@@ -73,7 +73,7 @@ struct CppVbScfOptimizerOptions {
   /**
    * @brief Determinant evaluation algorithm used in the C++ VBSCF path.
    */
-  VbScfAlgorithm algorithm = VbScfAlgorithm::Original;
+  VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original;
 
   /**
    * @brief Maximum number of accepted optimization iterations.

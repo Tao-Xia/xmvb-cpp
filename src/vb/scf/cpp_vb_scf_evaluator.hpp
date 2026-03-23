@@ -26,7 +26,7 @@ public:
    * @brief Creates an evaluator with default helper components.
    */
   explicit CppVbScfEvaluator(
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
+      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original);
 
   /**
    * @brief Creates an evaluator with explicit helper components.

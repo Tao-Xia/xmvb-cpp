@@ -9,7 +9,7 @@ namespace xmvb::vb {
 
 namespace {
 
-using ColumnMajorMatrixXd =
+using Matrix =
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 }  // namespace
@@ -20,8 +20,8 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
     const std::vector<double>& active_space_coulomb_exchange_matrix,
     const std::vector<double>& overlap_response_matrix,
     const std::vector<double>& active_density_matrix,
-    const std::vector<double>& basis_overlap_matrix,
-    const std::vector<double>& ao_effective_one_electron_matrix,
+    const std::vector<double>& active_orbital_overlap_matrix,
+    const std::vector<double>& ao_effective_h1e,
     const OrbitalPreparationInput& orbital_preparation_input,
     const OrbitalPreparationResult& orbital_preparation_result,
     int n_inactive_doubly_occupied_orbitals,
@@ -43,51 +43,51 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
       active_space_coulomb_exchange_matrix.size() != ao_matrix_size ||
       overlap_response_matrix.size() != ao_matrix_size ||
       active_density_matrix.size() != ao_matrix_size ||
-      basis_overlap_matrix.size() != ao_matrix_size ||
-      ao_effective_one_electron_matrix.size() != ao_matrix_size ||
+      active_orbital_overlap_matrix.size() != ao_matrix_size ||
+      ao_effective_h1e.size() != ao_matrix_size ||
       orbital_preparation_result.occupied_space_projector.size() != ao_matrix_size ||
       orbital_preparation_result.auxiliary_orbital_inverse_matrix.size() != ao_matrix_size) {
     throw std::invalid_argument("legacy-style projector matrix size mismatch");
   }
 
-  const Eigen::Map<const ColumnMajorMatrixXd> grda(
+  const Eigen::Map<const Matrix> grda(
       active_active_gradient_matrix.data(), n_active_orbitals, n_active_orbitals);
-  const Eigen::Map<const ColumnMajorMatrixXd> grdv(
+  const Eigen::Map<const Matrix> grdv(
       active_virtual_gradient_matrix.data(), n_basis_functions, n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> g22(
+  const Eigen::Map<const Matrix> g22(
       active_space_coulomb_exchange_matrix.data(), n_basis_functions, n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> q22(
+  const Eigen::Map<const Matrix> q22(
       overlap_response_matrix.data(), n_basis_functions, n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> p22(
+  const Eigen::Map<const Matrix> p22(
       active_density_matrix.data(), n_basis_functions, n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> ssf(
-      basis_overlap_matrix.data(), n_basis_functions, n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> f11(
-      ao_effective_one_electron_matrix.data(), n_basis_functions, n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> a1(
+  const Eigen::Map<const Matrix> ssf(
+      active_orbital_overlap_matrix.data(), n_basis_functions, n_basis_functions);
+  const Eigen::Map<const Matrix> f11(
+      ao_effective_h1e.data(), n_basis_functions, n_basis_functions);
+  const Eigen::Map<const Matrix> a1(
       orbital_preparation_result.occupied_space_projector.data(),
       n_basis_functions,
       n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> a5(
+  const Eigen::Map<const Matrix> a5(
       orbital_preparation_result.auxiliary_orbital_inverse_matrix.data(),
       n_basis_functions,
       n_basis_functions);
 
-  const Eigen::Map<const ColumnMajorMatrixXd> a2(
+  const Eigen::Map<const Matrix> a2(
       orbital_preparation_result.inactive_active_overlap_matrix.data(),
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
-  const Eigen::Map<const ColumnMajorMatrixXd> a3(
+  const Eigen::Map<const Matrix> a3(
       orbital_preparation_result.inactive_auxiliary_transform.data(),
       n_basis_functions,
       n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> a4(
+  const Eigen::Map<const Matrix> a4(
       orbital_preparation_result.projected_active_overlap_matrix.data(),
       n_basis_functions,
       n_active_orbitals);
 
-  ColumnMajorMatrixXd gradient_auxiliary =
-      ColumnMajorMatrixXd::Zero(n_basis_functions, n_active_orbitals);
+  Matrix gradient_auxiliary =
+      Matrix::Zero(n_basis_functions, n_active_orbitals);
   for (int active_orbital = 0; active_orbital < n_active_orbitals; ++active_orbital) {
     for (int basis_row = 0; basis_row < n_basis_functions; ++basis_row) {
       for (int active_source = 0; active_source < n_active_orbitals; ++active_source) {
@@ -103,8 +103,8 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
     }
   }
 
-  ColumnMajorMatrixXd slot_gradient_matrix =
-      ColumnMajorMatrixXd::Zero(n_basis_functions, n_orbitals);
+  Matrix slot_gradient_matrix =
+      Matrix::Zero(n_basis_functions, n_orbitals);
 
   for (int active_orbital = 0; active_orbital < n_active_orbitals; ++active_orbital) {
     const int orbital_index = active_orbital + n_inactive_doubly_occupied_orbitals;
@@ -125,7 +125,7 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
     }
   }
 
-  ColumnMajorMatrixXd symmetrized_g22 = g22;
+  Matrix symmetrized_g22 = g22;
   for (int column = 0; column < n_basis_functions; ++column) {
     for (int row = 0; row <= column; ++row) {
       symmetrized_g22(row, column) += f11(row, column);
@@ -133,8 +133,8 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
       symmetrized_g22(column, row) = symmetrized_g22(row, column);
     }
   }
-  const ColumnMajorMatrixXd tmp1 = symmetrized_g22 * a3.leftCols(n_inactive_doubly_occupied_orbitals);
-  const ColumnMajorMatrixXd tmp2 = a1.transpose() * tmp1;
+  const Matrix tmp1 = symmetrized_g22 * a3.leftCols(n_inactive_doubly_occupied_orbitals);
+  const Matrix tmp2 = a1.transpose() * tmp1;
   for (int inactive_orbital = 0; inactive_orbital < n_inactive_doubly_occupied_orbitals; ++inactive_orbital) {
     const int coefficient_count =
         orbital_preparation_input.original_orbital_basis_counts[static_cast<std::size_t>(inactive_orbital)];
@@ -151,9 +151,9 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
     }
   }
 
-  const ColumnMajorMatrixXd inactive_correction_from_density =
+  const Matrix inactive_correction_from_density =
       ssf * p22 * f11 * a3.leftCols(n_inactive_doubly_occupied_orbitals);
-  const ColumnMajorMatrixXd inactive_correction_from_overlap =
+  const Matrix inactive_correction_from_overlap =
       ssf * q22 * a3.leftCols(n_inactive_doubly_occupied_orbitals);
   for (int inactive_orbital = 0; inactive_orbital < n_inactive_doubly_occupied_orbitals; ++inactive_orbital) {
     const int coefficient_count =

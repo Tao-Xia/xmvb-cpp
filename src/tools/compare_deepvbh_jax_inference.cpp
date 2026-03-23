@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
 
   try {
     const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(input_path);
-    xmvb::vb::CppVbScfEvaluator exact_evaluator(xmvb::vb::VbScfAlgorithm::Original);
+    xmvb::vb::CppVbScfEvaluator exact_evaluator(xmvb::vb::VBSCFAlgorithm::Original);
     const auto exact_result = exact_evaluator.evaluate(
         load_result.input,
         load_result.nuclear_repulsion_energy);

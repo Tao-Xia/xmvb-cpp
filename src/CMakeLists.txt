@@ -30,8 +30,8 @@ set(XMVB_CPP_CORE_SOURCES
   core/linear_algebra/generalized_eigensolver.cpp
   vb/matrices/determinant_hamiltonian_resolver.cpp
   vb/matrices/determinant_overlap_resolver.cpp
-  vb/matrices/full_determinant_structure_expander.cpp
-  vb/matrices/full_determinant_structure_hamiltonian_overlap_builder.cpp
+  vb/matrices/full_structure_expander.cpp
+  vb/matrices/full_structure_builder.cpp
   vb/matrices/hamiltonian_overlap_builder.cpp
   vb/matrices/structure_matrix_evaluator.cpp
   vb/matrices/structure_subspace_builder.cpp

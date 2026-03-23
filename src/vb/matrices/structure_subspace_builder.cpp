@@ -41,9 +41,9 @@ std::vector<int> build_structure_index_remap(
 FullDeterminantStructureData StructureSubspaceBuilder::build(
     const FullDeterminantStructureData& full_data,
     const std::vector<int>& selected_structure_indices) const {
-  if (static_cast<int>(full_data.alpha_occupied_orbitals_by_determinant.size()) !=
-          static_cast<int>(full_data.beta_occupied_orbitals_by_determinant.size()) ||
-      static_cast<int>(full_data.alpha_occupied_orbitals_by_determinant.size()) !=
+  if (static_cast<int>(full_data.alpha_det.size()) !=
+          static_cast<int>(full_data.beta_det.size()) ||
+      static_cast<int>(full_data.alpha_det.size()) !=
           static_cast<int>(full_data.determinant_to_structure_terms.size())) {
     throw std::invalid_argument("full determinant inputs are inconsistent");
   }
@@ -55,9 +55,9 @@ FullDeterminantStructureData StructureSubspaceBuilder::build(
   FullDeterminantStructureData result;
   result.n_structures = static_cast<int>(selected_structure_indices.size());
   result.n_active_orbitals = full_data.n_active_orbitals;
-  result.basis_overlap_matrix = full_data.basis_overlap_matrix;
-  result.one_electron_matrix = full_data.one_electron_matrix;
-  result.packed_two_electron_integrals = full_data.packed_two_electron_integrals;
+  result.ovlp_act = full_data.ovlp_act;
+  result.h1e_act = full_data.h1e_act;
+  result.eri_act = full_data.eri_act;
 
   for (std::size_t determinant_index = 0;
        determinant_index < full_data.determinant_to_structure_terms.size();
@@ -80,10 +80,10 @@ FullDeterminantStructureData StructureSubspaceBuilder::build(
       continue;
     }
 
-    result.alpha_occupied_orbitals_by_determinant.push_back(
-        full_data.alpha_occupied_orbitals_by_determinant[determinant_index]);
-    result.beta_occupied_orbitals_by_determinant.push_back(
-        full_data.beta_occupied_orbitals_by_determinant[determinant_index]);
+    result.alpha_det.push_back(
+        full_data.alpha_det[determinant_index]);
+    result.beta_det.push_back(
+        full_data.beta_det[determinant_index]);
     result.determinant_to_structure_terms.push_back(std::move(filtered_terms));
   }
 

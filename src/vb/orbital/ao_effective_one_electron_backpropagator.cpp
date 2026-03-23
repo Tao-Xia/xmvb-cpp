@@ -8,7 +8,7 @@ namespace xmvb::vb {
 
 namespace {
 
-using ColumnMajorMatrixXd = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 }  // namespace
 
@@ -30,14 +30,14 @@ AoEffectiveOneElectronBackpropagator::backpropagate(
     throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
   }
 
-  const Eigen::Map<const ColumnMajorMatrixXd> ao_effective_gradient(
+  const Eigen::Map<const Matrix> ao_effective_gradient(
       ao_effective_one_electron_gradient.data(),
       n_basis_functions,
       n_basis_functions);
-  const ColumnMajorMatrixXd unsymmetrized_g11_gradient =
+  const Matrix unsymmetrized_g11_gradient =
       ao_effective_gradient + ao_effective_gradient.transpose();
-  ColumnMajorMatrixXd inactive_density_gradient =
-      ColumnMajorMatrixXd::Zero(n_basis_functions, n_basis_functions);
+  Matrix inactive_density_gradient =
+      Matrix::Zero(n_basis_functions, n_basis_functions);
 
   for (std::size_t integral_index = 0;
        integral_index < ao_two_electron_integral_values.size();

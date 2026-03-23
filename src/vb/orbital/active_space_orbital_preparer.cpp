@@ -12,14 +12,14 @@ namespace xmvb::vb {
 
 namespace {
 
-using ColumnMajorMatrixXd = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 struct JacobiDiagonalizationResult {
-  ColumnMajorMatrixXd eigenvector_matrix;
+  Matrix eigenvector_matrix;
   Eigen::VectorXd eigenvalues;
 };
 
-void require_finite_matrix(const ColumnMajorMatrixXd& matrix, const char* label) {
+void require_finite_matrix(const Matrix& matrix, const char* label) {
   for (int column = 0; column < matrix.cols(); ++column) {
     for (int row = 0; row < matrix.rows(); ++row) {
       if (!std::isfinite(matrix(row, column))) {
@@ -66,7 +66,7 @@ int get_sparse_coefficient_count(
 
 std::vector<double> normalize_sparse_orbitals(
     const OrbitalPreparationInput& input,
-    const Eigen::Map<const ColumnMajorMatrixXd>& basis_overlap_matrix) {
+    const Eigen::Map<const Matrix>& active_orbital_overlap_matrix) {
   std::vector<double> normalized_values = input.orbital_value_table;
 
   for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
@@ -98,7 +98,7 @@ std::vector<double> normalize_sparse_orbitals(
             normalized_values[static_cast<std::size_t>(orbital_index) * input.n_basis_functions +
                               right_index];
         squared_norm +=
-            left_value * right_value * basis_overlap_matrix(left_basis_function, right_basis_function);
+            left_value * right_value * active_orbital_overlap_matrix(left_basis_function, right_basis_function);
       }
     }
 
@@ -119,11 +119,11 @@ std::vector<double> normalize_sparse_orbitals(
   return normalized_values;
 }
 
-ColumnMajorMatrixXd expand_sparse_orbitals(
+Matrix expand_sparse_orbitals(
     const OrbitalPreparationInput& input,
     const std::vector<double>& normalized_orbital_values) {
-  ColumnMajorMatrixXd orbital_matrix =
-      ColumnMajorMatrixXd::Zero(input.n_basis_functions, input.n_orbitals);
+  Matrix orbital_matrix =
+      Matrix::Zero(input.n_basis_functions, input.n_orbitals);
 
   for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
     const int coefficient_count = get_sparse_coefficient_count(
@@ -150,7 +150,7 @@ ColumnMajorMatrixXd expand_sparse_orbitals(
 }
 
 JacobiDiagonalizationResult diagonalize_symmetric_jacobi(
-    const ColumnMajorMatrixXd& symmetric_matrix) {
+    const Matrix& symmetric_matrix) {
   if (symmetric_matrix.rows() != symmetric_matrix.cols()) {
     throw std::invalid_argument("Jacobi diagonalization requires a square matrix");
   }
@@ -162,9 +162,9 @@ JacobiDiagonalizationResult diagonalize_symmetric_jacobi(
   constexpr double kEpsilon = 1.0e-30;
 
   const int dimension = symmetric_matrix.rows();
-  ColumnMajorMatrixXd diagonal_matrix = symmetric_matrix;
-  ColumnMajorMatrixXd eigenvector_matrix =
-      ColumnMajorMatrixXd::Identity(dimension, dimension);
+  Matrix diagonal_matrix = symmetric_matrix;
+  Matrix eigenvector_matrix =
+      Matrix::Identity(dimension, dimension);
 
   double max_off_diagonal = kOne;
   while ((max_off_diagonal - kEpsilon) > kZero) {
@@ -249,40 +249,40 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
     throw std::invalid_argument("invalid occupied/virtual partition");
   }
 
-  const Eigen::Map<const ColumnMajorMatrixXd> basis_overlap_matrix(
-      input.basis_overlap_matrix.data(),
+  const Eigen::Map<const Matrix> basis_overlap_matrix(
+      input.active_orbital_overlap_matrix.data(),
       input.n_basis_functions,
       input.n_basis_functions);
   const std::vector<double> normalized_orbital_values =
       normalize_sparse_orbitals(input, basis_overlap_matrix);
   require_finite_vector(normalized_orbital_values, "normalized_orbital_values");
-  ColumnMajorMatrixXd original_orbital_matrix =
+  Matrix original_orbital_matrix =
       expand_sparse_orbitals(input, normalized_orbital_values);
   require_finite_matrix(original_orbital_matrix, "original_orbital_matrix");
 
-  ColumnMajorMatrixXd auxiliary_orbital_matrix =
-      ColumnMajorMatrixXd::Zero(input.n_basis_functions, input.n_basis_functions);
-  ColumnMajorMatrixXd inactive_auxiliary_transform =
-      ColumnMajorMatrixXd::Zero(input.n_basis_functions, input.n_basis_functions);
+  Matrix auxiliary_orbital_matrix =
+      Matrix::Zero(input.n_basis_functions, input.n_basis_functions);
+  Matrix inactive_auxiliary_transform =
+      Matrix::Zero(input.n_basis_functions, input.n_basis_functions);
   if (n_inactive_doubly_occupied_orbitals > 0) {
     auxiliary_orbital_matrix.leftCols(n_inactive_doubly_occupied_orbitals) =
         original_orbital_matrix.leftCols(n_inactive_doubly_occupied_orbitals);
   }
 
-  ColumnMajorMatrixXd inactive_density_matrix =
-      ColumnMajorMatrixXd::Zero(input.n_basis_functions, input.n_basis_functions);
-  ColumnMajorMatrixXd inactive_overlap_inverse =
-      ColumnMajorMatrixXd::Zero(n_inactive_doubly_occupied_orbitals,
+  Matrix inactive_density_matrix =
+      Matrix::Zero(input.n_basis_functions, input.n_basis_functions);
+  Matrix inactive_overlap_inverse =
+      Matrix::Zero(n_inactive_doubly_occupied_orbitals,
                                 n_inactive_doubly_occupied_orbitals);
   if (n_inactive_doubly_occupied_orbitals > 0) {
     const auto inactive_orbitals =
         auxiliary_orbital_matrix.leftCols(n_inactive_doubly_occupied_orbitals);
-    const ColumnMajorMatrixXd inactive_overlap =
+    const Matrix inactive_overlap =
         inactive_orbitals.transpose() * basis_overlap_matrix * inactive_orbitals;
     require_finite_matrix(inactive_overlap, "inactive_overlap");
     inactive_overlap_inverse = inactive_overlap.inverse();
     require_finite_matrix(inactive_overlap_inverse, "inactive_overlap_inverse");
-    const ColumnMajorMatrixXd auxiliary_inactive_orbitals =
+    const Matrix auxiliary_inactive_orbitals =
         inactive_orbitals * inactive_overlap_inverse;
     inactive_auxiliary_transform.leftCols(n_inactive_doubly_occupied_orbitals) =
         auxiliary_inactive_orbitals;
@@ -293,20 +293,20 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
   const auto active_orbitals = original_orbital_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       input.n_active_orbitals);
-  ColumnMajorMatrixXd occupied_space_projector =
-      ColumnMajorMatrixXd::Identity(input.n_basis_functions, input.n_basis_functions);
+  Matrix occupied_space_projector =
+      Matrix::Identity(input.n_basis_functions, input.n_basis_functions);
   occupied_space_projector -= inactive_density_matrix * basis_overlap_matrix;
   auxiliary_orbital_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       input.n_active_orbitals) = occupied_space_projector * active_orbitals;
   require_finite_matrix(auxiliary_orbital_matrix, "auxiliary_orbital_matrix");
 
-  const ColumnMajorMatrixXd active_auxiliary_orbitals = auxiliary_orbital_matrix.middleCols(
+  const Matrix active_auxiliary_orbitals = auxiliary_orbital_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       input.n_active_orbitals);
-  const ColumnMajorMatrixXd active_orbital_overlap_matrix =
+  const Matrix active_overlap_matrix =
       active_auxiliary_orbitals.transpose() * basis_overlap_matrix * active_auxiliary_orbitals;
-  require_finite_matrix(active_orbital_overlap_matrix, "active_orbital_overlap_matrix");
+  require_finite_matrix(active_overlap_matrix, "active_orbital_overlap_matrix");
 
   std::vector<int> active_sparse_row_offsets(
       static_cast<std::size_t>(input.n_basis_functions) + 1,
@@ -337,12 +337,12 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
   active_sparse_row_offsets[static_cast<std::size_t>(input.n_basis_functions)] =
       static_cast<int>(active_sparse_values.size());
   if (input.n_active_orbitals > 0) {
-    const ColumnMajorMatrixXd active_orbital_overlap_inverse =
-        active_orbital_overlap_matrix.inverse();
+    const Matrix active_orbital_overlap_inverse =
+        active_overlap_matrix.inverse();
     require_finite_matrix(active_orbital_overlap_inverse, "active_orbital_overlap_inverse");
 
-    ColumnMajorMatrixXd occupied_overlap_inverse =
-        ColumnMajorMatrixXd::Zero(n_occupied_orbitals, n_occupied_orbitals);
+    Matrix occupied_overlap_inverse =
+        Matrix::Zero(n_occupied_orbitals, n_occupied_orbitals);
     if (n_inactive_doubly_occupied_orbitals > 0) {
       occupied_overlap_inverse.topLeftCorner(
           n_inactive_doubly_occupied_orbitals,
@@ -355,13 +355,13 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
     if (n_virtual_orbitals > 0) {
       const auto occupied_auxiliary_orbitals =
           auxiliary_orbital_matrix.leftCols(n_occupied_orbitals);
-      const ColumnMajorMatrixXd tmp_occ =
+      const Matrix tmp_occ =
           occupied_auxiliary_orbitals.transpose() * basis_overlap_matrix;
-      const ColumnMajorMatrixXd tmp2 = occupied_overlap_inverse * tmp_occ;
-      ColumnMajorMatrixXd complementary_projector =
-          ColumnMajorMatrixXd::Identity(input.n_basis_functions, input.n_basis_functions) -
+      const Matrix tmp2 = occupied_overlap_inverse * tmp_occ;
+      Matrix complementary_projector =
+          Matrix::Identity(input.n_basis_functions, input.n_basis_functions) -
           occupied_auxiliary_orbitals * tmp2;
-      const ColumnMajorMatrixXd virtual_overlap =
+      const Matrix virtual_overlap =
           complementary_projector.transpose() * basis_overlap_matrix * complementary_projector;
       const auto diagonalization = diagonalize_symmetric_jacobi(virtual_overlap);
 
@@ -393,15 +393,15 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
     }
   }
 
-  const ColumnMajorMatrixXd active_overlap_source =
+  const Matrix active_overlap_source =
       basis_overlap_matrix * active_orbitals;
-  const ColumnMajorMatrixXd inactive_active_overlap_matrix_full =
+  const Matrix inactive_active_overlap_matrix_full =
       inactive_auxiliary_transform.transpose() * active_overlap_source;
-  const ColumnMajorMatrixXd inactive_active_overlap_matrix =
+  const Matrix inactive_active_overlap_matrix =
       inactive_active_overlap_matrix_full.topRows(n_inactive_doubly_occupied_orbitals);
-  const ColumnMajorMatrixXd projected_active_overlap_matrix =
+  const Matrix projected_active_overlap_matrix =
       occupied_space_projector.transpose() * active_overlap_source;
-  const ColumnMajorMatrixXd auxiliary_orbital_inverse =
+  const Matrix auxiliary_orbital_inverse =
       auxiliary_orbital_matrix.inverse();
   require_finite_matrix(inactive_active_overlap_matrix, "inactive_active_overlap_matrix");
   require_finite_matrix(projected_active_overlap_matrix, "projected_active_overlap_matrix");
@@ -415,8 +415,8 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
   result.active_sparse_orbital_indices = std::move(active_sparse_orbital_indices);
   result.active_sparse_values = std::move(active_sparse_values);
   result.active_orbital_overlap_matrix.assign(
-      active_orbital_overlap_matrix.data(),
-      active_orbital_overlap_matrix.data() + active_orbital_overlap_matrix.size());
+      active_overlap_matrix.data(),
+      active_overlap_matrix.data() + active_overlap_matrix.size());
   result.inactive_density_matrix.assign(
       inactive_density_matrix.data(),
       inactive_density_matrix.data() + inactive_density_matrix.size());

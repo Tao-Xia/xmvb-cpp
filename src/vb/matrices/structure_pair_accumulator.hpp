@@ -2,8 +2,7 @@
 
 #include <vector>
 
-#include "vb/matrices/structure_accumulation_result.hpp"
-#include "vb/matrices/structure_expansion_term.hpp"
+#include "vb/matrices/structure_types.hpp"
 
 namespace xmvb::vb {
 

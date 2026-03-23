@@ -1,4 +1,4 @@
-#include "vb/matrices/full_determinant_structure_expander.hpp"
+#include "vb/matrices/full_structure_expander.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -236,10 +236,10 @@ FullDeterminantStructureData FullDeterminantStructureExpander::expand(
 
       DeterminantKey determinant_key{alpha_orbitals, beta_orbitals};
       const auto [determinant_iterator, inserted] =
-          determinant_to_index.emplace(determinant_key, static_cast<int>(result.alpha_occupied_orbitals_by_determinant.size()));
+          determinant_to_index.emplace(determinant_key, static_cast<int>(result.alpha_det.size()));
       if (inserted) {
-        result.alpha_occupied_orbitals_by_determinant.push_back(alpha_orbitals);
-        result.beta_occupied_orbitals_by_determinant.push_back(beta_orbitals);
+        result.alpha_det.push_back(alpha_orbitals);
+        result.beta_det.push_back(beta_orbitals);
         result.determinant_to_structure_terms.push_back({});
       }
 

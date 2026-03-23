@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vb/matrices/full_determinant_structure_data.hpp"
+#include "vb/matrices/structure_types.hpp"
 #include "vb/orbital/ao_integral_input.hpp"
 #include "vb/orbital/orbital_preparation_input.hpp"
 

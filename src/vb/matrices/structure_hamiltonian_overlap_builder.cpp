@@ -15,11 +15,12 @@ StructureHamiltonianOverlapBuilder::StructureHamiltonianOverlapBuilder(
       structure_pair_accumulator_(std::move(structure_pair_accumulator)) {}
 
 StructureAccumulationResult StructureHamiltonianOverlapBuilder::build(
+
     const std::vector<DeterminantPairInput>& determinant_pair_inputs,
     const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-    const std::vector<double>& one_electron_matrix,
+    const std::vector<double>& h1e_act,
     int n_orbitals,
-    const std::vector<double>& packed_two_electron_integrals,
+    const std::vector<double>& eri_act,
     int n_structures,
     int n_determinants) const {
   if (n_structures <= 0) {
@@ -45,12 +46,12 @@ StructureAccumulationResult StructureHamiltonianOverlapBuilder::build(
     }
 
     const auto determinant_hamiltonian_result = determinant_hamiltonian_resolver_.resolve(
-        determinant_pair_input.occupied_orbitals_left,
-        determinant_pair_input.occupied_orbitals_right,
-        determinant_pair_input.determinant_overlap_submatrix,
-        one_electron_matrix,
+        determinant_pair_input.occ_L,
+        determinant_pair_input.occ_R,
+        determinant_pair_input.det_ovlp_mat,
+        h1e_act,
         n_orbitals,
-        packed_two_electron_integrals);
+        eri_act);
 
     structure_pair_accumulator_.accumulate(
         determinant_pair_input.determinant_index_left,

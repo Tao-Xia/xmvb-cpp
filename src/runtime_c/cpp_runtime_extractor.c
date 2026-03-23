@@ -87,7 +87,7 @@ static void free_runtime_output_buffers(
     int** orbital_basis_index_table,
     int** orbital_basis_counts,
     int** original_orbital_basis_counts,
-    double** basis_overlap_matrix,
+    double** active_orbital_overlap_matrix,
     double** ao_core_hamiltonian_matrix,
     double** ao_two_electron_integral_values,
     int** ao_two_electron_integral_indices) {
@@ -108,7 +108,7 @@ static void free_runtime_output_buffers(
   free(*orbital_basis_index_table);
   free(*orbital_basis_counts);
   free(*original_orbital_basis_counts);
-  free(*basis_overlap_matrix);
+  free(*active_orbital_overlap_matrix);
   free(*ao_core_hamiltonian_matrix);
   free(*ao_two_electron_integral_values);
   free(*ao_two_electron_integral_indices);
@@ -129,7 +129,7 @@ static void free_runtime_output_buffers(
   *orbital_basis_index_table = NULL;
   *orbital_basis_counts = NULL;
   *original_orbital_basis_counts = NULL;
-  *basis_overlap_matrix = NULL;
+  *active_orbital_overlap_matrix = NULL;
   *ao_core_hamiltonian_matrix = NULL;
   *ao_two_electron_integral_values = NULL;
   *ao_two_electron_integral_indices = NULL;
@@ -165,7 +165,7 @@ void free_cpp_runtime_snapshot(CppRuntimeSnapshot* snapshot) {
       &snapshot->orbital_basis_index_table,
       &snapshot->orbital_basis_counts,
       &snapshot->original_orbital_basis_counts,
-      &snapshot->basis_overlap_matrix,
+      &snapshot->active_orbital_overlap_matrix,
       &snapshot->ao_core_hamiltonian_matrix,
       &snapshot->ao_two_electron_integral_values,
       &snapshot->ao_two_electron_integral_indices);
@@ -357,7 +357,7 @@ int extract_cpp_runtime_input(
     int** orbital_basis_index_table,
     int** orbital_basis_counts,
     int** original_orbital_basis_counts,
-    double** basis_overlap_matrix,
+    double** active_orbital_overlap_matrix,
     double* nuclear_repulsion_energy,
     long* n_ao_two_electron_integrals,
     double** ao_core_hamiltonian_matrix,
@@ -394,7 +394,7 @@ int extract_cpp_runtime_input(
   *orbital_basis_index_table = snapshot.orbital_basis_index_table;
   *orbital_basis_counts = snapshot.orbital_basis_counts;
   *original_orbital_basis_counts = snapshot.original_orbital_basis_counts;
-  *basis_overlap_matrix = snapshot.basis_overlap_matrix;
+  *active_orbital_overlap_matrix = snapshot.active_orbital_overlap_matrix;
   *ao_core_hamiltonian_matrix = snapshot.ao_core_hamiltonian_matrix;
   *ao_two_electron_integral_values = snapshot.ao_two_electron_integral_values;
   *ao_two_electron_integral_indices = snapshot.ao_two_electron_integral_indices;
@@ -404,7 +404,7 @@ int extract_cpp_runtime_input(
   snapshot.orbital_basis_index_table = NULL;
   snapshot.orbital_basis_counts = NULL;
   snapshot.original_orbital_basis_counts = NULL;
-  snapshot.basis_overlap_matrix = NULL;
+  snapshot.active_orbital_overlap_matrix = NULL;
   snapshot.ao_core_hamiltonian_matrix = NULL;
   snapshot.ao_two_electron_integral_values = NULL;
   snapshot.ao_two_electron_integral_indices = NULL;

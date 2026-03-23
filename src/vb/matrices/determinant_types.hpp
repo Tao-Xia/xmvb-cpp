@@ -1,5 +1,7 @@
 #pragma once
 
+#include <vector>
+
 #include <Eigen/Core>
 
 namespace xmvb::vb {
@@ -45,14 +47,14 @@ struct DeterminantOverlapResult {
    * columns = left determinant", so `matrix_U` spans the right-determinant
    * occupied space.
    */
-  Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor> matrix_U;
+  Eigen::MatrixXd matrix_U;
 
   /**
    * @brief Right singular vectors of the overlap submatrix.
    *
    * `matrix_V` spans the left-determinant occupied space.
    */
-  Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor> matrix_V;
+  Eigen::MatrixXd matrix_V;
 
   /**
    * @brief Sign contribution from the orthogonal factors.
@@ -60,6 +62,61 @@ struct DeterminantOverlapResult {
    * This equals `det(U) * det(V)` and is always `+1.0` or `-1.0`.
    */
   double parity = 1.0;
+};
+
+/**
+ * @brief Determinant-level Hamiltonian and overlap quantities.
+ */
+struct DeterminantHamiltonianResult {
+  /**
+   * @brief Determinant overlap between the two determinants.
+   */
+  double overlap_determinant = 0.0;
+
+  /**
+   * @brief One-electron Hamiltonian matrix element.
+   */
+  double one_electron_hamiltonian = 0.0;
+
+  /**
+   * @brief Total Hamiltonian matrix element including one- and two-electron parts.
+   */
+  double total_hamiltonian = 0.0;
+
+  /**
+   * @brief Nullity of the determinant overlap submatrix.
+   */
+  int nullity = 0;
+};
+
+/**
+ * @brief Input data for one determinant pair contribution.
+ */
+struct DeterminantPairInput {
+  /**
+   * @brief Zero-based determinant index on the left.
+   */
+  int determinant_index_left = 0;
+
+  /**
+   * @brief Zero-based determinant index on the right.
+   */
+  int determinant_index_right = 0;
+
+  /**
+   * @brief Zero-based occupied orbitals of the left determinant.
+   */
+  std::vector<int> occ_L;
+
+  /**
+   * @brief Zero-based occupied orbitals of the right determinant.
+   */
+  std::vector<int> occ_R;
+
+  /**
+   * @brief Column-major determinant overlap submatrix between occupied orbitals.
+   */
+  std::vector<double> det_ovlp_mat;
 };
 
 }  // namespace xmvb::vb

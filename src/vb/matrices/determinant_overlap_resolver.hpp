@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vb/matrices/determinant_overlap_result.hpp"
+#include "vb/matrices/determinant_types.hpp"
 
 namespace xmvb::vb {
 

@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/raw_structure_data.hpp"
+#include "vb/matrices/structure_types.hpp"
 #include "runtime_c/cpp_runtime_extractor.h"
 
 namespace xmvb::vb {

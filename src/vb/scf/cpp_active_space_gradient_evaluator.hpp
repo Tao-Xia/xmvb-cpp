@@ -3,8 +3,8 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "vb/matrices/full_determinant_structure_hamiltonian_overlap_builder.hpp"
 #include "vb/matrices/cpp_vb_input.hpp"
+#include "vb/matrices/full_structure_builder.hpp"
 #include "vb/orbital/active_space_one_electron_builder.hpp"
 #include "vb/orbital/active_space_orbital_preparer.hpp"
 #include "vb/orbital/active_space_two_electron_builder.hpp"
@@ -33,7 +33,7 @@ public:
    * @brief Creates an evaluator with default helper components.
    */
   explicit CppActiveSpaceGradientEvaluator(
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
+      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original);
 
   /**
    * @brief Creates an evaluator with explicit helper components.
@@ -45,7 +45,7 @@ public:
       ActiveSpaceTwoElectronBuilder active_space_two_electron_builder,
       FullDeterminantStructureHamiltonianOverlapBuilder structure_builder,
       xmvb::core::GeneralizedEigensolver generalized_eigensolver,
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
+      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original);
 
   /**
    * @brief Evaluates the ground-state active-space analytic gradient.
@@ -70,7 +70,7 @@ private:
   ActiveSpaceTwoElectronBuilder active_space_two_electron_builder_;
   FullDeterminantStructureHamiltonianOverlapBuilder structure_builder_;
   xmvb::core::GeneralizedEigensolver generalized_eigensolver_;
-  VbScfAlgorithm algorithm_ = VbScfAlgorithm::Original;
+  VBSCFAlgorithm algorithm_ = VBSCFAlgorithm::Original;
 };
 
 }  // namespace xmvb::vb

@@ -16,7 +16,7 @@ namespace xmvb::vb {
 
 namespace {
 
-using ColumnMajorMatrixXd = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 struct SparseActiveCoefficient {
   int active_orbital_index = 0;
@@ -66,7 +66,7 @@ UniquePermutationSet enumerate_unique_symmetry_permutations(
 }
 
 std::vector<std::vector<SparseActiveCoefficient>> build_sparse_active_coefficients_by_basis(
-    const Eigen::Ref<const ColumnMajorMatrixXd>& active_auxiliary_orbitals,
+    const Eigen::Ref<const Matrix>& active_auxiliary_orbitals,
     int n_basis_functions,
     int n_active_orbitals) {
   std::vector<std::vector<SparseActiveCoefficient>> coefficients_by_basis(
@@ -148,7 +148,7 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
     throw std::invalid_argument("invalid active-orbital column range");
   }
 
-  const Eigen::Map<const ColumnMajorMatrixXd> auxiliary_matrix(
+  const Eigen::Map<const Matrix> auxiliary_matrix(
       auxiliary_orbital_matrix.data(),
       n_basis_functions,
       n_basis_functions);

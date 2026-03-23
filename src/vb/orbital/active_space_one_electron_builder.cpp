@@ -8,12 +8,12 @@ namespace xmvb::vb {
 
 namespace {
 
-using ColumnMajorMatrixXd = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 }  // namespace
 
 ActiveSpaceOneElectronResult ActiveSpaceOneElectronBuilder::build(
-    const std::vector<double>& ao_effective_one_electron_matrix,
+    const std::vector<double>& ao_effective_h1e,
     const std::vector<double>& auxiliary_orbital_matrix,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -24,7 +24,7 @@ ActiveSpaceOneElectronResult ActiveSpaceOneElectronBuilder::build(
 
   const std::size_t ao_matrix_size =
       static_cast<std::size_t>(n_basis_functions) * n_basis_functions;
-  if (ao_effective_one_electron_matrix.size() != ao_matrix_size) {
+  if (ao_effective_h1e.size() != ao_matrix_size) {
     throw std::invalid_argument("AO effective one-electron matrix size mismatch");
   }
   if (auxiliary_orbital_matrix.size() != ao_matrix_size) {
@@ -35,11 +35,11 @@ ActiveSpaceOneElectronResult ActiveSpaceOneElectronBuilder::build(
     throw std::invalid_argument("invalid active-orbital column range");
   }
 
-  const Eigen::Map<const ColumnMajorMatrixXd> ao_f11_matrix(
-      ao_effective_one_electron_matrix.data(),
+  const Eigen::Map<const Matrix> ao_f11_matrix(
+      ao_effective_h1e.data(),
       n_basis_functions,
       n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> auxiliary_matrix(
+  const Eigen::Map<const Matrix> auxiliary_matrix(
       auxiliary_orbital_matrix.data(),
       n_basis_functions,
       n_basis_functions);
@@ -47,13 +47,13 @@ ActiveSpaceOneElectronResult ActiveSpaceOneElectronBuilder::build(
   const auto active_auxiliary_orbitals = auxiliary_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
-  const ColumnMajorMatrixXd temp =
+  const Matrix temp =
       active_auxiliary_orbitals.transpose() * ao_f11_matrix;
-  const ColumnMajorMatrixXd hho_matrix =
+  const Matrix hho_matrix =
       temp * active_auxiliary_orbitals;
 
   ActiveSpaceOneElectronResult result;
-  result.active_one_electron_matrix.assign(
+  result.h1e_act.assign(
       hho_matrix.data(),
       hho_matrix.data() + hho_matrix.size());
   return result;

@@ -9,7 +9,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/full_determinant_structure_hamiltonian_overlap_builder.hpp"
+#include "vb/matrices/full_structure_builder.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
@@ -23,7 +23,7 @@ enum class Component {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
+  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
   Component component = Component::Overlap;
   int count = 8;
   double step = 1.0e-6;
@@ -49,9 +49,9 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
+        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
       } else if (argument_value == "biorthogonal") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Biorthogonal;
+        options.algorithm = xmvb::vb::VBSCFAlgorithm::Biorthogonal;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -91,7 +91,7 @@ Options parse_arguments(int argc, char** argv) {
 
 double compute_one_electron_reference_energy(
     const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_one_electron_matrix,
+    const std::vector<double>& ao_effective_h1e,
     const std::vector<double>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
   double one_electron_reference_energy = 0.0;
@@ -101,7 +101,7 @@ double compute_one_electron_reference_energy(
           static_cast<std::size_t>(column) * n_basis_functions + row;
       one_electron_reference_energy +=
           inactive_density_matrix[index] *
-          (ao_effective_one_electron_matrix[index] + ao_core_hamiltonian_matrix[index]);
+          (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
     }
   }
   return one_electron_reference_energy;
@@ -111,17 +111,17 @@ double evaluate_total_energy_from_active_space(
     const xmvb::vb::CppVbInput& input,
     const xmvb::vb::CppActiveSpaceGradientResult& baseline,
     const std::vector<double>& active_orbital_overlap_matrix,
-    const std::vector<double>& active_one_electron_matrix,
+    const std::vector<double>& h1e_act,
     const std::vector<double>& packed_active_two_electron_integrals,
     double nuclear_repulsion_energy,
-    xmvb::vb::VbScfAlgorithm algorithm) {
+    xmvb::vb::VBSCFAlgorithm algorithm) {
   xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(algorithm);
   const auto structure_matrices = structure_builder.build(
-      input.structure_data.alpha_occupied_orbitals_by_determinant,
-      input.structure_data.beta_occupied_orbitals_by_determinant,
+      input.structure_data.alpha_det,
+      input.structure_data.beta_det,
       input.structure_data.determinant_to_structure_terms,
       active_orbital_overlap_matrix,
-      active_one_electron_matrix,
+      h1e_act,
       input.orbital_preparation_input.n_active_orbitals,
       packed_active_two_electron_integrals,
       input.structure_data.n_structures);
@@ -132,7 +132,7 @@ double evaluate_total_energy_from_active_space(
       input.structure_data.n_structures);
   const double one_electron_reference_energy = compute_one_electron_reference_energy(
       baseline.orbital_preparation_result.inactive_density_matrix,
-      baseline.ao_effective_one_electron_result.ao_effective_one_electron_matrix,
+      baseline.ao_effective_one_electron_result.ao_effective_h1e,
       input.ao_integral_input.ao_core_hamiltonian_matrix,
       input.ao_integral_input.n_basis_functions);
   return one_electron_reference_energy + eigen_result.eigenvalues.front() + nuclear_repulsion_energy;
@@ -202,8 +202,8 @@ int main(int argc, char** argv) {
       const int entry_index = ranked_entries[static_cast<std::size_t>(report_index)].second;
       std::vector<double> plus_overlap = result.active_orbital_overlap_matrix;
       std::vector<double> minus_overlap = result.active_orbital_overlap_matrix;
-      std::vector<double> plus_one = result.active_space_one_electron_result.active_one_electron_matrix;
-      std::vector<double> minus_one = result.active_space_one_electron_result.active_one_electron_matrix;
+      std::vector<double> plus_one = result.active_space_one_electron_result.h1e_act;
+      std::vector<double> minus_one = result.active_space_one_electron_result.h1e_act;
       std::vector<double> plus_two = result.active_space_two_electron_result.packed_active_two_electron_integrals;
       std::vector<double> minus_two = result.active_space_two_electron_result.packed_active_two_electron_integrals;
 

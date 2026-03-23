@@ -8,7 +8,7 @@ namespace xmvb::vb {
 
 namespace {
 
-using ColumnMajorMatrixXd = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 }  // namespace
 
@@ -32,16 +32,16 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
   }
 
-  Eigen::Map<const ColumnMajorMatrixXd> p11(
+  Eigen::Map<const Matrix> p11(
       inactive_density_matrix.data(),
       n_basis_functions,
       n_basis_functions);
-  Eigen::Map<const ColumnMajorMatrixXd> hhf(
+  Eigen::Map<const Matrix> hhf(
       ao_core_hamiltonian_matrix.data(),
       n_basis_functions,
       n_basis_functions);
-  ColumnMajorMatrixXd g11 =
-      ColumnMajorMatrixXd::Zero(n_basis_functions, n_basis_functions);
+  Matrix g11 =
+      Matrix::Zero(n_basis_functions, n_basis_functions);
 
   for (std::size_t integral_index = 0;
        integral_index < ao_two_electron_integral_values.size();
@@ -86,13 +86,13 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     }
   }
 
-  const ColumnMajorMatrixXd f11 = g11 + hhf;
+  const Matrix f11 = g11 + hhf;
 
   AoEffectiveOneElectronResult result;
   result.ao_coulomb_exchange_matrix.assign(
       g11.data(),
       g11.data() + g11.size());
-  result.ao_effective_one_electron_matrix.assign(
+  result.ao_effective_h1e.assign(
       f11.data(),
       f11.data() + f11.size());
   return result;

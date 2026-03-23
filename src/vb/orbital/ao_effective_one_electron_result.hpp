@@ -16,7 +16,7 @@ struct AoEffectiveOneElectronResult {
   /**
    * @brief Column-major AO effective one-electron matrix `F11 = HHF + G11`.
    */
-  std::vector<double> ao_effective_one_electron_matrix;
+  std::vector<double> ao_effective_h1e;
 };
 
 }  // namespace xmvb::vb

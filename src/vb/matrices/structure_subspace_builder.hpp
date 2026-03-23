@@ -2,8 +2,8 @@
 
 #include <vector>
 
-#include "vb/matrices/full_determinant_structure_data.hpp"
 #include "vb/matrices/cpp_vb_input.hpp"
+#include "vb/matrices/structure_types.hpp"
 
 namespace xmvb::vb {
 

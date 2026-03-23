@@ -20,7 +20,7 @@ public:
   /**
    * @brief Builds packed active-space two-electron integrals.
    *
-   * @param ao_two_electron_integral_values Sparse AO ERI values `ggf`.
+   * @param ao_two_electron_integral_values Sparse AO eri_act values `ggf`.
    * @param ao_two_electron_integral_indices Flattened AO index table `g2eidx`.
    * @param auxiliary_orbital_matrix Column-major auxiliary orbital matrix.
    * @param n_basis_functions Number of AO basis functions.

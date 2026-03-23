@@ -16,7 +16,7 @@ namespace {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
+  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
   int count = 8;
   double step = 1.0e-6;
 };
@@ -77,9 +77,9 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
+        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
       } else if (argument_value == "biorthogonal") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Biorthogonal;
+        options.algorithm = xmvb::vb::VBSCFAlgorithm::Biorthogonal;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -107,7 +107,7 @@ Options parse_arguments(int argc, char** argv) {
 
 double evaluate_total_energy(
     const xmvb::vb::CppVbInput& input,
-    xmvb::vb::VbScfAlgorithm algorithm,
+    xmvb::vb::VBSCFAlgorithm algorithm,
     double nuclear_repulsion_energy) {
   xmvb::vb::CppVbScfEvaluator evaluator(algorithm);
   return evaluator.evaluate(input, nuclear_repulsion_energy).total_energy;

@@ -2,11 +2,10 @@
 
 #include <vector>
 
+#include "vb/matrices/determinant_types.hpp"
 #include "vb/matrices/determinant_hamiltonian_resolver.hpp"
-#include "vb/matrices/determinant_pair_input.hpp"
-#include "vb/matrices/structure_accumulation_result.hpp"
-#include "vb/matrices/structure_expansion_term.hpp"
 #include "vb/matrices/structure_pair_accumulator.hpp"
+#include "vb/matrices/structure_types.hpp"
 
 namespace xmvb::vb {
 
@@ -40,9 +39,9 @@ public:
    *
    * @param determinant_pair_inputs Determinant pairs to evaluate.
    * @param determinant_to_structure_terms Expansion terms for each determinant.
-   * @param one_electron_matrix Column-major one-electron integral matrix.
+   * @param h1e_act Column-major one-electron integral matrix.
    * @param n_orbitals Total number of orbitals.
-   * @param packed_two_electron_integrals Packed two-electron integral storage.
+   * @param eri_act Packed two-electron integral storage.
    * @param n_structures Number of structures.
    * @param n_determinants Number of determinants.
    * @return StructureAccumulationResult Structure-level matrices and overlap cache.
@@ -50,9 +49,9 @@ public:
   StructureAccumulationResult build(
       const std::vector<DeterminantPairInput>& determinant_pair_inputs,
       const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
-      const std::vector<double>& one_electron_matrix,
+      const std::vector<double>& h1e_act,
       int n_orbitals,
-      const std::vector<double>& packed_two_electron_integrals,
+      const std::vector<double>& eri_act,
       int n_structures,
       int n_determinants) const;
 

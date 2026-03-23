@@ -1,4 +1,8 @@
 src/test_molecule
 deepvbscf_data_f2_scan
-.vscode/
 artifacts/
+deepvbscf_data/
+build/
+.cache/
+.venv/
+.vscode/

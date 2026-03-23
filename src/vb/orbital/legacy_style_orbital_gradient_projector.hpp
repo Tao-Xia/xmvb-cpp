@@ -42,8 +42,8 @@ public:
    * @param active_space_coulomb_exchange_matrix Legacy-style `G22`, dimension `(nb, nb)`.
    * @param overlap_response_matrix Legacy-style `Q22`, dimension `(nb, nb)`.
    * @param active_density_matrix Legacy-style `P22`, dimension `(nb, nb)`.
-   * @param basis_overlap_matrix AO overlap matrix `SSF`, dimension `(nb, nb)`.
-   * @param ao_effective_one_electron_matrix AO effective one-electron matrix `F11`, dimension `(nb, nb)`.
+   * @param active_orbital_overlap_matrix AO overlap matrix `SSF`, dimension `(nb, nb)`.
+   * @param ao_effective_h1e AO effective one-electron matrix `F11`, dimension `(nb, nb)`.
    * @param orbital_preparation_input Sparse-orbital indexing and original `ma0` counts.
    * @param orbital_preparation_result Legacy-style orbital-preparation intermediates.
    * @param n_inactive_doubly_occupied_orbitals Number of inactive doubly occupied orbitals.
@@ -57,8 +57,8 @@ public:
       const std::vector<double>& active_space_coulomb_exchange_matrix,
       const std::vector<double>& overlap_response_matrix,
       const std::vector<double>& active_density_matrix,
-      const std::vector<double>& basis_overlap_matrix,
-      const std::vector<double>& ao_effective_one_electron_matrix,
+      const std::vector<double>& active_orbital_overlap_matrix,
+      const std::vector<double>& ao_effective_h1e,
       const OrbitalPreparationInput& orbital_preparation_input,
       const OrbitalPreparationResult& orbital_preparation_result,
       int n_inactive_doubly_occupied_orbitals,

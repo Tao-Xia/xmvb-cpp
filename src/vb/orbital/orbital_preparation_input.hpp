@@ -64,7 +64,7 @@ struct OrbitalPreparationInput {
   /**
    * @brief Column-major AO overlap matrix.
    */
-  SharedVector<double> basis_overlap_matrix;
+  SharedVector<double> active_orbital_overlap_matrix;
 };
 
 }  // namespace xmvb::vb

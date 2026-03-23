@@ -9,7 +9,7 @@ namespace xmvb::vb {
 struct OrbitalSpace {
   VbDimensions dims;
 
-  std::vector<double> basis_overlap_matrix;
+  std::vector<double> active_orbital_overlap_matrix;
   std::vector<double> orbital_transform_matrix;
   std::vector<double> orbital_parameter_matrix;
 

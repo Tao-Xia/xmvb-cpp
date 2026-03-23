@@ -65,7 +65,7 @@ void validate_state_selection(
 
 double compute_one_electron_reference_energy(
     const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_one_electron_matrix,
+    const std::vector<double>& ao_effective_h1e,
     const std::vector<double>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
   double one_electron_reference_energy = 0.0;
@@ -75,7 +75,7 @@ double compute_one_electron_reference_energy(
           static_cast<std::size_t>(column) * n_basis_functions + row;
       one_electron_reference_energy +=
           inactive_density_matrix[index] *
-          (ao_effective_one_electron_matrix[index] + ao_core_hamiltonian_matrix[index]);
+          (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
     }
   }
   return one_electron_reference_energy;
@@ -83,7 +83,7 @@ double compute_one_electron_reference_energy(
 
 }  // namespace
 
-CppVbScfEvaluator::CppVbScfEvaluator(VbScfAlgorithm algorithm)
+CppVbScfEvaluator::CppVbScfEvaluator(VBSCFAlgorithm algorithm)
     : matrix_evaluator_(algorithm), generalized_eigensolver_(), subspace_builder_() {}
 
 CppVbScfEvaluator::CppVbScfEvaluator(
@@ -139,7 +139,7 @@ CppVbScfResult CppVbScfEvaluator::evaluate(
           input.ao_integral_input.n_basis_functions);
   const auto active_space_one_electron_result =
       active_space_one_electron_builder.build(
-          ao_effective_one_electron_result.ao_effective_one_electron_matrix,
+          ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.ao_integral_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -154,7 +154,7 @@ CppVbScfResult CppVbScfEvaluator::evaluate(
   result.structure_matrices = matrix_evaluator_.evaluate(input);
   result.one_electron_reference_energy = compute_one_electron_reference_energy(
       orbital_result.inactive_density_matrix,
-      ao_effective_one_electron_result.ao_effective_one_electron_matrix,
+      ao_effective_one_electron_result.ao_effective_h1e,
       input.ao_integral_input.ao_core_hamiltonian_matrix,
       input.ao_integral_input.n_basis_functions);
   result.average_structure_overlap = compute_average_structure_overlap(

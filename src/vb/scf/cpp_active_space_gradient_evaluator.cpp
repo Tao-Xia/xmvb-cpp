@@ -13,7 +13,7 @@
 
 #include "vb/matrices/biorthogonal_spin_pair.hpp"
 #include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/structure_expansion_term.hpp"
+#include "vb/matrices/structure_types.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 
 namespace xmvb::vb {
@@ -26,7 +26,7 @@ namespace {
 
 constexpr double kLowRankUpdateStabilityThreshold = 1.0e-10;
 
-using ColumnMajorMatrixXd =
+using Matrix =
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 struct StructurePairAdjoints {
@@ -36,10 +36,10 @@ struct StructurePairAdjoints {
 
 struct SpinDeterminantTraversalState {
   bool initialized = false;
-  std::vector<int> occupied_orbitals_right;
+  std::vector<int> occ_R;
   std::vector<double> overlap_submatrix;
-  DeterminantOverlapResult overlap_result;
-  ColumnMajorMatrixXd inverse_matrix;
+  DeterminantOverlapResult det_ovlp_result;
+  Matrix inverse_matrix;
 };
 
 struct SingleOrbitalRowUpdatePlan {
@@ -89,7 +89,7 @@ std::vector<double> permute_rows_of_overlap_submatrix(
     const std::vector<int>& row_permutation) {
   std::vector<double> permuted_overlap_submatrix(overlap_submatrix.size(), 0.0);
   const auto source_matrix = map_column_major_matrix(overlap_submatrix, n_electrons);
-  auto permuted_matrix = Eigen::Map<ColumnMajorMatrixXd>(
+  auto permuted_matrix = Eigen::Map<Matrix>(
       permuted_overlap_submatrix.data(),
       n_electrons,
       n_electrons);
@@ -100,10 +100,10 @@ std::vector<double> permute_rows_of_overlap_submatrix(
   return permuted_overlap_submatrix;
 }
 
-ColumnMajorMatrixXd permute_columns_of_inverse_matrix(
-    const ColumnMajorMatrixXd& inverse_matrix,
+Matrix permute_columns_of_inverse_matrix(
+    const Matrix& inverse_matrix,
     const std::vector<int>& row_permutation) {
-  ColumnMajorMatrixXd permuted_inverse(inverse_matrix.rows(), inverse_matrix.cols());
+  Matrix permuted_inverse(inverse_matrix.rows(), inverse_matrix.cols());
   for (int column_index = 0; column_index < inverse_matrix.cols(); ++column_index) {
     permuted_inverse.col(column_index) =
         inverse_matrix.col(row_permutation[static_cast<std::size_t>(column_index)]);
@@ -112,27 +112,27 @@ ColumnMajorMatrixXd permute_columns_of_inverse_matrix(
 }
 
 bool build_single_orbital_row_update_plan(
-    const std::vector<int>& previous_occupied_orbitals_right,
-    const std::vector<int>& next_occupied_orbitals_right,
+    const std::vector<int>& previous_occ_R,
+    const std::vector<int>& next_occ_R,
     SingleOrbitalRowUpdatePlan& update_plan) {
-  if (previous_occupied_orbitals_right.size() != next_occupied_orbitals_right.size()) {
+  if (previous_occ_R.size() != next_occ_R.size()) {
     return false;
   }
 
-  const int n_electrons = static_cast<int>(previous_occupied_orbitals_right.size());
+  const int n_electrons = static_cast<int>(previous_occ_R.size());
   update_plan.row_permutation.assign(static_cast<std::size_t>(n_electrons), -1);
   update_plan.replacement_row = -1;
 
   std::vector<bool> used_previous_rows(static_cast<std::size_t>(n_electrons), false);
   for (int next_row = 0; next_row < n_electrons; ++next_row) {
     const int next_orbital =
-        next_occupied_orbitals_right[static_cast<std::size_t>(next_row)];
+        next_occ_R[static_cast<std::size_t>(next_row)];
     int matched_previous_row = -1;
     for (int previous_row = 0; previous_row < n_electrons; ++previous_row) {
       if (used_previous_rows[static_cast<std::size_t>(previous_row)]) {
         continue;
       }
-      if (previous_occupied_orbitals_right[static_cast<std::size_t>(previous_row)] != next_orbital) {
+      if (previous_occ_R[static_cast<std::size_t>(previous_row)] != next_orbital) {
         continue;
       }
       matched_previous_row = previous_row;
@@ -175,17 +175,17 @@ bool build_single_orbital_row_update_plan(
 }
 
 int count_position_mismatches(
-    const std::vector<int>& occupied_orbitals_left,
-    const std::vector<int>& occupied_orbitals_right) {
-  if (occupied_orbitals_left.size() != occupied_orbitals_right.size()) {
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R) {
+  if (occ_L.size() != occ_R.size()) {
     throw std::invalid_argument("occupied orbital list sizes must match");
   }
 
   int mismatch_count = 0;
   for (std::size_t orbital_index = 0;
-       orbital_index < occupied_orbitals_left.size();
+       orbital_index < occ_L.size();
        ++orbital_index) {
-    if (occupied_orbitals_left[orbital_index] != occupied_orbitals_right[orbital_index]) {
+    if (occ_L[orbital_index] != occ_R[orbital_index]) {
       ++mismatch_count;
     }
   }
@@ -193,9 +193,9 @@ int count_position_mismatches(
 }
 
 std::vector<int> build_greedy_determinant_traversal_order(
-    const std::vector<std::vector<int>>& alpha_occupied_orbitals_by_determinant,
-    const std::vector<std::vector<int>>& beta_occupied_orbitals_by_determinant) {
-  const int n_determinants = static_cast<int>(alpha_occupied_orbitals_by_determinant.size());
+    const std::vector<std::vector<int>>& alpha_det,
+    const std::vector<std::vector<int>>& beta_det) {
+  const int n_determinants = static_cast<int>(alpha_det.size());
   std::vector<int> traversal_order;
   traversal_order.reserve(static_cast<std::size_t>(n_determinants));
   if (n_determinants == 0) {
@@ -218,11 +218,11 @@ std::vector<int> build_greedy_determinant_traversal_order(
 
       const int candidate_distance =
           count_position_mismatches(
-              alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(current_index)],
-              alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(candidate_index)]) +
+              alpha_det[static_cast<std::size_t>(current_index)],
+              alpha_det[static_cast<std::size_t>(candidate_index)]) +
           count_position_mismatches(
-              beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(current_index)],
-              beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(candidate_index)]);
+              beta_det[static_cast<std::size_t>(current_index)],
+              beta_det[static_cast<std::size_t>(candidate_index)]);
       if (candidate_distance < best_distance) {
         best_distance = candidate_distance;
         best_index = candidate_index;
@@ -238,56 +238,56 @@ std::vector<int> build_greedy_determinant_traversal_order(
 }
 
 void store_spin_determinant_traversal_state(
-    const std::vector<int>& occupied_orbitals_right,
+    const std::vector<int>& occ_R,
     std::vector<double> overlap_submatrix,
-    DeterminantOverlapResult overlap_result,
+    DeterminantOverlapResult det_ovlp_result,
     SpinDeterminantTraversalState& state) {
   state.initialized = true;
-  state.occupied_orbitals_right = occupied_orbitals_right;
+  state.occ_R = occ_R;
   state.overlap_submatrix = std::move(overlap_submatrix);
-  state.overlap_result = std::move(overlap_result);
+  state.det_ovlp_result = std::move(det_ovlp_result);
   state.inverse_matrix.resize(0, 0);
 
-  if (state.overlap_result.n_electrons == 0) {
+  if (state.det_ovlp_result.n_electrons == 0) {
     return;
   }
-  if (state.overlap_result.nullity != 0 ||
-      std::abs(state.overlap_result.overlap_determinant) <=
+  if (state.det_ovlp_result.nullity != 0 ||
+      std::abs(state.det_ovlp_result.overlap_determinant) <=
           kLowRankUpdateStabilityThreshold) {
     return;
   }
 
-  state.inverse_matrix = build_inverse_overlap_submatrix_from_result(state.overlap_result);
+  state.inverse_matrix = build_inverse_overlap_submatrix_from_result(state.det_ovlp_result);
 }
 
 bool try_apply_single_row_overlap_update(
-    const std::vector<int>& occupied_orbitals_left,
-    const std::vector<int>& occupied_orbitals_right,
-    const std::vector<double>& basis_overlap_matrix,
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const std::vector<double>& active_orbital_overlap_matrix,
     int n_orbitals,
     const DeterminantOverlapResolver& determinant_overlap_resolver,
     SpinDeterminantTraversalState& state) {
-  if (!state.initialized || state.overlap_result.n_electrons == 0) {
-    return occupied_orbitals_left.empty();
+  if (!state.initialized || state.det_ovlp_result.n_electrons == 0) {
+    return occ_L.empty();
   }
-  if (state.overlap_result.nullity != 0) {
+  if (state.det_ovlp_result.nullity != 0) {
     return false;
   }
-  if (occupied_orbitals_right.size() != state.occupied_orbitals_right.size()) {
+  if (occ_R.size() != state.occ_R.size()) {
     return false;
   }
-  if (state.inverse_matrix.rows() != static_cast<int>(occupied_orbitals_left.size())) {
+  if (state.inverse_matrix.rows() != static_cast<int>(occ_L.size())) {
     return false;
   }
 
-  if (occupied_orbitals_right == state.occupied_orbitals_right) {
+  if (occ_R == state.occ_R) {
     return true;
   }
 
   SingleOrbitalRowUpdatePlan update_plan;
   if (!build_single_orbital_row_update_plan(
-          state.occupied_orbitals_right,
-          occupied_orbitals_right,
+          state.occ_R,
+          occ_R,
           update_plan) ||
       !is_valid_permutation(update_plan.row_permutation) ||
       update_plan.replacement_row < 0) {
@@ -295,11 +295,11 @@ bool try_apply_single_row_overlap_update(
   }
 
   int changed_rows_after_permutation = 0;
-  for (std::size_t row_index = 0; row_index < occupied_orbitals_right.size(); ++row_index) {
+  for (std::size_t row_index = 0; row_index < occ_R.size(); ++row_index) {
     const int permuted_previous_orbital =
-        state.occupied_orbitals_right
+        state.occ_R
             [static_cast<std::size_t>(update_plan.row_permutation[row_index])];
-    if (permuted_previous_orbital != occupied_orbitals_right[row_index]) {
+    if (permuted_previous_orbital != occ_R[row_index]) {
       ++changed_rows_after_permutation;
       if (static_cast<int>(row_index) != update_plan.replacement_row) {
         return false;
@@ -310,31 +310,31 @@ bool try_apply_single_row_overlap_update(
     return false;
   }
 
-  const int n_electrons = static_cast<int>(occupied_orbitals_left.size());
+  const int n_electrons = static_cast<int>(occ_L.size());
   std::vector<double> updated_overlap_submatrix = permute_rows_of_overlap_submatrix(
       state.overlap_submatrix,
       n_electrons,
       update_plan.row_permutation);
-  auto updated_overlap_matrix = Eigen::Map<ColumnMajorMatrixXd>(
+  auto updated_overlap_matrix = Eigen::Map<Matrix>(
       updated_overlap_submatrix.data(),
       n_electrons,
       n_electrons);
   const int permuted_determinant_sign = permutation_sign(update_plan.row_permutation);
   const double permuted_determinant =
-      static_cast<double>(permuted_determinant_sign) * state.overlap_result.overlap_determinant;
+      static_cast<double>(permuted_determinant_sign) * state.det_ovlp_result.overlap_determinant;
   if (!std::isfinite(permuted_determinant)) {
     return false;
   }
 
-  ColumnMajorMatrixXd permuted_inverse = permute_columns_of_inverse_matrix(
+  Matrix permuted_inverse = permute_columns_of_inverse_matrix(
       state.inverse_matrix,
       update_plan.row_permutation);
   Eigen::RowVectorXd row_delta(n_electrons);
   for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = occupied_orbitals_left[static_cast<std::size_t>(left_column)];
+    const int orbital_index_left = occ_L[static_cast<std::size_t>(left_column)];
     const double updated_value =
-        basis_overlap_matrix[static_cast<std::size_t>(orbital_index_left) * n_orbitals +
-                             occupied_orbitals_right[static_cast<std::size_t>(update_plan.replacement_row)]];
+        active_orbital_overlap_matrix[static_cast<std::size_t>(orbital_index_left) * n_orbitals +
+                             occ_R[static_cast<std::size_t>(update_plan.replacement_row)]];
     row_delta(left_column) =
         updated_value - updated_overlap_matrix(update_plan.replacement_row, left_column);
     updated_overlap_matrix(update_plan.replacement_row, left_column) = updated_value;
@@ -354,20 +354,20 @@ bool try_apply_single_row_overlap_update(
     return false;
   }
 
-  ColumnMajorMatrixXd updated_inverse = std::move(permuted_inverse);
+  Matrix updated_inverse = std::move(permuted_inverse);
   updated_inverse.noalias() -=
       (inverse_column * row_times_inverse) / denominator;
   if (!updated_inverse.allFinite()) {
     return false;
   }
 
-  state.occupied_orbitals_right = occupied_orbitals_right;
+  state.occ_R = occ_R;
   state.overlap_submatrix = std::move(updated_overlap_submatrix);
-  state.overlap_result = determinant_overlap_resolver.resolve(
+  state.det_ovlp_result = determinant_overlap_resolver.resolve(
       state.overlap_submatrix,
       n_electrons);
-  if (state.overlap_result.nullity != 0 ||
-      std::abs(state.overlap_result.overlap_determinant) <=
+  if (state.det_ovlp_result.nullity != 0 ||
+      std::abs(state.det_ovlp_result.overlap_determinant) <=
           kLowRankUpdateStabilityThreshold) {
     return false;
   }
@@ -376,44 +376,44 @@ bool try_apply_single_row_overlap_update(
 }
 
 const SpinDeterminantTraversalState& resolve_spin_determinant_overlap_with_cache(
-    const std::vector<int>& occupied_orbitals_left,
-    const std::vector<int>& occupied_orbitals_right,
-    const std::vector<double>& basis_overlap_matrix,
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const std::vector<double>& active_orbital_overlap_matrix,
     int n_orbitals,
     const DeterminantOverlapResolver& determinant_overlap_resolver,
     SpinDeterminantTraversalState& traversal_state) {
-  if (occupied_orbitals_left.empty()) {
-    DeterminantOverlapResult overlap_result;
-    overlap_result.overlap_determinant = 1.0;
+  if (occ_L.empty()) {
+    DeterminantOverlapResult det_ovlp_result;
+    det_ovlp_result.overlap_determinant = 1.0;
     store_spin_determinant_traversal_state(
-        occupied_orbitals_right,
+        occ_R,
         {},
-        std::move(overlap_result),
+        std::move(det_ovlp_result),
         traversal_state);
     return traversal_state;
   }
 
 #if XMVB_CPP_ENABLE_DETERMINANT_LOW_RANK_UPDATES
   if (!try_apply_single_row_overlap_update(
-          occupied_orbitals_left,
-          occupied_orbitals_right,
-          basis_overlap_matrix,
+          occ_L,
+          occ_R,
+          active_orbital_overlap_matrix,
           n_orbitals,
           determinant_overlap_resolver,
           traversal_state)) {
 #endif
     auto overlap_submatrix = build_overlap_submatrix(
-        occupied_orbitals_left,
-        occupied_orbitals_right,
-        basis_overlap_matrix,
+        occ_L,
+        occ_R,
+        active_orbital_overlap_matrix,
         n_orbitals);
-    auto overlap_result = determinant_overlap_resolver.resolve(
+    auto det_ovlp_result = determinant_overlap_resolver.resolve(
         overlap_submatrix,
-        static_cast<int>(occupied_orbitals_left.size()));
+        static_cast<int>(occ_L.size()));
     store_spin_determinant_traversal_state(
-        occupied_orbitals_right,
+        occ_R,
         std::move(overlap_submatrix),
-        std::move(overlap_result),
+        std::move(det_ovlp_result),
         traversal_state);
 #if XMVB_CPP_ENABLE_DETERMINANT_LOW_RANK_UPDATES
   }
@@ -619,7 +619,7 @@ double selected_state_average_energy(
 
 double compute_one_electron_reference_energy(
     const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_one_electron_matrix,
+    const std::vector<double>& ao_effective_h1e,
     const std::vector<double>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
   double one_electron_reference_energy = 0.0;
@@ -629,7 +629,7 @@ double compute_one_electron_reference_energy(
           static_cast<std::size_t>(column) * n_basis_functions + row;
       one_electron_reference_energy +=
           inactive_density_matrix[index] *
-          (ao_effective_one_electron_matrix[index] + ao_core_hamiltonian_matrix[index]);
+          (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
     }
   }
   return one_electron_reference_energy;
@@ -638,7 +638,7 @@ double compute_one_electron_reference_energy(
 }  // namespace
 
 CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
-    VbScfAlgorithm algorithm)
+    VBSCFAlgorithm algorithm)
     : orbital_preparer_(),
       ao_effective_one_electron_builder_(),
       active_space_one_electron_builder_(),
@@ -654,7 +654,7 @@ CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
     ActiveSpaceTwoElectronBuilder active_space_two_electron_builder,
     FullDeterminantStructureHamiltonianOverlapBuilder structure_builder,
     xmvb::core::GeneralizedEigensolver generalized_eigensolver,
-    VbScfAlgorithm algorithm)
+    VBSCFAlgorithm algorithm)
     : orbital_preparer_(std::move(orbital_preparer)),
       ao_effective_one_electron_builder_(std::move(ao_effective_one_electron_builder)),
       active_space_one_electron_builder_(std::move(active_space_one_electron_builder)),
@@ -711,7 +711,7 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
   stage_start_time = std::chrono::steady_clock::now();
   const auto active_space_one_electron_result =
       active_space_one_electron_builder_.build(
-          ao_effective_one_electron_result.ao_effective_one_electron_matrix,
+          ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.ao_integral_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -732,11 +732,11 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
 
   stage_start_time = std::chrono::steady_clock::now();
   const auto structure_matrices = structure_builder_.build(
-      input.structure_data.alpha_occupied_orbitals_by_determinant,
-      input.structure_data.beta_occupied_orbitals_by_determinant,
+      input.structure_data.alpha_det,
+      input.structure_data.beta_det,
       input.structure_data.determinant_to_structure_terms,
       orbital_result.active_orbital_overlap_matrix,
-      active_space_one_electron_result.active_one_electron_matrix,
+      active_space_one_electron_result.h1e_act,
       input.orbital_preparation_input.n_active_orbitals,
       active_space_two_electron_result.packed_active_two_electron_integrals,
       input.structure_data.n_structures);
@@ -760,7 +760,7 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
       orbital_result.active_orbital_overlap_matrix.size(),
       0.0);
   result.active_one_electron_gradient.assign(
-      active_space_one_electron_result.active_one_electron_matrix.size(),
+      active_space_one_electron_result.h1e_act.size(),
       0.0);
   result.packed_active_two_electron_gradient.assign(
       active_space_two_electron_result.packed_active_two_electron_integrals.size(),
@@ -778,7 +778,7 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
   result.scf_result.eigenvector_matrix = eigen_result.eigenvector_matrix;
   result.scf_result.one_electron_reference_energy = compute_one_electron_reference_energy(
       orbital_result.inactive_density_matrix,
-      ao_effective_one_electron_result.ao_effective_one_electron_matrix,
+      ao_effective_one_electron_result.ao_effective_h1e,
       input.ao_integral_input.ao_core_hamiltonian_matrix,
       input.ao_integral_input.n_basis_functions);
   result.scf_result.electronic_energy = selected_state_average_energy(
@@ -800,7 +800,7 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
 
   DeterminantOverlapResolver determinant_overlap_resolver;
   const int n_determinants =
-      static_cast<int>(input.structure_data.alpha_occupied_orbitals_by_determinant.size());
+      static_cast<int>(input.structure_data.alpha_det.size());
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
 
   stage_start_time = std::chrono::steady_clock::now();
@@ -822,31 +822,31 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
       }
 
       const auto alpha_overlap_submatrix = build_overlap_submatrix(
-          input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-          input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
+          input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
+          input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
           orbital_result.active_orbital_overlap_matrix,
           n_active_orbitals);
       const auto alpha_result = determinant_overlap_resolver.resolve(
           alpha_overlap_submatrix,
           static_cast<int>(
-              input.structure_data.alpha_occupied_orbitals_by_determinant
+              input.structure_data.alpha_det
                   [static_cast<std::size_t>(determinant_index_left)]
                   .size()));
       const auto beta_overlap_submatrix = build_overlap_submatrix(
-          input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-          input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
+          input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
+          input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
           orbital_result.active_orbital_overlap_matrix,
           n_active_orbitals);
       const auto beta_result = determinant_overlap_resolver.resolve(
           beta_overlap_submatrix,
           static_cast<int>(
-              input.structure_data.beta_occupied_orbitals_by_determinant
+              input.structure_data.beta_det
                   [static_cast<std::size_t>(determinant_index_left)]
                   .size()));
-      const ColumnMajorMatrixXd alpha_first_order_cofactor_matrix =
-          build_first_order_cofactor_matrix_from_result(alpha_result);
-      const ColumnMajorMatrixXd beta_first_order_cofactor_matrix =
-          build_first_order_cofactor_matrix_from_result(beta_result);
+      const Matrix alpha_cofactor_1st =
+          calc_cofactor_1st(alpha_result);
+      const Matrix beta_cofactor_1st =
+          calc_cofactor_1st(beta_result);
 
       const double alpha_weight =
           pair_adjoints.hamiltonian_weight * beta_result.overlap_determinant;
@@ -854,84 +854,84 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
           pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant;
 
       const int n_alpha_electrons = static_cast<int>(
-          input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)].size());
+          input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)].size());
       for (int left_column = 0; left_column < n_alpha_electrons; ++left_column) {
         const int orbital_index_left =
-            input.structure_data.alpha_occupied_orbitals_by_determinant
+            input.structure_data.alpha_det
                 [static_cast<std::size_t>(determinant_index_left)]
                 [static_cast<std::size_t>(left_column)];
         for (int right_row = 0; right_row < n_alpha_electrons; ++right_row) {
           const int orbital_index_right =
-              input.structure_data.alpha_occupied_orbitals_by_determinant
+              input.structure_data.alpha_det
                   [static_cast<std::size_t>(determinant_index_right)]
                   [static_cast<std::size_t>(right_row)];
           result.active_one_electron_gradient[static_cast<std::size_t>(orbital_index_left) *
                                                   n_active_orbitals +
                                               orbital_index_right] +=
               alpha_weight *
-              alpha_first_order_cofactor_matrix(right_row, left_column);
+              alpha_cofactor_1st(right_row, left_column);
         }
       }
 
       const int n_beta_electrons = static_cast<int>(
-          input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)].size());
+          input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)].size());
       for (int left_column = 0; left_column < n_beta_electrons; ++left_column) {
         const int orbital_index_left =
-            input.structure_data.beta_occupied_orbitals_by_determinant
+            input.structure_data.beta_det
                 [static_cast<std::size_t>(determinant_index_left)]
                 [static_cast<std::size_t>(left_column)];
         for (int right_row = 0; right_row < n_beta_electrons; ++right_row) {
           const int orbital_index_right =
-              input.structure_data.beta_occupied_orbitals_by_determinant
+              input.structure_data.beta_det
                   [static_cast<std::size_t>(determinant_index_right)]
                   [static_cast<std::size_t>(right_row)];
           result.active_one_electron_gradient[static_cast<std::size_t>(orbital_index_left) *
                                                   n_active_orbitals +
                                               orbital_index_right] +=
               beta_weight *
-              beta_first_order_cofactor_matrix(right_row, left_column);
+              beta_cofactor_1st(right_row, left_column);
         }
       }
 
       if (alpha_result.nullity != 0 || beta_result.nullity != 0) {
         throw std::runtime_error("analytic active-space overlap gradient requires nullity == 0");
       }
-      ColumnMajorMatrixXd alpha_same_spin_inverse_overlap_gradient =
-          ColumnMajorMatrixXd::Zero(n_alpha_electrons, n_alpha_electrons);
-      ColumnMajorMatrixXd beta_same_spin_inverse_overlap_gradient =
-          ColumnMajorMatrixXd::Zero(n_beta_electrons, n_beta_electrons);
-      ColumnMajorMatrixXd alpha_opposite_spin_inverse_overlap_gradient =
-          ColumnMajorMatrixXd::Zero(n_alpha_electrons, n_alpha_electrons);
-      ColumnMajorMatrixXd beta_opposite_spin_inverse_overlap_gradient =
-          ColumnMajorMatrixXd::Zero(n_beta_electrons, n_beta_electrons);
+      Matrix alpha_same_spin_inverse_overlap_gradient =
+          Matrix::Zero(n_alpha_electrons, n_alpha_electrons);
+      Matrix beta_same_spin_inverse_overlap_gradient =
+          Matrix::Zero(n_beta_electrons, n_beta_electrons);
+      Matrix alpha_opposite_spin_inverse_overlap_gradient =
+          Matrix::Zero(n_alpha_electrons, n_alpha_electrons);
+      Matrix beta_opposite_spin_inverse_overlap_gradient =
+          Matrix::Zero(n_beta_electrons, n_beta_electrons);
 
       double opposite_spin_phi = 0.0;
       SameSpinBiorthogonalPhiResult alpha_phi_result;
       SameSpinBiorthogonalPhiResult beta_phi_result;
-      if (algorithm_ == VbScfAlgorithm::Biorthogonal) {
+      if (algorithm_ == VBSCFAlgorithm::Biorthogonal) {
         alpha_phi_result = compute_same_spin_biorthogonal_phi(
-            input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-            input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
-            active_space_one_electron_result.active_one_electron_matrix,
+            input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
+            input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
+            active_space_one_electron_result.h1e_act,
             n_active_orbitals,
             active_space_two_electron_result.packed_active_two_electron_integrals,
             alpha_result,
             &alpha_same_spin_inverse_overlap_gradient);
         beta_phi_result = compute_same_spin_biorthogonal_phi(
-            input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-            input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
-            active_space_one_electron_result.active_one_electron_matrix,
+            input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
+            input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
+            active_space_one_electron_result.h1e_act,
             n_active_orbitals,
             active_space_two_electron_result.packed_active_two_electron_integrals,
             beta_result,
             &beta_same_spin_inverse_overlap_gradient);
         if (n_alpha_electrons > 0 && n_beta_electrons > 0) {
           opposite_spin_phi = compute_opposite_spin_biorthogonal_phi(
-              input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-              input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
+              input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
+              input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
               alpha_result,
-              input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-              input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
+              input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
+              input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
               beta_result,
               active_space_two_electron_result.packed_active_two_electron_integrals,
               &alpha_opposite_spin_inverse_overlap_gradient,
@@ -939,38 +939,38 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
         }
       } else {
         alpha_phi_result = compute_same_spin_original_phi(
-            input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-            input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
-            active_space_one_electron_result.active_one_electron_matrix,
+            input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
+            input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
+            active_space_one_electron_result.h1e_act,
             n_active_orbitals,
             active_space_two_electron_result.packed_active_two_electron_integrals,
             alpha_result,
             &alpha_same_spin_inverse_overlap_gradient);
         beta_phi_result = compute_same_spin_original_phi(
-            input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-            input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
-            active_space_one_electron_result.active_one_electron_matrix,
+            input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
+            input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
+            active_space_one_electron_result.h1e_act,
             n_active_orbitals,
             active_space_two_electron_result.packed_active_two_electron_integrals,
             beta_result,
             &beta_same_spin_inverse_overlap_gradient);
         if (n_alpha_electrons > 0 && n_beta_electrons > 0) {
           opposite_spin_phi = compute_opposite_spin_original_phi(
-              input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-              input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
+              input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
+              input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
               alpha_result,
-              input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-              input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
+              input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
+              input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
               beta_result,
               active_space_two_electron_result.packed_active_two_electron_integrals,
               &alpha_opposite_spin_inverse_overlap_gradient,
               &beta_opposite_spin_inverse_overlap_gradient);
         }
       }
-      const ColumnMajorMatrixXd alpha_inverse_overlap_gradient =
+      const Matrix alpha_inverse_overlap_gradient =
           alpha_same_spin_inverse_overlap_gradient +
           alpha_opposite_spin_inverse_overlap_gradient;
-      const ColumnMajorMatrixXd beta_inverse_overlap_gradient =
+      const Matrix beta_inverse_overlap_gradient =
           beta_same_spin_inverse_overlap_gradient +
           beta_opposite_spin_inverse_overlap_gradient;
       const double alpha_phi = alpha_phi_result.total_phi;
@@ -984,8 +984,8 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
           pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant *
               (alpha_phi + beta_phi + opposite_spin_phi);
       accumulate_spin_overlap_gradient(
-          input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-          input.structure_data.alpha_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
+          input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
+          input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
           alpha_result,
           alpha_determinant_weight,
           pair_adjoints.hamiltonian_weight * beta_result.overlap_determinant *
@@ -993,8 +993,8 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
           n_active_orbitals,
           &result.active_orbital_overlap_gradient);
       accumulate_spin_overlap_gradient(
-          input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_left)],
-          input.structure_data.beta_occupied_orbitals_by_determinant[static_cast<std::size_t>(determinant_index_right)],
+          input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
+          input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
           beta_result,
           beta_determinant_weight,
           pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant *
@@ -1005,32 +1005,32 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
       if (alpha_result.nullity == 0) {
         for (int left_first = 0; left_first < n_alpha_electrons - 1; ++left_first) {
           const int orbital_index_left_first =
-              input.structure_data.alpha_occupied_orbitals_by_determinant
+              input.structure_data.alpha_det
                   [static_cast<std::size_t>(determinant_index_left)]
                   [static_cast<std::size_t>(left_first)];
           for (int right_first = 0; right_first < n_alpha_electrons - 1; ++right_first) {
             const int orbital_index_right_first =
-                input.structure_data.alpha_occupied_orbitals_by_determinant
+                input.structure_data.alpha_det
                     [static_cast<std::size_t>(determinant_index_right)]
                     [static_cast<std::size_t>(right_first)];
             const double cofactor_11 =
-                alpha_first_order_cofactor_matrix(right_first, left_first);
+                alpha_cofactor_1st(right_first, left_first);
             for (int left_second = left_first + 1; left_second < n_alpha_electrons; ++left_second) {
               const int orbital_index_left_second =
-                  input.structure_data.alpha_occupied_orbitals_by_determinant
+                  input.structure_data.alpha_det
                       [static_cast<std::size_t>(determinant_index_left)]
                       [static_cast<std::size_t>(left_second)];
               const double cofactor_12 =
-                  alpha_first_order_cofactor_matrix(right_first, left_second);
+                  alpha_cofactor_1st(right_first, left_second);
               for (int right_second = right_first + 1; right_second < n_alpha_electrons; ++right_second) {
                 const int orbital_index_right_second =
-                    input.structure_data.alpha_occupied_orbitals_by_determinant
+                    input.structure_data.alpha_det
                         [static_cast<std::size_t>(determinant_index_right)]
                         [static_cast<std::size_t>(right_second)];
                 const double cofactor_22 =
-                    alpha_first_order_cofactor_matrix(right_second, left_second);
+                    alpha_cofactor_1st(right_second, left_second);
                 const double cofactor_21 =
-                    alpha_first_order_cofactor_matrix(right_second, left_first);
+                    alpha_cofactor_1st(right_second, left_first);
                 const double second_order_cofactor =
                     (cofactor_11 * cofactor_22 - cofactor_12 * cofactor_21) /
                     alpha_result.overlap_determinant;
@@ -1058,32 +1058,32 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
       if (beta_result.nullity == 0) {
         for (int left_first = 0; left_first < n_beta_electrons - 1; ++left_first) {
           const int orbital_index_left_first =
-              input.structure_data.beta_occupied_orbitals_by_determinant
+              input.structure_data.beta_det
                   [static_cast<std::size_t>(determinant_index_left)]
                   [static_cast<std::size_t>(left_first)];
           for (int right_first = 0; right_first < n_beta_electrons - 1; ++right_first) {
             const int orbital_index_right_first =
-                input.structure_data.beta_occupied_orbitals_by_determinant
+                input.structure_data.beta_det
                     [static_cast<std::size_t>(determinant_index_right)]
                     [static_cast<std::size_t>(right_first)];
             const double cofactor_11 =
-                beta_first_order_cofactor_matrix(right_first, left_first);
+                beta_cofactor_1st(right_first, left_first);
             for (int left_second = left_first + 1; left_second < n_beta_electrons; ++left_second) {
               const int orbital_index_left_second =
-                  input.structure_data.beta_occupied_orbitals_by_determinant
+                  input.structure_data.beta_det
                       [static_cast<std::size_t>(determinant_index_left)]
                       [static_cast<std::size_t>(left_second)];
               const double cofactor_12 =
-                  beta_first_order_cofactor_matrix(right_first, left_second);
+                  beta_cofactor_1st(right_first, left_second);
               for (int right_second = right_first + 1; right_second < n_beta_electrons; ++right_second) {
                 const int orbital_index_right_second =
-                    input.structure_data.beta_occupied_orbitals_by_determinant
+                    input.structure_data.beta_det
                         [static_cast<std::size_t>(determinant_index_right)]
                         [static_cast<std::size_t>(right_second)];
                 const double cofactor_22 =
-                    beta_first_order_cofactor_matrix(right_second, left_second);
+                    beta_cofactor_1st(right_second, left_second);
                 const double cofactor_21 =
-                    beta_first_order_cofactor_matrix(right_second, left_first);
+                    beta_cofactor_1st(right_second, left_first);
                 const double second_order_cofactor =
                     (cofactor_11 * cofactor_22 - cofactor_12 * cofactor_21) /
                     beta_result.overlap_determinant;
@@ -1112,28 +1112,28 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
           n_alpha_electrons > 0 && n_beta_electrons > 0) {
         for (int alpha_left_column = 0; alpha_left_column < n_alpha_electrons; ++alpha_left_column) {
           const int alpha_orbital_left =
-              input.structure_data.alpha_occupied_orbitals_by_determinant
+              input.structure_data.alpha_det
                   [static_cast<std::size_t>(determinant_index_left)]
                   [static_cast<std::size_t>(alpha_left_column)];
           for (int alpha_right_row = 0; alpha_right_row < n_alpha_electrons; ++alpha_right_row) {
             const int alpha_orbital_right =
-                input.structure_data.alpha_occupied_orbitals_by_determinant
+                input.structure_data.alpha_det
                     [static_cast<std::size_t>(determinant_index_right)]
                     [static_cast<std::size_t>(alpha_right_row)];
             const double alpha_cofactor =
-                alpha_first_order_cofactor_matrix(alpha_right_row, alpha_left_column);
+                alpha_cofactor_1st(alpha_right_row, alpha_left_column);
             for (int beta_left_column = 0; beta_left_column < n_beta_electrons; ++beta_left_column) {
               const int beta_orbital_left =
-                  input.structure_data.beta_occupied_orbitals_by_determinant
+                  input.structure_data.beta_det
                       [static_cast<std::size_t>(determinant_index_left)]
                       [static_cast<std::size_t>(beta_left_column)];
               for (int beta_right_row = 0; beta_right_row < n_beta_electrons; ++beta_right_row) {
                 const int beta_orbital_right =
-                    input.structure_data.beta_occupied_orbitals_by_determinant
+                    input.structure_data.beta_det
                         [static_cast<std::size_t>(determinant_index_right)]
                         [static_cast<std::size_t>(beta_right_row)];
                 const double beta_cofactor =
-                    beta_first_order_cofactor_matrix(beta_right_row, beta_left_column);
+                    beta_cofactor_1st(beta_right_row, beta_left_column);
 
                 const int two_electron_index = TwoElectronIndexer::two_electron_storage_index(
                     beta_orbital_right,

@@ -11,7 +11,7 @@ struct ActiveSpaceOneElectronResult {
   /**
    * @brief Column-major active-space effective one-electron matrix `HHO`.
    */
-  std::vector<double> active_one_electron_matrix;
+  std::vector<double> h1e_act;
 };
 
 }  // namespace xmvb::vb

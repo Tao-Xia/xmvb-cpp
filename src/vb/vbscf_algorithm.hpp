@@ -2,16 +2,16 @@
 
 namespace xmvb::vb {
 
-enum class VbScfAlgorithm {
+enum class VBSCFAlgorithm {
   Original,
   Biorthogonal,
 };
 
-inline const char* vb_scf_algorithm_name(VbScfAlgorithm algorithm) {
+inline const char* vb_scf_algorithm_name(VBSCFAlgorithm algorithm) {
   switch (algorithm) {
-    case VbScfAlgorithm::Original:
+    case VBSCFAlgorithm::Original:
       return "original";
-    case VbScfAlgorithm::Biorthogonal:
+    case VBSCFAlgorithm::Biorthogonal:
       return "biorthogonal";
   }
   return "unknown";

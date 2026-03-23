@@ -9,257 +9,211 @@
 #include "vb/matrices/biorthogonal_spin_pair.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 
+
+
 namespace xmvb::vb {
 
-namespace {
+void build_minor_matrix(
+    const Matrix& mat,
+    int r1, int r2, int c1, int c2,
+    Eigen::Ref<Matrix> minor_wksp) 
+{
+  const int dim = static_cast<int>(mat.rows());
+  
+  std::vector<int> row_map, col_map;
+  row_map.reserve(dim - 2);
+  col_map.reserve(dim - 2);
 
-void build_second_order_minor_matrix(
-    const ColumnMajorMatrixXd& matrix,
-    int removed_row_first,
-    int removed_row_second,
-    int removed_column_first,
-    int removed_column_second,
-    Eigen::Ref<ColumnMajorMatrixXd> workspace_minor) {
-  const int dimension = static_cast<int>(matrix.rows());
-  int minor_column = 0;
-  for (int column = 0; column < dimension; ++column) {
-    if (column == removed_column_first || column == removed_column_second) {
-      continue;
+  for (int i = 0; i < dim; ++i) {
+    if (i != r1 && i != r2) row_map.push_back(i);
+    if (i != c1 && i != c2) col_map.push_back(i);
+  }
+
+  for (int c = 0; c < dim - 2; ++c) {
+    for (int r = 0; r < dim - 2; ++r) {
+      minor_wksp(r, c) = mat(row_map[r], col_map[c]);
     }
-    int minor_row = 0;
-    for (int row = 0; row < dimension; ++row) {
-      if (row == removed_row_first || row == removed_row_second) {
-        continue;
-      }
-      workspace_minor(minor_row, minor_column) = matrix(row, column);
-      ++minor_row;
-    }
-    ++minor_column;
   }
 }
 
-double compute_second_order_cofactor_from_minor(
-    const ColumnMajorMatrixXd& overlap_matrix,
-    int removed_right_row_first,
-    int removed_right_row_second,
-    int removed_left_column_first,
-    int removed_left_column_second,
-    Eigen::Ref<ColumnMajorMatrixXd> workspace_minor) {
-  build_second_order_minor_matrix(
-      overlap_matrix,
-      removed_right_row_first,
-      removed_right_row_second,
-      removed_left_column_first,
-      removed_left_column_second,
-      workspace_minor);
+double calc_minor_cofactor(
+    const Matrix& det_ovlp_mat,
+    int r1, int r2, int c1, int c2,
+    Eigen::Ref<Matrix> minor_wksp) 
+{
+  build_minor_matrix(det_ovlp_mat, r1, r2, c1, c2, minor_wksp);
 
-  const double sign =
-      ((removed_right_row_first + removed_right_row_second +
-        removed_left_column_first + removed_left_column_second) % 2 == 0)
-      ? 1.0
-      : -1.0;
-
-  const Eigen::FullPivLU<Eigen::Ref<ColumnMajorMatrixXd>> lu_factorization(workspace_minor);
-  return sign * lu_factorization.determinant();
+  const double sign = ((r1 + r2 + c1 + c2) & 1) ? -1.0 : 1.0;
+  const Eigen::FullPivLU<Eigen::Ref<Matrix>> lu(minor_wksp);
+  
+  return sign * lu.determinant();
 }
 
-DeterminantHamiltonianResult resolve_original_same_spin_hamiltonian(
-    const std::vector<int>& occupied_orbitals_left,
-    const std::vector<int>& occupied_orbitals_right,
-    const std::vector<double>& determinant_overlap_submatrix,
-    const DeterminantOverlapResult& overlap_result,
-    const std::vector<double>& one_electron_matrix,
-    int n_orbitals,
-    const std::vector<double>& packed_two_electron_integrals) {
-  const int n_electrons = static_cast<int>(occupied_orbitals_left.size());
-  const auto overlap_matrix = map_column_major_matrix(
-      determinant_overlap_submatrix,
-      n_electrons);
-  const auto first_order_cofactor_matrix =
-      build_first_order_cofactor_matrix_from_result(overlap_result);
-  const ConstColumnMajorMatrixMap one_electron_integrals(
-      one_electron_matrix.data(),
-      n_orbitals,
-      n_orbitals);
+DeterminantHamiltonianResult calc_same_spin_hamiltonian(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const std::vector<double>& det_ovlp,
+    const DeterminantOverlapResult& det_ovlp_result,
+    const std::vector<double>& h1e_act,
+    int n_orb_act,
+    const std::vector<double>& eri_act) 
+{
+  // n_elec is not the number total electrons
+  // it is the number of alpha/beta active electrons
+  const std::size_t n_elec = occ_L.size();
 
-  DeterminantHamiltonianResult result;
-  result.overlap_determinant = overlap_result.overlap_determinant;
-  result.nullity = overlap_result.nullity;
+  // overlap matrix between two determinant
+  const ConstMatrixMap det_ovlp_mat(det_ovlp.data(),n_elec, n_elec);
+  // active orbital one-electron integral matrix
+  const ConstMatrixMap h1e_act_mat(h1e_act.data(), n_orb_act, n_orb_act);
+  // 1st-cofactor between two determinant
+  const Matrix cofactor_1st = calc_cofactor_1st(det_ovlp_result);
+  
+  DeterminantHamiltonianResult res;
+  res.overlap_determinant = det_ovlp_result.overlap_determinant;
+  res.nullity = det_ovlp_result.nullity;
+  res.total_hamiltonian = 0.0;
 
-  if (result.nullity >= 3) {
-    return result;
-  }
+  if (res.nullity >= 3) return res;
 
-  for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = occupied_orbitals_left[static_cast<std::size_t>(left_column)];
-    for (int right_row = 0; right_row < n_electrons; ++right_row) {
-      const int orbital_index_right =
-          occupied_orbitals_right[static_cast<std::size_t>(right_row)];
-      result.total_hamiltonian +=
-          one_electron_integrals(orbital_index_right, orbital_index_left) *
-          first_order_cofactor_matrix(right_row, left_column);
+  // 1-electron 
+  for (std::size_t cL = 0; cL < n_elec; ++cL) {
+    const int orb_L = occ_L[cL];
+    for (std::size_t rR = 0; rR < n_elec; ++rR) {
+      const int orb_R = occ_R[rR];
+      res.total_hamiltonian += h1e_act_mat(orb_R, orb_L) * cofactor_1st(rR, cL);
     }
   }
-  result.one_electron_hamiltonian = result.total_hamiltonian;
 
-  if (n_electrons < 2) {
-    return result;
-  }
+  res.one_electron_hamiltonian = res.total_hamiltonian;
 
-  ColumnMajorMatrixXd workspace_minor(n_electrons - 2, n_electrons - 2);
-  const double inv_overlap_det =
-      (result.nullity == 0) ? (1.0 / overlap_result.overlap_determinant) : 0.0;
+  if (n_elec < 2) return res;
 
-  for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orb_L1 = occupied_orbitals_left[static_cast<std::size_t>(left_first)];
-    for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orb_R1 = occupied_orbitals_right[static_cast<std::size_t>(right_first)];
-      const double cofactor_11 = first_order_cofactor_matrix(right_first, left_first);
+  Matrix minor_wksp(n_elec - 2, n_elec - 2);
+  const double inv_S_det = (res.nullity == 0) ? (1.0 / det_ovlp_result.overlap_determinant) : 0.0;
 
-      const int pair_R1_L1 = TwoElectronIndexer::packed_pair_index(orb_R1, orb_L1);
+  // 2-electron 贡献
+  if (res.nullity == 0) {
+    // fast path 
+    for (std::size_t L1 = 0; L1 < n_elec - 1; ++L1) {
+      const int oL1 = occ_L[L1];
+      for (std::size_t R1 = 0; R1 < n_elec - 1; ++R1) {
+        const int oR1 = occ_R[R1];
+        const double c11 = cofactor_1st(R1, L1);
+        const int pR1_L1 = TwoElectronIndexer::packed_pair_index(oR1, oL1);
 
-      for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orb_L2 = occupied_orbitals_left[static_cast<std::size_t>(left_second)];
-        const double cofactor_12 = first_order_cofactor_matrix(right_first, left_second);
+        for (std::size_t L2 = L1 + 1; L2 < n_elec; ++L2) {
+          const int oL2 = occ_L[L2];
+          const double c12 = cofactor_1st(R1, L2);
+          const int pR1_L2 = TwoElectronIndexer::packed_pair_index(oR1, oL2);
 
-        const int pair_R1_L2 = TwoElectronIndexer::packed_pair_index(orb_R1, orb_L2);
+          for (std::size_t R2 = R1 + 1; R2 < n_elec; ++R2) {
+            const int oR2 = occ_R[R2];
+            const double c22 = cofactor_1st(R2, L2);
+            const double c21 = cofactor_1st(R2, L1);
 
-        for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
-          const int orb_R2 = occupied_orbitals_right[static_cast<std::size_t>(right_second)];
-          const double cofactor_22 = first_order_cofactor_matrix(right_second, left_second);
-          const double cofactor_21 = first_order_cofactor_matrix(right_second, left_first);
+            const double cofactor_2nd = (c11 * c22 - c12 * c21) * inv_S_det;
 
-          double second_order_cofactor = 0.0;
-          if (result.nullity == 0) {
-            second_order_cofactor =
-                (cofactor_11 * cofactor_22 - cofactor_12 * cofactor_21) * inv_overlap_det;
-          } else {
-            second_order_cofactor = compute_second_order_cofactor_from_minor(
-                overlap_matrix,
-                right_first,
-                right_second,
-                left_first,
-                left_second,
-                workspace_minor);
+            const int pR2_L2 = TwoElectronIndexer::packed_pair_index(oR2, oL2);
+            const int pR2_L1 = TwoElectronIndexer::packed_pair_index(oR2, oL1);
+            const int J_idx = TwoElectronIndexer::packed_pair_of_pairs_index(pR1_L1, pR2_L2);
+            const int K_idx = TwoElectronIndexer::packed_pair_of_pairs_index(pR1_L2, pR2_L1);
+
+            res.total_hamiltonian += (eri_act[J_idx] - eri_act[K_idx]) * cofactor_2nd;
           }
+        }
+      }
+    }
+  } else {
+    // nullity > 0
+    for (std::size_t L1 = 0; L1 < n_elec - 1; ++L1) {
+      const int oL1 = occ_L[L1];
+      for (std::size_t R1 = 0; R1 < n_elec - 1; ++R1) {
+        const int oR1 = occ_R[R1];
+        const int pR1_L1 = TwoElectronIndexer::packed_pair_index(oR1, oL1);
 
-          const int pair_R2_L2 = TwoElectronIndexer::packed_pair_index(orb_R2, orb_L2);
-          const int pair_R2_L1 = TwoElectronIndexer::packed_pair_index(orb_R2, orb_L1);
+        for (std::size_t L2 = L1 + 1; L2 < n_elec; ++L2) {
+          const int oL2 = occ_L[L2];
+          const int pR1_L2 = TwoElectronIndexer::packed_pair_index(oR1, oL2);
 
-          const int columb_index =
-              TwoElectronIndexer::packed_pair_of_pairs_index(pair_R1_L1, pair_R2_L2);
-          const int exchange_index =
-              TwoElectronIndexer::packed_pair_of_pairs_index(pair_R1_L2, pair_R2_L1);
+          for (std::size_t R2 = R1 + 1; R2 < n_elec; ++R2) {
+            const int oR2 = occ_R[R2];
+            
+            const double cofactor_2nd = calc_minor_cofactor(det_ovlp_mat, R1, R2, L1, L2, minor_wksp);
 
-          result.total_hamiltonian +=
-              (packed_two_electron_integrals[static_cast<std::size_t>(columb_index)] -
-               packed_two_electron_integrals[static_cast<std::size_t>(exchange_index)]) *
-              second_order_cofactor;
+            const int pR2_L2 = TwoElectronIndexer::packed_pair_index(oR2, oL2);
+            const int pR2_L1 = TwoElectronIndexer::packed_pair_index(oR2, oL1);
+            const int J_idx = TwoElectronIndexer::packed_pair_of_pairs_index(pR1_L1, pR2_L2);
+            const int K_idx = TwoElectronIndexer::packed_pair_of_pairs_index(pR1_L2, pR2_L1);
+
+            res.total_hamiltonian += (eri_act[J_idx] - eri_act[K_idx]) * cofactor_2nd;
+          }
         }
       }
     }
   }
 
-  return result;
+  return res;
 }
 
-}  // namespace
 
 DeterminantHamiltonianResolver::DeterminantHamiltonianResolver(
-    VbScfAlgorithm algorithm)
+    VBSCFAlgorithm algorithm)
     : overlap_resolver_(),
       algorithm_(algorithm) {}
 
 DeterminantHamiltonianResolver::DeterminantHamiltonianResolver(
     DeterminantOverlapResolver overlap_resolver,
-    VbScfAlgorithm algorithm)
+    VBSCFAlgorithm algorithm)
     : overlap_resolver_(std::move(overlap_resolver)),
       algorithm_(algorithm) {}
 
 DeterminantHamiltonianResult DeterminantHamiltonianResolver::resolve(
-    const std::vector<int>& occupied_orbitals_left,
-    const std::vector<int>& occupied_orbitals_right,
-    const std::vector<double>& determinant_overlap_submatrix,
-    const std::vector<double>& one_electron_matrix,
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const std::vector<double>& det_ovlp_mat,
+    const std::vector<double>& h1e_act,
     int n_orbitals,
-    const std::vector<double>& packed_two_electron_integrals) const {
-  if (occupied_orbitals_left.size() != occupied_orbitals_right.size()) {
+    const std::vector<double>& eri_act) const {
+  if (occ_L.size() != occ_R.size()) {
     throw std::invalid_argument("left and right determinants must have the same electron count");
   }
-  if (occupied_orbitals_left.empty()) {
+  if (occ_L.empty()) {
     throw std::invalid_argument("determinants must not be empty");
   }
 
-  const auto overlap_result = overlap_resolver_.resolve(
-      determinant_overlap_submatrix,
-      static_cast<int>(occupied_orbitals_left.size()));
+  const auto det_ovlp_result = overlap_resolver_.resolve(
+      det_ovlp_mat,
+      static_cast<int>(occ_L.size()));
   return resolve(
-      occupied_orbitals_left,
-      occupied_orbitals_right,
-      determinant_overlap_submatrix,
-      overlap_result,
-      one_electron_matrix,
+      occ_L,
+      occ_R,
+      det_ovlp_mat,
+      det_ovlp_result,
+      h1e_act,
       n_orbitals,
-      packed_two_electron_integrals);
+      eri_act);
 }
 
 DeterminantHamiltonianResult DeterminantHamiltonianResolver::resolve(
-    const std::vector<int>& occupied_orbitals_left,
-    const std::vector<int>& occupied_orbitals_right,
-    const std::vector<double>& determinant_overlap_submatrix,
-    const DeterminantOverlapResult& overlap_result,
-    const std::vector<double>& one_electron_matrix,
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const std::vector<double>& det_ovlp_mat,
+    const DeterminantOverlapResult& det_ovlp_result,
+    const std::vector<double>& h1e_act,
     int n_orbitals,
-    const std::vector<double>& packed_two_electron_integrals) const {
-  if (occupied_orbitals_left.size() != occupied_orbitals_right.size()) {
-    throw std::invalid_argument("left and right determinants must have the same electron count");
-  }
-  if (occupied_orbitals_left.empty()) {
-    throw std::invalid_argument("determinants must not be empty");
-  }
-  if (n_orbitals <= 0) {
-    throw std::invalid_argument("n_orbitals must be positive");
-  }
+    const std::vector<double>& eri_act) const {
 
-  const int n_electrons = static_cast<int>(occupied_orbitals_left.size());
-  const std::size_t one_electron_matrix_size =
-      static_cast<std::size_t>(n_orbitals) * static_cast<std::size_t>(n_orbitals);
-  if (one_electron_matrix.size() != one_electron_matrix_size) {
-    throw std::invalid_argument("one_electron_matrix size does not match n_orbitals");
-  }
-  const std::size_t overlap_matrix_size =
-      static_cast<std::size_t>(n_electrons) * static_cast<std::size_t>(n_electrons);
-  if (determinant_overlap_submatrix.size() != overlap_matrix_size) {
-    throw std::invalid_argument("determinant_overlap_submatrix size does not match electron count");
-  }
-  if (overlap_result.n_electrons != n_electrons) {
-    throw std::invalid_argument("precomputed overlap_result electron count mismatch");
-  }
+  const int n_electrons = static_cast<int>(occ_L.size());
 
-  if (algorithm_ == VbScfAlgorithm::Biorthogonal) {
-    DeterminantHamiltonianResult result;
-    result.overlap_determinant = overlap_result.overlap_determinant;
-    result.nullity = overlap_result.nullity;
-    const auto hamiltonian_result = compute_same_spin_biorthogonal_hamiltonian(
-        occupied_orbitals_left,
-        occupied_orbitals_right,
-        one_electron_matrix,
-        n_orbitals,
-        packed_two_electron_integrals,
-        overlap_result);
-    result.one_electron_hamiltonian = hamiltonian_result.one_electron_hamiltonian;
-    result.total_hamiltonian = hamiltonian_result.total_hamiltonian;
-    return result;
-  }
-
-  return resolve_original_same_spin_hamiltonian(
-      occupied_orbitals_left,
-      occupied_orbitals_right,
-      determinant_overlap_submatrix,
-      overlap_result,
-      one_electron_matrix,
+  return xmvb::vb::calc_same_spin_hamiltonian(
+      occ_L,
+      occ_R,
+      det_ovlp_mat,
+      det_ovlp_result,
+      h1e_act,
       n_orbitals,
-      packed_two_electron_integrals);
+      eri_act);
 }
 
 }  // namespace xmvb::vb

@@ -12,7 +12,7 @@ namespace xmvb::vb {
 
 namespace {
 
-using ColumnMajorMatrixXd = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
+using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;
 
 int get_sparse_coefficient_count(
     const std::vector<int>& orbital_basis_counts,
@@ -39,7 +39,7 @@ int get_sparse_coefficient_count(
 
 std::vector<double> normalize_sparse_orbitals(
     const OrbitalPreparationInput& input,
-    const Eigen::Map<const ColumnMajorMatrixXd>& basis_overlap_matrix,
+    const Eigen::Map<const Matrix>& active_orbital_overlap_matrix,
     std::vector<double>* squared_norms_out) {
   std::vector<double> normalized_values = input.orbital_value_table;
   squared_norms_out->assign(static_cast<std::size_t>(input.n_orbitals), 0.0);
@@ -70,7 +70,7 @@ std::vector<double> normalize_sparse_orbitals(
             normalized_values[static_cast<std::size_t>(orbital_index) * input.n_basis_functions +
                               right_index];
         squared_norm +=
-            left_value * right_value * basis_overlap_matrix(left_basis_function, right_basis_function);
+            left_value * right_value * active_orbital_overlap_matrix(left_basis_function, right_basis_function);
       }
     }
 
@@ -90,11 +90,11 @@ std::vector<double> normalize_sparse_orbitals(
   return normalized_values;
 }
 
-ColumnMajorMatrixXd expand_sparse_orbitals(
+Matrix expand_sparse_orbitals(
     const OrbitalPreparationInput& input,
     const std::vector<double>& normalized_orbital_values) {
-  ColumnMajorMatrixXd orbital_matrix =
-      ColumnMajorMatrixXd::Zero(input.n_basis_functions, input.n_orbitals);
+  Matrix orbital_matrix =
+      Matrix::Zero(input.n_basis_functions, input.n_orbitals);
 
   for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
     const int coefficient_count = get_sparse_coefficient_count(
@@ -145,85 +145,85 @@ ActiveSpaceOrbitalBackpropagationResult ActiveSpaceOrbitalBackpropagator::backpr
     throw std::invalid_argument("inactive_density_gradient size mismatch");
   }
 
-  const Eigen::Map<const ColumnMajorMatrixXd> basis_overlap_matrix(
-      input.basis_overlap_matrix.data(),
+  const Eigen::Map<const Matrix> active_orbital_overlap_matrix(
+      input.active_orbital_overlap_matrix.data(),
       input.n_basis_functions,
       input.n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> auxiliary_gradient_matrix(
+  const Eigen::Map<const Matrix> auxiliary_gradient_matrix(
       auxiliary_orbital_gradient.data(),
       input.n_basis_functions,
       input.n_basis_functions);
-  const Eigen::Map<const ColumnMajorMatrixXd> active_overlap_gradient_matrix(
+  const Eigen::Map<const Matrix> active_overlap_gradient_matrix(
       active_orbital_overlap_gradient.data(),
       input.n_active_orbitals,
       input.n_active_orbitals);
-  const Eigen::Map<const ColumnMajorMatrixXd> inactive_density_gradient_matrix(
+  const Eigen::Map<const Matrix> inactive_density_gradient_matrix(
       inactive_density_gradient.data(),
       input.n_basis_functions,
       input.n_basis_functions);
 
   std::vector<double> squared_norms;
   const std::vector<double> normalized_orbital_values =
-      normalize_sparse_orbitals(input, basis_overlap_matrix, &squared_norms);
-  const ColumnMajorMatrixXd original_orbital_matrix =
+      normalize_sparse_orbitals(input, active_orbital_overlap_matrix, &squared_norms);
+  const Matrix original_orbital_matrix =
       expand_sparse_orbitals(input, normalized_orbital_values);
   const auto inactive_orbitals = original_orbital_matrix.leftCols(n_inactive_doubly_occupied_orbitals);
   const auto active_orbitals = original_orbital_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       input.n_active_orbitals);
 
-  ColumnMajorMatrixXd inactive_density_matrix =
-      ColumnMajorMatrixXd::Zero(input.n_basis_functions, input.n_basis_functions);
+  Matrix inactive_density_matrix =
+      Matrix::Zero(input.n_basis_functions, input.n_basis_functions);
   if (n_inactive_doubly_occupied_orbitals > 0) {
-    const ColumnMajorMatrixXd inactive_overlap =
-        inactive_orbitals.transpose() * basis_overlap_matrix * inactive_orbitals;
-    const ColumnMajorMatrixXd inactive_overlap_inverse = inactive_overlap.inverse();
+    const Matrix inactive_overlap =
+        inactive_orbitals.transpose() * active_orbital_overlap_matrix * inactive_orbitals;
+    const Matrix inactive_overlap_inverse = inactive_overlap.inverse();
     inactive_density_matrix =
         inactive_orbitals * inactive_overlap_inverse * inactive_orbitals.transpose();
   }
-  const ColumnMajorMatrixXd occupied_space_projector =
-      ColumnMajorMatrixXd::Identity(input.n_basis_functions, input.n_basis_functions) -
-      inactive_density_matrix * basis_overlap_matrix;
-  const ColumnMajorMatrixXd active_auxiliary_orbitals =
+  const Matrix occupied_space_projector =
+      Matrix::Identity(input.n_basis_functions, input.n_basis_functions) -
+      inactive_density_matrix * active_orbital_overlap_matrix;
+  const Matrix active_auxiliary_orbitals =
       occupied_space_projector * active_orbitals;
 
-  const ColumnMajorMatrixXd active_overlap_gradient_symmetric =
+  const Matrix active_overlap_gradient_symmetric =
       active_overlap_gradient_matrix + active_overlap_gradient_matrix.transpose();
-  const ColumnMajorMatrixXd active_auxiliary_gradient =
+  const Matrix active_auxiliary_gradient =
       auxiliary_gradient_matrix.middleCols(
           n_inactive_doubly_occupied_orbitals,
           input.n_active_orbitals) +
-      basis_overlap_matrix * active_auxiliary_orbitals * active_overlap_gradient_symmetric;
+      active_orbital_overlap_matrix * active_auxiliary_orbitals * active_overlap_gradient_symmetric;
 
-  ColumnMajorMatrixXd original_orbital_gradient =
-      ColumnMajorMatrixXd::Zero(input.n_basis_functions, input.n_orbitals);
+  Matrix original_orbital_gradient =
+      Matrix::Zero(input.n_basis_functions, input.n_orbitals);
   if (n_inactive_doubly_occupied_orbitals == 0) {
     original_orbital_gradient.middleCols(
         n_inactive_doubly_occupied_orbitals,
         input.n_active_orbitals) = active_auxiliary_gradient;
   } else {
-    const ColumnMajorMatrixXd bs_active = basis_overlap_matrix * active_orbitals;
-    const ColumnMajorMatrixXd inactive_overlap =
-        inactive_orbitals.transpose() * basis_overlap_matrix * inactive_orbitals;
-    const ColumnMajorMatrixXd inactive_overlap_inverse = inactive_overlap.inverse();
+    const Matrix bs_active = active_orbital_overlap_matrix * active_orbitals;
+    const Matrix inactive_overlap =
+        inactive_orbitals.transpose() * active_orbital_overlap_matrix * inactive_orbitals;
+    const Matrix inactive_overlap_inverse = inactive_overlap.inverse();
 
-    const ColumnMajorMatrixXd original_active_gradient =
+    const Matrix original_active_gradient =
         active_auxiliary_gradient -
-        basis_overlap_matrix * inactive_density_matrix * active_auxiliary_gradient;
-    const ColumnMajorMatrixXd total_inactive_density_gradient =
+        active_orbital_overlap_matrix * inactive_density_matrix * active_auxiliary_gradient;
+    const Matrix total_inactive_density_gradient =
         inactive_density_gradient_matrix -
         active_auxiliary_gradient * bs_active.transpose();
-    const ColumnMajorMatrixXd inactive_density_gradient_symmetric =
+    const Matrix inactive_density_gradient_symmetric =
         total_inactive_density_gradient + total_inactive_density_gradient.transpose();
-    const ColumnMajorMatrixXd inactive_overlap_inverse_gradient =
+    const Matrix inactive_overlap_inverse_gradient =
         inactive_orbitals.transpose() * total_inactive_density_gradient * inactive_orbitals;
-    const ColumnMajorMatrixXd inactive_overlap_gradient =
+    const Matrix inactive_overlap_gradient =
         -inactive_overlap_inverse *
         inactive_overlap_inverse_gradient *
         inactive_overlap_inverse;
-    const ColumnMajorMatrixXd original_inactive_gradient =
+    const Matrix original_inactive_gradient =
         inactive_density_gradient_symmetric * inactive_orbitals * inactive_overlap_inverse +
-        basis_overlap_matrix * inactive_orbitals *
+        active_orbital_overlap_matrix * inactive_orbitals *
             (inactive_overlap_gradient + inactive_overlap_gradient.transpose());
 
     original_orbital_gradient.leftCols(n_inactive_doubly_occupied_orbitals) =
@@ -264,7 +264,7 @@ ActiveSpaceOrbitalBackpropagationResult ActiveSpaceOrbitalBackpropagator::backpr
         Eigen::MatrixXd::Zero(coefficient_count, coefficient_count);
     for (int row = 0; row < coefficient_count; ++row) {
       for (int column = 0; column < coefficient_count; ++column) {
-        overlap_submatrix(row, column) = basis_overlap_matrix(
+        overlap_submatrix(row, column) = active_orbital_overlap_matrix(
             basis_function_indices[static_cast<std::size_t>(row)],
             basis_function_indices[static_cast<std::size_t>(column)]);
       }

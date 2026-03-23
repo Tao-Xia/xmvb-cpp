@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vb/matrices/hamiltonian_overlap_matrices.hpp"
+#include "vb/matrices/structure_types.hpp"
 #include "vb/model/vb_wavefunction_data.hpp"
 #include "vb/orbital/orbital_space.hpp"
 

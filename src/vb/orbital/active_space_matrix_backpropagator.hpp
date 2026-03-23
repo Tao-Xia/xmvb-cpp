@@ -22,8 +22,8 @@ public:
    *
    * @param active_orbital_overlap_gradient Column-major gradient with respect to `SSO`.
    * @param active_one_electron_gradient Column-major gradient with respect to `HHO`.
-   * @param basis_overlap_matrix Column-major AO overlap matrix.
-   * @param ao_effective_one_electron_matrix Column-major AO `F11`.
+   * @param active_orbital_overlap_matrix Column-major AO overlap matrix.
+   * @param ao_effective_h1e Column-major AO `F11`.
    * @param auxiliary_orbital_matrix Column-major full auxiliary orbital matrix.
    * @param n_basis_functions Number of AO basis functions.
    * @param n_inactive_doubly_occupied_orbitals Number of inactive doubly occupied orbitals.
@@ -33,8 +33,8 @@ public:
   ActiveSpaceMatrixBackpropagationResult backpropagate(
       const std::vector<double>& active_orbital_overlap_gradient,
       const std::vector<double>& active_one_electron_gradient,
-      const std::vector<double>& basis_overlap_matrix,
-      const std::vector<double>& ao_effective_one_electron_matrix,
+      const std::vector<double>& active_orbital_overlap_matrix,
+      const std::vector<double>& ao_effective_h1e,
       const std::vector<double>& auxiliary_orbital_matrix,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,

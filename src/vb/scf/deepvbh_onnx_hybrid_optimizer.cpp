@@ -311,7 +311,7 @@ CppVbScfOptimizerResult DeepVBHOnnxHybridOptimizer::optimize(
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
-  if (options_.optimizer_options.algorithm != VbScfAlgorithm::Original) {
+  if (options_.optimizer_options.algorithm != VBSCFAlgorithm::Original) {
     throw std::invalid_argument(
         "deepvbh_onnx currently supports only the original VBSCF algorithm");
   }

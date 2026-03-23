@@ -3,7 +3,7 @@
 namespace xmvb::vb {
 
 StructureMatrixEvaluator::
-    StructureMatrixEvaluator(VbScfAlgorithm algorithm)
+    StructureMatrixEvaluator(VBSCFAlgorithm algorithm)
     : orbital_preparer_(),
       ao_effective_one_electron_builder_(),
       active_space_one_electron_builder_(),
@@ -41,7 +41,7 @@ StructureAccumulationResult StructureMatrixEvaluator::evaluate(
           input.ao_integral_input.n_basis_functions);
   const auto active_space_one_electron_result =
       active_space_one_electron_builder_.build(
-          ao_effective_one_electron_result.ao_effective_one_electron_matrix,
+          ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.ao_integral_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -55,11 +55,11 @@ StructureAccumulationResult StructureMatrixEvaluator::evaluate(
           input.orbital_preparation_input.n_active_orbitals);
 
   return structure_builder_.build(
-      input.structure_data.alpha_occupied_orbitals_by_determinant,
-      input.structure_data.beta_occupied_orbitals_by_determinant,
+      input.structure_data.alpha_det,
+      input.structure_data.beta_det,
       input.structure_data.determinant_to_structure_terms,
       orbital_result.active_orbital_overlap_matrix,
-      active_space_one_electron_result.active_one_electron_matrix,
+      active_space_one_electron_result.h1e_act,
       input.orbital_preparation_input.n_active_orbitals,
       active_space_two_electron_result.packed_active_two_electron_integrals,
       input.structure_data.n_structures);

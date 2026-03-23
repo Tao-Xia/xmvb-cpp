@@ -463,11 +463,11 @@ void apply_algorithm_argument(
     const std::string& algorithm_name,
     xmvb::vb::CppVbScfOptimizerOptions* options) {
   if (algorithm_name == "original") {
-    options->algorithm = xmvb::vb::VbScfAlgorithm::Original;
+    options->algorithm = xmvb::vb::VBSCFAlgorithm::Original;
     return;
   }
   if (algorithm_name == "biorthogonal") {
-    options->algorithm = xmvb::vb::VbScfAlgorithm::Biorthogonal;
+    options->algorithm = xmvb::vb::VBSCFAlgorithm::Biorthogonal;
     return;
   }
   throw std::invalid_argument("invalid algorithm: " + algorithm_name);
@@ -577,7 +577,7 @@ int main(int argc, char** argv) {
 
   std::shared_ptr<AcceptedIterationTraceDatasetWriter> trace_writer;
   if (!dump_trace_dir.empty()) {
-    if (options.algorithm != xmvb::vb::VbScfAlgorithm::Original) {
+    if (options.algorithm != xmvb::vb::VBSCFAlgorithm::Original) {
       throw std::invalid_argument(
           "--dump-trace-dir currently supports only --algorithm original");
     }

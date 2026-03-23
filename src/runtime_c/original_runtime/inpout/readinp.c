@@ -746,7 +746,7 @@ int getcom(inp_info inp_str, FILE *fp) {
                     inp_str->inttyp=INT_FCOSX;
                 }
             }
-            // else if (strstr(kwd,"ERI")!=NULL){
+            // else if (strstr(kwd,"eri_act")!=NULL){
             //     if (strstr(kval,"COSX")!=NULL)
             //         inp_str->vberi=2;
             // }

@@ -115,7 +115,7 @@ static int allocate_snapshot_buffers(
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_orbitals * sizeof(int));
   snapshot->orbital_basis_counts = (int*)malloc((size_t)snapshot->n_orbitals * sizeof(int));
   snapshot->original_orbital_basis_counts = (int*)malloc((size_t)snapshot->n_orbitals * sizeof(int));
-  snapshot->basis_overlap_matrix = (double*)malloc(
+  snapshot->active_orbital_overlap_matrix = (double*)malloc(
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
   snapshot->ao_core_hamiltonian_matrix = (double*)malloc(
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
@@ -131,7 +131,7 @@ static int allocate_snapshot_buffers(
       snapshot->ao_shell_local_indices == NULL || snapshot->ao_cartesian_exponents == NULL ||
       snapshot->raw_structure_orbitals == NULL || snapshot->orbital_value_table == NULL ||
       snapshot->orbital_basis_index_table == NULL || snapshot->orbital_basis_counts == NULL ||
-      snapshot->original_orbital_basis_counts == NULL || snapshot->basis_overlap_matrix == NULL ||
+      snapshot->original_orbital_basis_counts == NULL || snapshot->active_orbital_overlap_matrix == NULL ||
       snapshot->ao_core_hamiltonian_matrix == NULL ||
       snapshot->ao_two_electron_integral_values == NULL ||
       snapshot->ao_two_electron_integral_indices == NULL) {
@@ -552,7 +552,7 @@ int xmvb_cpp_runtime_copy_snapshot(
       runtime_handle->vb_wavefunction->ma0,
       (size_t)snapshot->n_orbitals * sizeof(int));
   memcpy(
-      snapshot->basis_overlap_matrix,
+      snapshot->active_orbital_overlap_matrix,
       runtime_handle->vb_wavefunction->ssf,
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
   memcpy(

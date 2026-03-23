@@ -48,7 +48,7 @@ typedef struct CppRuntimeSnapshot {
   int* orbital_basis_index_table;
   int* orbital_basis_counts;
   int* original_orbital_basis_counts;
-  double* basis_overlap_matrix;
+  double* active_orbital_overlap_matrix;
   double nuclear_repulsion_energy;
   long n_ao_two_electron_integrals;
   double* ao_core_hamiltonian_matrix;
@@ -83,7 +83,7 @@ int extract_cpp_runtime_input(
     int** orbital_basis_index_table,
     int** orbital_basis_counts,
     int** original_orbital_basis_counts,
-    double** basis_overlap_matrix,
+    double** active_orbital_overlap_matrix,
     double* nuclear_repulsion_energy,
     long* n_ao_two_electron_integrals,
     double** ao_core_hamiltonian_matrix,

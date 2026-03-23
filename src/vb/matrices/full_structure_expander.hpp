@@ -1,7 +1,6 @@
 #pragma once
 
-#include "vb/matrices/full_determinant_structure_data.hpp"
-#include "vb/matrices/raw_structure_data.hpp"
+#include "vb/matrices/structure_types.hpp"
 
 namespace xmvb::vb {
 

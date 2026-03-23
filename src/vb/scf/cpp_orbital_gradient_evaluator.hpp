@@ -29,7 +29,7 @@ public:
    * @brief Creates an evaluator with default helper components.
    */
   explicit CppOrbitalGradientEvaluator(
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original,
+      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original,
       double finite_difference_step = 1.0e-5);
 
   /**

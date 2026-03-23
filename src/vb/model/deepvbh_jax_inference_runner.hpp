@@ -6,9 +6,8 @@
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/full_determinant_structure_hamiltonian_overlap_builder.hpp"
-#include "vb/matrices/raw_structure_data.hpp"
-#include "vb/matrices/structure_accumulation_result.hpp"
+#include "vb/matrices/full_structure_builder.hpp"
+#include "vb/matrices/structure_types.hpp"
 #include "vb/orbital/active_space_one_electron_builder.hpp"
 #include "vb/orbital/active_space_orbital_preparer.hpp"
 #include "vb/orbital/ao_effective_one_electron_builder.hpp"
@@ -26,7 +25,7 @@ struct DeepVBHJaxInferenceOptions {
   std::string device = "gpu";
   std::string dtype = "float32";
   bool keep_work_directory = false;
-  VbScfAlgorithm algorithm = VbScfAlgorithm::Original;
+  VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original;
 };
 
 struct DeepVBHJaxPrediction {

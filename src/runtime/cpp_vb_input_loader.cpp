@@ -4,7 +4,7 @@
 #include <stdexcept>
 
 #include "runtime_c/cpp_runtime_extractor.h"
-#include "vb/matrices/full_determinant_structure_expander.hpp"
+#include "vb/matrices/full_structure_expander.hpp"
 
 namespace xmvb::vb {
 
@@ -67,9 +67,9 @@ CppVbInputLoadResult load_cpp_vb_input_with_timings(
   result.orbital_preparation_input.original_orbital_basis_counts.assign(
       runtime_snapshot.original_orbital_basis_counts,
       runtime_snapshot.original_orbital_basis_counts + runtime_snapshot.n_orbitals);
-  result.orbital_preparation_input.basis_overlap_matrix.assign(
-      runtime_snapshot.basis_overlap_matrix,
-      runtime_snapshot.basis_overlap_matrix +
+  result.orbital_preparation_input.active_orbital_overlap_matrix.assign(
+      runtime_snapshot.active_orbital_overlap_matrix,
+      runtime_snapshot.active_orbital_overlap_matrix +
           static_cast<std::size_t>(runtime_snapshot.n_basis_functions) *
               runtime_snapshot.n_basis_functions);
 

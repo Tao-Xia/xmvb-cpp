@@ -55,7 +55,7 @@ std::vector<double> build_reference_energy_inactive_density_gradient(
       orbital_result.inactive_density_matrix.size(),
       0.0);
   if (inactive_density_gradient.size() !=
-          ao_effective_one_electron_result.ao_effective_one_electron_matrix.size() ||
+          ao_effective_one_electron_result.ao_effective_h1e.size() ||
       inactive_density_gradient.size() !=
           input.ao_integral_input.ao_core_hamiltonian_matrix.size()) {
     throw std::runtime_error("one-electron reference energy gradient size mismatch");
@@ -63,7 +63,7 @@ std::vector<double> build_reference_energy_inactive_density_gradient(
 
   for (std::size_t index = 0; index < inactive_density_gradient.size(); ++index) {
     inactive_density_gradient[index] =
-        ao_effective_one_electron_result.ao_effective_one_electron_matrix[index] +
+        ao_effective_one_electron_result.ao_effective_h1e[index] +
         input.ao_integral_input.ao_core_hamiltonian_matrix[index];
   }
 
@@ -111,7 +111,7 @@ std::vector<double> build_reference_energy_orbital_gradient(
 }  // namespace
 
 CppOrbitalGradientEvaluator::CppOrbitalGradientEvaluator(
-    VbScfAlgorithm algorithm,
+    VBSCFAlgorithm algorithm,
     double finite_difference_step)
     : active_space_gradient_evaluator_(algorithm),
       orbital_preparer_(),
@@ -197,14 +197,14 @@ CppOrbitalGradientResult CppOrbitalGradientEvaluator::evaluate(
       orbital_result.inactive_density_matrix.size(),
       0.0);
   if (total_inactive_density_gradient.size() !=
-          ao_effective_one_electron_result.ao_effective_one_electron_matrix.size() ||
+          ao_effective_one_electron_result.ao_effective_h1e.size() ||
       total_inactive_density_gradient.size() !=
           input.ao_integral_input.ao_core_hamiltonian_matrix.size()) {
     throw std::runtime_error("one-electron reference energy gradient size mismatch");
   }
   for (std::size_t index = 0; index < total_inactive_density_gradient.size(); ++index) {
     total_inactive_density_gradient[index] =
-        ao_effective_one_electron_result.ao_effective_one_electron_matrix[index] +
+        ao_effective_one_electron_result.ao_effective_h1e[index] +
         input.ao_integral_input.ao_core_hamiltonian_matrix[index];
   }
   const std::vector<double> zero_active_orbital_overlap_gradient(
@@ -216,8 +216,8 @@ CppOrbitalGradientResult CppOrbitalGradientEvaluator::evaluate(
       active_space_matrix_backpropagator_.backpropagate(
           active_space_gradient_result.active_orbital_overlap_gradient,
           active_space_gradient_result.active_one_electron_gradient,
-          input.orbital_preparation_input.basis_overlap_matrix,
-          ao_effective_one_electron_result.ao_effective_one_electron_matrix,
+          input.orbital_preparation_input.active_orbital_overlap_matrix,
+          ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
