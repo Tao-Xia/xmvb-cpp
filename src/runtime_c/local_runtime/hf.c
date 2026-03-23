@@ -1,0 +1,31 @@
+#define init_hf xmvb_cpp_init_hf
+#define set_hf_diis xmvb_cpp_set_hf_diis
+#define set_hf_ctrl xmvb_cpp_set_hf_ctrl
+#define load_hf_dft xmvb_cpp_load_hf_dft
+#define del_hf xmvb_cpp_del_hf
+#define load_hf_jaux xmvb_cpp_load_hf_jaux
+#define load_hf_kaux xmvb_cpp_load_hf_kaux
+#define load_hf_jgrids xmvb_cpp_load_hf_jgrids
+#define load_hf_kgrids xmvb_cpp_load_hf_kgrids
+#define set_hf_coulomb xmvb_cpp_set_hf_coulomb
+#define set_hf_exchange xmvb_cpp_set_hf_exchange
+#define cal_c_matrix xmvb_cpp_cal_c_matrix
+#define set_hf_sub xmvb_cpp_set_hf_sub
+#define set_hf_mu xmvb_cpp_set_hf_mu
+#define cal_rhf_energy xmvb_cpp_cal_rhf_energy
+#define cal_uhf_energy xmvb_cpp_cal_uhf_energy
+#define cal_hf_energy xmvb_cpp_cal_hf_energy
+#define cufock xmvb_cpp_cufock
+#define print_uhf xmvb_cpp_print_uhf
+#define do_rhf xmvb_cpp_do_rhf
+#define do_uhf xmvb_cpp_do_uhf
+#define cal_no_orb xmvb_cpp_cal_no_orb
+#define load_hf_sub xmvb_cpp_load_hf_sub
+#define del_hf_sub xmvb_cpp_del_hf_sub
+#define load_hf_aim xmvb_cpp_load_hf_aim
+#define del_hf_aim xmvb_cpp_del_hf_aim
+#define do_rhf_aim xmvb_cpp_do_rhf_aim
+#define cal_rhf_grad xmvb_cpp_cal_rhf_grad
+#define load_hf_charge xmvb_cpp_load_hf_charge
+
+#include "../original_runtime/scf/hf.c"

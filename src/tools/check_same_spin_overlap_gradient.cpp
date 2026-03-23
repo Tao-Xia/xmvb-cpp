@@ -1,0 +1,691 @@
+#include <algorithm>
+#include <cmath>
+#include <iomanip>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "runtime/cpp_vb_input_loader.hpp"
+#include "vb/matrices/biorthogonal_spin_pair.hpp"
+#include "vb/matrices/determinant_hamiltonian_resolver.hpp"
+#include "vb/matrices/determinant_overlap_resolver.hpp"
+#include "vb/matrices/two_electron_indexer.hpp"
+#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
+#include "vb/vbscf_algorithm.hpp"
+
+namespace {
+
+enum class Spin {
+  Alpha,
+  Beta,
+};
+
+enum class Mode {
+  Same,
+  Opposite,
+  Full,
+};
+
+struct Options {
+  std::string input_path;
+  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
+  Mode mode = Mode::Same;
+  Spin spin = Spin::Alpha;
+  int determinant_index_left = 0;
+  int determinant_index_right = 0;
+  int count = 8;
+  double step = 1.0e-6;
+};
+
+void print_usage() {
+  std::cerr << "usage: check_same_spin_overlap_gradient <input.xmi> "
+               "[--algorithm original|biorthogonal] "
+               "[--mode same|opposite|full] "
+               "[--spin alpha|beta] "
+               "[--left i] [--right j] "
+               "[--count N] [--step h]\n";
+}
+
+Options parse_arguments(int argc, char** argv) {
+  if (argc < 2 || ((argc - 2) % 2 != 0)) {
+    print_usage();
+    throw std::invalid_argument("invalid argument count");
+  }
+
+  Options options;
+  options.input_path = argv[1];
+  for (int argument_index = 2; argument_index < argc; argument_index += 2) {
+    const std::string argument_name = argv[argument_index];
+    const std::string argument_value = argv[argument_index + 1];
+    if (argument_name == "--algorithm") {
+      if (argument_value == "original") {
+        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
+      } else if (argument_value == "biorthogonal") {
+        options.algorithm = xmvb::vb::VbScfAlgorithm::Biorthogonal;
+      } else {
+        throw std::invalid_argument("invalid algorithm: " + argument_value);
+      }
+      continue;
+    }
+    if (argument_name == "--mode") {
+      if (argument_value == "same") {
+        options.mode = Mode::Same;
+      } else if (argument_value == "opposite") {
+        options.mode = Mode::Opposite;
+      } else if (argument_value == "full") {
+        options.mode = Mode::Full;
+      } else {
+        throw std::invalid_argument("invalid mode: " + argument_value);
+      }
+      continue;
+    }
+    if (argument_name == "--spin") {
+      if (argument_value == "alpha") {
+        options.spin = Spin::Alpha;
+      } else if (argument_value == "beta") {
+        options.spin = Spin::Beta;
+      } else {
+        throw std::invalid_argument("invalid spin: " + argument_value);
+      }
+      continue;
+    }
+    if (argument_name == "--left") {
+      options.determinant_index_left = std::stoi(argument_value);
+      continue;
+    }
+    if (argument_name == "--right") {
+      options.determinant_index_right = std::stoi(argument_value);
+      continue;
+    }
+    if (argument_name == "--count") {
+      options.count = std::stoi(argument_value);
+      continue;
+    }
+    if (argument_name == "--step") {
+      options.step = std::stod(argument_value);
+      continue;
+    }
+    throw std::invalid_argument("unknown argument: " + argument_name);
+  }
+
+  if (options.count <= 0) {
+    throw std::invalid_argument("--count must be positive");
+  }
+  if (options.step <= 0.0) {
+    throw std::invalid_argument("--step must be positive");
+  }
+  return options;
+}
+
+double evaluate_same_spin_hamiltonian(
+    const std::vector<int>& occupied_orbitals_left,
+    const std::vector<int>& occupied_orbitals_right,
+    const std::vector<double>& active_orbital_overlap_matrix,
+    const std::vector<double>& active_one_electron_matrix,
+    int n_active_orbitals,
+    const std::vector<double>& packed_active_two_electron_integrals,
+    xmvb::vb::VbScfAlgorithm algorithm) {
+  xmvb::vb::DeterminantOverlapResolver overlap_resolver;
+  xmvb::vb::DeterminantHamiltonianResolver hamiltonian_resolver(algorithm);
+  const auto overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+      occupied_orbitals_left,
+      occupied_orbitals_right,
+      active_orbital_overlap_matrix,
+      n_active_orbitals);
+  const auto overlap_result =
+      overlap_resolver.resolve(overlap_submatrix, static_cast<int>(occupied_orbitals_left.size()));
+  return hamiltonian_resolver.resolve(
+      occupied_orbitals_left,
+      occupied_orbitals_right,
+      overlap_submatrix,
+      overlap_result,
+      active_one_electron_matrix,
+      n_active_orbitals,
+      packed_active_two_electron_integrals).total_hamiltonian;
+}
+
+double evaluate_opposite_spin_hamiltonian(
+    const std::vector<int>& alpha_occupied_orbitals_left,
+    const std::vector<int>& alpha_occupied_orbitals_right,
+    const std::vector<int>& beta_occupied_orbitals_left,
+    const std::vector<int>& beta_occupied_orbitals_right,
+    const std::vector<double>& active_orbital_overlap_matrix,
+    int n_active_orbitals,
+    const std::vector<double>& packed_active_two_electron_integrals,
+    xmvb::vb::VbScfAlgorithm algorithm) {
+  xmvb::vb::DeterminantOverlapResolver overlap_resolver;
+  const auto alpha_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+      alpha_occupied_orbitals_left,
+      alpha_occupied_orbitals_right,
+      active_orbital_overlap_matrix,
+      n_active_orbitals);
+  const auto beta_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+      beta_occupied_orbitals_left,
+      beta_occupied_orbitals_right,
+      active_orbital_overlap_matrix,
+      n_active_orbitals);
+  const auto alpha_overlap_result =
+      overlap_resolver.resolve(alpha_overlap_submatrix, static_cast<int>(alpha_occupied_orbitals_left.size()));
+  const auto beta_overlap_result =
+      overlap_resolver.resolve(beta_overlap_submatrix, static_cast<int>(beta_occupied_orbitals_left.size()));
+
+  if (algorithm == xmvb::vb::VbScfAlgorithm::Biorthogonal) {
+    return xmvb::vb::compute_opposite_spin_biorthogonal_hamiltonian(
+        alpha_occupied_orbitals_left,
+        alpha_occupied_orbitals_right,
+        alpha_overlap_result,
+        beta_occupied_orbitals_left,
+        beta_occupied_orbitals_right,
+        beta_overlap_result,
+        packed_active_two_electron_integrals);
+  }
+
+  if (alpha_overlap_result.nullity >= 2 || beta_overlap_result.nullity >= 2) {
+    return 0.0;
+  }
+  const xmvb::vb::ColumnMajorMatrixXd alpha_first_order_cofactor_matrix =
+      xmvb::vb::build_first_order_cofactor_matrix_from_result(alpha_overlap_result);
+  const xmvb::vb::ColumnMajorMatrixXd beta_first_order_cofactor_matrix =
+      xmvb::vb::build_first_order_cofactor_matrix_from_result(beta_overlap_result);
+  double hamiltonian = 0.0;
+  for (int alpha_left_column = 0;
+       alpha_left_column < static_cast<int>(alpha_occupied_orbitals_left.size());
+       ++alpha_left_column) {
+    const int alpha_orbital_left =
+        alpha_occupied_orbitals_left[static_cast<std::size_t>(alpha_left_column)];
+    for (int alpha_right_row = 0;
+         alpha_right_row < static_cast<int>(alpha_occupied_orbitals_right.size());
+         ++alpha_right_row) {
+      const int alpha_orbital_right =
+          alpha_occupied_orbitals_right[static_cast<std::size_t>(alpha_right_row)];
+      const double alpha_cofactor =
+          alpha_first_order_cofactor_matrix(alpha_right_row, alpha_left_column);
+      for (int beta_left_column = 0;
+           beta_left_column < static_cast<int>(beta_occupied_orbitals_left.size());
+           ++beta_left_column) {
+        const int beta_orbital_left =
+            beta_occupied_orbitals_left[static_cast<std::size_t>(beta_left_column)];
+        for (int beta_right_row = 0;
+             beta_right_row < static_cast<int>(beta_occupied_orbitals_right.size());
+             ++beta_right_row) {
+          const int beta_orbital_right =
+              beta_occupied_orbitals_right[static_cast<std::size_t>(beta_right_row)];
+          const double beta_cofactor =
+              beta_first_order_cofactor_matrix(beta_right_row, beta_left_column);
+          const int two_electron_index = xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
+              beta_orbital_right,
+              beta_orbital_left,
+              alpha_orbital_right,
+              alpha_orbital_left);
+          hamiltonian +=
+              alpha_cofactor * beta_cofactor *
+              packed_active_two_electron_integrals[static_cast<std::size_t>(two_electron_index)];
+        }
+      }
+    }
+  }
+  return hamiltonian;
+}
+
+double evaluate_full_pair_hamiltonian(
+    const std::vector<int>& alpha_occupied_orbitals_left,
+    const std::vector<int>& alpha_occupied_orbitals_right,
+    const std::vector<int>& beta_occupied_orbitals_left,
+    const std::vector<int>& beta_occupied_orbitals_right,
+    const std::vector<double>& active_orbital_overlap_matrix,
+    const std::vector<double>& active_one_electron_matrix,
+    int n_active_orbitals,
+    const std::vector<double>& packed_active_two_electron_integrals,
+    xmvb::vb::VbScfAlgorithm algorithm) {
+  xmvb::vb::DeterminantOverlapResolver overlap_resolver;
+  xmvb::vb::DeterminantHamiltonianResolver hamiltonian_resolver(algorithm);
+  const auto alpha_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+      alpha_occupied_orbitals_left,
+      alpha_occupied_orbitals_right,
+      active_orbital_overlap_matrix,
+      n_active_orbitals);
+  const auto beta_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+      beta_occupied_orbitals_left,
+      beta_occupied_orbitals_right,
+      active_orbital_overlap_matrix,
+      n_active_orbitals);
+  const auto alpha_overlap_result =
+      overlap_resolver.resolve(alpha_overlap_submatrix, static_cast<int>(alpha_occupied_orbitals_left.size()));
+  const auto beta_overlap_result =
+      overlap_resolver.resolve(beta_overlap_submatrix, static_cast<int>(beta_occupied_orbitals_left.size()));
+  const auto alpha_hamiltonian_result = hamiltonian_resolver.resolve(
+      alpha_occupied_orbitals_left,
+      alpha_occupied_orbitals_right,
+      alpha_overlap_submatrix,
+      alpha_overlap_result,
+      active_one_electron_matrix,
+      n_active_orbitals,
+      packed_active_two_electron_integrals);
+  const auto beta_hamiltonian_result = hamiltonian_resolver.resolve(
+      beta_occupied_orbitals_left,
+      beta_occupied_orbitals_right,
+      beta_overlap_submatrix,
+      beta_overlap_result,
+      active_one_electron_matrix,
+      n_active_orbitals,
+      packed_active_two_electron_integrals);
+  return alpha_hamiltonian_result.total_hamiltonian * beta_overlap_result.overlap_determinant +
+      beta_hamiltonian_result.total_hamiltonian * alpha_overlap_result.overlap_determinant +
+      evaluate_opposite_spin_hamiltonian(
+          alpha_occupied_orbitals_left,
+          alpha_occupied_orbitals_right,
+          beta_occupied_orbitals_left,
+          beta_occupied_orbitals_right,
+          active_orbital_overlap_matrix,
+          n_active_orbitals,
+          packed_active_two_electron_integrals,
+          algorithm);
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  try {
+    const Options options = parse_arguments(argc, argv);
+    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    xmvb::vb::CppActiveSpaceGradientEvaluator active_space_evaluator(options.algorithm);
+    const auto baseline =
+        active_space_evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
+    const auto& alpha_occupied_by_determinant =
+        load_result.input.structure_data.alpha_occupied_orbitals_by_determinant;
+    const auto& beta_occupied_by_determinant =
+        load_result.input.structure_data.beta_occupied_orbitals_by_determinant;
+    const auto& occupied_by_determinant =
+        (options.spin == Spin::Alpha)
+            ? alpha_occupied_by_determinant
+            : beta_occupied_by_determinant;
+    if (options.determinant_index_left < 0 ||
+        static_cast<std::size_t>(options.determinant_index_left) >= occupied_by_determinant.size() ||
+        options.determinant_index_right < 0 ||
+        static_cast<std::size_t>(options.determinant_index_right) >= occupied_by_determinant.size()) {
+      throw std::out_of_range("determinant index out of range");
+    }
+
+    const auto& occupied_orbitals_left =
+        occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+    const auto& occupied_orbitals_right =
+        occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+    const int n_active_orbitals = load_result.input.orbital_preparation_input.n_active_orbitals;
+
+    xmvb::vb::DeterminantOverlapResolver overlap_resolver;
+    std::vector<double> analytic_gradient(
+        baseline.active_orbital_overlap_matrix.size(),
+        0.0);
+    double baseline_hamiltonian = 0.0;
+    if (options.mode == Mode::Same) {
+      const auto overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+          occupied_orbitals_left,
+          occupied_orbitals_right,
+          baseline.active_orbital_overlap_matrix,
+          n_active_orbitals);
+      const auto overlap_result =
+          overlap_resolver.resolve(overlap_submatrix, static_cast<int>(occupied_orbitals_left.size()));
+
+      xmvb::vb::ColumnMajorMatrixXd inverse_overlap_gradient;
+      xmvb::vb::SameSpinBiorthogonalPhiResult phi_result;
+      if (options.algorithm == xmvb::vb::VbScfAlgorithm::Biorthogonal) {
+        phi_result = xmvb::vb::compute_same_spin_biorthogonal_phi(
+            occupied_orbitals_left,
+            occupied_orbitals_right,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            overlap_result,
+            &inverse_overlap_gradient);
+      } else {
+        phi_result = xmvb::vb::compute_same_spin_original_phi(
+            occupied_orbitals_left,
+            occupied_orbitals_right,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            overlap_result,
+            &inverse_overlap_gradient);
+      }
+      xmvb::vb::accumulate_spin_overlap_gradient(
+          occupied_orbitals_left,
+          occupied_orbitals_right,
+          overlap_result,
+          phi_result.total_phi,
+          inverse_overlap_gradient,
+          n_active_orbitals,
+          &analytic_gradient);
+      baseline_hamiltonian = evaluate_same_spin_hamiltonian(
+          occupied_orbitals_left,
+          occupied_orbitals_right,
+          baseline.active_orbital_overlap_matrix,
+          baseline.active_space_one_electron_result.active_one_electron_matrix,
+          n_active_orbitals,
+          baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+          options.algorithm);
+    } else if (options.mode == Mode::Opposite) {
+      const auto& alpha_occupied_orbitals_left =
+          alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+      const auto& alpha_occupied_orbitals_right =
+          alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+      const auto& beta_occupied_orbitals_left =
+          beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+      const auto& beta_occupied_orbitals_right =
+          beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+      const auto alpha_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+          alpha_occupied_orbitals_left,
+          alpha_occupied_orbitals_right,
+          baseline.active_orbital_overlap_matrix,
+          n_active_orbitals);
+      const auto beta_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+          beta_occupied_orbitals_left,
+          beta_occupied_orbitals_right,
+          baseline.active_orbital_overlap_matrix,
+          n_active_orbitals);
+      const auto alpha_overlap_result = overlap_resolver.resolve(
+          alpha_overlap_submatrix,
+          static_cast<int>(alpha_occupied_orbitals_left.size()));
+      const auto beta_overlap_result = overlap_resolver.resolve(
+          beta_overlap_submatrix,
+          static_cast<int>(beta_occupied_orbitals_left.size()));
+      xmvb::vb::ColumnMajorMatrixXd alpha_inverse_overlap_gradient;
+      xmvb::vb::ColumnMajorMatrixXd beta_inverse_overlap_gradient;
+      double opposite_phi = 0.0;
+      if (options.algorithm == xmvb::vb::VbScfAlgorithm::Biorthogonal) {
+        opposite_phi = xmvb::vb::compute_opposite_spin_biorthogonal_phi(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            alpha_overlap_result,
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            beta_overlap_result,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            &alpha_inverse_overlap_gradient,
+            &beta_inverse_overlap_gradient);
+      } else {
+        opposite_phi = xmvb::vb::compute_opposite_spin_original_phi(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            alpha_overlap_result,
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            beta_overlap_result,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            &alpha_inverse_overlap_gradient,
+            &beta_inverse_overlap_gradient);
+      }
+      xmvb::vb::accumulate_spin_overlap_gradient(
+          alpha_occupied_orbitals_left,
+          alpha_occupied_orbitals_right,
+          alpha_overlap_result,
+          beta_overlap_result.overlap_determinant * opposite_phi,
+          beta_overlap_result.overlap_determinant * alpha_inverse_overlap_gradient,
+          n_active_orbitals,
+          &analytic_gradient);
+      xmvb::vb::accumulate_spin_overlap_gradient(
+          beta_occupied_orbitals_left,
+          beta_occupied_orbitals_right,
+          beta_overlap_result,
+          alpha_overlap_result.overlap_determinant * opposite_phi,
+          alpha_overlap_result.overlap_determinant * beta_inverse_overlap_gradient,
+          n_active_orbitals,
+          &analytic_gradient);
+      baseline_hamiltonian = evaluate_opposite_spin_hamiltonian(
+          alpha_occupied_orbitals_left,
+          alpha_occupied_orbitals_right,
+          beta_occupied_orbitals_left,
+          beta_occupied_orbitals_right,
+          baseline.active_orbital_overlap_matrix,
+          n_active_orbitals,
+          baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+          options.algorithm);
+    } else {
+      const auto& alpha_occupied_orbitals_left =
+          alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+      const auto& alpha_occupied_orbitals_right =
+          alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+      const auto& beta_occupied_orbitals_left =
+          beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+      const auto& beta_occupied_orbitals_right =
+          beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+      const auto alpha_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+          alpha_occupied_orbitals_left,
+          alpha_occupied_orbitals_right,
+          baseline.active_orbital_overlap_matrix,
+          n_active_orbitals);
+      const auto beta_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
+          beta_occupied_orbitals_left,
+          beta_occupied_orbitals_right,
+          baseline.active_orbital_overlap_matrix,
+          n_active_orbitals);
+      const auto alpha_overlap_result = overlap_resolver.resolve(
+          alpha_overlap_submatrix,
+          static_cast<int>(alpha_occupied_orbitals_left.size()));
+      const auto beta_overlap_result = overlap_resolver.resolve(
+          beta_overlap_submatrix,
+          static_cast<int>(beta_occupied_orbitals_left.size()));
+      xmvb::vb::ColumnMajorMatrixXd alpha_inverse_overlap_gradient;
+      xmvb::vb::ColumnMajorMatrixXd beta_inverse_overlap_gradient;
+      xmvb::vb::SameSpinBiorthogonalPhiResult alpha_phi_result;
+      xmvb::vb::SameSpinBiorthogonalPhiResult beta_phi_result;
+      double opposite_phi = 0.0;
+      if (options.algorithm == xmvb::vb::VbScfAlgorithm::Biorthogonal) {
+        alpha_phi_result = xmvb::vb::compute_same_spin_biorthogonal_phi(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            alpha_overlap_result,
+            &alpha_inverse_overlap_gradient);
+        beta_phi_result = xmvb::vb::compute_same_spin_biorthogonal_phi(
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            beta_overlap_result,
+            &beta_inverse_overlap_gradient);
+        opposite_phi = xmvb::vb::compute_opposite_spin_biorthogonal_phi(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            alpha_overlap_result,
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            beta_overlap_result,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            &alpha_inverse_overlap_gradient,
+            &beta_inverse_overlap_gradient);
+      } else {
+        alpha_phi_result = xmvb::vb::compute_same_spin_original_phi(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            alpha_overlap_result,
+            &alpha_inverse_overlap_gradient);
+        beta_phi_result = xmvb::vb::compute_same_spin_original_phi(
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            beta_overlap_result,
+            &beta_inverse_overlap_gradient);
+        opposite_phi = xmvb::vb::compute_opposite_spin_original_phi(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            alpha_overlap_result,
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            beta_overlap_result,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            &alpha_inverse_overlap_gradient,
+            &beta_inverse_overlap_gradient);
+      }
+      xmvb::vb::accumulate_spin_overlap_gradient(
+          alpha_occupied_orbitals_left,
+          alpha_occupied_orbitals_right,
+          alpha_overlap_result,
+          beta_overlap_result.overlap_determinant *
+              (alpha_phi_result.total_phi + beta_phi_result.total_phi + opposite_phi),
+          beta_overlap_result.overlap_determinant * alpha_inverse_overlap_gradient,
+          n_active_orbitals,
+          &analytic_gradient);
+      xmvb::vb::accumulate_spin_overlap_gradient(
+          beta_occupied_orbitals_left,
+          beta_occupied_orbitals_right,
+          beta_overlap_result,
+          alpha_overlap_result.overlap_determinant *
+              (alpha_phi_result.total_phi + beta_phi_result.total_phi + opposite_phi),
+          alpha_overlap_result.overlap_determinant * beta_inverse_overlap_gradient,
+          n_active_orbitals,
+          &analytic_gradient);
+      baseline_hamiltonian = evaluate_full_pair_hamiltonian(
+          alpha_occupied_orbitals_left,
+          alpha_occupied_orbitals_right,
+          beta_occupied_orbitals_left,
+          beta_occupied_orbitals_right,
+          baseline.active_orbital_overlap_matrix,
+          baseline.active_space_one_electron_result.active_one_electron_matrix,
+          n_active_orbitals,
+          baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+          options.algorithm);
+    }
+
+    std::vector<std::pair<double, int>> ranked_entries;
+    ranked_entries.reserve(analytic_gradient.size());
+    for (std::size_t index = 0; index < analytic_gradient.size(); ++index) {
+      ranked_entries.emplace_back(std::abs(analytic_gradient[index]), static_cast<int>(index));
+    }
+    std::sort(
+        ranked_entries.begin(),
+        ranked_entries.end(),
+        [](const auto& left, const auto& right) {
+          if (left.first != right.first) {
+            return left.first > right.first;
+          }
+          return left.second < right.second;
+        });
+
+    const int n_to_report =
+        std::min(options.count, static_cast<int>(ranked_entries.size()));
+    std::cout << std::setprecision(12);
+    std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
+    std::cout << "mode = "
+              << (options.mode == Mode::Same ? "same" :
+                  (options.mode == Mode::Opposite ? "opposite" : "full"))
+              << '\n';
+    std::cout << "spin = " << (options.spin == Spin::Alpha ? "alpha" : "beta") << '\n';
+    std::cout << "determinant_index_left = " << options.determinant_index_left << '\n';
+    std::cout << "determinant_index_right = " << options.determinant_index_right << '\n';
+    std::cout << "baseline_same_spin_hamiltonian = " << baseline_hamiltonian << '\n';
+    std::cout << "finite_difference_step = " << options.step << '\n';
+    std::cout << "reported_entries = " << n_to_report << '\n';
+
+    for (int report_index = 0; report_index < n_to_report; ++report_index) {
+      const int entry_index = ranked_entries[static_cast<std::size_t>(report_index)].second;
+      std::vector<double> plus_overlap = baseline.active_orbital_overlap_matrix;
+      std::vector<double> minus_overlap = baseline.active_orbital_overlap_matrix;
+      plus_overlap[static_cast<std::size_t>(entry_index)] += options.step;
+      minus_overlap[static_cast<std::size_t>(entry_index)] -= options.step;
+      double plus_hamiltonian = 0.0;
+      double minus_hamiltonian = 0.0;
+      if (options.mode == Mode::Same) {
+        plus_hamiltonian = evaluate_same_spin_hamiltonian(
+            occupied_orbitals_left,
+            occupied_orbitals_right,
+            plus_overlap,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            options.algorithm);
+        minus_hamiltonian = evaluate_same_spin_hamiltonian(
+            occupied_orbitals_left,
+            occupied_orbitals_right,
+            minus_overlap,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            options.algorithm);
+      } else if (options.mode == Mode::Opposite) {
+        const auto& alpha_occupied_orbitals_left =
+            alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+        const auto& alpha_occupied_orbitals_right =
+            alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+        const auto& beta_occupied_orbitals_left =
+            beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+        const auto& beta_occupied_orbitals_right =
+            beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+        plus_hamiltonian = evaluate_opposite_spin_hamiltonian(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            plus_overlap,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            options.algorithm);
+        minus_hamiltonian = evaluate_opposite_spin_hamiltonian(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            minus_overlap,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            options.algorithm);
+      } else {
+        const auto& alpha_occupied_orbitals_left =
+            alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+        const auto& alpha_occupied_orbitals_right =
+            alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+        const auto& beta_occupied_orbitals_left =
+            beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+        const auto& beta_occupied_orbitals_right =
+            beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+        plus_hamiltonian = evaluate_full_pair_hamiltonian(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            plus_overlap,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            options.algorithm);
+        minus_hamiltonian = evaluate_full_pair_hamiltonian(
+            alpha_occupied_orbitals_left,
+            alpha_occupied_orbitals_right,
+            beta_occupied_orbitals_left,
+            beta_occupied_orbitals_right,
+            minus_overlap,
+            baseline.active_space_one_electron_result.active_one_electron_matrix,
+            n_active_orbitals,
+            baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+            options.algorithm);
+      }
+      const double finite_difference = (plus_hamiltonian - minus_hamiltonian) / (2.0 * options.step);
+      const double analytic = analytic_gradient[static_cast<std::size_t>(entry_index)];
+      const double absolute_error = std::abs(analytic - finite_difference);
+      const double relative_error =
+          absolute_error / std::max(1.0, std::abs(finite_difference));
+
+      std::cout << "entry[" << report_index << "]"
+                << " index=" << entry_index
+                << " analytic=" << analytic
+                << " fd=" << finite_difference
+                << " abs_error=" << absolute_error
+                << " rel_error=" << relative_error
+                << '\n';
+    }
+
+    return 0;
+  } catch (const std::exception& error) {
+    std::cerr << error.what() << '\n';
+    return 1;
+  }
+}

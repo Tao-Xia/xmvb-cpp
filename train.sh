@@ -1,0 +1,18 @@
+ ./.venv/bin/python -m deepVBH.train \
+    --data-root /home/xiatao/vb_project/xmvb-cpp/deepvbscf_data_f2_scan \
+    --model-type e3nn \
+    --gradient-target residual \
+    --dtype float32 \
+    --hidden-dim 64 \
+    --pair-hidden-dim 64 \
+    --num-radial 6 \
+    --lmax 2 \
+    --valid-fraction 0.125 \
+    --test-fraction 0.125 \
+    --max-steps-per-sample 8 \
+    --step-selection final \
+    --gradient-loss-interval 2 \
+    --cache-steps \
+    --preload-steps \
+    --scheduler plateau \
+    --checkpoint artifacts/deepVBH_f2_fast.pt

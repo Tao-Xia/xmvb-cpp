@@ -1,0 +1,14 @@
+name: xmvb-cpp-dev
+channels:
+  - conda-forge
+dependencies:
+  - cmake
+  - ninja
+  - c-compiler
+  - cxx-compiler
+  - pkg-config
+  - clang-tools
+  - eigen
+  - openblas
+  - libxc
+  - libcint

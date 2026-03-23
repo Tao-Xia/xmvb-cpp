@@ -1,0 +1,194 @@
+[
+  {
+    "sample_name": "F2_r1p100",
+    "bond_length": 1.1,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p100.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p150",
+    "bond_length": 1.15,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p150.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p200",
+    "bond_length": 1.2,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p200.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p250",
+    "bond_length": 1.25,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p250.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p300",
+    "bond_length": 1.3,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p300.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p350",
+    "bond_length": 1.35,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p350.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p400",
+    "bond_length": 1.4,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p400.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p450",
+    "bond_length": 1.45,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p450.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p500",
+    "bond_length": 1.5,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p500.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p550",
+    "bond_length": 1.55,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p550.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p600",
+    "bond_length": 1.6,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p600.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p650",
+    "bond_length": 1.65,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p650.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p700",
+    "bond_length": 1.7,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p700.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p750",
+    "bond_length": 1.75,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p750.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p800",
+    "bond_length": 1.8,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p800.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r1p900",
+    "bond_length": 1.9,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r1p900.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p000",
+    "bond_length": 2.0,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p000.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p100",
+    "bond_length": 2.1,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p100.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p200",
+    "bond_length": 2.2,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p200.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p300",
+    "bond_length": 2.3,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p300.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p400",
+    "bond_length": 2.4,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p400.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p500",
+    "bond_length": 2.5,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p500.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p600",
+    "bond_length": 2.6,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p600.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p700",
+    "bond_length": 2.7,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p700.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p800",
+    "bond_length": 2.8,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p800.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r2p900",
+    "bond_length": 2.9,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r2p900.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r3p000",
+    "bond_length": 3.0,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r3p000.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r3p200",
+    "bond_length": 3.2,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r3p200.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r3p400",
+    "bond_length": 3.4,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r3p400.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r3p600",
+    "bond_length": 3.6,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r3p600.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r3p800",
+    "bond_length": 3.8,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r3p800.xmi",
+    "copied_sidecars": []
+  },
+  {
+    "sample_name": "F2_r4p000",
+    "bond_length": 4.0,
+    "xmi_path": "/home/xiatao/vb_project/xmvb-cpp/generated_inputs/F2_scan/F2_r4p000.xmi",
+    "copied_sidecars": []
+  }
+]

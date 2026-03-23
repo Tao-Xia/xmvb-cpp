@@ -1,0 +1,1 @@
+rm *.mol *.tmp *.geo
