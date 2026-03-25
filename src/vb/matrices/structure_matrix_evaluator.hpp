@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vb/matrices/cpp_vb_input.hpp"
+#include "vb/matrices/prepared_active_space_context.hpp"
 #include "vb/matrices/full_structure_builder.hpp"
 #include "vb/matrices/structure_types.hpp"
 #include "vb/orbital/active_space_one_electron_builder.hpp"
@@ -47,6 +48,19 @@ public:
    */
   StructureAccumulationResult evaluate(
       const CppVbInput& input) const;
+
+  /**
+   * @brief Prepares the shared active-space intermediates used by matrix/SCF code.
+   */
+  PreparedActiveSpaceContext prepare_active_space(
+      const CppVbInput& input) const;
+
+  /**
+   * @brief Evaluates structure matrices from prebuilt active-space intermediates.
+   */
+  StructureAccumulationResult evaluate(
+      const CppVbInput& input,
+      const PreparedActiveSpaceContext& prepared_active_space) const;
 
 private:
   ActiveSpaceOrbitalPreparer orbital_preparer_;

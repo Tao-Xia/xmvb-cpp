@@ -45,7 +45,7 @@ struct FiniteDifferenceChainBreakdown {
 
 void print_usage() {
   std::cerr << "usage: check_cpp_auxiliary_gradient <input.xmi> "
-               "[--algorithm original|biorthogonal] "
+               "[--algorithm original] "
                "[--count N] [--step h]\n";
 }
 
@@ -63,8 +63,6 @@ Options parse_arguments(int argc, char** argv) {
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
         options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
-      } else if (argument_value == "biorthogonal") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Biorthogonal;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -121,7 +119,7 @@ double evaluate_total_energy_from_auxiliary(
       (input.orbital_preparation_input.n_total_electrons -
        input.orbital_preparation_input.n_active_electrons) / 2;
 
-  const Eigen::Map<const Matrix> active_orbital_overlap_matrix(
+  const Eigen::Map<const Matrix> active_orbital_overlap_input(
       input.orbital_preparation_input.active_orbital_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
@@ -133,7 +131,9 @@ double evaluate_total_energy_from_auxiliary(
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
   const Matrix active_orbital_overlap_matrix =
-      active_auxiliary_orbitals.transpose() * active_orbital_overlap_matrix * active_auxiliary_orbitals;
+      active_auxiliary_orbitals.transpose() *
+      active_orbital_overlap_input *
+      active_auxiliary_orbitals;
 
   xmvb::vb::ActiveSpaceOneElectronBuilder active_space_one_electron_builder;
   xmvb::vb::ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;
@@ -189,7 +189,7 @@ ActiveSpaceMatrices build_active_space_matrices(
       (input.orbital_preparation_input.n_total_electrons -
        input.orbital_preparation_input.n_active_electrons) / 2;
 
-  const Eigen::Map<const Matrix> active_orbital_overlap_matrix(
+  const Eigen::Map<const Matrix> active_orbital_overlap_input(
       input.orbital_preparation_input.active_orbital_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
@@ -201,7 +201,9 @@ ActiveSpaceMatrices build_active_space_matrices(
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
   const Matrix active_orbital_overlap_matrix =
-      active_auxiliary_orbitals.transpose() * active_orbital_overlap_matrix * active_auxiliary_orbitals;
+      active_auxiliary_orbitals.transpose() *
+      active_orbital_overlap_input *
+      active_auxiliary_orbitals;
 
   xmvb::vb::ActiveSpaceOneElectronBuilder active_space_one_electron_builder;
   xmvb::vb::ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;

@@ -11,9 +11,9 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/biorthogonal_spin_pair.hpp"
 #include "vb/matrices/determinant_overlap_resolver.hpp"
 #include "vb/matrices/full_structure_builder.hpp"
+#include "vb/matrices/spin_pair_utils.hpp"
 #include "vb/matrices/structure_types.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
@@ -37,7 +37,7 @@ struct StructurePairAdjoints {
 
 void print_usage() {
   std::cerr << "usage: check_active_overlap_split <input.xmi> "
-               "[--algorithm original|biorthogonal] "
+               "[--algorithm original] "
                "[--count N] [--step h]\n";
 }
 
@@ -55,8 +55,6 @@ Options parse_arguments(int argc, char** argv) {
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
         options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
-      } else if (argument_value == "biorthogonal") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Biorthogonal;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -210,64 +208,35 @@ int main(int argc, char** argv) {
         xmvb::vb::Matrix beta_same_spin_inverse_overlap_gradient;
         xmvb::vb::Matrix alpha_opposite_spin_inverse_overlap_gradient;
         xmvb::vb::Matrix beta_opposite_spin_inverse_overlap_gradient;
-        xmvb::vb::SameSpinBiorthogonalPhiResult alpha_phi_result;
-        xmvb::vb::SameSpinBiorthogonalPhiResult beta_phi_result;
-        double opposite_spin_phi = 0.0;
-        if (options.algorithm == xmvb::vb::VBSCFAlgorithm::Biorthogonal) {
-          alpha_phi_result = xmvb::vb::compute_same_spin_biorthogonal_phi(
-              load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
-              load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
-              baseline.active_space_one_electron_result.h1e_act,
-              n_active_orbitals,
-              baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
-              alpha_result,
-              &alpha_same_spin_inverse_overlap_gradient);
-          beta_phi_result = xmvb::vb::compute_same_spin_biorthogonal_phi(
-              load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
-              load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
-              baseline.active_space_one_electron_result.h1e_act,
-              n_active_orbitals,
-              baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
-              beta_result,
-              &beta_same_spin_inverse_overlap_gradient);
-          opposite_spin_phi = xmvb::vb::compute_opposite_spin_biorthogonal_phi(
-              load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
-              load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
-              alpha_result,
-              load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
-              load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
-              beta_result,
-              baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
-              &alpha_opposite_spin_inverse_overlap_gradient,
-              &beta_opposite_spin_inverse_overlap_gradient);
-        } else {
-          alpha_phi_result = xmvb::vb::compute_same_spin_original_phi(
-              load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
-              load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
-              baseline.active_space_one_electron_result.h1e_act,
-              n_active_orbitals,
-              baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
-              alpha_result,
-              &alpha_same_spin_inverse_overlap_gradient);
-          beta_phi_result = xmvb::vb::compute_same_spin_original_phi(
-              load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
-              load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
-              baseline.active_space_one_electron_result.h1e_act,
-              n_active_orbitals,
-              baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
-              beta_result,
-              &beta_same_spin_inverse_overlap_gradient);
-          opposite_spin_phi = xmvb::vb::compute_opposite_spin_original_phi(
-              load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
-              load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
-              alpha_result,
-              load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
-              load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
-              beta_result,
-              baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
-              &alpha_opposite_spin_inverse_overlap_gradient,
-              &beta_opposite_spin_inverse_overlap_gradient);
-        }
+        xmvb::vb::SameSpinPhiResult alpha_phi_result =
+            xmvb::vb::compute_same_spin_original_phi(
+                load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
+                load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
+                baseline.active_space_one_electron_result.h1e_act,
+                n_active_orbitals,
+                baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+                alpha_result,
+                &alpha_same_spin_inverse_overlap_gradient);
+        xmvb::vb::SameSpinPhiResult beta_phi_result =
+            xmvb::vb::compute_same_spin_original_phi(
+                load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
+                load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
+                baseline.active_space_one_electron_result.h1e_act,
+                n_active_orbitals,
+                baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+                beta_result,
+                &beta_same_spin_inverse_overlap_gradient);
+        const double opposite_spin_phi =
+            xmvb::vb::compute_opposite_spin_original_phi(
+                load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_left)],
+                load_result.input.structure_data.alpha_det[static_cast<std::size_t>(determinant_index_right)],
+                alpha_result,
+                load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_left)],
+                load_result.input.structure_data.beta_det[static_cast<std::size_t>(determinant_index_right)],
+                beta_result,
+                baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
+                &alpha_opposite_spin_inverse_overlap_gradient,
+                &beta_opposite_spin_inverse_overlap_gradient);
         const xmvb::vb::Matrix alpha_inverse_overlap_gradient =
             alpha_same_spin_inverse_overlap_gradient +
             alpha_opposite_spin_inverse_overlap_gradient;

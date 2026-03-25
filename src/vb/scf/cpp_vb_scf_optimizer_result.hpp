@@ -32,6 +32,21 @@ struct CppVbScfAcceptedIterationSnapshot {
   StructureAccumulationResult structure_matrices;
 
   /**
+   * @brief Column-major active-orbital overlap matrix `SSO` at this iterate.
+   */
+  std::vector<double> active_orbital_overlap_matrix;
+
+  /**
+   * @brief Column-major active-space effective one-electron matrix `HHO`.
+   */
+  std::vector<double> active_one_electron_integrals;
+
+  /**
+   * @brief Packed active-space two-electron integrals for reconstructing `J` and `K`.
+   */
+  std::vector<double> packed_active_two_electron_integrals;
+
+  /**
    * @brief Exact energy gradient with respect to `orbital_value_table`.
    */
   std::vector<double> sparse_orbital_energy_gradient;
@@ -50,6 +65,11 @@ struct CppVbScfAcceptedIterationSnapshot {
    * @brief Inactive-space reference energy `E11` at this accepted iterate.
    */
   double one_electron_reference_energy = 0.0;
+
+  /**
+   * @brief Scalar summary of the structure overlap matrix at this iterate.
+   */
+  double average_structure_overlap = 0.0;
 };
 
 /**

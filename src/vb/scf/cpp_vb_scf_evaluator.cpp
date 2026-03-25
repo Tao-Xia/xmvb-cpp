@@ -1,13 +1,7 @@
 #include "vb/scf/cpp_vb_scf_evaluator.hpp"
 
-
 #include <stdexcept>
 #include <utility>
-
-#include "vb/orbital/active_space_one_electron_builder.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/active_space_two_electron_builder.hpp"
-#include "vb/orbital/ao_effective_one_electron_builder.hpp"
 
 namespace xmvb::vb {
 
@@ -63,24 +57,6 @@ void validate_state_selection(
   }
 }
 
-double compute_one_electron_reference_energy(
-    const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_h1e,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
-    int n_basis_functions) {
-  double one_electron_reference_energy = 0.0;
-  for (int column = 0; column < n_basis_functions; ++column) {
-    for (int row = 0; row < n_basis_functions; ++row) {
-      const std::size_t index =
-          static_cast<std::size_t>(column) * n_basis_functions + row;
-      one_electron_reference_energy +=
-          inactive_density_matrix[index] *
-          (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
-    }
-  }
-  return one_electron_reference_energy;
-}
-
 }  // namespace
 
 CppVbScfEvaluator::CppVbScfEvaluator(VBSCFAlgorithm algorithm)
@@ -120,43 +96,12 @@ CppVbScfResult CppVbScfEvaluator::evaluate(
   result.nuclear_repulsion_energy = nuclear_repulsion_energy;
   result.selected_state_indices = selected_state_indices;
   result.state_average_weights = normalized_weights;
-  const int n_inactive_doubly_occupied_orbitals =
-      (input.orbital_preparation_input.n_total_electrons -
-       input.orbital_preparation_input.n_active_electrons) / 2;
-  ActiveSpaceOrbitalPreparer orbital_preparer;
-  AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;
-  ActiveSpaceOneElectronBuilder active_space_one_electron_builder;
-  ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;
-
-  const auto orbital_result =
-      orbital_preparer.prepare(input.orbital_preparation_input);
-  const auto ao_effective_one_electron_result =
-      ao_effective_one_electron_builder.build(
-          orbital_result.inactive_density_matrix,
-          input.ao_integral_input.ao_core_hamiltonian_matrix,
-          input.ao_integral_input.ao_two_electron_integral_values,
-          input.ao_integral_input.ao_two_electron_integral_indices,
-          input.ao_integral_input.n_basis_functions);
-  const auto active_space_one_electron_result =
-      active_space_one_electron_builder.build(
-          ao_effective_one_electron_result.ao_effective_h1e,
-          orbital_result.auxiliary_orbital_matrix,
-          input.ao_integral_input.n_basis_functions,
-          n_inactive_doubly_occupied_orbitals,
-          input.orbital_preparation_input.n_active_orbitals);
-  const auto active_space_two_electron_result =
-      active_space_two_electron_builder.build(
-          input.ao_integral_input.ao_two_electron_integral_values,
-          input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
-          input.ao_integral_input.n_basis_functions,
-          input.orbital_preparation_input.n_active_orbitals);
-  result.structure_matrices = matrix_evaluator_.evaluate(input);
-  result.one_electron_reference_energy = compute_one_electron_reference_energy(
-      orbital_result.inactive_density_matrix,
-      ao_effective_one_electron_result.ao_effective_h1e,
-      input.ao_integral_input.ao_core_hamiltonian_matrix,
-      input.ao_integral_input.n_basis_functions);
+  const auto prepared_active_space = matrix_evaluator_.prepare_active_space(input);
+  result.structure_matrices = matrix_evaluator_.evaluate(
+      input,
+      prepared_active_space);
+  result.one_electron_reference_energy =
+      prepared_active_space.one_electron_reference_energy;
   result.average_structure_overlap = compute_average_structure_overlap(
       result.structure_matrices.overlap_matrix,
       result.n_structures);

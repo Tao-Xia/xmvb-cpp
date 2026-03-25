@@ -26,13 +26,15 @@ find_path(EIGEN3_INCLUDE_DIR Eigen/Core
   REQUIRED)
 
 set(XMVB_CPP_CORE_SOURCES
-  vb/matrices/biorthogonal_spin_pair.cpp
   core/linear_algebra/generalized_eigensolver.cpp
   vb/matrices/determinant_hamiltonian_resolver.cpp
   vb/matrices/determinant_overlap_resolver.cpp
+  vb/matrices/full_determinant_pair_evaluator.cpp
   vb/matrices/full_structure_expander.cpp
   vb/matrices/full_structure_builder.cpp
   vb/matrices/hamiltonian_overlap_builder.cpp
+  vb/matrices/prepared_active_space_context.cpp
+  vb/matrices/spin_pair_utils.cpp
   vb/matrices/structure_matrix_evaluator.cpp
   vb/matrices/structure_subspace_builder.cpp
   vb/matrices/structure_hamiltonian_overlap_builder.cpp

@@ -1,8 +1,14 @@
 #include "runtime_c/local_runtime_api.h"
 
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -86,6 +92,45 @@ static void free_runtime_input_info(inp_info input_info) {
   free(input_info->froz_list);
   free(input_info->monomers);
   free(input_info);
+}
+
+static int parse_positive_env_int(const char* name) {
+  char* end = NULL;
+  const char* value = getenv(name);
+  long parsed = 0;
+
+  if (value == NULL || value[0] == '\0') {
+    return 0;
+  }
+
+  errno = 0;
+  parsed = strtol(value, &end, 10);
+  if (errno != 0 || end == value || *end != '\0' || parsed <= 0 || parsed > INT_MAX) {
+    return 0;
+  }
+
+  return (int)parsed;
+}
+
+static int resolve_runtime_thread_count(void) {
+  int thread_count = parse_positive_env_int("XMVB_CPP_NUM_THREADS");
+  if (thread_count > 0) {
+    return thread_count;
+  }
+
+  thread_count = parse_positive_env_int("OMP_NUM_THREADS");
+  if (thread_count > 0) {
+    return thread_count;
+  }
+
+#ifdef _OPENMP
+  thread_count = omp_get_max_threads();
+  if (thread_count > 0) {
+    return thread_count;
+  }
+#endif
+
+  return 1;
 }
 
 static int allocate_snapshot_buffers(
@@ -185,8 +230,8 @@ int xmvb_cpp_runtime_create(
   }
   handle->parallel_info->myproc = 0;
   handle->parallel_info->nprocs = 1;
-  handle->parallel_info->thread_num = 1;
-  handle->parallel_info->ncores = 1;
+  handle->parallel_info->thread_num = resolve_runtime_thread_count();
+  handle->parallel_info->ncores = handle->parallel_info->thread_num;
   init_xscf_world(handle->parallel_info->thread_num);
   handle->xscf_world_initialized = 1;
 

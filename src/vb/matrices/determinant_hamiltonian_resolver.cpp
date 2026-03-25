@@ -6,10 +6,8 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
-#include "vb/matrices/biorthogonal_spin_pair.hpp"
+#include "vb/matrices/spin_pair_utils.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
-
-
 
 namespace xmvb::vb {
 

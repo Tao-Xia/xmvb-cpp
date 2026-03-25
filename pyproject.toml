@@ -21,6 +21,7 @@ geom = [
 jax = [
   "jax>=0.5",
   "flax>=0.10",
+  "grain>=0.2",
   "optax>=0.2",
   "orbax-checkpoint>=0.6",
   "e3nn-jax>=0.20",
@@ -28,6 +29,7 @@ jax = [
 jax-cuda12 = [
   "jax[cuda12]>=0.5",
   "flax>=0.10",
+  "grain>=0.2",
   "optax>=0.2",
   "orbax-checkpoint>=0.6",
   "e3nn-jax>=0.20",
@@ -46,12 +48,12 @@ dev = [
 
 [project.scripts]
 deepvbh-train = "deepVBH.train:main"
-deepvbh-train-jax = "deepVBH.train_jax:main"
+deepvbh-train-jax = "deepvbh.train_jax:main"
 deepvbh-check-equivariance-jax = "deepVBH.check_equivariance_jax:main"
 deepvbh-export-onnx = "deepVBH.export_onnx:main"
 
 [tool.setuptools]
-packages = ["deepVBH"]
+packages = ["deepvbh"]
 
 [tool.uv]
 package = true

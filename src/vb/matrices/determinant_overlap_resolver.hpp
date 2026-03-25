@@ -31,7 +31,7 @@ public:
    * @param overlap_submatrix Column-major determinant overlap submatrix.
    * @param n_electrons Dimension of the square matrix.
    * @return DeterminantOverlapResult Thresholded nullity plus the full SVD
-   *   factors needed by the biorthogonal kernels.
+   *   factors needed by the determinant-level kernels.
    */
   DeterminantOverlapResult resolve(
       const std::vector<double>& overlap_submatrix,

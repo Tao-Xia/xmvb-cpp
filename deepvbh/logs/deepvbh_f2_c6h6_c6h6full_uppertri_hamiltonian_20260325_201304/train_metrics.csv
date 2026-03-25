@@ -1,0 +1,1 @@
+epoch,learning_rate,train_loss,train_mae,train_rmse,valid_loss,valid_mae,valid_rmse,test_loss,test_mae,test_rmse,best_valid_epoch,best_valid_loss,epoch_wall_time_seconds

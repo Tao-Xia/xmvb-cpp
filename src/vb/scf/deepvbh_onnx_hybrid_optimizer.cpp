@@ -85,6 +85,12 @@ CppVbScfAcceptedIterationSnapshot build_accepted_iteration_snapshot(
       input.orbital_preparation_input.orbital_value_table.begin(),
       input.orbital_preparation_input.orbital_value_table.end());
   snapshot.structure_matrices = gradient_result.scf_result.structure_matrices;
+  snapshot.active_orbital_overlap_matrix =
+      gradient_result.active_orbital_overlap_matrix;
+  snapshot.active_one_electron_integrals =
+      gradient_result.active_one_electron_integrals;
+  snapshot.packed_active_two_electron_integrals =
+      gradient_result.packed_active_two_electron_integrals;
   snapshot.sparse_orbital_energy_gradient =
       gradient_result.sparse_orbital_energy_gradient;
   snapshot.sparse_orbital_reference_energy_gradient =
@@ -92,6 +98,8 @@ CppVbScfAcceptedIterationSnapshot build_accepted_iteration_snapshot(
   snapshot.total_energy = gradient_result.scf_result.total_energy;
   snapshot.one_electron_reference_energy =
       gradient_result.scf_result.one_electron_reference_energy;
+  snapshot.average_structure_overlap =
+      gradient_result.scf_result.average_structure_overlap;
   return snapshot;
 }
 

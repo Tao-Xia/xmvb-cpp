@@ -1,1 +1,1 @@
-rm *.mol *.tmp *.geo
+rm *.mol *.tmp *.geo *.serr *.slog

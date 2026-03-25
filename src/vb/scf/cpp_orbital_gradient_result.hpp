@@ -85,6 +85,21 @@ struct CppOrbitalGradientResult {
   CppVbScfResult scf_result;
 
   /**
+   * @brief Column-major active-orbital overlap matrix `SSO`.
+   */
+  std::vector<double> active_orbital_overlap_matrix;
+
+  /**
+   * @brief Column-major active-space effective one-electron matrix `HHO`.
+   */
+  std::vector<double> active_one_electron_integrals;
+
+  /**
+   * @brief Packed active-space two-electron integrals used to derive `J` and `K`.
+   */
+  std::vector<double> packed_active_two_electron_integrals;
+
+  /**
    * @brief Historical configuration field retained for evaluator compatibility.
    */
   double finite_difference_step = 0.0;

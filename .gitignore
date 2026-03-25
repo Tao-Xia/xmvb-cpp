@@ -2,7 +2,10 @@ src/test_molecule
 deepvbscf_data_f2_scan
 artifacts/
 deepvbscf_data/
-build/
 .cache/
 .venv/
 .vscode/
+data/
+/export/home/xiatao/project/xmvb-cpp/build
+__pycache__/
+.cache/

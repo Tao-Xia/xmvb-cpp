@@ -1,4 +1,5 @@
 #include <cctype>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -12,6 +13,7 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/scf/deepvbh_onnx_direct_final_optimizer.hpp"
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
+#include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/scf/cpp_vb_scf_optimizer.hpp"
 
 namespace {
@@ -118,6 +120,212 @@ std::vector<int> collect_differentiable_parameter_indices(
   return differentiable_parameter_indices;
 }
 
+std::size_t packed_active_two_electron_size(int n_active_orbitals) {
+  if (n_active_orbitals <= 0) {
+    throw std::invalid_argument("n_active_orbitals must be positive");
+  }
+  return static_cast<std::size_t>(
+             xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
+                 n_active_orbitals - 1,
+                 n_active_orbitals - 1,
+                 n_active_orbitals - 1,
+                 n_active_orbitals - 1)) +
+      1;
+}
+
+std::vector<double> build_coulomb_diagonal_matrix(
+    const std::vector<double>& packed_active_two_electron_integrals,
+    int n_active_orbitals) {
+  const std::size_t expected_size =
+      packed_active_two_electron_size(n_active_orbitals);
+  if (packed_active_two_electron_integrals.size() != expected_size) {
+    throw std::runtime_error("packed_active_two_electron_integrals size mismatch");
+  }
+  std::vector<double> matrix(
+      static_cast<std::size_t>(n_active_orbitals) *
+          static_cast<std::size_t>(n_active_orbitals),
+      0.0);
+  for (int column = 0; column < n_active_orbitals; ++column) {
+    for (int row = 0; row < n_active_orbitals; ++row) {
+      const int packed_index =
+          xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
+              row,
+              row,
+              column,
+              column);
+      matrix[static_cast<std::size_t>(column) * n_active_orbitals + row] =
+          packed_active_two_electron_integrals[static_cast<std::size_t>(packed_index)];
+    }
+  }
+  return matrix;
+}
+
+std::vector<double> build_exchange_diagonal_matrix(
+    const std::vector<double>& packed_active_two_electron_integrals,
+    int n_active_orbitals) {
+  const std::size_t expected_size =
+      packed_active_two_electron_size(n_active_orbitals);
+  if (packed_active_two_electron_integrals.size() != expected_size) {
+    throw std::runtime_error("packed_active_two_electron_integrals size mismatch");
+  }
+  std::vector<double> matrix(
+      static_cast<std::size_t>(n_active_orbitals) *
+          static_cast<std::size_t>(n_active_orbitals),
+      0.0);
+  for (int column = 0; column < n_active_orbitals; ++column) {
+    for (int row = 0; row < n_active_orbitals; ++row) {
+      const int packed_index =
+          xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
+              row,
+              column,
+              column,
+              row);
+      matrix[static_cast<std::size_t>(column) * n_active_orbitals + row] =
+          packed_active_two_electron_integrals[static_cast<std::size_t>(packed_index)];
+    }
+  }
+  return matrix;
+}
+
+struct StructurePairTopology {
+  int n_active_beta_electrons = 0;
+  int n_open_shell_electrons = 0;
+  std::vector<int> structure_pair_orbital_indices;
+  std::vector<std::uint8_t> structure_pair_mask;
+  std::vector<int> structure_open_shell_orbitals;
+  std::vector<std::uint8_t> structure_open_shell_mask;
+};
+
+std::vector<int> build_local_active_structure_pair_indices(
+    const StructurePairTopology& topology,
+    int active_start,
+    int n_active_orbitals) {
+  std::vector<int> local_indices = topology.structure_pair_orbital_indices;
+  for (int& orbital_index : local_indices) {
+    const int local_index = orbital_index - active_start;
+    if (local_index < 0 || local_index >= n_active_orbitals) {
+      throw std::runtime_error(
+          "structure pair orbital index is outside the active orbital window");
+    }
+    orbital_index = local_index;
+  }
+  return local_indices;
+}
+
+std::vector<int> build_local_active_open_shell_orbitals(
+    const StructurePairTopology& topology,
+    int active_start,
+    int n_active_orbitals) {
+  std::vector<int> local_orbitals = topology.structure_open_shell_orbitals;
+  for (int& orbital_index : local_orbitals) {
+    const int local_index = orbital_index - active_start;
+    if (local_index < 0 || local_index >= n_active_orbitals) {
+      throw std::runtime_error(
+          "open-shell orbital index is outside the active orbital window");
+    }
+    orbital_index = local_index;
+  }
+  return local_orbitals;
+}
+
+std::vector<double> build_structure_occupancy(
+    const xmvb::vb::RawStructureData& raw_structure_data,
+    int n_orbitals) {
+  if (n_orbitals <= 0) {
+    throw std::invalid_argument("n_orbitals must be positive");
+  }
+  std::vector<double> occupancy(
+      static_cast<std::size_t>(raw_structure_data.n_structures) *
+          static_cast<std::size_t>(n_orbitals),
+      0.0);
+  for (int structure_index = 0;
+       structure_index < raw_structure_data.n_structures;
+       ++structure_index) {
+    const int* structure_orbitals =
+        raw_structure_data.structure_orbitals_data(structure_index);
+    for (int electron_index = 0;
+         electron_index < raw_structure_data.n_total_electrons;
+         ++electron_index) {
+      const int orbital_index = structure_orbitals[electron_index] - 1;
+      if (orbital_index < 0 || orbital_index >= n_orbitals) {
+        throw std::runtime_error(
+            "raw structure orbital index is out of range for structure occupancy");
+      }
+      occupancy[static_cast<std::size_t>(structure_index) * n_orbitals +
+                static_cast<std::size_t>(orbital_index)] += 1.0;
+    }
+  }
+  return occupancy;
+}
+
+StructurePairTopology build_structure_pair_topology(
+    const xmvb::vb::RawStructureData& raw_structure_data) {
+  StructurePairTopology topology;
+  const int n_inactive_doubly_occupied_orbitals =
+      (raw_structure_data.n_total_electrons - raw_structure_data.n_active_electrons) / 2;
+  topology.n_open_shell_electrons = raw_structure_data.spin_multiplicity - 1;
+  topology.n_active_beta_electrons =
+      (raw_structure_data.n_active_electrons - topology.n_open_shell_electrons) / 2;
+
+  const int active_start = 2 * n_inactive_doubly_occupied_orbitals;
+  const int active_stop = active_start + raw_structure_data.n_active_electrons;
+  if (active_start < 0 || active_stop > raw_structure_data.n_total_electrons) {
+    throw std::runtime_error("active-electron window is out of range for raw structures");
+  }
+
+  if (topology.n_active_beta_electrons > 0) {
+    topology.structure_pair_orbital_indices.resize(
+        static_cast<std::size_t>(raw_structure_data.n_structures) *
+            static_cast<std::size_t>(topology.n_active_beta_electrons) * 2,
+        0);
+    topology.structure_pair_mask.resize(
+        static_cast<std::size_t>(raw_structure_data.n_structures) *
+            static_cast<std::size_t>(topology.n_active_beta_electrons),
+        1);
+  }
+  if (topology.n_open_shell_electrons > 0) {
+    topology.structure_open_shell_orbitals.resize(
+        static_cast<std::size_t>(raw_structure_data.n_structures) *
+            static_cast<std::size_t>(topology.n_open_shell_electrons),
+        0);
+    topology.structure_open_shell_mask.resize(
+        static_cast<std::size_t>(raw_structure_data.n_structures) *
+            static_cast<std::size_t>(topology.n_open_shell_electrons),
+        1);
+  }
+
+  for (int structure_index = 0;
+       structure_index < raw_structure_data.n_structures;
+       ++structure_index) {
+    const int* structure_orbitals =
+        raw_structure_data.structure_orbitals_data(structure_index);
+    for (int pair_index = 0; pair_index < topology.n_active_beta_electrons; ++pair_index) {
+      const int left_orbital =
+          structure_orbitals[active_start + 2 * pair_index] - 1;
+      const int right_orbital =
+          structure_orbitals[active_start + 2 * pair_index + 1] - 1;
+      const std::size_t pair_offset =
+          (static_cast<std::size_t>(structure_index) * topology.n_active_beta_electrons +
+           static_cast<std::size_t>(pair_index)) *
+          2;
+      topology.structure_pair_orbital_indices[pair_offset] = left_orbital;
+      topology.structure_pair_orbital_indices[pair_offset + 1] = right_orbital;
+    }
+    for (int open_shell_index = 0;
+         open_shell_index < topology.n_open_shell_electrons;
+         ++open_shell_index) {
+      const int orbital_index =
+          structure_orbitals[active_start + 2 * topology.n_active_beta_electrons +
+                             open_shell_index] -
+          1;
+      topology.structure_open_shell_orbitals[
+          static_cast<std::size_t>(structure_index) * topology.n_open_shell_electrons +
+          static_cast<std::size_t>(open_shell_index)] = orbital_index;
+    }
+  }
+  return topology;
+}
+
 fs::path reserve_sample_directory(
     const fs::path& dataset_root,
     const fs::path& input_file_path) {
@@ -220,9 +428,33 @@ public:
     const fs::path step_dir = steps_dir_ / step_name;
     fs::create_directories(step_dir);
 
+    const std::vector<double> coulomb_diagonal_matrix =
+        build_coulomb_diagonal_matrix(
+            snapshot.packed_active_two_electron_integrals,
+            n_active_orbitals_);
+    const std::vector<double> exchange_diagonal_matrix =
+        build_exchange_diagonal_matrix(
+            snapshot.packed_active_two_electron_integrals,
+            n_active_orbitals_);
+
     write_binary_container(
         step_dir / "orbital_value_table_f64.bin",
         snapshot.orbital_value_table);
+    write_binary_container(
+        step_dir / "active_orbital_overlap_matrix_f64.bin",
+        snapshot.active_orbital_overlap_matrix);
+    write_binary_container(
+        step_dir / "active_one_electron_integrals_f64.bin",
+        snapshot.active_one_electron_integrals);
+    write_binary_container(
+        step_dir / "packed_active_two_electron_integrals_f64.bin",
+        snapshot.packed_active_two_electron_integrals);
+    write_binary_container(
+        step_dir / "coulomb_diagonal_matrix_f64.bin",
+        coulomb_diagonal_matrix);
+    write_binary_container(
+        step_dir / "exchange_diagonal_matrix_f64.bin",
+        exchange_diagonal_matrix);
     write_binary_container(
         step_dir / "overlap_matrix_f64.bin",
         snapshot.structure_matrices.overlap_matrix);
@@ -238,6 +470,9 @@ public:
     write_binary_container(
         step_dir / "sparse_orbital_reference_energy_gradient_f64.bin",
         snapshot.sparse_orbital_reference_energy_gradient);
+    write_binary_container(
+        step_dir / "average_structure_overlap_f64.bin",
+        std::vector<double>{snapshot.average_structure_overlap});
 
     std::ostringstream metadata_stream;
     metadata_stream << "{\n"
@@ -247,9 +482,16 @@ public:
                     << snapshot.total_energy << ",\n"
                     << "  \"one_electron_reference_energy\": " << std::setprecision(17)
                     << snapshot.one_electron_reference_energy << ",\n"
+                    << "  \"average_structure_overlap\": " << std::setprecision(17)
+                    << snapshot.average_structure_overlap << ",\n"
                     << "  \"n_orbitals\": " << n_orbitals_ << ",\n"
+                    << "  \"n_active_orbitals\": " << n_active_orbitals_ << ",\n"
                     << "  \"n_basis_functions\": " << n_basis_functions_ << ",\n"
                     << "  \"n_structures\": " << n_structures_ << ",\n"
+                    << "  \"active_feature_matrix_layout\": ["
+                    << n_active_orbitals_ << ", " << n_active_orbitals_ << "],\n"
+                    << "  \"packed_active_two_electron_integral_count\": "
+                    << snapshot.packed_active_two_electron_integrals.size() << ",\n"
                     << "  \"n_differentiable_parameters\": "
                     << differentiable_parameter_count_ << "\n"
                     << "}\n";
@@ -270,11 +512,49 @@ private:
   void write_static_files(
       const xmvb::vb::CppVbInputLoadResult& load_result) const {
     const auto& static_molecule_metadata = load_result.static_molecule_metadata;
+    const auto structure_occupancy = build_structure_occupancy(
+        load_result.raw_structure_data,
+        n_orbitals_);
+    const auto structure_pair_topology =
+        build_structure_pair_topology(load_result.raw_structure_data);
+    const int active_start =
+        (n_total_electrons_ - n_active_electrons_) / 2;
+    const auto local_structure_pair_indices =
+        build_local_active_structure_pair_indices(
+            structure_pair_topology,
+            active_start,
+            n_active_orbitals_);
+    const auto local_structure_open_shell_orbitals =
+        build_local_active_open_shell_orbitals(
+            structure_pair_topology,
+            active_start,
+            n_active_orbitals_);
     const auto differentiable_parameter_indices =
         collect_differentiable_parameter_indices(load_result.input.orbital_preparation_input);
     write_binary_container(
         static_dir_ / "raw_structure_orbitals_i32.bin",
         load_result.raw_structure_data.raw_structure_orbitals);
+    write_binary_container(
+        static_dir_ / "structure_occupancy_f64.bin",
+        structure_occupancy);
+    write_binary_container(
+        static_dir_ / "structure_pair_orbital_indices_i32.bin",
+        structure_pair_topology.structure_pair_orbital_indices);
+    write_binary_container(
+        static_dir_ / "structure_pair_active_orbital_indices_i32.bin",
+        local_structure_pair_indices);
+    write_binary_container(
+        static_dir_ / "structure_pair_mask_u8.bin",
+        structure_pair_topology.structure_pair_mask);
+    write_binary_container(
+        static_dir_ / "structure_open_shell_orbitals_i32.bin",
+        structure_pair_topology.structure_open_shell_orbitals);
+    write_binary_container(
+        static_dir_ / "structure_open_shell_active_orbitals_i32.bin",
+        local_structure_open_shell_orbitals);
+    write_binary_container(
+        static_dir_ / "structure_open_shell_mask_u8.bin",
+        structure_pair_topology.structure_open_shell_mask);
     write_binary_container(
         static_dir_ / "atomic_numbers_i32.bin",
         static_molecule_metadata.atomic_numbers);
@@ -331,8 +611,32 @@ private:
                     << "  \"n_shells\": " << n_shells_ << ",\n"
                     << "  \"n_basis_functions\": " << n_basis_functions_ << ",\n"
                     << "  \"n_orbitals\": " << n_orbitals_ << ",\n"
+                    << "  \"n_active_orbitals\": " << n_active_orbitals_ << ",\n"
+                    << "  \"active_orbital_start_index\": " << active_start << ",\n"
                     << "  \"n_differentiable_parameters\": "
                     << differentiable_parameter_count_ << ",\n"
+                    << "  \"raw_structure_orbitals_layout\": ["
+                    << n_structures_ << ", " << n_total_electrons_ << "],\n"
+                    << "  \"structure_occupancy_layout\": ["
+                    << n_structures_ << ", " << n_orbitals_ << "],\n"
+                    << "  \"structure_pair_orbital_indices_layout\": ["
+                    << n_structures_ << ", "
+                    << structure_pair_topology.n_active_beta_electrons << ", 2],\n"
+                    << "  \"structure_pair_active_orbital_indices_layout\": ["
+                    << n_structures_ << ", "
+                    << structure_pair_topology.n_active_beta_electrons << ", 2],\n"
+                    << "  \"structure_pair_mask_layout\": ["
+                    << n_structures_ << ", "
+                    << structure_pair_topology.n_active_beta_electrons << "],\n"
+                    << "  \"structure_open_shell_orbitals_layout\": ["
+                    << n_structures_ << ", "
+                    << structure_pair_topology.n_open_shell_electrons << "],\n"
+                    << "  \"structure_open_shell_active_orbitals_layout\": ["
+                    << n_structures_ << ", "
+                    << structure_pair_topology.n_open_shell_electrons << "],\n"
+                    << "  \"structure_open_shell_mask_layout\": ["
+                    << n_structures_ << ", "
+                    << structure_pair_topology.n_open_shell_electrons << "],\n"
                     << "  \"atomic_coordinate_unit\": \"bohr\",\n"
                     << "  \"atomic_coordinates_layout\": ["
                     << n_atoms_ << ", 3],\n"
@@ -466,10 +770,6 @@ void apply_algorithm_argument(
     options->algorithm = xmvb::vb::VBSCFAlgorithm::Original;
     return;
   }
-  if (algorithm_name == "biorthogonal") {
-    options->algorithm = xmvb::vb::VBSCFAlgorithm::Biorthogonal;
-    return;
-  }
   throw std::invalid_argument("invalid algorithm: " + algorithm_name);
 }
 
@@ -488,7 +788,7 @@ void print_usage() {
           xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
     std::cerr << "|deepvbh_onnx_direct_final";
   }
-  std::cerr << "] [--algorithm original|biorthogonal]"
+  std::cerr << "] [--algorithm original]"
                " [--dump-trace-dir <dataset_root>]"
                " [--onnx-model <path>]"
                " [--ml-initial-step-scale <value>]"

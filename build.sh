@@ -5,11 +5,34 @@ build_dir="${1:-build}"
 build_type="${CMAKE_BUILD_TYPE:-Release}"
 jobs="${XMVB_BUILD_JOBS:-4}"
 extra_args=("${@:2}")
+repo_root="$(pwd -P)"
+build_profile="${XMVB_CPP_BUILD_PROFILE:-auto}"
 
 parse_cache_value() {
   local cache_file="$1"
   local key="$2"
   sed -n "s#^${key}:[^=]*=##p" "${cache_file}" | head -n 1
+}
+
+has_cmake_arg_key() {
+  local key="$1"
+  local arg=""
+  for arg in "${extra_args[@]}"; do
+    case "${arg}" in
+      -D"${key}"=*|-D"${key}":*=*)
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+append_default_cmake_arg() {
+  local key="$1"
+  local value="$2"
+  if ! has_cmake_arg_key "${key}"; then
+    extra_args+=("-D${key}=${value}")
+  fi
 }
 
 append_candidate_prefix_from_arg() {
@@ -145,6 +168,69 @@ selected_cc="${CC:-}"
 selected_cxx="${CXX:-}"
 candidate_prefixes=()
 value=""
+slater_profile_enabled=""
+slater_gentoo_prefix=""
+slater_dependency_prefix=""
+slater_onnx_root=""
+
+apply_slater_build_profile() {
+  case "${build_profile}" in
+    auto)
+      case "${repo_root}" in
+        /export/home/xiatao/project/xmvb-cpp|/pool1/home/xiatao/project/xmvb-cpp)
+          ;;
+        *)
+          return 0
+          ;;
+      esac
+      ;;
+    slater)
+      ;;
+    off|disabled|manual)
+      return 0
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  slater_gentoo_prefix="/export/home/lxyan/gentoo"
+  slater_dependency_prefix="/export/home/xiatao/miniconda3/envs/xmvb-dev"
+  slater_onnx_root="${repo_root}/third_party/onnxruntime-linux-x64-1.20.1"
+
+  if [[ ! -x "${slater_gentoo_prefix}/usr/bin/gcc" ||
+        ! -x "${slater_gentoo_prefix}/usr/bin/g++" ||
+        ! -d "${slater_dependency_prefix}" ||
+        ! -d "${slater_onnx_root}" ]]; then
+    return 0
+  fi
+
+  if [[ -z "${selected_cc}" ]]; then
+    selected_cc="${slater_gentoo_prefix}/usr/bin/gcc"
+  fi
+  if [[ -z "${selected_cxx}" ]]; then
+    selected_cxx="${slater_gentoo_prefix}/usr/bin/g++"
+  fi
+
+  append_default_cmake_arg LAPACK_ROOT_DIR "${slater_dependency_prefix}"
+  append_default_cmake_arg LIBXC_ROOT_DIR "${slater_dependency_prefix}"
+  append_default_cmake_arg CINT_ROOT_DIR "${slater_dependency_prefix}"
+  append_default_cmake_arg EIGEN3_ROOT_DIR "${slater_dependency_prefix}"
+  append_default_cmake_arg ONNXRUNTIME_ROOT_DIR "${slater_onnx_root}"
+  append_default_cmake_arg XMVB_CPP_ENABLE_ONNX_RUNTIME ON
+
+  slater_profile_enabled="1"
+}
+
+apply_slater_build_profile
+
+if [[ -n "${slater_profile_enabled}" ]]; then
+  echo "Using slater build profile:"
+  echo "  repo_root=${repo_root}"
+  echo "  gentoo_prefix=${slater_gentoo_prefix}"
+  echo "  dependency_prefix=${slater_dependency_prefix}"
+  echo "  onnxruntime_root=${slater_onnx_root}"
+fi
 
 if [[ -z "${selected_cc}" || -z "${selected_cxx}" ]]; then
   detect_preferred_compilers || true

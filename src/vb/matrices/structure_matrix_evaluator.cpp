@@ -25,43 +25,31 @@ StructureMatrixEvaluator::
 
 StructureAccumulationResult StructureMatrixEvaluator::evaluate(
     const CppVbInput& input) const {
-  const int n_inactive_doubly_occupied_orbitals =
-      (input.orbital_preparation_input.n_total_electrons -
-       input.orbital_preparation_input.n_active_electrons) /
-      2;
+  const auto prepared_active_space = prepare_active_space(input);
+  return evaluate(input, prepared_active_space);
+}
 
-  const auto orbital_result =
-      orbital_preparer_.prepare(input.orbital_preparation_input);
-  const auto ao_effective_one_electron_result =
-      ao_effective_one_electron_builder_.build(
-          orbital_result.inactive_density_matrix,
-          input.ao_integral_input.ao_core_hamiltonian_matrix,
-          input.ao_integral_input.ao_two_electron_integral_values,
-          input.ao_integral_input.ao_two_electron_integral_indices,
-          input.ao_integral_input.n_basis_functions);
-  const auto active_space_one_electron_result =
-      active_space_one_electron_builder_.build(
-          ao_effective_one_electron_result.ao_effective_h1e,
-          orbital_result.auxiliary_orbital_matrix,
-          input.ao_integral_input.n_basis_functions,
-          n_inactive_doubly_occupied_orbitals,
-          input.orbital_preparation_input.n_active_orbitals);
-  const auto active_space_two_electron_result =
-      active_space_two_electron_builder_.build(
-          input.ao_integral_input.ao_two_electron_integral_values,
-          input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
-          input.ao_integral_input.n_basis_functions,
-          input.orbital_preparation_input.n_active_orbitals);
+PreparedActiveSpaceContext StructureMatrixEvaluator::prepare_active_space(
+    const CppVbInput& input) const {
+  return prepare_active_space_context(
+      input,
+      orbital_preparer_,
+      ao_effective_one_electron_builder_,
+      active_space_one_electron_builder_,
+      active_space_two_electron_builder_);
+}
 
+StructureAccumulationResult StructureMatrixEvaluator::evaluate(
+    const CppVbInput& input,
+    const PreparedActiveSpaceContext& prepared_active_space) const {
   return structure_builder_.build(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
       input.structure_data.determinant_to_structure_terms,
-      orbital_result.active_orbital_overlap_matrix,
-      active_space_one_electron_result.h1e_act,
+      prepared_active_space.orbital_result.active_orbital_overlap_matrix,
+      prepared_active_space.active_space_one_electron_result.h1e_act,
       input.orbital_preparation_input.n_active_orbitals,
-      active_space_two_electron_result.packed_active_two_electron_integrals,
+      prepared_active_space.active_space_two_electron_result.packed_active_two_electron_integrals,
       input.structure_data.n_structures);
 }
 

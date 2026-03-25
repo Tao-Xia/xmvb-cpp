@@ -3,12 +3,23 @@
 #include <vector>
 
 #include "vb/matrices/determinant_hamiltonian_resolver.hpp"
+#include "vb/matrices/full_determinant_pair_evaluator.hpp"
 #include "vb/matrices/determinant_overlap_resolver.hpp"
 #include "vb/matrices/structure_pair_accumulator.hpp"
 #include "vb/matrices/structure_types.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace xmvb::vb {
+
+struct FullDeterminantStructureBuildResult {
+  int n_determinants = 0;
+  StructureAccumulationResult structure_matrices;
+  std::vector<FullDeterminantPairEvaluation> pair_evaluations;
+
+  const FullDeterminantPairEvaluation& pair_evaluation(
+      int determinant_index_left,
+      int determinant_index_right) const;
+};
 /**
  * @brief Builds full structure Hamiltonian and overlap matrices from full determinants.
  *
@@ -66,6 +77,16 @@ public:
       const std::vector<double>& eri_act,
       int n_structures) const;
 
+  FullDeterminantStructureBuildResult build_with_pair_evaluations(
+      const std::vector<std::vector<int>>& alpha_det,
+      const std::vector<std::vector<int>>& beta_det,
+      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+      const std::vector<double>& ovlp_act,
+      const std::vector<double>& h1e_act,
+      int n_orbitals,
+      const std::vector<double>& eri_act,
+      int n_structures) const;
+
   /**
    * @brief Builds structure-level matrices from an explicit input object.
    *
@@ -73,6 +94,9 @@ public:
    * @return StructureAccumulationResult Structure Hamiltonian and overlap matrices.
    */
   StructureAccumulationResult build(const FullDeterminantStructureData& input) const;
+
+  FullDeterminantStructureBuildResult build_with_pair_evaluations(
+      const FullDeterminantStructureData& input) const;
 
 private:
   DeterminantOverlapResolver determinant_overlap_resolver_;

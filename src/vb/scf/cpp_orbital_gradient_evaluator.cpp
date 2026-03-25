@@ -282,6 +282,13 @@ CppOrbitalGradientResult CppOrbitalGradientEvaluator::evaluate(
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
   result.finite_difference_step = finite_difference_step_;
   result.scf_result = active_space_gradient_result.scf_result;
+  result.active_orbital_overlap_matrix =
+      active_space_gradient_result.active_orbital_overlap_matrix;
+  result.active_one_electron_integrals =
+      active_space_gradient_result.active_space_one_electron_result.h1e_act;
+  result.packed_active_two_electron_integrals =
+      active_space_gradient_result.active_space_two_electron_result
+          .packed_active_two_electron_integrals;
   result.sparse_orbital_energy_gradient =
       orbital_backpropagation_result.orbital_value_gradient;
   result.sparse_orbital_reference_energy_gradient =

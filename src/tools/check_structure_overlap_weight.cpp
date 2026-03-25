@@ -23,7 +23,7 @@ struct Options {
 
 void print_usage() {
   std::cerr << "usage: check_structure_overlap_weight <input.xmi> "
-               "[--algorithm original|biorthogonal] "
+               "[--algorithm original] "
                "[--count N] [--step h]\n";
 }
 
@@ -41,8 +41,6 @@ Options parse_arguments(int argc, char** argv) {
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
         options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
-      } else if (argument_value == "biorthogonal") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Biorthogonal;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
