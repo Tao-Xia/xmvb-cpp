@@ -1,0 +1,3 @@
+[submodule "src/third_party/LBFGSpp"]
+  path = src/third_party/LBFGSpp
+  url = https://github.com/yixuan/LBFGSpp.git
