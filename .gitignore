@@ -57,3 +57,33 @@ fort.*
 !test/*.xmi
 !test_molecule/*.sh
 !test_molecule/*.xmi
+
+# Local research notes and scratch artifacts that should stay outside the
+# benchmark-code baseline.
+1.md
+1.py
+FURTHER_OPTIMIZATIONS.md
+Nonorthogonal orbital based N-body reduced density.pdf
+OPTIMIZATION_SAME_SPIN_CACHE_RI.md
+PERFORMANCE_BOTTLENECK_ANALYSIS.md
+Pfaffian_VBSCF.tex
+Pfaffian_VBSCF_II.tex
+SAME_SPIN_CACHE_ANALYSIS.md
+TNHVP_VBSCF.tex
+biorthogonal_vbscf_formulas.md
+biorthogonal_vbscf_framework.md
+biorthogonal_vbscf_lit_review.md
+figures/
+hvp/
+orbital_view.ipynb
+out_respon.md
+pfaffian_ansatz_feasibility.md
+pfaffian_vbscf.md
+problem.md
+test_same_spin_cache_debug.cpp
+tnhvp-optim-2.md
+tnhvp-optim-3.md
+tnhvp-optim-4.md
+tnhvp-optim.md
+vb_pdft.md
+毕业论文.md
