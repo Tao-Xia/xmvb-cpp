@@ -63,7 +63,14 @@ do
 shift
 done
 
-if [ -z ${program_version} ]; then
+if [[ $# -lt 1 ]]; then
+    echo "usage: sbatch -c <threads> xmvb.sh [--version <version>] <input.xmi>" >&2
+    exit 1
+fi
+
+INPUT_FILE="$1"
+
+if [ -z "${program_version:-}" ]; then
     program_version="latest"
 fi
 
@@ -74,7 +81,7 @@ PROGRAM_PATH_6526Y="/share/6526Y_apps/xmvb/${program_version}/"
 module rm anaconda
 module rm gcc/10.3.0
 
-grep -q 'opt=gaussian' ${INPUT_FILE} && GAUSS_OPT=1 || GAUSS_OPT=0
+grep -q 'opt=gaussian' "${INPUT_FILE}" && GAUSS_OPT=1 || GAUSS_OPT=0
 
 if [ ${GAUSS_OPT} -eq 0 ]; then
     if [ ${SLURM_JOB_PARTITION} == "pc" ]; then
@@ -100,7 +107,6 @@ else
     
 fi
 
-INPUT_FILE=$1
 JOB_ID=${SLURM_JOB_ID}
 JOB_NAME=${SLURM_JOB_NAME}
 NP=${SLURM_CPUS_PER_TASK}
@@ -172,5 +178,4 @@ done
 cd ${SUBMIT_DIR}
 
 touch $RUNDIR/_OK
-
 
