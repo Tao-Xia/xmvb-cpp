@@ -33,10 +33,29 @@ struct DeterminantOverlapResult {
   int nullity = 0;
 
   /**
+   * @brief Cached inverse overlap submatrix for regular determinant pairs.
+   *
+   * When `nullity == 0`, the resolver may populate this matrix directly from a
+   * fast LU path instead of storing a full SVD. Singular pairs leave this
+   * matrix empty.
+   */
+  Eigen::MatrixXd inverse_overlap_submatrix;
+
+  /**
+   * @brief Cached first deleted-minor matrix for nullity-0/1 determinant pairs.
+   *
+   * This uses the internal convention "rows = right determinant, columns =
+   * left determinant". The same matrix is reused by same-spin Hamiltonian
+   * assembly, opposite-spin coupling, and active-space gradient accumulation.
+   * Rank-deficient pairs with `nullity >= 2` leave this matrix empty.
+   */
+  Eigen::MatrixXd first_order_cofactor_matrix;
+
+  /**
    * @brief Singular values of the determinant overlap submatrix.
    *
-   * The singular values are stored in the same descending order returned by
-   * `Eigen::JacobiSVD`.
+   * Singular pairs may require a full SVD. Regular pairs resolved through the
+   * LU fast path leave this vector empty.
    */
   Eigen::VectorXd singular_values;
 
@@ -45,14 +64,16 @@ struct DeterminantOverlapResult {
    *
    * The overlap matrix uses the internal convention "rows = right determinant,
    * columns = left determinant", so `matrix_U` spans the right-determinant
-   * occupied space.
+   * occupied space. Regular pairs resolved through the LU fast path leave this
+   * matrix empty.
    */
   Eigen::MatrixXd matrix_U;
 
   /**
    * @brief Right singular vectors of the overlap submatrix.
    *
-   * `matrix_V` spans the left-determinant occupied space.
+   * `matrix_V` spans the left-determinant occupied space. Regular pairs
+   * resolved through the LU fast path leave this matrix empty.
    */
   Eigen::MatrixXd matrix_V;
 
@@ -117,6 +138,33 @@ struct DeterminantPairInput {
    * @brief Column-major determinant overlap submatrix between occupied orbitals.
    */
   std::vector<double> det_ovlp_mat;
+};
+
+/**
+ * @brief Sparse packed active-pair vector plus its dense projected image.
+ *
+ * `packed_pair_indices[k]` and `packed_pair_values[k]` store one nonzero entry
+ * of the regrouped opposite-spin coefficient vector. `projected_pair_values`
+ * stores the dense contraction of that sparse vector with the active-space
+ * packed-pair kernel.
+ */
+struct OppositeSpinPackedPairProjection {
+  std::vector<int> packed_pair_indices;
+  std::vector<double> packed_pair_values;
+  std::vector<double> projected_pair_values;
+};
+
+/**
+ * @brief Exact packed-pair caches reused by opposite-spin forward/backward paths.
+ *
+ * `first_order_cofactor_projection` is available for determinant pairs with
+ * `nullity <= 1`. `inverse_overlap_projection` is available only for regular
+ * determinant pairs with `nullity == 0`.
+ */
+struct OppositeSpinPairCache {
+  int n_packed_active_pairs = 0;
+  OppositeSpinPackedPairProjection first_order_cofactor_projection;
+  OppositeSpinPackedPairProjection inverse_overlap_projection;
 };
 
 }  // namespace xmvb::vb

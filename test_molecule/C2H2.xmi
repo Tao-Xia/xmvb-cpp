@@ -1,0 +1,48 @@
+C2H2
+$ctrl
+vbscf
+str=full
+nao=4
+nae=4
+iscf=5
+iprint=3
+orbtyp=hao
+frgtyp=atom
+int=libcint 
+basis=cc-pVDZ
+itmax=2000
+molden
+guess=mo
+$end
+
+$orb
+2 2 2 1 1 1*4
+1 2
+1 3
+2 4
+1
+2
+1   # active orbital start
+2
+1
+2
+$end
+
+$geo
+C    0.000000000   0.000000000   0.602483000
+C    0.000000000   0.000000000  -0.602483000
+H    0.000000000   0.000000000   1.669115000
+H    0.000000000   0.000000000  -1.669115000
+$end
+
+$GUS
+1 5
+2 3
+3 4
+4 1
+5 2
+6 6 
+7 6
+8 7 
+9 7
+$end

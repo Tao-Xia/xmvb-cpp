@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include "vb/matrices/cpp_vb_input.hpp"
+#include "vb/orbital/active_space_two_electron_result.hpp"
 #include "vb/orbital/orbital_preparation_result.hpp"
 #include "vb/orbital/active_space_two_electron_backpropagation_result.hpp"
 
@@ -12,7 +14,7 @@ namespace xmvb::vb {
  *
  * Given the objective gradient with respect to the packed active-space
  * two-electron integrals `GGO`, this class computes the induced gradient with
- * respect to the full auxiliary orbital matrix.
+ * respect to the active auxiliary block.
  */
 class ActiveSpaceTwoElectronBackpropagator {
 public:
@@ -33,6 +35,32 @@ public:
       const std::vector<double>& ao_two_electron_integral_values,
       const std::vector<int>& ao_two_electron_integral_indices,
       const std::vector<double>& auxiliary_orbital_matrix,
+      int n_basis_functions,
+      int n_inactive_doubly_occupied_orbitals,
+      int n_active_orbitals) const;
+
+  /**
+   * @brief Backpropagates the packed active-space two-electron adjoint using precomputed sparse active coefficients.
+   */
+  ActiveSpaceTwoElectronBackpropagationResult backpropagate(
+      const std::vector<double>& packed_active_two_electron_gradient,
+      const std::vector<double>& ao_two_electron_integral_values,
+      const std::vector<int>& ao_two_electron_integral_indices,
+      const OrbitalPreparationResult& orbital_preparation_result,
+      const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+      int n_basis_functions,
+      int n_inactive_doubly_occupied_orbitals,
+      int n_active_orbitals) const;
+
+  /**
+   * @brief Backpropagates RI active-pair-factor adjoints using the cached
+   * molecule-static AO-side RI factors.
+   */
+  ActiveSpaceTwoElectronBackpropagationResult backpropagate(
+      const std::vector<double>& ri_active_pair_factor_gradient,
+      const CppVbInput& input,
+      const OrbitalPreparationResult& orbital_preparation_result,
+      const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,
       int n_active_orbitals) const;

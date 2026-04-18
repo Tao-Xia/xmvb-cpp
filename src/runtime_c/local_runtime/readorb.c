@@ -167,7 +167,8 @@ int readorb(char *inpname, vb_info vb_str) {
 
   memcpy(vb_str->ma,vb_str->ma0,nor*sizeof(int));
 
-  if (vb_str->orbtyp!=HAO_TYP) {
+  if (vb_str->orbtyp!=HAO_TYP &&
+      !vb_str->preserve_explicit_sparse_orbital_layout) {
     for (int i=0;i<nor;i++) {
       if (vb_str->ma[i]==1)
         vb_str->ma0[i]=0;

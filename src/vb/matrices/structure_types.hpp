@@ -51,11 +51,6 @@ struct StructureAccumulationResult {
   std::vector<double> hamiltonian_matrix;
 
   /**
-   * @brief Structure one-electron Hamiltonian matrix.
-   */
-  std::vector<double> one_electron_hamiltonian_matrix;
-
-  /**
    * @brief Determinant overlap cache used by the legacy implementation.
    *
    * For diagonal determinant pairs this stores the overlap determinant at the
@@ -115,14 +110,14 @@ struct RawStructureData {
   std::vector<int> raw_structure_orbitals;
 
   std::size_t flat_orbital_count() const {
-    return static_cast<std::size_t>(n_structures) *
-           static_cast<std::size_t>(n_total_electrons);
+    return xmvb::to_size(n_structures) *
+           xmvb::to_size(n_total_electrons);
   }
 
   const int* structure_orbitals_data(int structure_index) const {
     return raw_structure_orbitals.data() +
-           static_cast<std::size_t>(structure_index) *
-               static_cast<std::size_t>(n_total_electrons);
+           xmvb::to_size(structure_index) *
+               xmvb::to_size(n_total_electrons);
   }
 };
 

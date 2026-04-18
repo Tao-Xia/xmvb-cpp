@@ -1,10 +1,15 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 
+#include "vb/orbital/ao_effective_one_electron_result.hpp"
+#include "vb/orbital/orbital_preparation_result.hpp"
 #include "vb/scf/cpp_vb_scf_result.hpp"
 
 namespace xmvb::vb {
+
+struct CppActiveSpaceSecondOrderContext;
 
 /**
  * @brief Result of the C++ orbital-gradient evaluation.
@@ -85,6 +90,19 @@ struct CppOrbitalGradientResult {
   CppVbScfResult scf_result;
 
   /**
+   * @brief Cached orbital-preparation intermediates for optional follow-on work.
+   *
+   * The optimizer uses this to defer expensive accepted-iterate-only outputs
+   * such as the exact `E11` orbital gradient.
+   */
+  OrbitalPreparationResult orbital_preparation_result;
+
+  /**
+   * @brief Cached AO effective one-electron intermediates for optional follow-on work.
+   */
+  AoEffectiveOneElectronResult ao_effective_one_electron_result;
+
+  /**
    * @brief Column-major active-orbital overlap matrix `SSO`.
    */
   std::vector<double> active_orbital_overlap_matrix;
@@ -118,6 +136,15 @@ struct CppOrbitalGradientResult {
    * @brief Exact `E11` gradient with respect to `orbital_value_table`.
    */
   std::vector<double> sparse_orbital_reference_energy_gradient;
+
+  /**
+   * @brief Accepted-point active-space context for exact direct-action HVP work.
+   *
+   * Relaxed orbital-gradient evaluations populate this cache so outer
+   * optimizers can reuse the accepted-point unique-spin and structure-basis
+   * intermediates without rebuilding them from scratch.
+   */
+  std::shared_ptr<CppActiveSpaceSecondOrderContext> second_order_context;
 };
 
 }  // namespace xmvb::vb

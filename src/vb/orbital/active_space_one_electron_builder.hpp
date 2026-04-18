@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 #include "vb/orbital/active_space_one_electron_result.hpp"
@@ -27,6 +29,13 @@ public:
   ActiveSpaceOneElectronResult build(
       const std::vector<double>& ao_effective_h1e,
       const std::vector<double>& auxiliary_orbital_matrix,
+      int n_basis_functions,
+      int n_inactive_doubly_occupied_orbitals,
+      int n_active_orbitals) const;
+
+  ActiveSpaceOneElectronResult build(
+      const std::vector<double>& ao_effective_h1e,
+      const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,
       int n_active_orbitals) const;

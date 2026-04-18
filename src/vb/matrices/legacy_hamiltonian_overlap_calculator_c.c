@@ -46,6 +46,7 @@ static void remove_extension(const char* input_file_path, char* input_stem, size
 int legacy_calculate_hamiltonian_overlap(
     const char* input_file_path,
     int n_threads,
+    int run_orbital_optimization,
     int* n_structures,
     double* total_energy,
     double* one_electron_energy,
@@ -80,12 +81,17 @@ int legacy_calculate_hamiltonian_overlap(
   vb_info vb_wavefunction = NULL;
   int status = 1;
 
-  char executable_name[] = "build/install/bin/xmvb.exe";
+  char executable_name[PATH_MAX];
   char input_path_buffer[4096];
   char input_stem[4096];
+  const char* executable_env = getenv("XMVB_CPP_LEGACY_EXECUTABLE_PATH");
+  if (executable_env != NULL && executable_env[0] != '\0') {
+    snprintf(executable_name, sizeof(executable_name), "%s", executable_env);
+  } else {
+    snprintf(executable_name, sizeof(executable_name), "%s", "build-cpp/src/driver/xmvb.exe");
+  }
   snprintf(input_path_buffer, sizeof(input_path_buffer), "%s", input_file_path);
   remove_extension(input_file_path, input_stem, sizeof(input_stem));
-
   input_info = readinp(input_path_buffer, executable_name);
   checkkeywords(input_info);
 
@@ -198,7 +204,7 @@ int legacy_calculate_hamiltonian_overlap(
     goto cleanup;
   }
 
-  {
+  if (run_orbital_optimization != 0) {
     char output[1] = {'\0'};
     int print_level = input_info->print_level;
     rdm_vbscf_(vb_wavefunction, &print_level, output);

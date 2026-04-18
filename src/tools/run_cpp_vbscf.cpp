@@ -1,9 +1,11 @@
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -17,6 +19,11 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unistd.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include "runtime/molden_file_writer.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
@@ -24,6 +31,7 @@
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/scf/adaptive_structure_space_optimizer.hpp"
+#include "vb/scf/exact_ctx_strategy_profile.hpp"
 #include "vb/scf/cpp_vb_scf_optimizer.hpp"
 
 namespace {
@@ -125,9 +133,22 @@ const char* gradient_tolerance_metric_name(
   return "unknown";
 }
 
+const char* scf_algorithm_log_name(xmvb::vb::VBSCFAlgorithm algorithm) {
+  switch (algorithm) {
+    case xmvb::vb::VBSCFAlgorithm::Original:
+      return "VBSCF";
+    case xmvb::vb::VBSCFAlgorithm::BiorthogonalExactSelected:
+      return "TBVBSCF";
+  }
+  return "unknown";
+}
+
 const char* bool_name(bool value) {
   return value ? "true" : "false";
 }
+
+constexpr int kLogRuleWidth = 88;
+constexpr int kLogLabelWidth = 34;
 
 std::optional<bool> parse_env_optional_flag(
     const char* variable_name) {
@@ -145,6 +166,21 @@ bool parse_env_flag_with_default(
     bool default_value) {
   const auto value = parse_env_optional_flag(variable_name);
   return value.has_value() ? *value : default_value;
+}
+
+bool exact_ctx_internal_inactive_chart_runtime_enabled() {
+  if (parse_env_flag_with_default(
+          "XMVB_CPP_DISABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART",
+          false)) {
+    return false;
+  }
+  // The actual default selection is molecule-dependent inside exact-ctx:
+  // closed-shell systems keep the cheaper internal inactive chart, while
+  // open-shell systems fall back to the physical occupied chart unless the
+  // user explicitly forces this path on.
+  return parse_env_flag_with_default(
+      "XMVB_CPP_ENABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART",
+      true);
 }
 
 int parse_env_int_with_default(
@@ -187,35 +223,156 @@ const char* env_value_or_unset(const char* variable_name) {
   return (value == nullptr || value[0] == '\0') ? "<unset>" : value;
 }
 
-bool optimizer_chart_uses_sparse_orbital_support(
-    const xmvb::vb::OrbitalPreparationInput& orbital_preparation_input) {
-  constexpr int kLegacyOrbitalTypeHao = 1;
-  constexpr int kLegacyOrbitalTypeBdo = 2;
-  constexpr int kLegacyOrbitalTypeOeo = 3;
-  // Mirror the optimizer's chart classification so the CLI summary can state
-  // whether exact_ctx starts from the full-AO OEO manifold or from the sparser
-  // HAO/BDO support charts that use different TN/HVP heuristics.
-  if (orbital_preparation_input.orbital_type == kLegacyOrbitalTypeOeo) {
-    return false;
+// Centralize terminal formatting so the standalone driver prints a stable
+// run log instead of a long unstructured key/value dump.
+void print_log_rule(char fill = '=') {
+  std::cout << std::string(kLogRuleWidth, fill) << '\n';
+}
+
+void print_log_section_title(const std::string& title) {
+  print_log_rule('=');
+  std::cout << title << '\n';
+  print_log_rule('=');
+}
+
+void print_log_subsection_title(const std::string& title) {
+  std::cout << '\n' << title << '\n'
+            << std::string(title.size(), '-') << '\n';
+}
+
+void print_log_field(
+    const std::string& label,
+    const std::string& value) {
+  std::ostringstream stream;
+  stream << std::left << std::setw(kLogLabelWidth) << label
+         << " : " << value;
+  std::cout << stream.str() << '\n';
+}
+
+std::string format_fixed_double(
+    double value,
+    int precision = 12) {
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(precision) << value;
+  return stream.str();
+}
+
+std::string format_scientific_double(
+    double value,
+    int precision = 8) {
+  std::ostringstream stream;
+  stream << std::scientific << std::setprecision(precision) << value;
+  return stream.str();
+}
+
+std::string format_seconds(
+    double seconds,
+    int precision = 6) {
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(precision) << seconds << " s";
+  return stream.str();
+}
+
+std::string format_core_hours(
+    double wall_time_seconds,
+    int n_threads) {
+  const int effective_threads = std::max(1, n_threads);
+  const double core_hours =
+      wall_time_seconds * static_cast<double>(effective_threads) / 3600.0;
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(6) << core_hours << " core-h";
+  return stream.str();
+}
+
+std::string format_timestamp(
+    const std::chrono::system_clock::time_point& time_point) {
+  const std::time_t raw_time = std::chrono::system_clock::to_time_t(time_point);
+  std::tm local_time{};
+  localtime_r(&raw_time, &local_time);
+  std::array<char, 32> buffer{};
+  if (std::strftime(
+          buffer.data(),
+          buffer.size(),
+          "%Y-%m-%d %H:%M:%S",
+          &local_time) == 0) {
+    return "<unavailable>";
   }
-  if (orbital_preparation_input.orbital_type == kLegacyOrbitalTypeHao ||
-      orbital_preparation_input.orbital_type == kLegacyOrbitalTypeBdo) {
-    return true;
+  return buffer.data();
+}
+
+std::string simplify_basis_name(const std::string& basis_name) {
+  if (basis_name.empty()) {
+    return "<unknown>";
   }
-  const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-  if (n_basis_functions <= 0) {
-    return false;
+  fs::path basis_path(basis_name);
+  std::string leaf_name = basis_path.filename().string();
+  if (leaf_name.empty()) {
+    leaf_name = basis_name;
   }
-  for (const int basis_count : orbital_preparation_input.orbital_basis_counts) {
-    if (basis_count > 0 && basis_count < n_basis_functions) {
-      return true;
+  if (leaf_name.size() > 4 &&
+      leaf_name.compare(leaf_name.size() - 4, 4, ".gbs") == 0) {
+    leaf_name.erase(leaf_name.size() - 4);
+  }
+  return leaf_name;
+}
+
+std::string get_host_name() {
+  std::array<char, 256> buffer{};
+  if (gethostname(buffer.data(), buffer.size()) != 0) {
+    return "<unknown>";
+  }
+  buffer.back() = '\0';
+  return buffer.data();
+}
+
+int openmp_max_thread_count() {
+  int n_threads = 1;
+#ifdef _OPENMP
+  n_threads = omp_get_max_threads();
+#endif
+  return n_threads;
+}
+
+int allocated_cpu_thread_count() {
+  const char* slurm_value = std::getenv("SLURM_CPUS_PER_TASK");
+  if (slurm_value != nullptr && slurm_value[0] != '\0') {
+    char* end = nullptr;
+    errno = 0;
+    const long parsed = std::strtol(slurm_value, &end, 10);
+    if (errno == 0 && end != slurm_value && (end == nullptr || end[0] == '\0') &&
+        parsed > 0 && parsed <= static_cast<long>(std::numeric_limits<int>::max())) {
+      return static_cast<int>(parsed);
     }
+  }
+  return openmp_max_thread_count();
+}
+
+std::string convergence_status_name(bool converged) {
+  return converged ? "converged" : "not converged";
+}
+
+bool oeo_active_representative_accepted_point_canonicalization_enabled() {
+  const auto enable_override =
+      parse_env_optional_flag(
+          "XMVB_CPP_ENABLE_OEO_ACTIVE_REPRESENTATIVE_CANONICALIZATION");
+  if (enable_override.has_value()) {
+    return *enable_override;
+  }
+  const auto disable_override =
+      parse_env_optional_flag(
+          "XMVB_CPP_DISABLE_OEO_ACTIVE_REPRESENTATIVE_CANONICALIZATION");
+  if (disable_override.has_value()) {
+    return !*disable_override;
   }
   return false;
 }
 
 std::string exact_ctx_initial_outer_response_policy_name(
     const xmvb::vb::OrbitalPreparationInput& orbital_preparation_input) {
+  const xmvb::vb::ExactCtxDefaultStrategy strategy =
+      xmvb::vb::choose_exact_ctx_default_strategy(
+          xmvb::vb::build_exact_ctx_system_profile(
+              orbital_preparation_input));
   const auto override =
       parse_env_optional_flag("XMVB_CPP_EXACT_CTX_INNER_SOLVE_USE_OUTER_RESPONSE");
   if (override.has_value()) {
@@ -226,7 +383,7 @@ std::string exact_ctx_initial_outer_response_policy_name(
   if (n_active_orbitals >
       parse_env_int_with_default(
           "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_ENABLE_MAX_ACTIVE_ORBITALS",
-          6)) {
+          strategy.startup_full_inner_solve_enable_max_active_orbitals)) {
     return "cheap_core_only";
   }
 
@@ -235,37 +392,36 @@ std::string exact_ctx_initial_outer_response_policy_name(
           0,
           parse_env_int_with_default(
               "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BEGIN",
-              0));
+              strategy.startup_full_inner_solve_begin));
   int full_inner_solve_count =
       std::max(
           0,
           parse_env_int_with_default(
               "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_COUNT",
-              2));
+              strategy.startup_full_inner_solve_count));
   int max_extra_count =
       std::max(
           0,
           parse_env_int_with_default(
               "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MAX_EXTRA_COUNT",
-              0));
+              strategy.startup_full_inner_solve_max_extra_count));
   if (n_active_orbitals >
       std::max(
           0,
           parse_env_int_with_default(
               "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MULTI_STEP_MAX_ACTIVE_ORBITALS",
-              8))) {
+              strategy.startup_full_inner_solve_multi_step_max_active_orbitals))) {
     full_inner_solve_count = std::min(full_inner_solve_count, 1);
     max_extra_count = 0;
   }
 
-  if (0 < full_inner_solve_begin) {
-    return "cheap_core_only";
-  }
-  if (full_inner_solve_count > 0) {
+  if (full_inner_solve_count > 0 &&
+      full_inner_solve_begin == 0 &&
+      max_extra_count == 0) {
     return "startup_full_outer_response";
   }
-  if (max_extra_count > 0) {
-    return "gradient_tail_conditional";
+  if (full_inner_solve_count > 0 || max_extra_count > 0) {
+    return "startup_full_window_with_gradient_tail";
   }
   return "cheap_core_only";
 }
@@ -281,108 +437,230 @@ void print_exact_ctx_policy_summary(
   }
 
   const auto& orbital_preparation_input = input.orbital_preparation_input;
-  const bool sparse_orbital_chart =
-      optimizer_chart_uses_sparse_orbital_support(orbital_preparation_input);
+  const xmvb::vb::ExactCtxSystemProfile system_profile =
+      xmvb::vb::build_exact_ctx_system_profile(orbital_preparation_input);
+  const xmvb::vb::ExactCtxDefaultStrategy strategy =
+      xmvb::vb::choose_exact_ctx_default_strategy(system_profile);
   const auto outer_response_override =
       parse_env_optional_flag("XMVB_CPP_EXACT_CTX_INNER_SOLVE_USE_OUTER_RESPONSE");
-  std::cout << "exact_ctx_initial_inner_solve_policy = "
-            << exact_ctx_initial_outer_response_policy_name(orbital_preparation_input)
-            << '\n';
-  std::cout << "exact_ctx_inner_solve_use_outer_response_override = ";
-  if (!outer_response_override.has_value()) {
-    std::cout << "auto\n";
-  } else {
-    std::cout << bool_name(*outer_response_override) << '\n';
+  print_log_subsection_title("Exact-CTX Strategy");
+  print_log_field(
+      "Initial inner solve",
+      exact_ctx_initial_outer_response_policy_name(orbital_preparation_input));
+  print_log_field(
+      "Outer-response override",
+      outer_response_override.has_value() ? bool_name(*outer_response_override) : "auto");
+  print_log_field(
+      "Outer-response enabled",
+      bool_name(
+          !parse_env_flag_with_default(
+              "XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE",
+              false)));
+  print_log_field(
+      "Internal inactive chart",
+      bool_name(exact_ctx_internal_inactive_chart_runtime_enabled()));
+  print_log_field(
+      "Default inactive chart",
+      bool_name(
+          strategy.prefer_internal_inactive_chart &&
+          exact_ctx_internal_inactive_chart_runtime_enabled()));
+  print_log_field(
+      "Strategy profile",
+      xmvb::vb::exact_ctx_default_strategy_kind_name(strategy.kind));
+  print_log_field(
+      "Accepted-point canonicalization",
+      bool_name(
+          oeo_active_representative_accepted_point_canonicalization_enabled()));
+  print_log_field(
+      "Initial chart",
+      system_profile.sparse_orbital_chart ? "sparse_support" : "full_ao");
+  print_log_field(
+      "Active orbitals",
+      std::to_string(orbital_preparation_input.n_active_orbitals));
+  print_log_field(
+      "Startup full begin",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BEGIN",
+              strategy.startup_full_inner_solve_begin)));
+  print_log_field(
+      "Startup full count",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_COUNT",
+              strategy.startup_full_inner_solve_count)));
+  print_log_field(
+      "Startup full max extra",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MAX_EXTRA_COUNT",
+              strategy.startup_full_inner_solve_max_extra_count)));
+  print_log_field(
+      "Grad-ratio threshold",
+      format_fixed_double(
+          parse_env_double_with_default(
+              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_GRAD_RATIO_THRESHOLD",
+              0.2),
+          12));
+  print_log_field(
+      "Base max CG iterations",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BASE_MAX_CG_ITERATIONS",
+              6)));
+  print_log_field(
+      "Tail max CG iterations",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_TAIL_MAX_CG_ITERATIONS",
+              strategy.startup_full_inner_solve_tail_max_cg_iterations)));
+  print_log_field(
+      "Multi-step active cap",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MULTI_STEP_MAX_ACTIVE_ORBITALS",
+              strategy.startup_full_inner_solve_multi_step_max_active_orbitals)));
+  print_log_field(
+      "Full inner-solve cap",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_ENABLE_MAX_ACTIVE_ORBITALS",
+              strategy.startup_full_inner_solve_enable_max_active_orbitals)));
+  print_log_field(
+      "Full correction cap",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_FULL_MODEL_CORRECTION_ENABLE_MAX_ACTIVE_ORBITALS",
+              6)));
+  print_log_field(
+      "Hybrid followup cap",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_HYBRID_FOLLOWUP_FULL_ENABLE_MAX_ACTIVE_ORBITALS",
+              6)));
+  print_log_field(
+      "Stall correction cap",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_STALL_FULL_MODEL_CORRECTION_ENABLE_MAX_ACTIVE_ORBITALS",
+              6)));
+  print_log_field(
+      "Retry rejected with full op",
+      bool_name(
+          parse_env_flag_with_default(
+              "XMVB_CPP_EXACT_CTX_RETRY_REJECTED_WITH_FULL_OPERATOR",
+              true)));
+  print_log_field(
+      "Hybrid refine max CG",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_HYBRID_REFINE_MAX_CG_ITERATIONS",
+              4)));
+  print_log_field(
+      "Sparse followup cooldown",
+      std::to_string(
+          parse_env_int_with_default(
+              "XMVB_CPP_EXACT_CTX_SPARSE_FOLLOWUP_PROBE_COOLDOWN",
+              2)));
+}
+
+void print_run_header(
+    const std::string& input_path,
+    const xmvb::vb::CppVbInputLoadResult& load_result,
+    const xmvb::vb::CppVbScfOptimizerOptions& options,
+    StructureSpaceMode structure_space_mode,
+    const std::chrono::system_clock::time_point& start_time) {
+  const fs::path absolute_input_path = fs::absolute(fs::path(input_path));
+  const auto& orbital_input = load_result.input.orbital_preparation_input;
+  const std::string basis_set_name = simplify_basis_name(load_result.basis_name);
+  const int expanded_determinant_count =
+      static_cast<int>(load_result.input.structure_data.alpha_det.size());
+
+  print_log_section_title("XMVB-CPP VBSCF Run");
+
+  print_log_subsection_title("Run Setup");
+  print_log_field("Input file", absolute_input_path.string());
+  print_log_field("Start time", format_timestamp(start_time));
+  print_log_field("SCF algorithm", scf_algorithm_log_name(options.algorithm));
+  print_log_field(
+      "Optimizer backend",
+      xmvb::vb::cpp_vb_scf_optimizer_backend_name(options.backend));
+  if (options.backend ==
+      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+    print_log_field(
+        "HVP mode",
+        xmvb::vb::nonredundant_truncated_newton_hvp_mode_name(
+            options.nonredundant_truncated_newton_hvp_mode));
   }
-  std::cout << "exact_ctx_outer_response_runtime_enabled = "
-            << bool_name(
-                   !parse_env_flag_with_default(
-                       "XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE",
-                       false))
-            << '\n';
-  std::cout << "exact_ctx_initial_chart = "
-            << (sparse_orbital_chart ? "sparse_support" : "full_ao")
-            << '\n';
-  std::cout << "exact_ctx_n_active_orbitals = "
-            << orbital_preparation_input.n_active_orbitals << '\n';
-  std::cout << "exact_ctx_startup_full_inner_solve_begin = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BEGIN",
-                   0)
-            << '\n';
-  std::cout << "exact_ctx_startup_full_inner_solve_count = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_COUNT",
-                   2)
-            << '\n';
-  std::cout << "exact_ctx_startup_full_inner_solve_max_extra_count = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MAX_EXTRA_COUNT",
-                   0)
-            << '\n';
-  std::cout << "exact_ctx_startup_full_inner_solve_grad_ratio_threshold = "
-            << std::setprecision(12)
-            << parse_env_double_with_default(
-                   "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_GRAD_RATIO_THRESHOLD",
-                   0.2)
-            << '\n';
-  std::cout << "exact_ctx_startup_full_inner_solve_base_max_cg_iterations = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BASE_MAX_CG_ITERATIONS",
-                   6)
-            << '\n';
-  std::cout << "exact_ctx_startup_full_inner_solve_tail_max_cg_iterations = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_TAIL_MAX_CG_ITERATIONS",
-                   8)
-            << '\n';
-  std::cout << "exact_ctx_startup_full_inner_solve_multi_step_max_active_orbitals = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MULTI_STEP_MAX_ACTIVE_ORBITALS",
-                   8)
-            << '\n';
-  std::cout << "exact_ctx_startup_full_inner_solve_enable_max_active_orbitals = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_ENABLE_MAX_ACTIVE_ORBITALS",
-                   6)
-            << '\n';
-  std::cout << "exact_ctx_full_model_correction_enable_max_active_orbitals = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_FULL_MODEL_CORRECTION_ENABLE_MAX_ACTIVE_ORBITALS",
-                   6)
-            << '\n';
-  std::cout << "exact_ctx_hybrid_followup_full_enable_max_active_orbitals = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_HYBRID_FOLLOWUP_FULL_ENABLE_MAX_ACTIVE_ORBITALS",
-                   6)
-            << '\n';
-  std::cout << "exact_ctx_stall_full_model_correction_enable_max_active_orbitals = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_STALL_FULL_MODEL_CORRECTION_ENABLE_MAX_ACTIVE_ORBITALS",
-                   6)
-            << '\n';
-  std::cout << "exact_ctx_retry_rejected_with_full_operator = "
-            << bool_name(
-                   parse_env_flag_with_default(
-                       "XMVB_CPP_EXACT_CTX_RETRY_REJECTED_WITH_FULL_OPERATOR",
-                       true))
-            << '\n';
-  std::cout << "exact_ctx_hybrid_refine_max_cg_iterations = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_HYBRID_REFINE_MAX_CG_ITERATIONS",
-                   4)
-            << '\n';
-  std::cout << "exact_ctx_sparse_followup_probe_cooldown = "
-            << parse_env_int_with_default(
-                   "XMVB_CPP_EXACT_CTX_SPARSE_FOLLOWUP_PROBE_COOLDOWN",
-                   2)
-            << '\n';
-  std::cout << "env_OMP_NUM_THREADS = "
-            << env_value_or_unset("OMP_NUM_THREADS") << '\n';
-  std::cout << "env_OPENBLAS_NUM_THREADS = "
-            << env_value_or_unset("OPENBLAS_NUM_THREADS") << '\n';
-  std::cout << "env_MKL_NUM_THREADS = "
-            << env_value_or_unset("MKL_NUM_THREADS") << '\n';
+  print_log_field("Structure space", structure_space_mode_name(structure_space_mode));
+  print_log_field("Basis set", basis_set_name);
+  if (!load_result.basis_name.empty() && load_result.basis_name != basis_set_name) {
+    print_log_field("Basis file", load_result.basis_name);
+  }
+  print_log_field(
+      "AO integral source",
+      xmvb::vb::ao_integral_source_name(load_result.ao_integral_source));
+  print_log_field(
+      "Two-electron mode",
+      xmvb::vb::standard_two_electron_mode_name(load_result.standard_two_electron_mode));
+  print_log_field(
+      "Orbital guess",
+      xmvb::vb::orbital_guess_source_name(load_result.orbital_guess_source));
+  print_log_field(
+      "Molden output",
+      load_result.request_molden_output ? "requested" : "not requested");
+
+  print_log_subsection_title("System Summary");
+  print_log_field("Atoms", std::to_string(load_result.static_molecule_metadata.n_atoms));
+  print_log_field("Shells", std::to_string(load_result.static_molecule_metadata.n_shells));
+  print_log_field("Basis functions", std::to_string(orbital_input.n_basis_functions));
+  print_log_field("Orbitals", std::to_string(orbital_input.n_orbitals));
+  print_log_field("Active orbitals", std::to_string(orbital_input.n_active_orbitals));
+  print_log_field(
+      "Electrons (total/active)",
+      std::to_string(orbital_input.n_total_electrons) + " / " +
+          std::to_string(orbital_input.n_active_electrons));
+  print_log_field(
+      "Spin multiplicity",
+      std::to_string(load_result.raw_structure_data.spin_multiplicity));
+  print_log_field(
+      "Raw structures (source/selected)",
+      std::to_string(load_result.source_raw_structure_count) + " / " +
+          std::to_string(load_result.raw_structure_data.n_structures));
+  print_log_field(
+      "Expanded determinants",
+      expanded_determinant_count > 0 ? std::to_string(expanded_determinant_count) : "deferred");
+
+  print_log_subsection_title("Execution Resources");
+  print_log_field("Host", get_host_name());
+  print_log_field("Allocated CPU threads", std::to_string(allocated_cpu_thread_count()));
+  print_log_field("OpenMP max threads", std::to_string(openmp_max_thread_count()));
+  print_log_field("SLURM_CPUS_PER_TASK", env_value_or_unset("SLURM_CPUS_PER_TASK"));
+  print_log_field("OMP_NUM_THREADS", env_value_or_unset("OMP_NUM_THREADS"));
+  print_log_field("OPENBLAS_NUM_THREADS", env_value_or_unset("OPENBLAS_NUM_THREADS"));
+  print_log_field("MKL_NUM_THREADS", env_value_or_unset("MKL_NUM_THREADS"));
+
+  print_log_subsection_title("Convergence Targets");
+  print_log_field(
+      "Gradient metric",
+      gradient_tolerance_metric_name(options.backend));
+  print_log_field(
+      "Gradient tolerance",
+      format_scientific_double(options.gradient_tolerance, 8));
+  print_log_field(
+      "Energy tolerance",
+      format_scientific_double(options.energy_tolerance, 8));
+  print_log_field("Max iterations", std::to_string(options.max_iterations));
+  if (options.backend ==
+      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+    print_log_field(
+        "Max CG iterations",
+        options.nonredundant_truncated_newton_max_cg_iterations > 0
+            ? std::to_string(options.nonredundant_truncated_newton_max_cg_iterations)
+            : "auto");
+  }
+
+  print_exact_ctx_policy_summary(options, load_result.input);
 }
 
 std::function<void(const xmvb::vb::CppVbScfAcceptedIterationSnapshot&)>
@@ -415,9 +693,17 @@ build_terminal_iteration_logger() {
   };
 
   auto state = std::make_shared<LoggerState>();
-  std::cout << "cpp_vbscf_iterations\n"
-            << "ITER           ENERGY               DE          GRAD_INF"
-               "             G_L2         DT_S\n";
+  std::cout << '\n';
+  print_log_subsection_title("SCF Iteration History");
+  std::cout << "  "
+            << std::setw(6) << "Iter"
+            << std::setw(23) << "Total Energy"
+            << std::setw(18) << "Delta E"
+            << std::setw(18) << "Grad_inf"
+            << std::setw(18) << "Grad_l2"
+            << std::setw(14) << "Accepted(s)"
+            << '\n';
+  print_log_rule('-');
   std::cout.flush();
 
   return [state](const xmvb::vb::CppVbScfAcceptedIterationSnapshot& snapshot) {
@@ -439,7 +725,8 @@ build_terminal_iteration_logger() {
     }
     const double delta_energy = snapshot.total_energy - state->previous_total_energy;
     std::ostringstream stream;
-    stream << std::setw(4) << snapshot.accepted_iteration_index
+    stream << "  "
+           << std::setw(4) << snapshot.accepted_iteration_index
            << std::setw(23) << std::fixed << std::setprecision(12)
            << snapshot.total_energy
            << std::setw(18) << std::scientific << std::setprecision(8)
@@ -1554,6 +1841,8 @@ int main(int argc, char** argv) {
     load_options.expand_selected_raw_structures = false;
   }
 
+  const auto command_start_time = std::chrono::system_clock::now();
+  const auto command_start_steady_time = std::chrono::steady_clock::now();
   const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(input_path, load_options);
   const auto& input = load_result.input;
   options.algorithm = load_result.requested_algorithm;
@@ -1569,6 +1858,13 @@ int main(int argc, char** argv) {
     throw std::invalid_argument(
         "tbvbscf is not yet wired into adaptive_mvp structure-space expansion");
   }
+
+  print_run_header(
+      input_path,
+      load_result,
+      options,
+      structure_space_mode,
+      command_start_time);
 
   std::shared_ptr<AcceptedIterationTraceDatasetWriter> trace_writer;
   if (options.verbose) {
@@ -1656,60 +1952,59 @@ int main(int argc, char** argv) {
       load_result.nuclear_repulsion_energy -
       result.final_one_electron_reference_energy;
 
-  std::cout << "optimizer_backend = "
-            << xmvb::vb::cpp_vb_scf_optimizer_backend_name(options.backend) << '\n';
-  if (structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
-    std::cout << "structure_space_mode = "
-              << structure_space_mode_name(structure_space_mode) << '\n';
-    std::cout << "adaptive_seed_selection = "
-              << xmvb::vb::adaptive_structure_space_seed_selection_name(
-                     adaptive_options.seed_selection)
-              << '\n';
-    std::cout << "adaptive_determinant_score_mode = "
-              << xmvb::vb::adaptive_determinant_score_mode_name(
-                     adaptive_options.determinant_score_mode)
-              << '\n';
+  const bool command_converged =
+      adaptive_result.has_value() ? adaptive_result->converged : result.converged;
+  const auto command_finish_time = std::chrono::system_clock::now();
+  const double total_job_wall_time_seconds =
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - command_start_steady_time)
+          .count();
+  const double optimizer_wall_time_seconds =
+      adaptive_result.has_value() ? adaptive_result->total_wall_time_seconds
+                                  : result.total_wall_time_seconds;
+  const int effective_thread_count = allocated_cpu_thread_count();
+
+  print_log_subsection_title("SCF Summary");
+  print_log_field("Status", convergence_status_name(command_converged));
+  print_log_field(
+      "Termination reason",
+      adaptive_result.has_value() ? adaptive_result->termination_reason
+                                  : result.termination_reason);
+  print_log_field("Iterations", std::to_string(result.n_iterations));
+  print_log_field("Start time", format_timestamp(command_start_time));
+  print_log_field("Finish time", format_timestamp(command_finish_time));
+  print_log_field(
+      "Input preparation wall time",
+      format_seconds(load_result.total_seconds));
+  print_log_field(
+      "SCF iteration wall time",
+      format_seconds(optimizer_wall_time_seconds));
+  print_log_field(
+      "End-to-end wall time",
+      format_seconds(total_job_wall_time_seconds));
+  print_log_field(
+      "Estimated OpenMP core-hours",
+      format_core_hours(total_job_wall_time_seconds, effective_thread_count));
+  print_log_field(
+      "Raw-structure selection",
+      xmvb::vb::raw_structure_selection_mode_name(load_result.raw_structure_selection));
+  if (trace_writer != nullptr) {
+    print_log_field("Trace sample directory", trace_writer->sample_directory().string());
   }
-  std::cout << "ao_integral_source = "
-            << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)
-            << '\n';
-  std::cout << "standard_two_electron_mode = "
-            << xmvb::vb::standard_two_electron_mode_name(
-                   load_result.standard_two_electron_mode)
-            << '\n';
-  std::cout << "gradient_tolerance = "
-            << std::setprecision(12) << options.gradient_tolerance << '\n';
-  std::cout << "energy_tolerance = "
-            << std::setprecision(12) << options.energy_tolerance << '\n';
-  std::cout << "max_iterations = " << options.max_iterations << '\n';
-  std::cout << "gradient_tolerance_metric = "
-            << gradient_tolerance_metric_name(options.backend)
-            << '\n';
-  if (options.backend ==
-      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    std::cout << "nonredundant_truncated_newton_hvp_mode = "
-              << xmvb::vb::nonredundant_truncated_newton_hvp_mode_name(
-                     options.nonredundant_truncated_newton_hvp_mode)
-              << '\n';
-    if (options.nonredundant_truncated_newton_max_cg_iterations > 0) {
-      std::cout << "nonredundant_truncated_newton_max_cg_iterations = "
-                << options.nonredundant_truncated_newton_max_cg_iterations << '\n';
-    } else {
-      std::cout << "nonredundant_truncated_newton_max_cg_iterations = auto\n";
-    }
+  if (molden_output_path.has_value()) {
+    print_log_field("Molden output", molden_output_path->string());
   }
-  print_exact_ctx_policy_summary(options, input);
-  std::cout << "orbital_guess_source = "
-            << xmvb::vb::orbital_guess_source_name(load_result.orbital_guess_source)
-            << '\n';
-  std::cout << "skip_orbital_guess = "
-            << (load_options.skip_orbital_guess ? "true" : "false")
-            << '\n';
-  std::cout << "raw_structure_selection = "
-            << xmvb::vb::raw_structure_selection_mode_name(load_result.raw_structure_selection)
-            << '\n';
-  std::cout << "source_raw_structure_count = "
-            << load_result.source_raw_structure_count << '\n';
+  if (options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx) {
+    print_log_field(
+        "ONNX model",
+        fs::absolute(deepvbh_options.inference_options.onnx_model_path).string());
+  } else if (
+      options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
+    print_log_field(
+        "ONNX model",
+        fs::absolute(deepvbh_direct_options.inference_options.onnx_model_path).string());
+  }
+
   if (adaptive_result.has_value()) {
     double adaptive_total_scoring_wall_time_seconds = 0.0;
     std::uint64_t adaptive_total_boundary_pair_evaluation_count = 0;
@@ -1720,131 +2015,157 @@ int main(int argc, char** argv) {
           iteration_summary.boundary_pair_evaluation_count;
     }
     const auto& last_iteration_summary = adaptive_result->iteration_summaries.back();
-    std::cout << "selected_raw_structure_count = "
-              << adaptive_result->selected_raw_structure_indices.size() << '\n';
-    std::cout << "expanded_determinant_count = "
-              << result.optimized_input.structure_data.alpha_det.size() << '\n';
-    std::cout << "adaptive_outer_iterations = "
-              << adaptive_result->iteration_summaries.size() << '\n';
-    std::cout << "adaptive_last_unique_proposal_determinant_count = "
-              << last_iteration_summary.unique_proposal_determinant_count << '\n';
-    std::cout << "adaptive_last_unique_outside_determinant_count = "
-              << last_iteration_summary.unique_outside_determinant_count << '\n';
-    std::cout << "adaptive_last_unique_shared_determinant_count = "
-              << last_iteration_summary.unique_shared_determinant_count << '\n';
-    std::cout << "adaptive_last_boundary_pair_evaluation_count = "
-              << last_iteration_summary.boundary_pair_evaluation_count << '\n';
-    std::cout << "adaptive_last_scoring_wall_time_seconds = " << std::setprecision(12)
-              << last_iteration_summary.scoring_wall_time_seconds << '\n';
-    std::cout << "adaptive_total_boundary_pair_evaluation_count = "
-              << adaptive_total_boundary_pair_evaluation_count << '\n';
-    std::cout << "adaptive_total_scoring_wall_time_seconds = " << std::setprecision(12)
-              << adaptive_total_scoring_wall_time_seconds << '\n';
-    std::cout << "adaptive_total_wall_time_seconds = " << std::setprecision(12)
-              << adaptive_result->total_wall_time_seconds << '\n';
+    print_log_field(
+        "Adaptive seed selection",
+        xmvb::vb::adaptive_structure_space_seed_selection_name(
+            adaptive_options.seed_selection));
+    print_log_field(
+        "Adaptive determinant score",
+        xmvb::vb::adaptive_determinant_score_mode_name(
+            adaptive_options.determinant_score_mode));
+    print_log_field(
+        "Selected raw structures",
+        std::to_string(adaptive_result->selected_raw_structure_indices.size()));
+    print_log_field(
+        "Expanded determinants",
+        std::to_string(result.optimized_input.structure_data.alpha_det.size()));
+    print_log_field(
+        "Adaptive outer iterations",
+        std::to_string(adaptive_result->iteration_summaries.size()));
+    print_log_field(
+        "Last proposal determinants",
+        std::to_string(last_iteration_summary.unique_proposal_determinant_count));
+    print_log_field(
+        "Last outside determinants",
+        std::to_string(last_iteration_summary.unique_outside_determinant_count));
+    print_log_field(
+        "Last shared determinants",
+        std::to_string(last_iteration_summary.unique_shared_determinant_count));
+    print_log_field(
+        "Boundary pair evaluations",
+        std::to_string(adaptive_total_boundary_pair_evaluation_count));
+    print_log_field(
+        "Adaptive scoring wall time",
+        format_seconds(adaptive_total_scoring_wall_time_seconds));
   } else {
-    std::cout << "selected_raw_structure_count = "
-              << load_result.raw_structure_data.n_structures << '\n';
-    std::cout << "expanded_determinant_count = "
-              << input.structure_data.alpha_det.size() << '\n';
+    print_log_field(
+        "Selected raw structures",
+        std::to_string(load_result.raw_structure_data.n_structures));
+    print_log_field(
+        "Expanded determinants",
+        std::to_string(input.structure_data.alpha_det.size()));
   }
-  if (options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx) {
-    std::cout << "onnx_model = "
-              << fs::absolute(deepvbh_options.inference_options.onnx_model_path).string()
-              << '\n';
-  } else if (
-      options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
-    std::cout << "onnx_model = "
-              << fs::absolute(deepvbh_direct_options.inference_options.onnx_model_path).string()
-              << '\n';
-  }
-  std::cout << "algorithm = "
-            << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
-  std::cout << "input_requested_algorithm = "
-            << xmvb::vb::vb_scf_algorithm_name(load_result.requested_algorithm) << '\n';
-  std::cout << "converged = "
-            << ((adaptive_result.has_value() ? adaptive_result->converged : result.converged)
-                    ? "true"
-                    : "false")
-            << '\n';
-  std::cout << "termination_reason = "
-            << (adaptive_result.has_value() ? adaptive_result->termination_reason
-                                            : result.termination_reason)
-            << '\n';
-  std::cout << "iterations = " << result.n_iterations << '\n';
-  if (trace_writer != nullptr) {
-    std::cout << "trace_sample_dir = " << trace_writer->sample_directory().string() << '\n';
-  }
-  if (molden_output_path.has_value()) {
-    std::cout << "molden_output = " << molden_output_path->string() << '\n';
-  }
-  std::cout << "nuclear_repulsion_energy = " << std::setprecision(12)
-            << load_result.nuclear_repulsion_energy << '\n';
-  std::cout << "initial_total_energy = " << std::setprecision(12)
-            << result.initial_total_energy << '\n';
-  std::cout << "initial_electronic_energy = " << std::setprecision(12)
-            << initial_electronic_energy << '\n';
-  std::cout << "initial_one_electron_reference_energy = "
-            << std::setprecision(12)
-            << result.initial_one_electron_reference_energy << '\n';
-  std::cout << "initial_valence_structure_eigenvalue = "
-            << std::setprecision(12)
-            << initial_valence_structure_eigenvalue << '\n';
-  std::cout << "final_total_energy = " << std::setprecision(12)
-            << result.final_total_energy << '\n';
-  std::cout << "final_electronic_energy = " << std::setprecision(12)
-            << final_electronic_energy << '\n';
-  std::cout << "final_one_electron_reference_energy = "
-            << std::setprecision(12)
-            << result.final_one_electron_reference_energy << '\n';
-  std::cout << "final_valence_structure_eigenvalue = "
-            << std::setprecision(12)
-            << final_valence_structure_eigenvalue << '\n';
-  std::cout << "final_gradient_inf_norm = " << std::setprecision(12)
-            << result.final_gradient_inf_norm << '\n';
-  std::cout << "final_gradient_l2_norm = " << std::setprecision(12)
-            << result.final_gradient_l2_norm << '\n';
+
+  print_log_subsection_title("Energy and Gradient");
+  print_log_field(
+      "Nuclear repulsion energy",
+      format_fixed_double(load_result.nuclear_repulsion_energy, 12));
+  print_log_field(
+      "Initial total energy",
+      format_fixed_double(result.initial_total_energy, 12));
+  print_log_field(
+      "Final total energy",
+      format_fixed_double(result.final_total_energy, 12));
+  print_log_field(
+      "Total energy change",
+      format_scientific_double(result.final_total_energy - result.initial_total_energy, 8));
+  print_log_field(
+      "Initial electronic energy",
+      format_fixed_double(initial_electronic_energy, 12));
+  print_log_field(
+      "Final electronic energy",
+      format_fixed_double(final_electronic_energy, 12));
+  print_log_field(
+      "Initial reference energy",
+      format_fixed_double(result.initial_one_electron_reference_energy, 12));
+  print_log_field(
+      "Final reference energy",
+      format_fixed_double(result.final_one_electron_reference_energy, 12));
+  print_log_field(
+      "Initial VB eigenvalue",
+      format_fixed_double(initial_valence_structure_eigenvalue, 12));
+  print_log_field(
+      "Final VB eigenvalue",
+      format_fixed_double(final_valence_structure_eigenvalue, 12));
+  print_log_field(
+      "Average structure overlap",
+      format_fixed_double(result.scf_result.average_structure_overlap, 12));
+  print_log_field(
+      "Final gradient |g|_inf",
+      format_scientific_double(result.final_gradient_inf_norm, 8));
+  print_log_field(
+      "Final gradient |g|_2",
+      format_scientific_double(result.final_gradient_l2_norm, 8));
   if (options.backend ==
           xmvb::vb::CppVbScfOptimizerBackend::NonredundantProjectedGradient ||
       options.backend ==
           xmvb::vb::CppVbScfOptimizerBackend::NonredundantLbfgspp ||
       options.backend ==
           xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    std::cout << "final_projected_gradient_inf_norm = "
-              << std::setprecision(12)
-              << result.final_projected_gradient_inf_norm << '\n';
-    std::cout << "final_projected_gradient_l2_norm = "
-              << std::setprecision(12)
-              << result.final_projected_gradient_l2_norm << '\n';
+    print_log_field(
+        "Final projected |g|_inf",
+        format_scientific_double(result.final_projected_gradient_inf_norm, 8));
+    print_log_field(
+        "Final projected |g|_2",
+        format_scientific_double(result.final_projected_gradient_l2_norm, 8));
   }
-  std::cout << "input_total_wall_time_seconds = " << std::setprecision(12)
-            << load_result.total_seconds << '\n';
-  std::cout << "runtime_total_wall_time_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.total_seconds << '\n';
-  std::cout << "runtime_read_input_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.read_input_seconds << '\n';
-  std::cout << "runtime_vb_input_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.vb_input_seconds << '\n';
-  std::cout << "runtime_libcint_buffer_setup_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.libcint_buffer_setup_seconds << '\n';
-  std::cout << "runtime_hf_setup_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.hf_setup_seconds << '\n';
-  std::cout << "runtime_vbprep_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.vbprep_seconds << '\n';
-  std::cout << "runtime_vbguess_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.vbguess_seconds << '\n';
-  std::cout << "runtime_one_electron_integrals_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.one_electron_integrals_seconds << '\n';
-  std::cout << "runtime_two_electron_integrals_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.two_electron_integrals_seconds << '\n';
-  std::cout << "runtime_output_copy_seconds = " << std::setprecision(12)
-            << load_result.runtime_timings.output_copy_seconds << '\n';
-  std::cout << "structure_expansion_seconds = " << std::setprecision(12)
-            << load_result.structure_expansion_seconds << '\n';
-  std::cout << "total_wall_time_seconds = " << std::setprecision(12)
-            << result.total_wall_time_seconds << '\n';
 
-  const bool command_converged =
-      adaptive_result.has_value() ? adaptive_result->converged : result.converged;
+  print_log_subsection_title("Timing Breakdown (Wall Time)");
+  print_log_field(
+      "Runtime extraction wall time",
+      format_seconds(load_result.runtime_timings.total_seconds));
+  print_log_field(
+      "Read input wall time",
+      format_seconds(load_result.runtime_timings.read_input_seconds));
+  print_log_field(
+      "VB input wall time",
+      format_seconds(load_result.runtime_timings.vb_input_seconds));
+  print_log_field(
+      "Libcint buffer setup wall time",
+      format_seconds(load_result.runtime_timings.libcint_buffer_setup_seconds));
+  print_log_field(
+      "HF setup wall time",
+      format_seconds(load_result.runtime_timings.hf_setup_seconds));
+  print_log_field(
+      "VB prep wall time",
+      format_seconds(load_result.runtime_timings.vbprep_seconds));
+  print_log_field(
+      "VB guess wall time",
+      format_seconds(load_result.runtime_timings.vbguess_seconds));
+  print_log_field(
+      "One-electron integral wall time",
+      format_seconds(load_result.runtime_timings.one_electron_integrals_seconds));
+  print_log_field(
+      "Two-electron integral wall time",
+      format_seconds(load_result.runtime_timings.two_electron_integrals_seconds));
+  print_log_field(
+      "Output copy wall time",
+      format_seconds(load_result.runtime_timings.output_copy_seconds));
+  print_log_field(
+      "AO integral provider wall time",
+      format_seconds(load_result.ao_integral_provider_seconds));
+  print_log_field(
+      "AO integral input wall time",
+      format_seconds(load_result.ao_integral_input_build_seconds));
+  print_log_field(
+      "Orbital guess build wall time",
+      format_seconds(load_result.orbital_guess_seconds));
+  print_log_field(
+      "Raw-structure selection wall",
+      format_seconds(load_result.raw_structure_selection_seconds));
+  print_log_field(
+      "Structure expansion wall time",
+      format_seconds(load_result.structure_expansion_seconds));
+  print_log_field(
+      "Input preparation wall time",
+      format_seconds(load_result.total_seconds));
+  print_log_field(
+      "SCF iteration wall time",
+      format_seconds(optimizer_wall_time_seconds));
+  print_log_field(
+      "End-to-end wall time",
+      format_seconds(total_job_wall_time_seconds));
+  print_log_rule('=');
+
   return command_converged ? 0 : 2;
 }

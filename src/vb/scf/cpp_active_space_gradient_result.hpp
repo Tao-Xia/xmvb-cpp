@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include "vb/orbital/active_space_one_electron_result.hpp"
@@ -9,6 +10,8 @@
 #include "vb/scf/cpp_vb_scf_result.hpp"
 
 namespace xmvb::vb {
+
+struct CppActiveSpaceSecondOrderContext;
 
 /**
  * @brief Analytic gradient result for the active-space integral layer.
@@ -34,7 +37,7 @@ struct CppActiveSpaceGradientResult {
   double active_one_electron_wall_time_seconds = 0.0;
 
   /**
-   * @brief Wall time spent building packed active-space two-electron integrals.
+   * @brief Wall time spent building the active-space two-electron representation.
    */
   double active_two_electron_wall_time_seconds = 0.0;
 
@@ -105,6 +108,15 @@ struct CppActiveSpaceGradientResult {
    * @brief Gradient with respect to packed `GGO`.
    */
   std::vector<double> packed_active_two_electron_gradient;
+
+  /**
+   * @brief Accepted-point forward context for future exact matrix-free HVPs.
+   *
+   * This optional cache persists the heavy same-spin reuse data, structure
+   * matrices, eigensystem, and selected-state matrix-form bundles created by a
+   * relaxed active-space evaluation.
+   */
+  std::shared_ptr<CppActiveSpaceSecondOrderContext> second_order_context;
 };
 
 }  // namespace xmvb::vb

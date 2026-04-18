@@ -62,6 +62,19 @@ public:
       double nuclear_repulsion_energy) const;
 
   /**
+   * @brief Evaluates only the relaxed state-averaged total energy.
+   *
+   * This skips eigenvector materialization and should be used for trial-point
+   * screening paths that do not need gradients, selected-state coefficients,
+   * or the accepted-point second-order context.
+   */
+  double evaluate_energy_only(
+      const CppVbInput& input,
+      const std::vector<int>& selected_state_indices,
+      const std::vector<double>& state_average_weights,
+      double nuclear_repulsion_energy) const;
+
+  /**
    * @brief Evaluates a compact selected-structure subspace on the current orbitals.
    *
    * @param input Full C++ VB input bundle.
@@ -95,6 +108,7 @@ private:
   StructureMatrixEvaluator matrix_evaluator_;
   xmvb::core::GeneralizedEigensolver generalized_eigensolver_;
   StructureSubspaceBuilder subspace_builder_;
+  VBSCFAlgorithm algorithm_ = VBSCFAlgorithm::Original;
 };
 
 }  // namespace xmvb::vb

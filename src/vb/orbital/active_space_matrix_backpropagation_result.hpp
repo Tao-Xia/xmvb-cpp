@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 namespace xmvb::vb {
@@ -9,11 +11,14 @@ namespace xmvb::vb {
  */
 struct ActiveSpaceMatrixBackpropagationResult {
   /**
-   * @brief Column-major gradient with respect to the full auxiliary orbital matrix.
+   * @brief Column-major gradient with respect to the active auxiliary block.
    *
-   * Only the active columns are populated by the current implementation.
+   * The matrix uses the natural `n_basis_functions x n_active_orbitals`
+   * layout consumed by `ActiveSpaceOrbitalBackpropagator` rather than
+   * embedding the active block into a mostly zero `n_basis x n_basis`
+   * auxiliary matrix.
    */
-  std::vector<double> auxiliary_orbital_gradient;
+  Eigen::MatrixXd active_auxiliary_orbital_gradient;
 
   /**
    * @brief Column-major gradient with respect to the AO effective one-electron matrix `F11`.

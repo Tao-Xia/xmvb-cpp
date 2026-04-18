@@ -10,25 +10,28 @@
 #include <omp.h>
 #endif
 
-#ifndef PATH_MAX
-#define PATH_MAX 4096
-#endif
-
 #include "inpout/input.h"
 #include "mol/mol.h"
 #include "mol/xint.h"
 #include "runtime_c/local_runtime/cint_compat.h"
-#include "scf/hf.h"
+#include "runtime_c/local_runtime_api_internal.h"
 #include "vb/vb.h"
 
+#if defined(__GNUC__) && !defined(XMVB_CPP_HAVE_LEGACY_HF_RUNTIME)
+void init_xscf_world(int thread_num) __attribute__((weak));
+void del_xscf_world(void) __attribute__((weak));
+int xmvb_cpp_vbguess(hf_info hf, inp_info inp_str, vb_info vb_str, int print_level)
+    __attribute__((weak));
+#else
 void init_xscf_world(int thread_num);
 void del_xscf_world(void);
+int xmvb_cpp_vbguess(hf_info hf, inp_info inp_str, vb_info vb_str, int print_level);
+#endif
 
 inp_info xmvb_cpp_readinp(char* inpname, char* exefile);
 int xmvb_cpp_checkkeywords(inp_info inp_str);
 vb_info xmvb_cpp_readinp_vb(mol_info mol, inp_info inp_str, para_info par_str, char* inpname);
 int xmvb_cpp_vbprep(hf_info hf, inp_info inp_str, vb_info vb_str, para_info par_str, int print_level);
-int xmvb_cpp_vbguess(hf_info hf, inp_info inp_str, vb_info vb_str, int print_level);
 int xmvb_cpp_get_ngto(mol_info mol);
 void xmvb_cpp_int_data_trans(
     mol_info mol,
@@ -39,31 +42,6 @@ void xmvb_cpp_int_data_trans(
     int ngto);
 int xmvb_cpp_cal_1eint(vb_info vb_str);
 int xmvb_cpp_cal_2eint(vb_info vb_str, int print_level);
-hf_info xmvb_cpp_init_hf(const mol_info mol);
-void xmvb_cpp_load_hf_jaux(const char* aux_fname, hf_info hf);
-void xmvb_cpp_load_hf_kgrids(const char* kgrids_fname, const char* kfgrids_fname, hf_info hf);
-void xmvb_cpp_set_hf_coulomb(Jbuilder_type jtype, hf_info hf);
-void xmvb_cpp_set_hf_exchange(Kbuilder_type ktype, hf_info hf);
-void xmvb_cpp_load_hf_dft(
-    double hf_frac,
-    GRIDS_TYPE gtype,
-    const int dft_id[],
-    const double dft_frac[],
-    int num,
-    int disp_type,
-    int dft_name,
-    hf_info hf);
-void xmvb_cpp_del_hf(hf_info hf);
-
-struct XmvbCppRuntimeHandle {
-  para_info parallel_info;
-  inp_info input_info;
-  mol_info molecule;
-  hf_info hf_wavefunction;
-  vb_info vb_wavefunction;
-  int xscf_world_initialized;
-  char runtime_xdat_path[PATH_MAX];
-};
 
 static void set_error_message(
     char* error_message,
@@ -73,6 +51,16 @@ static void set_error_message(
     return;
   }
   snprintf(error_message, error_message_capacity, "%s", message);
+}
+
+static void restore_runtime_env_var(
+    const char* name,
+    const char* previous_value) {
+  if (previous_value != NULL) {
+    setenv(name, previous_value, 1);
+  } else {
+    unsetenv(name);
+  }
 }
 
 static void remove_if_present(const char* path) {
@@ -135,11 +123,31 @@ static int resolve_runtime_thread_count(void) {
 
 static int allocate_snapshot_buffers(
     CppRuntimeSnapshot* snapshot,
+    int copy_legacy_ao_integrals,
     char* error_message,
     size_t error_message_capacity) {
   snapshot->atomic_numbers = (int*)malloc((size_t)snapshot->n_atoms * sizeof(int));
   snapshot->atomic_coordinates =
       (double*)malloc((size_t)snapshot->n_atoms * 3 * sizeof(double));
+  snapshot->libcint_atm =
+      (int*)malloc((size_t)snapshot->libcint_atm_size * sizeof(int));
+  snapshot->libcint_bas =
+      (int*)malloc((size_t)snapshot->libcint_bas_size * sizeof(int));
+  snapshot->libcint_basidx =
+      (int*)malloc((size_t)snapshot->libcint_basidx_size * sizeof(int));
+  snapshot->libcint_env =
+      (double*)malloc((size_t)snapshot->libcint_env_size * sizeof(double));
+  snapshot->auxiliary_libcint_bas = NULL;
+  snapshot->auxiliary_libcint_basidx = NULL;
+  snapshot->auxiliary_libcint_env = NULL;
+  if (snapshot->auxiliary_n_shells > 0) {
+    snapshot->auxiliary_libcint_bas =
+        (int*)malloc((size_t)snapshot->auxiliary_libcint_bas_size * sizeof(int));
+    snapshot->auxiliary_libcint_basidx =
+        (int*)malloc((size_t)snapshot->auxiliary_libcint_basidx_size * sizeof(int));
+    snapshot->auxiliary_libcint_env =
+        (double*)malloc((size_t)snapshot->auxiliary_libcint_env_size * sizeof(double));
+  }
   snapshot->shell_to_atom = (int*)malloc((size_t)snapshot->n_shells * sizeof(int));
   snapshot->shell_angular_momenta = (int*)malloc((size_t)snapshot->n_shells * sizeof(int));
   snapshot->shell_n_primitives = (int*)malloc((size_t)snapshot->n_shells * sizeof(int));
@@ -160,15 +168,48 @@ static int allocate_snapshot_buffers(
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_orbitals * sizeof(int));
   snapshot->orbital_basis_counts = (int*)malloc((size_t)snapshot->n_orbitals * sizeof(int));
   snapshot->original_orbital_basis_counts = (int*)malloc((size_t)snapshot->n_orbitals * sizeof(int));
+  snapshot->block_members = NULL;
+  snapshot->block_orbital_counts = NULL;
+  snapshot->block_basis_counts = NULL;
+  snapshot->ao_normalization = NULL;
+  if (snapshot->n_blocks > 0 && snapshot->block_storage_dimension > 0) {
+    snapshot->block_members = (int*)malloc(
+        (size_t)snapshot->n_blocks * (size_t)snapshot->block_storage_dimension * sizeof(int));
+    snapshot->block_orbital_counts = (int*)malloc((size_t)snapshot->n_blocks * sizeof(int));
+    snapshot->block_basis_counts = (int*)malloc((size_t)snapshot->n_blocks * sizeof(int));
+  }
+  if (snapshot->n_basis_functions > 0) {
+    snapshot->ao_normalization = (double*)malloc(
+        (size_t)snapshot->n_basis_functions * sizeof(double));
+  }
   snapshot->active_orbital_overlap_matrix = (double*)malloc(
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
-  snapshot->ao_core_hamiltonian_matrix = (double*)malloc(
+  snapshot->hf_overlap_matrix = (double*)malloc(
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
-  snapshot->ao_two_electron_integral_values =
-      (double*)malloc((size_t)snapshot->n_ao_two_electron_integrals * sizeof(double));
-  snapshot->ao_two_electron_integral_indices =
-      (int*)malloc((size_t)snapshot->n_ao_two_electron_integrals * 4 * sizeof(int));
+  snapshot->hf_density_matrix = (double*)malloc(
+      (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+  snapshot->hf_fock_matrix = (double*)malloc(
+      (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+  snapshot->ao_core_hamiltonian_matrix = NULL;
+  snapshot->ao_two_electron_integral_values = NULL;
+  snapshot->ao_two_electron_integral_indices = NULL;
+  if (copy_legacy_ao_integrals) {
+    snapshot->ao_core_hamiltonian_matrix = (double*)malloc(
+        (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+    if (snapshot->n_ao_two_electron_integrals > 0) {
+      snapshot->ao_two_electron_integral_values =
+          (double*)malloc((size_t)snapshot->n_ao_two_electron_integrals * sizeof(double));
+      snapshot->ao_two_electron_integral_indices =
+          (int*)malloc((size_t)snapshot->n_ao_two_electron_integrals * 4 * sizeof(int));
+    }
+  }
   if (snapshot->atomic_numbers == NULL || snapshot->atomic_coordinates == NULL ||
+      snapshot->libcint_atm == NULL || snapshot->libcint_bas == NULL ||
+      snapshot->libcint_basidx == NULL || snapshot->libcint_env == NULL ||
+      (snapshot->auxiliary_n_shells > 0 &&
+       (snapshot->auxiliary_libcint_bas == NULL ||
+        snapshot->auxiliary_libcint_basidx == NULL ||
+        snapshot->auxiliary_libcint_env == NULL)) ||
       snapshot->shell_to_atom == NULL || snapshot->shell_angular_momenta == NULL ||
       snapshot->shell_n_primitives == NULL || snapshot->shell_ao_starts == NULL ||
       snapshot->shell_ao_counts == NULL || snapshot->ao_to_atom == NULL ||
@@ -176,10 +217,19 @@ static int allocate_snapshot_buffers(
       snapshot->ao_shell_local_indices == NULL || snapshot->ao_cartesian_exponents == NULL ||
       snapshot->raw_structure_orbitals == NULL || snapshot->orbital_value_table == NULL ||
       snapshot->orbital_basis_index_table == NULL || snapshot->orbital_basis_counts == NULL ||
-      snapshot->original_orbital_basis_counts == NULL || snapshot->active_orbital_overlap_matrix == NULL ||
-      snapshot->ao_core_hamiltonian_matrix == NULL ||
-      snapshot->ao_two_electron_integral_values == NULL ||
-      snapshot->ao_two_electron_integral_indices == NULL) {
+      snapshot->original_orbital_basis_counts == NULL ||
+      (snapshot->n_blocks > 0 && snapshot->block_storage_dimension > 0 &&
+       (snapshot->block_members == NULL || snapshot->block_orbital_counts == NULL ||
+        snapshot->block_basis_counts == NULL)) ||
+      (snapshot->n_basis_functions > 0 && snapshot->ao_normalization == NULL) ||
+      snapshot->active_orbital_overlap_matrix == NULL ||
+      snapshot->hf_overlap_matrix == NULL ||
+      snapshot->hf_density_matrix == NULL ||
+      snapshot->hf_fock_matrix == NULL ||
+      (copy_legacy_ao_integrals && snapshot->ao_core_hamiltonian_matrix == NULL) ||
+      (copy_legacy_ao_integrals && snapshot->n_ao_two_electron_integrals > 0 &&
+       (snapshot->ao_two_electron_integral_values == NULL ||
+        snapshot->ao_two_electron_integral_indices == NULL))) {
     free_cpp_runtime_snapshot(snapshot);
     set_error_message(
         error_message,
@@ -232,8 +282,10 @@ int xmvb_cpp_runtime_create(
   handle->parallel_info->nprocs = 1;
   handle->parallel_info->thread_num = resolve_runtime_thread_count();
   handle->parallel_info->ncores = handle->parallel_info->thread_num;
-  init_xscf_world(handle->parallel_info->thread_num);
-  handle->xscf_world_initialized = 1;
+  if (init_xscf_world != NULL) {
+    init_xscf_world(handle->parallel_info->thread_num);
+    handle->xscf_world_initialized = 1;
+  }
 
   *runtime_handle = handle;
   return 0;
@@ -243,8 +295,9 @@ void xmvb_cpp_runtime_destroy(XmvbCppRuntimeHandle* runtime_handle) {
   if (runtime_handle == NULL) {
     return;
   }
-  if (runtime_handle->hf_wavefunction != NULL) {
-    xmvb_cpp_del_hf(runtime_handle->hf_wavefunction);
+  if (runtime_handle->hf_wavefunction != NULL &&
+      runtime_handle->destroy_hf_fn != NULL) {
+    runtime_handle->destroy_hf_fn(runtime_handle->hf_wavefunction);
   }
   if (runtime_handle->vb_wavefunction != NULL) {
     del_vb_str(runtime_handle->vb_wavefunction);
@@ -258,7 +311,7 @@ void xmvb_cpp_runtime_destroy(XmvbCppRuntimeHandle* runtime_handle) {
     free_runtime_input_info(runtime_handle->input_info);
   }
   remove_if_present(runtime_handle->runtime_xdat_path);
-  if (runtime_handle->xscf_world_initialized) {
+  if (runtime_handle->xscf_world_initialized && del_xscf_world != NULL) {
     del_xscf_world();
   }
   free(runtime_handle->parallel_info);
@@ -276,60 +329,32 @@ int xmvb_cpp_runtime_load_input(
     return 1;
   }
 
+  const char* previous_echo_input = getenv("XMVB_CPP_ECHO_INPUT");
+  char* previous_echo_input_copy = NULL;
+  if (previous_echo_input != NULL) {
+    previous_echo_input_copy = strdup(previous_echo_input);
+    if (previous_echo_input_copy == NULL) {
+      set_error_message(error_message, error_message_capacity, "failed to preserve XMVB_CPP_ECHO_INPUT");
+      return 1;
+    }
+  } else if (setenv("XMVB_CPP_ECHO_INPUT", "0", 1) != 0) {
+    set_error_message(error_message, error_message_capacity, "failed to disable input echo");
+    return 1;
+  }
+
   runtime_handle->input_info = xmvb_cpp_readinp(input_file_path, (char*)executable_path);
+  restore_runtime_env_var("XMVB_CPP_ECHO_INPUT", previous_echo_input_copy);
+  free(previous_echo_input_copy);
   xmvb_cpp_checkkeywords(runtime_handle->input_info);
   runtime_handle->input_info->print_level = 0;
-  if (runtime_handle->input_info->inttyp != INT_CINT) {
+  if (runtime_handle->input_info->inttyp != INT_CINT &&
+      runtime_handle->input_info->input_requests_ri_two_electron_mode == 0) {
     set_error_message(
         error_message,
         error_message_capacity,
-        "standalone xmvb-cpp runtime currently supports only INT=CINT inputs");
+        "standalone xmvb-cpp runtime currently supports only INT=LIBCINT or INT=RI inputs");
     return 1;
   }
-  return 0;
-}
-
-int xmvb_cpp_runtime_setup_hf(
-    XmvbCppRuntimeHandle* runtime_handle,
-    char* error_message,
-    size_t error_message_capacity) {
-  if (runtime_handle == NULL || runtime_handle->input_info == NULL ||
-      runtime_handle->molecule == NULL) {
-    set_error_message(error_message, error_message_capacity, "runtime state is incomplete for hf setup");
-    return 1;
-  }
-
-  if (runtime_handle->hf_wavefunction != NULL) {
-    return 0;
-  }
-
-  runtime_handle->hf_wavefunction = xmvb_cpp_init_hf(runtime_handle->molecule);
-  if (runtime_handle->hf_wavefunction == NULL) {
-    set_error_message(error_message, error_message_capacity, "failed to initialize hf runtime");
-    return 1;
-  }
-
-  xmvb_cpp_load_hf_jaux(runtime_handle->input_info->aux_name, runtime_handle->hf_wavefunction);
-  xmvb_cpp_load_hf_kgrids(
-      runtime_handle->input_info->k_grid_file,
-      runtime_handle->input_info->k_grid_file_final,
-      runtime_handle->hf_wavefunction);
-  xmvb_cpp_set_hf_coulomb(RI_jbuilder, runtime_handle->hf_wavefunction);
-  xmvb_cpp_set_hf_exchange(COSX_kbuilder, runtime_handle->hf_wavefunction);
-
-  if (runtime_handle->input_info->ndft > 0) {
-    xmvb_cpp_load_hf_dft(
-        runtime_handle->input_info->hf_frac,
-        runtime_handle->input_info->grid_type,
-        runtime_handle->input_info->dft_id,
-        runtime_handle->input_info->dft_frac,
-        runtime_handle->input_info->ndft,
-        runtime_handle->input_info->disp_type,
-        runtime_handle->input_info->dft_name,
-        runtime_handle->hf_wavefunction);
-  }
-
-  runtime_handle->hf_wavefunction->open_type = runtime_handle->input_info->ihf_type;
   return 0;
 }
 
@@ -496,6 +521,13 @@ int xmvb_cpp_runtime_run_vbguess(
     set_error_message(error_message, error_message_capacity, "runtime state is incomplete for vbguess");
     return 1;
   }
+  if (xmvb_cpp_vbguess == NULL) {
+    set_error_message(
+        error_message,
+        error_message_capacity,
+        "legacy VB guess support was not built; rerun with C++ orbital guess or rebuild with legacy HF enabled");
+    return 1;
+  }
 
   if (xmvb_cpp_vbguess(
           runtime_handle->hf_wavefunction,
@@ -508,8 +540,43 @@ int xmvb_cpp_runtime_run_vbguess(
   return 0;
 }
 
+int xmvb_cpp_runtime_clear_orbital_guess(
+    XmvbCppRuntimeHandle* runtime_handle,
+    char* error_message,
+    size_t error_message_capacity) {
+  if (runtime_handle == NULL || runtime_handle->vb_wavefunction == NULL ||
+      runtime_handle->vb_wavefunction->dv == NULL) {
+    set_error_message(
+        error_message,
+        error_message_capacity,
+        "runtime state is incomplete for clearing orbital guess");
+    return 1;
+  }
+
+  memset(
+      runtime_handle->vb_wavefunction->dv,
+      0,
+      (size_t)runtime_handle->vb_wavefunction->nb *
+          (size_t)runtime_handle->vb_wavefunction->nor * sizeof(double));
+  return 0;
+}
+
 int xmvb_cpp_runtime_copy_snapshot(
     const XmvbCppRuntimeHandle* runtime_handle,
+    CppRuntimeSnapshot* snapshot,
+    char* error_message,
+    size_t error_message_capacity) {
+  return xmvb_cpp_runtime_copy_snapshot_with_options(
+      runtime_handle,
+      1,
+      snapshot,
+      error_message,
+      error_message_capacity);
+}
+
+int xmvb_cpp_runtime_copy_snapshot_with_options(
+    const XmvbCppRuntimeHandle* runtime_handle,
+    int copy_legacy_ao_integrals,
     CppRuntimeSnapshot* snapshot,
     char* error_message,
     size_t error_message_capacity) {
@@ -518,21 +585,93 @@ int xmvb_cpp_runtime_copy_snapshot(
     return 1;
   }
 
+  bas_info auxiliary_basis = NULL;
+  struct MolInfo auxiliary_molecule;
+  memset(&auxiliary_molecule, 0, sizeof(auxiliary_molecule));
+
   snapshot->n_structures = runtime_handle->vb_wavefunction->nstr;
   snapshot->n_atoms = runtime_handle->molecule->atm->natm;
   snapshot->n_shells = runtime_handle->molecule->bas->nbas;
+  snapshot->n_gaussian_primitives = runtime_handle->vb_wavefunction->ngto;
+  snapshot->auxiliary_n_shells = 0;
+  snapshot->auxiliary_n_gaussian_primitives = 0;
+  snapshot->libcint_atm_size = ATM_SLOTS * snapshot->n_atoms;
+  snapshot->libcint_bas_size = BAS_SLOTS * snapshot->n_shells;
+  snapshot->libcint_basidx_size = snapshot->n_shells * 2;
+  snapshot->libcint_env_size =
+      snapshot->n_gaussian_primitives * 2 + snapshot->n_atoms * 3 + PTR_ENV_START;
+  snapshot->auxiliary_libcint_bas_size = 0;
+  snapshot->auxiliary_libcint_basidx_size = 0;
+  snapshot->auxiliary_libcint_env_size = 0;
   snapshot->n_basis_functions = runtime_handle->vb_wavefunction->nb;
   snapshot->n_orbitals = runtime_handle->vb_wavefunction->nor;
   snapshot->n_active_orbitals = runtime_handle->vb_wavefunction->nao;
   snapshot->n_total_electrons = runtime_handle->vb_wavefunction->nel;
   snapshot->n_active_electrons = runtime_handle->vb_wavefunction->nae;
+  snapshot->n_blocks = runtime_handle->vb_wavefunction->nblock;
+  snapshot->block_storage_dimension =
+      runtime_handle->vb_wavefunction->dovbci > 0
+          ? runtime_handle->vb_wavefunction->nb
+          : runtime_handle->vb_wavefunction->nor;
+  snapshot->block_partial_overlap = runtime_handle->vb_wavefunction->block_part_ov;
   snapshot->spin_multiplicity = runtime_handle->vb_wavefunction->nmul;
+  snapshot->input_requests_ri_two_electron_mode =
+      runtime_handle->input_info != NULL
+          ? runtime_handle->input_info->input_requests_ri_two_electron_mode
+          : 0;
+  snapshot->input_requests_molden_output =
+      runtime_handle->input_info != NULL
+          ? runtime_handle->input_info->molden
+          : 0;
+  snapshot->input_requests_tbvbscf_mode =
+      runtime_handle->input_info != NULL
+          ? runtime_handle->input_info->biovb
+          : 0;
+  snapshot->requested_scf_max_iterations = runtime_handle->vb_wavefunction->itmax;
+  snapshot->guess_type = runtime_handle->vb_wavefunction->iguess;
+  snapshot->orbital_type = runtime_handle->vb_wavefunction->orbtyp;
+  snapshot->fragment_type = runtime_handle->vb_wavefunction->frgtyp;
   snapshot->wavefunction_type = runtime_handle->vb_wavefunction->wfntyp;
   snapshot->vb_function_type = runtime_handle->vb_wavefunction->vbftyp;
+  snprintf(
+      snapshot->basis_name,
+      sizeof(snapshot->basis_name),
+      "%s",
+      runtime_handle->input_info != NULL ? runtime_handle->input_info->basis_name : "");
   snapshot->nuclear_repulsion_energy = runtime_handle->vb_wavefunction->enuc;
-  snapshot->n_ao_two_electron_integrals = runtime_handle->vb_wavefunction->n2e;
+  snapshot->n_ao_two_electron_integrals =
+      copy_legacy_ao_integrals ? runtime_handle->vb_wavefunction->n2e : 0;
 
-  if (allocate_snapshot_buffers(snapshot, error_message, error_message_capacity) != 0) {
+  if (runtime_handle->input_info != NULL && runtime_handle->input_info->aux_name[0] != '\0') {
+    auxiliary_basis = init_bas(
+        runtime_handle->input_info->aux_name,
+        runtime_handle->molecule->atm);
+    if (auxiliary_basis == NULL) {
+      set_error_message(error_message, error_message_capacity, "failed to initialize RI auxiliary basis");
+      return 1;
+    }
+    auxiliary_molecule.atm = runtime_handle->molecule->atm;
+    auxiliary_molecule.bas = auxiliary_basis;
+    snapshot->auxiliary_n_shells = auxiliary_basis->nbas;
+    snapshot->auxiliary_n_gaussian_primitives =
+        xmvb_cpp_get_ngto(&auxiliary_molecule);
+    snapshot->auxiliary_libcint_bas_size =
+        BAS_SLOTS * snapshot->auxiliary_n_shells;
+    snapshot->auxiliary_libcint_basidx_size =
+        snapshot->auxiliary_n_shells * 2;
+    snapshot->auxiliary_libcint_env_size =
+        snapshot->auxiliary_n_gaussian_primitives * 2 +
+        snapshot->n_atoms * 3 + PTR_ENV_START;
+  }
+
+  if (allocate_snapshot_buffers(
+          snapshot,
+          copy_legacy_ao_integrals,
+          error_message,
+          error_message_capacity) != 0) {
+    if (auxiliary_basis != NULL) {
+      del_bas(auxiliary_basis);
+    }
     return 1;
   }
 
@@ -545,6 +684,34 @@ int xmvb_cpp_runtime_copy_snapshot(
         snapshot->atomic_coordinates + atom_index * 3,
         runtime_handle->molecule->atm->value + coordinate_offset,
         3 * sizeof(double));
+  }
+
+  memcpy(
+      snapshot->libcint_atm,
+      runtime_handle->vb_wavefunction->atm,
+      (size_t)snapshot->libcint_atm_size * sizeof(int));
+  memcpy(
+      snapshot->libcint_bas,
+      runtime_handle->vb_wavefunction->bas,
+      (size_t)snapshot->libcint_bas_size * sizeof(int));
+  memcpy(
+      snapshot->libcint_basidx,
+      runtime_handle->vb_wavefunction->basidx,
+      (size_t)snapshot->libcint_basidx_size * sizeof(int));
+  memcpy(
+      snapshot->libcint_env,
+      runtime_handle->vb_wavefunction->env,
+      (size_t)snapshot->libcint_env_size * sizeof(double));
+  if (auxiliary_basis != NULL) {
+    xmvb_cpp_int_data_trans(
+        &auxiliary_molecule,
+        snapshot->libcint_atm,
+        snapshot->auxiliary_libcint_bas,
+        snapshot->auxiliary_libcint_basidx,
+        snapshot->auxiliary_libcint_env,
+        snapshot->auxiliary_n_gaussian_primitives);
+    del_bas(auxiliary_basis);
+    auxiliary_basis = NULL;
   }
 
   for (int shell_index = 0; shell_index < snapshot->n_shells; ++shell_index) {
@@ -596,21 +763,74 @@ int xmvb_cpp_runtime_copy_snapshot(
       snapshot->original_orbital_basis_counts,
       runtime_handle->vb_wavefunction->ma0,
       (size_t)snapshot->n_orbitals * sizeof(int));
+  if (snapshot->n_blocks > 0 && snapshot->block_storage_dimension > 0) {
+    memcpy(
+        snapshot->block_members,
+        runtime_handle->vb_wavefunction->blocks,
+        (size_t)snapshot->n_blocks * (size_t)snapshot->block_storage_dimension * sizeof(int));
+    memcpy(
+        snapshot->block_orbital_counts,
+        runtime_handle->vb_wavefunction->noc_block,
+        (size_t)snapshot->n_blocks * sizeof(int));
+    memcpy(
+        snapshot->block_basis_counts,
+        runtime_handle->vb_wavefunction->mx_block,
+        (size_t)snapshot->n_blocks * sizeof(int));
+  }
+  memcpy(
+      snapshot->ao_normalization,
+      runtime_handle->vb_wavefunction->snorm,
+      (size_t)snapshot->n_basis_functions * sizeof(double));
   memcpy(
       snapshot->active_orbital_overlap_matrix,
       runtime_handle->vb_wavefunction->ssf,
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
-  memcpy(
-      snapshot->ao_core_hamiltonian_matrix,
-      runtime_handle->vb_wavefunction->hhf,
+  memset(
+      snapshot->hf_overlap_matrix,
+      0,
       (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
-  memcpy(
-      snapshot->ao_two_electron_integral_values,
-      runtime_handle->vb_wavefunction->ggf,
-      (size_t)snapshot->n_ao_two_electron_integrals * sizeof(double));
-  memcpy(
-      snapshot->ao_two_electron_integral_indices,
-      runtime_handle->vb_wavefunction->g2eidx,
-      (size_t)snapshot->n_ao_two_electron_integrals * 4 * sizeof(int));
+  memset(
+      snapshot->hf_density_matrix,
+      0,
+      (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+  memset(
+      snapshot->hf_fock_matrix,
+      0,
+      (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+  if (runtime_handle->hf_wavefunction != NULL) {
+    memcpy(
+        snapshot->hf_overlap_matrix,
+        runtime_handle->hf_wavefunction->s_matrix[0],
+        (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+    memcpy(
+        snapshot->hf_density_matrix,
+        runtime_handle->hf_wavefunction->d_matrix[0][0],
+        (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+    memcpy(
+        snapshot->hf_fock_matrix,
+        runtime_handle->hf_wavefunction->f_matrix[0][0],
+        (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+  } else {
+    memcpy(
+        snapshot->hf_overlap_matrix,
+        snapshot->active_orbital_overlap_matrix,
+        (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+  }
+  if (copy_legacy_ao_integrals) {
+    memcpy(
+        snapshot->ao_core_hamiltonian_matrix,
+        runtime_handle->vb_wavefunction->hhf,
+        (size_t)snapshot->n_basis_functions * (size_t)snapshot->n_basis_functions * sizeof(double));
+    if (snapshot->n_ao_two_electron_integrals > 0) {
+      memcpy(
+          snapshot->ao_two_electron_integral_values,
+          runtime_handle->vb_wavefunction->ggf,
+          (size_t)snapshot->n_ao_two_electron_integrals * sizeof(double));
+      memcpy(
+          snapshot->ao_two_electron_integral_indices,
+          runtime_handle->vb_wavefunction->g2eidx,
+          (size_t)snapshot->n_ao_two_electron_integrals * 4 * sizeof(int));
+    }
+  }
   return 0;
 }

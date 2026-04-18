@@ -53,6 +53,7 @@ struct InpInfo {
   double cad_step_size; 
 
   int int_punch;
+  int input_requests_ri_two_electron_mode;
 
   int read_points;
 

@@ -49,7 +49,7 @@ StructureAccumulationResult StructureMatrixEvaluator::evaluate(
       prepared_active_space.orbital_result.active_orbital_overlap_matrix,
       prepared_active_space.active_space_one_electron_result.h1e_act,
       input.orbital_preparation_input.n_active_orbitals,
-      prepared_active_space.active_space_two_electron_result.packed_active_two_electron_integrals,
+      prepared_active_space.active_space_two_electron_result,
       input.structure_data.n_structures);
 }
 

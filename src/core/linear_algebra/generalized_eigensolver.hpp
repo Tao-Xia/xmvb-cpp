@@ -44,6 +44,17 @@ public:
       const std::vector<double>& hamiltonian_matrix,
       const std::vector<double>& overlap_matrix,
       int dimension) const;
+
+  /**
+   * @brief Solves only the generalized eigenvalues.
+   *
+   * This skips the full eigenvector matrix and is intended for energy-only
+   * trial-point screening where only selected-state energies are needed.
+   */
+  std::vector<double> solve_eigenvalues_only(
+      const std::vector<double>& hamiltonian_matrix,
+      const std::vector<double>& overlap_matrix,
+      int dimension) const;
 };
 
 }  // namespace xmvb::core

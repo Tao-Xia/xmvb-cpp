@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 namespace xmvb::vb {
@@ -9,11 +11,13 @@ namespace xmvb::vb {
  */
 struct ActiveSpaceTwoElectronBackpropagationResult {
   /**
-   * @brief Column-major gradient with respect to the full auxiliary orbital matrix.
+   * @brief Column-major gradient with respect to the active auxiliary block.
    *
-   * Only the active columns are populated by the current implementation.
+   * The two-electron builder never touches the inactive or virtual auxiliary
+   * columns, so returning the compact `n_basis_functions x n_active_orbitals`
+   * block avoids repeated AO-sized allocations in the SCF hot path.
    */
-  std::vector<double> auxiliary_orbital_gradient;
+  Eigen::MatrixXd active_auxiliary_orbital_gradient;
 };
 
 }  // namespace xmvb::vb

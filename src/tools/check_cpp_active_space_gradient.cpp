@@ -7,9 +7,12 @@
 #include <utility>
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/full_structure_builder.hpp"
+#include "vb/orbital/active_space_two_electron_utils.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
@@ -24,6 +27,8 @@ enum class Component {
 struct Options {
   std::string input_path;
   xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+  xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
+      xmvb::vb::StandardTwoElectronMode::Auto;
   Component component = Component::Overlap;
   int count = 8;
   double step = 1.0e-6;
@@ -32,6 +37,7 @@ struct Options {
 void print_usage() {
   std::cerr << "usage: check_cpp_active_space_gradient <input.xmi> "
                "[--algorithm original] "
+               "[--standard-two-electron-mode auto|exact|ri] "
                "[--component overlap|one_electron|two_electron] "
                "[--count N] [--step h]\n";
 }
@@ -52,6 +58,19 @@ Options parse_arguments(int argc, char** argv) {
         options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
+      }
+      continue;
+    }
+    if (argument_name == "--standard-two-electron-mode") {
+      if (argument_value == "auto") {
+        options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Auto;
+      } else if (argument_value == "exact") {
+        options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Exact;
+      } else if (argument_value == "ri") {
+        options.standard_two_electron_mode =
+            xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity;
+      } else {
+        throw std::invalid_argument("invalid standard two-electron mode: " + argument_value);
       }
       continue;
     }
@@ -88,17 +107,22 @@ Options parse_arguments(int argc, char** argv) {
 }
 
 double compute_one_electron_reference_energy(
-    const std::vector<double>& inactive_density_matrix,
+    const Eigen::MatrixXd& inactive_density_matrix,
     const std::vector<double>& ao_effective_h1e,
     const std::vector<double>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
+  if (inactive_density_matrix.rows() != n_basis_functions ||
+      inactive_density_matrix.cols() != n_basis_functions) {
+    throw std::invalid_argument(
+        "inactive density matrix shape does not match n_basis_functions");
+  }
   double one_electron_reference_energy = 0.0;
   for (int column = 0; column < n_basis_functions; ++column) {
     for (int row = 0; row < n_basis_functions; ++row) {
       const std::size_t index =
-          static_cast<std::size_t>(column) * n_basis_functions + row;
+          xmvb::to_size(column) * n_basis_functions + row;
       one_electron_reference_energy +=
-          inactive_density_matrix[index] *
+          inactive_density_matrix.data()[index] *
           (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
     }
   }
@@ -162,15 +186,51 @@ const char* component_name(Component component) {
   return "unknown";
 }
 
+int count_nonzero_off_diagonal_entries(
+    const std::vector<double>& matrix,
+    int dimension,
+    double tolerance) {
+  if (static_cast<int>(matrix.size()) != dimension * dimension) {
+    throw std::invalid_argument("matrix size does not match dimension");
+  }
+  int count = 0;
+  for (int column = 0; column < dimension; ++column) {
+    for (int row = 0; row < dimension; ++row) {
+      if (row == column) {
+        continue;
+      }
+      const double value =
+          matrix[xmvb::to_size(column) * dimension + row];
+      if (std::abs(value) > tolerance) {
+        ++count;
+      }
+    }
+  }
+  return count;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    xmvb::vb::CppVbInputLoadOptions load_options;
+    load_options.ao_integral_source = xmvb::vb::AoIntegralSource::LegacyRuntime;
+    load_options.orbital_guess_source =
+        xmvb::vb::OrbitalGuessSource::LegacyRuntime;
+    load_options.standard_two_electron_mode = options.standard_two_electron_mode;
+    const auto load_result =
+        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
     xmvb::vb::CppActiveSpaceGradientEvaluator evaluator(options.algorithm);
     const auto result = evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const auto& gradient = component_gradient(result, options.component);
+    const std::vector<double> baseline_packed_two =
+        result.active_space_two_electron_result.packed_active_two_electron_integrals.empty()
+            ? xmvb::vb::reconstruct_packed_active_two_electron_integrals(
+                  xmvb::vb::make_active_space_two_electron_view(
+                      result.active_space_two_electron_result),
+                  load_result.input.orbital_preparation_input.n_active_orbitals)
+            : result.active_space_two_electron_result.packed_active_two_electron_integrals;
 
     std::vector<std::pair<double, int>> ranked_entries;
     ranked_entries.reserve(gradient.size());
@@ -191,32 +251,48 @@ int main(int argc, char** argv) {
         std::min(options.count, static_cast<int>(ranked_entries.size()));
     std::cout << std::setprecision(12);
     std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
+    std::cout << "standard_two_electron_mode = "
+              << xmvb::vb::standard_two_electron_mode_name(
+                     load_result.standard_two_electron_mode)
+              << '\n';
     std::cout << "component = " << component_name(options.component) << '\n';
     std::cout << "initial_total_energy = " << result.scf_result.total_energy << '\n';
+    std::cout << "structure_overlap_offdiag_nnz = "
+              << count_nonzero_off_diagonal_entries(
+                     result.scf_result.structure_matrices.overlap_matrix,
+                     result.scf_result.n_structures,
+                     1.0e-12)
+              << '\n';
+    std::cout << "structure_hamiltonian_offdiag_nnz = "
+              << count_nonzero_off_diagonal_entries(
+                     result.scf_result.structure_matrices.hamiltonian_matrix,
+                     result.scf_result.n_structures,
+                     1.0e-12)
+              << '\n';
     std::cout << "finite_difference_step = " << options.step << '\n';
     std::cout << "reported_entries = " << n_to_report << '\n';
 
     for (int report_index = 0; report_index < n_to_report; ++report_index) {
-      const int entry_index = ranked_entries[static_cast<std::size_t>(report_index)].second;
+      const int entry_index = ranked_entries[xmvb::to_size(report_index)].second;
       std::vector<double> plus_overlap = result.active_orbital_overlap_matrix;
       std::vector<double> minus_overlap = result.active_orbital_overlap_matrix;
       std::vector<double> plus_one = result.active_space_one_electron_result.h1e_act;
       std::vector<double> minus_one = result.active_space_one_electron_result.h1e_act;
-      std::vector<double> plus_two = result.active_space_two_electron_result.packed_active_two_electron_integrals;
-      std::vector<double> minus_two = result.active_space_two_electron_result.packed_active_two_electron_integrals;
+      std::vector<double> plus_two = baseline_packed_two;
+      std::vector<double> minus_two = baseline_packed_two;
 
       switch (options.component) {
         case Component::Overlap:
-          plus_overlap[static_cast<std::size_t>(entry_index)] += options.step;
-          minus_overlap[static_cast<std::size_t>(entry_index)] -= options.step;
+          plus_overlap[xmvb::to_size(entry_index)] += options.step;
+          minus_overlap[xmvb::to_size(entry_index)] -= options.step;
           break;
         case Component::OneElectron:
-          plus_one[static_cast<std::size_t>(entry_index)] += options.step;
-          minus_one[static_cast<std::size_t>(entry_index)] -= options.step;
+          plus_one[xmvb::to_size(entry_index)] += options.step;
+          minus_one[xmvb::to_size(entry_index)] -= options.step;
           break;
         case Component::TwoElectron:
-          plus_two[static_cast<std::size_t>(entry_index)] += options.step;
-          minus_two[static_cast<std::size_t>(entry_index)] -= options.step;
+          plus_two[xmvb::to_size(entry_index)] += options.step;
+          minus_two[xmvb::to_size(entry_index)] -= options.step;
           break;
       }
 
@@ -237,7 +313,7 @@ int main(int argc, char** argv) {
           load_result.nuclear_repulsion_energy,
           options.algorithm);
       const double finite_difference = (plus_energy - minus_energy) / (2.0 * options.step);
-      const double analytic = gradient[static_cast<std::size_t>(entry_index)];
+      const double analytic = gradient[xmvb::to_size(entry_index)];
       const double absolute_error = std::abs(analytic - finite_difference);
       const double relative_error =
           absolute_error / std::max(1.0, std::abs(finite_difference));

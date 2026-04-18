@@ -33,6 +33,7 @@ void switch_xscf_thread(int blas_xscf)
         /* code */
         openblas_set_num_threads(1);
         XSCF_tm = 1;
+        break;
     default:
         openblas_set_num_threads(get_xscf_threadnum());
         XSCF_tm = 0;

@@ -17,7 +17,8 @@ class LegacyHamiltonianOverlapCalculator {
 public:
   HamiltonianOverlapCalculationResult calculate_from_input_file(
       const std::string& input_file_path,
-      int n_threads) const;
+      int n_threads,
+      bool optimize_orbitals = true) const;
 };
 
 }  // namespace xmvb::vb

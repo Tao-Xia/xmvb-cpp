@@ -9,6 +9,7 @@ extern "C" {
 int legacy_calculate_hamiltonian_overlap(
     const char* input_file_path,
     int n_threads,
+    int run_orbital_optimization,
     int* n_structures,
     double* total_energy,
     double* one_electron_energy,

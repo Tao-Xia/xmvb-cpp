@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 #include "vb/matrices/determinant_types.hpp"
@@ -14,6 +16,7 @@ namespace xmvb::vb {
  */
 class DeterminantOverlapResolver {
 public:
+
   /**
    * @brief Constructs a resolver with a singular-value threshold.
    *
@@ -30,12 +33,34 @@ public:
    *
    * @param overlap_submatrix Column-major determinant overlap submatrix.
    * @param n_electrons Dimension of the square matrix.
-   * @return DeterminantOverlapResult Thresholded nullity plus the full SVD
-   *   factors needed by the determinant-level kernels.
+   * @return DeterminantOverlapResult Thresholded nullity plus either a cached
+   *   LU inverse for regular pairs or SVD factors for singular pairs.
    */
   DeterminantOverlapResult resolve(
       const std::vector<double>& overlap_submatrix,
       int n_electrons) const;
+
+  /**
+   * @brief Resolves determinant overlap quantities from an Eigen matrix view.
+   *
+   * This overload keeps the same algebra as the column-major vector entry
+   * point, but avoids an extra matrix-to-vector flatten/copy in hot C++ call
+   * sites such as the exact-separator recurrence.
+   *
+   * @param overlap_submatrix Square determinant overlap matrix with
+   *   right-determinant rows and left-determinant columns.
+   * @return DeterminantOverlapResult Thresholded nullity plus either a cached
+   *   LU inverse for regular pairs or SVD factors for singular pairs.
+   */
+  DeterminantOverlapResult resolve_matrix(
+      const Eigen::MatrixXd& overlap_submatrix) const;
+
+  /**
+   * @brief Returns the singular-value threshold used by the resolver.
+   */
+  double linear_dependence_threshold() const {
+    return linear_dependence_threshold_;
+  }
 
 private:
   double linear_dependence_threshold_;

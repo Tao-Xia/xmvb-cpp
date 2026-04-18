@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include "vb/matrices/cpp_vb_input.hpp"
 #include "vb/orbital/active_space_one_electron_builder.hpp"
 #include "vb/orbital/active_space_one_electron_result.hpp"
@@ -34,7 +36,7 @@ struct TimedPreparedActiveSpaceContext {
 };
 
 double compute_one_electron_reference_energy(
-    const std::vector<double>& inactive_density_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
     const std::vector<double>& ao_effective_h1e,
     const std::vector<double>& ao_core_hamiltonian_matrix,
     int n_basis_functions);

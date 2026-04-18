@@ -1,0 +1,143 @@
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+#include "vb/orbital/ao_integral_input.hpp"
+
+namespace xmvb::vb {
+
+/**
+ * @brief Molecule-static CSR buffers for the exact AO-H1E linear operator.
+ *
+ * The exact AO effective one-electron map is linear in the full AO inactive
+ * density storage.  This helper materializes that map once as a CSR operator
+ * on `vec(P11)` / `vec(G11)` so repeated SCF and exact_ctx HVP evaluations can
+ * use row-wise sparse contractions instead of rescattering every ERI into six
+ * AO matrix entries.
+ */
+struct AoEffectiveOneElectronGraphBuffers {
+  std::vector<int> row_offsets;
+  std::vector<int> source_indices;
+  std::vector<double> signed_weights;
+  std::vector<int> transpose_source_offsets;
+  std::vector<int> transpose_row_indices;
+  std::vector<double> transpose_signed_weights;
+};
+
+/**
+ * @brief Combined forward and transpose outputs of the AO-H1E graph operator.
+ *
+ * `forward_output` is the unsymmetrized `\delta G11`, while
+ * `transpose_output` is the unsymmetrized pullback with respect to `P11`.
+ */
+struct AoEffectiveOneElectronGraphFusedResult {
+  std::vector<double> forward_output;
+  std::vector<double> transpose_output;
+};
+
+/**
+ * @brief Builds the molecule-static CSR operator for the exact AO-H1E map.
+ *
+ * The per-edge weights already include the AO-integral symmetry multiplier and
+ * the Coulomb/exchange prefactor (`+4` or `-1`), so later applications only
+ * need sparse matrix-vector multiplies against full AO matrix storage.
+ */
+AoEffectiveOneElectronGraphBuffers build_ao_effective_one_electron_graph(
+    const std::vector<int>& ao_effective_one_electron_linear_indices,
+    const std::vector<double>& ao_two_electron_integral_values,
+    const std::vector<std::uint8_t>& ao_two_electron_integral_symmetry_shifts,
+    int n_basis_functions);
+
+/**
+ * @brief Returns whether `ao_integral_input` carries a valid AO-H1E graph.
+ */
+bool ao_effective_one_electron_graph_available(
+    const AoIntegralInput& ao_integral_input) noexcept;
+
+/**
+ * @brief Applies the AO-H1E CSR graph in the forward direction.
+ *
+ * `source_matrix_storage` is the full column-major AO matrix storage for
+ * `vec(P11)` or any other dense AO-side source vector.
+ */
+std::vector<double> apply_ao_effective_one_electron_graph_forward(
+    const double* source_matrix_storage,
+    const AoIntegralInput& ao_integral_input);
+
+/**
+ * @brief Applies the AO-H1E CSR graph in the forward direction with OpenMP row parallelism.
+ *
+ * `n_threads` is the number of threads used for the row-partitioned sparse
+ * contraction. Each row writes to a disjoint destination entry, so the forward
+ * graph path does not need thread-local AO matrix buffers.
+ */
+std::vector<double> apply_ao_effective_one_electron_graph_forward(
+    const double* source_matrix_storage,
+    const AoIntegralInput& ao_integral_input,
+    int n_threads);
+
+/**
+ * @brief Applies the transpose of the AO-H1E CSR graph.
+ *
+ * `row_adjoint_storage` is the full column-major AO matrix storage for the
+ * adjoint living on `vec(G11)`.
+ */
+std::vector<double> apply_ao_effective_one_electron_graph_transpose(
+    const double* row_adjoint_storage,
+    const AoIntegralInput& ao_integral_input);
+
+/**
+ * @brief Applies the AO-H1E CSR graph and its transpose in one row sweep.
+ *
+ * This is the exact_ctx HVP hot path: one sparse row traversal accumulates
+ * both `\delta G11 = K * \delta P11` and the transpose pullback
+ * `K^T * \delta \Lambda` without revisiting the molecule-static operator.
+ */
+AoEffectiveOneElectronGraphFusedResult
+apply_fused_ao_effective_one_electron_graph(
+    const double* source_matrix_storage,
+    const double* row_adjoint_storage,
+    const AoIntegralInput& ao_integral_input);
+
+/**
+ * @brief Applies the fused AO-H1E CSR graph with OpenMP row parallelism.
+ *
+ * The forward output stays row-local, while the transpose pullback switches to
+ * the source-owned companion graph so each thread owns a disjoint block of
+ * `K^T * lambda`. This avoids allocating one full AO matrix per worker on the
+ * exact_ctx hot path.
+ */
+AoEffectiveOneElectronGraphFusedResult
+apply_fused_ao_effective_one_electron_graph(
+    const double* source_matrix_storage,
+    const double* row_adjoint_storage,
+    const AoIntegralInput& ao_integral_input,
+    int n_threads);
+
+/**
+ * @brief Applies the AO-H1E CSR graph into caller-provided output buffers.
+ *
+ * This variant exists for hot exact_ctx HVP paths that repeatedly apply the
+ * same molecule-static graph and want to reuse large AO-sized work buffers
+ * across matvec calls instead of reallocating them every time.
+ */
+void apply_fused_ao_effective_one_electron_graph(
+    const double* source_matrix_storage,
+    const double* row_adjoint_storage,
+    const AoIntegralInput& ao_integral_input,
+    std::vector<double>* forward_output,
+    std::vector<double>* transpose_output);
+
+/**
+ * @brief Applies the fused AO-H1E CSR graph with caller-provided thread count.
+ */
+void apply_fused_ao_effective_one_electron_graph(
+    const double* source_matrix_storage,
+    const double* row_adjoint_storage,
+    const AoIntegralInput& ao_integral_input,
+    int n_threads,
+    std::vector<double>* forward_output,
+    std::vector<double>* transpose_output);
+
+}  // namespace xmvb::vb

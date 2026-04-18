@@ -65,8 +65,20 @@ int xmvb_cpp_runtime_run_vbguess(
     char* error_message,
     size_t error_message_capacity);
 
+int xmvb_cpp_runtime_clear_orbital_guess(
+    XmvbCppRuntimeHandle* runtime_handle,
+    char* error_message,
+    size_t error_message_capacity);
+
 int xmvb_cpp_runtime_copy_snapshot(
     const XmvbCppRuntimeHandle* runtime_handle,
+    CppRuntimeSnapshot* snapshot,
+    char* error_message,
+    size_t error_message_capacity);
+
+int xmvb_cpp_runtime_copy_snapshot_with_options(
+    const XmvbCppRuntimeHandle* runtime_handle,
+    int copy_legacy_ao_integrals,
     CppRuntimeSnapshot* snapshot,
     char* error_message,
     size_t error_message_capacity);

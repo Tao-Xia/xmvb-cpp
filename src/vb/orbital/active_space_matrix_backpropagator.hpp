@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 #include "vb/orbital/active_space_matrix_backpropagation_result.hpp"
@@ -12,7 +14,7 @@ namespace xmvb::vb {
  * The input adjoints are assumed to be gradients of the objective with respect
  * to the active-space overlap matrix `SSO` and active-space one-electron matrix
  * `HHO`. The backpropagator returns the induced gradients with respect to:
- * - the full auxiliary orbital matrix `T`
+ * - the active auxiliary block `T_active`
  * - the AO effective one-electron matrix `F11`
  */
 class ActiveSpaceMatrixBackpropagator {
@@ -36,6 +38,26 @@ public:
       const std::vector<double>& active_orbital_overlap_matrix,
       const std::vector<double>& ao_effective_h1e,
       const std::vector<double>& auxiliary_orbital_matrix,
+      int n_basis_functions,
+      int n_inactive_doubly_occupied_orbitals,
+      int n_active_orbitals) const;
+
+  ActiveSpaceMatrixBackpropagationResult backpropagate(
+      const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_gradient,
+      const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_gradient,
+      const std::vector<double>& active_orbital_overlap_matrix,
+      const std::vector<double>& ao_effective_h1e,
+      const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
+      int n_basis_functions,
+      int n_inactive_doubly_occupied_orbitals,
+      int n_active_orbitals) const;
+
+  ActiveSpaceMatrixBackpropagationResult backpropagate(
+      const std::vector<double>& active_orbital_overlap_gradient,
+      const std::vector<double>& active_one_electron_gradient,
+      const std::vector<double>& active_orbital_overlap_matrix,
+      const std::vector<double>& ao_effective_h1e,
+      const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,
       int n_active_orbitals) const;

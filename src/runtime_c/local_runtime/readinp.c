@@ -30,6 +30,7 @@
 #include "gopt/gopt.h"
 
 static int should_log_readinp_debug(void);
+static int should_echo_input_file(void);
 
 static const char* get_runtime_temp_directory(void) {
   const char* temp_directory = getenv("TMPDIR");
@@ -133,6 +134,22 @@ static void build_prefixed_path_or_die(
 static int should_log_readinp_debug(void) {
   const char* debug_flag = getenv("XMVB_CPP_DEBUG_READINP");
   return debug_flag != NULL && debug_flag[0] != '\0' && strcmp(debug_flag, "0") != 0;
+}
+
+static int should_echo_input_file(void) {
+  const char* echo_flag = getenv("XMVB_CPP_ECHO_INPUT");
+  if (echo_flag == NULL) {
+    return 1;
+  }
+  if (echo_flag[0] == '\0' ||
+      strcmp(echo_flag, "0") == 0 ||
+      strcmp(echo_flag, "false") == 0 ||
+      strcmp(echo_flag, "FALSE") == 0 ||
+      strcmp(echo_flag, "no") == 0 ||
+      strcmp(echo_flag, "NO") == 0) {
+    return 0;
+  }
+  return 1;
 }
 
 void check_split(char **split,int nlen,int *nsplit) {
@@ -804,16 +821,19 @@ int getcom(inp_info inp_str, FILE *fp) {
                     inp_str->vbftyp=VBF_PPD;
             }
             else if (strstr(kwd,"INT")!=NULL) {
+                inp_str->input_requests_ri_two_electron_mode=0;
                 if (strstr(kval,"READ")!=NULL)
-                    inp_str->inttyp=3;
-                if (strstr(kval,"LIBCINT")!=NULL)
-                    inp_str->inttyp=0;
+                    inp_str->inttyp=INT_READ;
+                else if (strstr(kval,"LIBCINT")!=NULL)
+                    inp_str->inttyp=INT_CINT;
                 else if (strstr(kval,"XINT")!=NULL)
-                    inp_str->inttyp=1;
-                else if (strstr(kval,"RI")!=NULL)
-                    inp_str->inttyp=1;
+                    inp_str->inttyp=INT_XINT;
+                else if (strstr(kval,"RI")!=NULL) {
+                    inp_str->inttyp=INT_RI;
+                    inp_str->input_requests_ri_two_electron_mode=1;
+                }
                 else if (strstr(kval,"COSX")!=NULL){
-                    inp_str->inttyp=2;
+                    inp_str->inttyp=INT_COSX;
                 }
                 else if (strstr(kval,"FCOSX")!=NULL){
                     inp_str->inttyp=INT_FCOSX;
@@ -1202,6 +1222,7 @@ void init_inp_param(inp_info inp_str) {
   inp_str->prtGradOnly = 0;
 
   inp_str->int_punch=0;
+  inp_str->input_requests_ri_two_electron_mode=0;
   
   memset(inp_str->strclass,0,sizeof(inp_str->strclass));
   memset(inp_str->idxstate,0,sizeof(inp_str->idxstate));
@@ -1296,8 +1317,11 @@ inp_info readinp(char *inpname, char* exefile) {
   inp_fp=open_required_file(inpname,"r","input file");
   scr_fp=open_required_file(inp_str->inpname,"w+","runtime scratch file");
 
-  printf("\n");
-  printf("---------------Input File---------------\n");
+  const int echo_input_file = should_echo_input_file();
+  if (echo_input_file) {
+    printf("\n");
+    printf("---------------Input File---------------\n");
+  }
 
   memset(inp_str->title,0,sizeof(inp_str->title));
 
@@ -1305,14 +1329,15 @@ inp_info readinp(char *inpname, char* exefile) {
     printf("Error in reading input file.\n");
     exit(1);
   }
-  else
+  else if (echo_input_file)
     printf("%s",inp_str->title);
 
 // read the whole file, delete the blank lines and comments, punch to scr file
   while(fgets(cline,1024,inp_fp)!=NULL) {
 
     *(cline+strcspn(cline,"\r\n"))=0;
-    printf("%s\n",cline);
+    if (echo_input_file)
+      printf("%s\n",cline);
     comment1=strchr(cline,'#');
     comment2=strchr(cline,';');
     if (comment1==NULL && comment2!=NULL)
@@ -1351,9 +1376,10 @@ inp_info readinp(char *inpname, char* exefile) {
     }
   }
 
-
-  printf("---------------End of Input--------------\n");
-  printf("\n");
+  if (echo_input_file) {
+    printf("---------------End of Input--------------\n");
+    printf("\n");
+  }
 
   fclose(inp_fp);
 
@@ -1562,6 +1588,7 @@ inp_info readinp_py(char *inpname, char* file_path) {
   inp_fp=open_required_file(inpname,"r","input file");
   scr_fp=open_required_file(inp_str->inpname,"w+","runtime scratch file");
 
+  const int echo_input_file = should_echo_input_file();
   memset(inp_str->title,0,sizeof(inp_str->title));
 
   if (fgets(inp_str->title,1024,inp_fp)==NULL) {
@@ -1619,7 +1646,7 @@ inp_info readinp_py(char *inpname, char* file_path) {
   // read $CTR section
   getcom(inp_str,scr_fp);
 
-  if (inp_str->print_level>0) {
+  if (echo_input_file && inp_str->print_level>0) {
     rewind(inp_fp);
     printf("\n");
     printf("---------------Input File---------------\n");

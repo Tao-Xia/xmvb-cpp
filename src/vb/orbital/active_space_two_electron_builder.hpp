@@ -2,6 +2,7 @@
 
 #include <vector>
 
+#include "vb/orbital/ao_integral_input.hpp"
 #include "vb/orbital/orbital_preparation_result.hpp"
 #include "vb/orbital/active_space_two_electron_result.hpp"
 
@@ -34,7 +35,8 @@ public:
       const std::vector<double>& auxiliary_orbital_matrix,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,
-      int n_active_orbitals) const;
+      int n_active_orbitals,
+      const std::vector<int>* ao_two_electron_pair_indices = nullptr) const;
 
   /**
    * @brief Builds packed active-space two-electron integrals using precomputed sparse active coefficients.
@@ -44,6 +46,19 @@ public:
       const std::vector<int>& ao_two_electron_integral_indices,
       const OrbitalPreparationResult& orbital_preparation_result,
       int n_basis_functions,
+      int n_active_orbitals,
+      const std::vector<int>* ao_two_electron_pair_indices = nullptr) const;
+
+  /**
+   * @brief Builds packed active-space two-electron integrals from cached AO integral metadata.
+   *
+   * This overload can reuse molecule-static packed AO-pair graph data prepared
+   * during input loading, which reduces synchronization and memory-traffic cost
+   * on dense active-space contractions.
+   */
+  ActiveSpaceTwoElectronResult build(
+      const AoIntegralInput& ao_integral_input,
+      const OrbitalPreparationResult& orbital_preparation_result,
       int n_active_orbitals) const;
 };
 

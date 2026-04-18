@@ -11,7 +11,8 @@ namespace xmvb::vb {
 HamiltonianOverlapCalculationResult
 LegacyHamiltonianOverlapCalculator::calculate_from_input_file(
     const std::string& input_file_path,
-    int n_threads) const {
+    int n_threads,
+    bool optimize_orbitals) const {
   int n_structures = 0;
   double total_energy = 0.0;
   double one_electron_energy = 0.0;
@@ -22,6 +23,7 @@ LegacyHamiltonianOverlapCalculator::calculate_from_input_file(
   const int status = legacy_calculate_hamiltonian_overlap(
       input_file_path.c_str(),
       n_threads,
+      optimize_orbitals ? 1 : 0,
       &n_structures,
       &total_energy,
       &one_electron_energy,
@@ -34,7 +36,7 @@ LegacyHamiltonianOverlapCalculator::calculate_from_input_file(
   }
 
   const std::size_t matrix_size =
-      static_cast<std::size_t>(n_structures) * static_cast<std::size_t>(n_structures);
+      xmvb::to_size(n_structures) * xmvb::to_size(n_structures);
 
   HamiltonianOverlapCalculationResult result;
   result.n_structures = n_structures;

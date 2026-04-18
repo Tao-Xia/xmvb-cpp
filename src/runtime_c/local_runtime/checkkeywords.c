@@ -70,10 +70,7 @@ int checkkeywords(inp_info inp_str) {
     else
       inp_str->ihf_type=UHF_WORK;
   if (inp_str->itmax<0) {
-    if (inp_str->dovb>0)
-      inp_str->itmax=200;
-    else
-      inp_str->itmax=100;
+    inp_str->itmax=2000;
   }
 
   if (inp_str->dobovb>0) {

@@ -18,7 +18,7 @@ std::vector<int> build_structure_index_remap(
   }
 
   std::vector<int> structure_index_remap(
-      static_cast<std::size_t>(n_structures),
+      xmvb::to_size(n_structures),
       -1);
   for (std::size_t selected_offset = 0;
        selected_offset < selected_structure_indices.size();
@@ -27,10 +27,10 @@ std::vector<int> build_structure_index_remap(
     if (structure_index < 0 || structure_index >= n_structures) {
       throw std::out_of_range("selected structure index is out of range");
     }
-    if (structure_index_remap[static_cast<std::size_t>(structure_index)] >= 0) {
+    if (structure_index_remap[xmvb::to_size(structure_index)] >= 0) {
       throw std::invalid_argument("selected_structure_indices must be unique");
     }
-    structure_index_remap[static_cast<std::size_t>(structure_index)] =
+    structure_index_remap[xmvb::to_size(structure_index)] =
         static_cast<int>(selected_offset);
   }
   return structure_index_remap;
@@ -69,7 +69,7 @@ FullDeterminantStructureData StructureSubspaceBuilder::build(
         throw std::invalid_argument("structure expansion term index out of range");
       }
       const int remapped_index =
-          structure_index_remap[static_cast<std::size_t>(term.structure_index)];
+          structure_index_remap[xmvb::to_size(term.structure_index)];
       if (remapped_index < 0) {
         continue;
       }
@@ -96,6 +96,11 @@ CppVbInput StructureSubspaceBuilder::build(
   CppVbInput result;
   result.orbital_preparation_input = input.orbital_preparation_input;
   result.ao_integral_input = input.ao_integral_input;
+  result.libcint_input = input.libcint_input;
+  result.auxiliary_libcint_input = input.auxiliary_libcint_input;
+  result.standard_two_electron_mode = input.standard_two_electron_mode;
+  result.pf_two_electron_mode = input.pf_two_electron_mode;
+  result.ri_integral_provider_result = input.ri_integral_provider_result;
   result.structure_data = build(input.structure_data, selected_structure_indices);
   return result;
 }

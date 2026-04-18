@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(xmvb_cpp_standalone LANGUAGES C CXX)
+project(xmvb_cpp_standalone LANGUAGES C CXX Fortran)
 
 file(TO_CMAKE_PATH "$ENV{CONDA_PREFIX}" XMVB_CONDA_PREFIX)
 
@@ -42,6 +42,8 @@ set(CMAKE_CXX_STANDARD 17)
 add_compile_options(-g -ggdb3 -fdiagnostics-color=always)
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 add_compile_options(-ffunction-sections -pipe)
+add_compile_options(
+  $<$<COMPILE_LANGUAGE:CXX>:-include${CMAKE_SOURCE_DIR}/include/xmvb/indexing.hpp>)
 add_link_options(-Wl,--gc-sections -Wl,--allow-shlib-undefined)
 
 if (NOT DEFINED XMVB_CPP_BUILD_DEV_TARGETS)

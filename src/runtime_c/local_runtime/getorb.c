@@ -27,6 +27,9 @@ int getorb(char *inpname,vb_info vb_str) {
   memset(vb_str->ma,0,nd*sizeof(int));
 
   if (vb_str->orbtyp==OEO_TYP) {
+    // Match legacy XMVB semantics: OEO orbitals are delocalized and always use
+    // the full AO chart. `$ORB/$FRAG` only define explicit sparse supports for
+    // HAO-style inputs.
     for (i=0;i<vb_str->nor;i++) {
       *(vb_str->ma+i)=vb_str->nb;
       *(vb_str->ma0+i)=vb_str->nb;

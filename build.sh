@@ -14,6 +14,34 @@ parse_cache_value() {
   sed -n "s#^${key}:[^=]*=##p" "${cache_file}" | head -n 1
 }
 
+repair_ninja_metadata_if_needed() {
+  local local_build_dir="$1"
+  local build_manifest="${local_build_dir}/build.ninja"
+  if [[ ! -f "${build_manifest}" ]]; then
+    return 0
+  fi
+
+  local ninja_program="${CMAKE_MAKE_PROGRAM:-ninja}"
+  local recompact_output=""
+  if ! recompact_output="$("${ninja_program}" -C "${local_build_dir}" -t recompact 2>&1)"; then
+    echo "Resetting corrupted Ninja metadata after recompact failure:"
+    printf '%s\n' "${recompact_output}"
+    rm -f \
+      "${local_build_dir}/.ninja_deps" \
+      "${local_build_dir}/.ninja_log" \
+      "${local_build_dir}/.ninja_lock"
+    return 0
+  fi
+
+  if [[ "${recompact_output}" == *"premature end of file"* ]]; then
+    echo "Resetting corrupted Ninja metadata after truncated log/deps recovery."
+    rm -f \
+      "${local_build_dir}/.ninja_deps" \
+      "${local_build_dir}/.ninja_log" \
+      "${local_build_dir}/.ninja_lock"
+  fi
+}
+
 has_cmake_arg_key() {
   local key="$1"
   local arg=""
@@ -143,7 +171,7 @@ write_vscode_clangd_settings() {
   local workspace_root="$1"
   local build_dir_name="$2"
   local clangd_path="$3"
-  local query_driver_glob="$4"
+  local query_driver_arg="$4"
 
   mkdir -p "${workspace_root}/.vscode"
   cat > "${workspace_root}/.vscode/settings.json" <<EOF
@@ -152,13 +180,75 @@ write_vscode_clangd_settings() {
   "clangd.arguments": [
     "--background-index",
     "--compile-commands-dir=\${workspaceFolder}/${build_dir_name}",
-    "--query-driver=/usr/bin/g++,/usr/bin/c++,${query_driver_glob}",
+    "--query-driver=${query_driver_arg}",
     "--header-insertion=never"
   ],
   "cmake.copyCompileCommands": "\${workspaceFolder}/compile_commands.json",
   "C_Cpp.intelliSenseEngine": "disabled"
 }
 EOF
+}
+
+build_query_driver_argument() {
+  local clangd_prefix="$1"
+  local compiler=""
+  local compiler_dir=""
+  local existing=""
+  local pattern=""
+  local resolved_compiler=""
+  local should_add=""
+  local query_driver_patterns=(
+    "/usr/bin/gcc"
+    "/usr/bin/g++"
+    "/usr/bin/cc"
+    "/usr/bin/c++"
+  )
+  local unique_patterns=()
+
+  for compiler in "${selected_cc:-}" "${selected_cxx:-}"; do
+    if [[ -z "${compiler}" ]]; then
+      continue
+    fi
+
+    compiler_dir="$(dirname "${compiler}")"
+    query_driver_patterns+=("${compiler_dir}/*")
+
+    resolved_compiler="$(readlink -f "${compiler}" 2>/dev/null || printf '%s\n' "${compiler}")"
+    compiler_dir="$(dirname "${resolved_compiler}")"
+    query_driver_patterns+=("${compiler_dir}/*")
+  done
+
+  if [[ -n "${clangd_prefix}" ]]; then
+    query_driver_patterns+=("${clangd_prefix}/bin/*")
+  fi
+
+  for pattern in "${query_driver_patterns[@]}"; do
+    if [[ -z "${pattern}" ]]; then
+      continue
+    fi
+
+    should_add=1
+    for existing in "${unique_patterns[@]}"; do
+      if [[ "${existing}" == "${pattern}" ]]; then
+        should_add=0
+        break
+      fi
+    done
+
+    if [[ "${should_add}" -eq 1 ]]; then
+      unique_patterns+=("${pattern}")
+    fi
+  done
+
+  local query_driver_arg=""
+  for pattern in "${unique_patterns[@]}"; do
+    if [[ -n "${query_driver_arg}" ]]; then
+      query_driver_arg+=","
+    fi
+    query_driver_arg+="${pattern}"
+  done
+
+  printf '%s\n' "${query_driver_arg}"
 }
 
 detected_cc=""
@@ -289,6 +379,7 @@ fi
 cmake_args+=("${extra_args[@]}")
 
 cmake "${cmake_args[@]}"
+repair_ninja_metadata_if_needed "${build_dir}"
 
 cmake --build "${build_dir}" --target run_cpp_vbscf -j "${jobs}"
 
@@ -305,11 +396,12 @@ elif [[ -f "${cache_file}" ]]; then
 fi
 
 if [[ -n "${clangd_prefix}" ]]; then
+  query_driver_arg="$(build_query_driver_argument "${clangd_prefix}")"
   write_vscode_clangd_settings \
     "$(pwd)" \
     "${build_dir}" \
     "${clangd_prefix}/bin/clangd" \
-    "${clangd_prefix}/bin/*"
+    "${query_driver_arg}"
 fi
 
 echo

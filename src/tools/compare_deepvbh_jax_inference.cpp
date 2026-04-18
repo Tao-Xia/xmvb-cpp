@@ -9,6 +9,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
+#include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/model/deepvbh_jax_inference_runner.hpp"
 #include "vb/scf/cpp_vb_scf_evaluator.hpp"
 
@@ -77,7 +78,7 @@ double lower_triangle_rmse(
   for (int column = 0; column < n; ++column) {
     for (int row = column; row < n; ++row) {
       const std::size_t index =
-          static_cast<std::size_t>(column) * n + row;
+          xmvb::to_size(column) * n + row;
       const double error = left[index] - right[index];
       squared_error_sum += error * error;
       ++count;
@@ -179,6 +180,48 @@ int main(int argc, char** argv) {
     const auto exact_result = exact_evaluator.evaluate(
         load_result.input,
         load_result.nuclear_repulsion_energy);
+    xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;
+    xmvb::vb::AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;
+    xmvb::vb::ActiveSpaceOneElectronBuilder active_space_one_electron_builder;
+    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
+        xmvb::vb::VBSCFAlgorithm::Original);
+    const int n_inactive_doubly_occupied_orbitals =
+        (load_result.input.orbital_preparation_input.n_total_electrons -
+         load_result.input.orbital_preparation_input.n_active_electrons) /
+        2;
+    const auto orbital_result =
+        orbital_preparer.prepare(load_result.input.orbital_preparation_input);
+    const auto ao_effective_one_electron_result =
+        ao_effective_one_electron_builder.build(
+            orbital_result.inactive_density_matrix,
+            load_result.input.ao_integral_input.ao_core_hamiltonian_matrix,
+            load_result.input.ao_integral_input.ao_two_electron_integral_values,
+            load_result.input.ao_integral_input.ao_two_electron_integral_indices,
+            load_result.input.ao_integral_input.n_basis_functions);
+    const auto active_space_one_electron_result =
+        active_space_one_electron_builder.build(
+            ao_effective_one_electron_result.ao_effective_h1e,
+            orbital_result.auxiliary_orbital_matrix,
+            load_result.input.ao_integral_input.n_basis_functions,
+            n_inactive_doubly_occupied_orbitals,
+            load_result.input.orbital_preparation_input.n_active_orbitals);
+    const int n_active_orbitals =
+        load_result.input.orbital_preparation_input.n_active_orbitals;
+    const int n_packed_active_pairs =
+        n_active_orbitals * (n_active_orbitals + 1) / 2;
+    const std::vector<double> zero_eri(
+        xmvb::to_size(n_packed_active_pairs) *
+            xmvb::to_size(n_packed_active_pairs + 1) / 2,
+        0.0);
+    const auto exact_one_electron_structure_matrices = structure_builder.build(
+        load_result.input.structure_data.alpha_det,
+        load_result.input.structure_data.beta_det,
+        load_result.input.structure_data.determinant_to_structure_terms,
+        orbital_result.active_orbital_overlap_matrix,
+        active_space_one_electron_result.h1e_act,
+        n_active_orbitals,
+        zero_eri,
+        load_result.input.structure_data.n_structures);
 
     xmvb::vb::DeepVBHJaxInferenceRunner runner(ml_options);
     const auto prediction = runner.predict(
@@ -202,9 +245,12 @@ int main(int argc, char** argv) {
             ? std::abs(prediction.predicted_total_energy - ml_cpp_total_energy)
             : 0.0;
 
+    const auto predicted_one_electron_hamiltonian = subtract_vectors(
+        prediction.structure_matrices.hamiltonian_matrix,
+        prediction.predicted_two_electron_hamiltonian_matrix);
     const auto exact_two_electron_hamiltonian = subtract_vectors(
         exact_result.structure_matrices.hamiltonian_matrix,
-        exact_result.structure_matrices.one_electron_hamiltonian_matrix);
+        exact_one_electron_structure_matrices.hamiltonian_matrix);
 
     std::ostringstream output;
     output << "{\n"
@@ -260,8 +306,8 @@ int main(int argc, char** argv) {
            << ",\n"
            << "  \"one_electron_structure_max_abs_diff\": " << std::setprecision(17)
            << max_abs_difference(
-                  prediction.structure_matrices.one_electron_hamiltonian_matrix,
-                  exact_result.structure_matrices.one_electron_hamiltonian_matrix)
+                  predicted_one_electron_hamiltonian,
+                  exact_one_electron_structure_matrices.hamiltonian_matrix)
            << ",\n"
            << "  \"two_electron_structure_max_abs_diff\": " << std::setprecision(17)
            << max_abs_difference(

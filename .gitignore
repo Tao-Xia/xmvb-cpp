@@ -1,11 +1,59 @@
-src/test_molecule
-deepvbscf_data_f2_scan
-artifacts/
-deepvbscf_data/
+# Build and editor state
+build/
+build-*/
+cmake-build-*/
 .cache/
+.codex
+.codex/
 .venv/
 .vscode/
-data/
-/export/home/xiatao/project/xmvb-cpp/build
+compile_commands.json
+
+# Python cache
 __pycache__/
-.cache/
+*.py[cod]
+
+# Large data / generated artifacts
+artifacts/
+benchmarks/
+data/
+deepvbscf_data/
+deepvbscf_data_f2_scan/
+tmp_compare/
+
+# DeepVBH training outputs
+deepvbh/logs/
+
+# TeX intermediate files
+*.aux
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+
+# Slurm and runtime logs
+slurm-*.out
+*.slog
+*.serr
+*.err
+*.out
+*.stdout.log
+*.stderr.log
+fort.*
+
+# Generated chemistry outputs
+*.cmdout
+*.col
+*.det
+*.log
+*.molden
+*.orb
+*.str
+*.xdat
+*.xmo
+
+# Keep benchmark launchers and input decks under test/ and test_molecule/,
+# but ignore the generated outputs that accumulate there during runs.
+!test/*.sh
+!test/*.xmi
+!test_molecule/*.sh
+!test_molecule/*.xmi

@@ -68,6 +68,7 @@ int init_vb_param(mol_info mol, inp_info inp_str, vb_info vb_str) {
   vb_str->frgtyp=inp_str->frgtyp;
   vb_str->wfntyp=inp_str->wfntyp;
   vb_str->vbftyp=inp_str->vbftyp;
+  vb_str->preserve_explicit_sparse_orbital_layout=0;
   vb_str->itmax=inp_str->itmax;
   vb_str->boysloc=inp_str->boysloc;
   vb_str->pmloc=inp_str->pmloc;

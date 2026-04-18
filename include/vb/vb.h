@@ -276,6 +276,10 @@ struct VbInfo {
 
   // Tested COSX algorithm
   Tensor3D J_K_last;
+
+  // Preserve an explicit fragment-sparse `$ORB/$FRAG` chart even when the
+  // input declares `ORBTYP=OEO`.
+  int preserve_explicit_sparse_orbital_layout;
 };
 
 typedef struct VbInfo* vb_info;

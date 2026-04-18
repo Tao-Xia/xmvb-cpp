@@ -22,6 +22,15 @@ struct CppVbScfAcceptedIterationSnapshot {
   int accepted_iteration_index = 0;
 
   /**
+   * @brief Whether this snapshot carries the heavyweight matrix/integral payloads.
+   *
+   * Lightweight callback paths such as the terminal logger only need scalar
+   * summaries, so they can skip deep copies of structure matrices, orbital
+   * tables, and integral buffers by leaving this flag `false`.
+   */
+  bool has_full_payload = true;
+
+  /**
    * @brief Sparse orbital coefficient table at this accepted iterate.
    */
   std::vector<double> orbital_value_table;
@@ -50,6 +59,22 @@ struct CppVbScfAcceptedIterationSnapshot {
    * @brief Exact energy gradient with respect to `orbital_value_table`.
    */
   std::vector<double> sparse_orbital_energy_gradient;
+
+  /**
+   * @brief Infinity norm of the exact energy gradient at this accepted iterate.
+   *
+   * This scalar is always populated, even when the heavyweight gradient vector
+   * itself is omitted from a lightweight callback snapshot.
+   */
+  double sparse_orbital_energy_gradient_inf_norm = 0.0;
+
+  /**
+   * @brief Euclidean norm of the exact energy gradient at this accepted iterate.
+   *
+   * This scalar is always populated, even when the heavyweight gradient vector
+   * itself is omitted from a lightweight callback snapshot.
+   */
+  double sparse_orbital_energy_gradient_l2_norm = 0.0;
 
   /**
    * @brief Exact `E11` gradient with respect to `orbital_value_table`.
@@ -102,14 +127,34 @@ struct CppVbScfOptimizerResult {
   double final_total_energy = 0.0;
 
   /**
+   * @brief Initial inactive-space reference energy `E11`.
+   */
+  double initial_one_electron_reference_energy = 0.0;
+
+  /**
+   * @brief Final inactive-space reference energy `E11`.
+   */
+  double final_one_electron_reference_energy = 0.0;
+
+  /**
    * @brief Final gradient infinity norm over differentiable parameters.
    */
   double final_gradient_inf_norm = 0.0;
 
   /**
+   * @brief Final projected gradient infinity norm in the nonredundant reduced space.
+   */
+  double final_projected_gradient_inf_norm = 0.0;
+
+  /**
    * @brief Final gradient Euclidean norm reported by the legacy L-BFGS driver.
    */
   double final_gradient_l2_norm = 0.0;
+
+  /**
+   * @brief Final projected gradient Euclidean norm in the nonredundant reduced space.
+   */
+  double final_projected_gradient_l2_norm = 0.0;
 
   /**
    * @brief Total energy after each objective/gradient evaluation, including the initial value.

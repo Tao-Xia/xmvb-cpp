@@ -20,6 +20,15 @@ if [[ ! -x "$binary_path" ]]; then
   exit 1
 fi
 
+runtime_env_helper="$repo_root/scripts/xmvb_cpp_runtime_env.sh"
+if [[ ! -f "$runtime_env_helper" ]]; then
+  echo "missing runtime env helper: $runtime_env_helper" >&2
+  exit 1
+fi
+source "$runtime_env_helper"
+prepare_xmvb_cpp_runtime_env "$binary_path" "$repo_root"
+prepare_xmvb_cpp_thread_env "$omp_threads"
+
 if [[ ! -d "$input_dir" ]]; then
   echo "missing input directory: $input_dir" >&2
   exit 1
@@ -58,8 +67,9 @@ echo "manifest = $manifest_file"
 echo "dataset_root = $dataset_root"
 echo "optimizer_backend = $optimizer_backend"
 echo "algorithm = $algorithm"
-echo "omp_threads = $omp_threads"
+log_xmvb_cpp_thread_env
 echo "xmvb_cpp_num_threads = $xmvb_cpp_num_threads"
+echo "ld_library_path = ${LD_LIBRARY_PATH:-<unset>}"
 echo "shard = $shard_index / $shard_count"
 echo "manifest_entries = ${#manifest_entries[@]}"
 
@@ -104,10 +114,7 @@ for index in "${!manifest_entries[@]}"; do
     continue
   fi
 
-  if OMP_NUM_THREADS="$omp_threads" \
-      XMVB_CPP_NUM_THREADS="$xmvb_cpp_num_threads" \
-      OPENBLAS_NUM_THREADS=1 \
-      GOTO_NUM_THREADS=1 \
+  if XMVB_CPP_NUM_THREADS="$xmvb_cpp_num_threads" \
       "$binary_path" \
       "$xmi_path" \
       --optimizer-backend "$optimizer_backend" \

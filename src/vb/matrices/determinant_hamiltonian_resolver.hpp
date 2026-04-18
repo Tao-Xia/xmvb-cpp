@@ -4,6 +4,7 @@
 
 #include "vb/matrices/determinant_types.hpp"
 #include "vb/matrices/determinant_overlap_resolver.hpp"
+#include "vb/orbital/active_space_two_electron_result.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace xmvb::vb {
@@ -59,6 +60,17 @@ public:
       const std::vector<double>& eri_act) const;
 
   /**
+   * @brief Evaluates determinant Hamiltonian using either packed or RI active ERIs.
+   */
+  DeterminantHamiltonianResult resolve(
+      const std::vector<int>& occ_L,
+      const std::vector<int>& occ_R,
+      const std::vector<double>& det_ovlp_mat,
+      const std::vector<double>& h1e_act,
+      int n_orbitals,
+      const ActiveSpaceTwoElectronResult& active_space_two_electron_result) const;
+
+  /**
    * @brief Evaluates determinant Hamiltonian using a precomputed overlap result.
    *
    * This overload lets callers reuse determinant/cofactor work across overlap
@@ -89,6 +101,18 @@ public:
       const std::vector<double>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act) const;
+
+  /**
+   * @brief Evaluates determinant Hamiltonian using either packed or RI active ERIs.
+   */
+  DeterminantHamiltonianResult resolve(
+      const std::vector<int>& occ_L,
+      const std::vector<int>& occ_R,
+      const std::vector<double>& det_ovlp_mat,
+      const DeterminantOverlapResult& det_ovlp_result,
+      const std::vector<double>& h1e_act,
+      int n_orbitals,
+      const ActiveSpaceTwoElectronResult& active_space_two_electron_result) const;
 
 private:
   DeterminantOverlapResolver overlap_resolver_;

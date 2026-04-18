@@ -180,24 +180,24 @@ double evaluate_opposite_spin_hamiltonian(
        alpha_left_column < static_cast<int>(alpha_occ_L.size());
        ++alpha_left_column) {
     const int alpha_orbital_left =
-        alpha_occ_L[static_cast<std::size_t>(alpha_left_column)];
+        alpha_occ_L[xmvb::to_size(alpha_left_column)];
     for (int alpha_right_row = 0;
          alpha_right_row < static_cast<int>(alpha_occ_R.size());
          ++alpha_right_row) {
       const int alpha_orbital_right =
-          alpha_occ_R[static_cast<std::size_t>(alpha_right_row)];
+          alpha_occ_R[xmvb::to_size(alpha_right_row)];
       const double alpha_cofactor =
           alpha_cofactor_1st(alpha_right_row, alpha_left_column);
       for (int beta_left_column = 0;
            beta_left_column < static_cast<int>(beta_occ_L.size());
            ++beta_left_column) {
         const int beta_orbital_left =
-            beta_occ_L[static_cast<std::size_t>(beta_left_column)];
+            beta_occ_L[xmvb::to_size(beta_left_column)];
         for (int beta_right_row = 0;
              beta_right_row < static_cast<int>(beta_occ_R.size());
              ++beta_right_row) {
           const int beta_orbital_right =
-              beta_occ_R[static_cast<std::size_t>(beta_right_row)];
+              beta_occ_R[xmvb::to_size(beta_right_row)];
           const double beta_cofactor =
               beta_cofactor_1st(beta_right_row, beta_left_column);
           const int two_electron_index = xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
@@ -207,7 +207,7 @@ double evaluate_opposite_spin_hamiltonian(
               alpha_orbital_left);
           hamiltonian +=
               alpha_cofactor * beta_cofactor *
-              packed_active_two_electron_integrals[static_cast<std::size_t>(two_electron_index)];
+              packed_active_two_electron_integrals[xmvb::to_size(two_electron_index)];
         }
       }
     }
@@ -287,16 +287,16 @@ int main(int argc, char** argv) {
             ? alpha_occupied_by_determinant
             : beta_occupied_by_determinant;
     if (options.determinant_index_left < 0 ||
-        static_cast<std::size_t>(options.determinant_index_left) >= occupied_by_determinant.size() ||
+        xmvb::to_size(options.determinant_index_left) >= occupied_by_determinant.size() ||
         options.determinant_index_right < 0 ||
-        static_cast<std::size_t>(options.determinant_index_right) >= occupied_by_determinant.size()) {
+        xmvb::to_size(options.determinant_index_right) >= occupied_by_determinant.size()) {
       throw std::out_of_range("determinant index out of range");
     }
 
     const auto& occ_L =
-        occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+        occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
     const auto& occ_R =
-        occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+        occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
     const int n_active_orbitals = load_result.input.orbital_preparation_input.n_active_orbitals;
 
     xmvb::vb::DeterminantOverlapResolver overlap_resolver;
@@ -341,13 +341,13 @@ int main(int argc, char** argv) {
           options.algorithm);
     } else if (options.mode == Mode::Opposite) {
       const auto& alpha_occ_L =
-          alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+          alpha_occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
       const auto& alpha_occ_R =
-          alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+          alpha_occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
       const auto& beta_occ_L =
-          beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+          beta_occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
       const auto& beta_occ_R =
-          beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+          beta_occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
       const auto alpha_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
           alpha_occ_L,
           alpha_occ_R,
@@ -402,13 +402,13 @@ int main(int argc, char** argv) {
           baseline.active_space_two_electron_result.packed_active_two_electron_integrals);
     } else {
       const auto& alpha_occ_L =
-          alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+          alpha_occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
       const auto& alpha_occ_R =
-          alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+          alpha_occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
       const auto& beta_occ_L =
-          beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+          beta_occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
       const auto& beta_occ_R =
-          beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+          beta_occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
       const auto alpha_overlap_submatrix = xmvb::vb::build_overlap_submatrix(
           alpha_occ_L,
           alpha_occ_R,
@@ -516,11 +516,11 @@ int main(int argc, char** argv) {
     std::cout << "reported_entries = " << n_to_report << '\n';
 
     for (int report_index = 0; report_index < n_to_report; ++report_index) {
-      const int entry_index = ranked_entries[static_cast<std::size_t>(report_index)].second;
+      const int entry_index = ranked_entries[xmvb::to_size(report_index)].second;
       std::vector<double> plus_overlap = baseline.active_orbital_overlap_matrix;
       std::vector<double> minus_overlap = baseline.active_orbital_overlap_matrix;
-      plus_overlap[static_cast<std::size_t>(entry_index)] += options.step;
-      minus_overlap[static_cast<std::size_t>(entry_index)] -= options.step;
+      plus_overlap[xmvb::to_size(entry_index)] += options.step;
+      minus_overlap[xmvb::to_size(entry_index)] -= options.step;
       double plus_hamiltonian = 0.0;
       double minus_hamiltonian = 0.0;
       if (options.mode == Mode::Same) {
@@ -542,13 +542,13 @@ int main(int argc, char** argv) {
             options.algorithm);
       } else if (options.mode == Mode::Opposite) {
         const auto& alpha_occ_L =
-            alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+            alpha_occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
         const auto& alpha_occ_R =
-            alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+            alpha_occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
         const auto& beta_occ_L =
-            beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+            beta_occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
         const auto& beta_occ_R =
-            beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+            beta_occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
         plus_hamiltonian = evaluate_opposite_spin_hamiltonian(
             alpha_occ_L,
             alpha_occ_R,
@@ -567,13 +567,13 @@ int main(int argc, char** argv) {
             baseline.active_space_two_electron_result.packed_active_two_electron_integrals);
       } else {
         const auto& alpha_occ_L =
-            alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+            alpha_occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
         const auto& alpha_occ_R =
-            alpha_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+            alpha_occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
         const auto& beta_occ_L =
-            beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_left)];
+            beta_occupied_by_determinant[xmvb::to_size(options.determinant_index_left)];
         const auto& beta_occ_R =
-            beta_occupied_by_determinant[static_cast<std::size_t>(options.determinant_index_right)];
+            beta_occupied_by_determinant[xmvb::to_size(options.determinant_index_right)];
         plus_hamiltonian = evaluate_full_pair_hamiltonian(
             alpha_occ_L,
             alpha_occ_R,
@@ -596,7 +596,7 @@ int main(int argc, char** argv) {
             options.algorithm);
       }
       const double finite_difference = (plus_hamiltonian - minus_hamiltonian) / (2.0 * options.step);
-      const double analytic = analytic_gradient[static_cast<std::size_t>(entry_index)];
+      const double analytic = analytic_gradient[xmvb::to_size(entry_index)];
       const double absolute_error = std::abs(analytic - finite_difference);
       const double relative_error =
           absolute_error / std::max(1.0, std::abs(finite_difference));

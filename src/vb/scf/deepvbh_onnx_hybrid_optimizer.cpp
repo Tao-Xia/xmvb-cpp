@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <iomanip>
-#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -22,7 +20,7 @@ double gradient_infinity_norm(
     const std::vector<int>& differentiable_parameter_indices) {
   double norm = 0.0;
   for (const int parameter_index : differentiable_parameter_indices) {
-    norm = std::max(norm, std::abs(gradient[static_cast<std::size_t>(parameter_index)]));
+    norm = std::max(norm, std::abs(gradient[xmvb::to_size(parameter_index)]));
   }
   return norm;
 }
@@ -32,7 +30,7 @@ double gradient_l2_norm(
     const std::vector<int>& differentiable_parameter_indices) {
   double squared_norm = 0.0;
   for (const int parameter_index : differentiable_parameter_indices) {
-    const double value = gradient[static_cast<std::size_t>(parameter_index)];
+    const double value = gradient[xmvb::to_size(parameter_index)];
     squared_norm += value * value;
   }
   return std::sqrt(squared_norm);
@@ -43,7 +41,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[static_cast<std::size_t>(orbital_index)];
+      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -52,7 +50,7 @@ int get_sparse_coefficient_count(
   while (coefficient_count < n_basis_functions) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [static_cast<std::size_t>(orbital_index) * n_basis_functions + coefficient_count];
+            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
     if (basis_function_index == 0) {
       break;
     }
@@ -123,7 +121,7 @@ bool is_finite_vector(
     const std::vector<double>& values,
     const std::vector<int>& differentiable_parameter_indices) {
   for (const int parameter_index : differentiable_parameter_indices) {
-    if (!std::isfinite(values[static_cast<std::size_t>(parameter_index)])) {
+    if (!std::isfinite(values[xmvb::to_size(parameter_index)])) {
       return false;
     }
   }
@@ -135,7 +133,7 @@ double differentiable_direction_norm(
     const std::vector<int>& differentiable_parameter_indices) {
   double squared_norm = 0.0;
   for (const int parameter_index : differentiable_parameter_indices) {
-    const double value = direction[static_cast<std::size_t>(parameter_index)];
+    const double value = direction[xmvb::to_size(parameter_index)];
     squared_norm += value * value;
   }
   return std::sqrt(squared_norm);
@@ -150,34 +148,10 @@ CppVbInput apply_sparse_direction(
   auto& orbital_value_table =
       updated_input.orbital_preparation_input.orbital_value_table;
   for (const int parameter_index : differentiable_parameter_indices) {
-    orbital_value_table[static_cast<std::size_t>(parameter_index)] +=
-        step_scale * direction[static_cast<std::size_t>(parameter_index)];
+    orbital_value_table[xmvb::to_size(parameter_index)] +=
+        step_scale * direction[xmvb::to_size(parameter_index)];
   }
   return updated_input;
-}
-
-void print_iteration_header() {
-  std::cout << "cpp_vbscf_iterations\n";
-  std::cout << "ITER           ENERGY               DE          GRAD_INF"
-            << "             G_L2         DT_S\n";
-  std::cout.flush();
-}
-
-void print_iteration_summary(
-    int iteration_index,
-    double energy,
-    double energy_change,
-    double gradient_inf_norm,
-    double gradient_l2_norm_value,
-    double iteration_seconds) {
-  std::cout << std::setw(4) << iteration_index
-            << "  " << std::setw(20) << std::setprecision(12) << std::fixed << energy
-            << "  " << std::setw(16) << std::setprecision(8) << std::scientific << energy_change
-            << "  " << std::setw(16) << std::setprecision(8) << gradient_inf_norm
-            << "  " << std::setw(16) << std::setprecision(8) << gradient_l2_norm_value
-            << "  " << std::setw(12) << std::setprecision(6) << std::fixed << iteration_seconds
-            << '\n';
-  std::cout.flush();
 }
 
 void append_fallback_histories(
@@ -272,7 +246,7 @@ double compute_prediction_total_energy(
     const int state_index = selected_state_indices[selection_index];
     electronic_energy +=
         normalized_weights[selection_index] *
-        eigen_result.eigenvalues[static_cast<std::size_t>(state_index)];
+        eigen_result.eigenvalues[xmvb::to_size(state_index)];
   }
   return prediction.one_electron_reference_energy +
       prediction.reference_energy_residual +
@@ -399,10 +373,6 @@ CppVbScfOptimizerResult DeepVBHOnnxHybridOptimizer::optimize(
   bool converged = false;
   std::string pending_fallback_reason;
 
-  if (options_.optimizer_options.verbose) {
-    print_iteration_header();
-  }
-
   if (current_gradient_inf_norm < options_.optimizer_options.gradient_tolerance) {
     converged = true;
     result.converged = true;
@@ -518,20 +488,8 @@ CppVbScfOptimizerResult DeepVBHOnnxHybridOptimizer::optimize(
     previous_energy = current_energy;
     has_previous_energy = true;
 
-    if (options_.optimizer_options.verbose) {
-      print_iteration_summary(
-          accepted_iterations,
-          current_energy,
-          energy_change,
-          current_gradient_inf_norm,
-          current_gradient_l2_norm,
-          iteration_seconds);
-      std::cout << "  deepvbh_step_scale = " << std::setprecision(6) << std::fixed
-                << accepted_step_scale << '\n';
-      std::cout << "  deepvbh_ml_total_energy = " << std::setprecision(12)
-                << std::fixed << current_ml_energy << '\n';
-      std::cout.flush();
-    }
+    (void)accepted_step_scale;
+    (void)current_ml_energy;
 
     if (std::abs(energy_change) < options_.optimizer_options.energy_tolerance &&
         current_gradient_inf_norm < options_.optimizer_options.gradient_tolerance) {
@@ -548,11 +506,6 @@ CppVbScfOptimizerResult DeepVBHOnnxHybridOptimizer::optimize(
   }
 
   if (!converged && options_.exact_fallback_max_iterations > 0) {
-    if (options_.optimizer_options.verbose) {
-      std::cout << "deepvbh_onnx_fallback = lbfgspp"
-                << " reason=" << pending_fallback_reason << '\n';
-      std::cout.flush();
-    }
     CppVbScfOptimizerOptions fallback_options = options_.optimizer_options;
     fallback_options.backend = CppVbScfOptimizerBackend::Lbfgspp;
     fallback_options.max_iterations = options_.exact_fallback_max_iterations;
