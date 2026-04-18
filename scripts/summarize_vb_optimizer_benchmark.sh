@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+repo_root="$(cd "${script_dir}/.." && pwd -P)"
+
 usage() {
   cat >&2 <<'EOF'
 usage: bash scripts/summarize_vb_optimizer_benchmark.sh <benchmark_dir|jobs.tsv> [summary.tsv]
@@ -93,8 +96,11 @@ parse_cpp_log() {
       values[key] = value
     }
     END {
-      scf_wall = values["SCF iteration wall time"]
-      sub(/ s$/, "", scf_wall)
+      optimizer_wall = values["Optimizer internal wall time"]
+      if (optimizer_wall == "") {
+        optimizer_wall = values["SCF iteration wall time"]
+      }
+      sub(/ s$/, "", optimizer_wall)
       e2e_wall = values["End-to-end wall time"]
       sub(/ s$/, "", e2e_wall)
       printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
@@ -103,7 +109,7 @@ parse_cpp_log() {
         values["Iterations"],
         values["Final total energy"],
         values["Final gradient |g|_inf"],
-        scf_wall,
+        optimizer_wall,
         e2e_wall,
         values["HVP mode"]
     }
@@ -118,6 +124,7 @@ parse_xmvb_xmo() {
       iterations = ""
       final_total_energy = ""
       method = ""
+      cpu_time_seconds = ""
     }
     /OPTIMIZATION METHOD:/ {
       line = $0
@@ -126,26 +133,68 @@ parse_xmvb_xmo() {
     }
     /VBSCF converged in/ {
       converged = "true"
-      if (match($0, /VBSCF converged in[[:space:]]+([0-9]+)/, matches)) {
-        iterations = matches[1]
+      line = $0
+      sub(/^.*VBSCF converged in[[:space:]]+/, "", line)
+      sub(/[[:space:]]+iterations.*$/, "", line)
+      iterations = line
+    }
+    /Cpu time for the job:/ {
+      line = $0
+      sub(/^.*Cpu time for the job:[[:space:]]+/, "", line)
+      sub(/[[:space:]]+seconds\..*$/, "", line)
+      cpu_time_seconds = line
+    }
+    /Total Energy:/ {
+      line = $0
+      sub(/^.*Total Energy:[[:space:]]+/, "", line)
+      final_total_energy = line
+    }
+    /TOTAL ENERGY[[:space:]]*:/ {
+      if (final_total_energy == "") {
+        final_total_energy = $NF
       }
     }
-    /TOTAL VB ENERGY/ {
-      final_total_energy = $NF
-    }
     END {
-      printf "%s\t%s\t%s\t%s\n",
+      if (method == "") {
+        method = "legacy_xmvb"
+      }
+      printf "%s\t%s\t%s\t%s\t%s\n",
         converged,
         iterations,
         final_total_energy,
-        method
+        method,
+        cpu_time_seconds
     }
   ' "${xmo_file}"
 }
 
+resolve_legacy_xmo() {
+  local primary_log="$1"
+  local work_dir="$2"
+  local sample_stem
+
+  if [[ -f "${primary_log}" ]]; then
+    printf '%s\n' "${primary_log}"
+    return 0
+  fi
+
+  sample_stem="$(basename "${primary_log}" .xmo)"
+  if [[ -n "${work_dir}" && -f "${work_dir}/${sample_stem}.xmo" ]]; then
+    printf '%s\n' "${work_dir}/${sample_stem}.xmo"
+    return 0
+  fi
+
+  if [[ -f "${repo_root}/test/${sample_stem}.xmo" ]]; then
+    printf '%s\n' "${repo_root}/test/${sample_stem}.xmo"
+    return 0
+  fi
+
+  return 1
+}
+
 collect_sacct_data
 
-printf 'mode\tjob_id\tscheduler_state\tscheduler_elapsed_seconds\tconverged\ttermination_reason\titerations\tfinal_total_energy\tfinal_gradient_inf_norm\tscf_iteration_wall_time_seconds\tend_to_end_wall_time_seconds\toptimizer_or_method\thvp_mode\tprimary_log\tsecondary_log\n' > "${summary_tsv}"
+printf 'mode\tjob_id\tscheduler_state\tscheduler_elapsed_seconds\tconverged\ttermination_reason\titerations\tfinal_total_energy\tfinal_gradient_inf_norm\toptimizer_internal_wall_time_seconds\tend_to_end_wall_time_seconds\txmo_cpu_time_seconds\toptimizer_or_method\thvp_mode\tprimary_log\tsecondary_log\n' > "${summary_tsv}"
 
 tail -n +2 "${jobs_tsv}" | while IFS=$'\t' read -r mode job_id job_script primary_log secondary_log work_dir slurm_dir; do
   if [[ -z "${mode}" ]]; then
@@ -159,31 +208,38 @@ tail -n +2 "${jobs_tsv}" | while IFS=$'\t' read -r mode job_id job_script primar
   iterations=""
   final_total_energy=""
   final_gradient_inf_norm=""
-  scf_iteration_wall_time_seconds=""
+  optimizer_internal_wall_time_seconds=""
   end_to_end_wall_time_seconds=""
+  xmo_cpu_time_seconds=""
   optimizer_or_method=""
   hvp_mode=""
+  resolved_primary_log="${primary_log}"
 
   if [[ "${mode}" == cpp_* ]]; then
     optimizer_or_method="${mode#cpp_}"
     if [[ -f "${primary_log}" ]]; then
       IFS=$'\t' read -r converged termination_reason iterations final_total_energy \
-        final_gradient_inf_norm scf_iteration_wall_time_seconds \
+        final_gradient_inf_norm optimizer_internal_wall_time_seconds \
         end_to_end_wall_time_seconds hvp_mode < <(parse_cpp_log "${primary_log}")
     else
       converged="missing_log"
     fi
   elif [[ "${mode}" == "legacy_xmvb" ]]; then
     optimizer_or_method="legacy_xmvb"
-    if [[ -f "${primary_log}" ]]; then
-      IFS=$'\t' read -r converged iterations final_total_energy optimizer_or_method \
-        < <(parse_xmvb_xmo "${primary_log}")
+    if resolved_primary_log="$(resolve_legacy_xmo "${primary_log}" "${work_dir}")"; then
+      legacy_method=""
+      IFS=$'\t' read -r converged iterations final_total_energy legacy_method xmo_cpu_time_seconds \
+        < <(parse_xmvb_xmo "${resolved_primary_log}")
+      if [[ -n "${legacy_method}" && "${legacy_method}" != "legacy_xmvb" ]]; then
+        optimizer_or_method="${legacy_method}"
+      fi
+      end_to_end_wall_time_seconds="${xmo_cpu_time_seconds}"
     else
       converged="missing_log"
     fi
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "${mode}" \
     "${job_id}" \
     "${scheduler_state}" \
@@ -193,11 +249,12 @@ tail -n +2 "${jobs_tsv}" | while IFS=$'\t' read -r mode job_id job_script primar
     "${iterations}" \
     "${final_total_energy}" \
     "${final_gradient_inf_norm}" \
-    "${scf_iteration_wall_time_seconds}" \
+    "${optimizer_internal_wall_time_seconds}" \
     "${end_to_end_wall_time_seconds}" \
+    "${xmo_cpu_time_seconds}" \
     "${optimizer_or_method}" \
     "${hvp_mode}" \
-    "${primary_log}" \
+    "${resolved_primary_log}" \
     "${secondary_log}" \
     >> "${summary_tsv}"
 done

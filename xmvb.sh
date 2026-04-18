@@ -69,6 +69,8 @@ if [[ $# -lt 1 ]]; then
 fi
 
 INPUT_FILE="$1"
+LOCAL_INPUT_FILE="$(basename "${INPUT_FILE}")"
+LOCAL_INPUT_STEM="${LOCAL_INPUT_FILE%%.*}"
 
 if [ -z "${program_version:-}" ]; then
     program_version="latest"
@@ -123,12 +125,12 @@ RUNDIR=/job_dir/${JOB_NAME}_${JOB_ID}
 mkdir -p ${RUNDIR}
 chmod 700 ${RUNDIR}
 # replace tab with space
-sed -i $'s/\t/ /g' ${INPUT_FILE}
+sed -i $'s/\t/ /g' "${INPUT_FILE}"
 # cp the input file
-cp ${INPUT_FILE} ${RUNDIR}/
+cp "${INPUT_FILE}" "${RUNDIR}/"
 # cp the initial guess
-if [ -f ${INPUT_FILE%%.*}.gus ]; then
-    cp ${INPUT_FILE%%.*}.gus ${RUNDIR}/
+if [ -f "${INPUT_FILE%%.*}.gus" ]; then
+    cp "${INPUT_FILE%%.*}.gus" "${RUNDIR}/"
 fi
 
 if [ ${NNODE} -eq 1 ]; then   # single node
@@ -141,10 +143,15 @@ if [ ${NNODE} -eq 1 ]; then   # single node
     new_version=0
     echo ${program_version} | egrep -q '^4' && new_version=1
     echo ${program_version} | egrep -q 'latest' && new_version=1
+    # Run on the copied local deck inside ${RUNDIR} so the redirected outputs
+    # stay in the benchmark work directory even when the submitted input path is
+    # absolute.
     if [ ${new_version} -eq 1 ]; then
-        ${PROGRAM} -n ${NP} ${INPUT_FILE} 1> ${INPUT_FILE%%.*}.xmo  2> ${INPUT_FILE%.*}.cmdout
+        ${PROGRAM} -n ${NP} "${LOCAL_INPUT_FILE}" \
+            1> "${LOCAL_INPUT_STEM}.xmo" \
+            2> "${LOCAL_INPUT_STEM}.cmdout"
     else
-        ${PROGRAM} ${INPUT_FILE} | grep -v libuuid &> ${INPUT_FILE%.*}.cmdout
+        ${PROGRAM} "${LOCAL_INPUT_FILE}" | grep -v libuuid &> "${LOCAL_INPUT_STEM}.cmdout"
     fi
 
 else   # multiple nodes
@@ -162,20 +169,23 @@ else   # multiple nodes
     mpirun -np $(( $NNODE )) \
       -env "OMP_STACKSIZE" "1G" \
       -env "OMP_NUM_THREADS" "${SLURM_CPUS_PER_TASK}" \
-      -machinefile ${HOST_LIST_FILE} ${PROGRAM} ${INPUT_FILE} 1>${INPUT_FILE%.*}.out 2>${INPUT_FILE%.*}.err
+      -machinefile ${HOST_LIST_FILE} ${PROGRAM} "${LOCAL_INPUT_FILE}" \
+      1>"${LOCAL_INPUT_STEM}.out" 2>"${LOCAL_INPUT_STEM}.err"
 fi
 
 rm -f x*.int
 
 # Fetch output file and other files possibly needed to starting directory
-for f in $(find -maxdepth 1 -type f)
+for f in ./*
 do
-  if [ $(basename ${f}) != ${INPUT_FILE} ]; then
-    cp ${f} $SUBMIT_DIR
+  if [ ! -f "${f}" ]; then
+    continue
+  fi
+  if [ "$(basename "${f}")" != "${LOCAL_INPUT_FILE}" ]; then
+    cp "${f}" "${SUBMIT_DIR}"
   fi
 done
 
 cd ${SUBMIT_DIR}
 
 touch $RUNDIR/_OK
-
