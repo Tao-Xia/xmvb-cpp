@@ -53,6 +53,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 extra_args=("${@:2}")
 submit_dir="${SLURM_SUBMIT_DIR:-$PWD}"
 repo_root_helper="${script_dir}/scripts/xmvb_cpp_repo_root.sh"
+if [[ ! -f "${repo_root_helper}" && -n "${XMVB_CPP_REPO:-}" ]]; then
+  repo_root_helper="${XMVB_CPP_REPO}/scripts/xmvb_cpp_repo_root.sh"
+fi
 if [[ ! -f "${repo_root_helper}" ]]; then
   echo "missing repo root helper: ${repo_root_helper}" >&2
   exit 1

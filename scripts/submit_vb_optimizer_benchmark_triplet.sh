@@ -131,6 +131,7 @@ build_cpp_export_spec() {
   local export_spec="ALL"
 
   export_spec="$(append_export_arg "${export_spec}" "OPTIMIZER_BACKEND" "${optimizer_backend}")"
+  export_spec="$(append_export_arg "${export_spec}" "XMVB_CPP_REPO" "${repo_root}")"
   export_spec="$(append_export_arg "${export_spec}" "OMP_NUM_THREADS" "${omp_threads}")"
   export_spec="$(append_export_arg "${export_spec}" "LOG_DIR" "${log_dir}")"
   export_spec="$(append_export_arg "${export_spec}" "DATASET_ROOT" "${trace_root}")"
