@@ -51,12 +51,11 @@ fort.*
 *.xdat
 *.xmo
 
-# Keep benchmark launchers and input decks under test/ and test_molecule/,
-# but ignore the generated outputs that accumulate there during runs.
-!test/*.sh
-!test/*.xmi
-!test_molecule/*.sh
-!test_molecule/*.xmi
+# Local benchmark decks, launcher copies, and runtime outputs live under
+# test/ and test_molecule/. They are intentionally kept outside the tracked
+# benchmark-code baseline.
+test/
+test_molecule/
 
 # Local research notes and scratch artifacts that should stay outside the
 # benchmark-code baseline.
