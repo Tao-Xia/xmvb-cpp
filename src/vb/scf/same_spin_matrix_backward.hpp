@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 #include "vb/matrices/same_spin_pair_cache.hpp"
@@ -93,7 +95,7 @@ build_local_same_spin_matrix_backward_contribution(
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     int n_active_orbitals,
-    const std::vector<double>& active_one_electron_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_active_orbital_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,

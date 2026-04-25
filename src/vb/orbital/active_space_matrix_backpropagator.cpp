@@ -11,8 +11,8 @@ namespace {
 ActiveSpaceMatrixBackpropagationResult backpropagate_active_space_matrix_impl(
     const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_gradient,
-    const std::vector<double>& active_orbital_overlap_matrix,
-    const std::vector<double>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
     const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_matrix,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -22,21 +22,16 @@ ActiveSpaceMatrixBackpropagationResult backpropagate_active_space_matrix_impl(
     throw std::invalid_argument("auxiliary orbital matrix shape mismatch");
   }
 
-  const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-      active_orbital_overlap_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const Eigen::Map<const Eigen::MatrixXd> ao_f11(
-      ao_effective_h1e.data(),
-      n_basis_functions,
-      n_basis_functions);
+  const Eigen::Ref<const Eigen::MatrixXd> basis_overlap =
+      active_orbital_overlap_matrix;
+  const Eigen::Ref<const Eigen::MatrixXd> ao_f11 = ao_effective_h1e;
   const auto active_auxiliary_orbitals = auxiliary_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
 
   ActiveSpaceMatrixBackpropagationResult result;
-  const std::size_t ao_matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+  const std::size_t n_basis = n_basis_functions;
+  const std::size_t ao_matrix_size = n_basis * n_basis;
   result.active_auxiliary_orbital_gradient =
       Eigen::MatrixXd::Zero(n_basis_functions, n_active_orbitals);
   result.ao_effective_one_electron_gradient.assign(ao_matrix_size, 0.0);
@@ -74,8 +69,8 @@ ActiveSpaceMatrixBackpropagationResult backpropagate_active_space_matrix_impl(
 ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backpropagate(
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
-    const std::vector<double>& active_orbital_overlap_matrix,
-    const std::vector<double>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
     const std::vector<double>& auxiliary_orbital_matrix,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -84,12 +79,14 @@ ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backprop
     throw std::invalid_argument("active-space backprop dimensions must be positive");
   }
 
-  const std::size_t ao_matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
-  const std::size_t active_matrix_size =
-      xmvb::to_size(n_active_orbitals) * n_active_orbitals;
-  if (active_orbital_overlap_matrix.size() != ao_matrix_size ||
-      ao_effective_h1e.size() != ao_matrix_size ||
+  const std::size_t n_basis = n_basis_functions;
+  const std::size_t n_active = n_active_orbitals;
+  const std::size_t ao_matrix_size = n_basis * n_basis;
+  const std::size_t active_matrix_size = n_active * n_active;
+  if (active_orbital_overlap_matrix.rows() != n_basis_functions ||
+      active_orbital_overlap_matrix.cols() != n_basis_functions ||
+      ao_effective_h1e.rows() != n_basis_functions ||
+      ao_effective_h1e.cols() != n_basis_functions ||
       auxiliary_orbital_matrix.size() != ao_matrix_size) {
     throw std::invalid_argument("AO-sized matrix input mismatch");
   }
@@ -128,8 +125,8 @@ ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backprop
 ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backpropagate(
     const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_gradient,
-    const std::vector<double>& active_orbital_overlap_matrix,
-    const std::vector<double>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
     const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -138,10 +135,11 @@ ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backprop
     throw std::invalid_argument("active-space backprop dimensions must be positive");
   }
 
-  const std::size_t ao_matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
-  if (active_orbital_overlap_matrix.size() != ao_matrix_size ||
-      ao_effective_h1e.size() != ao_matrix_size) {
+  const std::size_t n_basis = n_basis_functions;
+  if (active_orbital_overlap_matrix.rows() != n_basis_functions ||
+      active_orbital_overlap_matrix.cols() != n_basis_functions ||
+      ao_effective_h1e.rows() != n_basis_functions ||
+      ao_effective_h1e.cols() != n_basis_functions) {
     throw std::invalid_argument("AO-sized matrix input mismatch");
   }
   if (active_orbital_overlap_gradient.rows() != n_active_orbitals ||
@@ -155,14 +153,9 @@ ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backprop
     throw std::invalid_argument("invalid active-orbital column range");
   }
 
-  const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-      active_orbital_overlap_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const Eigen::Map<const Eigen::MatrixXd> ao_f11(
-      ao_effective_h1e.data(),
-      n_basis_functions,
-      n_basis_functions);
+  const Eigen::Ref<const Eigen::MatrixXd> basis_overlap =
+      active_orbital_overlap_matrix;
+  const Eigen::Ref<const Eigen::MatrixXd> ao_f11 = ao_effective_h1e;
   const auto active_auxiliary_orbitals = auxiliary_orbital_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
@@ -170,6 +163,7 @@ ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backprop
   ActiveSpaceMatrixBackpropagationResult result;
   result.active_auxiliary_orbital_gradient =
       Eigen::MatrixXd::Zero(n_basis_functions, n_active_orbitals);
+  const std::size_t ao_matrix_size = n_basis * n_basis;
   result.ao_effective_one_electron_gradient.assign(ao_matrix_size, 0.0);
   Eigen::Map<Eigen::MatrixXd> ao_f11_gradient(
       result.ao_effective_one_electron_gradient.data(),
@@ -213,8 +207,8 @@ ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backprop
 ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backpropagate(
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
-    const std::vector<double>& active_orbital_overlap_matrix,
-    const std::vector<double>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
     const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -223,12 +217,13 @@ ActiveSpaceMatrixBackpropagationResult ActiveSpaceMatrixBackpropagator::backprop
     throw std::invalid_argument("active-space backprop dimensions must be positive");
   }
 
-  const std::size_t ao_matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
-  const std::size_t active_matrix_size =
-      xmvb::to_size(n_active_orbitals) * n_active_orbitals;
-  if (active_orbital_overlap_matrix.size() != ao_matrix_size ||
-      ao_effective_h1e.size() != ao_matrix_size) {
+  const std::size_t n_basis = n_basis_functions;
+  const std::size_t n_active = n_active_orbitals;
+  const std::size_t active_matrix_size = n_active * n_active;
+  if (active_orbital_overlap_matrix.rows() != n_basis_functions ||
+      active_orbital_overlap_matrix.cols() != n_basis_functions ||
+      ao_effective_h1e.rows() != n_basis_functions ||
+      ao_effective_h1e.cols() != n_basis_functions) {
     throw std::invalid_argument("AO-sized matrix input mismatch");
   }
   if (active_orbital_overlap_gradient.size() != active_matrix_size ||

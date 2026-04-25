@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "vb/orbital/ao_integral_input.hpp"
 
 namespace xmvb::vb {
@@ -18,10 +20,10 @@ struct CppRestrictedHartreeFockResult {
   bool converged = false;
   int iterations = 0;
   double electronic_energy = 0.0;
-  std::vector<double> molecular_orbital_matrix;
-  std::vector<double> orbital_energies;
-  std::vector<double> density_projector;
-  std::vector<double> fock_matrix;
+  Eigen::MatrixXd molecular_orbital_matrix;
+  Eigen::VectorXd orbital_energies;
+  Eigen::MatrixXd density_projector;
+  Eigen::MatrixXd fock_matrix;
 };
 
 class CppRestrictedHartreeFockSolver {
@@ -31,12 +33,12 @@ public:
 
   CppRestrictedHartreeFockResult solve(
       int n_total_electrons,
-      const std::vector<double>& ao_overlap_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
       const AoIntegralInput& ao_integral_input) const;
 
   CppRestrictedHartreeFockResult solve(
       int n_total_electrons,
-      const std::vector<double>& ao_overlap_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
       const AoIntegralInput& ao_integral_input,
       const std::vector<double>& initial_density_projector) const;
 

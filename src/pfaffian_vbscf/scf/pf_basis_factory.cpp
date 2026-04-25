@@ -20,7 +20,7 @@ std::vector<std::vector<int>> enumerate_combinations(
 
   std::vector<std::vector<int>> combinations;
   std::vector<int> current;
-  current.reserve(xmvb::to_size(n_selected));
+  current.reserve(n_selected);
 
   const auto recurse =
       [&](const auto& self, int start_index, int remaining) -> void {
@@ -124,7 +124,7 @@ PfBasisData build_fixed_ms_pf_basis(
   basis.n_states =
       n_selected_structures *
       static_cast<int>(beta_position_combinations.size());
-  basis.states.reserve(xmvb::to_size(basis.n_states));
+  basis.states.reserve(basis.n_states);
 
   std::mt19937 generator(options.seed);
   std::normal_distribution<double> distribution(0.0, 1.0);
@@ -155,22 +155,22 @@ PfBasisData build_fixed_ms_pf_basis(
 
     for (const auto& beta_positions : beta_position_combinations) {
       std::vector<bool> beta_mask(
-          xmvb::to_size(partition.n_open_shell_electrons),
+          partition.n_open_shell_electrons,
           false);
       for (const int beta_position : beta_positions) {
-        beta_mask[xmvb::to_size(beta_position)] = true;
+        beta_mask[beta_position] = true;
       }
 
       std::vector<int> blocked_alpha_orbitals;
       std::vector<int> blocked_beta_orbitals;
-      blocked_alpha_orbitals.reserve(xmvb::to_size(n_blocked_alpha));
-      blocked_beta_orbitals.reserve(xmvb::to_size(n_blocked_beta));
+      blocked_alpha_orbitals.reserve(n_blocked_alpha);
+      blocked_beta_orbitals.reserve(n_blocked_beta);
       for (int open_shell_index = 0;
            open_shell_index < partition.n_open_shell_electrons;
            ++open_shell_index) {
         const int orbital =
-            pattern.open_shell_orbitals[xmvb::to_size(open_shell_index)];
-        if (beta_mask[xmvb::to_size(open_shell_index)]) {
+            pattern.open_shell_orbitals[open_shell_index];
+        if (beta_mask[open_shell_index]) {
           blocked_beta_orbitals.push_back(orbital);
         } else {
           blocked_alpha_orbitals.push_back(orbital);

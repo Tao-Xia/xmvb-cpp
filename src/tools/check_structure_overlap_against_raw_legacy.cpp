@@ -91,13 +91,13 @@ std::vector<xmvb::vb::OrbitalPair> build_active_pairs_for_structure(
   const int* structure_orbitals =
       raw_structure_data.structure_orbitals_data(structure_index);
   std::vector<xmvb::vb::OrbitalPair> pairs;
-  pairs.reserve(xmvb::to_size(n_active_beta_electrons));
+  pairs.reserve(n_active_beta_electrons);
   for (int pair_index = 0; pair_index < n_active_beta_electrons; ++pair_index) {
     const int left_orbital =
-        structure_orbitals[xmvb::to_size(active_offset + 2 * pair_index)] -
+        structure_orbitals[active_offset + 2 * pair_index] -
         n_inactive_doubly_occupied_orbitals - 1;
     const int right_orbital =
-        structure_orbitals[xmvb::to_size(active_offset + 2 * pair_index + 1)] -
+        structure_orbitals[active_offset + 2 * pair_index + 1] -
         n_inactive_doubly_occupied_orbitals - 1;
     pairs.push_back({left_orbital, right_orbital});
   }
@@ -115,26 +115,26 @@ std::vector<double> build_raw_legacy_structure_overlap_matrix(
   xmvb::vb::DeterminantOverlapResolver overlap_resolver;
   const int n_structures = raw_structure_data.n_structures;
   std::vector<std::vector<xmvb::vb::LegacyStructureDeterminantTerm>> structure_terms(
-      xmvb::to_size(n_structures));
+      n_structures);
   for (int structure_index = 0; structure_index < n_structures; ++structure_index) {
-    structure_terms[xmvb::to_size(structure_index)] =
+    structure_terms[structure_index] =
         xmvb::vb::enumerate_legacy_determinant_terms(
             build_active_pairs_for_structure(raw_structure_data, structure_index));
   }
 
   std::vector<double> overlap_matrix(
-      xmvb::to_size(n_structures) * n_structures,
+      n_structures * n_structures,
       0.0);
   for (int left_structure = 0; left_structure < n_structures; ++left_structure) {
     for (int right_structure = 0; right_structure <= left_structure; ++right_structure) {
       const double overlap_value = xmvb::vb::legacy_structure_overlap(
-          structure_terms[xmvb::to_size(left_structure)],
-          structure_terms[xmvb::to_size(right_structure)],
+          structure_terms[left_structure],
+          structure_terms[right_structure],
           active_overlap,
           overlap_resolver);
-      overlap_matrix[xmvb::to_size(left_structure) * n_structures + right_structure] =
+      overlap_matrix[left_structure * n_structures + right_structure] =
           overlap_value;
-      overlap_matrix[xmvb::to_size(right_structure) * n_structures + left_structure] =
+      overlap_matrix[right_structure * n_structures + left_structure] =
           overlap_value;
     }
   }
@@ -152,8 +152,7 @@ int main(int argc, char** argv) {
         xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
 
     xmvb::vb::StructureMatrixEvaluator evaluator;
-    const auto prepared_active_space =
-        evaluator.prepare_active_space(load_result.input);
+    const auto prepared_active_space = evaluator.prepare_active_space(load_result.input);
     const auto structure_matrices =
         evaluator.evaluate(load_result.input, prepared_active_space);
     const auto raw_legacy_overlap =

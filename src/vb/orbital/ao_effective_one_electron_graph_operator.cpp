@@ -1,7 +1,9 @@
 #include "vb/orbital/ao_effective_one_electron_graph_operator.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 
 #ifdef _OPENMP
@@ -19,11 +21,14 @@ constexpr double kIntegralSymmetryMultipliers[] = {
     0.125,
 };
 
+constexpr std::size_t kAoH1eTransposeStripeSize = 8192;
+constexpr int kAoH1eTransposeStripeCacheSlots = 4;
+
 std::size_t ao_matrix_size(int n_basis_functions) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
-  return xmvb::to_size(n_basis_functions) * n_basis_functions;
+  return n_basis_functions * n_basis_functions;
 }
 
 void validate_graph_storage_shapes(
@@ -48,8 +53,9 @@ void validate_graph_storage_shapes(
   if (row_offsets.back() < 0) {
     throw std::invalid_argument("AO-H1E graph edge count must be nonnegative");
   }
-  if (source_indices.size() != xmvb::to_size(row_offsets.back()) ||
-      signed_weights.size() != xmvb::to_size(row_offsets.back())) {
+  const std::size_t edge_count = row_offsets.back();
+  if (source_indices.size() != edge_count ||
+      signed_weights.size() != edge_count) {
     throw std::invalid_argument(
         "AO-H1E graph edge arrays do not match the stored edge count");
   }
@@ -79,8 +85,9 @@ void validate_transpose_graph_storage_shapes(
     throw std::invalid_argument(
         "AO-H1E transpose graph edge count must be nonnegative");
   }
-  if (row_indices.size() != xmvb::to_size(source_offsets.back()) ||
-      signed_weights.size() != xmvb::to_size(source_offsets.back())) {
+  const std::size_t edge_count = source_offsets.back();
+  if (row_indices.size() != edge_count ||
+      signed_weights.size() != edge_count) {
     throw std::invalid_argument(
         "AO-H1E transpose graph edge arrays do not match the stored edge count");
   }
@@ -97,6 +104,146 @@ int sanitize_graph_thread_count(int n_threads) {
   }
   return n_threads;
 }
+
+/**
+ * @brief Bounded-memory striped reducer for AO-H1E transpose accumulations.
+ *
+ * The multithreaded exact_ctx fused graph apply partitions destination rows
+ * across threads, so `K * x` stays row-local. The transpose pullback
+ * `K^T * lambda` still collides on source AO entries, however. This reducer
+ * keeps only a few dense source stripes per worker and flushes them under
+ * stripe-local locks, which avoids one full AO matrix per thread while
+ * preserving the single-row-sweep algorithm.
+ */
+class AoH1eStripedTransposeReducer {
+public:
+  class ThreadLocalAccumulator {
+  public:
+    explicit ThreadLocalAccumulator(AoH1eStripedTransposeReducer* reducer)
+        : reducer_(reducer),
+          stripe_indices_(
+              reducer->cache_slots_,
+              -1),
+          stripe_buffers_(
+              reducer->cache_slots_,
+              std::vector<double>(reducer->stripe_size_, 0.0)),
+          touched_offsets_(reducer->cache_slots_) {
+      if (reducer_ == nullptr) {
+        throw std::invalid_argument("AO-H1E striped reducer must not be null");
+      }
+    }
+
+    ~ThreadLocalAccumulator() {
+      flush_all();
+    }
+
+    void add(std::size_t source_index, double value) {
+      if (value == 0.0) {
+        return;
+      }
+      if (source_index >= reducer_->target_->size()) {
+        throw std::out_of_range("AO-H1E transpose source index is out of range");
+      }
+      const std::ptrdiff_t stripe_index = static_cast<std::ptrdiff_t>(
+          source_index / reducer_->stripe_size_);
+      const std::size_t stripe_offset = source_index % reducer_->stripe_size_;
+      const int slot = acquire_slot(stripe_index);
+      auto& stripe_buffer = stripe_buffers_[slot];
+      double& buffered_value = stripe_buffer[stripe_offset];
+      if (buffered_value == 0.0) {
+        touched_offsets_[slot].push_back(stripe_offset);
+      }
+      buffered_value += value;
+    }
+
+    void flush_all() noexcept {
+      for (int slot = 0; slot < reducer_->cache_slots_; ++slot) {
+        flush_slot(slot);
+      }
+    }
+
+  private:
+    int acquire_slot(std::ptrdiff_t stripe_index) {
+      for (int slot = 0; slot < reducer_->cache_slots_; ++slot) {
+        if (stripe_indices_[slot] == stripe_index) {
+          return slot;
+        }
+      }
+      for (int slot = 0; slot < reducer_->cache_slots_; ++slot) {
+        if (stripe_indices_[slot] < 0) {
+          stripe_indices_[slot] = stripe_index;
+          return slot;
+        }
+      }
+      const int victim_slot = next_victim_slot_;
+      next_victim_slot_ = (next_victim_slot_ + 1) % reducer_->cache_slots_;
+      flush_slot(victim_slot);
+      stripe_indices_[victim_slot] = stripe_index;
+      return victim_slot;
+    }
+
+    void flush_slot(int slot) noexcept {
+      const std::ptrdiff_t stripe_index = stripe_indices_[slot];
+      auto& touched_offsets = touched_offsets_[slot];
+      if (stripe_index < 0 || touched_offsets.empty()) {
+        stripe_indices_[slot] = -1;
+        touched_offsets.clear();
+        return;
+      }
+
+      const std::size_t stripe_begin =
+          static_cast<std::size_t>(stripe_index) * reducer_->stripe_size_;
+      const std::size_t stripe_length = std::min(
+          reducer_->stripe_size_,
+          reducer_->target_->size() - stripe_begin);
+      std::lock_guard<std::mutex> guard(
+          reducer_->stripe_mutexes_[stripe_index]);
+      auto& stripe_buffer = stripe_buffers_[slot];
+      for (const std::size_t stripe_offset : touched_offsets) {
+        if (stripe_offset >= stripe_length) {
+          continue;
+        }
+        const std::size_t source_index = stripe_begin + stripe_offset;
+        (*reducer_->target_)[source_index] += stripe_buffer[stripe_offset];
+        stripe_buffer[stripe_offset] = 0.0;
+      }
+      touched_offsets.clear();
+      stripe_indices_[slot] = -1;
+    }
+
+    AoH1eStripedTransposeReducer* reducer_ = nullptr;
+    std::vector<std::ptrdiff_t> stripe_indices_;
+    std::vector<std::vector<double>> stripe_buffers_;
+    std::vector<std::vector<std::size_t>> touched_offsets_;
+    int next_victim_slot_ = 0;
+  };
+
+  explicit AoH1eStripedTransposeReducer(std::vector<double>* target)
+      : target_(target),
+        stripe_size_(kAoH1eTransposeStripeSize),
+        cache_slots_(kAoH1eTransposeStripeCacheSlots),
+        stripe_mutexes_(compute_stripe_count(target)) {
+    if (target_ == nullptr) {
+      throw std::invalid_argument("AO-H1E striped reducer target must not be null");
+    }
+  }
+
+private:
+  static std::size_t compute_stripe_count(const std::vector<double>* target) {
+    if (target == nullptr) {
+      throw std::invalid_argument("AO-H1E striped reducer target must not be null");
+    }
+    return std::max<std::size_t>(
+        1,
+        (target->size() + kAoH1eTransposeStripeSize - 1) /
+            kAoH1eTransposeStripeSize);
+  }
+
+  std::vector<double>* target_ = nullptr;
+  std::size_t stripe_size_ = 0;
+  int cache_slots_ = 0;
+  std::vector<std::mutex> stripe_mutexes_;
+};
 
 }  // namespace
 
@@ -120,7 +267,7 @@ AoEffectiveOneElectronGraphBuffers build_ao_effective_one_electron_graph(
 
   constexpr std::size_t kEdgesPerIntegral = 6;
   if (n_integrals >
-      xmvb::to_size(std::numeric_limits<int>::max()) / kEdgesPerIntegral) {
+      std::numeric_limits<int>::max() / kEdgesPerIntegral) {
     throw std::overflow_error("AO-H1E graph edge count exceeds 32-bit storage");
   }
   const std::size_t n_edges = n_integrals * kEdgesPerIntegral;
@@ -131,10 +278,10 @@ AoEffectiveOneElectronGraphBuffers build_ao_effective_one_electron_graph(
         ao_effective_one_electron_linear_indices.data() + integral_index * 10;
     for (int entry_index = 0; entry_index < 6; ++entry_index) {
       const int row_index = linear_indices[entry_index];
-      if (row_index < 0 || xmvb::to_size(row_index) >= matrix_size) {
+      if (row_index < 0 || row_index >= matrix_size) {
         throw std::invalid_argument("AO-H1E graph destination row is out of range");
       }
-      ++row_counts[xmvb::to_size(row_index)];
+      ++row_counts[row_index];
     }
     const int source_entries[] = {
         linear_indices[1],
@@ -145,7 +292,7 @@ AoEffectiveOneElectronGraphBuffers build_ao_effective_one_electron_graph(
         linear_indices[9],
     };
     for (int source_entry : source_entries) {
-      if (source_entry < 0 || xmvb::to_size(source_entry) >= matrix_size) {
+      if (source_entry < 0 || source_entry >= matrix_size) {
         throw std::invalid_argument("AO-H1E graph source row is out of range");
       }
     }
@@ -199,17 +346,17 @@ AoEffectiveOneElectronGraphBuffers build_ao_effective_one_electron_graph(
     };
     for (int entry_index = 0; entry_index < 6; ++entry_index) {
       const int row_index = destination_entries[entry_index];
-      const int destination_offset = next_offsets[xmvb::to_size(row_index)]++;
-      graph.source_indices[xmvb::to_size(destination_offset)] =
+      const int destination_offset = next_offsets[row_index]++;
+      graph.source_indices[destination_offset] =
           source_entries[entry_index];
-      graph.signed_weights[xmvb::to_size(destination_offset)] =
+      graph.signed_weights[destination_offset] =
           signed_edge_weights[entry_index];
     }
   }
 
   std::vector<int> source_counts(matrix_size, 0);
   for (std::size_t edge_index = 0; edge_index < n_edges; ++edge_index) {
-    ++source_counts[xmvb::to_size(graph.source_indices[edge_index])];
+    ++source_counts[graph.source_indices[edge_index]];
   }
   graph.transpose_source_offsets.resize(matrix_size + 1, 0);
   for (std::size_t source_index = 0; source_index < matrix_size; ++source_index) {
@@ -223,13 +370,13 @@ AoEffectiveOneElectronGraphBuffers build_ao_effective_one_electron_graph(
     for (int edge_offset = graph.row_offsets[row_index];
          edge_offset < graph.row_offsets[row_index + 1];
          ++edge_offset) {
-      const std::size_t edge_index = xmvb::to_size(edge_offset);
+      const std::size_t edge_index = edge_offset;
       const int source_index = graph.source_indices[edge_index];
       const int destination_offset =
-          next_source_offsets[xmvb::to_size(source_index)]++;
-      graph.transpose_row_indices[xmvb::to_size(destination_offset)] =
+          next_source_offsets[source_index]++;
+      graph.transpose_row_indices[destination_offset] =
           static_cast<int>(row_index);
-      graph.transpose_signed_weights[xmvb::to_size(destination_offset)] =
+      graph.transpose_signed_weights[destination_offset] =
           graph.signed_weights[edge_index];
     }
   }
@@ -277,9 +424,9 @@ std::vector<double> apply_ao_effective_one_electron_graph_forward(
            edge_offset < row_offsets[row_index + 1];
            ++edge_offset) {
         row_value +=
-            signed_weights[xmvb::to_size(edge_offset)] *
+            signed_weights[edge_offset] *
             source_matrix_storage[
-                xmvb::to_size(source_indices[xmvb::to_size(edge_offset)])];
+                source_indices[edge_offset]];
       }
       result[row_index] = row_value;
     }
@@ -290,15 +437,15 @@ std::vector<double> apply_ao_effective_one_electron_graph_forward(
   for (std::ptrdiff_t row_offset = 0;
        row_offset < static_cast<std::ptrdiff_t>(matrix_size);
        ++row_offset) {
-    const std::size_t row_index = xmvb::to_size(row_offset);
+    const std::size_t row_index = row_offset;
     double row_value = 0.0;
     for (int edge_offset = row_offsets[row_index];
          edge_offset < row_offsets[row_index + 1];
          ++edge_offset) {
       row_value +=
-          signed_weights[xmvb::to_size(edge_offset)] *
+          signed_weights[edge_offset] *
           source_matrix_storage[
-              xmvb::to_size(source_indices[xmvb::to_size(edge_offset)])];
+              source_indices[edge_offset]];
     }
     result[row_index] = row_value;
   }
@@ -308,6 +455,16 @@ std::vector<double> apply_ao_effective_one_electron_graph_forward(
 std::vector<double> apply_ao_effective_one_electron_graph_transpose(
     const double* row_adjoint_storage,
     const AoIntegralInput& ao_integral_input) {
+  return apply_ao_effective_one_electron_graph_transpose(
+      row_adjoint_storage,
+      ao_integral_input,
+      1);
+}
+
+std::vector<double> apply_ao_effective_one_electron_graph_transpose(
+    const double* row_adjoint_storage,
+    const AoIntegralInput& ao_integral_input,
+    int n_threads) {
   if (row_adjoint_storage == nullptr) {
     throw std::invalid_argument("AO-H1E graph transpose source must not be null");
   }
@@ -315,6 +472,7 @@ std::vector<double> apply_ao_effective_one_electron_graph_transpose(
       ao_matrix_size(ao_integral_input.n_basis_functions);
   validate_graph_storage_shapes(ao_integral_input, matrix_size);
   validate_transpose_graph_storage_shapes(ao_integral_input, matrix_size);
+  n_threads = sanitize_graph_thread_count(n_threads);
 
   std::vector<double> result(matrix_size, 0.0);
 
@@ -327,15 +485,34 @@ std::vector<double> apply_ao_effective_one_electron_graph_transpose(
     const auto& signed_weights =
         ao_integral_input
             .ao_effective_one_electron_graph_transpose_signed_weights;
-    for (std::size_t source_index = 0; source_index < matrix_size; ++source_index) {
+    if (n_threads <= 1) {
+      for (std::size_t source_index = 0; source_index < matrix_size; ++source_index) {
+        double source_value = 0.0;
+        for (int edge_offset = source_offsets[source_index];
+             edge_offset < source_offsets[source_index + 1];
+             ++edge_offset) {
+          const std::size_t edge_index = edge_offset;
+          source_value +=
+              signed_weights[edge_index] *
+              row_adjoint_storage[row_indices[edge_index]];
+        }
+        result[source_index] = source_value;
+      }
+      return result;
+    }
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+    for (std::ptrdiff_t source_offset = 0;
+         source_offset < static_cast<std::ptrdiff_t>(matrix_size);
+         ++source_offset) {
+      const std::size_t source_index = source_offset;
       double source_value = 0.0;
       for (int edge_offset = source_offsets[source_index];
            edge_offset < source_offsets[source_index + 1];
            ++edge_offset) {
-        const std::size_t edge_index = xmvb::to_size(edge_offset);
+        const std::size_t edge_index = edge_offset;
         source_value +=
             signed_weights[edge_index] *
-            row_adjoint_storage[xmvb::to_size(row_indices[edge_index])];
+            row_adjoint_storage[row_indices[edge_index]];
       }
       result[source_index] = source_value;
     }
@@ -348,16 +525,48 @@ std::vector<double> apply_ao_effective_one_electron_graph_transpose(
       ao_integral_input.ao_effective_one_electron_graph_source_indices;
   const auto& signed_weights =
       ao_integral_input.ao_effective_one_electron_graph_signed_weights;
-  for (std::size_t row_index = 0; row_index < matrix_size; ++row_index) {
-    const double row_adjoint = row_adjoint_storage[row_index];
-    if (row_adjoint == 0.0) {
-      continue;
+  if (n_threads <= 1) {
+    for (std::size_t row_index = 0; row_index < matrix_size; ++row_index) {
+      const double row_adjoint = row_adjoint_storage[row_index];
+      if (row_adjoint == 0.0) {
+        continue;
+      }
+      for (int edge_offset = row_offsets[row_index];
+           edge_offset < row_offsets[row_index + 1];
+           ++edge_offset) {
+        result[source_indices[edge_offset]] +=
+            signed_weights[edge_offset] * row_adjoint;
+      }
     }
-    for (int edge_offset = row_offsets[row_index];
-         edge_offset < row_offsets[row_index + 1];
-         ++edge_offset) {
-      result[xmvb::to_size(source_indices[xmvb::to_size(edge_offset)])] +=
-          signed_weights[xmvb::to_size(edge_offset)] * row_adjoint;
+    return result;
+  }
+
+  // If the input deck did not materialize the transpose companion graph we
+  // still keep the multithreaded graph path on bounded memory by reducing the
+  // source updates through a striped cache.
+  AoH1eStripedTransposeReducer transpose_reducer(&result);
+#pragma omp parallel num_threads(n_threads)
+  {
+    AoH1eStripedTransposeReducer::ThreadLocalAccumulator
+        local_transpose_accumulator(&transpose_reducer);
+
+#pragma omp for schedule(static)
+    for (std::ptrdiff_t row_offset = 0;
+         row_offset < static_cast<std::ptrdiff_t>(matrix_size);
+         ++row_offset) {
+      const std::size_t row_index = row_offset;
+      const double row_adjoint = row_adjoint_storage[row_index];
+      if (row_adjoint == 0.0) {
+        continue;
+      }
+      for (int edge_offset = row_offsets[row_index];
+           edge_offset < row_offsets[row_index + 1];
+           ++edge_offset) {
+        const std::size_t edge_index = edge_offset;
+        local_transpose_accumulator.add(
+            source_indices[edge_index],
+            signed_weights[edge_index] * row_adjoint);
+      }
     }
   }
   return result;
@@ -423,7 +632,6 @@ void apply_fused_ao_effective_one_electron_graph(
   const std::size_t matrix_size =
       ao_matrix_size(ao_integral_input.n_basis_functions);
   validate_graph_storage_shapes(ao_integral_input, matrix_size);
-  validate_transpose_graph_storage_shapes(ao_integral_input, matrix_size);
   n_threads = sanitize_graph_thread_count(n_threads);
 
   forward_output->assign(matrix_size, 0.0);
@@ -435,20 +643,19 @@ void apply_fused_ao_effective_one_electron_graph(
   const auto& signed_weights =
       ao_integral_input.ao_effective_one_electron_graph_signed_weights;
 
-  // The graph rows correspond to destination AO matrix entries. A single row
-  // sweep therefore computes both `K * x` and `K^T * lambda`: the row-local
-  // accumulator forms the forward output, while each edge contributes its
-  // transpose pullback into the source AO entry referenced by that edge.
   if (n_threads <= 1) {
+    // On one thread the row-owned graph is still the cheapest route because it
+    // computes the forward image and transpose pullback together without
+    // revisiting the sparse edge list.
     for (std::size_t row_index = 0; row_index < matrix_size; ++row_index) {
       double row_forward_value = 0.0;
       const double row_adjoint = row_adjoint_storage[row_index];
       for (int edge_offset = row_offsets[row_index];
            edge_offset < row_offsets[row_index + 1];
            ++edge_offset) {
-        const std::size_t edge_index = xmvb::to_size(edge_offset);
+        const std::size_t edge_index = edge_offset;
         const std::size_t source_index =
-            xmvb::to_size(source_indices[edge_index]);
+            source_indices[edge_index];
         const double signed_weight = signed_weights[edge_index];
         row_forward_value += signed_weight * source_matrix_storage[source_index];
         (*transpose_output)[source_index] += signed_weight * row_adjoint;
@@ -457,90 +664,90 @@ void apply_fused_ao_effective_one_electron_graph(
     }
     return;
   }
-#pragma omp parallel for schedule(static) num_threads(n_threads)
-  for (std::ptrdiff_t row_offset = 0;
-       row_offset < static_cast<std::ptrdiff_t>(matrix_size);
-       ++row_offset) {
-    const std::size_t row_index = xmvb::to_size(row_offset);
-    double row_forward_value = 0.0;
-    for (int edge_offset = row_offsets[row_index];
-         edge_offset < row_offsets[row_index + 1];
-         ++edge_offset) {
-      const std::size_t edge_index = xmvb::to_size(edge_offset);
-      const std::size_t source_index =
-          xmvb::to_size(source_indices[edge_index]);
-      row_forward_value += signed_weights[edge_index] *
-          source_matrix_storage[source_index];
-    }
-    (*forward_output)[row_index] = row_forward_value;
-  }
 
   if (transpose_graph_available(ao_integral_input)) {
-    const auto& source_offsets =
+    validate_transpose_graph_storage_shapes(ao_integral_input, matrix_size);
+    const auto& transpose_source_offsets =
         ao_integral_input
             .ao_effective_one_electron_graph_transpose_source_offsets;
-    const auto& row_indices =
+    const auto& transpose_row_indices =
         ao_integral_input.ao_effective_one_electron_graph_transpose_row_indices;
     const auto& transpose_signed_weights =
         ao_integral_input
             .ao_effective_one_electron_graph_transpose_signed_weights;
 
-    // The source-owned transpose graph lets each thread write a disjoint block
-    // of `K^T * lambda`, so the fused exact_ctx kernel no longer needs one
-    // full AO-matrix-sized transpose buffer per OpenMP worker.
-#pragma omp parallel for schedule(static) num_threads(n_threads)
-    for (std::ptrdiff_t source_offset = 0;
-         source_offset < static_cast<std::ptrdiff_t>(matrix_size);
-         ++source_offset) {
-      const std::size_t source_index = xmvb::to_size(source_offset);
-      double source_value = 0.0;
-      for (int edge_offset = source_offsets[source_index];
-           edge_offset < source_offsets[source_index + 1];
-           ++edge_offset) {
-        const std::size_t edge_index = xmvb::to_size(edge_offset);
-        source_value +=
-            transpose_signed_weights[edge_index] *
-            row_adjoint_storage[xmvb::to_size(row_indices[edge_index])];
+    // The molecule-static companion graph gives the transpose apply a
+    // source-owned partition, so the multithreaded exact_ctx path can stay
+    // lock-free and avoid the cache-thrashing flush traffic of the striped
+    // fallback.
+#pragma omp parallel num_threads(n_threads)
+    {
+#pragma omp for schedule(static)
+      for (std::ptrdiff_t row_offset = 0;
+           row_offset < static_cast<std::ptrdiff_t>(matrix_size);
+           ++row_offset) {
+        const std::size_t row_index = row_offset;
+        double row_forward_value = 0.0;
+        for (int edge_offset = row_offsets[row_index];
+             edge_offset < row_offsets[row_index + 1];
+             ++edge_offset) {
+          const std::size_t edge_index = edge_offset;
+          row_forward_value +=
+              signed_weights[edge_index] *
+              source_matrix_storage[source_indices[edge_index]];
+        }
+        (*forward_output)[row_index] = row_forward_value;
       }
-      (*transpose_output)[source_index] = source_value;
+
+#pragma omp for schedule(static)
+      for (std::ptrdiff_t source_offset = 0;
+           source_offset < static_cast<std::ptrdiff_t>(matrix_size);
+           ++source_offset) {
+        const std::size_t source_index = source_offset;
+        double source_value = 0.0;
+        for (int edge_offset = transpose_source_offsets[source_index];
+             edge_offset < transpose_source_offsets[source_index + 1];
+             ++edge_offset) {
+          const std::size_t edge_index = edge_offset;
+          source_value +=
+              transpose_signed_weights[edge_index] *
+              row_adjoint_storage[transpose_row_indices[edge_index]];
+        }
+        (*transpose_output)[source_index] = source_value;
+      }
     }
     return;
   }
 
-  std::vector<std::vector<double>> partial_transpose_outputs(
-      xmvb::to_size(n_threads),
-      std::vector<double>(matrix_size, 0.0));
-
+  // If the transpose companion graph is unavailable, stay on bounded memory by
+  // reducing the row-owned transpose contributions through a small striped
+  // cache instead of falling back to one full AO matrix per worker.
+  AoH1eStripedTransposeReducer transpose_reducer(transpose_output);
 #pragma omp parallel num_threads(n_threads)
   {
-    int thread_index = 0;
-#ifdef _OPENMP
-    thread_index = omp_get_thread_num();
-#endif
-    auto& local_transpose_output =
-        partial_transpose_outputs[xmvb::to_size(thread_index)];
+    AoH1eStripedTransposeReducer::ThreadLocalAccumulator
+        local_transpose_accumulator(&transpose_reducer);
 
 #pragma omp for schedule(static)
     for (std::ptrdiff_t row_offset = 0;
          row_offset < static_cast<std::ptrdiff_t>(matrix_size);
          ++row_offset) {
-      const std::size_t row_index = xmvb::to_size(row_offset);
+      const std::size_t row_index = row_offset;
+      double row_forward_value = 0.0;
       const double row_adjoint = row_adjoint_storage[row_index];
       for (int edge_offset = row_offsets[row_index];
            edge_offset < row_offsets[row_index + 1];
            ++edge_offset) {
-        const std::size_t edge_index = xmvb::to_size(edge_offset);
+        const std::size_t edge_index = edge_offset;
         const std::size_t source_index =
-            xmvb::to_size(source_indices[edge_index]);
-        local_transpose_output[source_index] +=
-            signed_weights[edge_index] * row_adjoint;
+            source_indices[edge_index];
+        const double signed_weight = signed_weights[edge_index];
+        row_forward_value += signed_weight * source_matrix_storage[source_index];
+        local_transpose_accumulator.add(
+            source_index,
+            signed_weight * row_adjoint);
       }
-    }
-  }
-
-  for (const auto& partial_transpose_output : partial_transpose_outputs) {
-    for (std::size_t index = 0; index < matrix_size; ++index) {
-      (*transpose_output)[index] += partial_transpose_output[index];
+      (*forward_output)[row_index] = row_forward_value;
     }
   }
 }

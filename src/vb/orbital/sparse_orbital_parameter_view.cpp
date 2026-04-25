@@ -14,10 +14,10 @@ int get_differentiable_coefficient_count(
   // here keeps the C++ optimizer on the same orbital manifold as legacy VBSCF.
   const bool have_original_counts =
       orbital_preparation_input.original_orbital_basis_counts.size() ==
-      xmvb::to_size(orbital_preparation_input.n_orbitals);
+      orbital_preparation_input.n_orbitals;
   const int explicit_count = have_original_counts
-      ? orbital_preparation_input.original_orbital_basis_counts[xmvb::to_size(orbital_index)]
-      : orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      ? orbital_preparation_input.original_orbital_basis_counts[orbital_index]
+      : orbital_preparation_input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -30,7 +30,7 @@ int get_differentiable_coefficient_count(
   while (coefficient_count < orbital_preparation_input.n_basis_functions) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) *
+            [orbital_index *
                  orbital_preparation_input.n_basis_functions +
              coefficient_count];
     if (basis_function_index == 0) {
@@ -45,7 +45,7 @@ int get_physical_support_coefficient_count(
     const OrbitalPreparationInput& orbital_preparation_input,
     int orbital_index) {
   const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      orbital_preparation_input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -54,7 +54,7 @@ int get_physical_support_coefficient_count(
   while (coefficient_count < orbital_preparation_input.n_basis_functions) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) *
+            [orbital_index *
                  orbital_preparation_input.n_basis_functions +
              coefficient_count];
     if (basis_function_index == 0) {
@@ -82,14 +82,14 @@ void enforce_strict_sparse_orbital_support(
   }
 
   const std::size_t expected_table_size =
-      xmvb::to_size(n_orbitals) * n_basis_functions;
+      n_orbitals * n_basis_functions;
   if (orbital_preparation_input->orbital_value_table.size() != expected_table_size ||
       orbital_preparation_input->orbital_basis_index_table.size() != expected_table_size) {
     throw std::invalid_argument(
         "orbital tables do not match orbital dimensions while enforcing sparse support");
   }
   if (orbital_preparation_input->orbital_basis_counts.size() !=
-      xmvb::to_size(n_orbitals)) {
+      n_orbitals) {
     throw std::invalid_argument(
         "orbital_basis_counts size mismatch while enforcing sparse support");
   }
@@ -111,7 +111,7 @@ void enforce_strict_sparse_orbital_support(
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input->orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index];
       if (basis_function_index <= 0 ||
           basis_function_index > n_basis_functions) {
@@ -124,10 +124,10 @@ void enforce_strict_sparse_orbital_support(
          coefficient_index < n_basis_functions;
          ++coefficient_index) {
       orbital_preparation_input->orbital_value_table
-          [xmvb::to_size(orbital_index) * n_basis_functions +
+          [orbital_index * n_basis_functions +
            coefficient_index] = 0.0;
       orbital_preparation_input->orbital_basis_index_table
-          [xmvb::to_size(orbital_index) * n_basis_functions +
+          [orbital_index * n_basis_functions +
            coefficient_index] = 0;
     }
   }
@@ -139,15 +139,15 @@ SparseOrbitalParameterView::SparseOrbitalParameterView(
       n_basis_functions_(orbital_preparation_input.n_basis_functions),
       total_slot_count_(orbital_preparation_input.n_orbitals *
                         orbital_preparation_input.n_basis_functions),
-      orbital_coefficient_counts_(xmvb::to_size(orbital_preparation_input.n_orbitals), 0),
-      flat_to_packed_index_(xmvb::to_size(total_slot_count_), -1) {
+      orbital_coefficient_counts_(orbital_preparation_input.n_orbitals, 0),
+      flat_to_packed_index_(total_slot_count_, -1) {
   if (n_orbitals_ <= 0 || n_basis_functions_ <= 0) {
     throw std::invalid_argument(
         "SparseOrbitalParameterView requires positive orbital dimensions");
   }
 
   differentiable_parameter_indices_.reserve(
-      xmvb::to_size(total_slot_count_));
+      total_slot_count_);
   // The legacy runtime stores each orbital in a fixed-width row of length
   // `n_basis_functions`, but only the leading explicit coefficients are
   // differentiable. Build a stable dense view once so all optimizers use the
@@ -160,13 +160,13 @@ SparseOrbitalParameterView::SparseOrbitalParameterView(
     if (coefficient_count < 0 || coefficient_count > n_basis_functions_) {
       throw std::runtime_error("invalid sparse orbital coefficient count");
     }
-    orbital_coefficient_counts_[xmvb::to_size(orbital_index)] = coefficient_count;
+    orbital_coefficient_counts_[orbital_index] = coefficient_count;
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int flat_index =
           orbital_index * n_basis_functions_ + coefficient_index;
-      flat_to_packed_index_[xmvb::to_size(flat_index)] =
+      flat_to_packed_index_[flat_index] =
           static_cast<int>(differentiable_parameter_indices_.size());
       differentiable_parameter_indices_.push_back(flat_index);
     }
@@ -177,7 +177,7 @@ int SparseOrbitalParameterView::orbital_coefficient_count(int orbital_index) con
   if (orbital_index < 0 || orbital_index >= n_orbitals_) {
     throw std::out_of_range("orbital index is out of range");
   }
-  return orbital_coefficient_counts_[xmvb::to_size(orbital_index)];
+  return orbital_coefficient_counts_[orbital_index];
 }
 
 int SparseOrbitalParameterView::packed_index(
@@ -189,7 +189,7 @@ int SparseOrbitalParameterView::packed_index(
     return -1;
   }
   const int flat_index = orbital_index * n_basis_functions_ + coefficient_index;
-  return flat_to_packed_index_[xmvb::to_size(flat_index)];
+  return flat_to_packed_index_[flat_index];
 }
 
 Eigen::VectorXd SparseOrbitalParameterView::pack(
@@ -208,9 +208,9 @@ Eigen::VectorXd SparseOrbitalParameterView::pack(
        packed_offset < packed_parameters.size();
        ++packed_offset) {
     const int flat_index =
-        differentiable_parameter_indices_[xmvb::to_size(packed_offset)];
+        differentiable_parameter_indices_[packed_offset];
     packed_parameters[packed_offset] =
-        orbital_preparation_input.orbital_value_table[xmvb::to_size(flat_index)];
+        orbital_preparation_input.orbital_value_table[flat_index];
   }
   return packed_parameters;
 }
@@ -230,8 +230,8 @@ Eigen::VectorXd SparseOrbitalParameterView::gather_from_full(
        packed_offset < packed_vector.size();
        ++packed_offset) {
     const int flat_index =
-        differentiable_parameter_indices_[xmvb::to_size(packed_offset)];
-    packed_vector[packed_offset] = full_vector[xmvb::to_size(flat_index)];
+        differentiable_parameter_indices_[packed_offset];
+    packed_vector[packed_offset] = full_vector[flat_index];
   }
   return packed_vector;
 }
@@ -259,8 +259,8 @@ void SparseOrbitalParameterView::unpack(
        packed_offset < packed_parameters.size();
        ++packed_offset) {
     const int flat_index =
-        differentiable_parameter_indices_[xmvb::to_size(packed_offset)];
-    orbital_preparation_input->orbital_value_table[xmvb::to_size(flat_index)] =
+        differentiable_parameter_indices_[packed_offset];
+    orbital_preparation_input->orbital_value_table[flat_index] =
         packed_parameters[packed_offset];
   }
   enforce_strict_sparse_orbital_support(orbital_preparation_input);

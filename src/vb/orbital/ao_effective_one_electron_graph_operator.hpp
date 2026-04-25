@@ -88,11 +88,27 @@ std::vector<double> apply_ao_effective_one_electron_graph_transpose(
     const AoIntegralInput& ao_integral_input);
 
 /**
- * @brief Applies the AO-H1E CSR graph and its transpose in one row sweep.
+ * @brief Applies the transpose of the AO-H1E CSR graph with OpenMP parallelism.
  *
- * This is the exact_ctx HVP hot path: one sparse row traversal accumulates
- * both `\delta G11 = K * \delta P11` and the transpose pullback
- * `K^T * \delta \Lambda` without revisiting the molecule-static operator.
+ * When the source-owned transpose graph is available this partitions the
+ * output sources directly across threads; otherwise it falls back to a bounded
+ * striped reduction over the row-owned graph instead of allocating one full AO
+ * matrix per worker.
+ */
+std::vector<double> apply_ao_effective_one_electron_graph_transpose(
+    const double* row_adjoint_storage,
+    const AoIntegralInput& ao_integral_input,
+    int n_threads);
+
+/**
+ * @brief Applies the AO-H1E CSR graph and its transpose for exact_ctx HVP.
+ *
+ * When the source-owned transpose companion graph is present, the
+ * implementation uses two sparse passes over the molecule-static operator:
+ * one row-owned forward apply and one source-owned transpose apply. This
+ * avoids thread-local AO-matrix copies while keeping the hot multithreaded
+ * path lock-free. If the transpose companion graph is unavailable, the code
+ * falls back to a bounded-memory single-row-sweep reduction.
  */
 AoEffectiveOneElectronGraphFusedResult
 apply_fused_ao_effective_one_electron_graph(
@@ -103,10 +119,10 @@ apply_fused_ao_effective_one_electron_graph(
 /**
  * @brief Applies the fused AO-H1E CSR graph with OpenMP row parallelism.
  *
- * The forward output stays row-local, while the transpose pullback switches to
- * the source-owned companion graph so each thread owns a disjoint block of
- * `K^T * lambda`. This avoids allocating one full AO matrix per worker on the
- * exact_ctx hot path.
+ * The multithreaded exact_ctx hot path prefers the lock-free companion
+ * transpose graph when available. Otherwise it falls back to a bounded striped
+ * accumulator on the shared transpose destination instead of allocating one
+ * full AO matrix per worker.
  */
 AoEffectiveOneElectronGraphFusedResult
 apply_fused_ao_effective_one_electron_graph(

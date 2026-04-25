@@ -2,7 +2,7 @@
 
 #include <Eigen/Core>
 
-#include "vb/pdft/physical_orbital_frame.hpp"
+#include "vb/orbital/physical_orbital_frame.hpp"
 
 namespace xmvb::vb {
 

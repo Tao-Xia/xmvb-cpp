@@ -11,9 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "mol/mol.h"
-#include "runtime_c/local_runtime/cint_compat.h"
-#include "xmvb/indexing.hpp"
+#include "runtime/libcint_compat.hpp"
+#include "runtime/legacy_shell_utils.hpp"
 
 namespace xmvb::vb {
 
@@ -56,8 +55,8 @@ std::string atomic_symbol(int atomic_number) {
       atomic_number >= static_cast<int>(kElementSymbols.size())) {
     return "X";
   }
-  const std::string symbol = trim_ascii_whitespace(kElementSymbols[xmvb::to_size(
-      atomic_number)]);
+  const std::string symbol = trim_ascii_whitespace(kElementSymbols[
+      atomic_number]);
   return symbol.empty() ? "X" : symbol;
 }
 
@@ -68,13 +67,13 @@ void validate_libcint_input(const LibcintInput& libcint_input) {
   if (libcint_input.n_shells <= 0) {
     throw std::invalid_argument("Molden export requires at least one shell");
   }
-  if (libcint_input.atm.size() != xmvb::to_size(libcint_input.n_atoms) * ATM_SLOTS) {
+  if (libcint_input.atm.size() != libcint_input.n_atoms * ATM_SLOTS) {
     throw std::invalid_argument("Libcint atom table size mismatch during Molden export");
   }
-  if (libcint_input.bas.size() != xmvb::to_size(libcint_input.n_shells) * BAS_SLOTS) {
+  if (libcint_input.bas.size() != libcint_input.n_shells * BAS_SLOTS) {
     throw std::invalid_argument("Libcint basis table size mismatch during Molden export");
   }
-  if (libcint_input.basidx.size() != xmvb::to_size(libcint_input.n_shells) * 2) {
+  if (libcint_input.basidx.size() != libcint_input.n_shells * 2) {
     throw std::invalid_argument("Libcint shell index table size mismatch during Molden export");
   }
   if (libcint_input.env.empty()) {
@@ -90,8 +89,8 @@ void validate_orbital_input(const OrbitalPreparationInput& orbital_input) {
     throw std::invalid_argument("Molden export requires at least one orbital");
   }
   const std::size_t expected_table_size =
-      xmvb::to_size(orbital_input.n_basis_functions) *
-      xmvb::to_size(orbital_input.n_orbitals);
+      orbital_input.n_basis_functions *
+      orbital_input.n_orbitals;
   if (orbital_input.orbital_value_table.size() != expected_table_size) {
     throw std::invalid_argument("orbital_value_table size mismatch during Molden export");
   }
@@ -100,56 +99,33 @@ void validate_orbital_input(const OrbitalPreparationInput& orbital_input) {
         "orbital_basis_index_table size mismatch during Molden export");
   }
   if (orbital_input.orbital_basis_counts.size() !=
-      xmvb::to_size(orbital_input.n_orbitals)) {
+      orbital_input.n_orbitals) {
     throw std::invalid_argument("orbital_basis_counts size mismatch during Molden export");
   }
-}
-
-int get_sparse_coefficient_count(
-    const OrbitalPreparationInput& orbital_input,
-    int orbital_index) {
-  const int n_basis_functions = orbital_input.n_basis_functions;
-  const int explicit_count =
-      orbital_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-
-  int coefficient_count = 0;
-  while (coefficient_count < n_basis_functions) {
-    const int basis_function_index =
-        orbital_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
-    if (basis_function_index == 0) {
-      break;
-    }
-    ++coefficient_count;
-  }
-  return coefficient_count;
 }
 
 std::vector<double> expand_dense_orbital_coefficients(
     const OrbitalPreparationInput& orbital_input,
     int orbital_index) {
   const int n_basis_functions = orbital_input.n_basis_functions;
-  std::vector<double> dense_coefficients(xmvb::to_size(n_basis_functions), 0.0);
+  std::vector<double> dense_coefficients(n_basis_functions, 0.0);
 
   // The VB optimizer stores one sparse support list per orbital inside a
   // padded `(n_orbitals, n_basis_functions)` table. Molden expects a dense AO
   // coefficient column, so rebuild that dense vector here.
   const int coefficient_count =
-      get_sparse_coefficient_count(orbital_input, orbital_index);
+      stored_sparse_orbital_coefficient_count(orbital_input, orbital_index);
   for (int coefficient_index = 0; coefficient_index < coefficient_count;
        ++coefficient_index) {
     const std::size_t storage_index =
-        xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index;
+        orbital_index * n_basis_functions + coefficient_index;
     const int one_based_basis_index =
         orbital_input.orbital_basis_index_table[storage_index];
     if (one_based_basis_index <= 0 || one_based_basis_index > n_basis_functions) {
       throw std::runtime_error(
           "orbital basis index is out of range during Molden export");
     }
-    dense_coefficients[xmvb::to_size(one_based_basis_index - 1)] =
+    dense_coefficients[one_based_basis_index - 1] =
         orbital_input.orbital_value_table[storage_index];
   }
   return dense_coefficients;
@@ -162,7 +138,7 @@ char shell_tag(int angular_momentum) {
         "unsupported angular momentum in Molden export: " +
         std::to_string(angular_momentum));
   }
-  return kShellTags[xmvb::to_size(angular_momentum)];
+  return kShellTags[angular_momentum];
 }
 
 std::vector<double> expand_dense_orbital_coefficients_in_molden_order(
@@ -174,16 +150,16 @@ std::vector<double> expand_dense_orbital_coefficients_in_molden_order(
   std::vector<double> molden_coefficients;
   molden_coefficients.reserve(dense_coefficients.size());
 
-  // The runtime stores cartesian shell-local AO coefficients in the historical
-  // XMVB order. Molden expects a different d/f ordering, so mirror the legacy
-  // writer exactly to keep visualization consistent with old XMVB output.
+  // The standalone orbital chart stores Cartesian shell-local AO coefficients
+  // in XMVB's historical ordering. Molden expects a different d/f ordering, so
+  // reorder those shell blocks here to keep visualization consistent.
   for (int shell_index = 0; shell_index < libcint_input.n_shells; ++shell_index) {
-    const std::size_t shell_offset = xmvb::to_size(shell_index) * BAS_SLOTS;
+    const std::size_t shell_offset = shell_index * BAS_SLOTS;
     const int angular_momentum = libcint_input.bas[shell_offset + ANG_OF];
-    const int ao_offset = libcint_input.basidx[xmvb::to_size(shell_index) * 2];
-    const int ao_count = libcint_input.basidx[xmvb::to_size(shell_index) * 2 + 1];
+    const int ao_offset = libcint_input.basidx[shell_index * 2];
+    const int ao_count = libcint_input.basidx[shell_index * 2 + 1];
     if (ao_offset < 0 ||
-        ao_count != xint_gtolen(angular_momentum) ||
+        ao_count != cartesian_ao_count(angular_momentum) ||
         ao_offset + ao_count > orbital_input.n_basis_functions) {
       throw std::runtime_error("shell AO layout is inconsistent during Molden export");
     }
@@ -192,7 +168,7 @@ std::vector<double> expand_dense_orbital_coefficients_in_molden_order(
       constexpr std::array<int, 6> kDOrder = {0, 3, 5, 1, 2, 4};
       for (const int local_index : kDOrder) {
         molden_coefficients.push_back(
-            dense_coefficients[xmvb::to_size(ao_offset + local_index)]);
+            dense_coefficients[ao_offset + local_index]);
       }
       continue;
     }
@@ -200,13 +176,13 @@ std::vector<double> expand_dense_orbital_coefficients_in_molden_order(
       constexpr std::array<int, 10> kFOrder = {0, 6, 9, 3, 1, 2, 5, 8, 7, 4};
       for (const int local_index : kFOrder) {
         molden_coefficients.push_back(
-            dense_coefficients[xmvb::to_size(ao_offset + local_index)]);
+            dense_coefficients[ao_offset + local_index]);
       }
       continue;
     }
     for (int local_index = 0; local_index < ao_count; ++local_index) {
       molden_coefficients.push_back(
-          dense_coefficients[xmvb::to_size(ao_offset + local_index)]);
+          dense_coefficients[ao_offset + local_index]);
     }
   }
 
@@ -225,7 +201,7 @@ void write_atoms_section(
          << "[Atoms] (AU)\n";
 
   for (int atom_index = 0; atom_index < libcint_input.n_atoms; ++atom_index) {
-    const std::size_t atom_offset = xmvb::to_size(atom_index) * ATM_SLOTS;
+    const std::size_t atom_offset = atom_index * ATM_SLOTS;
     const int atomic_number = libcint_input.atm[atom_offset + CHARGE_OF];
     const int coordinate_offset = libcint_input.atm[atom_offset + PTR_COORD];
     if (coordinate_offset < 0 ||
@@ -236,9 +212,9 @@ void write_atoms_section(
            << std::right << std::setw(6) << atom_index + 1
            << std::setw(7) << atomic_number
            << std::fixed << std::setprecision(8)
-           << std::setw(20) << libcint_input.env[xmvb::to_size(coordinate_offset)]
-           << std::setw(16) << libcint_input.env[xmvb::to_size(coordinate_offset + 1)]
-           << std::setw(16) << libcint_input.env[xmvb::to_size(coordinate_offset + 2)]
+           << std::setw(20) << libcint_input.env[coordinate_offset]
+           << std::setw(16) << libcint_input.env[coordinate_offset + 1]
+           << std::setw(16) << libcint_input.env[coordinate_offset + 2]
            << '\n';
   }
 }
@@ -260,7 +236,7 @@ void write_gto_section(
   for (int atom_index = 0; atom_index < libcint_input.n_atoms; ++atom_index) {
     output << std::setw(4) << atom_index + 1 << '\n';
     for (int shell_index = 0; shell_index < libcint_input.n_shells; ++shell_index) {
-      const std::size_t shell_offset = xmvb::to_size(shell_index) * BAS_SLOTS;
+      const std::size_t shell_offset = shell_index * BAS_SLOTS;
       if (libcint_input.bas[shell_offset + ATOM_OF] != atom_index) {
         continue;
       }
@@ -275,7 +251,7 @@ void write_gto_section(
       }
       if (n_contractions != 1) {
         throw std::runtime_error(
-            "Molden export only supports single-contraction shells in the runtime snapshot");
+            "Molden export only supports single-contraction shells in the standalone basis data");
       }
       if (exponent_offset < 0 || coefficient_offset < 0 ||
           exponent_offset + n_primitives > static_cast<int>(libcint_input.env.size()) ||
@@ -288,16 +264,17 @@ void write_gto_section(
              << std::scientific << std::uppercase << std::setprecision(9);
       for (int primitive_index = 0; primitive_index < n_primitives; ++primitive_index) {
         const double exponent =
-            libcint_input.env[xmvb::to_size(exponent_offset + primitive_index)];
+            libcint_input.env[exponent_offset + primitive_index];
         const double normalized_coefficient =
-            libcint_input.env[xmvb::to_size(coefficient_offset + primitive_index)];
+            libcint_input.env[coefficient_offset + primitive_index];
         output << std::setw(18)
                << exponent
                << std::setw(18)
-               // The runtime snapshot stores primitive coefficients multiplied
+               // The standalone basis loader stores primitive coefficients multiplied
                // by the historical XMVB/cartesian normalization factor.
-               // Molden viewers expect the legacy unnormalized coefficients.
-               << normalized_coefficient / xint_norm(angular_momentum, exponent)
+               // Molden viewers expect the corresponding de-normalized values.
+               << normalized_coefficient /
+                      legacy_shell_normalization(angular_momentum, exponent)
                << '\n';
       }
     }
@@ -327,7 +304,7 @@ void write_mo_section(
       output << std::setw(4) << basis_function_index + 1
              << "  "
              << std::setw(16)
-             << dense_coefficients[xmvb::to_size(basis_function_index)]
+             << dense_coefficients[basis_function_index]
              << '\n';
     }
   }
@@ -354,7 +331,7 @@ fs::path write_molden_file(
         "failed to open Molden output file: " + output_path.string());
   }
 
-  // Keep the Molden sections close to the legacy runtime layout so existing
+  // Keep the Molden sections close to the historical XMVB layout so existing
   // visualization workflows continue to recognize the file without new knobs.
   write_atoms_section(output, input.libcint_input);
   write_charge_section(output, input.libcint_input.n_atoms);

@@ -12,6 +12,7 @@
 #include <omp.h>
 #endif
 
+#include "core/openmp_utils.hpp"
 #include "vb/matrices/eigen_matrix_storage_utils.hpp"
 #include "vb/orbital/ao_effective_one_electron_graph_operator.hpp"
 #include "vb/orbital/ao_effective_one_electron_ri_operator.hpp"
@@ -28,10 +29,10 @@ constexpr double kIntegralSymmetryMultipliers[] = {
 };
 
 std::vector<std::size_t> build_column_offsets(int n_basis_functions) {
-  std::vector<std::size_t> column_offsets(xmvb::to_size(n_basis_functions), 0);
+  std::vector<std::size_t> column_offsets(n_basis_functions, 0);
   for (int column = 0; column < n_basis_functions; ++column) {
-    column_offsets[xmvb::to_size(column)] =
-        xmvb::to_size(column) * n_basis_functions;
+    column_offsets[column] =
+        column * n_basis_functions;
   }
   return column_offsets;
 }
@@ -120,32 +121,32 @@ inline void accumulate_ao_effective_one_electron_integral(
   if constexpr (UseLinearIndexCache) {
     const int* linear_indices =
         ao_effective_one_electron_linear_indices + integral_index * 10;
-    ij_index = xmvb::to_size(linear_indices[0]);
-    kl_index = xmvb::to_size(linear_indices[1]);
-    ik_index = xmvb::to_size(linear_indices[2]);
-    jl_index = xmvb::to_size(linear_indices[3]);
-    il_index = xmvb::to_size(linear_indices[4]);
-    jk_index = xmvb::to_size(linear_indices[5]);
-    lj_index = xmvb::to_size(linear_indices[6]);
-    ki_index = xmvb::to_size(linear_indices[7]);
-    kj_index = xmvb::to_size(linear_indices[8]);
-    li_index = xmvb::to_size(linear_indices[9]);
+    ij_index = linear_indices[0];
+    kl_index = linear_indices[1];
+    ik_index = linear_indices[2];
+    jl_index = linear_indices[3];
+    il_index = linear_indices[4];
+    jk_index = linear_indices[5];
+    lj_index = linear_indices[6];
+    ki_index = linear_indices[7];
+    kj_index = linear_indices[8];
+    li_index = linear_indices[9];
   } else {
-    const std::size_t col_i = column_offsets[xmvb::to_size(i)];
-    const std::size_t col_j = column_offsets[xmvb::to_size(j)];
-    const std::size_t col_k = column_offsets[xmvb::to_size(k)];
-    const std::size_t col_l = column_offsets[xmvb::to_size(l)];
+    const std::size_t col_i = column_offsets[i];
+    const std::size_t col_j = column_offsets[j];
+    const std::size_t col_k = column_offsets[k];
+    const std::size_t col_l = column_offsets[l];
 
-    ij_index = col_j + xmvb::to_size(i);
-    kl_index = col_l + xmvb::to_size(k);
-    ik_index = col_k + xmvb::to_size(i);
-    jl_index = col_l + xmvb::to_size(j);
-    il_index = col_l + xmvb::to_size(i);
-    jk_index = col_k + xmvb::to_size(j);
-    lj_index = col_j + xmvb::to_size(l);
-    ki_index = col_i + xmvb::to_size(k);
-    kj_index = col_j + xmvb::to_size(k);
-    li_index = col_i + xmvb::to_size(l);
+    ij_index = col_j + i;
+    kl_index = col_l + k;
+    ik_index = col_k + i;
+    jl_index = col_l + j;
+    il_index = col_l + i;
+    jk_index = col_k + j;
+    lj_index = col_j + l;
+    ki_index = col_i + k;
+    kj_index = col_j + k;
+    li_index = col_i + l;
   }
 
   const double density_ij = inactive_density_matrix[ij_index];
@@ -166,28 +167,23 @@ inline void accumulate_ao_effective_one_electron_integral(
 
 AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const LibcintRiIntegralProviderResult& ri_integral_provider_result,
     int n_basis_functions) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
 
-  const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
   if (inactive_density_matrix.rows() != n_basis_functions ||
       inactive_density_matrix.cols() != n_basis_functions ||
-      ao_core_hamiltonian_matrix.size() != matrix_size) {
+      ao_core_hamiltonian_matrix.rows() != n_basis_functions ||
+      ao_core_hamiltonian_matrix.cols() != n_basis_functions) {
     throw std::invalid_argument("AO matrix sizes do not match n_basis_functions");
   }
   if (ri_integral_provider_result.n_basis_functions != n_basis_functions) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
 
-  const Eigen::Map<const Eigen::MatrixXd> core_hamiltonian(
-      ao_core_hamiltonian_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
   std::vector<double> g11_storage =
       apply_ao_effective_one_electron_ri_operator(
           flatten_matrix_column_major(inactive_density_matrix),
@@ -200,40 +196,30 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
       n_basis_functions);
 
   AoEffectiveOneElectronResult result;
-  result.ao_coulomb_exchange_matrix.assign(
-      g11.data(),
-      g11.data() + g11.size());
+  result.ao_coulomb_exchange_matrix = g11;
 
-  Eigen::MatrixXd ao_effective_h1e = core_hamiltonian;
+  Eigen::MatrixXd ao_effective_h1e = ao_core_hamiltonian_matrix;
   ao_effective_h1e.noalias() += g11;
-  result.ao_effective_h1e.assign(
-      ao_effective_h1e.data(),
-      ao_effective_h1e.data() + ao_effective_h1e.size());
+  result.ao_effective_h1e = std::move(ao_effective_h1e);
   return result;
 }
 
 AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
     const AoEffectiveOneElectronRiLowRankFactors& inactive_density_factors,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const LibcintRiIntegralProviderResult& ri_integral_provider_result,
     int n_basis_functions) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
 
-  const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
-  if (ao_core_hamiltonian_matrix.size() != matrix_size) {
-    throw std::invalid_argument("AO core Hamiltonian size does not match n_basis_functions");
+  if (ao_core_hamiltonian_matrix.rows() != n_basis_functions ||
+      ao_core_hamiltonian_matrix.cols() != n_basis_functions) {
+    throw std::invalid_argument("AO core Hamiltonian shape does not match n_basis_functions");
   }
   if (ri_integral_provider_result.n_basis_functions != n_basis_functions) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
-
-  const Eigen::Map<const Eigen::MatrixXd> core_hamiltonian(
-      ao_core_hamiltonian_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
 
   // The inactive density is already available as `P11 = F F^T` from orbital
   // preparation.  Feeding those occupied-space factors directly into the RI
@@ -249,15 +235,11 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
       n_basis_functions);
 
   AoEffectiveOneElectronResult result;
-  result.ao_coulomb_exchange_matrix.assign(
-      g11.data(),
-      g11.data() + g11.size());
+  result.ao_coulomb_exchange_matrix = g11;
 
-  Eigen::MatrixXd ao_effective_h1e = core_hamiltonian;
+  Eigen::MatrixXd ao_effective_h1e = ao_core_hamiltonian_matrix;
   ao_effective_h1e.noalias() += g11;
-  result.ao_effective_h1e.assign(
-      ao_effective_h1e.data(),
-      ao_effective_h1e.data() + ao_effective_h1e.size());
+  result.ao_effective_h1e = std::move(ao_effective_h1e);
   return result;
 }
 
@@ -265,7 +247,7 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
 
 AoEffectiveOneElectronResult build_ao_effective_one_electron(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const std::vector<double>& ao_two_electron_integral_values,
     const std::vector<int>& ao_two_electron_integral_indices,
     const std::uint8_t* ao_two_electron_integral_symmetry_shifts,
@@ -277,20 +259,17 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron(
   }
 
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (inactive_density_matrix.rows() != n_basis_functions ||
       inactive_density_matrix.cols() != n_basis_functions ||
-      ao_core_hamiltonian_matrix.size() != matrix_size) {
+      ao_core_hamiltonian_matrix.rows() != n_basis_functions ||
+      ao_core_hamiltonian_matrix.cols() != n_basis_functions) {
     throw std::invalid_argument("AO matrix sizes do not match n_basis_functions");
   }
   if (ao_two_electron_integral_indices.size() != ao_two_electron_integral_values.size() * 4) {
     throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
   }
 
-  Eigen::Map<const Eigen::MatrixXd> hhf(
-      ao_core_hamiltonian_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
   std::vector<double> g11_storage(matrix_size, 0.0);
   std::atomic<int> invalid_integral_index(-1);
   const double* inactive_density_matrix_data = inactive_density_matrix.data();
@@ -314,7 +293,7 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron(
 
   int n_threads = 1;
 #ifdef _OPENMP
-  n_threads = omp_get_max_threads();
+  n_threads = xmvb::effective_openmp_thread_count();
 #endif
   std::vector<std::vector<double>> partial_g11;
   if (n_threads <= 1) {
@@ -453,7 +432,7 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron(
     }
   } else {
     partial_g11.assign(
-        xmvb::to_size(n_threads),
+        n_threads,
         std::vector<double>(matrix_size, 0.0));
 
 #pragma omp parallel
@@ -462,13 +441,13 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron(
 #ifdef _OPENMP
       thread_index = omp_get_thread_num();
 #endif
-      auto& local_g11 = partial_g11[xmvb::to_size(thread_index)];
+      auto& local_g11 = partial_g11[thread_index];
 
 #pragma omp for schedule(static)
       for (std::ptrdiff_t integral_offset = 0;
            integral_offset < static_cast<std::ptrdiff_t>(ao_two_electron_integral_values.size());
            ++integral_offset) {
-        const std::size_t integral_index = xmvb::to_size(integral_offset);
+        const std::size_t integral_index = integral_offset;
         if (ao_effective_one_electron_linear_indices != nullptr &&
             validate_integral_indices &&
             ao_two_electron_integral_symmetry_shifts != nullptr) {
@@ -599,21 +578,18 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron(
     }
   }
 
-  const Eigen::MatrixXd f11 = g11 + hhf;
+  Eigen::MatrixXd f11 = ao_core_hamiltonian_matrix;
+  f11.noalias() += g11;
 
   AoEffectiveOneElectronResult result;
-  result.ao_coulomb_exchange_matrix.assign(
-      g11.data(),
-      g11.data() + g11.size());
-  result.ao_effective_h1e.assign(
-      f11.data(),
-      f11.data() + f11.size());
+  result.ao_coulomb_exchange_matrix = g11;
+  result.ao_effective_h1e = std::move(f11);
   return result;
 }
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const std::vector<double>& ao_two_electron_integral_values,
     const std::vector<int>& ao_two_electron_integral_indices,
     int n_basis_functions) const {
@@ -621,7 +597,7 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     throw std::invalid_argument("n_basis_functions must be positive");
   }
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (inactive_density_matrix.size() != matrix_size) {
     throw std::invalid_argument("inactive density matrix size mismatch");
   }
@@ -639,7 +615,7 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const std::vector<double>& ao_two_electron_integral_values,
     const std::vector<int>& ao_two_electron_integral_indices,
     int n_basis_functions) const {
@@ -656,14 +632,14 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const LibcintRiIntegralProviderResult& ri_integral_provider_result,
     int n_basis_functions) const {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (inactive_density_matrix.size() != matrix_size) {
     throw std::invalid_argument("inactive density matrix size mismatch");
   }
@@ -680,7 +656,7 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const LibcintRiIntegralProviderResult& ri_integral_provider_result,
     int n_basis_functions) const {
   return build_ao_effective_one_electron_ri(
@@ -692,7 +668,7 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const OrbitalPreparationResult& orbital_result,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const LibcintRiIntegralProviderResult& ri_integral_provider_result,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals) const {
@@ -719,10 +695,10 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const AoIntegralInput& ao_integral_input) const {
   const std::size_t matrix_size =
-      xmvb::to_size(ao_integral_input.n_basis_functions) *
+      ao_integral_input.n_basis_functions *
       ao_integral_input.n_basis_functions;
   if (inactive_density_matrix.size() != matrix_size) {
     throw std::invalid_argument(
@@ -740,21 +716,12 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     const AoIntegralInput& ao_integral_input) const {
-  const std::size_t matrix_size =
-      xmvb::to_size(ao_integral_input.n_basis_functions) *
-      ao_integral_input.n_basis_functions;
-  if (inactive_density_matrix.rows() != ao_integral_input.n_basis_functions ||
-      inactive_density_matrix.cols() != ao_integral_input.n_basis_functions ||
-      ao_core_hamiltonian_matrix.size() != matrix_size) {
-    throw std::invalid_argument(
-        "AO matrix sizes do not match the AO-H1E graph dimensions");
-  }
 
   int n_threads = 1;
 #ifdef _OPENMP
-  n_threads = omp_get_max_threads();
+  n_threads = xmvb::effective_openmp_thread_count();
 #endif
   const int graph_threads =
       choose_ao_effective_one_electron_graph_threads(
@@ -766,10 +733,6 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
             inactive_density_matrix.data(),
             ao_integral_input,
             graph_threads);
-    Eigen::Map<const Eigen::MatrixXd> hhf(
-        ao_core_hamiltonian_matrix.data(),
-        ao_integral_input.n_basis_functions,
-        ao_integral_input.n_basis_functions);
     Eigen::Map<Eigen::MatrixXd> g11(
         g11_storage.data(),
         ao_integral_input.n_basis_functions,
@@ -780,15 +743,12 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
         g11(column, row) = g11(row, column);
       }
     }
-    const Eigen::MatrixXd f11 = g11 + hhf;
+    Eigen::MatrixXd f11 = ao_core_hamiltonian_matrix;
+    f11.noalias() += g11;
 
     AoEffectiveOneElectronResult result;
-    result.ao_coulomb_exchange_matrix.assign(
-        g11.data(),
-        g11.data() + g11.size());
-    result.ao_effective_h1e.assign(
-        f11.data(),
-        f11.data() + f11.size());
+    result.ao_coulomb_exchange_matrix = g11;
+    result.ao_effective_h1e = std::move(f11);
     return result;
   }
 
@@ -809,8 +769,8 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
   return build_ao_effective_one_electron(
       inactive_density_matrix,
       ao_core_hamiltonian_matrix,
-      ao_integral_input.ao_two_electron_integral_values.vector(),
-      ao_integral_input.ao_two_electron_integral_indices.vector(),
+      ao_integral_input.ao_two_electron_integral_values,
+      ao_integral_input.ao_two_electron_integral_indices,
       ao_integral_input.ao_two_electron_integral_symmetry_shifts.empty()
           ? nullptr
           : ao_integral_input.ao_two_electron_integral_symmetry_shifts.data(),
@@ -825,7 +785,7 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const std::vector<double>& inactive_density_matrix,
     const AoIntegralInput& ao_integral_input) const {
   const std::size_t matrix_size =
-      xmvb::to_size(ao_integral_input.n_basis_functions) *
+      ao_integral_input.n_basis_functions *
       ao_integral_input.n_basis_functions;
   if (inactive_density_matrix.size() != matrix_size) {
     throw std::invalid_argument(
@@ -843,7 +803,7 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const AoIntegralInput& ao_integral_input) const {
   return build(
       inactive_density_matrix,
-      ao_integral_input.ao_core_hamiltonian_matrix.vector(),
+      ao_integral_input.ao_core_hamiltonian_matrix,
       ao_integral_input);
 }
 

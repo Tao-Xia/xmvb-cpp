@@ -98,8 +98,8 @@ int main(int argc, char** argv) {
         provider_buffers.ao_two_electron_integral_values,
         provider_buffers.ao_two_electron_integral_indices);
     const auto legacy_lookup = build_integral_lookup(
-        legacy.ao_two_electron_integral_values.vector(),
-        legacy.ao_two_electron_integral_indices.vector());
+        legacy.ao_two_electron_integral_values,
+        legacy.ao_two_electron_integral_indices);
 
     double max_eri_abs_diff = 0.0;
     double max_eri_abs_value = 0.0;

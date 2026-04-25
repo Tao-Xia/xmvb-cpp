@@ -163,7 +163,7 @@ Matrix apply_left_matrix_polynomial_frechet(
   for (int power = 2; power < degree; ++power) {
     right_power = right_power * kernel;
     frechet_term = kernel * frechet_term + right_power;
-    const double scale = coefficients[xmvb::to_size(power)];
+    const double scale = coefficients[power];
     if (scale == 0.0) {
       continue;
     }
@@ -263,7 +263,7 @@ MatrixPolynomialAdjointResult backpropagate_left_matrix_polynomial(
       coefficients.size(),
       Matrix::Zero(source.rows(), source.cols()));
   for (int index = static_cast<int>(coefficients.size()) - 1; index >= 0; --index) {
-    const std::size_t idx = xmvb::to_size(index);
+    const std::size_t idx = index;
     result.coefficient_adjoints[idx] +=
         frobenius_inner_product(output_adjoint, states[idx]);
     state_adjoints[idx].noalias() += coefficients[idx] * output_adjoint;
@@ -272,8 +272,8 @@ MatrixPolynomialAdjointResult backpropagate_left_matrix_polynomial(
       continue;
     }
     result.kernel_adjoint.noalias() +=
-        state_adjoints[idx] * states[xmvb::to_size(index - 1)].transpose();
-    state_adjoints[xmvb::to_size(index - 1)].noalias() +=
+        state_adjoints[idx] * states[index - 1].transpose();
+    state_adjoints[index - 1].noalias() +=
         kernel.transpose() * state_adjoints[idx];
   }
 
@@ -346,7 +346,7 @@ MatrixPolynomialAdjointResult backpropagate_right_matrix_polynomial(
       coefficients.size(),
       Matrix::Zero(source.rows(), source.cols()));
   for (int index = static_cast<int>(coefficients.size()) - 1; index >= 0; --index) {
-    const std::size_t idx = xmvb::to_size(index);
+    const std::size_t idx = index;
     result.coefficient_adjoints[idx] +=
         frobenius_inner_product(output_adjoint, states[idx]);
     state_adjoints[idx].noalias() += coefficients[idx] * output_adjoint;
@@ -355,8 +355,8 @@ MatrixPolynomialAdjointResult backpropagate_right_matrix_polynomial(
       continue;
     }
     result.kernel_adjoint.noalias() +=
-        states[xmvb::to_size(index - 1)].transpose() * state_adjoints[idx];
-    state_adjoints[xmvb::to_size(index - 1)].noalias() +=
+        states[index - 1].transpose() * state_adjoints[idx];
+    state_adjoints[index - 1].noalias() +=
         state_adjoints[idx] * kernel.transpose();
   }
 
@@ -412,11 +412,11 @@ MatrixPolynomialAdjointResult backpropagate_left_matrix_polynomial_frechet(
   right_terms[1] = source;
   frechet_terms[1] = source;
   for (int power = 2; power < degree; ++power) {
-    right_terms[xmvb::to_size(power)].noalias() =
-        right_terms[xmvb::to_size(power - 1)] * kernel;
-    frechet_terms[xmvb::to_size(power)].noalias() =
-        kernel * frechet_terms[xmvb::to_size(power - 1)] +
-        right_terms[xmvb::to_size(power)];
+    right_terms[power].noalias() =
+        right_terms[power - 1] * kernel;
+    frechet_terms[power].noalias() =
+        kernel * frechet_terms[power - 1] +
+        right_terms[power];
   }
 
   std::vector<Matrix> right_adjoints(
@@ -426,25 +426,25 @@ MatrixPolynomialAdjointResult backpropagate_left_matrix_polynomial_frechet(
       coefficients.size(),
       Matrix::Zero(source.rows(), source.cols()));
   for (int power = degree - 1; power >= 1; --power) {
-    const std::size_t idx = xmvb::to_size(power);
+    const std::size_t idx = power;
     result.coefficient_adjoints[idx] +=
         frobenius_inner_product(output_adjoint, frechet_terms[idx]);
     frechet_adjoints[idx].noalias() += coefficients[idx] * output_adjoint;
   }
 
   for (int power = degree - 1; power >= 2; --power) {
-    const std::size_t idx = xmvb::to_size(power);
+    const std::size_t idx = power;
     result.kernel_adjoint.noalias() +=
         frechet_adjoints[idx] *
-        frechet_terms[xmvb::to_size(power - 1)].transpose();
-    frechet_adjoints[xmvb::to_size(power - 1)].noalias() +=
+        frechet_terms[power - 1].transpose();
+    frechet_adjoints[power - 1].noalias() +=
         kernel.transpose() * frechet_adjoints[idx];
     right_adjoints[idx].noalias() += frechet_adjoints[idx];
 
     result.kernel_adjoint.noalias() +=
-        right_terms[xmvb::to_size(power - 1)].transpose() *
+        right_terms[power - 1].transpose() *
         right_adjoints[idx];
-    right_adjoints[xmvb::to_size(power - 1)].noalias() +=
+    right_adjoints[power - 1].noalias() +=
         right_adjoints[idx] * kernel.transpose();
   }
 

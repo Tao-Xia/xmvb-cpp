@@ -74,7 +74,7 @@ PfActiveStructurePattern decode_pf_structure_pattern(
 
   PfActiveStructurePattern pattern;
   std::vector<bool> orbital_is_assigned(
-      xmvb::to_size(n_active_orbitals),
+      n_active_orbitals,
       false);
   const int* structure_orbitals =
       raw_structure_data.structure_orbitals_data(structure_index);
@@ -93,22 +93,22 @@ PfActiveStructurePattern decode_pf_structure_pattern(
     }
 
     if (left_orbital == right_orbital) {
-      if (orbital_is_assigned[xmvb::to_size(left_orbital)]) {
+      if (orbital_is_assigned[left_orbital]) {
         throw std::invalid_argument(
             "raw VB structure reuses an active orbital across multiple singlet pairs");
       }
-      orbital_is_assigned[xmvb::to_size(left_orbital)] = true;
+      orbital_is_assigned[left_orbital] = true;
       pattern.doubly_occupied.push_back(left_orbital);
       continue;
     }
 
-    if (orbital_is_assigned[xmvb::to_size(left_orbital)] ||
-        orbital_is_assigned[xmvb::to_size(right_orbital)]) {
+    if (orbital_is_assigned[left_orbital] ||
+        orbital_is_assigned[right_orbital]) {
       throw std::invalid_argument(
           "raw VB structure reuses an active orbital across multiple covalent bonds");
     }
-    orbital_is_assigned[xmvb::to_size(left_orbital)] = true;
-    orbital_is_assigned[xmvb::to_size(right_orbital)] = true;
+    orbital_is_assigned[left_orbital] = true;
+    orbital_is_assigned[right_orbital] = true;
     pattern.covalent_pairs.emplace_back(left_orbital, right_orbital);
   }
 
@@ -123,11 +123,11 @@ PfActiveStructurePattern decode_pf_structure_pattern(
       throw std::invalid_argument(
           "raw VB structure references an open-shell orbital outside the active-space window");
     }
-    if (orbital_is_assigned[xmvb::to_size(orbital)]) {
+    if (orbital_is_assigned[orbital]) {
       throw std::invalid_argument(
           "raw VB structure reuses an active orbital between singlet-pair and open-shell sectors");
     }
-    orbital_is_assigned[xmvb::to_size(orbital)] = true;
+    orbital_is_assigned[orbital] = true;
     pattern.open_shell_orbitals.push_back(orbital);
   }
 

@@ -11,6 +11,7 @@
 #include "vb/orbital/nonredundant_orbital_space.hpp"
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
+#include "vb/scf/exact_orbital_second_order_operator_outer_response_internal.hpp"
 #include "vb/scf/opposite_spin_matrix_backward.hpp"
 #include "vb/scf/same_spin_matrix_backward.hpp"
 #include "vb/scf/selected_state_determinant_matrices.hpp"
@@ -75,6 +76,23 @@ public:
     std::vector<double> packed_active_two_electron_gradient;
     std::vector<double> overlap_matrix;
     std::vector<double> hamiltonian_matrix;
+  };
+
+  struct DirectCoreDiagnostics {
+    Eigen::MatrixXd delta_matrix_active_auxiliary_gradient;
+    Eigen::MatrixXd delta_two_electron_active_auxiliary_gradient;
+    Eigen::MatrixXd delta_total_active_auxiliary_gradient;
+    Eigen::MatrixXd delta_ao_effective_one_electron_matrix;
+    Eigen::MatrixXd delta_ao_backpropagated_inactive_density_gradient;
+    Eigen::MatrixXd delta_total_inactive_density_gradient;
+    Eigen::VectorXd reduced_response;
+  };
+
+  struct FixedUpstreamDiagnostics {
+    Eigen::MatrixXd original_orbital_gradient;
+    std::vector<double> orbital_value_gradient;
+    Eigen::VectorXd packed_response;
+    Eigen::VectorXd reduced_response;
   };
 
   ExactOrbitalSecondOrderOperator(
@@ -243,6 +261,26 @@ public:
       const Eigen::VectorXd& reduced_direction) const;
 
   /**
+   * @brief Exposes the accepted-point direct-core intermediates for debugging.
+   *
+   * This diagnostics hook follows the same uncached analytic path as
+   * `apply_reduced_core_direct_only_uncached()` and materializes the dense
+   * AO/orbital pullback blocks before the final reduced-space projection.
+   */
+  DirectCoreDiagnostics compute_direct_core_diagnostics(
+      const Eigen::VectorXd& reduced_direction) const;
+
+  /**
+   * @brief Exposes the raw fixed-upstream orbital pullback before reduction.
+   *
+   * This diagnostics hook isolates the directional derivative of the orbital
+   * normalization/scatter stage with accepted upstream adjoints held fixed, so
+   * raw sparse-slot, packed, and reduced responses can be compared separately.
+   */
+  FixedUpstreamDiagnostics compute_fixed_upstream_diagnostics(
+      const Eigen::VectorXd& reduced_direction) const;
+
+  /**
    * @brief Expands one reduced direction into explicit block-local rotations.
    *
    * This is primarily used while porting old orbital-Hessian formulas into a
@@ -305,9 +343,12 @@ private:
   mutable Eigen::MatrixXd ao_h1e_symmetrized_gradient_workspace_;
   Eigen::MatrixXd accepted_total_active_auxiliary_gradient_;
   std::vector<double> accepted_total_inactive_density_gradient_;
-  std::vector<double> zero_core_hamiltonian_;
+  Eigen::MatrixXd zero_core_hamiltonian_;
   mutable std::vector<double> ao_h1e_delta_h1e_workspace_;
   mutable std::vector<double> ao_h1e_inactive_density_gradient_workspace_;
+  mutable std::vector<Eigen::MatrixXd> ao_h1e_partial_delta_h1e_workspaces_;
+  mutable std::vector<Eigen::MatrixXd>
+      ao_h1e_partial_inactive_density_gradient_workspaces_;
   ExactPackedActiveTwoElectronAdjointCache accepted_exact_two_electron_cache_;
   bool has_accepted_exact_two_electron_cache_ = false;
   mutable ExactPackedActiveTwoElectronApplyWorkspace
@@ -317,11 +358,19 @@ private:
   mutable std::vector<double>
       outer_response_delta_active_one_electron_matrix_workspace_;
   mutable std::vector<double>
+      outer_response_symmetric_active_overlap_gradient_workspace_;
+  mutable std::vector<double>
+      outer_response_symmetric_active_one_electron_gradient_workspace_;
+  mutable std::vector<double>
       outer_response_delta_packed_active_two_electron_workspace_;
   mutable ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace
       outer_response_exact_two_electron_directional_workspace_;
   std::unique_ptr<AcceptedOrbitalPreparationCache> accepted_orbital_preparation_cache_;
   std::vector<StructureCoefficientBlock> structure_coefficient_blocks_;
+  // Frozen accepted-point selected-state response metadata.  Each HVP still
+  // builds fresh directional structure columns, but gap/gauge data and selected
+  // eigenvector bookkeeping are reused across Krylov matvecs.
+  AcceptedOuterResponseLinearResponseCache accepted_outer_response_cache_;
   mutable ApplyTimingTotals apply_timing_totals_;
 };
 

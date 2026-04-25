@@ -1,8 +1,9 @@
 #pragma once
 
-#include <cstdint>
+#include <Eigen/Core>
 
-#include "core/shared_vector.hpp"
+#include <cstdint>
+#include <vector>
 
 namespace xmvb::vb {
 
@@ -18,17 +19,17 @@ struct AoIntegralInput {
   /**
    * @brief Column-major AO core Hamiltonian matrix `HHF`.
    */
-  SharedVector<double> ao_core_hamiltonian_matrix;
+  Eigen::MatrixXd ao_core_hamiltonian_matrix;
 
   /**
    * @brief Sparse AO two-electron integral values `ggf`.
    */
-  SharedVector<double> ao_two_electron_integral_values;
+  std::vector<double> ao_two_electron_integral_values;
 
   /**
    * @brief Flattened AO two-electron index table `g2eidx` with 4 entries per integral.
    */
-  SharedVector<int> ao_two_electron_integral_indices;
+  std::vector<int> ao_two_electron_integral_indices;
 
   /**
    * @brief Per-integral symmetry shift count for AO effective-one-electron kernels.
@@ -44,7 +45,7 @@ struct AoIntegralInput {
    * This cache is molecule-static and avoids repeating these branchy symmetry
    * checks inside every SCF iteration.
    */
-  SharedVector<std::uint8_t> ao_two_electron_integral_symmetry_shifts;
+  std::vector<std::uint8_t> ao_two_electron_integral_symmetry_shifts;
 
   /**
    * @brief Precomputed packed AO pair indices `(ij_pair, kl_pair)` with 2 entries per integral.
@@ -53,7 +54,7 @@ struct AoIntegralInput {
    * to avoid repeatedly converting AO four-index tuples into packed pair
    * indices inside hot ERI contraction loops.
    */
-  SharedVector<int> ao_two_electron_pair_indices;
+  std::vector<int> ao_two_electron_pair_indices;
 
   /**
    * @brief Row offsets for a molecule-static symmetric AO-pair interaction graph.
@@ -63,12 +64,12 @@ struct AoIntegralInput {
    * active-space contractions can run as a row-wise sparse-matrix multiply
    * without thread-local full-size accumulation buffers.
    */
-  SharedVector<int> ao_two_electron_pair_graph_row_offsets;
+  std::vector<int> ao_two_electron_pair_graph_row_offsets;
 
   /**
    * @brief Column packed-AO-pair indices for the symmetric AO-pair graph.
    */
-  SharedVector<int> ao_two_electron_pair_graph_column_indices;
+  std::vector<int> ao_two_electron_pair_graph_column_indices;
 
   /**
    * @brief Source AO-integral indices for each symmetric AO-pair graph entry.
@@ -77,7 +78,7 @@ struct AoIntegralInput {
    * points each graph edge back to its source integral so the static graph
    * cache does not duplicate the AO integral value buffer.
    */
-  SharedVector<int> ao_two_electron_pair_graph_integral_indices;
+  std::vector<int> ao_two_electron_pair_graph_integral_indices;
 
   /**
    * @brief Optional 10-entry-per-integral cache of AO matrix linear indices for `G11` kernels.
@@ -89,7 +90,7 @@ struct AoIntegralInput {
    * kernels to avoid recomputing repeated column-offset arithmetic inside hot
    * ERI contraction loops.
    */
-  SharedVector<int> ao_effective_one_electron_linear_indices;
+  std::vector<int> ao_effective_one_electron_linear_indices;
 
   /**
    * @brief Row offsets for a molecule-static AO-H1E sparse operator graph.
@@ -100,7 +101,7 @@ struct AoIntegralInput {
    * hot exact_ctx HVP paths can run row-wise sparse contractions instead of
    * rescattering every ERI into six AO matrix entries on every matvec.
    */
-  SharedVector<int> ao_effective_one_electron_graph_row_offsets;
+  std::vector<int> ao_effective_one_electron_graph_row_offsets;
 
   /**
    * @brief Source AO-matrix linear indices for the AO-H1E sparse operator graph.
@@ -108,7 +109,7 @@ struct AoIntegralInput {
    * These are full column-major AO matrix indices into `vec(P11)` or the
    * transpose pullback buffer, matching the row graph above.
    */
-  SharedVector<int> ao_effective_one_electron_graph_source_indices;
+  std::vector<int> ao_effective_one_electron_graph_source_indices;
 
   /**
    * @brief Signed AO-H1E sparse operator weights for each row-graph edge.
@@ -117,7 +118,7 @@ struct AoIntegralInput {
    * Coulomb/exchange prefactor (`+4` or `-1`), so applying the graph reduces
    * to a pure sparse matrix-vector multiply.
    */
-  SharedVector<double> ao_effective_one_electron_graph_signed_weights;
+  std::vector<double> ao_effective_one_electron_graph_signed_weights;
 
   /**
    * @brief Source-owned offsets for the transpose AO-H1E sparse operator graph.
@@ -128,17 +129,17 @@ struct AoIntegralInput {
    * therefore avoid one full AO-matrix-sized transpose buffer per OpenMP
    * worker.
    */
-  SharedVector<int> ao_effective_one_electron_graph_transpose_source_offsets;
+  std::vector<int> ao_effective_one_electron_graph_transpose_source_offsets;
 
   /**
    * @brief Destination row indices for the transpose AO-H1E sparse graph.
    */
-  SharedVector<int> ao_effective_one_electron_graph_transpose_row_indices;
+  std::vector<int> ao_effective_one_electron_graph_transpose_row_indices;
 
   /**
    * @brief Signed edge weights for the source-owned transpose AO-H1E graph.
    */
-  SharedVector<double> ao_effective_one_electron_graph_transpose_signed_weights;
+  std::vector<double> ao_effective_one_electron_graph_transpose_signed_weights;
 };
 
 }  // namespace xmvb::vb

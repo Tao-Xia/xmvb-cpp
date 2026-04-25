@@ -84,7 +84,7 @@ xmvb::pfaffian_vbscf::Matrix dense_mat(
       xmvb::pfaffian_vbscf::Matrix::Zero(dim, dim);
   for (int col = 0; col < dim; ++col) {
     for (int row = 0; row < dim; ++row) {
-      mat(row, col) = data[xmvb::to_size(col) * dim + row];
+      mat(row, col) = data[col * dim + row];
     }
   }
   return mat;
@@ -246,10 +246,10 @@ int main(int argc, char** argv) {
         xmvb::pfaffian_vbscf::build_spin_block_diagonal_metric(spatial_overlap);
     const auto left_pairing =
         xmvb::pfaffian_vbscf::decode_pf_state(
-            basis.states[xmvb::to_size(opt.row)]);
+            basis.states[opt.row]);
     const auto right_pairing =
         xmvb::pfaffian_vbscf::decode_pf_state(
-            basis.states[xmvb::to_size(opt.col)]);
+            basis.states[opt.col]);
 
     const auto cache =
         xmvb::pfaffian_vbscf::PfForwardKernel::build_closed_shell_exact_cache(

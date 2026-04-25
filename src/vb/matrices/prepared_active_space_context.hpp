@@ -37,18 +37,11 @@ struct TimedPreparedActiveSpaceContext {
 
 double compute_one_electron_reference_energy(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_h1e,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     int n_basis_functions);
 
 TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
-    const CppVbInput& input,
-    const ActiveSpaceOrbitalPreparer& orbital_preparer,
-    const AoEffectiveOneElectronBuilder& ao_effective_one_electron_builder,
-    const ActiveSpaceOneElectronBuilder& active_space_one_electron_builder,
-    const ActiveSpaceTwoElectronBuilder& active_space_two_electron_builder);
-
-PreparedActiveSpaceContext prepare_active_space_context(
     const CppVbInput& input,
     const ActiveSpaceOrbitalPreparer& orbital_preparer,
     const AoEffectiveOneElectronBuilder& ao_effective_one_electron_builder,

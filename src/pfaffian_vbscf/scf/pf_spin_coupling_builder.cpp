@@ -19,7 +19,7 @@ std::vector<std::vector<int>> enumerate_combinations(
 
   std::vector<std::vector<int>> combinations;
   std::vector<int> current;
-  current.reserve(xmvb::to_size(n_selected));
+  current.reserve(n_selected);
 
   const auto recurse =
       [&](const auto& self, int start_index, int remaining) -> void {
@@ -105,13 +105,13 @@ Matrix build_s2_matrix(
       ms * ms + 0.5 * static_cast<double>(n_open_shell_electrons);
 
   std::vector<std::vector<bool>> beta_masks;
-  beta_masks.reserve(xmvb::to_size(dimension));
+  beta_masks.reserve(dimension);
   for (const auto& beta_positions : beta_position_combinations) {
     std::vector<bool> beta_mask(
-        xmvb::to_size(n_open_shell_electrons),
+        n_open_shell_electrons,
         false);
     for (const int beta_position : beta_positions) {
-      beta_mask[xmvb::to_size(beta_position)] = true;
+      beta_mask[beta_position] = true;
     }
     beta_masks.push_back(std::move(beta_mask));
   }
@@ -120,8 +120,8 @@ Matrix build_s2_matrix(
     s2_matrix(row, row) = diagonal_value;
     for (int col = 0; col < row; ++col) {
       if (differs_by_opposite_spin_swap(
-              beta_masks[xmvb::to_size(row)],
-              beta_masks[xmvb::to_size(col)])) {
+              beta_masks[row],
+              beta_masks[col])) {
         s2_matrix(row, col) = 1.0;
         s2_matrix(col, row) = 1.0;
       }
@@ -200,7 +200,7 @@ PfSpinCouplingBlock PfSpinCouplingBuilder::build(
        ++adapted_index) {
     block.primitive_to_adapted_coefficients.col(adapted_index) =
         eigensolver.eigenvectors().col(
-            selected_columns[xmvb::to_size(adapted_index)]);
+            selected_columns[adapted_index]);
   }
   return block;
 }

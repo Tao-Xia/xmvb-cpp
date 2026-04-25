@@ -78,7 +78,7 @@ double lower_triangle_rmse(
   for (int column = 0; column < n; ++column) {
     for (int row = column; row < n; ++row) {
       const std::size_t index =
-          xmvb::to_size(column) * n + row;
+          column * n + row;
       const double error = left[index] - right[index];
       squared_error_sum += error * error;
       ++count;
@@ -210,8 +210,8 @@ int main(int argc, char** argv) {
     const int n_packed_active_pairs =
         n_active_orbitals * (n_active_orbitals + 1) / 2;
     const std::vector<double> zero_eri(
-        xmvb::to_size(n_packed_active_pairs) *
-            xmvb::to_size(n_packed_active_pairs + 1) / 2,
+        n_packed_active_pairs *
+            (n_packed_active_pairs + 1) / 2,
         0.0);
     const auto exact_one_electron_structure_matrices = structure_builder.build(
         load_result.input.structure_data.alpha_det,

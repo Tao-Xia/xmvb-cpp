@@ -237,7 +237,7 @@ int main(int argc, char** argv) {
         options.top_edges,
         static_cast<int>(metric_graph.edges.size()));
     for (int edge_index = 0; edge_index < n_edges_to_print; ++edge_index) {
-      const auto& edge = metric_graph.edges[xmvb::to_size(edge_index)];
+      const auto& edge = metric_graph.edges[edge_index];
       std::cout << "metric_edge[" << edge_index << "]"
                 << " left_component=" << edge.left_component
                 << " right_component=" << edge.right_component
@@ -253,7 +253,7 @@ int main(int argc, char** argv) {
         static_cast<int>(metric_summary.articulation_candidates.size()));
     for (int separator_index = 0; separator_index < n_separators_to_print; ++separator_index) {
       const auto& candidate =
-          metric_summary.articulation_candidates[xmvb::to_size(separator_index)];
+          metric_summary.articulation_candidates[separator_index];
       std::cout << "articulation_candidate[" << separator_index << "]"
                 << " component=" << candidate.articulation_component
                 << " resulting_component_count=" << candidate.resulting_component_count

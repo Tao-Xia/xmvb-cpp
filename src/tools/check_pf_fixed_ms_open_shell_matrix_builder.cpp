@@ -24,16 +24,16 @@ std::size_t linear_index(
     int row,
     int col,
     int dimension) {
-  return xmvb::to_size(col) * dimension + row;
+  return col * dimension + row;
 }
 
 ScalarBuffer flatten_matrix(const Matrix& matrix) {
   ScalarBuffer data(
-      xmvb::to_size(matrix.rows()) * matrix.cols(),
+      matrix.rows() * matrix.cols(),
       0.0);
   for (int col = 0; col < matrix.cols(); ++col) {
     for (int row = 0; row < matrix.rows(); ++row) {
-      data[xmvb::to_size(col) * matrix.rows() + row] = matrix(row, col);
+      data[col * matrix.rows() + row] = matrix(row, col);
     }
   }
   return data;
@@ -77,19 +77,19 @@ Matrix random_pair_block(
     std::mt19937* generator,
     std::normal_distribution<double>* distribution) {
   Matrix pair_block = Matrix::Zero(dimension, dimension);
-  std::vector<bool> blocked_mask(xmvb::to_size(dimension), false);
+  std::vector<bool> blocked_mask(dimension, false);
   for (const int orbital : blocked_alpha_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (const int orbital : blocked_beta_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (int col = 0; col < dimension; ++col) {
-    if (blocked_mask[xmvb::to_size(col)]) {
+    if (blocked_mask[col]) {
       continue;
     }
     for (int row = col; row < dimension; ++row) {
-      if (blocked_mask[xmvb::to_size(row)]) {
+      if (blocked_mask[row]) {
         continue;
       }
       const double value = (*distribution)(*generator);
@@ -141,7 +141,7 @@ ScalarBuffer random_packed_two_electron(
           last_pair_index,
           last_pair_index) +
       1;
-  ScalarBuffer packed_integrals(xmvb::to_size(storage_size), 0.0);
+  ScalarBuffer packed_integrals(storage_size, 0.0);
   for (double& value : packed_integrals) {
     value = (*distribution)(*generator);
   }
@@ -174,22 +174,22 @@ void run_case(
   basis.n_blocked_beta = 1;
   basis.n_alpha = basis.n_singlet_pairs + basis.n_blocked_alpha;
   basis.n_beta = basis.n_singlet_pairs + basis.n_blocked_beta;
-  basis.states.reserve(xmvb::to_size(basis.n_states));
+  basis.states.reserve(basis.n_states);
 
   for (int state_index = 0; state_index < basis.n_states; ++state_index) {
     const Matrix alpha_beta_block =
         random_pair_block(
             n_active_orbitals,
-            blocked_alpha_list[xmvb::to_size(state_index)],
-            blocked_beta_list[xmvb::to_size(state_index)],
+            blocked_alpha_list[state_index],
+            blocked_beta_list[state_index],
             generator,
             distribution);
     basis.states.push_back(
         build_state(
             n_active_orbitals,
             n_singlet_pairs,
-            blocked_alpha_list[xmvb::to_size(state_index)],
-            blocked_beta_list[xmvb::to_size(state_index)],
+            blocked_alpha_list[state_index],
+            blocked_beta_list[state_index],
             alpha_beta_block));
   }
 
@@ -214,8 +214,8 @@ void run_case(
     for (int col = 0; col <= row; ++col) {
       const auto pair_result =
           xmvb::pfaffian_vbscf::evaluate_fixed_ms_open_shell_pf_state_pair_hamiltonian(
-              basis.states[xmvb::to_size(row)],
-              basis.states[xmvb::to_size(col)],
+              basis.states[row],
+              basis.states[col],
               spatial_overlap_matrix,
               one_electron_matrix,
               active_space.ggo);

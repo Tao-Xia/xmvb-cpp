@@ -13,6 +13,7 @@
 #include <omp.h>
 #endif
 
+#include "core/openmp_utils.hpp"
 #include "vb/matrices/eigen_matrix_storage_utils.hpp"
 #include "vb/orbital/ao_effective_one_electron_graph_operator.hpp"
 #include "vb/orbital/ao_effective_one_electron_ri_operator.hpp"
@@ -29,10 +30,10 @@ constexpr double kIntegralSymmetryMultipliers[] = {
 };
 
 std::vector<std::size_t> build_column_offsets(int n_basis_functions) {
-  std::vector<std::size_t> column_offsets(xmvb::to_size(n_basis_functions), 0);
+  std::vector<std::size_t> column_offsets(n_basis_functions, 0);
   for (int column = 0; column < n_basis_functions; ++column) {
-    column_offsets[xmvb::to_size(column)] =
-        xmvb::to_size(column) * n_basis_functions;
+    column_offsets[column] =
+        column * n_basis_functions;
   }
   return column_offsets;
 }
@@ -41,7 +42,7 @@ std::vector<double> encode_symmetric_gradient_as_unsymmetrized_storage(
     const std::vector<double>& symmetric_gradient,
     int n_basis_functions) {
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (symmetric_gradient.size() != matrix_size) {
     throw std::invalid_argument("symmetric_gradient size mismatch");
   }
@@ -138,12 +139,12 @@ build_ao_effective_one_electron_ri_backpropagator_factors(
     throw std::invalid_argument("invalid inactive/active partition for RI AO-H1E backprop");
   }
   const std::size_t expected_active_gradient_size =
-      xmvb::to_size(n_active_orbitals) * n_active_orbitals;
+      n_active_orbitals * n_active_orbitals;
   if (active_one_electron_gradient.size() != expected_active_gradient_size) {
     throw std::invalid_argument("active one-electron gradient size mismatch");
   }
   const std::size_t expected_auxiliary_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (orbital_result.auxiliary_orbital_matrix.size() != expected_auxiliary_size) {
     throw std::invalid_argument("auxiliary orbital matrix size mismatch");
   }
@@ -274,32 +275,32 @@ inline void accumulate_ao_effective_one_electron_backprop_integral(
   if constexpr (UseLinearIndexCache) {
     const int* linear_indices =
         ao_effective_one_electron_linear_indices + integral_index * 10;
-    ij_index = xmvb::to_size(linear_indices[0]);
-    kl_index = xmvb::to_size(linear_indices[1]);
-    ik_index = xmvb::to_size(linear_indices[2]);
-    jl_index = xmvb::to_size(linear_indices[3]);
-    il_index = xmvb::to_size(linear_indices[4]);
-    jk_index = xmvb::to_size(linear_indices[5]);
-    lj_index = xmvb::to_size(linear_indices[6]);
-    ki_index = xmvb::to_size(linear_indices[7]);
-    kj_index = xmvb::to_size(linear_indices[8]);
-    li_index = xmvb::to_size(linear_indices[9]);
+    ij_index = linear_indices[0];
+    kl_index = linear_indices[1];
+    ik_index = linear_indices[2];
+    jl_index = linear_indices[3];
+    il_index = linear_indices[4];
+    jk_index = linear_indices[5];
+    lj_index = linear_indices[6];
+    ki_index = linear_indices[7];
+    kj_index = linear_indices[8];
+    li_index = linear_indices[9];
   } else {
-    const std::size_t col_i = column_offsets[xmvb::to_size(i)];
-    const std::size_t col_j = column_offsets[xmvb::to_size(j)];
-    const std::size_t col_k = column_offsets[xmvb::to_size(k)];
-    const std::size_t col_l = column_offsets[xmvb::to_size(l)];
+    const std::size_t col_i = column_offsets[i];
+    const std::size_t col_j = column_offsets[j];
+    const std::size_t col_k = column_offsets[k];
+    const std::size_t col_l = column_offsets[l];
 
-    ij_index = col_j + xmvb::to_size(i);
-    kl_index = col_l + xmvb::to_size(k);
-    ik_index = col_k + xmvb::to_size(i);
-    jl_index = col_l + xmvb::to_size(j);
-    il_index = col_l + xmvb::to_size(i);
-    jk_index = col_k + xmvb::to_size(j);
-    lj_index = col_j + xmvb::to_size(l);
-    ki_index = col_i + xmvb::to_size(k);
-    kj_index = col_j + xmvb::to_size(k);
-    li_index = col_i + xmvb::to_size(l);
+    ij_index = col_j + i;
+    kl_index = col_l + k;
+    ik_index = col_k + i;
+    jl_index = col_l + j;
+    il_index = col_l + i;
+    jk_index = col_k + j;
+    lj_index = col_j + l;
+    ki_index = col_i + k;
+    kj_index = col_j + k;
+    li_index = col_i + l;
   }
 
   const double gradient_ij = unsymmetrized_gradient_storage[ij_index];
@@ -329,7 +330,7 @@ backpropagate_ao_effective_one_electron_ri(
     throw std::invalid_argument("n_basis_functions must be positive");
   }
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (ao_effective_one_electron_gradient.size() != matrix_size) {
     throw std::invalid_argument("ao_effective_one_electron_gradient size mismatch");
   }
@@ -406,7 +407,7 @@ backpropagate_ao_effective_one_electron(
     throw std::invalid_argument("n_basis_functions must be positive");
   }
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (ao_effective_one_electron_gradient.size() != matrix_size) {
     throw std::invalid_argument("ao_effective_one_electron_gradient size mismatch");
   }
@@ -442,7 +443,7 @@ backpropagate_ao_effective_one_electron(
 
   int n_threads = 1;
 #ifdef _OPENMP
-  n_threads = omp_get_max_threads();
+  n_threads = xmvb::effective_openmp_thread_count();
 #endif
   std::vector<std::vector<double>> partial_inactive_density_gradients;
   if (n_threads <= 1) {
@@ -581,7 +582,7 @@ backpropagate_ao_effective_one_electron(
     }
   } else {
     partial_inactive_density_gradients.assign(
-        xmvb::to_size(n_threads),
+        n_threads,
         std::vector<double>(matrix_size, 0.0));
 
 #pragma omp parallel
@@ -591,13 +592,13 @@ backpropagate_ao_effective_one_electron(
       thread_index = omp_get_thread_num();
 #endif
       auto& local_inactive_density_gradient =
-          partial_inactive_density_gradients[xmvb::to_size(thread_index)];
+          partial_inactive_density_gradients[thread_index];
 
 #pragma omp for schedule(static)
       for (std::ptrdiff_t integral_offset = 0;
            integral_offset < static_cast<std::ptrdiff_t>(ao_two_electron_integral_values.size());
            ++integral_offset) {
-        const std::size_t integral_index = xmvb::to_size(integral_offset);
+        const std::size_t integral_index = integral_offset;
         if (ao_effective_one_electron_linear_indices != nullptr &&
             validate_integral_indices &&
             ao_two_electron_integral_symmetry_shifts != nullptr) {
@@ -799,7 +800,7 @@ AoEffectiveOneElectronBackpropagator::backpropagate(
     const std::vector<double>& ao_effective_one_electron_gradient,
     const AoIntegralInput& ao_integral_input) const {
   const std::size_t matrix_size =
-      xmvb::to_size(ao_integral_input.n_basis_functions) *
+      ao_integral_input.n_basis_functions *
       ao_integral_input.n_basis_functions;
   if (ao_effective_one_electron_gradient.size() != matrix_size) {
     throw std::invalid_argument(
@@ -808,21 +809,25 @@ AoEffectiveOneElectronBackpropagator::backpropagate(
 
   int n_threads = 1;
 #ifdef _OPENMP
-  n_threads = omp_get_max_threads();
+  n_threads = xmvb::effective_openmp_thread_count();
 #endif
-  if (n_threads <= 1 &&
-      ao_effective_one_electron_graph_available(ao_integral_input)) {
+  if (ao_effective_one_electron_graph_available(ao_integral_input)) {
     const Eigen::Map<const Eigen::MatrixXd> ao_effective_gradient(
         ao_effective_one_electron_gradient.data(),
         ao_integral_input.n_basis_functions,
         ao_integral_input.n_basis_functions);
+    // The AO-H1E graph stores the unsymmetrized `G11` map, so the adjoint must
+    // enter as `Lambda + Lambda^T` before applying `K^T`. The graph transpose
+    // now has a multithreaded implementation, which keeps LBFGS/SCF gradient
+    // paths on the same molecule-static operator used by exact_ctx.
     const Eigen::MatrixXd unsymmetrized_g11_gradient =
         ao_effective_gradient + ao_effective_gradient.transpose();
     AoEffectiveOneElectronBackpropagationResult result;
     result.inactive_density_gradient =
         apply_ao_effective_one_electron_graph_transpose(
             unsymmetrized_g11_gradient.data(),
-            ao_integral_input);
+            ao_integral_input,
+            n_threads);
     return result;
   }
 
@@ -842,8 +847,8 @@ AoEffectiveOneElectronBackpropagator::backpropagate(
       ao_integral_input.ao_two_electron_pair_graph_row_offsets.empty();
   return backpropagate_ao_effective_one_electron(
       ao_effective_one_electron_gradient,
-      ao_integral_input.ao_two_electron_integral_values.vector(),
-      ao_integral_input.ao_two_electron_integral_indices.vector(),
+      ao_integral_input.ao_two_electron_integral_values,
+      ao_integral_input.ao_two_electron_integral_indices,
       ao_integral_input.ao_two_electron_integral_symmetry_shifts.empty()
           ? nullptr
           : ao_integral_input.ao_two_electron_integral_symmetry_shifts.data(),

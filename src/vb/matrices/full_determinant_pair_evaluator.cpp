@@ -12,7 +12,7 @@ namespace {
 
 struct PreparedSpinDeterminantPair {
   SpinDeterminantPairEvaluation evaluation;
-  std::vector<double> overlap_submatrix;
+  Eigen::MatrixXd overlap_submatrix;
 };
 
 PreparedSpinDeterminantPair prepare_spin_determinant_pair(
@@ -33,9 +33,8 @@ PreparedSpinDeterminantPair prepare_spin_determinant_pair(
       ovlp_act,
       n_orbitals);
 
-  result.evaluation.overlap_result = determinant_overlap_resolver.resolve(
-      result.overlap_submatrix,
-      static_cast<int>(occ_L.size()));
+  result.evaluation.overlap_result =
+      determinant_overlap_resolver.resolve_matrix(result.overlap_submatrix);
   cache_first_order_cofactor(&result.evaluation.overlap_result);
 
   return result;
@@ -44,7 +43,7 @@ PreparedSpinDeterminantPair prepare_spin_determinant_pair(
 void evaluate_spin_determinant_hamiltonian(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const std::vector<double>& eri_act,
     const DeterminantHamiltonianResolver& determinant_hamiltonian_resolver,
@@ -56,7 +55,6 @@ void evaluate_spin_determinant_hamiltonian(
   const auto hamiltonian_result = determinant_hamiltonian_resolver.resolve(
       occ_L,
       occ_R,
-      prepared_result->overlap_submatrix,
       prepared_result->evaluation.overlap_result,
       h1e_act,
       n_orbitals,
@@ -71,7 +69,7 @@ void evaluate_spin_determinant_hamiltonian(
 void evaluate_spin_determinant_hamiltonian(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantHamiltonianResolver& determinant_hamiltonian_resolver,
@@ -83,7 +81,6 @@ void evaluate_spin_determinant_hamiltonian(
   const auto hamiltonian_result = determinant_hamiltonian_resolver.resolve(
       occ_L,
       occ_R,
-      prepared_result->overlap_submatrix,
       prepared_result->evaluation.overlap_result,
       h1e_act,
       n_orbitals,
@@ -130,18 +127,18 @@ double evaluate_opposite_spin_coulomb_coupling(
 
   for (int alpha_left_column = 0; alpha_left_column < n_alpha_electrons; ++alpha_left_column) {
     const int alpha_orbital_left =
-        alpha_occ_L[xmvb::to_size(alpha_left_column)];
+        alpha_occ_L[alpha_left_column];
     for (int alpha_right_row = 0; alpha_right_row < n_alpha_electrons; ++alpha_right_row) {
       const int alpha_orbital_right =
-          alpha_occ_R[xmvb::to_size(alpha_right_row)];
+          alpha_occ_R[alpha_right_row];
       const double alpha_cofactor =
           alpha_cofactor_1st(alpha_right_row, alpha_left_column);
       for (int beta_left_column = 0; beta_left_column < n_beta_electrons; ++beta_left_column) {
         const int beta_orbital_left =
-            beta_occ_L[xmvb::to_size(beta_left_column)];
+            beta_occ_L[beta_left_column];
         for (int beta_right_row = 0; beta_right_row < n_beta_electrons; ++beta_right_row) {
           const int beta_orbital_right =
-              beta_occ_R[xmvb::to_size(beta_right_row)];
+              beta_occ_R[beta_right_row];
           const double beta_cofactor =
               beta_cofactor_1st(beta_right_row, beta_left_column);
           const int two_electron_index = TwoElectronIndexer::two_electron_storage_index(
@@ -151,7 +148,7 @@ double evaluate_opposite_spin_coulomb_coupling(
               alpha_orbital_left);
           opposite_spin_coulomb_coupling +=
               alpha_cofactor * beta_cofactor *
-              eri_act[xmvb::to_size(two_electron_index)];
+              eri_act[two_electron_index];
         }
       }
     }
@@ -195,10 +192,10 @@ double evaluate_opposite_spin_coulomb_coupling(
 
   for (int alpha_left_column = 0; alpha_left_column < n_alpha_electrons; ++alpha_left_column) {
     const int alpha_orbital_left =
-        alpha_occ_L[xmvb::to_size(alpha_left_column)];
+        alpha_occ_L[alpha_left_column];
     for (int alpha_right_row = 0; alpha_right_row < n_alpha_electrons; ++alpha_right_row) {
       const int alpha_orbital_right =
-          alpha_occ_R[xmvb::to_size(alpha_right_row)];
+          alpha_occ_R[alpha_right_row];
       const double alpha_cofactor =
           alpha_cofactor_1st(alpha_right_row, alpha_left_column);
       const int alpha_packed_pair_index = TwoElectronIndexer::packed_pair_index(
@@ -206,10 +203,10 @@ double evaluate_opposite_spin_coulomb_coupling(
           alpha_orbital_left);
       for (int beta_left_column = 0; beta_left_column < n_beta_electrons; ++beta_left_column) {
         const int beta_orbital_left =
-            beta_occ_L[xmvb::to_size(beta_left_column)];
+            beta_occ_L[beta_left_column];
         for (int beta_right_row = 0; beta_right_row < n_beta_electrons; ++beta_right_row) {
           const int beta_orbital_right =
-              beta_occ_R[xmvb::to_size(beta_right_row)];
+              beta_occ_R[beta_right_row];
           const double beta_cofactor =
               beta_cofactor_1st(beta_right_row, beta_left_column);
           const int beta_packed_pair_index = TwoElectronIndexer::packed_pair_index(
@@ -266,18 +263,18 @@ double evaluate_opposite_spin_coulomb_coupling(
 
   for (int alpha_left_column = 0; alpha_left_column < n_alpha_electrons; ++alpha_left_column) {
     const int alpha_orbital_left =
-        alpha_occ_L[xmvb::to_size(alpha_left_column)];
+        alpha_occ_L[alpha_left_column];
     for (int alpha_right_row = 0; alpha_right_row < n_alpha_electrons; ++alpha_right_row) {
       const int alpha_orbital_right =
-          alpha_occ_R[xmvb::to_size(alpha_right_row)];
+          alpha_occ_R[alpha_right_row];
       const double alpha_cofactor =
           alpha_cofactor_1st(alpha_right_row, alpha_left_column);
       for (int beta_left_column = 0; beta_left_column < n_beta_electrons; ++beta_left_column) {
         const int beta_orbital_left =
-            beta_occ_L[xmvb::to_size(beta_left_column)];
+            beta_occ_L[beta_left_column];
         for (int beta_right_row = 0; beta_right_row < n_beta_electrons; ++beta_right_row) {
           const int beta_orbital_right =
-              beta_occ_R[xmvb::to_size(beta_right_row)];
+              beta_occ_R[beta_right_row];
           const double beta_cofactor =
               beta_cofactor_1st(beta_right_row, beta_left_column);
           const int two_electron_index = TwoElectronIndexer::two_electron_storage_index(
@@ -287,7 +284,7 @@ double evaluate_opposite_spin_coulomb_coupling(
               alpha_orbital_left);
           opposite_spin_coulomb_coupling +=
               alpha_cofactor * beta_cofactor *
-              eri_act[xmvb::to_size(two_electron_index)];
+              eri_act[two_electron_index];
         }
       }
     }
@@ -310,7 +307,7 @@ SpinDeterminantPairEvaluation FullDeterminantPairEvaluator::evaluate_same_spin_p
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const std::vector<double>& eri_act) const {
   // This is the cacheable same-spin kernel: it resolves the occupied-overlap
@@ -341,7 +338,7 @@ SpinDeterminantPairEvaluation FullDeterminantPairEvaluator::evaluate_same_spin_p
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result) const {
   auto prepared_result = prepare_spin_determinant_pair(
@@ -452,7 +449,7 @@ FullDeterminantPairEvaluation FullDeterminantPairEvaluator::evaluate(
     const std::vector<int>& beta_occ_L,
     const std::vector<int>& beta_occ_R,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const std::vector<double>& eri_act,
     bool retain_spin_pair_evaluations) const {
@@ -510,7 +507,7 @@ FullDeterminantPairEvaluation FullDeterminantPairEvaluator::evaluate(
     const std::vector<int>& beta_occ_L,
     const std::vector<int>& beta_occ_R,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     bool retain_spin_pair_evaluations) const {

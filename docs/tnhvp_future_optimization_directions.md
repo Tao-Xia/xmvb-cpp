@@ -1,6 +1,12 @@
 # TNHVP 后续优化方向
 
+当前可执行的性能任务、基准和进度看板见
+[docs/tnhvp_performance_improvement_plan.md](/pool1/home/xiatao/project/xmvb-cpp/docs/tnhvp_performance_improvement_plan.md)。
+
 本文档总结当前 `exact_ctx` / TNHVP 路径上仍然最有希望继续降低 wall-time 的方向，并按“潜在收益”和“实现风险”进行区分。这里讨论的是下一步算法与实现工作的取舍，不是当前代码已经完成的内容。
+
+关于 `outer-response` 为什么应当优先被整理成“接受点固定线性响应算子”，见
+[docs/outer_response_linear_response_predecomposition.md](/pool1/home/xiatao/project/xmvb-cpp/docs/outer_response_linear_response_predecomposition.md)。
 
 ## 1. 当前瓶颈的基本判断
 
@@ -23,6 +29,13 @@ $$
 2. 从变量图表本身出发，简化固定上游回传链与活性辅助轨道导数链。
 
 相比之下，单纯的小型常数优化虽然仍然有价值，但通常不足以带来“本质效果”。
+
+补充进展：`2026-04-23` 已经完成一轮 `outer_response_structure_matrices`
+热点优化。对 `241_VBSCF` 和 `10698_VBSCF`，结构矩阵阶段都从大约
+`0.08 s` 降到了 `0.04-0.05 s`。因此，`P1` 不再是唯一主导项；在更大
+case 上，新的主要 outer-response 开销已经更偏向
+`outer_response_active_space_integrals`，其次是
+`outer_response_orbital_pullback`。
 
 ## 2. 优先级最高的方向
 
@@ -112,7 +125,7 @@ $$
 
 目前 outer-response 末端仍存在若干临时矩阵构造、对称化以及 `std::vector<double>` 打包过程。若把这部分改成稳定的 workspace / `Eigen::MatrixXd` 主导的数据通路，并尽量减少格式转换，则可以继续压缩常数因子。
 
-这类优化本身不改变算法结构，但实现难度小于真正的图表重构，适合作为第二阶段工作。
+这类优化本身不改变算法结构，但实现难度小于真正的图表重构，适合作为第二阶段工作。结合当前最新 benchmark，这一项的重要性已经高于继续深挖结构矩阵常数因子。
 
 **预期收益**
 

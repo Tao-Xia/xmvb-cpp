@@ -22,7 +22,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = input.n_basis_functions;
   const int explicit_count =
-      input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -31,7 +31,7 @@ int get_sparse_coefficient_count(
   while (coefficient_count < n_basis_functions) {
     const int basis_index =
         input.orbital_basis_index_table[
-            xmvb::to_size(orbital_index) * n_basis_functions +
+            orbital_index * n_basis_functions +
             coefficient_count];
     if (basis_index == 0) {
       break;
@@ -92,11 +92,14 @@ PfOrbitalGradResult finish_orbital_gradient_backpropagation(
           input.ao_integral_input.ao_core_hamiltonian_matrix.size()) {
     throw std::runtime_error("one-electron reference gradient size mismatch");
   }
+  const double* ao_core_hamiltonian_data =
+      input.ao_integral_input.ao_core_hamiltonian_matrix.data();
+  const double* ao_effective_h1e_data =
+      active_gradient_result.ao_effective_one_electron_result.ao_effective_h1e.data();
   for (std::size_t index = 0; index < total_inactive_density_gradient.size(); ++index) {
     total_inactive_density_gradient[index] =
-        active_gradient_result.ao_effective_one_electron_result
-            .ao_effective_h1e[index] +
-        input.ao_integral_input.ao_core_hamiltonian_matrix[index];
+        ao_effective_h1e_data[index] +
+        ao_core_hamiltonian_data[index];
   }
 
   const Clock::time_point backprop_start_time = Clock::now();

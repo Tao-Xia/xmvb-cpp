@@ -21,7 +21,7 @@ DeterminantOverlapResult DeterminantOverlapResolver::resolve(
     const std::vector<double>& overlap_submatrix,
     int n_electrons) const 
 {
-  const std::size_t matrix_size = xmvb::to_size(n_electrons) * n_electrons;
+  const std::size_t matrix_size = n_electrons * n_electrons;
 
   if (overlap_submatrix.size() != matrix_size) {
     throw std::invalid_argument("overlap_submatrix size does not match n_electrons");

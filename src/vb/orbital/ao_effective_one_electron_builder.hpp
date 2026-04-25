@@ -31,14 +31,14 @@ public:
    */
   AoEffectiveOneElectronResult build(
       const std::vector<double>& inactive_density_matrix,
-      const std::vector<double>& ao_core_hamiltonian_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
       const std::vector<double>& ao_two_electron_integral_values,
       const std::vector<int>& ao_two_electron_integral_indices,
       int n_basis_functions) const;
 
   AoEffectiveOneElectronResult build(
       const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-      const std::vector<double>& ao_core_hamiltonian_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
       const std::vector<double>& ao_two_electron_integral_values,
       const std::vector<int>& ao_two_electron_integral_indices,
       int n_basis_functions) const;
@@ -48,13 +48,13 @@ public:
    */
   AoEffectiveOneElectronResult build(
       const std::vector<double>& inactive_density_matrix,
-      const std::vector<double>& ao_core_hamiltonian_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
       const LibcintRiIntegralProviderResult& ri_integral_provider_result,
       int n_basis_functions) const;
 
   AoEffectiveOneElectronResult build(
       const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-      const std::vector<double>& ao_core_hamiltonian_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
       const LibcintRiIntegralProviderResult& ri_integral_provider_result,
       int n_basis_functions) const;
 
@@ -67,7 +67,7 @@ public:
    */
   AoEffectiveOneElectronResult build(
       const OrbitalPreparationResult& orbital_result,
-      const std::vector<double>& ao_core_hamiltonian_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
       const LibcintRiIntegralProviderResult& ri_integral_provider_result,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals) const;
@@ -82,12 +82,12 @@ public:
    */
   AoEffectiveOneElectronResult build(
       const std::vector<double>& inactive_density_matrix,
-      const std::vector<double>& ao_core_hamiltonian_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
       const AoIntegralInput& ao_integral_input) const;
 
   AoEffectiveOneElectronResult build(
       const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-      const std::vector<double>& ao_core_hamiltonian_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
       const AoIntegralInput& ao_integral_input) const;
 
   /**

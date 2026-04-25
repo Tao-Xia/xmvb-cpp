@@ -22,6 +22,11 @@ namespace xmvb::vb {
  * `coefficient_matrix` is the same state reshaped to unique spin-string space
  * with dimensions `(n_unique_alpha, n_unique_beta)`.
  *
+ * In close-shell expansions `alpha_id == beta_id` for every determinant, so
+ * `coefficient_matrix` is diagonal. In that case `close_shell_diagonal` is set
+ * and `diagonal_coefficients` / `local_diagonal_coefficients` cache the global
+ * and trimmed diagonal entries directly for hot-path contractions.
+ *
  * `local_coefficient_matrix` stores the same coefficients restricted to the
  * trimmed support block `alpha_support x beta_support`. This exact support-aware
  * view lets backward contractions skip global zero rows/columns for each
@@ -32,9 +37,12 @@ struct SelectedStateDeterminantCoefficients {
   double normalized_state_weight = 0.0;
   std::vector<double> determinant_coefficients;
   Eigen::MatrixXd coefficient_matrix;
+  bool close_shell_diagonal = false;
+  std::vector<double> diagonal_coefficients;
   std::vector<int> alpha_support;
   std::vector<int> beta_support;
   Eigen::MatrixXd local_coefficient_matrix;
+  std::vector<double> local_diagonal_coefficients;
   int nonzero_coefficient_count = 0;
 };
 

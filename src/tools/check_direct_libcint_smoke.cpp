@@ -133,10 +133,10 @@ int main(int argc, char** argv) {
     for (int column = 0; column < core_h_block.right_ao_count; ++column) {
       for (int row = 0; row < core_h_block.left_ao_count; ++row) {
         const std::size_t local_index =
-            xmvb::to_size(column) * core_h_block.left_ao_count + row;
+            column * core_h_block.left_ao_count + row;
         const std::size_t global_index =
-            xmvb::to_size(core_h_block.right_ao_offset + column) * n_basis_functions +
-            xmvb::to_size(core_h_block.left_ao_offset + row);
+            core_h_block.right_ao_offset + column * n_basis_functions +
+            core_h_block.left_ao_offset + row;
         const double direct_value = core_h_block.values[local_index];
         const double stored_value =
             input.ao_integral_input.ao_core_hamiltonian_matrix[global_index];
@@ -163,10 +163,10 @@ int main(int argc, char** argv) {
         for (int q = 0; q < quartet.ao_count_j; ++q) {
           for (int p = 0; p < quartet.ao_count_i; ++p) {
             const std::size_t local_index =
-                xmvb::to_size(p) +
-                xmvb::to_size(q) * quartet.ao_count_i +
-                xmvb::to_size(r) * quartet.ao_count_i * quartet.ao_count_j +
-                xmvb::to_size(s) * quartet.ao_count_i * quartet.ao_count_j *
+                p +
+                q * quartet.ao_count_i +
+                r * quartet.ao_count_i * quartet.ao_count_j +
+                s * quartet.ao_count_i * quartet.ao_count_j *
                     quartet.ao_count_k;
             const int i = quartet.ao_offset_i + p;
             const int j = quartet.ao_offset_j + q;

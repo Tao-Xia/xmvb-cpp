@@ -34,17 +34,11 @@ double determinant_overlap(
     const std::vector<int>& right_occ,
     const Eigen::MatrixXd& overlap_matrix,
     const DeterminantOverlapResolver& overlap_resolver) {
-  std::vector<double> overlap_storage(
-      overlap_matrix.data(),
-      overlap_matrix.data() + overlap_matrix.size());
   const auto overlap_submatrix = build_overlap_submatrix(
       left_occ,
       right_occ,
-      overlap_storage,
-      overlap_matrix.rows());
-  return overlap_resolver
-      .resolve(overlap_submatrix, static_cast<int>(left_occ.size()))
-      .overlap_determinant;
+      overlap_matrix);
+  return overlap_resolver.resolve_matrix(overlap_submatrix).overlap_determinant;
 }
 
 }  // namespace
@@ -53,18 +47,18 @@ std::vector<LegacyStructureDeterminantTerm> enumerate_legacy_determinant_terms(
     const std::vector<OrbitalPair>& pairs) {
   const int n_pairs = static_cast<int>(pairs.size());
   std::vector<std::vector<int>> determinants;
-  std::vector<int> initial_determinant(xmvb::to_size(2 * n_pairs), 0);
+  std::vector<int> initial_determinant(2 * n_pairs, 0);
   for (int pair_index = 0; pair_index < n_pairs; ++pair_index) {
-    initial_determinant[xmvb::to_size(pair_index)] =
-        pairs[xmvb::to_size(pair_index)].first;
-    initial_determinant[xmvb::to_size(pair_index + n_pairs)] =
-        pairs[xmvb::to_size(pair_index)].second;
+    initial_determinant[pair_index] =
+        pairs[pair_index].first;
+    initial_determinant[pair_index + n_pairs] =
+        pairs[pair_index].second;
   }
   determinants.push_back(initial_determinant);
 
   for (int pair_index = 0; pair_index < n_pairs; ++pair_index) {
-    if (initial_determinant[xmvb::to_size(pair_index)] ==
-        initial_determinant[xmvb::to_size(pair_index + n_pairs)]) {
+    if (initial_determinant[pair_index] ==
+        initial_determinant[pair_index + n_pairs]) {
       continue;
     }
     const std::size_t current_size = determinants.size();
@@ -72,8 +66,8 @@ std::vector<LegacyStructureDeterminantTerm> enumerate_legacy_determinant_terms(
     for (std::size_t determinant_index = 0; determinant_index < current_size; ++determinant_index) {
       auto swapped_determinant = determinants[determinant_index];
       std::swap(
-          swapped_determinant[xmvb::to_size(pair_index)],
-          swapped_determinant[xmvb::to_size(pair_index + n_pairs)]);
+          swapped_determinant[pair_index],
+          swapped_determinant[pair_index + n_pairs]);
       determinants.push_back(std::move(swapped_determinant));
     }
   }

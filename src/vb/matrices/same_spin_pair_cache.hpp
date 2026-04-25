@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <cstddef>
 #include <vector>
 
@@ -33,11 +35,14 @@ struct SameSpinPairCacheContext {
   SpinDeterminantReuseTable alpha_reuse_table;
   SpinDeterminantReuseTable beta_reuse_table;
   std::vector<SpinDeterminantPairEvaluation> alpha_pair_cache;
-  // In close-shell expansions the ordered beta-beta kernel is identical to the
-  // alpha-alpha kernel, so `beta_pair_cache_ref()` aliases `alpha_pair_cache`
-  // and this storage remains empty.
+  // When alpha/beta unique determinant spaces are identical, the ordered
+  // beta-beta kernel is identical to the alpha-alpha kernel after the beta
+  // determinant ids are expressed in the shared basis. In that case
+  // `beta_pair_cache_ref()` aliases `alpha_pair_cache` and this storage
+  // remains empty.
   std::vector<SpinDeterminantPairEvaluation> beta_pair_cache;
   bool beta_reuses_alpha_pair_cache = false;
+  bool close_shell_diagonal_reuses_same_spin_pair_cache = false;
 
   // Optional scalar opposite-spin cache for legacy pair-by-pair callers.
   // The matrix-form forward/backward paths consume the per-spin projected
@@ -57,6 +62,10 @@ struct SameSpinPairCacheContext {
   }
 
   bool close_shell_reuses_same_spin_pair_cache() const {
+    return close_shell_diagonal_reuses_same_spin_pair_cache;
+  }
+
+  bool shares_same_spin_pair_cache_between_spins() const {
     return beta_reuses_alpha_pair_cache;
   }
 
@@ -80,10 +89,10 @@ struct SameSpinPairCacheContext {
   std::size_t opposite_spin_cache_index(
       int unique_alpha_L, int unique_alpha_R,
       int unique_beta_L, int unique_beta_R) const {
-    return xmvb::to_size(unique_alpha_L) * n_unique_alpha * n_unique_alpha * n_unique_beta +
-           xmvb::to_size(unique_alpha_R) * n_unique_alpha * n_unique_beta +
-           xmvb::to_size(unique_beta_L) * n_unique_beta +
-           xmvb::to_size(unique_beta_R);
+    return unique_alpha_L * n_unique_alpha * n_unique_alpha * n_unique_beta +
+           unique_alpha_R * n_unique_alpha * n_unique_beta +
+           unique_beta_L * n_unique_beta +
+           unique_beta_R;
   }
 };
 
@@ -116,7 +125,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     const std::vector<std::vector<int>>& beta_det,
     const FullDeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const std::vector<double>& eri_act);
 
@@ -125,7 +134,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     const std::vector<std::vector<int>>& beta_det,
     const FullDeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const std::vector<double>& eri_act,
     SameSpinPairCacheBuildOptions build_options);
@@ -138,7 +147,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     const std::vector<std::vector<int>>& beta_det,
     const FullDeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result);
 
@@ -147,7 +156,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     const std::vector<std::vector<int>>& beta_det,
     const FullDeterminantPairEvaluator& pair_evaluator,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     SameSpinPairCacheBuildOptions build_options);
@@ -168,7 +177,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
  */
 void populate_same_spin_phi_cache(
     SameSpinPairCacheContext* same_spin_pair_cache,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result);
 
@@ -183,7 +192,7 @@ FullDeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_
     int determinant_index_left,
     int determinant_index_right,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const std::vector<double>& eri_act,
     bool retain_spin_pair_evaluations = true);
@@ -199,7 +208,7 @@ FullDeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_
     int determinant_index_left,
     int determinant_index_right,
     const std::vector<double>& ovlp_act,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     bool retain_spin_pair_evaluations = true);

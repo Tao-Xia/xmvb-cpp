@@ -116,11 +116,11 @@ double metric_transpose_max_abs_diff(
   for (int column = 0; column < left_right.right_ao_count; ++column) {
     for (int row = 0; row < left_right.left_ao_count; ++row) {
       const std::size_t left_right_index =
-          xmvb::to_size(row) +
-          xmvb::to_size(column) * left_right.left_ao_count;
+          row +
+          column * left_right.left_ao_count;
       const std::size_t right_left_index =
-          xmvb::to_size(column) +
-          xmvb::to_size(row) * right_left.left_ao_count;
+          column +
+          row * right_left.left_ao_count;
       max_abs_diff = std::max(
           max_abs_diff,
           std::abs(left_right.values[left_right_index] - right_left.values[right_left_index]));
@@ -151,17 +151,17 @@ double three_center_transpose_max_abs_diff(
            left_local < left_right_auxiliary.primary_left_ao_count;
            ++left_local) {
         const std::size_t left_right_index =
-            xmvb::to_size(left_local) +
-            xmvb::to_size(right_local) *
+            left_local +
+            right_local *
                 left_right_auxiliary.primary_left_ao_count +
-            xmvb::to_size(auxiliary_local) *
+            auxiliary_local *
                 left_right_auxiliary.primary_left_ao_count *
                 left_right_auxiliary.primary_right_ao_count;
         const std::size_t right_left_index =
-            xmvb::to_size(right_local) +
-            xmvb::to_size(left_local) *
+            right_local +
+            left_local *
                 right_left_auxiliary.primary_left_ao_count +
-            xmvb::to_size(auxiliary_local) *
+            auxiliary_local *
                 right_left_auxiliary.primary_left_ao_count *
                 right_left_auxiliary.primary_right_ao_count;
         max_abs_diff = std::max(

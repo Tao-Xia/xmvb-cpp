@@ -125,7 +125,7 @@ std::string format_double_list(
     if (value_index > 0) {
       stream << " ";
     }
-    stream << values[xmvb::to_size(value_index)];
+    stream << values[value_index];
   }
   if (static_cast<int>(values.size()) > n_to_print) {
     if (n_to_print > 0) {
@@ -219,7 +219,7 @@ int main(int argc, char** argv) {
         options.max_rank_cap >= 0 ? std::min(options.max_rank_cap, max_available_rank)
                                   : max_available_rank;
     std::vector<RankSweepEntry> rank_sweep;
-    rank_sweep.reserve(xmvb::to_size(max_rank_cap + 1));
+    rank_sweep.reserve(max_rank_cap + 1);
     for (int rank_cap = 0; rank_cap <= max_rank_cap; ++rank_cap) {
       const auto truncated_offblock = xmvb::vb::build_blockwise_truncated_offblock(
           support_overlap,
@@ -305,13 +305,13 @@ int main(int argc, char** argv) {
       right_pairs_original.reserve(component.right_pairs.size());
       for (const auto& pair : component.left_pairs) {
         left_pairs_original.emplace_back(
-            support_orbitals[xmvb::to_size(pair.first)],
-            support_orbitals[xmvb::to_size(pair.second)]);
+            support_orbitals[pair.first],
+            support_orbitals[pair.second]);
       }
       for (const auto& pair : component.right_pairs) {
         right_pairs_original.emplace_back(
-            support_orbitals[xmvb::to_size(pair.first)],
-            support_orbitals[xmvb::to_size(pair.second)]);
+            support_orbitals[pair.first],
+            support_orbitals[pair.second]);
       }
       std::cout << "component[" << component.index << "]"
                 << " type=" << component.type

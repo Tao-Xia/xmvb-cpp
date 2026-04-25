@@ -36,7 +36,7 @@ LegacyHamiltonianOverlapCalculator::calculate_from_input_file(
   }
 
   const std::size_t matrix_size =
-      xmvb::to_size(n_structures) * xmvb::to_size(n_structures);
+      n_structures * n_structures;
 
   HamiltonianOverlapCalculationResult result;
   result.n_structures = n_structures;

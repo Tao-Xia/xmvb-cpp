@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 #include "vb/matrices/determinant_hamiltonian_resolver.hpp"
@@ -75,7 +77,7 @@ public:
       const std::vector<std::vector<int>>& beta_det,
       const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act,
       int n_structures) const;
@@ -88,7 +90,7 @@ public:
       const std::vector<std::vector<int>>& beta_det,
       const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_structures) const;
@@ -105,7 +107,7 @@ public:
       const std::vector<std::vector<int>>& beta_det,
       const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act,
       int n_structures,
@@ -119,7 +121,7 @@ public:
       const std::vector<std::vector<int>>& beta_det,
       const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_structures,
@@ -140,7 +142,7 @@ public:
       const std::vector<std::vector<int>>& beta_det,
       const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act,
       int n_structures) const;
@@ -162,7 +164,7 @@ private:
       const std::vector<std::vector<int>>& beta_det,
       const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act,
       int n_structures,
@@ -174,7 +176,7 @@ private:
       const std::vector<std::vector<int>>& beta_det,
       const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_structures,
@@ -183,7 +185,6 @@ private:
 
   DeterminantOverlapResolver determinant_overlap_resolver_;
   DeterminantHamiltonianResolver determinant_hamiltonian_resolver_;
-  VBSCFAlgorithm algorithm_ = VBSCFAlgorithm::Original;
 };
 
 }  // namespace xmvb::vb

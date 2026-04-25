@@ -53,10 +53,10 @@ inline const Eigen::MatrixXd& get_vandermonde_inverse(int max_degree) {
   // Each worker therefore keeps its own cache to avoid lock contention in the
   // hot path while still using heap-stable matrix storage across vector growth.
   if (static_cast<int>(cache.size()) <= max_degree) {
-    cache.resize(xmvb::to_size(max_degree + 1));
+    cache.resize(max_degree + 1);
   }
   std::unique_ptr<Eigen::MatrixXd>& cached_inverse =
-      cache[xmvb::to_size(max_degree)];
+      cache[max_degree];
   if (!cached_inverse) {
     cached_inverse =
         std::make_unique<Eigen::MatrixXd>(build_vandermonde_inverse(max_degree));
@@ -102,7 +102,7 @@ inline std::vector<Scalar> build_projected_overlap_coefficients_from_traces_gene
   }
 
   std::vector<Scalar> coefficients(
-      xmvb::to_size(coefficient_order + 1),
+      coefficient_order + 1,
       zero_value<Scalar>());
   coefficients[0] = scalar_from_double<Scalar>(1.0);
   for (int order = 1; order <= coefficient_order; ++order) {
@@ -110,10 +110,10 @@ inline std::vector<Scalar> build_projected_overlap_coefficients_from_traces_gene
     for (int power = 1; power <= order; ++power) {
       scaled_sum +=
           scalar_from_double<Scalar>(projected_trace_weight(power)) *
-          traces[xmvb::to_size(power - 1)] *
-          coefficients[xmvb::to_size(order - power)];
+          traces[power - 1] *
+          coefficients[order - power];
     }
-    coefficients[xmvb::to_size(order)] =
+    coefficients[order] =
         scaled_sum / scalar_from_double<Scalar>(static_cast<double>(order));
   }
   return coefficients;
@@ -134,7 +134,7 @@ inline Scalar projected_overlap_first_derivative_coefficient_from_traces_generic
           traces,
           coefficient_order);
   std::vector<Scalar> derivative_coefficients(
-      xmvb::to_size(coefficient_order + 1),
+      coefficient_order + 1,
       zero_value<Scalar>());
   for (int order = 1; order <= coefficient_order; ++order) {
     Scalar scaled_sum = zero_value<Scalar>();
@@ -143,17 +143,17 @@ inline Scalar projected_overlap_first_derivative_coefficient_from_traces_generic
           scalar_from_double<Scalar>(projected_trace_weight(power));
       scaled_sum +=
           weighted_trace *
-          first_derivative_traces[xmvb::to_size(power - 1)] *
-          coefficients[xmvb::to_size(order - power)];
+          first_derivative_traces[power - 1] *
+          coefficients[order - power];
       scaled_sum +=
           weighted_trace *
-          traces[xmvb::to_size(power - 1)] *
-          derivative_coefficients[xmvb::to_size(order - power)];
+          traces[power - 1] *
+          derivative_coefficients[order - power];
     }
-    derivative_coefficients[xmvb::to_size(order)] =
+    derivative_coefficients[order] =
         scaled_sum / scalar_from_double<Scalar>(static_cast<double>(order));
   }
-  return derivative_coefficients[xmvb::to_size(coefficient_order)];
+  return derivative_coefficients[coefficient_order];
 }
 
 template <typename Scalar>
@@ -175,13 +175,13 @@ inline Scalar projected_overlap_second_derivative_coefficient_from_traces_generi
           traces,
           coefficient_order);
   std::vector<Scalar> left_derivative_coefficients(
-      xmvb::to_size(coefficient_order + 1),
+      coefficient_order + 1,
       zero_value<Scalar>());
   std::vector<Scalar> right_derivative_coefficients(
-      xmvb::to_size(coefficient_order + 1),
+      coefficient_order + 1,
       zero_value<Scalar>());
   std::vector<Scalar> second_derivative_coefficients(
-      xmvb::to_size(coefficient_order + 1),
+      coefficient_order + 1,
       zero_value<Scalar>());
 
   for (int order = 1; order <= coefficient_order; ++order) {
@@ -193,45 +193,45 @@ inline Scalar projected_overlap_second_derivative_coefficient_from_traces_generi
           scalar_from_double<Scalar>(projected_trace_weight(power));
       left_scaled_sum +=
           weighted_trace *
-          first_derivative_traces_left[xmvb::to_size(power - 1)] *
-          coefficients[xmvb::to_size(order - power)];
+          first_derivative_traces_left[power - 1] *
+          coefficients[order - power];
       left_scaled_sum +=
           weighted_trace *
-          traces[xmvb::to_size(power - 1)] *
-          left_derivative_coefficients[xmvb::to_size(order - power)];
+          traces[power - 1] *
+          left_derivative_coefficients[order - power];
       right_scaled_sum +=
           weighted_trace *
-          first_derivative_traces_right[xmvb::to_size(power - 1)] *
-          coefficients[xmvb::to_size(order - power)];
+          first_derivative_traces_right[power - 1] *
+          coefficients[order - power];
       right_scaled_sum +=
           weighted_trace *
-          traces[xmvb::to_size(power - 1)] *
-          right_derivative_coefficients[xmvb::to_size(order - power)];
+          traces[power - 1] *
+          right_derivative_coefficients[order - power];
       second_scaled_sum +=
           weighted_trace *
-          second_derivative_traces[xmvb::to_size(power - 1)] *
-          coefficients[xmvb::to_size(order - power)];
+          second_derivative_traces[power - 1] *
+          coefficients[order - power];
       second_scaled_sum +=
           weighted_trace *
-          first_derivative_traces_left[xmvb::to_size(power - 1)] *
-          right_derivative_coefficients[xmvb::to_size(order - power)];
+          first_derivative_traces_left[power - 1] *
+          right_derivative_coefficients[order - power];
       second_scaled_sum +=
           weighted_trace *
-          first_derivative_traces_right[xmvb::to_size(power - 1)] *
-          left_derivative_coefficients[xmvb::to_size(order - power)];
+          first_derivative_traces_right[power - 1] *
+          left_derivative_coefficients[order - power];
       second_scaled_sum +=
           weighted_trace *
-          traces[xmvb::to_size(power - 1)] *
-          second_derivative_coefficients[xmvb::to_size(order - power)];
+          traces[power - 1] *
+          second_derivative_coefficients[order - power];
     }
-    left_derivative_coefficients[xmvb::to_size(order)] =
+    left_derivative_coefficients[order] =
         left_scaled_sum / scalar_from_double<Scalar>(static_cast<double>(order));
-    right_derivative_coefficients[xmvb::to_size(order)] =
+    right_derivative_coefficients[order] =
         right_scaled_sum / scalar_from_double<Scalar>(static_cast<double>(order));
-    second_derivative_coefficients[xmvb::to_size(order)] =
+    second_derivative_coefficients[order] =
         second_scaled_sum / scalar_from_double<Scalar>(static_cast<double>(order));
   }
-  return second_derivative_coefficients[xmvb::to_size(coefficient_order)];
+  return second_derivative_coefficients[coefficient_order];
 }
 
 inline int spatial_source_entry_index(
@@ -280,11 +280,11 @@ inline std::vector<GenericMatrix<Scalar>> build_matrix_powers_including_identity
   }
 
   std::vector<GenericMatrix<Scalar>> powers(
-      xmvb::to_size(max_power + 1));
+      max_power + 1);
   powers[0] = GenericMatrix<Scalar>::Identity(matrix.rows(), matrix.cols());
   for (int power = 1; power <= max_power; ++power) {
-    powers[xmvb::to_size(power)] =
-        powers[xmvb::to_size(power - 1)] * matrix;
+    powers[power] =
+        powers[power - 1] * matrix;
   }
   return powers;
 }
@@ -297,14 +297,14 @@ inline std::vector<Scalar> build_power_traces_generic(
     throw std::invalid_argument("max_power must be non-negative");
   }
 
-  std::vector<Scalar> traces(xmvb::to_size(max_power), zero_value<Scalar>());
+  std::vector<Scalar> traces(max_power, zero_value<Scalar>());
   if (max_power == 0) {
     return traces;
   }
 
   GenericMatrix<Scalar> power_matrix = matrix;
   for (int power = 1; power <= max_power; ++power) {
-    traces[xmvb::to_size(power - 1)] = power_matrix.trace();
+    traces[power - 1] = power_matrix.trace();
     if (power < max_power) {
       power_matrix *= matrix;
     }
@@ -317,11 +317,11 @@ inline std::vector<Scalar> build_first_derivative_power_traces_generic(
     const std::vector<GenericMatrix<Scalar>>& matrix_powers,
     const GenericMatrix<Scalar>& first_direction_matrix,
     int max_power) {
-  std::vector<Scalar> traces(xmvb::to_size(max_power), zero_value<Scalar>());
+  std::vector<Scalar> traces(max_power, zero_value<Scalar>());
   for (int power = 1; power <= max_power; ++power) {
-    traces[xmvb::to_size(power - 1)] =
+    traces[power - 1] =
         scalar_from_double<Scalar>(static_cast<double>(power)) *
-        (matrix_powers[xmvb::to_size(power - 1)] *
+        (matrix_powers[power - 1] *
          first_direction_matrix)
             .trace();
   }
@@ -335,23 +335,23 @@ inline std::vector<Scalar> build_second_derivative_power_traces_generic(
     const GenericMatrix<Scalar>& first_direction_matrix_right,
     const GenericMatrix<Scalar>& second_direction_matrix,
     int max_power) {
-  std::vector<Scalar> traces(xmvb::to_size(max_power), zero_value<Scalar>());
+  std::vector<Scalar> traces(max_power, zero_value<Scalar>());
   for (int power = 1; power <= max_power; ++power) {
     Scalar trace_value =
         scalar_from_double<Scalar>(static_cast<double>(power)) *
-        (matrix_powers[xmvb::to_size(power - 1)] *
+        (matrix_powers[power - 1] *
          second_direction_matrix)
             .trace();
     for (int split_power = 0; split_power <= power - 2; ++split_power) {
       trace_value +=
           scalar_from_double<Scalar>(static_cast<double>(power)) *
-          (matrix_powers[xmvb::to_size(split_power)] *
+          (matrix_powers[split_power] *
            first_direction_matrix_right *
-           matrix_powers[xmvb::to_size(power - 2 - split_power)] *
+           matrix_powers[power - 2 - split_power] *
            first_direction_matrix_left)
               .trace();
     }
-    traces[xmvb::to_size(power - 1)] = trace_value;
+    traces[power - 1] = trace_value;
   }
   return traces;
 }
@@ -402,7 +402,7 @@ inline Scalar spin_resolved_projected_overlap_generic(
       sampled_values(alpha_degree, beta_degree) =
           build_projected_overlap_coefficients_from_traces_generic(
               traces,
-              n_pairs)[xmvb::to_size(n_pairs)];
+              n_pairs)[n_pairs];
     }
   }
 
@@ -483,22 +483,22 @@ inline PfPairKernelResultGeneric<Scalar> evaluate_pf_pair_kernel_generic(
           n_beta_electrons);
 
   std::vector<GenericMatrix<Scalar>> alpha_source_directions(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix<Scalar>> beta_source_directions(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix<Scalar>> alpha_first_direction_matrices(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix<Scalar>> beta_first_direction_matrices(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<std::vector<Scalar>> alpha_first_derivative_traces(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<std::vector<Scalar>> beta_first_derivative_traces(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<Scalar> alpha_first_derivative_coefficients(
-      xmvb::to_size(n_spatial_entries),
+      n_spatial_entries,
       zero_value<Scalar>());
   std::vector<Scalar> beta_first_derivative_coefficients(
-      xmvb::to_size(n_spatial_entries),
+      n_spatial_entries,
       zero_value<Scalar>());
 
   const GenericMatrix<Scalar> left_transpose = left_pairing_matrix.transpose();
@@ -514,51 +514,51 @@ inline PfPairKernelResultGeneric<Scalar> evaluate_pf_pair_kernel_generic(
               right_row,
               left_column,
               n_active_orbitals);
-      alpha_source_directions[xmvb::to_size(entry_index)] =
+      alpha_source_directions[entry_index] =
           build_spin_source_direction_matrix_generic<Scalar>(
               n_active_orbitals,
               true,
               right_row,
               left_column);
-      beta_source_directions[xmvb::to_size(entry_index)] =
+      beta_source_directions[entry_index] =
           build_spin_source_direction_matrix_generic<Scalar>(
               n_active_orbitals,
               false,
               right_row,
               left_column);
-      alpha_first_direction_matrices[xmvb::to_size(entry_index)] =
+      alpha_first_direction_matrices[entry_index] =
           left_transpose *
-              alpha_source_directions[xmvb::to_size(entry_index)] *
+              alpha_source_directions[entry_index] *
               right_times_source_transpose +
           left_transpose *
               source_times_right *
-              alpha_source_directions[xmvb::to_size(entry_index)].transpose();
-      beta_first_direction_matrices[xmvb::to_size(entry_index)] =
+              alpha_source_directions[entry_index].transpose();
+      beta_first_direction_matrices[entry_index] =
           left_transpose *
-              beta_source_directions[xmvb::to_size(entry_index)] *
+              beta_source_directions[entry_index] *
               right_times_source_transpose +
           left_transpose *
               source_times_right *
-              beta_source_directions[xmvb::to_size(entry_index)].transpose();
-      alpha_first_derivative_traces[xmvb::to_size(entry_index)] =
+              beta_source_directions[entry_index].transpose();
+      alpha_first_derivative_traces[entry_index] =
           build_first_derivative_power_traces_generic(
               matrix_powers,
-              alpha_first_direction_matrices[xmvb::to_size(entry_index)],
+              alpha_first_direction_matrices[entry_index],
               n_pairs);
-      beta_first_derivative_traces[xmvb::to_size(entry_index)] =
+      beta_first_derivative_traces[entry_index] =
           build_first_derivative_power_traces_generic(
               matrix_powers,
-              beta_first_direction_matrices[xmvb::to_size(entry_index)],
+              beta_first_direction_matrices[entry_index],
               n_pairs);
-      alpha_first_derivative_coefficients[xmvb::to_size(entry_index)] =
+      alpha_first_derivative_coefficients[entry_index] =
           projected_overlap_first_derivative_coefficient_from_traces_generic(
               traces,
-              alpha_first_derivative_traces[xmvb::to_size(entry_index)],
+              alpha_first_derivative_traces[entry_index],
               n_pairs);
-      beta_first_derivative_coefficients[xmvb::to_size(entry_index)] =
+      beta_first_derivative_coefficients[entry_index] =
           projected_overlap_first_derivative_coefficient_from_traces_generic(
               traces,
-              beta_first_derivative_traces[xmvb::to_size(entry_index)],
+              beta_first_derivative_traces[entry_index],
               n_pairs);
     }
   }
@@ -572,9 +572,9 @@ inline PfPairKernelResultGeneric<Scalar> evaluate_pf_pair_kernel_generic(
               n_active_orbitals);
       const Scalar h_qp = one_electron_matrix(right_row, left_column);
       result.one_electron_hamiltonian +=
-          h_qp * alpha_first_derivative_coefficients[xmvb::to_size(entry_index)];
+          h_qp * alpha_first_derivative_coefficients[entry_index];
       result.one_electron_hamiltonian +=
-          h_qp * beta_first_derivative_coefficients[xmvb::to_size(entry_index)];
+          h_qp * beta_first_derivative_coefficients[entry_index];
     }
   }
   result.total_hamiltonian = result.one_electron_hamiltonian;
@@ -610,56 +610,56 @@ inline PfPairKernelResultGeneric<Scalar> evaluate_pf_pair_kernel_generic(
                   right_second,
                   left_first);
           const Scalar same_spin_interaction =
-              packed_active_two_electron_integrals[xmvb::to_size(direct_index)] -
-              packed_active_two_electron_integrals[xmvb::to_size(exchange_index)];
+              packed_active_two_electron_integrals[direct_index] -
+              packed_active_two_electron_integrals[exchange_index];
 
           const GenericMatrix<Scalar> alpha_second_direction_matrix =
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(first_entry_index)] *
+                  alpha_source_directions[first_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(second_entry_index)].transpose() +
+                  alpha_source_directions[second_entry_index].transpose() +
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(second_entry_index)] *
+                  alpha_source_directions[second_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(first_entry_index)].transpose();
+                  alpha_source_directions[first_entry_index].transpose();
           const std::vector<Scalar> alpha_second_derivative_traces =
               build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  alpha_first_direction_matrices[xmvb::to_size(first_entry_index)],
-                  alpha_first_direction_matrices[xmvb::to_size(second_entry_index)],
+                  alpha_first_direction_matrices[first_entry_index],
+                  alpha_first_direction_matrices[second_entry_index],
                   alpha_second_direction_matrix,
                   n_pairs);
           result.total_hamiltonian +=
               same_spin_interaction *
               projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  alpha_first_derivative_traces[xmvb::to_size(first_entry_index)],
-                  alpha_first_derivative_traces[xmvb::to_size(second_entry_index)],
+                  alpha_first_derivative_traces[first_entry_index],
+                  alpha_first_derivative_traces[second_entry_index],
                   alpha_second_derivative_traces,
                   n_pairs);
 
           const GenericMatrix<Scalar> beta_second_direction_matrix =
               left_transpose *
-                  beta_source_directions[xmvb::to_size(first_entry_index)] *
+                  beta_source_directions[first_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(second_entry_index)].transpose() +
+                  beta_source_directions[second_entry_index].transpose() +
               left_transpose *
-                  beta_source_directions[xmvb::to_size(second_entry_index)] *
+                  beta_source_directions[second_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(first_entry_index)].transpose();
+                  beta_source_directions[first_entry_index].transpose();
           const std::vector<Scalar> beta_second_derivative_traces =
               build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  beta_first_direction_matrices[xmvb::to_size(first_entry_index)],
-                  beta_first_direction_matrices[xmvb::to_size(second_entry_index)],
+                  beta_first_direction_matrices[first_entry_index],
+                  beta_first_direction_matrices[second_entry_index],
                   beta_second_direction_matrix,
                   n_pairs);
           result.total_hamiltonian +=
               same_spin_interaction *
               projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  beta_first_derivative_traces[xmvb::to_size(first_entry_index)],
-                  beta_first_derivative_traces[xmvb::to_size(second_entry_index)],
+                  beta_first_derivative_traces[first_entry_index],
+                  beta_first_derivative_traces[second_entry_index],
                   beta_second_derivative_traces,
                   n_pairs);
         }
@@ -697,26 +697,26 @@ inline PfPairKernelResultGeneric<Scalar> evaluate_pf_pair_kernel_generic(
                   alpha_left_column);
           const GenericMatrix<Scalar> mixed_second_direction_matrix =
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(alpha_entry_index)] *
+                  alpha_source_directions[alpha_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(beta_entry_index)].transpose() +
+                  beta_source_directions[beta_entry_index].transpose() +
               left_transpose *
-                  beta_source_directions[xmvb::to_size(beta_entry_index)] *
+                  beta_source_directions[beta_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(alpha_entry_index)].transpose();
+                  alpha_source_directions[alpha_entry_index].transpose();
           const std::vector<Scalar> mixed_second_derivative_traces =
               build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  alpha_first_direction_matrices[xmvb::to_size(alpha_entry_index)],
-                  beta_first_direction_matrices[xmvb::to_size(beta_entry_index)],
+                  alpha_first_direction_matrices[alpha_entry_index],
+                  beta_first_direction_matrices[beta_entry_index],
                   mixed_second_direction_matrix,
                   n_pairs);
           result.total_hamiltonian +=
-              packed_active_two_electron_integrals[xmvb::to_size(opposite_spin_index)] *
+              packed_active_two_electron_integrals[opposite_spin_index] *
               projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  alpha_first_derivative_traces[xmvb::to_size(alpha_entry_index)],
-                  beta_first_derivative_traces[xmvb::to_size(beta_entry_index)],
+                  alpha_first_derivative_traces[alpha_entry_index],
+                  beta_first_derivative_traces[beta_entry_index],
                   mixed_second_derivative_traces,
                   n_pairs);
         }

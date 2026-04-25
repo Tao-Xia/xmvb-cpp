@@ -47,11 +47,11 @@ struct DeterminantKeyHasher {
   std::size_t operator()(const DeterminantKey& determinant_key) const {
     std::size_t hash_value = 0;
     for (const int orbital_index : determinant_key.alpha_orbitals) {
-      hash_value = hash_value * 1315423911u + xmvb::to_size(orbital_index + 257);
+      hash_value = hash_value * 1315423911u + orbital_index + 257;
     }
     hash_value = hash_value * 2654435761u + 17u;
     for (const int orbital_index : determinant_key.beta_orbitals) {
-      hash_value = hash_value * 1315423911u + xmvb::to_size(orbital_index + 257);
+      hash_value = hash_value * 1315423911u + orbital_index + 257;
     }
     return hash_value;
   }
@@ -178,10 +178,10 @@ void enumerate_paired_determinants_recursive(
     return;
   }
 
-  (*occupied_orbitals)[xmvb::to_size(pair_index)] =
-      paired_active_orbitals[xmvb::to_size(2 * pair_index)];
-  (*occupied_orbitals)[xmvb::to_size(pair_index + n_active_beta_electrons)] =
-      paired_active_orbitals[xmvb::to_size(2 * pair_index + 1)];
+  (*occupied_orbitals)[pair_index] =
+      paired_active_orbitals[2 * pair_index];
+  (*occupied_orbitals)[pair_index + n_active_beta_electrons] =
+      paired_active_orbitals[2 * pair_index + 1];
   enumerate_paired_determinants_recursive(
       paired_active_orbitals,
       n_active_beta_electrons,
@@ -190,15 +190,15 @@ void enumerate_paired_determinants_recursive(
       occupied_orbitals,
       assignments);
 
-  if (paired_active_orbitals[xmvb::to_size(2 * pair_index)] ==
-      paired_active_orbitals[xmvb::to_size(2 * pair_index + 1)]) {
+  if (paired_active_orbitals[2 * pair_index] ==
+      paired_active_orbitals[2 * pair_index + 1]) {
     return;
   }
 
-  (*occupied_orbitals)[xmvb::to_size(pair_index)] =
-      paired_active_orbitals[xmvb::to_size(2 * pair_index + 1)];
-  (*occupied_orbitals)[xmvb::to_size(pair_index + n_active_beta_electrons)] =
-      paired_active_orbitals[xmvb::to_size(2 * pair_index)];
+  (*occupied_orbitals)[pair_index] =
+      paired_active_orbitals[2 * pair_index + 1];
+  (*occupied_orbitals)[pair_index + n_active_beta_electrons] =
+      paired_active_orbitals[2 * pair_index];
   enumerate_paired_determinants_recursive(
       paired_active_orbitals,
       n_active_beta_electrons,
@@ -224,7 +224,7 @@ std::vector<PairedDeterminantAssignment> expand_paired_active_orbitals(
   }
 
   std::vector<PairedDeterminantAssignment> assignments;
-  std::vector<int> occupied_orbitals(xmvb::to_size(2 * n_active_beta_electrons), 0);
+  std::vector<int> occupied_orbitals(2 * n_active_beta_electrons, 0);
   enumerate_paired_determinants_recursive(
       paired_active_orbitals,
       n_active_beta_electrons,
@@ -297,14 +297,14 @@ xmvb::vb::FullDeterminantStructureData expand_with_sign_mode(
     const int* raw_structure = raw_structure_data.structure_orbitals_data(structure_index);
 
     std::vector<int> active_structure_orbitals(
-        xmvb::to_size(raw_structure_data.n_active_electrons),
+        raw_structure_data.n_active_electrons,
         0);
     for (int active_index = 0;
          active_index < raw_structure_data.n_active_electrons;
          ++active_index) {
-      active_structure_orbitals[xmvb::to_size(active_index)] =
-          raw_structure[xmvb::to_size(
-              active_index + 2 * n_inactive_doubly_occupied_orbitals)] -
+      active_structure_orbitals[active_index] =
+          raw_structure[
+              active_index + 2 * n_inactive_doubly_occupied_orbitals] -
           n_inactive_doubly_occupied_orbitals - 1;
     }
 
@@ -350,7 +350,7 @@ xmvb::vb::FullDeterminantStructureData expand_with_sign_mode(
         result.beta_det.push_back(beta_orbitals);
         result.determinant_to_structure_terms.push_back({});
       }
-      result.determinant_to_structure_terms[xmvb::to_size(determinant_iterator->second)]
+      result.determinant_to_structure_terms[determinant_iterator->second]
           .push_back(
               xmvb::vb::StructureExpansionTerm{
                   structure_index,
@@ -373,7 +373,7 @@ MatrixOffDiagonalStats matrix_off_diagonal_stats(
       if (row == column) {
         continue;
       }
-      const double value = matrix[xmvb::col_major_index(row, column, dimension)];
+      const double value = matrix[(column) * (dimension) + (row)];
       const double abs_value = std::abs(value);
       stats.max_abs = std::max(stats.max_abs, abs_value);
       if (abs_value > 1.0e-12) {
@@ -394,7 +394,7 @@ void print_matrix_block(
   for (int row = 0; row < block_size; ++row) {
     for (int column = 0; column < block_size; ++column) {
       std::cout << std::setw(14)
-                << matrix[xmvb::col_major_index(row, column, dimension)];
+                << matrix[(column) * (dimension) + (row)];
     }
     std::cout << '\n';
   }
@@ -415,12 +415,14 @@ int main(int argc, char** argv) {
     xmvb::vb::AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;
     xmvb::vb::ActiveSpaceOneElectronBuilder active_space_one_electron_builder;
     xmvb::vb::ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;
-    const auto prepared_active_space = xmvb::vb::prepare_active_space_context(
-        load_result.input,
-        orbital_preparer,
-        ao_effective_one_electron_builder,
-        active_space_one_electron_builder,
-        active_space_two_electron_builder);
+    const auto prepared_active_space =
+        xmvb::vb::prepare_timed_active_space_context(
+            load_result.input,
+            orbital_preparer,
+            ao_effective_one_electron_builder,
+            active_space_one_electron_builder,
+            active_space_two_electron_builder)
+            .prepared_active_space;
 
     xmvb::core::GeneralizedEigensolver generalized_eigensolver;
     xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(

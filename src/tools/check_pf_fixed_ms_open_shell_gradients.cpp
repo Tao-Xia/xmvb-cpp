@@ -53,19 +53,19 @@ Matrix random_pair_block(
     std::mt19937* generator,
     std::normal_distribution<double>* distribution) {
   Matrix pair_block = Matrix::Zero(dimension, dimension);
-  std::vector<bool> blocked_mask(xmvb::to_size(dimension), false);
+  std::vector<bool> blocked_mask(dimension, false);
   for (const int orbital : blocked_alpha_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (const int orbital : blocked_beta_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (int col = 0; col < dimension; ++col) {
-    if (blocked_mask[xmvb::to_size(col)]) {
+    if (blocked_mask[col]) {
       continue;
     }
     for (int row = col; row < dimension; ++row) {
-      if (blocked_mask[xmvb::to_size(row)]) {
+      if (blocked_mask[row]) {
         continue;
       }
       const double value = (*distribution)(*generator);
@@ -89,7 +89,7 @@ ScalarBuffer random_packed_two_electron(
           last_pair_index,
           last_pair_index) +
       1;
-  ScalarBuffer packed_integrals(xmvb::to_size(storage_size), 0.0);
+  ScalarBuffer packed_integrals(storage_size, 0.0);
   for (double& value : packed_integrals) {
     value = (*distribution)(*generator);
   }

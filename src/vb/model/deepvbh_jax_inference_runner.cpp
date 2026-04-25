@@ -124,35 +124,14 @@ std::optional<double> read_binary_scalar_if_exists(const fs::path& path) {
   return read_binary_scalar(path);
 }
 
-int get_sparse_coefficient_count(
-    const OrbitalPreparationInput& orbital_preparation_input,
-    int orbital_index) {
-  const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-  const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-
-  int coefficient_count = 0;
-  while (coefficient_count < n_basis_functions) {
-    const int basis_function_index =
-        orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
-    if (basis_function_index == 0) {
-      break;
-    }
-    ++coefficient_count;
-  }
-  return coefficient_count;
-}
-
 std::vector<int> collect_differentiable_parameter_indices(
     const OrbitalPreparationInput& orbital_preparation_input) {
   std::vector<int> differentiable_parameter_indices;
   for (int orbital_index = 0; orbital_index < orbital_preparation_input.n_orbitals; ++orbital_index) {
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        differentiable_sparse_orbital_parameter_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
       differentiable_parameter_indices.push_back(
           orbital_index * orbital_preparation_input.n_basis_functions + coefficient_index);
@@ -167,22 +146,24 @@ std::vector<double> sparse_to_dense_orbital_coefficients(
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   std::vector<double> dense_coefficients(
-      xmvb::to_size(n_orbitals) * xmvb::to_size(n_basis_functions),
+      static_cast<std::size_t>(n_orbitals) * static_cast<std::size_t>(n_basis_functions),
       0.0);
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index] -
+              [orbital_index * n_basis_functions + coefficient_index] -
           1;
       if (basis_function_index < 0) {
         continue;
       }
-      dense_coefficients[xmvb::to_size(orbital_index) * n_basis_functions +
+      dense_coefficients[static_cast<std::size_t>(orbital_index) * n_basis_functions +
                          basis_function_index] =
-          sparse_coefficients[xmvb::to_size(orbital_index) * n_basis_functions +
+          sparse_coefficients[static_cast<std::size_t>(orbital_index) * n_basis_functions +
                               coefficient_index];
     }
   }
@@ -195,22 +176,24 @@ std::vector<double> dense_to_sparse_orbital_coefficients(
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   std::vector<double> sparse_coefficients(
-      xmvb::to_size(n_orbitals) * xmvb::to_size(n_basis_functions),
+      static_cast<std::size_t>(n_orbitals) * static_cast<std::size_t>(n_basis_functions),
       0.0);
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index] -
+              [orbital_index * n_basis_functions + coefficient_index] -
           1;
       if (basis_function_index < 0) {
         continue;
       }
-      sparse_coefficients[xmvb::to_size(orbital_index) * n_basis_functions +
+      sparse_coefficients[static_cast<std::size_t>(orbital_index) * n_basis_functions +
                           coefficient_index] =
-          dense_coefficients[xmvb::to_size(orbital_index) * n_basis_functions +
+          dense_coefficients[static_cast<std::size_t>(orbital_index) * n_basis_functions +
                              basis_function_index];
     }
   }
@@ -221,7 +204,7 @@ std::size_t packed_active_two_electron_size(int n_active_orbitals) {
   if (n_active_orbitals <= 0) {
     throw std::invalid_argument("n_active_orbitals must be positive");
   }
-  return xmvb::to_size(
+  return static_cast<std::size_t>(
              TwoElectronIndexer::two_electron_storage_index(
                  n_active_orbitals - 1,
                  n_active_orbitals - 1,
@@ -310,18 +293,20 @@ void write_column_major_matrix(
   if (rows < 0 || columns < 0) {
     throw std::invalid_argument("matrix shape must be non-negative");
   }
+  const std::size_t matrix_size =
+      static_cast<std::size_t>(rows) * static_cast<std::size_t>(columns);
   if (row_major_values.size() !=
-      xmvb::to_size(rows) * xmvb::to_size(columns)) {
+      matrix_size) {
     throw std::invalid_argument(
         "matrix size mismatch when writing column-major output: " + path.string());
   }
   std::vector<double> column_major_values(
-      xmvb::to_size(rows) * xmvb::to_size(columns),
+      matrix_size,
       0.0);
   for (int row = 0; row < rows; ++row) {
     for (int column = 0; column < columns; ++column) {
-      column_major_values[xmvb::to_size(column) * rows + row] =
-          row_major_values[xmvb::to_size(row) * columns + column];
+      column_major_values[static_cast<std::size_t>(column) * rows + row] =
+          row_major_values[static_cast<std::size_t>(row) * columns + column];
     }
   }
   write_binary_container(path, column_major_values);
@@ -334,10 +319,9 @@ std::vector<double> build_structure_occupancy(
     throw std::invalid_argument("n_orbitals must be positive");
   }
   std::vector<double> occupancy(
-      xmvb::to_size(raw_structure_data.n_structures) *
-          xmvb::to_size(n_orbitals),
+      raw_structure_data.n_structures * static_cast<std::size_t>(n_orbitals),
       0.0);
-  for (int structure_index = 0;
+  for (std::size_t structure_index = 0;
        structure_index < raw_structure_data.n_structures;
        ++structure_index) {
     const int* structure_orbitals =
@@ -350,8 +334,8 @@ std::vector<double> build_structure_occupancy(
         throw std::runtime_error(
             "raw structure orbital index is out of range for structure occupancy");
       }
-      occupancy[xmvb::to_size(structure_index) * n_orbitals +
-                xmvb::to_size(orbital_index)] += 1.0;
+      occupancy[structure_index * static_cast<std::size_t>(n_orbitals) +
+                static_cast<std::size_t>(orbital_index)] += 1.0;
     }
   }
   return occupancy;
@@ -362,16 +346,16 @@ std::vector<std::uint8_t> build_orbital_basis_mask(
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   std::vector<std::uint8_t> mask(
-      xmvb::to_size(n_orbitals) * xmvb::to_size(n_basis_functions),
+      static_cast<std::size_t>(n_orbitals) * static_cast<std::size_t>(n_basis_functions),
       0);
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
     const int coefficient_count =
-        orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+        orbital_preparation_input.orbital_basis_counts[orbital_index];
     if (coefficient_count < 0 || coefficient_count > n_basis_functions) {
       throw std::runtime_error("orbital_basis_counts contains an invalid coefficient count");
     }
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
-      mask[xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index] = 1;
+      mask[static_cast<std::size_t>(orbital_index) * n_basis_functions + coefficient_index] = 1;
     }
   }
   return mask;
@@ -384,20 +368,20 @@ std::vector<std::uint8_t> build_orbital_shell_dense_mask(
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   if (orbital_basis_mask.size() !=
-      xmvb::to_size(n_orbitals) * xmvb::to_size(n_basis_functions)) {
+      static_cast<std::size_t>(n_orbitals) * static_cast<std::size_t>(n_basis_functions)) {
     throw std::invalid_argument("orbital_basis_mask size mismatch");
   }
 
   std::vector<std::uint8_t> dense_mask(
-      xmvb::to_size(n_orbitals) * xmvb::to_size(n_basis_functions),
+      static_cast<std::size_t>(n_orbitals) * static_cast<std::size_t>(n_basis_functions),
       0);
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
     std::vector<std::uint8_t> touched_shells(
-        xmvb::to_size(static_molecule_metadata.n_shells),
+        static_cast<std::size_t>(static_molecule_metadata.n_shells),
         0);
     for (int coefficient_index = 0; coefficient_index < n_basis_functions; ++coefficient_index) {
       const std::size_t sparse_offset =
-          xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index;
+          static_cast<std::size_t>(orbital_index) * n_basis_functions + coefficient_index;
       if (orbital_basis_mask[sparse_offset] == 0) {
         continue;
       }
@@ -408,28 +392,28 @@ std::vector<std::uint8_t> build_orbital_shell_dense_mask(
         throw std::runtime_error("orbital_basis_index_table contains an invalid AO index");
       }
       const int shell_index =
-          static_molecule_metadata.ao_to_shell[xmvb::to_size(basis_function_index)];
+          static_molecule_metadata.ao_to_shell[basis_function_index];
       if (shell_index < 0 || shell_index >= static_molecule_metadata.n_shells) {
         throw std::runtime_error("ao_to_shell contains an invalid shell index");
       }
-      touched_shells[xmvb::to_size(shell_index)] = 1;
+      touched_shells[shell_index] = 1;
     }
 
     for (int shell_index = 0; shell_index < static_molecule_metadata.n_shells; ++shell_index) {
-      if (touched_shells[xmvb::to_size(shell_index)] == 0) {
+      if (touched_shells[shell_index] == 0) {
         continue;
       }
       const int shell_start =
-          static_molecule_metadata.shell_ao_starts[xmvb::to_size(shell_index)];
+          static_molecule_metadata.shell_ao_starts[shell_index];
       const int shell_count =
-          static_molecule_metadata.shell_ao_counts[xmvb::to_size(shell_index)];
+          static_molecule_metadata.shell_ao_counts[shell_index];
       if (shell_start < 0 || shell_count < 0 ||
           shell_start + shell_count > n_basis_functions) {
         throw std::runtime_error("shell AO layout is out of range when building dense mask");
       }
       for (int local_ao_index = 0; local_ao_index < shell_count; ++local_ao_index) {
-        dense_mask[xmvb::to_size(orbital_index) * n_basis_functions +
-                   xmvb::to_size(shell_start + local_ao_index)] = 1;
+        dense_mask[static_cast<std::size_t>(orbital_index) * n_basis_functions +
+                   static_cast<std::size_t>(shell_start + local_ao_index)] = 1;
       }
     }
   }
@@ -443,7 +427,7 @@ std::vector<double> build_dense_orbital_coefficients(
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const std::size_t matrix_size =
-      xmvb::to_size(n_orbitals) * xmvb::to_size(n_basis_functions);
+      static_cast<std::size_t>(n_orbitals) * static_cast<std::size_t>(n_basis_functions);
   if (orbital_basis_mask.size() != matrix_size ||
       orbital_shell_dense_mask.size() != matrix_size) {
     throw std::invalid_argument("orbital mask size mismatch when building dense coefficients");
@@ -453,7 +437,7 @@ std::vector<double> build_dense_orbital_coefficients(
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
     for (int coefficient_index = 0; coefficient_index < n_basis_functions; ++coefficient_index) {
       const std::size_t sparse_offset =
-          xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index;
+          static_cast<std::size_t>(orbital_index) * n_basis_functions + coefficient_index;
       if (orbital_basis_mask[sparse_offset] == 0) {
         continue;
       }
@@ -462,8 +446,8 @@ std::vector<double> build_dense_orbital_coefficients(
       if (basis_function_index < 0 || basis_function_index >= n_basis_functions) {
         throw std::runtime_error("orbital_basis_index_table contains an invalid AO index");
       }
-      dense_coefficients[xmvb::to_size(orbital_index) * n_basis_functions +
-                         xmvb::to_size(basis_function_index)] +=
+      dense_coefficients[static_cast<std::size_t>(orbital_index) * n_basis_functions +
+                         static_cast<std::size_t>(basis_function_index)] +=
           orbital_preparation_input.orbital_value_table[sparse_offset];
     }
   }
@@ -492,26 +476,26 @@ StructurePairTopology build_structure_pair_topology(
 
   if (topology.n_active_beta_electrons > 0) {
     topology.structure_pair_orbital_indices.resize(
-        xmvb::to_size(raw_structure_data.n_structures) *
-            xmvb::to_size(topology.n_active_beta_electrons) * 2,
+        raw_structure_data.n_structures *
+            static_cast<std::size_t>(topology.n_active_beta_electrons) * 2,
         0);
     topology.structure_pair_mask.resize(
-        xmvb::to_size(raw_structure_data.n_structures) *
-            xmvb::to_size(topology.n_active_beta_electrons),
+        raw_structure_data.n_structures *
+            static_cast<std::size_t>(topology.n_active_beta_electrons),
         1);
   }
   if (topology.n_open_shell_electrons > 0) {
     topology.structure_open_shell_orbitals.resize(
-        xmvb::to_size(raw_structure_data.n_structures) *
-            xmvb::to_size(topology.n_open_shell_electrons),
+        raw_structure_data.n_structures *
+            static_cast<std::size_t>(topology.n_open_shell_electrons),
         0);
     topology.structure_open_shell_mask.resize(
-        xmvb::to_size(raw_structure_data.n_structures) *
-            xmvb::to_size(topology.n_open_shell_electrons),
+        raw_structure_data.n_structures *
+            static_cast<std::size_t>(topology.n_open_shell_electrons),
         1);
   }
 
-  for (int structure_index = 0;
+  for (std::size_t structure_index = 0;
        structure_index < raw_structure_data.n_structures;
        ++structure_index) {
     const int* structure_orbitals =
@@ -522,8 +506,8 @@ StructurePairTopology build_structure_pair_topology(
       const int right_orbital =
           structure_orbitals[active_start + 2 * pair_index + 1] - 1;
       const std::size_t pair_offset =
-          (xmvb::to_size(structure_index) * topology.n_active_beta_electrons +
-           xmvb::to_size(pair_index)) *
+          (structure_index * static_cast<std::size_t>(topology.n_active_beta_electrons) +
+           static_cast<std::size_t>(pair_index)) *
           2;
       topology.structure_pair_orbital_indices[pair_offset] = left_orbital;
       topology.structure_pair_orbital_indices[pair_offset + 1] = right_orbital;
@@ -536,8 +520,8 @@ StructurePairTopology build_structure_pair_topology(
                              open_shell_index] -
           1;
       topology.structure_open_shell_orbitals[
-          xmvb::to_size(structure_index) * topology.n_open_shell_electrons +
-          xmvb::to_size(open_shell_index)] = orbital_index;
+          structure_index * static_cast<std::size_t>(topology.n_open_shell_electrons) +
+          static_cast<std::size_t>(open_shell_index)] = orbital_index;
     }
   }
   return topology;
@@ -847,7 +831,7 @@ std::size_t element_count(const std::vector<int64_t>& shape) {
     if (dimension < 0) {
       throw std::invalid_argument("runtime tensor shape must not contain negative dimensions");
     }
-    count *= xmvb::to_size(dimension);
+    count *= static_cast<std::size_t>(dimension);
   }
   return count;
 }
@@ -1088,7 +1072,7 @@ OnnxRuntimeInferenceOutput collect_required_onnx_outputs(
           two_electron_iterator->second,
           two_electron_iterator->first);
   if (output.two_electron_hamiltonian.size() !=
-      xmvb::to_size(n_structures) * xmvb::to_size(n_structures)) {
+      static_cast<std::size_t>(n_structures) * static_cast<std::size_t>(n_structures)) {
     throw std::runtime_error("unexpected size for ONNX output `two_electron_hamiltonian`");
   }
 
@@ -1097,7 +1081,7 @@ OnnxRuntimeInferenceOutput collect_required_onnx_outputs(
           dense_residual_iterator->second,
           dense_residual_iterator->first);
   if (output.dense_orbital_residual.size() !=
-      xmvb::to_size(n_orbitals) * xmvb::to_size(n_basis_functions)) {
+      static_cast<std::size_t>(n_orbitals) * static_cast<std::size_t>(n_basis_functions)) {
     throw std::runtime_error("unexpected size for ONNX output `dense_orbital_residual`");
   }
 
@@ -1278,7 +1262,7 @@ OnnxRuntimeInferenceOutput run_onnx_runtime_inference(
             input_name));
       } else if (input_name == "orbital_basis_counts") {
         input_buffers.push_back(make_int_input_tensor(
-            orbital_input.orbital_basis_counts.vector(),
+            orbital_input.orbital_basis_counts,
             {orbital_input.n_orbitals},
             {orbital_input.n_orbitals},
             ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32,
@@ -1353,7 +1337,7 @@ OnnxRuntimeInferenceOutput run_onnx_runtime_inference(
             input_name));
       } else if (input_name == "orbital_value_table") {
         input_buffers.push_back(make_double_input_tensor(
-            orbital_input.orbital_value_table.vector(),
+            orbital_input.orbital_value_table,
             {orbital_input.n_orbitals, orbital_input.n_basis_functions},
             {orbital_input.n_orbitals, orbital_input.n_basis_functions},
             floating_type,
@@ -1381,7 +1365,7 @@ OnnxRuntimeInferenceOutput run_onnx_runtime_inference(
             input_name));
       } else if (input_name == "orbital_basis_index_table") {
         input_buffers.push_back(make_int_input_tensor(
-            orbital_input.orbital_basis_index_table.vector(),
+            orbital_input.orbital_basis_index_table,
             {orbital_input.n_orbitals, orbital_input.n_basis_functions},
             {orbital_input.n_orbitals, orbital_input.n_basis_functions},
             ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32,
@@ -1550,8 +1534,8 @@ DeepVBHJaxPrediction DeepVBHJaxInferenceRunner::predict(
 
   try {
     const std::size_t orbital_matrix_size =
-        xmvb::to_size(input.orbital_preparation_input.n_orbitals) *
-        xmvb::to_size(input.orbital_preparation_input.n_basis_functions);
+        input.orbital_preparation_input.n_orbitals *
+        input.orbital_preparation_input.n_basis_functions;
     if (options_.backend == "onnx_runtime") {
       if (!onnx_output.has_value()) {
         throw std::runtime_error("missing ONNX Runtime prediction outputs");

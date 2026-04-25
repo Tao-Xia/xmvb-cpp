@@ -122,8 +122,8 @@ KernelTraceData compute_kernel_trace_data(
 
   KernelTraceData data;
   // storige power kernal matrix
-  data.kernel_powers.resize(xmvb::to_size(order));
-  data.traces.assign(xmvb::to_size(order), 0.0);
+  data.kernel_powers.resize(order);
+  data.traces.assign(order, 0.0);
 
   if (order == 0) {
     return data;
@@ -135,9 +135,9 @@ KernelTraceData compute_kernel_trace_data(
   for (int power = 1; power <= order; ++power) {
     Matrix next_power = current_power * kernel;
     current_power.swap(next_power);
-    data.traces[xmvb::to_size(power - 1)] = current_power.trace();
+    data.traces[power - 1] = current_power.trace();
     if (power < order) {
-      data.kernel_powers[xmvb::to_size(power)] = current_power;
+      data.kernel_powers[power] = current_power;
     }
   }
 

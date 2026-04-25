@@ -10,7 +10,6 @@
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/full_structure_expander.hpp"
-#include "xmvb/indexing.hpp"
 
 namespace {
 
@@ -109,7 +108,7 @@ std::vector<DeterminantTermMap> build_cpp_terms_by_structure(
     const xmvb::vb::FullDeterminantStructureData& expanded_data,
     int n_inactive_doubly_occupied_orbitals) {
   std::vector<DeterminantTermMap> terms_by_structure(
-      xmvb::to_size(expanded_data.n_structures));
+      expanded_data.n_structures);
   for (std::size_t determinant_index = 0;
        determinant_index < expanded_data.alpha_det.size();
        ++determinant_index) {
@@ -129,7 +128,7 @@ std::vector<DeterminantTermMap> build_cpp_terms_by_structure(
         std::move(beta_absolute)};
     for (const auto& term :
          expanded_data.determinant_to_structure_terms[determinant_index]) {
-      terms_by_structure[xmvb::to_size(term.structure_index)][key] +=
+      terms_by_structure[term.structure_index][key] +=
           term.coefficient;
     }
   }
@@ -175,10 +174,10 @@ std::vector<DeterminantTermMap> build_legacy_terms_by_structure(
   // Recover the active alpha/beta strings, canonicalize them, and accumulate
   // the permutation sign exactly as the old determinant summation does.
   std::vector<int> determinant_storage(
-      xmvb::to_size(max_structure_determinants) * n_total_electrons,
+      max_structure_determinants * n_total_electrons,
       0);
   std::vector<DeterminantTermMap> terms_by_structure(
-      xmvb::to_size(raw_structure_data.n_structures));
+      raw_structure_data.n_structures);
   for (int structure_index = 0;
        structure_index < raw_structure_data.n_structures;
        ++structure_index) {
@@ -202,13 +201,13 @@ std::vector<DeterminantTermMap> build_legacy_terms_by_structure(
           " with status=" + std::to_string(status));
     }
 
-    auto& structure_terms = terms_by_structure[xmvb::to_size(structure_index)];
+    auto& structure_terms = terms_by_structure[structure_index];
     for (int determinant_index = 0;
          determinant_index < n_determinants;
          ++determinant_index) {
       const int* determinant =
           determinant_storage.data() +
-          xmvb::to_size(determinant_index) * n_total_electrons;
+          determinant_index * n_total_electrons;
 
       std::vector<int> alpha_active;
       std::vector<int> beta_active;
@@ -313,9 +312,9 @@ int main(int argc, char** argv) {
          structure_index < raw_structure_data.n_structures;
          ++structure_index) {
       const auto& cpp_terms =
-          cpp_terms_by_structure[xmvb::to_size(structure_index)];
+          cpp_terms_by_structure[structure_index];
       const auto& legacy_terms =
-          legacy_terms_by_structure[xmvb::to_size(structure_index)];
+          legacy_terms_by_structure[structure_index];
       bool structure_mismatch = false;
 
       for (const auto& [key, cpp_coefficient] : cpp_terms) {

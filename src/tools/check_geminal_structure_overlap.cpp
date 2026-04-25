@@ -246,7 +246,7 @@ std::vector<Pair> extract_active_pairs(
 
   const int* structure_orbitals = raw_structure_data.structure_orbitals_data(structure_index);
   std::vector<Pair> pairs;
-  pairs.reserve(xmvb::to_size(n_active_beta_electrons));
+  pairs.reserve(n_active_beta_electrons);
   for (int pair_index = 0; pair_index < n_active_beta_electrons; ++pair_index) {
     const int left_orbital =
         structure_orbitals[active_start + 2 * pair_index] -
@@ -273,7 +273,7 @@ std::vector<DeterminantTerm> enumerate_geminal_determinant_terms(
     const bool diagonal_pair = left_orbital == right_orbital;
     std::vector<DeterminantTerm> next_terms;
     next_terms.reserve(
-        partial_terms.size() * xmvb::to_size(diagonal_pair ? 1 : 2));
+        partial_terms.size() * diagonal_pair ? 1 : 2);
     for (const auto& partial_term : partial_terms) {
       DeterminantTerm direct_term = partial_term;
       direct_term.alpha_occ.push_back(left_orbital);
@@ -316,7 +316,7 @@ std::vector<DeterminantTerm> enumerate_geminal_determinant_terms(
 bool is_disjoint_covalent_structure(
     const std::vector<Pair>& pairs,
     int n_active_orbitals) {
-  std::vector<int> counts(xmvb::to_size(n_active_orbitals), 0);
+  std::vector<int> counts(n_active_orbitals, 0);
   for (const auto& pair : pairs) {
     if (pair.first == pair.second) {
       return false;
@@ -325,10 +325,10 @@ bool is_disjoint_covalent_structure(
         pair.second < 0 || pair.second >= n_active_orbitals) {
       throw std::runtime_error("pair orbital is out of active-space range");
     }
-    ++counts[xmvb::to_size(pair.first)];
-    ++counts[xmvb::to_size(pair.second)];
-    if (counts[xmvb::to_size(pair.first)] > 1 ||
-        counts[xmvb::to_size(pair.second)] > 1) {
+    ++counts[pair.first];
+    ++counts[pair.second];
+    if (counts[pair.first] > 1 ||
+        counts[pair.second] > 1) {
       return false;
     }
   }
@@ -358,8 +358,8 @@ double active_overlap_element(
   if (row < 0 || row >= n_active_orbitals || column < 0 || column >= n_active_orbitals) {
     throw std::out_of_range("active overlap index is out of range");
   }
-  return orbital_overlap_matrix[xmvb::to_size(column) *
-                                    xmvb::to_size(n_active_orbitals) +
+  return orbital_overlap_matrix[column *
+                                    n_active_orbitals +
                                 row];
 }
 
@@ -375,7 +375,7 @@ double determinant_overlap(
       orbital_overlap_matrix,
       n_active_orbitals);
   return overlap_resolver
-      .resolve(overlap_submatrix, static_cast<int>(left_occ.size()))
+      .resolve_matrix(overlap_submatrix)
       .overlap_determinant;
 }
 
@@ -490,8 +490,8 @@ xmvb::vb::Matrix build_pair_overlap_kernel(
   for (int row = 0; row < n_left_pairs; ++row) {
     for (int column = 0; column < n_right_pairs; ++column) {
       pair_overlap_matrix(row, column) = single_pair_overlap(
-          left_structure.pairs[xmvb::to_size(row)],
-          right_structure.pairs[xmvb::to_size(column)],
+          left_structure.pairs[row],
+          right_structure.pairs[column],
           orbital_overlap_matrix,
           n_active_orbitals,
           overlap_resolver,
@@ -517,7 +517,7 @@ double matrix_permanent_ryser(const xmvb::vb::Matrix& matrix) {
 
   const std::uint64_t subset_count = std::uint64_t{1} << dimension;
   double permanent_value = 0.0;
-  std::vector<double> row_sums(xmvb::to_size(dimension), 0.0);
+  std::vector<double> row_sums(dimension, 0.0);
   for (std::uint64_t subset = 1; subset < subset_count; ++subset) {
     std::fill(row_sums.begin(), row_sums.end(), 0.0);
     for (int column = 0; column < dimension; ++column) {
@@ -525,7 +525,7 @@ double matrix_permanent_ryser(const xmvb::vb::Matrix& matrix) {
         continue;
       }
       for (int row = 0; row < dimension; ++row) {
-        row_sums[xmvb::to_size(row)] += matrix(row, column);
+        row_sums[row] += matrix(row, column);
       }
     }
 
@@ -612,8 +612,8 @@ xmvb::vb::Matrix build_spatial_overlap_support(
   for (int row = 0; row < support_size; ++row) {
     for (int column = 0; column < support_size; ++column) {
       support_overlap(row, column) = active_overlap_element(
-          support_orbitals[xmvb::to_size(row)],
-          support_orbitals[xmvb::to_size(column)],
+          support_orbitals[row],
+          support_orbitals[column],
           orbital_overlap_matrix,
           n_active_orbitals);
     }
@@ -644,7 +644,7 @@ xmvb::vb::Matrix build_pairing_matrix(
   std::map<int, int> support_index;
   for (int support_position = 0; support_position < support_size; ++support_position) {
     support_index.emplace(
-        support_orbitals[xmvb::to_size(support_position)],
+        support_orbitals[support_position],
         support_position);
   }
 
@@ -790,17 +790,17 @@ CandidateReport evaluate_candidate(
     const Evaluator& evaluator) {
   CandidateReport report;
   report.name = name;
-  report.pair_errors.reserve(xmvb::to_size(n_selected_structures) *
-                             xmvb::to_size(n_selected_structures + 1) / 2);
+  report.pair_errors.reserve(n_selected_structures *
+                             (n_selected_structures + 1) / 2);
 
   for (int row = 0; row < n_selected_structures; ++row) {
     for (int column = 0; column <= row; ++column) {
       const double candidate_overlap_value = evaluator(
-          geminal_expansions[xmvb::to_size(row)],
-          geminal_expansions[xmvb::to_size(column)]);
+          geminal_expansions[row],
+          geminal_expansions[column]);
       const double exact_overlap_value =
-          exact_overlap_matrix[xmvb::to_size(column) *
-                                   xmvb::to_size(n_selected_structures) +
+          exact_overlap_matrix[column *
+                                   n_selected_structures +
                                row];
       const double absolute_error = std::abs(exact_overlap_value - candidate_overlap_value);
       const double relative_error =
@@ -814,8 +814,8 @@ CandidateReport evaluate_candidate(
       PairError error;
       error.row_local = row;
       error.column_local = column;
-      error.row_original = selected_structure_indices[xmvb::to_size(row)];
-      error.column_original = selected_structure_indices[xmvb::to_size(column)];
+      error.row_original = selected_structure_indices[row];
+      error.column_original = selected_structure_indices[column];
       error.exact_overlap = exact_overlap_value;
       error.candidate_overlap = candidate_overlap_value;
       error.absolute_error = absolute_error;
@@ -864,8 +864,8 @@ int main(int argc, char** argv) {
     int total_disjoint_covalent_structures = 0;
     std::vector<int> selected_structure_indices;
     std::vector<StructureGeminalExpansion> geminal_expansions;
-    selected_structure_indices.reserve(xmvb::to_size(
-        options.max_structures > 0 ? options.max_structures : raw_structure_data.n_structures));
+    selected_structure_indices.reserve(
+        options.max_structures > 0 ? options.max_structures : raw_structure_data.n_structures);
     geminal_expansions.reserve(selected_structure_indices.capacity());
 
     for (int structure_index = 0; structure_index < raw_structure_data.n_structures; ++structure_index) {
@@ -894,11 +894,11 @@ int main(int argc, char** argv) {
     }
 
     const std::vector<double> zero_h1e(
-        xmvb::to_size(n_active_orbitals) *
-            xmvb::to_size(n_active_orbitals),
+        n_active_orbitals *
+            n_active_orbitals,
         0.0);
     const std::vector<double> zero_eri(
-        xmvb::to_size(packed_active_two_electron_size(n_active_orbitals)),
+        packed_active_two_electron_size(n_active_orbitals),
         0.0);
 
     xmvb::vb::FullDeterminantStructureExpander expander;
@@ -1063,11 +1063,11 @@ int main(int argc, char** argv) {
       const int n_to_report =
           std::min(options.report_count, static_cast<int>(report.pair_errors.size()));
       for (int report_index = 0; report_index < n_to_report; ++report_index) {
-        const auto& error = report.pair_errors[xmvb::to_size(report_index)];
+        const auto& error = report.pair_errors[report_index];
         const auto& left_structure =
-            geminal_expansions[xmvb::to_size(error.row_local)];
+            geminal_expansions[error.row_local];
         const auto& right_structure =
-            geminal_expansions[xmvb::to_size(error.column_local)];
+            geminal_expansions[error.column_local];
         std::cout << "pair[" << report_index << "]"
                   << " row_local=" << error.row_local
                   << " column_local=" << error.column_local

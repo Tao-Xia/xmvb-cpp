@@ -26,8 +26,8 @@ TraceProjectionResult TraceProjector::project(
   }
 
   TraceProjectionResult result;
-  result.trace_weights.assign(xmvb::to_size(order), 0.0);
-  ScalarBuffer series_coefficients(xmvb::to_size(order) + 1, 0.0);
+  result.trace_weights.assign(order, 0.0);
+  ScalarBuffer series_coefficients(order + 1, 0.0);
   series_coefficients[0] = 1.0;
 
   for (int k = 1; k <= order; ++k) {
@@ -35,15 +35,15 @@ TraceProjectionResult TraceProjector::project(
     for (int p = 1; p <= k; ++p) {
       // -0.5 * (-1)^(p + 1) 
       coeff += signed_trace_scale(p) *
-          traces[xmvb::to_size(p - 1)] * // t_p
-          series_coefficients[xmvb::to_size(k - p)]; // c_{k-p}
+          traces[p - 1] * // t_p
+          series_coefficients[k - p]; // c_{k-p}
     }
     // c_{k}
-    series_coefficients[xmvb::to_size(k)] = coeff / static_cast<double>(k);
+    series_coefficients[k] = coeff / static_cast<double>(k);
   }
 
   // the overlap between two VB structures
-  result.overlap_value = series_coefficients[xmvb::to_size(order)];
+  result.overlap_value = series_coefficients[order];
 
   result.overlap_coefficients = series_coefficients;
   if (order == 0) {
@@ -51,11 +51,11 @@ TraceProjectionResult TraceProjector::project(
   }
 
   // Backward Pass with Adjoint method
-  ScalarBuffer coeff_adjoints(xmvb::to_size(order) + 1, 0.0);
-  coeff_adjoints[xmvb::to_size(order)] = 1.0;
+  ScalarBuffer coeff_adjoints(order + 1, 0.0);
+  coeff_adjoints[order] = 1.0;
 
   for (int k = order; k >= 1; --k) {
-    const double coeff_bar = coeff_adjoints[xmvb::to_size(k)];
+    const double coeff_bar = coeff_adjoints[k];
     if (coeff_bar == 0.0) {
       continue;
     }
@@ -63,10 +63,10 @@ TraceProjectionResult TraceProjector::project(
     const double inv_k = 1.0 / static_cast<double>(k);
     for (int power = 1; power <= k; ++power) {
       const double scale = coeff_bar * inv_k * signed_trace_scale(power);
-      result.trace_weights[xmvb::to_size(power - 1)] +=
-          scale * series_coefficients[xmvb::to_size(k - power)];
-      coeff_adjoints[xmvb::to_size(k - power)] +=
-          scale * traces[xmvb::to_size(power - 1)];
+      result.trace_weights[power - 1] +=
+          scale * series_coefficients[k - power];
+      coeff_adjoints[k - power] +=
+          scale * traces[power - 1];
     }
   }
 
@@ -88,47 +88,47 @@ ScalarBuffer TraceProjector::backpropagate_trace_weight_adjoints(
         "trace_weight_adjoints size is smaller than the requested order");
   }
 
-  ScalarBuffer series_coefficients(xmvb::to_size(order) + 1, 0.0);
+  ScalarBuffer series_coefficients(order + 1, 0.0);
   series_coefficients[0] = 1.0;
   std::vector<ScalarBuffer> coefficient_trace_jacobians(
-      xmvb::to_size(order) + 1,
-      ScalarBuffer(xmvb::to_size(order), 0.0));
+      order + 1,
+      ScalarBuffer(order, 0.0));
 
   for (int k = 1; k <= order; ++k) {
     double coeff = 0.0;
     for (int power = 1; power <= k; ++power) {
       coeff += signed_trace_scale(power) *
-          traces[xmvb::to_size(power - 1)] *
-          series_coefficients[xmvb::to_size(k - power)];
+          traces[power - 1] *
+          series_coefficients[k - power];
     }
-    series_coefficients[xmvb::to_size(k)] = coeff / static_cast<double>(k);
+    series_coefficients[k] = coeff / static_cast<double>(k);
 
     const double inv_k = 1.0 / static_cast<double>(k);
     for (int trace_index = 1; trace_index <= k; ++trace_index) {
       double jacobian = signed_trace_scale(trace_index) *
-          series_coefficients[xmvb::to_size(k - trace_index)];
+          series_coefficients[k - trace_index];
       for (int power = 1; power <= k; ++power) {
         jacobian +=
             signed_trace_scale(power) *
-            traces[xmvb::to_size(power - 1)] *
-            coefficient_trace_jacobians[xmvb::to_size(k - power)]
-                                       [xmvb::to_size(trace_index - 1)];
+            traces[power - 1] *
+            coefficient_trace_jacobians[k - power]
+                                       [trace_index - 1];
       }
-      coefficient_trace_jacobians[xmvb::to_size(k)]
-                                 [xmvb::to_size(trace_index - 1)] =
+      coefficient_trace_jacobians[k]
+                                 [trace_index - 1] =
           inv_k * jacobian;
     }
   }
 
-  ScalarBuffer trace_adjoints(xmvb::to_size(order), 0.0);
-  ScalarBuffer coefficient_adjoints(xmvb::to_size(order) + 1, 0.0);
+  ScalarBuffer trace_adjoints(order, 0.0);
+  ScalarBuffer coefficient_adjoints(order + 1, 0.0);
   std::vector<ScalarBuffer> coefficient_trace_jacobian_adjoints(
-      xmvb::to_size(order) + 1,
-      ScalarBuffer(xmvb::to_size(order), 0.0));
+      order + 1,
+      ScalarBuffer(order, 0.0));
   for (int trace_index = 1; trace_index <= order; ++trace_index) {
-    coefficient_trace_jacobian_adjoints[xmvb::to_size(order)]
-                                       [xmvb::to_size(trace_index - 1)] =
-        trace_weight_adjoints[xmvb::to_size(trace_index - 1)];
+    coefficient_trace_jacobian_adjoints[order]
+                                       [trace_index - 1] =
+        trace_weight_adjoints[trace_index - 1];
   }
 
   for (int k = order; k >= 1; --k) {
@@ -136,38 +136,38 @@ ScalarBuffer TraceProjector::backpropagate_trace_weight_adjoints(
 
     for (int trace_index = 1; trace_index <= k; ++trace_index) {
       const double jacobian_bar =
-          coefficient_trace_jacobian_adjoints[xmvb::to_size(k)]
-                                             [xmvb::to_size(trace_index - 1)];
+          coefficient_trace_jacobian_adjoints[k]
+                                             [trace_index - 1];
       if (jacobian_bar == 0.0) {
         continue;
       }
 
-      coefficient_adjoints[xmvb::to_size(k - trace_index)] +=
+      coefficient_adjoints[k - trace_index] +=
           jacobian_bar * inv_k * signed_trace_scale(trace_index);
       for (int power = 1; power <= k; ++power) {
         const double scale =
             jacobian_bar * inv_k * signed_trace_scale(power);
-        trace_adjoints[xmvb::to_size(power - 1)] +=
+        trace_adjoints[power - 1] +=
             scale *
-            coefficient_trace_jacobians[xmvb::to_size(k - power)]
-                                       [xmvb::to_size(trace_index - 1)];
-        coefficient_trace_jacobian_adjoints[xmvb::to_size(k - power)]
-                                           [xmvb::to_size(trace_index - 1)] +=
-            scale * traces[xmvb::to_size(power - 1)];
+            coefficient_trace_jacobians[k - power]
+                                       [trace_index - 1];
+        coefficient_trace_jacobian_adjoints[k - power]
+                                           [trace_index - 1] +=
+            scale * traces[power - 1];
       }
     }
 
-    const double coeff_bar = coefficient_adjoints[xmvb::to_size(k)];
+    const double coeff_bar = coefficient_adjoints[k];
     if (coeff_bar == 0.0) {
       continue;
     }
 
     for (int power = 1; power <= k; ++power) {
       const double scale = coeff_bar * inv_k * signed_trace_scale(power);
-      trace_adjoints[xmvb::to_size(power - 1)] +=
-          scale * series_coefficients[xmvb::to_size(k - power)];
-      coefficient_adjoints[xmvb::to_size(k - power)] +=
-          scale * traces[xmvb::to_size(power - 1)];
+      trace_adjoints[power - 1] +=
+          scale * series_coefficients[k - power];
+      coefficient_adjoints[k - power] +=
+          scale * traces[power - 1];
     }
   }
 
@@ -189,24 +189,24 @@ ScalarBuffer TraceProjector::backpropagate_overlap_coefficient_adjoints(
         "overlap_coefficient_adjoints size is smaller than the requested order + 1");
   }
 
-  ScalarBuffer series_coefficients(xmvb::to_size(order) + 1, 0.0);
+  ScalarBuffer series_coefficients(order + 1, 0.0);
   series_coefficients[0] = 1.0;
   for (int k = 1; k <= order; ++k) {
     double coeff = 0.0;
     for (int power = 1; power <= k; ++power) {
       coeff += signed_trace_scale(power) *
-          traces[xmvb::to_size(power - 1)] *
-          series_coefficients[xmvb::to_size(k - power)];
+          traces[power - 1] *
+          series_coefficients[k - power];
     }
-    series_coefficients[xmvb::to_size(k)] = coeff / static_cast<double>(k);
+    series_coefficients[k] = coeff / static_cast<double>(k);
   }
 
-  ScalarBuffer trace_adjoints(xmvb::to_size(order), 0.0);
+  ScalarBuffer trace_adjoints(order, 0.0);
   ScalarBuffer coefficient_adjoints(
       overlap_coefficient_adjoints.begin(),
       overlap_coefficient_adjoints.begin() + order + 1);
   for (int k = order; k >= 1; --k) {
-    const double coeff_bar = coefficient_adjoints[xmvb::to_size(k)];
+    const double coeff_bar = coefficient_adjoints[k];
     if (coeff_bar == 0.0) {
       continue;
     }
@@ -214,10 +214,10 @@ ScalarBuffer TraceProjector::backpropagate_overlap_coefficient_adjoints(
     const double inv_k = 1.0 / static_cast<double>(k);
     for (int power = 1; power <= k; ++power) {
       const double scale = coeff_bar * inv_k * signed_trace_scale(power);
-      trace_adjoints[xmvb::to_size(power - 1)] +=
-          scale * series_coefficients[xmvb::to_size(k - power)];
-      coefficient_adjoints[xmvb::to_size(k - power)] +=
-          scale * traces[xmvb::to_size(power - 1)];
+      trace_adjoints[power - 1] +=
+          scale * series_coefficients[k - power];
+      coefficient_adjoints[k - power] +=
+          scale * traces[power - 1];
     }
   }
 

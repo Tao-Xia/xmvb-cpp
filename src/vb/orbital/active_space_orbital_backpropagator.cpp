@@ -17,45 +17,22 @@ namespace {
 
 constexpr int kLegacyOrbitalTypeOeo = 3;
 
-int get_sparse_coefficient_count(
-    const std::vector<int>& orbital_basis_counts,
-    const std::vector<int>& orbital_basis_index_table,
-    int n_basis_functions,
-    int orbital_index) {
-  const int explicit_count = orbital_basis_counts[xmvb::to_size(orbital_index)];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-
-  int coefficient_count = 0;
-  while (coefficient_count < n_basis_functions) {
-    const int basis_function_index =
-        orbital_basis_index_table[xmvb::to_size(orbital_index) * n_basis_functions +
-                                  coefficient_count];
-    if (basis_function_index == 0) {
-      break;
-    }
-    ++coefficient_count;
-  }
-  return coefficient_count;
-}
-
 std::vector<double> compute_sparse_orbital_squared_norms(
     const OrbitalPreparationInput& input,
     const Eigen::Map<const Eigen::MatrixXd>& basis_overlap_matrix) {
-  std::vector<double> squared_norms(xmvb::to_size(input.n_orbitals), 0.0);
+  std::vector<double> squared_norms(input.n_orbitals, 0.0);
 
 #pragma omp parallel for schedule(static)
-  for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
-    const int coefficient_count = get_sparse_coefficient_count(
-        input.orbital_basis_counts,
-        input.orbital_basis_index_table,
-        input.n_basis_functions,
-        orbital_index);
+  for (std::ptrdiff_t orbital_offset = 0;
+       orbital_offset < static_cast<std::ptrdiff_t>(input.n_orbitals);
+       ++orbital_offset) {
+    const std::size_t orbital_index = orbital_offset;
+    const int coefficient_count =
+        stored_sparse_orbital_coefficient_count(input, orbital_index);
     double squared_norm = 0.0;
     for (int left_index = 0; left_index < coefficient_count; ++left_index) {
       const int left_basis_function =
-          input.orbital_basis_index_table[xmvb::to_size(orbital_index) *
+          input.orbital_basis_index_table[orbital_index *
                                               input.n_basis_functions +
                                           left_index] -
           1;
@@ -63,11 +40,11 @@ std::vector<double> compute_sparse_orbital_squared_norms(
         throw std::runtime_error("invalid sparse orbital basis index while computing norms");
       }
       const double left_value =
-          input.orbital_value_table[xmvb::to_size(orbital_index) * input.n_basis_functions +
+          input.orbital_value_table[orbital_index * input.n_basis_functions +
                                     left_index];
       for (int right_index = 0; right_index < coefficient_count; ++right_index) {
         const int right_basis_function =
-            input.orbital_basis_index_table[xmvb::to_size(orbital_index) *
+            input.orbital_basis_index_table[orbital_index *
                                                 input.n_basis_functions +
                                             right_index] -
             1;
@@ -75,7 +52,7 @@ std::vector<double> compute_sparse_orbital_squared_norms(
           throw std::runtime_error("invalid sparse orbital basis index while computing norms");
         }
         const double right_value =
-            input.orbital_value_table[xmvb::to_size(orbital_index) * input.n_basis_functions +
+            input.orbital_value_table[orbital_index * input.n_basis_functions +
                                       right_index];
         squared_norm +=
             left_value * right_value *
@@ -87,7 +64,7 @@ std::vector<double> compute_sparse_orbital_squared_norms(
         squared_norm <= std::numeric_limits<double>::epsilon()) {
       throw std::runtime_error("orbital normalization failed during cached backpropagation");
     }
-    squared_norms[xmvb::to_size(orbital_index)] = squared_norm;
+    squared_norms[orbital_index] = squared_norm;
   }
 
   return squared_norms;
@@ -146,17 +123,18 @@ void validate_orbital_preparation_result(
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) {
   const std::size_t ao_matrix_size =
-      xmvb::to_size(input.n_basis_functions) * input.n_basis_functions;
+      input.n_basis_functions * input.n_basis_functions;
   const std::size_t normalized_matrix_size =
-      xmvb::to_size(input.n_basis_functions) * input.n_orbitals;
+      input.n_basis_functions * input.n_orbitals;
   const std::size_t projected_active_size =
-      xmvb::to_size(input.n_basis_functions) * n_active_orbitals;
+      input.n_basis_functions * static_cast<std::size_t>(n_active_orbitals);
   const std::size_t inactive_active_size =
-      xmvb::to_size(n_inactive_doubly_occupied_orbitals) * n_active_orbitals;
+      static_cast<std::size_t>(n_inactive_doubly_occupied_orbitals) *
+      static_cast<std::size_t>(n_active_orbitals);
 
   if (orbital_preparation_result.occupied_space_projector.size() != ao_matrix_size ||
       orbital_preparation_result.inactive_auxiliary_transform.size() != ao_matrix_size ||
-      xmvb::to_size(
+      static_cast<std::size_t>(
           orbital_preparation_result.physical_orbital_frame.normalized_orbital_matrix.size()) !=
           normalized_matrix_size ||
       orbital_preparation_result.projected_active_overlap_matrix.size() !=
@@ -181,17 +159,14 @@ ActiveSpaceOrbitalBackpropagationResult scatter_dense_orbital_gradient_to_sparse
   }
 
   std::vector<double> orbital_value_gradient(input.orbital_value_table.size(), 0.0);
-  for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
-    const int coefficient_count = get_sparse_coefficient_count(
-        input.orbital_basis_counts,
-        input.orbital_basis_index_table,
-        input.n_basis_functions,
-        orbital_index);
+  for (std::size_t orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
+    const int coefficient_count =
+        stored_sparse_orbital_coefficient_count(input, orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
-          input.orbital_basis_index_table[xmvb::to_size(orbital_index) *
+          input.orbital_basis_index_table[orbital_index *
                                               input.n_basis_functions +
                                           coefficient_index] -
           1;
@@ -199,7 +174,7 @@ ActiveSpaceOrbitalBackpropagationResult scatter_dense_orbital_gradient_to_sparse
         throw std::runtime_error(
             "invalid sparse orbital basis index while scattering dense orbital gradient");
       }
-      orbital_value_gradient[xmvb::to_size(orbital_index) * input.n_basis_functions +
+      orbital_value_gradient[orbital_index * input.n_basis_functions +
                              coefficient_index] =
           original_orbital_gradient(basis_function_index, orbital_index);
     }
@@ -224,26 +199,27 @@ ActiveSpaceOrbitalBackpropagationResult backpropagate_normalization_to_raw_slots
       normalized_orbital_matrix.cols() != input.n_orbitals) {
     throw std::invalid_argument("normalized orbital matrix shape mismatch");
   }
-  if (squared_norms.size() != xmvb::to_size(input.n_orbitals)) {
+  if (squared_norms.size() != input.n_orbitals) {
     throw std::invalid_argument("squared orbital norms size mismatch");
   }
 
   std::vector<double> orbital_value_gradient(input.orbital_value_table.size(), 0.0);
 
 #pragma omp parallel for schedule(static)
-  for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
-    const int coefficient_count = get_sparse_coefficient_count(
-        input.orbital_basis_counts,
-        input.orbital_basis_index_table,
-        input.n_basis_functions,
-        orbital_index);
-    std::vector<int> basis_function_indices(xmvb::to_size(coefficient_count), 0);
+  for (std::ptrdiff_t orbital_offset = 0;
+       orbital_offset < static_cast<std::ptrdiff_t>(input.n_orbitals);
+       ++orbital_offset) {
+    const std::size_t orbital_index = orbital_offset;
+    const int coefficient_count =
+        stored_sparse_orbital_coefficient_count(input, orbital_index);
+    const std::size_t n_coefficients = coefficient_count;
+    std::vector<int> basis_function_indices(n_coefficients, 0);
     Eigen::VectorXd normalized_vector = Eigen::VectorXd::Zero(coefficient_count);
     Eigen::VectorXd dense_gradient = Eigen::VectorXd::Zero(coefficient_count);
 
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
       const int basis_function_index =
-          input.orbital_basis_index_table[xmvb::to_size(orbital_index) *
+          input.orbital_basis_index_table[orbital_index *
                                               input.n_basis_functions +
                                           coefficient_index] -
           1;
@@ -251,7 +227,7 @@ ActiveSpaceOrbitalBackpropagationResult backpropagate_normalization_to_raw_slots
         throw std::runtime_error(
             "invalid sparse orbital basis index while pulling gradients back");
       }
-      basis_function_indices[xmvb::to_size(coefficient_index)] = basis_function_index;
+      basis_function_indices[coefficient_index] = basis_function_index;
       normalized_vector(coefficient_index) =
           normalized_orbital_matrix(basis_function_index, orbital_index);
       dense_gradient(coefficient_index) =
@@ -263,21 +239,21 @@ ActiveSpaceOrbitalBackpropagationResult backpropagate_normalization_to_raw_slots
     for (int row = 0; row < coefficient_count; ++row) {
       for (int column = 0; column < coefficient_count; ++column) {
         overlap_submatrix(row, column) =
-            basis_overlap_matrix(
-                basis_function_indices[xmvb::to_size(row)],
-                basis_function_indices[xmvb::to_size(column)]);
+                basis_overlap_matrix(
+                basis_function_indices[row],
+                basis_function_indices[column]);
       }
     }
 
     const double normalization_factor =
-        std::sqrt(1.0 / squared_norms[xmvb::to_size(orbital_index)]);
+        std::sqrt(1.0 / squared_norms[orbital_index]);
     const double scalar_term = dense_gradient.dot(normalized_vector);
     const Eigen::VectorXd raw_gradient =
         normalization_factor * dense_gradient -
         normalization_factor * scalar_term * (overlap_submatrix * normalized_vector);
 
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
-      orbital_value_gradient[xmvb::to_size(orbital_index) * input.n_basis_functions +
+      orbital_value_gradient[orbital_index * input.n_basis_functions +
                              coefficient_index] = raw_gradient(coefficient_index);
     }
   }
@@ -289,7 +265,8 @@ ActiveSpaceOrbitalBackpropagationResult backpropagate_normalization_to_raw_slots
 
 }  // namespace
 
-ActiveSpaceOrbitalBackpropagationResult ActiveSpaceOrbitalBackpropagator::backpropagate(
+ActiveSpaceOrbitalBackpropagationDiagnostics
+ActiveSpaceOrbitalBackpropagator::compute_diagnostics(
     const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient,
     const OrbitalPreparationInput& input,
@@ -421,19 +398,45 @@ ActiveSpaceOrbitalBackpropagationResult ActiveSpaceOrbitalBackpropagator::backpr
   // and is the main suspect for the open-shell active-orbital drift relative
   // to legacy XMVB. Preserve the legacy OEO chart here.
   if (input.orbital_type == kLegacyOrbitalTypeOeo) {
-    return scatter_dense_orbital_gradient_to_sparse_slots(
-        original_orbital_gradient,
-        input);
+    ActiveSpaceOrbitalBackpropagationDiagnostics diagnostics;
+    diagnostics.original_orbital_gradient = std::move(original_orbital_gradient);
+    diagnostics.orbital_value_gradient =
+        scatter_dense_orbital_gradient_to_sparse_slots(
+            diagnostics.original_orbital_gradient,
+            input)
+            .orbital_value_gradient;
+    return diagnostics;
   }
 
   const std::vector<double> squared_norms =
       compute_sparse_orbital_squared_norms(input, basis_overlap_matrix);
-  return backpropagate_normalization_to_raw_slots(
-      original_orbital_gradient,
-      input,
-      basis_overlap_matrix,
-      normalized_orbital_matrix,
-      squared_norms);
+  ActiveSpaceOrbitalBackpropagationDiagnostics diagnostics;
+  diagnostics.original_orbital_gradient = std::move(original_orbital_gradient);
+  diagnostics.orbital_value_gradient =
+      backpropagate_normalization_to_raw_slots(
+          diagnostics.original_orbital_gradient,
+          input,
+          basis_overlap_matrix,
+          normalized_orbital_matrix,
+          squared_norms)
+          .orbital_value_gradient;
+  return diagnostics;
+}
+
+ActiveSpaceOrbitalBackpropagationResult ActiveSpaceOrbitalBackpropagator::backpropagate(
+    const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_gradient,
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient,
+    const OrbitalPreparationInput& input,
+    const OrbitalPreparationResult& orbital_preparation_result) const {
+  const auto diagnostics =
+      compute_diagnostics(
+          active_auxiliary_gradient,
+          inactive_density_gradient,
+          input,
+          orbital_preparation_result);
+  ActiveSpaceOrbitalBackpropagationResult result;
+  result.orbital_value_gradient = diagnostics.orbital_value_gradient;
+  return result;
 }
 
 ActiveSpaceOrbitalBackpropagationResult ActiveSpaceOrbitalBackpropagator::backpropagate(
@@ -442,9 +445,9 @@ ActiveSpaceOrbitalBackpropagationResult ActiveSpaceOrbitalBackpropagator::backpr
     const OrbitalPreparationInput& input,
     const OrbitalPreparationResult& orbital_preparation_result) const {
   const std::size_t active_auxiliary_size =
-      xmvb::to_size(input.n_basis_functions) * input.n_active_orbitals;
+      input.n_basis_functions * input.n_active_orbitals;
   const std::size_t inactive_density_size =
-      xmvb::to_size(input.n_basis_functions) * input.n_basis_functions;
+      input.n_basis_functions * input.n_basis_functions;
   if (active_auxiliary_gradient.size() != active_auxiliary_size) {
     throw std::invalid_argument("active auxiliary gradient size mismatch");
   }

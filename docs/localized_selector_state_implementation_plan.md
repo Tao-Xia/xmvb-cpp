@@ -77,7 +77,7 @@ $$
 
 The best home is:
 
-- [`physical_orbital_frame.hpp`](/pool1/home/xiatao/project/xmvb-cpp/src/vb/pdft/physical_orbital_frame.hpp)
+- [`physical_orbital_frame.hpp`](/pool1/home/xiatao/project/xmvb-cpp/src/vb/orbital/physical_orbital_frame.hpp)
 
 rather than `CppOrbitalGradientResult` directly, because the selector is part
 of the accepted-point relation between the internal working frame and the
@@ -160,7 +160,7 @@ against a tight accepted-point tolerance.
 
 The first implementation pass should touch only these files:
 
-1. [`physical_orbital_frame.hpp`](/pool1/home/xiatao/project/xmvb-cpp/src/vb/pdft/physical_orbital_frame.hpp)
+1. [`physical_orbital_frame.hpp`](/pool1/home/xiatao/project/xmvb-cpp/src/vb/orbital/physical_orbital_frame.hpp)
 2. [`active_space_orbital_preparer.cpp`](/pool1/home/xiatao/project/xmvb-cpp/src/vb/orbital/active_space_orbital_preparer.cpp)
 3. [`cpp_vb_scf_optimizer.cpp`](/pool1/home/xiatao/project/xmvb-cpp/src/vb/scf/cpp_vb_scf_optimizer.cpp)
 

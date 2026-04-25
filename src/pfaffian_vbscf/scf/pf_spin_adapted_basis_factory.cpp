@@ -102,8 +102,8 @@ PfSpinAdaptedBasisData build_structure_pf_spin_adapted_basis(
       n_selected_structures *
       coupling_block.primitive_to_adapted_coefficients.rows();
   basis.primitive_basis.states.reserve(
-      xmvb::to_size(basis.primitive_basis.n_states));
-  basis.states.reserve(xmvb::to_size(basis.n_states));
+      basis.primitive_basis.n_states);
+  basis.states.reserve(basis.n_states);
   basis.primitive_to_adapted_coefficients =
       Matrix::Zero(
           basis.primitive_basis.n_states,
@@ -141,24 +141,24 @@ PfSpinAdaptedBasisData build_structure_pf_spin_adapted_basis(
 
     for (const auto& spin_string : coupling_block.primitive_spin_strings) {
       std::vector<bool> beta_mask(
-          xmvb::to_size(partition.n_open_shell_electrons),
+          partition.n_open_shell_electrons,
           false);
       for (const int beta_position : spin_string.blocked_beta_positions) {
-        beta_mask[xmvb::to_size(beta_position)] = true;
+        beta_mask[beta_position] = true;
       }
 
       std::vector<int> blocked_alpha_orbitals;
       std::vector<int> blocked_beta_orbitals;
       blocked_alpha_orbitals.reserve(
-          xmvb::to_size(coupling_block.n_blocked_alpha));
+          coupling_block.n_blocked_alpha);
       blocked_beta_orbitals.reserve(
-          xmvb::to_size(coupling_block.n_blocked_beta));
+          coupling_block.n_blocked_beta);
       for (int open_shell_index = 0;
            open_shell_index < partition.n_open_shell_electrons;
            ++open_shell_index) {
         const int orbital =
-            pattern.open_shell_orbitals[xmvb::to_size(open_shell_index)];
-        if (beta_mask[xmvb::to_size(open_shell_index)]) {
+            pattern.open_shell_orbitals[open_shell_index];
+        if (beta_mask[open_shell_index]) {
           blocked_beta_orbitals.push_back(orbital);
         } else {
           blocked_alpha_orbitals.push_back(orbital);

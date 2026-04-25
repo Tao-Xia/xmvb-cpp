@@ -100,7 +100,7 @@ Matrix dense_mat(
     int dim,
     const char* label) {
   const std::size_t expected_size =
-      xmvb::to_size(dim) * xmvb::to_size(dim);
+      dim * dim;
   if (data.size() != expected_size) {
     throw std::invalid_argument(std::string(label) + " size does not match dimension");
   }
@@ -108,7 +108,7 @@ Matrix dense_mat(
   Matrix matrix = Matrix::Zero(dim, dim);
   for (int col = 0; col < dim; ++col) {
     for (int row = 0; row < dim; ++row) {
-      matrix(row, col) = data[xmvb::to_size(col) * dim + row];
+      matrix(row, col) = data[col * dim + row];
     }
   }
   return matrix;
@@ -116,11 +116,11 @@ Matrix dense_mat(
 
 ScalarBuffer column_major_storage(const Matrix& matrix) {
   ScalarBuffer data(
-      xmvb::to_size(matrix.rows()) * xmvb::to_size(matrix.cols()),
+      matrix.rows() * matrix.cols(),
       0.0);
   for (int col = 0; col < matrix.cols(); ++col) {
     for (int row = 0; row < matrix.rows(); ++row) {
-      data[xmvb::to_size(col) * matrix.rows() + row] = matrix(row, col);
+      data[col * matrix.rows() + row] = matrix(row, col);
     }
   }
   return data;
@@ -160,12 +160,12 @@ ScalarBuffer build_density_coefficients(
     return {};
   }
 
-  ScalarBuffer coefficients(xmvb::to_size(order + 1), 0.0);
+  ScalarBuffer coefficients(order + 1, 0.0);
   for (int power = 0; power <= order; ++power) {
     const double sign = ((power % 2) == 0) ? 1.0 : -1.0;
-    coefficients[xmvb::to_size(power)] =
+    coefficients[power] =
         2.0 * sign *
-        cache.projected_overlap_coefficients[xmvb::to_size(order - power)];
+        cache.projected_overlap_coefficients[order - power];
   }
   return coefficients;
 }
@@ -260,12 +260,12 @@ int main(int argc, char** argv) {
         dense_mat(act.hho, n, "act.hho");
     const Matrix left_pairing =
         xmvb::pfaffian_vbscf::decode_antisymmetric_matrix(
-            basis.states[xmvb::to_size(opt.row)].packed_entries,
-            basis.states[xmvb::to_size(opt.row)].n_spin_orbitals);
+            basis.states[opt.row].packed_entries,
+            basis.states[opt.row].n_spin_orbitals);
     const Matrix right_pairing =
         xmvb::pfaffian_vbscf::decode_antisymmetric_matrix(
-            basis.states[xmvb::to_size(opt.col)].packed_entries,
-            basis.states[xmvb::to_size(opt.col)].n_spin_orbitals);
+            basis.states[opt.col].packed_entries,
+            basis.states[opt.col].n_spin_orbitals);
 
     const Matrix spin_metric =
         xmvb::pfaffian_vbscf::build_spin_block_diagonal_metric(spatial_overlap);
@@ -305,7 +305,7 @@ int main(int argc, char** argv) {
         overlap_sigma + one_electron_sigma + two_electron_sigma;
 
     std::vector<std::pair<double, int>> ranked;
-    ranked.reserve(xmvb::to_size(n * n));
+    ranked.reserve(n * n);
     for (int col = 0; col < n; ++col) {
       for (int row = 0; row < n; ++row) {
         const int linear_index = col * n + row;
@@ -332,7 +332,7 @@ int main(int argc, char** argv) {
     std::cout << "reported_entries = " << n_report << '\n';
 
     for (int report_index = 0; report_index < n_report; ++report_index) {
-      const int linear_index = ranked[xmvb::to_size(report_index)].second;
+      const int linear_index = ranked[report_index].second;
       const int entry_col = linear_index / n;
       const int entry_row = linear_index % n;
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <string>
 #include <vector>
 
@@ -48,7 +50,7 @@ struct CppVbScfAcceptedIterationSnapshot {
   /**
    * @brief Column-major active-space effective one-electron matrix `HHO`.
    */
-  std::vector<double> active_one_electron_integrals;
+  Eigen::MatrixXd active_one_electron_integrals;
 
   /**
    * @brief Packed active-space two-electron integrals for reconstructing `J` and `K`.

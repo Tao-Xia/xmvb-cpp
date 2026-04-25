@@ -142,7 +142,7 @@ Matrix dense_mat(
   Matrix mat = Matrix::Zero(dim, dim);
   for (int col = 0; col < dim; ++col) {
     for (int row = 0; row < dim; ++row) {
-      mat(row, col) = data[xmvb::to_size(col) * dim + row];
+      mat(row, col) = data[col * dim + row];
     }
   }
   return mat;
@@ -194,17 +194,17 @@ TwoElectronSplit evaluate_exact_two_electron_split_generic(
           n_pairs);
 
   std::vector<GenericMatrix> alpha_source_directions(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix> beta_source_directions(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix> alpha_first_direction_matrices(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix> beta_first_direction_matrices(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<std::vector<double>> alpha_first_derivative_traces(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<std::vector<double>> beta_first_derivative_traces(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
 
   const GenericMatrix left_transpose = left_pairing_matrix.transpose();
   const GenericMatrix right_times_source_transpose =
@@ -219,41 +219,41 @@ TwoElectronSplit evaluate_exact_two_electron_split_generic(
               right_row,
               left_column,
               n_active_orbitals);
-      alpha_source_directions[xmvb::to_size(entry_index)] =
+      alpha_source_directions[entry_index] =
           detail::build_spin_source_direction_matrix_generic<double>(
               n_active_orbitals,
               true,
               right_row,
               left_column);
-      beta_source_directions[xmvb::to_size(entry_index)] =
+      beta_source_directions[entry_index] =
           detail::build_spin_source_direction_matrix_generic<double>(
               n_active_orbitals,
               false,
               right_row,
               left_column);
-      alpha_first_direction_matrices[xmvb::to_size(entry_index)] =
+      alpha_first_direction_matrices[entry_index] =
           left_transpose *
-              alpha_source_directions[xmvb::to_size(entry_index)] *
+              alpha_source_directions[entry_index] *
               right_times_source_transpose +
           left_transpose *
               source_times_right *
-              alpha_source_directions[xmvb::to_size(entry_index)].transpose();
-      beta_first_direction_matrices[xmvb::to_size(entry_index)] =
+              alpha_source_directions[entry_index].transpose();
+      beta_first_direction_matrices[entry_index] =
           left_transpose *
-              beta_source_directions[xmvb::to_size(entry_index)] *
+              beta_source_directions[entry_index] *
               right_times_source_transpose +
           left_transpose *
               source_times_right *
-              beta_source_directions[xmvb::to_size(entry_index)].transpose();
-      alpha_first_derivative_traces[xmvb::to_size(entry_index)] =
+              beta_source_directions[entry_index].transpose();
+      alpha_first_derivative_traces[entry_index] =
           detail::build_first_derivative_power_traces_generic(
               matrix_powers,
-              alpha_first_direction_matrices[xmvb::to_size(entry_index)],
+              alpha_first_direction_matrices[entry_index],
               n_pairs);
-      beta_first_derivative_traces[xmvb::to_size(entry_index)] =
+      beta_first_derivative_traces[entry_index] =
           detail::build_first_derivative_power_traces_generic(
               matrix_powers,
-              beta_first_direction_matrices[xmvb::to_size(entry_index)],
+              beta_first_direction_matrices[entry_index],
               n_pairs);
     }
   }
@@ -290,37 +290,37 @@ TwoElectronSplit evaluate_exact_two_electron_split_generic(
                   right_second,
                   left_first);
           const double same_spin_interaction =
-              packed_active_two_electron_integrals[xmvb::to_size(direct_index)] -
-              packed_active_two_electron_integrals[xmvb::to_size(exchange_index)];
+              packed_active_two_electron_integrals[direct_index] -
+              packed_active_two_electron_integrals[exchange_index];
 
           const GenericMatrix alpha_second_direction_matrix =
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(first_entry_index)] *
+                  alpha_source_directions[first_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(second_entry_index)].transpose() +
+                  alpha_source_directions[second_entry_index].transpose() +
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(second_entry_index)] *
+                  alpha_source_directions[second_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(first_entry_index)].transpose();
+                  alpha_source_directions[first_entry_index].transpose();
           const std::vector<double> alpha_second_derivative_traces =
               detail::build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  alpha_first_direction_matrices[xmvb::to_size(first_entry_index)],
-                  alpha_first_direction_matrices[xmvb::to_size(second_entry_index)],
+                  alpha_first_direction_matrices[first_entry_index],
+                  alpha_first_direction_matrices[second_entry_index],
                   alpha_second_direction_matrix,
                   n_pairs);
           const double alpha_total =
               detail::projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  alpha_first_derivative_traces[xmvb::to_size(first_entry_index)],
-                  alpha_first_derivative_traces[xmvb::to_size(second_entry_index)],
+                  alpha_first_derivative_traces[first_entry_index],
+                  alpha_first_derivative_traces[second_entry_index],
                   alpha_second_derivative_traces,
                   n_pairs);
           double alpha_cumulant = 0.0;
           for (int power = 0; power < n_pairs; ++power) {
             alpha_cumulant +=
-                projection.trace_weights[xmvb::to_size(power)] *
-                alpha_second_derivative_traces[xmvb::to_size(power)];
+                projection.trace_weights[power] *
+                alpha_second_derivative_traces[power];
           }
           split.total += same_spin_interaction * alpha_total;
           split.cumulant += same_spin_interaction * alpha_cumulant;
@@ -332,32 +332,32 @@ TwoElectronSplit evaluate_exact_two_electron_split_generic(
 
           const GenericMatrix beta_second_direction_matrix =
               left_transpose *
-                  beta_source_directions[xmvb::to_size(first_entry_index)] *
+                  beta_source_directions[first_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(second_entry_index)].transpose() +
+                  beta_source_directions[second_entry_index].transpose() +
               left_transpose *
-                  beta_source_directions[xmvb::to_size(second_entry_index)] *
+                  beta_source_directions[second_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(first_entry_index)].transpose();
+                  beta_source_directions[first_entry_index].transpose();
           const std::vector<double> beta_second_derivative_traces =
               detail::build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  beta_first_direction_matrices[xmvb::to_size(first_entry_index)],
-                  beta_first_direction_matrices[xmvb::to_size(second_entry_index)],
+                  beta_first_direction_matrices[first_entry_index],
+                  beta_first_direction_matrices[second_entry_index],
                   beta_second_direction_matrix,
                   n_pairs);
           const double beta_total =
               detail::projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  beta_first_derivative_traces[xmvb::to_size(first_entry_index)],
-                  beta_first_derivative_traces[xmvb::to_size(second_entry_index)],
+                  beta_first_derivative_traces[first_entry_index],
+                  beta_first_derivative_traces[second_entry_index],
                   beta_second_derivative_traces,
                   n_pairs);
           double beta_cumulant = 0.0;
           for (int power = 0; power < n_pairs; ++power) {
             beta_cumulant +=
-                projection.trace_weights[xmvb::to_size(power)] *
-                beta_second_derivative_traces[xmvb::to_size(power)];
+                projection.trace_weights[power] *
+                beta_second_derivative_traces[power];
           }
           split.total += same_spin_interaction * beta_total;
           split.cumulant += same_spin_interaction * beta_cumulant;
@@ -400,35 +400,35 @@ TwoElectronSplit evaluate_exact_two_electron_split_generic(
                   alpha_right_row,
                   alpha_left_column);
           const double interaction =
-              packed_active_two_electron_integrals[xmvb::to_size(opposite_spin_index)];
+              packed_active_two_electron_integrals[opposite_spin_index];
           const GenericMatrix mixed_second_direction_matrix =
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(alpha_entry_index)] *
+                  alpha_source_directions[alpha_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(beta_entry_index)].transpose() +
+                  beta_source_directions[beta_entry_index].transpose() +
               left_transpose *
-                  beta_source_directions[xmvb::to_size(beta_entry_index)] *
+                  beta_source_directions[beta_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(alpha_entry_index)].transpose();
+                  alpha_source_directions[alpha_entry_index].transpose();
           const std::vector<double> mixed_second_derivative_traces =
               detail::build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  alpha_first_direction_matrices[xmvb::to_size(alpha_entry_index)],
-                  beta_first_direction_matrices[xmvb::to_size(beta_entry_index)],
+                  alpha_first_direction_matrices[alpha_entry_index],
+                  beta_first_direction_matrices[beta_entry_index],
                   mixed_second_direction_matrix,
                   n_pairs);
           const double mixed_total =
               detail::projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  alpha_first_derivative_traces[xmvb::to_size(alpha_entry_index)],
-                  beta_first_derivative_traces[xmvb::to_size(beta_entry_index)],
+                  alpha_first_derivative_traces[alpha_entry_index],
+                  beta_first_derivative_traces[beta_entry_index],
                   mixed_second_derivative_traces,
                   n_pairs);
           double mixed_cumulant = 0.0;
           for (int power = 0; power < n_pairs; ++power) {
             mixed_cumulant +=
-                projection.trace_weights[xmvb::to_size(power)] *
-                mixed_second_derivative_traces[xmvb::to_size(power)];
+                projection.trace_weights[power] *
+                mixed_second_derivative_traces[power];
           }
           split.total += interaction * mixed_total;
           split.cumulant += interaction * mixed_cumulant;
@@ -497,8 +497,8 @@ double contract_same_spin_bridge(
                   right_second,
                   left_first);
           const double interaction =
-              ggo[xmvb::to_size(direct_index)] -
-              ggo[xmvb::to_size(exchange_index)];
+              ggo[direct_index] -
+              ggo[exchange_index];
           value += interaction * bridge_left * bridge_right;
         }
       }
@@ -538,7 +538,7 @@ int main(int argc, char** argv) {
         xmvb::pfaffian_vbscf::build_spin_block_diagonal_metric(spatial_overlap_matrix);
 
     std::vector<Matrix> pairing_matrices;
-    pairing_matrices.reserve(xmvb::to_size(basis.n_states));
+    pairing_matrices.reserve(basis.n_states);
     for (const auto& state : basis.states) {
       pairing_matrices.push_back(
           xmvb::pfaffian_vbscf::decode_antisymm(
@@ -562,9 +562,9 @@ int main(int argc, char** argv) {
       const int col_end = restrict_pair ? opt.col : row;
       for (int col = col_begin; col <= col_end; ++col) {
         const GenericMatrix left_pairing_matrix =
-            pairing_matrices[xmvb::to_size(row)];
+            pairing_matrices[row];
         const GenericMatrix right_pairing_matrix =
-            pairing_matrices[xmvb::to_size(col)];
+            pairing_matrices[col];
         const TwoElectronSplit exact =
             evaluate_exact_two_electron_split_generic(
                 left_pairing_matrix,
@@ -575,9 +575,9 @@ int main(int argc, char** argv) {
 
         const xmvb::pfaffian_vbscf::PfKernelCache cache =
             xmvb::pfaffian_vbscf::PfForwardKernel::build_cache(
-                pairing_matrices[xmvb::to_size(row)].transpose(),
+                pairing_matrices[row].transpose(),
                 spin_metric,
-                pairing_matrices[xmvb::to_size(col)],
+                pairing_matrices[col],
                 basis.n_beta);
         const std::vector<xmvb::pfaffian_vbscf::PfTensorTerm> terms =
             xmvb::pfaffian_vbscf::build_two_electron_hamiltonian_tensor_terms(cache);
@@ -703,23 +703,23 @@ int main(int argc, char** argv) {
             cache.left * cache.sigma * cache.right;
         const Matrix right_sigma = cache.right * cache.sigma;
         std::vector<Matrix> kernel_power_times_left_sigma_right(
-            xmvb::to_size(cache.trace_order));
+            cache.trace_order);
         std::vector<Matrix> right_sigma_times_kernel_power_times_left_sigma_right(
-            xmvb::to_size(cache.trace_order));
+            cache.trace_order);
         for (int power = 0; power < cache.trace_order; ++power) {
-          kernel_power_times_left_sigma_right[xmvb::to_size(power)] =
-              cache.kernel_powers[xmvb::to_size(power)] *
+          kernel_power_times_left_sigma_right[power] =
+              cache.kernel_powers[power] *
               left_sigma_right;
-          right_sigma_times_kernel_power_times_left_sigma_right[xmvb::to_size(power)] =
+          right_sigma_times_kernel_power_times_left_sigma_right[power] =
               right_sigma *
-              kernel_power_times_left_sigma_right[xmvb::to_size(power)];
+              kernel_power_times_left_sigma_right[power];
         }
 
         double candidate_same_spin_cumulant = 0.0;
         double candidate_opposite_spin_cumulant = 0.0;
         for (int power = 0; power < cache.trace_order; ++power) {
           const double scale =
-              cache.trace_weights[xmvb::to_size(power)] *
+              cache.trace_weights[power] *
               static_cast<double>(power + 1);
           if (scale == 0.0) {
             continue;
@@ -736,7 +736,7 @@ int main(int argc, char** argv) {
                       xmvb::pfaffian_vbscf::PfSpinBlock::AlphaBeta),
                   xmvb::pfaffian_vbscf::detail::copy_spin_block(
                       cache,
-                      cache.kernel_power_times_left[xmvb::to_size(power)],
+                      cache.kernel_power_times_left[power],
                       xmvb::pfaffian_vbscf::PfSpinBlock::BetaAlpha));
           candidate_opposite_spin_cumulant +=
               scale *
@@ -749,7 +749,7 @@ int main(int argc, char** argv) {
                       xmvb::pfaffian_vbscf::PfSpinBlock::BetaAlpha),
                   xmvb::pfaffian_vbscf::detail::copy_spin_block(
                       cache,
-                      cache.kernel_power_times_left[xmvb::to_size(power)],
+                      cache.kernel_power_times_left[power],
                       xmvb::pfaffian_vbscf::PfSpinBlock::AlphaBeta));
 
           if (power == 0) {
@@ -766,12 +766,12 @@ int main(int argc, char** argv) {
                     xmvb::pfaffian_vbscf::detail::copy_spin_block(
                         cache,
                         kernel_power_times_left_sigma_right[
-                            xmvb::to_size(split_power)],
+                            split_power],
                         xmvb::pfaffian_vbscf::PfSpinBlock::AlphaAlpha),
                     xmvb::pfaffian_vbscf::detail::copy_spin_block(
                         cache,
                         kernel_power_times_left_sigma_right[
-                            xmvb::to_size(tail_power)],
+                            tail_power],
                         xmvb::pfaffian_vbscf::PfSpinBlock::AlphaAlpha));
             candidate_same_spin_cumulant +=
                 (2.0 * scale) *
@@ -781,12 +781,12 @@ int main(int argc, char** argv) {
                     xmvb::pfaffian_vbscf::detail::copy_spin_block(
                         cache,
                         kernel_power_times_left_sigma_right[
-                            xmvb::to_size(split_power)],
+                            split_power],
                         xmvb::pfaffian_vbscf::PfSpinBlock::BetaBeta),
                     xmvb::pfaffian_vbscf::detail::copy_spin_block(
                         cache,
                         kernel_power_times_left_sigma_right[
-                            xmvb::to_size(tail_power)],
+                            tail_power],
                         xmvb::pfaffian_vbscf::PfSpinBlock::BetaBeta));
             candidate_opposite_spin_cumulant +=
                 scale *
@@ -796,12 +796,12 @@ int main(int argc, char** argv) {
                     xmvb::pfaffian_vbscf::detail::copy_spin_block(
                         cache,
                         right_sigma_times_kernel_power_times_left_sigma_right[
-                            xmvb::to_size(split_power)],
+                            split_power],
                         xmvb::pfaffian_vbscf::PfSpinBlock::AlphaBeta),
                     xmvb::pfaffian_vbscf::detail::copy_spin_block(
                         cache,
                         cache.kernel_power_times_left[
-                            xmvb::to_size(tail_power)],
+                            tail_power],
                         xmvb::pfaffian_vbscf::PfSpinBlock::BetaAlpha));
             candidate_opposite_spin_cumulant +=
                 scale *
@@ -811,12 +811,12 @@ int main(int argc, char** argv) {
                     xmvb::pfaffian_vbscf::detail::copy_spin_block(
                         cache,
                         right_sigma_times_kernel_power_times_left_sigma_right[
-                            xmvb::to_size(tail_power)],
+                            tail_power],
                         xmvb::pfaffian_vbscf::PfSpinBlock::BetaAlpha),
                     xmvb::pfaffian_vbscf::detail::copy_spin_block(
                         cache,
                         cache.kernel_power_times_left[
-                            xmvb::to_size(split_power)],
+                            split_power],
                         xmvb::pfaffian_vbscf::PfSpinBlock::AlphaBeta));
           }
         }
@@ -971,9 +971,9 @@ int main(int argc, char** argv) {
 
       const xmvb::pfaffian_vbscf::PfKernelCache argmax_cache =
           xmvb::pfaffian_vbscf::PfForwardKernel::build_cache(
-              pairing_matrices[xmvb::to_size(total_argmax_diag.row)].transpose(),
+              pairing_matrices[total_argmax_diag.row].transpose(),
               spin_metric,
-              pairing_matrices[xmvb::to_size(total_argmax_diag.col)],
+              pairing_matrices[total_argmax_diag.col],
               basis.n_beta);
       std::cout << "argmax_right_aa_norm = "
                 << xmvb::pfaffian_vbscf::detail::copy_spin_block(
@@ -1001,7 +1001,7 @@ int main(int argc, char** argv) {
                        .norm() << '\n';
       for (int power = 0; power < basis.n_beta; ++power) {
         const Matrix& kpl =
-            argmax_cache.kernel_power_times_left[xmvb::to_size(power)];
+            argmax_cache.kernel_power_times_left[power];
         std::cout << "argmax_kpl_power_" << power << "_aa_norm = "
                   << xmvb::pfaffian_vbscf::detail::copy_spin_block(
                          argmax_cache,

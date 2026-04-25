@@ -108,12 +108,12 @@ void prepare_closed_shell_two_electron_workspace(
       cache.closed_shell_coeff_n2.size(),
       &workspace->coeff_n2_adjoints);
   resize_and_zero_buffer(
-      xmvb::to_size(cache.trace_order + 1),
+      cache.trace_order + 1,
       &workspace->overlap_coefficient_adjoints);
 }
 
 std::size_t closed_shell_packed_pair_count(int n_active_orbitals) {
-  const std::size_t n = xmvb::to_size(n_active_orbitals);
+  const std::size_t n = n_active_orbitals;
   return n * (n + 1) / 2;
 }
 
@@ -269,16 +269,16 @@ void accumulate_trace_weighted_source_adjoint(
       cache.left.transpose();
 
   ScalarBuffer trace_weight_adjoints(
-      xmvb::to_size(cache.trace_order),
+      cache.trace_order,
       0.0);
   for (int power = 0; power < cache.trace_order; ++power) {
     const Matrix& kernel_power = detail::kernel_power_matrix(cache, power);
     const double scaled_power = static_cast<double>(power + 1);
     const double trace_weight =
-        source_trace_weights[xmvb::to_size(power)];
+        source_trace_weights[power];
 
     if (backpropagate_trace_weight_adjoints) {
-      trace_weight_adjoints[xmvb::to_size(power)] +=
+      trace_weight_adjoints[power] +=
           scaled_power *
           frobenius_inner_product(
               trace_kernel_adjoint,
@@ -344,9 +344,9 @@ void accumulate_trace_rdm_source_adjoint(
   }
 
   ScalarBuffer source_trace_weights(
-      xmvb::to_size(cache.trace_order),
+      cache.trace_order,
       0.0);
-  source_trace_weights[xmvb::to_size(trace_index)] = 1.0;
+  source_trace_weights[trace_index] = 1.0;
   full_workspace.setZero();
   write_spin_block(block, block_adjoint, full_workspace);
   accumulate_trace_weighted_source_adjoint(
@@ -472,7 +472,7 @@ void accumulate_source_adjoint(
       full_workspace.noalias() =
           source_workspace *
           cache.kernel_power_times_left_sigma_right[
-              xmvb::to_size(operand.power)]
+              operand.power]
               .transpose();
       sigma_adjoint.noalias() +=
           cache.right.transpose() * full_workspace;
@@ -647,12 +647,12 @@ std::vector<Matrix> build_block_sequence(
   }
 
   std::vector<Matrix> sequence;
-  sequence.reserve(xmvb::to_size(count));
+  sequence.reserve(count);
   for (int index = 0; index < count; ++index) {
     sequence.push_back(
         detail::copy_spin_block(
             cache,
-            source_family[xmvb::to_size(index)],
+            source_family[index],
             block)
             .eval());
   }
@@ -663,12 +663,12 @@ std::vector<Matrix> build_trace_block_sequence(
     const PfKernelCache& cache,
     PfSpinBlock block) {
   std::vector<Matrix> sequence;
-  sequence.reserve(xmvb::to_size(cache.trace_order));
+  sequence.reserve(cache.trace_order);
   for (int index = 0; index < cache.trace_order; ++index) {
     sequence.push_back(
         detail::copy_spin_block(
             cache,
-            cache.trace_rdms[xmvb::to_size(index)],
+            cache.trace_rdms[index],
             block)
             .eval());
   }
@@ -694,7 +694,7 @@ std::vector<Matrix> build_zero_sequence(
     int count,
     int n_active_orbitals) {
   return std::vector<Matrix>(
-      xmvb::to_size(count),
+      count,
       Matrix::Zero(n_active_orbitals, n_active_orbitals));
 }
 
@@ -796,14 +796,14 @@ ScalarBuffer build_closed_shell_projected_coefficients(
         "cache.trace_order + 1");
   }
 
-  ScalarBuffer coefficients(xmvb::to_size(order + 1), 0.0);
+  ScalarBuffer coefficients(order + 1, 0.0);
   for (int power = 0; power <= order; ++power) {
     const double sign = ((power % 2) == 0) ? 1.0 : -1.0;
-    coefficients[xmvb::to_size(power)] =
+    coefficients[power] =
         scale *
         sign *
-        cache.projected_overlap_coefficients[xmvb::to_size(
-            order - power)];
+        cache.projected_overlap_coefficients[
+            order - power];
   }
   return coefficients;
 }
@@ -829,8 +829,8 @@ void accumulate_projected_coefficient_family_adjoints(
 
   for (int power = 0; power <= order; ++power) {
     const double sign = ((power % 2) == 0) ? 1.0 : -1.0;
-    (*overlap_coefficient_adjoints)[xmvb::to_size(order - power)] +=
-        scale * sign * family_adjoints[xmvb::to_size(power)];
+    (*overlap_coefficient_adjoints)[order - power] +=
+        scale * sign * family_adjoints[power];
   }
 }
 
@@ -2160,7 +2160,7 @@ Matrix PfAdjointKernel::build_one_rdm_source_sigma_adjoint(
     Matrix sa_adjoint = Matrix::Zero(n, n);
     Matrix spatial_adjoint = Matrix::Zero(n, n);
     ScalarBuffer overlap_coefficient_adjoints(
-        xmvb::to_size(trace_order + 1),
+        trace_order + 1,
         0.0);
 
     accumulate_closed_shell_one_rdm_exact_terms(
@@ -2215,7 +2215,7 @@ Matrix PfAdjointKernel::build_one_rdm_source_sigma_adjoint(
       cache.right.transpose();
 
   ScalarBuffer overlap_coefficient_adjoints(
-      xmvb::to_size(trace_order + 1),
+      trace_order + 1,
       0.0);
   accumulate_projected_coefficient_family_adjoints(
       trace_order - 1,

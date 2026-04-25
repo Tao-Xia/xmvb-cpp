@@ -30,11 +30,11 @@ struct DeterminantKeyHasher {
   std::size_t operator()(const DeterminantKey& determinant_key) const {
     std::size_t hash_value = 0;
     for (const int orbital_index : determinant_key.alpha_orbitals) {
-      hash_value = hash_value * 1315423911u + xmvb::to_size(orbital_index + 257);
+      hash_value = hash_value * 1315423911u + orbital_index + 257;
     }
     hash_value = hash_value * 2654435761u + 17u;
     for (const int orbital_index : determinant_key.beta_orbitals) {
-      hash_value = hash_value * 1315423911u + xmvb::to_size(orbital_index + 257);
+      hash_value = hash_value * 1315423911u + orbital_index + 257;
     }
     return hash_value;
   }
@@ -85,15 +85,15 @@ std::vector<std::vector<int>> expand_paired_active_orbitals(
   std::vector<int> initial_determinant(2 * n_active_beta_electrons, 0);
   for (int electron_index = 0; electron_index < n_active_beta_electrons; ++electron_index) {
     initial_determinant[electron_index] =
-        paired_active_orbitals[xmvb::to_size(2 * electron_index)];
+        paired_active_orbitals[2 * electron_index];
     initial_determinant[electron_index + n_active_beta_electrons] =
-        paired_active_orbitals[xmvb::to_size(2 * electron_index + 1)];
+        paired_active_orbitals[2 * electron_index + 1];
   }
   determinants.push_back(initial_determinant);
 
   for (int electron_index = 0; electron_index < n_active_beta_electrons; ++electron_index) {
-    if (initial_determinant[xmvb::to_size(electron_index)] ==
-        initial_determinant[xmvb::to_size(electron_index + n_active_beta_electrons)]) {
+    if (initial_determinant[electron_index] ==
+        initial_determinant[electron_index + n_active_beta_electrons]) {
       continue;
     }
 
@@ -102,8 +102,8 @@ std::vector<std::vector<int>> expand_paired_active_orbitals(
     for (std::size_t determinant_index = 0; determinant_index < current_size; ++determinant_index) {
       auto swapped_determinant = determinants[determinant_index];
       std::swap(
-          swapped_determinant[xmvb::to_size(electron_index)],
-          swapped_determinant[xmvb::to_size(electron_index + n_active_beta_electrons)]);
+          swapped_determinant[electron_index],
+          swapped_determinant[electron_index + n_active_beta_electrons]);
       determinants.push_back(std::move(swapped_determinant));
     }
   }
@@ -149,12 +149,12 @@ FullDeterminantStructureData FullDeterminantStructureExpander::expand(
     const int* raw_structure = raw_structure_data.structure_orbitals_data(structure_index);
 
     std::vector<int> active_structure_orbitals(
-        xmvb::to_size(raw_structure_data.n_active_electrons),
+        raw_structure_data.n_active_electrons,
         0);
     for (int active_index = 0; active_index < raw_structure_data.n_active_electrons; ++active_index) {
-      active_structure_orbitals[xmvb::to_size(active_index)] =
-          raw_structure[xmvb::to_size(
-              active_index + 2 * n_inactive_doubly_occupied_orbitals)] -
+      active_structure_orbitals[active_index] =
+          raw_structure[
+              active_index + 2 * n_inactive_doubly_occupied_orbitals] -
           n_inactive_doubly_occupied_orbitals - 1;
     }
 
@@ -192,7 +192,7 @@ FullDeterminantStructureData FullDeterminantStructureExpander::expand(
         result.determinant_to_structure_terms.push_back({});
       }
 
-      result.determinant_to_structure_terms[xmvb::to_size(determinant_iterator->second)]
+      result.determinant_to_structure_terms[determinant_iterator->second]
           .push_back({
               .structure_index = structure_index,
               .coefficient = expansion_coefficient,

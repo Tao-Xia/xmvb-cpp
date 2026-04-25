@@ -11,9 +11,8 @@ namespace xmvb::vb {
  *
  * This helper fills the reusable orbital-preparation and active-space input
  * tensors inside `CppActiveSpaceGradientResult` while zero-initializing the
- * active-space adjoint buffers. It is used by both the production
- * nonorthogonal gradient evaluator and the exact biorthogonal selected-space
- * path so the two code paths share the same result-layout contract.
+ * active-space adjoint buffers. The production gradient and exact_ctx HVP
+ * paths share this result-layout contract.
  */
 void initialize_active_space_gradient_probe_result(
     const CppVbInput& input,

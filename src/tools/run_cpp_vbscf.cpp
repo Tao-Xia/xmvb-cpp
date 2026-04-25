@@ -25,8 +25,8 @@
 #include <omp.h>
 #endif
 
-#include "runtime/molden_file_writer.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/molden_file_writer.hpp"
 #include "vb/scf/deepvbh_onnx_direct_final_optimizer.hpp"
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
@@ -133,19 +133,19 @@ const char* gradient_tolerance_metric_name(
   return "unknown";
 }
 
-const char* scf_algorithm_log_name(xmvb::vb::VBSCFAlgorithm algorithm) {
-  switch (algorithm) {
-    case xmvb::vb::VBSCFAlgorithm::Original:
-      return "VBSCF";
-    case xmvb::vb::VBSCFAlgorithm::BiorthogonalExactSelected:
-      return "TBVBSCF";
-  }
-  return "unknown";
-}
-
 const char* bool_name(bool value) {
   return value ? "true" : "false";
 }
+
+bool parse_env_flag_with_default(
+    const char* variable_name,
+    bool default_value);
+int parse_env_int_with_default(
+    const char* variable_name,
+    int default_value);
+double parse_env_double_with_default(
+    const char* variable_name,
+    double default_value);
 
 constexpr int kLogRuleWidth = 88;
 constexpr int kLogLabelWidth = 34;
@@ -263,6 +263,23 @@ std::string format_scientific_double(
   std::ostringstream stream;
   stream << std::scientific << std::setprecision(precision) << value;
   return stream.str();
+}
+
+std::string format_compact_double(
+    double value,
+    int precision = 6) {
+  std::ostringstream stream;
+  stream << std::defaultfloat << std::setprecision(precision) << value;
+  return stream.str();
+}
+
+std::string format_convergence_threshold_summary(
+    double energy_tolerance,
+    double gradient_tolerance) {
+  return format_scientific_double(energy_tolerance, 0) +
+      " for energy and " +
+      format_compact_double(gradient_tolerance, 6) +
+      " for gradient.";
 }
 
 std::string format_seconds(
@@ -531,7 +548,7 @@ void print_exact_ctx_policy_summary(
       std::to_string(
           parse_env_int_with_default(
               "XMVB_CPP_EXACT_CTX_FULL_MODEL_CORRECTION_ENABLE_MAX_ACTIVE_ORBITALS",
-              6)));
+              8)));
   print_log_field(
       "Hybrid followup cap",
       std::to_string(
@@ -581,7 +598,7 @@ void print_run_header(
   print_log_subsection_title("Run Setup");
   print_log_field("Input file", absolute_input_path.string());
   print_log_field("Start time", format_timestamp(start_time));
-  print_log_field("SCF algorithm", scf_algorithm_log_name(options.algorithm));
+  print_log_field("SCF algorithm", "VBSCF");
   print_log_field(
       "Optimizer backend",
       xmvb::vb::cpp_vb_scf_optimizer_backend_name(options.backend));
@@ -645,12 +662,16 @@ void print_run_header(
       "Gradient metric",
       gradient_tolerance_metric_name(options.backend));
   print_log_field(
-      "Gradient tolerance",
-      format_scientific_double(options.gradient_tolerance, 8));
-  print_log_field(
-      "Energy tolerance",
-      format_scientific_double(options.energy_tolerance, 8));
+      "Convergence threshold",
+      format_convergence_threshold_summary(
+          options.energy_tolerance,
+          options.gradient_tolerance));
   print_log_field("Max iterations", std::to_string(options.max_iterations));
+  if (options.nonredundant_polish_max_iterations > 0) {
+    print_log_field(
+        "Nonredundant polish budget",
+        std::to_string(options.nonredundant_polish_max_iterations));
+  }
   if (options.backend ==
       xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
@@ -750,7 +771,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      orbital_preparation_input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -759,7 +780,7 @@ int get_sparse_coefficient_count(
   while (coefficient_count < n_basis_functions) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
+            [orbital_index * n_basis_functions + coefficient_count];
     if (basis_function_index == 0) {
       break;
     }
@@ -786,12 +807,12 @@ std::size_t packed_active_two_electron_size(int n_active_orbitals) {
   if (n_active_orbitals <= 0) {
     throw std::invalid_argument("n_active_orbitals must be positive");
   }
-  return xmvb::to_size(
+  return 
              xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
                  n_active_orbitals - 1,
                  n_active_orbitals - 1,
                  n_active_orbitals - 1,
-                 n_active_orbitals - 1)) +
+                 n_active_orbitals - 1) +
       1;
 }
 
@@ -804,8 +825,8 @@ std::vector<double> build_coulomb_diagonal_matrix(
     throw std::runtime_error("packed_active_two_electron_integrals size mismatch");
   }
   std::vector<double> matrix(
-      xmvb::to_size(n_active_orbitals) *
-          xmvb::to_size(n_active_orbitals),
+      n_active_orbitals *
+          n_active_orbitals,
       0.0);
   for (int column = 0; column < n_active_orbitals; ++column) {
     for (int row = 0; row < n_active_orbitals; ++row) {
@@ -815,8 +836,8 @@ std::vector<double> build_coulomb_diagonal_matrix(
               row,
               column,
               column);
-      matrix[xmvb::to_size(column) * n_active_orbitals + row] =
-          packed_active_two_electron_integrals[xmvb::to_size(packed_index)];
+      matrix[column * n_active_orbitals + row] =
+          packed_active_two_electron_integrals[packed_index];
     }
   }
   return matrix;
@@ -831,8 +852,8 @@ std::vector<double> build_exchange_diagonal_matrix(
     throw std::runtime_error("packed_active_two_electron_integrals size mismatch");
   }
   std::vector<double> matrix(
-      xmvb::to_size(n_active_orbitals) *
-          xmvb::to_size(n_active_orbitals),
+      n_active_orbitals *
+          n_active_orbitals,
       0.0);
   for (int column = 0; column < n_active_orbitals; ++column) {
     for (int row = 0; row < n_active_orbitals; ++row) {
@@ -842,8 +863,8 @@ std::vector<double> build_exchange_diagonal_matrix(
               column,
               column,
               row);
-      matrix[xmvb::to_size(column) * n_active_orbitals + row] =
-          packed_active_two_electron_integrals[xmvb::to_size(packed_index)];
+      matrix[column * n_active_orbitals + row] =
+          packed_active_two_electron_integrals[packed_index];
     }
   }
   return matrix;
@@ -897,8 +918,8 @@ std::vector<double> build_structure_occupancy(
     throw std::invalid_argument("n_orbitals must be positive");
   }
   std::vector<double> occupancy(
-      xmvb::to_size(raw_structure_data.n_structures) *
-          xmvb::to_size(n_orbitals),
+      raw_structure_data.n_structures *
+          n_orbitals,
       0.0);
   for (int structure_index = 0;
        structure_index < raw_structure_data.n_structures;
@@ -913,8 +934,8 @@ std::vector<double> build_structure_occupancy(
         throw std::runtime_error(
             "raw structure orbital index is out of range for structure occupancy");
       }
-      occupancy[xmvb::to_size(structure_index) * n_orbitals +
-                xmvb::to_size(orbital_index)] += 1.0;
+      occupancy[structure_index * n_orbitals +
+                orbital_index] += 1.0;
     }
   }
   return occupancy;
@@ -937,22 +958,22 @@ StructurePairTopology build_structure_pair_topology(
 
   if (topology.n_active_beta_electrons > 0) {
     topology.structure_pair_orbital_indices.resize(
-        xmvb::to_size(raw_structure_data.n_structures) *
-            xmvb::to_size(topology.n_active_beta_electrons) * 2,
+        raw_structure_data.n_structures *
+            topology.n_active_beta_electrons * 2,
         0);
     topology.structure_pair_mask.resize(
-        xmvb::to_size(raw_structure_data.n_structures) *
-            xmvb::to_size(topology.n_active_beta_electrons),
+        raw_structure_data.n_structures *
+            topology.n_active_beta_electrons,
         1);
   }
   if (topology.n_open_shell_electrons > 0) {
     topology.structure_open_shell_orbitals.resize(
-        xmvb::to_size(raw_structure_data.n_structures) *
-            xmvb::to_size(topology.n_open_shell_electrons),
+        raw_structure_data.n_structures *
+            topology.n_open_shell_electrons,
         0);
     topology.structure_open_shell_mask.resize(
-        xmvb::to_size(raw_structure_data.n_structures) *
-            xmvb::to_size(topology.n_open_shell_electrons),
+        raw_structure_data.n_structures *
+            topology.n_open_shell_electrons,
         1);
   }
 
@@ -967,8 +988,8 @@ StructurePairTopology build_structure_pair_topology(
       const int right_orbital =
           structure_orbitals[active_start + 2 * pair_index + 1] - 1;
       const std::size_t pair_offset =
-          (xmvb::to_size(structure_index) * topology.n_active_beta_electrons +
-           xmvb::to_size(pair_index)) *
+          (structure_index * topology.n_active_beta_electrons +
+           pair_index) *
           2;
       topology.structure_pair_orbital_indices[pair_offset] = left_orbital;
       topology.structure_pair_orbital_indices[pair_offset + 1] = right_orbital;
@@ -981,8 +1002,8 @@ StructurePairTopology build_structure_pair_topology(
                              open_shell_index] -
           1;
       topology.structure_open_shell_orbitals[
-          xmvb::to_size(structure_index) * topology.n_open_shell_electrons +
-          xmvb::to_size(open_shell_index)] = orbital_index;
+          structure_index * topology.n_open_shell_electrons +
+          open_shell_index] = orbital_index;
     }
   }
   return topology;
@@ -1068,7 +1089,7 @@ public:
         raw_structure_selection_name_(
             xmvb::vb::raw_structure_selection_mode_name(load_result.raw_structure_selection)),
         source_raw_structure_count_(load_result.source_raw_structure_count),
-        algorithm_name_(xmvb::vb::vb_scf_algorithm_name(optimizer_options.algorithm)),
+        algorithm_name_("original"),
         optimizer_backend_name_(
             xmvb::vb::cpp_vb_scf_optimizer_backend_name(optimizer_options.backend)),
         n_structures_(load_result.raw_structure_data.n_structures),
@@ -1112,9 +1133,10 @@ public:
     write_binary_container(
         step_dir / "active_orbital_overlap_matrix_f64.bin",
         snapshot.active_orbital_overlap_matrix);
-    write_binary_container(
+    write_binary_buffer<double>(
         step_dir / "active_one_electron_integrals_f64.bin",
-        snapshot.active_one_electron_integrals);
+        snapshot.active_one_electron_integrals.data(),
+        static_cast<std::size_t>(snapshot.active_one_electron_integrals.size()));
     write_binary_container(
         step_dir / "packed_active_two_electron_integrals_f64.bin",
         snapshot.packed_active_two_electron_integrals);
@@ -1514,10 +1536,6 @@ void apply_ao_integral_source_argument(
     options->ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
     return;
   }
-  if (source_name == "legacy") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::LegacyRuntime;
-    return;
-  }
   if (source_name == "libcint_cpp") {
     options->ao_integral_source = xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
     return;
@@ -1534,10 +1552,6 @@ void apply_orbital_guess_source_argument(
     xmvb::vb::CppVbInputLoadOptions* options) {
   if (options == nullptr) {
     throw std::invalid_argument("load options must not be null");
-  }
-  if (source_name == "legacy") {
-    options->orbital_guess_source = xmvb::vb::OrbitalGuessSource::LegacyRuntime;
-    return;
   }
   if (source_name == "cpp") {
     options->orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
@@ -1624,6 +1638,8 @@ void print_usage() {
                " [--verbose true|false]"
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
+               "\nDefaults: nonredundant_truncated_newton uses 1.5e-3 gradient "
+               "and 1e-6 energy tolerances unless explicitly overridden."
                " [--nonredundant-polish-max-iterations <count>]"
                " [--nonredundant-polish-gradient-scale <value>]"
                " [--nonredundant-truncated-newton-max-cg-iterations <count|0=auto>]"
@@ -1631,9 +1647,9 @@ void print_usage() {
                " [--nonredundant-truncated-newton-hvp-step-size <value>]"
                " [--nonredundant-truncated-newton-transport-history-size <count>]"
                " [--standard-two-electron-mode auto|exact|ri]"
-               " [--ao-integral-source auto|legacy|libcint_cpp|runtime_hcore]"
+               " [--ao-integral-source auto|libcint_cpp|runtime_hcore]"
                " [--skip-orbital-guess true|false]"
-               " [--orbital-guess-source legacy|cpp]"
+               " [--orbital-guess-source cpp]"
                " [--raw-structure-selection full|covalent]"
                " [--adaptive-seed-selection full|covalent]"
                " [--adaptive-determinant-score-mode proposal_all|outside_only]"
@@ -1646,6 +1662,7 @@ void print_usage() {
                " [--adaptive-minimum-candidate-score <value>]"
                " [--adaptive-verbose true|false]"
                " [--dump-trace-dir <dataset_root>]"
+               " [--dump-final-orbital-value-table-bin <path>]"
                " [--onnx-model <path>]"
                " [--ml-initial-step-scale <value>]"
                " [--ml-minimum-step-scale <value>]"
@@ -1681,7 +1698,7 @@ int main(int argc, char** argv) {
   options.accepted_iteration_callback_requires_full_snapshot = false;
   options.max_iterations = 2000;
   options.gradient_tolerance = 1.0e-3;
-  options.energy_tolerance = 1.0e-5;
+  options.energy_tolerance = 1.0e-7;
   options.initial_step_size = 1.0e20;
   options.minimum_step_size = 1.0e-20;
   options.history_size = 100;
@@ -1695,9 +1712,13 @@ int main(int argc, char** argv) {
   deepvbh_direct_options.inference_options.backend = "onnx_runtime";
 
   std::string dump_trace_dir;
+  std::string dump_final_orbital_value_table_bin;
   bool user_specified_ao_integral_source = false;
   bool user_specified_raw_structure_selection = false;
   bool user_specified_max_iterations = false;
+  bool user_specified_gradient_tolerance = false;
+  bool user_specified_energy_tolerance = false;
+  bool user_specified_nonredundant_polish_max_iterations = false;
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
@@ -1708,18 +1729,20 @@ int main(int argc, char** argv) {
         apply_structure_space_mode_argument(argument_value, &structure_space_mode);
       } else if (argument_name == "--algorithm") {
         throw std::invalid_argument(
-            "--algorithm is no longer supported; set the algorithm via the input .xmi "
-            "keywords such as tbvbscf");
+            "--algorithm is no longer supported; use the standard VBSCF input deck");
       } else if (argument_name == "--max-iterations") {
         user_specified_max_iterations = true;
         options.max_iterations = std::stoi(argument_value);
       } else if (argument_name == "--verbose") {
         options.verbose = parse_bool_argument(argument_value);
       } else if (argument_name == "--gradient-tolerance") {
+        user_specified_gradient_tolerance = true;
         options.gradient_tolerance = std::stod(argument_value);
       } else if (argument_name == "--energy-tolerance") {
+        user_specified_energy_tolerance = true;
         options.energy_tolerance = std::stod(argument_value);
       } else if (argument_name == "--nonredundant-polish-max-iterations") {
+        user_specified_nonredundant_polish_max_iterations = true;
         options.nonredundant_polish_max_iterations = std::stoi(argument_value);
       } else if (argument_name == "--nonredundant-polish-gradient-scale") {
         options.nonredundant_polish_gradient_scale = std::stod(argument_value);
@@ -1778,6 +1801,8 @@ int main(int argc, char** argv) {
         adaptive_options.verbose = parse_bool_argument(argument_value);
       } else if (argument_name == "--dump-trace-dir") {
         dump_trace_dir = argument_value;
+      } else if (argument_name == "--dump-final-orbital-value-table-bin") {
+        dump_final_orbital_value_table_bin = argument_value;
       } else if (argument_name == "--onnx-model") {
         deepvbh_options.inference_options.onnx_model_path = argument_value;
         deepvbh_direct_options.inference_options.onnx_model_path = argument_value;
@@ -1820,6 +1845,24 @@ int main(int argc, char** argv) {
     load_options.ao_integral_source =
         xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
   }
+  load_options.build_ao_effective_one_electron_graph =
+      options.backend ==
+          xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton &&
+      options.nonredundant_truncated_newton_hvp_mode ==
+          xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction;
+
+  if (options.backend ==
+      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+    // TNHVP spends most tail wall time on tiny projected-gradient improvements
+    // after the energy has stabilized. Use a slightly looser standalone default
+    // for this backend while preserving explicit command-line tolerances.
+    if (!user_specified_gradient_tolerance) {
+      options.gradient_tolerance = 1.5e-3;
+    }
+    if (!user_specified_energy_tolerance) {
+      options.energy_tolerance = 1.0e-6;
+    }
+  }
 
   if (structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
     if (options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx ||
@@ -1845,18 +1888,19 @@ int main(int argc, char** argv) {
   const auto command_start_steady_time = std::chrono::steady_clock::now();
   const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(input_path, load_options);
   const auto& input = load_result.input;
-  options.algorithm = load_result.requested_algorithm;
+  if (!user_specified_nonredundant_polish_max_iterations &&
+      options.backend ==
+          xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+    // Truncated-Newton already pays the main second-order cost on the
+    // projected directions. A short full-space polish usually reaches the
+    // legacy dual tolerance faster than continuing the reduced-space tail.
+    options.nonredundant_polish_max_iterations = 12;
+  }
   if (!user_specified_max_iterations) {
     // Keep the standalone SCF loop aligned with the legacy deck semantics:
     // `.xmi` `itmax` controls the maximum iteration count, and omitted `itmax`
     // falls back to the project default of 2000.
     options.max_iterations = load_result.requested_scf_max_iterations;
-  }
-
-  if (options.algorithm == xmvb::vb::VBSCFAlgorithm::BiorthogonalExactSelected &&
-      structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
-    throw std::invalid_argument(
-        "tbvbscf is not yet wired into adaptive_mvp structure-space expansion");
   }
 
   print_run_header(
@@ -1873,11 +1917,6 @@ int main(int argc, char** argv) {
         build_terminal_iteration_logger());
   }
   if (!dump_trace_dir.empty()) {
-    if (options.algorithm != xmvb::vb::VBSCFAlgorithm::Original) {
-      throw std::invalid_argument(
-          "--dump-trace-dir currently supports only input files that request "
-          "the original VBSCF algorithm");
-    }
     trace_writer = std::make_shared<AcceptedIterationTraceDatasetWriter>(
         dump_trace_dir,
         input_path,
@@ -1894,9 +1933,7 @@ int main(int argc, char** argv) {
   }
 
   deepvbh_options.optimizer_options = options;
-  deepvbh_options.inference_options.algorithm = options.algorithm;
   deepvbh_direct_options.optimizer_options = options;
-  deepvbh_direct_options.inference_options.algorithm = options.algorithm;
   xmvb::vb::CppVbScfOptimizerResult result;
   std::optional<xmvb::vb::AdaptiveStructureSpaceOptimizerResult> adaptive_result;
   if (structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
@@ -1933,6 +1970,16 @@ int main(int argc, char** argv) {
   if (trace_writer != nullptr) {
     trace_writer->finalize(result);
   }
+  if (!dump_final_orbital_value_table_bin.empty()) {
+    // The final orbital table is the minimal state needed for reduced-chart
+    // finite-difference diagnostics.  Keep this separate from trace dumping so
+    // production convergence tests do not pay for per-iteration matrix dumps.
+    write_binary_container(
+        fs::path(dump_final_orbital_value_table_bin),
+        result.optimized_input.orbital_preparation_input.orbital_value_table);
+  }
+  const bool command_converged =
+      adaptive_result.has_value() ? adaptive_result->converged : result.converged;
   std::optional<fs::path> molden_output_path;
   if (load_result.request_molden_output) {
     molden_output_path =
@@ -1951,9 +1998,6 @@ int main(int argc, char** argv) {
       result.final_total_energy -
       load_result.nuclear_repulsion_energy -
       result.final_one_electron_reference_energy;
-
-  const bool command_converged =
-      adaptive_result.has_value() ? adaptive_result->converged : result.converged;
   const auto command_finish_time = std::chrono::system_clock::now();
   const double total_job_wall_time_seconds =
       std::chrono::duration<double>(
@@ -2109,38 +2153,7 @@ int main(int argc, char** argv) {
         "Final projected |g|_2",
         format_scientific_double(result.final_projected_gradient_l2_norm, 8));
   }
-
   print_log_subsection_title("Timing Breakdown (Wall Time)");
-  print_log_field(
-      "Runtime extraction wall time",
-      format_seconds(load_result.runtime_timings.total_seconds));
-  print_log_field(
-      "Read input wall time",
-      format_seconds(load_result.runtime_timings.read_input_seconds));
-  print_log_field(
-      "VB input wall time",
-      format_seconds(load_result.runtime_timings.vb_input_seconds));
-  print_log_field(
-      "Libcint buffer setup wall time",
-      format_seconds(load_result.runtime_timings.libcint_buffer_setup_seconds));
-  print_log_field(
-      "HF setup wall time",
-      format_seconds(load_result.runtime_timings.hf_setup_seconds));
-  print_log_field(
-      "VB prep wall time",
-      format_seconds(load_result.runtime_timings.vbprep_seconds));
-  print_log_field(
-      "VB guess wall time",
-      format_seconds(load_result.runtime_timings.vbguess_seconds));
-  print_log_field(
-      "One-electron integral wall time",
-      format_seconds(load_result.runtime_timings.one_electron_integrals_seconds));
-  print_log_field(
-      "Two-electron integral wall time",
-      format_seconds(load_result.runtime_timings.two_electron_integrals_seconds));
-  print_log_field(
-      "Output copy wall time",
-      format_seconds(load_result.runtime_timings.output_copy_seconds));
   print_log_field(
       "AO integral provider wall time",
       format_seconds(load_result.ao_integral_provider_seconds));

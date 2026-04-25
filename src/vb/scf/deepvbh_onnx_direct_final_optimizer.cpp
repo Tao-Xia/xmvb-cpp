@@ -18,7 +18,7 @@ double gradient_infinity_norm(
     const std::vector<int>& differentiable_parameter_indices) {
   double norm = 0.0;
   for (const int parameter_index : differentiable_parameter_indices) {
-    norm = std::max(norm, std::abs(gradient[xmvb::to_size(parameter_index)]));
+    norm = std::max(norm, std::abs(gradient[parameter_index]));
   }
   return norm;
 }
@@ -28,33 +28,10 @@ double gradient_l2_norm(
     const std::vector<int>& differentiable_parameter_indices) {
   double squared_norm = 0.0;
   for (const int parameter_index : differentiable_parameter_indices) {
-    const double value = gradient[xmvb::to_size(parameter_index)];
+    const double value = gradient[parameter_index];
     squared_norm += value * value;
   }
   return std::sqrt(squared_norm);
-}
-
-int get_sparse_coefficient_count(
-    const OrbitalPreparationInput& orbital_preparation_input,
-    int orbital_index) {
-  const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-  const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-
-  int coefficient_count = 0;
-  while (coefficient_count < n_basis_functions) {
-    const int basis_function_index =
-        orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
-    if (basis_function_index == 0) {
-      break;
-    }
-    ++coefficient_count;
-  }
-  return coefficient_count;
 }
 
 std::vector<int> collect_differentiable_parameter_indices(
@@ -62,7 +39,9 @@ std::vector<int> collect_differentiable_parameter_indices(
   std::vector<int> differentiable_parameter_indices;
   for (int orbital_index = 0; orbital_index < orbital_preparation_input.n_orbitals; ++orbital_index) {
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        differentiable_sparse_orbital_parameter_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
       differentiable_parameter_indices.push_back(
           orbital_index * orbital_preparation_input.n_basis_functions + coefficient_index);
@@ -119,7 +98,7 @@ bool is_finite_vector(
     const std::vector<double>& values,
     const std::vector<int>& differentiable_parameter_indices) {
   for (const int parameter_index : differentiable_parameter_indices) {
-    if (!std::isfinite(values[xmvb::to_size(parameter_index)])) {
+    if (!std::isfinite(values[parameter_index])) {
       return false;
     }
   }
@@ -131,7 +110,7 @@ double differentiable_direction_norm(
     const std::vector<int>& differentiable_parameter_indices) {
   double squared_norm = 0.0;
   for (const int parameter_index : differentiable_parameter_indices) {
-    const double value = direction[xmvb::to_size(parameter_index)];
+    const double value = direction[parameter_index];
     squared_norm += value * value;
   }
   return std::sqrt(squared_norm);
@@ -146,8 +125,8 @@ CppVbInput apply_sparse_direction(
   auto& orbital_value_table =
       updated_input.orbital_preparation_input.orbital_value_table;
   for (const int parameter_index : differentiable_parameter_indices) {
-    orbital_value_table[xmvb::to_size(parameter_index)] +=
-        step_scale * direction[xmvb::to_size(parameter_index)];
+    orbital_value_table[parameter_index] +=
+        step_scale * direction[parameter_index];
   }
   return updated_input;
 }

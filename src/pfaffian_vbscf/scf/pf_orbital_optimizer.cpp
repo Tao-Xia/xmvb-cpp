@@ -32,7 +32,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = input.n_basis_functions;
   const int explicit_count =
-      input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -41,7 +41,7 @@ int get_sparse_coefficient_count(
   while (coefficient_count < n_basis_functions) {
     const int basis_index =
         input.orbital_basis_index_table[
-            xmvb::to_size(orbital_index) * n_basis_functions +
+            orbital_index * n_basis_functions +
             coefficient_count];
     if (basis_index == 0) {
       break;
@@ -76,10 +76,10 @@ Eigen::VectorXd pack_parameter_vector(
        parameter_offset < parameters.size();
        ++parameter_offset) {
     const int parameter_index =
-        parameter_indices[xmvb::to_size(parameter_offset)];
+        parameter_indices[parameter_offset];
     parameters[parameter_offset] =
         input.orbital_preparation_input.orbital_value_table[
-            xmvb::to_size(parameter_index)];
+            parameter_index];
   }
   return parameters;
 }
@@ -92,9 +92,9 @@ void unpack_parameter_vector(
        parameter_offset < parameters.size();
        ++parameter_offset) {
     const int parameter_index =
-        parameter_indices[xmvb::to_size(parameter_offset)];
+        parameter_indices[parameter_offset];
     input->orbital_preparation_input.orbital_value_table[
-        xmvb::to_size(parameter_index)] =
+        parameter_index] =
         parameters[parameter_offset];
   }
 }
@@ -135,10 +135,10 @@ public:
          parameter_offset < parameters.size();
          ++parameter_offset) {
       const int parameter_index =
-          parameter_indices_[xmvb::to_size(parameter_offset)];
+          parameter_indices_[parameter_offset];
       gradient[parameter_offset] =
           gradient_result.sparse_orbital_energy_gradient[
-              xmvb::to_size(parameter_index)];
+              parameter_index];
     }
 
     last_gradient_result_ = gradient_result;

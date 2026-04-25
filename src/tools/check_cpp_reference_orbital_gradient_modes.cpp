@@ -34,7 +34,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      orbital_preparation_input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -43,7 +43,7 @@ int get_sparse_coefficient_count(
   while (coefficient_count < n_basis_functions) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
+            [orbital_index * n_basis_functions + coefficient_count];
     if (basis_function_index == 0) {
       break;
     }
@@ -142,8 +142,8 @@ int main(int argc, char** argv) {
     ranked_parameters.reserve(differentiable_parameter_indices.size());
     for (const int parameter_index : differentiable_parameter_indices) {
       ranked_parameters.emplace_back(
-          std::abs(gradient_result.sparse_orbital_reference_energy_gradient[xmvb::to_size(
-              parameter_index)]),
+          std::abs(gradient_result.sparse_orbital_reference_energy_gradient[
+              parameter_index]),
           parameter_index);
     }
     std::sort(
@@ -194,7 +194,7 @@ int main(int argc, char** argv) {
         gradient_result.orbital_preparation_result.auxiliary_orbital_matrix.size(),
         0.0);
     const std::vector<double> zero_active_overlap_gradient(
-        xmvb::to_size(input.orbital_preparation_input.n_active_orbitals) *
+        input.orbital_preparation_input.n_active_orbitals *
             input.orbital_preparation_input.n_active_orbitals,
         0.0);
 
@@ -217,13 +217,13 @@ int main(int argc, char** argv) {
     std::cout << "reported_parameters = " << n_to_report << '\n';
 
     for (int report_index = 0; report_index < n_to_report; ++report_index) {
-      const int parameter_index = ranked_parameters[xmvb::to_size(report_index)].second;
+      const int parameter_index = ranked_parameters[report_index].second;
       xmvb::vb::CppVbInput plus_input = input;
       xmvb::vb::CppVbInput minus_input = input;
-      plus_input.orbital_preparation_input.orbital_value_table[xmvb::to_size(
-          parameter_index)] += options.step;
-      minus_input.orbital_preparation_input.orbital_value_table[xmvb::to_size(
-          parameter_index)] -= options.step;
+      plus_input.orbital_preparation_input.orbital_value_table[
+          parameter_index] += options.step;
+      minus_input.orbital_preparation_input.orbital_value_table[
+          parameter_index] -= options.step;
       const double plus_energy =
           evaluate_reference_energy(
               plus_input,
@@ -239,9 +239,9 @@ int main(int argc, char** argv) {
       std::cout << "parameter[" << report_index << "]"
                 << " index=" << parameter_index
                 << " current=" << gradient_result.sparse_orbital_reference_energy_gradient[
-                       xmvb::to_size(parameter_index)]
+                       parameter_index]
                 << " custom=" << custom_reference_gradient[
-                       xmvb::to_size(parameter_index)]
+                       parameter_index]
                 << " fd=" << finite_difference
                 << '\n';
     }

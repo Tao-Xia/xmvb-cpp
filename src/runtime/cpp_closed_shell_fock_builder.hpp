@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vector>
+#include <Eigen/Core>
 
 #include "vb/orbital/ao_integral_input.hpp"
 
@@ -14,8 +14,8 @@ namespace xmvb::vb {
  */
 class CppClosedShellFockBuilder {
 public:
-  std::vector<double> build(
-      const std::vector<double>& density_projector,
+  Eigen::MatrixXd build(
+      const Eigen::Ref<const Eigen::MatrixXd>& density_projector,
       const AoIntegralInput& ao_integral_input) const;
 };
 

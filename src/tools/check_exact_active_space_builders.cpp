@@ -97,7 +97,7 @@ std::vector<double> build_dense_active_coefficients(
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) {
   if (auxiliary_orbital_matrix.size() !=
-      xmvb::to_size(n_basis_functions) * n_basis_functions) {
+      n_basis_functions * n_basis_functions) {
     throw std::invalid_argument("auxiliary orbital matrix size mismatch");
   }
 
@@ -110,7 +110,7 @@ std::vector<double> build_dense_active_coefficients(
       n_active_orbitals);
 
   std::vector<double> dense_active_coefficients(
-      xmvb::to_size(n_basis_functions) * n_active_orbitals,
+      n_basis_functions * n_active_orbitals,
       0.0);
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
@@ -118,7 +118,7 @@ std::vector<double> build_dense_active_coefficients(
     for (int active_orbital_index = 0;
          active_orbital_index < n_active_orbitals;
          ++active_orbital_index) {
-      dense_active_coefficients[xmvb::to_size(basis_function_index) * n_active_orbitals +
+      dense_active_coefficients[basis_function_index * n_active_orbitals +
                                 active_orbital_index] =
           active_auxiliary_orbitals(basis_function_index, active_orbital_index);
     }
@@ -153,13 +153,13 @@ UniquePermutationSet enumerate_unique_symmetry_permutations(
     for (int permutation_index = 0;
          permutation_index < unique_permutations.count;
          ++permutation_index) {
-      if (unique_permutations.values[xmvb::to_size(permutation_index)] == permutation) {
+      if (unique_permutations.values[permutation_index] == permutation) {
         already_seen = true;
         break;
       }
     }
     if (!already_seen) {
-      unique_permutations.values[xmvb::to_size(unique_permutations.count)] = permutation;
+      unique_permutations.values[unique_permutations.count] = permutation;
       ++unique_permutations.count;
     }
   }
@@ -174,7 +174,7 @@ xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron
     throw std::invalid_argument("n_basis_functions must be positive");
   }
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (inactive_density_matrix.size() != matrix_size ||
       ao_integral_input.ao_core_hamiltonian_matrix.size() != matrix_size) {
     throw std::invalid_argument("AO matrix size mismatch");
@@ -270,7 +270,7 @@ xmvb::vb::ActiveSpaceTwoElectronResult build_reference_active_space_two_electron
           n_inactive_doubly_occupied_orbitals,
           n_active_orbitals);
   const std::size_t active_tensor_size =
-      xmvb::to_size(n_active_orbitals) *
+      n_active_orbitals *
       n_active_orbitals *
       n_active_orbitals *
       n_active_orbitals;
@@ -279,12 +279,12 @@ xmvb::vb::ActiveSpaceTwoElectronResult build_reference_active_space_two_electron
   n_threads = omp_get_max_threads();
 #endif
   std::vector<std::vector<double>> partial_tensors(
-      xmvb::to_size(n_threads),
+      n_threads,
       std::vector<double>(active_tensor_size, 0.0));
 
   const auto active_tensor_index =
       [n_active_orbitals](int p, int q, int r, int s) -> std::size_t {
-    return (((xmvb::to_size(p) * n_active_orbitals + q) * n_active_orbitals + r) *
+    return (((p * n_active_orbitals + q) * n_active_orbitals + r) *
             n_active_orbitals) +
         s;
   };
@@ -295,14 +295,14 @@ xmvb::vb::ActiveSpaceTwoElectronResult build_reference_active_space_two_electron
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
-    auto& local_tensor = partial_tensors[xmvb::to_size(thread_index)];
+    auto& local_tensor = partial_tensors[thread_index];
 
 #pragma omp for schedule(static)
     for (std::ptrdiff_t integral_offset = 0;
          integral_offset < static_cast<std::ptrdiff_t>(
                                ao_integral_input.ao_two_electron_integral_values.size());
          ++integral_offset) {
-      const std::size_t integral_index = xmvb::to_size(integral_offset);
+      const std::size_t integral_index = integral_offset;
       const double ao_integral_value =
           ao_integral_input.ao_two_electron_integral_values[integral_index];
       const int i = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4];
@@ -325,20 +325,20 @@ xmvb::vb::ActiveSpaceTwoElectronResult build_reference_active_space_two_electron
            permutation_index < permutations.count;
            ++permutation_index) {
         const auto& permutation =
-            permutations.values[xmvb::to_size(permutation_index)];
+            permutations.values[permutation_index];
         const int a = permutation[0];
         const int b = permutation[1];
         const int c = permutation[2];
         const int d = permutation[3];
 
         const double* coeff_a =
-            dense_active_coefficients.data() + xmvb::to_size(a) * n_active_orbitals;
+            dense_active_coefficients.data() + a * n_active_orbitals;
         const double* coeff_b =
-            dense_active_coefficients.data() + xmvb::to_size(b) * n_active_orbitals;
+            dense_active_coefficients.data() + b * n_active_orbitals;
         const double* coeff_c =
-            dense_active_coefficients.data() + xmvb::to_size(c) * n_active_orbitals;
+            dense_active_coefficients.data() + c * n_active_orbitals;
         const double* coeff_d =
-            dense_active_coefficients.data() + xmvb::to_size(d) * n_active_orbitals;
+            dense_active_coefficients.data() + d * n_active_orbitals;
         for (int p = 0; p < n_active_orbitals; ++p) {
           if (coeff_a[p] == 0.0) {
             continue;
@@ -377,12 +377,11 @@ xmvb::vb::ActiveSpaceTwoElectronResult build_reference_active_space_two_electron
   }
 
   const std::size_t packed_size =
-      xmvb::to_size(
-          xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
-              n_active_orbitals - 1,
-              n_active_orbitals - 1,
-              n_active_orbitals - 1,
-              n_active_orbitals - 1)) +
+      xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
+          n_active_orbitals - 1,
+          n_active_orbitals - 1,
+          n_active_orbitals - 1,
+          n_active_orbitals - 1) +
       1;
   std::vector<double> packed_active_two_electron_integrals(packed_size, 0.0);
   for (int p = 0; p < n_active_orbitals; ++p) {
@@ -396,7 +395,7 @@ xmvb::vb::ActiveSpaceTwoElectronResult build_reference_active_space_two_electron
                   q,
                   r,
                   s);
-          packed_active_two_electron_integrals[xmvb::to_size(packed_index)] =
+          packed_active_two_electron_integrals[packed_index] =
               active_two_electron_tensor[active_tensor_index(p, q, r, s)];
         }
       }

@@ -28,7 +28,7 @@ double compute_average_diagonal(
   }
   double diagonal_sum = 0.0;
   for (int index = 0; index < dimension; ++index) {
-    diagonal_sum += matrix[xmvb::to_size(index) * dimension + index];
+    diagonal_sum += matrix[index * dimension + index];
   }
   return diagonal_sum / static_cast<double>(dimension);
 }
@@ -38,7 +38,7 @@ Matrix dense_mat(
     int dimension,
     const char* label) {
   const std::size_t expected_size =
-      xmvb::to_size(dimension) * xmvb::to_size(dimension);
+      dimension * dimension;
   if (data.size() != expected_size) {
     throw std::invalid_argument(std::string(label) + " size does not match the matrix dimension");
   }
@@ -46,17 +46,17 @@ Matrix dense_mat(
   Matrix matrix = Matrix::Zero(dimension, dimension);
   for (int col = 0; col < dimension; ++col) {
     for (int row = 0; row < dimension; ++row) {
-      matrix(row, col) = data[xmvb::to_size(col) * dimension + row];
+      matrix(row, col) = data[col * dimension + row];
     }
   }
   return matrix;
 }
 
 ScalarBuffer column_major_storage(const ConstMatrixRef& matrix) {
-  ScalarBuffer data(xmvb::to_size(matrix.rows()) * matrix.cols(), 0.0);
+  ScalarBuffer data(matrix.rows() * matrix.cols(), 0.0);
   for (Eigen::Index col = 0; col < matrix.cols(); ++col) {
     for (Eigen::Index row = 0; row < matrix.rows(); ++row) {
-      data[xmvb::to_size(col) * matrix.rows() + row] = matrix(row, col);
+      data[col * matrix.rows() + row] = matrix(row, col);
     }
   }
   return data;

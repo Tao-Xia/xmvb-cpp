@@ -34,7 +34,7 @@ inline ScalarBuffer encode_antisymm(const ConstMatrixRef& matrix) {
 
   const Eigen::Index dimension = matrix.rows();
   ScalarBuffer packed;
-  packed.reserve(xmvb::to_size(dimension * (dimension - 1) / 2));
+  packed.reserve(dimension * (dimension - 1) / 2);
   for (Eigen::Index col = 1; col < dimension; ++col) {
     for (Eigen::Index row = 0; row < col; ++row) {
       if (std::abs(matrix(row, row)) > 1.0e-12 ||

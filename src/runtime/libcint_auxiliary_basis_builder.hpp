@@ -28,7 +28,7 @@ struct LibcintAuxiliaryBasisBuilderOptions {
  *
  * This is a pure C++ implementation of the generated `GEN-A_n` / `GEN-A_n*`
  * auxiliary-basis policy used by the forthcoming RI path. It intentionally
- * does not depend on the legacy runtime's hidden basis state.
+ * does not depend on hidden state outside the C++ loader.
  */
 class LibcintAuxiliaryBasisBuilder {
 public:

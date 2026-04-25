@@ -16,23 +16,6 @@ namespace {
 
 using SparseTriplet = Eigen::Triplet<double, int>;
 
-void validate_ordered_pair_cache_shape(
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_spin_pair_cache,
-    int n_unique_determinants,
-    const char* spin_label) {
-  if (n_unique_determinants < 0) {
-    throw std::invalid_argument("n_unique_determinants must be non-negative");
-  }
-  const std::size_t expected_size =
-      xmvb::to_size(n_unique_determinants) *
-      xmvb::to_size(n_unique_determinants);
-  if (ordered_spin_pair_cache.size() != expected_size) {
-    throw std::invalid_argument(
-        std::string("ordered ") + spin_label +
-        " pair cache size does not match n_unique_determinants^2");
-  }
-}
-
 void accumulate_sparse_projection_triplets(
     const OppositeSpinPackedPairProjection& projection,
     int left_unique_index,
@@ -43,7 +26,7 @@ void accumulate_sparse_projection_triplets(
        ++entry_index) {
     const int packed_pair_index = projection.packed_pair_indices[entry_index];
     const double packed_pair_value = projection.packed_pair_values[entry_index];
-    (*triplets_by_packed_pair)[xmvb::to_size(packed_pair_index)]
+    (*triplets_by_packed_pair)[packed_pair_index]
         .emplace_back(left_unique_index, right_unique_index, packed_pair_value);
   }
 }
@@ -73,10 +56,6 @@ OppositeSpinPerSpinMatrixChannels build_opposite_spin_per_spin_matrix_channels_i
     const std::vector<SpinDeterminantPairEvaluation>& ordered_spin_pair_cache,
     int n_unique_determinants,
     const char* spin_label) {
-  validate_ordered_pair_cache_shape(
-      ordered_spin_pair_cache,
-      n_unique_determinants,
-      spin_label);
 
   OppositeSpinPerSpinMatrixChannels channels;
   channels.n_unique_determinants = n_unique_determinants;
@@ -90,19 +69,19 @@ OppositeSpinPerSpinMatrixChannels build_opposite_spin_per_spin_matrix_channels_i
           n_unique_determinants);
 
   channels.has_first_order_projection_by_ordered_pair.assign(
-      xmvb::to_size(channels.n_ordered_unique_pairs),
+      channels.n_ordered_unique_pairs,
       0u);
   channels.has_inverse_projection_by_ordered_pair.assign(
-      xmvb::to_size(channels.n_ordered_unique_pairs),
+      channels.n_ordered_unique_pairs,
       0u);
 
   std::vector<std::vector<SparseTriplet>> first_order_triplets_by_packed_pair(
-      xmvb::to_size(channels.n_packed_active_pairs));
+      channels.n_packed_active_pairs);
   std::vector<std::vector<SparseTriplet>> inverse_overlap_triplets_by_packed_pair(
-      xmvb::to_size(channels.n_packed_active_pairs));
+      channels.n_packed_active_pairs);
 
   channels.inverse_projected_image_by_packed_pair.resize(
-      xmvb::to_size(channels.n_packed_active_pairs));
+      channels.n_packed_active_pairs);
   for (auto& projected_image_matrix : channels.inverse_projected_image_by_packed_pair) {
     projected_image_matrix =
         Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
@@ -181,9 +160,9 @@ OppositeSpinPerSpinMatrixChannels build_opposite_spin_per_spin_matrix_channels_i
         for (int packed_pair_index = 0;
              packed_pair_index < channels.n_packed_active_pairs;
              ++packed_pair_index) {
-          channels.inverse_projected_image_by_packed_pair[xmvb::to_size(
-              packed_pair_index)](left_unique_index, right_unique_index) =
-              projected_pair_values[xmvb::to_size(packed_pair_index)];
+          channels.inverse_projected_image_by_packed_pair[
+              packed_pair_index](left_unique_index, right_unique_index) =
+              projected_pair_values[packed_pair_index];
         }
       } else if (projection_has_any_payload(pair_cache.inverse_overlap_projection)) {
         throw std::invalid_argument(

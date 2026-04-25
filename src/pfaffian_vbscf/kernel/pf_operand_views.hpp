@@ -19,7 +19,7 @@ inline const Matrix& kernel_power_matrix(
   if (power >= static_cast<int>(cache.kernel_powers.size())) {
     throw std::invalid_argument("kernel power is not available in the cache");
   }
-  return cache.kernel_powers[xmvb::to_size(power)];
+  return cache.kernel_powers[power];
 }
 
 inline const Matrix& kernel_power_times_left_matrix(
@@ -31,7 +31,7 @@ inline const Matrix& kernel_power_times_left_matrix(
   if (power >= static_cast<int>(cache.kernel_power_times_left.size())) {
     throw std::invalid_argument("kernel power-times-left is not available in the cache");
   }
-  return cache.kernel_power_times_left[xmvb::to_size(power)];
+  return cache.kernel_power_times_left[power];
 }
 
 inline const Matrix& kernel_power_times_right_matrix(
@@ -43,7 +43,7 @@ inline const Matrix& kernel_power_times_right_matrix(
   if (power >= static_cast<int>(cache.kernel_power_times_right.size())) {
     throw std::invalid_argument("kernel power-times-right is not available in the cache");
   }
-  return cache.kernel_power_times_right[xmvb::to_size(power)];
+  return cache.kernel_power_times_right[power];
 }
 
 inline const Matrix& kernel_power_times_left_sigma_right_matrix(
@@ -56,7 +56,7 @@ inline const Matrix& kernel_power_times_left_sigma_right_matrix(
     throw std::invalid_argument(
         "kernel power-times-left-sigma-right is not available in the cache");
   }
-  return cache.kernel_power_times_left_sigma_right[xmvb::to_size(power)];
+  return cache.kernel_power_times_left_sigma_right[power];
 }
 
 inline const Matrix& right_sigma_times_kernel_power_times_left_sigma_right_matrix(
@@ -71,7 +71,7 @@ inline const Matrix& right_sigma_times_kernel_power_times_left_sigma_right_matri
         "right-sigma-times-kernel-power-times-left-sigma-right is not available in the cache");
   }
   return cache.right_sigma_times_kernel_power_times_left_sigma_right[
-      xmvb::to_size(power)];
+      power];
 }
 
 inline const Matrix& trace_rdm_matrix(
@@ -83,7 +83,7 @@ inline const Matrix& trace_rdm_matrix(
   if (index >= static_cast<int>(cache.trace_rdms.size())) {
     throw std::invalid_argument("trace RDM is not available in the cache");
   }
-  return cache.trace_rdms[xmvb::to_size(index)];
+  return cache.trace_rdms[index];
 }
 
 inline const Matrix& materialize_source_matrix(

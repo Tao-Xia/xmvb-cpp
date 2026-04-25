@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 #include "vb/matrices/determinant_types.hpp"
@@ -54,8 +56,8 @@ public:
   DeterminantHamiltonianResult resolve(
       const std::vector<int>& occ_L,
       const std::vector<int>& occ_R,
-      const std::vector<double>& det_ovlp_mat,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& det_ovlp_mat,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act) const;
 
@@ -65,8 +67,8 @@ public:
   DeterminantHamiltonianResult resolve(
       const std::vector<int>& occ_L,
       const std::vector<int>& occ_R,
-      const std::vector<double>& det_ovlp_mat,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& det_ovlp_mat,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result) const;
 
@@ -81,10 +83,8 @@ public:
    *   left determinant.
    * @param occ_R Zero-based occupied orbital indices of the
    *   right determinant.
-   * @param det_ovlp_mat Column-major overlap submatrix between
-   *   occupied orbitals of the two determinants.
    * @param det_ovlp_result Precomputed determinant overlap quantities for
-   *   `det_ovlp_mat`.
+   *   the occupied-overlap submatrix of this determinant pair.
    * @param h1e_act Column-major one-electron integral matrix over
    *   the full orbital basis.
    * @param n_orbitals Total number of orbitals represented in
@@ -96,9 +96,8 @@ public:
   DeterminantHamiltonianResult resolve(
       const std::vector<int>& occ_L,
       const std::vector<int>& occ_R,
-      const std::vector<double>& det_ovlp_mat,
       const DeterminantOverlapResult& det_ovlp_result,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act) const;
 
@@ -108,15 +107,13 @@ public:
   DeterminantHamiltonianResult resolve(
       const std::vector<int>& occ_L,
       const std::vector<int>& occ_R,
-      const std::vector<double>& det_ovlp_mat,
       const DeterminantOverlapResult& det_ovlp_result,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result) const;
 
 private:
   DeterminantOverlapResolver overlap_resolver_;
-  VBSCFAlgorithm algorithm_ = VBSCFAlgorithm::Original;
 };
 
 }  // namespace xmvb::vb

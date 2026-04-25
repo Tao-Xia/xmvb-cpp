@@ -14,6 +14,7 @@
 #include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
 #include "vb/orbital/nonredundant_orbital_space.hpp"
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vb/scf/cpp_vb_scf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
@@ -51,6 +52,7 @@ struct Options {
   bool parameter_roundtrip = false;
   SelectionMode selection_mode = SelectionMode::Top;
   GradientSpace gradient_space = GradientSpace::Sparse;
+  bool print_analytic_branch_decomposition = false;
   int orbital_index_begin = 1;
   int orbital_index_end = std::numeric_limits<int>::max();
 };
@@ -60,7 +62,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      orbital_preparation_input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -69,7 +71,7 @@ int get_sparse_coefficient_count(
   while (coefficient_count < n_basis_functions) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
+            [orbital_index * n_basis_functions + coefficient_count];
     if (basis_function_index == 0) {
       break;
     }
@@ -109,7 +111,9 @@ std::vector<int> collect_differentiable_parameter_indices_in_orbital_range(
 
   const int clipped_begin = std::max(1, orbital_index_begin);
   const int clipped_end =
-      std::min(orbital_preparation_input.n_orbitals, orbital_index_end);
+      std::min(
+          static_cast<int>(orbital_preparation_input.n_orbitals),
+          orbital_index_end);
   std::vector<int> differentiable_parameter_indices;
   if (clipped_begin > clipped_end) {
     return differentiable_parameter_indices;
@@ -205,9 +209,6 @@ xmvb::vb::AoIntegralSource parse_ao_integral_source(const std::string& value) {
   if (value == "auto") {
     return xmvb::vb::AoIntegralSource::Auto;
   }
-  if (value == "legacy") {
-    return xmvb::vb::AoIntegralSource::LegacyRuntime;
-  }
   if (value == "libcint_cpp") {
     return xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
   }
@@ -220,20 +221,20 @@ xmvb::vb::AoIntegralSource parse_ao_integral_source(const std::string& value) {
 std::vector<std::unordered_set<int>> collect_orbital_support_sets(
     const xmvb::vb::OrbitalPreparationInput& orbital_preparation_input) {
   std::vector<std::unordered_set<int>> support_sets(
-      xmvb::to_size(orbital_preparation_input.n_orbitals));
+      orbital_preparation_input.n_orbitals);
   for (int orbital_index = 0;
        orbital_index < orbital_preparation_input.n_orbitals;
        ++orbital_index) {
     const int coefficient_count =
         get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
-    auto& support_set = support_sets[xmvb::to_size(orbital_index)];
-    support_set.reserve(xmvb::to_size(coefficient_count));
+    auto& support_set = support_sets[orbital_index];
+    support_set.reserve(coefficient_count);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) *
+              [orbital_index *
                    orbital_preparation_input.n_basis_functions +
                coefficient_index] -
           1;
@@ -265,13 +266,13 @@ std::vector<int> collect_added_support_parameter_indices(
     const int coefficient_count =
         get_sparse_coefficient_count(adapted_input, orbital_index);
     const auto& original_support =
-        original_support_sets[xmvb::to_size(orbital_index)];
+        original_support_sets[orbital_index];
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           adapted_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) *
+              [orbital_index *
                    adapted_input.n_basis_functions +
                coefficient_index] -
           1;
@@ -324,6 +325,7 @@ void print_usage() {
                "[--orbital-range begin:end] "
                "[--gradient-space sparse|reduced] "
                "[--nonredundant-adapt true|false] "
+               "[--print-analytic-branch-decomposition true|false] "
                "[--parameter-roundtrip true|false] "
                "[--selection top|added]\n";
 }
@@ -393,6 +395,10 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (argument_name == "--nonredundant-adapt") {
       options.nonredundant_adapt = parse_bool_argument(argument_value);
+      continue;
+    }
+    if (argument_name == "--print-analytic-branch-decomposition") {
+      options.print_analytic_branch_decomposition = parse_bool_argument(argument_value);
       continue;
     }
     if (argument_name == "--parameter-roundtrip") {
@@ -465,6 +471,77 @@ std::vector<double> build_selected_sparse_gradient(
     }
   }
   throw std::invalid_argument("unsupported gradient component");
+}
+
+double sparse_gradient_inf_norm_for_indices(
+    const std::vector<double>& gradient,
+    const std::vector<int>& parameter_indices) {
+  double gradient_inf_norm = 0.0;
+  for (const int parameter_index : parameter_indices) {
+    gradient_inf_norm = std::max(
+        gradient_inf_norm,
+        std::abs(gradient[parameter_index]));
+  }
+  return gradient_inf_norm;
+}
+
+void zero_all_active_space_gradients(
+    xmvb::vb::CppActiveSpaceGradientResult* result) {
+  if (result == nullptr) {
+    throw std::invalid_argument("active-space gradient result must not be null");
+  }
+  std::fill(
+      result->active_orbital_overlap_gradient.begin(),
+      result->active_orbital_overlap_gradient.end(),
+      0.0);
+  std::fill(
+      result->active_one_electron_gradient.begin(),
+      result->active_one_electron_gradient.end(),
+      0.0);
+  std::fill(
+      result->packed_active_two_electron_gradient.begin(),
+      result->packed_active_two_electron_gradient.end(),
+      0.0);
+}
+
+void print_sparse_branch_summary(
+    const char* label,
+    const std::vector<double>& branch_gradient,
+    const std::vector<int>& parameter_indices,
+    int count) {
+  std::vector<std::pair<double, int>> ranked_parameters;
+  ranked_parameters.reserve(parameter_indices.size());
+  for (const int parameter_index : parameter_indices) {
+    ranked_parameters.emplace_back(
+        std::abs(branch_gradient[parameter_index]),
+        parameter_index);
+  }
+  std::sort(
+      ranked_parameters.begin(),
+      ranked_parameters.end(),
+      [](const auto& left, const auto& right) {
+        if (left.first != right.first) {
+          return left.first > right.first;
+        }
+        return left.second < right.second;
+      });
+
+  const int n_to_report =
+      std::min(count, static_cast<int>(ranked_parameters.size()));
+  std::cout << "branch[" << label << "]"
+            << " analytic_gradient_inf_norm="
+            << sparse_gradient_inf_norm_for_indices(branch_gradient, parameter_indices)
+            << '\n';
+  std::cout << "branch[" << label << "]"
+            << " reported_parameters=" << n_to_report << '\n';
+  for (int report_index = 0; report_index < n_to_report; ++report_index) {
+    const int parameter_index = ranked_parameters[report_index].second;
+    std::cout << "branch[" << label << "]"
+              << " parameter[" << report_index << "]"
+              << " index=" << parameter_index
+              << " analytic=" << branch_gradient[parameter_index]
+              << '\n';
+  }
 }
 
 }  // namespace
@@ -545,6 +622,9 @@ int main(int argc, char** argv) {
     std::cout << "orbital_range = "
               << options.orbital_index_begin << ':'
               << options.orbital_index_end << '\n';
+    std::cout << "print_analytic_branch_decomposition = "
+              << (options.print_analytic_branch_decomposition ? "true" : "false")
+              << '\n';
     std::cout << "initial_total_energy = " << gradient_result.scf_result.total_energy << '\n';
     std::cout << "initial_component_energy = " << initial_component_energy << '\n';
     std::cout << "finite_difference_step = " << options.step << '\n';
@@ -571,7 +651,7 @@ int main(int argc, char** argv) {
       ranked_parameters.reserve(differentiable_parameter_indices.size());
       for (const int parameter_index : differentiable_parameter_indices) {
         ranked_parameters.emplace_back(
-            std::abs(selected_sparse_gradient[xmvb::to_size(parameter_index)]),
+            std::abs(selected_sparse_gradient[parameter_index]),
             parameter_index);
       }
       std::sort(
@@ -590,18 +670,99 @@ int main(int argc, char** argv) {
       for (const int parameter_index : differentiable_parameter_indices) {
         gradient_inf_norm = std::max(
             gradient_inf_norm,
-            std::abs(selected_sparse_gradient[xmvb::to_size(parameter_index)]));
+            std::abs(selected_sparse_gradient[parameter_index]));
       }
       std::cout << "analytic_gradient_inf_norm = " << gradient_inf_norm << '\n';
       std::cout << "reported_parameters = " << n_to_report << '\n';
 
+      if (options.print_analytic_branch_decomposition) {
+        xmvb::vb::CppActiveSpaceGradientEvaluator active_space_gradient_evaluator(
+            options.algorithm);
+        xmvb::vb::CppOrbitalGradientEvaluator orbital_gradient_evaluator(
+            options.algorithm);
+        const auto active_space_gradient_result =
+            active_space_gradient_evaluator.evaluate(
+                diagnostic_input,
+                load_result.nuclear_repulsion_energy);
+
+        auto reference_only_active_space_gradient_result =
+            active_space_gradient_result;
+        zero_all_active_space_gradients(&reference_only_active_space_gradient_result);
+        const auto reference_only_orbital_gradient_result =
+            orbital_gradient_evaluator.evaluate_without_reference_energy_gradient(
+                diagnostic_input,
+                std::move(reference_only_active_space_gradient_result));
+        print_sparse_branch_summary(
+            "reference",
+            reference_only_orbital_gradient_result.sparse_orbital_energy_gradient,
+            differentiable_parameter_indices,
+            options.count);
+
+        auto overlap_active_space_gradient_result = active_space_gradient_result;
+        std::fill(
+            overlap_active_space_gradient_result.active_one_electron_gradient.begin(),
+            overlap_active_space_gradient_result.active_one_electron_gradient.end(),
+            0.0);
+        std::fill(
+            overlap_active_space_gradient_result.packed_active_two_electron_gradient.begin(),
+            overlap_active_space_gradient_result.packed_active_two_electron_gradient.end(),
+            0.0);
+        const auto overlap_orbital_gradient_result =
+            orbital_gradient_evaluator.evaluate_without_reference_energy_gradient(
+                diagnostic_input,
+                std::move(overlap_active_space_gradient_result));
+        print_sparse_branch_summary(
+            "reference_plus_overlap",
+            overlap_orbital_gradient_result.sparse_orbital_energy_gradient,
+            differentiable_parameter_indices,
+            options.count);
+
+        auto one_active_space_gradient_result = active_space_gradient_result;
+        std::fill(
+            one_active_space_gradient_result.active_orbital_overlap_gradient.begin(),
+            one_active_space_gradient_result.active_orbital_overlap_gradient.end(),
+            0.0);
+        std::fill(
+            one_active_space_gradient_result.packed_active_two_electron_gradient.begin(),
+            one_active_space_gradient_result.packed_active_two_electron_gradient.end(),
+            0.0);
+        const auto one_orbital_gradient_result =
+            orbital_gradient_evaluator.evaluate_without_reference_energy_gradient(
+                diagnostic_input,
+                std::move(one_active_space_gradient_result));
+        print_sparse_branch_summary(
+            "reference_plus_one_electron",
+            one_orbital_gradient_result.sparse_orbital_energy_gradient,
+            differentiable_parameter_indices,
+            options.count);
+
+        auto two_active_space_gradient_result = active_space_gradient_result;
+        std::fill(
+            two_active_space_gradient_result.active_orbital_overlap_gradient.begin(),
+            two_active_space_gradient_result.active_orbital_overlap_gradient.end(),
+            0.0);
+        std::fill(
+            two_active_space_gradient_result.active_one_electron_gradient.begin(),
+            two_active_space_gradient_result.active_one_electron_gradient.end(),
+            0.0);
+        const auto two_orbital_gradient_result =
+            orbital_gradient_evaluator.evaluate_without_reference_energy_gradient(
+                diagnostic_input,
+                std::move(two_active_space_gradient_result));
+        print_sparse_branch_summary(
+            "reference_plus_two_electron",
+            two_orbital_gradient_result.sparse_orbital_energy_gradient,
+            differentiable_parameter_indices,
+            options.count);
+      }
+
       for (int report_index = 0; report_index < n_to_report; ++report_index) {
-        const int parameter_index = ranked_parameters[xmvb::to_size(report_index)].second;
+        const int parameter_index = ranked_parameters[report_index].second;
         xmvb::vb::CppVbInput plus_input = diagnostic_input;
         xmvb::vb::CppVbInput minus_input = diagnostic_input;
-        plus_input.orbital_preparation_input.orbital_value_table[xmvb::to_size(parameter_index)] +=
+        plus_input.orbital_preparation_input.orbital_value_table[parameter_index] +=
             options.step;
-        minus_input.orbital_preparation_input.orbital_value_table[xmvb::to_size(parameter_index)] -=
+        minus_input.orbital_preparation_input.orbital_value_table[parameter_index] -=
             options.step;
 
         const double plus_energy = evaluate_energy_component(
@@ -615,7 +776,7 @@ int main(int argc, char** argv) {
             load_result.nuclear_repulsion_energy,
             options.component);
         const double finite_difference = (plus_energy - minus_energy) / (2.0 * options.step);
-        const double analytic = selected_sparse_gradient[xmvb::to_size(parameter_index)];
+        const double analytic = selected_sparse_gradient[parameter_index];
         const double absolute_error = std::abs(analytic - finite_difference);
         const double relative_error =
             absolute_error / std::max(1.0, std::abs(finite_difference));
@@ -656,7 +817,7 @@ int main(int argc, char** argv) {
       }
 
       std::vector<std::pair<double, int>> ranked_directions;
-      ranked_directions.reserve(xmvb::to_size(projection.reduced_gradient.size()));
+      ranked_directions.reserve(projection.reduced_gradient.size());
       for (Eigen::Index reduced_index = 0;
            reduced_index < projection.reduced_gradient.size();
            ++reduced_index) {
@@ -689,7 +850,7 @@ int main(int argc, char** argv) {
       std::cout << "reported_parameters = " << n_to_report << '\n';
 
       for (int report_index = 0; report_index < n_to_report; ++report_index) {
-        const int reduced_index = ranked_directions[xmvb::to_size(report_index)].second;
+        const int reduced_index = ranked_directions[report_index].second;
         Eigen::VectorXd reduced_direction =
             Eigen::VectorXd::Zero(projection.reduced_gradient.size());
         reduced_direction[reduced_index] = 1.0;
@@ -703,10 +864,10 @@ int main(int argc, char** argv) {
 
         xmvb::vb::CppVbInput plus_input = diagnostic_input;
         xmvb::vb::CppVbInput minus_input = diagnostic_input;
-        // Reduced nonredundant coordinates represent finite occupied/virtual
-        // rotations inside each support block. Mirror the optimizer manifold by
-        // applying the same Cayley-style block retraction here instead of a
-        // linear packed-parameter perturbation.
+        // Reduced nonredundant coordinates represent accepted-point orbital
+        // replacement directions. Mirror the optimizer manifold by applying the
+        // same finite orbital increment lift here instead of perturbing the
+        // packed sparse coefficients directly.
         plus_input.orbital_preparation_input =
             nonredundant_space.retract_step(
                 diagnostic_input.orbital_preparation_input,

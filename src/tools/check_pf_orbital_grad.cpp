@@ -63,7 +63,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = input.n_basis_functions;
   const int explicit_count =
-      input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -72,7 +72,7 @@ int get_sparse_coefficient_count(
   while (count < n_basis_functions) {
     const int basis_index =
         input.orbital_basis_index_table[
-            xmvb::to_size(orbital_index) * n_basis_functions + count];
+            orbital_index * n_basis_functions + count];
     if (basis_index == 0) {
       break;
     }
@@ -236,7 +236,7 @@ int main(int argc, char** argv) {
     std::vector<std::pair<double, int>> ranked;
     ranked.reserve(differentiable.size());
     for (const int idx : differentiable) {
-      ranked.emplace_back(std::abs(grad[xmvb::to_size(idx)]), idx);
+      ranked.emplace_back(std::abs(grad[idx]), idx);
     }
     std::sort(
         ranked.begin(),
@@ -281,12 +281,12 @@ int main(int argc, char** argv) {
     }
 
     for (int i = 0; i < n_report; ++i) {
-      const int param_idx = ranked[xmvb::to_size(i)].second;
+      const int param_idx = ranked[i].second;
       xmvb::vb::CppVbInput plus_input = load.input;
       xmvb::vb::CppVbInput minus_input = load.input;
-      plus_input.orbital_preparation_input.orbital_value_table[xmvb::to_size(param_idx)] +=
+      plus_input.orbital_preparation_input.orbital_value_table[param_idx] +=
           opt.step;
-      minus_input.orbital_preparation_input.orbital_value_table[xmvb::to_size(param_idx)] -=
+      minus_input.orbital_preparation_input.orbital_value_table[param_idx] -=
           opt.step;
 
       const double plus_e = use_spin_adapted
@@ -308,7 +308,7 @@ int main(int argc, char** argv) {
                 basis,
                 load.nuclear_repulsion_energy);
       const double fd = (plus_e - minus_e) / (2.0 * opt.step);
-      const double analytic = grad[xmvb::to_size(param_idx)];
+      const double analytic = grad[param_idx];
       const double abs_err = std::abs(analytic - fd);
       const double rel_err = abs_err / std::max(1.0, std::abs(fd));
 

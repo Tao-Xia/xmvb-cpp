@@ -247,8 +247,8 @@ std::vector<Pair> build_pair_list(
     return {};
   }
   std::vector<Pair> pairs;
-  pairs.reserve(xmvb::to_size(structure_count) *
-                xmvb::to_size(structure_count - 1) / 2);
+  pairs.reserve(structure_count *
+                structure_count - 1 / 2);
   for (int left_structure = 0; left_structure < structure_count; ++left_structure) {
     for (int right_structure = 0; right_structure < left_structure; ++right_structure) {
       pairs.emplace_back(left_structure, right_structure);
@@ -259,7 +259,7 @@ std::vector<Pair> build_pair_list(
     std::shuffle(pairs.begin(), pairs.end(), rng);
   }
   if (max_pairs > 0 && static_cast<int>(pairs.size()) > max_pairs) {
-    pairs.resize(xmvb::to_size(max_pairs));
+    pairs.resize(max_pairs);
   }
   return pairs;
 }
@@ -328,12 +328,12 @@ void print_connected_component_details(
               << " total_covalent_labels=" << connected_component.total_covalent_labels
               << '\n';
     for (const int graph_node : connected_component.graph_nodes) {
-      const auto& union_component = union_components[xmvb::to_size(graph_node)];
+      const auto& union_component = union_components[graph_node];
       std::vector<int> active_orbitals_one_based;
       active_orbitals_one_based.reserve(union_component.local_vertices.size());
       for (const int local_vertex : union_component.local_vertices) {
         active_orbitals_one_based.push_back(
-            support_orbitals[xmvb::to_size(local_vertex)] + 1);
+            support_orbitals[local_vertex] + 1);
       }
       std::cerr << "    union_component[" << graph_node << "]"
                 << " type=" << union_component.type
@@ -401,8 +401,8 @@ xmvb::vb::Matrix build_full_active_overlap_matrix(
   for (int column = 0; column < n_active_orbitals; ++column) {
     for (int row = 0; row < n_active_orbitals; ++row) {
       active_overlap(row, column) =
-          active_overlap_storage[xmvb::to_size(column) *
-                                     xmvb::to_size(n_active_orbitals) +
+          active_overlap_storage[column *
+                                     n_active_orbitals +
                                  row];
     }
   }
@@ -416,12 +416,12 @@ std::vector<xmvb::vb::OrbitalPair> build_original_pairs_for_metric_component(
     bool use_left_pairs) {
   std::vector<xmvb::vb::OrbitalPair> pairs;
   for (const int graph_node : graph_nodes) {
-    const auto& component = union_components[xmvb::to_size(graph_node)];
+    const auto& component = union_components[graph_node];
     const auto& source_pairs = use_left_pairs ? component.left_pairs : component.right_pairs;
     for (const auto& pair : source_pairs) {
       pairs.emplace_back(
-          support_orbitals[xmvb::to_size(pair.first)],
-          support_orbitals[xmvb::to_size(pair.second)]);
+          support_orbitals[pair.first],
+          support_orbitals[pair.second]);
     }
   }
   return pairs;
@@ -458,11 +458,11 @@ int main(int argc, char** argv) {
     // unique determinant terms entering the exact structure-pair overlap
     // expansion for that single raw structure.
     std::vector<PerStructureCache> structure_cache(
-        xmvb::to_size(raw_structure_data.n_structures));
+        raw_structure_data.n_structures);
     for (int structure_index = 0;
          structure_index < raw_structure_data.n_structures;
          ++structure_index) {
-      auto& cache = structure_cache[xmvb::to_size(structure_index)];
+      auto& cache = structure_cache[structure_index];
       cache.active_pairs =
           xmvb::vb::extract_active_pairs(raw_structure_data, structure_index);
       cache.determinant_terms =
@@ -495,8 +495,8 @@ int main(int argc, char** argv) {
     for (std::size_t pair_index = 0; pair_index < pair_list.size(); ++pair_index) {
       const auto [left_structure, right_structure] = pair_list[pair_index];
       processed_pair_count = pair_index + 1;
-      const auto& left_cache = structure_cache[xmvb::to_size(left_structure)];
-      const auto& right_cache = structure_cache[xmvb::to_size(right_structure)];
+      const auto& left_cache = structure_cache[left_structure];
+      const auto& right_cache = structure_cache[right_structure];
       const std::uint64_t full_pair_determinant_count =
           static_cast<std::uint64_t>(left_cache.determinant_terms.size()) *
           static_cast<std::uint64_t>(right_cache.determinant_terms.size());
@@ -532,7 +532,7 @@ int main(int argc, char** argv) {
           union_components);
       if (metric_summary.connected_component_count <= 1) {
         if (options.report_every > 0 &&
-            (pair_index + 1) % xmvb::to_size(options.report_every) == 0) {
+            (pair_index + 1) % options.report_every == 0) {
           const auto elapsed_seconds = std::chrono::duration<double>(
               std::chrono::steady_clock::now() - started_at).count();
           std::cerr << "progress = " << (pair_index + 1) << "/" << pair_list.size()
@@ -660,7 +660,7 @@ int main(int argc, char** argv) {
       examples.push_back(std::move(example));
 
       if (options.report_every > 0 &&
-          (pair_index + 1) % xmvb::to_size(options.report_every) == 0) {
+          (pair_index + 1) % options.report_every == 0) {
         const auto elapsed_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - started_at).count();
         std::cerr << "progress = " << (pair_index + 1) << "/" << pair_list.size()
@@ -783,7 +783,7 @@ int main(int argc, char** argv) {
         std::min(options.top_examples, static_cast<int>(examples.size()));
     std::cout << "top_examples\n";
     for (int example_index = 0; example_index < n_examples_to_print; ++example_index) {
-      const auto& example = examples[xmvb::to_size(example_index)];
+      const auto& example = examples[example_index];
       const auto saved =
           static_cast<std::int64_t>(example.full_pair_determinant_count) -
           static_cast<std::int64_t>(example.disconnected_factored_determinant_count);

@@ -10,6 +10,8 @@
 #include <utility>
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "vb/matrices/determinant_hamiltonian_resolver.hpp"
 #include "vb/matrices/determinant_overlap_resolver.hpp"
 #include "vb/matrices/full_determinant_pair_evaluator.hpp"
@@ -51,12 +53,12 @@ struct DeterminantKeyHasher {
     std::size_t hash_value = 0;
     for (const int orbital_index : determinant_key.alpha_orbitals) {
       hash_value = hash_value * 1315423911u +
-          xmvb::to_size(orbital_index + 257);
+          orbital_index + 257;
     }
     hash_value = hash_value * 2654435761u + 17u;
     for (const int orbital_index : determinant_key.beta_orbitals) {
       hash_value = hash_value * 1315423911u +
-          xmvb::to_size(orbital_index + 257);
+          orbital_index + 257;
     }
     return hash_value;
   }
@@ -151,14 +153,14 @@ std::vector<RawStructureTopologySignature> build_topology_signatures(
   }
 
   std::vector<RawStructureTopologySignature> signatures(
-      xmvb::to_size(raw_structure_data.n_structures));
+      raw_structure_data.n_structures);
   for (int structure_index = 0;
        structure_index < raw_structure_data.n_structures;
        ++structure_index) {
     const int* structure_orbitals =
         raw_structure_data.structure_orbitals_data(structure_index);
-    auto& signature = signatures[xmvb::to_size(structure_index)];
-    signature.paired_orbitals.reserve(xmvb::to_size(n_active_beta_electrons));
+    auto& signature = signatures[structure_index];
+    signature.paired_orbitals.reserve(n_active_beta_electrons);
     for (int pair_index = 0; pair_index < n_active_beta_electrons; ++pair_index) {
       int left_orbital = structure_orbitals[active_start + 2 * pair_index];
       int right_orbital = structure_orbitals[active_start + 2 * pair_index + 1];
@@ -171,7 +173,7 @@ std::vector<RawStructureTopologySignature> build_topology_signatures(
         signature.paired_orbitals.begin(),
         signature.paired_orbitals.end());
 
-    signature.open_shell_orbitals.reserve(xmvb::to_size(n_open_shell_electrons));
+    signature.open_shell_orbitals.reserve(n_open_shell_electrons);
     for (int open_shell_index = 0;
          open_shell_index < n_open_shell_electrons;
          ++open_shell_index) {
@@ -214,23 +216,23 @@ std::vector<ProposedCandidate> build_candidate_pool(
     const AdaptiveStructureSpaceOptimizerOptions& options) {
   std::vector<bool> selected_mask(topology_signatures.size(), false);
   for (const int structure_index : selected_raw_structure_indices) {
-    selected_mask[xmvb::to_size(structure_index)] = true;
+    selected_mask[structure_index] = true;
   }
 
   std::vector<int> best_distances(topology_signatures.size(), -1);
   for (const int selected_index : selected_raw_structure_indices) {
     std::vector<ProposedCandidate> local_candidates;
     const auto& selected_signature =
-        topology_signatures[xmvb::to_size(selected_index)];
+        topology_signatures[selected_index];
     for (int candidate_index = 0;
          candidate_index < static_cast<int>(topology_signatures.size());
          ++candidate_index) {
-      if (selected_mask[xmvb::to_size(candidate_index)]) {
+      if (selected_mask[candidate_index]) {
         continue;
       }
       const int distance = topology_distance(
           selected_signature,
-          topology_signatures[xmvb::to_size(candidate_index)]);
+          topology_signatures[candidate_index]);
       if (distance > options.max_topology_distance) {
         continue;
       }
@@ -249,12 +251,12 @@ std::vector<ProposedCandidate> build_candidate_pool(
     if (static_cast<int>(local_candidates.size()) >
         options.max_neighbors_per_structure) {
       local_candidates.resize(
-          xmvb::to_size(options.max_neighbors_per_structure));
+          options.max_neighbors_per_structure);
     }
 
     for (const auto& candidate : local_candidates) {
       int& best_distance =
-          best_distances[xmvb::to_size(candidate.raw_structure_index)];
+          best_distances[candidate.raw_structure_index];
       if (best_distance < 0 || candidate.topology_distance < best_distance) {
         best_distance = candidate.topology_distance;
       }
@@ -265,7 +267,7 @@ std::vector<ProposedCandidate> build_candidate_pool(
   for (int candidate_index = 0;
        candidate_index < static_cast<int>(best_distances.size());
        ++candidate_index) {
-    const int best_distance = best_distances[xmvb::to_size(candidate_index)];
+    const int best_distance = best_distances[candidate_index];
     if (best_distance >= 0) {
       merged_candidates.push_back({candidate_index, best_distance});
     }
@@ -281,7 +283,7 @@ std::vector<ProposedCandidate> build_candidate_pool(
       });
   if (static_cast<int>(merged_candidates.size()) > options.max_candidate_pool_size) {
     merged_candidates.resize(
-        xmvb::to_size(options.max_candidate_pool_size));
+        options.max_candidate_pool_size);
   }
   return merged_candidates;
 }
@@ -292,7 +294,7 @@ const FullDeterminantStructureData& get_single_structure_expansion(
     const FullDeterminantStructureExpander& expander,
     std::vector<std::optional<FullDeterminantStructureData>>* single_structure_cache) {
   auto& cached_value =
-      (*single_structure_cache)[xmvb::to_size(raw_structure_index)];
+      (*single_structure_cache)[raw_structure_index];
   if (!cached_value.has_value()) {
     cached_value = expander.expand_subset(raw_structure_data, {raw_structure_index});
   }
@@ -428,7 +430,7 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
           ++score_batch.unique_shared_determinant_count;
         }
       }
-      proposal_determinants[xmvb::to_size(iterator->second)]
+      proposal_determinants[iterator->second]
           .contributions.push_back({
               static_cast<int>(candidate_offset),
               determinant_coefficient,
@@ -437,26 +439,26 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
   }
 
   std::vector<double> candidate_state_residuals(
-      candidate_pool.size() * xmvb::to_size(n_selected_states),
+      candidate_pool.size() * n_selected_states,
       0.0);
   std::vector<double> state_structure_coefficients(
-      xmvb::to_size(n_selected_states) *
-          xmvb::to_size(n_current_structures),
+      n_selected_states *
+          n_current_structures,
       0.0);
   for (int selected_state_offset = 0;
        selected_state_offset < n_selected_states;
        ++selected_state_offset) {
     const int state_index =
-        scf_result.selected_state_indices[xmvb::to_size(selected_state_offset)];
+        scf_result.selected_state_indices[selected_state_offset];
     for (int structure_index = 0;
          structure_index < n_current_structures;
          ++structure_index) {
-      state_structure_coefficients[xmvb::to_size(selected_state_offset) *
+      state_structure_coefficients[selected_state_offset *
                                        n_current_structures +
-                                   xmvb::to_size(structure_index)] =
-          scf_result.eigenvector_matrix[xmvb::to_size(state_index) *
+                                   structure_index] =
+          scf_result.eigenvector_matrix[state_index *
                                             n_current_structures +
-                                        xmvb::to_size(structure_index)];
+                                        structure_index];
     }
   }
 
@@ -466,13 +468,13 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
   const int n_active_orbitals =
       current_input.orbital_preparation_input.n_active_orbitals;
   std::vector<double> row_hamiltonian(
-      xmvb::to_size(n_current_structures),
+      n_current_structures,
       0.0);
   std::vector<double> row_overlap(
-      xmvb::to_size(n_current_structures),
+      n_current_structures,
       0.0);
   std::vector<double> determinant_state_residuals(
-      xmvb::to_size(n_selected_states),
+      n_selected_states,
       0.0);
 
   for (const auto& proposal_determinant : proposal_determinants) {
@@ -499,10 +501,10 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
       const auto& current_terms =
           current_input.structure_data.determinant_to_structure_terms[current_det_index];
       for (const auto& current_term : current_terms) {
-        row_hamiltonian[xmvb::to_size(current_term.structure_index)] +=
+        row_hamiltonian[current_term.structure_index] +=
             current_term.coefficient *
             determinant_pair_evaluation.total_hamiltonian;
-        row_overlap[xmvb::to_size(current_term.structure_index)] +=
+        row_overlap[current_term.structure_index] +=
             current_term.coefficient *
             determinant_pair_evaluation.overlap_determinant;
       }
@@ -512,21 +514,21 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
          selected_state_offset < n_selected_states;
          ++selected_state_offset) {
       const int state_index =
-          scf_result.selected_state_indices[xmvb::to_size(selected_state_offset)];
+          scf_result.selected_state_indices[selected_state_offset];
       const double state_energy =
-          scf_result.electronic_state_energies[xmvb::to_size(state_index)];
+          scf_result.electronic_state_energies[state_index];
       double residual = 0.0;
       for (int structure_index = 0;
            structure_index < n_current_structures;
            ++structure_index) {
         residual +=
-            (row_hamiltonian[xmvb::to_size(structure_index)] -
-             state_energy * row_overlap[xmvb::to_size(structure_index)]) *
-            state_structure_coefficients[xmvb::to_size(selected_state_offset) *
+            (row_hamiltonian[structure_index] -
+             state_energy * row_overlap[structure_index]) *
+            state_structure_coefficients[selected_state_offset *
                                              n_current_structures +
-                                         xmvb::to_size(structure_index)];
+                                         structure_index];
       }
-      determinant_state_residuals[xmvb::to_size(selected_state_offset)] =
+      determinant_state_residuals[selected_state_offset] =
           residual;
     }
 
@@ -534,11 +536,11 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
       for (int selected_state_offset = 0;
            selected_state_offset < n_selected_states;
            ++selected_state_offset) {
-        candidate_state_residuals[xmvb::to_size(contribution.candidate_offset) *
+        candidate_state_residuals[contribution.candidate_offset *
                                       n_selected_states +
-                                  xmvb::to_size(selected_state_offset)] +=
+                                  selected_state_offset] +=
             contribution.coefficient *
-            determinant_state_residuals[xmvb::to_size(selected_state_offset)];
+            determinant_state_residuals[selected_state_offset];
       }
     }
   }
@@ -549,7 +551,7 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
        ++candidate_offset) {
     const auto residual_begin =
         candidate_state_residuals.begin() +
-        static_cast<std::ptrdiff_t>(candidate_offset * xmvb::to_size(n_selected_states));
+        static_cast<std::ptrdiff_t>(candidate_offset * n_selected_states);
     const auto residual_end =
         residual_begin + n_selected_states;
     score_batch.scores.push_back(score_candidate_structure(
@@ -575,7 +577,7 @@ std::vector<int> select_candidates_to_add(
   }
   const int n_to_add = std::min(batch_size, remaining_capacity);
   std::vector<int> selected_candidates;
-  selected_candidates.reserve(xmvb::to_size(n_to_add));
+  selected_candidates.reserve(n_to_add);
   for (const auto& candidate_score : candidate_scores) {
     if (candidate_score.score < minimum_candidate_score) {
       break;
@@ -621,7 +623,7 @@ AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
       load_result.raw_structure_data,
       options_.seed_selection);
   std::vector<std::optional<FullDeterminantStructureData>> single_structure_cache(
-      xmvb::to_size(load_result.raw_structure_data.n_structures));
+      load_result.raw_structure_data.n_structures);
 
   CppVbInput current_input = build_input_for_selected_raw_structures(
       load_result.input,

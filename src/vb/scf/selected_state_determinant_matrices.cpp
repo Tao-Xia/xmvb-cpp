@@ -140,7 +140,7 @@ void validate_input_shapes(
   }
 
   const std::size_t expected_eigenvector_size =
-      xmvb::to_size(n_structures) * xmvb::to_size(n_structures);
+      n_structures * n_structures;
   if (eigenvector_matrix.size() != expected_eigenvector_size) {
     throw std::invalid_argument("eigenvector_matrix size does not match n_structures^2");
   }
@@ -241,6 +241,8 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
       same_spin_pair_cache.alpha_reuse_table.unique_determinants.size());
   const int n_unique_beta = static_cast<int>(
       same_spin_pair_cache.beta_reuse_table.unique_determinants.size());
+  const bool close_shell_diagonal =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
 
   SelectedStateDeterminantMatrices result;
   result.n_structures = n_structures;
@@ -273,19 +275,27 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
     state_coefficients.normalized_state_weight =
         normalized_state_weights[selected_state_offset];
     state_coefficients.determinant_coefficients.assign(
-        xmvb::to_size(n_determinants),
+        n_determinants,
         0.0);
+    state_coefficients.close_shell_diagonal = close_shell_diagonal;
     state_coefficients.coefficient_matrix =
         Eigen::MatrixXd::Zero(n_unique_alpha, n_unique_beta);
     std::vector<std::size_t> touched_pair_indices;
-    touched_pair_indices.reserve(xmvb::to_size(n_determinants));
+    touched_pair_indices.reserve(n_determinants);
+    std::vector<int> touched_diagonal_indices;
+    if (close_shell_diagonal) {
+      state_coefficients.diagonal_coefficients.assign(
+          n_unique_alpha,
+          0.0);
+      touched_diagonal_indices.reserve(n_determinants);
+    }
 
     for (int determinant_index = 0;
          determinant_index < n_determinants;
          ++determinant_index) {
       const auto& structure_terms =
-          full_determinant_data.determinant_to_structure_terms[xmvb::to_size(
-              determinant_index)];
+          full_determinant_data.determinant_to_structure_terms[
+              determinant_index];
       double coefficient = 0.0;
       for (const auto& term : structure_terms) {
         if (term.structure_index < 0 || term.structure_index >= n_structures) {
@@ -295,13 +305,13 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
             term.coefficient *
             selected_state_column[term.structure_index];
       }
-      state_coefficients.determinant_coefficients[xmvb::to_size(determinant_index)] =
+      state_coefficients.determinant_coefficients[determinant_index] =
           coefficient;
 
       const int unique_alpha_id =
-          result.determinant_to_unique_alpha_id[xmvb::to_size(determinant_index)];
+          result.determinant_to_unique_alpha_id[determinant_index];
       const int unique_beta_id =
-          result.determinant_to_unique_beta_id[xmvb::to_size(determinant_index)];
+          result.determinant_to_unique_beta_id[determinant_index];
       if (unique_alpha_id < 0 || unique_alpha_id >= n_unique_alpha ||
           unique_beta_id < 0 || unique_beta_id >= n_unique_beta) {
         throw std::out_of_range("determinant-to-unique spin id is out of range");
@@ -309,11 +319,21 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
       // In the expected full-determinant space each (alpha,beta) pair is unique.
       // We still accumulate defensively in case an upstream caller keeps
       // duplicate determinant rows mapped to the same unique spin pair.
-      state_coefficients.coefficient_matrix(unique_alpha_id, unique_beta_id) +=
-          coefficient;
-      touched_pair_indices.push_back(
-          xmvb::to_size(unique_beta_id) * xmvb::to_size(n_unique_alpha) +
-          xmvb::to_size(unique_alpha_id));
+      if (close_shell_diagonal) {
+        if (unique_alpha_id != unique_beta_id) {
+          throw std::runtime_error(
+              "close-shell selected-state compression requires alpha and beta unique ids to match");
+        }
+        state_coefficients.diagonal_coefficients[unique_alpha_id] +=
+            coefficient;
+        touched_diagonal_indices.push_back(unique_alpha_id);
+      } else {
+        state_coefficients.coefficient_matrix(unique_alpha_id, unique_beta_id) +=
+            coefficient;
+        touched_pair_indices.push_back(
+            unique_beta_id * n_unique_alpha +
+            unique_alpha_id);
+      }
     }
 
     // Build the exact trimmed support block for this selected state after the
@@ -321,54 +341,77 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
     // cancellations are removed before the local alpha/beta supports are fixed.
     // Iterate only the touched unique-spin pairs instead of rescanning the full
     // `n_unique_alpha x n_unique_beta` matrix on every selected-state rebuild.
-    std::sort(touched_pair_indices.begin(), touched_pair_indices.end());
-    touched_pair_indices.erase(
-        std::unique(touched_pair_indices.begin(), touched_pair_indices.end()),
-        touched_pair_indices.end());
     std::vector<unsigned char> alpha_has_support(
-        xmvb::to_size(n_unique_alpha),
+        n_unique_alpha,
         0u);
     std::vector<unsigned char> beta_has_support(
-        xmvb::to_size(n_unique_beta),
+        n_unique_beta,
         0u);
-    for (const std::size_t touched_pair_index : touched_pair_indices) {
-      const int unique_alpha_id = static_cast<int>(
-          touched_pair_index % xmvb::to_size(n_unique_alpha));
-      const int unique_beta_id = static_cast<int>(
-          touched_pair_index / xmvb::to_size(n_unique_alpha));
-      const double coefficient =
-          state_coefficients.coefficient_matrix(unique_alpha_id, unique_beta_id);
-      if (coefficient == 0.0) {
-        continue;
+    if (close_shell_diagonal) {
+      std::sort(
+          touched_diagonal_indices.begin(),
+          touched_diagonal_indices.end());
+      touched_diagonal_indices.erase(
+          std::unique(
+              touched_diagonal_indices.begin(),
+              touched_diagonal_indices.end()),
+          touched_diagonal_indices.end());
+      for (const int unique_id : touched_diagonal_indices) {
+        const double coefficient =
+            state_coefficients.diagonal_coefficients[unique_id];
+        if (coefficient == 0.0) {
+          continue;
+        }
+        alpha_has_support[unique_id] = 1u;
+        beta_has_support[unique_id] = 1u;
+        state_coefficients.coefficient_matrix(unique_id, unique_id) =
+            coefficient;
+        ++state_coefficients.nonzero_coefficient_count;
       }
-      alpha_has_support[xmvb::to_size(unique_alpha_id)] = 1u;
-      beta_has_support[xmvb::to_size(unique_beta_id)] = 1u;
-      ++state_coefficients.nonzero_coefficient_count;
+    } else {
+      std::sort(touched_pair_indices.begin(), touched_pair_indices.end());
+      touched_pair_indices.erase(
+          std::unique(touched_pair_indices.begin(), touched_pair_indices.end()),
+          touched_pair_indices.end());
+      for (const std::size_t touched_pair_index : touched_pair_indices) {
+        const int unique_alpha_id = static_cast<int>(
+            touched_pair_index % n_unique_alpha);
+        const int unique_beta_id = static_cast<int>(
+            touched_pair_index / n_unique_alpha);
+        const double coefficient =
+            state_coefficients.coefficient_matrix(unique_alpha_id, unique_beta_id);
+        if (coefficient == 0.0) {
+          continue;
+        }
+        alpha_has_support[unique_alpha_id] = 1u;
+        beta_has_support[unique_beta_id] = 1u;
+        ++state_coefficients.nonzero_coefficient_count;
+      }
     }
 
     std::vector<int> alpha_global_to_local(
-        xmvb::to_size(n_unique_alpha),
+        n_unique_alpha,
         -1);
     std::vector<int> beta_global_to_local(
-        xmvb::to_size(n_unique_beta),
+        n_unique_beta,
         -1);
     for (int unique_alpha_id = 0;
          unique_alpha_id < n_unique_alpha;
          ++unique_alpha_id) {
-      if (alpha_has_support[xmvb::to_size(unique_alpha_id)] == 0u) {
+      if (alpha_has_support[unique_alpha_id] == 0u) {
         continue;
       }
-      alpha_global_to_local[xmvb::to_size(unique_alpha_id)] =
+      alpha_global_to_local[unique_alpha_id] =
           static_cast<int>(state_coefficients.alpha_support.size());
       state_coefficients.alpha_support.push_back(unique_alpha_id);
     }
     for (int unique_beta_id = 0;
          unique_beta_id < n_unique_beta;
          ++unique_beta_id) {
-      if (beta_has_support[xmvb::to_size(unique_beta_id)] == 0u) {
+      if (beta_has_support[unique_beta_id] == 0u) {
         continue;
       }
-      beta_global_to_local[xmvb::to_size(unique_beta_id)] =
+      beta_global_to_local[unique_beta_id] =
           static_cast<int>(state_coefficients.beta_support.size());
       state_coefficients.beta_support.push_back(unique_beta_id);
     }
@@ -377,20 +420,38 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
         Eigen::MatrixXd::Zero(
             static_cast<int>(state_coefficients.alpha_support.size()),
             static_cast<int>(state_coefficients.beta_support.size()));
-    for (const std::size_t touched_pair_index : touched_pair_indices) {
-      const int unique_alpha_id = static_cast<int>(
-          touched_pair_index % xmvb::to_size(n_unique_alpha));
-      const int unique_beta_id = static_cast<int>(
-          touched_pair_index / xmvb::to_size(n_unique_alpha));
-      const int alpha_local =
-          alpha_global_to_local[xmvb::to_size(unique_alpha_id)];
-      const int beta_local =
-          beta_global_to_local[xmvb::to_size(unique_beta_id)];
-      if (alpha_local < 0 || beta_local < 0) {
-        continue;
+    if (close_shell_diagonal) {
+      state_coefficients.local_diagonal_coefficients.assign(
+          state_coefficients.alpha_support.size(),
+          0.0);
+      for (int local_index = 0;
+           local_index < static_cast<int>(state_coefficients.alpha_support.size());
+           ++local_index) {
+        const int unique_id =
+            state_coefficients.alpha_support[local_index];
+        const double coefficient =
+            state_coefficients.diagonal_coefficients[unique_id];
+        state_coefficients.local_diagonal_coefficients[local_index] =
+            coefficient;
+        state_coefficients.local_coefficient_matrix(local_index, local_index) =
+            coefficient;
       }
-      state_coefficients.local_coefficient_matrix(alpha_local, beta_local) =
-          state_coefficients.coefficient_matrix(unique_alpha_id, unique_beta_id);
+    } else {
+      for (const std::size_t touched_pair_index : touched_pair_indices) {
+        const int unique_alpha_id = static_cast<int>(
+            touched_pair_index % n_unique_alpha);
+        const int unique_beta_id = static_cast<int>(
+            touched_pair_index / n_unique_alpha);
+        const int alpha_local =
+            alpha_global_to_local[unique_alpha_id];
+        const int beta_local =
+            beta_global_to_local[unique_beta_id];
+        if (alpha_local < 0 || beta_local < 0) {
+          continue;
+        }
+        state_coefficients.local_coefficient_matrix(alpha_local, beta_local) =
+            state_coefficients.coefficient_matrix(unique_alpha_id, unique_beta_id);
+      }
     }
 
     result.states.push_back(std::move(state_coefficients));
@@ -416,7 +477,7 @@ SelectedStateDeterminantMatrices build_selected_state_determinant_matrices_impl(
           int state_index) -> const double* {
         (void) selected_state_offset;
         return eigenvector_matrix.data() +
-            xmvb::to_size(state_index) * n_structures;
+            state_index * n_structures;
       });
 }
 
@@ -552,7 +613,7 @@ std::vector<double> gather_selected_state_energies(
     if (state_index < 0 || state_index >= static_cast<int>(eigenvalues.size())) {
       throw std::out_of_range("selected state index is out of range for eigenvalues");
     }
-    selected_state_energies.push_back(eigenvalues[xmvb::to_size(state_index)]);
+    selected_state_energies.push_back(eigenvalues[state_index]);
   }
   return selected_state_energies;
 }
@@ -583,10 +644,10 @@ build_exact_determinant_pair_weight_tables_from_coefficients(
   DeterminantPairWeightTablesFromCoefficients pair_weights;
   pair_weights.n_determinants = n_determinants;
   pair_weights.ordered_hamiltonian_weights.assign(
-      xmvb::to_size(n_determinants) * xmvb::to_size(n_determinants),
+      n_determinants * n_determinants,
       0.0);
   pair_weights.ordered_overlap_weights.assign(
-      xmvb::to_size(n_determinants) * xmvb::to_size(n_determinants),
+      n_determinants * n_determinants,
       0.0);
 
   // Exact selected-state bilinear form:
@@ -597,7 +658,7 @@ build_exact_determinant_pair_weight_tables_from_coefficients(
        ++state_offset) {
     const auto& state_coefficients = selected_state_matrices.states[state_offset];
     if (state_coefficients.determinant_coefficients.size() !=
-        xmvb::to_size(n_determinants)) {
+        n_determinants) {
       throw std::invalid_argument(
           "state determinant_coefficients size does not match n_determinants");
     }
@@ -611,19 +672,19 @@ build_exact_determinant_pair_weight_tables_from_coefficients(
          determinant_index_left < n_determinants;
          ++determinant_index_left) {
       const double coefficient_left =
-          state_coefficients.determinant_coefficients[xmvb::to_size(
-              determinant_index_left)];
+          state_coefficients.determinant_coefficients[
+              determinant_index_left];
       const std::size_t row_offset =
-          xmvb::to_size(determinant_index_left) * n_determinants;
+          determinant_index_left * n_determinants;
       for (int determinant_index_right = 0;
            determinant_index_right < n_determinants;
            ++determinant_index_right) {
         const double pair_product =
             coefficient_left *
-            state_coefficients.determinant_coefficients[xmvb::to_size(
-                determinant_index_right)];
+            state_coefficients.determinant_coefficients[
+                determinant_index_right];
         const std::size_t ordered_index =
-            row_offset + xmvb::to_size(determinant_index_right);
+            row_offset + determinant_index_right;
         pair_weights.ordered_hamiltonian_weights[ordered_index] +=
             hamiltonian_prefactor * pair_product;
         pair_weights.ordered_overlap_weights[ordered_index] +=
@@ -641,7 +702,7 @@ build_exact_determinant_pair_weight_tables_from_coefficients(
        determinant_index_left < n_determinants;
        ++determinant_index_left) {
     const std::size_t left_row_offset =
-        xmvb::to_size(determinant_index_left) * n_determinants;
+        determinant_index_left * n_determinants;
     for (int determinant_index_right = 0;
          determinant_index_right <= determinant_index_left;
          ++determinant_index_right) {
@@ -650,7 +711,7 @@ build_exact_determinant_pair_weight_tables_from_coefficients(
               determinant_index_left,
               determinant_index_right);
       const std::size_t direct_ordered_index =
-          left_row_offset + xmvb::to_size(determinant_index_right);
+          left_row_offset + determinant_index_right;
       const double hamiltonian_direct =
           pair_weights.ordered_hamiltonian_weights[direct_ordered_index];
       const double overlap_direct =
@@ -662,8 +723,8 @@ build_exact_determinant_pair_weight_tables_from_coefficients(
             overlap_direct;
       } else {
         const std::size_t swapped_ordered_index =
-            xmvb::to_size(determinant_index_right) * n_determinants +
-            xmvb::to_size(determinant_index_left);
+            determinant_index_right * n_determinants +
+            determinant_index_left;
         pair_weights.unordered_combined_hamiltonian_weights[unordered_index] =
             hamiltonian_direct +
             pair_weights.ordered_hamiltonian_weights[swapped_ordered_index];
@@ -705,10 +766,10 @@ build_directional_determinant_pair_weight_tables_from_coefficients(
   DeterminantPairWeightTablesFromCoefficients pair_weights;
   pair_weights.n_determinants = n_determinants;
   pair_weights.ordered_hamiltonian_weights.assign(
-      xmvb::to_size(n_determinants) * xmvb::to_size(n_determinants),
+      n_determinants * n_determinants,
       0.0);
   pair_weights.ordered_overlap_weights.assign(
-      xmvb::to_size(n_determinants) * xmvb::to_size(n_determinants),
+      n_determinants * n_determinants,
       0.0);
 
   for (std::size_t state_offset = 0;
@@ -718,9 +779,9 @@ build_directional_determinant_pair_weight_tables_from_coefficients(
     const auto& directional_state_coefficients =
         directional_selected_state_matrices.states[state_offset];
     if (state_coefficients.determinant_coefficients.size() !=
-            xmvb::to_size(n_determinants) ||
+            n_determinants ||
         directional_state_coefficients.determinant_coefficients.size() !=
-            xmvb::to_size(n_determinants)) {
+            n_determinants) {
       throw std::invalid_argument(
           "state determinant_coefficients size does not match n_determinants");
     }
@@ -735,27 +796,27 @@ build_directional_determinant_pair_weight_tables_from_coefficients(
          determinant_index_left < n_determinants;
          ++determinant_index_left) {
       const double coefficient_left =
-          state_coefficients.determinant_coefficients[xmvb::to_size(
-              determinant_index_left)];
+          state_coefficients.determinant_coefficients[
+              determinant_index_left];
       const double directional_coefficient_left =
-          directional_state_coefficients.determinant_coefficients[xmvb::to_size(
-              determinant_index_left)];
+          directional_state_coefficients.determinant_coefficients[
+              determinant_index_left];
       const std::size_t row_offset =
-          xmvb::to_size(determinant_index_left) * n_determinants;
+          determinant_index_left * n_determinants;
       for (int determinant_index_right = 0;
            determinant_index_right < n_determinants;
            ++determinant_index_right) {
         const double coefficient_right =
-            state_coefficients.determinant_coefficients[xmvb::to_size(
-                determinant_index_right)];
+            state_coefficients.determinant_coefficients[
+                determinant_index_right];
         const double directional_coefficient_right =
-            directional_state_coefficients.determinant_coefficients[xmvb::to_size(
-                determinant_index_right)];
+            directional_state_coefficients.determinant_coefficients[
+                determinant_index_right];
         const double directional_pair_product =
             directional_coefficient_left * coefficient_right +
             coefficient_left * directional_coefficient_right;
         const std::size_t ordered_index =
-            row_offset + xmvb::to_size(determinant_index_right);
+            row_offset + determinant_index_right;
         pair_weights.ordered_hamiltonian_weights[ordered_index] +=
             state_weight * directional_pair_product;
         pair_weights.ordered_overlap_weights[ordered_index] -=
@@ -779,7 +840,7 @@ build_directional_determinant_pair_weight_tables_from_coefficients(
        determinant_index_left < n_determinants;
        ++determinant_index_left) {
     const std::size_t left_row_offset =
-        xmvb::to_size(determinant_index_left) * n_determinants;
+        determinant_index_left * n_determinants;
     for (int determinant_index_right = 0;
          determinant_index_right <= determinant_index_left;
          ++determinant_index_right) {
@@ -788,7 +849,7 @@ build_directional_determinant_pair_weight_tables_from_coefficients(
               determinant_index_left,
               determinant_index_right);
       const std::size_t direct_ordered_index =
-          left_row_offset + xmvb::to_size(determinant_index_right);
+          left_row_offset + determinant_index_right;
       const double hamiltonian_direct =
           pair_weights.ordered_hamiltonian_weights[direct_ordered_index];
       const double overlap_direct =
@@ -800,8 +861,8 @@ build_directional_determinant_pair_weight_tables_from_coefficients(
             overlap_direct;
       } else {
         const std::size_t swapped_ordered_index =
-            xmvb::to_size(determinant_index_right) * n_determinants +
-            xmvb::to_size(determinant_index_left);
+            determinant_index_right * n_determinants +
+            determinant_index_left;
         pair_weights.unordered_combined_hamiltonian_weights[unordered_index] =
             hamiltonian_direct +
             pair_weights.ordered_hamiltonian_weights[swapped_ordered_index];

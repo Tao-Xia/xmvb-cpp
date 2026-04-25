@@ -41,15 +41,6 @@ public:
       FullDeterminantStructureHamiltonianOverlapBuilder structure_builder);
 
   /**
-   * @brief Evaluates full structure Hamiltonian and overlap matrices.
-   *
-   * @param input C++ VB input bundle.
-   * @return StructureAccumulationResult Structure Hamiltonian and overlap matrices.
-   */
-  StructureAccumulationResult evaluate(
-      const CppVbInput& input) const;
-
-  /**
    * @brief Prepares the shared active-space intermediates used by matrix/SCF code.
    */
   PreparedActiveSpaceContext prepare_active_space(

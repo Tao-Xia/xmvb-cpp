@@ -28,6 +28,26 @@ Current status:
 - `LibcintRiIntegralProviderResult::auxiliary_metric_matrix` and `metric_whitened_ao_pair_factors` are already `Eigen::MatrixXd`.
 - `OrbitalPreparationResult::inactive_density_low_rank_factors` and `AoEffectiveOneElectronRiLowRankFactors::scaled_factor_matrix` are already `Eigen::MatrixXd`.
 - `OrbitalPreparationResult::auxiliary_orbital_matrix` and `inactive_density_matrix` are already `Eigen::MatrixXd`.
+- `AoIntegralInput::ao_core_hamiltonian_matrix` and the materialized AO-integral
+  provider/builder chain are now `Eigen::MatrixXd`, so the dense AO core
+  Hamiltonian stays in Eigen form from libcint materialization through loader,
+  RHF/guess build, AO effective-one-electron build, orbital gradient, and
+  exact-ctx HVP probe paths.
+- `AoEffectiveOneElectronResult::ao_coulomb_exchange_matrix` and
+  `AoEffectiveOneElectronResult::ao_effective_h1e` are now `Eigen::MatrixXd`.
+  The AO-H1E result stays in Eigen form through active-space H1E projection,
+  active-space matrix backpropagation, one-electron reference-energy assembly,
+  nonredundant reduced-curvature setup, and exact-ctx accepted-point orbital
+  pullback setup.
+- `ActiveSpaceOneElectronResult::h1e_act` is now `Eigen::MatrixXd`. The
+  determinant / same-spin / structure forward path and the matrix-form
+  same-spin backward/HVP path now consume `HHO` through
+  `Eigen::Ref<const Eigen::MatrixXd>` instead of flattening it back to
+  `std::vector<double>`.
+- `CppOrbitalGradientResult::active_one_electron_integrals` and accepted
+  optimizer snapshots now also keep `HHO` as `Eigen::MatrixXd`, so the normal
+  optimizer / trace / adaptive-structure code no longer carries a second
+  flattened `HHO` copy in memory.
 - `ActiveSpaceOneElectronBuilder`, `ActiveSpaceMatrixBackpropagator`, `AoEffectiveOneElectronBuilder`, and `AoEffectiveOneElectronBackpropagator` now accept those orbital-preparation matrices through `Eigen::Ref<const Eigen::MatrixXd>` compatibility boundaries.
 - Do not reintroduce row-pointer arithmetic over RI packed-factor rows. Column-major Eigen matrices do not store logical rows contiguously.
 
@@ -44,12 +64,14 @@ Primary implementation files on this chain:
 
 ### Determinant / structure backward kernels
 
-These files still map coefficient tables through row-major Eigen types and need a second migration wave after the active-space pipeline settles:
+These files still need follow-up cleanup, but the `HHO` dense-matrix contract is
+already Eigen-native on the production path. The remaining work is mostly about
+coefficient tables and accepted-snapshot compatibility buffers:
 
 - `src/vb/scf/opposite_spin_matrix_backward.cpp`
 - `src/vb/scf/same_spin_matrix_backward.cpp`
-- `src/vb/biorthogonal_vbscf/biorthogonal_opposite_spin_matrix_backward.cpp`
-- `src/vb/biorthogonal_vbscf/biorthogonal_same_spin_matrix_backward.cpp`
+- `src/vb/scf/cpp_orbital_gradient_result.hpp`
+- `src/vb/scf/cpp_vb_scf_optimizer_result.hpp`
 
 ## Legacy C Runtime And BLAS
 

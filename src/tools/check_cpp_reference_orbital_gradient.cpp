@@ -26,7 +26,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      orbital_preparation_input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -35,7 +35,7 @@ int get_sparse_coefficient_count(
   while (coefficient_count < n_basis_functions) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
+            [orbital_index * n_basis_functions + coefficient_count];
     if (basis_function_index == 0) {
       break;
     }
@@ -121,10 +121,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     xmvb::vb::CppVbInputLoadOptions load_options;
-    // Match the production legacy guess path so open-shell `$GUS` test cases
-    // reach the reference-gradient check instead of failing in the partial C++
-    // read-guess parser.
-    load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::LegacyRuntime;
+    load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
     const auto load_result =
         xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
 
@@ -148,8 +145,8 @@ int main(int argc, char** argv) {
     for (const int parameter_index : differentiable_parameter_indices) {
       ranked_parameters.emplace_back(
           std::abs(
-              gradient_result.sparse_orbital_reference_energy_gradient[xmvb::to_size(
-                  parameter_index)]),
+              gradient_result.sparse_orbital_reference_energy_gradient[
+                  parameter_index]),
           parameter_index);
     }
     std::sort(
@@ -173,21 +170,21 @@ int main(int argc, char** argv) {
     for (const int parameter_index : differentiable_parameter_indices) {
       gradient_inf_norm = std::max(
           gradient_inf_norm,
-          std::abs(gradient_result.sparse_orbital_reference_energy_gradient[xmvb::to_size(
-              parameter_index)]));
+          std::abs(gradient_result.sparse_orbital_reference_energy_gradient[
+              parameter_index]));
     }
     std::cout << gradient_inf_norm << '\n';
     std::cout << "finite_difference_step = " << options.step << '\n';
     std::cout << "reported_parameters = " << n_to_report << '\n';
 
     for (int report_index = 0; report_index < n_to_report; ++report_index) {
-      const int parameter_index = ranked_parameters[xmvb::to_size(report_index)].second;
+      const int parameter_index = ranked_parameters[report_index].second;
       xmvb::vb::CppVbInput plus_input = load_result.input;
       xmvb::vb::CppVbInput minus_input = load_result.input;
-      plus_input.orbital_preparation_input.orbital_value_table[xmvb::to_size(
-          parameter_index)] += options.step;
-      minus_input.orbital_preparation_input.orbital_value_table[xmvb::to_size(
-          parameter_index)] -= options.step;
+      plus_input.orbital_preparation_input.orbital_value_table[
+          parameter_index] += options.step;
+      minus_input.orbital_preparation_input.orbital_value_table[
+          parameter_index] -= options.step;
 
       const double plus_energy =
           evaluate_reference_energy(
@@ -201,8 +198,8 @@ int main(int argc, char** argv) {
               load_result.nuclear_repulsion_energy);
       const double finite_difference = (plus_energy - minus_energy) / (2.0 * options.step);
       const double analytic =
-          gradient_result.sparse_orbital_reference_energy_gradient[xmvb::to_size(
-              parameter_index)];
+          gradient_result.sparse_orbital_reference_energy_gradient[
+              parameter_index];
       const double absolute_error = std::abs(analytic - finite_difference);
       const double relative_error =
           absolute_error / std::max(1.0, std::abs(finite_difference));

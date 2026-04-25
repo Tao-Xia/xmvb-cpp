@@ -18,11 +18,16 @@ struct SameSpinPhiResult {
   double total_phi = 0.0;
 };
 
-std::vector<double> build_overlap_submatrix(
+Eigen::MatrixXd build_overlap_submatrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const std::vector<double>& ovlp_act,
     int n_orbitals);
+
+Eigen::MatrixXd build_overlap_submatrix(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& ovlp_act);
 
 Eigen::MatrixXd calc_cofactor_1st(
     const DeterminantOverlapResult& det_ovlp_result);
@@ -87,6 +92,23 @@ Eigen::MatrixXd build_deleted_minor_matrix(
     const std::vector<int>& deleted_rows,
     const std::vector<int>& deleted_cols);
 
+double calc_second_order_cofactor(
+    const DeterminantOverlapResult& det_ovlp_result,
+    int right_first,
+    int right_second,
+    int left_first,
+    int left_second);
+
+double calc_directional_second_order_cofactor(
+    const Eigen::MatrixXd& overlap_block,
+    const Eigen::MatrixXd& delta_overlap_block,
+    const DeterminantOverlapResult& det_ovlp_result,
+    int right_first,
+    int right_second,
+    int left_first,
+    int left_second,
+    const DeterminantOverlapResolver& overlap_resolver);
+
 double calc_deleted_minor_sign(
     int n_rows,
     int n_cols,
@@ -115,7 +137,7 @@ Eigen::MatrixXd build_directional_first_cofactor_matrix(
 SameSpinPhiResult compute_same_spin_original_phi(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const std::vector<double>& packed_active_two_electron_integrals,
     const DeterminantOverlapResult& det_ovlp_result,
@@ -124,7 +146,7 @@ SameSpinPhiResult compute_same_spin_original_phi(
 SameSpinPhiResult compute_same_spin_original_phi(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantOverlapResult& det_ovlp_result,

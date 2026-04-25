@@ -23,20 +23,15 @@ StructureMatrixEvaluator::
       active_space_two_electron_builder_(std::move(active_space_two_electron_builder)),
       structure_builder_(std::move(structure_builder)) {}
 
-StructureAccumulationResult StructureMatrixEvaluator::evaluate(
-    const CppVbInput& input) const {
-  const auto prepared_active_space = prepare_active_space(input);
-  return evaluate(input, prepared_active_space);
-}
-
 PreparedActiveSpaceContext StructureMatrixEvaluator::prepare_active_space(
     const CppVbInput& input) const {
-  return prepare_active_space_context(
-      input,
-      orbital_preparer_,
-      ao_effective_one_electron_builder_,
-      active_space_one_electron_builder_,
-      active_space_two_electron_builder_);
+  return prepare_timed_active_space_context(
+             input,
+             orbital_preparer_,
+             ao_effective_one_electron_builder_,
+             active_space_one_electron_builder_,
+             active_space_two_electron_builder_)
+      .prepared_active_space;
 }
 
 StructureAccumulationResult StructureMatrixEvaluator::evaluate(

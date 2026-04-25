@@ -65,7 +65,7 @@ bool is_effectively_zero(double value) {
 std::size_t lower_triangle_index(
     int row,
     int col) {
-  return xmvb::to_size(row) * (row + 1) / 2 + col;
+  return row * (row + 1) / 2 + col;
 }
 
 double compute_average_diagonal(
@@ -76,7 +76,7 @@ double compute_average_diagonal(
   }
   double diagonal_sum = 0.0;
   for (int index = 0; index < dimension; ++index) {
-    diagonal_sum += matrix[xmvb::to_size(index) * dimension + index];
+    diagonal_sum += matrix[index * dimension + index];
   }
   return diagonal_sum / static_cast<double>(dimension);
 }
@@ -113,7 +113,7 @@ void accumulate_scaled_matrix(
   }
 
   const std::size_t expected_size =
-      xmvb::to_size(source.rows()) * source.cols();
+      source.rows() * source.cols();
   if (destination->empty()) {
     destination->assign(expected_size, 0.0);
   } else if (destination->size() != expected_size) {
@@ -122,7 +122,7 @@ void accumulate_scaled_matrix(
 
   for (Eigen::Index col = 0; col < source.cols(); ++col) {
     for (Eigen::Index row = 0; row < source.rows(); ++row) {
-      (*destination)[xmvb::to_size(col) * source.rows() + row] +=
+      (*destination)[col * source.rows() + row] +=
           scale * source(row, col);
     }
   }
@@ -202,7 +202,7 @@ Matrix dense_mat(
     int dimension,
     const char* label) {
   const std::size_t expected_size =
-      xmvb::to_size(dimension) * xmvb::to_size(dimension);
+      dimension * dimension;
   if (data.size() != expected_size) {
     throw std::invalid_argument(
         std::string(label) + " size does not match the matrix dimension");
@@ -211,17 +211,17 @@ Matrix dense_mat(
   Matrix matrix = Matrix::Zero(dimension, dimension);
   for (int col = 0; col < dimension; ++col) {
     for (int row = 0; row < dimension; ++row) {
-      matrix(row, col) = data[xmvb::to_size(col) * dimension + row];
+      matrix(row, col) = data[col * dimension + row];
     }
   }
   return matrix;
 }
 
 ScalarBuffer column_major_storage(const ConstMatrixRef& matrix) {
-  ScalarBuffer data(xmvb::to_size(matrix.rows()) * matrix.cols(), 0.0);
+  ScalarBuffer data(matrix.rows() * matrix.cols(), 0.0);
   for (Eigen::Index col = 0; col < matrix.cols(); ++col) {
     for (Eigen::Index row = 0; row < matrix.rows(); ++row) {
-      data[xmvb::to_size(col) * matrix.rows() + row] = matrix(row, col);
+      data[col * matrix.rows() + row] = matrix(row, col);
     }
   }
   return data;
@@ -261,7 +261,7 @@ Eigen::VectorXd ground_state_coefficients(
     int dimension) {
   Eigen::VectorXd coefficients = Eigen::VectorXd::Zero(dimension);
   for (int index = 0; index < dimension; ++index) {
-    coefficients[index] = eigenvector_matrix[xmvb::to_size(index)];
+    coefficients[index] = eigenvector_matrix[index];
   }
   return coefficients;
 }
@@ -277,7 +277,7 @@ std::vector<PairWeight> build_pair_weights(
 
   const int dimension = static_cast<int>(hamiltonian_gradient.rows());
   std::vector<PairWeight> weights;
-  weights.reserve(xmvb::to_size(dimension) * (dimension + 1) / 2);
+  weights.reserve(dimension * (dimension + 1) / 2);
   for (int row = 0; row < dimension; ++row) {
     for (int col = 0; col <= row; ++col) {
       const double multiplicity = (row == col) ? 1.0 : 2.0;
@@ -394,8 +394,9 @@ PfActiveGradResult PfActiveGradEval::eval(
       prepared_active_space.orbital_result.active_orbital_overlap_matrix.begin(),
       prepared_active_space.orbital_result.active_orbital_overlap_matrix.end());
   active_space.hho.assign(
-      prepared_active_space.active_space_one_electron_result.h1e_act.begin(),
-      prepared_active_space.active_space_one_electron_result.h1e_act.end());
+      prepared_active_space.active_space_one_electron_result.h1e_act.data(),
+      prepared_active_space.active_space_one_electron_result.h1e_act.data() +
+          prepared_active_space.active_space_one_electron_result.h1e_act.size());
   active_space.two_electron_representation =
       prepared_active_space.active_space_two_electron_result.representation;
   active_space.n_auxiliary_functions =
@@ -425,7 +426,7 @@ PfActiveGradResult PfActiveGradEval::eval(
   const double matrix_dt = seconds_since(matrix_start_time);
   if (use_closed_shell_cache_path &&
       mats.lower_triangle_pair_caches.size() !=
-          xmvb::to_size(basis.n_states) * (basis.n_states + 1) / 2) {
+          basis.n_states * (basis.n_states + 1) / 2) {
     throw std::runtime_error(
         "PfMatrixBuilder did not return the expected number of pair caches");
   }
@@ -535,7 +536,7 @@ PfActiveGradResult PfActiveGradEval::eval(
 
       try {
         const PairWeight& weight =
-            pair_weights[xmvb::to_size(pair_index)];
+            pair_weights[pair_index];
         ++local_accum.grad_pair_calls;
 
         if (use_closed_shell_cache_path) {
@@ -592,8 +593,8 @@ PfActiveGradResult PfActiveGradEval::eval(
           const Clock::time_point open_shell_pair_start_time = Clock::now();
           const PfHighSpinOpenShellHamiltonianResult pair_result =
               evaluate_high_spin_open_shell_pf_state_pair_hamiltonian(
-                  basis.states[xmvb::to_size(weight.row)],
-                  basis.states[xmvb::to_size(weight.col)],
+                  basis.states[weight.row],
+                  basis.states[weight.col],
                   spatial_overlap_matrix,
                   one_electron_matrix,
                   active_space.ggo,
@@ -626,8 +627,8 @@ PfActiveGradResult PfActiveGradEval::eval(
           const Clock::time_point open_shell_pair_start_time = Clock::now();
           const PfFixedMsOpenShellHamiltonianResult pair_result =
               evaluate_fixed_ms_open_shell_pf_state_pair_hamiltonian(
-                  basis.states[xmvb::to_size(weight.row)],
-                  basis.states[xmvb::to_size(weight.col)],
+                  basis.states[weight.row],
+                  basis.states[weight.col],
                   spatial_overlap_matrix,
                   one_electron_matrix,
                   active_space.ggo,

@@ -187,8 +187,8 @@ Matrix extract_submatrix(
   for (int col = 0; col < static_cast<int>(cols.size()); ++col) {
     for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
       submatrix(row, col) =
-          matrix(rows[xmvb::to_size(row)],
-                 cols[xmvb::to_size(col)]);
+          matrix(rows[row],
+                 cols[col]);
     }
   }
   return submatrix;
@@ -209,8 +209,8 @@ void accumulate_submatrix(
   for (int col = 0; col < source.cols(); ++col) {
     for (int row = 0; row < source.rows(); ++row) {
       (*target)(
-          rows[xmvb::to_size(row)],
-          cols[xmvb::to_size(col)]) += source(row, col);
+          rows[row],
+          cols[col]) += source(row, col);
     }
   }
 }
@@ -228,8 +228,8 @@ Matrix scatter_submatrix(
   for (int col = 0; col < static_cast<int>(cols.size()); ++col) {
     for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
       matrix(
-          rows[xmvb::to_size(row)],
-          cols[xmvb::to_size(col)]) = submatrix(row, col);
+          rows[row],
+          cols[col]) = submatrix(row, col);
     }
   }
   return matrix;
@@ -237,11 +237,11 @@ Matrix scatter_submatrix(
 
 std::vector<double> flatten_matrix(const Matrix& matrix) {
   std::vector<double> data(
-      xmvb::to_size(matrix.rows() * matrix.cols()),
+      matrix.rows() * matrix.cols(),
       0.0);
   for (int col = 0; col < matrix.cols(); ++col) {
     for (int row = 0; row < matrix.rows(); ++row) {
-      data[xmvb::to_size(col) * matrix.rows() + row] = matrix(row, col);
+      data[col * matrix.rows() + row] = matrix(row, col);
     }
   }
   return data;
@@ -355,14 +355,14 @@ Matrix random_pair_matrix(
     std::mt19937* generator,
     std::normal_distribution<double>* distribution) {
   Matrix pair_matrix = Matrix::Zero(dimension, dimension);
-  std::vector<bool> blocked_mask(xmvb::to_size(dimension), false);
+  std::vector<bool> blocked_mask(dimension, false);
   for (const int orbital : blocked_alpha_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (int col = 0; col < dimension; ++col) {
     for (int row = 0; row < dimension; ++row) {
-      if (blocked_mask[xmvb::to_size(row)] ||
-          blocked_mask[xmvb::to_size(col)]) {
+      if (blocked_mask[row] ||
+          blocked_mask[col]) {
         continue;
       }
       pair_matrix(row, col) = (*distribution)(*generator);
@@ -424,38 +424,38 @@ CandidateContext build_candidate_context(
   context.right_blocked_alpha_orbitals = right_blocked_alpha_orbitals;
 
   std::vector<bool> left_blocked_mask(
-      xmvb::to_size(n_active_orbitals),
+      n_active_orbitals,
       false);
   for (int index = 0; index < static_cast<int>(left_blocked_alpha_orbitals.size()); ++index) {
-    const int orbital = left_blocked_alpha_orbitals[xmvb::to_size(index)];
+    const int orbital = left_blocked_alpha_orbitals[index];
     if (orbital < 0 || orbital >= n_active_orbitals) {
       throw std::invalid_argument("left blocked alpha orbital is out of range");
     }
-    if (left_blocked_mask[xmvb::to_size(orbital)]) {
+    if (left_blocked_mask[orbital]) {
       throw std::invalid_argument("left blocked alpha orbital is duplicated");
     }
-    left_blocked_mask[xmvb::to_size(orbital)] = true;
+    left_blocked_mask[orbital] = true;
   }
 
   std::vector<bool> right_blocked_mask(
-      xmvb::to_size(n_active_orbitals),
+      n_active_orbitals,
       false);
   for (int index = 0; index < static_cast<int>(right_blocked_alpha_orbitals.size()); ++index) {
-    const int orbital = right_blocked_alpha_orbitals[xmvb::to_size(index)];
+    const int orbital = right_blocked_alpha_orbitals[index];
     if (orbital < 0 || orbital >= n_active_orbitals) {
       throw std::invalid_argument("right blocked alpha orbital is out of range");
     }
-    if (right_blocked_mask[xmvb::to_size(orbital)]) {
+    if (right_blocked_mask[orbital]) {
       throw std::invalid_argument("right blocked alpha orbital is duplicated");
     }
-    right_blocked_mask[xmvb::to_size(orbital)] = true;
+    right_blocked_mask[orbital] = true;
   }
 
   for (int orbital = 0; orbital < n_active_orbitals; ++orbital) {
-    if (!left_blocked_mask[xmvb::to_size(orbital)]) {
+    if (!left_blocked_mask[orbital]) {
       context.left_pair_orbitals.push_back(orbital);
     }
-    if (!right_blocked_mask[xmvb::to_size(orbital)]) {
+    if (!right_blocked_mask[orbital]) {
       context.right_pair_orbitals.push_back(orbital);
     }
   }
@@ -531,10 +531,10 @@ CandidateContext build_candidate_context(
       context.right_pair_ab_reduced;
 
   context.interpolation_nodes.resize(
-      xmvb::to_size(context.interpolation_degree + 1),
+      context.interpolation_degree + 1,
       0.0);
   for (int node = 0; node <= context.interpolation_degree; ++node) {
-    context.interpolation_nodes[xmvb::to_size(node)] =
+    context.interpolation_nodes[node] =
         kInterpolationNodeScale * static_cast<double>(node);
   }
   context.inverse_vandermonde =
@@ -1184,7 +1184,7 @@ double candidate_total_hamiltonian_spatial_directional_forward_mode(
   for (int node = 0; node <= context.interpolation_degree; ++node) {
     const double weight = weights(node);
     const double t_value =
-        context.interpolation_nodes[xmvb::to_size(node)];
+        context.interpolation_nodes[node];
     const FastSampleOperands operands =
         build_fast_sample_operands(
             context,
@@ -2409,7 +2409,7 @@ CandidateResult evaluate_candidate(
   for (int node = 0; node <= context.interpolation_degree; ++node) {
     const double weight = weights(node);
     const double t_value =
-        context.interpolation_nodes[xmvb::to_size(node)];
+        context.interpolation_nodes[node];
     const FastSampleOperands operands =
         build_fast_sample_operands(context, t_value);
 

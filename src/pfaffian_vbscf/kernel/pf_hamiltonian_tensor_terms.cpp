@@ -56,8 +56,8 @@ std::vector<PfTensorTerm> build_two_electron_hamiltonian_tensor_terms(
 
   std::vector<PfTensorTerm> terms;
   terms.reserve(
-      xmvb::to_size(3 * cache.trace_order * cache.trace_order) +
-      xmvb::to_size(6 * cache.trace_order * cache.trace_order));
+      3 * cache.trace_order * cache.trace_order +
+      6 * cache.trace_order * cache.trace_order);
 
   for (int p_idx = 0; p_idx < cache.trace_order; ++p_idx) {
     for (int q_idx = 0; q_idx < cache.trace_order; ++q_idx) {
@@ -69,7 +69,7 @@ std::vector<PfTensorTerm> build_two_electron_hamiltonian_tensor_terms(
       }
 
       const double w_combined =
-          cache.trace_weights[xmvb::to_size(combined_order - 1)];
+          cache.trace_weights[combined_order - 1];
       if (w_combined == 0.0) {
         continue;
       }
@@ -101,7 +101,7 @@ std::vector<PfTensorTerm> build_two_electron_hamiltonian_tensor_terms(
 
   for (int power = 0; power < cache.trace_order; ++power) {
     const double scale =
-        cache.trace_weights[xmvb::to_size(power)] *
+        cache.trace_weights[power] *
         static_cast<double>(power + 1);
     if (scale == 0.0) {
       continue;

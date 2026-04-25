@@ -110,8 +110,8 @@ Matrix extract_submatrix(
   for (int col = 0; col < static_cast<int>(cols.size()); ++col) {
     for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
       submatrix(row, col) =
-          matrix(rows[xmvb::to_size(row)],
-                 cols[xmvb::to_size(col)]);
+          matrix(rows[row],
+                 cols[col]);
     }
   }
   return submatrix;
@@ -119,11 +119,11 @@ Matrix extract_submatrix(
 
 std::vector<double> flatten_matrix(const Matrix& matrix) {
   std::vector<double> data(
-      xmvb::to_size(matrix.rows() * matrix.cols()),
+      matrix.rows() * matrix.cols(),
       0.0);
   for (int col = 0; col < matrix.cols(); ++col) {
     for (int row = 0; row < matrix.rows(); ++row) {
-      data[xmvb::to_size(col) * matrix.rows() + row] = matrix(row, col);
+      data[col * matrix.rows() + row] = matrix(row, col);
     }
   }
   return data;
@@ -251,17 +251,17 @@ Matrix random_pair_matrix(
     std::mt19937* generator,
     std::normal_distribution<double>* distribution) {
   Matrix pair_matrix = Matrix::Zero(dimension, dimension);
-  std::vector<bool> blocked_mask(xmvb::to_size(dimension), false);
+  std::vector<bool> blocked_mask(dimension, false);
   for (const int orbital : blocked_alpha_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (const int orbital : blocked_beta_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (int col = 0; col < dimension; ++col) {
     for (int row = 0; row < dimension; ++row) {
-      if (blocked_mask[xmvb::to_size(row)] ||
-          blocked_mask[xmvb::to_size(col)]) {
+      if (blocked_mask[row] ||
+          blocked_mask[col]) {
         continue;
       }
       pair_matrix(row, col) = (*distribution)(*generator);
@@ -281,7 +281,7 @@ ScalarBuffer random_packed_two_electron_integrals(
           n_active_orbitals - 1,
           n_active_orbitals - 1) +
       1;
-  ScalarBuffer packed(xmvb::to_size(size), 0.0);
+  ScalarBuffer packed(size, 0.0);
   for (double& value : packed) {
     value = (*distribution)(*generator);
   }

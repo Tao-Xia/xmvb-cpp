@@ -104,7 +104,7 @@ int get_sparse_coefficient_count(
     int orbital_index) {
   const int n_basis_functions = input.n_basis_functions;
   const int explicit_count =
-      input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+      input.orbital_basis_counts[orbital_index];
   if (explicit_count > 1) {
     return explicit_count;
   }
@@ -113,7 +113,7 @@ int get_sparse_coefficient_count(
   while (count < n_basis_functions) {
     const int basis_index =
         input.orbital_basis_index_table[
-            xmvb::to_size(orbital_index) * n_basis_functions + count];
+            orbital_index * n_basis_functions + count];
     if (basis_index == 0) {
       break;
     }
@@ -145,17 +145,17 @@ xmvb::pfaffian_vbscf::PfBasisData make_basis(
   basis.n_active_orbitals = n_act;
   basis.n_alpha = n_alpha;
   basis.n_beta = n_beta;
-  basis.states.resize(xmvb::to_size(k));
+  basis.states.resize(k);
 
   const int n_spin = 2 * n_act;
   const int n_param = xmvb::pfaffian_vbscf::packed_antisymm_size(n_spin);
   std::mt19937 gen(seed);
   std::normal_distribution<double> dist(0.0, 1.0);
   for (int state = 0; state < k; ++state) {
-    auto& st = basis.states[xmvb::to_size(state)];
+    auto& st = basis.states[state];
     st.n_active_orbitals = n_act;
     st.n_spin_orbitals = n_spin;
-    st.packed_entries.resize(xmvb::to_size(n_param), 0.0);
+    st.packed_entries.resize(n_param, 0.0);
     double norm2 = 0.0;
     for (double& value : st.packed_entries) {
       value = dist(gen);
@@ -174,7 +174,7 @@ Eigen::VectorXd gather_gradient(
     const std::vector<int>& diff_idx) {
   Eigen::VectorXd out(static_cast<Eigen::Index>(diff_idx.size()));
   for (Eigen::Index i = 0; i < out.size(); ++i) {
-    out[i] = grad[xmvb::to_size(diff_idx[xmvb::to_size(i)])];
+    out[i] = grad[diff_idx[i]];
   }
   return out;
 }
@@ -205,8 +205,8 @@ xmvb::vb::CppVbInput stepped_input(
     double step) {
   xmvb::vb::CppVbInput trial = input;
   for (Eigen::Index i = 0; i < direction.size(); ++i) {
-    const int param_idx = diff_idx[xmvb::to_size(i)];
-    trial.orbital_preparation_input.orbital_value_table[xmvb::to_size(param_idx)] +=
+    const int param_idx = diff_idx[i];
+    trial.orbital_preparation_input.orbital_value_table[param_idx] +=
         step * direction[i];
   }
   return trial;

@@ -32,7 +32,7 @@ std::vector<int> build_structure_index_remap(
   }
 
   std::vector<int> structure_index_remap(
-      xmvb::to_size(n_structures),
+      n_structures,
       -1);
   for (std::size_t selected_offset = 0;
        selected_offset < selected_structure_indices.size();
@@ -41,10 +41,10 @@ std::vector<int> build_structure_index_remap(
     if (structure_index < 0 || structure_index >= n_structures) {
       throw std::out_of_range("selected structure index is out of range");
     }
-    if (structure_index_remap[xmvb::to_size(structure_index)] >= 0) {
+    if (structure_index_remap[structure_index] >= 0) {
       throw std::invalid_argument("selected_structure_indices must be unique");
     }
-    structure_index_remap[xmvb::to_size(structure_index)] =
+    structure_index_remap[structure_index] =
         static_cast<int>(selected_offset);
   }
   return structure_index_remap;
@@ -93,7 +93,7 @@ std::vector<int> select_raw_structure_indices(
   validate_raw_structure_data(raw_structure_data);
 
   std::vector<int> selected_structure_indices;
-  selected_structure_indices.reserve(xmvb::to_size(raw_structure_data.n_structures));
+  selected_structure_indices.reserve(raw_structure_data.n_structures);
   if (mode == RawStructureSelectionMode::Full) {
     for (int structure_index = 0;
          structure_index < raw_structure_data.n_structures;

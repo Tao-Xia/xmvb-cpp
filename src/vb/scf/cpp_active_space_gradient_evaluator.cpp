@@ -1,5 +1,6 @@
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -15,7 +16,7 @@
 #include <omp.h>
 #endif
 
-#include "vb/biorthogonal_vbscf/biorthogonal_exact_selected_structure_gradient.hpp"
+#include "core/openmp_utils.hpp"
 #include "vb/matrices/determinant_pair_storage_utils.hpp"
 #include "vb/matrices/determinant_overlap_resolver.hpp"
 #include "vb/matrices/prepared_active_space_context.hpp"
@@ -26,6 +27,7 @@
 #include "vb/orbital/active_space_two_electron_utils.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
 #include "vb/scf/cpp_active_space_gradient_result_utils.hpp"
+#include "vb/scf/exact_ctx_memory_accounting.hpp"
 #include "vb/scf/opposite_spin_matrix_backward.hpp"
 #include "vb/scf/same_spin_matrix_backward.hpp"
 #include "vb/scf/selected_state_determinant_matrices.hpp"
@@ -69,7 +71,7 @@ bool has_nonzero_structure_pair_adjoints(
 SameSpinPhiResult compute_same_spin_phi_from_active_space_result(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantOverlapResult& overlap_result,
@@ -100,7 +102,7 @@ SameSpinPhiResult compute_same_spin_phi_from_active_space_result(
 SameSpinPhiResult evaluate_same_spin_phi_with_optional_cache(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const SpinDeterminantPairEvaluation& pair_evaluation,
@@ -131,9 +133,9 @@ void accumulate_one_electron_gradient_contribution(
     double weight,
     Eigen::Ref<Eigen::MatrixXd> active_one_electron_gradient) {
   for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = occ_L[xmvb::to_size(left_column)];
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = occ_R[xmvb::to_size(right_row)];
+      const int orbital_index_right = occ_R[right_row];
       active_one_electron_gradient(orbital_index_right, orbital_index_left) +=
           weight * cofactor_1st(right_row, left_column);
     }
@@ -154,15 +156,15 @@ void accumulate_same_spin_two_electron_gradient_contribution(
   const int n_electrons = static_cast<int>(occ_L.size());
   const double cofactor_scale = weight / overlap_determinant;
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[xmvb::to_size(left_first)];
+    const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[xmvb::to_size(right_first)];
+      const int orbital_index_right_first = occ_R[right_first];
       const double cofactor_11 = cofactor_1st(right_first, left_first);
       for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orbital_index_left_second = occ_L[xmvb::to_size(left_second)];
+        const int orbital_index_left_second = occ_L[left_second];
         const double cofactor_12 = cofactor_1st(right_first, left_second);
         for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
-          const int orbital_index_right_second = occ_R[xmvb::to_size(right_second)];
+          const int orbital_index_right_second = occ_R[right_second];
           const double cofactor_22 = cofactor_1st(right_second, left_second);
           const double cofactor_21 = cofactor_1st(right_second, left_first);
           const double second_order_cofactor =
@@ -178,9 +180,9 @@ void accumulate_same_spin_two_electron_gradient_contribution(
               orbital_index_left_second,
               orbital_index_right_second,
               orbital_index_left_first);
-          (*packed_active_two_electron_gradient)[xmvb::to_size(direct_index)] +=
+          (*packed_active_two_electron_gradient)[direct_index] +=
               second_order_cofactor;
-          (*packed_active_two_electron_gradient)[xmvb::to_size(exchange_index)] -=
+          (*packed_active_two_electron_gradient)[exchange_index] -=
               second_order_cofactor;
         }
       }
@@ -226,8 +228,8 @@ void accumulate_opposite_spin_two_electron_gradient_contribution(
             TwoElectronIndexer::packed_pair_of_pairs_index(
                 beta_packed_pair_index,
                 alpha_packed_pair_index);
-        (*packed_active_two_electron_gradient)[xmvb::to_size(
-            packed_pair_of_pairs_index)] +=
+        (*packed_active_two_electron_gradient)[
+            packed_pair_of_pairs_index] +=
             weighted_alpha_value * beta_projection.packed_pair_values[beta_entry];
       }
     }
@@ -238,30 +240,30 @@ void accumulate_opposite_spin_two_electron_gradient_contribution(
        alpha_left_column < static_cast<int>(alpha_occ_L.size());
        ++alpha_left_column) {
     const int alpha_orbital_left =
-        alpha_occ_L[xmvb::to_size(alpha_left_column)];
+        alpha_occ_L[alpha_left_column];
     for (int alpha_right_row = 0;
          alpha_right_row < static_cast<int>(alpha_occ_R.size());
          ++alpha_right_row) {
       const int alpha_orbital_right =
-          alpha_occ_R[xmvb::to_size(alpha_right_row)];
+          alpha_occ_R[alpha_right_row];
       const double weighted_alpha_cofactor =
           weight * alpha_cofactor_1st(alpha_right_row, alpha_left_column);
       for (int beta_left_column = 0;
            beta_left_column < static_cast<int>(beta_occ_L.size());
            ++beta_left_column) {
         const int beta_orbital_left =
-            beta_occ_L[xmvb::to_size(beta_left_column)];
+            beta_occ_L[beta_left_column];
         for (int beta_right_row = 0;
              beta_right_row < static_cast<int>(beta_occ_R.size());
              ++beta_right_row) {
           const int beta_orbital_right =
-              beta_occ_R[xmvb::to_size(beta_right_row)];
+              beta_occ_R[beta_right_row];
           const int two_electron_index = TwoElectronIndexer::two_electron_storage_index(
               beta_orbital_right,
               beta_orbital_left,
               alpha_orbital_right,
               alpha_orbital_left);
-          (*packed_active_two_electron_gradient)[xmvb::to_size(two_electron_index)] +=
+          (*packed_active_two_electron_gradient)[two_electron_index] +=
               weighted_alpha_cofactor * beta_cofactor_1st(beta_right_row, beta_left_column);
         }
       }
@@ -289,17 +291,6 @@ std::vector<double> normalize_state_average_weights_local(
   return normalized_weights;
 }
 
-std::vector<int> build_full_structure_index_range(int n_structures) {
-  if (n_structures < 0) {
-    throw std::invalid_argument("n_structures must be non-negative");
-  }
-  std::vector<int> indices(xmvb::to_size(n_structures));
-  for (int structure_index = 0; structure_index < n_structures; ++structure_index) {
-    indices[xmvb::to_size(structure_index)] = structure_index;
-  }
-  return indices;
-}
-
 void validate_state_selection(
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -323,7 +314,7 @@ double compute_average_structure_overlap(
     int n_structures) {
   double diagonal_sum = 0.0;
   for (int structure_index = 0; structure_index < n_structures; ++structure_index) {
-    diagonal_sum += overlap_matrix[xmvb::to_size(structure_index) * n_structures +
+    diagonal_sum += overlap_matrix[structure_index * n_structures +
                                    structure_index];
   }
   return diagonal_sum / static_cast<double>(n_structures);
@@ -336,8 +327,8 @@ std::size_t structure_upper_storage_index(
       structure_row > structure_column) {
     throw std::invalid_argument("structure upper-triangular index is out of range");
   }
-  return xmvb::to_size(structure_column) * (structure_column + 1) / 2 +
-      xmvb::to_size(structure_row);
+  return structure_column * (structure_column + 1) / 2 +
+      structure_row;
 }
 
 // Precompute the selected-state structure adjoint weights once after the
@@ -351,7 +342,7 @@ StructurePairWeightTables build_structure_pair_weight_tables(
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights) {
   const std::size_t n_upper_entries =
-      xmvb::to_size(n_structures) * (n_structures + 1) / 2;
+      n_structures * (n_structures + 1) / 2;
   StructurePairWeightTables weights;
   weights.hamiltonian_upper_weights.assign(n_upper_entries, 0.0);
   weights.overlap_upper_weights.assign(n_upper_entries, 0.0);
@@ -361,16 +352,16 @@ StructurePairWeightTables build_structure_pair_weight_tables(
        ++selected_state_offset) {
     const int state_index = selected_state_indices[selected_state_offset];
     const double state_weight = state_average_weights[selected_state_offset];
-    const double state_energy = eigenvalues[xmvb::to_size(state_index)];
+    const double state_energy = eigenvalues[state_index];
     const double* eigenvector_column =
         eigenvector_matrix.data() +
-        xmvb::to_size(state_index) * n_structures;
+        state_index * n_structures;
     for (int structure_column = 0;
          structure_column < n_structures;
          ++structure_column) {
       const double coefficient_column = eigenvector_column[structure_column];
       const std::size_t column_offset =
-          xmvb::to_size(structure_column) * (structure_column + 1) / 2;
+          structure_column * (structure_column + 1) / 2;
       for (int structure_row = 0;
            structure_row <= structure_column;
            ++structure_row) {
@@ -379,7 +370,7 @@ StructurePairWeightTables build_structure_pair_weight_tables(
         const double weighted_product =
             symmetry * state_weight * eigenvector_column[structure_row] * coefficient_column;
         const std::size_t storage_index =
-            column_offset + xmvb::to_size(structure_row);
+            column_offset + structure_row;
         weights.hamiltonian_upper_weights[storage_index] += weighted_product;
         weights.overlap_upper_weights[storage_index] -=
             state_energy * weighted_product;
@@ -428,7 +419,7 @@ double selected_state_average_energy(
        selected_state_offset < selected_state_indices.size();
        ++selected_state_offset) {
     energy += state_average_weights[selected_state_offset] *
-              eigenvalues[xmvb::to_size(selected_state_indices[selected_state_offset])];
+              eigenvalues[selected_state_indices[selected_state_offset]];
   }
   return energy;
 }
@@ -596,6 +587,19 @@ finalize_active_space_second_order_context(
             normalized_weights,
             context->same_spin_pair_cache);
   }
+  // Accepted-point exact_ctx memory can become the dominant footprint on
+  // medium systems long before the SCF iteration finishes. Keep the breakdown
+  // behind an env-gated logger so production runs stay unchanged, while
+  // compute-node diagnostics can attribute large resident sets to concrete
+  // accepted-context payloads.
+  ExactCtxMemoryBreakdown memory_breakdown;
+  append_exact_ctx_memory_breakdown(
+      "accepted_point_context",
+      *context,
+      &memory_breakdown);
+  maybe_log_exact_ctx_memory_breakdown(
+      "accepted_point_context",
+      memory_breakdown);
   return context;
 }
 
@@ -636,8 +640,8 @@ void populate_scf_result(
        selected_state_offset < selected_state_indices.size();
        ++selected_state_offset) {
     scf_result->selected_state_total_energies[selected_state_offset] =
-        eigen_result.eigenvalues[xmvb::to_size(
-            selected_state_indices[selected_state_offset])] +
+        eigen_result.eigenvalues[
+            selected_state_indices[selected_state_offset]] +
         nuclear_repulsion_energy;
   }
 }
@@ -749,17 +753,17 @@ void accumulate_active_space_gradient_pair_with_adjoints(
   }
 
   const auto& alpha_occ_L =
-      input.structure_data.alpha_det[xmvb::to_size(
-          determinant_index_left)];
+      input.structure_data.alpha_det[
+          determinant_index_left];
   const auto& alpha_occ_R =
-      input.structure_data.alpha_det[xmvb::to_size(
-          determinant_index_right)];
+      input.structure_data.alpha_det[
+          determinant_index_right];
   const auto& beta_occ_L =
-      input.structure_data.beta_det[xmvb::to_size(
-          determinant_index_left)];
+      input.structure_data.beta_det[
+          determinant_index_left];
   const auto& beta_occ_R =
-      input.structure_data.beta_det[xmvb::to_size(
-          determinant_index_right)];
+      input.structure_data.beta_det[
+          determinant_index_right];
   const auto& alpha_result = determinant_pair_evaluation.alpha.overlap_result;
   const auto& beta_result = determinant_pair_evaluation.beta.overlap_result;
   const Eigen::MatrixXd alpha_cofactor_1st =
@@ -918,10 +922,10 @@ void accumulate_active_space_gradient_pair(
     std::vector<double>* active_orbital_overlap_gradient,
     std::vector<double>* packed_active_two_electron_gradient) {
   const auto pair_adjoints = determinant_pair_structure_adjoints(
-      input.structure_data.determinant_to_structure_terms[xmvb::to_size(
-          determinant_index_left)],
-      input.structure_data.determinant_to_structure_terms[xmvb::to_size(
-          determinant_index_right)],
+      input.structure_data.determinant_to_structure_terms[
+          determinant_index_left],
+      input.structure_data.determinant_to_structure_terms[
+          determinant_index_right],
       structure_pair_weights);
   accumulate_active_space_gradient_pair_with_adjoints(
       pair_adjoints,
@@ -986,16 +990,16 @@ void accumulate_active_space_gradient_unordered_pair(
   }
 
   const auto direct_pair_adjoints = determinant_pair_structure_adjoints(
-      input.structure_data.determinant_to_structure_terms[xmvb::to_size(
-          determinant_index_left)],
-      input.structure_data.determinant_to_structure_terms[xmvb::to_size(
-          determinant_index_right)],
+      input.structure_data.determinant_to_structure_terms[
+          determinant_index_left],
+      input.structure_data.determinant_to_structure_terms[
+          determinant_index_right],
       structure_pair_weights);
   const auto swapped_pair_adjoints = determinant_pair_structure_adjoints(
-      input.structure_data.determinant_to_structure_terms[xmvb::to_size(
-          determinant_index_right)],
-      input.structure_data.determinant_to_structure_terms[xmvb::to_size(
-          determinant_index_left)],
+      input.structure_data.determinant_to_structure_terms[
+          determinant_index_right],
+      input.structure_data.determinant_to_structure_terms[
+          determinant_index_left],
       structure_pair_weights);
   const StructurePairAdjoints combined_pair_adjoints = {
       direct_pair_adjoints.hamiltonian_weight +
@@ -1066,9 +1070,7 @@ void accumulate_active_space_gradient(
 
   const auto stage_start_time = std::chrono::steady_clock::now();
   int n_threads = 1;
-#ifdef _OPENMP
-  n_threads = omp_get_max_threads();
-#endif
+  n_threads = xmvb::effective_openmp_thread_count();
   const std::size_t n_determinant_pairs =
       unordered_determinant_pair_count(n_determinants);
   if (n_threads > n_determinants) {
@@ -1160,7 +1162,7 @@ void accumulate_active_space_gradient(
     }
   } else {
     std::vector<ThreadLocalActiveSpaceGradientBuffers> partial_gradients;
-    partial_gradients.reserve(xmvb::to_size(n_threads));
+    partial_gradients.reserve(n_threads);
     for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
       ThreadLocalActiveSpaceGradientBuffers buffers;
       buffers.active_orbital_overlap_gradient.assign(
@@ -1177,6 +1179,12 @@ void accumulate_active_space_gradient(
 
     std::atomic<bool> failed(false);
     std::exception_ptr first_exception;
+    const std::size_t pair_chunk_size =
+        unordered_determinant_pair_parallel_chunk_size(
+            n_determinant_pairs,
+            n_threads);
+    const std::size_t pair_chunk_stride =
+        pair_chunk_size * static_cast<std::size_t>(n_threads);
 
 #pragma omp parallel num_threads(n_threads)
     {
@@ -1187,18 +1195,20 @@ void accumulate_active_space_gradient(
       thread_index = omp_get_thread_num();
 #endif
       auto& local_gradients =
-          partial_gradients[xmvb::to_size(thread_index)];
+          partial_gradients[thread_index];
       Eigen::Map<Eigen::MatrixXd> local_active_one_electron_gradient(
           local_gradients.active_one_electron_gradient.data(),
           n_active_orbitals,
           n_active_orbitals);
-      const std::size_t pair_begin =
-          n_determinant_pairs * xmvb::to_size(thread_index) /
-          xmvb::to_size(n_threads);
-      const std::size_t pair_end =
-          n_determinant_pairs * xmvb::to_size(thread_index + 1) /
-          xmvb::to_size(n_threads);
-      if (pair_begin < pair_end) {
+      // Each pair contributes to thread-local gradient buffers.  Cyclic chunk
+      // ownership balances sparse/zero-adjoint determinant rows without
+      // introducing non-deterministic dynamic scheduling into the reduction.
+      for (std::size_t pair_begin =
+               static_cast<std::size_t>(thread_index) * pair_chunk_size;
+           pair_begin < n_determinant_pairs;
+           pair_begin += pair_chunk_stride) {
+        const std::size_t pair_end =
+            std::min(n_determinant_pairs, pair_begin + pair_chunk_size);
         auto determinant_pair =
             determinant_pair_from_storage_index(pair_begin);
         for (std::size_t pair_storage_index = pair_begin;
@@ -1282,8 +1292,7 @@ CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
       active_space_one_electron_builder_(),
       active_space_two_electron_builder_(),
       structure_builder_(algorithm),
-      generalized_eigensolver_(),
-      algorithm_(algorithm) {}
+      generalized_eigensolver_() {}
 
 CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
     ActiveSpaceOrbitalPreparer orbital_preparer,
@@ -1297,25 +1306,12 @@ CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
       active_space_one_electron_builder_(std::move(active_space_one_electron_builder)),
       active_space_two_electron_builder_(std::move(active_space_two_electron_builder)),
       structure_builder_(std::move(structure_builder)),
-      generalized_eigensolver_(std::move(generalized_eigensolver)),
-      algorithm_(VBSCFAlgorithm::Original) {}
+      generalized_eigensolver_(std::move(generalized_eigensolver)) {}
 
 CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
     const CppVbInput& input,
     double nuclear_repulsion_energy) const {
   return evaluate(input, {0}, {1.0}, nuclear_repulsion_energy);
-}
-
-CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
-    const CppVbInput& input,
-    TimedPreparedActiveSpaceContext timed_prepared_active_space_context,
-    double nuclear_repulsion_energy) const {
-  return evaluate(
-      input,
-      std::move(timed_prepared_active_space_context),
-      {0},
-      {1.0},
-      nuclear_repulsion_energy);
 }
 
 CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
@@ -1331,16 +1327,6 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
       selected_state_indices,
       state_average_weights,
       input.structure_data.n_structures);
-  if (algorithm_ == VBSCFAlgorithm::BiorthogonalExactSelected) {
-    return biorthogonal_vbscf::
-        evaluate_biorthogonal_exact_selected_structure_active_space_gradient(
-            input,
-            build_full_structure_index_range(input.structure_data.n_structures),
-            selected_state_indices,
-            state_average_weights,
-            algorithm_,
-            nuclear_repulsion_energy);
-  }
   const std::vector<double> normalized_weights =
       normalize_state_average_weights_local(state_average_weights);
   auto forward_context = build_active_space_gradient_forward_context(
@@ -1392,17 +1378,6 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
       selected_state_indices,
       state_average_weights,
       input.structure_data.n_structures);
-  if (algorithm_ == VBSCFAlgorithm::BiorthogonalExactSelected) {
-    (void)timed_prepared_active_space_context;
-    return biorthogonal_vbscf::
-        evaluate_biorthogonal_exact_selected_structure_active_space_gradient(
-            input,
-            build_full_structure_index_range(input.structure_data.n_structures),
-            selected_state_indices,
-            state_average_weights,
-            algorithm_,
-            nuclear_repulsion_energy);
-  }
   const std::vector<double> normalized_weights =
       normalize_state_average_weights_local(state_average_weights);
 

@@ -10,6 +10,11 @@
 
 namespace xmvb::vb {
 
+struct ActiveSpaceOrbitalBackpropagationDiagnostics {
+  Eigen::MatrixXd original_orbital_gradient;
+  std::vector<double> orbital_value_gradient;
+};
+
 /**
  * @brief Reverse-mode backpropagator for `ActiveSpaceOrbitalPreparer`.
  *
@@ -48,6 +53,20 @@ public:
    * @return ActiveSpaceOrbitalBackpropagationResult Gradient with respect to `orbital_value_table`.
    */
   ActiveSpaceOrbitalBackpropagationResult backpropagate(
+      const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_gradient,
+      const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient,
+      const OrbitalPreparationInput& input,
+      const OrbitalPreparationResult& orbital_preparation_result) const;
+
+  /**
+   * @brief Returns the cached dense pullback stage and the final raw-slot gradient.
+   *
+   * This is a diagnostics hook for exact-context HVP validation. It exposes
+   * the intermediate dense orbital gradient before the per-orbital
+   * normalization pullback so callers can compare stage A/B of the orbital
+   * backpropagation chain separately.
+   */
+  ActiveSpaceOrbitalBackpropagationDiagnostics compute_diagnostics(
       const Eigen::Ref<const Eigen::MatrixXd>& active_auxiliary_gradient,
       const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient,
       const OrbitalPreparationInput& input,

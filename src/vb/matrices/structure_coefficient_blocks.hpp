@@ -22,6 +22,8 @@ struct StructureCoefficientBlock {
   std::vector<int> alpha_support;
   std::vector<int> beta_support;
   Eigen::MatrixXd local_coefficients;
+  bool close_shell_diagonal = false;
+  std::vector<double> local_diagonal_coefficients;
 };
 
 namespace detail {
@@ -57,6 +59,7 @@ inline void trim_zero_structure_support(StructureCoefficientBlock* block) {
   if (block->local_coefficients.size() == 0) {
     block->alpha_support.clear();
     block->beta_support.clear();
+    block->local_diagonal_coefficients.clear();
     return;
   }
 
@@ -115,23 +118,23 @@ inline void trim_zero_structure_support(StructureCoefficientBlock* block) {
 
   for (const int alpha_local : kept_alpha_local_indices) {
     trimmed_alpha_support.push_back(
-        block->alpha_support[xmvb::to_size(alpha_local)]);
+        block->alpha_support[alpha_local]);
   }
   for (const int beta_local : kept_beta_local_indices) {
     trimmed_beta_support.push_back(
-        block->beta_support[xmvb::to_size(beta_local)]);
+        block->beta_support[beta_local]);
   }
 
   for (int trimmed_beta_local = 0;
        trimmed_beta_local < static_cast<int>(kept_beta_local_indices.size());
        ++trimmed_beta_local) {
     const int source_beta_local =
-        kept_beta_local_indices[xmvb::to_size(trimmed_beta_local)];
+        kept_beta_local_indices[trimmed_beta_local];
     for (int trimmed_alpha_local = 0;
          trimmed_alpha_local < static_cast<int>(kept_alpha_local_indices.size());
          ++trimmed_alpha_local) {
       const int source_alpha_local =
-          kept_alpha_local_indices[xmvb::to_size(trimmed_alpha_local)];
+          kept_alpha_local_indices[trimmed_alpha_local];
       trimmed_coefficients(trimmed_alpha_local, trimmed_beta_local) =
           block->local_coefficients(source_alpha_local, source_beta_local);
     }
@@ -140,6 +143,21 @@ inline void trim_zero_structure_support(StructureCoefficientBlock* block) {
   block->alpha_support = std::move(trimmed_alpha_support);
   block->beta_support = std::move(trimmed_beta_support);
   block->local_coefficients = std::move(trimmed_coefficients);
+  if (block->close_shell_diagonal &&
+      block->alpha_support == block->beta_support) {
+    block->local_diagonal_coefficients.assign(
+        block->alpha_support.size(),
+        0.0);
+    for (int local_index = 0;
+         local_index < static_cast<int>(block->alpha_support.size());
+         ++local_index) {
+      block->local_diagonal_coefficients[local_index] =
+          block->local_coefficients(local_index, local_index);
+    }
+  } else {
+    block->close_shell_diagonal = false;
+    block->local_diagonal_coefficients.clear();
+  }
 }
 
 }  // namespace detail
@@ -165,6 +183,11 @@ inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks
   }
 
   const int n_determinants = static_cast<int>(determinant_to_structure_terms.size());
+  const bool close_shell_diagonal =
+      alpha_reuse_table.unique_determinants ==
+          beta_reuse_table.unique_determinants &&
+      alpha_reuse_table.determinant_to_unique_id ==
+          beta_reuse_table.determinant_to_unique_id;
   if (static_cast<int>(alpha_reuse_table.determinant_to_unique_id.size()) !=
           n_determinants ||
       static_cast<int>(beta_reuse_table.determinant_to_unique_id.size()) !=
@@ -174,25 +197,21 @@ inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks
   }
 
   std::vector<std::vector<detail::StructureCoefficientEntry>> entries_by_structure(
-      xmvb::to_size(n_blocks));
+      n_blocks);
   std::vector<std::vector<int>> alpha_support_candidates(
-      xmvb::to_size(n_blocks));
+      n_blocks);
   std::vector<std::vector<int>> beta_support_candidates(
-      xmvb::to_size(n_blocks));
+      n_blocks);
 
   for (int determinant_index = 0;
        determinant_index < n_determinants;
        ++determinant_index) {
     const int unique_alpha_id =
-        xmvb::index_at(
-            alpha_reuse_table.determinant_to_unique_id,
-            determinant_index);
+        alpha_reuse_table.determinant_to_unique_id[determinant_index];
     const int unique_beta_id =
-        xmvb::index_at(
-            beta_reuse_table.determinant_to_unique_id,
-            determinant_index);
+        beta_reuse_table.determinant_to_unique_id[determinant_index];
     const auto& structure_terms =
-        xmvb::index_at(determinant_to_structure_terms, determinant_index);
+        determinant_to_structure_terms[determinant_index];
     for (const auto& term : structure_terms) {
       if (term.structure_index < 0 ||
           term.structure_index >=
@@ -200,7 +219,7 @@ inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks
         throw std::out_of_range("structure index is out of range");
       }
       const int block_index =
-          xmvb::index_at(structure_to_block_index, term.structure_index);
+          structure_to_block_index[term.structure_index];
       if (block_index < 0) {
         continue;
       }
@@ -208,31 +227,33 @@ inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks
         throw std::out_of_range("block index is out of range");
       }
       auto& entries =
-          xmvb::index_at(entries_by_structure, block_index);
+          entries_by_structure[block_index];
       entries.push_back(detail::StructureCoefficientEntry{
           unique_alpha_id,
           unique_beta_id,
           term.coefficient});
-      xmvb::index_at(alpha_support_candidates, block_index)
+      alpha_support_candidates[block_index]
           .push_back(unique_alpha_id);
-      xmvb::index_at(beta_support_candidates, block_index)
+      beta_support_candidates[block_index]
           .push_back(unique_beta_id);
     }
   }
 
   std::vector<StructureCoefficientBlock> coefficient_blocks(
-      xmvb::to_size(n_blocks));
+      n_blocks);
   for (int block_index = 0; block_index < n_blocks; ++block_index) {
-    auto& block = xmvb::index_at(coefficient_blocks, block_index);
+    auto& block = coefficient_blocks[block_index];
+    block.close_shell_diagonal = close_shell_diagonal;
     block.alpha_support = std::move(
-        xmvb::index_at(alpha_support_candidates, block_index));
+        alpha_support_candidates[block_index]);
     block.beta_support = std::move(
-        xmvb::index_at(beta_support_candidates, block_index));
+        beta_support_candidates[block_index]);
     detail::sort_and_deduplicate_support(&block.alpha_support);
     detail::sort_and_deduplicate_support(&block.beta_support);
 
     if (block.alpha_support.empty() || block.beta_support.empty()) {
       block.local_coefficients.resize(0, 0);
+      block.local_diagonal_coefficients.clear();
       continue;
     }
 
@@ -240,7 +261,7 @@ inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks
         Eigen::MatrixXd::Zero(
             static_cast<int>(block.alpha_support.size()),
             static_cast<int>(block.beta_support.size()));
-    const auto& entries = xmvb::index_at(entries_by_structure, block_index);
+    const auto& entries = entries_by_structure[block_index];
     for (const auto& entry : entries) {
       const auto alpha_iterator =
           std::lower_bound(
@@ -263,7 +284,28 @@ inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks
           static_cast<int>(alpha_iterator - block.alpha_support.begin());
       const int beta_local =
           static_cast<int>(beta_iterator - block.beta_support.begin());
+      if (close_shell_diagonal &&
+          entry.alpha_unique_id != entry.beta_unique_id) {
+        throw std::logic_error(
+            "close-shell structure coefficient entry must stay on the diagonal");
+      }
       block.local_coefficients(alpha_local, beta_local) += entry.coefficient;
+    }
+
+    if (close_shell_diagonal) {
+      if (block.alpha_support != block.beta_support) {
+        throw std::logic_error(
+            "close-shell structure coefficient supports must match");
+      }
+      block.local_diagonal_coefficients.assign(
+          block.alpha_support.size(),
+          0.0);
+      for (int local_index = 0;
+           local_index < static_cast<int>(block.alpha_support.size());
+           ++local_index) {
+        block.local_diagonal_coefficients[local_index] =
+            block.local_coefficients(local_index, local_index);
+      }
     }
 
     if (prune_zero_support) {
@@ -280,11 +322,11 @@ inline std::vector<StructureCoefficientBlock> build_structure_coefficient_blocks
     const SpinDeterminantReuseTable& alpha_reuse_table,
     const SpinDeterminantReuseTable& beta_reuse_table,
     bool prune_zero_support = false) {
-  std::vector<int> structure_to_block_index(xmvb::to_size(n_structures), -1);
+  std::vector<int> structure_to_block_index(n_structures, -1);
   for (int structure_index = 0;
        structure_index < n_structures;
        ++structure_index) {
-    structure_to_block_index[xmvb::to_size(structure_index)] =
+    structure_to_block_index[structure_index] =
         structure_index;
   }
   return build_structure_coefficient_blocks(

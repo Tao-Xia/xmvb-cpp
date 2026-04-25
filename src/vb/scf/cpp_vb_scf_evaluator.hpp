@@ -5,7 +5,6 @@
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "vb/matrices/cpp_vb_input.hpp"
 #include "vb/matrices/structure_matrix_evaluator.hpp"
-#include "vb/matrices/structure_subspace_builder.hpp"
 #include "vb/scf/cpp_vb_scf_result.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
@@ -74,41 +73,9 @@ public:
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;
 
-  /**
-   * @brief Evaluates a compact selected-structure subspace on the current orbitals.
-   *
-   * @param input Full C++ VB input bundle.
-   * @param selected_structure_indices Zero-based structure indices kept in the subspace.
-   * @param nuclear_repulsion_energy Nuclear repulsion energy.
-   * @return CppVbScfResult Structure matrices plus generalized-eigen data.
-   */
-  CppVbScfResult evaluate_subspace(
-      const CppVbInput& input,
-      const std::vector<int>& selected_structure_indices,
-      double nuclear_repulsion_energy = 0.0) const;
-
-  /**
-   * @brief Evaluates a selected-structure subspace for chosen states.
-   *
-   * @param input Full C++ VB input bundle.
-   * @param selected_structure_indices Zero-based structure indices kept in the subspace.
-   * @param selected_state_indices Zero-based state indices in the selected subspace.
-   * @param state_average_weights Non-negative state-averaging weights.
-   * @param nuclear_repulsion_energy Nuclear repulsion energy.
-   * @return CppVbScfResult Structure matrices plus generalized-eigen data.
-   */
-  CppVbScfResult evaluate_subspace(
-      const CppVbInput& input,
-      const std::vector<int>& selected_structure_indices,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy) const;
-
 private:
   StructureMatrixEvaluator matrix_evaluator_;
   xmvb::core::GeneralizedEigensolver generalized_eigensolver_;
-  StructureSubspaceBuilder subspace_builder_;
-  VBSCFAlgorithm algorithm_ = VBSCFAlgorithm::Original;
 };
 
 }  // namespace xmvb::vb

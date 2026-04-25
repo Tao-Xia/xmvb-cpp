@@ -255,8 +255,8 @@ std::vector<Pair> build_pair_list(
     return {};
   }
   std::vector<Pair> pairs;
-  pairs.reserve(xmvb::to_size(structure_count) *
-                xmvb::to_size(structure_count - 1) / 2);
+  pairs.reserve(structure_count *
+                structure_count - 1 / 2);
   for (int left_structure = 0; left_structure < structure_count; ++left_structure) {
     for (int right_structure = 0; right_structure < left_structure; ++right_structure) {
       pairs.emplace_back(left_structure, right_structure);
@@ -267,7 +267,7 @@ std::vector<Pair> build_pair_list(
     std::shuffle(pairs.begin(), pairs.end(), rng);
   }
   if (max_pairs > 0 && static_cast<int>(pairs.size()) > max_pairs) {
-    pairs.resize(xmvb::to_size(max_pairs));
+    pairs.resize(max_pairs);
   }
   return pairs;
 }
@@ -423,12 +423,12 @@ int main(int argc, char** argv) {
     }
 
     std::vector<PerStructureCache> structure_cache(
-        xmvb::to_size(raw_structure_data.n_structures));
+        raw_structure_data.n_structures);
     std::map<int, int> determinant_term_count_histogram;
     for (int structure_index = 0;
          structure_index < raw_structure_data.n_structures;
          ++structure_index) {
-      auto& cache = structure_cache[xmvb::to_size(structure_index)];
+      auto& cache = structure_cache[structure_index];
       cache.active_pairs =
           xmvb::vb::extract_active_pairs(raw_structure_data, structure_index);
       // `determinant_term_count` is the number of unique determinant terms in the
@@ -472,8 +472,8 @@ int main(int argc, char** argv) {
 
     for (std::size_t pair_index = 0; pair_index < pair_list.size(); ++pair_index) {
       const auto [left_structure, right_structure] = pair_list[pair_index];
-      const auto& left_cache = structure_cache[xmvb::to_size(left_structure)];
-      const auto& right_cache = structure_cache[xmvb::to_size(right_structure)];
+      const auto& left_cache = structure_cache[left_structure];
+      const auto& right_cache = structure_cache[right_structure];
 
       const auto support_orbitals =
           xmvb::vb::build_support_orbitals(left_cache.active_pairs, right_cache.active_pairs);
@@ -583,7 +583,7 @@ int main(int argc, char** argv) {
       ++signature_summary.width_upper_bound_histogram[record.weighted_min_degree_width_upper_bound];
 
       if (options.report_every > 0 &&
-          (pair_index + 1) % xmvb::to_size(options.report_every) == 0) {
+          (pair_index + 1) % options.report_every == 0) {
         const auto elapsed_seconds = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - started_at).count();
         std::cerr << "progress = " << (pair_index + 1) << "/" << pair_list.size()
@@ -734,7 +734,7 @@ int main(int argc, char** argv) {
          signature_index < static_cast<int>(sorted_signatures.size());
          ++signature_index) {
       const auto& [signature, summary] =
-          sorted_signatures[xmvb::to_size(signature_index)];
+          sorted_signatures[signature_index];
       std::cout << "signature = " << signature
                 << " | pair_count = " << summary.pair_count
                 << " | max_component_covalent_labels_hist = "

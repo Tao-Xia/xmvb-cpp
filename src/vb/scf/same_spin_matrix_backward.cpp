@@ -22,7 +22,7 @@ constexpr double kContributionTolerance = 1.0e-15;
 constexpr int kSameSpinBackwardPairTileSize = 64;
 
 std::size_t square_storage_size(int dimension) {
-  return xmvb::product_size(dimension, dimension);
+  return (dimension) * (dimension);
 }
 
 int same_spin_backward_pair_tile_size() {
@@ -183,6 +183,115 @@ bool selected_state_has_local_support(
       state_coefficients.local_coefficient_matrix.size() != 0;
 }
 
+bool selected_state_has_close_shell_diagonal(
+    const SelectedStateDeterminantCoefficients& state_coefficients,
+    int n_unique_alpha,
+    int n_unique_beta) {
+  return state_coefficients.close_shell_diagonal &&
+      n_unique_alpha == n_unique_beta &&
+      state_coefficients.diagonal_coefficients.size() ==
+          static_cast<std::size_t>(n_unique_alpha);
+}
+
+bool selected_state_has_local_close_shell_diagonal(
+    const SelectedStateDeterminantCoefficients& state_coefficients) {
+  return state_coefficients.close_shell_diagonal &&
+      state_coefficients.alpha_support == state_coefficients.beta_support &&
+      state_coefficients.local_diagonal_coefficients.size() ==
+          state_coefficients.alpha_support.size();
+}
+
+void accumulate_diagonal_kernel_image_global(
+    const std::vector<double>& diagonal_coefficients,
+    const Eigen::MatrixXd& partner_kernel_matrix,
+    double scale,
+    Eigen::MatrixXd* global_weight_matrix) {
+  if (global_weight_matrix == nullptr) {
+    throw std::invalid_argument("global_weight_matrix must not be null");
+  }
+  if (std::abs(scale) <= kContributionTolerance ||
+      diagonal_coefficients.empty()) {
+    return;
+  }
+  if (partner_kernel_matrix.rows() != static_cast<int>(diagonal_coefficients.size()) ||
+      partner_kernel_matrix.cols() != static_cast<int>(diagonal_coefficients.size())) {
+    throw std::invalid_argument(
+        "partner kernel shape does not match close-shell diagonal coefficients");
+  }
+
+  for (int column = 0;
+       column < static_cast<int>(diagonal_coefficients.size());
+       ++column) {
+    const double right_coefficient = diagonal_coefficients[column];
+    if (std::abs(right_coefficient) <= kContributionTolerance) {
+      continue;
+    }
+    for (int row = 0;
+         row < static_cast<int>(diagonal_coefficients.size());
+         ++row) {
+      const double left_coefficient = diagonal_coefficients[row];
+      if (std::abs(left_coefficient) <= kContributionTolerance) {
+        continue;
+      }
+      (*global_weight_matrix)(row, column) +=
+          scale *
+          left_coefficient *
+          partner_kernel_matrix(row, column) *
+          right_coefficient;
+    }
+  }
+}
+
+void accumulate_directional_diagonal_kernel_image_global(
+    const std::vector<double>& diagonal_coefficients,
+    const std::vector<double>& directional_diagonal_coefficients,
+    const Eigen::MatrixXd& partner_kernel_matrix,
+    double scale,
+    Eigen::MatrixXd* global_weight_matrix) {
+  if (global_weight_matrix == nullptr) {
+    throw std::invalid_argument("global_weight_matrix must not be null");
+  }
+  if (std::abs(scale) <= kContributionTolerance ||
+      diagonal_coefficients.empty()) {
+    return;
+  }
+  if (directional_diagonal_coefficients.size() != diagonal_coefficients.size() ||
+      partner_kernel_matrix.rows() != static_cast<int>(diagonal_coefficients.size()) ||
+      partner_kernel_matrix.cols() != static_cast<int>(diagonal_coefficients.size())) {
+    throw std::invalid_argument(
+        "directional close-shell diagonal contraction dimensions do not match");
+  }
+
+  for (int column = 0;
+       column < static_cast<int>(diagonal_coefficients.size());
+       ++column) {
+    const double right_coefficient = diagonal_coefficients[column];
+    const double directional_right =
+        directional_diagonal_coefficients[column];
+    if (std::abs(right_coefficient) <= kContributionTolerance &&
+        std::abs(directional_right) <= kContributionTolerance) {
+      continue;
+    }
+    for (int row = 0;
+         row < static_cast<int>(diagonal_coefficients.size());
+         ++row) {
+      const double left_coefficient = diagonal_coefficients[row];
+      const double directional_left =
+          directional_diagonal_coefficients[row];
+      const double directional_value =
+          directional_left * right_coefficient +
+          left_coefficient * directional_right;
+      if (std::abs(directional_value) <= kContributionTolerance) {
+        continue;
+      }
+      (*global_weight_matrix)(row, column) +=
+          scale *
+          partner_kernel_matrix(row, column) *
+          directional_value;
+    }
+  }
+}
+
 void validate_state_coefficient_matrix(
     const SelectedStateDeterminantCoefficients& state_coefficients,
     int n_unique_alpha,
@@ -225,11 +334,11 @@ void scatter_add_dense_submatrix(
   for (int column_local = 0;
        column_local < static_cast<int>(column_indices.size());
        ++column_local) {
-    const int column_global = column_indices[xmvb::to_size(column_local)];
+    const int column_global = column_indices[column_local];
     for (int row_local = 0;
          row_local < static_cast<int>(row_indices.size());
          ++row_local) {
-      const int row_global = row_indices[xmvb::to_size(row_local)];
+      const int row_global = row_indices[row_local];
       (*global_matrix)(row_global, column_global) +=
           scale * local_matrix(row_local, column_local);
     }
@@ -264,6 +373,49 @@ void accumulate_selected_state_alpha_image(
   }
   if (std::abs(scale) <= kContributionTolerance ||
       !selected_state_has_local_support(state_coefficients)) {
+    return;
+  }
+  if (selected_state_has_local_close_shell_diagonal(state_coefficients)) {
+    const auto& local_diagonal_coefficients =
+        state_coefficients.local_diagonal_coefficients;
+    if (beta_kernel_subblock.rows() !=
+            static_cast<int>(local_diagonal_coefficients.size()) ||
+        beta_kernel_subblock.cols() !=
+            static_cast<int>(local_diagonal_coefficients.size())) {
+      throw std::invalid_argument(
+          "beta support kernel shape does not match close-shell local diagonal coefficients");
+    }
+    alpha_image->setZero(
+        static_cast<int>(local_diagonal_coefficients.size()),
+        static_cast<int>(local_diagonal_coefficients.size()));
+    for (int column = 0;
+         column < static_cast<int>(local_diagonal_coefficients.size());
+         ++column) {
+      const double right_coefficient =
+          local_diagonal_coefficients[column];
+      if (std::abs(right_coefficient) <= kContributionTolerance) {
+        continue;
+      }
+      for (int row = 0;
+           row < static_cast<int>(local_diagonal_coefficients.size());
+           ++row) {
+        const double left_coefficient =
+            local_diagonal_coefficients[row];
+        if (std::abs(left_coefficient) <= kContributionTolerance) {
+          continue;
+        }
+        (*alpha_image)(row, column) =
+            left_coefficient *
+            beta_kernel_subblock(row, column) *
+            right_coefficient;
+      }
+    }
+    scatter_add_dense_submatrix(
+        *alpha_image,
+        state_coefficients.alpha_support,
+        state_coefficients.alpha_support,
+        scale,
+        global_alpha_weight_matrix);
     return;
   }
   validate_local_state_coefficient_matrix(state_coefficients);
@@ -304,6 +456,49 @@ void accumulate_selected_state_beta_image(
       !selected_state_has_local_support(state_coefficients)) {
     return;
   }
+  if (selected_state_has_local_close_shell_diagonal(state_coefficients)) {
+    const auto& local_diagonal_coefficients =
+        state_coefficients.local_diagonal_coefficients;
+    if (alpha_kernel_subblock.rows() !=
+            static_cast<int>(local_diagonal_coefficients.size()) ||
+        alpha_kernel_subblock.cols() !=
+            static_cast<int>(local_diagonal_coefficients.size())) {
+      throw std::invalid_argument(
+          "alpha support kernel shape does not match close-shell local diagonal coefficients");
+    }
+    beta_image->setZero(
+        static_cast<int>(local_diagonal_coefficients.size()),
+        static_cast<int>(local_diagonal_coefficients.size()));
+    for (int column = 0;
+         column < static_cast<int>(local_diagonal_coefficients.size());
+         ++column) {
+      const double right_coefficient =
+          local_diagonal_coefficients[column];
+      if (std::abs(right_coefficient) <= kContributionTolerance) {
+        continue;
+      }
+      for (int row = 0;
+           row < static_cast<int>(local_diagonal_coefficients.size());
+           ++row) {
+        const double left_coefficient =
+            local_diagonal_coefficients[row];
+        if (std::abs(left_coefficient) <= kContributionTolerance) {
+          continue;
+        }
+        (*beta_image)(row, column) =
+            left_coefficient *
+            alpha_kernel_subblock(row, column) *
+            right_coefficient;
+      }
+    }
+    scatter_add_dense_submatrix(
+        *beta_image,
+        state_coefficients.beta_support,
+        state_coefficients.beta_support,
+        scale,
+        global_beta_weight_matrix);
+    return;
+  }
   validate_local_state_coefficient_matrix(state_coefficients);
   const auto& local_coefficients = state_coefficients.local_coefficient_matrix;
   if (alpha_kernel_subblock.rows() != local_coefficients.rows() ||
@@ -340,9 +535,9 @@ void accumulate_one_electron_gradient_contribution_local(
   }
 
   for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = xmvb::index_at(occ_L, left_column);
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = xmvb::index_at(occ_R, right_row);
+      const int orbital_index_right = occ_R[right_row];
       (*active_one_electron_gradient)(orbital_index_right, orbital_index_left) +=
           weight * cofactor_1st(right_row, left_column);
     }
@@ -369,10 +564,10 @@ void accumulate_overlap_block_gradient_contribution_local(
   }
 
   for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = xmvb::index_at(occ_L, left_column);
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = xmvb::index_at(occ_R, right_row);
-      (*active_orbital_overlap_gradient)[xmvb::to_size(orbital_index_left) *
+      const int orbital_index_right = occ_R[right_row];
+      (*active_orbital_overlap_gradient)[orbital_index_left *
                                              n_active_orbitals +
                                          orbital_index_right] +=
           weight * overlap_block_gradient(right_row, left_column);
@@ -397,15 +592,15 @@ void accumulate_same_spin_two_electron_gradient_contribution_local(
   const int n_electrons = static_cast<int>(occ_L.size());
   const double cofactor_scale = weight / overlap_determinant;
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = xmvb::index_at(occ_L, left_first);
+    const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = xmvb::index_at(occ_R, right_first);
+      const int orbital_index_right_first = occ_R[right_first];
       const double cofactor_11 = cofactor_1st(right_first, left_first);
       for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orbital_index_left_second = xmvb::index_at(occ_L, left_second);
+        const int orbital_index_left_second = occ_L[left_second];
         const double cofactor_12 = cofactor_1st(right_first, left_second);
         for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
-          const int orbital_index_right_second = xmvb::index_at(occ_R, right_second);
+          const int orbital_index_right_second = occ_R[right_second];
           const double cofactor_22 = cofactor_1st(right_second, left_second);
           const double cofactor_21 = cofactor_1st(right_second, left_first);
           const double second_order_cofactor =
@@ -421,9 +616,9 @@ void accumulate_same_spin_two_electron_gradient_contribution_local(
               orbital_index_left_second,
               orbital_index_right_second,
               orbital_index_left_first);
-          xmvb::index_at(*packed_active_two_electron_gradient, direct_index) +=
+          (*packed_active_two_electron_gradient)[direct_index] +=
               second_order_cofactor;
-          xmvb::index_at(*packed_active_two_electron_gradient, exchange_index) -=
+          (*packed_active_two_electron_gradient)[exchange_index] -=
               second_order_cofactor;
         }
       }
@@ -449,24 +644,22 @@ void accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local
     return;
   }
 
-  const Eigen::MatrixXd overlap_block =
-      build_overlap_submatrix_from_result(overlap_result);
-  const DeterminantOverlapResolver overlap_resolver;
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = xmvb::index_at(occ_L, left_first);
+    const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = xmvb::index_at(occ_R, right_first);
+      const int orbital_index_right_first = occ_R[right_first];
       for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orbital_index_left_second = xmvb::index_at(occ_L, left_second);
+        const int orbital_index_left_second = occ_L[left_second];
         for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
-          const int orbital_index_right_second = xmvb::index_at(occ_R, right_second);
+          const int orbital_index_right_second = occ_R[right_second];
           const double second_order_cofactor =
               weight *
-              calc_deleted_minor_determinant(
-                  overlap_block,
-                  {right_first, right_second},
-                  {left_first, left_second},
-                  overlap_resolver);
+              calc_second_order_cofactor(
+                  overlap_result,
+                  right_first,
+                  right_second,
+                  left_first,
+                  left_second);
           if (std::abs(second_order_cofactor) <= kContributionTolerance) {
             continue;
           }
@@ -481,9 +674,9 @@ void accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local
               orbital_index_left_second,
               orbital_index_right_second,
               orbital_index_left_first);
-          xmvb::index_at(*packed_active_two_electron_gradient, direct_index) +=
+          (*packed_active_two_electron_gradient)[direct_index] +=
               second_order_cofactor;
-          xmvb::index_at(*packed_active_two_electron_gradient, exchange_index) -=
+          (*packed_active_two_electron_gradient)[exchange_index] -=
               second_order_cofactor;
         }
       }
@@ -528,11 +721,11 @@ void scatter_minor_cofactor_to_overlap_block_gradient_local(
   for (int retained_col = 0;
        retained_col < static_cast<int>(retained_cols.size());
        ++retained_col) {
-    const int overlap_col = retained_cols[xmvb::to_size(retained_col)];
+    const int overlap_col = retained_cols[retained_col];
     for (int retained_row = 0;
          retained_row < static_cast<int>(retained_rows.size());
          ++retained_row) {
-      const int overlap_row = retained_rows[xmvb::to_size(retained_row)];
+      const int overlap_row = retained_rows[retained_row];
       (*overlap_block_gradient)(overlap_row, overlap_col) +=
           scale * minor_cofactor(retained_row, retained_col);
     }
@@ -600,20 +793,97 @@ void accumulate_directional_deleted_minor_pullback_to_overlap_block_gradient_loc
       delta_overlap_gradient);
 }
 
+void accumulate_directional_second_order_cofactor_pullback_local(
+    const Eigen::MatrixXd& overlap_block,
+    const Eigen::MatrixXd& delta_overlap_block,
+    int right_first,
+    int right_second,
+    int left_first,
+    int left_second,
+    double coefficient,
+    double delta_coefficient,
+    const DeterminantOverlapResolver& overlap_resolver,
+    Eigen::MatrixXd* delta_overlap_gradient) {
+  if (delta_overlap_gradient == nullptr) {
+    throw std::invalid_argument("delta_overlap_gradient must not be null");
+  }
+  if (std::abs(coefficient) <= kContributionTolerance &&
+      std::abs(delta_coefficient) <= kContributionTolerance) {
+    return;
+  }
+
+  const int n_electrons = overlap_block.rows();
+  const int minor_dimension = n_electrons - 2;
+  if (minor_dimension <= 0) {
+    return;
+  }
+
+  Eigen::MatrixXd minor(minor_dimension, minor_dimension);
+  Eigen::MatrixXd delta_minor(minor_dimension, minor_dimension);
+  int minor_row = 0;
+  for (int row = 0; row < n_electrons; ++row) {
+    if (row == right_first || row == right_second) {
+      continue;
+    }
+    int minor_col = 0;
+    for (int col = 0; col < n_electrons; ++col) {
+      if (col == left_first || col == left_second) {
+        continue;
+      }
+      minor(minor_row, minor_col) = overlap_block(row, col);
+      delta_minor(minor_row, minor_col) = delta_overlap_block(row, col);
+      ++minor_col;
+    }
+    ++minor_row;
+  }
+
+  const DeterminantOverlapResult minor_result =
+      overlap_resolver.resolve_matrix(minor);
+  const Eigen::MatrixXd minor_cofactor =
+      calc_cofactor_1st(minor_result);
+  const Eigen::MatrixXd delta_minor_cofactor =
+      build_directional_first_cofactor_matrix(
+          minor,
+          delta_minor,
+          minor_result,
+          overlap_resolver);
+  const double sign =
+      ((right_first + right_second + left_first + left_second) % 2 == 0)
+          ? 1.0
+          : -1.0;
+
+  minor_row = 0;
+  for (int row = 0; row < n_electrons; ++row) {
+    if (row == right_first || row == right_second) {
+      continue;
+    }
+    int minor_col = 0;
+    for (int col = 0; col < n_electrons; ++col) {
+      if (col == left_first || col == left_second) {
+        continue;
+      }
+      (*delta_overlap_gradient)(row, col) +=
+          sign *
+          (delta_coefficient * minor_cofactor(minor_row, minor_col) +
+           coefficient * delta_minor_cofactor(minor_row, minor_col));
+      ++minor_col;
+    }
+    ++minor_row;
+  }
+}
+
 Eigen::MatrixXd build_spin_one_electron_block_matrix_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
-    int n_active_orbitals) {
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act) {
   const int n_electrons = static_cast<int>(occ_L.size());
   Eigen::MatrixXd one_electron_block(n_electrons, n_electrons);
   for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = xmvb::index_at(occ_L, left_column);
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < n_electrons; ++right_row) {
-      const int orbital_index_right = xmvb::index_at(occ_R, right_row);
+      const int orbital_index_right = occ_R[right_row];
       one_electron_block(right_row, left_column) =
-          h1e_act[xmvb::to_size(orbital_index_left) * n_active_orbitals +
-                  orbital_index_right];
+          h1e_act(orbital_index_right, orbital_index_left);
     }
   }
   return one_electron_block;
@@ -622,7 +892,7 @@ Eigen::MatrixXd build_spin_one_electron_block_matrix_local(
 SameSpinPhiResult evaluate_same_spin_phi_with_optional_cache_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const SpinDeterminantPairEvaluation& pair_evaluation,
@@ -652,16 +922,11 @@ Eigen::MatrixXd build_local_overlap_direction_matrix(
     const std::vector<int>& occ_R,
     const std::vector<double>& delta_active_orbital_overlap_matrix,
     int n_active_orbitals) {
-  const std::vector<double> delta_overlap_storage =
-      build_overlap_submatrix(
-          occ_L,
-          occ_R,
-          delta_active_orbital_overlap_matrix,
-          n_active_orbitals);
-  return Eigen::Map<const Eigen::MatrixXd>(
-      delta_overlap_storage.data(),
-      static_cast<int>(occ_R.size()),
-      static_cast<int>(occ_L.size()));
+  return build_overlap_submatrix(
+      occ_L,
+      occ_R,
+      delta_active_orbital_overlap_matrix,
+      n_active_orbitals);
 }
 
 double lookup_directional_active_two_electron_kernel_value(
@@ -675,14 +940,14 @@ double lookup_directional_active_two_electron_kernel_value(
       TwoElectronIndexer::packed_pair_of_pairs_index(
           row_packed_pair_index,
           column_packed_pair_index);
-  return delta_packed_active_two_electron_integrals[xmvb::to_size(
-      packed_pair_of_pairs_index)];
+  return delta_packed_active_two_electron_integrals[
+      packed_pair_of_pairs_index];
 }
 
 SingularSpinDirectionalData build_singular_spin_directional_data(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& active_one_electron_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
@@ -721,14 +986,15 @@ SingularSpinDirectionalData build_singular_spin_directional_data(
       build_spin_one_electron_block_matrix_local(
           occ_L,
           occ_R,
-          active_one_electron_matrix,
-          n_active_orbitals);
+          active_one_electron_matrix);
   const Eigen::MatrixXd delta_one_electron_block =
       build_spin_one_electron_block_matrix_local(
           occ_L,
           occ_R,
-          delta_active_one_electron_matrix,
-          n_active_orbitals);
+          Eigen::Map<const Eigen::MatrixXd>(
+              delta_active_one_electron_matrix.data(),
+              n_active_orbitals,
+              n_active_orbitals));
   result.delta_total_hamiltonian =
       (delta_one_electron_block.cwiseProduct(result.cofactor_1st)).sum() +
       (one_electron_block.cwiseProduct(result.delta_cofactor_1st)).sum();
@@ -755,16 +1021,16 @@ SingularSpinDirectionalData build_singular_spin_directional_data(
       make_active_space_two_electron_view(active_space_two_electron_result);
   const int n_electrons = static_cast<int>(occ_L.size());
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[xmvb::to_size(left_first)];
+    const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[xmvb::to_size(right_first)];
+      const int orbital_index_right_first = occ_R[right_first];
       const int direct_left_pair_index = TwoElectronIndexer::packed_pair_index(
           orbital_index_right_first,
           orbital_index_left_first);
       for (int left_second = left_first + 1;
            left_second < n_electrons;
            ++left_second) {
-        const int orbital_index_left_second = occ_L[xmvb::to_size(left_second)];
+        const int orbital_index_left_second = occ_L[left_second];
         const int exchange_left_pair_index = TwoElectronIndexer::packed_pair_index(
             orbital_index_right_first,
             orbital_index_left_second);
@@ -772,7 +1038,7 @@ SingularSpinDirectionalData build_singular_spin_directional_data(
              right_second < n_electrons;
              ++right_second) {
           const int orbital_index_right_second =
-              occ_R[xmvb::to_size(right_second)];
+              occ_R[right_second];
           const int direct_right_pair_index = TwoElectronIndexer::packed_pair_index(
               orbital_index_right_second,
               orbital_index_left_second);
@@ -800,26 +1066,32 @@ SingularSpinDirectionalData build_singular_spin_directional_data(
                   exchange_left_pair_index,
                   exchange_right_pair_index);
           const double second_order_cofactor =
-              calc_deleted_minor_determinant(
-                  overlap_block,
-                  {right_first, right_second},
-                  {left_first, left_second},
-                  overlap_resolver);
+              calc_second_order_cofactor(
+                  overlap_result,
+                  right_first,
+                  right_second,
+                  left_first,
+                  left_second);
           const double directional_second_order_cofactor =
-              calc_directional_deleted_minor_determinant(
+              calc_directional_second_order_cofactor(
                   overlap_block,
                   delta_overlap_submatrix,
-                  {right_first, right_second},
-                  {left_first, left_second},
+                  overlap_result,
+                  right_first,
+                  right_second,
+                  left_first,
+                  left_second,
                   overlap_resolver);
           result.delta_total_hamiltonian +=
               delta_interaction_value * second_order_cofactor +
               interaction_value * directional_second_order_cofactor;
-          accumulate_directional_deleted_minor_pullback_to_overlap_block_gradient_local(
+          accumulate_directional_second_order_cofactor_pullback_local(
               overlap_block,
               delta_overlap_submatrix,
-              {right_first, right_second},
-              {left_first, left_second},
+              right_first,
+              right_second,
+              left_first,
+              left_second,
               interaction_value,
               delta_interaction_value,
               overlap_resolver,
@@ -835,7 +1107,7 @@ SingularSpinDirectionalData build_singular_spin_directional_data(
 RegularSpinDirectionalData build_regular_spin_directional_data(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& active_one_electron_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
@@ -878,15 +1150,16 @@ RegularSpinDirectionalData build_regular_spin_directional_data(
       build_spin_one_electron_block_matrix_local(
           occ_L,
           occ_R,
-          active_one_electron_matrix,
-          n_active_orbitals);
+          active_one_electron_matrix);
 
   const Eigen::MatrixXd delta_one_electron_block =
       build_spin_one_electron_block_matrix_local(
           occ_L,
           occ_R,
-          delta_active_one_electron_matrix,
-          n_active_orbitals);
+          Eigen::Map<const Eigen::MatrixXd>(
+              delta_active_one_electron_matrix.data(),
+              n_active_orbitals,
+              n_active_orbitals));
           
   const SameSpinPhiResult same_spin_phi_result =
       evaluate_same_spin_phi_with_optional_cache_local(
@@ -913,16 +1186,16 @@ RegularSpinDirectionalData build_regular_spin_directional_data(
       make_active_space_two_electron_view(active_space_two_electron_result);
   const int n_electrons = static_cast<int>(occ_L.size());
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[xmvb::to_size(left_first)];
+    const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[xmvb::to_size(right_first)];
+      const int orbital_index_right_first = occ_R[right_first];
       const int direct_left_pair_index = TwoElectronIndexer::packed_pair_index(
           orbital_index_right_first,
           orbital_index_left_first);
       for (int left_second = left_first + 1;
            left_second < n_electrons;
            ++left_second) {
-        const int orbital_index_left_second = occ_L[xmvb::to_size(left_second)];
+        const int orbital_index_left_second = occ_L[left_second];
         const int exchange_left_pair_index = TwoElectronIndexer::packed_pair_index(
             orbital_index_right_first,
             orbital_index_left_second);
@@ -930,7 +1203,7 @@ RegularSpinDirectionalData build_regular_spin_directional_data(
              right_second < n_electrons;
              ++right_second) {
           const int orbital_index_right_second =
-              occ_R[xmvb::to_size(right_second)];
+              occ_R[right_second];
           const int direct_right_pair_index = TwoElectronIndexer::packed_pair_index(
               orbital_index_right_second,
               orbital_index_left_second);
@@ -1026,9 +1299,9 @@ void accumulate_directional_one_electron_gradient_contribution_local(
   }
 
   for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = xmvb::index_at(occ_L, left_column);
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = xmvb::index_at(occ_R, right_row);
+      const int orbital_index_right = occ_R[right_row];
       (*active_one_electron_gradient)(orbital_index_right, orbital_index_left) +=
           delta_weight * cofactor_1st(right_row, left_column) +
           weight * delta_cofactor_1st(right_row, left_column);
@@ -1063,14 +1336,14 @@ void accumulate_directional_same_spin_two_electron_gradient_contribution_local(
           inv_overlap_determinant * inv_overlap_determinant;
   const double prefactor = weight * inv_overlap_determinant;
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = xmvb::index_at(occ_L, left_first);
+    const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = xmvb::index_at(occ_R, right_first);
+      const int orbital_index_right_first = occ_R[right_first];
       const double cofactor_11 = cofactor_1st(right_first, left_first);
       const double delta_cofactor_11 =
           delta_cofactor_1st(right_first, left_first);
       for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orbital_index_left_second = xmvb::index_at(occ_L, left_second);
+        const int orbital_index_left_second = occ_L[left_second];
         const double cofactor_12 = cofactor_1st(right_first, left_second);
         const double delta_cofactor_12 =
             delta_cofactor_1st(right_first, left_second);
@@ -1078,7 +1351,7 @@ void accumulate_directional_same_spin_two_electron_gradient_contribution_local(
              right_second < n_electrons;
              ++right_second) {
           const int orbital_index_right_second =
-              xmvb::index_at(occ_R, right_second);
+              occ_R[right_second];
           const double cofactor_22 = cofactor_1st(right_second, left_second);
           const double cofactor_21 = cofactor_1st(right_second, left_first);
           const double delta_cofactor_22 =
@@ -1106,9 +1379,9 @@ void accumulate_directional_same_spin_two_electron_gradient_contribution_local(
               orbital_index_left_second,
               orbital_index_right_second,
               orbital_index_left_first);
-          xmvb::index_at(*packed_active_two_electron_gradient, direct_index) +=
+          (*packed_active_two_electron_gradient)[direct_index] +=
               directional_second_order_cofactor;
-          xmvb::index_at(*packed_active_two_electron_gradient, exchange_index) -=
+          (*packed_active_two_electron_gradient)[exchange_index] -=
               directional_second_order_cofactor;
         }
       }
@@ -1148,25 +1421,29 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
           n_active_orbitals);
   const DeterminantOverlapResolver overlap_resolver;
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = xmvb::index_at(occ_L, left_first);
+    const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = xmvb::index_at(occ_R, right_first);
+      const int orbital_index_right_first = occ_R[right_first];
       for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orbital_index_left_second = xmvb::index_at(occ_L, left_second);
+        const int orbital_index_left_second = occ_L[left_second];
         for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
-          const int orbital_index_right_second = xmvb::index_at(occ_R, right_second);
+          const int orbital_index_right_second = occ_R[right_second];
           const double second_order_cofactor =
-              calc_deleted_minor_determinant(
-                  overlap_block,
-                  {right_first, right_second},
-                  {left_first, left_second},
-                  overlap_resolver);
+              calc_second_order_cofactor(
+                  overlap_result,
+                  right_first,
+                  right_second,
+                  left_first,
+                  left_second);
           const double directional_second_order_cofactor =
-              calc_directional_deleted_minor_determinant(
+              calc_directional_second_order_cofactor(
                   overlap_block,
                   delta_overlap_submatrix,
-                  {right_first, right_second},
-                  {left_first, left_second},
+                  overlap_result,
+                  right_first,
+                  right_second,
+                  left_first,
+                  left_second,
                   overlap_resolver);
           const double total_directional_second_order_cofactor =
               delta_weight * second_order_cofactor +
@@ -1186,9 +1463,9 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
               orbital_index_left_second,
               orbital_index_right_second,
               orbital_index_left_first);
-          xmvb::index_at(*packed_active_two_electron_gradient, direct_index) +=
+          (*packed_active_two_electron_gradient)[direct_index] +=
               total_directional_second_order_cofactor;
-          xmvb::index_at(*packed_active_two_electron_gradient, exchange_index) -=
+          (*packed_active_two_electron_gradient)[exchange_index] -=
               total_directional_second_order_cofactor;
         }
       }
@@ -1249,10 +1526,10 @@ void accumulate_regular_spin_overlap_gradient_direction_local(
       delta_inverse_overlap_transpose;
 
   for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = xmvb::index_at(occ_L, left_column);
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = xmvb::index_at(occ_R, right_row);
-      (*active_orbital_overlap_gradient)[xmvb::to_size(orbital_index_left) *
+      const int orbital_index_right = occ_R[right_row];
+      (*active_orbital_overlap_gradient)[orbital_index_left *
                                              n_active_orbitals +
                                          orbital_index_right] +=
           overlap_submatrix_gradient_direction(right_row, left_column);
@@ -1313,7 +1590,8 @@ build_dense_same_spin_weight_matrices_from_partner_kernels(
     const SelectedStateDeterminantMatrices& selected_states,
     const Eigen::MatrixXd& alpha_partner_kernel_matrix,
     const Eigen::MatrixXd& beta_partner_kernel_matrix,
-    const std::vector<double>& per_state_scales) {
+    const std::vector<double>& per_state_scales,
+    bool close_shell_same_spin) {
   if (per_state_scales.size() != selected_states.states.size()) {
     throw std::invalid_argument(
         "per_state_scales must align with selected_states.states");
@@ -1352,8 +1630,26 @@ build_dense_same_spin_weight_matrices_from_partner_kernels(
         selected_states.states[state_offset],
         selected_states.n_unique_alpha,
         selected_states.n_unique_beta);
-    coefficient_matrix_dense =
-        selected_states.states[state_offset].coefficient_matrix;
+    const auto& state_coefficients = selected_states.states[state_offset];
+    if (selected_state_has_close_shell_diagonal(
+            state_coefficients,
+            selected_states.n_unique_alpha,
+            selected_states.n_unique_beta)) {
+      accumulate_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          beta_partner_kernel_matrix,
+          scale,
+          &weight_matrices.alpha_weight_matrix);
+      if (!close_shell_same_spin) {
+        accumulate_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            alpha_partner_kernel_matrix,
+            scale,
+            &weight_matrices.beta_weight_matrix);
+      }
+      continue;
+    }
+    coefficient_matrix_dense = state_coefficients.coefficient_matrix;
 
     multiply_right_symmetric(
         coefficient_matrix_dense,
@@ -1361,6 +1657,10 @@ build_dense_same_spin_weight_matrices_from_partner_kernels(
         &beta_push);
     alpha_image.noalias() = beta_push * coefficient_matrix_dense.transpose();
     weight_matrices.alpha_weight_matrix.noalias() += scale * alpha_image;
+
+    if (close_shell_same_spin) {
+      continue;
+    }
 
     multiply_left_symmetric(
         alpha_partner_kernel_matrix,
@@ -1370,6 +1670,10 @@ build_dense_same_spin_weight_matrices_from_partner_kernels(
     weight_matrices.beta_weight_matrix.noalias() += scale * beta_image;
   }
 
+  if (close_shell_same_spin) {
+    weight_matrices.beta_weight_matrix =
+        weight_matrices.alpha_weight_matrix;
+  }
   return weight_matrices;
 }
 
@@ -1378,7 +1682,8 @@ build_support_sparse_same_spin_weight_matrices_from_partner_kernels(
     const SelectedStateDeterminantMatrices& selected_states,
     const Eigen::MatrixXd& alpha_partner_kernel_matrix,
     const Eigen::MatrixXd& beta_partner_kernel_matrix,
-    const std::vector<double>& per_state_scales) {
+    const std::vector<double>& per_state_scales,
+    bool close_shell_same_spin) {
   if (per_state_scales.size() != selected_states.states.size()) {
     throw std::invalid_argument(
         "per_state_scales must align with selected_states.states");
@@ -1423,6 +1728,9 @@ build_support_sparse_same_spin_weight_matrices_from_partner_kernels(
         &weight_matrices.alpha_weight_matrix,
         &beta_push,
         &alpha_image);
+    if (close_shell_same_spin) {
+      continue;
+    }
     accumulate_selected_state_beta_image(
         state_coefficients,
         alpha_partner_subblock,
@@ -1432,6 +1740,10 @@ build_support_sparse_same_spin_weight_matrices_from_partner_kernels(
         &beta_image);
   }
 
+  if (close_shell_same_spin) {
+    weight_matrices.beta_weight_matrix =
+        weight_matrices.alpha_weight_matrix;
+  }
   return weight_matrices;
 }
 
@@ -1440,19 +1752,22 @@ build_same_spin_weight_matrices_from_partner_kernels(
     const SelectedStateDeterminantMatrices& selected_states,
     const Eigen::MatrixXd& alpha_partner_kernel_matrix,
     const Eigen::MatrixXd& beta_partner_kernel_matrix,
-    const std::vector<double>& per_state_scales) {
+    const std::vector<double>& per_state_scales,
+    bool close_shell_same_spin) {
   if (should_use_support_sparse_selected_state_contractions(selected_states)) {
     return build_support_sparse_same_spin_weight_matrices_from_partner_kernels(
         selected_states,
         alpha_partner_kernel_matrix,
         beta_partner_kernel_matrix,
-        per_state_scales);
+        per_state_scales,
+        close_shell_same_spin);
   }
   return build_dense_same_spin_weight_matrices_from_partner_kernels(
       selected_states,
       alpha_partner_kernel_matrix,
       beta_partner_kernel_matrix,
-      per_state_scales);
+      per_state_scales,
+      close_shell_same_spin);
 }
 
 SameSpinExactWeightMatrices build_dense_exact_same_spin_weight_matrices(
@@ -1465,6 +1780,8 @@ SameSpinExactWeightMatrices build_dense_exact_same_spin_weight_matrices(
   }
 
   SameSpinExactWeightMatrices weight_matrices;
+  const bool close_shell_same_spin =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
   weight_matrices.alpha_hamiltonian_weight_matrix =
       Eigen::MatrixXd::Zero(selected_states.n_unique_alpha, selected_states.n_unique_alpha);
   weight_matrices.alpha_overlap_weight_matrix =
@@ -1486,10 +1803,13 @@ SameSpinExactWeightMatrices build_dense_exact_same_spin_weight_matrices(
       build_pair_scalar_matrices(
           same_spin_pair_cache.alpha_pair_cache_ref(),
           selected_states.n_unique_alpha);
-  const SameSpinPairScalarMatrices beta_scalar_matrices =
-      build_pair_scalar_matrices(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          selected_states.n_unique_beta);
+  SameSpinPairScalarMatrices beta_scalar_matrices;
+  if (!close_shell_same_spin) {
+    beta_scalar_matrices =
+        build_pair_scalar_matrices(
+            same_spin_pair_cache.beta_pair_cache_ref(),
+            selected_states.n_unique_beta);
+  }
 
   // Each selected state already stores the determinant expansion in unique
   // alpha/beta matrix form `C^(n)`. The separable same-spin channels therefore
@@ -1526,34 +1846,95 @@ SameSpinExactWeightMatrices build_dense_exact_same_spin_weight_matrices(
         state_coefficients,
         selected_states.n_unique_alpha,
         selected_states.n_unique_beta);
+    if (selected_state_has_close_shell_diagonal(
+            state_coefficients,
+            selected_states.n_unique_alpha,
+            selected_states.n_unique_beta)) {
+      accumulate_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.overlap_determinant_matrix
+              : beta_scalar_matrices.overlap_determinant_matrix,
+          state_weight,
+          &weight_matrices.alpha_hamiltonian_weight_matrix);
+      accumulate_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.overlap_determinant_matrix
+              : beta_scalar_matrices.overlap_determinant_matrix,
+          overlap_weight,
+          &weight_matrices.alpha_overlap_weight_matrix);
+      accumulate_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.regular_total_hamiltonian_matrix
+              : beta_scalar_matrices.regular_total_hamiltonian_matrix,
+          state_weight,
+          &weight_matrices.alpha_partner_total_transfer_matrix);
+      accumulate_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.singular_total_hamiltonian_matrix
+              : beta_scalar_matrices.singular_total_hamiltonian_matrix,
+          state_weight,
+          &weight_matrices.alpha_singular_partner_transfer_matrix);
+      if (!close_shell_same_spin) {
+        accumulate_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.overlap_determinant_matrix,
+            state_weight,
+            &weight_matrices.beta_hamiltonian_weight_matrix);
+        accumulate_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.overlap_determinant_matrix,
+            overlap_weight,
+            &weight_matrices.beta_overlap_weight_matrix);
+        accumulate_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.regular_total_hamiltonian_matrix,
+            state_weight,
+            &weight_matrices.beta_partner_total_transfer_matrix);
+        accumulate_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.singular_total_hamiltonian_matrix,
+            state_weight,
+            &weight_matrices.beta_singular_partner_transfer_matrix);
+      }
+      continue;
+    }
     coefficient_matrix_dense = state_coefficients.coefficient_matrix;
 
     // Reuse the same dense scratch buffers for every selected state so the hot
     // BLAS-3 contractions avoid repeated allocation churn.
     multiply_right_symmetric(
         coefficient_matrix_dense,
-        beta_scalar_matrices.overlap_determinant_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.overlap_determinant_matrix
+            : beta_scalar_matrices.overlap_determinant_matrix,
         &beta_push);
     alpha_image.noalias() = beta_push * coefficient_matrix_dense.transpose();
-
-    multiply_left_symmetric(
-        alpha_scalar_matrices.overlap_determinant_matrix,
-        coefficient_matrix_dense,
-        &alpha_push);
-    beta_image.noalias() = coefficient_matrix_dense.transpose() * alpha_push;
 
     weight_matrices.alpha_hamiltonian_weight_matrix.noalias() +=
         state_weight * alpha_image;
     weight_matrices.alpha_overlap_weight_matrix.noalias() +=
         overlap_weight * alpha_image;
-    weight_matrices.beta_hamiltonian_weight_matrix.noalias() +=
-        state_weight * beta_image;
-    weight_matrices.beta_overlap_weight_matrix.noalias() +=
-        overlap_weight * beta_image;
+    if (!close_shell_same_spin) {
+      multiply_left_symmetric(
+          alpha_scalar_matrices.overlap_determinant_matrix,
+          coefficient_matrix_dense,
+          &alpha_push);
+      beta_image.noalias() = coefficient_matrix_dense.transpose() * alpha_push;
+      weight_matrices.beta_hamiltonian_weight_matrix.noalias() +=
+          state_weight * beta_image;
+      weight_matrices.beta_overlap_weight_matrix.noalias() +=
+          overlap_weight * beta_image;
+    }
 
     multiply_right_symmetric(
         coefficient_matrix_dense,
-        beta_scalar_matrices.regular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.regular_total_hamiltonian_matrix
+            : beta_scalar_matrices.regular_total_hamiltonian_matrix,
         &beta_push);
     alpha_image.noalias() = beta_push * coefficient_matrix_dense.transpose();
     weight_matrices.alpha_partner_total_transfer_matrix.noalias() +=
@@ -1561,27 +1942,42 @@ SameSpinExactWeightMatrices build_dense_exact_same_spin_weight_matrices(
 
     multiply_right_symmetric(
         coefficient_matrix_dense,
-        beta_scalar_matrices.singular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.singular_total_hamiltonian_matrix
+            : beta_scalar_matrices.singular_total_hamiltonian_matrix,
         &beta_push);
     alpha_image.noalias() = beta_push * coefficient_matrix_dense.transpose();
     weight_matrices.alpha_singular_partner_transfer_matrix.noalias() +=
         state_weight * alpha_image;
 
-    multiply_left_symmetric(
-        alpha_scalar_matrices.regular_total_hamiltonian_matrix,
-        coefficient_matrix_dense,
-        &alpha_push);
-    beta_image.noalias() = coefficient_matrix_dense.transpose() * alpha_push;
-    weight_matrices.beta_partner_total_transfer_matrix.noalias() +=
-        state_weight * beta_image;
+    if (!close_shell_same_spin) {
+      multiply_left_symmetric(
+          alpha_scalar_matrices.regular_total_hamiltonian_matrix,
+          coefficient_matrix_dense,
+          &alpha_push);
+      beta_image.noalias() = coefficient_matrix_dense.transpose() * alpha_push;
+      weight_matrices.beta_partner_total_transfer_matrix.noalias() +=
+          state_weight * beta_image;
 
-    multiply_left_symmetric(
-        alpha_scalar_matrices.singular_total_hamiltonian_matrix,
-        coefficient_matrix_dense,
-        &alpha_push);
-    beta_image.noalias() = coefficient_matrix_dense.transpose() * alpha_push;
-    weight_matrices.beta_singular_partner_transfer_matrix.noalias() +=
-        state_weight * beta_image;
+      multiply_left_symmetric(
+          alpha_scalar_matrices.singular_total_hamiltonian_matrix,
+          coefficient_matrix_dense,
+          &alpha_push);
+      beta_image.noalias() = coefficient_matrix_dense.transpose() * alpha_push;
+      weight_matrices.beta_singular_partner_transfer_matrix.noalias() +=
+          state_weight * beta_image;
+    }
+  }
+
+  if (close_shell_same_spin) {
+    weight_matrices.beta_hamiltonian_weight_matrix =
+        weight_matrices.alpha_hamiltonian_weight_matrix;
+    weight_matrices.beta_overlap_weight_matrix =
+        weight_matrices.alpha_overlap_weight_matrix;
+    weight_matrices.beta_partner_total_transfer_matrix =
+        weight_matrices.alpha_partner_total_transfer_matrix;
+    weight_matrices.beta_singular_partner_transfer_matrix =
+        weight_matrices.alpha_singular_partner_transfer_matrix;
   }
 
   return weight_matrices;
@@ -1597,6 +1993,8 @@ SameSpinExactWeightMatrices build_support_sparse_exact_same_spin_weight_matrices
   }
 
   SameSpinExactWeightMatrices weight_matrices;
+  const bool close_shell_same_spin =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
   weight_matrices.alpha_hamiltonian_weight_matrix =
       Eigen::MatrixXd::Zero(selected_states.n_unique_alpha, selected_states.n_unique_alpha);
   weight_matrices.alpha_overlap_weight_matrix =
@@ -1618,10 +2016,13 @@ SameSpinExactWeightMatrices build_support_sparse_exact_same_spin_weight_matrices
       build_pair_scalar_matrices(
           same_spin_pair_cache.alpha_pair_cache_ref(),
           selected_states.n_unique_alpha);
-  const SameSpinPairScalarMatrices beta_scalar_matrices =
-      build_pair_scalar_matrices(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          selected_states.n_unique_beta);
+  SameSpinPairScalarMatrices beta_scalar_matrices;
+  if (!close_shell_same_spin) {
+    beta_scalar_matrices =
+        build_pair_scalar_matrices(
+            same_spin_pair_cache.beta_pair_cache_ref(),
+            selected_states.n_unique_beta);
+  }
 
   // Support-aware exact backward contraction:
   // each selected state contributes only on its trimmed unique-spin block
@@ -1665,17 +2066,23 @@ SameSpinExactWeightMatrices build_support_sparse_exact_same_spin_weight_matrices
         state_coefficients.alpha_support,
         &alpha_singular_total_subblock);
     gather_dense_submatrix(
-        beta_scalar_matrices.overlap_determinant_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.overlap_determinant_matrix
+            : beta_scalar_matrices.overlap_determinant_matrix,
         state_coefficients.beta_support,
         state_coefficients.beta_support,
         &beta_overlap_subblock);
     gather_dense_submatrix(
-        beta_scalar_matrices.regular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.regular_total_hamiltonian_matrix
+            : beta_scalar_matrices.regular_total_hamiltonian_matrix,
         state_coefficients.beta_support,
         state_coefficients.beta_support,
         &beta_regular_total_subblock);
     gather_dense_submatrix(
-        beta_scalar_matrices.singular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.singular_total_hamiltonian_matrix
+            : beta_scalar_matrices.singular_total_hamiltonian_matrix,
         state_coefficients.beta_support,
         state_coefficients.beta_support,
         &beta_singular_total_subblock);
@@ -1694,20 +2101,22 @@ SameSpinExactWeightMatrices build_support_sparse_exact_same_spin_weight_matrices
         &weight_matrices.alpha_overlap_weight_matrix,
         &beta_push,
         &alpha_image);
-    accumulate_selected_state_beta_image(
-        state_coefficients,
-        alpha_overlap_subblock,
-        state_weight,
-        &weight_matrices.beta_hamiltonian_weight_matrix,
-        &alpha_push,
-        &beta_image);
-    accumulate_selected_state_beta_image(
-        state_coefficients,
-        alpha_overlap_subblock,
-        overlap_weight,
-        &weight_matrices.beta_overlap_weight_matrix,
-        &alpha_push,
-        &beta_image);
+    if (!close_shell_same_spin) {
+      accumulate_selected_state_beta_image(
+          state_coefficients,
+          alpha_overlap_subblock,
+          state_weight,
+          &weight_matrices.beta_hamiltonian_weight_matrix,
+          &alpha_push,
+          &beta_image);
+      accumulate_selected_state_beta_image(
+          state_coefficients,
+          alpha_overlap_subblock,
+          overlap_weight,
+          &weight_matrices.beta_overlap_weight_matrix,
+          &alpha_push,
+          &beta_image);
+    }
     accumulate_selected_state_alpha_image(
         state_coefficients,
         beta_regular_total_subblock,
@@ -1722,20 +2131,33 @@ SameSpinExactWeightMatrices build_support_sparse_exact_same_spin_weight_matrices
         &weight_matrices.alpha_singular_partner_transfer_matrix,
         &beta_push,
         &alpha_image);
-    accumulate_selected_state_beta_image(
-        state_coefficients,
-        alpha_regular_total_subblock,
-        state_weight,
-        &weight_matrices.beta_partner_total_transfer_matrix,
-        &alpha_push,
-        &beta_image);
-    accumulate_selected_state_beta_image(
-        state_coefficients,
-        alpha_singular_total_subblock,
-        state_weight,
-        &weight_matrices.beta_singular_partner_transfer_matrix,
-        &alpha_push,
-        &beta_image);
+    if (!close_shell_same_spin) {
+      accumulate_selected_state_beta_image(
+          state_coefficients,
+          alpha_regular_total_subblock,
+          state_weight,
+          &weight_matrices.beta_partner_total_transfer_matrix,
+          &alpha_push,
+          &beta_image);
+      accumulate_selected_state_beta_image(
+          state_coefficients,
+          alpha_singular_total_subblock,
+          state_weight,
+          &weight_matrices.beta_singular_partner_transfer_matrix,
+          &alpha_push,
+          &beta_image);
+    }
+  }
+
+  if (close_shell_same_spin) {
+    weight_matrices.beta_hamiltonian_weight_matrix =
+        weight_matrices.alpha_hamiltonian_weight_matrix;
+    weight_matrices.beta_overlap_weight_matrix =
+        weight_matrices.alpha_overlap_weight_matrix;
+    weight_matrices.beta_partner_total_transfer_matrix =
+        weight_matrices.alpha_partner_total_transfer_matrix;
+    weight_matrices.beta_singular_partner_transfer_matrix =
+        weight_matrices.alpha_singular_partner_transfer_matrix;
   }
 
   return weight_matrices;
@@ -1791,6 +2213,8 @@ SameSpinExactWeightMatrices build_dense_directional_exact_same_spin_weight_matri
       directional_selected_state_energies);
 
   SameSpinExactWeightMatrices weight_matrices;
+  const bool close_shell_same_spin =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
   weight_matrices.alpha_hamiltonian_weight_matrix =
       Eigen::MatrixXd::Zero(selected_states.n_unique_alpha, selected_states.n_unique_alpha);
   weight_matrices.alpha_overlap_weight_matrix =
@@ -1812,10 +2236,13 @@ SameSpinExactWeightMatrices build_dense_directional_exact_same_spin_weight_matri
       build_pair_scalar_matrices(
           same_spin_pair_cache.alpha_pair_cache_ref(),
           selected_states.n_unique_alpha);
-  const SameSpinPairScalarMatrices beta_scalar_matrices =
-      build_pair_scalar_matrices(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          selected_states.n_unique_beta);
+  SameSpinPairScalarMatrices beta_scalar_matrices;
+  if (!close_shell_same_spin) {
+    beta_scalar_matrices =
+        build_pair_scalar_matrices(
+            same_spin_pair_cache.beta_pair_cache_ref(),
+            selected_states.n_unique_beta);
+  }
 
   Eigen::MatrixXd coefficient_matrix_dense(
       selected_states.n_unique_alpha,
@@ -1873,6 +2300,86 @@ SameSpinExactWeightMatrices build_dense_directional_exact_same_spin_weight_matri
         directional_state_coefficients,
         directional_selected_states.n_unique_alpha,
         directional_selected_states.n_unique_beta);
+    if (selected_state_has_close_shell_diagonal(
+            state_coefficients,
+            selected_states.n_unique_alpha,
+            selected_states.n_unique_beta) &&
+        selected_state_has_close_shell_diagonal(
+            directional_state_coefficients,
+            directional_selected_states.n_unique_alpha,
+            directional_selected_states.n_unique_beta)) {
+      accumulate_directional_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          directional_state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.overlap_determinant_matrix
+              : beta_scalar_matrices.overlap_determinant_matrix,
+          state_weight,
+          &weight_matrices.alpha_hamiltonian_weight_matrix);
+      accumulate_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.overlap_determinant_matrix
+              : beta_scalar_matrices.overlap_determinant_matrix,
+          -state_weight * directional_state_energy,
+          &weight_matrices.alpha_overlap_weight_matrix);
+      accumulate_directional_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          directional_state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.overlap_determinant_matrix
+              : beta_scalar_matrices.overlap_determinant_matrix,
+          -state_weight * state_energy,
+          &weight_matrices.alpha_overlap_weight_matrix);
+      accumulate_directional_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          directional_state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.regular_total_hamiltonian_matrix
+              : beta_scalar_matrices.regular_total_hamiltonian_matrix,
+          state_weight,
+          &weight_matrices.alpha_partner_total_transfer_matrix);
+      accumulate_directional_diagonal_kernel_image_global(
+          state_coefficients.diagonal_coefficients,
+          directional_state_coefficients.diagonal_coefficients,
+          close_shell_same_spin
+              ? alpha_scalar_matrices.singular_total_hamiltonian_matrix
+              : beta_scalar_matrices.singular_total_hamiltonian_matrix,
+          state_weight,
+          &weight_matrices.alpha_singular_partner_transfer_matrix);
+      if (!close_shell_same_spin) {
+        accumulate_directional_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            directional_state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.overlap_determinant_matrix,
+            state_weight,
+            &weight_matrices.beta_hamiltonian_weight_matrix);
+        accumulate_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.overlap_determinant_matrix,
+            -state_weight * directional_state_energy,
+            &weight_matrices.beta_overlap_weight_matrix);
+        accumulate_directional_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            directional_state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.overlap_determinant_matrix,
+            -state_weight * state_energy,
+            &weight_matrices.beta_overlap_weight_matrix);
+        accumulate_directional_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            directional_state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.regular_total_hamiltonian_matrix,
+            state_weight,
+            &weight_matrices.beta_partner_total_transfer_matrix);
+        accumulate_directional_diagonal_kernel_image_global(
+            state_coefficients.diagonal_coefficients,
+            directional_state_coefficients.diagonal_coefficients,
+            alpha_scalar_matrices.singular_total_hamiltonian_matrix,
+            state_weight,
+            &weight_matrices.beta_singular_partner_transfer_matrix);
+      }
+      continue;
+    }
     coefficient_matrix_dense = state_coefficients.coefficient_matrix;
     directional_coefficient_matrix_dense =
         directional_state_coefficients.coefficient_matrix;
@@ -1893,13 +2400,17 @@ SameSpinExactWeightMatrices build_dense_directional_exact_same_spin_weight_matri
 
     multiply_right_symmetric(
         coefficient_matrix_dense,
-        beta_scalar_matrices.overlap_determinant_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.overlap_determinant_matrix
+            : beta_scalar_matrices.overlap_determinant_matrix,
         &base_push);
     base_image_overlap.noalias() =
         base_push * coefficient_matrix_dense.transpose();
     multiply_right_symmetric(
         directional_coefficient_matrix_dense,
-        beta_scalar_matrices.overlap_determinant_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.overlap_determinant_matrix
+            : beta_scalar_matrices.overlap_determinant_matrix,
         &directional_push);
     directional_image_overlap.noalias() =
         directional_push * coefficient_matrix_dense.transpose();
@@ -1915,13 +2426,17 @@ SameSpinExactWeightMatrices build_dense_directional_exact_same_spin_weight_matri
 
     multiply_right_symmetric(
         coefficient_matrix_dense,
-        beta_scalar_matrices.regular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.regular_total_hamiltonian_matrix
+            : beta_scalar_matrices.regular_total_hamiltonian_matrix,
         &base_push);
     base_image_transfer.noalias() =
         base_push * coefficient_matrix_dense.transpose();
     multiply_right_symmetric(
         directional_coefficient_matrix_dense,
-        beta_scalar_matrices.regular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.regular_total_hamiltonian_matrix
+            : beta_scalar_matrices.regular_total_hamiltonian_matrix,
         &directional_push);
     directional_image_transfer.noalias() =
         directional_push * coefficient_matrix_dense.transpose();
@@ -1932,13 +2447,17 @@ SameSpinExactWeightMatrices build_dense_directional_exact_same_spin_weight_matri
 
     multiply_right_symmetric(
         coefficient_matrix_dense,
-        beta_scalar_matrices.singular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.singular_total_hamiltonian_matrix
+            : beta_scalar_matrices.singular_total_hamiltonian_matrix,
         &base_push);
     base_image_transfer.noalias() =
         base_push * coefficient_matrix_dense.transpose();
     multiply_right_symmetric(
         directional_coefficient_matrix_dense,
-        beta_scalar_matrices.singular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.singular_total_hamiltonian_matrix
+            : beta_scalar_matrices.singular_total_hamiltonian_matrix,
         &directional_push);
     directional_image_transfer.noalias() =
         directional_push * coefficient_matrix_dense.transpose();
@@ -1947,61 +2466,74 @@ SameSpinExactWeightMatrices build_dense_directional_exact_same_spin_weight_matri
     weight_matrices.alpha_singular_partner_transfer_matrix.noalias() +=
         state_weight * directional_scale * directional_image_transfer;
 
-    multiply_left_symmetric(
-        alpha_scalar_matrices.overlap_determinant_matrix,
-        coefficient_matrix_dense,
-        &base_push);
-    base_beta_image_overlap.noalias() =
-        coefficient_matrix_dense.transpose() * base_push;
-    multiply_left_symmetric(
-        alpha_scalar_matrices.overlap_determinant_matrix,
-        directional_coefficient_matrix_dense,
-        &directional_push);
-    directional_beta_image_overlap.noalias() =
-        directional_coefficient_matrix_dense.transpose() * base_push;
-    directional_beta_image_overlap.noalias() +=
-        coefficient_matrix_dense.transpose() * directional_push;
+    if (!close_shell_same_spin) {
+      multiply_left_symmetric(
+          alpha_scalar_matrices.overlap_determinant_matrix,
+          coefficient_matrix_dense,
+          &base_push);
+      base_beta_image_overlap.noalias() =
+          coefficient_matrix_dense.transpose() * base_push;
+      multiply_left_symmetric(
+          alpha_scalar_matrices.overlap_determinant_matrix,
+          directional_coefficient_matrix_dense,
+          &directional_push);
+      directional_beta_image_overlap.noalias() =
+          directional_coefficient_matrix_dense.transpose() * base_push;
+      directional_beta_image_overlap.noalias() +=
+          coefficient_matrix_dense.transpose() * directional_push;
 
-    weight_matrices.beta_hamiltonian_weight_matrix.noalias() +=
-        state_weight * directional_scale * directional_beta_image_overlap;
-    weight_matrices.beta_overlap_weight_matrix.noalias() -=
-        state_weight * directional_scale *
-        (scaled_directional_state_energy * base_beta_image_overlap +
-         state_energy * directional_beta_image_overlap);
+      weight_matrices.beta_hamiltonian_weight_matrix.noalias() +=
+          state_weight * directional_scale * directional_beta_image_overlap;
+      weight_matrices.beta_overlap_weight_matrix.noalias() -=
+          state_weight * directional_scale *
+          (scaled_directional_state_energy * base_beta_image_overlap +
+           state_energy * directional_beta_image_overlap);
 
-    multiply_left_symmetric(
-        alpha_scalar_matrices.regular_total_hamiltonian_matrix,
-        coefficient_matrix_dense,
-        &base_push);
-    base_beta_image_transfer.noalias() =
-        coefficient_matrix_dense.transpose() * base_push;
-    multiply_left_symmetric(
-        alpha_scalar_matrices.regular_total_hamiltonian_matrix,
-        directional_coefficient_matrix_dense,
-        &directional_push);
-    directional_beta_image_transfer.noalias() =
-        directional_coefficient_matrix_dense.transpose() * base_push;
-    directional_beta_image_transfer.noalias() +=
-        coefficient_matrix_dense.transpose() * directional_push;
-    weight_matrices.beta_partner_total_transfer_matrix.noalias() +=
-        state_weight * directional_scale * directional_beta_image_transfer;
+      multiply_left_symmetric(
+          alpha_scalar_matrices.regular_total_hamiltonian_matrix,
+          coefficient_matrix_dense,
+          &base_push);
+      base_beta_image_transfer.noalias() =
+          coefficient_matrix_dense.transpose() * base_push;
+      multiply_left_symmetric(
+          alpha_scalar_matrices.regular_total_hamiltonian_matrix,
+          directional_coefficient_matrix_dense,
+          &directional_push);
+      directional_beta_image_transfer.noalias() =
+          directional_coefficient_matrix_dense.transpose() * base_push;
+      directional_beta_image_transfer.noalias() +=
+          coefficient_matrix_dense.transpose() * directional_push;
+      weight_matrices.beta_partner_total_transfer_matrix.noalias() +=
+          state_weight * directional_scale * directional_beta_image_transfer;
 
-    multiply_left_symmetric(
-        alpha_scalar_matrices.singular_total_hamiltonian_matrix,
-        coefficient_matrix_dense,
-        &base_push);
-    base_beta_image_transfer.noalias() =
-        coefficient_matrix_dense.transpose() * base_push;
-    multiply_left_symmetric(
-        alpha_scalar_matrices.singular_total_hamiltonian_matrix,
-        directional_coefficient_matrix_dense,
-        &directional_push);
-    directional_beta_image_transfer.noalias() =
-        directional_coefficient_matrix_dense.transpose() * base_push;
-    directional_beta_image_transfer.noalias() +=
-        coefficient_matrix_dense.transpose() * directional_push;
-    weight_matrices.beta_singular_partner_transfer_matrix.noalias() +=
-        state_weight * directional_scale * directional_beta_image_transfer;
+      multiply_left_symmetric(
+          alpha_scalar_matrices.singular_total_hamiltonian_matrix,
+          coefficient_matrix_dense,
+          &base_push);
+      base_beta_image_transfer.noalias() =
+          coefficient_matrix_dense.transpose() * base_push;
+      multiply_left_symmetric(
+          alpha_scalar_matrices.singular_total_hamiltonian_matrix,
+          directional_coefficient_matrix_dense,
+          &directional_push);
+      directional_beta_image_transfer.noalias() =
+          directional_coefficient_matrix_dense.transpose() * base_push;
+      directional_beta_image_transfer.noalias() +=
+          coefficient_matrix_dense.transpose() * directional_push;
+      weight_matrices.beta_singular_partner_transfer_matrix.noalias() +=
+          state_weight * directional_scale * directional_beta_image_transfer;
+    }
+  }
+
+  if (close_shell_same_spin) {
+    weight_matrices.beta_hamiltonian_weight_matrix =
+        weight_matrices.alpha_hamiltonian_weight_matrix;
+    weight_matrices.beta_overlap_weight_matrix =
+        weight_matrices.alpha_overlap_weight_matrix;
+    weight_matrices.beta_partner_total_transfer_matrix =
+        weight_matrices.alpha_partner_total_transfer_matrix;
+    weight_matrices.beta_singular_partner_transfer_matrix =
+        weight_matrices.alpha_singular_partner_transfer_matrix;
   }
 
   return weight_matrices;
@@ -2020,6 +2552,8 @@ SameSpinExactWeightMatrices build_support_sparse_directional_exact_same_spin_wei
       directional_selected_state_energies);
 
   SameSpinExactWeightMatrices weight_matrices;
+  const bool close_shell_same_spin =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
   weight_matrices.alpha_hamiltonian_weight_matrix =
       Eigen::MatrixXd::Zero(selected_states.n_unique_alpha, selected_states.n_unique_alpha);
   weight_matrices.alpha_overlap_weight_matrix =
@@ -2041,10 +2575,13 @@ SameSpinExactWeightMatrices build_support_sparse_directional_exact_same_spin_wei
       build_pair_scalar_matrices(
           same_spin_pair_cache.alpha_pair_cache_ref(),
           selected_states.n_unique_alpha);
-  const SameSpinPairScalarMatrices beta_scalar_matrices =
-      build_pair_scalar_matrices(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          selected_states.n_unique_beta);
+  SameSpinPairScalarMatrices beta_scalar_matrices;
+  if (!close_shell_same_spin) {
+    beta_scalar_matrices =
+        build_pair_scalar_matrices(
+            same_spin_pair_cache.beta_pair_cache_ref(),
+            selected_states.n_unique_beta);
+  }
 
   Eigen::MatrixXd alpha_overlap_subblock;
   Eigen::MatrixXd alpha_regular_total_subblock;
@@ -2126,17 +2663,23 @@ SameSpinExactWeightMatrices build_support_sparse_directional_exact_same_spin_wei
         alpha_union_support,
         &alpha_singular_total_subblock);
     gather_dense_submatrix(
-        beta_scalar_matrices.overlap_determinant_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.overlap_determinant_matrix
+            : beta_scalar_matrices.overlap_determinant_matrix,
         beta_union_support,
         beta_union_support,
         &beta_overlap_subblock);
     gather_dense_submatrix(
-        beta_scalar_matrices.regular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.regular_total_hamiltonian_matrix
+            : beta_scalar_matrices.regular_total_hamiltonian_matrix,
         beta_union_support,
         beta_union_support,
         &beta_regular_total_subblock);
     gather_dense_submatrix(
-        beta_scalar_matrices.singular_total_hamiltonian_matrix,
+        close_shell_same_spin
+            ? alpha_scalar_matrices.singular_total_hamiltonian_matrix
+            : beta_scalar_matrices.singular_total_hamiltonian_matrix,
         beta_union_support,
         beta_union_support,
         &beta_singular_total_subblock);
@@ -2213,77 +2756,90 @@ SameSpinExactWeightMatrices build_support_sparse_directional_exact_same_spin_wei
         state_weight * directional_scale,
         &weight_matrices.alpha_singular_partner_transfer_matrix);
 
-    multiply_left_symmetric(
-        alpha_overlap_subblock,
-        coefficient_matrix_union,
-        &base_push);
-    beta_base_image.noalias() =
-        coefficient_matrix_union.transpose() * base_push;
-    multiply_left_symmetric(
-        alpha_overlap_subblock,
-        directional_coefficient_matrix_union,
-        &directional_push);
-    beta_directional_image.noalias() =
-        directional_coefficient_matrix_union.transpose() * base_push;
-    beta_directional_image.noalias() +=
-        coefficient_matrix_union.transpose() * directional_push;
+    if (!close_shell_same_spin) {
+      multiply_left_symmetric(
+          alpha_overlap_subblock,
+          coefficient_matrix_union,
+          &base_push);
+      beta_base_image.noalias() =
+          coefficient_matrix_union.transpose() * base_push;
+      multiply_left_symmetric(
+          alpha_overlap_subblock,
+          directional_coefficient_matrix_union,
+          &directional_push);
+      beta_directional_image.noalias() =
+          directional_coefficient_matrix_union.transpose() * base_push;
+      beta_directional_image.noalias() +=
+          coefficient_matrix_union.transpose() * directional_push;
 
-    scatter_add_dense_submatrix(
-        beta_directional_image,
-        beta_union_support,
-        beta_union_support,
-        state_weight * directional_scale,
-        &weight_matrices.beta_hamiltonian_weight_matrix);
-    scatter_add_dense_submatrix(
-        beta_base_image,
-        beta_union_support,
-        beta_union_support,
-        -state_weight * directional_scale * scaled_directional_state_energy,
-        &weight_matrices.beta_overlap_weight_matrix);
-    scatter_add_dense_submatrix(
-        beta_directional_image,
-        beta_union_support,
-        beta_union_support,
-        -state_weight * directional_scale * state_energy,
-        &weight_matrices.beta_overlap_weight_matrix);
+      scatter_add_dense_submatrix(
+          beta_directional_image,
+          beta_union_support,
+          beta_union_support,
+          state_weight * directional_scale,
+          &weight_matrices.beta_hamiltonian_weight_matrix);
+      scatter_add_dense_submatrix(
+          beta_base_image,
+          beta_union_support,
+          beta_union_support,
+          -state_weight * directional_scale * scaled_directional_state_energy,
+          &weight_matrices.beta_overlap_weight_matrix);
+      scatter_add_dense_submatrix(
+          beta_directional_image,
+          beta_union_support,
+          beta_union_support,
+          -state_weight * directional_scale * state_energy,
+          &weight_matrices.beta_overlap_weight_matrix);
 
-    multiply_left_symmetric(
-        alpha_regular_total_subblock,
-        coefficient_matrix_union,
-        &base_push);
-    multiply_left_symmetric(
-        alpha_regular_total_subblock,
-        directional_coefficient_matrix_union,
-        &directional_push);
-    beta_directional_image.noalias() =
-        directional_coefficient_matrix_union.transpose() * base_push;
-    beta_directional_image.noalias() +=
-        coefficient_matrix_union.transpose() * directional_push;
-    scatter_add_dense_submatrix(
-        beta_directional_image,
-        beta_union_support,
-        beta_union_support,
-        state_weight * directional_scale,
-        &weight_matrices.beta_partner_total_transfer_matrix);
+      multiply_left_symmetric(
+          alpha_regular_total_subblock,
+          coefficient_matrix_union,
+          &base_push);
+      multiply_left_symmetric(
+          alpha_regular_total_subblock,
+          directional_coefficient_matrix_union,
+          &directional_push);
+      beta_directional_image.noalias() =
+          directional_coefficient_matrix_union.transpose() * base_push;
+      beta_directional_image.noalias() +=
+          coefficient_matrix_union.transpose() * directional_push;
+      scatter_add_dense_submatrix(
+          beta_directional_image,
+          beta_union_support,
+          beta_union_support,
+          state_weight * directional_scale,
+          &weight_matrices.beta_partner_total_transfer_matrix);
 
-    multiply_left_symmetric(
-        alpha_singular_total_subblock,
-        coefficient_matrix_union,
-        &base_push);
-    multiply_left_symmetric(
-        alpha_singular_total_subblock,
-        directional_coefficient_matrix_union,
-        &directional_push);
-    beta_directional_image.noalias() =
-        directional_coefficient_matrix_union.transpose() * base_push;
-    beta_directional_image.noalias() +=
-        coefficient_matrix_union.transpose() * directional_push;
-    scatter_add_dense_submatrix(
-        beta_directional_image,
-        beta_union_support,
-        beta_union_support,
-        state_weight * directional_scale,
-        &weight_matrices.beta_singular_partner_transfer_matrix);
+      multiply_left_symmetric(
+          alpha_singular_total_subblock,
+          coefficient_matrix_union,
+          &base_push);
+      multiply_left_symmetric(
+          alpha_singular_total_subblock,
+          directional_coefficient_matrix_union,
+          &directional_push);
+      beta_directional_image.noalias() =
+          directional_coefficient_matrix_union.transpose() * base_push;
+      beta_directional_image.noalias() +=
+          coefficient_matrix_union.transpose() * directional_push;
+      scatter_add_dense_submatrix(
+          beta_directional_image,
+          beta_union_support,
+          beta_union_support,
+          state_weight * directional_scale,
+          &weight_matrices.beta_singular_partner_transfer_matrix);
+    }
+  }
+
+  if (close_shell_same_spin) {
+    weight_matrices.beta_hamiltonian_weight_matrix =
+        weight_matrices.alpha_hamiltonian_weight_matrix;
+    weight_matrices.beta_overlap_weight_matrix =
+        weight_matrices.alpha_overlap_weight_matrix;
+    weight_matrices.beta_partner_total_transfer_matrix =
+        weight_matrices.alpha_partner_total_transfer_matrix;
+    weight_matrices.beta_singular_partner_transfer_matrix =
+        weight_matrices.alpha_singular_partner_transfer_matrix;
   }
 
   return weight_matrices;
@@ -2315,7 +2871,7 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants,
     int n_active_orbitals,
-    const std::vector<double>& active_one_electron_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_active_orbital_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -2345,8 +2901,8 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
               left_id,
               right_id,
               n_unique_determinants)];
-      const auto& occ_L = xmvb::index_at(unique_determinants, left_id);
-      const auto& occ_R = xmvb::index_at(unique_determinants, right_id);
+      const auto& occ_L = unique_determinants[left_id];
+      const auto& occ_R = unique_determinants[right_id];
       const auto& overlap_result = pair_evaluation.overlap_result;
       if (overlap_result.nullity == 0 &&
           overlap_result.overlap_determinant != 0.0) {
@@ -2408,7 +2964,8 @@ SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matric
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     const SameSpinDirectionalScalarMatrices& alpha_directional_scalars,
-    const SameSpinDirectionalScalarMatrices& beta_directional_scalars) {
+    const SameSpinDirectionalScalarMatrices& beta_directional_scalars,
+    bool close_shell_same_spin) {
   // The accepted selected-state coefficients stay fixed. Only the partner
   // kernels change, so the same unique-spin coefficient matrices `C^(n)` map
   // `δdet_partner` and `δH_same,partner` back to the active same-spin weights.
@@ -2436,7 +2993,8 @@ SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matric
           selected_states,
           alpha_directional_scalars.delta_overlap_determinant_matrix,
           beta_directional_scalars.delta_overlap_determinant_matrix,
-          hamiltonian_scales);
+          hamiltonian_scales,
+          close_shell_same_spin);
   weight_matrices.alpha_delta_hamiltonian_weight_matrix =
       std::move(delta_hamiltonian_weights.alpha_weight_matrix);
   weight_matrices.beta_delta_hamiltonian_weight_matrix =
@@ -2447,7 +3005,8 @@ SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matric
           selected_states,
           alpha_directional_scalars.delta_overlap_determinant_matrix,
           beta_directional_scalars.delta_overlap_determinant_matrix,
-          overlap_scales);
+          overlap_scales,
+          close_shell_same_spin);
   weight_matrices.alpha_delta_overlap_weight_matrix =
       std::move(delta_overlap_weights.alpha_weight_matrix);
   weight_matrices.beta_delta_overlap_weight_matrix =
@@ -2460,7 +3019,8 @@ SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matric
               alpha_directional_scalars.delta_singular_total_hamiltonian_matrix,
           beta_directional_scalars.delta_regular_total_hamiltonian_matrix +
               beta_directional_scalars.delta_singular_total_hamiltonian_matrix,
-          hamiltonian_scales);
+          hamiltonian_scales,
+          close_shell_same_spin);
   weight_matrices.alpha_delta_partner_total_transfer_matrix =
       std::move(delta_partner_weights.alpha_weight_matrix);
   weight_matrices.beta_delta_partner_total_transfer_matrix =
@@ -2573,8 +3133,8 @@ void accumulate_spin_matrix_backward(
                   left_id,
                   right_id,
                   n_unique_determinants)];
-          const auto& occ_L = xmvb::index_at(unique_determinants, left_id);
-          const auto& occ_R = xmvb::index_at(unique_determinants, right_id);
+          const auto& occ_L = unique_determinants[left_id];
+          const auto& occ_R = unique_determinants[right_id];
           const auto& overlap_result = pair_evaluation.overlap_result;
           const bool has_hamiltonian_weight =
               std::abs(hamiltonian_weight) > kContributionTolerance;
@@ -2701,7 +3261,7 @@ void accumulate_spin_local_matrix_backward(
     const Eigen::MatrixXd& delta_partner_total_transfer_matrix,
     int n_unique_determinants,
     int n_active_orbitals,
-    const std::vector<double>& active_one_electron_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_active_orbital_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -2776,8 +3336,8 @@ void accumulate_spin_local_matrix_backward(
                   left_id,
                   right_id,
                   n_unique_determinants)];
-          const auto& occ_L = xmvb::index_at(unique_determinants, left_id);
-          const auto& occ_R = xmvb::index_at(unique_determinants, right_id);
+          const auto& occ_L = unique_determinants[left_id];
+          const auto& occ_R = unique_determinants[right_id];
           const auto& overlap_result = pair_evaluation.overlap_result;
           const bool is_regular_pair =
               overlap_result.nullity == 0 &&
@@ -2954,12 +3514,11 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
           same_spin_pair_cache,
           selected_states,
           selected_state_energies);
+  const bool close_shell_same_spin =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
   const Eigen::MatrixXd alpha_total_partner_transfer_matrix =
       exact_weight_matrices.alpha_partner_total_transfer_matrix +
       exact_weight_matrices.alpha_singular_partner_transfer_matrix;
-  const Eigen::MatrixXd beta_total_partner_transfer_matrix =
-      exact_weight_matrices.beta_partner_total_transfer_matrix +
-      exact_weight_matrices.beta_singular_partner_transfer_matrix;
 
   SameSpinMatrixBackwardContribution result;
   result.active_orbital_overlap_gradient.assign(
@@ -2985,17 +3544,30 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
       &active_one_electron_gradient,
       &result.active_orbital_overlap_gradient,
       &result.packed_active_two_electron_gradient);
-  accumulate_spin_matrix_backward(
-      same_spin_pair_cache.beta_reuse_table.unique_determinants,
-      same_spin_pair_cache.beta_pair_cache_ref(),
-      exact_weight_matrices.beta_hamiltonian_weight_matrix,
-      exact_weight_matrices.beta_overlap_weight_matrix,
-      beta_total_partner_transfer_matrix,
-      selected_states.n_unique_beta,
-      n_active_orbitals,
-      &active_one_electron_gradient,
-      &result.active_orbital_overlap_gradient,
-      &result.packed_active_two_electron_gradient);
+  if (close_shell_same_spin) {
+    active_one_electron_gradient *= 2.0;
+    for (double& value : result.active_orbital_overlap_gradient) {
+      value *= 2.0;
+    }
+    for (double& value : result.packed_active_two_electron_gradient) {
+      value *= 2.0;
+    }
+  } else {
+    const Eigen::MatrixXd beta_total_partner_transfer_matrix =
+        exact_weight_matrices.beta_partner_total_transfer_matrix +
+        exact_weight_matrices.beta_singular_partner_transfer_matrix;
+    accumulate_spin_matrix_backward(
+        same_spin_pair_cache.beta_reuse_table.unique_determinants,
+        same_spin_pair_cache.beta_pair_cache_ref(),
+        exact_weight_matrices.beta_hamiltonian_weight_matrix,
+        exact_weight_matrices.beta_overlap_weight_matrix,
+        beta_total_partner_transfer_matrix,
+        selected_states.n_unique_beta,
+        n_active_orbitals,
+        &active_one_electron_gradient,
+        &result.active_orbital_overlap_gradient,
+        &result.packed_active_two_electron_gradient);
+  }
 
   result.active_one_electron_gradient.assign(
       active_one_electron_gradient.data(),
@@ -3035,12 +3607,11 @@ build_directional_same_spin_matrix_backward_contribution(
                 directional_selected_states,
                 selected_state_energies,
                 directional_selected_state_energies);
+  const bool close_shell_same_spin =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
   const Eigen::MatrixXd alpha_total_partner_transfer_matrix =
       directional_weight_matrices.alpha_partner_total_transfer_matrix +
       directional_weight_matrices.alpha_singular_partner_transfer_matrix;
-  const Eigen::MatrixXd beta_total_partner_transfer_matrix =
-      directional_weight_matrices.beta_partner_total_transfer_matrix +
-      directional_weight_matrices.beta_singular_partner_transfer_matrix;
 
   SameSpinMatrixBackwardContribution result;
   result.active_orbital_overlap_gradient.assign(
@@ -3066,17 +3637,30 @@ build_directional_same_spin_matrix_backward_contribution(
       &active_one_electron_gradient,
       &result.active_orbital_overlap_gradient,
       &result.packed_active_two_electron_gradient);
-  accumulate_spin_matrix_backward(
-      same_spin_pair_cache.beta_reuse_table.unique_determinants,
-      same_spin_pair_cache.beta_pair_cache_ref(),
-      directional_weight_matrices.beta_hamiltonian_weight_matrix,
-      directional_weight_matrices.beta_overlap_weight_matrix,
-      beta_total_partner_transfer_matrix,
-      selected_states.n_unique_beta,
-      n_active_orbitals,
-      &active_one_electron_gradient,
-      &result.active_orbital_overlap_gradient,
-      &result.packed_active_two_electron_gradient);
+  if (close_shell_same_spin) {
+    active_one_electron_gradient *= 2.0;
+    for (double& value : result.active_orbital_overlap_gradient) {
+      value *= 2.0;
+    }
+    for (double& value : result.packed_active_two_electron_gradient) {
+      value *= 2.0;
+    }
+  } else {
+    const Eigen::MatrixXd beta_total_partner_transfer_matrix =
+        directional_weight_matrices.beta_partner_total_transfer_matrix +
+        directional_weight_matrices.beta_singular_partner_transfer_matrix;
+    accumulate_spin_matrix_backward(
+        same_spin_pair_cache.beta_reuse_table.unique_determinants,
+        same_spin_pair_cache.beta_pair_cache_ref(),
+        directional_weight_matrices.beta_hamiltonian_weight_matrix,
+        directional_weight_matrices.beta_overlap_weight_matrix,
+        beta_total_partner_transfer_matrix,
+        selected_states.n_unique_beta,
+        n_active_orbitals,
+        &active_one_electron_gradient,
+        &result.active_orbital_overlap_gradient,
+        &result.packed_active_two_electron_gradient);
+  }
 
   result.active_one_electron_gradient.assign(
       active_one_electron_gradient.data(),
@@ -3090,7 +3674,7 @@ build_local_same_spin_matrix_backward_contribution(
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     int n_active_orbitals,
-    const std::vector<double>& active_one_electron_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_active_orbital_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -3110,12 +3694,11 @@ build_local_same_spin_matrix_backward_contribution(
           same_spin_pair_cache,
           selected_states,
           selected_state_energies);
+  const bool close_shell_same_spin =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
   const Eigen::MatrixXd alpha_total_partner_transfer_matrix =
       exact_weight_matrices.alpha_partner_total_transfer_matrix +
       exact_weight_matrices.alpha_singular_partner_transfer_matrix;
-  const Eigen::MatrixXd beta_total_partner_transfer_matrix =
-      exact_weight_matrices.beta_partner_total_transfer_matrix +
-      exact_weight_matrices.beta_singular_partner_transfer_matrix;
 
   const SameSpinDirectionalScalarMatrices alpha_directional_scalars =
       build_directional_pair_scalar_matrices(
@@ -3128,23 +3711,29 @@ build_local_same_spin_matrix_backward_contribution(
           delta_active_orbital_overlap_matrix,
           delta_active_one_electron_matrix,
           delta_packed_active_two_electron_integrals);
-  const SameSpinDirectionalScalarMatrices beta_directional_scalars =
-      build_directional_pair_scalar_matrices(
-          same_spin_pair_cache.beta_reuse_table.unique_determinants,
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          selected_states.n_unique_beta,
-          n_active_orbitals,
-          active_one_electron_matrix,
-          active_space_two_electron_result,
-          delta_active_orbital_overlap_matrix,
-          delta_active_one_electron_matrix,
-          delta_packed_active_two_electron_integrals);
+  SameSpinDirectionalScalarMatrices beta_directional_scalars;
+  if (!close_shell_same_spin) {
+    beta_directional_scalars =
+        build_directional_pair_scalar_matrices(
+            same_spin_pair_cache.beta_reuse_table.unique_determinants,
+            same_spin_pair_cache.beta_pair_cache_ref(),
+            selected_states.n_unique_beta,
+            n_active_orbitals,
+            active_one_electron_matrix,
+            active_space_two_electron_result,
+            delta_active_orbital_overlap_matrix,
+            delta_active_one_electron_matrix,
+            delta_packed_active_two_electron_integrals);
+  }
   const SameSpinLocalResponseWeightMatrices local_weight_matrices =
       build_local_same_spin_response_weight_matrices(
           selected_states,
           selected_state_energies,
           alpha_directional_scalars,
-          beta_directional_scalars);
+          close_shell_same_spin
+              ? alpha_directional_scalars
+              : beta_directional_scalars,
+          close_shell_same_spin);
 
   SameSpinMatrixBackwardContribution result;
   result.active_orbital_overlap_gradient.assign(
@@ -3178,25 +3767,38 @@ build_local_same_spin_matrix_backward_contribution(
       &active_one_electron_gradient,
       &result.active_orbital_overlap_gradient,
       &result.packed_active_two_electron_gradient);
-  accumulate_spin_local_matrix_backward(
-      same_spin_pair_cache.beta_reuse_table.unique_determinants,
-      same_spin_pair_cache.beta_pair_cache_ref(),
-      exact_weight_matrices.beta_hamiltonian_weight_matrix,
-      exact_weight_matrices.beta_overlap_weight_matrix,
-      beta_total_partner_transfer_matrix,
-      local_weight_matrices.beta_delta_hamiltonian_weight_matrix,
-      local_weight_matrices.beta_delta_overlap_weight_matrix,
-      local_weight_matrices.beta_delta_partner_total_transfer_matrix,
-      selected_states.n_unique_beta,
-      n_active_orbitals,
-      active_one_electron_matrix,
-      active_space_two_electron_result,
-      delta_active_orbital_overlap_matrix,
-      delta_active_one_electron_matrix,
-      delta_packed_active_two_electron_integrals,
-      &active_one_electron_gradient,
-      &result.active_orbital_overlap_gradient,
-      &result.packed_active_two_electron_gradient);
+  if (close_shell_same_spin) {
+    active_one_electron_gradient *= 2.0;
+    for (double& value : result.active_orbital_overlap_gradient) {
+      value *= 2.0;
+    }
+    for (double& value : result.packed_active_two_electron_gradient) {
+      value *= 2.0;
+    }
+  } else {
+    const Eigen::MatrixXd beta_total_partner_transfer_matrix =
+        exact_weight_matrices.beta_partner_total_transfer_matrix +
+        exact_weight_matrices.beta_singular_partner_transfer_matrix;
+    accumulate_spin_local_matrix_backward(
+        same_spin_pair_cache.beta_reuse_table.unique_determinants,
+        same_spin_pair_cache.beta_pair_cache_ref(),
+        exact_weight_matrices.beta_hamiltonian_weight_matrix,
+        exact_weight_matrices.beta_overlap_weight_matrix,
+        beta_total_partner_transfer_matrix,
+        local_weight_matrices.beta_delta_hamiltonian_weight_matrix,
+        local_weight_matrices.beta_delta_overlap_weight_matrix,
+        local_weight_matrices.beta_delta_partner_total_transfer_matrix,
+        selected_states.n_unique_beta,
+        n_active_orbitals,
+        active_one_electron_matrix,
+        active_space_two_electron_result,
+        delta_active_orbital_overlap_matrix,
+        delta_active_one_electron_matrix,
+        delta_packed_active_two_electron_integrals,
+        &active_one_electron_gradient,
+        &result.active_orbital_overlap_gradient,
+        &result.packed_active_two_electron_gradient);
+  }
 
   result.active_one_electron_gradient.assign(
       active_one_electron_gradient.data(),

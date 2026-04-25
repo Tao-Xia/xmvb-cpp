@@ -423,7 +423,7 @@ int main(int argc, char** argv) {
     }
 
     for (int i = 0; i < n_report; ++i) {
-      const int idx = ranked[xmvb::to_size(i)].second;
+      const int idx = ranked[i].second;
       std::vector<double> plus_one = result.act_h1e_result.h1e_act;
       std::vector<double> minus_one = result.act_h1e_result.h1e_act;
       std::vector<double> plus_two =
@@ -435,16 +435,16 @@ int main(int argc, char** argv) {
 
       switch (opt.component) {
         case Component::Overlap:
-          plus_overlap[xmvb::to_size(idx)] += opt.step;
-          minus_overlap[xmvb::to_size(idx)] -= opt.step;
+          plus_overlap[idx] += opt.step;
+          minus_overlap[idx] -= opt.step;
           break;
         case Component::OneElectron:
-          plus_one[xmvb::to_size(idx)] += opt.step;
-          minus_one[xmvb::to_size(idx)] -= opt.step;
+          plus_one[idx] += opt.step;
+          minus_one[idx] -= opt.step;
           break;
         case Component::TwoElectron:
-          plus_two[xmvb::to_size(idx)] += opt.step;
-          minus_two[xmvb::to_size(idx)] -= opt.step;
+          plus_two[idx] += opt.step;
+          minus_two[idx] -= opt.step;
           break;
       }
 
@@ -479,7 +479,7 @@ int main(int argc, char** argv) {
                 minus_two,
                 load.nuclear_repulsion_energy);
       const double fd = (plus_e - minus_e) / (2.0 * opt.step);
-      const double analytic = grad[xmvb::to_size(idx)];
+      const double analytic = grad[idx];
       const double abs_err = std::abs(analytic - fd);
       const double rel_err = abs_err / std::max(1.0, std::abs(fd));
 

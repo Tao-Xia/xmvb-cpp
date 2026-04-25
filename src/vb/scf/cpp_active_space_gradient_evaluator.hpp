@@ -66,19 +66,6 @@ public:
       double nuclear_repulsion_energy) const;
 
   /**
-   * @brief Evaluates the ground-state gradient reusing a prebuilt active-space context.
-   *
-   * This overload skips orbital preparation and active-space integral
-   * construction, reusing the supplied timed context and differentiating only
-   * the determinant/structure/eigensolver layers for the provided structure
-   * topology.
-   */
-  CppActiveSpaceGradientResult evaluate(
-      const CppVbInput& input,
-      TimedPreparedActiveSpaceContext timed_prepared_active_space_context,
-      double nuclear_repulsion_energy = 0.0) const;
-
-  /**
    * @brief Evaluates a state-averaged gradient reusing a prebuilt active-space context.
    */
   CppActiveSpaceGradientResult evaluate(
@@ -119,7 +106,6 @@ private:
   ActiveSpaceTwoElectronBuilder active_space_two_electron_builder_;
   FullDeterminantStructureHamiltonianOverlapBuilder structure_builder_;
   xmvb::core::GeneralizedEigensolver generalized_eigensolver_;
-  VBSCFAlgorithm algorithm_ = VBSCFAlgorithm::Original;
 };
 
 }  // namespace xmvb::vb

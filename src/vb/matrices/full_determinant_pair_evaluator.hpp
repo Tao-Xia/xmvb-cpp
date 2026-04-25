@@ -1,5 +1,7 @@
 #pragma once
 
+#include <Eigen/Core>
+
 #include <vector>
 
 #include "vb/matrices/determinant_hamiltonian_resolver.hpp"
@@ -61,7 +63,7 @@ public:
       const std::vector<int>& occ_L,
       const std::vector<int>& occ_R,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act) const;
 
@@ -72,7 +74,7 @@ public:
       const std::vector<int>& occ_L,
       const std::vector<int>& occ_R,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result) const;
 
@@ -112,7 +114,7 @@ public:
       const std::vector<int>& beta_occ_L,
       const std::vector<int>& beta_occ_R,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const std::vector<double>& eri_act,
       bool retain_spin_pair_evaluations = true) const;
@@ -126,7 +128,7 @@ public:
       const std::vector<int>& beta_occ_L,
       const std::vector<int>& beta_occ_R,
       const std::vector<double>& ovlp_act,
-      const std::vector<double>& h1e_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       bool retain_spin_pair_evaluations = true) const;

@@ -34,10 +34,6 @@ void apply_orbital_guess_source_argument(
   if (options == nullptr) {
     throw std::invalid_argument("load options must not be null");
   }
-  if (source_name == "legacy") {
-    options->orbital_guess_source = xmvb::vb::OrbitalGuessSource::LegacyRuntime;
-    return;
-  }
   if (source_name == "cpp") {
     options->orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
     return;
@@ -53,10 +49,6 @@ void apply_ao_integral_source_argument(
   }
   if (source_name == "auto") {
     options->ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-    return;
-  }
-  if (source_name == "legacy") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::LegacyRuntime;
     return;
   }
   if (source_name == "libcint_cpp") {

@@ -24,8 +24,8 @@ Eigen::MatrixXd extract_cross_block(
   for (int row = 0; row < block.rows(); ++row) {
     for (int column = 0; column < block.cols(); ++column) {
       block(row, column) = matrix(
-          left_component.local_vertices[xmvb::to_size(row)],
-          right_component.local_vertices[xmvb::to_size(column)]);
+          left_component.local_vertices[row],
+          right_component.local_vertices[column]);
     }
   }
   return block;
@@ -42,8 +42,8 @@ void assign_directed_cross_block(
   for (int row = 0; row < block.rows(); ++row) {
     for (int column = 0; column < block.cols(); ++column) {
       (*destination)(
-          left_component.local_vertices[xmvb::to_size(row)],
-          right_component.local_vertices[xmvb::to_size(column)]) =
+          left_component.local_vertices[row],
+          right_component.local_vertices[column]) =
           block(row, column);
     }
   }
@@ -181,10 +181,10 @@ int count_component_covalent_labels(const UnionGraphComponent& component) {
 std::vector<std::vector<int>> build_metric_aware_adjacency(
     int node_count,
     const std::vector<MetricAwareComponentGraphEdge>& edges) {
-  std::vector<std::vector<int>> adjacency(xmvb::to_size(node_count));
+  std::vector<std::vector<int>> adjacency(node_count);
   for (const auto& edge : edges) {
-    adjacency[xmvb::to_size(edge.left_component)].push_back(edge.right_component);
-    adjacency[xmvb::to_size(edge.right_component)].push_back(edge.left_component);
+    adjacency[edge.left_component].push_back(edge.right_component);
+    adjacency[edge.right_component].push_back(edge.left_component);
   }
   for (auto& neighbors : adjacency) {
     std::sort(neighbors.begin(), neighbors.end());
@@ -202,7 +202,7 @@ MetricAwareConnectedComponent summarize_metric_connected_component(
   summary.index = component_index;
   summary.graph_nodes = graph_nodes;
   for (const int graph_node : graph_nodes) {
-    const auto& union_component = components[xmvb::to_size(graph_node)];
+    const auto& union_component = components[graph_node];
     summary.total_active_orbitals +=
         static_cast<int>(union_component.active_orbitals.size());
     summary.total_left_pairs +=
@@ -210,7 +210,7 @@ MetricAwareConnectedComponent summarize_metric_connected_component(
     summary.total_right_pairs +=
         static_cast<int>(union_component.right_pairs.size());
     summary.total_covalent_labels +=
-        graph.component_covalent_label_counts[xmvb::to_size(graph_node)];
+        graph.component_covalent_label_counts[graph_node];
   }
   return summary;
 }
@@ -220,27 +220,27 @@ std::vector<MetricAwareConnectedComponent> build_metric_connected_components(
     const std::vector<UnionGraphComponent>& components,
     int removed_node) {
   std::vector<MetricAwareConnectedComponent> connected_components;
-  std::vector<int> component_id(xmvb::to_size(graph.node_count), -1);
+  std::vector<int> component_id(graph.node_count, -1);
   for (int start_node = 0; start_node < graph.node_count; ++start_node) {
     if (start_node == removed_node ||
-        component_id[xmvb::to_size(start_node)] >= 0) {
+        component_id[start_node] >= 0) {
       continue;
     }
 
     std::vector<int> stack{start_node};
     std::vector<int> graph_nodes;
-    component_id[xmvb::to_size(start_node)] =
+    component_id[start_node] =
         static_cast<int>(connected_components.size());
     while (!stack.empty()) {
       const int node = stack.back();
       stack.pop_back();
       graph_nodes.push_back(node);
-      for (const int neighbor : graph.adjacency[xmvb::to_size(node)]) {
+      for (const int neighbor : graph.adjacency[node]) {
         if (neighbor == removed_node ||
-            component_id[xmvb::to_size(neighbor)] >= 0) {
+            component_id[neighbor] >= 0) {
           continue;
         }
-        component_id[xmvb::to_size(neighbor)] =
+        component_id[neighbor] =
             static_cast<int>(connected_components.size());
         stack.push_back(neighbor);
       }
@@ -269,7 +269,7 @@ std::vector<MetricAwareConnectedComponent> build_metric_connected_components(
   for (int component_index = 0;
        component_index < static_cast<int>(connected_components.size());
        ++component_index) {
-    connected_components[xmvb::to_size(component_index)].index = component_index;
+    connected_components[component_index].index = component_index;
   }
   return connected_components;
 }
@@ -295,37 +295,37 @@ std::pair<int, std::vector<int>> build_weighted_min_degree_order(
     const MetricAwareComponentGraph& graph) {
   const int node_count = graph.node_count;
   std::vector<std::vector<char>> live_adjacency(
-      xmvb::to_size(node_count),
-      std::vector<char>(xmvb::to_size(node_count), 0));
+      node_count,
+      std::vector<char>(node_count, 0));
   for (const auto& edge : graph.edges) {
-    live_adjacency[xmvb::to_size(edge.left_component)]
-                  [xmvb::to_size(edge.right_component)] = 1;
-    live_adjacency[xmvb::to_size(edge.right_component)]
-                  [xmvb::to_size(edge.left_component)] = 1;
+    live_adjacency[edge.left_component]
+                  [edge.right_component] = 1;
+    live_adjacency[edge.right_component]
+                  [edge.left_component] = 1;
   }
 
-  std::vector<char> eliminated(xmvb::to_size(node_count), 0);
+  std::vector<char> eliminated(node_count, 0);
   std::vector<int> elimination_order;
-  elimination_order.reserve(xmvb::to_size(node_count));
+  elimination_order.reserve(node_count);
   int width_upper_bound = 0;
   for (int step = 0; step < node_count; ++step) {
     int best_node = -1;
     int best_weighted_degree = std::numeric_limits<int>::max();
     int best_degree = std::numeric_limits<int>::max();
     for (int node = 0; node < node_count; ++node) {
-      if (eliminated[xmvb::to_size(node)] != 0) {
+      if (eliminated[node] != 0) {
         continue;
       }
       int weighted_degree = 0;
       int degree = 0;
       for (int neighbor = 0; neighbor < node_count; ++neighbor) {
-        if (eliminated[xmvb::to_size(neighbor)] != 0 ||
-            live_adjacency[xmvb::to_size(node)]
-                          [xmvb::to_size(neighbor)] == 0) {
+        if (eliminated[neighbor] != 0 ||
+            live_adjacency[node]
+                          [neighbor] == 0) {
           continue;
         }
         weighted_degree +=
-            graph.component_covalent_label_counts[xmvb::to_size(neighbor)];
+            graph.component_covalent_label_counts[neighbor];
         ++degree;
       }
       if (weighted_degree < best_weighted_degree ||
@@ -347,9 +347,9 @@ std::pair<int, std::vector<int>> build_weighted_min_degree_order(
 
     std::vector<int> live_neighbors;
     for (int neighbor = 0; neighbor < node_count; ++neighbor) {
-      if (eliminated[xmvb::to_size(neighbor)] != 0 ||
-          live_adjacency[xmvb::to_size(best_node)]
-                        [xmvb::to_size(neighbor)] == 0) {
+      if (eliminated[neighbor] != 0 ||
+          live_adjacency[best_node]
+                        [neighbor] == 0) {
         continue;
       }
       live_neighbors.push_back(neighbor);
@@ -362,20 +362,20 @@ std::pair<int, std::vector<int>> build_weighted_min_degree_order(
            ++right_index) {
         const int left_neighbor = live_neighbors[left_index];
         const int right_neighbor = live_neighbors[right_index];
-        live_adjacency[xmvb::to_size(left_neighbor)]
-                      [xmvb::to_size(right_neighbor)] = 1;
-        live_adjacency[xmvb::to_size(right_neighbor)]
-                      [xmvb::to_size(left_neighbor)] = 1;
+        live_adjacency[left_neighbor]
+                      [right_neighbor] = 1;
+        live_adjacency[right_neighbor]
+                      [left_neighbor] = 1;
       }
     }
 
     for (int neighbor = 0; neighbor < node_count; ++neighbor) {
-      live_adjacency[xmvb::to_size(best_node)]
-                    [xmvb::to_size(neighbor)] = 0;
-      live_adjacency[xmvb::to_size(neighbor)]
-                    [xmvb::to_size(best_node)] = 0;
+      live_adjacency[best_node]
+                    [neighbor] = 0;
+      live_adjacency[neighbor]
+                    [best_node] = 0;
     }
-    eliminated[xmvb::to_size(best_node)] = 1;
+    eliminated[best_node] = 1;
   }
   return {width_upper_bound, elimination_order};
 }
@@ -401,7 +401,7 @@ std::vector<OrbitalPair> extract_active_pairs(
 
   const int* structure_orbitals = raw_structure_data.structure_orbitals_data(structure_index);
   std::vector<OrbitalPair> pairs;
-  pairs.reserve(xmvb::to_size(n_active_beta_electrons));
+  pairs.reserve(n_active_beta_electrons);
   for (int pair_index = 0; pair_index < n_active_beta_electrons; ++pair_index) {
     const int left_orbital =
         structure_orbitals[active_start + 2 * pair_index] -
@@ -439,7 +439,7 @@ std::map<int, int> build_support_index(
   for (int support_position = 0; support_position < static_cast<int>(support_orbitals.size());
        ++support_position) {
     support_index.emplace(
-        support_orbitals[xmvb::to_size(support_position)],
+        support_orbitals[support_position],
         support_position);
   }
   return support_index;
@@ -470,9 +470,9 @@ Eigen::MatrixXd build_support_overlap_matrix(
   for (int row = 0; row < support_size; ++row) {
     for (int column = 0; column < support_size; ++column) {
       support_overlap(row, column) =
-          active_overlap_matrix[xmvb::to_size(support_orbitals[xmvb::to_size(column)]) *
-                                    xmvb::to_size(n_active_orbitals) +
-                                support_orbitals[xmvb::to_size(row)]];
+          active_overlap_matrix[support_orbitals[column] *
+                                    n_active_orbitals +
+                                support_orbitals[row]];
     }
   }
   return support_overlap;
@@ -483,13 +483,13 @@ std::vector<UnionGraphComponent> build_union_graph_components(
     const std::vector<OrbitalPair>& right_pairs,
     const std::vector<int>& support_orbitals) {
   const int support_size = static_cast<int>(support_orbitals.size());
-  std::vector<std::vector<int>> adjacency(xmvb::to_size(support_size));
+  std::vector<std::vector<int>> adjacency(support_size);
   auto add_edge = [&](const OrbitalPair& pair) {
     if (pair.first == pair.second) {
       return;
     }
-    adjacency[xmvb::to_size(pair.first)].push_back(pair.second);
-    adjacency[xmvb::to_size(pair.second)].push_back(pair.first);
+    adjacency[pair.first].push_back(pair.second);
+    adjacency[pair.second].push_back(pair.first);
   };
   for (const auto& pair : left_pairs) {
     add_edge(pair);
@@ -498,27 +498,27 @@ std::vector<UnionGraphComponent> build_union_graph_components(
     add_edge(pair);
   }
 
-  std::vector<int> component_id(xmvb::to_size(support_size), -1);
+  std::vector<int> component_id(support_size, -1);
   std::vector<UnionGraphComponent> components;
   for (int start_vertex = 0; start_vertex < support_size; ++start_vertex) {
-    if (component_id[xmvb::to_size(start_vertex)] >= 0) {
+    if (component_id[start_vertex] >= 0) {
       continue;
     }
 
     UnionGraphComponent component;
     component.index = static_cast<int>(components.size());
     std::vector<int> stack{start_vertex};
-    component_id[xmvb::to_size(start_vertex)] = component.index;
+    component_id[start_vertex] = component.index;
     while (!stack.empty()) {
       const int vertex = stack.back();
       stack.pop_back();
       component.local_vertices.push_back(vertex);
-      component.active_orbitals.push_back(support_orbitals[xmvb::to_size(vertex)]);
-      for (const int neighbor : adjacency[xmvb::to_size(vertex)]) {
-        if (component_id[xmvb::to_size(neighbor)] >= 0) {
+      component.active_orbitals.push_back(support_orbitals[vertex]);
+      for (const int neighbor : adjacency[vertex]) {
+        if (component_id[neighbor] >= 0) {
           continue;
         }
-        component_id[xmvb::to_size(neighbor)] = component.index;
+        component_id[neighbor] = component.index;
         stack.push_back(neighbor);
       }
     }
@@ -528,11 +528,11 @@ std::vector<UnionGraphComponent> build_union_graph_components(
   }
 
   for (const auto& pair : left_pairs) {
-    components[xmvb::to_size(component_id[xmvb::to_size(pair.first)])]
+    components[component_id[pair.first]]
         .left_pairs.push_back(pair);
   }
   for (const auto& pair : right_pairs) {
-    components[xmvb::to_size(component_id[xmvb::to_size(pair.first)])]
+    components[component_id[pair.first]]
         .right_pairs.push_back(pair);
   }
 

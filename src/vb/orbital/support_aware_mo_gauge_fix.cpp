@@ -10,7 +10,6 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/LU>
 
-#include "runtime/cpp_block_guess_builder.hpp"
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
 
 namespace xmvb::vb {
@@ -26,13 +25,15 @@ Eigen::MatrixXd build_dense_sparse_orbital_columns(
       Eigen::MatrixXd::Zero(n_basis_functions, std::max(0, orbital_count));
   for (int orbital_index = 0; orbital_index < orbital_count; ++orbital_index) {
     const int coefficient_count =
-        get_orbital_basis_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index] -
           1;
       if (basis_function_index < 0 ||
@@ -42,7 +43,7 @@ Eigen::MatrixXd build_dense_sparse_orbital_columns(
       }
       dense_orbitals(basis_function_index, orbital_index) =
           orbital_preparation_input.orbital_value_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index];
     }
   }
@@ -62,13 +63,15 @@ Eigen::MatrixXd build_dense_sparse_orbital_columns_from_full_vector(
       Eigen::MatrixXd::Zero(n_basis_functions, std::max(0, orbital_count));
   for (int orbital_index = 0; orbital_index < orbital_count; ++orbital_index) {
     const int coefficient_count =
-        get_orbital_basis_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index] -
           1;
       if (basis_function_index < 0 ||
@@ -77,7 +80,7 @@ Eigen::MatrixXd build_dense_sparse_orbital_columns_from_full_vector(
             "invalid sparse orbital basis index while building dense MO gauge gradient columns");
       }
       dense_orbitals(basis_function_index, orbital_index) =
-          full_vector[xmvb::to_size(orbital_index) * n_basis_functions +
+          full_vector[orbital_index * n_basis_functions +
                       coefficient_index];
     }
   }
@@ -99,16 +102,18 @@ void scatter_dense_sparse_orbital_columns(
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   for (int orbital_index = 0; orbital_index < orbital_count; ++orbital_index) {
     const int coefficient_count =
-        get_orbital_basis_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index] -
           1;
-      (*full_vector)[xmvb::to_size(orbital_index) * n_basis_functions +
+      (*full_vector)[orbital_index * n_basis_functions +
                      coefficient_index] =
           dense_orbitals(basis_function_index, orbital_index);
     }
@@ -119,15 +124,17 @@ std::vector<int> collect_support_indices_from_layout(
     const OrbitalPreparationInput& orbital_preparation_input,
     int orbital_index) {
   const int coefficient_count =
-      get_orbital_basis_count(orbital_preparation_input, orbital_index);
+      stored_sparse_orbital_coefficient_count(
+          orbital_preparation_input,
+          orbital_index);
   std::vector<int> support_indices;
-  support_indices.reserve(xmvb::to_size(coefficient_count));
+  support_indices.reserve(coefficient_count);
   for (int coefficient_index = 0;
        coefficient_index < coefficient_count;
        ++coefficient_index) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) *
+            [orbital_index *
                  orbital_preparation_input.n_basis_functions +
              coefficient_index] -
         1;
@@ -213,14 +220,14 @@ Eigen::MatrixXd build_support_overlap_submatrix(
   for (Eigen::Index row = 0;
        row < static_cast<Eigen::Index>(support_indices.size());
        ++row) {
-    const int basis_row = support_indices[xmvb::to_size(row)];
+    const int basis_row = support_indices[row];
     for (Eigen::Index column = 0;
          column < static_cast<Eigen::Index>(support_indices.size());
          ++column) {
       support_overlap(row, column) =
           basis_overlap(
               basis_row,
-              support_indices[xmvb::to_size(column)]);
+              support_indices[column]);
     }
   }
   return support_overlap;
@@ -269,9 +276,9 @@ SupportAwareInactiveMoGaugeTransform finalize_transform(
 bool orbital_input_has_support_aware_mo_gauge_reference(
     const OrbitalPreparationInput& orbital_preparation_input) {
   return orbital_preparation_input.mo_gauge_reference_orbital_basis_counts.size() ==
-          xmvb::to_size(orbital_preparation_input.n_orbitals) &&
+          orbital_preparation_input.n_orbitals &&
       orbital_preparation_input.mo_gauge_reference_orbital_basis_index_table.size() ==
-          xmvb::to_size(orbital_preparation_input.n_orbitals) *
+          orbital_preparation_input.n_orbitals *
               orbital_preparation_input.n_basis_functions;
 }
 
@@ -386,7 +393,7 @@ SupportAwareInactiveMoGaugeTransform apply_support_aware_inactive_mo_gauge_fix(
          row < static_cast<Eigen::Index>(target_support.size());
          ++row) {
       support_restricted_basis.row(row) =
-          remaining_basis.row(target_support[xmvb::to_size(row)]);
+          remaining_basis.row(target_support[row]);
     }
     const Eigen::MatrixXd support_weight =
         support_restricted_basis.transpose() *
@@ -414,21 +421,23 @@ SupportAwareInactiveMoGaugeTransform apply_support_aware_inactive_mo_gauge_fix(
   }
 
   std::vector<double> updated_orbital_values =
-      orbital_preparation_input->orbital_value_table.vector();
+      orbital_preparation_input->orbital_value_table;
   for (int orbital_index = 0;
        orbital_index < n_inactive_orbitals;
        ++orbital_index) {
     const int coefficient_count =
-        get_orbital_basis_count(*orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            *orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input->orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index] -
           1;
-      updated_orbital_values[xmvb::to_size(orbital_index) *
+      updated_orbital_values[orbital_index *
                                  n_basis_functions +
                              coefficient_index] =
           localized_inactive_orbitals(

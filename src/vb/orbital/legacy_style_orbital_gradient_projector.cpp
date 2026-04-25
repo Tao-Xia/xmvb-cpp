@@ -28,9 +28,9 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
   }
 
   const std::size_t ao_matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   const std::size_t active_matrix_size =
-      xmvb::to_size(n_active_orbitals) * n_active_orbitals;
+      n_active_orbitals * n_active_orbitals;
   if (active_active_gradient_matrix.size() != active_matrix_size ||
       active_virtual_gradient_matrix.size() != ao_matrix_size ||
       active_space_coulomb_exchange_matrix.size() != ao_matrix_size ||
@@ -102,14 +102,14 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
   for (int active_orbital = 0; active_orbital < n_active_orbitals; ++active_orbital) {
     const int orbital_index = active_orbital + n_inactive_doubly_occupied_orbitals;
     const int coefficient_count =
-        orbital_preparation_input.original_orbital_basis_counts[xmvb::to_size(orbital_index)];
+        orbital_preparation_input.original_orbital_basis_counts[orbital_index];
     if (coefficient_count == 1) {
       continue;
     }
     for (int coefficient_slot = 0; coefficient_slot < coefficient_count; ++coefficient_slot) {
       const int basis_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_slot] -
+              [orbital_index * n_basis_functions + coefficient_slot] -
           1;
       for (int basis_row = 0; basis_row < n_basis_functions; ++basis_row) {
         slot_gradient_matrix(coefficient_slot, orbital_index) +=
@@ -130,14 +130,14 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
   const Eigen::MatrixXd tmp2 = a1.transpose() * tmp1;
   for (int inactive_orbital = 0; inactive_orbital < n_inactive_doubly_occupied_orbitals; ++inactive_orbital) {
     const int coefficient_count =
-        orbital_preparation_input.original_orbital_basis_counts[xmvb::to_size(inactive_orbital)];
+        orbital_preparation_input.original_orbital_basis_counts[inactive_orbital];
     if (coefficient_count == 1) {
       continue;
     }
     for (int coefficient_slot = 0; coefficient_slot < coefficient_count; ++coefficient_slot) {
       const int basis_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(inactive_orbital) * n_basis_functions + coefficient_slot] -
+              [inactive_orbital * n_basis_functions + coefficient_slot] -
           1;
       slot_gradient_matrix(coefficient_slot, inactive_orbital) =
           tmp2(basis_index, inactive_orbital) + tmp2(basis_index, inactive_orbital);
@@ -150,14 +150,14 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
       ssf * q22 * a3.leftCols(n_inactive_doubly_occupied_orbitals);
   for (int inactive_orbital = 0; inactive_orbital < n_inactive_doubly_occupied_orbitals; ++inactive_orbital) {
     const int coefficient_count =
-        orbital_preparation_input.original_orbital_basis_counts[xmvb::to_size(inactive_orbital)];
+        orbital_preparation_input.original_orbital_basis_counts[inactive_orbital];
     if (coefficient_count == 1) {
       continue;
     }
     for (int coefficient_slot = 0; coefficient_slot < coefficient_count; ++coefficient_slot) {
       const int basis_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(inactive_orbital) * n_basis_functions + coefficient_slot] -
+              [inactive_orbital * n_basis_functions + coefficient_slot] -
           1;
       slot_gradient_matrix(coefficient_slot, inactive_orbital) -=
           2.0 * inactive_correction_from_density(basis_index, inactive_orbital);
@@ -168,14 +168,14 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
 
   for (int inactive_orbital = 0; inactive_orbital < n_inactive_doubly_occupied_orbitals; ++inactive_orbital) {
     const int coefficient_count =
-        orbital_preparation_input.original_orbital_basis_counts[xmvb::to_size(inactive_orbital)];
+        orbital_preparation_input.original_orbital_basis_counts[inactive_orbital];
     if (coefficient_count == 1) {
       continue;
     }
     for (int coefficient_slot = 0; coefficient_slot < coefficient_count; ++coefficient_slot) {
       const int basis_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(inactive_orbital) * n_basis_functions + coefficient_slot] -
+              [inactive_orbital * n_basis_functions + coefficient_slot] -
           1;
       for (int active_orbital = 0; active_orbital < n_active_orbitals; ++active_orbital) {
         for (int basis_row = 0; basis_row < n_basis_functions; ++basis_row) {
@@ -194,7 +194,7 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
        orbital_index < n_inactive_doubly_occupied_orbitals + n_active_orbitals;
        ++orbital_index) {
     const int coefficient_count =
-        orbital_preparation_input.original_orbital_basis_counts[xmvb::to_size(orbital_index)];
+        orbital_preparation_input.original_orbital_basis_counts[orbital_index];
     if (coefficient_count == 0 || coefficient_count == 1) {
       continue;
     }

@@ -40,13 +40,12 @@ struct ExactPackedActiveTwoElectronAdjointCache {
   std::vector<int> ao_pair_second_indices;
   std::vector<int> active_pair_first_indices;
   std::vector<int> active_pair_second_indices;
+  Eigen::MatrixXd accepted_pair_coefficients;
+  Eigen::MatrixXd accepted_base_pair_products;
   Eigen::MatrixXd active_pair_gradient_matrix;
-  std::vector<double> active_pair_gradient_buffer;
   std::vector<double> accepted_active_pair_gradient_backprop_rows_buffer;
   Eigen::MatrixXd accepted_dense_active_coefficients;
-  std::vector<double> accepted_dense_active_coefficients_buffer;
-  std::vector<double> accepted_pair_products_buffer;
-  std::vector<double> accepted_base_pair_gradients_buffer;
+  Eigen::MatrixXd accepted_base_pair_gradients;
   std::vector<double> accepted_base_pair_gradient_matrices_buffer;
 };
 
@@ -58,12 +57,11 @@ struct ExactPackedActiveTwoElectronAdjointCache {
  * reallocation of the largest exact-2e intermediates on every Krylov matvec.
  */
 struct ExactPackedActiveTwoElectronApplyWorkspace {
+  Eigen::MatrixXd dense_active_direction;
   Eigen::MatrixXd dense_active_gradient_direction;
-  std::vector<double> dense_active_direction_buffer;
-  std::vector<double> dense_active_gradient_direction_buffer;
-  std::vector<double> mixed_pair_coefficients_buffer;
-  std::vector<double> transformed_pair_coefficients_buffer;
-  std::vector<double> pair_gradients_buffer;
+  Eigen::MatrixXd mixed_pair_coefficients;
+  Eigen::MatrixXd transformed_pair_coefficients;
+  Eigen::MatrixXd pair_gradients;
 };
 
 /**
@@ -74,12 +72,11 @@ struct ExactPackedActiveTwoElectronApplyWorkspace {
  * avoids several large allocations on every `H v` application.
  */
 struct ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace {
-  std::vector<double> dense_active_coefficients_buffer;
-  std::vector<double> dense_active_direction_buffer;
-  std::vector<double> pair_coefficients_buffer;
-  std::vector<double> base_pair_products_buffer;
-  std::vector<double> directional_pair_coefficients_buffer;
-  std::vector<double> directional_pair_products_buffer;
+  Eigen::MatrixXd dense_active_direction;
+  Eigen::MatrixXd pair_coefficients;
+  Eigen::MatrixXd base_pair_products;
+  Eigen::MatrixXd directional_pair_coefficients;
+  Eigen::MatrixXd directional_pair_products;
   Eigen::MatrixXd delta_active_pair_matrix;
 };
 
@@ -203,6 +200,21 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
         nullptr);
 
 /**
+ * @brief Computes exact packed `\delta GGO` from one accepted-point exact 2e cache.
+ *
+ * The accepted AO-by-active coefficients and their accepted AO-pair images are
+ * already materialized inside `accepted_cache`. Reusing them here avoids
+ * rebuilding the accepted pair map and re-copying the accepted dense-active
+ * buffers on every directional `\delta GGO` apply.
+ */
+void compute_exact_packed_active_two_electron_integral_directional_derivative(
+    const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+    const AoIntegralInput& ao_integral_input,
+    ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace* workspace,
+    std::vector<double>* delta_packed_active_two_electron_integrals);
+
+/**
  * @brief Precomputes accepted-point exact 2e HVP invariants.
  *
  * `accepted_dense_active_coefficients` is the accepted AO-by-active dense
@@ -233,11 +245,9 @@ Eigen::MatrixXd apply_exact_packed_active_two_electron_adjoint_hessian_vector(
  * @brief Applies the exact fixed-adjoint 2e Hessian into reusable work buffers.
  *
  * This is the allocation-aware accepted-point hot path used by exact_ctx HVPs.
- * Raw compatibility buffers are kept inside `workspace`, but callers receive
- * the final dense AO-by-active result as `Eigen::MatrixXd`. Callers that only
- * need the row-buffer representation may pass `nullptr` for
- * `dense_active_gradient_direction` and consume
- * `workspace->dense_active_gradient_direction_buffer` directly.
+ * The exact-2e workspaces now keep their AO-by-active and AO-pair-by-active-pair
+ * intermediates in Eigen matrices. Any unavoidable legacy row-buffer flattening
+ * is isolated inside the AO-kernel compatibility boundary.
  */
 void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
     const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,

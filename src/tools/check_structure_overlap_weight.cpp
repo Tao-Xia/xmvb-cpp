@@ -74,9 +74,9 @@ double structure_upper_overlap_weight(
     int structure_column) {
   const double state_energy = eigenvalues.front();
   const double coefficient_row =
-      eigenvector_matrix[xmvb::to_size(0) * n_structures + structure_row];
+      eigenvector_matrix[0 * n_structures + structure_row];
   const double coefficient_column =
-      eigenvector_matrix[xmvb::to_size(0) * n_structures + structure_column];
+      eigenvector_matrix[0 * n_structures + structure_column];
   if (structure_row == structure_column) {
     return -state_energy * coefficient_row * coefficient_column;
   }
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
     std::cout << "reported_entries = " << n_to_report << '\n';
 
     for (int report_index = 0; report_index < n_to_report; ++report_index) {
-      const int packed_index = ranked_entries[xmvb::to_size(report_index)].second;
+      const int packed_index = ranked_entries[report_index].second;
       const int row = packed_index / n_structures;
       const int column = packed_index % n_structures;
       const double analytic = structure_upper_overlap_weight(
@@ -144,11 +144,11 @@ int main(int argc, char** argv) {
 
       std::vector<double> plus_overlap = result.scf_result.structure_matrices.overlap_matrix;
       std::vector<double> minus_overlap = result.scf_result.structure_matrices.overlap_matrix;
-      plus_overlap[xmvb::to_size(row) * n_structures + column] += options.step;
-      minus_overlap[xmvb::to_size(row) * n_structures + column] -= options.step;
+      plus_overlap[row * n_structures + column] += options.step;
+      minus_overlap[row * n_structures + column] -= options.step;
       if (row != column) {
-        plus_overlap[xmvb::to_size(column) * n_structures + row] += options.step;
-        minus_overlap[xmvb::to_size(column) * n_structures + row] -= options.step;
+        plus_overlap[column * n_structures + row] += options.step;
+        minus_overlap[column * n_structures + row] -= options.step;
       }
 
       const double plus_energy = evaluate_ground_state_energy(

@@ -37,13 +37,13 @@ ScalarBuffer build_closed_shell_projected_coefficients(
         "cache.trace_order + 1");
   }
 
-  ScalarBuffer coefficients(xmvb::to_size(order + 1), 0.0);
+  ScalarBuffer coefficients(order + 1, 0.0);
   for (int power = 0; power <= order; ++power) {
     const double sign = ((power % 2) == 0) ? 1.0 : -1.0;
-    coefficients[xmvb::to_size(power)] =
+    coefficients[power] =
         sign *
-        cache.projected_overlap_coefficients[xmvb::to_size(
-            order - power)];
+        cache.projected_overlap_coefficients[
+            order - power];
   }
   return coefficients;
 }
@@ -185,7 +185,7 @@ void build_trace_rdms(PfKernelCache* cache) {
   }
 
   cache->trace_rdms.clear();
-  cache->trace_rdms.reserve(xmvb::to_size(cache->trace_order));
+  cache->trace_rdms.reserve(cache->trace_order);
   for (int trace_index = 0; trace_index < cache->trace_order; ++trace_index) {
     cache->trace_rdms.push_back(build_trace_rdm(*cache, trace_index));
   }
@@ -200,7 +200,7 @@ Matrix build_trace_rdm(
 
   const int n = cache.n_active_orbitals;
   const Matrix gc =
-      cache.kernel_powers[xmvb::to_size(trace_index)]
+      cache.kernel_powers[trace_index]
           .topLeftCorner(n, n) *
       cache.left_sigma_right.topLeftCorner(n, n);
   const double scale = 2.0 * static_cast<double>(trace_index + 1);

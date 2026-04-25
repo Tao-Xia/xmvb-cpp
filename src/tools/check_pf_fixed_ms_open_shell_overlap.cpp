@@ -93,8 +93,8 @@ Matrix extract_submatrix(
   for (int col = 0; col < static_cast<int>(cols.size()); ++col) {
     for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
       submatrix(row, col) =
-          matrix(rows[xmvb::to_size(row)],
-                 cols[xmvb::to_size(col)]);
+          matrix(rows[row],
+                 cols[col]);
     }
   }
   return submatrix;
@@ -181,8 +181,8 @@ DeterminantOverlapResult determinant_overlap_and_gradient(
   for (int col = 0; col < static_cast<int>(right_occ.size()); ++col) {
     for (int row = 0; row < static_cast<int>(left_occ.size()); ++row) {
       result.gradient(
-          left_occ[xmvb::to_size(row)],
-          right_occ[xmvb::to_size(col)]) +=
+          left_occ[row],
+          right_occ[col]) +=
           result.overlap * inverse(col, row);
     }
   }
@@ -250,17 +250,17 @@ Matrix random_pair_matrix(
     std::mt19937* generator,
     std::normal_distribution<double>* distribution) {
   Matrix pair_matrix = Matrix::Zero(dimension, dimension);
-  std::vector<bool> blocked_mask(xmvb::to_size(dimension), false);
+  std::vector<bool> blocked_mask(dimension, false);
   for (const int orbital : blocked_alpha_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (const int orbital : blocked_beta_orbitals) {
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
   for (int col = 0; col < dimension; ++col) {
     for (int row = 0; row < dimension; ++row) {
-      if (blocked_mask[xmvb::to_size(row)] ||
-          blocked_mask[xmvb::to_size(col)]) {
+      if (blocked_mask[row] ||
+          blocked_mask[col]) {
         continue;
       }
       pair_matrix(row, col) = (*distribution)(*generator);

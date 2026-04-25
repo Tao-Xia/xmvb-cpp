@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -11,33 +10,16 @@
 #include <string>
 #include <vector>
 
+#include <Eigen/Core>
 #include "lapacke.h"
 #include "runtime/cpp_block_guess_builder.hpp"
 #include "runtime/cpp_restricted_hartree_fock.hpp"
-#include "runtime_c/local_runtime/cint_compat.h"
-
-#ifdef atm
-#undef atm
-#endif
-
-#ifdef bas
-#undef bas
-#endif
-
-#include "vb/vb.h"
+#include "runtime/input_deck_keywords.hpp"
+#include "runtime/libcint_compat.hpp"
 
 namespace xmvb::vb {
 
 namespace {
-
-std::string uppercase_copy(const std::string& text) {
-  std::string upper = text;
-  for (char& character : upper) {
-    character = static_cast<char>(
-        std::toupper(static_cast<unsigned char>(character)));
-  }
-  return upper;
-}
 
 std::string strip_inline_comment(const std::string& line) {
   const std::size_t comment_position = line.find('#');
@@ -141,57 +123,38 @@ std::vector<double> build_support_gathered_dense_guess(
     int orbital_index) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const int coefficient_count =
-      get_orbital_basis_count(orbital_preparation_input, orbital_index);
+      stored_sparse_orbital_coefficient_count(
+          orbital_preparation_input,
+          orbital_index);
   std::vector<double> gathered_coefficients(
-      xmvb::to_size(coefficient_count),
+      coefficient_count,
       0.0);
   for (int coefficient_index = 0;
        coefficient_index < coefficient_count;
        ++coefficient_index) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions +
+            [orbital_index * n_basis_functions +
              coefficient_index] -
         1;
     if (basis_function_index < 0 || basis_function_index >= n_basis_functions) {
       throw std::runtime_error(
           "invalid sparse orbital basis index while gathering C++ GUESS=READ/RDCI");
     }
-    gathered_coefficients[xmvb::to_size(coefficient_index)] =
+    gathered_coefficients[coefficient_index] =
         read_guess.dense_orbital_coefficients
-            [xmvb::to_size(orbital_index) * n_basis_functions +
+            [orbital_index * n_basis_functions +
              basis_function_index];
   }
   return gathered_coefficients;
 }
 
 ReadGuessSection parse_read_guess_section(
-    const std::string& input_file_path,
+    const std::vector<std::string>& guess_section_lines,
     const OrbitalPreparationInput& orbital_preparation_input) {
-  std::ifstream input_stream(input_file_path);
-  if (!input_stream) {
+  if (guess_section_lines.empty()) {
     throw std::runtime_error(
-        "failed to open input file for C++ GUESS=READ/RDCI: " + input_file_path);
-  }
-
-  std::vector<std::string> guess_section_lines;
-  std::string line;
-  bool inside_guess_section = false;
-  while (std::getline(input_stream, line)) {
-    const std::string upper_line = uppercase_copy(line);
-    if (!inside_guess_section) {
-      if (upper_line.find("$GUS") != std::string::npos) {
-        inside_guess_section = true;
-      }
-      continue;
-    }
-    if (upper_line.find("$END") != std::string::npos) {
-      break;
-    }
-    guess_section_lines.push_back(line);
-  }
-  if (!inside_guess_section) {
-    throw std::runtime_error("C++ GUESS=READ/RDCI requires a $GUS section in the input file");
+        "C++ GUESS=READ/RDCI requires parsed $GUS lines from the input deck");
   }
 
   std::vector<int> file_orbital_basis_counts;
@@ -227,7 +190,7 @@ ReadGuessSection parse_read_guess_section(
       file_orbital_basis_counts.begin(),
       file_orbital_basis_counts.begin() + n_orbitals);
   std::vector<double> dense_coefficients(
-      xmvb::to_size(n_orbitals) * n_basis_functions,
+      n_orbitals * n_basis_functions,
       0.0);
   std::vector<std::string> buffered_tokens;
   std::size_t next_token_offset = 0;
@@ -249,9 +212,9 @@ ReadGuessSection parse_read_guess_section(
     buffered_tokens.insert(buffered_tokens.end(), tokens.begin(), tokens.end());
 
     while (orbital_index < n_orbitals) {
-      const int expected_pair_count = parsed_orbital_basis_counts[xmvb::to_size(orbital_index)];
+      const int expected_pair_count = parsed_orbital_basis_counts[orbital_index];
       const std::size_t required_token_count =
-          xmvb::to_size(expected_pair_count) * 2;
+          expected_pair_count * 2;
       const std::size_t available_token_count =
           buffered_tokens.size() - next_token_offset;
       if (available_token_count < required_token_count) {
@@ -260,7 +223,7 @@ ReadGuessSection parse_read_guess_section(
 
       for (int coefficient_index = 0; coefficient_index < expected_pair_count; ++coefficient_index) {
         const std::size_t token_offset =
-            next_token_offset + xmvb::to_size(coefficient_index) * 2;
+            next_token_offset + coefficient_index * 2;
         const double coefficient_value =
             parse_guess_double(buffered_tokens[token_offset]);
         const int basis_function_index =
@@ -270,7 +233,7 @@ ReadGuessSection parse_read_guess_section(
           throw std::runtime_error(
               "basis index in $GUS section is out of range for GUESS=READ/RDCI");
         }
-        dense_coefficients[xmvb::to_size(orbital_index) * n_basis_functions +
+        dense_coefficients[orbital_index * n_basis_functions +
                            (basis_function_index - 1)] = coefficient_value;
       }
 
@@ -312,7 +275,7 @@ void expand_read_guess_layout_if_needed(
 }
 
 void build_read_or_rdci_guess(
-    const std::string& input_file_path,
+    const std::vector<std::string>& guess_section_lines,
     OrbitalPreparationInput* orbital_preparation_input,
     std::vector<double>* orbital_value_table) {
   if (orbital_preparation_input == nullptr) {
@@ -323,7 +286,7 @@ void build_read_or_rdci_guess(
   }
 
   const ReadGuessSection read_guess = parse_read_guess_section(
-      input_file_path,
+      guess_section_lines,
       *orbital_preparation_input);
   expand_read_guess_layout_if_needed(
       read_guess,
@@ -335,7 +298,9 @@ void build_read_or_rdci_guess(
 
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
     const int coefficient_count =
-        get_orbital_basis_count(*orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            *orbital_preparation_input,
+            orbital_index);
     // Match legacy `vb_readguess`: `$GUS` is first expanded to a dense AO
     // vector and then gathered back onto the target runtime support chart.
     // The `$GUS` header does not redefine the variational manifold.
@@ -345,9 +310,9 @@ void build_read_or_rdci_guess(
             *orbital_preparation_input,
             orbital_index);
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
-      (*orbital_value_table)[xmvb::to_size(orbital_index) * n_basis_functions +
+      (*orbital_value_table)[orbital_index * n_basis_functions +
                              coefficient_index] =
-          support_coefficients[xmvb::to_size(coefficient_index)];
+          support_coefficients[coefficient_index];
     }
   }
 }
@@ -362,29 +327,34 @@ void normalize_sparse_guess(
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const auto& overlap_matrix =
-      orbital_preparation_input.active_orbital_overlap_matrix.vector();
+      orbital_preparation_input.active_orbital_overlap_matrix;
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
-    const int basis_count = get_orbital_basis_count(orbital_preparation_input, orbital_index);
+    // Guess normalization uses the stored sparse support, not the legacy
+    // differentiable parameter count. Expanded MO/HAO supports still need every
+    // stored coefficient normalized before entering orbital preparation.
+    const int basis_count =
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     double norm = 0.0;
     for (int left_index = 0; left_index < basis_count; ++left_index) {
       const int left_basis =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions + left_index] -
+              [orbital_index * n_basis_functions + left_index] -
           1;
       const double left_coefficient =
-          (*orbital_value_table)[xmvb::to_size(orbital_index) * n_basis_functions +
+          (*orbital_value_table)[orbital_index * n_basis_functions +
                                  left_index];
       for (int right_index = 0; right_index < basis_count; ++right_index) {
         const int right_basis =
             orbital_preparation_input.orbital_basis_index_table
-                [xmvb::to_size(orbital_index) * n_basis_functions + right_index] -
+                [orbital_index * n_basis_functions + right_index] -
             1;
         const double right_coefficient =
-            (*orbital_value_table)[xmvb::to_size(orbital_index) * n_basis_functions +
+            (*orbital_value_table)[orbital_index * n_basis_functions +
                                    right_index];
         norm += left_coefficient * right_coefficient *
-                overlap_matrix[xmvb::to_size(left_basis) * n_basis_functions +
-                               right_basis];
+                overlap_matrix(left_basis, right_basis);
       }
     }
     if (!(norm > 0.0)) {
@@ -392,7 +362,7 @@ void normalize_sparse_guess(
     }
     const double scale = std::sqrt(1.0 / norm);
     for (int coefficient_index = 0; coefficient_index < basis_count; ++coefficient_index) {
-      (*orbital_value_table)[xmvb::to_size(orbital_index) * n_basis_functions +
+      (*orbital_value_table)[orbital_index * n_basis_functions +
                              coefficient_index] *= scale;
     }
   }
@@ -407,13 +377,6 @@ bool supports_cpp_rhf_auto_guess(
              orbital_preparation_input.n_basis_functions * 2;
 }
 
-bool has_hf_overlap_matrix(
-    const OrbitalPreparationInput& orbital_preparation_input) {
-  return orbital_preparation_input.hf_overlap_matrix.size() ==
-         xmvb::to_size(orbital_preparation_input.n_basis_functions) *
-             orbital_preparation_input.n_basis_functions;
-}
-
 bool has_materialized_ao_two_electron_integrals(
     const AoIntegralInput& ao_integral_input) {
   return !ao_integral_input.ao_two_electron_integral_values.empty();
@@ -426,7 +389,7 @@ void build_hcore_block_guess(
     std::vector<double>* orbital_value_table) {
   build_block_matrix_guess(
       libcint_input,
-      ao_integral_input.ao_core_hamiltonian_matrix.vector(),
+      ao_integral_input.ao_core_hamiltonian_matrix,
       orbital_preparation_input,
       orbital_value_table);
 }
@@ -437,50 +400,50 @@ CppRestrictedHartreeFockResult solve_rhf_guess(
     const OrbitalPreparationInput& orbital_preparation_input) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   std::vector<std::vector<int>> atom_ao_indices(
-      xmvb::to_size(libcint_input.n_atoms));
+      libcint_input.n_atoms);
   for (int shell_index = 0; shell_index < libcint_input.n_shells; ++shell_index) {
     const int atom_index =
-        libcint_input.bas[xmvb::to_size(shell_index) * BAS_SLOTS + ATOM_OF];
-    const int ao_offset = libcint_input.basidx[xmvb::to_size(shell_index) * 2];
-    const int ao_count = libcint_input.basidx[xmvb::to_size(shell_index) * 2 + 1];
+        libcint_input.bas[shell_index * BAS_SLOTS + ATOM_OF];
+    const int ao_offset = libcint_input.basidx[shell_index * 2];
+    const int ao_count = libcint_input.basidx[shell_index * 2 + 1];
     if (atom_index < 0 || atom_index >= libcint_input.n_atoms) {
       throw std::runtime_error("invalid atom index in LibcintInput shell table");
     }
-    auto& atom_indices = atom_ao_indices[xmvb::to_size(atom_index)];
+    auto& atom_indices = atom_ao_indices[atom_index];
     for (int local_ao = 0; local_ao < ao_count; ++local_ao) {
       atom_indices.push_back(ao_offset + local_ao);
     }
   }
 
   const auto& overlap_matrix =
-      orbital_preparation_input.active_orbital_overlap_matrix.vector();
-  const auto& hcore_matrix = ao_integral_input.ao_core_hamiltonian_matrix.vector();
+      orbital_preparation_input.active_orbital_overlap_matrix;
+  const auto& hcore_matrix = ao_integral_input.ao_core_hamiltonian_matrix;
   std::vector<double> initial_density_projector(
-      xmvb::to_size(n_basis_functions) * n_basis_functions,
+      n_basis_functions * n_basis_functions,
       0.0);
   constexpr double kDegeneracyTolerance = 1.0e-6;
   for (int atom_index = 0; atom_index < libcint_input.n_atoms; ++atom_index) {
-    const auto& ao_indices = atom_ao_indices[xmvb::to_size(atom_index)];
+    const auto& ao_indices = atom_ao_indices[atom_index];
     if (ao_indices.empty()) {
       continue;
     }
 
     const int block_size = static_cast<int>(ao_indices.size());
     std::vector<double> local_overlap(
-        xmvb::to_size(block_size) * block_size,
+        block_size * block_size,
         0.0);
     std::vector<double> local_hcore(
-        xmvb::to_size(block_size) * block_size,
+        block_size * block_size,
         0.0);
-    std::vector<double> local_eigenvalues(xmvb::to_size(block_size), 0.0);
+    std::vector<double> local_eigenvalues(block_size, 0.0);
     for (int local_column = 0; local_column < block_size; ++local_column) {
-      const int global_column = ao_indices[xmvb::to_size(local_column)];
+      const int global_column = ao_indices[local_column];
       for (int local_row = 0; local_row < block_size; ++local_row) {
-        const int global_row = ao_indices[xmvb::to_size(local_row)];
-        local_overlap[xmvb::to_size(local_column) * block_size + local_row] =
-            overlap_matrix[xmvb::to_size(global_column) * n_basis_functions + global_row];
-        local_hcore[xmvb::to_size(local_column) * block_size + local_row] =
-            hcore_matrix[xmvb::to_size(global_column) * n_basis_functions + global_row];
+        const int global_row = ao_indices[local_row];
+        local_overlap[local_column * block_size + local_row] =
+            overlap_matrix(global_row, global_column);
+        local_hcore[local_column * block_size + local_row] =
+            hcore_matrix(global_row, global_column);
       }
     }
 
@@ -499,13 +462,13 @@ CppRestrictedHartreeFockResult solve_rhf_guess(
     }
 
     double remaining_spinless_occupancy = 0.5 * static_cast<double>(
-        libcint_input.atm[xmvb::to_size(atom_index) * ATM_SLOTS + CHARGE_OF]);
+        libcint_input.atm[atom_index * ATM_SLOTS + CHARGE_OF]);
     int group_begin = 0;
     while (group_begin < block_size && remaining_spinless_occupancy > 1.0e-12) {
       int group_end = group_begin + 1;
       while (group_end < block_size &&
-             std::abs(local_eigenvalues[xmvb::to_size(group_end)] -
-                      local_eigenvalues[xmvb::to_size(group_begin)]) <=
+             std::abs(local_eigenvalues[group_end] -
+                      local_eigenvalues[group_begin]) <=
                  kDegeneracyTolerance) {
         ++group_end;
       }
@@ -515,13 +478,13 @@ CppRestrictedHartreeFockResult solve_rhf_guess(
       const double occupation = occupied_in_group / static_cast<double>(group_size);
       for (int group_orbital = group_begin; group_orbital < group_end; ++group_orbital) {
         const double* local_orbital =
-            local_hcore.data() + xmvb::to_size(group_orbital) * block_size;
+            local_hcore.data() + group_orbital * block_size;
         for (int local_column = 0; local_column < block_size; ++local_column) {
-          const int global_column = ao_indices[xmvb::to_size(local_column)];
+          const int global_column = ao_indices[local_column];
           const double column_value = local_orbital[local_column];
           for (int local_row = 0; local_row < block_size; ++local_row) {
-            const int global_row = ao_indices[xmvb::to_size(local_row)];
-            initial_density_projector[xmvb::to_size(global_column) *
+            const int global_row = ao_indices[local_row];
+            initial_density_projector[global_column *
                                           n_basis_functions +
                                       global_row] +=
                 occupation * local_orbital[local_row] * column_value;
@@ -536,7 +499,7 @@ CppRestrictedHartreeFockResult solve_rhf_guess(
   CppRestrictedHartreeFockSolver solver;
   return solver.solve(
       orbital_preparation_input.n_total_electrons,
-      orbital_preparation_input.active_orbital_overlap_matrix.vector(),
+      orbital_preparation_input.active_orbital_overlap_matrix,
       ao_integral_input,
       initial_density_projector);
 }
@@ -550,20 +513,29 @@ void build_rhf_block_guess(
       libcint_input,
       ao_integral_input,
       orbital_preparation_input);
-  if (has_hf_overlap_matrix(orbital_preparation_input)) {
-    build_block_matrix_guess(
-        libcint_input,
-        rhf_result.fock_matrix,
-        orbital_preparation_input.hf_overlap_matrix.vector(),
-        orbital_preparation_input,
-        orbital_value_table);
-  } else {
-    build_block_matrix_guess(
-        libcint_input,
-        rhf_result.fock_matrix,
-        orbital_preparation_input,
-        orbital_value_table);
+  const std::size_t matrix_size =
+      orbital_preparation_input.n_basis_functions *
+      orbital_preparation_input.n_basis_functions;
+  const bool have_explicit_hf_overlap =
+      orbital_preparation_input.hf_overlap_matrix.size() != 0;
+  if (have_explicit_hf_overlap &&
+      (orbital_preparation_input.hf_overlap_matrix.rows() !=
+              orbital_preparation_input.n_basis_functions ||
+          orbital_preparation_input.hf_overlap_matrix.cols() !=
+              orbital_preparation_input.n_basis_functions)) {
+    throw std::invalid_argument(
+        "hf_overlap_matrix dimensions do not match n_basis_functions");
   }
+  const Eigen::Ref<const Eigen::MatrixXd> hf_overlap_matrix =
+      have_explicit_hf_overlap
+          ? orbital_preparation_input.hf_overlap_matrix
+          : orbital_preparation_input.active_orbital_overlap_matrix;
+  build_block_matrix_guess(
+      libcint_input,
+      rhf_result.fock_matrix,
+      hf_overlap_matrix,
+      orbital_preparation_input,
+      orbital_value_table);
 }
 
 std::vector<int> read_mo_indices(
@@ -574,9 +546,9 @@ std::vector<int> read_mo_indices(
     throw std::runtime_error("failed to open input file for C++ MO guess: " + input_file_path);
   }
 
-  std::vector<int> mo_indices(xmvb::to_size(n_orbitals), 0);
+  std::vector<int> mo_indices(n_orbitals, 0);
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
-    mo_indices[xmvb::to_size(orbital_index)] = orbital_index + 1;
+    mo_indices[orbital_index] = orbital_index + 1;
   }
 
   bool inside_guess_section = false;
@@ -601,7 +573,7 @@ std::vector<int> read_mo_indices(
     int mo_orbital = 0;
     if (std::sscanf(line.c_str(), "%d %d", &vb_orbital, &mo_orbital) == 2 &&
         vb_orbital >= 1 && vb_orbital <= n_orbitals) {
-      mo_indices[xmvb::to_size(vb_orbital - 1)] = mo_orbital;
+      mo_indices[vb_orbital - 1] = mo_orbital;
     }
   }
 
@@ -626,11 +598,11 @@ void build_hcore_mo_guess(
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   (void)libcint_input;
   const auto ao_normalization = build_ao_normalization(orbital_preparation_input);
-  std::vector<double> overlap_matrix =
-      orbital_preparation_input.active_orbital_overlap_matrix.vector();
-  std::vector<double> orbital_matrix =
-      ao_integral_input.ao_core_hamiltonian_matrix.vector();
-  std::vector<double> eigenvalues(xmvb::to_size(n_basis_functions), 0.0);
+  Eigen::MatrixXd overlap_matrix =
+      orbital_preparation_input.active_orbital_overlap_matrix;
+  Eigen::MatrixXd orbital_matrix =
+      ao_integral_input.ao_core_hamiltonian_matrix;
+  std::vector<double> eigenvalues(n_basis_functions, 0.0);
 
   if (LAPACKE_dsygv(
           LAPACK_COL_MAJOR,
@@ -648,31 +620,32 @@ void build_hcore_mo_guess(
 
   for (int basis_index = 0; basis_index < n_basis_functions; ++basis_index) {
     for (int mo_index = 0; mo_index < n_basis_functions; ++mo_index) {
-      orbital_matrix[xmvb::to_size(mo_index) * n_basis_functions + basis_index] *=
-          ao_normalization[xmvb::to_size(basis_index)];
+      orbital_matrix(basis_index, mo_index) *=
+          ao_normalization[basis_index];
     }
   }
 
   const auto mo_indices = read_mo_indices(input_file_path, n_orbitals);
   std::fill(orbital_value_table->begin(), orbital_value_table->end(), 0.0);
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
-    const int selected_mo = std::abs(mo_indices[xmvb::to_size(orbital_index)]) - 1;
+    const int selected_mo = std::abs(mo_indices[orbital_index]) - 1;
     if (selected_mo < 0 || selected_mo >= n_basis_functions) {
       throw std::runtime_error("MO guess index is out of range for C++ MO guess");
     }
     const double sign =
-        mo_indices[xmvb::to_size(orbital_index)] >= 0 ? 1.0 : -1.0;
+        mo_indices[orbital_index] >= 0 ? 1.0 : -1.0;
     const int basis_count =
-        get_orbital_basis_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0; coefficient_index < basis_count; ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index] -
+              [orbital_index * n_basis_functions + coefficient_index] -
           1;
-      (*orbital_value_table)[xmvb::to_size(orbital_index) * n_basis_functions +
+      (*orbital_value_table)[orbital_index * n_basis_functions +
                              coefficient_index] =
-          sign * orbital_matrix[xmvb::to_size(selected_mo) * n_basis_functions +
-                                basis_function_index];
+          sign * orbital_matrix(basis_function_index, selected_mo);
     }
   }
 
@@ -696,34 +669,35 @@ void build_rhf_mo_guess(
       ao_integral_input,
       orbital_preparation_input);
   const auto ao_normalization = build_ao_normalization(orbital_preparation_input);
-  std::vector<double> orbital_matrix = rhf_result.molecular_orbital_matrix;
+  Eigen::MatrixXd orbital_matrix = rhf_result.molecular_orbital_matrix;
   for (int basis_index = 0; basis_index < n_basis_functions; ++basis_index) {
     for (int mo_index = 0; mo_index < n_basis_functions; ++mo_index) {
-      orbital_matrix[xmvb::to_size(mo_index) * n_basis_functions + basis_index] *=
-          ao_normalization[xmvb::to_size(basis_index)];
+      orbital_matrix(basis_index, mo_index) *=
+          ao_normalization[basis_index];
     }
   }
 
   const auto mo_indices = read_mo_indices(input_file_path, n_orbitals);
   std::fill(orbital_value_table->begin(), orbital_value_table->end(), 0.0);
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
-    const int selected_mo = std::abs(mo_indices[xmvb::to_size(orbital_index)]) - 1;
+    const int selected_mo = std::abs(mo_indices[orbital_index]) - 1;
     if (selected_mo < 0 || selected_mo >= n_basis_functions) {
       throw std::runtime_error("MO guess index is out of range for C++ RHF MO guess");
     }
     const double sign =
-        mo_indices[xmvb::to_size(orbital_index)] >= 0 ? 1.0 : -1.0;
+        mo_indices[orbital_index] >= 0 ? 1.0 : -1.0;
     const int basis_count =
-        get_orbital_basis_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0; coefficient_index < basis_count; ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index] -
+              [orbital_index * n_basis_functions + coefficient_index] -
           1;
-      (*orbital_value_table)[xmvb::to_size(orbital_index) * n_basis_functions +
+      (*orbital_value_table)[orbital_index * n_basis_functions +
                              coefficient_index] =
-          sign * orbital_matrix[xmvb::to_size(selected_mo) * n_basis_functions +
-                                basis_function_index];
+          sign * orbital_matrix(basis_function_index, selected_mo);
     }
   }
 
@@ -739,24 +713,24 @@ void build_unit_guess(
 
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   std::fill(orbital_value_table->begin(), orbital_value_table->end(), 0.0);
-  std::vector<int> basis_used(xmvb::to_size(n_basis_functions), 0);
+  std::vector<int> basis_used(n_basis_functions, 0);
   const auto blocks = detect_orbital_blocks(orbital_preparation_input);
   for (const auto& block : blocks) {
     for (int orbital_index : block) {
       const int stored_basis_count =
-          orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
+          orbital_preparation_input.orbital_basis_counts[orbital_index];
       for (int coefficient_index = 0; coefficient_index < stored_basis_count; ++coefficient_index) {
         const int basis_function_index =
             orbital_preparation_input.orbital_basis_index_table
-                [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_index] -
+                [orbital_index * n_basis_functions + coefficient_index] -
             1;
         if (basis_function_index < 0) {
           break;
         }
-        if (basis_used[xmvb::to_size(basis_function_index)] == 0) {
-          (*orbital_value_table)[xmvb::to_size(orbital_index) * n_basis_functions +
+        if (basis_used[basis_function_index] == 0) {
+          (*orbital_value_table)[orbital_index * n_basis_functions +
                                  coefficient_index] = 1.0;
-          basis_used[xmvb::to_size(basis_function_index)] = 1;
+          basis_used[basis_function_index] = 1;
           break;
         }
       }
@@ -768,8 +742,6 @@ void build_unit_guess(
 
 const char* orbital_guess_source_name(OrbitalGuessSource source) {
   switch (source) {
-    case OrbitalGuessSource::LegacyRuntime:
-      return "legacy";
     case OrbitalGuessSource::Cpp:
       return "cpp";
   }
@@ -777,11 +749,11 @@ const char* orbital_guess_source_name(OrbitalGuessSource source) {
 }
 
 bool cpp_initial_guess_supported(int guess_type) noexcept {
-  return guess_type == GUS_AUTO ||
-         guess_type == GUS_UNIT ||
-         guess_type == GUS_MO ||
-         guess_type == GUS_READ ||
-         guess_type == GUS_RDCI;
+  return guess_type == kGuessTypeAuto ||
+         guess_type == kGuessTypeUnit ||
+         guess_type == kGuessTypeMo ||
+         guess_type == kGuessTypeRead ||
+         guess_type == kGuessTypeRdci;
 }
 
 void build_cpp_initial_guess(
@@ -789,19 +761,20 @@ void build_cpp_initial_guess(
     int guess_type,
     const LibcintInput& libcint_input,
     const AoIntegralInput& ao_integral_input,
+    const std::vector<std::string>* read_guess_lines,
     OrbitalPreparationInput* orbital_preparation_input) {
   if (orbital_preparation_input == nullptr) {
     throw std::invalid_argument("orbital_preparation_input must not be null");
   }
   const std::size_t expected_orbital_value_count =
-      xmvb::to_size(orbital_preparation_input->n_basis_functions) *
+      orbital_preparation_input->n_basis_functions *
       orbital_preparation_input->n_orbitals;
 
   std::vector<double> orbital_value_table(
       expected_orbital_value_count,
       0.0);
   switch (guess_type) {
-    case GUS_AUTO:
+    case kGuessTypeAuto:
       // Prefer the RHF-like guess when exact AO ERIs are available. In RI or
       // hcore-only load modes the C++ path no longer has a materialized AO 2e
       // tensor, so fall back to the one-electron block guess instead of
@@ -821,10 +794,10 @@ void build_cpp_initial_guess(
             &orbital_value_table);
       }
       break;
-    case GUS_UNIT:
+    case kGuessTypeUnit:
       build_unit_guess(*orbital_preparation_input, &orbital_value_table);
       break;
-    case GUS_MO:
+    case kGuessTypeMo:
       // Legacy `vb_moguess` uses HF canonical orbitals for `GUESS=MO`, not the
       // one-electron hcore eigensystem. Match that behavior whenever the C++
       // path can form an RHF reference; otherwise keep the old hcore fallback.
@@ -845,17 +818,20 @@ void build_cpp_initial_guess(
             &orbital_value_table);
       }
       break;
-    case GUS_READ:
-    case GUS_RDCI:
+    case kGuessTypeRead:
+    case kGuessTypeRdci:
+      if (read_guess_lines == nullptr) {
+        throw std::runtime_error(
+            "C++ GUESS=READ/RDCI requires parsed $GUS lines from the input deck");
+      }
       build_read_or_rdci_guess(
-          input_file_path,
+          *read_guess_lines,
           orbital_preparation_input,
           &orbital_value_table);
       break;
-    case GUS_NBO:
+    case kGuessTypeNbo:
       throw std::runtime_error(
-          "C++ guess builder does not support GUESS=NBO; "
-          "rerun with --orbital-guess-source legacy");
+          "C++ guess builder does not support GUESS=NBO");
     default:
       throw std::runtime_error("unsupported guess type in C++ guess builder");
   }

@@ -162,8 +162,8 @@ Matrix det_pair_mat(
   Matrix sub = Matrix::Zero(n, n);
   for (int row = 0; row < n; ++row) {
     for (int col = 0; col < n; ++col) {
-      sub(row, col) = pair_mat(occ[xmvb::to_size(row)],
-                               occ[xmvb::to_size(col)]);
+      sub(row, col) = pair_mat(occ[row],
+                               occ[col]);
     }
   }
   return sub;
@@ -226,22 +226,22 @@ void build_exact_mats(
   }
 
   std::vector<std::vector<int>> occs;
-  occs.reserve(xmvb::to_size(n_dets));
+  occs.reserve(n_dets);
   for (int det = 0; det < n_dets; ++det) {
     occs.push_back(
         spin_occ(
-            input.structure_data.alpha_det[xmvb::to_size(det)],
-            input.structure_data.beta_det[xmvb::to_size(det)],
+            input.structure_data.alpha_det[det],
+            input.structure_data.beta_det[det],
             act.n_active_orbitals));
   }
 
   Matrix q = Matrix::Zero(n_dets, k);
   for (int state = 0; state < k; ++state) {
-    const auto& st = basis.states[xmvb::to_size(state)];
+    const auto& st = basis.states[state];
     const Matrix pair_mat =
         xmvb::pfaffian_vbscf::decode_antisymm(st.packed_entries, st.n_spin_orbitals);
     for (int det = 0; det < n_dets; ++det) {
-      q(det, state) = det_amp(pair_mat, occs[xmvb::to_size(det)]);
+      q(det, state) = det_amp(pair_mat, occs[det]);
     }
   }
 
@@ -261,7 +261,7 @@ Matrix build_candidate_h1e(
   const Matrix one_electron_matrix = dense_mat(act.hho, act.n_active_orbitals);
 
   std::vector<Matrix> pairing_matrices;
-  pairing_matrices.reserve(xmvb::to_size(k));
+  pairing_matrices.reserve(k);
   for (const auto& state : basis.states) {
     pairing_matrices.push_back(
         xmvb::pfaffian_vbscf::decode_antisymm(
@@ -274,8 +274,8 @@ Matrix build_candidate_h1e(
     for (int col = 0; col <= row; ++col) {
       const auto pair =
           xmvb::pfaffian_vbscf::evaluate_pf_pair_kernel(
-              pairing_matrices[xmvb::to_size(row)],
-              pairing_matrices[xmvb::to_size(col)],
+              pairing_matrices[row],
+              pairing_matrices[col],
               spatial_overlap_matrix,
               one_electron_matrix,
               act.ggo,
@@ -316,7 +316,7 @@ Matrix dense_mat(
   Matrix mat = Matrix::Zero(dim, dim);
   for (int col = 0; col < dim; ++col) {
     for (int row = 0; row < dim; ++row) {
-      mat(row, col) = data[xmvb::to_size(col) * dim + row];
+      mat(row, col) = data[col * dim + row];
     }
   }
   return mat;

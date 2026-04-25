@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vector>
+#include <Eigen/Core>
 
 namespace xmvb::vb {
 
@@ -11,7 +11,7 @@ struct ActiveSpaceOneElectronResult {
   /**
    * @brief Column-major active-space effective one-electron matrix `HHO`.
    */
-  std::vector<double> h1e_act;
+  Eigen::MatrixXd h1e_act;
 };
 
 }  // namespace xmvb::vb

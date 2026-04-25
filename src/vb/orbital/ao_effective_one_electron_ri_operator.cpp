@@ -14,12 +14,14 @@
 #include <omp.h>
 #endif
 
+#include "core/openmp_utils.hpp"
+
 namespace xmvb::vb {
 
 namespace {
 
 std::size_t packed_pair_count(int n_basis_functions) {
-  const std::size_t n = xmvb::to_size(n_basis_functions);
+  const std::size_t n = n_basis_functions;
   return n * (n + 1) / 2;
 }
 
@@ -63,9 +65,9 @@ void add_scaled_packed_factor_row_to_lower_triangle(
   std::size_t packed_index = 0;
   for (int column = 0; column < n_basis_functions; ++column) {
     const std::size_t column_offset =
-        xmvb::to_size(column) * n_basis_functions;
+        column * n_basis_functions;
     for (int row = 0; row <= column; ++row) {
-      output_storage[column_offset + xmvb::to_size(row)] +=
+      output_storage[column_offset + row] +=
           scale * packed_factor_matrix(
               auxiliary_index,
               static_cast<Eigen::Index>(packed_index++));
@@ -82,9 +84,9 @@ void subtract_lower_triangle_in_place(
   }
   for (int column = 0; column < n_basis_functions; ++column) {
     const std::size_t column_offset =
-        xmvb::to_size(column) * n_basis_functions;
+        column * n_basis_functions;
     for (int row = 0; row <= column; ++row) {
-      output_storage[column_offset + xmvb::to_size(row)] -=
+      output_storage[column_offset + row] -=
           exchange_matrix(column, row);
     }
   }
@@ -230,6 +232,21 @@ SpectralFactorization build_prefactorized_spectral_factorization(
   return factorization;
 }
 
+int ri_auxiliary_thread_count(int n_auxiliary_functions) {
+  // RI application partitions by auxiliary factor. The reduction buffers are
+  // full AO matrices, so launching more workers than factors, or launching an
+  // inner team under an existing exact_ctx parallel region, only increases
+  // memory traffic without adding useful work.
+  int n_threads = xmvb::effective_openmp_thread_count();
+  if (n_auxiliary_functions <= 1) {
+    return 1;
+  }
+  if (n_threads > n_auxiliary_functions) {
+    n_threads = n_auxiliary_functions;
+  }
+  return std::max(1, n_threads);
+}
+
 void symmetrize_in_place(
     std::vector<double>* matrix_storage,
     int n_basis_functions) {
@@ -259,7 +276,7 @@ std::vector<double> apply_low_rank_ri_operator(
     int n_basis_functions,
     const SpectralFactorization& factorization) {
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   std::vector<double> output_storage(matrix_size, 0.0);
   if (factorization.scaled_eigenvectors.cols() == 0) {
     return output_storage;
@@ -268,21 +285,24 @@ std::vector<double> apply_low_rank_ri_operator(
   const auto& packed_factor_matrix =
       ri_integral_provider_result.metric_whitened_ao_pair_factors;
   int n_threads = 1;
-#ifdef _OPENMP
-  n_threads = omp_get_max_threads();
-#endif
+  n_threads = ri_auxiliary_thread_count(
+      ri_integral_provider_result.n_auxiliary_functions);
   std::vector<std::vector<double>> partial_outputs(
-      xmvb::to_size(n_threads),
+      n_threads,
       std::vector<double>(matrix_size, 0.0));
 
-#pragma omp parallel
+  // Each worker owns a full AO output matrix because every auxiliary RI factor
+  // contributes to many matrix entries. Cap the team to the effective
+  // non-nested width and auxiliary workload so these buffers do not multiply
+  // unnecessarily inside outer exact_ctx parallel regions.
+#pragma omp parallel num_threads(n_threads)
   {
     int thread_index = 0;
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
     Eigen::Map<Eigen::MatrixXd> local_output(
-        partial_outputs[xmvb::to_size(thread_index)].data(),
+        partial_outputs[thread_index].data(),
         n_basis_functions,
         n_basis_functions);
     Eigen::MatrixXd factor_matrix(n_basis_functions, n_basis_functions);
@@ -375,7 +395,7 @@ std::vector<double> apply_low_rank_ri_operator(
             factorization.n_negative_components,
             1.0,
             transformed_eigenvectors.data() +
-                xmvb::to_size(factorization.n_positive_components) *
+                factorization.n_positive_components *
                     n_basis_functions,
             n_basis_functions,
             1.0,
@@ -399,7 +419,7 @@ std::vector<double> apply_dense_ri_operator(
     const LibcintRiIntegralProviderResult& ri_integral_provider_result,
     int n_basis_functions) {
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   std::vector<double> output_storage(matrix_size, 0.0);
   const auto weighted_packed_input =
       build_weighted_packed_symmetric_matrix(input_matrix);
@@ -407,21 +427,23 @@ std::vector<double> apply_dense_ri_operator(
       ri_integral_provider_result.metric_whitened_ao_pair_factors;
 
   int n_threads = 1;
-#ifdef _OPENMP
-  n_threads = omp_get_max_threads();
-#endif
+  n_threads = ri_auxiliary_thread_count(
+      ri_integral_provider_result.n_auxiliary_functions);
   std::vector<std::vector<double>> partial_outputs(
-      xmvb::to_size(n_threads),
+      n_threads,
       std::vector<double>(matrix_size, 0.0));
 
-#pragma omp parallel
+  // The dense RI fallback has the same reduction shape as the low-rank path:
+  // local AO matrices avoid write conflicts, while the capped team width keeps
+  // the memory footprint proportional to useful auxiliary work.
+#pragma omp parallel num_threads(n_threads)
   {
     int thread_index = 0;
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
     Eigen::Map<Eigen::MatrixXd> local_output(
-        partial_outputs[xmvb::to_size(thread_index)].data(),
+        partial_outputs[thread_index].data(),
         n_basis_functions,
         n_basis_functions);
     Eigen::MatrixXd factor_matrix(n_basis_functions, n_basis_functions);
@@ -511,7 +533,7 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
   }
 
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (input_matrix.size() != matrix_size) {
     throw std::invalid_argument("input_matrix size mismatch");
   }

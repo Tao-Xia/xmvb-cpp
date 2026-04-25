@@ -90,7 +90,7 @@ Matrix dense_mat(
   Matrix mat = Matrix::Zero(dim, dim);
   for (int col = 0; col < dim; ++col) {
     for (int row = 0; row < dim; ++row) {
-      mat(row, col) = data[xmvb::to_size(col) * dim + row];
+      mat(row, col) = data[col * dim + row];
     }
   }
   return mat;
@@ -180,14 +180,14 @@ xmvb::pfaffian_vbscf::ScalarBuffer build_projected_order_coefficients(
   }
 
   xmvb::pfaffian_vbscf::ScalarBuffer coefficients(
-      xmvb::to_size(order + 1),
+      order + 1,
       0.0);
   for (int power = 0; power <= order; ++power) {
     const double sign = ((power % 2) == 0) ? 1.0 : -1.0;
-    coefficients[xmvb::to_size(power)] =
+    coefficients[power] =
         sign *
-        cache.projected_overlap_coefficients[xmvb::to_size(
-            order - power)];
+        cache.projected_overlap_coefficients[
+            order - power];
   }
   return coefficients;
 }
@@ -209,7 +209,7 @@ xmvb::pfaffian_vbscf::ScalarBuffer pad_weights(
     throw std::invalid_argument("size must be non-negative");
   }
   xmvb::pfaffian_vbscf::ScalarBuffer padded(
-      xmvb::to_size(size),
+      size,
       0.0);
   for (std::size_t index = 0; index < buffer.size(); ++index) {
     padded[index] = buffer[index];
@@ -239,7 +239,7 @@ std::vector<Matrix> build_left_power_sequence(
   }
 
   std::vector<Matrix> sequence;
-  sequence.reserve(xmvb::to_size(count));
+  sequence.reserve(count);
   Matrix current = source;
   for (int index = 0; index < count; ++index) {
     sequence.push_back(current);
@@ -548,17 +548,17 @@ ExactTwoElectronChannels evaluate_exact_two_electron_channels_generic(
       detail::build_power_traces_generic(kernel_matrix, n_pairs);
 
   std::vector<GenericMatrix> alpha_source_directions(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix> beta_source_directions(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix> alpha_first_direction_matrices(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<GenericMatrix> beta_first_direction_matrices(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<std::vector<double>> alpha_first_derivative_traces(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
   std::vector<std::vector<double>> beta_first_derivative_traces(
-      xmvb::to_size(n_spatial_entries));
+      n_spatial_entries);
 
   const GenericMatrix left_transpose = left_pairing_matrix.transpose();
   const GenericMatrix right_times_source_transpose =
@@ -573,41 +573,41 @@ ExactTwoElectronChannels evaluate_exact_two_electron_channels_generic(
               right_row,
               left_column,
               n_active_orbitals);
-      alpha_source_directions[xmvb::to_size(entry_index)] =
+      alpha_source_directions[entry_index] =
           detail::build_spin_source_direction_matrix_generic<double>(
               n_active_orbitals,
               true,
               right_row,
               left_column);
-      beta_source_directions[xmvb::to_size(entry_index)] =
+      beta_source_directions[entry_index] =
           detail::build_spin_source_direction_matrix_generic<double>(
               n_active_orbitals,
               false,
               right_row,
               left_column);
-      alpha_first_direction_matrices[xmvb::to_size(entry_index)] =
+      alpha_first_direction_matrices[entry_index] =
           left_transpose *
-              alpha_source_directions[xmvb::to_size(entry_index)] *
+              alpha_source_directions[entry_index] *
               right_times_source_transpose +
           left_transpose *
               source_times_right *
-              alpha_source_directions[xmvb::to_size(entry_index)].transpose();
-      beta_first_direction_matrices[xmvb::to_size(entry_index)] =
+              alpha_source_directions[entry_index].transpose();
+      beta_first_direction_matrices[entry_index] =
           left_transpose *
-              beta_source_directions[xmvb::to_size(entry_index)] *
+              beta_source_directions[entry_index] *
               right_times_source_transpose +
           left_transpose *
               source_times_right *
-              beta_source_directions[xmvb::to_size(entry_index)].transpose();
-      alpha_first_derivative_traces[xmvb::to_size(entry_index)] =
+              beta_source_directions[entry_index].transpose();
+      alpha_first_derivative_traces[entry_index] =
           detail::build_first_derivative_power_traces_generic(
               matrix_powers,
-              alpha_first_direction_matrices[xmvb::to_size(entry_index)],
+              alpha_first_direction_matrices[entry_index],
               n_pairs);
-      beta_first_derivative_traces[xmvb::to_size(entry_index)] =
+      beta_first_derivative_traces[entry_index] =
           detail::build_first_derivative_power_traces_generic(
               matrix_powers,
-              beta_first_direction_matrices[xmvb::to_size(entry_index)],
+              beta_first_direction_matrices[entry_index],
               n_pairs);
     }
   }
@@ -644,54 +644,54 @@ ExactTwoElectronChannels evaluate_exact_two_electron_channels_generic(
                   right_second,
                   left_first);
           const double same_spin_interaction =
-              packed_active_two_electron_integrals[xmvb::to_size(direct_index)] -
-              packed_active_two_electron_integrals[xmvb::to_size(exchange_index)];
+              packed_active_two_electron_integrals[direct_index] -
+              packed_active_two_electron_integrals[exchange_index];
 
           const GenericMatrix alpha_second_direction_matrix =
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(first_entry_index)] *
+                  alpha_source_directions[first_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(second_entry_index)].transpose() +
+                  alpha_source_directions[second_entry_index].transpose() +
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(second_entry_index)] *
+                  alpha_source_directions[second_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(first_entry_index)].transpose();
+                  alpha_source_directions[first_entry_index].transpose();
           const std::vector<double> alpha_second_derivative_traces =
               detail::build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  alpha_first_direction_matrices[xmvb::to_size(first_entry_index)],
-                  alpha_first_direction_matrices[xmvb::to_size(second_entry_index)],
+                  alpha_first_direction_matrices[first_entry_index],
+                  alpha_first_direction_matrices[second_entry_index],
                   alpha_second_direction_matrix,
                   n_pairs);
           const double alpha_total =
               detail::projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  alpha_first_derivative_traces[xmvb::to_size(first_entry_index)],
-                  alpha_first_derivative_traces[xmvb::to_size(second_entry_index)],
+                  alpha_first_derivative_traces[first_entry_index],
+                  alpha_first_derivative_traces[second_entry_index],
                   alpha_second_derivative_traces,
                   n_pairs);
 
           const GenericMatrix beta_second_direction_matrix =
               left_transpose *
-                  beta_source_directions[xmvb::to_size(first_entry_index)] *
+                  beta_source_directions[first_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(second_entry_index)].transpose() +
+                  beta_source_directions[second_entry_index].transpose() +
               left_transpose *
-                  beta_source_directions[xmvb::to_size(second_entry_index)] *
+                  beta_source_directions[second_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(first_entry_index)].transpose();
+                  beta_source_directions[first_entry_index].transpose();
           const std::vector<double> beta_second_derivative_traces =
               detail::build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  beta_first_direction_matrices[xmvb::to_size(first_entry_index)],
-                  beta_first_direction_matrices[xmvb::to_size(second_entry_index)],
+                  beta_first_direction_matrices[first_entry_index],
+                  beta_first_direction_matrices[second_entry_index],
                   beta_second_direction_matrix,
                   n_pairs);
           const double beta_total =
               detail::projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  beta_first_derivative_traces[xmvb::to_size(first_entry_index)],
-                  beta_first_derivative_traces[xmvb::to_size(second_entry_index)],
+                  beta_first_derivative_traces[first_entry_index],
+                  beta_first_derivative_traces[second_entry_index],
                   beta_second_derivative_traces,
                   n_pairs);
 
@@ -732,26 +732,26 @@ ExactTwoElectronChannels evaluate_exact_two_electron_channels_generic(
                   alpha_left_column);
           const GenericMatrix mixed_second_direction_matrix =
               left_transpose *
-                  alpha_source_directions[xmvb::to_size(alpha_entry_index)] *
+                  alpha_source_directions[alpha_entry_index] *
                   right_pairing_matrix *
-                  beta_source_directions[xmvb::to_size(beta_entry_index)].transpose() +
+                  beta_source_directions[beta_entry_index].transpose() +
               left_transpose *
-                  beta_source_directions[xmvb::to_size(beta_entry_index)] *
+                  beta_source_directions[beta_entry_index] *
                   right_pairing_matrix *
-                  alpha_source_directions[xmvb::to_size(alpha_entry_index)].transpose();
+                  alpha_source_directions[alpha_entry_index].transpose();
           const std::vector<double> mixed_second_derivative_traces =
               detail::build_second_derivative_power_traces_generic(
                   matrix_powers,
-                  alpha_first_direction_matrices[xmvb::to_size(alpha_entry_index)],
-                  beta_first_direction_matrices[xmvb::to_size(beta_entry_index)],
+                  alpha_first_direction_matrices[alpha_entry_index],
+                  beta_first_direction_matrices[beta_entry_index],
                   mixed_second_direction_matrix,
                   n_pairs);
           channels.opposite_spin_total +=
-              packed_active_two_electron_integrals[xmvb::to_size(opposite_spin_index)] *
+              packed_active_two_electron_integrals[opposite_spin_index] *
               detail::projected_overlap_second_derivative_coefficient_from_traces_generic(
                   traces,
-                  alpha_first_derivative_traces[xmvb::to_size(alpha_entry_index)],
-                  beta_first_derivative_traces[xmvb::to_size(beta_entry_index)],
+                  alpha_first_derivative_traces[alpha_entry_index],
+                  beta_first_derivative_traces[beta_entry_index],
                   mixed_second_derivative_traces,
                   n_pairs);
         }
@@ -789,12 +789,12 @@ int main(int argc, char** argv) {
         xmvb::pfaffian_vbscf::build_spin_block_diagonal_metric(spatial_overlap);
     const Matrix left_pairing =
         xmvb::pfaffian_vbscf::decode_antisymmetric_matrix(
-            basis.states[xmvb::to_size(opt.row)].packed_entries,
-            basis.states[xmvb::to_size(opt.row)].n_spin_orbitals);
+            basis.states[opt.row].packed_entries,
+            basis.states[opt.row].n_spin_orbitals);
     const Matrix right_pairing =
         xmvb::pfaffian_vbscf::decode_antisymmetric_matrix(
-            basis.states[xmvb::to_size(opt.col)].packed_entries,
-            basis.states[xmvb::to_size(opt.col)].n_spin_orbitals);
+            basis.states[opt.col].packed_entries,
+            basis.states[opt.col].n_spin_orbitals);
     const Matrix left = left_pairing.transpose();
     const Matrix right = right_pairing;
     const auto cache =
@@ -830,14 +830,14 @@ int main(int argc, char** argv) {
     Matrix p = Matrix::Zero(n, n);
     for (int power = 0; power < cache.trace_order; ++power) {
       const double scale =
-          cache.trace_weights[xmvb::to_size(power)] *
+          cache.trace_weights[power] *
           static_cast<double>(power + 1);
       if (scale == 0.0) {
         continue;
       }
       p.noalias() +=
           scale *
-          cache.kernel_powers[xmvb::to_size(power)].topLeftCorner(n, n);
+          cache.kernel_powers[power].topLeftCorner(n, n);
     }
 
     const Matrix candidate_pg = 2.0 * (p * g);
@@ -881,18 +881,18 @@ int main(int argc, char** argv) {
             beta_block);
     std::vector<Matrix> kpl_ba;
     std::vector<Matrix> kpr_ab;
-    kpl_ba.reserve(xmvb::to_size(cache.trace_order));
-    kpr_ab.reserve(xmvb::to_size(cache.trace_order));
+    kpl_ba.reserve(cache.trace_order);
+    kpr_ab.reserve(cache.trace_order);
     for (int power = 0; power < cache.trace_order; ++power) {
       kpl_ba.push_back(
           copy_spin_block(
               cache,
-              cache.kernel_power_times_left[xmvb::to_size(power)],
+              cache.kernel_power_times_left[power],
               xmvb::pfaffian_vbscf::PfSpinBlock::BetaAlpha));
       kpr_ab.push_back(
           copy_spin_block(
               cache,
-              cache.kernel_power_times_right[xmvb::to_size(power)],
+              cache.kernel_power_times_right[power],
               xmvb::pfaffian_vbscf::PfSpinBlock::AlphaBeta));
     }
     const Matrix bs = b * spatial_overlap;
@@ -1566,17 +1566,17 @@ int main(int argc, char** argv) {
               << max_abs_diff(beta_block, candidate_beta_transpose) << '\n';
     for (int power = 0; power < cache.trace_order; ++power) {
       const Matrix trace_alpha =
-          cache.trace_rdms[xmvb::to_size(power)].topLeftCorner(n, n);
+          cache.trace_rdms[power].topLeftCorner(n, n);
       const Matrix trace_beta =
-          cache.trace_rdms[xmvb::to_size(power)].bottomRightCorner(n, n);
+          cache.trace_rdms[power].bottomRightCorner(n, n);
       const Matrix candidate_trace_alpha =
           2.0 * static_cast<double>(power + 1) *
-          cache.kernel_powers[xmvb::to_size(power)].topLeftCorner(n, n) *
+          cache.kernel_powers[power].topLeftCorner(n, n) *
           c;
       const Matrix candidate_trace_beta =
           2.0 * static_cast<double>(power + 1) *
           c *
-          cache.kernel_powers[xmvb::to_size(power)].topLeftCorner(n, n);
+          cache.kernel_powers[power].topLeftCorner(n, n);
       const Matrix candidate_trace_beta_transpose = candidate_trace_beta.transpose();
       std::cout << "diff_trace_alpha[" << power << "] = "
                 << max_abs_diff(trace_alpha, candidate_trace_alpha) << '\n';
@@ -1588,34 +1588,34 @@ int main(int argc, char** argv) {
                 << max_abs_diff(trace_beta, candidate_trace_beta_transpose) << '\n';
       std::cout << "diff_kpl_ba[" << power << "] = "
                 << max_abs_diff(
-                       kpl_ba[xmvb::to_size(power)],
-                       ga_sequence[xmvb::to_size(power)])
+                       kpl_ba[power],
+                       ga_sequence[power])
                 << '\n';
       std::cout << "diff_kpr_ab[" << power << "] = "
                 << max_abs_diff(
-                       kpr_ab[xmvb::to_size(power)],
-                       -ga_sequence[xmvb::to_size(power)])
+                       kpr_ab[power],
+                       -ga_sequence[power])
                 << '\n';
       const Matrix kplsr_alpha =
           copy_spin_block(
               cache,
-              cache.kernel_power_times_left_sigma_right[xmvb::to_size(power)],
+              cache.kernel_power_times_left_sigma_right[power],
               xmvb::pfaffian_vbscf::PfSpinBlock::AlphaAlpha);
       std::cout << "diff_kplsr_aa[" << power << "] = "
                 << max_abs_diff(
                        kplsr_alpha,
-                       gc_sequence[xmvb::to_size(power)])
+                       gc_sequence[power])
                 << '\n';
       const Matrix rskplsr_ab =
           copy_spin_block(
               cache,
               cache.right_sigma_times_kernel_power_times_left_sigma_right[
-                  xmvb::to_size(power)],
+                  power],
               xmvb::pfaffian_vbscf::PfSpinBlock::AlphaBeta);
       std::cout << "diff_rskplsr_ab[" << power << "] = "
                 << max_abs_diff(
                        rskplsr_ab,
-                       bs * gc_sequence[xmvb::to_size(power)])
+                       bs * gc_sequence[power])
                 << '\n';
     }
     std::cout << "exact_total = " << exact_channels.total << '\n';

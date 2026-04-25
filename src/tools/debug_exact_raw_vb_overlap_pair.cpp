@@ -91,12 +91,12 @@ std::vector<Pair> build_original_pairs_for_metric_component(
     bool use_left_pairs) {
   std::vector<Pair> pairs;
   for (const int graph_node : graph_nodes) {
-    const auto& component = union_components[xmvb::to_size(graph_node)];
+    const auto& component = union_components[graph_node];
     const auto& source_pairs = use_left_pairs ? component.left_pairs : component.right_pairs;
     for (const auto& pair : source_pairs) {
       pairs.emplace_back(
-          support_orbitals[xmvb::to_size(pair.first)],
-          support_orbitals[xmvb::to_size(pair.second)]);
+          support_orbitals[pair.first],
+          support_orbitals[pair.second]);
     }
   }
   return pairs;
@@ -159,8 +159,8 @@ int main(int argc, char** argv) {
     for (int column = 0; column < n_active_orbitals; ++column) {
       for (int row = 0; row < n_active_orbitals; ++row) {
         full_active_overlap(row, column) =
-            active_overlap_storage[xmvb::to_size(column) *
-                                       xmvb::to_size(n_active_orbitals) +
+            active_overlap_storage[column *
+                                       n_active_orbitals +
                                    row];
       }
     }
@@ -239,7 +239,7 @@ int main(int argc, char** argv) {
       active_orbitals_one_based.reserve(union_component.local_vertices.size());
       for (const int local_vertex : union_component.local_vertices) {
         active_orbitals_one_based.push_back(
-            support_orbitals[xmvb::to_size(local_vertex)]);
+            support_orbitals[local_vertex]);
       }
       std::cout << "  union_component[" << component_index << "]"
                 << " type=" << union_component.type

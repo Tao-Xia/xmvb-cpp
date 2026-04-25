@@ -97,28 +97,96 @@ struct BlockDirectionLayout {
   int direction_count = 0;
 };
 
-int get_sparse_coefficient_count(
-    const OrbitalPreparationInput& orbital_preparation_input,
-    int orbital_index) {
-  const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
-  if (explicit_count > 1) {
-    return explicit_count;
+// Extract the AO metric seen by one sparse orbital on its own explicit support.
+Eigen::MatrixXd build_local_sparse_overlap_metric(
+    const Eigen::MatrixXd& block_overlap_matrix,
+    const std::vector<int>& block_rows) {
+  const Eigen::Index local_size =
+      static_cast<Eigen::Index>(block_rows.size());
+  Eigen::MatrixXd local_overlap =
+      Eigen::MatrixXd::Zero(local_size, local_size);
+  for (Eigen::Index row = 0; row < local_size; ++row) {
+    const int block_row = block_rows[static_cast<std::size_t>(row)];
+    for (Eigen::Index column = 0; column < local_size; ++column) {
+      local_overlap(row, column) =
+          block_overlap_matrix(
+              block_row,
+              block_rows[static_cast<std::size_t>(column)]);
+    }
+  }
+  return local_overlap;
+}
+
+// Project one raw sparse increment to the local normalization tangent and
+// retract it back to the same fixed-support chart while preserving the
+// accepted-point raw norm.  This keeps `retract_step(0)` equal to the current
+// stored coefficients instead of silently recentering the chart at the unit-
+// norm representative.
+Eigen::VectorXd retract_local_sparse_normalized_step(
+    const Eigen::MatrixXd& local_overlap,
+    const Eigen::VectorXd& local_coefficients,
+    const Eigen::VectorXd& local_step) {
+  const Eigen::VectorXd metric_times_coefficients =
+      local_overlap * local_coefficients;
+  const double squared_norm =
+      local_coefficients.dot(metric_times_coefficients);
+  if (!std::isfinite(squared_norm) ||
+      squared_norm <= std::numeric_limits<double>::epsilon()) {
+    throw std::runtime_error(
+        "sparse-support retraction encountered a non-positive local orbital norm");
   }
 
-  int coefficient_count = 0;
-  while (coefficient_count < orbital_preparation_input.n_basis_functions) {
-    const int basis_function_index =
-        orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) *
-                 orbital_preparation_input.n_basis_functions +
-             coefficient_count];
-    if (basis_function_index == 0) {
-      break;
-    }
-    ++coefficient_count;
+  const double rho = std::sqrt(squared_norm);
+  const Eigen::VectorXd normalized_orbital =
+      local_coefficients / rho;
+  const Eigen::VectorXd metric_times_step =
+      local_overlap * local_step;
+  const double tangent_overlap =
+      normalized_orbital.dot(metric_times_step);
+  const Eigen::VectorXd tangent_step =
+      local_step - normalized_orbital * tangent_overlap;
+  Eigen::VectorXd trial_orbital =
+      local_coefficients + tangent_step;
+  const double trial_squared_norm =
+      trial_orbital.dot(local_overlap * trial_orbital);
+  if (!std::isfinite(trial_squared_norm) ||
+      trial_squared_norm <= std::numeric_limits<double>::epsilon()) {
+    throw std::runtime_error(
+        "sparse-support retraction produced a non-positive trial orbital norm");
   }
-  return coefficient_count;
+
+  trial_orbital *= rho / std::sqrt(trial_squared_norm);
+  if (!trial_orbital.allFinite()) {
+    throw std::runtime_error(
+        "sparse-support retraction produced non-finite local coefficients");
+  }
+  return trial_orbital;
+}
+
+// Linearize `retract_local_sparse_normalized_step()` at zero step.  Because
+// the finite retraction preserves the accepted-point raw norm, the first-order
+// stored-coefficient tangent is just the support-local normalization-tangent
+// projection of the raw increment.
+Eigen::VectorXd linearize_local_sparse_normalized_step(
+    const Eigen::MatrixXd& local_overlap,
+    const Eigen::VectorXd& local_coefficients,
+    const Eigen::VectorXd& local_step) {
+  const Eigen::VectorXd metric_times_coefficients =
+      local_overlap * local_coefficients;
+  const double squared_norm =
+      local_coefficients.dot(metric_times_coefficients);
+  if (!std::isfinite(squared_norm) ||
+      squared_norm <= std::numeric_limits<double>::epsilon()) {
+    throw std::runtime_error(
+        "sparse-support tangent linearization encountered a non-positive local orbital norm");
+  }
+
+  const double rho = std::sqrt(squared_norm);
+  const Eigen::VectorXd normalized_orbital =
+      local_coefficients / rho;
+  const double tangent_overlap =
+      normalized_orbital.dot(local_overlap * local_step);
+  return local_step - normalized_orbital * tangent_overlap;
 }
 
 std::vector<int> build_block_basis_function_indices(
@@ -130,9 +198,9 @@ std::vector<int> build_block_basis_function_indices(
 
   std::vector<int> basis_function_indices;
   basis_function_indices.reserve(
-      xmvb::to_size(orbital_preparation_input.n_basis_functions));
+      orbital_preparation_input.n_basis_functions);
   std::vector<char> seen_basis_functions(
-      xmvb::to_size(orbital_preparation_input.n_basis_functions),
+      orbital_preparation_input.n_basis_functions,
       0);
 
   // Partial-overlap blocks do not admit a single representative sparse row.
@@ -141,13 +209,15 @@ std::vector<int> build_block_basis_function_indices(
   // space stays close to the legacy sparse layout when possible.
   for (const int orbital_index : block_orbitals) {
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) *
+              [orbital_index *
                    orbital_preparation_input.n_basis_functions +
                coefficient_index] -
           1;
@@ -155,10 +225,10 @@ std::vector<int> build_block_basis_function_indices(
           basis_function_index >= orbital_preparation_input.n_basis_functions) {
         throw std::runtime_error("invalid block basis-function index");
       }
-      if (seen_basis_functions[xmvb::to_size(basis_function_index)] != 0) {
+      if (seen_basis_functions[basis_function_index] != 0) {
         continue;
       }
-      seen_basis_functions[xmvb::to_size(basis_function_index)] = 1;
+      seen_basis_functions[basis_function_index] = 1;
       basis_function_indices.push_back(basis_function_index);
     }
   }
@@ -172,15 +242,17 @@ BlockOrbitalData build_block_orbital_data(
   BlockOrbitalData result;
   result.orbital_index = orbital_index;
   result.coefficient_count =
-      get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
-  result.block_row_for_slot.resize(xmvb::to_size(result.coefficient_count), -1);
+      stored_sparse_orbital_coefficient_count(
+          orbital_preparation_input,
+          orbital_index);
+  result.block_row_for_slot.resize(result.coefficient_count, -1);
 
   for (int coefficient_index = 0;
        coefficient_index < result.coefficient_count;
        ++coefficient_index) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) *
+            [orbital_index *
                  orbital_preparation_input.n_basis_functions +
              coefficient_index] -
         1;
@@ -190,7 +262,7 @@ BlockOrbitalData build_block_orbital_data(
           "orbital support does not match representative block support");
     }
     const int block_row = iterator->second;
-    result.block_row_for_slot[xmvb::to_size(coefficient_index)] = block_row;
+    result.block_row_for_slot[coefficient_index] = block_row;
   }
 
   return result;
@@ -210,7 +282,7 @@ Eigen::VectorXd gather_block_orbital_from_dense_matrix(
        block_row < static_cast<int>(block_basis_function_indices.size());
        ++block_row) {
     const int basis_function_index =
-        block_basis_function_indices[xmvb::to_size(block_row)];
+        block_basis_function_indices[block_row];
     if (basis_function_index < 0 || basis_function_index >= orbital_matrix.rows()) {
       throw std::runtime_error(
           "invalid block basis-function index while gathering dense orbital");
@@ -434,10 +506,10 @@ Eigen::VectorXd build_candidate_metric_diagonal(
               n_inactive,
               n_occupied);
       metric_diagonal(direction_index) =
-          occupied_occupied_metrics[xmvb::to_size(inactive_index)](
+          occupied_occupied_metrics[inactive_index](
               active_index,
               active_index) +
-          occupied_occupied_metrics[xmvb::to_size(active_index)](
+          occupied_occupied_metrics[active_index](
               inactive_index,
               inactive_index);
     }
@@ -456,7 +528,7 @@ Eigen::VectorXd build_candidate_metric_diagonal(
               n_inactive,
               n_occupied);
       metric_diagonal(direction_index) =
-          occupied_occupied_metrics[xmvb::to_size(target_active_index)](
+          occupied_occupied_metrics[target_active_index](
               source_active_index,
               source_active_index);
     }
@@ -476,7 +548,7 @@ Eigen::VectorXd build_candidate_metric_diagonal(
               n_occupied,
               n_virtual);
       metric_diagonal(direction_index) =
-          virtual_virtual_metrics[xmvb::to_size(occupied_index)](
+          virtual_virtual_metrics[occupied_index](
               virtual_index,
               virtual_index);
     }
@@ -556,7 +628,7 @@ Eigen::VectorXd build_candidate_metric_diagonal_from_common_grams(
 }
 
 Eigen::MatrixXd build_block_effective_one_electron_matrix(
-    const std::vector<double>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
     int n_basis_functions,
     const std::vector<int>& basis_function_indices) {
 
@@ -565,15 +637,15 @@ Eigen::MatrixXd build_block_effective_one_electron_matrix(
   Eigen::MatrixXd block_effective_one_electron =
       Eigen::MatrixXd::Zero(block_basis_count, block_basis_count);
 
-  // `ao_effective_h1e` is the full AO `F11` in column-major storage. Extracting
+  // `ao_effective_h1e` is the full AO `F11`. Extracting
   // the block-local submatrix lets us estimate orbital-energy denominators using
   // the same local support that defines the nonredundant directions.
   for (int row = 0; row < block_basis_count; ++row) {
-    const int ao_row = basis_function_indices[xmvb::to_size(row)];
+    const int ao_row = basis_function_indices[row];
     for (int column = 0; column < block_basis_count; ++column) {
-      const int ao_column = basis_function_indices[xmvb::to_size(column)];
+      const int ao_column = basis_function_indices[column];
       block_effective_one_electron(row, column) =
-          ao_effective_h1e[xmvb::to_size(ao_row + ao_column * n_basis_functions)];
+          ao_effective_h1e(ao_row, ao_column);
     }
   }
   return block_effective_one_electron;
@@ -761,80 +833,6 @@ Eigen::VectorXd normalize_curvature_diagonal(
   return normalized;
 }
 
-Eigen::MatrixXd build_block_rotation_generator(
-    int n_inactive,
-    int n_occupied,
-    int n_virtual,
-    const Eigen::VectorXd& candidate_coefficients) {
-  const BlockDirectionLayout layout =
-      build_block_direction_layout(n_inactive, n_occupied, n_virtual);
-  const int direction_count = layout.direction_count;
-  if (candidate_coefficients.size() != static_cast<Eigen::Index>(direction_count)) {
-    throw std::invalid_argument(
-        "candidate coefficient size does not match block rotation generator");
-  }
-
-  Eigen::MatrixXd generator =
-      Eigen::MatrixXd::Zero(n_occupied + n_virtual, n_occupied + n_virtual);
-  if (layout.inactive_active_count > 0) {
-    const Eigen::Map<const Eigen::MatrixXd> inactive_active_coefficients(
-        candidate_coefficients.data(),
-        layout.n_active,
-        n_inactive);
-    generator.block(n_inactive, 0, layout.n_active, n_inactive) =
-        inactive_active_coefficients;
-    generator.block(0, n_inactive, n_inactive, layout.n_active) =
-        -inactive_active_coefficients.transpose();
-  }
-  if (n_virtual > 0 && n_occupied > 0) {
-    const Eigen::Map<const Eigen::MatrixXd> occupied_virtual_coefficients(
-        candidate_coefficients.data() + layout.occupied_virtual_offset,
-        n_virtual,
-        n_occupied);
-    generator.block(n_occupied, 0, n_virtual, n_occupied) =
-        occupied_virtual_coefficients;
-    generator.block(0, n_occupied, n_occupied, n_virtual) =
-        -occupied_virtual_coefficients.transpose();
-  }
-  return generator;
-}
-
-Eigen::MatrixXd build_cayley_retracted_occupied_coordinates(
-    int n_inactive,
-    int n_occupied,
-    int n_virtual,
-    const Eigen::VectorXd& candidate_coefficients) {
-  const int block_dimension = n_occupied + n_virtual;
-  if (block_dimension <= 0 || n_occupied <= 0) {
-    return Eigen::MatrixXd::Zero(std::max(0, block_dimension), std::max(0, n_occupied));
-  }
-
-  const Eigen::MatrixXd generator =
-      build_block_rotation_generator(
-          n_inactive,
-          n_occupied,
-          n_virtual,
-          candidate_coefficients);
-  const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(block_dimension, block_dimension);
-  const Eigen::MatrixXd left_factor = identity - 0.5 * generator;
-  const Eigen::MatrixXd right_factor =
-      (identity + 0.5 * generator).leftCols(n_occupied);
-  const Eigen::FullPivLU<Eigen::MatrixXd> left_factor_lu(left_factor);
-  if (!left_factor_lu.isInvertible()) {
-    throw std::runtime_error(
-        "nonredundant block Cayley retraction became singular");
-  }
-
-  Eigen::MatrixXd occupied_coordinates = left_factor_lu.solve(right_factor);
-  if (occupied_coordinates.rows() != block_dimension ||
-      occupied_coordinates.cols() != n_occupied ||
-      !occupied_coordinates.allFinite()) {
-    throw std::runtime_error(
-        "nonredundant block Cayley retraction returned non-finite coefficients");
-  }
-  return occupied_coordinates;
-}
-
 }  // namespace
 
 NonredundantOrbitalSpace::NonredundantOrbitalSpace(
@@ -842,14 +840,12 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     const SparseOrbitalParameterView& parameter_view,
     const Eigen::Ref<const Eigen::MatrixXd>& occupied_orbital_basis_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& physical_orbital_matrix,
-    const std::vector<double>* ao_effective_h1e)
+    const Eigen::MatrixXd* ao_effective_h1e)
     : packed_parameter_size_(parameter_view.size()) {
   if (ao_effective_h1e != nullptr &&
-      ao_effective_h1e->size() !=
-          xmvb::to_size(
-              orbital_preparation_input.n_basis_functions *
-              orbital_preparation_input.n_basis_functions)) {
-    throw std::invalid_argument("AO effective one-electron matrix size mismatch");
+      (ao_effective_h1e->rows() != orbital_preparation_input.n_basis_functions ||
+       ao_effective_h1e->cols() != orbital_preparation_input.n_basis_functions)) {
+    throw std::invalid_argument("AO effective one-electron matrix shape mismatch");
   }
 
   const int n_inactive_doubly_occupied_orbitals =
@@ -912,7 +908,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     basis_to_block_row.reserve(block_space.basis_function_indices.size());
     for (int block_row = 0; block_row < block_basis_count; ++block_row) {
       basis_to_block_row.emplace(
-          block_space.basis_function_indices[xmvb::to_size(block_row)],
+          block_space.basis_function_indices[block_row],
           block_row);
     }
 
@@ -928,16 +924,18 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
          local_orbital_index < block_space.n_occupied;
          ++local_orbital_index) {
       const int orbital_index =
-          occupied_block_orbitals[xmvb::to_size(local_orbital_index)];
+          occupied_block_orbitals[local_orbital_index];
       const int coefficient_count =
-          get_orbital_basis_count(orbital_preparation_input, orbital_index);
+          stored_sparse_orbital_coefficient_count(
+              orbital_preparation_input,
+              orbital_index);
       for (int coefficient_index = 0;
            coefficient_index < coefficient_count;
            ++coefficient_index) {
         const int block_row =
             basis_to_block_row.at(
                 orbital_preparation_input.orbital_basis_index_table
-                    [xmvb::to_size(orbital_index) *
+                    [orbital_index *
                          orbital_preparation_input.n_basis_functions +
                      coefficient_index] -
                 1);
@@ -945,7 +943,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
             block_row,
             local_orbital_index) =
             orbital_preparation_input.orbital_value_table
-                [xmvb::to_size(orbital_index) *
+                [orbital_index *
                      orbital_preparation_input.n_basis_functions +
                  coefficient_index];
       }
@@ -975,8 +973,8 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       for (int column = 0; column < block_basis_count; ++column) {
         block_overlap(row, column) =
             basis_overlap_matrix(
-                block_space.basis_function_indices[xmvb::to_size(row)],
-                block_space.basis_function_indices[xmvb::to_size(column)]);
+                block_space.basis_function_indices[row],
+                block_space.basis_function_indices[column]);
       }
     }
     // Keep the block virtual basis on the same accepted-point physical chart
@@ -1026,30 +1024,34 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       }
     }
 
-    // `occupied_masked` and `virtual_masked` store the candidate-direction
-    // columns in the native sparse-coefficient coordinates of one orbital.
-    // They are the building blocks for the implicit rectangular matrix `D`
-    // whose columns are all inactive/active, active/active, and
-    // occupied/virtual directions.
-    std::vector<Eigen::MatrixXd> occupied_occupied_metrics;
-    std::vector<Eigen::MatrixXd> virtual_virtual_metrics;
-    occupied_occupied_metrics.reserve(block_space.orbitals.size());
-    virtual_virtual_metrics.reserve(block_space.orbitals.size());
+    // `occupied_masked` / `virtual_masked` keep the legacy raw sparse chart
+    // used by the current sparse finite-step path.  The mixed-chart migration
+    // also needs per-orbital masked copies of `(Q_i, Q_a, Q_v)` so sparse
+    // `project_vector()` / `expand_step()` can use the same block-local chart
+    // as the dense full-support formulas without touching the fixed-support
+    // storage layout yet.
     for (int local_orbital_index = 0;
          local_orbital_index < block_space.n_occupied;
          ++local_orbital_index) {
-      const auto& orbital = block_space.orbitals[xmvb::to_size(local_orbital_index)];
+      const auto& orbital = block_space.orbitals[local_orbital_index];
       OrbitalProjector projector;
-      projector.packed_indices.reserve(xmvb::to_size(orbital.coefficient_count));
+      projector.packed_indices.reserve(orbital.coefficient_count);
+      projector.block_rows.reserve(orbital.coefficient_count);
       if (block_basis.uses_dense_full_support_projector) {
-        projector.flat_index_by_block_row.assign(xmvb::to_size(block_basis_count), -1);
-        projector.packed_index_by_block_row.assign(xmvb::to_size(block_basis_count), -1);
+        projector.flat_index_by_block_row.assign(block_basis_count, -1);
+        projector.packed_index_by_block_row.assign(block_basis_count, -1);
       } else {
         projector.occupied_masked =
             Eigen::MatrixXd::Zero(orbital.coefficient_count, block_space.n_occupied);
-        projector.reference_occupied_masked =
-            Eigen::MatrixXd::Zero(orbital.coefficient_count, block_space.n_occupied);
+        projector.inactive_working_masked =
+            Eigen::MatrixXd::Zero(orbital.coefficient_count, block_space.n_inactive);
+        projector.active_working_masked =
+            Eigen::MatrixXd::Zero(
+                orbital.coefficient_count,
+                block_space.n_occupied - block_space.n_inactive);
         projector.virtual_masked =
+            Eigen::MatrixXd::Zero(orbital.coefficient_count, n_virtual);
+        projector.internal_virtual_masked =
             Eigen::MatrixXd::Zero(orbital.coefficient_count, n_virtual);
       }
       for (int coefficient_index = 0;
@@ -1066,31 +1068,24 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
         projector.flat_indices.push_back(flat_index);
         projector.packed_indices.push_back(packed_index);
         const int block_row =
-            orbital.block_row_for_slot[xmvb::to_size(coefficient_index)];
+            orbital.block_row_for_slot[coefficient_index];
+        projector.block_rows.push_back(block_row);
         if (block_basis.uses_dense_full_support_projector) {
-          projector.flat_index_by_block_row[xmvb::to_size(block_row)] = flat_index;
-          projector.packed_index_by_block_row[xmvb::to_size(block_row)] = packed_index;
+          projector.flat_index_by_block_row[block_row] = flat_index;
+          projector.packed_index_by_block_row[block_row] = packed_index;
         } else {
           projector.occupied_masked.row(coefficient_index) =
               block_raw_occupied_orbitals.row(block_row);
-          projector.reference_occupied_masked.row(coefficient_index) =
-              block_reference_occupied_orbitals.row(block_row);
           if (n_virtual > 0) {
             projector.virtual_masked.row(coefficient_index) =
                 block_space.virtual_orbitals.row(block_row);
           }
         }
       }
-      if (!block_basis.uses_dense_full_support_projector) {
-        occupied_occupied_metrics.push_back(
-            projector.occupied_masked.transpose() *
-            projector.occupied_masked);
-        virtual_virtual_metrics.push_back(
-            projector.virtual_masked.transpose() * projector.virtual_masked);
-      } else {
+      if (block_basis.uses_dense_full_support_projector) {
         for (int block_row = 0; block_row < block_basis_count; ++block_row) {
-          if (projector.flat_index_by_block_row[xmvb::to_size(block_row)] < 0 ||
-              projector.packed_index_by_block_row[xmvb::to_size(block_row)] < 0) {
+          if (projector.flat_index_by_block_row[block_row] < 0 ||
+              projector.packed_index_by_block_row[block_row] < 0) {
             throw std::runtime_error(
                 "dense full-support projector is missing a block row");
           }
@@ -1099,75 +1094,35 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       block_basis.orbitals.push_back(std::move(projector));
     }
 
+    initialize_block_mixed_chart_cache(
+        &block_basis,
+        block_occupied_orbitals);
+
+    if (!block_basis.uses_dense_full_support_projector) {
+      const int n_active = block_basis.n_occupied - block_basis.n_inactive;
+      for (auto& projector : block_basis.orbitals) {
+        for (Eigen::Index local_index = 0;
+             local_index < static_cast<Eigen::Index>(projector.block_rows.size());
+             ++local_index) {
+          const int block_row = projector.block_rows[local_index];
+          if (block_basis.n_inactive > 0) {
+            projector.inactive_working_masked.row(local_index) =
+                block_basis.inactive_working_orbitals.row(block_row);
+          }
+          if (n_active > 0) {
+            projector.active_working_masked.row(local_index) =
+                block_basis.active_working_orbitals.row(block_row);
+          }
+          if (block_basis.n_virtual > 0) {
+            projector.internal_virtual_masked.row(local_index) =
+                block_basis.internal_virtual_orbitals.row(block_row);
+          }
+        }
+      }
+    }
+
     if (block_basis.uses_dense_full_support_projector) {
       const int n_active = block_basis.n_occupied - block_basis.n_inactive;
-      if (block_basis.n_inactive > 0) {
-        const Eigen::MatrixXd inactive_metric =
-            block_reference_occupied_orbitals.leftCols(block_basis.n_inactive)
-                .transpose() *
-            block_overlap *
-            block_reference_occupied_orbitals.leftCols(block_basis.n_inactive);
-        const Eigen::MatrixXd inactive_inverse_square_root =
-            build_self_adjoint_matrix_power(
-                inactive_metric,
-                -0.5,
-                "dense full-support inactive metric");
-        block_basis.inactive_working_orbitals =
-            block_reference_occupied_orbitals.leftCols(block_basis.n_inactive) *
-            inactive_inverse_square_root;
-        block_basis.inactive_right_transform =
-            build_self_adjoint_matrix_power(
-                inactive_metric,
-                0.5,
-                "dense full-support inactive metric");
-      } else {
-        block_basis.inactive_working_orbitals =
-            Eigen::MatrixXd::Zero(block_basis_count, 0);
-        block_basis.inactive_right_transform =
-            Eigen::MatrixXd::Zero(0, 0);
-      }
-
-      if (n_active > 0) {
-        const Eigen::MatrixXd active_auxiliary_orbitals =
-            block_occupied_orbitals.middleCols(
-                block_basis.n_inactive,
-                n_active);
-        const Eigen::MatrixXd active_metric =
-            active_auxiliary_orbitals.transpose() *
-            block_overlap *
-            active_auxiliary_orbitals;
-        const Eigen::MatrixXd active_inverse_square_root =
-            build_self_adjoint_matrix_power(
-                active_metric,
-                -0.5,
-                "dense full-support active auxiliary metric");
-        block_basis.active_working_orbitals =
-            active_auxiliary_orbitals * active_inverse_square_root;
-        block_basis.active_shape_matrix =
-            build_self_adjoint_matrix_power(
-                active_metric,
-                0.5,
-                "dense full-support active auxiliary metric");
-        if (block_basis.n_inactive > 0) {
-          block_basis.active_inactive_gauge_coefficients =
-              block_basis.inactive_working_orbitals.transpose() *
-              block_overlap *
-              block_reference_occupied_orbitals.middleCols(
-                  block_basis.n_inactive,
-                  n_active);
-        } else {
-          block_basis.active_inactive_gauge_coefficients =
-              Eigen::MatrixXd::Zero(0, n_active);
-        }
-      } else {
-        block_basis.active_working_orbitals =
-            Eigen::MatrixXd::Zero(block_basis_count, 0);
-        block_basis.active_shape_matrix =
-            Eigen::MatrixXd::Zero(0, 0);
-        block_basis.active_inactive_gauge_coefficients =
-            Eigen::MatrixXd::Zero(block_basis.n_inactive, 0);
-      }
-
       Eigen::MatrixXd internal_occupied_orbitals =
           Eigen::MatrixXd::Zero(block_basis_count, block_basis.n_occupied);
       if (block_basis.n_inactive > 0) {
@@ -1180,17 +1135,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
             n_active) = block_basis.active_working_orbitals;
       }
       block_basis.occupied_orbitals = internal_occupied_orbitals;
-
-      // The dense full-support OEO path now works on the mixed chart
-      // `(Q_i, Q_a, L_a)` where `Q_i` and `Q_a` are `S`-orthonormal occupied
-      // frames and `L_a` carries the nonorthogonal active shape. Build the
-      // virtual complement from that orthonormal occupied frame so the block
-      // rotation generator acts on genuine orthogonal subspaces.
-      block_basis.virtual_orbitals =
-          build_block_virtual_orbitals(
-              internal_occupied_orbitals,
-              block_overlap);
-
+      block_basis.virtual_orbitals = block_basis.internal_virtual_orbitals;
       initialize_dense_full_support_metric_cache(&block_basis);
     }
 
@@ -1205,12 +1150,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
           build_dense_full_support_metric_diagonal(block_basis);
     } else {
       block_basis.candidate_metric_diagonal =
-          build_candidate_metric_diagonal(
-              occupied_occupied_metrics,
-              virtual_virtual_metrics,
-              block_basis.n_inactive,
-              block_basis.n_occupied,
-              block_basis.n_virtual);
+          build_sparse_mixed_chart_metric_diagonal(block_basis);
     }
     block_basis.reduced_offset = reduced_size_;
     reduced_size_ += direction_count;
@@ -1247,10 +1187,10 @@ Eigen::MatrixXd NonredundantOrbitalSpace::gather_dense_full_support_block_matrix
   for (int occupied_index = 0;
        occupied_index < block_basis.n_occupied;
        ++occupied_index) {
-    const auto& projector = block_basis.orbitals[xmvb::to_size(occupied_index)];
+    const auto& projector = block_basis.orbitals[occupied_index];
     for (int block_row = 0; block_row < block_basis_count; ++block_row) {
       const int packed_index =
-          projector.packed_index_by_block_row[xmvb::to_size(block_row)];
+          projector.packed_index_by_block_row[block_row];
       if (packed_index < 0 || packed_index >= packed_parameter_size_) {
         throw std::runtime_error(
             "dense full-support projector is missing a packed block row");
@@ -1265,23 +1205,15 @@ void NonredundantOrbitalSpace::accumulate_dense_full_support_block_matrix(
     const BlockBasis& block_basis,
     const Eigen::MatrixXd& block_matrix,
     Eigen::VectorXd* packed_vector) const {
-  if (packed_vector == nullptr) {
-    throw std::invalid_argument("packed_vector must not be null");
-  }
   const int block_basis_count = static_cast<int>(block_basis.basis_function_indices.size());
-  if (block_matrix.rows() != block_basis_count ||
-      block_matrix.cols() != block_basis.n_occupied) {
-    throw std::invalid_argument(
-        "dense full-support block matrix shape does not match block basis");
-  }
 
   for (int occupied_index = 0;
        occupied_index < block_basis.n_occupied;
        ++occupied_index) {
-    const auto& projector = block_basis.orbitals[xmvb::to_size(occupied_index)];
+    const auto& projector = block_basis.orbitals[occupied_index];
     for (int block_row = 0; block_row < block_basis_count; ++block_row) {
       const int packed_index =
-          projector.packed_index_by_block_row[xmvb::to_size(block_row)];
+          projector.packed_index_by_block_row[block_row];
       if (packed_index < 0 || packed_index >= packed_parameter_size_) {
         throw std::runtime_error(
             "dense full-support projector is missing a packed block row");
@@ -1295,29 +1227,21 @@ void NonredundantOrbitalSpace::write_dense_full_support_block_matrix(
     const BlockBasis& block_basis,
     const Eigen::MatrixXd& block_matrix,
     std::vector<double>* orbital_value_table) const {
-  if (orbital_value_table == nullptr) {
-    throw std::invalid_argument("orbital_value_table must not be null");
-  }
   const int block_basis_count = static_cast<int>(block_basis.basis_function_indices.size());
-  if (block_matrix.rows() != block_basis_count ||
-      block_matrix.cols() != block_basis.n_occupied) {
-    throw std::invalid_argument(
-        "dense full-support block matrix shape does not match block basis");
-  }
 
   for (int occupied_index = 0;
        occupied_index < block_basis.n_occupied;
        ++occupied_index) {
-    const auto& projector = block_basis.orbitals[xmvb::to_size(occupied_index)];
+    const auto& projector = block_basis.orbitals[occupied_index];
     for (int block_row = 0; block_row < block_basis_count; ++block_row) {
       const int flat_index =
-          projector.flat_index_by_block_row[xmvb::to_size(block_row)];
+          projector.flat_index_by_block_row[block_row];
       if (flat_index < 0 ||
           flat_index >= static_cast<int>(orbital_value_table->size())) {
         throw std::runtime_error(
             "dense full-support projector is missing a flat block row");
       }
-      (*orbital_value_table)[xmvb::to_size(flat_index)] =
+      (*orbital_value_table)[flat_index] =
           block_matrix(block_row, occupied_index);
     }
   }
@@ -1325,9 +1249,6 @@ void NonredundantOrbitalSpace::write_dense_full_support_block_matrix(
 
 void NonredundantOrbitalSpace::initialize_dense_full_support_metric_cache(
     BlockBasis* block_basis) const {
-  if (block_basis == nullptr) {
-    throw std::invalid_argument("block_basis must not be null");
-  }
   if (!block_basis->uses_dense_full_support_projector) {
     return;
   }
@@ -1442,6 +1363,101 @@ void NonredundantOrbitalSpace::initialize_dense_full_support_metric_cache(
   }
 }
 
+void NonredundantOrbitalSpace::initialize_block_mixed_chart_cache(
+    BlockBasis* block_basis,
+    const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_occupied_orbitals) const {
+  const int block_basis_count =
+      static_cast<int>(block_basis->basis_function_indices.size());
+  const int n_active =
+      block_basis->n_occupied - block_basis->n_inactive;
+
+  if (block_basis->n_inactive > 0) {
+    const Eigen::MatrixXd inactive_metric =
+        block_basis->reference_occupied_orbitals
+            .leftCols(block_basis->n_inactive)
+            .transpose() *
+        block_basis->block_overlap_matrix *
+        block_basis->reference_occupied_orbitals
+            .leftCols(block_basis->n_inactive);
+    const Eigen::MatrixXd inactive_inverse_square_root =
+        build_self_adjoint_matrix_power(
+            inactive_metric,
+            -0.5,
+            "block mixed-chart inactive metric");
+    block_basis->inactive_working_orbitals =
+        block_basis->reference_occupied_orbitals
+            .leftCols(block_basis->n_inactive) *
+        inactive_inverse_square_root;
+    block_basis->inactive_right_transform =
+        build_self_adjoint_matrix_power(
+            inactive_metric,
+            0.5,
+            "block mixed-chart inactive metric");
+  } else {
+    block_basis->inactive_working_orbitals =
+        Eigen::MatrixXd::Zero(block_basis_count, 0);
+    block_basis->inactive_right_transform =
+        Eigen::MatrixXd::Zero(0, 0);
+  }
+
+  if (n_active > 0) {
+    const Eigen::MatrixXd active_auxiliary_orbitals =
+        auxiliary_occupied_orbitals.middleCols(
+            block_basis->n_inactive,
+            n_active);
+    const Eigen::MatrixXd active_metric =
+        active_auxiliary_orbitals.transpose() *
+        block_basis->block_overlap_matrix *
+        active_auxiliary_orbitals;
+    const Eigen::MatrixXd active_inverse_square_root =
+        build_self_adjoint_matrix_power(
+            active_metric,
+            -0.5,
+            "block mixed-chart active auxiliary metric");
+    block_basis->active_working_orbitals =
+        active_auxiliary_orbitals * active_inverse_square_root;
+    block_basis->active_shape_matrix =
+        build_self_adjoint_matrix_power(
+            active_metric,
+            0.5,
+            "block mixed-chart active auxiliary metric");
+    if (block_basis->n_inactive > 0) {
+      block_basis->active_inactive_gauge_coefficients =
+          block_basis->inactive_working_orbitals.transpose() *
+          block_basis->block_overlap_matrix *
+          block_basis->reference_occupied_orbitals.middleCols(
+              block_basis->n_inactive,
+              n_active);
+    } else {
+      block_basis->active_inactive_gauge_coefficients =
+          Eigen::MatrixXd::Zero(0, n_active);
+    }
+  } else {
+    block_basis->active_working_orbitals =
+        Eigen::MatrixXd::Zero(block_basis_count, 0);
+    block_basis->active_shape_matrix =
+        Eigen::MatrixXd::Zero(0, 0);
+    block_basis->active_inactive_gauge_coefficients =
+        Eigen::MatrixXd::Zero(block_basis->n_inactive, 0);
+  }
+
+  Eigen::MatrixXd internal_occupied_orbitals =
+      Eigen::MatrixXd::Zero(block_basis_count, block_basis->n_occupied);
+  if (block_basis->n_inactive > 0) {
+    internal_occupied_orbitals.leftCols(block_basis->n_inactive) =
+        block_basis->inactive_working_orbitals;
+  }
+  if (n_active > 0) {
+    internal_occupied_orbitals.middleCols(
+        block_basis->n_inactive,
+        n_active) = block_basis->active_working_orbitals;
+  }
+  block_basis->internal_virtual_orbitals =
+      build_block_virtual_orbitals(
+          internal_occupied_orbitals,
+          block_basis->block_overlap_matrix);
+}
+
 Eigen::MatrixXd NonredundantOrbitalSpace::build_dense_full_support_block_step(
     const BlockBasis& block_basis,
     const Eigen::VectorXd& candidate_coefficients) const {
@@ -1453,24 +1469,18 @@ Eigen::MatrixXd NonredundantOrbitalSpace::build_dense_full_support_block_step(
   const int n_inactive = layout.n_inactive;
   const int n_active = layout.n_active;
   const int n_virtual = layout.n_virtual;
-  if (candidate_coefficients.size() !=
-      static_cast<Eigen::Index>(layout.direction_count)) {
-    throw std::invalid_argument(
-        "dense full-support candidate coefficient size does not match block");
-  }
-
   Eigen::Map<const Eigen::MatrixXd> inactive_active_coefficients(
       candidate_coefficients.data(),
-      std::max(0, n_active),
-      std::max(0, n_inactive));
+      n_active,
+      n_inactive);
   Eigen::Map<const Eigen::MatrixXd> active_shape_step(
       candidate_coefficients.data() + layout.inactive_active_count,
-      std::max(0, n_active),
-      std::max(0, n_active));
+      n_active,
+      n_active);
   Eigen::Map<const Eigen::MatrixXd> occupied_virtual_coefficients(
       candidate_coefficients.data() + layout.occupied_virtual_offset,
-      std::max(0, n_virtual),
-      std::max(0, block_basis.n_occupied));
+      n_virtual,
+      block_basis.n_occupied);
 
   Eigen::MatrixXd block_step =
       Eigen::MatrixXd::Zero(
@@ -1531,6 +1541,113 @@ Eigen::MatrixXd NonredundantOrbitalSpace::build_dense_full_support_block_step(
   return block_step;
 }
 
+// Lift one reduced block step to a finite occupied-block trial point.  The
+// internal orthogonal frame `(Q_i, Q_a, Q_v)` is advanced by a Cayley update,
+// while the active nonorthogonal shape still follows `L_a + Delta L_a`.
+Eigen::MatrixXd NonredundantOrbitalSpace::build_mixed_chart_trial_occupied_orbitals(
+    const BlockBasis& block_basis,
+    const Eigen::VectorXd& candidate_coefficients) const {
+  const BlockDirectionLayout layout =
+      build_block_direction_layout(
+          block_basis.n_inactive,
+          block_basis.n_occupied,
+          block_basis.n_virtual);
+  const int n_inactive = layout.n_inactive;
+  const int n_active = layout.n_active;
+  const int n_virtual = layout.n_virtual;
+  const int n_occupied = layout.n_occupied;
+  const int block_basis_count =
+      static_cast<int>(block_basis.basis_function_indices.size());
+  if (layout.direction_count == 0) {
+    return block_basis.reference_occupied_orbitals;
+  }
+
+  Eigen::Map<const Eigen::MatrixXd> inactive_active_coefficients(
+      candidate_coefficients.data(),
+      n_active,
+      n_inactive);
+  Eigen::Map<const Eigen::MatrixXd> active_shape_step(
+      candidate_coefficients.data() + layout.inactive_active_count,
+      n_active,
+      n_active);
+  Eigen::Map<const Eigen::MatrixXd> occupied_virtual_coefficients(
+      candidate_coefficients.data() + layout.occupied_virtual_offset,
+      n_virtual,
+      n_occupied);
+
+  const int frame_size = n_occupied + n_virtual;
+  Eigen::MatrixXd frame =
+      Eigen::MatrixXd::Zero(block_basis_count, frame_size);
+  if (n_inactive > 0) {
+    frame.leftCols(n_inactive) =
+        block_basis.inactive_working_orbitals;
+  }
+  if (n_active > 0) {
+    frame.middleCols(n_inactive, n_active) =
+        block_basis.active_working_orbitals;
+  }
+  if (n_virtual > 0) {
+    frame.rightCols(n_virtual) =
+        block_basis.internal_virtual_orbitals;
+  }
+
+  Eigen::MatrixXd omega =
+      Eigen::MatrixXd::Zero(frame_size, frame_size);
+  if (n_inactive > 0 && n_active > 0) {
+    omega.block(n_inactive, 0, n_active, n_inactive) =
+        inactive_active_coefficients;
+    omega.block(0, n_inactive, n_inactive, n_active) =
+        -inactive_active_coefficients.transpose();
+  }
+  if (n_virtual > 0 && n_inactive > 0) {
+    const auto inactive_virtual_coefficients =
+        occupied_virtual_coefficients.leftCols(n_inactive);
+    omega.block(n_occupied, 0, n_virtual, n_inactive) =
+        inactive_virtual_coefficients;
+    omega.block(0, n_occupied, n_inactive, n_virtual) =
+        -inactive_virtual_coefficients.transpose();
+  }
+  if (n_virtual > 0 && n_active > 0) {
+    const auto active_virtual_coefficients =
+        occupied_virtual_coefficients.rightCols(n_active);
+    omega.block(n_occupied, n_inactive, n_virtual, n_active) =
+        active_virtual_coefficients;
+    omega.block(n_inactive, n_occupied, n_active, n_virtual) =
+        -active_virtual_coefficients.transpose();
+  }
+
+  const Eigen::MatrixXd cayley_left =
+      Eigen::MatrixXd::Identity(frame_size, frame_size) - 0.5 * omega;
+  const Eigen::MatrixXd cayley_right =
+      Eigen::MatrixXd::Identity(frame_size, frame_size) + 0.5 * omega;
+  Eigen::FullPivLU<Eigen::MatrixXd> cayley_solver(cayley_left);
+  if (!cayley_solver.isInvertible()) {
+    throw std::runtime_error(
+        "mixed-chart Cayley retraction encountered a singular frame update");
+  }
+  const Eigen::MatrixXd rotated_frame =
+      frame * cayley_solver.solve(cayley_right);
+
+  Eigen::MatrixXd trial_occupied_orbitals =
+      Eigen::MatrixXd::Zero(block_basis_count, n_occupied);
+  if (n_inactive > 0) {
+    trial_occupied_orbitals.leftCols(n_inactive).noalias() =
+        rotated_frame.leftCols(n_inactive) *
+        block_basis.inactive_right_transform;
+  }
+  if (n_active > 0) {
+    trial_occupied_orbitals.middleCols(n_inactive, n_active).noalias() =
+        rotated_frame.middleCols(n_inactive, n_active) *
+        (block_basis.active_shape_matrix + active_shape_step);
+    if (n_inactive > 0) {
+      trial_occupied_orbitals.middleCols(n_inactive, n_active).noalias() +=
+          rotated_frame.leftCols(n_inactive) *
+          block_basis.active_inactive_gauge_coefficients;
+    }
+  }
+  return trial_occupied_orbitals;
+}
+
 Eigen::VectorXd NonredundantOrbitalSpace::project_dense_full_support_candidate_overlap(
     const BlockBasis& block_basis,
     const Eigen::Ref<const Eigen::MatrixXd>& block_columns) const {
@@ -1542,13 +1659,6 @@ Eigen::VectorXd NonredundantOrbitalSpace::project_dense_full_support_candidate_o
   const int n_inactive = layout.n_inactive;
   const int n_active = layout.n_active;
   const int n_virtual = layout.n_virtual;
-  if (block_columns.rows() !=
-          static_cast<Eigen::Index>(block_basis.basis_function_indices.size()) ||
-      block_columns.cols() != block_basis.n_occupied) {
-    throw std::invalid_argument(
-        "dense full-support block columns shape does not match block basis");
-  }
-
   Eigen::VectorXd candidate_overlap =
       Eigen::VectorXd::Zero(static_cast<Eigen::Index>(layout.direction_count));
   if (layout.direction_count == 0) {
@@ -1725,6 +1835,187 @@ Eigen::VectorXd NonredundantOrbitalSpace::build_dense_full_support_metric_diagon
   return metric_diagonal;
 }
 
+Eigen::VectorXd NonredundantOrbitalSpace::build_sparse_mixed_chart_metric_diagonal(
+    const BlockBasis& block_basis) const {
+  const BlockDirectionLayout layout =
+      build_block_direction_layout(
+          block_basis.n_inactive,
+          block_basis.n_occupied,
+          block_basis.n_virtual);
+  const int n_inactive = layout.n_inactive;
+  const int n_active = layout.n_active;
+  const int n_virtual = layout.n_virtual;
+  Eigen::VectorXd metric_diagonal =
+      Eigen::VectorXd::Zero(static_cast<Eigen::Index>(layout.direction_count));
+  if (layout.direction_count == 0) {
+    return metric_diagonal;
+  }
+
+  std::vector<Eigen::VectorXd> inactive_working_norms;
+  std::vector<Eigen::VectorXd> active_working_norms;
+  std::vector<Eigen::VectorXd> internal_virtual_norms;
+  std::vector<Eigen::MatrixXd> inactive_active_cross_metrics;
+  inactive_working_norms.reserve(block_basis.orbitals.size());
+  active_working_norms.reserve(block_basis.orbitals.size());
+  internal_virtual_norms.reserve(block_basis.orbitals.size());
+  inactive_active_cross_metrics.reserve(block_basis.orbitals.size());
+  for (const auto& projector : block_basis.orbitals) {
+    Eigen::VectorXd inactive_norms = Eigen::VectorXd::Zero(n_inactive);
+    Eigen::VectorXd active_norms = Eigen::VectorXd::Zero(n_active);
+    Eigen::VectorXd virtual_norms = Eigen::VectorXd::Zero(n_virtual);
+    Eigen::MatrixXd inactive_active_cross =
+        Eigen::MatrixXd::Zero(n_inactive, n_active);
+    if (n_inactive > 0) {
+      inactive_norms =
+          projector.inactive_working_masked.colwise().squaredNorm().transpose();
+    }
+    if (n_active > 0) {
+      active_norms =
+          projector.active_working_masked.colwise().squaredNorm().transpose();
+    }
+    if (n_virtual > 0) {
+      virtual_norms =
+          projector.internal_virtual_masked.colwise().squaredNorm().transpose();
+    }
+    if (n_inactive > 0 && n_active > 0) {
+      inactive_active_cross.noalias() =
+          projector.inactive_working_masked.transpose() *
+          projector.active_working_masked;
+    }
+    inactive_working_norms.push_back(std::move(inactive_norms));
+    active_working_norms.push_back(std::move(active_norms));
+    internal_virtual_norms.push_back(std::move(virtual_norms));
+    inactive_active_cross_metrics.push_back(std::move(inactive_active_cross));
+  }
+
+  constexpr double kMinimumMetricDiagonal = 1.0e-10;
+  int direction_index = 0;
+  for (int inactive_source = 0;
+       inactive_source < n_inactive;
+       ++inactive_source) {
+    for (int active_source = 0;
+         active_source < n_active;
+         ++active_source) {
+      double diagonal_value = 0.0;
+      for (int inactive_target = 0;
+           inactive_target < n_inactive;
+           ++inactive_target) {
+        const double coefficient =
+            block_basis.inactive_right_transform(
+                inactive_source,
+                inactive_target);
+        diagonal_value +=
+            active_working_norms[inactive_target](active_source) *
+            coefficient * coefficient;
+      }
+      for (int active_target = 0;
+           active_target < n_active;
+           ++active_target) {
+        const int occupied_index = n_inactive + active_target;
+        const double shape_coefficient =
+            block_basis.active_shape_matrix(
+                active_source,
+                active_target);
+        const double gauge_coefficient =
+            block_basis.active_inactive_gauge_coefficients(
+                inactive_source,
+                active_target);
+        diagonal_value +=
+            inactive_working_norms[occupied_index](inactive_source) *
+            shape_coefficient * shape_coefficient;
+        diagonal_value +=
+            active_working_norms[occupied_index](active_source) *
+            gauge_coefficient * gauge_coefficient;
+        diagonal_value -=
+            2.0 *
+            inactive_active_cross_metrics[occupied_index](
+                inactive_source,
+                active_source) *
+            shape_coefficient * gauge_coefficient;
+      }
+      metric_diagonal(direction_index) =
+          std::max(kMinimumMetricDiagonal, diagonal_value);
+      ++direction_index;
+    }
+  }
+
+  for (int target_active = 0;
+       target_active < n_active;
+       ++target_active) {
+    const int occupied_index = n_inactive + target_active;
+    for (int source_active = 0;
+         source_active < n_active;
+         ++source_active) {
+      metric_diagonal(direction_index) =
+          std::max(
+              kMinimumMetricDiagonal,
+              active_working_norms[occupied_index](source_active));
+      ++direction_index;
+    }
+  }
+
+  for (int inactive_source = 0;
+       inactive_source < n_inactive;
+       ++inactive_source) {
+    for (int virtual_index = 0;
+         virtual_index < n_virtual;
+         ++virtual_index) {
+      double diagonal_value = 0.0;
+      for (int inactive_target = 0;
+           inactive_target < n_inactive;
+           ++inactive_target) {
+        const double coefficient =
+            block_basis.inactive_right_transform(
+                inactive_source,
+                inactive_target);
+        diagonal_value +=
+            internal_virtual_norms[inactive_target](virtual_index) *
+            coefficient * coefficient;
+      }
+      for (int active_target = 0;
+           active_target < n_active;
+           ++active_target) {
+        const double coefficient =
+            block_basis.active_inactive_gauge_coefficients(
+                inactive_source,
+                active_target);
+        diagonal_value +=
+            internal_virtual_norms[n_inactive + active_target](virtual_index) *
+            coefficient * coefficient;
+      }
+      metric_diagonal(direction_index) =
+          std::max(kMinimumMetricDiagonal, diagonal_value);
+      ++direction_index;
+    }
+  }
+
+  for (int active_source = 0;
+       active_source < n_active;
+       ++active_source) {
+    for (int virtual_index = 0;
+         virtual_index < n_virtual;
+         ++virtual_index) {
+      double diagonal_value = 0.0;
+      for (int active_target = 0;
+           active_target < n_active;
+           ++active_target) {
+        const double coefficient =
+            block_basis.active_shape_matrix(
+                active_source,
+                active_target);
+        diagonal_value +=
+            internal_virtual_norms[n_inactive + active_target](virtual_index) *
+            coefficient * coefficient;
+      }
+      metric_diagonal(direction_index) =
+          std::max(kMinimumMetricDiagonal, diagonal_value);
+      ++direction_index;
+    }
+  }
+
+  return metric_diagonal;
+}
+
 Eigen::VectorXd NonredundantOrbitalSpace::apply_dense_full_support_candidate_metric(
     const BlockBasis& block_basis,
     const Eigen::VectorXd& candidate_coefficients) const {
@@ -1736,12 +2027,6 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_dense_full_support_candidate_met
   const int n_inactive = layout.n_inactive;
   const int n_active = layout.n_active;
   const int n_virtual = layout.n_virtual;
-  if (candidate_coefficients.size() !=
-      static_cast<Eigen::Index>(layout.direction_count)) {
-    throw std::invalid_argument(
-        "dense full-support candidate coefficient size does not match block");
-  }
-
   Eigen::VectorXd metric_action =
       Eigen::VectorXd::Zero(static_cast<Eigen::Index>(layout.direction_count));
   if (layout.direction_count == 0) {
@@ -1750,29 +2035,29 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_dense_full_support_candidate_met
 
   Eigen::Map<const Eigen::MatrixXd> inactive_active_coefficients(
       candidate_coefficients.data(),
-      std::max(0, n_active),
-      std::max(0, n_inactive));
+      n_active,
+      n_inactive);
   Eigen::Map<const Eigen::MatrixXd> active_shape_coefficients(
       candidate_coefficients.data() + layout.inactive_active_count,
-      std::max(0, n_active),
-      std::max(0, n_active));
+      n_active,
+      n_active);
   Eigen::Map<const Eigen::MatrixXd> occupied_virtual_coefficients(
       candidate_coefficients.data() + layout.occupied_virtual_offset,
-      std::max(0, n_virtual),
-      std::max(0, block_basis.n_occupied));
+      n_virtual,
+      block_basis.n_occupied);
 
   Eigen::Map<Eigen::MatrixXd> inactive_active_metric_action(
       metric_action.data(),
-      std::max(0, n_active),
-      std::max(0, n_inactive));
+      n_active,
+      n_inactive);
   Eigen::Map<Eigen::MatrixXd> active_shape_metric_action(
       metric_action.data() + layout.inactive_active_count,
-      std::max(0, n_active),
-      std::max(0, n_active));
+      n_active,
+      n_active);
   Eigen::Map<Eigen::MatrixXd> occupied_virtual_metric_action(
       metric_action.data() + layout.occupied_virtual_offset,
-      std::max(0, n_virtual),
-      std::max(0, block_basis.n_occupied));
+      n_virtual,
+      block_basis.n_occupied);
 
   const Eigen::MatrixXd& active_inactive_gauge_coefficients =
       block_basis.active_inactive_gauge_coefficients;
@@ -1841,12 +2126,6 @@ Eigen::VectorXd NonredundantOrbitalSpace::solve_dense_full_support_candidate_met
   const int n_inactive = layout.n_inactive;
   const int n_active = layout.n_active;
   const int n_virtual = layout.n_virtual;
-  if (right_hand_side.size() !=
-      static_cast<Eigen::Index>(layout.direction_count)) {
-    throw std::invalid_argument(
-        "dense full-support metric right-hand side size does not match block");
-  }
-
   Eigen::VectorXd solution =
       Eigen::VectorXd::Zero(static_cast<Eigen::Index>(layout.direction_count));
   if (layout.direction_count == 0) {
@@ -1855,29 +2134,29 @@ Eigen::VectorXd NonredundantOrbitalSpace::solve_dense_full_support_candidate_met
 
   Eigen::Map<const Eigen::MatrixXd> inactive_active_rhs(
       right_hand_side.data(),
-      std::max(0, n_active),
-      std::max(0, n_inactive));
+      n_active,
+      n_inactive);
   Eigen::Map<const Eigen::MatrixXd> active_shape_rhs(
       right_hand_side.data() + layout.inactive_active_count,
-      std::max(0, n_active),
-      std::max(0, n_active));
+      n_active,
+      n_active);
   Eigen::Map<const Eigen::MatrixXd> occupied_virtual_rhs(
       right_hand_side.data() + layout.occupied_virtual_offset,
-      std::max(0, n_virtual),
-      std::max(0, block_basis.n_occupied));
+      n_virtual,
+      block_basis.n_occupied);
 
   Eigen::Map<Eigen::MatrixXd> inactive_active_solution(
       solution.data(),
-      std::max(0, n_active),
-      std::max(0, n_inactive));
+      n_active,
+      n_inactive);
   Eigen::Map<Eigen::MatrixXd> active_shape_solution(
       solution.data() + layout.inactive_active_count,
-      std::max(0, n_active),
-      std::max(0, n_active));
+      n_active,
+      n_active);
   Eigen::Map<Eigen::MatrixXd> occupied_virtual_solution(
       solution.data() + layout.occupied_virtual_offset,
-      std::max(0, n_virtual),
-      std::max(0, block_basis.n_occupied));
+      n_virtual,
+      block_basis.n_occupied);
 
   const Eigen::MatrixXd& active_inactive_gauge_coefficients =
       block_basis.active_inactive_gauge_coefficients;
@@ -2004,63 +2283,79 @@ Eigen::VectorXd NonredundantOrbitalSpace::project_block_candidate_overlap(
         block_columns);
   }
 
-  std::vector<Eigen::VectorXd> occupied_contractions;
-  std::vector<Eigen::VectorXd> virtual_contractions;
-  occupied_contractions.reserve(block_basis.orbitals.size());
-  virtual_contractions.reserve(block_basis.orbitals.size());
-  for (const auto& projector : block_basis.orbitals) {
+  Eigen::MatrixXd inactive_active_overlap =
+      Eigen::MatrixXd::Zero(n_active, n_inactive);
+  Eigen::MatrixXd active_inactive_overlap =
+      Eigen::MatrixXd::Zero(n_inactive, n_active);
+  Eigen::MatrixXd active_shape_overlap =
+      Eigen::MatrixXd::Zero(n_active, n_active);
+  Eigen::MatrixXd virtual_inactive_overlap =
+      Eigen::MatrixXd::Zero(n_virtual, n_inactive);
+  Eigen::MatrixXd virtual_active_overlap =
+      Eigen::MatrixXd::Zero(n_virtual, n_active);
+
+  for (int occupied_index = 0;
+       occupied_index < n_occupied;
+       ++occupied_index) {
+    const auto& projector = block_basis.orbitals[occupied_index];
     Eigen::VectorXd local_vector(
         static_cast<Eigen::Index>(projector.packed_indices.size()));
     for (Eigen::Index local_index = 0;
          local_index < local_vector.size();
          ++local_index) {
       local_vector[local_index] =
-          packed_vector[projector.packed_indices[xmvb::to_size(local_index)]];
+          packed_vector[projector.packed_indices[local_index]];
     }
-    occupied_contractions.push_back(
-        projector.occupied_masked.transpose() * local_vector);
+
+    if (occupied_index < n_inactive) {
+      if (n_active > 0) {
+        inactive_active_overlap.col(occupied_index).noalias() =
+            projector.active_working_masked.transpose() * local_vector;
+      }
+      if (n_virtual > 0) {
+        virtual_inactive_overlap.col(occupied_index).noalias() =
+            projector.internal_virtual_masked.transpose() * local_vector;
+      }
+      continue;
+    }
+
+    const int active_index = occupied_index - n_inactive;
+    if (n_inactive > 0) {
+      active_inactive_overlap.col(active_index).noalias() =
+          projector.inactive_working_masked.transpose() * local_vector;
+    }
+    if (n_active > 0) {
+      active_shape_overlap.col(active_index).noalias() =
+          projector.active_working_masked.transpose() * local_vector;
+    }
     if (n_virtual > 0) {
-      virtual_contractions.push_back(
-          projector.virtual_masked.transpose() * local_vector);
-    } else {
-      virtual_contractions.push_back(Eigen::VectorXd::Zero(0));
+      virtual_active_overlap.col(active_index).noalias() =
+          projector.internal_virtual_masked.transpose() * local_vector;
     }
   }
 
   if (n_inactive > 0 && n_active > 0) {
-    Eigen::Map<Eigen::MatrixXd> inactive_active_overlap(
+    Eigen::Map<Eigen::MatrixXd> inactive_active_candidate_overlap(
         candidate_overlap.data(),
         n_active,
         n_inactive);
-    for (int inactive_index = 0;
-         inactive_index < n_inactive;
-         ++inactive_index) {
-      inactive_active_overlap.col(inactive_index) =
-          occupied_contractions[xmvb::to_size(inactive_index)]
-              .segment(n_inactive, n_active);
-    }
-    for (int active_index = n_inactive;
-         active_index < n_occupied;
-         ++active_index) {
-      inactive_active_overlap.row(active_index - n_inactive) -=
-          occupied_contractions[xmvb::to_size(active_index)]
-              .head(n_inactive)
-              .transpose();
-    }
+    inactive_active_candidate_overlap.noalias() =
+        inactive_active_overlap *
+        block_basis.inactive_right_transform.transpose();
+    inactive_active_candidate_overlap.noalias() +=
+        active_shape_overlap *
+        block_basis.active_inactive_gauge_coefficients.transpose();
+    inactive_active_candidate_overlap.noalias() -=
+        block_basis.active_shape_matrix *
+        active_inactive_overlap.transpose();
   }
 
   if (n_active > 0) {
-    Eigen::Map<Eigen::MatrixXd> active_active_overlap(
+    Eigen::Map<Eigen::MatrixXd> active_shape_candidate_overlap(
         candidate_overlap.data() + layout.inactive_active_count,
         n_active,
         n_active);
-    for (int target_active_index = n_inactive;
-         target_active_index < n_occupied;
-         ++target_active_index) {
-      active_active_overlap.col(target_active_index - n_inactive) =
-          occupied_contractions[xmvb::to_size(target_active_index)]
-              .segment(n_inactive, n_active);
-    }
+    active_shape_candidate_overlap = active_shape_overlap;
   }
 
   if (n_virtual > 0) {
@@ -2068,11 +2363,20 @@ Eigen::VectorXd NonredundantOrbitalSpace::project_block_candidate_overlap(
         candidate_overlap.data() + layout.occupied_virtual_offset,
         n_virtual,
         n_occupied);
-    for (int occupied_index = 0;
-         occupied_index < n_occupied;
-         ++occupied_index) {
-      occupied_virtual_overlap.col(occupied_index) =
-          virtual_contractions[xmvb::to_size(occupied_index)];
+    if (n_inactive > 0) {
+      occupied_virtual_overlap.leftCols(n_inactive).noalias() =
+          virtual_inactive_overlap *
+          block_basis.inactive_right_transform.transpose();
+      if (n_active > 0) {
+        occupied_virtual_overlap.leftCols(n_inactive).noalias() +=
+            virtual_active_overlap *
+            block_basis.active_inactive_gauge_coefficients.transpose();
+      }
+    }
+    if (n_active > 0) {
+      occupied_virtual_overlap.rightCols(n_active).noalias() =
+          virtual_active_overlap *
+          block_basis.active_shape_matrix.transpose();
     }
   }
 
@@ -2083,10 +2387,6 @@ void NonredundantOrbitalSpace::accumulate_block_candidate_combination(
     const BlockBasis& block_basis,
     const Eigen::VectorXd& candidate_coefficients,
     Eigen::VectorXd* packed_vector) const {
-  if (packed_vector == nullptr) {
-    throw std::invalid_argument("packed_vector must not be null");
-  }
-
   const BlockDirectionLayout layout =
       build_block_direction_layout(
           block_basis.n_inactive,
@@ -2097,26 +2397,22 @@ void NonredundantOrbitalSpace::accumulate_block_candidate_combination(
   const int n_active = layout.n_active;
   const int n_virtual = layout.n_virtual;
   const int direction_count = layout.direction_count;
-  if (candidate_coefficients.size() != static_cast<Eigen::Index>(direction_count)) {
-    throw std::invalid_argument(
-        "candidate coefficient size does not match nonredundant block");
-  }
   if (direction_count == 0) {
     return;
   }
 
   Eigen::Map<const Eigen::MatrixXd> inactive_active_coefficients(
       candidate_coefficients.data(),
-      std::max(0, n_active),
-      std::max(0, n_inactive));
-  Eigen::Map<const Eigen::MatrixXd> active_active_coefficients(
+      n_active,
+      n_inactive);
+  Eigen::Map<const Eigen::MatrixXd> active_shape_coefficients(
       candidate_coefficients.data() + layout.inactive_active_count,
-      std::max(0, n_active),
-      std::max(0, n_active));
+      n_active,
+      n_active);
   Eigen::Map<const Eigen::MatrixXd> occupied_virtual_coefficients(
       candidate_coefficients.data() + layout.occupied_virtual_offset,
-      std::max(0, n_virtual),
-      std::max(0, n_occupied));
+      n_virtual,
+      n_occupied);
 
   if (block_basis.uses_dense_full_support_projector) {
     const Eigen::MatrixXd block_step =
@@ -2130,39 +2426,88 @@ void NonredundantOrbitalSpace::accumulate_block_candidate_combination(
     return;
   }
 
-  // Applying `D * a` is the reverse of the overlap assembly above: inactive /
-  // active rotations contribute to two occupied orbitals with opposite signs,
-  // while occupied / virtual rotations contribute to one occupied orbital.
+  // Sparse blocks use the same internal `(Q_i, Q_a, L_a, Q_v)` chart as the
+  // dense formulas, then sample each physical occupied column on its fixed
+  // support before scattering back to packed sparse storage.
+  Eigen::MatrixXd inactive_active_step =
+      Eigen::MatrixXd::Zero(n_active, n_inactive);
+  Eigen::MatrixXd inactive_virtual_step =
+      Eigen::MatrixXd::Zero(n_virtual, n_inactive);
+  Eigen::MatrixXd active_inactive_step =
+      Eigen::MatrixXd::Zero(n_inactive, n_active);
+  Eigen::MatrixXd active_working_step =
+      active_shape_coefficients;
+  Eigen::MatrixXd active_virtual_step =
+      Eigen::MatrixXd::Zero(n_virtual, n_active);
+
+  if (n_inactive > 0 && n_active > 0) {
+    inactive_active_step.noalias() =
+        inactive_active_coefficients *
+        block_basis.inactive_right_transform;
+    active_inactive_step.noalias() =
+        -inactive_active_coefficients.transpose() *
+        block_basis.active_shape_matrix;
+    active_working_step.noalias() +=
+        inactive_active_coefficients *
+        block_basis.active_inactive_gauge_coefficients;
+  }
+  if (n_virtual > 0) {
+    if (n_inactive > 0) {
+      inactive_virtual_step.noalias() =
+          occupied_virtual_coefficients.leftCols(n_inactive) *
+          block_basis.inactive_right_transform;
+      if (n_active > 0) {
+        active_virtual_step.noalias() +=
+            occupied_virtual_coefficients.leftCols(n_inactive) *
+            block_basis.active_inactive_gauge_coefficients;
+      }
+    }
+    if (n_active > 0) {
+      active_virtual_step.noalias() +=
+          occupied_virtual_coefficients.rightCols(n_active) *
+          block_basis.active_shape_matrix;
+    }
+  }
+
   for (int occupied_index = 0;
        occupied_index < n_occupied;
        ++occupied_index) {
-    const auto& projector = block_basis.orbitals[xmvb::to_size(occupied_index)];
+    const auto& projector = block_basis.orbitals[occupied_index];
     Eigen::VectorXd local_step =
         Eigen::VectorXd::Zero(static_cast<Eigen::Index>(projector.packed_indices.size()));
-    if (occupied_index < n_inactive && n_active > 0) {
-      local_step.noalias() +=
-          projector.occupied_masked.middleCols(n_inactive, n_active) *
-          inactive_active_coefficients.col(occupied_index);
-    }
-    if (occupied_index >= n_inactive && n_inactive > 0) {
-      local_step.noalias() -=
-          projector.occupied_masked.leftCols(n_inactive) *
-          inactive_active_coefficients.row(occupied_index - n_inactive).transpose();
-    }
-    if (occupied_index >= n_inactive && n_active > 0) {
-      local_step.noalias() +=
-          projector.occupied_masked.middleCols(n_inactive, n_active) *
-          active_active_coefficients.col(occupied_index - n_inactive);
-    }
-    if (n_virtual > 0) {
-      local_step.noalias() +=
-          projector.virtual_masked *
-          occupied_virtual_coefficients.col(occupied_index);
+    if (occupied_index < n_inactive) {
+      if (n_active > 0) {
+        local_step.noalias() +=
+            projector.active_working_masked *
+            inactive_active_step.col(occupied_index);
+      }
+      if (n_virtual > 0) {
+        local_step.noalias() +=
+            projector.internal_virtual_masked *
+            inactive_virtual_step.col(occupied_index);
+      }
+    } else {
+      const int active_index = occupied_index - n_inactive;
+      if (n_inactive > 0) {
+        local_step.noalias() +=
+            projector.inactive_working_masked *
+            active_inactive_step.col(active_index);
+      }
+      if (n_active > 0) {
+        local_step.noalias() +=
+            projector.active_working_masked *
+            active_working_step.col(active_index);
+      }
+      if (n_virtual > 0) {
+        local_step.noalias() +=
+            projector.internal_virtual_masked *
+            active_virtual_step.col(active_index);
+      }
     }
     for (Eigen::Index local_index = 0;
          local_index < local_step.size();
          ++local_index) {
-      (*packed_vector)[projector.packed_indices[xmvb::to_size(local_index)]] +=
+      (*packed_vector)[projector.packed_indices[local_index]] +=
           local_step[local_index];
     }
   }
@@ -2173,10 +2518,6 @@ NonredundantOrbitalSpace::project_impl(
     const Eigen::VectorXd& packed_vector,
     bool recover_tangent_coordinates,
     bool build_packed_projection) const {
-  if (packed_vector.size() != packed_parameter_size_) {
-    throw std::invalid_argument("packed vector size does not match nonredundant space");
-  }
-
   ProjectionResult result;
   result.reduced_gradient =
       Eigen::VectorXd::Zero(static_cast<Eigen::Index>(reduced_size_));
@@ -2270,10 +2611,6 @@ NonredundantOrbitalSpace::project_vector(
 
 Eigen::VectorXd NonredundantOrbitalSpace::apply_inverse_reduced_curvature(
     const Eigen::VectorXd& reduced_vector) const {
-  if (reduced_vector.size() != static_cast<Eigen::Index>(reduced_size_)) {
-    throw std::invalid_argument(
-        "reduced vector size does not match nonredundant curvature diagonal");
-  }
   if (!has_reduced_curvature_diagonal_) {
     return reduced_vector;
   }
@@ -2297,12 +2634,78 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_inverse_reduced_curvature(
   return preconditioned;
 }
 
+Eigen::VectorXd
+NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
+    const Eigen::VectorXd& reduced_vector) const {
+  constexpr double kMinimumCurvature = 1.0e-12;
+  Eigen::VectorXd preconditioned = reduced_vector;
+  for (const auto& block_basis : block_bases_) {
+    const Eigen::Index local_size =
+        static_cast<Eigen::Index>(block_basis.candidate_metric_diagonal.size());
+    if (local_size == 0) {
+      continue;
+    }
+
+    Eigen::VectorXd local_vector =
+        reduced_vector.segment(block_basis.reduced_offset, local_size);
+    const bool has_block_curvature =
+        block_basis.reduced_curvature_diagonal.size() == local_size;
+    if (has_block_curvature) {
+      // The reduced block model is
+      //   `M = C^{1/2} G C^{1/2}`
+      // where `G = D^T D` is the accepted-point block Gram matrix in the raw
+      // candidate chart and `C` is the positive reduced curvature diagonal.
+      // Whiten the right-hand side by `C^{-1/2}`, solve the block metric, then
+      // apply the second `C^{-1/2}` so the overall action is symmetric
+      // positive and compatible with PCG.
+      local_vector.array() /=
+          block_basis.reduced_curvature_diagonal
+              .array()
+              .max(kMinimumCurvature)
+              .sqrt();
+    }
+
+    if (block_basis.uses_dense_full_support_projector) {
+      local_vector =
+          solve_dense_full_support_candidate_metric(
+              block_basis,
+              local_vector);
+    } else if (block_basis.has_exact_metric_factorization) {
+      // Exact-factorized blocks already use the whitened chart `z = L^{-1} D^T v`
+      // with identity reduced metric, so only the curvature scaling above is
+      // required here.
+    } else {
+      // Sparse large blocks keep the cheaper diagonal-only model. Re-entering
+      // the iterative block metric solve here would nest one Krylov iteration
+      // inside another and tends to lose wall time on localized charts.
+      if (has_block_curvature) {
+        local_vector =
+            local_vector.array() /
+            block_basis.reduced_curvature_diagonal
+                .array()
+                .max(kMinimumCurvature)
+                .sqrt();
+      }
+      preconditioned.segment(block_basis.reduced_offset, local_size) =
+          local_vector;
+      continue;
+    }
+
+    if (has_block_curvature) {
+      local_vector.array() /=
+          block_basis.reduced_curvature_diagonal
+              .array()
+              .max(kMinimumCurvature)
+              .sqrt();
+    }
+    preconditioned.segment(block_basis.reduced_offset, local_size) =
+        local_vector;
+  }
+  return preconditioned;
+}
+
 Eigen::VectorXd NonredundantOrbitalSpace::apply_reduced_curvature(
     const Eigen::VectorXd& reduced_vector) const {
-  if (reduced_vector.size() != static_cast<Eigen::Index>(reduced_size_)) {
-    throw std::invalid_argument(
-        "reduced vector size does not match nonredundant curvature diagonal");
-  }
   if (!has_reduced_curvature_diagonal_) {
     return reduced_vector;
   }
@@ -2328,10 +2731,6 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_reduced_curvature(
 
 Eigen::VectorXd NonredundantOrbitalSpace::expand_step(
     const Eigen::VectorXd& reduced_step) const {
-  if (reduced_step.size() != static_cast<Eigen::Index>(reduced_size_)) {
-    throw std::invalid_argument("reduced step size does not match nonredundant space");
-  }
-
   Eigen::VectorXd packed_step =
       Eigen::VectorXd::Zero(static_cast<Eigen::Index>(packed_parameter_size_));
   // Expand a reduced-coordinate step back to the packed sparse-parameter
@@ -2349,32 +2748,189 @@ Eigen::VectorXd NonredundantOrbitalSpace::expand_step(
   return packed_step;
 }
 
+Eigen::VectorXd NonredundantOrbitalSpace::expand_retract_input_tangent(
+    const OrbitalPreparationInput& orbital_preparation_input,
+    const Eigen::VectorXd& reduced_step) const {
+  Eigen::VectorXd input_tangent =
+      Eigen::VectorXd::Zero(
+          static_cast<Eigen::Index>(
+              orbital_preparation_input.orbital_value_table.size()));
+
+  for (const auto& block_basis : block_bases_) {
+    if (block_basis.n_occupied <= 0) {
+      continue;
+    }
+
+    const Eigen::VectorXd candidate_coefficients =
+        block_candidate_coefficients_from_reduced_step(
+            block_basis,
+            reduced_step);
+    if (block_basis.uses_dense_full_support_projector) {
+      const Eigen::MatrixXd block_step =
+          build_dense_full_support_block_step(
+              block_basis,
+              candidate_coefficients);
+      for (int occupied_index = 0;
+           occupied_index < block_basis.n_occupied;
+           ++occupied_index) {
+        const auto& projector = block_basis.orbitals[occupied_index];
+        for (int block_row = 0;
+             block_row < static_cast<int>(block_basis.basis_function_indices.size());
+             ++block_row) {
+          const int flat_index =
+              projector.flat_index_by_block_row[block_row];
+          if (flat_index < 0 ||
+              flat_index >= input_tangent.size()) {
+            throw std::runtime_error(
+                "dense full-support tangent expansion is missing a flat block row");
+          }
+          input_tangent[flat_index] +=
+              block_step(block_row, occupied_index);
+        }
+      }
+      continue;
+    }
+
+    const BlockDirectionLayout layout =
+        build_block_direction_layout(
+            block_basis.n_inactive,
+            block_basis.n_occupied,
+            block_basis.n_virtual);
+    Eigen::Map<const Eigen::MatrixXd> inactive_active_coefficients(
+        candidate_coefficients.data(),
+        layout.n_active,
+        layout.n_inactive);
+    Eigen::Map<const Eigen::MatrixXd> active_shape_coefficients(
+        candidate_coefficients.data() + layout.inactive_active_count,
+        layout.n_active,
+        layout.n_active);
+    Eigen::Map<const Eigen::MatrixXd> occupied_virtual_coefficients(
+        candidate_coefficients.data() + layout.occupied_virtual_offset,
+        layout.n_virtual,
+        layout.n_occupied);
+
+    Eigen::MatrixXd inactive_active_step =
+        Eigen::MatrixXd::Zero(layout.n_active, layout.n_inactive);
+    Eigen::MatrixXd inactive_virtual_step =
+        Eigen::MatrixXd::Zero(layout.n_virtual, layout.n_inactive);
+    Eigen::MatrixXd active_inactive_step =
+        Eigen::MatrixXd::Zero(layout.n_inactive, layout.n_active);
+    Eigen::MatrixXd active_working_step =
+        active_shape_coefficients;
+    Eigen::MatrixXd active_virtual_step =
+        Eigen::MatrixXd::Zero(layout.n_virtual, layout.n_active);
+
+    if (layout.n_inactive > 0 && layout.n_active > 0) {
+      inactive_active_step.noalias() =
+          inactive_active_coefficients *
+          block_basis.inactive_right_transform;
+      active_inactive_step.noalias() =
+          -inactive_active_coefficients.transpose() *
+          block_basis.active_shape_matrix;
+      active_working_step.noalias() +=
+          inactive_active_coefficients *
+          block_basis.active_inactive_gauge_coefficients;
+    }
+    if (layout.n_virtual > 0) {
+      if (layout.n_inactive > 0) {
+        inactive_virtual_step.noalias() =
+            occupied_virtual_coefficients.leftCols(layout.n_inactive) *
+            block_basis.inactive_right_transform;
+        if (layout.n_active > 0) {
+          active_virtual_step.noalias() +=
+              occupied_virtual_coefficients.leftCols(layout.n_inactive) *
+              block_basis.active_inactive_gauge_coefficients;
+        }
+      }
+      if (layout.n_active > 0) {
+        active_virtual_step.noalias() +=
+            occupied_virtual_coefficients.rightCols(layout.n_active) *
+            block_basis.active_shape_matrix;
+      }
+    }
+
+    for (int occupied_index = 0;
+         occupied_index < block_basis.n_occupied;
+         ++occupied_index) {
+      const auto& projector = block_basis.orbitals[occupied_index];
+      Eigen::VectorXd local_step =
+          Eigen::VectorXd::Zero(
+              static_cast<Eigen::Index>(projector.flat_indices.size()));
+      if (occupied_index < block_basis.n_inactive) {
+        if (layout.n_active > 0) {
+          local_step.noalias() +=
+              projector.active_working_masked *
+              inactive_active_step.col(occupied_index);
+        }
+        if (layout.n_virtual > 0) {
+          local_step.noalias() +=
+              projector.internal_virtual_masked *
+              inactive_virtual_step.col(occupied_index);
+        }
+      } else {
+        const int active_index = occupied_index - block_basis.n_inactive;
+        if (layout.n_inactive > 0) {
+          local_step.noalias() +=
+              projector.inactive_working_masked *
+              active_inactive_step.col(active_index);
+        }
+        if (layout.n_active > 0) {
+          local_step.noalias() +=
+              projector.active_working_masked *
+              active_working_step.col(active_index);
+        }
+        if (layout.n_virtual > 0) {
+          local_step.noalias() +=
+              projector.internal_virtual_masked *
+              active_virtual_step.col(active_index);
+        }
+      }
+
+      Eigen::VectorXd local_coefficients =
+          Eigen::VectorXd::Zero(
+              static_cast<Eigen::Index>(projector.flat_indices.size()));
+      for (Eigen::Index local_index = 0;
+           local_index < local_coefficients.size();
+           ++local_index) {
+        local_coefficients[local_index] =
+            orbital_preparation_input.orbital_value_table
+                [projector.flat_indices[local_index]];
+      }
+      const Eigen::MatrixXd local_overlap =
+          build_local_sparse_overlap_metric(
+              block_basis.block_overlap_matrix,
+              projector.block_rows);
+      const Eigen::VectorXd local_tangent =
+          linearize_local_sparse_normalized_step(
+              local_overlap,
+              local_coefficients,
+              local_step);
+
+      for (Eigen::Index local_index = 0;
+           local_index < local_tangent.size();
+           ++local_index) {
+        input_tangent[projector.flat_indices[local_index]] +=
+            local_tangent[local_index];
+      }
+    }
+  }
+
+  return input_tangent;
+}
+
 OrbitalPreparationInput NonredundantOrbitalSpace::retract_step(
     const OrbitalPreparationInput& orbital_preparation_input,
     const Eigen::VectorXd& reduced_step,
     double step_scale) const {
-  if (reduced_step.size() != static_cast<Eigen::Index>(reduced_size_)) {
-    throw std::invalid_argument("reduced step size does not match nonredundant space");
-  }
-  if (!std::isfinite(step_scale)) {
-    throw std::invalid_argument("nonredundant step scale must be finite");
-  }
-  if (static_cast<int>(orbital_preparation_input.orbital_value_table.size()) !=
-      orbital_preparation_input.n_orbitals * orbital_preparation_input.n_basis_functions) {
-    throw std::invalid_argument(
-        "orbital_value_table size does not match nonredundant retraction layout");
-  }
-
   OrbitalPreparationInput trial_input = orbital_preparation_input;
   std::vector<double> updated_orbital_values =
-      orbital_preparation_input.orbital_value_table.vector();
+      orbital_preparation_input.orbital_value_table;
 
-  // The reduced directions are not raw sparse-coefficient unit vectors. Each
-  // block therefore needs its own finite-step map back to `orbital_value_table`:
-  // partially overlapping sparse blocks keep the legacy block-local Cayley
-  // retraction, while dense full-support/OEO blocks now retract the orthogonal
-  // frame part on the mixed chart `(Q_i, Q_a)` and update the active shape
-  // `L_a` separately.
+  // Both dense and sparse blocks now generate the finite step from the same
+  // internal mixed chart `(Q_i, Q_a, Q_v, L_a)`.  Dense full-support blocks
+  // can write the rotated block columns back directly; sparse blocks first
+  // restrict the internal finite step to each orbital's fixed support and then
+  // retract that support-local target on the local `x^T S x = 1` manifold.
   for (const auto& block_basis : block_bases_) {
     if (block_basis.n_occupied <= 0) {
       continue;
@@ -2385,78 +2941,12 @@ OrbitalPreparationInput NonredundantOrbitalSpace::retract_step(
             block_basis,
             reduced_step);
     candidate_coefficients *= step_scale;
+    const Eigen::MatrixXd trial_occupied_orbitals =
+        build_mixed_chart_trial_occupied_orbitals(
+            block_basis,
+            candidate_coefficients);
 
     if (block_basis.uses_dense_full_support_projector) {
-      const BlockDirectionLayout layout =
-          build_block_direction_layout(
-              block_basis.n_inactive,
-              block_basis.n_occupied,
-              block_basis.n_virtual);
-      const int n_active = layout.n_active;
-      Eigen::Map<const Eigen::MatrixXd> active_shape_step(
-          candidate_coefficients.data() + layout.inactive_active_count,
-          std::max(0, n_active),
-          std::max(0, n_active));
-
-      Eigen::MatrixXd internal_occupied_frame =
-          Eigen::MatrixXd::Zero(
-              static_cast<Eigen::Index>(block_basis.basis_function_indices.size()),
-              block_basis.n_occupied);
-      if (block_basis.n_inactive > 0) {
-        internal_occupied_frame.leftCols(block_basis.n_inactive) =
-            block_basis.inactive_working_orbitals;
-      }
-      if (n_active > 0) {
-        internal_occupied_frame.middleCols(
-            block_basis.n_inactive,
-            n_active) = block_basis.active_working_orbitals;
-      }
-
-      const Eigen::MatrixXd occupied_coordinates =
-          build_cayley_retracted_occupied_coordinates(
-              block_basis.n_inactive,
-              block_basis.n_occupied,
-              block_basis.n_virtual,
-              candidate_coefficients);
-      const Eigen::MatrixXd occupied_mixing =
-          occupied_coordinates.topRows(block_basis.n_occupied);
-      const Eigen::MatrixXd virtual_mixing =
-          occupied_coordinates.bottomRows(block_basis.n_virtual);
-      Eigen::MatrixXd retracted_internal_occupied =
-          internal_occupied_frame * occupied_mixing;
-      if (block_basis.n_virtual > 0) {
-        retracted_internal_occupied.noalias() +=
-            block_basis.virtual_orbitals * virtual_mixing;
-      }
-
-      Eigen::MatrixXd trial_occupied_orbitals =
-          Eigen::MatrixXd::Zero(
-              static_cast<Eigen::Index>(block_basis.basis_function_indices.size()),
-              block_basis.n_occupied);
-      if (block_basis.n_inactive > 0) {
-        trial_occupied_orbitals.leftCols(block_basis.n_inactive).noalias() =
-            retracted_internal_occupied.leftCols(block_basis.n_inactive) *
-            block_basis.inactive_right_transform;
-      }
-      if (n_active > 0) {
-        const Eigen::MatrixXd trial_active_shape =
-            block_basis.active_shape_matrix + active_shape_step;
-        trial_occupied_orbitals.middleCols(
-            block_basis.n_inactive,
-            n_active).noalias() =
-            retracted_internal_occupied.middleCols(
-                block_basis.n_inactive,
-                n_active) *
-            trial_active_shape;
-        if (block_basis.n_inactive > 0) {
-          trial_occupied_orbitals.middleCols(
-              block_basis.n_inactive,
-              n_active).noalias() +=
-              retracted_internal_occupied.leftCols(block_basis.n_inactive) *
-              block_basis.active_inactive_gauge_coefficients;
-        }
-      }
-
       if (!trial_occupied_orbitals.allFinite()) {
         throw std::runtime_error(
             "nonredundant dense full-support retraction produced non-finite coefficients");
@@ -2468,64 +2958,47 @@ OrbitalPreparationInput NonredundantOrbitalSpace::retract_step(
       continue;
     }
 
-    const BlockDirectionLayout layout =
-        build_block_direction_layout(
-            block_basis.n_inactive,
-            block_basis.n_occupied,
-            block_basis.n_virtual);
-    Eigen::Map<const Eigen::MatrixXd> active_active_coefficients(
-        candidate_coefficients.data() + layout.inactive_active_count,
-        std::max(0, layout.n_active),
-        std::max(0, layout.n_active));
-    const Eigen::MatrixXd occupied_coordinates =
-        build_cayley_retracted_occupied_coordinates(
-            block_basis.n_inactive,
-            block_basis.n_occupied,
-            block_basis.n_virtual,
-            candidate_coefficients);
-    const Eigen::MatrixXd occupied_mixing =
-        occupied_coordinates.topRows(block_basis.n_occupied);
-    const Eigen::MatrixXd virtual_mixing =
-        occupied_coordinates.bottomRows(block_basis.n_virtual);
-
     for (int occupied_index = 0;
          occupied_index < block_basis.n_occupied;
          ++occupied_index) {
-      const auto& projector = block_basis.orbitals[xmvb::to_size(occupied_index)];
-      // The generic sparse-support chart lives in the current raw sparse
-      // coefficient slots.  Its finite-step retraction must therefore start
-      // from the current raw occupied block, not from an auxiliary or
-      // normalized physical proxy, otherwise the reduced directional
-      // derivative no longer matches the sparse gradient pullback.
+      const auto& projector = block_basis.orbitals[occupied_index];
+      const Eigen::Index local_size =
+          static_cast<Eigen::Index>(projector.flat_indices.size());
       Eigen::VectorXd local_coefficients =
-          projector.occupied_masked * occupied_mixing.col(occupied_index);
-      if (block_basis.n_virtual > 0) {
-        local_coefficients.noalias() +=
-            projector.virtual_masked * virtual_mixing.col(occupied_index);
-      }
-      if (occupied_index >= block_basis.n_inactive && layout.n_active > 0) {
-        // The sparse partial-overlap path still uses the Cayley map for the
-        // occupied/virtual rotation blocks. The retained active-active block is
-        // appended as a first-order accepted-point update on the physical
-        // active columns so the reduced chart matches the explicit tangent
-        // basis used by projection and HVP assembly.
-        local_coefficients.noalias() +=
-            projector.occupied_masked.middleCols(
-                block_basis.n_inactive,
-                layout.n_active) *
-            active_active_coefficients.col(occupied_index - block_basis.n_inactive);
-      }
-      if (!local_coefficients.allFinite()) {
-        throw std::runtime_error(
-            "nonredundant block retraction produced non-finite local coefficients");
-      }
-
+          Eigen::VectorXd::Zero(local_size);
       for (Eigen::Index local_index = 0;
            local_index < local_coefficients.size();
            ++local_index) {
+        local_coefficients[local_index] =
+            orbital_preparation_input.orbital_value_table
+                [projector.flat_indices[local_index]];
+      }
+      const Eigen::MatrixXd local_overlap =
+          build_local_sparse_overlap_metric(
+              block_basis.block_overlap_matrix,
+              projector.block_rows);
+      Eigen::VectorXd local_target =
+          Eigen::VectorXd::Zero(local_size);
+      for (Eigen::Index local_index = 0;
+           local_index < local_size;
+           ++local_index) {
+        local_target[local_index] =
+            trial_occupied_orbitals(
+                projector.block_rows[static_cast<std::size_t>(local_index)],
+                occupied_index);
+      }
+      const Eigen::VectorXd local_retracted =
+          retract_local_sparse_normalized_step(
+              local_overlap,
+              local_coefficients,
+              local_target - local_coefficients);
+
+      for (Eigen::Index local_index = 0;
+           local_index < local_retracted.size();
+           ++local_index) {
         updated_orbital_values
-            [projector.flat_indices[xmvb::to_size(local_index)]] =
-                local_coefficients[local_index];
+            [projector.flat_indices[local_index]] =
+                local_retracted[local_index];
       }
     }
   }
@@ -2538,10 +3011,6 @@ OrbitalPreparationInput NonredundantOrbitalSpace::retract_step(
 Eigen::VectorXd NonredundantOrbitalSpace::block_candidate_coefficients_from_reduced_step(
     const BlockBasis& block_basis,
     const Eigen::VectorXd& reduced_step) const {
-  if (reduced_step.size() != static_cast<Eigen::Index>(reduced_size_)) {
-    throw std::invalid_argument("reduced step size does not match nonredundant space");
-  }
-
   const Eigen::VectorXd local_reduced =
       reduced_step.segment(
           block_basis.reduced_offset,
@@ -2576,10 +3045,6 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_block_candidate_metric(
 Eigen::VectorXd NonredundantOrbitalSpace::solve_block_candidate_metric(
     const BlockBasis& block_basis,
     const Eigen::VectorXd& right_hand_side) const {
-  if (right_hand_side.size() != block_basis.candidate_metric_diagonal.size()) {
-    throw std::invalid_argument(
-        "candidate metric right-hand side size does not match direct-candidate block");
-  }
   if (right_hand_side.size() == 0) {
     return Eigen::VectorXd::Zero(0);
   }
@@ -2662,9 +3127,6 @@ Eigen::VectorXd NonredundantOrbitalSpace::solve_block_candidate_metric(
 
 void NonredundantOrbitalSpace::maybe_factorize_small_block_candidate_metric(
     BlockBasis* block_basis) {
-  if (block_basis == nullptr) {
-    throw std::invalid_argument("block_basis must not be null");
-  }
   const int direction_count =
       static_cast<int>(block_basis->candidate_metric_diagonal.size());
   if (direction_count <= 0 ||
@@ -2722,10 +3184,6 @@ void NonredundantOrbitalSpace::maybe_factorize_small_block_candidate_metric(
 std::vector<NonredundantOrbitalSpace::BlockRotationDirection>
 NonredundantOrbitalSpace::expand_block_rotation_directions(
     const Eigen::VectorXd& reduced_step) const {
-  if (reduced_step.size() != static_cast<Eigen::Index>(reduced_size_)) {
-    throw std::invalid_argument("reduced step size does not match nonredundant space");
-  }
-
   std::vector<BlockRotationDirection> directions;
   directions.reserve(block_bases_.size());
   for (const auto& block_basis : block_bases_) {
@@ -2750,20 +3208,37 @@ NonredundantOrbitalSpace::expand_block_rotation_directions(
     direction.n_virtual = n_virtual;
     direction.basis_function_indices = block_basis.basis_function_indices;
     direction.occupied_orbital_indices = block_basis.occupied_orbital_indices;
-    direction.occupied_orbitals = block_basis.occupied_orbitals;
-    direction.virtual_orbitals = block_basis.virtual_orbitals;
+    if (block_basis.uses_dense_full_support_projector) {
+      direction.occupied_orbitals = block_basis.occupied_orbitals;
+      direction.virtual_orbitals = block_basis.virtual_orbitals;
+    } else {
+      direction.occupied_orbitals =
+          Eigen::MatrixXd::Zero(
+              static_cast<Eigen::Index>(block_basis.basis_function_indices.size()),
+              n_occupied);
+      if (n_inactive > 0) {
+        direction.occupied_orbitals.leftCols(n_inactive) =
+            block_basis.inactive_working_orbitals;
+      }
+      if (n_active > 0) {
+        direction.occupied_orbitals.middleCols(
+            n_inactive,
+            n_active) = block_basis.active_working_orbitals;
+      }
+      direction.virtual_orbitals = block_basis.internal_virtual_orbitals;
+    }
     direction.inactive_active_coefficients =
         Eigen::MatrixXd::Zero(
-            static_cast<Eigen::Index>(std::max(0, n_active)),
-            static_cast<Eigen::Index>(std::max(0, n_inactive)));
+            n_active,
+            n_inactive);
     direction.active_active_coefficients =
         Eigen::MatrixXd::Zero(
-            static_cast<Eigen::Index>(std::max(0, n_active)),
-            static_cast<Eigen::Index>(std::max(0, n_active)));
+            n_active,
+            n_active);
     direction.occupied_virtual_coefficients =
         Eigen::MatrixXd::Zero(
-            static_cast<Eigen::Index>(std::max(0, n_virtual)),
-            static_cast<Eigen::Index>(std::max(0, n_occupied)));
+            n_virtual,
+            n_occupied);
 
     if (layout.inactive_active_count > 0) {
       direction.inactive_active_coefficients =

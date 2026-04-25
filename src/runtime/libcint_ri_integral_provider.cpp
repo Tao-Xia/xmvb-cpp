@@ -64,16 +64,16 @@ bool can_build_dense_lower_ao_factor_cache(
     return false;
   }
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) *
-      xmvb::to_size(n_basis_functions);
+      n_basis_functions *
+      n_basis_functions;
   if (matrix_size == 0 ||
       matrix_size >
           std::numeric_limits<std::size_t>::max() /
-              xmvb::to_size(n_auxiliary_functions)) {
+              n_auxiliary_functions) {
     return false;
   }
   const std::size_t dense_value_count =
-      matrix_size * xmvb::to_size(n_auxiliary_functions);
+      matrix_size * n_auxiliary_functions;
   return dense_value_count <=
       kDenseAoFactorMatrixCacheMaxBytes / sizeof(double);
 }
@@ -83,10 +83,10 @@ std::vector<double> build_dense_lower_ao_factor_matrices(
     int n_auxiliary_functions,
     int n_basis_functions) {
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) *
-      xmvb::to_size(n_basis_functions);
+      n_basis_functions *
+      n_basis_functions;
   std::vector<double> dense_lower_factor_matrices(
-      xmvb::to_size(n_auxiliary_functions) * matrix_size,
+      n_auxiliary_functions * matrix_size,
       0.0);
 
 #pragma omp parallel for schedule(static)
@@ -95,7 +95,7 @@ std::vector<double> build_dense_lower_ao_factor_matrices(
        ++auxiliary_index) {
     double* dense_matrix =
         dense_lower_factor_matrices.data() +
-        xmvb::to_size(auxiliary_index) * matrix_size;
+        auxiliary_index * matrix_size;
 
     std::size_t packed_index = 0;
     for (int column = 0; column < n_basis_functions; ++column) {
@@ -111,8 +111,8 @@ std::vector<double> build_dense_lower_ao_factor_matrices(
         // contiguous. Access through `(auxiliary, packed_pair)` indexing rather
         // than row-pointer arithmetic.
         dense_matrix[
-            xmvb::to_size(row) * n_basis_functions +
-            xmvb::to_size(column)] =
+            row * n_basis_functions +
+            column] =
             packed_factor_rows(auxiliary_index, static_cast<Eigen::Index>(packed_index++));
       }
     }
@@ -125,9 +125,9 @@ std::vector<ThreeCenterShellTask> build_three_center_shell_tasks(
     int n_auxiliary_shells) {
   std::vector<ThreeCenterShellTask> tasks;
   tasks.reserve(
-      xmvb::to_size(n_auxiliary_shells) *
-      xmvb::to_size(n_primary_shells) *
-      xmvb::to_size(n_primary_shells + 1) / 2);
+      n_auxiliary_shells *
+      n_primary_shells *
+      (n_primary_shells + 1) / 2);
   for (int primary_left_shell = 0; primary_left_shell < n_primary_shells; ++primary_left_shell) {
     for (int primary_right_shell = 0;
          primary_right_shell <= primary_left_shell;
@@ -167,9 +167,9 @@ void scatter_three_center_shell_block(
         }
         const int packed_pair_index = ao_pair_index(left_index, right_index);
         const std::size_t local_index =
-            xmvb::to_size(left_local) +
-            xmvb::to_size(right_local) * block.primary_left_ao_count +
-            xmvb::to_size(auxiliary_local) *
+            left_local +
+            right_local * block.primary_left_ao_count +
+            auxiliary_local *
                 block.primary_left_ao_count * block.primary_right_ao_count;
         (*raw_ao_pair_factors)(auxiliary_index, packed_pair_index) =
             block.values[local_index];
@@ -213,8 +213,8 @@ LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
         for (int row = 0; row < block.left_ao_count; ++row) {
           const int global_row = block.left_ao_offset + row;
           const std::size_t local_index =
-              xmvb::to_size(row) +
-              xmvb::to_size(column) * block.left_ao_count;
+              row +
+              column * block.left_ao_count;
           const double value = block.values[local_index];
           auxiliary_metric(global_row, global_column) = value;
           auxiliary_metric(global_column, global_row) = value;
@@ -257,7 +257,7 @@ LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
       for (std::ptrdiff_t task_index = 0;
            task_index < static_cast<std::ptrdiff_t>(three_center_tasks.size());
            ++task_index) {
-        const auto& task = three_center_tasks[xmvb::to_size(task_index)];
+        const auto& task = three_center_tasks[task_index];
         const auto block =
             local_evaluator.evaluate_three_center_shell_block(
                 task.primary_left_shell,

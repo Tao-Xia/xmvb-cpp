@@ -25,7 +25,7 @@ Matrix dense_mat(
     int dimension,
     const char* label) {
   const std::size_t expected_size =
-      xmvb::to_size(dimension) * xmvb::to_size(dimension);
+      dimension * dimension;
   if (data.size() != expected_size) {
     throw std::invalid_argument(std::string(label) + " size does not match the active-space dimension");
   }
@@ -33,7 +33,7 @@ Matrix dense_mat(
   Matrix matrix = Matrix::Zero(dimension, dimension);
   for (int col = 0; col < dimension; ++col) {
     for (int row = 0; row < dimension; ++row) {
-      matrix(row, col) = data[xmvb::to_size(col) * dimension + row];
+      matrix(row, col) = data[col * dimension + row];
     }
   }
   return matrix;
@@ -43,13 +43,13 @@ std::size_t linear_index(
     int row,
     int col,
     int dimension) {
-  return xmvb::to_size(col) * dimension + row;
+  return col * dimension + row;
 }
 
 std::size_t lower_triangle_index(
     int row,
     int col) {
-  return xmvb::to_size(row) * (row + 1) / 2 + col;
+  return row * (row + 1) / 2 + col;
 }
 
 bool basis_contains_open_shell_states(const PfBasisData& basis) {
@@ -184,11 +184,11 @@ PfMatrixBuildResult PfMatrixBuilder::build(
   std::vector<Matrix> closed_shell_left_ba_blocks;
   if (use_closed_shell_cache_path) {
     if (store_lower_triangle_pair_caches) {
-      pairing_matrices.reserve(xmvb::to_size(n_states));
-      pairing_matrices_transpose.reserve(xmvb::to_size(n_states));
+      pairing_matrices.reserve(n_states);
+      pairing_matrices_transpose.reserve(n_states);
     } else {
-      closed_shell_right_ab_blocks.reserve(xmvb::to_size(n_states));
-      closed_shell_left_ba_blocks.reserve(xmvb::to_size(n_states));
+      closed_shell_right_ab_blocks.reserve(n_states);
+      closed_shell_left_ba_blocks.reserve(n_states);
     }
   }
   for (const PfState& state : basis.states) {
@@ -222,10 +222,10 @@ PfMatrixBuildResult PfMatrixBuilder::build(
 
   PfMatrixBuildResult result;
   result.n_states = n_states;
-  result.s.assign(xmvb::to_size(n_states) * n_states, 0.0);
-  result.h.assign(xmvb::to_size(n_states) * n_states, 0.0);
+  result.s.assign(n_states * n_states, 0.0);
+  result.h.assign(n_states * n_states, 0.0);
   const std::size_t lower_triangle_size =
-      xmvb::to_size(n_states) * (n_states + 1) / 2;
+      n_states * (n_states + 1) / 2;
   if (use_closed_shell_cache_path && store_lower_triangle_pair_caches) {
     result.lower_triangle_pair_caches.resize(lower_triangle_size);
   }
@@ -240,11 +240,11 @@ PfMatrixBuildResult PfMatrixBuilder::build(
 #endif
       for (int row = 0; row < n_states; ++row) {
         const Matrix& left_pairing =
-            pairing_matrices_transpose[xmvb::to_size(row)];
+            pairing_matrices_transpose[row];
         for (int col = 0; col <= row; ++col) {
           const std::size_t pair_index = lower_triangle_index(row, col);
           const Matrix& right_pairing =
-              pairing_matrices[xmvb::to_size(col)];
+              pairing_matrices[col];
           PfKernelCache cache =
               PfForwardKernel::build_closed_shell_exact_cache(
                   left_pairing,
@@ -271,10 +271,10 @@ PfMatrixBuildResult PfMatrixBuilder::build(
 #endif
       for (int row = 0; row < n_states; ++row) {
         const Matrix& left_ba =
-            closed_shell_left_ba_blocks[xmvb::to_size(row)];
+            closed_shell_left_ba_blocks[row];
         for (int col = 0; col <= row; ++col) {
           const Matrix& right_ab =
-              closed_shell_right_ab_blocks[xmvb::to_size(col)];
+              closed_shell_right_ab_blocks[col];
           const PfKernelCache cache =
               PfForwardKernel::build_closed_shell_exact_spatial_cache(
                   left_ba,
@@ -302,8 +302,8 @@ PfMatrixBuildResult PfMatrixBuilder::build(
       for (int col = 0; col <= row; ++col) {
         const PfHighSpinOpenShellHamiltonianResult pair_result =
             evaluate_high_spin_open_shell_pf_state_pair_hamiltonian(
-                basis.states[xmvb::to_size(row)],
-                basis.states[xmvb::to_size(col)],
+                basis.states[row],
+                basis.states[col],
                 spatial_overlap_matrix,
                 one_electron_matrix,
                 active_space.ggo,
@@ -324,8 +324,8 @@ PfMatrixBuildResult PfMatrixBuilder::build(
       for (int col = 0; col <= row; ++col) {
         const PfFixedMsOpenShellHamiltonianResult pair_result =
             evaluate_fixed_ms_open_shell_pf_state_pair_hamiltonian(
-                basis.states[xmvb::to_size(row)],
-                basis.states[xmvb::to_size(col)],
+                basis.states[row],
+                basis.states[col],
                 spatial_overlap_matrix,
                 one_electron_matrix,
                 active_space.ggo);

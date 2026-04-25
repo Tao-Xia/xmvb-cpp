@@ -4,7 +4,7 @@
 
 #include <vector>
 
-#include "vb/pdft/physical_orbital_frame.hpp"
+#include "vb/orbital/physical_orbital_frame.hpp"
 
 namespace xmvb::vb {
 
@@ -91,9 +91,8 @@ struct OrbitalPreparationResult {
    * @brief Normalized physical orbital coefficients before inactive-space projection.
    *
    * The current matrix-form VBSCF path primarily consumes the auxiliary
-   * orbital matrices above. Post-VBSCF real-space methods such as a future
-   * `VB-PDFT` implementation should instead start from this physical orbital
-   * frame.
+   * orbital matrices above. This cached physical frame remains available for
+   * downstream orbital diagnostics and accepted-point chart transport.
    */
   PhysicalOrbitalFrame physical_orbital_frame;
 };

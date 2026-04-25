@@ -35,8 +35,8 @@ public:
   ActiveSpaceMatrixBackpropagationResult backpropagate(
       const std::vector<double>& active_orbital_overlap_gradient,
       const std::vector<double>& active_one_electron_gradient,
-      const std::vector<double>& active_orbital_overlap_matrix,
-      const std::vector<double>& ao_effective_h1e,
+      const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
       const std::vector<double>& auxiliary_orbital_matrix,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,
@@ -45,8 +45,8 @@ public:
   ActiveSpaceMatrixBackpropagationResult backpropagate(
       const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_gradient,
       const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_gradient,
-      const std::vector<double>& active_orbital_overlap_matrix,
-      const std::vector<double>& ao_effective_h1e,
+      const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
       const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,
@@ -55,8 +55,8 @@ public:
   ActiveSpaceMatrixBackpropagationResult backpropagate(
       const std::vector<double>& active_orbital_overlap_gradient,
       const std::vector<double>& active_one_electron_gradient,
-      const std::vector<double>& active_orbital_overlap_matrix,
-      const std::vector<double>& ao_effective_h1e,
+      const Eigen::Ref<const Eigen::MatrixXd>& active_orbital_overlap_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
       const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,

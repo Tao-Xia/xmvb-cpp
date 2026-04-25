@@ -25,20 +25,17 @@ double product_of_leading_singular_values(
 Eigen::MatrixXd build_spin_one_electron_block_matrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
-    int n_active_orbitals) {
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act) {
   const int n_electrons = static_cast<int>(occ_L.size());
   Eigen::MatrixXd one_electron_block(n_electrons, n_electrons);
 
   for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = occ_L[xmvb::to_size(left_column)];
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < n_electrons; ++right_row) {
       const int orbital_index_right =
-          occ_R[xmvb::to_size(right_row)];
+          occ_R[right_row];
       one_electron_block(right_row, left_column) =
-          h1e_act[xmvb::to_size(orbital_index_left) *
-                                         n_active_orbitals +
-                                     orbital_index_right];
+          h1e_act(orbital_index_right, orbital_index_left);
     }
   }
 
@@ -105,7 +102,7 @@ double contract_sparse_projection_with_dense_image(
         sparse_projection.packed_pair_indices[entry_index];
     contraction +=
         sparse_projection.packed_pair_values[entry_index] *
-        dense_projected_values[xmvb::to_size(packed_pair_index)];
+        dense_projected_values[packed_pair_index];
   }
   return contraction;
 }
@@ -122,15 +119,15 @@ void build_inverse_overlap_gradient_from_projected_pair_values(
   const int n_electrons = static_cast<int>(occ_L.size());
   inverse_overlap_gradient->setZero(n_electrons, n_electrons);
   for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = occ_L[xmvb::to_size(left_column)];
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < n_electrons; ++right_row) {
       const int orbital_index_right =
-          occ_R[xmvb::to_size(right_row)];
+          occ_R[right_row];
       const int packed_pair_index = TwoElectronIndexer::packed_pair_index(
           orbital_index_right,
           orbital_index_left);
       (*inverse_overlap_gradient)(left_column, right_row) =
-          projected_pair_values[xmvb::to_size(packed_pair_index)];
+          projected_pair_values[packed_pair_index];
     }
   }
 }
@@ -183,7 +180,7 @@ template <typename InteractionLookup>
 SameSpinPhiResult compute_same_spin_original_phi_impl(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const DeterminantOverlapResult& det_ovlp_result,
     Eigen::MatrixXd* inverse_overlap_gradient,
@@ -203,8 +200,7 @@ SameSpinPhiResult compute_same_spin_original_phi_impl(
   const Eigen::MatrixXd one_electron_block = build_spin_one_electron_block_matrix(
       occ_L,
       occ_R,
-      h1e_act,
-      n_active_orbitals);
+      h1e_act);
 
   SameSpinPhiResult result;
   result.one_electron_phi =
@@ -218,22 +214,22 @@ SameSpinPhiResult compute_same_spin_original_phi_impl(
 
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
     const int orbital_index_left_first =
-        occ_L[xmvb::to_size(left_first)];
+        occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
       const int orbital_index_right_first =
-          occ_R[xmvb::to_size(right_first)];
+          occ_R[right_first];
       const int direct_left_pair_index = TwoElectronIndexer::packed_pair_index(
           orbital_index_right_first,
           orbital_index_left_first);
       for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
         const int orbital_index_left_second =
-            occ_L[xmvb::to_size(left_second)];
+            occ_L[left_second];
         const int exchange_left_pair_index = TwoElectronIndexer::packed_pair_index(
             orbital_index_right_first,
             orbital_index_left_second);
         for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
           const int orbital_index_right_second =
-              occ_R[xmvb::to_size(right_second)];
+              occ_R[right_second];
           const int direct_right_pair_index = TwoElectronIndexer::packed_pair_index(
               orbital_index_right_second,
               orbital_index_left_second);
@@ -291,10 +287,10 @@ double compute_opposite_spin_original_phi_impl(
 
   for (int alpha_left_column = 0; alpha_left_column < n_alpha_electrons; ++alpha_left_column) {
     const int alpha_orbital_left =
-        alpha_occ_L[xmvb::to_size(alpha_left_column)];
+        alpha_occ_L[alpha_left_column];
     for (int alpha_right_row = 0; alpha_right_row < n_alpha_electrons; ++alpha_right_row) {
       const int alpha_orbital_right =
-          alpha_occ_R[xmvb::to_size(alpha_right_row)];
+          alpha_occ_R[alpha_right_row];
       const double alpha_inverse_value =
           alpha_inverse_overlap_submatrix(alpha_left_column, alpha_right_row);
       const int alpha_packed_pair_index = TwoElectronIndexer::packed_pair_index(
@@ -302,10 +298,10 @@ double compute_opposite_spin_original_phi_impl(
           alpha_orbital_left);
       for (int beta_left_column = 0; beta_left_column < n_beta_electrons; ++beta_left_column) {
         const int beta_orbital_left =
-            beta_occ_L[xmvb::to_size(beta_left_column)];
+            beta_occ_L[beta_left_column];
         for (int beta_right_row = 0; beta_right_row < n_beta_electrons; ++beta_right_row) {
           const int beta_orbital_right =
-              beta_occ_R[xmvb::to_size(beta_right_row)];
+              beta_occ_R[beta_right_row];
           const double beta_inverse_value =
               beta_inverse_overlap_submatrix(beta_left_column, beta_right_row);
           const int beta_packed_pair_index = TwoElectronIndexer::packed_pair_index(
@@ -333,27 +329,38 @@ double compute_opposite_spin_original_phi_impl(
 }  // namespace
 
 
-std::vector<double> build_overlap_submatrix(
+Eigen::MatrixXd build_overlap_submatrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const std::vector<double>& ovlp_act,
     int n_orbitals) {
+  Eigen::Map<const Eigen::MatrixXd> overlap_matrix(
+      ovlp_act.data(),
+      n_orbitals,
+      n_orbitals);
+  return build_overlap_submatrix(
+      occ_L,
+      occ_R,
+      overlap_matrix);
+}
+
+Eigen::MatrixXd build_overlap_submatrix(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& ovlp_act) {
   const int n_electrons = static_cast<int>(occ_L.size());
   if (static_cast<int>(occ_R.size()) != n_electrons) {
     throw std::invalid_argument("left and right occupation sizes must match");
   }
-
-  std::vector<double> overlap_submatrix(
-      xmvb::to_size(n_electrons) * xmvb::to_size(n_electrons),
-      0.0);
+  Eigen::MatrixXd overlap_submatrix =
+      Eigen::MatrixXd::Zero(n_electrons, n_electrons);
 
   for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = occ_L[xmvb::to_size(left_column)];
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < n_electrons; ++right_row) {
-      const int orbital_index_right = occ_R[xmvb::to_size(right_row)];
-      overlap_submatrix[xmvb::to_size(left_column) * n_electrons + right_row] =
-          ovlp_act[xmvb::to_size(orbital_index_left) * n_orbitals +
-                   orbital_index_right];
+      const int orbital_index_right = occ_R[right_row];
+      overlap_submatrix(right_row, left_column) =
+          ovlp_act(orbital_index_right, orbital_index_left);
     }
   }
 
@@ -433,11 +440,11 @@ void gather_dense_submatrix(
   for (int column_local = 0;
        column_local < static_cast<int>(column_indices.size());
        ++column_local) {
-    const int column_global = column_indices[xmvb::to_size(column_local)];
+    const int column_global = column_indices[column_local];
     for (int row_local = 0;
          row_local < static_cast<int>(row_indices.size());
          ++row_local) {
-      const int row_global = row_indices[xmvb::to_size(row_local)];
+      const int row_global = row_indices[row_local];
       (*local_matrix)(row_local, column_local) =
           global_matrix(row_global, column_global);
     }
@@ -460,7 +467,7 @@ int limited_packed_pair_block_size(
     block_size = std::min(
         block_size,
         static_cast<int>(std::min<std::size_t>(
-            xmvb::to_size(n_packed_active_pairs),
+            n_packed_active_pairs,
             budget_limited_block_size)));
   }
   return block_size;
@@ -527,8 +534,8 @@ double project_sparse_projection_onto_packed_pair(
 
   if (target_packed_pair_index <
       static_cast<int>(sparse_projection.projected_pair_values.size())) {
-    return sparse_projection.projected_pair_values[xmvb::to_size(
-        target_packed_pair_index)];
+    return sparse_projection.projected_pair_values[
+        target_packed_pair_index];
   }
 
   double projected_value = 0.0;
@@ -564,8 +571,8 @@ Eigen::VectorXd gather_projected_values_for_packed_pair_indices(
         throw std::invalid_argument("packed active-pair index out of range");
       }
       projected_values(static_cast<int>(target_index)) =
-          sparse_projection.projected_pair_values[xmvb::to_size(
-              packed_pair_index)];
+          sparse_projection.projected_pair_values[
+              packed_pair_index];
     }
     return projected_values;
   }
@@ -659,6 +666,143 @@ Eigen::MatrixXd build_deleted_minor_matrix(
     ++minor_row;
   }
   return minor;
+}
+
+double calc_second_order_cofactor(
+    const DeterminantOverlapResult& det_ovlp_result,
+    int right_first,
+    int right_second,
+    int left_first,
+    int left_second) {
+  if (right_first == right_second || left_first == left_second) {
+    return 0.0;
+  }
+  if (det_ovlp_result.n_electrons < 2) {
+    return 0.0;
+  }
+
+  if (det_ovlp_result.nullity == 0 &&
+      det_ovlp_result.overlap_determinant != 0.0) {
+    const Eigen::MatrixXd cofactor_1st = calc_cofactor_1st(det_ovlp_result);
+    return (cofactor_1st(right_first, left_first) *
+                cofactor_1st(right_second, left_second) -
+            cofactor_1st(right_first, left_second) *
+                cofactor_1st(right_second, left_first)) /
+        det_ovlp_result.overlap_determinant;
+  }
+
+  require_svd_overlap_result(det_ovlp_result);
+  const int n_electrons = det_ovlp_result.n_electrons;
+  if (det_ovlp_result.nullity == 1) {
+    // Rank-(n-1) degree-2 cofactors are exact null-mode wedges against each
+    // regular singular direction. Reusing the parent SVD avoids one fresh
+    // `(n-2)` minor factorization per `(r1,r2,c1,c2)` tuple.
+    const int null_index = n_electrons - 1;
+    const double prefactor =
+        det_ovlp_result.parity *
+        product_of_leading_singular_values(det_ovlp_result, n_electrons - 1);
+
+    const double right_null_first = det_ovlp_result.matrix_U(right_first, null_index);
+    const double right_null_second = det_ovlp_result.matrix_U(right_second, null_index);
+    const double left_null_first = det_ovlp_result.matrix_V(left_first, null_index);
+    const double left_null_second = det_ovlp_result.matrix_V(left_second, null_index);
+
+    double second_cofactor = 0.0;
+    for (int singular_index = 0; singular_index < n_electrons - 1; ++singular_index) {
+      const double right_wedge =
+          det_ovlp_result.matrix_U(right_first, singular_index) * right_null_second -
+          det_ovlp_result.matrix_U(right_second, singular_index) * right_null_first;
+      const double left_wedge =
+          det_ovlp_result.matrix_V(left_first, singular_index) * left_null_second -
+          det_ovlp_result.matrix_V(left_second, singular_index) * left_null_first;
+      second_cofactor +=
+          (right_wedge * left_wedge) /
+          det_ovlp_result.singular_values(singular_index);
+    }
+    return prefactor * second_cofactor;
+  }
+
+  if (det_ovlp_result.nullity == 2) {
+    // Rank-(n-2) degree-2 cofactors collapse to one left/right null wedge.
+    const int first_null_index = n_electrons - 2;
+    const int second_null_index = n_electrons - 1;
+    const double prefactor =
+        det_ovlp_result.parity *
+        product_of_leading_singular_values(det_ovlp_result, n_electrons - 2);
+
+    const double right_wedge =
+        det_ovlp_result.matrix_U(right_first, first_null_index) *
+            det_ovlp_result.matrix_U(right_second, second_null_index) -
+        det_ovlp_result.matrix_U(right_second, first_null_index) *
+            det_ovlp_result.matrix_U(right_first, second_null_index);
+    const double left_wedge =
+        det_ovlp_result.matrix_V(left_first, first_null_index) *
+            det_ovlp_result.matrix_V(left_second, second_null_index) -
+        det_ovlp_result.matrix_V(left_second, first_null_index) *
+            det_ovlp_result.matrix_V(left_first, second_null_index);
+    return prefactor * right_wedge * left_wedge;
+  }
+
+  return 0.0;
+}
+
+double calc_directional_second_order_cofactor(
+    const Eigen::MatrixXd& overlap_block,
+    const Eigen::MatrixXd& delta_overlap_block,
+    const DeterminantOverlapResult& det_ovlp_result,
+    int right_first,
+    int right_second,
+    int left_first,
+    int left_second,
+    const DeterminantOverlapResolver& overlap_resolver) {
+  if (overlap_block.rows() != overlap_block.cols() ||
+      delta_overlap_block.rows() != overlap_block.rows() ||
+      delta_overlap_block.cols() != overlap_block.cols() ||
+      det_ovlp_result.n_electrons != overlap_block.rows()) {
+    throw std::invalid_argument(
+        "directional second-order cofactor inputs have inconsistent dimensions");
+  }
+  if (right_first == right_second || left_first == left_second) {
+    return 0.0;
+  }
+
+  const int n_electrons = overlap_block.rows();
+  const int minor_dimension = n_electrons - 2;
+  if (minor_dimension < 0) {
+    return 0.0;
+  }
+  if (minor_dimension == 0) {
+    return 0.0;
+  }
+
+  Eigen::MatrixXd minor(minor_dimension, minor_dimension);
+  Eigen::MatrixXd delta_minor(minor_dimension, minor_dimension);
+  int minor_row = 0;
+  for (int row = 0; row < n_electrons; ++row) {
+    if (row == right_first || row == right_second) {
+      continue;
+    }
+    int minor_col = 0;
+    for (int col = 0; col < n_electrons; ++col) {
+      if (col == left_first || col == left_second) {
+        continue;
+      }
+      minor(minor_row, minor_col) = overlap_block(row, col);
+      delta_minor(minor_row, minor_col) = delta_overlap_block(row, col);
+      ++minor_col;
+    }
+    ++minor_row;
+  }
+
+  const DeterminantOverlapResult minor_result =
+      overlap_resolver.resolve_matrix(minor);
+  const Eigen::MatrixXd minor_cofactor =
+      calc_cofactor_1st(minor_result);
+  const double sign =
+      ((right_first + right_second + left_first + left_second) % 2 == 0)
+          ? 1.0
+          : -1.0;
+  return sign * (minor_cofactor.cwiseProduct(delta_minor)).sum();
 }
 
 double calc_deleted_minor_sign(
@@ -783,7 +927,7 @@ Eigen::MatrixXd build_directional_first_cofactor_matrix(
 SameSpinPhiResult compute_same_spin_original_phi(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const std::vector<double>& packed_active_two_electron_integrals,
     const DeterminantOverlapResult& det_ovlp_result,
@@ -802,15 +946,15 @@ SameSpinPhiResult compute_same_spin_original_phi(
             TwoElectronIndexer::packed_pair_of_pairs_index(
                 row_packed_pair_index,
                 column_packed_pair_index);
-        return packed_active_two_electron_integrals[xmvb::to_size(
-            packed_pair_of_pairs_index)];
+        return packed_active_two_electron_integrals[
+            packed_pair_of_pairs_index];
       });
 }
 
 SameSpinPhiResult compute_same_spin_original_phi(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantOverlapResult& det_ovlp_result,
@@ -887,8 +1031,8 @@ double compute_opposite_spin_original_phi(
             TwoElectronIndexer::packed_pair_of_pairs_index(
                 row_packed_pair_index,
                 column_packed_pair_index);
-        return packed_active_two_electron_integrals[xmvb::to_size(
-            packed_pair_of_pairs_index)];
+        return packed_active_two_electron_integrals[
+            packed_pair_of_pairs_index];
       });
 }
 
@@ -1035,11 +1179,11 @@ void accumulate_spin_overlap_gradient(
           inverse_overlap_gradient * inverse_overlap_submatrix.transpose();
 
   for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = occ_L[xmvb::to_size(left_column)];
+    const int orbital_index_left = occ_L[left_column];
     for (int right_row = 0; right_row < n_electrons; ++right_row) {
       const int orbital_index_right =
-          occ_R[xmvb::to_size(right_row)];
-      (*active_orbital_overlap_gradient)[xmvb::to_size(orbital_index_left) *
+          occ_R[right_row];
+      (*active_orbital_overlap_gradient)[orbital_index_left *
                                              n_active_orbitals +
                                          orbital_index_right] +=
           overlap_submatrix_gradient(right_row, left_column);

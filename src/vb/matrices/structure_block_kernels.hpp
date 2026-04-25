@@ -32,8 +32,7 @@ double dense_frobenius_inner_product(
  *
  * Algebraically this computes the dense block contraction
  * `sum(C_L .* (alpha * (C_R * beta^T)))`, which is the common local kernel
- * used by both the nonorthogonal and biorthogonal matrix-form structure
- * builders.
+ * used by the matrix-form structure builders.
  */
 template <typename MatrixType>
 double contract_dense_structure_pair_kernel(
@@ -64,6 +63,52 @@ double contract_dense_structure_pair_kernel(
   image->noalias() = alpha_kernel * (*beta_push);
 
   return dense_frobenius_inner_product(left_coefficients, *image);
+}
+
+/**
+ * @brief Contracts one pair of diagonal structure coefficient blocks.
+ *
+ * In close-shell expansions the structure coefficient matrices are diagonal on
+ * the shared unique-spin support, so the local kernel reduces to
+ *
+ * `sum_{i,j} l_i * alpha(i,j) * r_j * beta(i,j)`.
+ */
+template <typename MatrixType>
+double contract_diagonal_structure_pair_kernel(
+    const std::vector<double>& left_diagonal_coefficients,
+    const std::vector<double>& right_diagonal_coefficients,
+    const MatrixType& alpha_kernel,
+    const MatrixType& beta_kernel) {
+  if (alpha_kernel.rows() != static_cast<int>(left_diagonal_coefficients.size()) ||
+      alpha_kernel.cols() != static_cast<int>(right_diagonal_coefficients.size()) ||
+      beta_kernel.rows() != static_cast<int>(left_diagonal_coefficients.size()) ||
+      beta_kernel.cols() != static_cast<int>(right_diagonal_coefficients.size())) {
+    throw std::invalid_argument(
+        "diagonal matrix-form structure contraction shape mismatch");
+  }
+  double contraction = 0.0;
+  for (int column = 0;
+       column < static_cast<int>(right_diagonal_coefficients.size());
+       ++column) {
+    const double right_coefficient = right_diagonal_coefficients[column];
+    if (right_coefficient == 0.0) {
+      continue;
+    }
+    for (int row = 0;
+         row < static_cast<int>(left_diagonal_coefficients.size());
+         ++row) {
+      const double left_coefficient = left_diagonal_coefficients[row];
+      if (left_coefficient == 0.0) {
+        continue;
+      }
+      contraction +=
+          left_coefficient *
+          alpha_kernel(row, column) *
+          right_coefficient *
+          beta_kernel(row, column);
+    }
+  }
+  return contraction;
 }
 
 }  // namespace xmvb::vb

@@ -60,7 +60,7 @@ ScalarBuffer evaluate_spin_resolved_overlap_metric_gradient(
   const Eigen::MatrixXd& inverse_vandermonde =
       detail::get_vandermonde_inverse(max_degree);
 
-  ScalarBuffer gradient(xmvb::to_size(n_spatial_entries), 0.0);
+  ScalarBuffer gradient(n_spatial_entries, 0.0);
   const GenericMatrix spin_orbital_overlap_matrix =
       build_spin_overlap_matrix(spatial_overlap_matrix);
 
@@ -149,7 +149,7 @@ ScalarBuffer evaluate_spin_resolved_overlap_metric_gradient(
                   traces,
                   beta_first_derivative_traces,
                   n_pairs);
-          gradient[xmvb::to_size(entry_index)] +=
+          gradient[entry_index] +=
               sample_weight * sample_gradient;
         }
       }

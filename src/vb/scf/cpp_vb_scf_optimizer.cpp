@@ -93,56 +93,34 @@ double gradient_infinity_norm(const Eigen::VectorXd& gradient) {
   return norm;
 }
 
-int get_sparse_coefficient_count(
-    const OrbitalPreparationInput& orbital_preparation_input,
-    int orbital_index) {
-  const int explicit_count =
-      orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-
-  int coefficient_count = 0;
-  while (coefficient_count < orbital_preparation_input.n_basis_functions) {
-    const int basis_function_index =
-        orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) *
-                 orbital_preparation_input.n_basis_functions +
-             coefficient_count];
-    if (basis_function_index == 0) {
-      break;
-    }
-    ++coefficient_count;
-  }
-  return coefficient_count;
-}
-
 bool orbital_uses_full_ao_support(
     const OrbitalPreparationInput& orbital_preparation_input,
     int orbital_index) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-  if (get_sparse_coefficient_count(orbital_preparation_input, orbital_index) !=
+  if (stored_sparse_orbital_coefficient_count(
+          orbital_preparation_input,
+          orbital_index) !=
       n_basis_functions) {
     return false;
   }
 
   std::vector<unsigned char> seen_basis_rows(
-      xmvb::to_size(n_basis_functions),
+      n_basis_functions,
       static_cast<unsigned char>(0));
   for (int coefficient_index = 0;
        coefficient_index < n_basis_functions;
        ++coefficient_index) {
     const int basis_function_index =
         orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions +
+            [orbital_index * n_basis_functions +
              coefficient_index] -
         1;
     if (basis_function_index < 0 ||
         basis_function_index >= n_basis_functions ||
-        seen_basis_rows[xmvb::to_size(basis_function_index)] != 0) {
+        seen_basis_rows[basis_function_index] != 0) {
       return false;
     }
-    seen_basis_rows[xmvb::to_size(basis_function_index)] = 1;
+    seen_basis_rows[basis_function_index] = 1;
   }
   return true;
 }
@@ -172,13 +150,15 @@ Eigen::MatrixXd build_dense_orbital_block_from_sparse_input(
   for (int orbital_offset = 0; orbital_offset < orbital_count; ++orbital_offset) {
     const int orbital_index = first_orbital + orbital_offset;
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index] -
           1;
       if (basis_function_index < 0 ||
@@ -188,7 +168,7 @@ Eigen::MatrixXd build_dense_orbital_block_from_sparse_input(
       }
       dense_block(basis_function_index, orbital_offset) =
           orbital_preparation_input.orbital_value_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index];
     }
   }
@@ -200,23 +180,21 @@ Eigen::MatrixXd build_dense_orbital_block_from_full_vector(
     const std::vector<double>& full_vector,
     int first_orbital,
     int orbital_count) {
-  if (full_vector.size() != orbital_preparation_input.orbital_value_table.size()) {
-    throw std::invalid_argument(
-        "full sparse orbital vector size does not match orbital_value_table");
-  }
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   Eigen::MatrixXd dense_block =
       Eigen::MatrixXd::Zero(n_basis_functions, std::max(0, orbital_count));
   for (int orbital_offset = 0; orbital_offset < orbital_count; ++orbital_offset) {
     const int orbital_index = first_orbital + orbital_offset;
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index] -
           1;
       if (basis_function_index < 0 ||
@@ -225,7 +203,7 @@ Eigen::MatrixXd build_dense_orbital_block_from_full_vector(
             "invalid sparse orbital basis index while rebuilding a dense gradient block");
       }
       dense_block(basis_function_index, orbital_offset) =
-          full_vector[xmvb::to_size(orbital_index) * n_basis_functions +
+          full_vector[orbital_index * n_basis_functions +
                       coefficient_index];
     }
   }
@@ -237,29 +215,19 @@ void scatter_dense_orbital_block_to_full_vector(
     const OrbitalPreparationInput& orbital_preparation_input,
     int first_orbital,
     std::vector<double>* full_vector) {
-  if (full_vector == nullptr) {
-    throw std::invalid_argument("full_vector must not be null");
-  }
-  if (full_vector->size() != orbital_preparation_input.orbital_value_table.size()) {
-    throw std::invalid_argument(
-        "full sparse orbital vector size does not match orbital_value_table");
-  }
-  if (dense_block.rows() != orbital_preparation_input.n_basis_functions) {
-    throw std::invalid_argument(
-        "dense orbital block row count does not match n_basis_functions");
-  }
-
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   for (int orbital_offset = 0; orbital_offset < dense_block.cols(); ++orbital_offset) {
     const int orbital_index = first_orbital + orbital_offset;
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index] -
           1;
       if (basis_function_index < 0 ||
@@ -267,7 +235,7 @@ void scatter_dense_orbital_block_to_full_vector(
         throw std::runtime_error(
             "invalid sparse orbital basis index while scattering a dense gradient block");
       }
-      (*full_vector)[xmvb::to_size(orbital_index) * n_basis_functions +
+      (*full_vector)[orbital_index * n_basis_functions +
                      coefficient_index] =
           dense_block(basis_function_index, orbital_offset);
     }
@@ -279,9 +247,6 @@ void transform_sparse_oeo_active_representative_gradient(
     const LocalizedRepresentativeSelector& target_selector,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* sparse_orbital_gradient) {
-  if (sparse_orbital_gradient == nullptr) {
-    throw std::invalid_argument("sparse_orbital_gradient must not be null");
-  }
   if (orbital_preparation_input.orbital_type != kLegacyOrbitalTypeOeo) {
     throw std::invalid_argument(
         "active representative transport is only defined on the current OEO chart");
@@ -367,9 +332,6 @@ void transform_sparse_inactive_orbital_step(
     const SupportAwareInactiveMoGaugeTransform& transform,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* sparse_orbital_step) {
-  if (sparse_orbital_step == nullptr) {
-    throw std::invalid_argument("sparse_orbital_step must not be null");
-  }
   if (!transform.chart_changed || transform.n_inactive_orbitals <= 1) {
     return;
   }
@@ -399,9 +361,6 @@ void transform_sparse_oeo_active_representative_step(
     const LocalizedRepresentativeSelector& target_selector,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* sparse_orbital_step) {
-  if (sparse_orbital_step == nullptr) {
-    throw std::invalid_argument("sparse_orbital_step must not be null");
-  }
   if (orbital_preparation_input.orbital_type != kLegacyOrbitalTypeOeo) {
     throw std::invalid_argument(
         "active representative step transport is only defined on the current OEO chart");
@@ -464,11 +423,6 @@ std::vector<double> build_full_sparse_vector_from_packed(
     const SparseOrbitalParameterView& parameter_view,
     const OrbitalPreparationInput& orbital_preparation_input,
     const Eigen::VectorXd& packed_vector) {
-  if (packed_vector.size() != parameter_view.size()) {
-    throw std::invalid_argument(
-        "packed sparse-orbital vector size does not match the parameter view");
-  }
-
   std::vector<double> full_sparse_vector(
       orbital_preparation_input.orbital_value_table.size(),
       0.0);
@@ -477,8 +431,7 @@ std::vector<double> build_full_sparse_vector_from_packed(
   for (Eigen::Index packed_index = 0;
        packed_index < packed_vector.size();
        ++packed_index) {
-    full_sparse_vector[xmvb::to_size(
-        differentiable_parameter_indices[xmvb::to_size(packed_index)])] =
+    full_sparse_vector[differentiable_parameter_indices[packed_index]] =
         packed_vector[packed_index];
   }
   return full_sparse_vector;
@@ -488,9 +441,6 @@ void overwrite_packed_vector_from_full_sparse(
     const SparseOrbitalParameterView& parameter_view,
     const std::vector<double>& full_sparse_vector,
     Eigen::VectorXd* packed_vector) {
-  if (packed_vector == nullptr) {
-    throw std::invalid_argument("packed_vector must not be null");
-  }
   *packed_vector =
       parameter_view.gather_from_full(full_sparse_vector);
 }
@@ -581,10 +531,6 @@ void transport_packed_secant_history_with_oeo_active_representative_reset(
 void refresh_cached_localized_representative_selector(
     const OrbitalPreparationInput& orbital_preparation_input,
     OrbitalPreparationResult* orbital_result) {
-  if (orbital_result == nullptr) {
-    throw std::invalid_argument("orbital_result must not be null");
-  }
-
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const int n_inactive_doubly_occupied_orbitals =
       (orbital_preparation_input.n_total_electrons -
@@ -604,11 +550,11 @@ void refresh_cached_localized_representative_selector(
       physical_orbital_frame.active_physical_orbital_matrix.cols() !=
           n_active_orbitals ||
       orbital_result->active_orbital_overlap_matrix.size() !=
-          xmvb::to_size(n_active_orbitals * n_active_orbitals) ||
+          n_active_orbitals * n_active_orbitals ||
       orbital_result->inactive_auxiliary_transform.size() !=
-          xmvb::to_size(n_basis_functions * n_basis_functions) ||
+          n_basis_functions * n_basis_functions ||
       orbital_result->auxiliary_orbital_inverse_matrix.size() !=
-          xmvb::to_size(n_basis_functions * n_basis_functions) ||
+          n_basis_functions * n_basis_functions ||
       orbital_result->auxiliary_orbital_matrix.rows() != n_basis_functions ||
       orbital_result->auxiliary_orbital_matrix.cols() != n_basis_functions) {
     throw std::runtime_error(
@@ -760,30 +706,22 @@ void refresh_cached_localized_representative_selector(
 void overwrite_sparse_orbitals_from_dense_physical_frame(
     const Eigen::MatrixXd& dense_orbitals,
     OrbitalPreparationInput* orbital_preparation_input) {
-  if (orbital_preparation_input == nullptr) {
-    throw std::invalid_argument(
-        "orbital_preparation_input must not be null when overwriting the final physical frame");
-  }
-  if (dense_orbitals.rows() != orbital_preparation_input->n_basis_functions ||
-      dense_orbitals.cols() != orbital_preparation_input->n_orbitals) {
-    throw std::invalid_argument(
-        "dense physical orbital frame dimensions do not match sparse orbital layout");
-  }
-
   std::vector<double> updated_orbital_values =
-      orbital_preparation_input->orbital_value_table.vector();
+      orbital_preparation_input->orbital_value_table;
   const int n_basis_functions = orbital_preparation_input->n_basis_functions;
   for (int orbital_index = 0;
        orbital_index < orbital_preparation_input->n_orbitals;
        ++orbital_index) {
     const int coefficient_count =
-        get_sparse_coefficient_count(*orbital_preparation_input, orbital_index);
+        stored_sparse_orbital_coefficient_count(
+            *orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input->orbital_basis_index_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index] -
           1;
       if (basis_function_index < 0 ||
@@ -791,7 +729,7 @@ void overwrite_sparse_orbitals_from_dense_physical_frame(
         throw std::runtime_error(
             "invalid sparse orbital basis index while overwriting the final physical frame");
       }
-      updated_orbital_values[xmvb::to_size(orbital_index) * n_basis_functions +
+      updated_orbital_values[orbital_index * n_basis_functions +
                              coefficient_index] =
           dense_orbitals(basis_function_index, orbital_index);
     }
@@ -1326,6 +1264,38 @@ int exact_ctx_stall_tail_boost_max_cg_iterations() {
           12));
 }
 
+int exact_ctx_tail_full_inner_solve_enable_max_active_orbitals() {
+  return std::max(
+      0,
+      parse_env_int_with_default(
+          "XMVB_CPP_EXACT_CTX_TAIL_FULL_INNER_SOLVE_ENABLE_MAX_ACTIVE_ORBITALS",
+          0));
+}
+
+int exact_ctx_tail_full_inner_solve_min_consecutive_projected_stalls() {
+  return std::max(
+      0,
+      parse_env_int_with_default(
+          "XMVB_CPP_EXACT_CTX_TAIL_FULL_INNER_SOLVE_MIN_CONSECUTIVE_PROJECTED_STALLS",
+          24));
+}
+
+int exact_ctx_tail_full_inner_solve_cooldown_accepted_iterations() {
+  return std::max(
+      0,
+      parse_env_int_with_default(
+          "XMVB_CPP_EXACT_CTX_TAIL_FULL_INNER_SOLVE_COOLDOWN",
+          24));
+}
+
+double exact_ctx_tail_full_inner_solve_gradient_tolerance_multiple() {
+  return std::max(
+      0.0,
+      parse_env_double_with_default(
+          "XMVB_CPP_EXACT_CTX_TAIL_FULL_INNER_SOLVE_GRADIENT_TOLERANCE_MULTIPLE",
+          16.0));
+}
+
 double nonredundant_truncated_newton_relative_residual_target_fraction() {
   return std::clamp(
       parse_env_double_with_default(
@@ -1364,24 +1334,29 @@ bool exact_ctx_stall_tail_boost_enabled(
 }
 
 bool exact_ctx_full_model_correction_allowed(
-    int n_active_orbitals,
+    const ExactCtxSystemProfile& system_profile,
     int consecutive_projected_stall_count) {
-  if (n_active_orbitals <=
+  if (system_profile.n_active_orbitals <=
       exact_ctx_full_model_correction_enable_max_active_orbitals()) {
     return true;
   }
 
-  // Large active spaces should keep the cheap exact-ctx path during the early
-  // high-gradient regime. The default correction window now extends through
-  // TiCl-class seven-active OEO problems because they benefit from occasional
-  // cheap-step/full-model corrections in the late stall regime, while
-  // FeCl2-class eight-active systems still tend to lose wall time overall if
-  // the full-model bridge is enabled too early or too often. Users can widen
-  // the window further with the env override when a larger active space
-  // demonstrably benefits from hybrid corrections.
+  // Open-shell sparse charts are the regime where the cheap core-only Hessian
+  // most often gives the right descent direction but poor trust-ratio
+  // calibration.  Allow a rejected-step full-model bridge through active=8
+  // without promoting every accepted-point solve to the full outer response.
+  if (system_profile.open_shell &&
+      system_profile.sparse_orbital_chart &&
+      system_profile.n_active_orbitals <= 8) {
+    return true;
+  }
+
+  // Larger active spaces should keep the cheap exact-ctx path during the early
+  // high-gradient regime. The stall gate keeps full-model corrections as a
+  // tail rescue instead of a steady-state cost.
   return exact_ctx_stall_tail_boost_enabled(
              consecutive_projected_stall_count) &&
-      n_active_orbitals <=
+      system_profile.n_active_orbitals <=
           exact_ctx_stall_full_model_correction_enable_max_active_orbitals();
 }
 
@@ -1390,11 +1365,13 @@ struct ExactCtxInnerSolvePolicy {
   bool forced_override = false;
   bool used_gradient_tail_extension = false;
   bool used_hybrid_followup_full_solve = false;
+  bool used_stall_tail_full_solve = false;
 };
 
 struct ExactCtxHybridStrategyState {
   bool request_followup = false;
-  int sparse_followup_cooldown_remaining = 0;
+  int hybrid_followup_cooldown_remaining = 0;
+  int tail_full_solve_cooldown_remaining = 0;
   bool has_full_operator_cost_sample = false;
   double last_outer_response_cost_fraction =
       std::numeric_limits<double>::infinity();
@@ -1451,9 +1428,13 @@ void maybe_log_exact_ctx_policy_decision(
          << " tail_ext=" << bool_name(policy.used_gradient_tail_extension)
          << " followup_req=" << bool_name(hybrid_strategy_state.request_followup)
          << " followup_cd="
-         << hybrid_strategy_state.sparse_followup_cooldown_remaining
+         << hybrid_strategy_state.hybrid_followup_cooldown_remaining
+         << " tail_full_cd="
+         << hybrid_strategy_state.tail_full_solve_cooldown_remaining
          << " followup_full="
          << bool_name(policy.used_hybrid_followup_full_solve)
+         << " stall_full="
+         << bool_name(policy.used_stall_tail_full_solve)
          << " full_corr_allowed="
          << bool_name(full_model_correction_allowed)
          << " full_retry_ready=" << bool_name(full_retry_available)
@@ -1532,7 +1513,7 @@ bool exact_ctx_hybrid_followup_full_inner_solve_allowed(
     return false;
   }
   if (!hybrid_strategy_state.request_followup ||
-      hybrid_strategy_state.sparse_followup_cooldown_remaining > 0 ||
+      hybrid_strategy_state.hybrid_followup_cooldown_remaining > 0 ||
       !hybrid_strategy_state.has_full_operator_cost_sample ||
       system_profile.n_active_orbitals >
           exact_ctx_hybrid_followup_full_inner_solve_enable_max_active_orbitals()) {
@@ -1567,6 +1548,40 @@ bool exact_ctx_hybrid_followup_full_inner_solve_allowed(
   return cost_fraction_is_affordable || outer_response_time_is_affordable;
 }
 
+bool exact_ctx_stall_tail_full_inner_solve_allowed(
+    const ExactCtxSystemProfile& system_profile,
+    double current_projected_gradient_inf_norm,
+    double gradient_tolerance,
+    int consecutive_projected_stall_count,
+    const ExactCtxHybridStrategyState& hybrid_strategy_state) {
+  const int max_active_orbitals =
+      exact_ctx_tail_full_inner_solve_enable_max_active_orbitals();
+  if (max_active_orbitals <= 0 ||
+      system_profile.n_active_orbitals > max_active_orbitals ||
+      hybrid_strategy_state.tail_full_solve_cooldown_remaining > 0) {
+    return false;
+  }
+  if (consecutive_projected_stall_count <
+      exact_ctx_tail_full_inner_solve_min_consecutive_projected_stalls()) {
+    return false;
+  }
+  const double gradient_multiple =
+      exact_ctx_tail_full_inner_solve_gradient_tolerance_multiple();
+  if (gradient_multiple > 0.0 &&
+      (!std::isfinite(current_projected_gradient_inf_norm) ||
+       current_projected_gradient_inf_norm >
+           gradient_multiple * std::max(gradient_tolerance, 0.0))) {
+    return false;
+  }
+
+  // Full outer-response HVPs are too expensive to use as the default steady-
+  // state model, but the dense OEO TiCl-class tail shows that a sparse pulse of
+  // the relaxed model can break long projected-gradient plateaus.  This gate
+  // therefore waits for sustained projected stalls, limits the active-space
+  // size, and then arms only one full accepted-point solve before cooldown.
+  return true;
+}
+
 ExactCtxInnerSolvePolicy choose_exact_ctx_inner_solve_policy(
     int accepted_iteration_index,
     const ExactCtxSystemProfile& system_profile,
@@ -1574,6 +1589,7 @@ ExactCtxInnerSolvePolicy choose_exact_ctx_inner_solve_policy(
     double initial_projected_gradient_inf_norm,
     double gradient_tolerance,
     double latest_objective_seconds,
+    int consecutive_projected_stall_count,
     const ExactCtxHybridStrategyState& hybrid_strategy_state) {
   // Keep the exact-ctx TN inner solve on the cheap core-only model by default,
   // and only spend full outer-response work in regimes where it materially
@@ -1602,6 +1618,16 @@ ExactCtxInnerSolvePolicy choose_exact_ctx_inner_solve_policy(
     // the cheaper solve plus another diagnostic bridge.
     policy.use_outer_response = true;
     policy.used_hybrid_followup_full_solve = true;
+    return policy;
+  }
+  if (exact_ctx_stall_tail_full_inner_solve_allowed(
+          system_profile,
+          current_projected_gradient_inf_norm,
+          gradient_tolerance,
+          consecutive_projected_stall_count,
+          hybrid_strategy_state)) {
+    policy.use_outer_response = true;
+    policy.used_stall_tail_full_solve = true;
     return policy;
   }
   const int startup_full_enable_max_active_orbitals =
@@ -1700,8 +1726,33 @@ int exact_ctx_sparse_hybrid_followup_probe_cooldown_accepted_iterations() {
           2));
 }
 
+int exact_ctx_dense_hybrid_followup_probe_cooldown_accepted_iterations() {
+  return std::max(
+      0,
+      parse_env_int_with_default(
+          "XMVB_CPP_EXACT_CTX_DENSE_FOLLOWUP_PROBE_COOLDOWN",
+          8));
+}
+
+int exact_ctx_hybrid_followup_probe_cooldown_accepted_iterations(
+    bool sparse_orbital_chart) {
+  return sparse_orbital_chart
+      ? exact_ctx_sparse_hybrid_followup_probe_cooldown_accepted_iterations()
+      : exact_ctx_dense_hybrid_followup_probe_cooldown_accepted_iterations();
+}
+
 class OrbitalObjective {
 public:
+  struct TrialEvaluation {
+    OrbitalPreparationInput orbital_preparation_input;
+    CppOrbitalGradientResult gradient_result;
+    Eigen::VectorXd gradient;
+    double energy = 0.0;
+    double gradient_inf_norm = 0.0;
+    double wall_time_seconds = 0.0;
+    bool valid = false;
+  };
+
   OrbitalObjective(
       const CppVbInput& input,
       SparseOrbitalParameterView parameter_view,
@@ -1720,37 +1771,12 @@ public:
         scf_evaluator_(scf_evaluator) {}
 
   double operator()(const Eigen::VectorXd& parameter_vector, Eigen::VectorXd& gradient) {
-    const auto iteration_start_time = std::chrono::steady_clock::now();
-    parameter_view_.unpack(parameter_vector, &working_input_.orbital_preparation_input);
-
-    const auto gradient_result = orbital_gradient_evaluator_->evaluate_without_reference_energy_gradient(
-        working_input_,
-        selected_state_indices_,
-        state_average_weights_,
-        nuclear_repulsion_energy_);
-    if (gradient_result.second_order_context == nullptr) {
-      throw std::runtime_error(
-          "relaxed orbital gradient did not populate the accepted-point second-order context");
-    }
-
-    gradient = parameter_view_.gather_from_full(
-        gradient_result.sparse_orbital_energy_gradient);
-
-    last_gradient_result_ = gradient_result;
-    // Matrix-free HVP probes rebuild the orbital-dependent layers at nearby
-    // points. The immutable determinant/integral bundle never changes across
-    // orbital iterations, so the probe buffer only needs the refreshed orbital
-    // preparation block from the accepted point.
-    probe_input_buffer_.orbital_preparation_input =
-        working_input_.orbital_preparation_input;
-    energy_history_.push_back(gradient_result.scf_result.total_energy);
-    gradient_inf_norm_history_.push_back(gradient_infinity_norm(gradient));
-    const auto iteration_end_time = std::chrono::steady_clock::now();
-    const std::chrono::duration<double> elapsed_seconds =
-        iteration_end_time - iteration_start_time;
-    iteration_time_history_seconds_.push_back(elapsed_seconds.count());
-    objective_wall_time_seconds_ += elapsed_seconds.count();
-    return gradient_result.scf_result.total_energy;
+    TrialEvaluation evaluation =
+        evaluate_trial_without_committing(parameter_vector);
+    gradient = std::move(evaluation.gradient);
+    const double energy = evaluation.energy;
+    commit_trial_evaluation(std::move(evaluation));
+    return energy;
   }
 
   const CppVbInput& last_input() const { return working_input_; }
@@ -1799,6 +1825,60 @@ public:
       return 0.0;
     }
     return gradient_inf_norm_history_.back();
+  }
+
+  TrialEvaluation evaluate_trial_without_committing(
+      const Eigen::VectorXd& parameter_vector) const {
+    const auto iteration_start_time = std::chrono::steady_clock::now();
+    // TN trial acceptance only needs a scratch orbital point.  Do not copy the
+    // whole objective state here: the accepted-point second-order context can
+    // be large, and rejected trust-region trials must leave it untouched.
+    parameter_view_.unpack(
+        parameter_vector,
+        &probe_input_buffer_.orbital_preparation_input);
+
+    TrialEvaluation evaluation;
+    evaluation.orbital_preparation_input =
+        probe_input_buffer_.orbital_preparation_input;
+    evaluation.gradient_result =
+        orbital_gradient_evaluator_->evaluate_without_reference_energy_gradient(
+            probe_input_buffer_,
+            selected_state_indices_,
+            state_average_weights_,
+            nuclear_repulsion_energy_);
+    if (evaluation.gradient_result.second_order_context == nullptr) {
+      throw std::runtime_error(
+          "relaxed orbital gradient did not populate the accepted-point second-order context");
+    }
+
+    evaluation.gradient = parameter_view_.gather_from_full(
+        evaluation.gradient_result.sparse_orbital_energy_gradient);
+    evaluation.energy = evaluation.gradient_result.scf_result.total_energy;
+    evaluation.gradient_inf_norm =
+        gradient_infinity_norm(evaluation.gradient);
+    evaluation.wall_time_seconds =
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - iteration_start_time)
+            .count();
+    evaluation.valid = true;
+    return evaluation;
+  }
+
+  void commit_trial_evaluation(TrialEvaluation evaluation) {
+    if (!evaluation.valid) {
+      throw std::invalid_argument("cannot commit an invalid orbital trial evaluation");
+    }
+    // A committed trial becomes the new accepted point used by later gradients,
+    // exact-ctx HVPs, chart canonicalization, and accepted-iteration snapshots.
+    working_input_.orbital_preparation_input =
+        std::move(evaluation.orbital_preparation_input);
+    last_gradient_result_ = std::move(evaluation.gradient_result);
+    probe_input_buffer_.orbital_preparation_input =
+        working_input_.orbital_preparation_input;
+    energy_history_.push_back(evaluation.energy);
+    gradient_inf_norm_history_.push_back(evaluation.gradient_inf_norm);
+    iteration_time_history_seconds_.push_back(evaluation.wall_time_seconds);
+    objective_wall_time_seconds_ += evaluation.wall_time_seconds;
   }
 
   double evaluate_energy_only(const Eigen::VectorXd& parameter_vector) const {
@@ -1892,14 +1972,22 @@ public:
   }
 
   OrbitalObjective make_probe_copy() const {
-    OrbitalObjective copy = *this;
-    copy.energy_history_.clear();
-    copy.gradient_inf_norm_history_.clear();
-    copy.iteration_time_history_seconds_.clear();
-    copy.objective_wall_time_seconds_ = 0.0;
-    copy.energy_only_call_count_ = 0;
-    copy.energy_only_wall_time_seconds_ = 0.0;
-    copy.last_energy_only_wall_time_seconds_ = 0.0;
+    // HVP finite-difference probes and TN trial evaluations only need the
+    // current immutable inputs plus the evaluator handles. Reconstruct a fresh
+    // objective instead of copying the last accepted gradient result and
+    // second-order context into another large object.
+    OrbitalObjective copy(
+        working_input_,
+        parameter_view_,
+        selected_state_indices_,
+        state_average_weights_,
+        nuclear_repulsion_energy_,
+        orbital_gradient_evaluator_,
+        scf_evaluator_);
+    copy.probe_input_buffer_.orbital_preparation_input =
+        working_input_.orbital_preparation_input;
+    copy.initial_oeo_reference_orbital_matrix_ =
+        initial_oeo_reference_orbital_matrix_;
     return copy;
   }
 
@@ -2109,11 +2197,112 @@ Eigen::VectorXd build_nonredundant_preconditioned_gradient_direction(
     const NonredundantOrbitalSpace& space,
     const NonredundantOrbitalSpace::ProjectionResult& projection) {
   // The reduced coordinates are either the orthogonalized tangent chart or the
-  // direct orbital-rotation amplitudes used by the full-AO fast path. The
-  // block-local curvature diagonal only rescales those reduced coordinates
-  // before we map the step back to the packed sparse-orbital parameters.
+  // direct nonredundant orbital-replacement amplitudes used by the full-AO
+  // fast path. Use the full block preconditioner rather than only the
+  // curvature diagonal so large reduced sparse blocks keep the accepted-point
+  // block metric in the search direction.
   return -space.expand_step(
-      space.apply_inverse_reduced_curvature(projection.reduced_gradient));
+      space.apply_inverse_reduced_block_preconditioner(
+          projection.reduced_gradient));
+}
+
+// The optimizer objective lives in packed differentiable sparse coefficients,
+// while `expand_retract_input_tangent()` returns the full stored-orbital
+// tangent. Gather the actual finite-retraction tangent back to packed
+// coordinates whenever a directional derivative or finite-difference scale must
+// match `retract_step()` rather than the raw additive chart.
+Eigen::VectorXd gather_nonredundant_retract_tangent(
+    const OrbitalPreparationInput& orbital_preparation_input,
+    const NonredundantOrbitalSpace& space,
+    const SparseOrbitalParameterView& parameter_view,
+    const Eigen::VectorXd& reduced_step) {
+  const Eigen::VectorXd full_tangent =
+      space.expand_retract_input_tangent(
+          orbital_preparation_input,
+          reduced_step);
+  Eigen::VectorXd packed_tangent =
+      Eigen::VectorXd::Zero(
+          static_cast<Eigen::Index>(parameter_view.size()));
+  const auto& differentiable_indices =
+      parameter_view.differentiable_parameter_indices();
+  for (Eigen::Index packed_index = 0;
+       packed_index < packed_tangent.size();
+       ++packed_index) {
+    packed_tangent[packed_index] =
+        full_tangent[differentiable_indices[packed_index]];
+  }
+  return packed_tangent;
+}
+
+double compute_nonredundant_retract_tangent_norm(
+    const OrbitalPreparationInput& orbital_preparation_input,
+    const NonredundantOrbitalSpace& space,
+    const SparseOrbitalParameterView& parameter_view,
+    const Eigen::VectorXd& reduced_step) {
+  if (reduced_step.size() == 0) {
+    return 0.0;
+  }
+  const double tangent_norm =
+      gather_nonredundant_retract_tangent(
+          orbital_preparation_input,
+          space,
+          parameter_view,
+          reduced_step)
+          .norm();
+  return std::isfinite(tangent_norm) ? tangent_norm : 0.0;
+}
+
+Eigen::VectorXd clip_nonredundant_reduced_step_to_retract_tangent_radius(
+    const OrbitalPreparationInput& orbital_preparation_input,
+    const NonredundantOrbitalSpace& space,
+    const SparseOrbitalParameterView& parameter_view,
+    const Eigen::VectorXd& reduced_step,
+    double trust_radius) {
+  if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
+    return Eigen::VectorXd::Zero(reduced_step.size());
+  }
+  const double tangent_norm =
+      compute_nonredundant_retract_tangent_norm(
+          orbital_preparation_input,
+          space,
+          parameter_view,
+          reduced_step);
+  if (!(tangent_norm > 0.0) || !std::isfinite(tangent_norm)) {
+    return Eigen::VectorXd::Zero(reduced_step.size());
+  }
+  if (tangent_norm <= trust_radius) {
+    return reduced_step;
+  }
+  return (trust_radius / tangent_norm) * reduced_step;
+}
+
+Eigen::VectorXd shrink_nonredundant_reduced_step_inside_retract_tangent_radius(
+    const OrbitalPreparationInput& orbital_preparation_input,
+    const NonredundantOrbitalSpace& space,
+    const SparseOrbitalParameterView& parameter_view,
+    const Eigen::VectorXd& reduced_step,
+    double trust_radius) {
+  if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
+    return Eigen::VectorXd::Zero(reduced_step.size());
+  }
+  constexpr double kInitialStepSafetyFraction = 0.95;
+  const double target_radius = kInitialStepSafetyFraction * trust_radius;
+  if (!(target_radius > 0.0) || !std::isfinite(target_radius)) {
+    return Eigen::VectorXd::Zero(reduced_step.size());
+  }
+  const double tangent_norm =
+      compute_nonredundant_retract_tangent_norm(
+          orbital_preparation_input,
+          space,
+          parameter_view,
+          reduced_step);
+  if (!(tangent_norm > 0.0) || !std::isfinite(tangent_norm)) {
+    return Eigen::VectorXd::Zero(reduced_step.size());
+  }
+  if (tangent_norm < target_radius) {
+    return reduced_step;
+  }
+  return (target_radius / tangent_norm) * reduced_step;
 }
 
 bool optimizer_chart_uses_sparse_orbital_support(
@@ -2297,14 +2486,6 @@ public:
   bool try_add_pair(
       Eigen::VectorXd reduced_step,
       Eigen::VectorXd reduced_gradient_change) {
-    if (space_ == nullptr) {
-      throw std::invalid_argument("transported preconditioner space must not be null");
-    }
-    if (reduced_step.size() != reduced_gradient_change.size() ||
-        reduced_step.size() != space_->reduced_size()) {
-      throw std::invalid_argument(
-          "transported preconditioner pair does not match reduced space");
-    }
     const double step_norm = reduced_step.norm();
     const double gradient_change_norm = reduced_gradient_change.norm();
     const double secant_curvature =
@@ -2337,35 +2518,25 @@ public:
   }
 
   Eigen::VectorXd apply(const Eigen::VectorXd& reduced_vector) const {
-    if (space_ == nullptr) {
-      throw std::invalid_argument("transported preconditioner space must not be null");
-    }
-    if (reduced_vector.size() != space_->reduced_size()) {
-      throw std::invalid_argument(
-          "transported preconditioner vector does not match reduced space");
-    }
     if (pairs_.empty()) {
-      return space_->apply_inverse_reduced_curvature(reduced_vector);
+      return space_->apply_inverse_reduced_block_preconditioner(reduced_vector);
     }
 
     Eigen::VectorXd q = reduced_vector;
     std::vector<double> alphas(pairs_.size(), 0.0);
-    for (std::ptrdiff_t pair_index =
-             static_cast<std::ptrdiff_t>(pairs_.size()) - 1;
-         pair_index >= 0;
-         --pair_index) {
-      const auto& pair = pairs_[static_cast<std::size_t>(pair_index)];
+    for (std::size_t pair_index = pairs_.size(); pair_index-- > 0;) {
+      const auto& pair = pairs_[pair_index];
       const double alpha =
           pair.inverse_curvature * pair.reduced_step.dot(q);
       if (!std::isfinite(alpha)) {
-        return space_->apply_inverse_reduced_curvature(reduced_vector);
+        return space_->apply_inverse_reduced_block_preconditioner(reduced_vector);
       }
-      alphas[static_cast<std::size_t>(pair_index)] = alpha;
+      alphas[pair_index] = alpha;
       q.noalias() -= alpha * pair.reduced_gradient_change;
     }
 
     Eigen::VectorXd z =
-        space_->apply_inverse_reduced_curvature(q);
+        space_->apply_inverse_reduced_block_preconditioner(q);
     for (std::size_t pair_index = 0;
          pair_index < pairs_.size();
          ++pair_index) {
@@ -2373,7 +2544,7 @@ public:
       const double beta =
           pair.inverse_curvature * pair.reduced_gradient_change.dot(z);
       if (!std::isfinite(beta)) {
-        return space_->apply_inverse_reduced_curvature(reduced_vector);
+        return space_->apply_inverse_reduced_block_preconditioner(reduced_vector);
       }
       z.noalias() += pair.reduced_step * (alphas[pair_index] - beta);
     }
@@ -2436,14 +2607,16 @@ Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
   }
   if (transported_preconditioner == nullptr ||
       transported_preconditioner->empty()) {
-    return current_space.apply_inverse_reduced_curvature(reduced_vector);
+    return current_space.apply_inverse_reduced_block_preconditioner(
+        reduced_vector);
   }
 
   const Eigen::VectorXd preconditioned =
       transported_preconditioner->apply(reduced_vector);
   const double curvature = reduced_vector.dot(preconditioned);
   if (!std::isfinite(curvature) || curvature <= 0.0) {
-    return current_space.apply_inverse_reduced_curvature(reduced_vector);
+    return current_space.apply_inverse_reduced_block_preconditioner(
+        reduced_vector);
   }
   return preconditioned;
 }
@@ -2453,9 +2626,6 @@ void append_nonredundant_truncated_newton_secant_pair(
     Eigen::VectorXd packed_projected_gradient_change,
     int max_history_size,
     std::vector<PackedSecantPair>* packed_secant_history) {
-  if (packed_secant_history == nullptr) {
-    throw std::invalid_argument("packed secant history must not be null");
-  }
   if (max_history_size <= 0) {
     return;
   }
@@ -2563,16 +2733,16 @@ public:
         hvp_step_size_(hvp_step_size) {}
 
   Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) override {
-    if (reduced_direction.size() != current_reduced_gradient_.size()) {
-      throw std::invalid_argument(
-          "reduced HVP direction does not match the nonredundant space");
-    }
     if (reduced_direction.size() == 0) {
       return Eigen::VectorXd::Zero(0);
     }
 
     const Eigen::VectorXd packed_direction =
-        current_space_.expand_step(reduced_direction);
+        gather_nonredundant_retract_tangent(
+            current_orbital_input_,
+            current_space_,
+            parameter_view_,
+            reduced_direction);
     const double packed_direction_norm = packed_direction.norm();
     if (!(packed_direction_norm > 0.0) || !std::isfinite(packed_direction_norm)) {
       return Eigen::VectorXd::Zero(reduced_direction.size());
@@ -2653,14 +2823,8 @@ private:
   Eigen::VectorXd apply_with_mode(
       const Eigen::VectorXd& reduced_direction,
       bool include_core_response) {
-    if (reduced_direction.size() != expected_reduced_size_) {
-      throw std::invalid_argument(
-          "reduced HVP direction does not match the nonredundant space");
-    }
-    if (!exact_operator_.supports_analytic_core_model()) {
-      throw std::runtime_error(
-          "exact_ctx analytic core HVP is unavailable for the current accepted point");
-    }
+    // The accepted-point exact operator is constructed only after the caller
+    // has validated the current chart and analytic-core availability.
     const Eigen::VectorXd response =
         include_outer_response_
             ? (include_core_response
@@ -2669,14 +2833,6 @@ private:
                          reduced_direction))
             : exact_operator_.apply_reduced_without_outer_response(
                   reduced_direction);
-    if (response.size() != expected_reduced_size_) {
-      throw std::runtime_error(
-          "exact-context reduced HVP returned the wrong dimension");
-    }
-    if (!response.allFinite()) {
-      throw std::runtime_error(
-          "exact-context reduced HVP returned non-finite values");
-    }
     return response;
   }
 
@@ -2824,6 +2980,7 @@ struct TruncatedNewtonStepResult {
   Eigen::VectorXd reduced_step;
   Eigen::VectorXd reduced_hessian_times_step;
   TruncatedNewtonKrylovSubspace krylov_subspace;
+  double retract_tangent_norm = 0.0;
   bool reached_boundary = false;
   bool encountered_negative_curvature = false;
   bool used_initial_step = false;
@@ -2832,6 +2989,67 @@ struct TruncatedNewtonStepResult {
   int cg_iterations = 0;
   double predicted_decrease = 0.0;
 };
+
+double truncated_newton_step_effective_norm(
+    const TruncatedNewtonStepResult& step) {
+  if (std::isfinite(step.retract_tangent_norm) &&
+      step.retract_tangent_norm > 0.0) {
+    return step.retract_tangent_norm;
+  }
+  const double reduced_norm = step.reduced_step.norm();
+  return std::isfinite(reduced_norm) ? reduced_norm : 0.0;
+}
+
+void clamp_nonredundant_step_result_to_retract_tangent_radius(
+    const OrbitalPreparationInput& orbital_preparation_input,
+    const NonredundantOrbitalSpace& current_space,
+    const SparseOrbitalParameterView& parameter_view,
+    const NonredundantOrbitalSpace::ProjectionResult& current_projection,
+    double trust_radius,
+    TruncatedNewtonStepResult* step) {
+  if (step == nullptr ||
+      step->reduced_step.size() != current_projection.reduced_gradient.size() ||
+      step->reduced_step.size() == 0 ||
+      !step->reduced_step.allFinite()) {
+    return;
+  }
+
+  const double tangent_norm =
+      compute_nonredundant_retract_tangent_norm(
+          orbital_preparation_input,
+          current_space,
+          parameter_view,
+          step->reduced_step);
+  step->retract_tangent_norm = tangent_norm;
+  if (!(trust_radius > 0.0) ||
+      !std::isfinite(trust_radius) ||
+      !(tangent_norm > 0.0) ||
+      !std::isfinite(tangent_norm)) {
+    return;
+  }
+
+  if (tangent_norm > trust_radius) {
+    const double scale = trust_radius / tangent_norm;
+    step->reduced_step *= scale;
+    if (step->reduced_hessian_times_step.size() ==
+            current_projection.reduced_gradient.size() &&
+        step->reduced_hessian_times_step.allFinite()) {
+      step->reduced_hessian_times_step *= scale;
+      step->predicted_decrease =
+          -current_projection.reduced_gradient.dot(step->reduced_step) -
+          0.5 * step->reduced_step.dot(step->reduced_hessian_times_step);
+    } else {
+      step->predicted_decrease = 0.0;
+    }
+    step->retract_tangent_norm = trust_radius;
+    step->reached_boundary = true;
+    return;
+  }
+
+  step->reached_boundary =
+      step->reached_boundary ||
+      tangent_norm >= (1.0 - 1.0e-8) * trust_radius;
+}
 
 struct ExactCtxHybridRefinementResult {
   TruncatedNewtonStepResult step;
@@ -2889,6 +3107,9 @@ struct RejectedTruncatedNewtonStepCache {
   }
 
   void update(
+      const OrbitalPreparationInput& orbital_preparation_input,
+      const NonredundantOrbitalSpace& current_space,
+      const SparseOrbitalParameterView& parameter_view,
       const TruncatedNewtonStepResult& cheap_model_step,
       const TruncatedNewtonStepResult& current_trial_step,
       Eigen::Index expected_size,
@@ -2897,7 +3118,10 @@ struct RejectedTruncatedNewtonStepCache {
         finite_nonzero_vector_matches_size(
                 cheap_model_step.reduced_step,
                 expected_size)
-            ? shrink_reduced_step_inside_trust_radius(
+            ? shrink_nonredundant_reduced_step_inside_retract_tangent_radius(
+                  orbital_preparation_input,
+                  current_space,
+                  parameter_view,
                   cheap_model_step.reduced_step,
                   trust_radius)
             : Eigen::VectorXd();
@@ -2905,7 +3129,10 @@ struct RejectedTruncatedNewtonStepCache {
         finite_nonzero_vector_matches_size(
                 current_trial_step.reduced_step,
                 expected_size)
-            ? shrink_reduced_step_inside_trust_radius(
+            ? shrink_nonredundant_reduced_step_inside_retract_tangent_radius(
+                  orbital_preparation_input,
+                  current_space,
+                  parameter_view,
                   current_trial_step.reduced_step,
                   trust_radius)
             : Eigen::VectorXd();
@@ -2916,7 +3143,7 @@ struct AcceptedTruncatedNewtonStepControl {
   double trust_radius = 0.0;
   bool stalled_projected_convergence = false;
   int consecutive_projected_stall_count = 0;
-  int sparse_followup_cooldown_remaining = 0;
+  int hybrid_followup_cooldown_remaining = 0;
   bool previous_iteration_reliable_for_transport = false;
   bool enable_hybrid_bridge_next_iteration = false;
 };
@@ -2960,12 +3187,6 @@ bool append_truncated_newton_krylov_basis_vector(
     const Eigen::VectorXd& hessian_times_candidate,
     std::vector<Eigen::VectorXd>* basis_vectors,
     std::vector<Eigen::VectorXd>* hessian_basis_vectors) {
-  if (basis_vectors == nullptr || hessian_basis_vectors == nullptr) {
-    throw std::invalid_argument("TN Krylov basis storage must not be null");
-  }
-  if (basis_vectors->size() != hessian_basis_vectors->size()) {
-    throw std::invalid_argument("TN Krylov basis storage is inconsistent");
-  }
   if (candidate_vector.size() != hessian_times_candidate.size() ||
       candidate_vector.size() == 0 ||
       !candidate_vector.allFinite() ||
@@ -3034,24 +3255,19 @@ TruncatedNewtonKrylovSubspace build_truncated_newton_krylov_subspace(
   krylov_subspace.projected_gradient.resize(basis_size);
 
   for (Eigen::Index column = 0; column < basis_size; ++column) {
-    if (basis_vectors[static_cast<std::size_t>(column)].size() != reduced_size ||
-        hessian_basis_vectors[static_cast<std::size_t>(column)].size() !=
-            reduced_size) {
-      return TruncatedNewtonKrylovSubspace();
-    }
     krylov_subspace.orthonormal_basis.col(column) =
-        basis_vectors[static_cast<std::size_t>(column)];
+        basis_vectors[column];
     krylov_subspace.hessian_basis.col(column) =
-        hessian_basis_vectors[static_cast<std::size_t>(column)];
+        hessian_basis_vectors[column];
     krylov_subspace.projected_gradient[column] =
-        basis_vectors[static_cast<std::size_t>(column)].dot(reduced_gradient);
+        basis_vectors[column].dot(reduced_gradient);
   }
 
   for (Eigen::Index row = 0; row < basis_size; ++row) {
     for (Eigen::Index column = 0; column < basis_size; ++column) {
       krylov_subspace.reduced_hessian(row, column) =
-          basis_vectors[static_cast<std::size_t>(row)].dot(
-              hessian_basis_vectors[static_cast<std::size_t>(column)]);
+          basis_vectors[row].dot(
+              hessian_basis_vectors[column]);
     }
   }
   krylov_subspace.reduced_hessian =
@@ -3115,10 +3331,6 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
       [&](double lambda,
           Eigen::VectorXd* eigen_coordinates,
           double* squared_norm) -> bool {
-        if (eigen_coordinates == nullptr || squared_norm == nullptr) {
-          throw std::invalid_argument(
-              "shifted Krylov trust-region outputs must not be null");
-        }
         eigen_coordinates->resize(eigenvalues.size());
         *squared_norm = 0.0;
         for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
@@ -3411,14 +3623,15 @@ assess_nonredundant_truncated_newton_full_retry_after_cheap_reject(
       std::isfinite(cheap_trial_evaluation.trust_ratio) &&
       cheap_trial_evaluation.trust_ratio > 0.0;
 
-  // same-iteration full retry is only worthwhile when the cheap step already
-  // moves downhill in the full objective and the rejection mainly looks like a
-  // trust-ratio calibration issue. If the cheap solve needed fallback, hit the
-  // boundary, saw negative curvature, or required Krylov rescue, recomputing a
-  // more expensive step at the same accepted point rarely fixes the real issue.
+  // Same-iteration full retry is worthwhile when the cheap step already moves
+  // downhill in the full objective and the rejection mainly looks like a
+  // trust-ratio calibration issue. Boundary steps are deliberately allowed:
+  // sparse open-shell charts often produce boundary-limited cheap directions
+  // whose full relaxed-response model fixes the radius calibration and avoids
+  // many tiny follow-up steps. Fallback, negative curvature, and Krylov rescue
+  // still indicate a genuinely unreliable cheap subproblem.
   return
       !cheap_predicted_decrease_fallback &&
-      !cheap_step.reached_boundary &&
       !cheap_step.encountered_negative_curvature &&
       !cheap_step.used_krylov_rescue &&
       has_positive_actual_decrease &&
@@ -3431,14 +3644,14 @@ assess_exact_ctx_hybrid_bridge_for_next_iteration(
     bool sparse_orbital_chart,
     bool projected_stall,
     int consecutive_projected_stall_count,
-    int sparse_followup_cooldown_remaining,
+    int hybrid_followup_cooldown_remaining,
     double trust_ratio,
     bool used_krylov_rescue_step) {
-  // Sparse HAO/BDO charts frequently show single-step projected-gradient plateaus
-  // even when the cheap accepted-point core model is still adequate. Triggering
-  // an outer-response refinement on the first mild stall over-pays for these
-  // localized manifolds. Require either sustained stall or an outright Krylov
-  // rescue before spending the extra full-model correction.
+  // Sparse HAO/BDO charts frequently show single-step projected-gradient
+  // plateaus, and dense OEO radicals can otherwise request the same expensive
+  // outer-response probe on every tail iteration. Require either sustained
+  // stall or an outright Krylov rescue, then honor a chart-specific cooldown
+  // before spending the next full-model correction.
   const bool due_to_projected_stall =
       projected_stall &&
       (!sparse_orbital_chart || consecutive_projected_stall_count >= 2);
@@ -3447,12 +3660,11 @@ assess_exact_ctx_hybrid_bridge_for_next_iteration(
       std::isfinite(trust_ratio) &&
       trust_ratio < exact_ctx_hybrid_bridge_low_trust_ratio_threshold();
   const bool due_to_krylov_rescue = used_krylov_rescue_step;
-  const bool sparse_followup_is_cooling_down =
-      sparse_orbital_chart &&
-      sparse_followup_cooldown_remaining > 0;
+  const bool followup_is_cooling_down =
+      hybrid_followup_cooldown_remaining > 0;
   return
       full_operator_available &&
-      (!sparse_followup_is_cooling_down || due_to_krylov_rescue) &&
+      (!followup_is_cooling_down || due_to_krylov_rescue) &&
       (due_to_projected_stall ||
        due_to_low_trust_ratio ||
        due_to_krylov_rescue);
@@ -3465,10 +3677,6 @@ build_nonredundant_truncated_newton_full_retry_warm_start(
     const RejectedTruncatedNewtonStepCache& rejected_step_cache,
     const TruncatedNewtonStepResult& cheap_step,
     ReducedHvpOperator* full_hvp_operator) {
-  if (full_hvp_operator == nullptr) {
-    throw std::invalid_argument("full retry HVP operator must not be null");
-  }
-
   FullRetryWarmStart warm_start;
   const Eigen::Index reduced_size =
       current_projection.reduced_gradient.size();
@@ -3484,7 +3692,7 @@ build_nonredundant_truncated_newton_full_retry_warm_start(
       finite_nonzero_vector_matches_size(
           cheap_reduced_step,
           reduced_size) &&
-      cheap_reduced_step.norm() < trust_radius;
+      !cheap_step.reached_boundary;
   if (!can_warm_start) {
     return warm_start;
   }
@@ -3526,7 +3734,7 @@ assess_accepted_nonredundant_truncated_newton_step(
     double next_projected_gradient_inf_norm,
     double gradient_tolerance,
     int previous_consecutive_projected_stall_count,
-    int previous_sparse_followup_cooldown_remaining,
+    int previous_hybrid_followup_cooldown_remaining,
     double trust_ratio,
     bool cheap_trial_rejected,
     bool full_retry_attempted,
@@ -3549,7 +3757,8 @@ assess_accepted_nonredundant_truncated_newton_step(
   } else if (
       trust_ratio > expand_ratio &&
       (accepted_step.reached_boundary ||
-       accepted_step.reduced_step.norm() >= boundary_fraction * trust_radius)) {
+       truncated_newton_step_effective_norm(accepted_step) >=
+           boundary_fraction * trust_radius)) {
     control.trust_radius =
         std::min(max_trust_radius, 2.0 * trust_radius);
   } else {
@@ -3565,12 +3774,13 @@ assess_accepted_nonredundant_truncated_newton_step(
       control.stalled_projected_convergence
           ? previous_consecutive_projected_stall_count + 1
           : 0;
-  const int sparse_followup_cooldown_after_decay =
-      std::max(0, previous_sparse_followup_cooldown_remaining - 1);
-  control.sparse_followup_cooldown_remaining =
-      sparse_orbital_chart && used_full_model_probe
-          ? exact_ctx_sparse_hybrid_followup_probe_cooldown_accepted_iterations()
-          : sparse_followup_cooldown_after_decay;
+  const int hybrid_followup_cooldown_after_decay =
+      std::max(0, previous_hybrid_followup_cooldown_remaining - 1);
+  control.hybrid_followup_cooldown_remaining =
+      used_full_model_probe
+          ? exact_ctx_hybrid_followup_probe_cooldown_accepted_iterations(
+                sparse_orbital_chart)
+          : hybrid_followup_cooldown_after_decay;
   control.previous_iteration_reliable_for_transport =
       !cheap_trial_rejected &&
       !full_retry_attempted &&
@@ -3586,7 +3796,7 @@ assess_accepted_nonredundant_truncated_newton_step(
           sparse_orbital_chart,
           control.stalled_projected_convergence,
           control.consecutive_projected_stall_count,
-          control.sparse_followup_cooldown_remaining,
+          control.hybrid_followup_cooldown_remaining,
           trust_ratio,
           used_krylov_rescue_step);
   return control;
@@ -3596,13 +3806,6 @@ double estimate_nonredundant_reduced_model_decrease(
     const NonredundantOrbitalSpace::ProjectionResult& projection,
     const Eigen::VectorXd& reduced_step,
     ReducedHvpOperator* hvp_operator) {
-  if (hvp_operator == nullptr) {
-    throw std::invalid_argument("reduced HVP operator must not be null");
-  }
-  if (reduced_step.size() != projection.reduced_gradient.size()) {
-    throw std::invalid_argument(
-        "reduced model step does not match projected gradient dimension");
-  }
   const Eigen::VectorXd reduced_hessian_step =
       hvp_operator->apply(reduced_step);
   return
@@ -3620,10 +3823,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd* initial_reduced_step = nullptr,
     const Eigen::VectorXd* initial_hessian_times_step = nullptr) {
-  if (hvp_operator == nullptr) {
-    throw std::invalid_argument("reduced HVP operator must not be null");
-  }
-
   TruncatedNewtonStepResult result;
   const Eigen::VectorXd fallback_step =
       build_nonredundant_preconditioned_reduced_gradient_step(
@@ -3658,11 +3857,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   const Eigen::VectorXd rhs = -current_projection.reduced_gradient;
   Eigen::VectorXd residual = rhs;
   if (initial_reduced_step != nullptr) {
-    if (initial_reduced_step->size() != current_projection.reduced_gradient.size()) {
-      throw std::invalid_argument(
-          "initial reduced TN step does not match projected gradient dimension");
-    }
-
     const double initial_step_norm = initial_reduced_step->norm();
     if (std::isfinite(initial_step_norm) &&
         initial_step_norm > 0.0 &&
@@ -3670,11 +3864,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       result.used_initial_step = true;
       Eigen::VectorXd hessian_times_initial_step;
       if (initial_hessian_times_step != nullptr) {
-        if (initial_hessian_times_step->size() !=
-            current_projection.reduced_gradient.size()) {
-          throw std::invalid_argument(
-              "initial TN Hessian-step product does not match projected gradient dimension");
-        }
         hessian_times_initial_step = *initial_hessian_times_step;
       } else {
         result.warm_start_hvp_performed = true;
@@ -3987,19 +4176,39 @@ ExactCtxHybridRefinementResult maybe_refine_exact_ctx_step_with_full_operator(
 
   // The cheap exact_ctx inner solve omits the relaxed outer response. One full
   // HVP on the cheap step quantifies that model mismatch. When the cheap step
-  // looks inaccurate, fall back directly to a few warm-started full-model CG
-  // iterations instead of trying to patch the cheap Krylov model in place.
+  // looks inaccurate, fall back directly to a few full-model CG iterations
+  // instead of trying to patch the cheap Krylov model in place. Do not exclude
+  // boundary-limited steps here: sparse open-shell runs can need the relaxed
+  // model exactly when cheap boundary steps start pushing into a bad basin.
   constexpr double kResidualRatioThreshold = 0.35;
   constexpr double kModelGapRatioThreshold = 0.25;
   constexpr double kRefinementBoundaryFraction = 0.9;
+  const double boundary_refinement_gradient_tolerance_multiple =
+      std::max(
+          0.0,
+          parse_env_double_with_default(
+              "XMVB_CPP_EXACT_CTX_HYBRID_BOUNDARY_REFINE_GRAD_MULTIPLE",
+              1.0e12));
+  const bool boundary_limited_step =
+      cheap_step.reached_boundary ||
+      step_norm >= kRefinementBoundaryFraction * trust_radius;
+  const double projected_gradient_inf_norm =
+      gradient_infinity_norm(current_projection.reduced_gradient);
+  const bool boundary_refinement_allowed =
+      !boundary_limited_step ||
+      (std::isfinite(projected_gradient_inf_norm) &&
+       projected_gradient_inf_norm <=
+           boundary_refinement_gradient_tolerance_multiple *
+               std::max(gradient_tolerance, 0.0));
+  const bool full_model_disagrees =
+      !std::isfinite(full_predicted_decrease) ||
+      full_predicted_decrease <= 0.0 ||
+      result.full_step_residual_ratio > kResidualRatioThreshold ||
+      result.full_model_gap_ratio > kModelGapRatioThreshold;
   const bool detected_model_mismatch =
-      !cheap_step.reached_boundary &&
       !cheap_step.encountered_negative_curvature &&
-      step_norm < kRefinementBoundaryFraction * trust_radius &&
-      (!std::isfinite(full_predicted_decrease) ||
-       full_predicted_decrease <= 0.0 ||
-       result.full_step_residual_ratio > kResidualRatioThreshold ||
-       result.full_model_gap_ratio > kModelGapRatioThreshold);
+      boundary_refinement_allowed &&
+      full_model_disagrees;
   if (!detected_model_mismatch) {
     return result;
   }
@@ -4047,14 +4256,6 @@ bool try_armijo_backtracking_direction(
     Eigen::VectorXd* accepted_parameters,
     Eigen::VectorXd* accepted_gradient,
     double* accepted_energy) {
-  if (objective == nullptr ||
-      accepted_parameters == nullptr ||
-      accepted_gradient == nullptr ||
-      accepted_energy == nullptr) {
-    throw std::invalid_argument(
-        "fallback line search requires non-null objective, parameter, gradient, and energy outputs");
-  }
-
   const double directional_derivative =
       current_gradient.dot(search_direction);
   if (!std::isfinite(directional_derivative) ||
@@ -4092,16 +4293,12 @@ bool try_build_nonredundant_lifted_trial_parameters(
     const SparseOrbitalParameterView& parameter_view,
     const Eigen::VectorXd& reduced_step,
     Eigen::VectorXd* trial_parameters) {
-  if (trial_parameters == nullptr) {
-    throw std::invalid_argument("trial_parameters must not be null");
-  }
   const Eigen::VectorXd current_parameters =
       parameter_view.pack(current_orbital_input);
-  // The reduced coordinates parameterize block-local occupied/virtual orbital
-  // rotations, not Euclidean coordinates in the packed sparse-coefficient
-  // chart. Trial points must therefore be generated with the same Cayley-style
-  // block retraction used to define the finite-step nonredundant manifold, and
-  // only then packed back into the optimizer coordinates.
+  // The reduced coordinates define accepted-point nonredundant orbital
+  // increments. Trial points should therefore be built by lifting that reduced
+  // direction back to a finite orbital coefficient update and then repacking
+  // the resulting sparse-orbital table.
   try {
     const OrbitalPreparationInput trial_orbital_input =
         current_space.retract_step(
@@ -4110,10 +4307,10 @@ bool try_build_nonredundant_lifted_trial_parameters(
     *trial_parameters =
         parameter_view.pack(trial_orbital_input);
   } catch (const std::exception&) {
-    // A finite reduced step can still violate the Cayley chart radius for one
-    // block.  In Armijo backtracking that is not a fatal optimizer error; it
-    // simply means the current trial step is too large and the caller should
-    // shrink it and retry.
+    // A finite reduced step can still leave the local accepted-point chart for
+    // one block. In Armijo backtracking that is not a fatal optimizer error;
+    // it simply means the current trial step is too large and the caller
+    // should shrink it and retry.
     return false;
   }
   if (trial_parameters->size() != current_parameters.size() ||
@@ -4139,14 +4336,6 @@ bool try_armijo_backtracking_nonredundant_direction(
     Eigen::VectorXd* accepted_parameters,
     Eigen::VectorXd* accepted_gradient,
     double* accepted_energy) {
-  if (objective == nullptr ||
-      accepted_parameters == nullptr ||
-      accepted_gradient == nullptr ||
-      accepted_energy == nullptr) {
-    throw std::invalid_argument(
-        "nonredundant Armijo line search requires non-null outputs");
-  }
-
   const double directional_derivative =
       current_gradient.dot(packed_tangent_search_direction);
   if (!std::isfinite(directional_derivative) ||
@@ -4158,9 +4347,9 @@ bool try_armijo_backtracking_nonredundant_direction(
   Eigen::VectorXd trial_parameters(current_parameters.size());
   Eigen::VectorXd trial_gradient(current_gradient.size());
   // Keep the accepted-point state in the original sparse-coefficient chart,
-  // but generate finite trial points with the nonredundant block-rotation
-  // retraction rather than by adding the tangent direction directly in packed
-  // sparse coordinates.
+  // but generate finite trial points with the nonredundant orbital-increment
+  // lift rather than by adding the reduced direction directly in packed sparse
+  // coordinates.
   while (step >= minimum_step) {
     if (!try_build_nonredundant_lifted_trial_parameters(
             current_orbital_input,
@@ -4233,14 +4422,6 @@ bool try_steepest_descent_armijo_fallback(
     Eigen::VectorXd* accepted_gradient,
     double* accepted_energy,
     double* accepted_step) {
-  if (objective == nullptr ||
-      accepted_parameters == nullptr ||
-      accepted_gradient == nullptr ||
-      accepted_energy == nullptr ||
-      accepted_step == nullptr) {
-    throw std::invalid_argument("fallback line search outputs must not be null");
-  }
-
   const Eigen::VectorXd direction = -start_gradient;
   const double directional_derivative = start_gradient.dot(direction);
   if (!(directional_derivative < 0.0)) {
@@ -4337,30 +4518,20 @@ void sync_result_from_objective(
   result->scf_result = objective.last_gradient_result().scf_result;
 }
 
-double vector_infinity_norm(const std::vector<double>& values) {
-  double inf_norm = 0.0;
-  for (const double value : values) {
-    inf_norm = std::max(inf_norm, std::abs(value));
-  }
-  return inf_norm;
-}
-
-double vector_l2_norm(const std::vector<double>& values) {
-  double squared_norm = 0.0;
-  for (const double value : values) {
-    squared_norm += value * value;
-  }
-  return std::sqrt(squared_norm);
-}
-
-CppVbScfAcceptedIterationSnapshot build_accepted_iteration_snapshot(
+void record_accepted_iteration_snapshot(
     OrbitalObjective* objective,
     int accepted_iteration_index,
-    bool include_reference_energy_gradient,
-    bool include_full_payload) {
-  if (objective == nullptr) {
-    throw std::invalid_argument("objective must not be null");
+    const CppVbScfOptimizerOptions& options,
+    CppVbScfOptimizerResult* result) {
+  if (!options.retain_accepted_iteration_trace && !options.accepted_iteration_callback) {
+    return;
   }
+  const bool include_reference_energy_gradient =
+      options.retain_accepted_iteration_trace ||
+      options.accepted_iteration_callback_requires_reference_gradient;
+  const bool include_full_payload =
+      options.retain_accepted_iteration_trace ||
+      options.accepted_iteration_callback_requires_full_snapshot;
   // Lightweight callback snapshots only need scalar iteration summaries. Skip
   // the heavyweight matrix/integral deep copies unless the retained trace or a
   // callback explicitly requested the full payload.
@@ -4371,10 +4542,13 @@ CppVbScfAcceptedIterationSnapshot build_accepted_iteration_snapshot(
   CppVbScfAcceptedIterationSnapshot snapshot;
   snapshot.accepted_iteration_index = accepted_iteration_index;
   snapshot.has_full_payload = include_full_payload;
-  snapshot.sparse_orbital_energy_gradient_inf_norm =
-      vector_infinity_norm(gradient_result.sparse_orbital_energy_gradient);
+  for (const double value : gradient_result.sparse_orbital_energy_gradient) {
+    snapshot.sparse_orbital_energy_gradient_inf_norm =
+        std::max(snapshot.sparse_orbital_energy_gradient_inf_norm, std::abs(value));
+    snapshot.sparse_orbital_energy_gradient_l2_norm += value * value;
+  }
   snapshot.sparse_orbital_energy_gradient_l2_norm =
-      vector_l2_norm(gradient_result.sparse_orbital_energy_gradient);
+      std::sqrt(snapshot.sparse_orbital_energy_gradient_l2_norm);
   if (include_full_payload) {
     snapshot.orbital_value_table.assign(
         objective->last_input().orbital_preparation_input.orbital_value_table.begin(),
@@ -4398,29 +4572,6 @@ CppVbScfAcceptedIterationSnapshot build_accepted_iteration_snapshot(
       gradient_result.scf_result.one_electron_reference_energy;
   snapshot.average_structure_overlap =
       gradient_result.scf_result.average_structure_overlap;
-  return snapshot;
-}
-
-void record_accepted_iteration_snapshot(
-    OrbitalObjective* objective,
-    int accepted_iteration_index,
-    const CppVbScfOptimizerOptions& options,
-    CppVbScfOptimizerResult* result) {
-  if (!options.retain_accepted_iteration_trace && !options.accepted_iteration_callback) {
-    return;
-  }
-  const bool include_reference_energy_gradient =
-      options.retain_accepted_iteration_trace ||
-      options.accepted_iteration_callback_requires_reference_gradient;
-  const bool include_full_payload =
-      options.retain_accepted_iteration_trace ||
-      options.accepted_iteration_callback_requires_full_snapshot;
-  const auto snapshot =
-      build_accepted_iteration_snapshot(
-          objective,
-          accepted_iteration_index,
-          include_reference_energy_gradient,
-          include_full_payload);
   if (options.retain_accepted_iteration_trace) {
     result->accepted_iteration_trace.push_back(snapshot);
   }
@@ -4493,11 +4644,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
     throw std::invalid_argument(
         "requested optimizer backend is not enabled in this build");
   }
-  if (options_.algorithm == VBSCFAlgorithm::BiorthogonalExactSelected &&
-      options_.backend == CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    throw std::invalid_argument(
-        "tbvbscf is not yet wired into the truncated-Newton exact-context HVP path");
-  }
   if (options_.backend == CppVbScfOptimizerBackend::DeepVBHOnnx) {
     throw std::invalid_argument(
         "deepvbh_onnx requires DeepVBHOnnxHybridOptimizer and runtime metadata");
@@ -4559,18 +4705,18 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
       case CppVbScfOptimizerBackend::LegacyFortran: {
 #ifdef XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND
         const int m = options_.history_size;
-        std::vector<double> x(xmvb::to_size(n));
-        std::memcpy(x.data(), parameter_vector.data(), sizeof(double) * xmvb::to_size(n));
-        std::vector<double> gradient_buffer(xmvb::to_size(n), 0.0);
+        std::vector<double> x(n);
+        std::memcpy(x.data(), parameter_vector.data(), sizeof(double) * n);
+        std::vector<double> gradient_buffer(n, 0.0);
         std::memcpy(
             gradient_buffer.data(),
             gradient.data(),
-            sizeof(double) * xmvb::to_size(n));
+            sizeof(double) * n);
         std::vector<double> workspace(
-            xmvb::to_size(n) * xmvb::to_size(2 * m + 1) +
-                xmvb::to_size(2 * m),
+            n * 2 * m + 1 +
+                2 * m,
             0.0);
-        std::vector<double> diag(xmvb::to_size(n), 1.0);
+        std::vector<double> diag(n, 1.0);
 
         int diagco = 0;
         int iprint[2] = {-1, 0};
@@ -4586,7 +4732,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           std::memcpy(
               gradient_buffer.data(),
               gradient_map.data(),
-              sizeof(double) * xmvb::to_size(n));
+              sizeof(double) * n);
           sync_result_from_objective(objective, &result);
           final_gradient_l2_norm = gradient_map.norm();
         };
@@ -4889,15 +5035,17 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           }
 
           const Eigen::VectorXd reduced_search_direction =
-              -current_space.apply_inverse_reduced_curvature(
+              -current_space.apply_inverse_reduced_block_preconditioner(
                   current_projection.reduced_gradient);
           const Eigen::VectorXd search_direction =
-              current_space.expand_step(reduced_search_direction);
-          // The reduced coordinates still encode block-local orbital-rotation
-          // directions, but the accepted point itself remains in the legacy
-          // sparse-coefficient chart. `expand_step` lifts that reduced
-          // direction back to the packed sparse increment seen by the outer
-          // optimizer.
+              gather_nonredundant_retract_tangent(
+                  objective.last_input().orbital_preparation_input,
+                  current_space,
+                  parameter_view,
+                  reduced_search_direction);
+          // The accepted point remains in packed sparse coefficients, so the
+          // projected-gradient backend must use the actual retraction tangent
+          // rather than the raw additive chart when testing descent and Armijo.
           const double directional_derivative =
               current_gradient.dot(search_direction);
           if (!std::isfinite(directional_derivative) ||
@@ -5008,10 +5156,16 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             break;
           }
 
-          const Eigen::VectorXd fallback_direction =
-              -current_projection.packed_projected_gradient;
           const Eigen::VectorXd fallback_reduced_direction =
               -current_projection.reduced_gradient;
+          const OrbitalPreparationInput previous_orbital_input =
+              objective.last_input().orbital_preparation_input;
+          const Eigen::VectorXd fallback_direction =
+              gather_nonredundant_retract_tangent(
+                  previous_orbital_input,
+                  current_space,
+                  parameter_view,
+                  fallback_reduced_direction);
           Eigen::VectorXd search_direction;
           Eigen::VectorXd reduced_search_direction;
           inverse_hessian.apply_Hv(
@@ -5021,8 +5175,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           {
             const auto search_projection =
                 current_space.project_vector(search_direction);
-            search_direction = search_projection.packed_projected_gradient;
             reduced_search_direction = search_projection.reduced_gradient;
+            search_direction =
+                gather_nonredundant_retract_tangent(
+                    previous_orbital_input,
+                    current_space,
+                    parameter_view,
+                    reduced_search_direction);
           }
           double directional_derivative =
               current_gradient.dot(search_direction);
@@ -5047,8 +5206,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           previous_projected_gradient = current_projection.packed_projected_gradient;
           const Eigen::VectorXd previous_reduced_gradient =
               current_projection.reduced_gradient;
-          const OrbitalPreparationInput previous_orbital_input =
-              objective.last_input().orbital_preparation_input;
           const double reference_energy = energy;
           Eigen::VectorXd accepted_parameters(current_parameters.size());
           Eigen::VectorXd accepted_gradient(current_gradient.size());
@@ -5112,7 +5269,11 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     reference_energy,
                     previous_gradient,
                     -previous_reduced_gradient,
-                    -previous_projected_gradient,
+                    gather_nonredundant_retract_tangent(
+                        previous_orbital_input,
+                        current_space,
+                        parameter_view,
+                        -previous_reduced_gradient),
                     fallback_initial_step,
                     options_.minimum_step_size,
                     options_.armijo_constant,
@@ -5309,7 +5470,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 0,
                 options_.nonredundant_truncated_newton_transport_history_size));
         // The trust-region subproblem still lives in reduced block-local
-        // orbital-rotation coordinates even though accepted trial points are
+        // nonredundant coordinates even though accepted trial points are
         // lifted back to sparse coefficients. In that reduced chart,
         // amplitudes much larger than O(1) no longer define meaningful local
         // trust regions, so clamp the initial and maximum radii to a
@@ -5384,6 +5545,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                         initial_projected_gradient_inf_norm,
                         options_.gradient_tolerance,
                         latest_objective_seconds,
+                        consecutive_projected_stall_count,
                         exact_ctx_hybrid_strategy_state)
                   : ExactCtxInnerSolvePolicy();
           const bool inner_solve_uses_outer_response =
@@ -5417,7 +5579,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               const auto exact_ctx_info = exact_ctx_hvp_operator->diagnostics();
               const bool full_model_correction_allowed =
                   exact_ctx_full_model_correction_allowed(
-                      n_active_orbitals,
+                      system_profile,
                       consecutive_projected_stall_count);
               if (exact_ctx_retry_rejected_step_with_full_operator() &&
                   full_model_correction_allowed &&
@@ -5524,22 +5686,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   bool screen_with_energy_only,
                   TruncatedNewtonTrialEvaluation* trial_evaluation,
                   Eigen::VectorXd* accepted_packed_step,
-                  OrbitalObjective* accepted_trial_objective,
+                  OrbitalObjective::TrialEvaluation* accepted_trial_evaluation,
                   Eigen::VectorXd* accepted_trial_parameters,
                   Eigen::VectorXd* accepted_trial_gradient,
                   double* accepted_trial_energy,
                   double* accepted_trust_ratio) -> bool {
                 if (trial_evaluation != nullptr) {
                   *trial_evaluation = TruncatedNewtonTrialEvaluation();
-                }
-                if (accepted_packed_step == nullptr ||
-                    accepted_trial_objective == nullptr ||
-                    accepted_trial_parameters == nullptr ||
-                    accepted_trial_gradient == nullptr ||
-                    accepted_trial_energy == nullptr ||
-                    accepted_trust_ratio == nullptr) {
-                  throw std::invalid_argument(
-                      "truncated-Newton trial-step outputs must not be null");
                 }
                 if (!std::isfinite(candidate_predicted_decrease) ||
                     candidate_predicted_decrease <= 0.0) {
@@ -5582,12 +5735,11 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     return false;
                   }
                 }
-                OrbitalObjective candidate_trial_objective = objective;
-                Eigen::VectorXd candidate_trial_gradient(current_gradient.size());
+                OrbitalObjective::TrialEvaluation candidate_trial_evaluation =
+                    objective.evaluate_trial_without_committing(
+                        candidate_trial_parameters);
                 const double candidate_trial_energy =
-                    candidate_trial_objective(
-                        candidate_trial_parameters,
-                        candidate_trial_gradient);
+                    candidate_trial_evaluation.energy;
                 const double actual_decrease =
                     energy - candidate_trial_energy;
                 const double candidate_trust_ratio =
@@ -5604,10 +5756,11 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 }
 
                 *accepted_packed_step = candidate_packed_step;
-                *accepted_trial_objective =
-                    std::move(candidate_trial_objective);
+                *accepted_trial_evaluation =
+                    std::move(candidate_trial_evaluation);
                 *accepted_trial_parameters = candidate_trial_parameters;
-                *accepted_trial_gradient = std::move(candidate_trial_gradient);
+                *accepted_trial_gradient =
+                    std::move(accepted_trial_evaluation->gradient);
                 *accepted_trial_energy = candidate_trial_energy;
                 *accepted_trust_ratio = candidate_trust_ratio;
                 return true;
@@ -5618,22 +5771,17 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   Eigen::VectorXd* accepted_trial_parameters,
                   Eigen::VectorXd* accepted_trial_gradient,
                   double* accepted_trial_energy) -> bool {
-                if (accepted_packed_step == nullptr ||
-                    accepted_trial_objective == nullptr ||
-                    accepted_trial_parameters == nullptr ||
-                    accepted_trial_gradient == nullptr ||
-                    accepted_trial_energy == nullptr) {
-                  throw std::invalid_argument(
-                      "nonredundant descent fallback outputs must not be null");
-                }
-
                 Eigen::VectorXd fallback_reduced_direction =
                     -apply_nonredundant_truncated_newton_preconditioner(
                         current_space,
                         &transported_preconditioner,
                         current_projection.reduced_gradient);
                 Eigen::VectorXd search_direction =
-                    current_space.expand_step(fallback_reduced_direction);
+                    gather_nonredundant_retract_tangent(
+                        current_orbital_input,
+                        current_space,
+                        parameter_view,
+                        fallback_reduced_direction);
                 double directional_derivative =
                     current_gradient.dot(search_direction);
                 if (!std::isfinite(directional_derivative) ||
@@ -5641,10 +5789,14 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     is_effectively_zero_step(
                         search_direction,
                         current_parameters)) {
-                  search_direction =
-                      -current_projection.packed_projected_gradient;
                   fallback_reduced_direction =
                       -current_projection.reduced_gradient;
+                  search_direction =
+                      gather_nonredundant_retract_tangent(
+                          current_orbital_input,
+                          current_space,
+                          parameter_view,
+                          fallback_reduced_direction);
                   directional_derivative =
                       current_gradient.dot(search_direction);
                 }
@@ -5657,7 +5809,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 }
 
                 const double reduced_search_direction_norm =
-                    fallback_reduced_direction.norm();
+                    search_direction.norm();
                 const double trust_radius_limited_initial_step =
                     std::isfinite(reduced_search_direction_norm) &&
                             reduced_search_direction_norm > 0.0
@@ -5677,7 +5829,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 // from a reduced step that already fits inside the current
                 // trust radius avoids burning many full objective evaluations
                 // just to rediscover the same radius contraction.
-                OrbitalObjective fallback_objective = objective;
+                OrbitalObjective fallback_objective =
+                    objective.make_probe_copy();
                 Eigen::VectorXd fallback_parameters(current_parameters.size());
                 Eigen::VectorXd fallback_gradient(current_gradient.size());
                 double fallback_energy = energy;
@@ -5730,7 +5883,10 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   previous_accepted_packed_step,
                   current_parameters.size())) {
             transported_initial_reduced_step =
-                shrink_reduced_step_inside_trust_radius(
+                shrink_nonredundant_reduced_step_inside_retract_tangent_radius(
+                    current_orbital_input,
+                    current_space,
+                    parameter_view,
                     current_space
                         .project_vector(previous_accepted_packed_step)
                         .reduced_gradient,
@@ -5774,6 +5930,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     &transported_preconditioner,
                     initial_reduced_step_for_current_solve);
           }
+          clamp_nonredundant_step_result_to_retract_tangent_radius(
+              current_orbital_input,
+              current_space,
+              parameter_view,
+              current_projection,
+              trust_radius,
+              &truncated_newton_step);
           if (truncated_newton_krylov_subspace_is_usable(
                   truncated_newton_step.krylov_subspace,
                   current_projection.reduced_gradient.size())) {
@@ -5799,11 +5962,30 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     current_projection,
                     trust_radius,
                     &transported_preconditioner);
+            reduced_step =
+                clip_nonredundant_reduced_step_to_retract_tangent_radius(
+                    current_orbital_input,
+                    current_space,
+                    parameter_view,
+                    reduced_step,
+                    trust_radius);
             predicted_decrease =
                 estimate_nonredundant_reduced_model_decrease(
                     current_projection,
                     reduced_step,
                     hvp_operator.get());
+            truncated_newton_step.reduced_step = reduced_step;
+            truncated_newton_step.reduced_hessian_times_step.resize(0);
+            truncated_newton_step.retract_tangent_norm =
+                compute_nonredundant_retract_tangent_norm(
+                    current_orbital_input,
+                    current_space,
+                    parameter_view,
+                    reduced_step);
+            truncated_newton_step.reached_boundary =
+                truncated_newton_step.retract_tangent_norm >=
+                (1.0 - 1.0e-8) * trust_radius;
+            truncated_newton_step.predicted_decrease = predicted_decrease;
             cheap_predicted_decrease_fallback = true;
           }
           bool full_operator_step_refined = false;
@@ -5836,26 +6018,42 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     cheap_core_hessian_times_step_ptr);
             if (hybrid_refinement.used_full_model_probe) {
               full_model_probe_used = true;
+              trial_step_for_current_trial = hybrid_refinement.step;
+              clamp_nonredundant_step_result_to_retract_tangent_radius(
+                  current_orbital_input,
+                  current_space,
+                  parameter_view,
+                  current_projection,
+                  trust_radius,
+                  &trial_step_for_current_trial);
               if (truncated_newton_krylov_subspace_is_usable(
                       hybrid_refinement.step.krylov_subspace,
                       current_projection.reduced_gradient.size())) {
                 cached_full_krylov_subspace =
                     hybrid_refinement.step.krylov_subspace;
               }
-              reduced_step = hybrid_refinement.step.reduced_step;
-              predicted_decrease = hybrid_refinement.step.predicted_decrease;
-              trial_step_for_current_trial = hybrid_refinement.step;
+              reduced_step = trial_step_for_current_trial.reduced_step;
+              predicted_decrease =
+                  trial_step_for_current_trial.predicted_decrease;
+              truncated_newton_step = trial_step_for_current_trial;
             }
             if (hybrid_refinement.used_refinement) {
               full_operator_step_refined = true;
               truncated_newton_step = hybrid_refinement.step;
+              clamp_nonredundant_step_result_to_retract_tangent_radius(
+                  current_orbital_input,
+                  current_space,
+                  parameter_view,
+                  current_projection,
+                  trust_radius,
+                  &truncated_newton_step);
               reduced_step = truncated_newton_step.reduced_step;
               predicted_decrease = truncated_newton_step.predicted_decrease;
             }
           }
 
           Eigen::VectorXd packed_step(current_parameters.size());
-          OrbitalObjective accepted_trial_objective = objective;
+          OrbitalObjective::TrialEvaluation accepted_trial_evaluation;
           Eigen::VectorXd trial_parameters(current_parameters.size());
           Eigen::VectorXd trial_gradient(current_gradient.size());
           double trial_energy = energy;
@@ -5870,7 +6068,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   screen_rejected_trials_with_energy_only,
                   &cheap_trial_evaluation,
                   &packed_step,
-                  &accepted_trial_objective,
+                  &accepted_trial_evaluation,
                   &trial_parameters,
                   &trial_gradient,
                   &trial_energy,
@@ -5919,6 +6117,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                         full_retry_warm_start.initial_hessian_times_step_ptr(
                             reduced_size));
               }
+              clamp_nonredundant_step_result_to_retract_tangent_radius(
+                  current_orbital_input,
+                  current_space,
+                  parameter_view,
+                  current_projection,
+                  trust_radius,
+                  &retry_step);
               if (truncated_newton_krylov_subspace_is_usable(
                       retry_step.krylov_subspace,
                       current_projection.reduced_gradient.size())) {
@@ -5941,11 +6146,30 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                         current_projection,
                         trust_radius,
                         &transported_preconditioner);
+                reduced_step =
+                    clip_nonredundant_reduced_step_to_retract_tangent_radius(
+                        current_orbital_input,
+                        current_space,
+                        parameter_view,
+                        reduced_step,
+                        trust_radius);
                 predicted_decrease =
                     estimate_nonredundant_reduced_model_decrease(
                         current_projection,
                         reduced_step,
                         retry_with_full_hvp_operator.get());
+                retry_step.reduced_step = reduced_step;
+                retry_step.reduced_hessian_times_step.resize(0);
+                retry_step.retract_tangent_norm =
+                    compute_nonredundant_retract_tangent_norm(
+                        current_orbital_input,
+                        current_space,
+                        parameter_view,
+                        reduced_step);
+                retry_step.reached_boundary =
+                    retry_step.retract_tangent_norm >=
+                    (1.0 - 1.0e-8) * trust_radius;
+                retry_step.predicted_decrease = predicted_decrease;
               }
               truncated_newton_step = std::move(retry_step);
               accepted_trial =
@@ -5955,7 +6179,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                       screen_rejected_trials_with_energy_only,
                       nullptr,
                       &packed_step,
-                      &accepted_trial_objective,
+                      &accepted_trial_evaluation,
                       &trial_parameters,
                       &trial_gradient,
                       &trial_energy,
@@ -5970,7 +6194,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                full_retry_attempted)) {
             if (try_nonredundant_descent_fallback_step(
                     &packed_step,
-                    &accepted_trial_objective,
+                    &objective,
                     &trial_parameters,
                     &trial_gradient,
                     &trial_energy)) {
@@ -5982,10 +6206,9 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               truncated_newton_step.cg_iterations = 0;
               truncated_newton_step.reduced_step =
                   current_space.project_vector(packed_step).reduced_gradient;
+              truncated_newton_step.retract_tangent_norm = packed_step.norm();
               truncated_newton_step.predicted_decrease =
-                  std::max(
-                      options_.energy_tolerance,
-                      energy - trial_energy);
+                  std::max(options_.energy_tolerance, energy - trial_energy);
             }
           }
           if (!accepted_trial) {
@@ -6012,13 +6235,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 truncated_newton_step.warm_start_hvp_performed,
                 truncated_newton_step.cg_iterations,
                 false,
-                consecutive_projected_stall_count,
-                exact_ctx_hybrid_strategy_state.request_followup,
-                truncated_newton_step.used_krylov_rescue,
-                truncated_newton_step.reached_boundary,
-                truncated_newton_step.encountered_negative_curvature,
-                truncated_newton_step.reduced_step.norm(),
-                truncated_newton_step.predicted_decrease);
+	                consecutive_projected_stall_count,
+	                exact_ctx_hybrid_strategy_state.request_followup,
+	                truncated_newton_step.used_krylov_rescue,
+	                truncated_newton_step.reached_boundary,
+	                truncated_newton_step.encountered_negative_curvature,
+	                truncated_newton_step_effective_norm(truncated_newton_step),
+	                truncated_newton_step.predicted_decrease);
             trust_radius *= kRejectShrink;
             if (trust_radius <= options_.minimum_step_size) {
               result.termination_reason =
@@ -6026,17 +6249,23 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               final_gradient_l2_norm = current_projection.reduced_gradient.norm();
               break;
             }
-            rejected_step_cache.update(
-                cheap_model_step,
-                truncated_newton_step,
-                reduced_size,
-                trust_radius);
+	            rejected_step_cache.update(
+	                current_orbital_input,
+	                current_space,
+	                parameter_view,
+	                cheap_model_step,
+	                truncated_newton_step,
+	                reduced_size,
+	                trust_radius);
             continue;
           }
 
           update_exact_ctx_hybrid_cost_sample();
           log_exact_ctx_hvp_diagnostics();
-          objective = std::move(accepted_trial_objective);
+          if (accepted_trial_evaluation.valid) {
+            objective.commit_trial_evaluation(
+                std::move(accepted_trial_evaluation));
+          }
           current_parameters = trial_parameters;
           current_gradient = std::move(trial_gradient);
           energy = trial_energy;
@@ -6056,7 +6285,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             previous_accepted_iteration_reliable_for_transport = false;
             consecutive_projected_stall_count = 0;
             exact_ctx_hybrid_strategy_state.request_followup = false;
-            exact_ctx_hybrid_strategy_state.sparse_followup_cooldown_remaining = 0;
+            exact_ctx_hybrid_strategy_state.hybrid_followup_cooldown_remaining = 0;
+            exact_ctx_hybrid_strategy_state.tail_full_solve_cooldown_remaining = 0;
           }
           sync_result_from_objective(objective, &result);
           record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
@@ -6086,7 +6316,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   final_projected_gradient_inf_norm,
                   options_.gradient_tolerance,
                   consecutive_projected_stall_count,
-                  exact_ctx_hybrid_strategy_state.sparse_followup_cooldown_remaining,
+                  exact_ctx_hybrid_strategy_state.hybrid_followup_cooldown_remaining,
                   trust_ratio,
                   cheap_trial_rejected,
                   full_retry_attempted,
@@ -6106,8 +6336,18 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           trust_radius = accepted_step_control.trust_radius;
           consecutive_projected_stall_count =
               accepted_step_control.consecutive_projected_stall_count;
-          exact_ctx_hybrid_strategy_state.sparse_followup_cooldown_remaining =
-              accepted_step_control.sparse_followup_cooldown_remaining;
+          exact_ctx_hybrid_strategy_state.hybrid_followup_cooldown_remaining =
+              accepted_step_control.hybrid_followup_cooldown_remaining;
+          const int tail_full_solve_cooldown_after_decay =
+              std::max(
+                  0,
+                  exact_ctx_hybrid_strategy_state
+                          .tail_full_solve_cooldown_remaining -
+                      1);
+          exact_ctx_hybrid_strategy_state.tail_full_solve_cooldown_remaining =
+              exact_ctx_inner_solve_policy.used_stall_tail_full_solve
+                  ? exact_ctx_tail_full_inner_solve_cooldown_accepted_iterations()
+                  : tail_full_solve_cooldown_after_decay;
           previous_accepted_iteration_reliable_for_transport =
               accepted_step_control.previous_iteration_reliable_for_transport;
           exact_ctx_hybrid_strategy_state.request_followup =
@@ -6130,13 +6370,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               truncated_newton_step.warm_start_hvp_performed,
               truncated_newton_step.cg_iterations,
               accepted_step_control.stalled_projected_convergence,
-              accepted_step_control.consecutive_projected_stall_count,
-              exact_ctx_hybrid_strategy_state.request_followup,
-              truncated_newton_step.used_krylov_rescue,
-              truncated_newton_step.reached_boundary,
-              truncated_newton_step.encountered_negative_curvature,
-              truncated_newton_step.reduced_step.norm(),
-              truncated_newton_step.predicted_decrease);
+	              accepted_step_control.consecutive_projected_stall_count,
+	              exact_ctx_hybrid_strategy_state.request_followup,
+	              truncated_newton_step.used_krylov_rescue,
+	              truncated_newton_step.reached_boundary,
+	              truncated_newton_step.encountered_negative_curvature,
+	              truncated_newton_step_effective_norm(truncated_newton_step),
+	              truncated_newton_step.predicted_decrease);
           if (std::abs(de) < options_.energy_tolerance &&
               gradient_infinity_norm(next_projection.reduced_gradient) <
                   options_.gradient_tolerance) {

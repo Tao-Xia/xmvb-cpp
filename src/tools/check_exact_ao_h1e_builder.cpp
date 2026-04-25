@@ -30,8 +30,8 @@ struct Options {
 void print_usage() {
   std::cerr << "usage: check_exact_ao_h1e_builder <input.xmi>"
                " [--standard-two-electron-mode exact|auto]"
-               " [--ao-integral-source legacy|libcint_cpp]"
-               " [--orbital-guess-source legacy|cpp]\n";
+               " [--ao-integral-source auto|libcint_cpp|runtime_hcore]"
+               " [--orbital-guess-source cpp]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -59,11 +59,14 @@ Options parse_arguments(int argc, char** argv) {
       continue;
     }
     if (name == "--ao-integral-source") {
-      if (value == "legacy") {
-        options.ao_integral_source = xmvb::vb::AoIntegralSource::LegacyRuntime;
+      if (value == "auto") {
+        options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
       } else if (value == "libcint_cpp") {
         options.ao_integral_source =
             xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
+      } else if (value == "runtime_hcore") {
+        options.ao_integral_source =
+            xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
       } else {
         throw std::invalid_argument(
             "invalid --ao-integral-source value: " + value);
@@ -71,9 +74,7 @@ Options parse_arguments(int argc, char** argv) {
       continue;
     }
     if (name == "--orbital-guess-source") {
-      if (value == "legacy") {
-        options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::LegacyRuntime;
-      } else if (value == "cpp") {
+      if (value == "cpp") {
         options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
       } else {
         throw std::invalid_argument(
@@ -100,14 +101,14 @@ double max_abs_difference(
 }
 
 double compute_one_electron_reference_energy(
-    const std::vector<double>& inactive_density_matrix,
+    const Eigen::Ref<const Matrix>& inactive_density,
     const std::vector<double>& ao_effective_h1e,
     const std::vector<double>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
-  const Eigen::Map<const Matrix> inactive_density(
-      inactive_density_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
+  if (inactive_density.rows() != n_basis_functions ||
+      inactive_density.cols() != n_basis_functions) {
+    throw std::invalid_argument("inactive density matrix shape mismatch");
+  }
   const Eigen::Map<const Matrix> effective_h1e(
       ao_effective_h1e.data(),
       n_basis_functions,
@@ -121,15 +122,16 @@ double compute_one_electron_reference_energy(
 }
 
 xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron(
-    const std::vector<double>& inactive_density_matrix,
+    const Eigen::Ref<const Matrix>& inactive_density,
     const xmvb::vb::AoIntegralInput& ao_integral_input) {
   const int n_basis_functions = ao_integral_input.n_basis_functions;
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
   const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
-  if (inactive_density_matrix.size() != matrix_size ||
+      n_basis_functions * n_basis_functions;
+  if (inactive_density.rows() != n_basis_functions ||
+      inactive_density.cols() != n_basis_functions ||
       ao_integral_input.ao_core_hamiltonian_matrix.size() != matrix_size) {
     throw std::invalid_argument("AO matrix size mismatch");
   }
@@ -138,10 +140,6 @@ xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron
     throw std::invalid_argument("AO two-electron index/value size mismatch");
   }
 
-  const Eigen::Map<const Matrix> inactive_density(
-      inactive_density_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
   const Eigen::Map<const Matrix> core_hamiltonian(
       ao_integral_input.ao_core_hamiltonian_matrix.data(),
       n_basis_functions,
@@ -256,13 +254,13 @@ int main(int argc, char** argv) {
         compute_one_electron_reference_energy(
             orbital_result.inactive_density_matrix,
             current_ao_result.ao_effective_h1e,
-            input.ao_integral_input.ao_core_hamiltonian_matrix.vector(),
+            input.ao_integral_input.ao_core_hamiltonian_matrix,
             n_basis_functions);
     const double reference_reference_energy =
         compute_one_electron_reference_energy(
             orbital_result.inactive_density_matrix,
             reference_ao_result.ao_effective_h1e,
-            input.ao_integral_input.ao_core_hamiltonian_matrix.vector(),
+            input.ao_integral_input.ao_core_hamiltonian_matrix,
             n_basis_functions);
 
     std::cout << std::setprecision(15);

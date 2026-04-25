@@ -10,14 +10,14 @@
 namespace xmvb::vb {
 
 /**
- * @brief Block-local nonredundant orbital rotation space in packed raw parameters.
+ * @brief Block-local nonredundant orbital-replacement space in packed parameters.
  *
  * The directions are generated from the current occupied orbitals and block-local
  * virtual orbitals. For partially overlapping sparse blocks, the block-local AO
  * support is the union of every member orbital support rather than the support
  * of one representative row. Each reduced coordinate corresponds to a
- * first-order orbital rotation direction represented directly in the packed
- * sparse coefficient vector used by the optimizer.
+ * first-order orbital replacement direction represented directly in the packed
+ * sparse coefficient vector used by the optimizer and HVP machinery.
  */
 class NonredundantOrbitalSpace {
 public:
@@ -27,15 +27,16 @@ public:
   };
 
   /**
-   * @brief Explicit block-local orbital-rotation amplitudes for one reduced step.
+   * @brief Explicit block-local nonredundant amplitudes for one reduced step.
    *
    * Each block stores the occupied and block-local virtual orbitals in the AO
    * basis restricted to that block support, together with the reduced step
    * expressed on the raw inactive/active, active/active, and occupied/virtual
    * candidate amplitudes used internally by the nonredundant basis
-   * construction. The active-active block is retained explicitly because the
-   * physical VB active orbitals are nonorthogonal variational objects rather
-   * than an internal gauge.
+   * construction. In the mixed-chart path the `active_active_coefficients`
+   * field carries the active-shape increment `ΔL_a` rather than an
+   * antisymmetric active-active rotation because the physical VB active
+   * orbitals remain genuinely nonorthogonal variational objects.
    */
   struct BlockRotationDirection {
     int n_inactive = 0;
@@ -55,7 +56,7 @@ public:
       const SparseOrbitalParameterView& parameter_view,
       const Eigen::Ref<const Eigen::MatrixXd>& occupied_orbital_basis_matrix,
       const Eigen::Ref<const Eigen::MatrixXd>& physical_orbital_matrix,
-      const std::vector<double>* ao_effective_h1e = nullptr);
+      const Eigen::MatrixXd* ao_effective_h1e = nullptr);
 
   int reduced_size() const noexcept {
     return reduced_size_;
@@ -87,18 +88,47 @@ public:
   Eigen::VectorXd apply_reduced_curvature(
       const Eigen::VectorXd& reduced_vector) const;
 
+  /**
+   * @brief Applies the reduced-space block preconditioner used by TNHVP.
+   *
+   * The reduced TN chart is block-separable. Small blocks that were whitened
+   * by an exact `D^T D = L L^T` factorization already have identity metric in
+   * reduced coordinates, so their baseline model is just the positive reduced
+   * curvature diagonal. Large dense full-support blocks remain in the raw
+   * candidate chart, where the local Gram matrix `G = D^T D` is not the
+   * identity. For those blocks we apply the symmetric positive model
+   * `M_block = C_block^{1/2} G_block C_block^{1/2}` and return
+   * `M_block^{-1} v`. Sparse large blocks fall back to the diagonal
+   * `C_block^{-1}` model because nesting an iterative `G^{-1}` solve inside
+   * every outer PCG preconditioner application is usually not worth the cost.
+   */
+  Eigen::VectorXd apply_inverse_reduced_block_preconditioner(
+      const Eigen::VectorXd& reduced_vector) const;
+
   Eigen::VectorXd expand_step(
       const Eigen::VectorXd& reduced_step) const;
 
   /**
-   * @brief Retracts one reduced step back to a finite sparse-orbital trial point.
+   * @brief Returns the first-order stored-coefficient direction of `retract_step()`.
    *
-   * The nonredundant basis is built from block-local occupied/virtual orbital
-   * rotations, so finite trial points should be generated in that same block
-   * orbital chart rather than by adding the tangent vector directly in the raw
-   * sparse-coefficient coordinates. This retraction applies a Cayley-style
-   * finite mixing inside each block and then scatters the resulting occupied
-   * orbital coefficients back into the legacy sparse layout.
+   * Sparse blocks are retracted back to each orbital's local
+   * `x^T S x = 1` manifold, so the finite-step input path is not the raw
+   * additive packed direction returned by `expand_step()`. This linearization
+   * provides the actual derivative of `orbital_value_table` with respect to
+   * the reduced step at the accepted point.
+   */
+  Eigen::VectorXd expand_retract_input_tangent(
+      const OrbitalPreparationInput& orbital_preparation_input,
+      const Eigen::VectorXd& reduced_step) const;
+
+  /**
+   * @brief Lifts one reduced step to a finite sparse-orbital trial point.
+   *
+   * All blocks now generate the finite step from the same internal mixed chart
+   * `(Q_i, Q_a, Q_v, L_a)`. Dense full-support blocks can write the rotated
+   * occupied columns back directly. Sparse blocks restrict that internal trial
+   * point to each orbital's fixed AO support and then retract the support-local
+   * target on the local `x^T S x = 1` manifold.
    */
   OrbitalPreparationInput retract_step(
       const OrbitalPreparationInput& orbital_preparation_input,
@@ -112,11 +142,14 @@ private:
   struct OrbitalProjector {
     std::vector<int> flat_indices;
     std::vector<int> packed_indices;
+    std::vector<int> block_rows;
     std::vector<int> flat_index_by_block_row;
     std::vector<int> packed_index_by_block_row;
     Eigen::MatrixXd occupied_masked;
-    Eigen::MatrixXd reference_occupied_masked;
+    Eigen::MatrixXd inactive_working_masked;
+    Eigen::MatrixXd active_working_masked;
     Eigen::MatrixXd virtual_masked;
+    Eigen::MatrixXd internal_virtual_masked;
   };
 
   struct BlockBasis {
@@ -133,6 +166,7 @@ private:
     Eigen::MatrixXd inactive_right_transform;
     Eigen::MatrixXd active_shape_matrix;
     Eigen::MatrixXd active_inactive_gauge_coefficients;
+    Eigen::MatrixXd internal_virtual_orbitals;
     Eigen::MatrixXd inactive_metric_matrix;
     Eigen::MatrixXd inactive_metric_inverse;
     Eigen::MatrixXd inactive_metric_eigenvectors;
@@ -171,11 +205,22 @@ private:
       const BlockBasis& block_basis,
       const Eigen::VectorXd& candidate_coefficients) const;
 
+  // Build the finite-step occupied block from the internal mixed chart
+  // `(Q_i, Q_a, Q_v, L_a)`.  The returned columns are physical occupied
+  // orbitals on the block union support, ready for either dense write-back or
+  // sparse support-local restriction.
+  Eigen::MatrixXd build_mixed_chart_trial_occupied_orbitals(
+      const BlockBasis& block_basis,
+      const Eigen::VectorXd& candidate_coefficients) const;
+
   Eigen::VectorXd project_dense_full_support_candidate_overlap(
       const BlockBasis& block_basis,
       const Eigen::Ref<const Eigen::MatrixXd>& block_columns) const;
 
   Eigen::VectorXd build_dense_full_support_metric_diagonal(
+      const BlockBasis& block_basis) const;
+
+  Eigen::VectorXd build_sparse_mixed_chart_metric_diagonal(
       const BlockBasis& block_basis) const;
 
   Eigen::VectorXd apply_dense_full_support_candidate_metric(
@@ -188,6 +233,10 @@ private:
 
   void initialize_dense_full_support_metric_cache(
       BlockBasis* block_basis) const;
+
+  void initialize_block_mixed_chart_cache(
+      BlockBasis* block_basis,
+      const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_occupied_orbitals) const;
 
   Eigen::VectorXd project_block_candidate_overlap(
       const BlockBasis& block_basis,

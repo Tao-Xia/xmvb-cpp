@@ -11,7 +11,7 @@ using RowMajorMatrix =
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 std::size_t packed_pair_count(int n_active_orbitals) {
-  const std::size_t n = xmvb::to_size(n_active_orbitals);
+  const std::size_t n = n_active_orbitals;
   return n * (n + 1) / 2;
 }
 
@@ -25,7 +25,7 @@ void validate_ri_inputs(
   const std::size_t n_pairs =
       packed_pair_count(cache.n_active_orbitals);
   const std::size_t expected_size =
-      xmvb::to_size(n_auxiliary_functions) * n_pairs;
+      n_auxiliary_functions * n_pairs;
   if (ri_active_pair_factors.size() != expected_size) {
     throw std::invalid_argument(
         "ri_active_pair_factors size does not match [n_auxiliary_functions][packed_pair]");
@@ -143,7 +143,7 @@ double evaluate_closed_shell_two_electron_spatial_ri(
        ++auxiliary_index) {
     const double* packed_row =
         ri_pair_factor_matrix.data() +
-        xmvb::to_size(auxiliary_index) * n_pairs;
+        auxiliary_index * n_pairs;
     unpack_pair_factor_row(packed_row, n, &factor_matrix);
 
     left_workspace.noalias() = factor_matrix * pair_term_matrix.transpose();
@@ -198,7 +198,7 @@ void backpropagate_closed_shell_ri_factor_gram(
 
   const std::size_t n_pairs = packed_pair_count(n_active_orbitals);
   const std::size_t expected_factor_size =
-      xmvb::to_size(n_auxiliary_functions) * n_pairs;
+      n_auxiliary_functions * n_pairs;
   if (ri_active_pair_factors.size() != expected_factor_size) {
     throw std::invalid_argument(
         "ri_active_pair_factors size does not match [n_auxiliary_functions][packed_pair]");

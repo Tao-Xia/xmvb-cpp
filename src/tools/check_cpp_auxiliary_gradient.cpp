@@ -135,7 +135,7 @@ double compute_one_electron_reference_energy(
   for (int column = 0; column < n_basis_functions; ++column) {
     for (int row = 0; row < n_basis_functions; ++row) {
       const std::size_t index =
-          xmvb::to_size(column) * n_basis_functions + row;
+          column * n_basis_functions + row;
       one_electron_reference_energy +=
           inactive_density_matrix[index] *
           (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
@@ -185,14 +185,14 @@ double evaluate_total_energy_from_auxiliary(
   if (use_standard_ri_active_space_path(input)) {
     xmvb::vb::OrbitalPreparationResult active_only_orbital_result;
     active_only_orbital_result.active_sparse_row_offsets.resize(
-        xmvb::to_size(n_basis_functions) + 1,
+        n_basis_functions + 1,
         0);
     int sparse_count = 0;
     for (int basis_function_index = 0;
          basis_function_index < n_basis_functions;
          ++basis_function_index) {
-      active_only_orbital_result.active_sparse_row_offsets[xmvb::to_size(
-          basis_function_index)] = sparse_count;
+      active_only_orbital_result.active_sparse_row_offsets[
+          basis_function_index] = sparse_count;
       for (int active_orbital_index = 0;
            active_orbital_index < n_active_orbitals;
            ++active_orbital_index) {
@@ -207,8 +207,8 @@ double evaluate_total_energy_from_auxiliary(
         ++sparse_count;
       }
     }
-    active_only_orbital_result.active_sparse_row_offsets[xmvb::to_size(
-        n_basis_functions)] = sparse_count;
+    active_only_orbital_result.active_sparse_row_offsets[
+        n_basis_functions] = sparse_count;
 
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_active_space_two_electron_builder;
     active_space_two_electron_result =
@@ -294,14 +294,14 @@ ActiveSpaceMatrices build_active_space_matrices(
   if (use_standard_ri_active_space_path(input)) {
     xmvb::vb::OrbitalPreparationResult active_only_orbital_result;
     active_only_orbital_result.active_sparse_row_offsets.resize(
-        xmvb::to_size(n_basis_functions) + 1,
+        n_basis_functions + 1,
         0);
     int sparse_count = 0;
     for (int basis_function_index = 0;
          basis_function_index < n_basis_functions;
          ++basis_function_index) {
-      active_only_orbital_result.active_sparse_row_offsets[xmvb::to_size(
-          basis_function_index)] = sparse_count;
+      active_only_orbital_result.active_sparse_row_offsets[
+          basis_function_index] = sparse_count;
       for (int active_orbital_index = 0;
            active_orbital_index < n_active_orbitals;
            ++active_orbital_index) {
@@ -316,8 +316,8 @@ ActiveSpaceMatrices build_active_space_matrices(
         ++sparse_count;
       }
     }
-    active_only_orbital_result.active_sparse_row_offsets[xmvb::to_size(
-        n_basis_functions)] = sparse_count;
+    active_only_orbital_result.active_sparse_row_offsets[
+        n_basis_functions] = sparse_count;
 
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_active_space_two_electron_builder;
     active_space_two_electron_result =
@@ -353,7 +353,7 @@ Eigen::MatrixXd build_active_pair_gradient_matrix(
     const std::vector<double>& packed_active_two_electron_gradient,
     int n_active_orbitals) {
   const std::size_t n_active_pairs =
-      xmvb::to_size(n_active_orbitals) * (n_active_orbitals + 1) / 2;
+      n_active_orbitals * (n_active_orbitals + 1) / 2;
   Eigen::MatrixXd active_pair_gradient_matrix =
       Eigen::MatrixXd::Zero(
           static_cast<Eigen::Index>(n_active_pairs),
@@ -362,11 +362,11 @@ Eigen::MatrixXd build_active_pair_gradient_matrix(
   for (int row_first = 0; row_first < n_active_orbitals; ++row_first) {
     for (int row_second = 0; row_second <= row_first; ++row_second) {
       const std::size_t row_pair_index =
-          xmvb::to_size(row_first) * (row_first + 1) / 2 + row_second;
+          row_first * (row_first + 1) / 2 + row_second;
       for (int column_first = 0; column_first < n_active_orbitals; ++column_first) {
         for (int column_second = 0; column_second <= column_first; ++column_second) {
           const std::size_t column_pair_index =
-              xmvb::to_size(column_first) * (column_first + 1) / 2 + column_second;
+              column_first * (column_first + 1) / 2 + column_second;
           const int packed_index =
               (row_pair_index >= column_pair_index)
                   ? xmvb::vb::TwoElectronIndexer::two_electron_storage_index(
@@ -380,7 +380,7 @@ Eigen::MatrixXd build_active_pair_gradient_matrix(
                         row_first,
                         row_second);
           double value =
-              packed_active_two_electron_gradient[xmvb::to_size(packed_index)];
+              packed_active_two_electron_gradient[packed_index];
           if (row_pair_index == column_pair_index) {
             value *= 2.0;
           }
@@ -404,11 +404,11 @@ std::vector<double> build_ri_active_pair_factor_gradient(
     throw std::invalid_argument("RI active-pair-factor gradient requires an RI forward result");
   }
   const std::size_t n_active_pairs =
-      xmvb::to_size(n_active_orbitals) * (n_active_orbitals + 1) / 2;
+      n_active_orbitals * (n_active_orbitals + 1) / 2;
   const std::size_t expected_factor_size =
-      xmvb::to_size(active_space_two_electron_result.n_auxiliary_functions) *
+      active_space_two_electron_result.n_auxiliary_functions *
       n_active_pairs;
-  if (xmvb::to_size(active_space_two_electron_result.ri_active_pair_factors.size()) !=
+  if (active_space_two_electron_result.ri_active_pair_factors.size() !=
           expected_factor_size ||
       active_space_two_electron_result.ri_active_pair_factors.rows() !=
           active_space_two_electron_result.n_auxiliary_functions ||
@@ -458,7 +458,7 @@ double evaluate_ao_effective_one_electron_objective(
                 input.ao_integral_input)
           : ao_effective_one_electron_builder.build(
                 inactive_density_matrix,
-                input.ao_integral_input.ao_core_hamiltonian_matrix.vector(),
+                input.ao_integral_input.ao_core_hamiltonian_matrix,
                 xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
                 input.ao_integral_input.n_basis_functions);
   return compute_matrix_inner_product(
@@ -525,9 +525,8 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     xmvb::vb::CppVbInputLoadOptions load_options;
-    load_options.ao_integral_source = xmvb::vb::AoIntegralSource::LegacyRuntime;
-    load_options.orbital_guess_source =
-        xmvb::vb::OrbitalGuessSource::LegacyRuntime;
+    load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
+    load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
     const auto load_result =
         xmvb::vb::load_cpp_vb_input_with_timings(
             options.input_path,
@@ -692,7 +691,7 @@ int main(int argc, char** argv) {
 
     for (int report_index = 0; report_index < n_to_report; ++report_index) {
       const int full_storage_index =
-          ranked_entries[xmvb::to_size(report_index)].second;
+          ranked_entries[report_index].second;
       const int basis_function_index = full_storage_index % n_basis_functions;
       const int column_index = full_storage_index / n_basis_functions;
       const int active_orbital_index =
@@ -711,8 +710,8 @@ int main(int argc, char** argv) {
       std::vector<double> plus_auxiliary =
           baseline_auxiliary_matrix;
       std::vector<double> minus_auxiliary = plus_auxiliary;
-      plus_auxiliary[xmvb::to_size(full_storage_index)] += options.step;
-      minus_auxiliary[xmvb::to_size(full_storage_index)] -= options.step;
+      plus_auxiliary[full_storage_index] += options.step;
+      minus_auxiliary[full_storage_index] -= options.step;
 
       const double plus_energy = evaluate_total_energy_from_auxiliary(
           input,
@@ -780,17 +779,17 @@ int main(int argc, char** argv) {
          report_index < n_inactive_density_to_report;
          ++report_index) {
       const int storage_index =
-          ranked_inactive_density_entries[xmvb::to_size(report_index)].second;
+          ranked_inactive_density_entries[report_index].second;
       const int row_index = storage_index % n_basis_functions;
       const int column_index = storage_index / n_basis_functions;
       const double analytic =
           ao_effective_one_electron_backpropagation_result.inactive_density_gradient
-              [xmvb::to_size(storage_index)];
+              [storage_index];
 
       std::vector<double> plus_inactive_density = baseline_inactive_density;
       std::vector<double> minus_inactive_density = plus_inactive_density;
-      plus_inactive_density[xmvb::to_size(storage_index)] += options.step;
-      minus_inactive_density[xmvb::to_size(storage_index)] -= options.step;
+      plus_inactive_density[storage_index] += options.step;
+      minus_inactive_density[storage_index] -= options.step;
 
       const double plus_objective =
           evaluate_ao_effective_one_electron_objective(

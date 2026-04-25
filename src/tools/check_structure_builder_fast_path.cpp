@@ -102,12 +102,12 @@ void print_largest_differences(
   const int n_to_report =
       std::min(count, static_cast<int>(ranked_entries.size()));
   for (int report_index = 0; report_index < n_to_report; ++report_index) {
-    const int flat_index = ranked_entries[xmvb::to_size(report_index)].second;
+    const int flat_index = ranked_entries[report_index].second;
     std::cout << label
               << "_diff[" << report_index << "] index=" << flat_index
-              << " fast=" << fast_values[xmvb::to_size(flat_index)]
-              << " reference=" << reference_values[xmvb::to_size(flat_index)]
-              << " abs_diff=" << ranked_entries[xmvb::to_size(report_index)].first
+              << " fast=" << fast_values[flat_index]
+              << " reference=" << reference_values[flat_index]
+              << " abs_diff=" << ranked_entries[report_index].first
               << '\n';
   }
 }
@@ -126,12 +126,14 @@ int main(int argc, char** argv) {
     xmvb::vb::AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;
     xmvb::vb::ActiveSpaceOneElectronBuilder active_space_one_electron_builder;
     xmvb::vb::ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;
-    const auto prepared_active_space = xmvb::vb::prepare_active_space_context(
-        load_result.input,
-        orbital_preparer,
-        ao_effective_one_electron_builder,
-        active_space_one_electron_builder,
-        active_space_two_electron_builder);
+    const auto prepared_active_space =
+        xmvb::vb::prepare_timed_active_space_context(
+            load_result.input,
+            orbital_preparer,
+            ao_effective_one_electron_builder,
+            active_space_one_electron_builder,
+            active_space_two_electron_builder)
+            .prepared_active_space;
 
     std::vector<double> packed_active_eri =
         prepared_active_space.active_space_two_electron_result
@@ -153,7 +155,8 @@ int main(int argc, char** argv) {
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
         prepared_active_space.active_space_one_electron_result.h1e_act,
         load_result.input.orbital_preparation_input.n_active_orbitals,
-        prepared_active_space.active_space_two_electron_result);
+        prepared_active_space.active_space_two_electron_result,
+        xmvb::vb::SameSpinPairCacheBuildOptions{});
     const auto fast_start = std::chrono::high_resolution_clock::now();
     const auto fast_result = structure_builder.build(
         load_result.input.structure_data.alpha_det,
@@ -173,7 +176,8 @@ int main(int argc, char** argv) {
         prepared_active_space.orbital_result.active_orbital_overlap_matrix,
         prepared_active_space.active_space_one_electron_result.h1e_act,
         load_result.input.orbital_preparation_input.n_active_orbitals,
-        packed_active_eri);
+        packed_active_eri,
+        xmvb::vb::SameSpinPairCacheBuildOptions{});
     const auto fast_exact_start = std::chrono::high_resolution_clock::now();
     const auto fast_exact_result = structure_builder.build(
         load_result.input.structure_data.alpha_det,

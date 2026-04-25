@@ -21,13 +21,13 @@ inline Eigen::MatrixXd copy_legacy_row_buffer_to_matrix(
   if (n_rows < 0 || n_cols < 0) {
     throw std::invalid_argument("matrix dimensions must be non-negative");
   }
-  if (values.size() != xmvb::to_size(n_rows) * xmvb::to_size(n_cols)) {
+  if (values.size() != n_rows * n_cols) {
     throw std::invalid_argument("legacy row buffer size does not match matrix dimensions");
   }
   Eigen::MatrixXd matrix(n_rows, n_cols);
   for (int row = 0; row < n_rows; ++row) {
     const double* source_row =
-        values.data() + xmvb::to_size(row) * xmvb::to_size(n_cols);
+        values.data() + row * n_cols;
     for (int col = 0; col < n_cols; ++col) {
       matrix(row, col) = source_row[col];
     }
@@ -44,12 +44,14 @@ inline Eigen::MatrixXd copy_legacy_row_buffer_to_matrix(
  */
 inline std::vector<double> copy_matrix_to_legacy_row_buffer(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix) {
+  const std::size_t row_count = matrix.rows();
+  const std::size_t col_count = matrix.cols();
   std::vector<double> values(
-      xmvb::to_size(matrix.rows()) * xmvb::to_size(matrix.cols()),
+      row_count * col_count,
       0.0);
   for (int row = 0; row < matrix.rows(); ++row) {
     double* target_row =
-        values.data() + xmvb::to_size(row) * xmvb::to_size(matrix.cols());
+        values.data() + row * col_count;
     for (int col = 0; col < matrix.cols(); ++col) {
       target_row[col] = matrix(row, col);
     }

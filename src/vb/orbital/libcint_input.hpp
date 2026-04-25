@@ -1,6 +1,6 @@
 #pragma once
 
-#include "core/shared_vector.hpp"
+#include <vector>
 
 namespace xmvb::vb {
 
@@ -31,22 +31,22 @@ struct LibcintInput {
   /**
    * @brief Raw libcint atom table.
    */
-  SharedVector<int> atm;
+  std::vector<int> atm;
 
   /**
    * @brief Raw libcint basis table.
    */
-  SharedVector<int> bas;
+  std::vector<int> bas;
 
   /**
    * @brief AO start/count table per shell used by the legacy runtime.
    */
-  SharedVector<int> basidx;
+  std::vector<int> basidx;
 
   /**
    * @brief Raw libcint environment array storing coordinates, exponents, and coefficients.
    */
-  SharedVector<double> env;
+  std::vector<double> env;
 };
 
 }  // namespace xmvb::vb

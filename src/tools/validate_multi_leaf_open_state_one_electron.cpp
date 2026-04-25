@@ -396,9 +396,9 @@ int component_ordered_block_parity(
 
   std::vector<int> block_order;
   block_order.reserve(
-      xmvb::to_size(n_root_occ) +
-      xmvb::to_size(
-          std::accumulate(leaf_occ_sizes.begin(), leaf_occ_sizes.end(), 0)));
+      n_root_occ +
+      
+          std::accumulate(leaf_occ_sizes.begin(), leaf_occ_sizes.end(), 0));
 
   std::uint64_t used_mask = 0U;
   int next_leaf_label = n_root_occ;
@@ -440,10 +440,10 @@ std::vector<int> select_occ_by_mask(
     const std::vector<int>& occupied_orbitals,
     std::uint64_t mask) {
   std::vector<int> selected;
-  selected.reserve(xmvb::to_size(popcount(mask)));
+  selected.reserve(popcount(mask));
   for (int index = 0; index < static_cast<int>(occupied_orbitals.size()); ++index) {
     if ((mask & (1ULL << index)) != 0U) {
-      selected.push_back(occupied_orbitals[xmvb::to_size(index)]);
+      selected.push_back(occupied_orbitals[index]);
     }
   }
   return selected;
@@ -489,10 +489,10 @@ Matrix build_support_submatrix(
   for (int row = 0; row < support_size; ++row) {
     for (int column = 0; column < support_size; ++column) {
       support_matrix(row, column) =
-          active_matrix_storage[xmvb::to_size(
-                                    support_orbitals[xmvb::to_size(column)]) *
-                                    xmvb::to_size(n_active_orbitals) +
-                                support_orbitals[xmvb::to_size(row)]];
+          active_matrix_storage[
+                                    support_orbitals[column] *
+                                    n_active_orbitals +
+                                support_orbitals[row]];
     }
   }
   return support_matrix;
@@ -503,9 +503,9 @@ double one_electron_element(
     int n_orbitals,
     int left_orbital,
     int right_orbital) {
-  return one_electron_storage[xmvb::to_size(left_orbital) *
-                                  xmvb::to_size(n_orbitals) +
-                              xmvb::to_size(right_orbital)];
+  return one_electron_storage[left_orbital *
+                                  n_orbitals +
+                              right_orbital];
 }
 
 Matrix build_overlap_block(
@@ -517,13 +517,13 @@ Matrix build_overlap_block(
       static_cast<int>(right_occ.size()),
       static_cast<int>(left_occ.size()));
   for (int column = 0; column < static_cast<int>(left_occ.size()); ++column) {
-    const int left_orbital = left_occ[xmvb::to_size(column)];
+    const int left_orbital = left_occ[column];
     for (int row = 0; row < static_cast<int>(right_occ.size()); ++row) {
-      const int right_orbital = right_occ[xmvb::to_size(row)];
+      const int right_orbital = right_occ[row];
       overlap_block(row, column) =
-          overlap_storage[xmvb::to_size(left_orbital) *
-                              xmvb::to_size(n_orbitals) +
-                          xmvb::to_size(right_orbital)];
+          overlap_storage[left_orbital *
+                              n_orbitals +
+                          right_orbital];
     }
   }
   return overlap_block;
@@ -558,9 +558,9 @@ ExactSpinValue evaluate_exact_spin_value(
 
   result.overlap = overlap_result.overlap_determinant;
   for (int column = 0; column < static_cast<int>(left_occ.size()); ++column) {
-    const int left_orbital = left_occ[xmvb::to_size(column)];
+    const int left_orbital = left_occ[column];
     for (int row = 0; row < static_cast<int>(right_occ.size()); ++row) {
-      const int right_orbital = right_occ[xmvb::to_size(row)];
+      const int right_orbital = right_occ[row];
       const double cofactor_value = cofactor_1st(row, column);
       if (std::abs(cofactor_value) <= 1.0e-15) {
         continue;
@@ -596,14 +596,14 @@ PartialSpinPayload build_partial_spin_payload(
   }
   const int internal_row_begin = zero_selected_root_block ? selected_root_rows : 0;
   const int internal_col_begin = zero_selected_root_block ? selected_root_cols : 0;
-  std::vector<int> left_root_flags(xmvb::to_size(payload.n_cols), 0);
-  std::vector<int> right_root_flags(xmvb::to_size(payload.n_rows), 0);
+  std::vector<int> left_root_flags(payload.n_cols, 0);
+  std::vector<int> right_root_flags(payload.n_rows, 0);
   if (zero_selected_root_block) {
     for (int column = 0; column < selected_root_cols; ++column) {
-      left_root_flags[xmvb::to_size(column)] = 1;
+      left_root_flags[column] = 1;
     }
     for (int row = 0; row < selected_root_rows; ++row) {
-      right_root_flags[xmvb::to_size(row)] = 1;
+      right_root_flags[row] = 1;
     }
   }
 
@@ -639,8 +639,8 @@ PartialSpinPayload build_partial_spin_payload(
         payload.cofactor_entries.push_back({
             .row_local_index = row,
             .col_local_index = column,
-            .row_orbital_label = right_occ[xmvb::to_size(row)],
-            .col_orbital_label = left_occ[xmvb::to_size(column)],
+            .row_orbital_label = right_occ[row],
+            .col_orbital_label = left_occ[column],
             .value = value,
         });
       }
@@ -649,7 +649,7 @@ PartialSpinPayload build_partial_spin_payload(
   }
 
   if (payload.n_rows == payload.n_cols + 1) {
-    payload.row_open_entries.reserve(xmvb::to_size(payload.n_rows));
+    payload.row_open_entries.reserve(payload.n_rows);
     for (int row = 0; row < payload.n_rows; ++row) {
       if (row < internal_row_begin) {
         continue;
@@ -668,15 +668,15 @@ PartialSpinPayload build_partial_spin_payload(
       if (work_collector != nullptr) {
         std::vector<int> minor_right_occ;
         std::vector<int> minor_right_root_flags;
-        minor_right_occ.reserve(xmvb::to_size(payload.n_cols));
-        minor_right_root_flags.reserve(xmvb::to_size(payload.n_cols));
+        minor_right_occ.reserve(payload.n_cols);
+        minor_right_root_flags.reserve(payload.n_cols);
         for (int source_index = 0; source_index < payload.n_rows; ++source_index) {
           if (source_index == row) {
             continue;
           }
-          minor_right_occ.push_back(right_occ[xmvb::to_size(source_index)]);
+          minor_right_occ.push_back(right_occ[source_index]);
           minor_right_root_flags.push_back(
-              right_root_flags[xmvb::to_size(source_index)]);
+              right_root_flags[source_index]);
         }
         work_collector->open_state_spin_work.insert({
             left_occ,
@@ -695,7 +695,7 @@ PartialSpinPayload build_partial_spin_payload(
               : parity_sign(row);
       payload.row_open_entries.push_back({
           .local_index = row,
-          .orbital_label = right_occ[xmvb::to_size(row)],
+          .orbital_label = right_occ[row],
           .value = sign * determinant,
       });
     }
@@ -703,7 +703,7 @@ PartialSpinPayload build_partial_spin_payload(
   }
 
   if (payload.n_cols == payload.n_rows + 1) {
-    payload.col_open_entries.reserve(xmvb::to_size(payload.n_cols));
+    payload.col_open_entries.reserve(payload.n_cols);
     for (int column = 0; column < payload.n_cols; ++column) {
       if (column < internal_col_begin) {
         continue;
@@ -722,15 +722,15 @@ PartialSpinPayload build_partial_spin_payload(
       if (work_collector != nullptr) {
         std::vector<int> minor_left_occ;
         std::vector<int> minor_left_root_flags;
-        minor_left_occ.reserve(xmvb::to_size(payload.n_rows));
-        minor_left_root_flags.reserve(xmvb::to_size(payload.n_rows));
+        minor_left_occ.reserve(payload.n_rows);
+        minor_left_root_flags.reserve(payload.n_rows);
         for (int source_column = 0; source_column < payload.n_cols; ++source_column) {
           if (source_column == column) {
             continue;
           }
-          minor_left_occ.push_back(left_occ[xmvb::to_size(source_column)]);
+          minor_left_occ.push_back(left_occ[source_column]);
           minor_left_root_flags.push_back(
-              left_root_flags[xmvb::to_size(source_column)]);
+              left_root_flags[source_column]);
         }
         work_collector->open_state_spin_work.insert({
             std::move(minor_left_occ),
@@ -749,7 +749,7 @@ PartialSpinPayload build_partial_spin_payload(
               : parity_sign(column);
       payload.col_open_entries.push_back({
           .local_index = column,
-          .orbital_label = left_occ[xmvb::to_size(column)],
+          .orbital_label = left_occ[column],
           .value = sign * determinant,
       });
     }
@@ -1201,11 +1201,11 @@ std::vector<int> build_component_ordered_support_orbitals(
 
   const auto append_component = [&](int component_index) {
     std::vector<int> local_vertices =
-        union_components[xmvb::to_size(component_index)].local_vertices;
+        union_components[component_index].local_vertices;
     std::sort(local_vertices.begin(), local_vertices.end());
     for (const int local_vertex : local_vertices) {
       ordered_support_orbitals.push_back(
-          support_orbitals[xmvb::to_size(local_vertex)]);
+          support_orbitals[local_vertex]);
     }
   };
 
@@ -1234,7 +1234,7 @@ bool is_connected_star_graph(
   for (int candidate_root = 0; candidate_root < graph.node_count; ++candidate_root) {
     bool is_star = true;
     for (int node = 0; node < graph.node_count; ++node) {
-      const int degree = static_cast<int>(graph.adjacency[xmvb::to_size(node)].size());
+      const int degree = static_cast<int>(graph.adjacency[node].size());
       if (node == candidate_root) {
         if (degree != graph.node_count - 1) {
           is_star = false;
@@ -1514,12 +1514,12 @@ ValidationResult validate_multi_leaf_pair(
   std::vector<int> left_leaf_beta_sizes;
   std::vector<int> right_leaf_alpha_sizes;
   std::vector<int> right_leaf_beta_sizes;
-  left_leaf_alpha_sizes.reserve(xmvb::to_size(result.n_leaves));
-  left_leaf_beta_sizes.reserve(xmvb::to_size(result.n_leaves));
-  right_leaf_alpha_sizes.reserve(xmvb::to_size(result.n_leaves));
-  right_leaf_beta_sizes.reserve(xmvb::to_size(result.n_leaves));
+  left_leaf_alpha_sizes.reserve(result.n_leaves);
+  left_leaf_beta_sizes.reserve(result.n_leaves);
+  right_leaf_alpha_sizes.reserve(result.n_leaves);
+  right_leaf_beta_sizes.reserve(result.n_leaves);
   for (int leaf_index = 0; leaf_index < result.n_leaves; ++leaf_index) {
-    const auto& leaf_component = ordered_components[xmvb::to_size(leaf_index + 1)];
+    const auto& leaf_component = ordered_components[leaf_index + 1];
     left_leaf_alpha_sizes.push_back(
         leaf_component.left_orientation_terms.empty()
             ? 0
@@ -1543,13 +1543,13 @@ ValidationResult validate_multi_leaf_pair(
       const double root_coefficient =
           left_root_term.coefficient * right_root_term.coefficient;
       std::vector<std::vector<StructureLeafMessage>> leaf_messages(
-          xmvb::to_size(result.n_leaves));
+          result.n_leaves);
       for (int leaf_index = 0; leaf_index < result.n_leaves; ++leaf_index) {
-        leaf_messages[xmvb::to_size(leaf_index)] = build_leaf_messages(
+        leaf_messages[leaf_index] = build_leaf_messages(
             leaf_index,
             left_root_term,
             right_root_term,
-            ordered_components[xmvb::to_size(leaf_index + 1)],
+            ordered_components[leaf_index + 1],
             overlap_storage,
             n_orbitals,
             overlap_resolver,
@@ -1562,16 +1562,16 @@ ValidationResult validate_multi_leaf_pair(
           StructurePayload>
           root_payload_cache;
       std::vector<std::uint64_t> selected_alpha_row_masks(
-          xmvb::to_size(result.n_leaves),
+          result.n_leaves,
           0ULL);
       std::vector<std::uint64_t> selected_alpha_col_masks(
-          xmvb::to_size(result.n_leaves),
+          result.n_leaves,
           0ULL);
       std::vector<std::uint64_t> selected_beta_row_masks(
-          xmvb::to_size(result.n_leaves),
+          result.n_leaves,
           0ULL);
       std::vector<std::uint64_t> selected_beta_col_masks(
-          xmvb::to_size(result.n_leaves),
+          result.n_leaves,
           0ULL);
 
       const auto accumulate_frontier =
@@ -1665,7 +1665,7 @@ ValidationResult validate_multi_leaf_pair(
             }
 
             for (const auto& message :
-                 leaf_messages[xmvb::to_size(leaf_index)]) {
+                 leaf_messages[leaf_index]) {
               if ((used_alpha_row_mask & message.alpha_row_mask) != 0U ||
                   (used_alpha_col_mask & message.alpha_col_mask) != 0U ||
                   (used_beta_row_mask & message.beta_row_mask) != 0U ||
@@ -1673,13 +1673,13 @@ ValidationResult validate_multi_leaf_pair(
                 continue;
               }
 
-              selected_alpha_row_masks[xmvb::to_size(leaf_index)] =
+              selected_alpha_row_masks[leaf_index] =
                   message.alpha_row_mask;
-              selected_alpha_col_masks[xmvb::to_size(leaf_index)] =
+              selected_alpha_col_masks[leaf_index] =
                   message.alpha_col_mask;
-              selected_beta_row_masks[xmvb::to_size(leaf_index)] =
+              selected_beta_row_masks[leaf_index] =
                   message.beta_row_mask;
-              selected_beta_col_masks[xmvb::to_size(leaf_index)] =
+              selected_beta_col_masks[leaf_index] =
                   message.beta_col_mask;
 
               const StructurePayload merged_payload =
@@ -1693,10 +1693,10 @@ ValidationResult validate_multi_leaf_pair(
                   used_beta_col_mask | message.beta_col_mask,
                   merged_payload);
 
-              selected_alpha_row_masks[xmvb::to_size(leaf_index)] = 0ULL;
-              selected_alpha_col_masks[xmvb::to_size(leaf_index)] = 0ULL;
-              selected_beta_row_masks[xmvb::to_size(leaf_index)] = 0ULL;
-              selected_beta_col_masks[xmvb::to_size(leaf_index)] = 0ULL;
+              selected_alpha_row_masks[leaf_index] = 0ULL;
+              selected_alpha_col_masks[leaf_index] = 0ULL;
+              selected_beta_row_masks[leaf_index] = 0ULL;
+              selected_beta_col_masks[leaf_index] = 0ULL;
             }
           };
 
@@ -1822,23 +1822,23 @@ std::vector<int> build_orbital_component_index(
     const std::vector<ComponentData>& ordered_components,
     int n_orbitals) {
   std::vector<int> component_index_by_orbital(
-      xmvb::to_size(n_orbitals),
+      n_orbitals,
       -1);
   for (int component_index = 0;
        component_index < static_cast<int>(ordered_components.size());
        ++component_index) {
     const auto& component =
-        ordered_components[xmvb::to_size(component_index)];
+        ordered_components[component_index];
     for (const auto& pair : component.left_pairs) {
-      component_index_by_orbital[xmvb::to_size(pair.first)] =
+      component_index_by_orbital[pair.first] =
           component_index;
-      component_index_by_orbital[xmvb::to_size(pair.second)] =
+      component_index_by_orbital[pair.second] =
           component_index;
     }
     for (const auto& pair : component.right_pairs) {
-      component_index_by_orbital[xmvb::to_size(pair.first)] =
+      component_index_by_orbital[pair.first] =
           component_index;
-      component_index_by_orbital[xmvb::to_size(pair.second)] =
+      component_index_by_orbital[pair.second] =
           component_index;
     }
   }
@@ -1879,9 +1879,9 @@ std::vector<PairMismatchRecord> build_pair_mismatch_records(
     records.push_back({
         .left_orbital = left_orbital,
         .right_orbital = right_orbital,
-        .left_component = component_index_by_orbital[xmvb::to_size(left_orbital)],
+        .left_component = component_index_by_orbital[left_orbital],
         .right_component =
-            component_index_by_orbital[xmvb::to_size(right_orbital)],
+            component_index_by_orbital[right_orbital],
         .one_electron_element = h_element,
         .exact_weight = exact_weight,
         .reconstructed_weight = reconstructed_weight,
@@ -2017,7 +2017,7 @@ int main(int argc, char** argv) {
           support_orbitals,
           union_components,
           root_node,
-          metric_graph.adjacency[xmvb::to_size(root_node)]);
+          metric_graph.adjacency[root_node]);
       const auto ordered_support_index =
           xmvb::vb::build_support_index(ordered_support_orbitals);
       const auto ordered_left_pairs =
@@ -2161,7 +2161,7 @@ int main(int argc, char** argv) {
            record_index < options.dump_pair_mismatches &&
            record_index < static_cast<int>(mismatch_records.size());
            ++record_index) {
-        const auto& record = mismatch_records[xmvb::to_size(record_index)];
+        const auto& record = mismatch_records[record_index];
         std::cout << "pair_mismatch[" << record_index << "]"
                   << " left_orbital=" << record.left_orbital
                   << " right_orbital=" << record.right_orbital

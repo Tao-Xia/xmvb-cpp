@@ -33,8 +33,9 @@ PfPreparedActiveSpaceData PfActBuilder::prepare(
       prepared_active_space.orbital_result.active_orbital_overlap_matrix.begin(),
       prepared_active_space.orbital_result.active_orbital_overlap_matrix.end());
   active_space.hho.assign(
-      prepared_active_space.active_space_one_electron_result.h1e_act.begin(),
-      prepared_active_space.active_space_one_electron_result.h1e_act.end());
+      prepared_active_space.active_space_one_electron_result.h1e_act.data(),
+      prepared_active_space.active_space_one_electron_result.h1e_act.data() +
+          prepared_active_space.active_space_one_electron_result.h1e_act.size());
   active_space.two_electron_representation =
       prepared_active_space.active_space_two_electron_result.representation;
   active_space.n_auxiliary_functions =

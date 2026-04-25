@@ -76,7 +76,7 @@ double compute_one_electron_reference_energy(
   for (int column = 0; column < n_basis_functions; ++column) {
     for (int row = 0; row < n_basis_functions; ++row) {
       const std::size_t index =
-          xmvb::to_size(column) * n_basis_functions + row;
+          column * n_basis_functions + row;
       one_electron_reference_energy +=
           inactive_density_matrix[index] *
           (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
@@ -96,7 +96,7 @@ void accumulate_g11_statistics(
   for (int column = 0; column < n_basis_functions; ++column) {
     for (int row = 0; row < n_basis_functions; ++row) {
       const std::size_t index =
-          xmvb::to_size(column) * n_basis_functions + row;
+          column * n_basis_functions + row;
       const double contribution =
           inactive_density_matrix[index] * g11_matrix[index];
       if (row == column) {
@@ -309,7 +309,7 @@ int main(int argc, char** argv) {
         input.ao_integral_input);
     const auto ri_ao_result = ao_builder.build(
         orbital_result.inactive_density_matrix,
-        input.ao_integral_input.ao_core_hamiltonian_matrix.vector(),
+        input.ao_integral_input.ao_core_hamiltonian_matrix,
         xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
         n_basis_functions);
     xmvb::vb::ActiveSpaceOneElectronBuilder active_h1e_builder;

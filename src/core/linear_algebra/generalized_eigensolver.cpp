@@ -17,8 +17,9 @@ void validate_generalized_eigenproblem_inputs(
     throw std::invalid_argument("dimension must be positive");
   }
 
+  const std::size_t matrix_dimension = static_cast<std::size_t>(dimension);
   const std::size_t expected_size =
-      xmvb::to_size(dimension) * xmvb::to_size(dimension);
+      matrix_dimension * matrix_dimension;
   if (hamiltonian_matrix.size() != expected_size ||
       overlap_matrix.size() != expected_size) {
     throw std::invalid_argument(
@@ -53,7 +54,7 @@ GeneralizedEigenResult GeneralizedEigensolver::solve(
   GeneralizedEigenResult result;
   std::vector<double> hamiltonian_matrix_copy = hamiltonian_matrix;
   std::vector<double> overlap_matrix_copy = overlap_matrix;
-  result.eigenvalues.resize(xmvb::to_size(dimension));
+  result.eigenvalues.resize(static_cast<std::size_t>(dimension));
   const lapack_int info = LAPACKE_dsygvd(
       LAPACK_COL_MAJOR,
       1,
@@ -81,7 +82,7 @@ std::vector<double> GeneralizedEigensolver::solve_eigenvalues_only(
 
   std::vector<double> hamiltonian_matrix_copy = hamiltonian_matrix;
   std::vector<double> overlap_matrix_copy = overlap_matrix;
-  std::vector<double> eigenvalues(xmvb::to_size(dimension));
+  std::vector<double> eigenvalues(static_cast<std::size_t>(dimension));
   const lapack_int info = LAPACKE_dsygvd(
       LAPACK_COL_MAJOR,
       1,

@@ -59,7 +59,7 @@ Eigen::MatrixXd build_dense_active_direction(
          basis_function_index < n_basis_functions;
          ++basis_function_index) {
       const std::size_t linear_index =
-          xmvb::to_size(active_orbital_index) * n_basis_functions +
+          active_orbital_index * n_basis_functions +
           basis_function_index;
       const double value =
           std::sin(0.37 * static_cast<double>(linear_index + 1)) +
@@ -79,7 +79,7 @@ Eigen::MatrixXd extract_dense_active_block(
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) {
   const std::size_t expected_size =
-      xmvb::to_size(n_basis_functions) * n_basis_functions;
+      n_basis_functions * n_basis_functions;
   if (full_auxiliary_gradient.size() != expected_size) {
     throw std::invalid_argument("full auxiliary gradient size mismatch");
   }
@@ -95,7 +95,7 @@ Eigen::MatrixXd extract_dense_active_block(
       const int column_index =
           n_inactive_doubly_occupied_orbitals + active_orbital_index;
       dense_active_gradient(basis_function_index, active_orbital_index) =
-          full_auxiliary_gradient[xmvb::to_size(column_index) * n_basis_functions +
+          full_auxiliary_gradient[column_index * n_basis_functions +
                                   basis_function_index];
     }
   }
@@ -188,7 +188,7 @@ int main(int argc, char** argv) {
         const int column_index =
             n_inactive_doubly_occupied_orbitals + active_orbital_index;
         const std::size_t flat_index =
-            xmvb::to_size(column_index) * n_basis_functions + basis_function_index;
+            column_index * n_basis_functions + basis_function_index;
         const double delta =
             options.step *
             dense_active_direction(basis_function_index, active_orbital_index);
@@ -201,8 +201,8 @@ int main(int argc, char** argv) {
     const auto plus_backpropagation_result =
         backpropagator.backpropagate(
             gradient_result.packed_active_two_electron_gradient,
-            input.ao_integral_input.ao_two_electron_integral_values.vector(),
-            input.ao_integral_input.ao_two_electron_integral_indices.vector(),
+            input.ao_integral_input.ao_two_electron_integral_values,
+            input.ao_integral_input.ao_two_electron_integral_indices,
             plus_auxiliary_matrix,
             n_basis_functions,
             n_inactive_doubly_occupied_orbitals,
@@ -210,8 +210,8 @@ int main(int argc, char** argv) {
     const auto minus_backpropagation_result =
         backpropagator.backpropagate(
             gradient_result.packed_active_two_electron_gradient,
-            input.ao_integral_input.ao_two_electron_integral_values.vector(),
-            input.ao_integral_input.ao_two_electron_integral_indices.vector(),
+            input.ao_integral_input.ao_two_electron_integral_values,
+            input.ao_integral_input.ao_two_electron_integral_indices,
             minus_auxiliary_matrix,
             n_basis_functions,
             n_inactive_doubly_occupied_orbitals,

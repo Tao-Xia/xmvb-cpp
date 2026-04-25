@@ -15,10 +15,8 @@
 #include <Eigen/SVD>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "runtime_c/local_runtime/cint_compat.h"
-#include "xmvb/indexing.hpp"
-
-extern "C" int xint_gtolen(int ang);
+#include "runtime/libcint_compat.hpp"
+#include "runtime/legacy_shell_utils.hpp"
 
 namespace {
 
@@ -127,7 +125,7 @@ MoldenOrbitals parse_molden_file(
   for (Eigen::Index orbital_index = 0;
        orbital_index < static_cast<Eigen::Index>(orbitals.size());
        ++orbital_index) {
-    coefficient_matrix.col(orbital_index) = orbitals[xmvb::to_size(orbital_index)];
+    coefficient_matrix.col(orbital_index) = orbitals[orbital_index];
   }
 
   MoldenOrbitals result;
@@ -143,17 +141,17 @@ std::vector<int> build_molden_to_internal_ao_permutation(
   constexpr std::array<int, 10> kFOrder = {0, 6, 9, 3, 1, 2, 5, 8, 7, 4};
 
   std::vector<int> molden_to_internal;
-  molden_to_internal.reserve(xmvb::to_size(n_basis_functions));
+  molden_to_internal.reserve(n_basis_functions);
 
   for (int shell_index = 0; shell_index < libcint_input.n_shells; ++shell_index) {
     const std::size_t shell_offset =
-        xmvb::to_size(shell_index) * BAS_SLOTS;
+        shell_index * BAS_SLOTS;
     const int angular_momentum = libcint_input.bas[shell_offset + ANG_OF];
     const int ao_offset =
-        libcint_input.basidx[xmvb::to_size(shell_index) * 2];
+        libcint_input.basidx[shell_index * 2];
     const int ao_count =
-        libcint_input.basidx[xmvb::to_size(shell_index) * 2 + 1];
-    if (ao_offset < 0 || ao_count != xint_gtolen(angular_momentum) ||
+        libcint_input.basidx[shell_index * 2 + 1];
+    if (ao_offset < 0 || ao_count != xmvb::vb::cartesian_ao_count(angular_momentum) ||
         ao_offset + ao_count > n_basis_functions) {
       throw std::runtime_error(
           "Libcint shell AO layout is inconsistent while building Molden permutation");
@@ -176,7 +174,7 @@ std::vector<int> build_molden_to_internal_ao_permutation(
     }
   }
 
-  if (molden_to_internal.size() != xmvb::to_size(n_basis_functions)) {
+  if (molden_to_internal.size() != n_basis_functions) {
     throw std::runtime_error("Molden/internal AO permutation size mismatch");
   }
   return molden_to_internal;
@@ -202,10 +200,10 @@ Eigen::MatrixXd build_molden_order_overlap_matrix(
       Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
   for (int molden_column = 0; molden_column < n_basis_functions; ++molden_column) {
     const int internal_column =
-        molden_to_internal[xmvb::to_size(molden_column)];
+        molden_to_internal[molden_column];
     for (int molden_row = 0; molden_row < n_basis_functions; ++molden_row) {
       const int internal_row =
-          molden_to_internal[xmvb::to_size(molden_row)];
+          molden_to_internal[molden_row];
       basis_overlap_molden(molden_row, molden_column) =
           basis_overlap_internal(internal_row, internal_column);
     }

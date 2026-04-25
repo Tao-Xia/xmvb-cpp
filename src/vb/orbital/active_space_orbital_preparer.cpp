@@ -43,45 +43,22 @@ void require_finite_vector(const std::vector<double>& values, const char* label)
   }
 }
 
-int get_sparse_coefficient_count(
-    const std::vector<int>& orbital_basis_counts,
-    const std::vector<int>& orbital_basis_index_table,
-    int n_basis_functions,
-    int orbital_index) {
-  const int explicit_count = orbital_basis_counts[xmvb::to_size(orbital_index)];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-
-  int coefficient_count = 0;
-  while (coefficient_count < n_basis_functions) {
-    const int basis_function_index =
-        orbital_basis_index_table[xmvb::to_size(orbital_index) * n_basis_functions +
-                                  coefficient_count];
-    if (basis_function_index == 0) {
-      break;
-    }
-    ++coefficient_count;
-  }
-  return coefficient_count;
-}
-
 std::vector<double> normalize_sparse_orbitals(
     const OrbitalPreparationInput& input,
     const Eigen::Map<const Eigen::MatrixXd>& active_orbital_overlap_matrix) {
   std::vector<double> normalized_values = input.orbital_value_table;
 
 #pragma omp parallel for schedule(static)
-  for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
-    const int coefficient_count = get_sparse_coefficient_count(
-        input.orbital_basis_counts,
-        input.orbital_basis_index_table,
-        input.n_basis_functions,
-        orbital_index);
+  for (std::ptrdiff_t orbital_offset = 0;
+       orbital_offset < static_cast<std::ptrdiff_t>(input.n_orbitals);
+       ++orbital_offset) {
+    const std::size_t orbital_index = orbital_offset;
+    const int coefficient_count =
+        stored_sparse_orbital_coefficient_count(input, orbital_index);
     double squared_norm = 0.0;
     for (int left_index = 0; left_index < coefficient_count; ++left_index) {
       const int left_basis_function =
-          input.orbital_basis_index_table[xmvb::to_size(orbital_index) *
+          input.orbital_basis_index_table[orbital_index *
                                               input.n_basis_functions +
                                           left_index] -
           1;
@@ -89,16 +66,16 @@ std::vector<double> normalize_sparse_orbitals(
         throw std::runtime_error("invalid sparse orbital basis index");
       }
       const double left_value =
-          normalized_values[xmvb::to_size(orbital_index) * input.n_basis_functions +
+          normalized_values[orbital_index * input.n_basis_functions +
                             left_index];
       for (int right_index = 0; right_index < coefficient_count; ++right_index) {
         const int right_basis_function =
-            input.orbital_basis_index_table[xmvb::to_size(orbital_index) *
+            input.orbital_basis_index_table[orbital_index *
                                                 input.n_basis_functions +
                                             right_index] -
             1;
         const double right_value =
-            normalized_values[xmvb::to_size(orbital_index) * input.n_basis_functions +
+            normalized_values[orbital_index * input.n_basis_functions +
                               right_index];
         squared_norm +=
             left_value * right_value * active_orbital_overlap_matrix(left_basis_function, right_basis_function);
@@ -114,7 +91,7 @@ std::vector<double> normalize_sparse_orbitals(
 
     const double normalization_factor = std::sqrt(1.0 / squared_norm);
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
-      normalized_values[xmvb::to_size(orbital_index) * input.n_basis_functions +
+      normalized_values[orbital_index * input.n_basis_functions +
                         coefficient_index] *= normalization_factor;
     }
   }
@@ -129,22 +106,22 @@ Eigen::MatrixXd expand_sparse_orbitals(
       Eigen::MatrixXd::Zero(input.n_basis_functions, input.n_orbitals);
 
 #pragma omp parallel for schedule(static)
-  for (int orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
-    const int coefficient_count = get_sparse_coefficient_count(
-        input.orbital_basis_counts,
-        input.orbital_basis_index_table,
-        input.n_basis_functions,
-        orbital_index);
+  for (std::ptrdiff_t orbital_offset = 0;
+       orbital_offset < static_cast<std::ptrdiff_t>(input.n_orbitals);
+       ++orbital_offset) {
+    const std::size_t orbital_index = orbital_offset;
+    const int coefficient_count =
+        stored_sparse_orbital_coefficient_count(input, orbital_index);
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
       const int basis_function_index =
-          input.orbital_basis_index_table[xmvb::to_size(orbital_index) *
+          input.orbital_basis_index_table[orbital_index *
                                               input.n_basis_functions +
                                           coefficient_index] -
           1;
       orbital_matrix(
           basis_function_index,
           orbital_index) =
-          normalized_orbital_values[xmvb::to_size(orbital_index) *
+          normalized_orbital_values[orbital_index *
                                         input.n_basis_functions +
                                     coefficient_index];
     }
@@ -478,20 +455,20 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
   require_finite_matrix(active_overlap_matrix, "active_orbital_overlap_matrix");
 
   std::vector<int> active_sparse_row_offsets(
-      xmvb::to_size(input.n_basis_functions) + 1,
+      input.n_basis_functions + 1,
       0);
   std::vector<int> active_sparse_orbital_indices;
   std::vector<double> active_sparse_values;
   active_sparse_orbital_indices.reserve(
-      xmvb::to_size(input.n_basis_functions) * input.n_active_orbitals);
+      input.n_basis_functions * input.n_active_orbitals);
   active_sparse_values.reserve(
-      xmvb::to_size(input.n_basis_functions) * input.n_active_orbitals);
-  for (int basis_function_index = 0;
+      input.n_basis_functions * input.n_active_orbitals);
+  for (std::size_t basis_function_index = 0;
        basis_function_index < input.n_basis_functions;
        ++basis_function_index) {
-    active_sparse_row_offsets[xmvb::to_size(basis_function_index)] =
+    active_sparse_row_offsets[basis_function_index] =
         static_cast<int>(active_sparse_values.size());
-    for (int active_orbital_index = 0;
+    for (std::size_t active_orbital_index = 0;
          active_orbital_index < input.n_active_orbitals;
          ++active_orbital_index) {
       const double coefficient =
@@ -499,11 +476,11 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
       if (coefficient == 0.0) {
         continue;
       }
-      active_sparse_orbital_indices.push_back(active_orbital_index);
+      active_sparse_orbital_indices.push_back(static_cast<int>(active_orbital_index));
       active_sparse_values.push_back(coefficient);
     }
   }
-  active_sparse_row_offsets[xmvb::to_size(input.n_basis_functions)] =
+  active_sparse_row_offsets[input.n_basis_functions] =
       static_cast<int>(active_sparse_values.size());
   const Eigen::MatrixXd active_orbital_overlap_inverse =
       invert_self_adjoint_positive_definite(

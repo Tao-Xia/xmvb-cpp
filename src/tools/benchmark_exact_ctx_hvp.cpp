@@ -97,9 +97,6 @@ xmvb::vb::AoIntegralSource parse_ao_integral_source(
   if (value == "auto") {
     return xmvb::vb::AoIntegralSource::Auto;
   }
-  if (value == "legacy") {
-    return xmvb::vb::AoIntegralSource::LegacyRuntime;
-  }
   if (value == "libcint_cpp") {
     return xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
   }
@@ -414,6 +411,42 @@ void print_measurement(const BenchmarkMeasurement& measurement) {
   std::cout << label << "_diag_avg_outer_response_wall_time_seconds = "
             << average_wall_time_seconds(
                    diagnostics.outer_response_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
+            << "_diag_avg_outer_response_active_space_integrals_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics.outer_response_active_space_integrals_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
+            << "_diag_avg_outer_response_structure_matrices_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics.outer_response_structure_matrices_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
+            << "_diag_avg_outer_response_eigensystem_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics.outer_response_eigensystem_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
+            << "_diag_avg_outer_response_pair_weights_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics.outer_response_pair_weights_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
+            << "_diag_avg_outer_response_active_gradient_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics.outer_response_active_gradient_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
+            << "_diag_avg_outer_response_orbital_pullback_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics.outer_response_orbital_pullback_wall_time_seconds,
                    diagnostics.apply_count)
             << '\n';
 }

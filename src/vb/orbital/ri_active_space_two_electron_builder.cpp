@@ -18,15 +18,15 @@ struct ActivePair {
 
 std::size_t ao_pair_index(int first, int second) {
   if (first >= second) {
-    return xmvb::to_size(first) * (first + 1) / 2 + second;
+    return first * (first + 1) / 2 + second;
   }
-  return xmvb::to_size(second) * (second + 1) / 2 + first;
+  return second * (second + 1) / 2 + first;
 }
 
 std::vector<ActivePair> build_active_pair_list(int n_active_orbitals) {
   std::vector<ActivePair> active_pairs;
   active_pairs.reserve(
-      xmvb::to_size(n_active_orbitals) * (n_active_orbitals + 1) / 2);
+      n_active_orbitals * (n_active_orbitals + 1) / 2);
   for (int first = 0; first < n_active_orbitals; ++first) {
     for (int second = 0; second <= first; ++second) {
       active_pairs.push_back({first, second});
@@ -40,7 +40,7 @@ Eigen::MatrixXd build_dense_active_coefficients(
     int n_basis_functions,
     int n_active_orbitals) {
   if (orbital_preparation_result.active_sparse_row_offsets.size() !=
-      xmvb::to_size(n_basis_functions) + 1) {
+      n_basis_functions + 1) {
     throw std::invalid_argument("active_sparse_row_offsets size mismatch");
   }
   if (orbital_preparation_result.active_sparse_orbital_indices.size() !=
@@ -54,20 +54,20 @@ Eigen::MatrixXd build_dense_active_coefficients(
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
     const int begin =
-        orbital_preparation_result.active_sparse_row_offsets[xmvb::to_size(
-            basis_function_index)];
+        orbital_preparation_result.active_sparse_row_offsets[
+            basis_function_index];
     const int end =
-        orbital_preparation_result.active_sparse_row_offsets[xmvb::to_size(
-            basis_function_index + 1)];
+        orbital_preparation_result.active_sparse_row_offsets[
+            basis_function_index + 1];
     for (int offset = begin; offset < end; ++offset) {
       const int active_orbital_index =
-          orbital_preparation_result.active_sparse_orbital_indices[xmvb::to_size(
-              offset)];
+          orbital_preparation_result.active_sparse_orbital_indices[
+              offset];
       if (active_orbital_index < 0 || active_orbital_index >= n_active_orbitals) {
         throw std::invalid_argument("active sparse orbital index out of range");
       }
       dense_active_coefficients(basis_function_index, active_orbital_index) =
-          orbital_preparation_result.active_sparse_values[xmvb::to_size(offset)];
+          orbital_preparation_result.active_sparse_values[offset];
     }
   }
   return dense_active_coefficients;
@@ -78,7 +78,7 @@ Eigen::MatrixXd build_ao_pair_to_active_pair_coefficients(
     int n_basis_functions,
     const std::vector<ActivePair>& active_pairs) {
   const std::size_t n_ao_pairs =
-      xmvb::to_size(n_basis_functions) * (n_basis_functions + 1) / 2;
+      n_basis_functions * (n_basis_functions + 1) / 2;
   const std::size_t n_active_pairs = active_pairs.size();
   Eigen::MatrixXd ao_pair_to_active_pair_coefficients =
       Eigen::MatrixXd::Zero(
@@ -131,9 +131,9 @@ ActiveSpaceTwoElectronResult RiActiveSpaceTwoElectronBuilder::build(
   }
 
   const std::size_t n_active_pairs =
-      xmvb::to_size(n_active_orbitals) * (n_active_orbitals + 1) / 2;
+      n_active_orbitals * (n_active_orbitals + 1) / 2;
   const std::size_t n_ao_pairs =
-      xmvb::to_size(n_basis_functions) * (n_basis_functions + 1) / 2;
+      n_basis_functions * (n_basis_functions + 1) / 2;
   if (ao_ri_result.metric_whitened_ao_pair_factors.rows() !=
           ao_ri_result.n_auxiliary_functions ||
       ao_ri_result.metric_whitened_ao_pair_factors.cols() !=
@@ -173,7 +173,7 @@ ActiveSpaceTwoElectronResult RiActiveSpaceTwoElectronBuilder::build(
       for (int pair_row = 0; pair_row <= pair_column; ++pair_row) {
         const int packed_index =
             TwoElectronIndexer::packed_pair_of_pairs_index(pair_column, pair_row);
-        packed_active_two_electron_integrals[xmvb::to_size(packed_index)] =
+        packed_active_two_electron_integrals[packed_index] =
             active_pair_gram(pair_column, pair_row);
       }
     }

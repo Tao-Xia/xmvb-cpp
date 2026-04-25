@@ -124,9 +124,9 @@ void set_symmetric_matrix_entry(
     throw std::invalid_argument("matrix must not be null");
   }
   const std::size_t upper_index =
-      xmvb::to_size(column) * dimension + xmvb::to_size(row);
+      column * dimension + row;
   const std::size_t lower_index =
-      xmvb::to_size(row) * dimension + xmvb::to_size(column);
+      row * dimension + column;
   (*matrix)[upper_index] = value;
   (*matrix)[lower_index] = value;
 }
@@ -240,11 +240,11 @@ int main(int argc, char** argv) {
         load_result.nuclear_repulsion_energy);
 
     std::vector<PerStructureCache> structure_cache(
-        xmvb::to_size(raw_structure_data.n_structures));
+        raw_structure_data.n_structures);
     for (int structure_index = 0;
          structure_index < raw_structure_data.n_structures;
          ++structure_index) {
-      auto& cache = structure_cache[xmvb::to_size(structure_index)];
+      auto& cache = structure_cache[structure_index];
       cache.active_pairs =
           xmvb::vb::extract_active_pairs(raw_structure_data, structure_index);
       cache.determinant_terms_global =
@@ -256,7 +256,7 @@ int main(int argc, char** argv) {
     xmvb::vb::DeterminantOverlapResolver overlap_resolver;
     const int n_structures = raw_structure_data.n_structures;
     const std::size_t matrix_size =
-        xmvb::to_size(n_structures) * xmvb::to_size(n_structures);
+        n_structures * n_structures;
     std::vector<double> legacy_exact_overlap_matrix(matrix_size, 0.0);
     std::vector<double> legacy_predicted_overlap_matrix(matrix_size, 0.0);
     std::map<int, int> predicted_rank_histogram;
@@ -268,10 +268,10 @@ int main(int argc, char** argv) {
     const int total_pairs = n_structures * (n_structures + 1) / 2;
 
     for (int left_structure = 0; left_structure < n_structures; ++left_structure) {
-      const auto& left_cache = structure_cache[xmvb::to_size(left_structure)];
+      const auto& left_cache = structure_cache[left_structure];
       for (int right_structure = 0; right_structure <= left_structure; ++right_structure) {
         const auto pair_started_at = std::chrono::steady_clock::now();
-        const auto& right_cache = structure_cache[xmvb::to_size(right_structure)];
+        const auto& right_cache = structure_cache[right_structure];
 
         const auto support_orbitals =
             xmvb::vb::build_support_orbitals(

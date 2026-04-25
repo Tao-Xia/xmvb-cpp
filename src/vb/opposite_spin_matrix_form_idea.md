@@ -512,16 +512,9 @@ This also suggests a staged rewrite plan:
 5. Reuse the existing projection-payload chain to map the matrix-form adjoints
    back to orbital-space gradients.
 
-## 10. Relation to Existing Repository Experiments
+## 10. Scope
 
-The repository already contains exploratory exact-separator code under
-
-- `src/vb/exact_separator/`
-
-which indicates that matrix-form or separator-form exact contractions are
-already of interest in this code base.
-
-This note is narrower in scope:
+This note is intentionally narrower in scope:
 
 1. it focuses on the current production RI determinant-pair implementation,
 2. it identifies the exact matrix-form reorganization enabled by the existing

@@ -110,14 +110,14 @@ struct RawStructureData {
   std::vector<int> raw_structure_orbitals;
 
   std::size_t flat_orbital_count() const {
-    return xmvb::to_size(n_structures) *
-           xmvb::to_size(n_total_electrons);
+    return n_structures *
+           n_total_electrons;
   }
 
   const int* structure_orbitals_data(int structure_index) const {
     return raw_structure_orbitals.data() +
-           xmvb::to_size(structure_index) *
-               xmvb::to_size(n_total_electrons);
+           structure_index *
+               n_total_electrons;
   }
 };
 

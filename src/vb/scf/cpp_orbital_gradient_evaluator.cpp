@@ -22,46 +22,14 @@ bool use_standard_ri_ao_effective_one_electron_path(const CppVbInput& input) {
       StandardTwoElectronMode::ResolutionOfIdentity;
 }
 
-int get_sparse_coefficient_count(
-    const OrbitalPreparationInput& orbital_preparation_input,
-    int orbital_index) {
-  const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-  // Keep the differentiable index list aligned with the legacy `ma0` variable
-  // count. For HAO orbitals with expanded support but `ma0 == 1`, only the
-  // leading coefficient slot is variational in the original optimizer.
-  const bool have_original_counts =
-      orbital_preparation_input.original_orbital_basis_counts.size() ==
-      xmvb::to_size(orbital_preparation_input.n_orbitals);
-  const int explicit_count = have_original_counts
-      ? orbital_preparation_input.original_orbital_basis_counts[xmvb::to_size(orbital_index)]
-      : orbital_preparation_input.orbital_basis_counts[xmvb::to_size(orbital_index)];
-  if (explicit_count > 1) {
-    return explicit_count;
-  }
-
-  if (explicit_count == 1) {
-    return 1;
-  }
-
-  int coefficient_count = 0;
-  while (coefficient_count < n_basis_functions) {
-    const int basis_function_index =
-        orbital_preparation_input.orbital_basis_index_table
-            [xmvb::to_size(orbital_index) * n_basis_functions + coefficient_count];
-    if (basis_function_index == 0) {
-      break;
-    }
-    ++coefficient_count;
-  }
-  return coefficient_count;
-}
-
 std::vector<int> collect_differentiable_parameter_indices(
     const OrbitalPreparationInput& orbital_preparation_input) {
   std::vector<int> differentiable_parameter_indices;
   for (int orbital_index = 0; orbital_index < orbital_preparation_input.n_orbitals; ++orbital_index) {
     const int coefficient_count =
-        get_sparse_coefficient_count(orbital_preparation_input, orbital_index);
+        differentiable_sparse_orbital_parameter_count(
+            orbital_preparation_input,
+            orbital_index);
     for (int coefficient_index = 0; coefficient_index < coefficient_count; ++coefficient_index) {
       differentiable_parameter_indices.push_back(
           orbital_index * orbital_preparation_input.n_basis_functions + coefficient_index);
@@ -87,18 +55,22 @@ std::vector<double> build_reference_energy_inactive_density_gradient(
           input.ao_integral_input.ao_core_hamiltonian_matrix.size()) {
     throw std::runtime_error("one-electron reference energy gradient size mismatch");
   }
+  const double* ao_core_hamiltonian_data =
+      input.ao_integral_input.ao_core_hamiltonian_matrix.data();
+  const double* ao_effective_h1e_data =
+      ao_effective_one_electron_result.ao_effective_h1e.data();
 
   for (std::size_t index = 0; index < inactive_density_gradient.size(); ++index) {
     inactive_density_gradient[index] =
-        ao_effective_one_electron_result.ao_effective_h1e[index] +
-        input.ao_integral_input.ao_core_hamiltonian_matrix[index];
+        ao_effective_h1e_data[index] +
+        ao_core_hamiltonian_data[index];
   }
 
   const auto ao_effective_one_electron_backpropagation_result =
       use_standard_ri_ao_effective_one_electron_path(input)
           ? ao_effective_one_electron_backpropagator.backpropagate(
                 std::vector<double>(
-                    xmvb::to_size(input.orbital_preparation_input.n_active_orbitals) *
+                    input.orbital_preparation_input.n_active_orbitals *
                         input.orbital_preparation_input.n_active_orbitals,
                     0.0),
                 orbital_result,
@@ -120,7 +92,7 @@ Eigen::MatrixXd build_active_pair_gradient_matrix(
     const std::vector<double>& packed_active_two_electron_gradient,
     int n_active_orbitals) {
   const std::size_t n_active_pairs =
-      xmvb::to_size(n_active_orbitals) * (n_active_orbitals + 1) / 2;
+      n_active_orbitals * (n_active_orbitals + 1) / 2;
   Eigen::MatrixXd active_pair_gradient_matrix =
       Eigen::MatrixXd::Zero(
           static_cast<Eigen::Index>(n_active_pairs),
@@ -129,11 +101,11 @@ Eigen::MatrixXd build_active_pair_gradient_matrix(
   for (int row_first = 0; row_first < n_active_orbitals; ++row_first) {
     for (int row_second = 0; row_second <= row_first; ++row_second) {
       const std::size_t row_pair_index =
-          xmvb::to_size(row_first) * (row_first + 1) / 2 + row_second;
+          row_first * (row_first + 1) / 2 + row_second;
       for (int column_first = 0; column_first < n_active_orbitals; ++column_first) {
         for (int column_second = 0; column_second <= column_first; ++column_second) {
           const std::size_t column_pair_index =
-              xmvb::to_size(column_first) * (column_first + 1) / 2 + column_second;
+              column_first * (column_first + 1) / 2 + column_second;
           const int packed_index =
               (row_pair_index >= column_pair_index)
                   ? TwoElectronIndexer::two_electron_storage_index(
@@ -147,7 +119,7 @@ Eigen::MatrixXd build_active_pair_gradient_matrix(
                         row_first,
                         row_second);
           double value =
-              packed_active_two_electron_gradient[xmvb::to_size(packed_index)];
+              packed_active_two_electron_gradient[packed_index];
           if (row_pair_index == column_pair_index) {
             value *= 2.0;
           }
@@ -171,11 +143,11 @@ std::vector<double> build_ri_active_pair_factor_gradient(
     throw std::invalid_argument("RI active-pair-factor gradient requires an RI forward result");
   }
   const std::size_t n_active_pairs =
-      xmvb::to_size(n_active_orbitals) * (n_active_orbitals + 1) / 2;
+      n_active_orbitals * (n_active_orbitals + 1) / 2;
   const std::size_t expected_factor_size =
-      xmvb::to_size(active_space_two_electron_result.n_auxiliary_functions) *
+      active_space_two_electron_result.n_auxiliary_functions *
       n_active_pairs;
-  if (xmvb::to_size(active_space_two_electron_result.ri_active_pair_factors.size()) !=
+  if (active_space_two_electron_result.ri_active_pair_factors.size() !=
           expected_factor_size ||
       active_space_two_electron_result.ri_active_pair_factors.rows() !=
           active_space_two_electron_result.n_auxiliary_functions ||
@@ -201,7 +173,7 @@ std::vector<double> build_reference_energy_orbital_gradient(
     const AoEffectiveOneElectronBackpropagator& ao_effective_one_electron_backpropagator,
     const ActiveSpaceOrbitalBackpropagator& active_space_orbital_backpropagator) {
   const std::vector<double> zero_active_auxiliary_gradient(
-      xmvb::to_size(input.orbital_preparation_input.n_basis_functions) *
+      input.orbital_preparation_input.n_basis_functions *
           input.orbital_preparation_input.n_active_orbitals,
       0.0);
   const std::vector<double> reference_energy_inactive_density_gradient =
@@ -378,10 +350,14 @@ CppOrbitalGradientResult CppOrbitalGradientEvaluator::evaluate_from_active_space
           input.ao_integral_input.ao_core_hamiltonian_matrix.size()) {
     throw std::runtime_error("one-electron reference energy gradient size mismatch");
   }
+  const double* ao_core_hamiltonian_data =
+      input.ao_integral_input.ao_core_hamiltonian_matrix.data();
+  const double* ao_effective_h1e_data =
+      ao_effective_one_electron_result.ao_effective_h1e.data();
   for (std::size_t index = 0; index < total_inactive_density_gradient.size(); ++index) {
     total_inactive_density_gradient[index] =
-        ao_effective_one_electron_result.ao_effective_h1e[index] +
-        input.ao_integral_input.ao_core_hamiltonian_matrix[index];
+        ao_effective_h1e_data[index] +
+        ao_core_hamiltonian_data[index];
   }
 
   stage_start_time = std::chrono::steady_clock::now();
@@ -578,10 +554,14 @@ CppOrbitalGradientEvaluator::evaluate_sparse_orbital_gradient_with_fixed_active_
           input.ao_integral_input.ao_core_hamiltonian_matrix.size()) {
     throw std::runtime_error("one-electron reference energy gradient size mismatch");
   }
+  const double* ao_core_hamiltonian_data =
+      input.ao_integral_input.ao_core_hamiltonian_matrix.data();
+  const double* ao_effective_h1e_data =
+      ao_effective_one_electron_result.ao_effective_h1e.data();
   for (std::size_t index = 0; index < total_inactive_density_gradient.size(); ++index) {
     total_inactive_density_gradient[index] =
-        ao_effective_one_electron_result.ao_effective_h1e[index] +
-        input.ao_integral_input.ao_core_hamiltonian_matrix[index];
+        ao_effective_h1e_data[index] +
+        ao_core_hamiltonian_data[index];
   }
 
   const auto active_space_matrix_backpropagation_result =

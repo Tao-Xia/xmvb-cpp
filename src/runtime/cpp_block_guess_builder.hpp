@@ -2,20 +2,21 @@
 
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "vb/orbital/libcint_input.hpp"
 #include "vb/orbital/orbital_preparation_input.hpp"
 
 namespace xmvb::vb {
-
-int get_orbital_basis_count(
-    const OrbitalPreparationInput& orbital_preparation_input,
-    int orbital_index);
 
 std::vector<std::vector<int>> detect_orbital_blocks(
     const OrbitalPreparationInput& orbital_preparation_input);
 
 std::vector<double> build_ao_normalization(
     const OrbitalPreparationInput& orbital_preparation_input);
+
+std::vector<double> build_ao_normalization(
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_matrix);
 
 std::vector<double> build_ao_normalization(
     const std::vector<double>& overlap_matrix,
@@ -29,6 +30,27 @@ void scale_guess_back_to_original_basis(
 void build_block_matrix_guess(
     const LibcintInput& libcint_input,
     const std::vector<double>& orbital_driving_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_matrix,
+    const OrbitalPreparationInput& orbital_preparation_input,
+    std::vector<double>* orbital_value_table);
+
+void build_block_matrix_guess(
+    const LibcintInput& libcint_input,
+    const std::vector<double>& orbital_driving_matrix,
+    const std::vector<double>& overlap_matrix,
+    const OrbitalPreparationInput& orbital_preparation_input,
+    std::vector<double>* orbital_value_table);
+
+void build_block_matrix_guess(
+    const LibcintInput& libcint_input,
+    const Eigen::Ref<const Eigen::MatrixXd>& orbital_driving_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_matrix,
+    const OrbitalPreparationInput& orbital_preparation_input,
+    std::vector<double>* orbital_value_table);
+
+void build_block_matrix_guess(
+    const LibcintInput& libcint_input,
+    const Eigen::Ref<const Eigen::MatrixXd>& orbital_driving_matrix,
     const std::vector<double>& overlap_matrix,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* orbital_value_table);
@@ -36,6 +58,12 @@ void build_block_matrix_guess(
 void build_block_matrix_guess(
     const LibcintInput& libcint_input,
     const std::vector<double>& orbital_driving_matrix,
+    const OrbitalPreparationInput& orbital_preparation_input,
+    std::vector<double>* orbital_value_table);
+
+void build_block_matrix_guess(
+    const LibcintInput& libcint_input,
+    const Eigen::Ref<const Eigen::MatrixXd>& orbital_driving_matrix,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* orbital_value_table);
 

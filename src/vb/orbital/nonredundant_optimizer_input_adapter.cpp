@@ -7,25 +7,23 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/cpp_block_guess_builder.hpp"
-
 namespace xmvb::vb {
 
 namespace {
 
 class DisjointSet {
 public:
-  explicit DisjointSet(int size)
-      : parent_(xmvb::to_size(size)),
-        rank_(xmvb::to_size(size), 0) {
+  explicit DisjointSet(std::size_t size)
+      : parent_(size),
+        rank_(size, 0) {
     std::iota(parent_.begin(), parent_.end(), 0);
   }
 
   int find(int index) {
-    if (parent_[xmvb::to_size(index)] != index) {
-      parent_[xmvb::to_size(index)] = find(parent_[xmvb::to_size(index)]);
+    if (parent_[index] != index) {
+      parent_[index] = find(parent_[index]);
     }
-    return parent_[xmvb::to_size(index)];
+    return parent_[index];
   }
 
   void unite(int left, int right) {
@@ -34,12 +32,12 @@ public:
     if (left_root == right_root) {
       return;
     }
-    if (rank_[xmvb::to_size(left_root)] < rank_[xmvb::to_size(right_root)]) {
+    if (rank_[left_root] < rank_[right_root]) {
       std::swap(left_root, right_root);
     }
-    parent_[xmvb::to_size(right_root)] = left_root;
-    if (rank_[xmvb::to_size(left_root)] == rank_[xmvb::to_size(right_root)]) {
-      ++rank_[xmvb::to_size(left_root)];
+    parent_[right_root] = left_root;
+    if (rank_[left_root] == rank_[right_root]) {
+      ++rank_[left_root];
     }
   }
 
@@ -51,21 +49,23 @@ private:
 std::vector<std::vector<int>> collect_orbital_supports(
     const OrbitalPreparationInput& orbital_preparation_input) {
   std::vector<std::vector<int>> orbital_supports(
-      xmvb::to_size(orbital_preparation_input.n_orbitals));
-  for (int orbital_index = 0;
+      orbital_preparation_input.n_orbitals);
+  for (std::size_t orbital_index = 0;
        orbital_index < orbital_preparation_input.n_orbitals;
        ++orbital_index) 
   {
     const int coefficient_count =
-        get_orbital_basis_count(orbital_preparation_input, orbital_index);
-    auto& support = orbital_supports[xmvb::to_size(orbital_index)];
-    support.reserve(xmvb::to_size(coefficient_count));
+        stored_sparse_orbital_coefficient_count(
+            orbital_preparation_input,
+            static_cast<int>(orbital_index));
+    auto& support = orbital_supports[orbital_index];
+    support.reserve(coefficient_count);
     for (int coefficient_index = 0;
          coefficient_index < coefficient_count;
          ++coefficient_index) {
       const int basis_function_index =
           orbital_preparation_input.orbital_basis_index_table
-              [xmvb::to_size(orbital_index) *
+              [orbital_index *
                    orbital_preparation_input.n_basis_functions +
                coefficient_index] -
           1;
@@ -85,14 +85,13 @@ std::vector<std::vector<int>> build_overlap_connected_components(
     const std::vector<std::vector<int>>& orbital_supports) {
   DisjointSet components(orbital_preparation_input.n_orbitals);
   std::vector<std::vector<int>> basis_to_orbitals(
-      xmvb::to_size(orbital_preparation_input.n_basis_functions));
-  for (int orbital_index = 0;
+      orbital_preparation_input.n_basis_functions);
+  for (std::size_t orbital_index = 0;
        orbital_index < orbital_preparation_input.n_orbitals;
        ++orbital_index) {
-    for (const int basis_function_index :
-         orbital_supports[xmvb::to_size(orbital_index)]) {
-      basis_to_orbitals[xmvb::to_size(basis_function_index)].push_back(
-          orbital_index);
+    for (const int basis_function_index : orbital_supports[orbital_index]) {
+      basis_to_orbitals[basis_function_index].push_back(
+          static_cast<int>(orbital_index));
     }
   }
 
@@ -109,11 +108,12 @@ std::vector<std::vector<int>> build_overlap_connected_components(
   }
 
   std::unordered_map<int, std::vector<int>> components_by_root;
-  components_by_root.reserve(xmvb::to_size(orbital_preparation_input.n_orbitals));
-  for (int orbital_index = 0;
+  components_by_root.reserve(orbital_preparation_input.n_orbitals);
+  for (std::size_t orbital_index = 0;
        orbital_index < orbital_preparation_input.n_orbitals;
        ++orbital_index) {
-    components_by_root[components.find(orbital_index)].push_back(orbital_index);
+    components_by_root[components.find(static_cast<int>(orbital_index))]
+        .push_back(static_cast<int>(orbital_index));
   }
 
   std::vector<std::vector<int>> overlap_components;
@@ -137,17 +137,17 @@ std::vector<int> build_component_union_support(
     const std::vector<std::vector<int>>& orbital_supports,
     int n_basis_functions) {
   std::vector<int> union_support;
-  union_support.reserve(xmvb::to_size(n_basis_functions));
-  std::vector<char> seen_support(xmvb::to_size(n_basis_functions), 0);
+  union_support.reserve(n_basis_functions);
+  std::vector<char> seen_support(n_basis_functions, 0);
   // Preserve first appearance order across the component so the adapted sparse
   // rows stay close to the original legacy slot ordering whenever possible.
   for (const int orbital_index : component_orbitals) {
     for (const int basis_function_index :
-         orbital_supports[xmvb::to_size(orbital_index)]) {
-      if (seen_support[xmvb::to_size(basis_function_index)] != 0) {
+         orbital_supports[orbital_index]) {
+      if (seen_support[basis_function_index] != 0) {
         continue;
       }
-      seen_support[xmvb::to_size(basis_function_index)] = 1;
+      seen_support[basis_function_index] = 1;
       union_support.push_back(basis_function_index);
     }
   }
@@ -161,13 +161,13 @@ bool orbital_supports_match(
   if (left_support.size() != right_support.size()) {
     return false;
   }
-  std::vector<char> left_mask(xmvb::to_size(n_basis_functions), 0);
-  std::vector<char> right_mask(xmvb::to_size(n_basis_functions), 0);
+  std::vector<char> left_mask(n_basis_functions, 0);
+  std::vector<char> right_mask(n_basis_functions, 0);
   for (const int basis_function_index : left_support) {
-    left_mask[xmvb::to_size(basis_function_index)] = 1;
+    left_mask[basis_function_index] = 1;
   }
   for (const int basis_function_index : right_support) {
-    right_mask[xmvb::to_size(basis_function_index)] = 1;
+    right_mask[basis_function_index] = 1;
   }
   return left_mask == right_mask;
 }
@@ -176,12 +176,12 @@ bool orbital_supports_overlap(
     const std::vector<int>& left_support,
     const std::vector<int>& right_support,
     int n_basis_functions) {
-  std::vector<char> right_mask(xmvb::to_size(n_basis_functions), 0);
+  std::vector<char> right_mask(n_basis_functions, 0);
   for (const int basis_function_index : right_support) {
-    right_mask[xmvb::to_size(basis_function_index)] = 1;
+    right_mask[basis_function_index] = 1;
   }
   for (const int basis_function_index : left_support) {
-    if (right_mask[xmvb::to_size(basis_function_index)] != 0) {
+    if (right_mask[basis_function_index] != 0) {
       return true;
     }
   }
@@ -198,28 +198,28 @@ void expand_component_sparse_supports(
         "orbital_preparation_input must not be null for support expansion");
   }
   if (union_support.size() >
-      xmvb::to_size(orbital_preparation_input->n_basis_functions)) {
+      orbital_preparation_input->n_basis_functions) {
     throw std::runtime_error(
         "union sparse orbital support exceeds n_basis_functions");
   }
 
-  const int n_basis_functions = orbital_preparation_input->n_basis_functions;
+  const std::size_t n_basis_functions = orbital_preparation_input->n_basis_functions;
   std::vector<double> updated_orbital_values =
-      orbital_preparation_input->orbital_value_table.vector();
+      orbital_preparation_input->orbital_value_table;
   std::vector<int> updated_basis_index_table =
-      orbital_preparation_input->orbital_basis_index_table.vector();
+      orbital_preparation_input->orbital_basis_index_table;
   std::vector<int> updated_basis_counts =
-      orbital_preparation_input->orbital_basis_counts.vector();
+      orbital_preparation_input->orbital_basis_counts;
   std::vector<int> updated_original_basis_counts =
-      orbital_preparation_input->original_orbital_basis_counts.vector();
+      orbital_preparation_input->original_orbital_basis_counts;
 
   for (const int orbital_index : component_orbitals) {
     const auto& orbital_support =
-        orbital_supports[xmvb::to_size(orbital_index)];
+        orbital_supports[orbital_index];
     // After support expansion, every downstream consumer must see a parameter
     // count that matches the adapted sparse slots, even if it still keys off
     // the legacy `original_orbital_basis_counts` metadata.
-    updated_original_basis_counts[xmvb::to_size(orbital_index)] =
+    updated_original_basis_counts[orbital_index] =
         static_cast<int>(union_support.size());
     if (orbital_supports_match(
             orbital_support,
@@ -234,18 +234,18 @@ void expand_component_sparse_supports(
          coefficient_index < static_cast<int>(orbital_support.size());
          ++coefficient_index) {
       value_by_basis.emplace(
-          orbital_support[xmvb::to_size(coefficient_index)],
+          orbital_support[coefficient_index],
           orbital_preparation_input->orbital_value_table
-              [xmvb::to_size(orbital_index) * n_basis_functions +
+              [orbital_index * n_basis_functions +
                coefficient_index]);
     }
 
-    for (int coefficient_index = 0;
+    for (std::size_t coefficient_index = 0;
          coefficient_index < n_basis_functions;
          ++coefficient_index) {
-      updated_orbital_values[xmvb::to_size(orbital_index) * n_basis_functions +
+      updated_orbital_values[orbital_index * n_basis_functions +
                              coefficient_index] = 0.0;
-      updated_basis_index_table[xmvb::to_size(orbital_index) * n_basis_functions +
+      updated_basis_index_table[orbital_index * n_basis_functions +
                                 coefficient_index] = 0;
     }
 
@@ -253,19 +253,19 @@ void expand_component_sparse_supports(
          coefficient_index < static_cast<int>(union_support.size());
          ++coefficient_index) {
       const int basis_function_index =
-          union_support[xmvb::to_size(coefficient_index)];
-      updated_basis_index_table[xmvb::to_size(orbital_index) * n_basis_functions +
+          union_support[coefficient_index];
+      updated_basis_index_table[orbital_index * n_basis_functions +
                                 coefficient_index] =
           basis_function_index + 1;
       const auto value_iterator =
           value_by_basis.find(basis_function_index);
       if (value_iterator != value_by_basis.end()) {
-        updated_orbital_values[xmvb::to_size(orbital_index) * n_basis_functions +
+        updated_orbital_values[orbital_index * n_basis_functions +
                                coefficient_index] =
             value_iterator->second;
       }
     }
-    updated_basis_counts[xmvb::to_size(orbital_index)] =
+    updated_basis_counts[orbital_index] =
         static_cast<int>(union_support.size());
   }
 
@@ -288,52 +288,53 @@ void rebuild_exact_support_block_metadata(
 
   std::vector<std::vector<int>> blocks;
   std::vector<int> block_basis_counts;
-  blocks.reserve(xmvb::to_size(orbital_preparation_input->n_orbitals));
-  block_basis_counts.reserve(xmvb::to_size(orbital_preparation_input->n_orbitals));
-  for (int orbital_index = 0;
+  blocks.reserve(orbital_preparation_input->n_orbitals);
+  block_basis_counts.reserve(orbital_preparation_input->n_orbitals);
+  for (std::size_t orbital_index = 0;
        orbital_index < orbital_preparation_input->n_orbitals;
        ++orbital_index) {
     bool appended_to_existing_block = false;
     for (std::size_t block_index = 0; block_index < blocks.size(); ++block_index) {
       const int representative_orbital = blocks[block_index].front();
       if (!orbital_supports_match(
-              orbital_supports[xmvb::to_size(orbital_index)],
-              orbital_supports[xmvb::to_size(representative_orbital)],
+              orbital_supports[orbital_index],
+              orbital_supports[representative_orbital],
               orbital_preparation_input->n_basis_functions)) {
         continue;
       }
-      blocks[block_index].push_back(orbital_index);
+      blocks[block_index].push_back(static_cast<int>(orbital_index));
       appended_to_existing_block = true;
       break;
     }
     if (!appended_to_existing_block) {
-      blocks.push_back({orbital_index});
+      blocks.push_back({static_cast<int>(orbital_index)});
       block_basis_counts.push_back(
           static_cast<int>(
-              orbital_supports[xmvb::to_size(orbital_index)].size()));
+              orbital_supports[orbital_index].size()));
     }
   }
 
-  int block_storage_dimension = 0;
+  std::size_t block_storage_dimension = 0;
   for (const auto& block : blocks) {
     block_storage_dimension =
-        std::max(block_storage_dimension, static_cast<int>(block.size()));
+        std::max(block_storage_dimension, block.size());
   }
+  const std::size_t block_storage_stride = std::max<std::size_t>(1, block_storage_dimension);
 
   std::vector<int> block_members(
-      xmvb::to_size(blocks.size()) * std::max(1, block_storage_dimension),
+      blocks.size() * block_storage_stride,
       0);
-  std::vector<int> block_orbital_counts(xmvb::to_size(blocks.size()), 0);
+  std::vector<int> block_orbital_counts(blocks.size(), 0);
   for (std::size_t block_index = 0; block_index < blocks.size(); ++block_index) {
     const auto& block = blocks[block_index];
     block_orbital_counts[block_index] = static_cast<int>(block.size());
     for (std::size_t orbital_offset = 0; orbital_offset < block.size(); ++orbital_offset) {
-      block_members[block_index * xmvb::to_size(std::max(1, block_storage_dimension)) +
+      block_members[block_index * block_storage_stride +
                     orbital_offset] = block[orbital_offset];
     }
   }
 
-  orbital_preparation_input->n_blocks = static_cast<int>(blocks.size());
+  orbital_preparation_input->n_blocks = blocks.size();
   orbital_preparation_input->block_storage_dimension = block_storage_dimension;
   orbital_preparation_input->block_members = std::move(block_members);
   orbital_preparation_input->block_orbital_counts = std::move(block_orbital_counts);
@@ -348,17 +349,18 @@ void rebuild_overlap_connected_block_metadata(
     throw std::invalid_argument("orbital_preparation_input must not be null");
   }
 
-  int block_storage_dimension = 0;
+  std::size_t block_storage_dimension = 0;
   for (const auto& component : overlap_components) {
     block_storage_dimension =
-        std::max(block_storage_dimension, static_cast<int>(component.size()));
+        std::max(block_storage_dimension, component.size());
   }
+  const std::size_t block_storage_stride = std::max<std::size_t>(1, block_storage_dimension);
 
   std::vector<int> block_members(
-      xmvb::to_size(overlap_components.size()) * std::max(1, block_storage_dimension),
+      overlap_components.size() * block_storage_stride,
       0);
   std::vector<int> block_orbital_counts(
-      xmvb::to_size(overlap_components.size()),
+      overlap_components.size(),
       0);
   std::vector<int> block_basis_counts;
   block_basis_counts.reserve(overlap_components.size());
@@ -371,7 +373,7 @@ void rebuild_overlap_connected_block_metadata(
     for (std::size_t orbital_offset = 0;
          orbital_offset < component.size();
          ++orbital_offset) {
-      block_members[block_index * xmvb::to_size(std::max(1, block_storage_dimension)) +
+      block_members[block_index * block_storage_stride +
                     orbital_offset] = component[orbital_offset];
     }
     block_basis_counts.push_back(
@@ -383,8 +385,7 @@ void rebuild_overlap_connected_block_metadata(
                 .size()));
   }
 
-  orbital_preparation_input->n_blocks =
-      static_cast<int>(overlap_components.size());
+  orbital_preparation_input->n_blocks = overlap_components.size();
   orbital_preparation_input->block_storage_dimension =
       block_storage_dimension;
   orbital_preparation_input->block_members = std::move(block_members);
@@ -403,14 +404,14 @@ bool support_layout_has_partial_overlap(
          right_orbital < n_orbitals;
          ++right_orbital) {
       if (!orbital_supports_overlap(
-              orbital_supports[xmvb::to_size(left_orbital)],
-              orbital_supports[xmvb::to_size(right_orbital)],
+              orbital_supports[left_orbital],
+              orbital_supports[right_orbital],
               n_basis_functions)) {
         continue;
       }
       if (orbital_supports_match(
-              orbital_supports[xmvb::to_size(left_orbital)],
-              orbital_supports[xmvb::to_size(right_orbital)],
+              orbital_supports[left_orbital],
+              orbital_supports[right_orbital],
               n_basis_functions)) {
         continue;
       }
@@ -430,7 +431,7 @@ bool orbital_input_requires_partial_overlap_support_expansion(
 OrbitalPreparationInput build_partial_overlap_support_expanded_input(
     const OrbitalPreparationInput& orbital_preparation_input) {
   std::vector<char> expand_orbital_mask(
-      xmvb::to_size(orbital_preparation_input.n_orbitals),
+      orbital_preparation_input.n_orbitals,
       1);
   return build_partial_overlap_support_expanded_input(
       orbital_preparation_input,
@@ -445,7 +446,7 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
     return orbital_preparation_input;
   }
   if (expand_orbital_mask.size() !=
-      xmvb::to_size(orbital_preparation_input.n_orbitals)) {
+      orbital_preparation_input.n_orbitals) {
     throw std::invalid_argument(
         "expand_orbital_mask size does not match n_orbitals");
   }
@@ -468,7 +469,7 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
     std::vector<int> selected_component_orbitals;
     selected_component_orbitals.reserve(component_orbitals.size());
     for (const int orbital_index : component_orbitals) {
-      if (expand_orbital_mask[xmvb::to_size(orbital_index)] == 0) {
+      if (expand_orbital_mask[orbital_index] == 0) {
         continue;
       }
       selected_component_orbitals.push_back(orbital_index);

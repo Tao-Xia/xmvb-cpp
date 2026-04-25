@@ -14,7 +14,7 @@ std::size_t checked_packed_pair_count(int n_active_orbitals) {
   if (n_active_orbitals < 0) {
     throw std::invalid_argument("n_active_orbitals must be non-negative");
   }
-  const std::size_t n = xmvb::to_size(n_active_orbitals);
+  const std::size_t n = n_active_orbitals;
   return n * (n + 1) / 2;
 }
 

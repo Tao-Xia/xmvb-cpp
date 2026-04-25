@@ -30,26 +30,26 @@ std::vector<int> build_complement_indices(
     const std::vector<int>& blocked_orbitals,
     const char* label) {
   std::vector<bool> blocked_mask(
-      xmvb::to_size(n_active_orbitals),
+      n_active_orbitals,
       false);
   for (const int orbital : blocked_orbitals) {
     if (orbital < 0 || orbital >= n_active_orbitals) {
       throw std::invalid_argument(
           std::string(label) + " index is outside the active-space range");
     }
-    if (blocked_mask[xmvb::to_size(orbital)]) {
+    if (blocked_mask[orbital]) {
       throw std::invalid_argument(
           std::string(label) + " contains a duplicated blocked orbital");
     }
-    blocked_mask[xmvb::to_size(orbital)] = true;
+    blocked_mask[orbital] = true;
   }
 
   std::vector<int> complement_indices;
   complement_indices.reserve(
-      xmvb::to_size(
-          std::max(0, n_active_orbitals - static_cast<int>(blocked_orbitals.size()))));
+      
+          std::max(0, n_active_orbitals - static_cast<int>(blocked_orbitals.size())));
   for (int orbital = 0; orbital < n_active_orbitals; ++orbital) {
-    if (!blocked_mask[xmvb::to_size(orbital)]) {
+    if (!blocked_mask[orbital]) {
       complement_indices.push_back(orbital);
     }
   }
@@ -67,8 +67,8 @@ Matrix extract_submatrix(
     for (int row = 0; row < static_cast<int>(row_indices.size()); ++row) {
       submatrix(row, col) =
           matrix(
-              row_indices[xmvb::to_size(row)],
-              col_indices[xmvb::to_size(col)]);
+              row_indices[row],
+              col_indices[col]);
     }
   }
   return submatrix;
@@ -89,8 +89,8 @@ void accumulate_submatrix(
   for (int col = 0; col < source.cols(); ++col) {
     for (int row = 0; row < source.rows(); ++row) {
       (*target)(
-          row_indices[xmvb::to_size(row)],
-          col_indices[xmvb::to_size(col)]) += source(row, col);
+          row_indices[row],
+          col_indices[col]) += source(row, col);
     }
   }
 }
@@ -108,8 +108,8 @@ Matrix scatter_submatrix(
   for (int col = 0; col < static_cast<int>(col_indices.size()); ++col) {
     for (int row = 0; row < static_cast<int>(row_indices.size()); ++row) {
       matrix(
-          row_indices[xmvb::to_size(row)],
-          col_indices[xmvb::to_size(col)]) = submatrix(row, col);
+          row_indices[row],
+          col_indices[col]) = submatrix(row, col);
     }
   }
   return matrix;
@@ -149,10 +149,10 @@ const InterpolationCache& get_interpolation_cache(int degree) {
   if (inserted) {
     InterpolationCache& interpolation_cache = iterator->second;
     interpolation_cache.nodes.resize(
-        xmvb::to_size(degree + 1),
+        degree + 1,
         0.0);
     for (int node = 0; node <= degree; ++node) {
-      interpolation_cache.nodes[xmvb::to_size(node)] =
+      interpolation_cache.nodes[node] =
           kInterpolationNodeScale * static_cast<double>(node);
     }
     interpolation_cache.inverse_vandermonde =
@@ -1468,7 +1468,7 @@ PfHighSpinOpenShellHamiltonianResult evaluate_high_spin_open_shell_pair_hamilton
   for (int node = 0; node <= context.interpolation_degree; ++node) {
     const double weight = weights(node);
     const double t_value =
-        context.interpolation_nodes[xmvb::to_size(node)];
+        context.interpolation_nodes[node];
     const FastSampleOperands operands =
         build_fast_sample_operands(
             context,

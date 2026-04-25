@@ -33,32 +33,23 @@ bool reconstruct_packed_ri_active_space_integrals_enabled() {
 
 double compute_one_electron_reference_energy(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_h1e,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
 
-  const std::size_t matrix_size =
-      xmvb::to_size(n_basis_functions) * xmvb::to_size(n_basis_functions);
   if (inactive_density_matrix.rows() != n_basis_functions ||
       inactive_density_matrix.cols() != n_basis_functions ||
-      ao_effective_h1e.size() != matrix_size ||
-      ao_core_hamiltonian_matrix.size() != matrix_size) {
+      ao_effective_h1e.rows() != n_basis_functions ||
+      ao_effective_h1e.cols() != n_basis_functions ||
+      ao_core_hamiltonian_matrix.rows() != n_basis_functions ||
+      ao_core_hamiltonian_matrix.cols() != n_basis_functions) {
     throw std::invalid_argument("one-electron reference energy input size mismatch");
   }
-
-  const Eigen::Map<const Eigen::MatrixXd> effective_h1e(
-      ao_effective_h1e.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const Eigen::Map<const Eigen::MatrixXd> core_hamiltonian(
-      ao_core_hamiltonian_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
   return (inactive_density_matrix.array() *
-          (effective_h1e.array() + core_hamiltonian.array())).sum();
+          (ao_effective_h1e.array() + ao_core_hamiltonian_matrix.array())).sum();
 }
 
 TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
@@ -90,7 +81,7 @@ TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
     context.ao_effective_one_electron_result =
         ao_effective_one_electron_builder.build(
             context.orbital_result,
-            input.ao_integral_input.ao_core_hamiltonian_matrix.vector(),
+            input.ao_integral_input.ao_core_hamiltonian_matrix,
             *ao_ri_result,
             input.ao_integral_input.n_basis_functions,
             context.n_inactive_doubly_occupied_orbitals);
@@ -151,21 +142,6 @@ TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
           input.ao_integral_input.ao_core_hamiltonian_matrix,
           input.ao_integral_input.n_basis_functions);
   return timed_context;
-}
-
-PreparedActiveSpaceContext prepare_active_space_context(
-    const CppVbInput& input,
-    const ActiveSpaceOrbitalPreparer& orbital_preparer,
-    const AoEffectiveOneElectronBuilder& ao_effective_one_electron_builder,
-    const ActiveSpaceOneElectronBuilder& active_space_one_electron_builder,
-    const ActiveSpaceTwoElectronBuilder& active_space_two_electron_builder) {
-  return prepare_timed_active_space_context(
-             input,
-             orbital_preparer,
-             ao_effective_one_electron_builder,
-             active_space_one_electron_builder,
-             active_space_two_electron_builder)
-      .prepared_active_space;
 }
 
 }  // namespace xmvb::vb

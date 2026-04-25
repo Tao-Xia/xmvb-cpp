@@ -26,10 +26,10 @@ void validate_primary_input(const LibcintInput& input) {
   if (input.n_shells <= 0) {
     throw std::invalid_argument("LibcintInput must contain at least one shell");
   }
-  if (input.atm.size() != xmvb::to_size(input.n_atoms) * ATM_SLOTS) {
+  if (input.atm.size() != input.n_atoms * ATM_SLOTS) {
     throw std::invalid_argument("LibcintInput atm size mismatch");
   }
-  if (input.bas.size() != xmvb::to_size(input.n_shells) * BAS_SLOTS) {
+  if (input.bas.size() != input.n_shells * BAS_SLOTS) {
     throw std::invalid_argument("LibcintInput bas size mismatch");
   }
   if (input.env.empty()) {
@@ -89,12 +89,12 @@ LibcintInput LibcintAuxiliaryBasisBuilder::build(
       1.0 + static_cast<double>(options.level) /
                 (12.0 - 2.0 * static_cast<double>(options.level));
 
-  std::vector<double> max_exponents(xmvb::to_size(primary_input.n_atoms), 0.0);
+  std::vector<double> max_exponents(primary_input.n_atoms, 0.0);
   std::vector<double> min_exponents(
-      xmvb::to_size(primary_input.n_atoms),
+      primary_input.n_atoms,
       1.0e300);
   for (int shell_index = 0; shell_index < primary_input.n_shells; ++shell_index) {
-    const std::size_t shell_offset = xmvb::to_size(shell_index) * BAS_SLOTS;
+    const std::size_t shell_offset = shell_index * BAS_SLOTS;
     const int atom_index = primary_input.bas[shell_offset + ATOM_OF];
     const int n_primitives = primary_input.bas[shell_offset + NPRIM_OF];
     const int exponent_offset = primary_input.bas[shell_offset + PTR_EXP];
@@ -106,20 +106,20 @@ LibcintInput LibcintAuxiliaryBasisBuilder::build(
     }
     for (int primitive_index = 0; primitive_index < n_primitives; ++primitive_index) {
       const double exponent =
-          primary_input.env[xmvb::to_size(exponent_offset + primitive_index)];
+          primary_input.env[exponent_offset + primitive_index];
       if (!(exponent > 0.0)) {
         throw std::invalid_argument("primary basis exponent must be positive");
       }
-      const std::size_t atom_offset = xmvb::to_size(atom_index);
+      const std::size_t atom_offset = atom_index;
       max_exponents[atom_offset] = std::max(max_exponents[atom_offset], exponent);
       min_exponents[atom_offset] = std::min(min_exponents[atom_offset], exponent);
     }
   }
 
   std::vector<AuxiliaryShellSpecification> shell_specs;
-  shell_specs.reserve(xmvb::to_size(primary_input.n_atoms) * 24);
+  shell_specs.reserve(primary_input.n_atoms * 24);
   for (int atom_index = 0; atom_index < primary_input.n_atoms; ++atom_index) {
-    const std::size_t atom_offset = xmvb::to_size(atom_index);
+    const std::size_t atom_offset = atom_index;
     const double max_exponent = max_exponents[atom_offset];
     const double min_exponent = min_exponents[atom_offset];
     if (!(max_exponent > 0.0) || !(min_exponent > 0.0) || max_exponent < min_exponent) {
@@ -141,7 +141,7 @@ LibcintInput LibcintAuxiliaryBasisBuilder::build(
         prefactor);
 
     const int atomic_charge =
-        primary_input.atm[xmvb::to_size(atom_index) * ATM_SLOTS + CHARGE_OF];
+        primary_input.atm[atom_index * ATM_SLOTS + CHARGE_OF];
     if (atomic_charge <= 2) {
       continue;
     }
