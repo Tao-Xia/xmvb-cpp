@@ -47,6 +47,7 @@ struct ExactCtxDefaultStrategy {
   int startup_full_inner_solve_multi_step_max_active_orbitals = 8;
   int startup_full_inner_solve_enable_max_active_orbitals = 0;
   bool allow_hybrid_followup_full_solve = false;
+  bool retry_rejected_step_with_full_operator = false;
 };
 
 ExactCtxSystemProfile build_exact_ctx_system_profile(

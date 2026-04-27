@@ -589,6 +589,20 @@ target_link_libraries(compare_ri_active_space_builder
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(compare_ri_active_space_builder)
 
+add_executable(check_ri_low_rank_unique_spin_pair
+  tools/check_ri_low_rank_unique_spin_pair.cpp)
+target_link_libraries(check_ri_low_rank_unique_spin_pair
+  PRIVATE
+    xmvb_cpp_vb
+    xmvb_cpp_runtime)
+xmvb_link_standalone_runtime(check_ri_low_rank_unique_spin_pair)
+
+add_executable(benchmark_low_rank_synthetic
+  tools/benchmark_low_rank_synthetic.cpp)
+target_include_directories(benchmark_low_rank_synthetic
+  PRIVATE
+    ${EIGEN3_INCLUDE_DIR})
+
 add_executable(check_active_overlap_split
   tools/check_active_overlap_split.cpp)
 target_link_libraries(check_active_overlap_split
@@ -636,6 +650,7 @@ add_dependencies(check_direct_libcint_smoke xmvb_cpp_runtime_assets)
 add_dependencies(check_libcint_ri_smoke xmvb_cpp_runtime_assets)
 add_dependencies(compare_libcint_materialized_provider xmvb_cpp_runtime_assets)
 add_dependencies(compare_ri_active_space_builder xmvb_cpp_runtime_assets)
+add_dependencies(check_ri_low_rank_unique_spin_pair xmvb_cpp_runtime_assets)
 add_dependencies(check_active_overlap_split xmvb_cpp_runtime_assets)
 add_dependencies(compare_deepvbh_jax_inference xmvb_cpp_runtime_assets)
 get_property(_xmvb_targets_after_dev_tools DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)

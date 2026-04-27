@@ -460,6 +460,10 @@ void print_exact_ctx_policy_summary(
       xmvb::vb::choose_exact_ctx_default_strategy(system_profile);
   const auto outer_response_override =
       parse_env_optional_flag("XMVB_CPP_EXACT_CTX_INNER_SOLVE_USE_OUTER_RESPONSE");
+  const auto retry_rejected_step_override =
+      parse_env_optional_flag("XMVB_CPP_EXACT_CTX_RETRY_REJECTED_WITH_FULL_OPERATOR");
+  const auto hybrid_followup_full_solve_override =
+      parse_env_optional_flag("XMVB_CPP_EXACT_CTX_HYBRID_FOLLOWUP_FULL_SOLVE");
   print_log_subsection_title("Exact-CTX Strategy");
   print_log_field(
       "Initial inner solve",
@@ -556,6 +560,11 @@ void print_exact_ctx_policy_summary(
               "XMVB_CPP_EXACT_CTX_HYBRID_FOLLOWUP_FULL_ENABLE_MAX_ACTIVE_ORBITALS",
               6)));
   print_log_field(
+      "Hybrid followup full solve",
+      hybrid_followup_full_solve_override.has_value()
+          ? (*hybrid_followup_full_solve_override ? "forced" : "disabled")
+          : (strategy.allow_hybrid_followup_full_solve ? "auto" : "false"));
+  print_log_field(
       "Stall correction cap",
       std::to_string(
           parse_env_int_with_default(
@@ -564,9 +573,9 @@ void print_exact_ctx_policy_summary(
   print_log_field(
       "Retry rejected with full op",
       bool_name(
-          parse_env_flag_with_default(
-              "XMVB_CPP_EXACT_CTX_RETRY_REJECTED_WITH_FULL_OPERATOR",
-              true)));
+          retry_rejected_step_override.has_value()
+              ? *retry_rejected_step_override
+              : strategy.retry_rejected_step_with_full_operator));
   print_log_field(
       "Hybrid refine max CG",
       std::to_string(

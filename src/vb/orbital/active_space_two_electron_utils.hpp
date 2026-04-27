@@ -10,6 +10,10 @@
 
 namespace xmvb::vb {
 
+using ExactCtxDenseMatrix = Eigen::MatrixXd;
+using ExactCtxPairMatrix =
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+
 /**
  * @brief Non-owning view of one active-space two-electron representation.
  *
@@ -40,12 +44,12 @@ struct ExactPackedActiveTwoElectronAdjointCache {
   std::vector<int> ao_pair_second_indices;
   std::vector<int> active_pair_first_indices;
   std::vector<int> active_pair_second_indices;
-  Eigen::MatrixXd accepted_pair_coefficients;
-  Eigen::MatrixXd accepted_base_pair_products;
-  Eigen::MatrixXd active_pair_gradient_matrix;
+  ExactCtxPairMatrix accepted_pair_coefficients;
+  ExactCtxPairMatrix accepted_base_pair_products;
+  ExactCtxPairMatrix active_pair_gradient_matrix;
   std::vector<double> accepted_active_pair_gradient_backprop_rows_buffer;
-  Eigen::MatrixXd accepted_dense_active_coefficients;
-  Eigen::MatrixXd accepted_base_pair_gradients;
+  ExactCtxDenseMatrix accepted_dense_active_coefficients;
+  ExactCtxPairMatrix accepted_base_pair_gradients;
   std::vector<double> accepted_base_pair_gradient_matrices_buffer;
 };
 
@@ -57,11 +61,11 @@ struct ExactPackedActiveTwoElectronAdjointCache {
  * reallocation of the largest exact-2e intermediates on every Krylov matvec.
  */
 struct ExactPackedActiveTwoElectronApplyWorkspace {
-  Eigen::MatrixXd dense_active_direction;
-  Eigen::MatrixXd dense_active_gradient_direction;
-  Eigen::MatrixXd mixed_pair_coefficients;
-  Eigen::MatrixXd transformed_pair_coefficients;
-  Eigen::MatrixXd pair_gradients;
+  ExactCtxDenseMatrix dense_active_direction;
+  ExactCtxDenseMatrix dense_active_gradient_direction;
+  ExactCtxPairMatrix mixed_pair_coefficients;
+  ExactCtxPairMatrix transformed_pair_coefficients;
+  ExactCtxPairMatrix pair_gradients;
 };
 
 /**
@@ -72,12 +76,12 @@ struct ExactPackedActiveTwoElectronApplyWorkspace {
  * avoids several large allocations on every `H v` application.
  */
 struct ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace {
-  Eigen::MatrixXd dense_active_direction;
-  Eigen::MatrixXd pair_coefficients;
-  Eigen::MatrixXd base_pair_products;
-  Eigen::MatrixXd directional_pair_coefficients;
-  Eigen::MatrixXd directional_pair_products;
-  Eigen::MatrixXd delta_active_pair_matrix;
+  ExactCtxDenseMatrix dense_active_direction;
+  ExactCtxPairMatrix pair_coefficients;
+  ExactCtxPairMatrix base_pair_products;
+  ExactCtxPairMatrix directional_pair_coefficients;
+  ExactCtxPairMatrix directional_pair_products;
+  ExactCtxDenseMatrix delta_active_pair_matrix;
 };
 
 /**

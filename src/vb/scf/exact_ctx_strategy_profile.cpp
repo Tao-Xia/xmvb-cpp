@@ -57,11 +57,24 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
     strategy.kind = ExactCtxDefaultStrategyKind::CheapCoreOnly;
     strategy.prefer_internal_inactive_chart = false;
     strategy.startup_full_inner_solve_enable_max_active_orbitals = 0;
-    strategy.allow_hybrid_followup_full_solve = false;
+    strategy.allow_hybrid_followup_full_solve =
+        system_profile.sparse_orbital_chart &&
+        system_profile.n_active_orbitals == 8;
+    strategy.retry_rejected_step_with_full_operator =
+        system_profile.sparse_orbital_chart &&
+        system_profile.n_active_orbitals >= 8;
     return strategy;
   }
 
-  strategy.prefer_internal_inactive_chart = true;
+  // The internal inactive `(Q_i, T_a)` chart was intended as a cheaper
+  // accepted-point model for closed-shell sparse HAO/BDO systems, but current
+  // 240/241 production traces show the opposite: it sends both systems onto
+  // the slow TNHVP trajectory, while staying in the physical occupied chart
+  // reproduces the fast reference path. Keep the sparse-chart default on the
+  // physical occupied manifold unless the user explicitly forces the internal
+  // chart through the environment override.
+  strategy.prefer_internal_inactive_chart =
+      !system_profile.sparse_orbital_chart;
   if (!system_profile.sparse_orbital_chart ||
       system_profile.n_active_orbitals <= 0 ||
       system_profile.n_active_orbitals > 6) {
@@ -74,15 +87,14 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
   strategy.startup_full_inner_solve_enable_max_active_orbitals = 6;
   if (system_profile.active_basis_cost_proxy <=
       kAffordableStartupOuterResponseCostProxy) {
-    // Cheap closed-shell sparse charts benefit from taking two immediate full
-    // startup solves; 241-class systems fall in this regime.
-    strategy.kind = ExactCtxDefaultStrategyKind::StartupFullOuterResponse;
-    strategy.startup_full_inner_solve_begin = 0;
-    strategy.startup_full_inner_solve_count = 2;
-    strategy.startup_full_inner_solve_max_extra_count = 0;
-    strategy.startup_full_inner_solve_tail_max_cg_iterations = 8;
-    strategy.startup_full_inner_solve_multi_step_max_active_orbitals = 8;
-    strategy.allow_hybrid_followup_full_solve = true;
+    // With the current full-width AO-H1E and row-local exact-2e kernels, the
+    // accepted cheap model reaches 241-class closed-shell sparse solutions with
+    // lower wall time than paying for full outer-response startup solves. Keep
+    // full-model corrections available through the optimizer rejection/stall
+    // gates instead of spending them unconditionally at iterations 0 and 1.
+    strategy.kind = ExactCtxDefaultStrategyKind::CheapCoreOnly;
+    strategy.startup_full_inner_solve_enable_max_active_orbitals = 0;
+    strategy.allow_hybrid_followup_full_solve = false;
     return strategy;
   }
 

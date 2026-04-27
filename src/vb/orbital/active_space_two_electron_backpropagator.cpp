@@ -254,7 +254,7 @@ std::vector<double> apply_sparse_ao_integral_matrix(
       n_threads,
       std::vector<double>(n_ao_pairs * n_active_pairs, 0.0));
 
-#pragma omp parallel
+#pragma omp parallel num_threads(n_threads)
   {
     int thread_index = 0;
 #ifdef _OPENMP

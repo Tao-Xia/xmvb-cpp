@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "core/openmp_utils.hpp"
 #include "vb/matrices/determinant_pair_storage_utils.hpp"
 #include "vb/matrices/spin_pair_utils.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
@@ -16,6 +17,20 @@ namespace xmvb::vb {
 namespace {
 
 constexpr double kContributionTolerance = 1.0e-15;
+
+int same_spin_pair_cache_thread_count(int n_unique_determinants) {
+  // Same-spin cache construction is row-parallel over unique determinants.
+  // Keep tiny determinant spaces serial and cap the team at the number of rows
+  // so dynamic scheduling does not launch workers with no cache rows to own.
+  if (n_unique_determinants <= 10) {
+    return 1;
+  }
+  return std::max(
+      1,
+      std::min(
+          xmvb::effective_openmp_thread_count(),
+          n_unique_determinants));
+}
 
 bool can_reuse_close_shell_same_spin_pair_cache(
     const std::vector<std::vector<int>>& alpha_det,
@@ -504,8 +519,10 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
   // right determinant and columns to the left determinant.
   const ActiveSpaceTwoElectronView two_electron_view =
       make_active_space_two_electron_view(eri_act);
+  const int n_threads =
+      same_spin_pair_cache_thread_count(n_unique_determinants);
 
-#pragma omp parallel for schedule(dynamic) if(n_unique_determinants > 10)
+#pragma omp parallel for schedule(dynamic, 1) if(n_threads > 1) num_threads(n_threads)
   for (int left_index = 0; left_index < n_unique_determinants; ++left_index) {
     for (int right_index = 0; right_index < n_unique_determinants; ++right_index) {
       pair_cache[ordered_spin_pair_storage_index(
@@ -551,8 +568,10 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
       n_unique_determinants);
   const ActiveSpaceTwoElectronView two_electron_view =
       make_active_space_two_electron_view(active_space_two_electron_result);
+  const int n_threads =
+      same_spin_pair_cache_thread_count(n_unique_determinants);
 
-#pragma omp parallel for schedule(dynamic) if(n_unique_determinants > 10)
+#pragma omp parallel for schedule(dynamic, 1) if(n_threads > 1) num_threads(n_threads)
   for (int left_index = 0; left_index < n_unique_determinants; ++left_index) {
     for (int right_index = 0; right_index < n_unique_determinants; ++right_index) {
       pair_cache[ordered_spin_pair_storage_index(
@@ -602,8 +621,10 @@ void populate_same_spin_phi_cache_entries(
         "same-spin phi cache population size does not match unique-spin dimensions");
   }
   const DeterminantOverlapResolver overlap_resolver;
+  const int n_threads =
+      same_spin_pair_cache_thread_count(n_unique_determinants);
 
-#pragma omp parallel for schedule(dynamic) if(n_unique_determinants > 10)
+#pragma omp parallel for schedule(dynamic, 1) if(n_threads > 1) num_threads(n_threads)
   for (int left_index = 0; left_index < n_unique_determinants; ++left_index) {
     for (int right_index = 0; right_index < n_unique_determinants; ++right_index) {
       auto& pair_evaluation = (*pair_cache)[ordered_spin_pair_storage_index(

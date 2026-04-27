@@ -1142,6 +1142,51 @@ std::optional<bool> exact_ctx_inner_solve_outer_response_override() {
       "XMVB_CPP_EXACT_CTX_INNER_SOLVE_USE_OUTER_RESPONSE");
 }
 
+bool exact_ctx_sr1_outer_response_approximation_enabled() {
+  return parse_env_flag_with_default(
+      "XMVB_CPP_EXACT_CTX_SR1_OUTER_APPROX",
+      false);
+}
+
+int exact_ctx_sr1_outer_response_history_size() {
+  return std::max(
+      0,
+      parse_env_int_with_default(
+          "XMVB_CPP_EXACT_CTX_SR1_OUTER_HISTORY_SIZE",
+          6));
+}
+
+double exact_ctx_sr1_outer_response_min_alignment() {
+  return std::max(
+      0.0,
+      parse_env_double_with_default(
+          "XMVB_CPP_EXACT_CTX_SR1_OUTER_MIN_ALIGNMENT",
+          1.0e-8));
+}
+
+double exact_ctx_sr1_outer_response_max_correction_ratio() {
+  return std::max(
+      0.0,
+      parse_env_double_with_default(
+          "XMVB_CPP_EXACT_CTX_SR1_OUTER_MAX_CORRECTION_RATIO",
+          0.5));
+}
+
+double exact_ctx_sr1_outer_response_initial_scale() {
+  return parse_env_double_with_default(
+      "XMVB_CPP_EXACT_CTX_SR1_OUTER_INITIAL_SCALE",
+      0.0);
+}
+
+double exact_ctx_sr1_outer_response_clear_trust_ratio() {
+  return std::clamp(
+      parse_env_double_with_default(
+          "XMVB_CPP_EXACT_CTX_SR1_OUTER_CLEAR_TRUST_RATIO",
+          0.35),
+      0.0,
+      1.0);
+}
+
 int exact_ctx_startup_full_inner_solve_begin() {
   return std::max(
       0,
@@ -1317,6 +1362,16 @@ bool truncated_newton_disable_curvature_preconditioner() {
   return parse_env_flag_with_default(
       "XMVB_CPP_DISABLE_TN_CURVATURE_PRECONDITIONER",
       false);
+}
+
+bool truncated_newton_use_block_preconditioner(
+    const NonredundantOrbitalSpace& current_space) {
+  const auto override = parse_env_optional_flag(
+      "XMVB_CPP_TN_USE_BLOCK_PRECONDITIONER");
+  if (override.has_value()) {
+    return *override;
+  }
+  return current_space.use_block_preconditioner_by_default();
 }
 
 int exact_ctx_stall_full_model_correction_enable_max_active_orbitals() {
@@ -1509,12 +1564,30 @@ bool exact_ctx_hybrid_followup_full_inner_solve_allowed(
     const ExactCtxHybridStrategyState& hybrid_strategy_state) {
   const ExactCtxDefaultStrategy strategy =
       choose_exact_ctx_default_strategy(system_profile);
-  if (!strategy.allow_hybrid_followup_full_solve) {
+  const auto force_followup_full_solve =
+      parse_env_optional_flag(
+          "XMVB_CPP_EXACT_CTX_HYBRID_FOLLOWUP_FULL_SOLVE");
+  if (force_followup_full_solve.has_value() &&
+      !*force_followup_full_solve) {
+    return false;
+  }
+  const bool followup_full_solve_forced =
+      force_followup_full_solve.value_or(false);
+  const bool open_shell_sparse_active8_followup =
+      system_profile.open_shell &&
+      system_profile.sparse_orbital_chart &&
+      system_profile.n_active_orbitals == 8;
+  if (!followup_full_solve_forced &&
+      !strategy.allow_hybrid_followup_full_solve) {
     return false;
   }
   if (!hybrid_strategy_state.request_followup ||
       hybrid_strategy_state.hybrid_followup_cooldown_remaining > 0 ||
-      !hybrid_strategy_state.has_full_operator_cost_sample ||
+      !hybrid_strategy_state.has_full_operator_cost_sample) {
+    return false;
+  }
+  if (!followup_full_solve_forced &&
+      !open_shell_sparse_active8_followup &&
       system_profile.n_active_orbitals >
           exact_ctx_hybrid_followup_full_inner_solve_enable_max_active_orbitals()) {
     return false;
@@ -1530,8 +1603,13 @@ bool exact_ctx_hybrid_followup_full_inner_solve_allowed(
   // but do not arm the followup full solve by default on the dense OEO chart.
   if (!system_profile.sparse_orbital_chart &&
       system_profile.n_active_orbitals <=
-          exact_ctx_hybrid_followup_full_inner_solve_enable_max_active_orbitals()) {
+          exact_ctx_hybrid_followup_full_inner_solve_enable_max_active_orbitals() &&
+      !followup_full_solve_forced) {
     return false;
+  }
+
+  if (followup_full_solve_forced || open_shell_sparse_active8_followup) {
+    return true;
   }
 
   const bool cost_fraction_is_affordable =
@@ -1702,10 +1780,14 @@ ExactCtxInnerSolvePolicy choose_exact_ctx_inner_solve_policy(
   return policy;
 }
 
-bool exact_ctx_retry_rejected_step_with_full_operator() {
-  return parse_env_flag_with_default(
-      "XMVB_CPP_EXACT_CTX_RETRY_REJECTED_WITH_FULL_OPERATOR",
-      true);
+bool exact_ctx_retry_rejected_step_with_full_operator(
+    const ExactCtxDefaultStrategy& strategy) {
+  const auto env_override = parse_env_optional_flag(
+      "XMVB_CPP_EXACT_CTX_RETRY_REJECTED_WITH_FULL_OPERATOR");
+  if (env_override.has_value()) {
+    return *env_override;
+  }
+  return strategy.retry_rejected_step_with_full_operator;
 }
 
 class OrbitalObjective;
@@ -2359,6 +2441,15 @@ int choose_nonredundant_truncated_newton_max_cg_iterations(
           objective.last_input().orbital_preparation_input);
   const ExactCtxDefaultStrategy strategy =
       choose_exact_ctx_default_strategy(system_profile);
+  if (!system_profile.open_shell &&
+      system_profile.sparse_orbital_chart &&
+      system_profile.n_active_orbitals > 0 &&
+      system_profile.n_active_orbitals <= 6 &&
+      strategy.kind == ExactCtxDefaultStrategyKind::CheapCoreOnly) {
+    // 241-class closed-shell sparse charts spend less wall time on a tighter
+    // cheap-core Krylov solve than on extra HVPs or same-iteration full retry.
+    return std::min(bounded_reduced_size, 8);
+  }
   // Cheap objectives can afford a more accurate Newton solve, while expensive
   // relaxed VBSCF evaluations should spend the HVP budget conservatively.
   if (options.nonredundant_truncated_newton_hvp_mode ==
@@ -2464,6 +2555,13 @@ int choose_nonredundant_truncated_newton_transport_history_size(
   if (options.nonredundant_truncated_newton_hvp_mode ==
       NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction) {
     if (!sparse_orbital_chart && n_active_orbitals <= 7) {
+      const auto full_ao_history_override = parse_env_optional_flag(
+          "XMVB_CPP_EXACT_CTX_FULL_AO_TRANSPORT_HISTORY");
+      if (full_ao_history_override.has_value()) {
+        return *full_ao_history_override
+            ? options.nonredundant_truncated_newton_transport_history_size
+            : 0;
+      }
       return 0;
     }
     if (latest_objective_seconds <= 5.0e-3) {
@@ -2605,18 +2703,24 @@ Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
     // be tested as plain PCG on the analytic HVP alone.
     return reduced_vector;
   }
+  const bool use_block_preconditioner =
+      truncated_newton_use_block_preconditioner(current_space);
   if (transported_preconditioner == nullptr ||
       transported_preconditioner->empty()) {
-    return current_space.apply_inverse_reduced_block_preconditioner(
-        reduced_vector);
+    return use_block_preconditioner
+        ? current_space.apply_inverse_reduced_block_preconditioner(
+              reduced_vector)
+        : current_space.apply_inverse_reduced_curvature(reduced_vector);
   }
 
   const Eigen::VectorXd preconditioned =
       transported_preconditioner->apply(reduced_vector);
   const double curvature = reduced_vector.dot(preconditioned);
   if (!std::isfinite(curvature) || curvature <= 0.0) {
-    return current_space.apply_inverse_reduced_block_preconditioner(
-        reduced_vector);
+    return use_block_preconditioner
+        ? current_space.apply_inverse_reduced_block_preconditioner(
+              reduced_vector)
+        : current_space.apply_inverse_reduced_curvature(reduced_vector);
   }
   return preconditioned;
 }
@@ -2714,6 +2818,184 @@ public:
   virtual Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) = 0;
 };
 
+struct MissingCurvatureSr1OuterResponsePair {
+  Eigen::VectorXd packed_step;
+  Eigen::VectorXd packed_missing_response;
+};
+
+class MissingCurvatureSr1OuterResponseModel {
+public:
+  explicit MissingCurvatureSr1OuterResponseModel(bool enabled)
+      : enabled_(enabled),
+        max_history_size_(exact_ctx_sr1_outer_response_history_size()),
+        min_alignment_(exact_ctx_sr1_outer_response_min_alignment()),
+        initial_scale_(exact_ctx_sr1_outer_response_initial_scale()) {}
+
+  bool enabled() const noexcept {
+    return enabled_ && max_history_size_ > 0;
+  }
+
+  std::size_t size() const noexcept {
+    return pairs_.size();
+  }
+
+  void clear() {
+    pairs_.clear();
+  }
+
+  bool try_append_pair(
+      const NonredundantOrbitalSpace& current_space,
+      const Eigen::VectorXd& packed_step,
+      const Eigen::VectorXd& reduced_step,
+      const Eigen::VectorXd& reduced_gradient_change,
+      const Eigen::VectorXd& core_hessian_times_step) {
+    if (!enabled() ||
+        !finite_nonzero_vector_matches_size(
+            reduced_step,
+            reduced_gradient_change.size()) ||
+        !finite_vector_matches_size(
+            core_hessian_times_step,
+            reduced_gradient_change.size()) ||
+        !finite_nonzero_vector_matches_size(
+            packed_step,
+            packed_step.size())) {
+      return false;
+    }
+
+    const Eigen::VectorXd missing_response =
+        reduced_gradient_change - core_hessian_times_step;
+    const double step_norm = reduced_step.norm();
+    const double missing_norm = missing_response.norm();
+    const double secant_denominator = reduced_step.dot(missing_response);
+    if (!(step_norm > 0.0) ||
+        !(missing_norm > 0.0) ||
+        !std::isfinite(step_norm) ||
+        !std::isfinite(missing_norm) ||
+        !std::isfinite(secant_denominator) ||
+        std::abs(secant_denominator) <
+            min_alignment_ * step_norm * missing_norm) {
+      return false;
+    }
+
+    // The outer-response secant residual is a reduced covector, while the
+    // TNHVP history is stored in ambient packed coordinates so it can be
+    // reprojected into the next accepted-point chart.  Expanding the reduced
+    // residual through the same block-local chart used by the transported
+    // preconditioner gives an approximate but cheap accepted-point transport.
+    Eigen::VectorXd packed_missing_response =
+        current_space.expand_step(missing_response);
+    if (!finite_nonzero_vector_matches_size(
+            packed_missing_response,
+            packed_step.size())) {
+      return false;
+    }
+
+    pairs_.push_back(
+        MissingCurvatureSr1OuterResponsePair{
+            packed_step,
+            std::move(packed_missing_response)});
+    while (pairs_.size() > static_cast<std::size_t>(max_history_size_)) {
+      pairs_.erase(pairs_.begin());
+    }
+    return true;
+  }
+
+  Eigen::VectorXd apply(
+      const NonredundantOrbitalSpace& current_space,
+      const Eigen::VectorXd& reduced_direction) const {
+    Eigen::VectorXd response =
+        Eigen::VectorXd::Zero(reduced_direction.size());
+    if (!enabled() ||
+        pairs_.empty() ||
+        reduced_direction.size() == 0 ||
+        !reduced_direction.allFinite()) {
+      return response;
+    }
+
+    const double initial_scale =
+        std::isfinite(initial_scale_) ? initial_scale_ : 0.0;
+    if (initial_scale != 0.0) {
+      response.noalias() += initial_scale * reduced_direction;
+    }
+
+    std::vector<Eigen::VectorXd> update_vectors;
+    std::vector<double> inverse_denominators;
+    update_vectors.reserve(pairs_.size());
+    inverse_denominators.reserve(pairs_.size());
+
+    for (const auto& pair : pairs_) {
+      if (!finite_nonzero_vector_matches_size(
+              pair.packed_step,
+              pair.packed_missing_response.size()) ||
+          pair.packed_step.size() != pair.packed_missing_response.size()) {
+        continue;
+      }
+
+      const Eigen::VectorXd reduced_step =
+          current_space.project_vector(pair.packed_step).reduced_gradient;
+      const Eigen::VectorXd missing_response =
+          current_space
+              .project_vector(pair.packed_missing_response)
+              .reduced_gradient;
+      if (!finite_nonzero_vector_matches_size(
+              reduced_step,
+              reduced_direction.size()) ||
+          !finite_nonzero_vector_matches_size(
+              missing_response,
+              reduced_direction.size())) {
+        continue;
+      }
+
+      Eigen::VectorXd sr1_residual =
+          missing_response - initial_scale * reduced_step;
+      for (std::size_t update_index = 0;
+           update_index < update_vectors.size();
+           ++update_index) {
+        sr1_residual.noalias() -=
+            update_vectors[update_index] *
+            (inverse_denominators[update_index] *
+             update_vectors[update_index].dot(reduced_step));
+      }
+
+      const double residual_norm = sr1_residual.norm();
+      const double step_norm = reduced_step.norm();
+      const double denominator = sr1_residual.dot(reduced_step);
+      if (!(residual_norm > 0.0) ||
+          !(step_norm > 0.0) ||
+          !std::isfinite(residual_norm) ||
+          !std::isfinite(step_norm) ||
+          !std::isfinite(denominator) ||
+          std::abs(denominator) <
+              min_alignment_ * residual_norm * step_norm) {
+        continue;
+      }
+
+      update_vectors.push_back(std::move(sr1_residual));
+      inverse_denominators.push_back(1.0 / denominator);
+    }
+
+    for (std::size_t update_index = 0;
+         update_index < update_vectors.size();
+         ++update_index) {
+      response.noalias() +=
+          update_vectors[update_index] *
+          (inverse_denominators[update_index] *
+           update_vectors[update_index].dot(reduced_direction));
+    }
+    if (!response.allFinite()) {
+      return Eigen::VectorXd::Zero(reduced_direction.size());
+    }
+    return response;
+  }
+
+private:
+  bool enabled_ = false;
+  int max_history_size_ = 0;
+  double min_alignment_ = 0.0;
+  double initial_scale_ = 0.0;
+  std::vector<MissingCurvatureSr1OuterResponsePair> pairs_;
+};
+
 class FullFiniteDifferenceReducedHvpOperator final : public ReducedHvpOperator {
 public:
   FullFiniteDifferenceReducedHvpOperator(
@@ -2786,15 +3068,20 @@ public:
       const NonredundantOrbitalSpace& current_space,
       const NonredundantOrbitalSpace::ProjectionResult& current_projection,
       double hvp_step_size,
-      bool include_outer_response)
+      bool include_outer_response,
+      const MissingCurvatureSr1OuterResponseModel* sr1_outer_response_model =
+          nullptr)
       : exact_operator_(
             objective.last_second_order_context(),
             &objective.last_input(),
             SparseOrbitalParameterView(
                 objective.last_input().orbital_preparation_input),
             &current_space),
+        current_space_(current_space),
         expected_reduced_size_(current_projection.reduced_gradient.size()),
-        include_outer_response_(include_outer_response) {
+        include_outer_response_(include_outer_response),
+        sr1_outer_response_model_(
+            include_outer_response ? nullptr : sr1_outer_response_model) {
     (void) hvp_step_size;
   }
 
@@ -2811,6 +3098,12 @@ public:
     return exact_operator_.supports_analytic_core_model();
   }
 
+  Eigen::VectorXd apply_core_only(
+      const Eigen::VectorXd& reduced_direction) {
+    return exact_operator_.apply_reduced_without_outer_response(
+        reduced_direction);
+  }
+
   ExactOrbitalSecondOrderOperator::Diagnostics diagnostics() const {
     return exact_operator_.diagnostics();
   }
@@ -2819,13 +3112,27 @@ public:
     return include_outer_response_;
   }
 
+  bool uses_sr1_outer_response_approximation() const noexcept {
+    return
+        !include_outer_response_ &&
+        sr1_outer_response_model_ != nullptr &&
+        sr1_outer_response_model_->enabled() &&
+        sr1_outer_response_model_->size() > 0;
+  }
+
+  std::size_t sr1_outer_response_history_size() const noexcept {
+    return sr1_outer_response_model_ != nullptr
+        ? sr1_outer_response_model_->size()
+        : 0;
+  }
+
 private:
   Eigen::VectorXd apply_with_mode(
       const Eigen::VectorXd& reduced_direction,
       bool include_core_response) {
     // The accepted-point exact operator is constructed only after the caller
     // has validated the current chart and analytic-core availability.
-    const Eigen::VectorXd response =
+    Eigen::VectorXd response =
         include_outer_response_
             ? (include_core_response
                    ? exact_operator_.apply_reduced(reduced_direction)
@@ -2833,12 +3140,44 @@ private:
                          reduced_direction))
             : exact_operator_.apply_reduced_without_outer_response(
                   reduced_direction);
+    if (include_core_response &&
+        !include_outer_response_ &&
+        sr1_outer_response_model_ != nullptr &&
+        sr1_outer_response_model_->enabled() &&
+        sr1_outer_response_model_->size() > 0) {
+      Eigen::VectorXd correction =
+          sr1_outer_response_model_->apply(
+              current_space_,
+              reduced_direction);
+      const double correction_norm = correction.norm();
+      if (correction.size() == response.size() &&
+          correction.allFinite() &&
+          correction_norm > 0.0 &&
+          std::isfinite(correction_norm)) {
+        const double response_norm = response.norm();
+        const double direction_norm = reduced_direction.norm();
+        const double correction_scale =
+            std::max(response_norm, direction_norm);
+        const double max_correction_norm =
+            exact_ctx_sr1_outer_response_max_correction_ratio() *
+            correction_scale;
+        if (max_correction_norm > 0.0 &&
+            std::isfinite(max_correction_norm) &&
+            correction_norm > max_correction_norm) {
+          correction *= max_correction_norm / correction_norm;
+        }
+        response.noalias() += correction;
+      }
+    }
     return response;
   }
 
   ExactOrbitalSecondOrderOperator exact_operator_;
+  const NonredundantOrbitalSpace& current_space_;
   Eigen::Index expected_reduced_size_ = 0;
   bool include_outer_response_ = true;
+  const MissingCurvatureSr1OuterResponseModel* sr1_outer_response_model_ =
+      nullptr;
 };
 
 void maybe_log_exact_ctx_hvp_diagnostics(
@@ -2867,8 +3206,18 @@ void maybe_log_exact_ctx_hvp_diagnostics(
          << " role=" << role
          << " outer_included="
          << bool_name(exact_ctx_hvp_operator->includes_outer_response())
+         << " sr1_outer_approx="
+         << bool_name(
+                exact_ctx_hvp_operator
+                    ->uses_sr1_outer_response_approximation())
+         << " sr1_hist="
+         << exact_ctx_hvp_operator->sr1_outer_response_history_size()
          << " outer_runtime="
          << bool_name(diagnostics.outer_response_enabled)
+         << " outer_local_only_approx="
+         << bool_name(diagnostics.outer_response_local_only_approximation)
+         << " outer_energy_only_approx="
+         << bool_name(diagnostics.outer_response_energy_only_approximation)
          << " internal_chart_runtime="
          << bool_name(diagnostics.internal_inactive_chart_runtime_enabled)
          << " internal_chart="
@@ -5494,6 +5843,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
         bool previous_accepted_iteration_reliable_for_transport = false;
         int consecutive_projected_stall_count = 0;
         ExactCtxHybridStrategyState exact_ctx_hybrid_strategy_state;
+        MissingCurvatureSr1OuterResponseModel sr1_outer_response_model(
+            exact_ctx_sr1_outer_response_approximation_enabled());
 
         while (n_iterations < options_.max_iterations) {
           if (current_space.reduced_size() == 0) {
@@ -5531,6 +5882,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           const ExactCtxSystemProfile system_profile =
               build_exact_ctx_system_profile(
                   objective.last_input().orbital_preparation_input);
+          const ExactCtxDefaultStrategy strategy =
+              choose_exact_ctx_default_strategy(system_profile);
           const double latest_objective_seconds =
               objective.iteration_time_history_seconds().empty()
                   ? 0.0
@@ -5570,7 +5923,11 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                       current_space,
                       current_projection,
                       options_.nonredundant_truncated_newton_hvp_step_size,
-                      inner_solve_uses_outer_response);
+                      inner_solve_uses_outer_response,
+                      !inner_solve_uses_outer_response &&
+                              sr1_outer_response_model.enabled()
+                          ? &sr1_outer_response_model
+                          : nullptr);
               cheap_exact_ctx_hvp_operator = exact_ctx_hvp_operator.get();
               if (!exact_ctx_hvp_operator->supports_analytic_core_model()) {
                 throw std::runtime_error(
@@ -5581,7 +5938,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   exact_ctx_full_model_correction_allowed(
                       system_profile,
                       consecutive_projected_stall_count);
-              if (exact_ctx_retry_rejected_step_with_full_operator() &&
+              if (exact_ctx_retry_rejected_step_with_full_operator(strategy) &&
                   full_model_correction_allowed &&
                   exact_ctx_info.outer_response_enabled &&
                   !inner_solve_uses_outer_response) {
@@ -5997,6 +6354,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             Eigen::VectorXd cheap_core_hessian_times_step_for_full_probe;
             const Eigen::VectorXd* cheap_core_hessian_times_step_ptr = nullptr;
             if (cheap_exact_ctx_hvp_operator != nullptr &&
+                !cheap_exact_ctx_hvp_operator
+                     ->uses_sr1_outer_response_approximation() &&
                 truncated_newton_step.reduced_hessian_times_step.size() ==
                     current_projection.reduced_gradient.size() &&
                 truncated_newton_step.reduced_hessian_times_step.allFinite()) {
@@ -6096,12 +6455,19 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                       current_projection.reduced_gradient);
               if (!reused_full_krylov_subspace) {
                 cached_full_krylov_subspace = TruncatedNewtonKrylovSubspace();
+                TruncatedNewtonStepResult full_retry_seed_step =
+                    truncated_newton_step;
+                if (cheap_exact_ctx_hvp_operator != nullptr &&
+                    cheap_exact_ctx_hvp_operator
+                        ->uses_sr1_outer_response_approximation()) {
+                  full_retry_seed_step.reduced_hessian_times_step.resize(0);
+                }
                 const FullRetryWarmStart full_retry_warm_start =
                     build_nonredundant_truncated_newton_full_retry_warm_start(
                         current_projection,
                         trust_radius,
                         rejected_step_cache,
-                        truncated_newton_step,
+                        full_retry_seed_step,
                         retry_with_full_hvp_operator.get());
                 retry_step =
                     solve_nonredundant_truncated_newton_step(
@@ -6235,13 +6601,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 truncated_newton_step.warm_start_hvp_performed,
                 truncated_newton_step.cg_iterations,
                 false,
-	                consecutive_projected_stall_count,
-	                exact_ctx_hybrid_strategy_state.request_followup,
-	                truncated_newton_step.used_krylov_rescue,
-	                truncated_newton_step.reached_boundary,
-	                truncated_newton_step.encountered_negative_curvature,
-	                truncated_newton_step_effective_norm(truncated_newton_step),
-	                truncated_newton_step.predicted_decrease);
+                consecutive_projected_stall_count,
+                exact_ctx_hybrid_strategy_state.request_followup,
+                truncated_newton_step.used_krylov_rescue,
+                truncated_newton_step.reached_boundary,
+                truncated_newton_step.encountered_negative_curvature,
+                truncated_newton_step_effective_norm(truncated_newton_step),
+                truncated_newton_step.predicted_decrease);
             trust_radius *= kRejectShrink;
             if (trust_radius <= options_.minimum_step_size) {
               result.termination_reason =
@@ -6249,15 +6615,55 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               final_gradient_l2_norm = current_projection.reduced_gradient.norm();
               break;
             }
-	            rejected_step_cache.update(
-	                current_orbital_input,
-	                current_space,
-	                parameter_view,
-	                cheap_model_step,
-	                truncated_newton_step,
-	                reduced_size,
-	                trust_radius);
+            if (sr1_outer_response_model.size() > 0) {
+              // A rejected trial is direct evidence that the accepted-point
+              // SR1 missing-curvature model is stale or over-aggressive. Clear
+              // both the model and same-point cheap caches so the retry uses
+              // the raw core HVP rather than recycling a poisoned subspace.
+              sr1_outer_response_model.clear();
+              cached_cheap_krylov_subspace = TruncatedNewtonKrylovSubspace();
+              rejected_step_cache.clear();
+            } else {
+              rejected_step_cache.update(
+                  current_orbital_input,
+                  current_space,
+                  parameter_view,
+                  cheap_model_step,
+                  truncated_newton_step,
+                  reduced_size,
+                  trust_radius);
+            }
             continue;
+          }
+
+          bool sr1_outer_pair_candidate_ready = false;
+          Eigen::VectorXd sr1_outer_reduced_step;
+          Eigen::VectorXd sr1_outer_reduced_gradient_change;
+          Eigen::VectorXd sr1_outer_core_hessian_times_step;
+          if (sr1_outer_response_model.enabled() &&
+              options_.nonredundant_truncated_newton_hvp_mode ==
+                  NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction &&
+              cheap_exact_ctx_hvp_operator != nullptr) {
+            sr1_outer_reduced_step =
+                current_space.project_vector(packed_step).reduced_gradient;
+            const Eigen::VectorXd packed_gradient_change =
+                trial_gradient - current_gradient;
+            sr1_outer_reduced_gradient_change =
+                current_space.project_reduced_gradient(packed_gradient_change);
+            if (finite_nonzero_vector_matches_size(
+                    sr1_outer_reduced_step,
+                    current_projection.reduced_gradient.size()) &&
+                finite_vector_matches_size(
+                    sr1_outer_reduced_gradient_change,
+                    current_projection.reduced_gradient.size())) {
+              sr1_outer_core_hessian_times_step =
+                  cheap_exact_ctx_hvp_operator->apply_core_only(
+                      sr1_outer_reduced_step);
+              sr1_outer_pair_candidate_ready =
+                  finite_vector_matches_size(
+                      sr1_outer_core_hessian_times_step,
+                      current_projection.reduced_gradient.size());
+            }
           }
 
           update_exact_ctx_hybrid_cost_sample();
@@ -6282,11 +6688,22 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           cached_cheap_krylov_subspace = TruncatedNewtonKrylovSubspace();
           cached_full_krylov_subspace = TruncatedNewtonKrylovSubspace();
           if (accepted_point_chart_reset) {
+            sr1_outer_response_model.clear();
             previous_accepted_iteration_reliable_for_transport = false;
             consecutive_projected_stall_count = 0;
             exact_ctx_hybrid_strategy_state.request_followup = false;
             exact_ctx_hybrid_strategy_state.hybrid_followup_cooldown_remaining = 0;
             exact_ctx_hybrid_strategy_state.tail_full_solve_cooldown_remaining = 0;
+          } else if (trust_ratio <
+                         exact_ctx_sr1_outer_response_clear_trust_ratio()) {
+            sr1_outer_response_model.clear();
+          } else if (sr1_outer_pair_candidate_ready) {
+            sr1_outer_response_model.try_append_pair(
+                current_space,
+                packed_step,
+                sr1_outer_reduced_step,
+                sr1_outer_reduced_gradient_change,
+                sr1_outer_core_hessian_times_step);
           }
           sync_result_from_objective(objective, &result);
           record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);

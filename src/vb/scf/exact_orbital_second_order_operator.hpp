@@ -45,6 +45,8 @@ public:
     bool used_reduced_curvature_diagonal = false;
     bool has_same_spin_matrix_form = false;
     bool has_opposite_spin_matrix_form = false;
+    bool outer_response_local_only_approximation = false;
+    bool outer_response_energy_only_approximation = false;
     int n_selected_states = 0;
     int n_active_orbitals = 0;
     int n_blocks = 0;

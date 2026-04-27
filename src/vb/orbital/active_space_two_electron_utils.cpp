@@ -260,7 +260,7 @@ std::vector<double> build_full_active_pair_gradient_matrices_from_cache(
 }
 
 std::vector<double> build_full_active_pair_gradient_matrices_from_cache(
-    const Eigen::Ref<const Eigen::MatrixXd>& packed_pair_gradients,
+    const ExactCtxPairMatrix& packed_pair_gradients,
     const ExactPackedActiveTwoElectronAdjointCache& cache) {
   const int n_basis_functions = cache.n_basis_functions;
   const int n_active_orbitals = cache.n_active_orbitals;
@@ -966,8 +966,12 @@ void build_accepted_active_pair_gradient_backprop_rows_fixed(
   resize_and_zero(
       accepted_backprop_rows,
       basis_count * n_active_pairs * kActiveCount);
+  int n_threads = 1;
+#ifdef _OPENMP
+  n_threads = xmvb::effective_openmp_thread_count();
+#endif
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
@@ -1092,8 +1096,12 @@ void build_accepted_active_pair_gradient_backprop_rows(
   resize_and_zero(
       accepted_backprop_rows,
       basis_count * n_active_pairs * active_count);
+  int n_threads = 1;
+#ifdef _OPENMP
+  n_threads = xmvb::effective_openmp_thread_count();
+#endif
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
@@ -1197,7 +1205,7 @@ backpropagate_fixed_pair_gradient_matrices_to_dense_active_coefficients_from_cac
     return;
   }
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
@@ -1356,7 +1364,7 @@ backpropagate_fixed_pair_gradient_matrices_to_dense_active_coefficients_from_cac
     return;
   }
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
@@ -1458,7 +1466,7 @@ void backpropagate_fixed_pair_gradient_matrices_to_dense_active_coefficients_fro
     return;
   }
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
@@ -1589,6 +1597,7 @@ void apply_ao_pair_graph_matrix_parallel_fixed_hvp(
     const double* transformed_pair_coefficients_data,
     const std::size_t* pair_row_offsets_data,
     std::size_t n_ao_pairs,
+    int n_threads,
     std::vector<double>* pair_gradients) {
   if (pair_gradients == nullptr) {
     throw std::invalid_argument("AO pair-gradient output must not be null");
@@ -1602,7 +1611,7 @@ void apply_ao_pair_graph_matrix_parallel_fixed_hvp(
   // workloads, `n_active_pairs` is one of a few triangular numbers, so
   // specializing the inner row accumulation removes the tiny dynamic loop from
   // every graph edge without changing the row-parallel schedule.
-#pragma omp parallel for schedule(guided, 64)
+#pragma omp parallel for schedule(guided, 64) num_threads(n_threads)
   for (std::ptrdiff_t row_offset = 0;
        row_offset < static_cast<std::ptrdiff_t>(n_ao_pairs);
        ++row_offset) {
@@ -1621,6 +1630,47 @@ void apply_ao_pair_graph_matrix_parallel_fixed_hvp(
       const double* source_row =
           transformed_pair_coefficients_data +
           pair_row_offsets_data[column_pair_index];
+      accumulate_scaled_active_pair_row_hvp<NActivePairs>(
+          target_row,
+          source_row,
+          ao_integral_value);
+    }
+  }
+}
+
+template <int NActivePairs>
+void apply_ao_pair_graph_matrix_row_major_fixed_hvp(
+    const std::vector<double>& ao_two_electron_integral_values,
+    const std::vector<int>& row_offsets,
+    const std::vector<int>& column_pair_indices,
+    const std::vector<int>& integral_indices,
+    const double* transformed_pair_coefficients_data,
+    std::size_t n_ao_pairs,
+    int n_threads,
+    double* pair_gradients_data) {
+  if (transformed_pair_coefficients_data == nullptr ||
+      pair_gradients_data == nullptr) {
+    throw std::invalid_argument("AO pair graph row-major HVP buffers must not be null");
+  }
+#pragma omp parallel for schedule(guided, 64) num_threads(n_threads)
+  for (std::ptrdiff_t row_offset = 0;
+       row_offset < static_cast<std::ptrdiff_t>(n_ao_pairs);
+       ++row_offset) {
+    const std::size_t row_index = row_offset;
+    double* target_row =
+        pair_gradients_data + row_index * NActivePairs;
+    const int begin = row_offsets[row_index];
+    const int end = row_offsets[row_index + 1];
+    for (int entry_offset = begin; entry_offset < end; ++entry_offset) {
+      const int column_pair_index =
+          column_pair_indices[entry_offset];
+      const int integral_index =
+          integral_indices[entry_offset];
+      const double ao_integral_value =
+          ao_two_electron_integral_values[integral_index];
+      const double* source_row =
+          transformed_pair_coefficients_data +
+          static_cast<std::size_t>(column_pair_index) * NActivePairs;
       accumulate_scaled_active_pair_row_hvp<NActivePairs>(
           target_row,
           source_row,
@@ -1852,7 +1902,7 @@ void apply_sparse_ao_integral_matrix_and_backprop_from_cached_rows_fixed(
       n_threads * dense_size,
       0.0);
   std::atomic<int> invalid_integral_index(-1);
-#pragma omp parallel
+#pragma omp parallel num_threads(n_threads)
   {
     int thread_index = 0;
 #ifdef _OPENMP
@@ -2192,7 +2242,7 @@ void apply_sparse_ao_integral_matrix_and_backprop_from_cached_rows(
       n_threads * dense_size,
       0.0);
   std::atomic<int> invalid_integral_index(-1);
-#pragma omp parallel
+#pragma omp parallel num_threads(n_threads)
   {
     int thread_index = 0;
 #ifdef _OPENMP
@@ -2772,7 +2822,7 @@ void apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed
 
 bool apply_exact_ao_pair_graph_matrix_and_backprop_from_cached_rows(
     const AoIntegralInput& ao_integral_input,
-    const Eigen::Ref<const Eigen::MatrixXd>& pair_source_coefficients,
+    const ExactCtxPairMatrix& pair_source_coefficients,
     const ExactPackedActiveTwoElectronAdjointCache& cache,
     Eigen::MatrixXd* dense_active_gradients) {
   if (dense_active_gradients == nullptr) {
@@ -2813,120 +2863,127 @@ bool apply_exact_ao_pair_graph_matrix_and_backprop_from_cached_rows(
     return false;
   }
 
+  std::vector<double> dense_active_gradient_buffer(
+      static_cast<std::size_t>(n_basis_functions) * n_active_orbitals,
+      0.0);
   switch (n_active_orbitals) {
     case 1:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<1>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<1>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 2:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<2>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<2>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 3:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<3>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<3>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 4:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<4>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<4>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 5:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<5>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<5>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 6:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<6>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<6>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 7:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<7>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<7>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 8:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<8>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<8>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 9:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<9>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<9>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     case 10:
-      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_column_major_fixed<10>(
+      apply_ao_pair_graph_matrix_and_backprop_from_cached_rows_fixed<10>(
           ao_integral_input.ao_two_electron_integral_values,
           ao_integral_input.ao_two_electron_pair_graph_row_offsets,
           ao_integral_input.ao_two_electron_pair_graph_column_indices,
           ao_integral_input.ao_two_electron_pair_graph_integral_indices,
-          pair_source_coefficients,
-          cached_row_threads,
+          pair_source_coefficients.data(),
           cache,
-          dense_active_gradients);
-      return true;
+          &dense_active_gradient_buffer);
+      break;
     default:
       return false;
   }
+  for (int basis_function_index = 0;
+       basis_function_index < n_basis_functions;
+       ++basis_function_index) {
+    for (int active_orbital_index = 0;
+         active_orbital_index < n_active_orbitals;
+         ++active_orbital_index) {
+      (*dense_active_gradients)(basis_function_index, active_orbital_index) +=
+          dense_active_gradient_buffer[
+              static_cast<std::size_t>(basis_function_index) *
+                  static_cast<std::size_t>(n_active_orbitals) +
+              static_cast<std::size_t>(active_orbital_index)];
+    }
+  }
+  return true;
 }
 
 std::vector<ActivePair> build_active_pair_list(int n_active_orbitals) {
@@ -2941,12 +2998,12 @@ std::vector<ActivePair> build_active_pair_list(int n_active_orbitals) {
   return active_pairs;
 }
 
-Eigen::MatrixXd build_active_pair_gradient_matrix(
+ExactCtxPairMatrix build_active_pair_gradient_matrix(
     const std::vector<double>& packed_active_two_electron_gradient,
     const std::vector<ActivePair>& active_pairs) {
   const std::size_t n_active_pairs = active_pairs.size();
-  Eigen::MatrixXd active_pair_gradient_matrix =
-      Eigen::MatrixXd::Zero(
+  ExactCtxPairMatrix active_pair_gradient_matrix =
+      ExactCtxPairMatrix::Zero(
           static_cast<Eigen::Index>(n_active_pairs),
           static_cast<Eigen::Index>(n_active_pairs));
 
@@ -2985,7 +3042,7 @@ void build_ao_pair_to_active_pair_coefficients(
     int n_basis_functions,
     int n_active_orbitals,
     const std::vector<ActivePair>& active_pairs,
-    Eigen::MatrixXd* ao_pair_to_active_pair_coefficients) {
+    ExactCtxPairMatrix* ao_pair_to_active_pair_coefficients) {
   if (ao_pair_to_active_pair_coefficients == nullptr) {
     throw std::invalid_argument("AO-pair coefficient output must not be null");
   }
@@ -3030,12 +3087,12 @@ void build_ao_pair_to_active_pair_coefficients(
   }
 }
 
-Eigen::MatrixXd build_ao_pair_to_active_pair_coefficients(
+ExactCtxPairMatrix build_ao_pair_to_active_pair_coefficients(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     int n_basis_functions,
     int n_active_orbitals,
     const std::vector<ActivePair>& active_pairs) {
-  Eigen::MatrixXd ao_pair_to_active_pair_coefficients;
+  ExactCtxPairMatrix ao_pair_to_active_pair_coefficients;
   build_ao_pair_to_active_pair_coefficients(
       dense_active_coefficients,
       n_basis_functions,
@@ -3051,7 +3108,7 @@ void build_mixed_ao_pair_to_active_pair_coefficients(
     int n_basis_functions,
     int n_active_orbitals,
     const std::vector<ActivePair>& active_pairs,
-    Eigen::MatrixXd* mixed_ao_pair_to_active_pair_coefficients) {
+    ExactCtxPairMatrix* mixed_ao_pair_to_active_pair_coefficients) {
   if (mixed_ao_pair_to_active_pair_coefficients == nullptr) {
     throw std::invalid_argument("mixed AO-pair coefficient output must not be null");
   }
@@ -3102,13 +3159,13 @@ void build_mixed_ao_pair_to_active_pair_coefficients(
   }
 }
 
-Eigen::MatrixXd build_mixed_ao_pair_to_active_pair_coefficients(
+ExactCtxPairMatrix build_mixed_ao_pair_to_active_pair_coefficients(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
     int n_basis_functions,
     int n_active_orbitals,
     const std::vector<ActivePair>& active_pairs) {
-  Eigen::MatrixXd mixed_ao_pair_to_active_pair_coefficients;
+  ExactCtxPairMatrix mixed_ao_pair_to_active_pair_coefficients;
   build_mixed_ao_pair_to_active_pair_coefficients(
       dense_active_coefficients,
       dense_active_direction,
@@ -3123,7 +3180,7 @@ void build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
     const ExactPackedActiveTwoElectronAdjointCache& cache,
-    Eigen::MatrixXd* mixed_ao_pair_to_active_pair_coefficients) {
+    ExactCtxPairMatrix* mixed_ao_pair_to_active_pair_coefficients) {
   const int n_basis_functions = cache.n_basis_functions;
   const int n_active_orbitals = cache.n_active_orbitals;
   const std::size_t n_active_pairs = cache.active_pair_first_indices.size();
@@ -3181,11 +3238,11 @@ void build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
   }
 }
 
-Eigen::MatrixXd build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
+ExactCtxPairMatrix build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
     const ExactPackedActiveTwoElectronAdjointCache& cache) {
-  Eigen::MatrixXd mixed_ao_pair_to_active_pair_coefficients;
+  ExactCtxPairMatrix mixed_ao_pair_to_active_pair_coefficients;
   build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
       dense_active_coefficients,
       dense_active_direction,
@@ -3194,9 +3251,9 @@ Eigen::MatrixXd build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
   return mixed_ao_pair_to_active_pair_coefficients;
 }
 void multiply_pair_coefficients_by_gradient_matrix(
-    const Eigen::Ref<const Eigen::MatrixXd>& ao_pair_to_active_pair_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_pair_gradient_matrix,
-    Eigen::MatrixXd* transformed_pair_coefficients) {
+    const ExactCtxPairMatrix& ao_pair_to_active_pair_coefficients,
+    const ExactCtxPairMatrix& active_pair_gradient_matrix,
+    ExactCtxPairMatrix* transformed_pair_coefficients) {
   if (transformed_pair_coefficients == nullptr) {
     throw std::invalid_argument("transformed pair coefficient output must not be null");
   }
@@ -3211,10 +3268,10 @@ void multiply_pair_coefficients_by_gradient_matrix(
       ao_pair_to_active_pair_coefficients * active_pair_gradient_matrix;
 }
 
-Eigen::MatrixXd multiply_pair_coefficients_by_gradient_matrix(
-    const Eigen::Ref<const Eigen::MatrixXd>& ao_pair_to_active_pair_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_pair_gradient_matrix) {
-  Eigen::MatrixXd transformed_pair_coefficients;
+ExactCtxPairMatrix multiply_pair_coefficients_by_gradient_matrix(
+    const ExactCtxPairMatrix& ao_pair_to_active_pair_coefficients,
+    const ExactCtxPairMatrix& active_pair_gradient_matrix) {
+  ExactCtxPairMatrix transformed_pair_coefficients;
   multiply_pair_coefficients_by_gradient_matrix(
       ao_pair_to_active_pair_coefficients,
       active_pair_gradient_matrix,
@@ -3395,7 +3452,7 @@ void apply_sparse_ao_integral_matrix_from_pair_indices(
       n_threads,
       std::vector<double>(n_ao_pairs * n_active_pairs, 0.0));
 
-#pragma omp parallel
+#pragma omp parallel num_threads(n_threads)
   {
     int thread_index = 0;
 #ifdef _OPENMP
@@ -3507,7 +3564,7 @@ void apply_sparse_ao_integral_matrix_from_four_indices(
       n_threads,
       std::vector<double>(n_ao_pairs * n_active_pairs, 0.0));
 
-#pragma omp parallel
+#pragma omp parallel num_threads(n_threads)
   {
     int thread_index = 0;
 #ifdef _OPENMP
@@ -3753,6 +3810,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 3:
@@ -3764,6 +3822,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 6:
@@ -3775,6 +3834,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 10:
@@ -3786,6 +3846,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 15:
@@ -3797,6 +3858,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 21:
@@ -3808,6 +3870,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 28:
@@ -3819,6 +3882,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 36:
@@ -3830,6 +3894,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 45:
@@ -3841,6 +3906,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     case 55:
@@ -3852,6 +3918,7 @@ void apply_ao_pair_graph_matrix(
           transformed_pair_coefficients.data(),
           pair_row_offsets_data,
           n_ao_pairs,
+          n_threads,
           pair_gradients);
       return;
     default:
@@ -3861,7 +3928,7 @@ void apply_ao_pair_graph_matrix(
   resize_and_zero(
       pair_gradients,
       n_ao_pairs * n_active_pairs);
-#pragma omp parallel for schedule(guided, 64)
+#pragma omp parallel for schedule(guided, 64) num_threads(n_threads)
   for (std::ptrdiff_t row_offset = 0;
        row_offset < static_cast<std::ptrdiff_t>(n_ao_pairs);
        ++row_offset) {
@@ -4083,10 +4150,10 @@ std::vector<double> apply_exact_ao_pair_kernel(
 
 void apply_exact_ao_pair_kernel(
     const AoIntegralInput& ao_integral_input,
-    const Eigen::Ref<const Eigen::MatrixXd>& transformed_pair_coefficients,
+    const ExactCtxPairMatrix& transformed_pair_coefficients,
     int n_basis_functions,
     std::size_t n_active_pairs,
-    Eigen::MatrixXd* pair_gradients) {
+    ExactCtxPairMatrix* pair_gradients) {
   if (pair_gradients == nullptr) {
     throw std::invalid_argument("exact AO-pair kernel output must not be null");
   }
@@ -4103,11 +4170,134 @@ void apply_exact_ao_pair_kernel(
   pair_gradients->setZero();
 
   if (!ao_integral_input.ao_two_electron_pair_graph_row_offsets.empty()) {
-#pragma omp parallel for schedule(guided, 64)
+    int n_threads = 1;
+#ifdef _OPENMP
+    n_threads = xmvb::effective_openmp_thread_count();
+#endif
+    const double* transformed_pair_coefficients_data =
+        transformed_pair_coefficients.data();
+    double* pair_gradients_data = pair_gradients->data();
+    switch (n_active_pairs) {
+      case 1:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<1>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 3:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<3>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 6:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<6>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 10:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<10>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 15:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<15>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 21:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<21>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 28:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<28>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 36:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<36>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 45:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<45>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      case 55:
+        apply_ao_pair_graph_matrix_row_major_fixed_hvp<55>(
+            ao_integral_input.ao_two_electron_integral_values,
+            ao_integral_input.ao_two_electron_pair_graph_row_offsets,
+            ao_integral_input.ao_two_electron_pair_graph_column_indices,
+            ao_integral_input.ao_two_electron_pair_graph_integral_indices,
+            transformed_pair_coefficients_data,
+            n_ao_pairs,
+            n_threads,
+            pair_gradients_data);
+        return;
+      default:
+        break;
+    }
+#pragma omp parallel for schedule(guided, 64) num_threads(n_threads)
     for (std::ptrdiff_t row_offset = 0;
          row_offset < static_cast<std::ptrdiff_t>(n_ao_pairs);
          ++row_offset) {
       const std::size_t row_index = row_offset;
+      double* target_row =
+          pair_gradients_data + row_index * n_active_pairs;
       for (int entry_offset = ao_integral_input.ao_two_electron_pair_graph_row_offsets[row_index];
            entry_offset <
                ao_integral_input.ao_two_electron_pair_graph_row_offsets[row_index + 1];
@@ -4118,16 +4308,15 @@ void apply_exact_ao_pair_kernel(
             ao_integral_input.ao_two_electron_pair_graph_integral_indices[entry_offset];
         const double ao_integral_value =
             ao_integral_input.ao_two_electron_integral_values[integral_index];
+        const double* source_row =
+            transformed_pair_coefficients_data +
+            static_cast<std::size_t>(column_pair_index) * n_active_pairs;
+#pragma omp simd
         for (std::size_t active_pair_index = 0;
              active_pair_index < n_active_pairs;
              ++active_pair_index) {
-          (*pair_gradients)(
-              static_cast<Eigen::Index>(row_index),
-              static_cast<Eigen::Index>(active_pair_index)) +=
-              ao_integral_value *
-              transformed_pair_coefficients(
-                  column_pair_index,
-                  static_cast<Eigen::Index>(active_pair_index));
+          target_row[active_pair_index] +=
+              ao_integral_value * source_row[active_pair_index];
         }
       }
     }
@@ -4173,9 +4362,9 @@ void apply_exact_ao_pair_kernel(
       return;
     }
 
-    std::vector<Eigen::MatrixXd> partial_pair_gradients(
+    std::vector<ExactCtxPairMatrix> partial_pair_gradients(
         std::max(1, n_threads),
-        Eigen::MatrixXd::Zero(
+        ExactCtxPairMatrix::Zero(
             static_cast<Eigen::Index>(n_ao_pairs),
             static_cast<Eigen::Index>(n_active_pairs)));
 #pragma omp parallel
@@ -4184,7 +4373,7 @@ void apply_exact_ao_pair_kernel(
 #ifdef _OPENMP
       thread_index = omp_get_thread_num();
 #endif
-      Eigen::MatrixXd& local_pair_gradients =
+      ExactCtxPairMatrix& local_pair_gradients =
           partial_pair_gradients[thread_index];
 #pragma omp for schedule(guided, 256)
       for (std::ptrdiff_t integral_offset = 0;
@@ -4221,20 +4410,20 @@ void apply_exact_ao_pair_kernel(
         }
       }
     }
-    for (const Eigen::MatrixXd& partial_pair_gradient : partial_pair_gradients) {
+    for (const ExactCtxPairMatrix& partial_pair_gradient : partial_pair_gradients) {
       pair_gradients->noalias() += partial_pair_gradient;
     }
     return;
   }
 
-  std::vector<Eigen::MatrixXd> partial_pair_gradients;
+  std::vector<ExactCtxPairMatrix> partial_pair_gradients;
   int n_threads = 1;
 #ifdef _OPENMP
   n_threads = xmvb::effective_openmp_thread_count();
 #endif
   partial_pair_gradients.assign(
       std::max(1, n_threads),
-      Eigen::MatrixXd::Zero(
+      ExactCtxPairMatrix::Zero(
           static_cast<Eigen::Index>(n_ao_pairs),
           static_cast<Eigen::Index>(n_active_pairs)));
 #pragma omp parallel
@@ -4243,7 +4432,7 @@ void apply_exact_ao_pair_kernel(
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
-    Eigen::MatrixXd& local_pair_gradients =
+    ExactCtxPairMatrix& local_pair_gradients =
         partial_pair_gradients[thread_index];
 #pragma omp for schedule(guided, 256)
     for (std::ptrdiff_t integral_offset = 0;
@@ -4282,7 +4471,7 @@ void apply_exact_ao_pair_kernel(
       }
     }
   }
-  for (const Eigen::MatrixXd& partial_pair_gradient : partial_pair_gradients) {
+  for (const ExactCtxPairMatrix& partial_pair_gradient : partial_pair_gradients) {
     pair_gradients->noalias() += partial_pair_gradient;
   }
 }
@@ -4752,7 +4941,7 @@ void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_fr
     return;
   }
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
@@ -4856,7 +5045,7 @@ void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_fr
     return;
   }
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
@@ -4971,7 +5160,7 @@ std::vector<double> backpropagate_pair_coefficients_to_dense_active_coefficients
 }
 
 void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
-    const Eigen::Ref<const Eigen::MatrixXd>& pair_gradients,
+    const ExactCtxPairMatrix& pair_gradients,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     const ExactPackedActiveTwoElectronAdjointCache& cache,
     Eigen::MatrixXd* dense_active_gradients) {
@@ -5159,7 +5348,7 @@ accumulate_pair_products_to_dense_active_coefficients_from_cached_rows_fixed(
     return;
   }
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {
@@ -5339,7 +5528,7 @@ void accumulate_pair_products_to_dense_active_coefficients_from_cached_rows(
     return;
   }
 
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) num_threads(n_threads)
   for (int basis_function_index = 0;
        basis_function_index < n_basis_functions;
        ++basis_function_index) {

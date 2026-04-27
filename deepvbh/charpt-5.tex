@@ -1,0 +1,324 @@
+\chapter{基于深度学习的价键哈密顿矩阵元预测}
+
+\section{前言}
+
+在前文中，我们围绕价键理论计算中的若干关键问题开展了系统的研究。首先，发展了一种基于 Hessian 向量积的价键自洽场二阶优化算法，有效提升了 VBSCF 波函数优化的收敛效率；其次，提出了基于深度学习的价键结构权重预测方法，并结合机器学习模型实现了价键结构的自动筛选，从而在一定程度上压缩了价键结构空间，显著提高了价键计算效率。
+
+尽管上述工作在优化算法和价键结构选择方面取得了一定进展，但价键理论在实际计算中仍然面临两个根本性的困难。首先，价键波函数建立在非正交轨道基础之上（即使引入分块正交化，活性轨道之间仍保持非正交），这使得不同价键结构之间的重叠矩阵与哈密顿矩阵元的计算过程极为复杂。其次，在传统价键理论中，每个价键结构通常需要展开为 $2^n$ 个 Slater 行列式进行计算，其中 $n$ 为该结构中单重态共价键的数目。随着体系规模或活性空间的增大，行列式的展开数量呈指数级增长，导致计算成本急剧攀升。这两个问题在大活性空间体系中尤为突出，使得传统价键自洽场方法在实际应用中依然受到较大局限\cite{shaik2008,chen2013nbodyi,chen2013nbodyii}。
+
+因此，如何在保持价键理论清晰的物理图像与化学解释能力的同时，降低价键哈密顿矩阵元的计算复杂度，成为进一步推动该理论发展的关键。本章将围绕这一问题展开研究，探索利用数据驱动方法直接预测价键哈密顿矩阵元，从而规避传统行列式展开带来的指数级计算问题。
+
+近年来，数据驱动的量子化学已从总能量校正和分子性质预测，逐步扩展到对原子分辨量子化学表示、分子波函数、电子密度、约化密度矩阵以及可转移神经波函数表示的直接学习，为近似更高层次的电子结构对象提供了参考\cite{ramakrishnan2015deltaml,faber2017dftml,schutt2017dtnn,schutt2019schnorb,grisafi2019density,fabrizio2019ncdensity,shao2023rdm,scherbela2024transferable}。在这一发展过程中，一条重要的技术路线是尽可能绕开传统的自洽求解流程，直接学习电子密度或与其等价的中间表示\cite{brockherde2017bypass,cuevas2021density,lewis2021condenseddensity,zepeda2021deepdensity,tawfik2025chargeddensity}。另一类工作则更强调从较丰富的量子化学表象出发进行联合建模与代理模型构建，如波函数与电子密度的联合建模、基于分子轨道基的特征学习以及密度矩阵代理模型等\cite{tsubaki2020qdf,zubatyuk2021aimnetnse,welborn2018mobasis,li2018dftblayer,qiao2020orbnet,fabrizio2022spahm,briling2024spahmab,dick2020neuralxc,shakiba2024ksham,hazra2024opdm,rana2025rdmscf,shmilovich2022orbitalmixer}。近期关于直接学习二阶约化密度矩阵（2-RDM）的研究也表明，从更高阶的多电子对象出发构建代理模型是可行的\cite{sagersmith2022twoelectron,jones2023v2rdmml,delgadogranados2025twordm}。总体来看，直接学习中间电子结构对象已成为连接量子化学物理先验与机器学习表征能力的一条重要研究方向\cite{dral2020age,butler2018mlms,kulik2022roadmap}。
+
+在现有文献中，关于“机器学习哈密顿量”的研究已形成较为清晰的发展脉络。针对周期性材料体系，研究者们构建了直接预测 DFT 或紧束缚（Tight-Binding, TB）哈密顿量的深度学习框架（如 DeepH 系列及 DeePTB），实现了对大尺度、缺陷或磁性体系能带和电子结构的加速预测\cite{li2022deeph,gong2023deephe3,li2023xdeeph,wang2021mltb,schattauer2022defecttb,gu2024deeptb,kranz2018dftbml,fan2022dftbmlprop,sun2023mldftb,cui2024dftbsolids,burrill2025mltb}。此外，基于等变神经网络（如 HamGNN）和有效相互作用参数学习的方案，进一步将这一思路推广至分子与固体的统一建模及超大尺度体系的量子输运模拟中\cite{nigam2022ncenter,zhong2023hamgnn,uhrin2025hubbard,ma2025effectiveham,pathrudkar2024multimillion,zou2025deeptbnegf}。上述方法的核心目标均是以数据驱动的方式逼近“原子结构 $\rightarrow$ 哈密顿量”的映射关系，从而绕开代价高昂的自洽迭代或大规模对角化环节。
+
+然而，已有工作大多聚焦于正交的分子轨道或固体能带表象，主要服务于单一行列式图像下的 Kohn--Sham 体系或半经验模型；此类方法通常仅需输入分子的几何构型，即可实现哈密顿矩阵的端到端映射。相比之下，本章关注的核心对象是建立在非正交轨道基底上的价键哈密顿矩阵元。由于价键哈密顿矩阵元本质上是多电子相互作用的体现，其物理状态远比单行列式复杂，仅凭单一的原子坐标已不足以提供完整的映射信息。为了准确评估这一多体哈密顿量，预测模型必须显式地引入更深层次的物理特征，囊括非正交活性轨道积分、结构间的重叠信息，以及特定价键结构的自旋配对模式。因此，本章工作不仅标志着机器学习哈密顿量预测从单电子哈密顿向多体哈密顿迈出了关键的第一步，也为解决传统价键理论中哈密顿矩阵元计算面临的 $2^n$ 问题提供了新的途径。
+
+\section{数据集构造}
+
+本章所用数据来源于精确的 VBSCF 求解轨迹。在优化过程的每一个被接受的迭代步中，记录活性空间内的关键物理量，包括活性轨道重叠矩阵、单电子积分矩阵、压缩存储的双电子积分，以及价键结构的重叠矩阵与哈密顿矩阵。
+
+在单个 VBSCF 迭代步中，设体系包含 $N_s$ 个价键结构，则理论上可构造 $\frac{N_s(N_s + 1)}{2}$ 个上三角结构对样本。考虑到对角元与非对角元在物理机制及数值分布上的显著差异，本文在样本构建时保留全部对角结构对 $(I, I)$，并对优化中间步骤中的非对角结构对进行适度随机抽样，以避免高度相似的冗余样本主导训练过程。对于验证集、测试集以及最终收敛态数据，则保留完整的矩阵元，以全面评估模型对哈密顿矩阵的重建能力。
+
+在此基础上，构建的数据集可形式化表示为
+
+\begin{equation}
+\mathcal{D} = \left{\left(\mathbf{X}{IJ}^{(t)}, \mathbf{R}^{(t)}, \mathbf{m}^{(t)}, S{IJ}^{(t)}, H_{IJ}^{(t)}\right)\right}.
+\end{equation}
+
+其中，$\mathbf{X}{IJ}^{(t)}$ 表示结构对 $(I, J)$ 在轨道对表象下的局部特征矩阵，$\mathbf{R}^{(t)}$ 表示由双电子积分诱导的轨道对耦合矩阵，$\mathbf{m}^{(t)}$ 为标识有效轨道对区域的掩码向量，$S{IJ}^{(t)}$ 为结构重叠标量，$H_{IJ}^{(t)}$ 为目标价键哈密顿矩阵元。
+
+由于数据来源于自洽迭代轨迹，相邻步骤之间通常具有较强相关性。为提升训练效率并最大化信息增益，本文未按迭代步均匀采样，而是基于核心积分矩阵的相对变化率对轨迹进行重新参数化，从而选取具有代表性的状态节点。设第 $t$ 步与第 $t-1$ 步的活性轨道重叠矩阵、单电子积分矩阵和压缩双电子积分分别为 $\mathbf{S}^{(t)}$、$\mathbf{h}^{(t)}$ 和 $\mathbf{g}^{(t)}$，其相对变化量定义为
+
+\begin{equation}
+\Delta_t(\mathbf{A}) = \frac{\lVert \mathbf{A}^{(t)} - \mathbf{A}^{(t-1)} \rVert_2}{\max!\left(\lVert \mathbf{A}^{(t)} \rVert_2, 10^{-12}\right)}, \quad \mathbf{A} \in {\mathbf{S}, \mathbf{h}, \mathbf{g}}.
+\end{equation}
+
+进一步定义综合变化量
+
+\begin{equation}
+\Delta_t = \Delta_t(\mathbf{S}) + \Delta_t(\mathbf{h}) + \Delta_t(\mathbf{g}),
+\end{equation}
+
+并沿轨迹计算累积变化量
+
+\begin{equation}
+C_t = \sum_{\tau=1}^{t} \Delta_\tau.
+\end{equation}
+
+随后在区间 $[0, C_T]$ 上选取若干等距阈值点，以筛选代表性训练步。该基于信息量的自适应采样策略使得模型在优化初期（矩阵变化剧烈阶段）能够捕获更多关键构型，而在收敛后期（变化趋缓阶段）则自动过滤冗余状态。实际计算中，本文对每条轨迹选取 5 个代表性迭代步用于训练，而验证与测试仅采用最终收敛态。
+
+为避免数据泄漏，本文以“分子系统”而非“单条样本”为基本单元进行数据划分。即在完成训练集、验证集与测试集的划分后，再展开对应的轨迹与结构对，从而保证同一分子的所有迭代状态不会同时出现在训练集与评估集中，以更可靠地评估模型对未知分子的泛化能力。
+
+\section{价键哈密顿矩阵元预测的输入设计}
+
+\subsection{输入信息表示}
+
+价键哈密顿矩阵元 $H_{IJ}$ 的形成机制极为复杂，其不仅取决于活性空间内的单电子积分、非正交轨道重叠及结构的局域占据模式，更受到不同轨道间双电子库仑与交换相互作用的强烈耦合控制。因此，理想的模型输入表示必须同时满足三个准则：第一，兼顾局域单体信息与非局域的双电子耦合作用；第二，具备尺度伸缩性以适配不同分子间变化的活性空间规模；第三，严格遵守哈密顿矩阵元 $H_{IJ}=H_{JI}$ 的交换对称性。
+
+基于上述物理考量，本文未直接将原始张量作为输入，而是将“无序活性轨道对”作为特征聚合的基本单元，把决定矩阵元的主要变量统一映射到轨道对表象中。这样既能在同一数学框架下统一表示单电子积分、轨道重叠等不同来源的物理量，也与双电子积分所描述的轨道对间相互作用相一致。
+
+设当前样本包含 $n_a$ 个活性轨道，则可构筑的无序轨道对总数为：
+
+\begin{equation}
+P = \frac{n_a(n_a + 1)}{2}.
+\end{equation}
+
+对于任意的局部轨道索引 $i$ 与 $j$（索引自 1 起始），采用上三角压缩存储顺序定义其一维绝对索引：
+
+\begin{equation}
+p(i, j) = \frac{\left(\max(i, j) - 1\right)\max(i, j)}{2} + \min(i, j).
+\end{equation}
+
+该全局索引策略为跨体系的数据对齐提供了统一坐标系。
+
+\subsection{输入特征构建}
+
+在上述轨道对序列中，每个位置标识一个唯一的活性轨道对 $(i,j)$。记价键活性空间单电子积分矩阵与非正交活性轨道重叠矩阵在对应位置的元素为：
+
+\begin{equation}
+h_{ij} = h_{ij}^{\mathrm{act}},\qquad s_{ij} = S_{ij}^{\mathrm{act}},\qquad i \ge j.
+\end{equation}
+
+为显式区分对角轨道对（即同一轨道的自相互作用）与非对角轨道对，引入拓扑指示变量：
+
+\begin{equation}
+d_{ij} =
+\begin{cases}
+1, & i = j, \\
+0, & i \ne j.
+\end{cases}
+\end{equation}
+
+哈密顿矩阵元的差异还深刻依赖于左右波函数在各轨道上的具体占据模式。设结构 $I$ 与结构 $J$ 在编号为 $p$ 的轨道对上的有效占据数分别为 $o_p^{(I)}$ 与 $o_p^{(J)}$。为严格保证 $H_{IJ} = H_{JI}$ 所要求的置换不变性，本文构造了如下交换对称特征：
+
+\begin{equation}
+u_p = o_p^{(I)} + o_p^{(J)},\qquad v_p = \left|o_p^{(I)} - o_p^{(J)}\right|.
+\end{equation}
+
+其中，$u_p$ 刻画了左右结构对该轨道对的联合占据强度，而 $v_p$ 则量化了占据态的相异度。基于此，第 $p$ 个轨道对的局域物理描述子被拼接为五维特征向量：
+
+\begin{equation}
+\mathbf{x}_p = [h_{ij}, s_{ij}, d_{ij}, u_p, v_p].
+\end{equation}
+
+将所有轨道对特征循序堆叠，即得到结构对 $(I,J)$ 的局域特征矩阵：
+
+\begin{equation}
+\mathbf{X}_{IJ} \in \mathbb{R}^{P_{\max} \times 5},
+\end{equation}
+
+其中 $P_{\max}$ 为整个数据集中统一标定的最大轨道对数（维度不足的样本通过零填充对齐）。
+
+然而，仅凭局域描述子尚无法捕获由双电子积分引发的跨轨道耦合行为。为此，本文将活性空间内的双电子积分张量重构为轨道对间的关联耦合矩阵 $\mathbf{R} \in \mathbb{R}^{P_{\max} \times P_{\max}}$，其在有效活性区域内的非零元素定义为：
+
+\begin{equation}
+\mathbf{R}_{pq} = (ij \mid kl)^{\mathrm{act}},\qquad p = p(i,j),\ q = p(k,l).
+\end{equation}
+
+矩阵元素 $\mathbf{R}_{pq}$ 直接给出了轨道对 $p$ 与轨道对 $q$ 之间的双电子作用强度。为屏蔽补零区域对网络注意力的干扰，引入掩码向量 $\mathbf{m} \in \{0,1\}^{P_{\max}}$ 标定真实的轨道对空间。
+
+综上所述，单个结构对样本可表示为如下多模态元组：
+
+\begin{equation}
+\left(\mathbf{X}_{IJ}, \mathbf{R}, \mathbf{m}, S_{IJ}, H_{IJ}\right).
+\end{equation}
+
+这一输入范式统一编码了轨道对局域属性（$\mathbf{X}_{IJ}$）、双电子长程耦合（$\mathbf{R}$）以及结构重叠量（$S_{IJ}$）等信息。
+
+\section{DeepVBH 模型架构设计}
+
+为解析上述复杂的输入空间，本文设计了关系感知的深度网络模型 DeepVBH，其前向过程可抽象为：
+
+\begin{equation}
+\hat{H}_{IJ} = f_{\theta}(\mathbf{X}_{IJ}, \mathbf{R}, \mathbf{m}, S_{IJ}).
+\end{equation}
+
+首先，局域特征矩阵通过由多层感知机（MLP）组成的投影器 $\phi_{\mathrm{proj}}$ 映射到 $d$ 维隐藏空间：
+
+\begin{equation}
+\mathbf{Z}^{(0)} = \phi_{\mathrm{proj}}(\mathbf{X}_{IJ}),\qquad \mathbf{Z}^{(0)} \in \mathbb{R}^{P_{\max} \times d}.
+\end{equation}
+
+区别于仅依赖特征相似度的标准自注意力机制\cite{vaswani2017}，DeepVBH 在注意力计算中引入了由物理关联矩阵驱动的关系感知偏置\cite{shaw2018relative}。双电子耦合矩阵 $\mathbf{R}$ 经由关系编码器 $\psi_{\mathrm{rel}}$ 转换为注意力偏置项：
+
+\begin{equation}
+\mathbf{B} = \psi_{\mathrm{rel}}(\mathbf{R}).
+\end{equation}
+
+节点间的信息聚合权重据此写为隐藏态点积项与物理耦合偏置项之和：
+
+\begin{equation}
+\mathbf{A} = \operatorname{softmax}\!\left(\frac{\mathbf{Q}\mathbf{K}^\mathsf{T}}{\sqrt{d}} + \mathbf{B}\right).
+\end{equation}
+
+由于 $\mathbf{B}$ 保留了 $(ij|kl)^{\mathrm{act}}$ 的数值分布信息，网络在执行信息交互时可以显式利用轨道对之间的量子化学耦合强度。此外，耦合矩阵也可直接参与节点特征的数值更新：
+
+\begin{equation}
+\mathbf{z}'_p = \sum_q \mathbf{A}_{pq}\left(\mathbf{V}_q + U(\mathbf{R}_{pq})\right),
+\end{equation}
+
+其中 $U(\cdot)$ 为针对标量 $\mathbf{R}_{pq}$ 的非线性特征提升函数。
+
+整个模型通过堆叠 $L$ 层上述关系感知注意力块（含残差连接与前馈子网 $\phi_{\mathrm{ffn}}$）进行深度特征精炼：
+
+\begin{align}
+\mathbf{Z}^{\left(l + \frac{1}{2}\right)} &= \mathbf{Z}^{(l)} + \operatorname{Attn}_{\mathrm{rel}}\!\left(\mathbf{Z}^{(l)}, \mathbf{R}, \mathbf{m}\right), \\
+\mathbf{Z}^{(l+1)} &= \mathbf{Z}^{\left(l + \frac{1}{2}\right)} + \phi_{\mathrm{ffn}}\!\left(\mathbf{Z}^{\left(l + \frac{1}{2}\right)}\right).
+\end{align}
+
+在信息池化阶段，所有处于掩码区域内的轨道对隐藏态被平均聚合为结构对的全局深层表征 $\mathbf{z}_{IJ}$：
+
+\begin{equation}
+\mathbf{z}_{IJ} = \frac{\sum_{p=1}^{P_{\max}} \mathbf{m}_p \mathbf{z}_p}{\max\!\left(\sum_{p=1}^{P_{\max}} \mathbf{m}_p, 1\right)}.
+\end{equation}
+
+随后，将其与由宏观结构重叠派生出的先验特征向量 $\mathbf{s}_{IJ}^{\mathrm{glob}}$ 进行拼接：
+
+\begin{equation}
+\mathbf{s}_{IJ}^{\mathrm{glob}} = [S_{IJ}, \lvert S_{IJ} \rvert, \operatorname{sign}(S_{IJ})].
+\end{equation}
+
+考虑到结构重叠 $S_{IJ}$ 的符号通常与哈密顿矩阵元的符号具有较强相关性，输出层采用带符号先验的回归参数化形式：
+
+\begin{equation}
+\hat{H}_{IJ} = -\operatorname{sign}(S_{IJ}) \cdot \operatorname{softplus}\!\left(g_{\theta}(\mathbf{z}_{IJ}, \mathbf{s}_{IJ}^{\mathrm{glob}})\right).
+\end{equation}
+
+需强调，引入 $\operatorname{sign}(S_{IJ})$ 是基于统计规律设计的经验性归纳偏置，用于加速神经网络对价键哈密顿矩阵元符号空间的收敛，而非宣称其为严格的普适解析定律。
+
+\section{模型训练方案}
+
+\subsection{目标函数}
+
+DeepVBH 采用端到端的直接回归策略。对于批大小为 $B$ 的训练批次，记目标矩阵元的真实值与网络预测值分别为 $H_b$ 和 $\hat{H}_b$。为消除不同分子间能量尺度的量纲差异对梯度流的干扰，采用基于训练集全局目标标准差 $\sigma_H$ 的归一化均方误差（MSE）作为损失函数：
+
+\begin{equation}
+\mathcal{L} = \frac{1}{B}\sum_{b=1}^{B}\left(\frac{\hat{H}_b - H_b}{\sigma_H}\right)^2.
+\end{equation}
+
+\subsection{评估准则}
+
+模型预测的稳健性通过平均绝对误差（MAE）和均方根误差（RMSE）进行多维度评估：
+
+\begin{align}
+\mathrm{MAE} &= \frac{1}{N}\sum_{n=1}^{N}\lvert \hat{H}_n - H_n \rvert, \\
+\mathrm{RMSE} &= \sqrt{\frac{1}{N}\sum_{n=1}^{N}\left(\hat{H}_n - H_n\right)^2}.
+\end{align}
+
+\subsection{训练超参数与策略}
+
+模型优化选用 AdamW 算法，搭配带线性预热机制的余弦退火学习率调度策略\cite{kingma2015adam,loshchilov2019adamw,loshchilov2017sgdr}。核心架构参数设定为：隐藏层维度 $d = 64$，自注意力头数为 4，关系感知模块堆叠层数为 3，前馈网络（FFN）扩维倍率映射至 256 维。训练超参数配置如下：批大小设为 4096，初始峰值学习率 $10^{-3}$，权重衰减因子 $10^{-4}$，并启用全局梯度范数裁剪以抑制梯度爆炸。正如前文所述，训练集由重参数化采样得到的代表步构成，而验证与测试评估则被严格限制在体系的基态收敛构型上。
+
+\section{计算结果与讨论}
+\subsection{实验配置}
+
+本节选取一组具有代表性的 VBSCF 计算任务来验证该方法的有效性。为保证结果与前述数据构造策略一致，主实验采用“每条轨迹保留 5 个代表性迭代步，并对非最终步非对角结构对按 50\% 比例随机抽样”的训练方案，并以验证损失最低的 checkpoint 作为最终模型。按照该设置，总计 73 个独立分子系统被划分为训练、验证和测试三部分：其中训练集包含 2,560,140 个结构对样本，验证集与测试集各包含 138,600 个最终收敛态样本。该数据集中所涉及的最大活性空间规模为 6 个活性轨道，对应最大无序活性轨道对数 $P_{\max} = 21$。
+\subsection{误差分析}
+
+主实验在第 3214 轮达到最优验证损失，对应的矩阵元回归误差统计如表~\ref{tab:deepvbh-metrics} 所示。
+
+\begin{table}[htbp]
+    \centering
+    \caption{DeepVBH 主模型在最佳验证 checkpoint 上的哈密顿矩阵元预测误差（单位：Hartree）}
+    \label{tab:deepvbh-metrics}
+    \begin{tabular}{lcc}
+        \toprule
+        数据集 & MAE（$\downarrow$） & RMSE（$\downarrow$） \\
+        \midrule
+        训练集 (Train) & 0.00091 & 0.00157 \\
+        验证集 (Valid) & 0.00127 & 0.00268 \\
+        测试集 (Test)  & 0.00125 & 0.00329 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+表~\ref{tab:deepvbh-metrics} 显示，DeepVBH 主模型在测试集上的哈密顿矩阵元预测误差达到 MAE = 0.00125 Hartree、RMSE = 0.00329 Hartree。验证集与测试集误差处于同一量级，说明模型在未知分子上的泛化表现较为稳定，未见明显的过拟合迹象。考虑到非正交基底上的价键哈密顿矩阵元同时受到单电子项、双电子相互作用以及自旋耦合模式的共同影响，这一结果表明，所采用的关系感知输入表示和注意力结构能够较好地捕捉相关物理特征。
+
+\subsection{分子级推理结果}
+
+仅考察单个矩阵元误差，还不足以完整评估代理模型在实际价键计算中的可用性。为此，本文进一步将预测矩阵代入广义本征方程，对测试集分子的基态能量与 Löwdin 结构权重进行分子级推理分析。当前目录中已经完成矩阵级后处理的 checkpoint 对应于最终收敛步监督训练模型，其在 73 个测试分子上的分子级误差分布统计见表~\ref{tab:deepvbh-derived}。
+
+\begin{table}[htbp]
+    \centering
+    \caption{73 个测试分子的分子级推理误差分布统计}
+    \label{tab:deepvbh-derived}
+    \begin{tabular}{lcccc}
+        \toprule
+        指标 & 平均值 & 25\% 分位 & 中位数 & 75\% 分位 \\
+        \midrule
+        分子矩阵元 MAE (Hartree) & $8.31 \times 10^{-4}$ & $5.53 \times 10^{-4}$ & $6.93 \times 10^{-4}$ & $9.08 \times 10^{-4}$ \\
+        基态能量绝对误差 (Hartree) & $1.056 \times 10^{-3}$ & $1.857 \times 10^{-4}$ & $3.278 \times 10^{-4}$ & $6.075 \times 10^{-4}$ \\
+        Löwdin 权重 MAE & $5.16 \times 10^{-5}$ & $2.49 \times 10^{-5}$ & $3.11 \times 10^{-5}$ & $4.28 \times 10^{-5}$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+从表~\ref{tab:deepvbh-derived} 可以看到，分子级误差分布整体较为集中。73 个测试分子中，有 62 个分子的基态能量绝对误差低于 $10^{-3}$ Hartree，67 个分子落在约 1 kcal/mol 所对应的化学精度范围内；对于 Löwdin 结构权重，则有 66 个分子的平均误差低于 $10^{-4}$。这说明矩阵元预测误差在绝大多数分子上并未在后续广义本征值求解中显著放大。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.95\textwidth]{deepvbh/figures/deepvbh_molecule_inference.png}
+    \caption{73 个测试分子的分子级推理误差分布。左图为按误差从小到大排序后的基态能量绝对误差，右图为对应的 Löwdin 权重 MAE。}
+    \label{fig:deepvbh-molecule-inference}
+\end{figure}
+
+图~\ref{fig:deepvbh-molecule-inference} 更直观地展示了分子级误差的排序分布。大多数测试分子聚集在较低误差区间内，仅有少量分子位于分布尾部，说明模型在整体上具有较稳定的分子级推理表现，但对少数困难样本仍存在进一步改进空间。
+
+\begin{table}[htbp]
+    \centering
+    \caption{代表性测试分子的分子级推理结果示例}
+    \label{tab:deepvbh-molecule-cases}
+    \resizebox{\textwidth}{!}{%
+    \begin{tabular}{lccccc}
+        \toprule
+        分子样本 & 分子矩阵元 MAE & 精确基态能量 & 预测基态能量 & 基态能量绝对误差 & Löwdin 权重 MAE \\
+        \midrule
+        5367417\_VBSCF   & $7.98 \times 10^{-4}$ & -5.827814 & -5.827820 & $5.80 \times 10^{-6}$ & $1.82 \times 10^{-5}$ \\
+        144909560\_VBSCF & $1.12 \times 10^{-3}$ & -6.175517 & -6.175331 & $1.86 \times 10^{-4}$ & $2.27 \times 10^{-5}$ \\
+        17016\_VBSCF     & $5.40 \times 10^{-4}$ & -6.438511 & -6.438183 & $3.28 \times 10^{-4}$ & $4.35 \times 10^{-5}$ \\
+        3018667\_VBSCF   & $6.27 \times 10^{-4}$ & -6.476337 & -6.475730 & $6.07 \times 10^{-4}$ & $2.98 \times 10^{-5}$ \\
+        18457365\_VBSCF  & $8.24 \times 10^{-4}$ & -6.794198 & -6.792396 & $1.80 \times 10^{-3}$ & $6.18 \times 10^{-5}$ \\
+        \bottomrule
+    \end{tabular}
+    }
+\end{table}
+
+表~\ref{tab:deepvbh-molecule-cases} 给出了若干代表性分子的推理个例。可以看到，即使分子矩阵元 MAE 处于相近量级，不同分子在广义本征值求解后的基态能量偏差仍可能存在明显差别，这说明分子级误差不仅取决于单个矩阵元的局部回归精度，也与结构空间本征谱的条件数、近简并程度以及关键矩阵元在本征矢中的贡献有关。这一现象也提示后续工作可以进一步引入面向本征值稳定性的训练目标或后处理约束。
+
+\subsection{选定分子的 SCF 轨迹推理误差}
+
+需要说明的是，当前目录中保留下来的全步推理结果来自“仅使用最终 SCF 收敛步训练”的 checkpoint，而非前述 5 步采样训练模型。因此，本小节分析的重点是该最终步监督模型在中间 SCF 轨迹上的外推行为。除最终收敛态外，本文还对当前目录中已完成全步推理的 5 个分子轨迹进行了逐步误差分析。考虑到其中有两条轨迹对应同分异构体，下面展示时去除了其中一个重复样本，最终保留 4 个互不重复分子式的代表性轨迹。图~\ref{fig:deepvbh-selected-allstep} 展示了这 4 个分子在每一个被接受的 SCF 迭代步上的基态能量绝对误差与 Löwdin 权重 MAE。为避免 73 个体系全部展开后图形过于拥挤，这里仅选择已经完成全轨迹推理的分子子集进行展示。图中标签采用由输入几何直接统计得到的分子式。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.92\textwidth]{deepvbh/figures/deepvbh_selected_allstep_inference.png}
+    \caption{4 个选定分子在整个 SCF 轨迹上的步级推理误差。上图为基态能量绝对误差，下图为 Löwdin 权重 MAE；横坐标为被接受的 SCF 迭代步编号。该结果来自仅最终 SCF 步监督训练得到的 checkpoint。}
+    \label{fig:deepvbh-selected-allstep}
+\end{figure}
+
+从图~\ref{fig:deepvbh-selected-allstep} 可以看到，这些分子的早期 SCF 步误差极大，随后在十几步到数十步内迅速下降，并在靠近收敛区后进入相对平稳的低误差区间。以基态能量误差为例，4 个分子在初始步的误差可达 $10^{3}\sim10^{4}$ Hartree，但在后续轨迹中很快回落到 $10^{-2}$ Hartree 甚至更低的量级；对应的 Löwdin 权重误差则从约 $10^{-2}$ 下降到 $10^{-4}$ 左右。该现象说明，对于仅在最终收敛步上接受监督的模型，中间 SCF 态仍然是明显更加困难的外推区域。
+
+\begin{table}[htbp]
+    \centering
+    \caption{4 个选定分子的步级推理轨迹摘要}
+    \label{tab:deepvbh-selected-allstep}
+    \begin{tabular}{lccccc}
+        \toprule
+        分子样本 & 轨迹步数 & 首次达到 $<10^{-2}$ Hartree 的步数 & 首次达到化学精度的步数 & 最终步能量绝对误差 & 最终步 Löwdin 权重 MAE \\
+        \midrule
+        C$_9$H$_{12}$O    & 114 & 14 & 14 & $2.77 \times 10^{-4}$ & $4.37 \times 10^{-5}$ \\
+        C$_7$H$_6$F$_3$NO & 138 & 24 & 32 & $5.84 \times 10^{-4}$ & $2.29 \times 10^{-5}$ \\
+        C$_6$H$_6$FN      & 116 & 23 & 45 & $9.34 \times 10^{-4}$ & $3.21 \times 10^{-5}$ \\
+        C$_8$H$_{10}$O$_2$ & 120 & 14 & 15 & $3.13 \times 10^{-4}$ & $2.30 \times 10^{-5}$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+表~\ref{tab:deepvbh-selected-allstep} 进一步量化了这种趋势。不同分子进入低误差区间所需的步数并不完全一致：有的分子在约 14 步左右已经达到化学精度，而有的分子需要延迟到 30--45 步之后。这说明 SCF 轨迹中不同阶段的数据分布差异很大，也再次表明，如果希望模型不仅在最终收敛态有效，而且能够服务于整个优化过程，就需要显式纳入轨迹级监督信息。
+
+\section{本章小结}
+
+在传统价键理论框架内，非正交波函数哈密顿矩阵的求解通常伴随着较高的计算成本。对于含有 $n$ 个单重态共价键的结构，相关计算往往涉及 $2^n$ 项 Slater 行列式展开，这成为价键方法应用于大尺度分子或较大活性空间时的重要限制\cite{shaik2008,chen2013nbodyi}。针对这一问题，本章提出并实现了一种数据驱动的哈密顿矩阵元预测框架 DeepVBH。该模型以结构对表征为输入，结合非正交活性轨道积分、价键结构自旋配对信息和价键结构重叠信息，对价键哈密顿矩阵元进行直接预测。矩阵元回归结果表明，DeepVBH 可将测试集误差控制在 $10^{-3}$ Hartree 量级。进一步的分子级推理结果显示，在 73 个测试分子中，绝大多数样本的基态能量误差保持在化学精度附近，Löwdin 结构权重误差则稳定在 $10^{-5}\sim10^{-4}$ 的范围内。代表性分子个例也说明，矩阵元层面的局部误差与分子本征谱对扰动的敏感性共同决定了最终的能量与结构权重偏差。总体而言，本章工作为利用机器学习降低 VBSCF 中哈密顿矩阵元计算成本提供了一条具有物理可解释性的可行途径。
+
+\chapterreferences

@@ -83,8 +83,10 @@ inline std::size_t exact_ctx_nested_vector_capacity_bytes(
   return bytes;
 }
 
-inline std::size_t exact_ctx_matrix_bytes(const Eigen::MatrixXd& matrix) {
-  return static_cast<std::size_t>(matrix.size()) * sizeof(double);
+template <typename Derived>
+inline std::size_t exact_ctx_matrix_bytes(const Eigen::MatrixBase<Derived>& matrix) {
+  return static_cast<std::size_t>(matrix.size()) *
+      sizeof(typename Derived::Scalar);
 }
 
 inline std::size_t exact_ctx_vector_bytes(const Eigen::VectorXd& vector) {

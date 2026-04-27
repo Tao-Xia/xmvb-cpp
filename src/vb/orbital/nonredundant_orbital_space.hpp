@@ -75,6 +75,10 @@ public:
     return has_reduced_curvature_diagonal_;
   }
 
+  bool use_block_preconditioner_by_default() const noexcept {
+    return use_block_preconditioner_by_default_;
+  }
+
   Eigen::VectorXd apply_inverse_reduced_curvature(
       const Eigen::VectorXd& reduced_vector) const;
 
@@ -271,6 +275,7 @@ private:
   int packed_parameter_size_ = 0;
   int reduced_size_ = 0;
   bool has_reduced_curvature_diagonal_ = false;
+  bool use_block_preconditioner_by_default_ = true;
 };
 
 }  // namespace xmvb::vb

@@ -125,6 +125,20 @@ int structure_matrix_tile_cache_tiles() {
   return cache_tiles;
 }
 
+int forward_structure_matrix_thread_count(int n_structures) {
+  // The tiled forward builder allocates one pair of spin-tile providers per
+  // worker. Cap the team by the outer structure-row count so small structure
+  // spaces do not pay for idle tile caches or empty dynamic-schedule workers.
+  if (n_structures <= 2) {
+    return 1;
+  }
+  return std::max(
+      1,
+      std::min(
+          xmvb::effective_openmp_thread_count(),
+          n_structures));
+}
+
 OppositeSpinPackedPairProjection build_sparse_packed_pair_projection(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
@@ -836,6 +850,8 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
           true);
   const ActiveSpaceTwoElectronView two_electron_view =
       make_active_space_two_electron_view(two_electron_input);
+  const int n_threads =
+      forward_structure_matrix_thread_count(n_structures);
 
   StructureAccumulationResult result;
   result.n_structures = n_structures;
@@ -900,7 +916,7 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
   // tile, the local contraction is algebraically identical to the dense
   // matrix-form kernel, but without building the global `N_alpha^2` /
   // `N_beta^2` channel families upfront.
-#pragma omp parallel if(n_structures > 2)
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
   {
     const FullDeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
     ForwardSpinPairTileProvider<TwoElectronInput> thread_alpha_provider(
@@ -933,7 +949,7 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
     LocalSpinProjectionBlock alpha_projection_block;
     LocalSpinProjectionBlock beta_projection_block;
 
-#pragma omp for schedule(dynamic)
+#pragma omp for schedule(dynamic, 1)
     for (int right_structure = 0;
          right_structure < n_structures;
          ++right_structure) {

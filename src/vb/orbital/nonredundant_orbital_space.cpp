@@ -866,6 +866,11 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       physical_orbital_matrix.cols() != orbital_preparation_input.n_orbitals) {
     throw std::invalid_argument("physical orbital matrix shape mismatch");
   }
+  use_block_preconditioner_by_default_ =
+      !(orbital_preparation_input.spin_multiplicity > 1 &&
+        orbital_preparation_input.orbital_type == kLegacyOrbitalTypeOeo &&
+        orbital_preparation_input.n_active_orbitals > 0 &&
+        orbital_preparation_input.n_active_orbitals <= 7);
 
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap_matrix(
       orbital_preparation_input.active_orbital_overlap_matrix.data(),

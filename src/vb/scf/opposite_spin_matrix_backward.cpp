@@ -2,10 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <cstdlib>
-#include <cstring>
-#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -14,6 +11,7 @@
 #include <Eigen/SparseCore>
 
 #include "vb/matrices/spin_pair_utils.hpp"
+#include "vb/matrices/support_local_contraction_kernels.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/orbital/active_space_two_electron_utils.hpp"
 
@@ -23,14 +21,10 @@ namespace {
 
 
 constexpr double kContributionTolerance = 1.0e-15;
-constexpr int kPackedPairMatrixCacheEntries = 4;
 constexpr int kOppositeSpinBackwardSparseBlockSize = 32;
 constexpr int kOppositeSpinBackwardDenseBatchSize = 8;
 constexpr int kOppositeSpinBackwardOverlapBlockSize = 32;
-constexpr std::size_t kOppositeSpinBackwardDenseBatchBytesBudget =
-    64ull * 1024ull * 1024ull;
-constexpr std::size_t kOppositeSpinBackwardOverlapBlockBytesBudget =
-    64ull * 1024ull * 1024ull;
+constexpr int kOppositeSpinBackwardUniqueTileSize = 64;
 
 struct RegularSpinDirectionalOverlapData {
   double overlap_determinant = 0.0;
@@ -63,21 +57,6 @@ int positive_env_override(
   return parsed_value;
 }
 
-std::size_t positive_env_override_size_t(
-    const char* env_name,
-    std::size_t default_value) {
-  const char* env_value = std::getenv(env_name);
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return default_value;
-  }
-  const std::size_t parsed_value = std::stoull(env_value);
-  if (parsed_value == 0) {
-    throw std::invalid_argument(
-        std::string(env_name) + " must be positive");
-  }
-  return parsed_value;
-}
-
 int opposite_spin_backward_sparse_block_size() {
   return positive_env_override(
       "XMVB_CPP_OPPOSITE_SPIN_BACKWARD_SPARSE_BLOCK_SIZE",
@@ -96,136 +75,27 @@ int opposite_spin_backward_overlap_block_size() {
       kOppositeSpinBackwardOverlapBlockSize);
 }
 
-double max_abs_dense_matrix(const Eigen::MatrixXd& matrix) {
-  if (matrix.size() == 0) {
-    return 0.0;
-  }
-  return matrix.cwiseAbs().maxCoeff();
+int opposite_spin_backward_unique_tile_size() {
+  return positive_env_override(
+      "XMVB_CPP_OPPOSITE_SPIN_BACKWARD_UNIQUE_TILE_SIZE",
+      kOppositeSpinBackwardUniqueTileSize);
 }
 
-std::size_t opposite_spin_backward_dense_batch_bytes_budget() {
-  return positive_env_override_size_t(
-      "XMVB_CPP_OPPOSITE_SPIN_BACKWARD_DENSE_BATCH_BYTES",
-      kOppositeSpinBackwardDenseBatchBytesBudget);
+bool selected_state_has_local_support(
+    const SelectedStateDeterminantCoefficients& state_coefficients) {
+  return !state_coefficients.alpha_support.empty() &&
+      !state_coefficients.beta_support.empty() &&
+      state_coefficients.local_coefficient_matrix.size() != 0;
 }
 
-std::size_t opposite_spin_backward_overlap_block_bytes_budget() {
-  return positive_env_override_size_t(
-      "XMVB_CPP_OPPOSITE_SPIN_BACKWARD_OVERLAP_BLOCK_BYTES",
-      kOppositeSpinBackwardOverlapBlockBytesBudget);
-}
-
-void validate_state_coefficient_matrix(
-    const SelectedStateDeterminantCoefficients& state_coefficients,
-    int n_unique_alpha,
-    int n_unique_beta) {
-  if (state_coefficients.coefficient_matrix.rows() != n_unique_alpha ||
-      state_coefficients.coefficient_matrix.cols() != n_unique_beta) {
+void validate_local_state_coefficient_matrix(
+    const SelectedStateDeterminantCoefficients& state_coefficients) {
+  if (state_coefficients.local_coefficient_matrix.rows() !=
+          static_cast<int>(state_coefficients.alpha_support.size()) ||
+      state_coefficients.local_coefficient_matrix.cols() !=
+          static_cast<int>(state_coefficients.beta_support.size())) {
     throw std::invalid_argument(
-        "selected-state coefficient_matrix shape does not match unique-spin dimensions");
-  }
-}
-
-bool selected_state_has_close_shell_diagonal(
-    const SelectedStateDeterminantCoefficients& state_coefficients,
-    int n_unique_alpha,
-    int n_unique_beta) {
-  return state_coefficients.close_shell_diagonal &&
-      n_unique_alpha == n_unique_beta &&
-      state_coefficients.diagonal_coefficients.size() ==
-          static_cast<std::size_t>(n_unique_alpha);
-}
-
-template <typename PairMatrix>
-void accumulate_diagonal_pair_matrix(
-    const std::vector<double>& diagonal_coefficients,
-    const PairMatrix& partner_pair_matrix,
-    double scale,
-    Eigen::MatrixXd* pair_matrix) {
-  if (pair_matrix == nullptr) {
-    throw std::invalid_argument("pair_matrix must not be null");
-  }
-  if (std::abs(scale) <= kContributionTolerance ||
-      diagonal_coefficients.empty()) {
-    return;
-  }
-  if (partner_pair_matrix.rows() != static_cast<int>(diagonal_coefficients.size()) ||
-      partner_pair_matrix.cols() != static_cast<int>(diagonal_coefficients.size())) {
-    throw std::invalid_argument(
-        "partner_pair_matrix shape does not match close-shell diagonal coefficients");
-  }
-
-  for (int column = 0;
-       column < static_cast<int>(diagonal_coefficients.size());
-       ++column) {
-    const double right_coefficient = diagonal_coefficients[column];
-    if (std::abs(right_coefficient) <= kContributionTolerance) {
-      continue;
-    }
-    for (int row = 0;
-         row < static_cast<int>(diagonal_coefficients.size());
-         ++row) {
-      const double left_coefficient = diagonal_coefficients[row];
-      if (std::abs(left_coefficient) <= kContributionTolerance) {
-        continue;
-      }
-      (*pair_matrix)(row, column) +=
-          scale *
-          left_coefficient *
-          partner_pair_matrix.coeff(row, column) *
-          right_coefficient;
-    }
-  }
-}
-
-template <typename PairMatrix>
-void accumulate_directional_diagonal_pair_matrix(
-    const std::vector<double>& diagonal_coefficients,
-    const std::vector<double>& directional_diagonal_coefficients,
-    const PairMatrix& partner_pair_matrix,
-    double scale,
-    Eigen::MatrixXd* pair_matrix) {
-  if (pair_matrix == nullptr) {
-    throw std::invalid_argument("pair_matrix must not be null");
-  }
-  if (std::abs(scale) <= kContributionTolerance ||
-      diagonal_coefficients.empty()) {
-    return;
-  }
-  if (directional_diagonal_coefficients.size() != diagonal_coefficients.size() ||
-      partner_pair_matrix.rows() != static_cast<int>(diagonal_coefficients.size()) ||
-      partner_pair_matrix.cols() != static_cast<int>(diagonal_coefficients.size())) {
-    throw std::invalid_argument(
-        "directional close-shell pair-matrix dimensions do not match");
-  }
-
-  for (int column = 0;
-       column < static_cast<int>(diagonal_coefficients.size());
-       ++column) {
-    const double right_coefficient = diagonal_coefficients[column];
-    const double directional_right =
-        directional_diagonal_coefficients[column];
-    if (std::abs(right_coefficient) <= kContributionTolerance &&
-        std::abs(directional_right) <= kContributionTolerance) {
-      continue;
-    }
-    for (int row = 0;
-         row < static_cast<int>(diagonal_coefficients.size());
-         ++row) {
-      const double left_coefficient = diagonal_coefficients[row];
-      const double directional_left =
-          directional_diagonal_coefficients[row];
-      const double directional_value =
-          directional_left * right_coefficient +
-          left_coefficient * directional_right;
-      if (std::abs(directional_value) <= kContributionTolerance) {
-        continue;
-      }
-      (*pair_matrix)(row, column) +=
-          scale *
-          partner_pair_matrix.coeff(row, column) *
-          directional_value;
-    }
+        "selected-state local_coefficient_matrix shape does not match support dimensions");
   }
 }
 
@@ -330,36 +200,6 @@ void accumulate_deleted_minor_pullback_to_overlap_block_gradient_local(
                   deleted_rows,
                   deleted_cols),
       overlap_block_gradient);
-}
-
-template <typename DenseMatrixProvider>
-Eigen::MatrixXd build_local_packed_pair_dense_image_matrix(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    int left_unique_index,
-    int right_unique_index,
-    DenseMatrixProvider* dense_image_provider) {
-  if (dense_image_provider == nullptr) {
-    throw std::invalid_argument("dense_image_provider must not be null");
-  }
-
-  Eigen::MatrixXd pair_dense_image(
-      static_cast<int>(occ_R.size()),
-      static_cast<int>(occ_L.size()));
-  for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = occ_L[left_column];
-    for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = occ_R[right_row];
-      const int packed_pair_index = TwoElectronIndexer::packed_pair_index(
-          orbital_index_right,
-          orbital_index_left);
-      pair_dense_image(right_row, left_column) =
-          dense_image_provider->get(packed_pair_index)(
-              left_unique_index,
-              right_unique_index);
-    }
-  }
-  return pair_dense_image;
 }
 
 void accumulate_singular_spin_overlap_gradient_from_dense_image_local(
@@ -539,96 +379,8 @@ std::vector<double> apply_directional_active_two_electron_kernel_to_sparse_proje
   return projected_pair_values;
 }
 
-bool gather_sparse_submatrix(
-    const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& global_matrix,
-    const std::vector<int>& row_indices,
-    const std::vector<int>& column_indices,
-    Eigen::MatrixXd* local_matrix) {
-  if (local_matrix == nullptr) {
-    throw std::invalid_argument("local_matrix must not be null");
-  }
-  local_matrix->setZero(
-      static_cast<int>(row_indices.size()),
-      static_cast<int>(column_indices.size()));
-  bool has_any_nonzero = false;
-  for (int column_local = 0;
-       column_local < static_cast<int>(column_indices.size());
-       ++column_local) {
-    const int column_global = column_indices[column_local];
-    for (Eigen::SparseMatrix<double, Eigen::ColMajor, int>::InnerIterator iterator(
-             global_matrix,
-             column_global);
-         iterator;
-         ++iterator) {
-      const int row_global = iterator.row();
-      const auto row_iterator =
-          std::lower_bound(row_indices.begin(), row_indices.end(), row_global);
-      if (row_iterator == row_indices.end() || *row_iterator != row_global) {
-        continue;
-      }
-      const int row_local =
-          static_cast<int>(row_iterator - row_indices.begin());
-      (*local_matrix)(row_local, column_local) = iterator.value();
-      has_any_nonzero = true;
-    }
-  }
-  return has_any_nonzero;
-}
-
-bool gather_pair_submatrix(
-    const Eigen::MatrixXd& global_matrix,
-    const std::vector<int>& indices,
-    Eigen::MatrixXd* local_matrix) {
-  gather_dense_submatrix(global_matrix, indices, indices, local_matrix);
-  return local_matrix->size() != 0;
-}
-
-bool gather_pair_submatrix(
-    const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& global_matrix,
-    const std::vector<int>& indices,
-    Eigen::MatrixXd* local_matrix) {
-  return gather_sparse_submatrix(global_matrix, indices, indices, local_matrix);
-}
-
-void accumulate_dense_submatrix(
-    const Eigen::MatrixXd& local_matrix,
-    const std::vector<int>& row_indices,
-    const std::vector<int>& column_indices,
-    double scale,
-    Eigen::MatrixXd* global_matrix) {
-  if (global_matrix == nullptr) {
-    throw std::invalid_argument("global_matrix must not be null");
-  }
-  if (std::abs(scale) <= kContributionTolerance || local_matrix.size() == 0) {
-    return;
-  }
-  if (local_matrix.rows() != static_cast<int>(row_indices.size()) ||
-      local_matrix.cols() != static_cast<int>(column_indices.size())) {
-    throw std::invalid_argument("local_matrix shape does not match support indices");
-  }
-
-  for (int column_local = 0;
-       column_local < local_matrix.cols();
-       ++column_local) {
-    const int column_global = column_indices[column_local];
-    for (int row_local = 0;
-         row_local < local_matrix.rows();
-         ++row_local) {
-      const int row_global = row_indices[row_local];
-      (*global_matrix)(row_global, column_global) +=
-          scale * local_matrix(row_local, column_local);
-    }
-  }
-}
-
 bool dense_matrix_is_effectively_zero(const Eigen::MatrixXd& matrix) {
   return matrix.size() == 0 || matrix.cwiseAbs().maxCoeff() <= kContributionTolerance;
-}
-
-std::size_t dense_square_matrix_storage_bytes(int dimension) {
-  return sizeof(double) *
-      dimension *
-      dimension;
 }
 
 std::vector<DirectionalOppositeSpinPairData>
@@ -904,7 +656,8 @@ std::vector<Eigen::SparseMatrix<double, Eigen::ColMajor, int>> build_directional
   return sparse_matrices;
 }
 
-std::vector<Eigen::MatrixXd> build_weighted_cofactor_projected_image_block(
+std::vector<Eigen::SparseMatrix<double, Eigen::ColMajor, int>>
+build_weighted_cofactor_projected_sparse_matrix_block(
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants,
     int packed_pair_begin,
@@ -912,19 +665,20 @@ std::vector<Eigen::MatrixXd> build_weighted_cofactor_projected_image_block(
   if (packed_pair_begin < 0 ||
       packed_pair_end < packed_pair_begin) {
     throw std::invalid_argument(
-        "packed-pair dense-image block range must satisfy 0 <= begin <= end");
+        "packed-pair sparse-image block range must satisfy 0 <= begin <= end");
   }
   const int block_size = packed_pair_end - packed_pair_begin;
-  std::vector<Eigen::MatrixXd> weighted_images;
-  weighted_images.resize(block_size);
-  for (int local_index = 0; local_index < block_size; ++local_index) {
-    weighted_images[local_index] =
-        Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
+  std::vector<Eigen::SparseMatrix<double, Eigen::ColMajor, int>> weighted_images(
+      block_size);
+  for (auto& weighted_image : weighted_images) {
+    weighted_image.resize(n_unique_determinants, n_unique_determinants);
   }
   if (block_size == 0) {
     return weighted_images;
   }
 
+  std::vector<std::vector<Eigen::Triplet<double, int>>> triplets_by_local_index(
+      block_size);
   for (int right_unique_index = 0;
        right_unique_index < n_unique_determinants;
        ++right_unique_index) {
@@ -942,22 +696,36 @@ std::vector<Eigen::MatrixXd> build_weighted_cofactor_projected_image_block(
         continue;
       }
 
-      for (int local_index = 0; local_index < block_size; ++local_index) {
-        const int packed_pair_index = packed_pair_begin + local_index;
-        if (static_cast<int>(projection.projected_pair_values.size()) <= packed_pair_index) {
+      const int local_end = std::min(
+          block_size,
+          static_cast<int>(projection.projected_pair_values.size()) -
+              packed_pair_begin);
+      for (int local_index = 0; local_index < local_end; ++local_index) {
+        const double value =
+            projection.projected_pair_values[packed_pair_begin + local_index];
+        if (std::abs(value) <= kContributionTolerance) {
           continue;
         }
-        weighted_images[local_index](
+        triplets_by_local_index[local_index].emplace_back(
             left_unique_index,
-            right_unique_index) =
-            projection.projected_pair_values[packed_pair_index];
+            right_unique_index,
+            value);
       }
+    }
+  }
+
+  for (int local_index = 0; local_index < block_size; ++local_index) {
+    auto& weighted_image = weighted_images[local_index];
+    const auto& triplets = triplets_by_local_index[local_index];
+    if (!triplets.empty()) {
+      weighted_image.setFromTriplets(triplets.begin(), triplets.end());
     }
   }
   return weighted_images;
 }
 
-std::vector<Eigen::MatrixXd> build_directional_weighted_cofactor_projected_image_block(
+std::vector<Eigen::SparseMatrix<double, Eigen::ColMajor, int>>
+build_directional_weighted_cofactor_projected_sparse_matrix_block(
     const std::vector<DirectionalOppositeSpinPairData>& directional_pair_data,
     int n_unique_determinants,
     int packed_pair_begin,
@@ -965,19 +733,20 @@ std::vector<Eigen::MatrixXd> build_directional_weighted_cofactor_projected_image
   if (packed_pair_begin < 0 ||
       packed_pair_end < packed_pair_begin) {
     throw std::invalid_argument(
-        "packed-pair dense-image block range must satisfy 0 <= begin <= end");
+        "directional packed-pair sparse-image block range must satisfy 0 <= begin <= end");
   }
   const int block_size = packed_pair_end - packed_pair_begin;
-  std::vector<Eigen::MatrixXd> weighted_images;
-  weighted_images.resize(block_size);
-  for (int local_index = 0; local_index < block_size; ++local_index) {
-    weighted_images[local_index] =
-        Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
+  std::vector<Eigen::SparseMatrix<double, Eigen::ColMajor, int>> weighted_images(
+      block_size);
+  for (auto& weighted_image : weighted_images) {
+    weighted_image.resize(n_unique_determinants, n_unique_determinants);
   }
   if (block_size == 0) {
     return weighted_images;
   }
 
+  std::vector<std::vector<Eigen::Triplet<double, int>>> triplets_by_local_index(
+      block_size);
   for (int right_unique_index = 0;
        right_unique_index < n_unique_determinants;
        ++right_unique_index) {
@@ -995,202 +764,467 @@ std::vector<Eigen::MatrixXd> build_directional_weighted_cofactor_projected_image
         continue;
       }
 
-      for (int local_index = 0; local_index < block_size; ++local_index) {
-        const int packed_pair_index = packed_pair_begin + local_index;
-        const double directional_projected_value =
-            static_cast<int>(directional_projection.projected_pair_values.size()) >
-                    packed_pair_index
-                ? directional_projection.projected_pair_values[
-                      packed_pair_index]
-                : 0.0;
-        weighted_images[local_index](
+      const int local_end = std::min(
+          block_size,
+          static_cast<int>(directional_projection.projected_pair_values.size()) -
+              packed_pair_begin);
+      for (int local_index = 0; local_index < local_end; ++local_index) {
+        const double value =
+            directional_projection.projected_pair_values[
+                packed_pair_begin + local_index];
+        if (std::abs(value) <= kContributionTolerance) {
+          continue;
+        }
+        triplets_by_local_index[local_index].emplace_back(
             left_unique_index,
-            right_unique_index) = directional_projected_value;
+            right_unique_index,
+            value);
       }
+    }
+  }
+
+  for (int local_index = 0; local_index < block_size; ++local_index) {
+    auto& weighted_image = weighted_images[local_index];
+    const auto& triplets = triplets_by_local_index[local_index];
+    if (!triplets.empty()) {
+      weighted_image.setFromTriplets(triplets.begin(), triplets.end());
     }
   }
   return weighted_images;
 }
 
-template <typename MatrixType>
-class CachedPackedPairBlockProvider {
-public:
-  CachedPackedPairBlockProvider(
-      int n_packed_pairs,
-      int block_size,
-      std::function<std::vector<MatrixType>(int, int)> block_builder)
-      : n_packed_pairs_(n_packed_pairs),
-        block_size_(block_size),
-        block_builder_(std::move(block_builder)) {
-    if (n_packed_pairs_ < 0 || block_size_ <= 0) {
-      throw std::invalid_argument(
-          "packed-pair block provider requires non-negative size and positive block size");
-    }
-  }
-
-  const MatrixType& get(int packed_pair_index) {
-    if (packed_pair_index < 0 || packed_pair_index >= n_packed_pairs_) {
-      throw std::out_of_range("packed_pair_index is outside provider range");
-    }
-    for (auto& entry : cache_entries_) {
-      if (entry.valid &&
-          packed_pair_index >= entry.packed_pair_begin &&
-          packed_pair_index < entry.packed_pair_end) {
-        entry.last_access_stamp = ++access_stamp_;
-        return entry.matrices[
-            packed_pair_index - entry.packed_pair_begin];
-      }
-    }
-
-    const int packed_pair_begin = packed_pair_index / block_size_ * block_size_;
-    const int packed_pair_end =
-        std::min(n_packed_pairs_, packed_pair_begin + block_size_);
-    CacheEntry built_entry;
-    built_entry.valid = true;
-    built_entry.packed_pair_begin = packed_pair_begin;
-    built_entry.packed_pair_end = packed_pair_end;
-    built_entry.last_access_stamp = ++access_stamp_;
-    built_entry.matrices = block_builder_(packed_pair_begin, packed_pair_end);
-    if (static_cast<int>(built_entry.matrices.size()) !=
-        packed_pair_end - packed_pair_begin) {
-      throw std::invalid_argument(
-          "packed-pair block builder returned wrong number of matrices");
-    }
-
-    if (cache_entries_.size() < kPackedPairMatrixCacheEntries) {
-      cache_entries_.push_back(std::move(built_entry));
-      auto& entry = cache_entries_.back();
-      return entry.matrices[
-          packed_pair_index - entry.packed_pair_begin];
-    }
-
-    auto victim_iterator = cache_entries_.begin();
-    for (auto iterator = cache_entries_.begin();
-         iterator != cache_entries_.end();
-         ++iterator) {
-      if (iterator->last_access_stamp < victim_iterator->last_access_stamp) {
-        victim_iterator = iterator;
-      }
-    }
-    *victim_iterator = std::move(built_entry);
-    return victim_iterator->matrices[
-        packed_pair_index - victim_iterator->packed_pair_begin];
-  }
-
-private:
-  struct CacheEntry {
-    bool valid = false;
-    int packed_pair_begin = -1;
-    int packed_pair_end = -1;
-    std::uint64_t last_access_stamp = 0;
-    std::vector<MatrixType> matrices;
-  };
-
-  int n_packed_pairs_ = 0;
-  int block_size_ = 1;
-  std::function<std::vector<MatrixType>(int, int)> block_builder_;
-  std::uint64_t access_stamp_ = 0;
-  std::vector<CacheEntry> cache_entries_;
-};
-
-double contract_sparse_matrix_with_dense_image(
+double contract_sparse_matrix_tile_with_dense_tile_matrix(
     const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& sparse_matrix,
-    const Eigen::MatrixXd& dense_image) {
-  if (sparse_matrix.rows() != dense_image.rows() ||
-      sparse_matrix.cols() != dense_image.cols()) {
-    throw std::invalid_argument(
-        "sparse opposite-spin channel shape does not match dense image");
-  }
-
+    const Eigen::MatrixXd& dense_tile_matrix,
+    int dense_tile_column,
+    int tile_left_size,
+    int row_begin,
+    int column_begin) {
+  const int row_end = row_begin + tile_left_size;
+  const int column_end =
+      column_begin + dense_tile_matrix.rows() / tile_left_size;
   double contraction = 0.0;
-  for (int outer_index = 0; outer_index < sparse_matrix.outerSize(); ++outer_index) {
+  for (int column = column_begin; column < column_end; ++column) {
     for (Eigen::SparseMatrix<double, Eigen::ColMajor, int>::InnerIterator iterator(
              sparse_matrix,
-             outer_index);
+             column);
          iterator;
          ++iterator) {
+      const int row = iterator.row();
+      if (row < row_begin || row >= row_end) {
+        continue;
+      }
+      const int tile_index =
+          (row - row_begin) + tile_left_size * (column - column_begin);
       contraction +=
-          iterator.value() * dense_image(iterator.row(), iterator.col());
+          iterator.value() *
+          dense_tile_matrix(tile_index, dense_tile_column);
     }
   }
   return contraction;
 }
 
-template <typename PairMatrix>
-Eigen::MatrixXd accumulate_alpha_pair_matrix(
+void accumulate_alpha_pair_matrix_tile(
     const SelectedStateDeterminantMatrices& selected_states,
-    const PairMatrix& beta_pair_matrix) {
-  if (beta_pair_matrix.rows() != selected_states.n_unique_beta ||
-      beta_pair_matrix.cols() != selected_states.n_unique_beta) {
-    throw std::invalid_argument(
-        "beta channel matrix shape does not match selected-state dimensions");
-  }
+    const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& beta_pair_matrix,
+    int alpha_left_begin,
+    int alpha_left_end,
+    int alpha_right_begin,
+    int alpha_right_end,
+    Eigen::MatrixXd* alpha_pair_tile) {
+  alpha_pair_tile->setZero(
+      alpha_left_end - alpha_left_begin,
+      alpha_right_end - alpha_right_begin);
 
-  Eigen::MatrixXd alpha_pair_matrix =
-      Eigen::MatrixXd::Zero(selected_states.n_unique_alpha, selected_states.n_unique_alpha);
+  const int beta_tile_size = opposite_spin_backward_unique_tile_size();
   for (const auto& state_coefficients : selected_states.states) {
-    validate_state_coefficient_matrix(
-        state_coefficients,
-        selected_states.n_unique_alpha,
-        selected_states.n_unique_beta);
-    if (selected_state_has_close_shell_diagonal(
-            state_coefficients,
-            selected_states.n_unique_alpha,
-            selected_states.n_unique_beta)) {
-      accumulate_diagonal_pair_matrix(
-          state_coefficients.diagonal_coefficients,
-          beta_pair_matrix,
-          state_coefficients.normalized_state_weight,
-          &alpha_pair_matrix);
+    if (!selected_state_has_local_support(state_coefficients)) {
       continue;
     }
-    const Eigen::MatrixXd& coefficient_matrix =
-        state_coefficients.coefficient_matrix;
-    alpha_pair_matrix.noalias() +=
-        state_coefficients.normalized_state_weight *
-        (coefficient_matrix * beta_pair_matrix) *
-        coefficient_matrix.transpose();
+    validate_local_state_coefficient_matrix(state_coefficients);
+
+    auto build_partner_tiles = [&](
+        const std::vector<int>& beta_support,
+        const SupportWindow& beta_left_window,
+        const SupportWindow& beta_right_window,
+        Eigen::MatrixXd* beta_tile,
+        Eigen::MatrixXd* unused_tile) {
+      gather_scalar_block_from_support(
+          beta_support,
+          beta_left_window,
+          beta_support,
+          beta_right_window,
+          [&](int row, int column) {
+            return beta_pair_matrix.coeff(row, column);
+          },
+          beta_tile);
+      unused_tile->setZero(beta_tile->rows(), beta_tile->cols());
+    };
+    auto consume_images = [&](
+        const SupportWindow& alpha_left_window,
+        const SupportWindow& alpha_right_window,
+        const Eigen::MatrixXd& alpha_image,
+        const Eigen::MatrixXd& unused_image) {
+      (void)unused_image;
+      scatter_add_dense_submatrix_to_tile(
+          alpha_image,
+          state_coefficients.alpha_support,
+          alpha_left_window,
+          alpha_left_begin,
+          state_coefficients.alpha_support,
+          alpha_right_window,
+          alpha_right_begin,
+          state_coefficients.normalized_state_weight,
+          alpha_pair_tile);
+    };
+
+    for_each_alpha_oriented_support_local_image_pair(
+        state_coefficients.local_coefficient_matrix,
+        state_coefficients.alpha_support,
+        state_coefficients.beta_support,
+        alpha_left_begin,
+        alpha_left_end,
+        alpha_right_begin,
+        alpha_right_end,
+        beta_tile_size,
+        build_partner_tiles,
+        consume_images);
   }
-  return alpha_pair_matrix;
 }
 
-template <typename PairMatrix>
-Eigen::MatrixXd accumulate_beta_pair_matrix(
+void accumulate_directional_alpha_pair_matrix_tile(
     const SelectedStateDeterminantMatrices& selected_states,
-    const PairMatrix& alpha_pair_matrix) {
-  if (alpha_pair_matrix.rows() != selected_states.n_unique_alpha ||
-      alpha_pair_matrix.cols() != selected_states.n_unique_alpha) {
-    throw std::invalid_argument(
-        "alpha channel matrix shape does not match selected-state dimensions");
-  }
+    const SelectedStateDeterminantMatrices& directional_selected_states,
+    const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& beta_pair_matrix,
+    int alpha_left_begin,
+    int alpha_left_end,
+    int alpha_right_begin,
+    int alpha_right_end,
+    Eigen::MatrixXd* alpha_pair_tile) {
+  alpha_pair_tile->setZero(
+      alpha_left_end - alpha_left_begin,
+      alpha_right_end - alpha_right_begin);
 
-  Eigen::MatrixXd beta_pair_matrix =
-      Eigen::MatrixXd::Zero(selected_states.n_unique_beta, selected_states.n_unique_beta);
-  for (const auto& state_coefficients : selected_states.states) {
-    validate_state_coefficient_matrix(
-        state_coefficients,
-        selected_states.n_unique_alpha,
-        selected_states.n_unique_beta);
-    if (selected_state_has_close_shell_diagonal(
-            state_coefficients,
-            selected_states.n_unique_alpha,
-            selected_states.n_unique_beta)) {
-      accumulate_diagonal_pair_matrix(
-          state_coefficients.diagonal_coefficients,
-          alpha_pair_matrix,
-          state_coefficients.normalized_state_weight,
-          &beta_pair_matrix);
+  const int beta_tile_size = opposite_spin_backward_unique_tile_size();
+  Eigen::MatrixXd beta_tile;
+  Eigen::MatrixXd beta_push;
+  Eigen::MatrixXd alpha_image;
+  for (std::size_t state_offset = 0;
+       state_offset < selected_states.states.size();
+       ++state_offset) {
+    const auto& state_coefficients = selected_states.states[state_offset];
+    const auto& directional_state_coefficients =
+        directional_selected_states.states[state_offset];
+    if (!selected_state_has_local_support(state_coefficients) ||
+        !selected_state_has_local_support(directional_state_coefficients)) {
       continue;
     }
-    const Eigen::MatrixXd& coefficient_matrix =
-        state_coefficients.coefficient_matrix;
-    beta_pair_matrix.noalias() +=
-        state_coefficients.normalized_state_weight *
-        coefficient_matrix.transpose() *
-        alpha_pair_matrix *
-        coefficient_matrix;
+    validate_local_state_coefficient_matrix(state_coefficients);
+    validate_local_state_coefficient_matrix(directional_state_coefficients);
+
+    // Directional selected-state packed-gradient weight:
+    //   d(C U_beta C^T) = dC U_beta C^T + C U_beta dC^T.
+    // The accepted and directional coefficient supports may differ, so both
+    // product-rule terms are streamed with their own left/right local supports
+    // instead of materializing a union-support dense coefficient block.
+    auto accumulate_mixed_image = [&](
+        const Eigen::MatrixXd& left_coefficients,
+        const std::vector<int>& left_alpha_support,
+        const std::vector<int>& left_beta_support,
+        const Eigen::MatrixXd& right_coefficients,
+        const std::vector<int>& right_alpha_support,
+        const std::vector<int>& right_beta_support) {
+      const SupportWindow alpha_left_window =
+          find_support_window(
+              left_alpha_support,
+              alpha_left_begin,
+              alpha_left_end);
+      const SupportWindow alpha_right_window =
+          find_support_window(
+              right_alpha_support,
+              alpha_right_begin,
+              alpha_right_end);
+      if (alpha_left_window.empty() ||
+          alpha_right_window.empty() ||
+          left_beta_support.empty() ||
+          right_beta_support.empty()) {
+        return;
+      }
+
+      const int n_left_beta_support =
+          static_cast<int>(left_beta_support.size());
+      const int n_right_beta_support =
+          static_cast<int>(right_beta_support.size());
+      for (int beta_left_begin_local = 0;
+           beta_left_begin_local < n_left_beta_support;
+           beta_left_begin_local += beta_tile_size) {
+        const SupportWindow beta_left_window{
+            beta_left_begin_local,
+            std::min(n_left_beta_support, beta_left_begin_local + beta_tile_size),
+        };
+        const auto left_block =
+            left_coefficients.block(
+                alpha_left_window.begin,
+                beta_left_window.begin,
+                alpha_left_window.size(),
+                beta_left_window.size());
+
+        for (int beta_right_begin_local = 0;
+             beta_right_begin_local < n_right_beta_support;
+             beta_right_begin_local += beta_tile_size) {
+          const SupportWindow beta_right_window{
+              beta_right_begin_local,
+              std::min(
+                  n_right_beta_support,
+                  beta_right_begin_local + beta_tile_size),
+          };
+          const auto right_block =
+              right_coefficients.block(
+                  alpha_right_window.begin,
+                  beta_right_window.begin,
+                  alpha_right_window.size(),
+                  beta_right_window.size());
+          gather_scalar_block_from_support(
+              left_beta_support,
+              beta_left_window,
+              right_beta_support,
+              beta_right_window,
+              [&](int row, int column) {
+                return beta_pair_matrix.coeff(row, column);
+              },
+              &beta_tile);
+          beta_push.noalias() = left_block * beta_tile;
+          alpha_image.noalias() = beta_push * right_block.transpose();
+          scatter_add_dense_submatrix_to_tile(
+              alpha_image,
+              left_alpha_support,
+              alpha_left_window,
+              alpha_left_begin,
+              right_alpha_support,
+              alpha_right_window,
+              alpha_right_begin,
+              state_coefficients.normalized_state_weight,
+              alpha_pair_tile);
+        }
+      }
+    };
+
+    accumulate_mixed_image(
+        directional_state_coefficients.local_coefficient_matrix,
+        directional_state_coefficients.alpha_support,
+        directional_state_coefficients.beta_support,
+        state_coefficients.local_coefficient_matrix,
+        state_coefficients.alpha_support,
+        state_coefficients.beta_support);
+    accumulate_mixed_image(
+        state_coefficients.local_coefficient_matrix,
+        state_coefficients.alpha_support,
+        state_coefficients.beta_support,
+        directional_state_coefficients.local_coefficient_matrix,
+        directional_state_coefficients.alpha_support,
+        directional_state_coefficients.beta_support);
   }
-  return beta_pair_matrix;
+}
+
+void accumulate_beta_pair_matrix_tile(
+    const SelectedStateDeterminantMatrices& selected_states,
+    const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& alpha_pair_matrix,
+    int beta_left_begin,
+    int beta_left_end,
+    int beta_right_begin,
+    int beta_right_end,
+    Eigen::MatrixXd* beta_pair_tile) {
+  beta_pair_tile->setZero(
+      beta_left_end - beta_left_begin,
+      beta_right_end - beta_right_begin);
+
+  const int alpha_tile_size = opposite_spin_backward_unique_tile_size();
+  for (const auto& state_coefficients : selected_states.states) {
+    if (!selected_state_has_local_support(state_coefficients)) {
+      continue;
+    }
+    validate_local_state_coefficient_matrix(state_coefficients);
+
+    auto build_partner_tiles = [&](
+        const std::vector<int>& alpha_support,
+        const SupportWindow& alpha_left_window,
+        const SupportWindow& alpha_right_window,
+        Eigen::MatrixXd* alpha_tile,
+        Eigen::MatrixXd* unused_tile) {
+      gather_scalar_block_from_support(
+          alpha_support,
+          alpha_left_window,
+          alpha_support,
+          alpha_right_window,
+          [&](int row, int column) {
+            return alpha_pair_matrix.coeff(row, column);
+          },
+          alpha_tile);
+      unused_tile->setZero(alpha_tile->rows(), alpha_tile->cols());
+    };
+    auto consume_images = [&](
+        const SupportWindow& beta_left_window,
+        const SupportWindow& beta_right_window,
+        const Eigen::MatrixXd& beta_image,
+        const Eigen::MatrixXd& unused_image) {
+      (void)unused_image;
+      scatter_add_dense_submatrix_to_tile(
+          beta_image,
+          state_coefficients.beta_support,
+          beta_left_window,
+          beta_left_begin,
+          state_coefficients.beta_support,
+          beta_right_window,
+          beta_right_begin,
+          state_coefficients.normalized_state_weight,
+          beta_pair_tile);
+    };
+
+    for_each_beta_oriented_support_local_image_pair(
+        state_coefficients.local_coefficient_matrix,
+        state_coefficients.alpha_support,
+        state_coefficients.beta_support,
+        beta_left_begin,
+        beta_left_end,
+        beta_right_begin,
+        beta_right_end,
+        alpha_tile_size,
+        build_partner_tiles,
+        consume_images);
+  }
+}
+
+void accumulate_directional_beta_pair_matrix_tile(
+    const SelectedStateDeterminantMatrices& selected_states,
+    const SelectedStateDeterminantMatrices& directional_selected_states,
+    const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& alpha_pair_matrix,
+    int beta_left_begin,
+    int beta_left_end,
+    int beta_right_begin,
+    int beta_right_end,
+    Eigen::MatrixXd* beta_pair_tile) {
+  beta_pair_tile->setZero(
+      beta_left_end - beta_left_begin,
+      beta_right_end - beta_right_begin);
+
+  const int alpha_tile_size = opposite_spin_backward_unique_tile_size();
+  Eigen::MatrixXd alpha_tile;
+  Eigen::MatrixXd alpha_push;
+  Eigen::MatrixXd beta_image;
+  for (std::size_t state_offset = 0;
+       state_offset < selected_states.states.size();
+       ++state_offset) {
+    const auto& state_coefficients = selected_states.states[state_offset];
+    const auto& directional_state_coefficients =
+        directional_selected_states.states[state_offset];
+    if (!selected_state_has_local_support(state_coefficients) ||
+        !selected_state_has_local_support(directional_state_coefficients)) {
+      continue;
+    }
+    validate_local_state_coefficient_matrix(state_coefficients);
+    validate_local_state_coefficient_matrix(directional_state_coefficients);
+
+    // Beta-side product rule:
+    //   d(C^T U_alpha C) = dC^T U_alpha C + C^T U_alpha dC.
+    auto accumulate_mixed_image = [&](
+        const Eigen::MatrixXd& left_coefficients,
+        const std::vector<int>& left_alpha_support,
+        const std::vector<int>& left_beta_support,
+        const Eigen::MatrixXd& right_coefficients,
+        const std::vector<int>& right_alpha_support,
+        const std::vector<int>& right_beta_support) {
+      const SupportWindow beta_left_window =
+          find_support_window(
+              left_beta_support,
+              beta_left_begin,
+              beta_left_end);
+      const SupportWindow beta_right_window =
+          find_support_window(
+              right_beta_support,
+              beta_right_begin,
+              beta_right_end);
+      if (beta_left_window.empty() ||
+          beta_right_window.empty() ||
+          left_alpha_support.empty() ||
+          right_alpha_support.empty()) {
+        return;
+      }
+
+      const int n_left_alpha_support =
+          static_cast<int>(left_alpha_support.size());
+      const int n_right_alpha_support =
+          static_cast<int>(right_alpha_support.size());
+      for (int alpha_left_begin_local = 0;
+           alpha_left_begin_local < n_left_alpha_support;
+           alpha_left_begin_local += alpha_tile_size) {
+        const SupportWindow alpha_left_window{
+            alpha_left_begin_local,
+            std::min(
+                n_left_alpha_support,
+                alpha_left_begin_local + alpha_tile_size),
+        };
+        const auto left_block =
+            left_coefficients.block(
+                alpha_left_window.begin,
+                beta_left_window.begin,
+                alpha_left_window.size(),
+                beta_left_window.size());
+
+        for (int alpha_right_begin_local = 0;
+             alpha_right_begin_local < n_right_alpha_support;
+             alpha_right_begin_local += alpha_tile_size) {
+          const SupportWindow alpha_right_window{
+              alpha_right_begin_local,
+              std::min(
+                  n_right_alpha_support,
+                  alpha_right_begin_local + alpha_tile_size),
+          };
+          const auto right_block =
+              right_coefficients.block(
+                  alpha_right_window.begin,
+                  beta_right_window.begin,
+                  alpha_right_window.size(),
+                  beta_right_window.size());
+          gather_scalar_block_from_support(
+              left_alpha_support,
+              alpha_left_window,
+              right_alpha_support,
+              alpha_right_window,
+              [&](int row, int column) {
+                return alpha_pair_matrix.coeff(row, column);
+              },
+              &alpha_tile);
+          alpha_push.noalias() = left_block.transpose() * alpha_tile;
+          beta_image.noalias() = alpha_push * right_block;
+          scatter_add_dense_submatrix_to_tile(
+              beta_image,
+              left_beta_support,
+              beta_left_window,
+              beta_left_begin,
+              right_beta_support,
+              beta_right_window,
+              beta_right_begin,
+              state_coefficients.normalized_state_weight,
+              beta_pair_tile);
+        }
+      }
+    };
+
+    accumulate_mixed_image(
+        directional_state_coefficients.local_coefficient_matrix,
+        directional_state_coefficients.alpha_support,
+        directional_state_coefficients.beta_support,
+        state_coefficients.local_coefficient_matrix,
+        state_coefficients.alpha_support,
+        state_coefficients.beta_support);
+    accumulate_mixed_image(
+        state_coefficients.local_coefficient_matrix,
+        state_coefficients.alpha_support,
+        state_coefficients.beta_support,
+        directional_state_coefficients.local_coefficient_matrix,
+        directional_state_coefficients.alpha_support,
+        directional_state_coefficients.beta_support);
+  }
 }
 
 void validate_directional_selected_state_inputs(
@@ -1204,210 +1238,6 @@ void validate_directional_selected_state_inputs(
       selected_states.states.size() != directional_selected_states.states.size()) {
     throw std::invalid_argument(
         "directional selected-state matrices do not match accepted-point dimensions");
-  }
-}
-
-template <typename PairMatrix>
-Eigen::MatrixXd accumulate_directional_alpha_pair_matrix(
-    const SelectedStateDeterminantMatrices& selected_states,
-    const SelectedStateDeterminantMatrices& directional_selected_states,
-    const PairMatrix& beta_pair_matrix) {
-  if (beta_pair_matrix.rows() != selected_states.n_unique_beta ||
-      beta_pair_matrix.cols() != selected_states.n_unique_beta) {
-    throw std::invalid_argument(
-        "beta channel matrix shape does not match selected-state dimensions");
-  }
-  Eigen::MatrixXd alpha_pair_matrix =
-      Eigen::MatrixXd::Zero(selected_states.n_unique_alpha, selected_states.n_unique_alpha);
-  Eigen::MatrixXd coefficient_matrix_dense(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_beta);
-  Eigen::MatrixXd directional_coefficient_matrix_dense(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_beta);
-  Eigen::MatrixXd pair_push(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_beta);
-  Eigen::MatrixXd directional_pair_push(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_beta);
-  Eigen::MatrixXd directional_image(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_alpha);
-  for (std::size_t state_offset = 0;
-       state_offset < selected_states.states.size();
-       ++state_offset) {
-    const auto& state_coefficients = selected_states.states[state_offset];
-    const auto& directional_state_coefficients =
-        directional_selected_states.states[state_offset];
-    validate_state_coefficient_matrix(
-        state_coefficients,
-        selected_states.n_unique_alpha,
-        selected_states.n_unique_beta);
-    validate_state_coefficient_matrix(
-        directional_state_coefficients,
-        directional_selected_states.n_unique_alpha,
-        directional_selected_states.n_unique_beta);
-    if (selected_state_has_close_shell_diagonal(
-            state_coefficients,
-            selected_states.n_unique_alpha,
-            selected_states.n_unique_beta) &&
-        selected_state_has_close_shell_diagonal(
-            directional_state_coefficients,
-            directional_selected_states.n_unique_alpha,
-            directional_selected_states.n_unique_beta)) {
-      accumulate_directional_diagonal_pair_matrix(
-          state_coefficients.diagonal_coefficients,
-          directional_state_coefficients.diagonal_coefficients,
-          beta_pair_matrix,
-          state_coefficients.normalized_state_weight,
-          &alpha_pair_matrix);
-      continue;
-    }
-    coefficient_matrix_dense = state_coefficients.coefficient_matrix;
-    directional_coefficient_matrix_dense =
-        directional_state_coefficients.coefficient_matrix;
-    // This contraction is linear in `delta C`, so we can evaluate it on a
-    // scaled directional matrix and restore the exact amplitude afterward.
-    const double directional_scale =
-        std::max(
-            1.0,
-            max_abs_dense_matrix(directional_coefficient_matrix_dense));
-    if (directional_scale != 1.0) {
-      directional_coefficient_matrix_dense /= directional_scale;
-    }
-
-    pair_push.noalias() = coefficient_matrix_dense * beta_pair_matrix;
-    directional_pair_push.noalias() =
-        directional_coefficient_matrix_dense * beta_pair_matrix;
-    // Product rule at fixed cache kernel B:
-    // d(C B C^T) = dC B C^T + C B dC^T.
-    directional_image.noalias() =
-        directional_pair_push * coefficient_matrix_dense.transpose();
-    directional_image.noalias() +=
-        pair_push * directional_coefficient_matrix_dense.transpose();
-    alpha_pair_matrix.noalias() +=
-        state_coefficients.normalized_state_weight *
-        directional_scale *
-        directional_image;
-  }
-  return alpha_pair_matrix;
-}
-
-template <typename PairMatrix>
-Eigen::MatrixXd accumulate_directional_beta_pair_matrix(
-    const SelectedStateDeterminantMatrices& selected_states,
-    const SelectedStateDeterminantMatrices& directional_selected_states,
-    const PairMatrix& alpha_pair_matrix) {
-  if (alpha_pair_matrix.rows() != selected_states.n_unique_alpha ||
-      alpha_pair_matrix.cols() != selected_states.n_unique_alpha) {
-    throw std::invalid_argument(
-        "alpha channel matrix shape does not match selected-state dimensions");
-  }
-  Eigen::MatrixXd beta_pair_matrix =
-      Eigen::MatrixXd::Zero(selected_states.n_unique_beta, selected_states.n_unique_beta);
-  Eigen::MatrixXd coefficient_matrix_dense(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_beta);
-  Eigen::MatrixXd directional_coefficient_matrix_dense(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_beta);
-  Eigen::MatrixXd pair_push(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_beta);
-  Eigen::MatrixXd directional_pair_push(
-      selected_states.n_unique_alpha,
-      selected_states.n_unique_beta);
-  Eigen::MatrixXd directional_image(
-      selected_states.n_unique_beta,
-      selected_states.n_unique_beta);
-  for (std::size_t state_offset = 0;
-       state_offset < selected_states.states.size();
-       ++state_offset) {
-    const auto& state_coefficients = selected_states.states[state_offset];
-    const auto& directional_state_coefficients =
-        directional_selected_states.states[state_offset];
-    validate_state_coefficient_matrix(
-        state_coefficients,
-        selected_states.n_unique_alpha,
-        selected_states.n_unique_beta);
-    validate_state_coefficient_matrix(
-        directional_state_coefficients,
-        directional_selected_states.n_unique_alpha,
-        directional_selected_states.n_unique_beta);
-    if (selected_state_has_close_shell_diagonal(
-            state_coefficients,
-            selected_states.n_unique_alpha,
-            selected_states.n_unique_beta) &&
-        selected_state_has_close_shell_diagonal(
-            directional_state_coefficients,
-            directional_selected_states.n_unique_alpha,
-            directional_selected_states.n_unique_beta)) {
-      accumulate_directional_diagonal_pair_matrix(
-          state_coefficients.diagonal_coefficients,
-          directional_state_coefficients.diagonal_coefficients,
-          alpha_pair_matrix,
-          state_coefficients.normalized_state_weight,
-          &beta_pair_matrix);
-      continue;
-    }
-    coefficient_matrix_dense = state_coefficients.coefficient_matrix;
-    directional_coefficient_matrix_dense =
-        directional_state_coefficients.coefficient_matrix;
-    // This contraction is linear in `delta C`, so we can evaluate it on a
-    // scaled directional matrix and restore the exact amplitude afterward.
-    const double directional_scale =
-        std::max(
-            1.0,
-            max_abs_dense_matrix(directional_coefficient_matrix_dense));
-    if (directional_scale != 1.0) {
-      directional_coefficient_matrix_dense /= directional_scale;
-    }
-
-    pair_push.noalias() = alpha_pair_matrix * coefficient_matrix_dense;
-    directional_pair_push.noalias() =
-        alpha_pair_matrix * directional_coefficient_matrix_dense;
-    // Product rule at fixed cache kernel A:
-    // d(C^T A C) = dC^T A C + C^T A dC.
-    directional_image.noalias() =
-        directional_coefficient_matrix_dense.transpose() * pair_push;
-    directional_image.noalias() +=
-        coefficient_matrix_dense.transpose() * directional_pair_push;
-    beta_pair_matrix.noalias() +=
-        state_coefficients.normalized_state_weight *
-        directional_scale *
-        directional_image;
-  }
-  return beta_pair_matrix;
-}
-
-template <typename DenseMatrixProvider>
-void build_inverse_overlap_gradient_from_dense_image_local(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    int left_unique_index,
-    int right_unique_index,
-    DenseMatrixProvider* dense_image_provider,
-    Eigen::MatrixXd* inverse_overlap_gradient) {
-  if (dense_image_provider == nullptr || inverse_overlap_gradient == nullptr) {
-    throw std::invalid_argument(
-        "dense-image inverse overlap gradient inputs must not be null");
-  }
-
-  const int n_electrons = static_cast<int>(occ_L.size());
-  inverse_overlap_gradient->setZero(n_electrons, n_electrons);
-  for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = occ_L[left_column];
-    for (int right_row = 0; right_row < n_electrons; ++right_row) {
-      const int orbital_index_right = occ_R[right_row];
-      const int packed_pair_index = TwoElectronIndexer::packed_pair_index(
-          orbital_index_right,
-          orbital_index_left);
-      (*inverse_overlap_gradient)(left_column, right_row) =
-          dense_image_provider->get(packed_pair_index)(
-              left_unique_index,
-              right_unique_index);
-    }
   }
 }
 
@@ -1491,6 +1321,758 @@ void validate_matrix_backward_inputs(
   }
 }
 
+void accumulate_opposite_spin_packed_gradient_by_tiles(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    int n_packed_active_pairs,
+    int sparse_block_size,
+    int dense_batch_size,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+  Eigen::MatrixXd alpha_pair_weight_tile;
+  for (int beta_batch_begin = 0;
+       beta_batch_begin < n_packed_active_pairs;
+       beta_batch_begin += dense_batch_size) {
+    const int beta_batch_end =
+        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
+    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
+        same_spin_pair_cache.beta_pair_cache_ref(),
+        selected_states.n_unique_beta,
+        beta_batch_begin,
+        beta_batch_end);
+
+    for (int alpha_left_begin = 0;
+         alpha_left_begin < selected_states.n_unique_alpha;
+         alpha_left_begin += unique_tile_size) {
+      const int alpha_left_end =
+          std::min(
+              selected_states.n_unique_alpha,
+              alpha_left_begin + unique_tile_size);
+      for (int alpha_right_begin = 0;
+           alpha_right_begin < selected_states.n_unique_alpha;
+           alpha_right_begin += unique_tile_size) {
+        const int alpha_right_end =
+            std::min(
+                selected_states.n_unique_alpha,
+                alpha_right_begin + unique_tile_size);
+
+        std::vector<int> active_beta_packed_pair_indices;
+        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+        const int alpha_tile_area =
+            alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
+        Eigen::MatrixXd alpha_pair_weight_tiles(
+            alpha_tile_area,
+            beta_batch_end - beta_batch_begin);
+        active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
+        int active_beta_count = 0;
+        for (int beta_local_index = 0;
+             beta_local_index < beta_batch_end - beta_batch_begin;
+             ++beta_local_index) {
+          accumulate_alpha_pair_matrix_tile(
+              selected_states,
+              beta_sparse_batch[beta_local_index],
+              alpha_left_begin,
+              alpha_left_end,
+              alpha_right_begin,
+              alpha_right_end,
+              &alpha_pair_weight_tile);
+          if (dense_matrix_is_effectively_zero(alpha_pair_weight_tile)) {
+            continue;
+          }
+          active_beta_packed_pair_indices.push_back(
+              beta_batch_begin + beta_local_index);
+          alpha_pair_weight_tiles.col(active_beta_count) =
+              Eigen::Map<const Eigen::VectorXd>(
+                  alpha_pair_weight_tile.data(),
+                  alpha_pair_weight_tile.size());
+          ++active_beta_count;
+        }
+        if (active_beta_packed_pair_indices.empty()) {
+          continue;
+        }
+
+        for (int alpha_block_begin = 0;
+             alpha_block_begin < n_packed_active_pairs;
+             alpha_block_begin += sparse_block_size) {
+          const int alpha_block_end =
+              std::min(
+                  n_packed_active_pairs,
+                  alpha_block_begin + sparse_block_size);
+          const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
+              same_spin_pair_cache.alpha_pair_cache_ref(),
+              selected_states.n_unique_alpha,
+              alpha_block_begin,
+              alpha_block_end);
+
+          for (std::size_t beta_active_index = 0;
+               beta_active_index < active_beta_packed_pair_indices.size();
+               ++beta_active_index) {
+            const int beta_packed_pair_index =
+                active_beta_packed_pair_indices[beta_active_index];
+            for (int alpha_local_index = 0;
+                 alpha_local_index < alpha_block_end - alpha_block_begin;
+                 ++alpha_local_index) {
+              const double packed_gradient_value =
+                  contract_sparse_matrix_tile_with_dense_tile_matrix(
+                      alpha_sparse_block[alpha_local_index],
+                      alpha_pair_weight_tiles,
+                      static_cast<int>(beta_active_index),
+                      alpha_tile_left_size,
+                      alpha_left_begin,
+                      alpha_right_begin);
+              if (std::abs(packed_gradient_value) <= kContributionTolerance) {
+                continue;
+              }
+
+              const int alpha_packed_pair_index =
+                  alpha_block_begin + alpha_local_index;
+              const int packed_pair_of_pairs_index =
+                  TwoElectronIndexer::packed_pair_of_pairs_index(
+                      beta_packed_pair_index,
+                      alpha_packed_pair_index);
+              (*packed_active_two_electron_gradient)[
+                  packed_pair_of_pairs_index] += packed_gradient_value;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void accumulate_directional_opposite_spin_packed_gradient_by_tiles(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    const SelectedStateDeterminantMatrices& directional_selected_states,
+    int n_packed_active_pairs,
+    int sparse_block_size,
+    int dense_batch_size,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+  Eigen::MatrixXd alpha_pair_weight_tile;
+  for (int beta_batch_begin = 0;
+       beta_batch_begin < n_packed_active_pairs;
+       beta_batch_begin += dense_batch_size) {
+    const int beta_batch_end =
+        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
+    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
+        same_spin_pair_cache.beta_pair_cache_ref(),
+        selected_states.n_unique_beta,
+        beta_batch_begin,
+        beta_batch_end);
+
+    for (int alpha_left_begin = 0;
+         alpha_left_begin < selected_states.n_unique_alpha;
+         alpha_left_begin += unique_tile_size) {
+      const int alpha_left_end =
+          std::min(
+              selected_states.n_unique_alpha,
+              alpha_left_begin + unique_tile_size);
+      for (int alpha_right_begin = 0;
+           alpha_right_begin < selected_states.n_unique_alpha;
+           alpha_right_begin += unique_tile_size) {
+        const int alpha_right_end =
+            std::min(
+                selected_states.n_unique_alpha,
+                alpha_right_begin + unique_tile_size);
+
+        std::vector<int> active_beta_packed_pair_indices;
+        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+        const int alpha_tile_area =
+            alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
+        Eigen::MatrixXd alpha_pair_weight_tiles(
+            alpha_tile_area,
+            beta_batch_end - beta_batch_begin);
+        active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
+        int active_beta_count = 0;
+        for (int beta_local_index = 0;
+             beta_local_index < beta_batch_end - beta_batch_begin;
+             ++beta_local_index) {
+          accumulate_directional_alpha_pair_matrix_tile(
+              selected_states,
+              directional_selected_states,
+              beta_sparse_batch[beta_local_index],
+              alpha_left_begin,
+              alpha_left_end,
+              alpha_right_begin,
+              alpha_right_end,
+              &alpha_pair_weight_tile);
+          if (dense_matrix_is_effectively_zero(alpha_pair_weight_tile)) {
+            continue;
+          }
+          active_beta_packed_pair_indices.push_back(
+              beta_batch_begin + beta_local_index);
+          alpha_pair_weight_tiles.col(active_beta_count) =
+              Eigen::Map<const Eigen::VectorXd>(
+                  alpha_pair_weight_tile.data(),
+                  alpha_pair_weight_tile.size());
+          ++active_beta_count;
+        }
+        if (active_beta_packed_pair_indices.empty()) {
+          continue;
+        }
+
+        for (int alpha_block_begin = 0;
+             alpha_block_begin < n_packed_active_pairs;
+             alpha_block_begin += sparse_block_size) {
+          const int alpha_block_end =
+              std::min(
+                  n_packed_active_pairs,
+                  alpha_block_begin + sparse_block_size);
+          const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
+              same_spin_pair_cache.alpha_pair_cache_ref(),
+              selected_states.n_unique_alpha,
+              alpha_block_begin,
+              alpha_block_end);
+
+          for (std::size_t beta_active_index = 0;
+               beta_active_index < active_beta_packed_pair_indices.size();
+               ++beta_active_index) {
+            const int beta_packed_pair_index =
+                active_beta_packed_pair_indices[beta_active_index];
+            for (int alpha_local_index = 0;
+                 alpha_local_index < alpha_block_end - alpha_block_begin;
+                 ++alpha_local_index) {
+              const double packed_gradient_value =
+                  contract_sparse_matrix_tile_with_dense_tile_matrix(
+                      alpha_sparse_block[alpha_local_index],
+                      alpha_pair_weight_tiles,
+                      static_cast<int>(beta_active_index),
+                      alpha_tile_left_size,
+                      alpha_left_begin,
+                      alpha_right_begin);
+              if (std::abs(packed_gradient_value) <= kContributionTolerance) {
+                continue;
+              }
+
+              const int alpha_packed_pair_index =
+                  alpha_block_begin + alpha_local_index;
+              const int packed_pair_of_pairs_index =
+                  TwoElectronIndexer::packed_pair_of_pairs_index(
+                      beta_packed_pair_index,
+                      alpha_packed_pair_index);
+              (*packed_active_two_electron_gradient)[
+                  packed_pair_of_pairs_index] += packed_gradient_value;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+void accumulate_local_opposite_spin_packed_gradient_by_tiles(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const std::vector<DirectionalOppositeSpinPairData>& alpha_directional_pair_data,
+    const std::vector<DirectionalOppositeSpinPairData>& beta_directional_pair_data,
+    const SelectedStateDeterminantMatrices& selected_states,
+    int n_packed_active_pairs,
+    int sparse_block_size,
+    int dense_batch_size,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+  Eigen::MatrixXd alpha_pair_weight_tile;
+  Eigen::MatrixXd alpha_directional_pair_weight_tile;
+  for (int beta_batch_begin = 0;
+       beta_batch_begin < n_packed_active_pairs;
+       beta_batch_begin += dense_batch_size) {
+    const int beta_batch_end =
+        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
+    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
+        same_spin_pair_cache.beta_pair_cache_ref(),
+        selected_states.n_unique_beta,
+        beta_batch_begin,
+        beta_batch_end);
+    const auto beta_directional_sparse_batch =
+        build_directional_first_order_sparse_matrix_block(
+            beta_directional_pair_data,
+            selected_states.n_unique_beta,
+            beta_batch_begin,
+            beta_batch_end);
+
+    for (int alpha_left_begin = 0;
+         alpha_left_begin < selected_states.n_unique_alpha;
+         alpha_left_begin += unique_tile_size) {
+      const int alpha_left_end =
+          std::min(
+              selected_states.n_unique_alpha,
+              alpha_left_begin + unique_tile_size);
+      for (int alpha_right_begin = 0;
+           alpha_right_begin < selected_states.n_unique_alpha;
+           alpha_right_begin += unique_tile_size) {
+        const int alpha_right_end =
+            std::min(
+                selected_states.n_unique_alpha,
+                alpha_right_begin + unique_tile_size);
+
+        std::vector<int> active_beta_packed_pair_indices;
+        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+        const int alpha_tile_area =
+            alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
+        Eigen::MatrixXd alpha_pair_weight_tiles(
+            alpha_tile_area,
+            beta_batch_end - beta_batch_begin);
+        Eigen::MatrixXd alpha_directional_pair_weight_tiles(
+            alpha_tile_area,
+            beta_batch_end - beta_batch_begin);
+        std::vector<unsigned char> accepted_tile_nonzero;
+        std::vector<unsigned char> directional_tile_nonzero;
+        active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
+        accepted_tile_nonzero.reserve(beta_sparse_batch.size());
+        directional_tile_nonzero.reserve(beta_sparse_batch.size());
+        int active_beta_count = 0;
+        for (int beta_local_index = 0;
+             beta_local_index < beta_batch_end - beta_batch_begin;
+             ++beta_local_index) {
+          accumulate_alpha_pair_matrix_tile(
+              selected_states,
+              beta_sparse_batch[beta_local_index],
+              alpha_left_begin,
+              alpha_left_end,
+              alpha_right_begin,
+              alpha_right_end,
+              &alpha_pair_weight_tile);
+          accumulate_alpha_pair_matrix_tile(
+              selected_states,
+              beta_directional_sparse_batch[beta_local_index],
+              alpha_left_begin,
+              alpha_left_end,
+              alpha_right_begin,
+              alpha_right_end,
+              &alpha_directional_pair_weight_tile);
+          const bool accepted_nonzero =
+              !dense_matrix_is_effectively_zero(alpha_pair_weight_tile);
+          const bool directional_nonzero =
+              !dense_matrix_is_effectively_zero(
+                  alpha_directional_pair_weight_tile);
+          if (!accepted_nonzero && !directional_nonzero) {
+            continue;
+          }
+          active_beta_packed_pair_indices.push_back(
+              beta_batch_begin + beta_local_index);
+          alpha_pair_weight_tiles.col(active_beta_count) =
+              Eigen::Map<const Eigen::VectorXd>(
+                  alpha_pair_weight_tile.data(),
+                  alpha_pair_weight_tile.size());
+          alpha_directional_pair_weight_tiles.col(active_beta_count) =
+              Eigen::Map<const Eigen::VectorXd>(
+                  alpha_directional_pair_weight_tile.data(),
+                  alpha_directional_pair_weight_tile.size());
+          accepted_tile_nonzero.push_back(accepted_nonzero ? 1u : 0u);
+          directional_tile_nonzero.push_back(directional_nonzero ? 1u : 0u);
+          ++active_beta_count;
+        }
+        if (active_beta_packed_pair_indices.empty()) {
+          continue;
+        }
+
+        for (int alpha_block_begin = 0;
+             alpha_block_begin < n_packed_active_pairs;
+             alpha_block_begin += sparse_block_size) {
+          const int alpha_block_end =
+              std::min(
+                  n_packed_active_pairs,
+                  alpha_block_begin + sparse_block_size);
+          const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
+              same_spin_pair_cache.alpha_pair_cache_ref(),
+              selected_states.n_unique_alpha,
+              alpha_block_begin,
+              alpha_block_end);
+          const auto alpha_directional_sparse_block =
+              build_directional_first_order_sparse_matrix_block(
+                  alpha_directional_pair_data,
+                  selected_states.n_unique_alpha,
+                  alpha_block_begin,
+                  alpha_block_end);
+
+          for (std::size_t beta_active_index = 0;
+               beta_active_index < active_beta_packed_pair_indices.size();
+               ++beta_active_index) {
+            const int beta_packed_pair_index =
+                active_beta_packed_pair_indices[beta_active_index];
+            for (int alpha_local_index = 0;
+                 alpha_local_index < alpha_block_end - alpha_block_begin;
+                 ++alpha_local_index) {
+              double packed_gradient_value = 0.0;
+              if (accepted_tile_nonzero[beta_active_index] != 0u) {
+                packed_gradient_value +=
+                    contract_sparse_matrix_tile_with_dense_tile_matrix(
+                        alpha_directional_sparse_block[alpha_local_index],
+                        alpha_pair_weight_tiles,
+                        static_cast<int>(beta_active_index),
+                        alpha_tile_left_size,
+                        alpha_left_begin,
+                        alpha_right_begin);
+              }
+              if (directional_tile_nonzero[beta_active_index] != 0u) {
+                packed_gradient_value +=
+                    contract_sparse_matrix_tile_with_dense_tile_matrix(
+                        alpha_sparse_block[alpha_local_index],
+                        alpha_directional_pair_weight_tiles,
+                        static_cast<int>(beta_active_index),
+                        alpha_tile_left_size,
+                        alpha_left_begin,
+                        alpha_right_begin);
+              }
+              if (std::abs(packed_gradient_value) <= kContributionTolerance) {
+                continue;
+              }
+
+              const int alpha_packed_pair_index =
+                  alpha_block_begin + alpha_local_index;
+              const int packed_pair_of_pairs_index =
+                  TwoElectronIndexer::packed_pair_of_pairs_index(
+                      beta_packed_pair_index,
+                      alpha_packed_pair_index);
+              (*packed_active_two_electron_gradient)[
+                  packed_pair_of_pairs_index] += packed_gradient_value;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// Store the overlap-adjoint tile bundle as one column-major matrix. Column P is
+// W_P(left_local, right_local) with left_local as the fastest index, which
+// preserves the mathematical tile layout while avoiding one allocation per
+// packed active pair.
+Eigen::MatrixXd build_alpha_overlap_weight_tile_matrix(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    int n_packed_active_pairs,
+    int alpha_left_begin,
+    int alpha_left_end,
+    int alpha_right_begin,
+    int alpha_right_end) {
+  const int n_left = alpha_left_end - alpha_left_begin;
+  const int n_right = alpha_right_end - alpha_right_begin;
+  Eigen::MatrixXd tile_matrix =
+      Eigen::MatrixXd::Zero(n_left * n_right, n_packed_active_pairs);
+
+  Eigen::MatrixXd tile;
+  const int block_size =
+      std::min(n_packed_active_pairs, opposite_spin_backward_overlap_block_size());
+  for (int packed_pair_begin = 0;
+       packed_pair_begin < n_packed_active_pairs;
+       packed_pair_begin += block_size) {
+    const int packed_pair_end =
+        std::min(n_packed_active_pairs, packed_pair_begin + block_size);
+    const auto beta_weighted_sparse_block =
+        build_weighted_cofactor_projected_sparse_matrix_block(
+            same_spin_pair_cache.beta_pair_cache_ref(),
+            selected_states.n_unique_beta,
+            packed_pair_begin,
+            packed_pair_end);
+    for (int local_index = 0;
+         local_index < packed_pair_end - packed_pair_begin;
+         ++local_index) {
+      accumulate_alpha_pair_matrix_tile(
+          selected_states,
+          beta_weighted_sparse_block[local_index],
+          alpha_left_begin,
+          alpha_left_end,
+          alpha_right_begin,
+          alpha_right_end,
+          &tile);
+      if (!dense_matrix_is_effectively_zero(tile)) {
+        tile_matrix.col(packed_pair_begin + local_index) =
+            Eigen::Map<const Eigen::VectorXd>(tile.data(), tile.size());
+      }
+    }
+  }
+  return tile_matrix;
+}
+
+Eigen::MatrixXd build_beta_overlap_weight_tile_matrix(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    int n_packed_active_pairs,
+    int beta_left_begin,
+    int beta_left_end,
+    int beta_right_begin,
+    int beta_right_end) {
+  const int n_left = beta_left_end - beta_left_begin;
+  const int n_right = beta_right_end - beta_right_begin;
+  Eigen::MatrixXd tile_matrix =
+      Eigen::MatrixXd::Zero(n_left * n_right, n_packed_active_pairs);
+
+  Eigen::MatrixXd tile;
+  const int block_size =
+      std::min(n_packed_active_pairs, opposite_spin_backward_overlap_block_size());
+  for (int packed_pair_begin = 0;
+       packed_pair_begin < n_packed_active_pairs;
+       packed_pair_begin += block_size) {
+    const int packed_pair_end =
+        std::min(n_packed_active_pairs, packed_pair_begin + block_size);
+    const auto alpha_weighted_sparse_block =
+        build_weighted_cofactor_projected_sparse_matrix_block(
+            same_spin_pair_cache.alpha_pair_cache_ref(),
+            selected_states.n_unique_alpha,
+            packed_pair_begin,
+            packed_pair_end);
+    for (int local_index = 0;
+         local_index < packed_pair_end - packed_pair_begin;
+         ++local_index) {
+      accumulate_beta_pair_matrix_tile(
+          selected_states,
+          alpha_weighted_sparse_block[local_index],
+          beta_left_begin,
+          beta_left_end,
+          beta_right_begin,
+          beta_right_end,
+          &tile);
+      if (!dense_matrix_is_effectively_zero(tile)) {
+        tile_matrix.col(packed_pair_begin + local_index) =
+            Eigen::Map<const Eigen::VectorXd>(tile.data(), tile.size());
+      }
+    }
+  }
+  return tile_matrix;
+}
+
+Eigen::MatrixXd build_directional_alpha_overlap_weight_tile_matrix(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    const SelectedStateDeterminantMatrices& directional_selected_states,
+    int n_packed_active_pairs,
+    int alpha_left_begin,
+    int alpha_left_end,
+    int alpha_right_begin,
+    int alpha_right_end) {
+  const int n_left = alpha_left_end - alpha_left_begin;
+  const int n_right = alpha_right_end - alpha_right_begin;
+  Eigen::MatrixXd tile_matrix =
+      Eigen::MatrixXd::Zero(n_left * n_right, n_packed_active_pairs);
+
+  Eigen::MatrixXd tile;
+  const int block_size =
+      std::min(n_packed_active_pairs, opposite_spin_backward_overlap_block_size());
+  for (int packed_pair_begin = 0;
+       packed_pair_begin < n_packed_active_pairs;
+       packed_pair_begin += block_size) {
+    const int packed_pair_end =
+        std::min(n_packed_active_pairs, packed_pair_begin + block_size);
+    const auto beta_weighted_sparse_block =
+        build_weighted_cofactor_projected_sparse_matrix_block(
+            same_spin_pair_cache.beta_pair_cache_ref(),
+            selected_states.n_unique_beta,
+            packed_pair_begin,
+            packed_pair_end);
+    for (int local_index = 0;
+         local_index < packed_pair_end - packed_pair_begin;
+         ++local_index) {
+      accumulate_directional_alpha_pair_matrix_tile(
+          selected_states,
+          directional_selected_states,
+          beta_weighted_sparse_block[local_index],
+          alpha_left_begin,
+          alpha_left_end,
+          alpha_right_begin,
+          alpha_right_end,
+          &tile);
+      if (!dense_matrix_is_effectively_zero(tile)) {
+        tile_matrix.col(packed_pair_begin + local_index) =
+            Eigen::Map<const Eigen::VectorXd>(tile.data(), tile.size());
+      }
+    }
+  }
+  return tile_matrix;
+}
+
+Eigen::MatrixXd build_directional_beta_overlap_weight_tile_matrix(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    const SelectedStateDeterminantMatrices& directional_selected_states,
+    int n_packed_active_pairs,
+    int beta_left_begin,
+    int beta_left_end,
+    int beta_right_begin,
+    int beta_right_end) {
+  const int n_left = beta_left_end - beta_left_begin;
+  const int n_right = beta_right_end - beta_right_begin;
+  Eigen::MatrixXd tile_matrix =
+      Eigen::MatrixXd::Zero(n_left * n_right, n_packed_active_pairs);
+
+  Eigen::MatrixXd tile;
+  const int block_size =
+      std::min(n_packed_active_pairs, opposite_spin_backward_overlap_block_size());
+  for (int packed_pair_begin = 0;
+       packed_pair_begin < n_packed_active_pairs;
+       packed_pair_begin += block_size) {
+    const int packed_pair_end =
+        std::min(n_packed_active_pairs, packed_pair_begin + block_size);
+    const auto alpha_weighted_sparse_block =
+        build_weighted_cofactor_projected_sparse_matrix_block(
+            same_spin_pair_cache.alpha_pair_cache_ref(),
+            selected_states.n_unique_alpha,
+            packed_pair_begin,
+            packed_pair_end);
+    for (int local_index = 0;
+         local_index < packed_pair_end - packed_pair_begin;
+         ++local_index) {
+      accumulate_directional_beta_pair_matrix_tile(
+          selected_states,
+          directional_selected_states,
+          alpha_weighted_sparse_block[local_index],
+          beta_left_begin,
+          beta_left_end,
+          beta_right_begin,
+          beta_right_end,
+          &tile);
+      if (!dense_matrix_is_effectively_zero(tile)) {
+        tile_matrix.col(packed_pair_begin + local_index) =
+            Eigen::Map<const Eigen::VectorXd>(tile.data(), tile.size());
+      }
+    }
+  }
+  return tile_matrix;
+}
+
+Eigen::MatrixXd build_local_directional_alpha_overlap_weight_tile_matrix(
+    const std::vector<DirectionalOppositeSpinPairData>& beta_directional_pair_data,
+    const SelectedStateDeterminantMatrices& selected_states,
+    int n_packed_active_pairs,
+    int alpha_left_begin,
+    int alpha_left_end,
+    int alpha_right_begin,
+    int alpha_right_end) {
+  const int n_left = alpha_left_end - alpha_left_begin;
+  const int n_right = alpha_right_end - alpha_right_begin;
+  Eigen::MatrixXd tile_matrix =
+      Eigen::MatrixXd::Zero(n_left * n_right, n_packed_active_pairs);
+
+  Eigen::MatrixXd tile;
+  const int block_size =
+      std::min(n_packed_active_pairs, opposite_spin_backward_overlap_block_size());
+  for (int packed_pair_begin = 0;
+       packed_pair_begin < n_packed_active_pairs;
+       packed_pair_begin += block_size) {
+    const int packed_pair_end =
+        std::min(n_packed_active_pairs, packed_pair_begin + block_size);
+    const auto beta_directional_weighted_sparse_block =
+        build_directional_weighted_cofactor_projected_sparse_matrix_block(
+            beta_directional_pair_data,
+            selected_states.n_unique_beta,
+            packed_pair_begin,
+            packed_pair_end);
+    for (int local_index = 0;
+         local_index < packed_pair_end - packed_pair_begin;
+         ++local_index) {
+      accumulate_alpha_pair_matrix_tile(
+          selected_states,
+          beta_directional_weighted_sparse_block[local_index],
+          alpha_left_begin,
+          alpha_left_end,
+          alpha_right_begin,
+          alpha_right_end,
+          &tile);
+      if (!dense_matrix_is_effectively_zero(tile)) {
+        tile_matrix.col(packed_pair_begin + local_index) =
+            Eigen::Map<const Eigen::VectorXd>(tile.data(), tile.size());
+      }
+    }
+  }
+  return tile_matrix;
+}
+
+Eigen::MatrixXd build_local_directional_beta_overlap_weight_tile_matrix(
+    const std::vector<DirectionalOppositeSpinPairData>& alpha_directional_pair_data,
+    const SelectedStateDeterminantMatrices& selected_states,
+    int n_packed_active_pairs,
+    int beta_left_begin,
+    int beta_left_end,
+    int beta_right_begin,
+    int beta_right_end) {
+  const int n_left = beta_left_end - beta_left_begin;
+  const int n_right = beta_right_end - beta_right_begin;
+  Eigen::MatrixXd tile_matrix =
+      Eigen::MatrixXd::Zero(n_left * n_right, n_packed_active_pairs);
+
+  Eigen::MatrixXd tile;
+  const int block_size =
+      std::min(n_packed_active_pairs, opposite_spin_backward_overlap_block_size());
+  for (int packed_pair_begin = 0;
+       packed_pair_begin < n_packed_active_pairs;
+       packed_pair_begin += block_size) {
+    const int packed_pair_end =
+        std::min(n_packed_active_pairs, packed_pair_begin + block_size);
+    const auto alpha_directional_weighted_sparse_block =
+        build_directional_weighted_cofactor_projected_sparse_matrix_block(
+            alpha_directional_pair_data,
+            selected_states.n_unique_alpha,
+            packed_pair_begin,
+            packed_pair_end);
+    for (int local_index = 0;
+         local_index < packed_pair_end - packed_pair_begin;
+         ++local_index) {
+      accumulate_beta_pair_matrix_tile(
+          selected_states,
+          alpha_directional_weighted_sparse_block[local_index],
+          beta_left_begin,
+          beta_left_end,
+          beta_right_begin,
+          beta_right_end,
+          &tile);
+      if (!dense_matrix_is_effectively_zero(tile)) {
+        tile_matrix.col(packed_pair_begin + local_index) =
+            Eigen::Map<const Eigen::VectorXd>(tile.data(), tile.size());
+      }
+    }
+  }
+  return tile_matrix;
+}
+
+void build_local_packed_pair_dense_image_matrix_from_tile_matrix(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::MatrixXd& packed_pair_tile_matrix,
+    int tile_index,
+    Eigen::MatrixXd* pair_dense_image) {
+  pair_dense_image->resize(
+      static_cast<int>(occ_R.size()),
+      static_cast<int>(occ_L.size()));
+  for (int left_column = 0;
+       left_column < static_cast<int>(occ_L.size());
+       ++left_column) {
+    const int orbital_index_left = occ_L[left_column];
+    for (int right_row = 0;
+         right_row < static_cast<int>(occ_R.size());
+         ++right_row) {
+      const int orbital_index_right = occ_R[right_row];
+      const int packed_pair_index =
+          TwoElectronIndexer::packed_pair_index(
+              orbital_index_right,
+              orbital_index_left);
+      (*pair_dense_image)(right_row, left_column) =
+          packed_pair_tile_matrix(tile_index, packed_pair_index);
+    }
+  }
+}
+
+void build_inverse_overlap_gradient_from_tile_matrix(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::MatrixXd& packed_pair_tile_matrix,
+    int tile_index,
+    Eigen::MatrixXd* inverse_overlap_gradient) {
+  const int n_electrons = static_cast<int>(occ_L.size());
+  inverse_overlap_gradient->setZero(n_electrons, n_electrons);
+  for (int left_column = 0; left_column < n_electrons; ++left_column) {
+    const int orbital_index_left = occ_L[left_column];
+    for (int right_row = 0; right_row < n_electrons; ++right_row) {
+      const int orbital_index_right = occ_R[right_row];
+      const int packed_pair_index =
+          TwoElectronIndexer::packed_pair_index(
+              orbital_index_right,
+              orbital_index_left);
+      (*inverse_overlap_gradient)(left_column, right_row) =
+          packed_pair_tile_matrix(tile_index, packed_pair_index);
+    }
+  }
+}
+
 void accumulate_alpha_overlap_gradient(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
@@ -1509,104 +2091,120 @@ void accumulate_alpha_overlap_gradient(
 
   const auto& unique_alpha_determinants =
       same_spin_pair_cache.alpha_reuse_table.unique_determinants;
-  const int overlap_block_size = limited_packed_pair_block_size(
-      n_packed_active_pairs,
-      opposite_spin_backward_overlap_block_size(),
-      dense_square_matrix_storage_bytes(selected_states.n_unique_alpha),
-      opposite_spin_backward_overlap_block_bytes_budget());
-  CachedPackedPairBlockProvider<Eigen::MatrixXd> alpha_pair_dense_image_provider(
-      n_packed_active_pairs,
-      overlap_block_size,
-      [&](int packed_pair_begin, int packed_pair_end) {
-        auto beta_weighted_image_block =
-            build_weighted_cofactor_projected_image_block(
-                same_spin_pair_cache.beta_pair_cache_ref(),
-                selected_states.n_unique_beta,
-                packed_pair_begin,
-                packed_pair_end);
-        std::vector<Eigen::MatrixXd> alpha_pair_dense_images;
-        alpha_pair_dense_images.reserve(beta_weighted_image_block.size());
-        for (auto& beta_weighted_image : beta_weighted_image_block) {
-          alpha_pair_dense_images.push_back(
-              accumulate_alpha_pair_matrix(
-                  selected_states,
-                  beta_weighted_image));
+  {
+    const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+    Eigen::MatrixXd pair_dense_image;
+    Eigen::MatrixXd inverse_overlap_gradient;
+    for (int alpha_left_begin = 0;
+         alpha_left_begin < selected_states.n_unique_alpha;
+         alpha_left_begin += unique_tile_size) {
+      const int alpha_left_end =
+          std::min(
+              selected_states.n_unique_alpha,
+              alpha_left_begin + unique_tile_size);
+      for (int alpha_right_begin = 0;
+           alpha_right_begin < selected_states.n_unique_alpha;
+           alpha_right_begin += unique_tile_size) {
+        const int alpha_right_end =
+            std::min(
+                selected_states.n_unique_alpha,
+                alpha_right_begin + unique_tile_size);
+
+        // W_P[I,J] = sum_s w_s C_s[I,:] V_beta(P) C_s[J,:]^T.
+        // The tile is consumed immediately by alpha pair-cache overlap adjoints,
+        // so no packed_pair -> N_unique^2 dense image is materialized.
+        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+        const auto alpha_pair_weight_tiles =
+            build_alpha_overlap_weight_tile_matrix(
+                same_spin_pair_cache,
+                selected_states,
+                n_packed_active_pairs,
+                alpha_left_begin,
+                alpha_left_end,
+                alpha_right_begin,
+                alpha_right_end);
+
+        for (int alpha_left_id = alpha_left_begin;
+             alpha_left_id < alpha_left_end;
+             ++alpha_left_id) {
+          const int alpha_left_local = alpha_left_id - alpha_left_begin;
+          for (int alpha_right_id = alpha_right_begin;
+               alpha_right_id < alpha_right_end;
+               ++alpha_right_id) {
+            const int alpha_right_local = alpha_right_id - alpha_right_begin;
+            const int alpha_tile_index =
+                alpha_left_local + alpha_tile_left_size * alpha_right_local;
+            const std::size_t ordered_pair_index =
+                ordered_spin_pair_storage_index(
+                    alpha_left_id,
+                    alpha_right_id,
+                    selected_states.n_unique_alpha);
+            const auto& alpha_pair_evaluation =
+                same_spin_pair_cache.alpha_pair_cache_ref()[ordered_pair_index];
+            const auto& occ_L = unique_alpha_determinants[alpha_left_id];
+            const auto& occ_R = unique_alpha_determinants[alpha_right_id];
+
+            if (alpha_pair_evaluation.overlap_result.nullity == 1) {
+              build_local_packed_pair_dense_image_matrix_from_tile_matrix(
+                  occ_L,
+                  occ_R,
+                  alpha_pair_weight_tiles,
+                  alpha_tile_index,
+                  &pair_dense_image);
+              accumulate_singular_spin_overlap_gradient_from_dense_image_local(
+                  occ_L,
+                  occ_R,
+                  alpha_pair_evaluation.overlap_result,
+                  pair_dense_image,
+                  n_active_orbitals,
+                  active_orbital_overlap_gradient);
+              continue;
+            }
+
+            const auto& inverse_projection =
+                alpha_pair_evaluation
+                    .opposite_spin_pair_cache
+                    .inverse_overlap_projection;
+            if (inverse_projection.packed_pair_indices.empty() ||
+                inverse_projection.projected_pair_values.empty()) {
+              continue;
+            }
+            if (alpha_pair_evaluation.overlap_result.nullity != 0) {
+              continue;
+            }
+
+            double determinant_overlap_weight = 0.0;
+            for (std::size_t entry_index = 0;
+                 entry_index < inverse_projection.packed_pair_indices.size();
+                 ++entry_index) {
+              const int packed_pair_index =
+                  inverse_projection.packed_pair_indices[entry_index];
+              determinant_overlap_weight +=
+                  inverse_projection.packed_pair_values[entry_index] *
+                  alpha_pair_weight_tiles(alpha_tile_index, packed_pair_index);
+            }
+            if (std::abs(determinant_overlap_weight) <=
+                kContributionTolerance) {
+              continue;
+            }
+
+            build_inverse_overlap_gradient_from_tile_matrix(
+                occ_L,
+                occ_R,
+                alpha_pair_weight_tiles,
+                alpha_tile_index,
+                &inverse_overlap_gradient);
+            accumulate_spin_overlap_gradient(
+                occ_L,
+                occ_R,
+                alpha_pair_evaluation.overlap_result,
+                determinant_overlap_weight,
+                inverse_overlap_gradient,
+                n_active_orbitals,
+                active_orbital_overlap_gradient);
+          }
         }
-        return alpha_pair_dense_images;
-      });
-  for (int alpha_left_id = 0;
-       alpha_left_id < selected_states.n_unique_alpha;
-       ++alpha_left_id) {
-    for (int alpha_right_id = 0;
-         alpha_right_id < selected_states.n_unique_alpha;
-         ++alpha_right_id) {
-      const std::size_t ordered_pair_index = ordered_spin_pair_storage_index(
-          alpha_left_id,
-          alpha_right_id,
-          selected_states.n_unique_alpha);
-      const auto& alpha_pair_evaluation =
-          same_spin_pair_cache.alpha_pair_cache_ref()[ordered_pair_index];
-      if (alpha_pair_evaluation.overlap_result.nullity == 1) {
-        const Eigen::MatrixXd pair_dense_image =
-            build_local_packed_pair_dense_image_matrix(
-                unique_alpha_determinants[alpha_left_id],
-                unique_alpha_determinants[alpha_right_id],
-                alpha_left_id,
-                alpha_right_id,
-                &alpha_pair_dense_image_provider);
-        accumulate_singular_spin_overlap_gradient_from_dense_image_local(
-            unique_alpha_determinants[alpha_left_id],
-            unique_alpha_determinants[alpha_right_id],
-            alpha_pair_evaluation.overlap_result,
-            pair_dense_image,
-            n_active_orbitals,
-            active_orbital_overlap_gradient);
-        continue;
       }
-      const auto& inverse_projection =
-          alpha_pair_evaluation.opposite_spin_pair_cache.inverse_overlap_projection;
-      if (inverse_projection.packed_pair_indices.empty() ||
-          inverse_projection.projected_pair_values.empty()) {
-        continue;
-      }
-      if (alpha_pair_evaluation.overlap_result.nullity != 0) {
-        continue;
-      }
-
-      double determinant_overlap_weight = 0.0;
-      for (std::size_t entry_index = 0;
-           entry_index < inverse_projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index =
-            inverse_projection.packed_pair_indices[entry_index];
-        const double projected_value =
-            alpha_pair_dense_image_provider.get(packed_pair_index)(
-                alpha_left_id,
-                alpha_right_id);
-        determinant_overlap_weight +=
-            inverse_projection.packed_pair_values[entry_index] *
-            projected_value;
-      }
-      if (std::abs(determinant_overlap_weight) <= kContributionTolerance) {
-        continue;
-      }
-
-      Eigen::MatrixXd inverse_overlap_gradient;
-      build_inverse_overlap_gradient_from_dense_image_local(
-          unique_alpha_determinants[alpha_left_id],
-          unique_alpha_determinants[alpha_right_id],
-          alpha_left_id,
-          alpha_right_id,
-          &alpha_pair_dense_image_provider,
-          &inverse_overlap_gradient);
-      accumulate_spin_overlap_gradient(
-          unique_alpha_determinants[alpha_left_id],
-          unique_alpha_determinants[alpha_right_id],
-          alpha_pair_evaluation.overlap_result,
-          determinant_overlap_weight,
-          inverse_overlap_gradient,
-          n_active_orbitals,
-          active_orbital_overlap_gradient);
     }
   }
 }
@@ -1629,104 +2227,120 @@ void accumulate_beta_overlap_gradient(
 
   const auto& unique_beta_determinants =
       same_spin_pair_cache.beta_reuse_table.unique_determinants;
-  const int overlap_block_size = limited_packed_pair_block_size(
-      n_packed_active_pairs,
-      opposite_spin_backward_overlap_block_size(),
-      dense_square_matrix_storage_bytes(selected_states.n_unique_beta),
-      opposite_spin_backward_overlap_block_bytes_budget());
-  CachedPackedPairBlockProvider<Eigen::MatrixXd> beta_pair_dense_image_provider(
-      n_packed_active_pairs,
-      overlap_block_size,
-      [&](int packed_pair_begin, int packed_pair_end) {
-        auto alpha_weighted_image_block =
-            build_weighted_cofactor_projected_image_block(
-                same_spin_pair_cache.alpha_pair_cache_ref(),
-                selected_states.n_unique_alpha,
-                packed_pair_begin,
-                packed_pair_end);
-        std::vector<Eigen::MatrixXd> beta_pair_dense_images;
-        beta_pair_dense_images.reserve(alpha_weighted_image_block.size());
-        for (auto& alpha_weighted_image : alpha_weighted_image_block) {
-          beta_pair_dense_images.push_back(
-              accumulate_beta_pair_matrix(
-                  selected_states,
-                  alpha_weighted_image));
+  {
+    const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+    Eigen::MatrixXd pair_dense_image;
+    Eigen::MatrixXd inverse_overlap_gradient;
+    for (int beta_left_begin = 0;
+         beta_left_begin < selected_states.n_unique_beta;
+         beta_left_begin += unique_tile_size) {
+      const int beta_left_end =
+          std::min(
+              selected_states.n_unique_beta,
+              beta_left_begin + unique_tile_size);
+      for (int beta_right_begin = 0;
+           beta_right_begin < selected_states.n_unique_beta;
+           beta_right_begin += unique_tile_size) {
+        const int beta_right_end =
+            std::min(
+                selected_states.n_unique_beta,
+                beta_right_begin + unique_tile_size);
+
+        // W_P[K,L] = sum_s w_s C_s[:,K]^T V_alpha(P) C_s[:,L].
+        // The current beta tile replaces the old packed_pair -> dense
+        // N_unique_beta^2 image cache.
+        const int beta_tile_left_size = beta_left_end - beta_left_begin;
+        const auto beta_pair_weight_tiles =
+            build_beta_overlap_weight_tile_matrix(
+                same_spin_pair_cache,
+                selected_states,
+                n_packed_active_pairs,
+                beta_left_begin,
+                beta_left_end,
+                beta_right_begin,
+                beta_right_end);
+
+        for (int beta_left_id = beta_left_begin;
+             beta_left_id < beta_left_end;
+             ++beta_left_id) {
+          const int beta_left_local = beta_left_id - beta_left_begin;
+          for (int beta_right_id = beta_right_begin;
+               beta_right_id < beta_right_end;
+               ++beta_right_id) {
+            const int beta_right_local = beta_right_id - beta_right_begin;
+            const int beta_tile_index =
+                beta_left_local + beta_tile_left_size * beta_right_local;
+            const std::size_t ordered_pair_index =
+                ordered_spin_pair_storage_index(
+                    beta_left_id,
+                    beta_right_id,
+                    selected_states.n_unique_beta);
+            const auto& beta_pair_evaluation =
+                same_spin_pair_cache.beta_pair_cache_ref()[ordered_pair_index];
+            const auto& occ_L = unique_beta_determinants[beta_left_id];
+            const auto& occ_R = unique_beta_determinants[beta_right_id];
+
+            if (beta_pair_evaluation.overlap_result.nullity == 1) {
+              build_local_packed_pair_dense_image_matrix_from_tile_matrix(
+                  occ_L,
+                  occ_R,
+                  beta_pair_weight_tiles,
+                  beta_tile_index,
+                  &pair_dense_image);
+              accumulate_singular_spin_overlap_gradient_from_dense_image_local(
+                  occ_L,
+                  occ_R,
+                  beta_pair_evaluation.overlap_result,
+                  pair_dense_image,
+                  n_active_orbitals,
+                  active_orbital_overlap_gradient);
+              continue;
+            }
+
+            const auto& inverse_projection =
+                beta_pair_evaluation
+                    .opposite_spin_pair_cache
+                    .inverse_overlap_projection;
+            if (inverse_projection.packed_pair_indices.empty() ||
+                inverse_projection.projected_pair_values.empty()) {
+              continue;
+            }
+            if (beta_pair_evaluation.overlap_result.nullity != 0) {
+              continue;
+            }
+
+            double determinant_overlap_weight = 0.0;
+            for (std::size_t entry_index = 0;
+                 entry_index < inverse_projection.packed_pair_indices.size();
+                 ++entry_index) {
+              const int packed_pair_index =
+                  inverse_projection.packed_pair_indices[entry_index];
+              determinant_overlap_weight +=
+                  inverse_projection.packed_pair_values[entry_index] *
+                  beta_pair_weight_tiles(beta_tile_index, packed_pair_index);
+            }
+            if (std::abs(determinant_overlap_weight) <=
+                kContributionTolerance) {
+              continue;
+            }
+
+            build_inverse_overlap_gradient_from_tile_matrix(
+                occ_L,
+                occ_R,
+                beta_pair_weight_tiles,
+                beta_tile_index,
+                &inverse_overlap_gradient);
+            accumulate_spin_overlap_gradient(
+                occ_L,
+                occ_R,
+                beta_pair_evaluation.overlap_result,
+                determinant_overlap_weight,
+                inverse_overlap_gradient,
+                n_active_orbitals,
+                active_orbital_overlap_gradient);
+          }
         }
-        return beta_pair_dense_images;
-      });
-  for (int beta_left_id = 0;
-       beta_left_id < selected_states.n_unique_beta;
-       ++beta_left_id) {
-    for (int beta_right_id = 0;
-         beta_right_id < selected_states.n_unique_beta;
-         ++beta_right_id) {
-      const std::size_t ordered_pair_index = ordered_spin_pair_storage_index(
-          beta_left_id,
-          beta_right_id,
-          selected_states.n_unique_beta);
-      const auto& beta_pair_evaluation =
-          same_spin_pair_cache.beta_pair_cache_ref()[ordered_pair_index];
-      if (beta_pair_evaluation.overlap_result.nullity == 1) {
-        const Eigen::MatrixXd pair_dense_image =
-            build_local_packed_pair_dense_image_matrix(
-                unique_beta_determinants[beta_left_id],
-                unique_beta_determinants[beta_right_id],
-                beta_left_id,
-                beta_right_id,
-                &beta_pair_dense_image_provider);
-        accumulate_singular_spin_overlap_gradient_from_dense_image_local(
-            unique_beta_determinants[beta_left_id],
-            unique_beta_determinants[beta_right_id],
-            beta_pair_evaluation.overlap_result,
-            pair_dense_image,
-            n_active_orbitals,
-            active_orbital_overlap_gradient);
-        continue;
       }
-      const auto& inverse_projection =
-          beta_pair_evaluation.opposite_spin_pair_cache.inverse_overlap_projection;
-      if (inverse_projection.packed_pair_indices.empty() ||
-          inverse_projection.projected_pair_values.empty()) {
-        continue;
-      }
-      if (beta_pair_evaluation.overlap_result.nullity != 0) {
-        continue;
-      }
-
-      double determinant_overlap_weight = 0.0;
-      for (std::size_t entry_index = 0;
-           entry_index < inverse_projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index =
-            inverse_projection.packed_pair_indices[entry_index];
-        const double projected_value =
-            beta_pair_dense_image_provider.get(packed_pair_index)(
-                beta_left_id,
-                beta_right_id);
-        determinant_overlap_weight +=
-            inverse_projection.packed_pair_values[entry_index] *
-            projected_value;
-      }
-      if (std::abs(determinant_overlap_weight) <= kContributionTolerance) {
-        continue;
-      }
-
-      Eigen::MatrixXd inverse_overlap_gradient;
-      build_inverse_overlap_gradient_from_dense_image_local(
-          unique_beta_determinants[beta_left_id],
-          unique_beta_determinants[beta_right_id],
-          beta_left_id,
-          beta_right_id,
-          &beta_pair_dense_image_provider,
-          &inverse_overlap_gradient);
-      accumulate_spin_overlap_gradient(
-          unique_beta_determinants[beta_left_id],
-          unique_beta_determinants[beta_right_id],
-          beta_pair_evaluation.overlap_result,
-          determinant_overlap_weight,
-          inverse_overlap_gradient,
-          n_active_orbitals,
-          active_orbital_overlap_gradient);
     }
   }
 }
@@ -1750,88 +2364,97 @@ void accumulate_directional_alpha_overlap_gradient(
 
   const auto& unique_alpha_determinants =
       same_spin_pair_cache.alpha_reuse_table.unique_determinants;
-  const int overlap_block_size = limited_packed_pair_block_size(
-      n_packed_active_pairs,
-      opposite_spin_backward_overlap_block_size(),
-      dense_square_matrix_storage_bytes(selected_states.n_unique_alpha),
-      opposite_spin_backward_overlap_block_bytes_budget());
-  CachedPackedPairBlockProvider<Eigen::MatrixXd> alpha_pair_dense_image_provider(
-      n_packed_active_pairs,
-      overlap_block_size,
-      [&](int packed_pair_begin, int packed_pair_end) {
-        auto beta_weighted_image_block =
-            build_weighted_cofactor_projected_image_block(
-                same_spin_pair_cache.beta_pair_cache_ref(),
-                selected_states.n_unique_beta,
-                packed_pair_begin,
-                packed_pair_end);
-        std::vector<Eigen::MatrixXd> alpha_pair_dense_images;
-        alpha_pair_dense_images.reserve(beta_weighted_image_block.size());
-        for (auto& beta_weighted_image : beta_weighted_image_block) {
-          alpha_pair_dense_images.push_back(
-              accumulate_directional_alpha_pair_matrix(
-                  selected_states,
-                  directional_selected_states,
-                  beta_weighted_image));
+  {
+    const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+    Eigen::MatrixXd inverse_overlap_gradient;
+    for (int alpha_left_begin = 0;
+         alpha_left_begin < selected_states.n_unique_alpha;
+         alpha_left_begin += unique_tile_size) {
+      const int alpha_left_end =
+          std::min(
+              selected_states.n_unique_alpha,
+              alpha_left_begin + unique_tile_size);
+      for (int alpha_right_begin = 0;
+           alpha_right_begin < selected_states.n_unique_alpha;
+           alpha_right_begin += unique_tile_size) {
+        const int alpha_right_end =
+            std::min(
+                selected_states.n_unique_alpha,
+                alpha_right_begin + unique_tile_size);
+
+        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+        const auto alpha_pair_weight_tiles =
+            build_directional_alpha_overlap_weight_tile_matrix(
+                same_spin_pair_cache,
+                selected_states,
+                directional_selected_states,
+                n_packed_active_pairs,
+                alpha_left_begin,
+                alpha_left_end,
+                alpha_right_begin,
+                alpha_right_end);
+
+        for (int alpha_left_id = alpha_left_begin;
+             alpha_left_id < alpha_left_end;
+             ++alpha_left_id) {
+          const int alpha_left_local = alpha_left_id - alpha_left_begin;
+          for (int alpha_right_id = alpha_right_begin;
+               alpha_right_id < alpha_right_end;
+               ++alpha_right_id) {
+            const int alpha_right_local = alpha_right_id - alpha_right_begin;
+            const int alpha_tile_index =
+                alpha_left_local + alpha_tile_left_size * alpha_right_local;
+            const std::size_t ordered_pair_index =
+                ordered_spin_pair_storage_index(
+                    alpha_left_id,
+                    alpha_right_id,
+                    selected_states.n_unique_alpha);
+            const auto& alpha_pair_evaluation =
+                same_spin_pair_cache.alpha_pair_cache_ref()[ordered_pair_index];
+            const auto& inverse_projection =
+                alpha_pair_evaluation
+                    .opposite_spin_pair_cache
+                    .inverse_overlap_projection;
+            if (inverse_projection.packed_pair_indices.empty() ||
+                inverse_projection.projected_pair_values.empty()) {
+              continue;
+            }
+            if (alpha_pair_evaluation.overlap_result.nullity != 0) {
+              continue;
+            }
+
+            double determinant_overlap_weight = 0.0;
+            for (std::size_t entry_index = 0;
+                 entry_index < inverse_projection.packed_pair_indices.size();
+                 ++entry_index) {
+              const int packed_pair_index =
+                  inverse_projection.packed_pair_indices[entry_index];
+              determinant_overlap_weight +=
+                  inverse_projection.packed_pair_values[entry_index] *
+                  alpha_pair_weight_tiles(alpha_tile_index, packed_pair_index);
+            }
+            if (std::abs(determinant_overlap_weight) <=
+                kContributionTolerance) {
+              continue;
+            }
+
+            build_inverse_overlap_gradient_from_tile_matrix(
+                unique_alpha_determinants[alpha_left_id],
+                unique_alpha_determinants[alpha_right_id],
+                alpha_pair_weight_tiles,
+                alpha_tile_index,
+                &inverse_overlap_gradient);
+            accumulate_spin_overlap_gradient(
+                unique_alpha_determinants[alpha_left_id],
+                unique_alpha_determinants[alpha_right_id],
+                alpha_pair_evaluation.overlap_result,
+                determinant_overlap_weight,
+                inverse_overlap_gradient,
+                n_active_orbitals,
+                active_orbital_overlap_gradient);
+          }
         }
-        return alpha_pair_dense_images;
-      });
-  for (int alpha_left_id = 0;
-       alpha_left_id < selected_states.n_unique_alpha;
-       ++alpha_left_id) {
-    for (int alpha_right_id = 0;
-         alpha_right_id < selected_states.n_unique_alpha;
-         ++alpha_right_id) {
-      const std::size_t ordered_pair_index = ordered_spin_pair_storage_index(
-          alpha_left_id,
-          alpha_right_id,
-          selected_states.n_unique_alpha);
-      const auto& alpha_pair_evaluation =
-          same_spin_pair_cache.alpha_pair_cache_ref()[ordered_pair_index];
-      const auto& inverse_projection =
-          alpha_pair_evaluation.opposite_spin_pair_cache.inverse_overlap_projection;
-      if (inverse_projection.packed_pair_indices.empty() ||
-          inverse_projection.projected_pair_values.empty()) {
-        continue;
       }
-      if (alpha_pair_evaluation.overlap_result.nullity != 0) {
-        continue;
-      }
-
-      double determinant_overlap_weight = 0.0;
-      for (std::size_t entry_index = 0;
-           entry_index < inverse_projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index =
-            inverse_projection.packed_pair_indices[entry_index];
-        const double projected_value =
-            alpha_pair_dense_image_provider.get(packed_pair_index)(
-                alpha_left_id,
-                alpha_right_id);
-        determinant_overlap_weight +=
-            inverse_projection.packed_pair_values[entry_index] *
-            projected_value;
-      }
-      if (std::abs(determinant_overlap_weight) <= kContributionTolerance) {
-        continue;
-      }
-
-      Eigen::MatrixXd inverse_overlap_gradient;
-      build_inverse_overlap_gradient_from_dense_image_local(
-          unique_alpha_determinants[alpha_left_id],
-          unique_alpha_determinants[alpha_right_id],
-          alpha_left_id,
-          alpha_right_id,
-          &alpha_pair_dense_image_provider,
-          &inverse_overlap_gradient);
-      accumulate_spin_overlap_gradient(
-          unique_alpha_determinants[alpha_left_id],
-          unique_alpha_determinants[alpha_right_id],
-          alpha_pair_evaluation.overlap_result,
-          determinant_overlap_weight,
-          inverse_overlap_gradient,
-          n_active_orbitals,
-          active_orbital_overlap_gradient);
     }
   }
 }
@@ -1855,88 +2478,97 @@ void accumulate_directional_beta_overlap_gradient(
 
   const auto& unique_beta_determinants =
       same_spin_pair_cache.beta_reuse_table.unique_determinants;
-  const int overlap_block_size = limited_packed_pair_block_size(
-      n_packed_active_pairs,
-      opposite_spin_backward_overlap_block_size(),
-      dense_square_matrix_storage_bytes(selected_states.n_unique_beta),
-      opposite_spin_backward_overlap_block_bytes_budget());
-  CachedPackedPairBlockProvider<Eigen::MatrixXd> beta_pair_dense_image_provider(
-      n_packed_active_pairs,
-      overlap_block_size,
-      [&](int packed_pair_begin, int packed_pair_end) {
-        auto alpha_weighted_image_block =
-            build_weighted_cofactor_projected_image_block(
-                same_spin_pair_cache.alpha_pair_cache_ref(),
-                selected_states.n_unique_alpha,
-                packed_pair_begin,
-                packed_pair_end);
-        std::vector<Eigen::MatrixXd> beta_pair_dense_images;
-        beta_pair_dense_images.reserve(alpha_weighted_image_block.size());
-        for (auto& alpha_weighted_image : alpha_weighted_image_block) {
-          beta_pair_dense_images.push_back(
-              accumulate_directional_beta_pair_matrix(
-                  selected_states,
-                  directional_selected_states,
-                  alpha_weighted_image));
+  {
+    const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+    Eigen::MatrixXd inverse_overlap_gradient;
+    for (int beta_left_begin = 0;
+         beta_left_begin < selected_states.n_unique_beta;
+         beta_left_begin += unique_tile_size) {
+      const int beta_left_end =
+          std::min(
+              selected_states.n_unique_beta,
+              beta_left_begin + unique_tile_size);
+      for (int beta_right_begin = 0;
+           beta_right_begin < selected_states.n_unique_beta;
+           beta_right_begin += unique_tile_size) {
+        const int beta_right_end =
+            std::min(
+                selected_states.n_unique_beta,
+                beta_right_begin + unique_tile_size);
+
+        const int beta_tile_left_size = beta_left_end - beta_left_begin;
+        const auto beta_pair_weight_tiles =
+            build_directional_beta_overlap_weight_tile_matrix(
+                same_spin_pair_cache,
+                selected_states,
+                directional_selected_states,
+                n_packed_active_pairs,
+                beta_left_begin,
+                beta_left_end,
+                beta_right_begin,
+                beta_right_end);
+
+        for (int beta_left_id = beta_left_begin;
+             beta_left_id < beta_left_end;
+             ++beta_left_id) {
+          const int beta_left_local = beta_left_id - beta_left_begin;
+          for (int beta_right_id = beta_right_begin;
+               beta_right_id < beta_right_end;
+               ++beta_right_id) {
+            const int beta_right_local = beta_right_id - beta_right_begin;
+            const int beta_tile_index =
+                beta_left_local + beta_tile_left_size * beta_right_local;
+            const std::size_t ordered_pair_index =
+                ordered_spin_pair_storage_index(
+                    beta_left_id,
+                    beta_right_id,
+                    selected_states.n_unique_beta);
+            const auto& beta_pair_evaluation =
+                same_spin_pair_cache.beta_pair_cache_ref()[ordered_pair_index];
+            const auto& inverse_projection =
+                beta_pair_evaluation
+                    .opposite_spin_pair_cache
+                    .inverse_overlap_projection;
+            if (inverse_projection.packed_pair_indices.empty() ||
+                inverse_projection.projected_pair_values.empty()) {
+              continue;
+            }
+            if (beta_pair_evaluation.overlap_result.nullity != 0) {
+              continue;
+            }
+
+            double determinant_overlap_weight = 0.0;
+            for (std::size_t entry_index = 0;
+                 entry_index < inverse_projection.packed_pair_indices.size();
+                 ++entry_index) {
+              const int packed_pair_index =
+                  inverse_projection.packed_pair_indices[entry_index];
+              determinant_overlap_weight +=
+                  inverse_projection.packed_pair_values[entry_index] *
+                  beta_pair_weight_tiles(beta_tile_index, packed_pair_index);
+            }
+            if (std::abs(determinant_overlap_weight) <=
+                kContributionTolerance) {
+              continue;
+            }
+
+            build_inverse_overlap_gradient_from_tile_matrix(
+                unique_beta_determinants[beta_left_id],
+                unique_beta_determinants[beta_right_id],
+                beta_pair_weight_tiles,
+                beta_tile_index,
+                &inverse_overlap_gradient);
+            accumulate_spin_overlap_gradient(
+                unique_beta_determinants[beta_left_id],
+                unique_beta_determinants[beta_right_id],
+                beta_pair_evaluation.overlap_result,
+                determinant_overlap_weight,
+                inverse_overlap_gradient,
+                n_active_orbitals,
+                active_orbital_overlap_gradient);
+          }
         }
-        return beta_pair_dense_images;
-      });
-  for (int beta_left_id = 0;
-       beta_left_id < selected_states.n_unique_beta;
-       ++beta_left_id) {
-    for (int beta_right_id = 0;
-         beta_right_id < selected_states.n_unique_beta;
-         ++beta_right_id) {
-      const std::size_t ordered_pair_index = ordered_spin_pair_storage_index(
-          beta_left_id,
-          beta_right_id,
-          selected_states.n_unique_beta);
-      const auto& beta_pair_evaluation =
-          same_spin_pair_cache.beta_pair_cache_ref()[ordered_pair_index];
-      const auto& inverse_projection =
-          beta_pair_evaluation.opposite_spin_pair_cache.inverse_overlap_projection;
-      if (inverse_projection.packed_pair_indices.empty() ||
-          inverse_projection.projected_pair_values.empty()) {
-        continue;
       }
-      if (beta_pair_evaluation.overlap_result.nullity != 0) {
-        continue;
-      }
-
-      double determinant_overlap_weight = 0.0;
-      for (std::size_t entry_index = 0;
-           entry_index < inverse_projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index =
-            inverse_projection.packed_pair_indices[entry_index];
-        const double projected_value =
-            beta_pair_dense_image_provider.get(packed_pair_index)(
-                beta_left_id,
-                beta_right_id);
-        determinant_overlap_weight +=
-            inverse_projection.packed_pair_values[entry_index] *
-            projected_value;
-      }
-      if (std::abs(determinant_overlap_weight) <= kContributionTolerance) {
-        continue;
-      }
-
-      Eigen::MatrixXd inverse_overlap_gradient;
-      build_inverse_overlap_gradient_from_dense_image_local(
-          unique_beta_determinants[beta_left_id],
-          unique_beta_determinants[beta_right_id],
-          beta_left_id,
-          beta_right_id,
-          &beta_pair_dense_image_provider,
-          &inverse_overlap_gradient);
-      accumulate_spin_overlap_gradient(
-          unique_beta_determinants[beta_left_id],
-          unique_beta_determinants[beta_right_id],
-          beta_pair_evaluation.overlap_result,
-          determinant_overlap_weight,
-          inverse_overlap_gradient,
-          n_active_orbitals,
-          active_orbital_overlap_gradient);
     }
   }
 }
@@ -1961,151 +2593,146 @@ void accumulate_local_alpha_overlap_gradient(
 
   const auto& unique_alpha_determinants =
       same_spin_pair_cache.alpha_reuse_table.unique_determinants;
-  const int overlap_block_size = limited_packed_pair_block_size(
-      n_packed_active_pairs,
-      opposite_spin_backward_overlap_block_size(),
-      dense_square_matrix_storage_bytes(selected_states.n_unique_alpha),
-      opposite_spin_backward_overlap_block_bytes_budget());
-  CachedPackedPairBlockProvider<Eigen::MatrixXd> alpha_pair_dense_image_provider(
-      n_packed_active_pairs,
-      overlap_block_size,
-      [&](int packed_pair_begin, int packed_pair_end) {
-        auto beta_weighted_image_block =
-            build_weighted_cofactor_projected_image_block(
-                same_spin_pair_cache.beta_pair_cache_ref(),
-                selected_states.n_unique_beta,
-                packed_pair_begin,
-                packed_pair_end);
-        std::vector<Eigen::MatrixXd> alpha_pair_dense_images;
-        alpha_pair_dense_images.reserve(beta_weighted_image_block.size());
-        for (auto& beta_weighted_image : beta_weighted_image_block) {
-          alpha_pair_dense_images.push_back(
-              accumulate_alpha_pair_matrix(
-                  selected_states,
-                  beta_weighted_image));
-        }
-        return alpha_pair_dense_images;
-      });
-  CachedPackedPairBlockProvider<Eigen::MatrixXd>
-      directional_alpha_pair_dense_image_provider(
-          n_packed_active_pairs,
-          overlap_block_size,
-          [&](int packed_pair_begin, int packed_pair_end) {
-            auto beta_directional_weighted_image_block =
-                build_directional_weighted_cofactor_projected_image_block(
-                    beta_directional_pair_data,
-                    selected_states.n_unique_beta,
-                    packed_pair_begin,
-                    packed_pair_end);
-            std::vector<Eigen::MatrixXd> alpha_pair_dense_images;
-            alpha_pair_dense_images.reserve(
-                beta_directional_weighted_image_block.size());
-            for (auto& beta_directional_weighted_image :
-                 beta_directional_weighted_image_block) {
-              alpha_pair_dense_images.push_back(
-                  accumulate_alpha_pair_matrix(
-                      selected_states,
-                      beta_directional_weighted_image));
+  {
+    const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+    Eigen::MatrixXd inverse_overlap_gradient;
+    Eigen::MatrixXd delta_inverse_overlap_gradient;
+    for (int alpha_left_begin = 0;
+         alpha_left_begin < selected_states.n_unique_alpha;
+         alpha_left_begin += unique_tile_size) {
+      const int alpha_left_end =
+          std::min(
+              selected_states.n_unique_alpha,
+              alpha_left_begin + unique_tile_size);
+      for (int alpha_right_begin = 0;
+           alpha_right_begin < selected_states.n_unique_alpha;
+           alpha_right_begin += unique_tile_size) {
+        const int alpha_right_end =
+            std::min(
+                selected_states.n_unique_alpha,
+                alpha_right_begin + unique_tile_size);
+
+        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+        const auto alpha_pair_weight_tiles =
+            build_alpha_overlap_weight_tile_matrix(
+                same_spin_pair_cache,
+                selected_states,
+                n_packed_active_pairs,
+                alpha_left_begin,
+                alpha_left_end,
+                alpha_right_begin,
+                alpha_right_end);
+        const auto directional_alpha_pair_weight_tiles =
+            build_local_directional_alpha_overlap_weight_tile_matrix(
+                beta_directional_pair_data,
+                selected_states,
+                n_packed_active_pairs,
+                alpha_left_begin,
+                alpha_left_end,
+                alpha_right_begin,
+                alpha_right_end);
+
+        for (int alpha_left_id = alpha_left_begin;
+             alpha_left_id < alpha_left_end;
+             ++alpha_left_id) {
+          const int alpha_left_local = alpha_left_id - alpha_left_begin;
+          for (int alpha_right_id = alpha_right_begin;
+               alpha_right_id < alpha_right_end;
+               ++alpha_right_id) {
+            const int alpha_right_local = alpha_right_id - alpha_right_begin;
+            const int alpha_tile_index =
+                alpha_left_local + alpha_tile_left_size * alpha_right_local;
+            const std::size_t ordered_pair_index =
+                ordered_spin_pair_storage_index(
+                    alpha_left_id,
+                    alpha_right_id,
+                    selected_states.n_unique_alpha);
+            const auto& alpha_pair_evaluation =
+                same_spin_pair_cache.alpha_pair_cache_ref()[ordered_pair_index];
+            if (alpha_pair_evaluation.overlap_result.nullity != 0 ||
+                alpha_pair_evaluation.overlap_result.overlap_determinant ==
+                    0.0) {
+              continue;
             }
-            return alpha_pair_dense_images;
-          });
-  for (int alpha_left_id = 0;
-       alpha_left_id < selected_states.n_unique_alpha;
-       ++alpha_left_id) {
-    for (int alpha_right_id = 0;
-         alpha_right_id < selected_states.n_unique_alpha;
-         ++alpha_right_id) {
-      const std::size_t ordered_pair_index = ordered_spin_pair_storage_index(
-          alpha_left_id,
-          alpha_right_id,
-          selected_states.n_unique_alpha);
-      const auto& alpha_pair_evaluation =
-          same_spin_pair_cache.alpha_pair_cache_ref()[ordered_pair_index];
-      if (alpha_pair_evaluation.overlap_result.nullity != 0 ||
-          alpha_pair_evaluation.overlap_result.overlap_determinant == 0.0) {
-        continue;
-      }
 
-      const auto& inverse_projection =
-          alpha_pair_evaluation.opposite_spin_pair_cache.inverse_overlap_projection;
-      const auto& directional_inverse_projection =
-          alpha_directional_pair_data[ordered_pair_index]
-              .delta_inverse_overlap_projection;
-      if (inverse_projection.packed_pair_indices.empty() &&
-          directional_inverse_projection.packed_pair_indices.empty()) {
-        continue;
-      }
+            const auto& inverse_projection =
+                alpha_pair_evaluation
+                    .opposite_spin_pair_cache
+                    .inverse_overlap_projection;
+            const auto& directional_inverse_projection =
+                alpha_directional_pair_data[ordered_pair_index]
+                    .delta_inverse_overlap_projection;
+            if (inverse_projection.packed_pair_indices.empty() &&
+                directional_inverse_projection.packed_pair_indices.empty()) {
+              continue;
+            }
 
-      double determinant_overlap_weight = 0.0;
-      double delta_determinant_overlap_weight = 0.0;
-      for (std::size_t entry_index = 0;
-           entry_index < inverse_projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index =
-            inverse_projection.packed_pair_indices[entry_index];
-        const double accepted_dense_value =
-            alpha_pair_dense_image_provider.get(packed_pair_index)(
-                alpha_left_id,
-                alpha_right_id);
-        const double directional_dense_value =
-            directional_alpha_pair_dense_image_provider.get(packed_pair_index)(
-                alpha_left_id,
-                alpha_right_id);
-        determinant_overlap_weight +=
-            inverse_projection.packed_pair_values[entry_index] *
-            accepted_dense_value;
-        delta_determinant_overlap_weight +=
-            inverse_projection.packed_pair_values[entry_index] *
-            directional_dense_value;
-      }
-      for (std::size_t entry_index = 0;
-           entry_index < directional_inverse_projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index =
-            directional_inverse_projection.packed_pair_indices[entry_index];
-        const double accepted_dense_value =
-            alpha_pair_dense_image_provider.get(packed_pair_index)(
-                alpha_left_id,
-                alpha_right_id);
-        delta_determinant_overlap_weight +=
-            directional_inverse_projection.packed_pair_values[entry_index] *
-            accepted_dense_value;
-      }
+            double determinant_overlap_weight = 0.0;
+            double delta_determinant_overlap_weight = 0.0;
+            for (std::size_t entry_index = 0;
+                 entry_index < inverse_projection.packed_pair_indices.size();
+                 ++entry_index) {
+              const int packed_pair_index =
+                  inverse_projection.packed_pair_indices[entry_index];
+              const double accepted_dense_value =
+                  alpha_pair_weight_tiles(alpha_tile_index, packed_pair_index);
+              const double directional_dense_value =
+                  directional_alpha_pair_weight_tiles(
+                      alpha_tile_index,
+                      packed_pair_index);
+              determinant_overlap_weight +=
+                  inverse_projection.packed_pair_values[entry_index] *
+                  accepted_dense_value;
+              delta_determinant_overlap_weight +=
+                  inverse_projection.packed_pair_values[entry_index] *
+                  directional_dense_value;
+            }
+            for (std::size_t entry_index = 0;
+                 entry_index <
+                     directional_inverse_projection.packed_pair_indices.size();
+                 ++entry_index) {
+              const int packed_pair_index =
+                  directional_inverse_projection.packed_pair_indices[entry_index];
+              const double accepted_dense_value =
+                  alpha_pair_weight_tiles(alpha_tile_index, packed_pair_index);
+              delta_determinant_overlap_weight +=
+                  directional_inverse_projection.packed_pair_values[entry_index] *
+                  accepted_dense_value;
+            }
 
-      Eigen::MatrixXd inverse_overlap_gradient;
-      build_inverse_overlap_gradient_from_dense_image_local(
-          unique_alpha_determinants[alpha_left_id],
-          unique_alpha_determinants[alpha_right_id],
-          alpha_left_id,
-          alpha_right_id,
-          &alpha_pair_dense_image_provider,
-          &inverse_overlap_gradient);
-      Eigen::MatrixXd delta_inverse_overlap_gradient;
-      build_inverse_overlap_gradient_from_dense_image_local(
-          unique_alpha_determinants[alpha_left_id],
-          unique_alpha_determinants[alpha_right_id],
-          alpha_left_id,
-          alpha_right_id,
-          &directional_alpha_pair_dense_image_provider,
-          &delta_inverse_overlap_gradient);
-      const Eigen::MatrixXd inverse_overlap_submatrix =
-          build_inverse_overlap_submatrix_from_result(
-              alpha_pair_evaluation.overlap_result);
-      accumulate_regular_spin_overlap_gradient_direction_local(
-          unique_alpha_determinants[alpha_left_id],
-          unique_alpha_determinants[alpha_right_id],
-          alpha_pair_evaluation.overlap_result.overlap_determinant,
-          alpha_directional_pair_data[ordered_pair_index]
-              .delta_overlap_determinant,
-          inverse_overlap_submatrix,
-          alpha_directional_pair_data[ordered_pair_index]
-              .delta_inverse_overlap_submatrix,
-          determinant_overlap_weight,
-          delta_determinant_overlap_weight,
-          inverse_overlap_gradient,
-          delta_inverse_overlap_gradient,
-          n_active_orbitals,
-          active_orbital_overlap_gradient);
+            build_inverse_overlap_gradient_from_tile_matrix(
+                unique_alpha_determinants[alpha_left_id],
+                unique_alpha_determinants[alpha_right_id],
+                alpha_pair_weight_tiles,
+                alpha_tile_index,
+                &inverse_overlap_gradient);
+            build_inverse_overlap_gradient_from_tile_matrix(
+                unique_alpha_determinants[alpha_left_id],
+                unique_alpha_determinants[alpha_right_id],
+                directional_alpha_pair_weight_tiles,
+                alpha_tile_index,
+                &delta_inverse_overlap_gradient);
+            const Eigen::MatrixXd inverse_overlap_submatrix =
+                build_inverse_overlap_submatrix_from_result(
+                    alpha_pair_evaluation.overlap_result);
+            accumulate_regular_spin_overlap_gradient_direction_local(
+                unique_alpha_determinants[alpha_left_id],
+                unique_alpha_determinants[alpha_right_id],
+                alpha_pair_evaluation.overlap_result.overlap_determinant,
+                alpha_directional_pair_data[ordered_pair_index]
+                    .delta_overlap_determinant,
+                inverse_overlap_submatrix,
+                alpha_directional_pair_data[ordered_pair_index]
+                    .delta_inverse_overlap_submatrix,
+                determinant_overlap_weight,
+                delta_determinant_overlap_weight,
+                inverse_overlap_gradient,
+                delta_inverse_overlap_gradient,
+                n_active_orbitals,
+                active_orbital_overlap_gradient);
+          }
+        }
+      }
     }
   }
 }
@@ -2130,151 +2757,146 @@ void accumulate_local_beta_overlap_gradient(
 
   const auto& unique_beta_determinants =
       same_spin_pair_cache.beta_reuse_table.unique_determinants;
-  const int overlap_block_size = limited_packed_pair_block_size(
-      n_packed_active_pairs,
-      opposite_spin_backward_overlap_block_size(),
-      dense_square_matrix_storage_bytes(selected_states.n_unique_beta),
-      opposite_spin_backward_overlap_block_bytes_budget());
-  CachedPackedPairBlockProvider<Eigen::MatrixXd> beta_pair_dense_image_provider(
-      n_packed_active_pairs,
-      overlap_block_size,
-      [&](int packed_pair_begin, int packed_pair_end) {
-        auto alpha_weighted_image_block =
-            build_weighted_cofactor_projected_image_block(
-                same_spin_pair_cache.alpha_pair_cache_ref(),
-                selected_states.n_unique_alpha,
-                packed_pair_begin,
-                packed_pair_end);
-        std::vector<Eigen::MatrixXd> beta_pair_dense_images;
-        beta_pair_dense_images.reserve(alpha_weighted_image_block.size());
-        for (auto& alpha_weighted_image : alpha_weighted_image_block) {
-          beta_pair_dense_images.push_back(
-              accumulate_beta_pair_matrix(
-                  selected_states,
-                  alpha_weighted_image));
-        }
-        return beta_pair_dense_images;
-      });
-  CachedPackedPairBlockProvider<Eigen::MatrixXd>
-      directional_beta_pair_dense_image_provider(
-          n_packed_active_pairs,
-          overlap_block_size,
-          [&](int packed_pair_begin, int packed_pair_end) {
-            auto alpha_directional_weighted_image_block =
-                build_directional_weighted_cofactor_projected_image_block(
-                    alpha_directional_pair_data,
-                    selected_states.n_unique_alpha,
-                    packed_pair_begin,
-                    packed_pair_end);
-            std::vector<Eigen::MatrixXd> beta_pair_dense_images;
-            beta_pair_dense_images.reserve(
-                alpha_directional_weighted_image_block.size());
-            for (auto& alpha_directional_weighted_image :
-                 alpha_directional_weighted_image_block) {
-              beta_pair_dense_images.push_back(
-                  accumulate_beta_pair_matrix(
-                      selected_states,
-                      alpha_directional_weighted_image));
+  {
+    const int unique_tile_size = opposite_spin_backward_unique_tile_size();
+    Eigen::MatrixXd inverse_overlap_gradient;
+    Eigen::MatrixXd delta_inverse_overlap_gradient;
+    for (int beta_left_begin = 0;
+         beta_left_begin < selected_states.n_unique_beta;
+         beta_left_begin += unique_tile_size) {
+      const int beta_left_end =
+          std::min(
+              selected_states.n_unique_beta,
+              beta_left_begin + unique_tile_size);
+      for (int beta_right_begin = 0;
+           beta_right_begin < selected_states.n_unique_beta;
+           beta_right_begin += unique_tile_size) {
+        const int beta_right_end =
+            std::min(
+                selected_states.n_unique_beta,
+                beta_right_begin + unique_tile_size);
+
+        const int beta_tile_left_size = beta_left_end - beta_left_begin;
+        const auto beta_pair_weight_tiles =
+            build_beta_overlap_weight_tile_matrix(
+                same_spin_pair_cache,
+                selected_states,
+                n_packed_active_pairs,
+                beta_left_begin,
+                beta_left_end,
+                beta_right_begin,
+                beta_right_end);
+        const auto directional_beta_pair_weight_tiles =
+            build_local_directional_beta_overlap_weight_tile_matrix(
+                alpha_directional_pair_data,
+                selected_states,
+                n_packed_active_pairs,
+                beta_left_begin,
+                beta_left_end,
+                beta_right_begin,
+                beta_right_end);
+
+        for (int beta_left_id = beta_left_begin;
+             beta_left_id < beta_left_end;
+             ++beta_left_id) {
+          const int beta_left_local = beta_left_id - beta_left_begin;
+          for (int beta_right_id = beta_right_begin;
+               beta_right_id < beta_right_end;
+               ++beta_right_id) {
+            const int beta_right_local = beta_right_id - beta_right_begin;
+            const int beta_tile_index =
+                beta_left_local + beta_tile_left_size * beta_right_local;
+            const std::size_t ordered_pair_index =
+                ordered_spin_pair_storage_index(
+                    beta_left_id,
+                    beta_right_id,
+                    selected_states.n_unique_beta);
+            const auto& beta_pair_evaluation =
+                same_spin_pair_cache.beta_pair_cache_ref()[ordered_pair_index];
+            if (beta_pair_evaluation.overlap_result.nullity != 0 ||
+                beta_pair_evaluation.overlap_result.overlap_determinant ==
+                    0.0) {
+              continue;
             }
-            return beta_pair_dense_images;
-          });
-  for (int beta_left_id = 0;
-       beta_left_id < selected_states.n_unique_beta;
-       ++beta_left_id) {
-    for (int beta_right_id = 0;
-         beta_right_id < selected_states.n_unique_beta;
-         ++beta_right_id) {
-      const std::size_t ordered_pair_index = ordered_spin_pair_storage_index(
-          beta_left_id,
-          beta_right_id,
-          selected_states.n_unique_beta);
-      const auto& beta_pair_evaluation =
-          same_spin_pair_cache.beta_pair_cache_ref()[ordered_pair_index];
-      if (beta_pair_evaluation.overlap_result.nullity != 0 ||
-          beta_pair_evaluation.overlap_result.overlap_determinant == 0.0) {
-        continue;
-      }
 
-      const auto& inverse_projection =
-          beta_pair_evaluation.opposite_spin_pair_cache.inverse_overlap_projection;
-      const auto& directional_inverse_projection =
-          beta_directional_pair_data[ordered_pair_index]
-              .delta_inverse_overlap_projection;
-      if (inverse_projection.packed_pair_indices.empty() &&
-          directional_inverse_projection.packed_pair_indices.empty()) {
-        continue;
-      }
+            const auto& inverse_projection =
+                beta_pair_evaluation
+                    .opposite_spin_pair_cache
+                    .inverse_overlap_projection;
+            const auto& directional_inverse_projection =
+                beta_directional_pair_data[ordered_pair_index]
+                    .delta_inverse_overlap_projection;
+            if (inverse_projection.packed_pair_indices.empty() &&
+                directional_inverse_projection.packed_pair_indices.empty()) {
+              continue;
+            }
 
-      double determinant_overlap_weight = 0.0;
-      double delta_determinant_overlap_weight = 0.0;
-      for (std::size_t entry_index = 0;
-           entry_index < inverse_projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index =
-            inverse_projection.packed_pair_indices[entry_index];
-        const double accepted_dense_value =
-            beta_pair_dense_image_provider.get(packed_pair_index)(
-                beta_left_id,
-                beta_right_id);
-        const double directional_dense_value =
-            directional_beta_pair_dense_image_provider.get(packed_pair_index)(
-                beta_left_id,
-                beta_right_id);
-        determinant_overlap_weight +=
-            inverse_projection.packed_pair_values[entry_index] *
-            accepted_dense_value;
-        delta_determinant_overlap_weight +=
-            inverse_projection.packed_pair_values[entry_index] *
-            directional_dense_value;
-      }
-      for (std::size_t entry_index = 0;
-           entry_index < directional_inverse_projection.packed_pair_indices.size();
-           ++entry_index) {
-        const int packed_pair_index =
-            directional_inverse_projection.packed_pair_indices[entry_index];
-        const double accepted_dense_value =
-            beta_pair_dense_image_provider.get(packed_pair_index)(
-                beta_left_id,
-                beta_right_id);
-        delta_determinant_overlap_weight +=
-            directional_inverse_projection.packed_pair_values[entry_index] *
-            accepted_dense_value;
-      }
+            double determinant_overlap_weight = 0.0;
+            double delta_determinant_overlap_weight = 0.0;
+            for (std::size_t entry_index = 0;
+                 entry_index < inverse_projection.packed_pair_indices.size();
+                 ++entry_index) {
+              const int packed_pair_index =
+                  inverse_projection.packed_pair_indices[entry_index];
+              const double accepted_dense_value =
+                  beta_pair_weight_tiles(beta_tile_index, packed_pair_index);
+              const double directional_dense_value =
+                  directional_beta_pair_weight_tiles(
+                      beta_tile_index,
+                      packed_pair_index);
+              determinant_overlap_weight +=
+                  inverse_projection.packed_pair_values[entry_index] *
+                  accepted_dense_value;
+              delta_determinant_overlap_weight +=
+                  inverse_projection.packed_pair_values[entry_index] *
+                  directional_dense_value;
+            }
+            for (std::size_t entry_index = 0;
+                 entry_index <
+                     directional_inverse_projection.packed_pair_indices.size();
+                 ++entry_index) {
+              const int packed_pair_index =
+                  directional_inverse_projection.packed_pair_indices[entry_index];
+              const double accepted_dense_value =
+                  beta_pair_weight_tiles(beta_tile_index, packed_pair_index);
+              delta_determinant_overlap_weight +=
+                  directional_inverse_projection.packed_pair_values[entry_index] *
+                  accepted_dense_value;
+            }
 
-      Eigen::MatrixXd inverse_overlap_gradient;
-      build_inverse_overlap_gradient_from_dense_image_local(
-          unique_beta_determinants[beta_left_id],
-          unique_beta_determinants[beta_right_id],
-          beta_left_id,
-          beta_right_id,
-          &beta_pair_dense_image_provider,
-          &inverse_overlap_gradient);
-      Eigen::MatrixXd delta_inverse_overlap_gradient;
-      build_inverse_overlap_gradient_from_dense_image_local(
-          unique_beta_determinants[beta_left_id],
-          unique_beta_determinants[beta_right_id],
-          beta_left_id,
-          beta_right_id,
-          &directional_beta_pair_dense_image_provider,
-          &delta_inverse_overlap_gradient);
-      const Eigen::MatrixXd inverse_overlap_submatrix =
-          build_inverse_overlap_submatrix_from_result(
-              beta_pair_evaluation.overlap_result);
-      accumulate_regular_spin_overlap_gradient_direction_local(
-          unique_beta_determinants[beta_left_id],
-          unique_beta_determinants[beta_right_id],
-          beta_pair_evaluation.overlap_result.overlap_determinant,
-          beta_directional_pair_data[ordered_pair_index]
-              .delta_overlap_determinant,
-          inverse_overlap_submatrix,
-          beta_directional_pair_data[ordered_pair_index]
-              .delta_inverse_overlap_submatrix,
-          determinant_overlap_weight,
-          delta_determinant_overlap_weight,
-          inverse_overlap_gradient,
-          delta_inverse_overlap_gradient,
-          n_active_orbitals,
-          active_orbital_overlap_gradient);
+            build_inverse_overlap_gradient_from_tile_matrix(
+                unique_beta_determinants[beta_left_id],
+                unique_beta_determinants[beta_right_id],
+                beta_pair_weight_tiles,
+                beta_tile_index,
+                &inverse_overlap_gradient);
+            build_inverse_overlap_gradient_from_tile_matrix(
+                unique_beta_determinants[beta_left_id],
+                unique_beta_determinants[beta_right_id],
+                directional_beta_pair_weight_tiles,
+                beta_tile_index,
+                &delta_inverse_overlap_gradient);
+            const Eigen::MatrixXd inverse_overlap_submatrix =
+                build_inverse_overlap_submatrix_from_result(
+                    beta_pair_evaluation.overlap_result);
+            accumulate_regular_spin_overlap_gradient_direction_local(
+                unique_beta_determinants[beta_left_id],
+                unique_beta_determinants[beta_right_id],
+                beta_pair_evaluation.overlap_result.overlap_determinant,
+                beta_directional_pair_data[ordered_pair_index]
+                    .delta_overlap_determinant,
+                inverse_overlap_submatrix,
+                beta_directional_pair_data[ordered_pair_index]
+                    .delta_inverse_overlap_submatrix,
+                determinant_overlap_weight,
+                delta_determinant_overlap_weight,
+                inverse_overlap_gradient,
+                delta_inverse_overlap_gradient,
+                n_active_orbitals,
+                active_orbital_overlap_gradient);
+          }
+        }
+      }
     }
   }
 }
@@ -2315,111 +2937,28 @@ OppositeSpinMatrixBackwardContribution build_opposite_spin_matrix_backward_contr
   }
 
   // Rebuild opposite-spin packed-pair channel matrices on demand from the
-  // unique same-spin cache. The small provider cache keeps the working set
-  // bounded while preserving the exact matrix-form contractions.
+  // unique same-spin cache. Sparse packed-pair blocks and unique-spin tiles
+  // bound the working set without the old dense provider layer.
   const int sparse_block_size = std::min(
       n_packed_active_pairs,
       opposite_spin_backward_sparse_block_size());
-  int dense_batch_size = std::min(
+  const int dense_batch_size = std::min(
       n_packed_active_pairs,
       opposite_spin_backward_dense_batch_size());
-  const std::size_t per_alpha_weight_matrix_bytes =
-      dense_square_matrix_storage_bytes(selected_states.n_unique_alpha);
-  if (per_alpha_weight_matrix_bytes > 0) {
-    const std::size_t dense_batch_bytes_budget =
-        opposite_spin_backward_dense_batch_bytes_budget();
-    const std::size_t budget_limited_batch_size = std::max<std::size_t>(
-        1u,
-        dense_batch_bytes_budget / per_alpha_weight_matrix_bytes);
-    dense_batch_size = std::min(
-        dense_batch_size,
-        static_cast<int>(std::min<std::size_t>(
-            n_packed_active_pairs,
-            budget_limited_batch_size)));
-  }
 
   // Opposite-spin packed 2e adjoint:
   //   dE / dG(Q,P) = sum_n w_n < U_alpha(P), C^(n) U_beta(Q) [C^(n)]^T >.
   //
-  // Build packed-pair sparse families in bounded blocks rather than per packed
-  // pair. This keeps the memory footprint bounded like the tiled forward path
-  // while avoiding the previous "re-scan the whole unique-pair cache once per
-  // beta pair and once per alpha pair" rebuild pattern. The dense beta batch
-  // is also capped by a byte budget so large unique-spin spaces automatically
-  // fall back to a smaller working set.
-  for (int beta_batch_begin = 0;
-       beta_batch_begin < n_packed_active_pairs;
-       beta_batch_begin += dense_batch_size) {
-    const int beta_batch_end =
-        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
-    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
-        same_spin_pair_cache.beta_pair_cache_ref(),
-        selected_states.n_unique_beta,
-        beta_batch_begin,
-        beta_batch_end);
-
-    std::vector<int> active_beta_packed_pair_indices;
-    std::vector<Eigen::MatrixXd> alpha_pair_weight_matrices;
-    active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
-    alpha_pair_weight_matrices.reserve(beta_sparse_batch.size());
-    for (int beta_local_index = 0;
-         beta_local_index < beta_batch_end - beta_batch_begin;
-         ++beta_local_index) {
-      Eigen::MatrixXd alpha_pair_weight_matrix =
-          accumulate_alpha_pair_matrix(
-              selected_states,
-              beta_sparse_batch[beta_local_index]);
-      if (dense_matrix_is_effectively_zero(alpha_pair_weight_matrix)) {
-        continue;
-      }
-      active_beta_packed_pair_indices.push_back(beta_batch_begin + beta_local_index);
-      alpha_pair_weight_matrices.push_back(std::move(alpha_pair_weight_matrix));
-    }
-    if (active_beta_packed_pair_indices.empty()) {
-      continue;
-    }
-
-    for (int alpha_block_begin = 0;
-         alpha_block_begin < n_packed_active_pairs;
-         alpha_block_begin += sparse_block_size) {
-      const int alpha_block_end =
-          std::min(n_packed_active_pairs, alpha_block_begin + sparse_block_size);
-      const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          selected_states.n_unique_alpha,
-          alpha_block_begin,
-          alpha_block_end);
-
-      for (std::size_t beta_active_index = 0;
-           beta_active_index < active_beta_packed_pair_indices.size();
-           ++beta_active_index) {
-        const int beta_packed_pair_index =
-            active_beta_packed_pair_indices[beta_active_index];
-        const auto& alpha_pair_weight_matrix =
-            alpha_pair_weight_matrices[beta_active_index];
-        for (int alpha_local_index = 0;
-             alpha_local_index < alpha_block_end - alpha_block_begin;
-             ++alpha_local_index) {
-          const double packed_gradient_value =
-              contract_sparse_matrix_with_dense_image(
-                  alpha_sparse_block[alpha_local_index],
-                  alpha_pair_weight_matrix);
-          if (std::abs(packed_gradient_value) <= kContributionTolerance) {
-            continue;
-          }
-
-          const int alpha_packed_pair_index =
-              alpha_block_begin + alpha_local_index;
-          const int packed_pair_of_pairs_index =
-              TwoElectronIndexer::packed_pair_of_pairs_index(
-                  beta_packed_pair_index,
-                  alpha_packed_pair_index);
-          result.packed_active_two_electron_gradient[
-              packed_pair_of_pairs_index] += packed_gradient_value;
-        }
-      }
-    }
-  }
+  // Build packed-pair sparse families in bounded blocks and contract each
+  // selected-state image on a unique-spin tile. No production path builds the
+  // old packed_pair -> N_unique^2 dense image.
+  accumulate_opposite_spin_packed_gradient_by_tiles(
+      same_spin_pair_cache,
+      selected_states,
+      n_packed_active_pairs,
+      sparse_block_size,
+      dense_batch_size,
+      &result.packed_active_two_electron_gradient);
 
   // Opposite-spin overlap adjoint:
   // alpha-side uses S_beta .* (G x_beta), beta-side uses S_alpha .* (G x_alpha).
@@ -2478,98 +3017,18 @@ build_directional_opposite_spin_matrix_backward_contribution(
   const int sparse_block_size = std::min(
       n_packed_active_pairs,
       opposite_spin_backward_sparse_block_size());
-  int dense_batch_size = std::min(
+  const int dense_batch_size = std::min(
       n_packed_active_pairs,
       opposite_spin_backward_dense_batch_size());
-  const std::size_t per_alpha_weight_matrix_bytes =
-      dense_square_matrix_storage_bytes(selected_states.n_unique_alpha);
-  if (per_alpha_weight_matrix_bytes > 0) {
-    const std::size_t dense_batch_bytes_budget =
-        opposite_spin_backward_dense_batch_bytes_budget();
-    const std::size_t budget_limited_batch_size = std::max<std::size_t>(
-        1u,
-        dense_batch_bytes_budget / per_alpha_weight_matrix_bytes);
-    dense_batch_size = std::min(
-        dense_batch_size,
-        static_cast<int>(std::min<std::size_t>(
-            n_packed_active_pairs,
-            budget_limited_batch_size)));
-  }
 
-  for (int beta_batch_begin = 0;
-       beta_batch_begin < n_packed_active_pairs;
-       beta_batch_begin += dense_batch_size) {
-    const int beta_batch_end =
-        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
-    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
-        same_spin_pair_cache.beta_pair_cache_ref(),
-        selected_states.n_unique_beta,
-        beta_batch_begin,
-        beta_batch_end);
-
-    std::vector<int> active_beta_packed_pair_indices;
-    std::vector<Eigen::MatrixXd> alpha_pair_weight_matrices;
-    active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
-    alpha_pair_weight_matrices.reserve(beta_sparse_batch.size());
-    for (int beta_local_index = 0;
-         beta_local_index < beta_batch_end - beta_batch_begin;
-         ++beta_local_index) {
-      Eigen::MatrixXd alpha_pair_weight_matrix =
-          accumulate_directional_alpha_pair_matrix(
-              selected_states,
-              directional_selected_states,
-              beta_sparse_batch[beta_local_index]);
-      if (dense_matrix_is_effectively_zero(alpha_pair_weight_matrix)) {
-        continue;
-      }
-      active_beta_packed_pair_indices.push_back(beta_batch_begin + beta_local_index);
-      alpha_pair_weight_matrices.push_back(std::move(alpha_pair_weight_matrix));
-    }
-    if (active_beta_packed_pair_indices.empty()) {
-      continue;
-    }
-
-    for (int alpha_block_begin = 0;
-         alpha_block_begin < n_packed_active_pairs;
-         alpha_block_begin += sparse_block_size) {
-      const int alpha_block_end =
-          std::min(n_packed_active_pairs, alpha_block_begin + sparse_block_size);
-      const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          selected_states.n_unique_alpha,
-          alpha_block_begin,
-          alpha_block_end);
-
-      for (std::size_t beta_active_index = 0;
-           beta_active_index < active_beta_packed_pair_indices.size();
-           ++beta_active_index) {
-        const int beta_packed_pair_index =
-            active_beta_packed_pair_indices[beta_active_index];
-        const auto& alpha_pair_weight_matrix =
-            alpha_pair_weight_matrices[beta_active_index];
-        for (int alpha_local_index = 0;
-             alpha_local_index < alpha_block_end - alpha_block_begin;
-             ++alpha_local_index) {
-          const double packed_gradient_value =
-              contract_sparse_matrix_with_dense_image(
-                  alpha_sparse_block[alpha_local_index],
-                  alpha_pair_weight_matrix);
-          if (std::abs(packed_gradient_value) <= kContributionTolerance) {
-            continue;
-          }
-
-          const int alpha_packed_pair_index =
-              alpha_block_begin + alpha_local_index;
-          const int packed_pair_of_pairs_index =
-              TwoElectronIndexer::packed_pair_of_pairs_index(
-                  beta_packed_pair_index,
-                  alpha_packed_pair_index);
-          result.packed_active_two_electron_gradient[
-              packed_pair_of_pairs_index] += packed_gradient_value;
-        }
-      }
-    }
-  }
+  accumulate_directional_opposite_spin_packed_gradient_by_tiles(
+      same_spin_pair_cache,
+      selected_states,
+      directional_selected_states,
+      n_packed_active_pairs,
+      sparse_block_size,
+      dense_batch_size,
+      &result.packed_active_two_electron_gradient);
 
   accumulate_directional_alpha_overlap_gradient(
       same_spin_pair_cache,
@@ -2646,128 +3105,19 @@ build_local_opposite_spin_matrix_backward_contribution(
   const int sparse_block_size = std::min(
       n_packed_active_pairs,
       opposite_spin_backward_sparse_block_size());
-  int dense_batch_size = std::min(
+  const int dense_batch_size = std::min(
       n_packed_active_pairs,
       opposite_spin_backward_dense_batch_size());
-  const std::size_t per_alpha_weight_matrix_bytes =
-      dense_square_matrix_storage_bytes(selected_states.n_unique_alpha);
-  if (per_alpha_weight_matrix_bytes > 0) {
-    const std::size_t dense_batch_bytes_budget =
-        opposite_spin_backward_dense_batch_bytes_budget();
-    const std::size_t budget_limited_batch_size = std::max<std::size_t>(
-        1u,
-        dense_batch_bytes_budget / per_alpha_weight_matrix_bytes);
-    dense_batch_size = std::min(
-        dense_batch_size,
-        static_cast<int>(std::min<std::size_t>(
-            n_packed_active_pairs,
-            budget_limited_batch_size)));
-  }
 
-  for (int beta_batch_begin = 0;
-       beta_batch_begin < n_packed_active_pairs;
-       beta_batch_begin += dense_batch_size) {
-    const int beta_batch_end =
-        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
-    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
-        same_spin_pair_cache.beta_pair_cache_ref(),
-        selected_states.n_unique_beta,
-        beta_batch_begin,
-        beta_batch_end);
-    const auto beta_directional_sparse_batch =
-        build_directional_first_order_sparse_matrix_block(
-            beta_directional_pair_data,
-            selected_states.n_unique_beta,
-            beta_batch_begin,
-            beta_batch_end);
-
-    std::vector<int> active_beta_packed_pair_indices;
-    std::vector<Eigen::MatrixXd> alpha_pair_weight_matrices;
-    std::vector<Eigen::MatrixXd> alpha_directional_pair_weight_matrices;
-    active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
-    alpha_pair_weight_matrices.reserve(beta_sparse_batch.size());
-    alpha_directional_pair_weight_matrices.reserve(beta_sparse_batch.size());
-    for (int beta_local_index = 0;
-         beta_local_index < beta_batch_end - beta_batch_begin;
-         ++beta_local_index) {
-      Eigen::MatrixXd alpha_pair_weight_matrix =
-          accumulate_alpha_pair_matrix(
-              selected_states,
-              beta_sparse_batch[beta_local_index]);
-      Eigen::MatrixXd alpha_directional_pair_weight_matrix =
-          accumulate_alpha_pair_matrix(
-              selected_states,
-              beta_directional_sparse_batch[beta_local_index]);
-      if (dense_matrix_is_effectively_zero(alpha_pair_weight_matrix) &&
-          dense_matrix_is_effectively_zero(alpha_directional_pair_weight_matrix)) {
-        continue;
-      }
-      active_beta_packed_pair_indices.push_back(beta_batch_begin + beta_local_index);
-      alpha_pair_weight_matrices.push_back(std::move(alpha_pair_weight_matrix));
-      alpha_directional_pair_weight_matrices.push_back(
-          std::move(alpha_directional_pair_weight_matrix));
-    }
-    if (active_beta_packed_pair_indices.empty()) {
-      continue;
-    }
-
-    for (int alpha_block_begin = 0;
-         alpha_block_begin < n_packed_active_pairs;
-         alpha_block_begin += sparse_block_size) {
-      const int alpha_block_end =
-          std::min(n_packed_active_pairs, alpha_block_begin + sparse_block_size);
-      const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          selected_states.n_unique_alpha,
-          alpha_block_begin,
-          alpha_block_end);
-      const auto alpha_directional_sparse_block =
-          build_directional_first_order_sparse_matrix_block(
-              alpha_directional_pair_data,
-              selected_states.n_unique_alpha,
-              alpha_block_begin,
-              alpha_block_end);
-
-      for (std::size_t beta_active_index = 0;
-           beta_active_index < active_beta_packed_pair_indices.size();
-           ++beta_active_index) {
-        const int beta_packed_pair_index =
-            active_beta_packed_pair_indices[beta_active_index];
-        const auto& alpha_pair_weight_matrix =
-            alpha_pair_weight_matrices[beta_active_index];
-        const auto& alpha_directional_pair_weight_matrix =
-            alpha_directional_pair_weight_matrices[beta_active_index];
-        for (int alpha_local_index = 0;
-             alpha_local_index < alpha_block_end - alpha_block_begin;
-             ++alpha_local_index) {
-          double packed_gradient_value = 0.0;
-          if (!dense_matrix_is_effectively_zero(alpha_pair_weight_matrix)) {
-            packed_gradient_value += contract_sparse_matrix_with_dense_image(
-                alpha_directional_sparse_block[alpha_local_index],
-                alpha_pair_weight_matrix);
-          }
-          if (!dense_matrix_is_effectively_zero(
-                  alpha_directional_pair_weight_matrix)) {
-            packed_gradient_value += contract_sparse_matrix_with_dense_image(
-                alpha_sparse_block[alpha_local_index],
-                alpha_directional_pair_weight_matrix);
-          }
-          if (std::abs(packed_gradient_value) <= kContributionTolerance) {
-            continue;
-          }
-
-          const int alpha_packed_pair_index =
-              alpha_block_begin + alpha_local_index;
-          const int packed_pair_of_pairs_index =
-              TwoElectronIndexer::packed_pair_of_pairs_index(
-                  beta_packed_pair_index,
-                  alpha_packed_pair_index);
-          result.packed_active_two_electron_gradient[
-              packed_pair_of_pairs_index] += packed_gradient_value;
-        }
-      }
-    }
-  }
+  accumulate_local_opposite_spin_packed_gradient_by_tiles(
+      same_spin_pair_cache,
+      alpha_directional_pair_data,
+      beta_directional_pair_data,
+      selected_states,
+      n_packed_active_pairs,
+      sparse_block_size,
+      dense_batch_size,
+      &result.packed_active_two_electron_gradient);
 
   accumulate_local_alpha_overlap_gradient(
       same_spin_pair_cache,

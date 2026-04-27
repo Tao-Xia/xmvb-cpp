@@ -585,7 +585,7 @@ backpropagate_ao_effective_one_electron(
         n_threads,
         std::vector<double>(matrix_size, 0.0));
 
-#pragma omp parallel
+#pragma omp parallel num_threads(n_threads)
     {
       int thread_index = 0;
 #ifdef _OPENMP

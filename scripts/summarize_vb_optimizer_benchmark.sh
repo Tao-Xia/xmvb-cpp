@@ -184,7 +184,10 @@ resolve_legacy_xmo() {
     return 0
   fi
 
-  if [[ -f "${repo_root}/test/${sample_stem}.xmo" ]]; then
+  # Only opt into the repository-level fallback explicitly. For benchmark
+  # suites, silently reusing an old test-side .xmo would contaminate summaries.
+  if [[ "${ALLOW_REPO_TEST_XMO_FALLBACK:-0}" == "1" &&
+        -f "${repo_root}/test/${sample_stem}.xmo" ]]; then
     printf '%s\n' "${repo_root}/test/${sample_stem}.xmo"
     return 0
   fi
