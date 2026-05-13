@@ -95,12 +95,12 @@ public:
   /**
    * @brief Applies the reduced-space block preconditioner used by TNHVP.
    *
-   * The reduced TN chart is block-separable. Blocks whitened by the spectral
-   * factorization of `D^T D` already have identity metric in reduced
+   * The reduced TN chart is block-separable. Sparse blocks whitened by the
+   * spectral factorization of `D^T D` already have identity metric in reduced
    * coordinates, so their baseline model is just the positive reduced
-   * curvature diagonal. If a dense full-support block cannot be factorized, it
-   * remains in the raw candidate chart, where the local Gram matrix
-   * `G = D^T D` is not the identity. For that fallback we apply the symmetric
+   * curvature diagonal. Dense full-support blocks remain in the raw candidate
+   * chart, where the local Gram matrix `G = D^T D` is applied and solved by
+   * analytic block formulas. For those dense blocks we apply the symmetric
    * positive model `M_block = C_block^{1/2} G_block C_block^{1/2}` and return
    * `M_block^{-1} v`. Sparse blocks that are not factorized fall back to the
    * diagonal `C_block^{-1}` model because nesting an iterative `G^{-1}` solve

@@ -1146,10 +1146,12 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     }
 
     // Start from the raw block-local candidate amplitudes `a` defined by the
-    // implicit tangent matrix `D`. The block may later replace those raw
+    // implicit tangent matrix `D`. Sparse blocks may later replace those raw
     // coordinates by a spectrally whitened chart `a = E z`, where
     // `E^T D^T D E = I` and near-null directions are removed before the global
-    // reduced offset is assigned.
+    // reduced offset is assigned. Dense full-support blocks keep their analytic
+    // metric formulas; explicitly materializing their full Gram matrix is too
+    // expensive for large OEO/full-AO systems.
     if (block_basis.uses_dense_full_support_projector) {
       block_basis.candidate_metric_diagonal =
           build_dense_full_support_metric_diagonal(block_basis);
@@ -1173,7 +1175,9 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
           normalize_curvature_diagonal(candidate_curvature);
     }
 
-    maybe_factorize_block_candidate_metric(&block_basis);
+    if (!block_basis.uses_dense_full_support_projector) {
+      maybe_factorize_block_candidate_metric(&block_basis);
+    }
     const int local_reduced_size = block_reduced_size(block_basis);
     block_basis.reduced_offset = reduced_size_;
     reduced_size_ += local_reduced_size;
