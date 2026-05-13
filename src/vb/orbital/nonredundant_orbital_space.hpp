@@ -95,16 +95,17 @@ public:
   /**
    * @brief Applies the reduced-space block preconditioner used by TNHVP.
    *
-   * The reduced TN chart is block-separable. Small blocks that were whitened
-   * by an exact `D^T D = L L^T` factorization already have identity metric in
-   * reduced coordinates, so their baseline model is just the positive reduced
-   * curvature diagonal. Large dense full-support blocks remain in the raw
-   * candidate chart, where the local Gram matrix `G = D^T D` is not the
-   * identity. For those blocks we apply the symmetric positive model
-   * `M_block = C_block^{1/2} G_block C_block^{1/2}` and return
-   * `M_block^{-1} v`. Sparse large blocks fall back to the diagonal
-   * `C_block^{-1}` model because nesting an iterative `G^{-1}` solve inside
-   * every outer PCG preconditioner application is usually not worth the cost.
+   * The reduced TN chart is block-separable. Blocks whitened by the spectral
+   * factorization of `D^T D` already have identity metric in reduced
+   * coordinates, so their baseline model is just the positive reduced
+   * curvature diagonal. If a dense full-support block cannot be factorized, it
+   * remains in the raw candidate chart, where the local Gram matrix
+   * `G = D^T D` is not the identity. For that fallback we apply the symmetric
+   * positive model `M_block = C_block^{1/2} G_block C_block^{1/2}` and return
+   * `M_block^{-1} v`. Sparse blocks that are not factorized fall back to the
+   * diagonal `C_block^{-1}` model because nesting an iterative `G^{-1}` solve
+   * inside every outer PCG preconditioner application is usually not worth the
+   * cost.
    */
   Eigen::VectorXd apply_inverse_reduced_block_preconditioner(
       const Eigen::VectorXd& reduced_vector) const;
@@ -184,9 +185,13 @@ private:
     Eigen::MatrixXd virtual_orbitals;
     std::vector<OrbitalProjector> orbitals;
     bool uses_dense_full_support_projector = false;
+    // Raw candidate-chart metric diagonal in the uncompressed direction basis.
     Eigen::VectorXd candidate_metric_diagonal;
     bool has_exact_metric_factorization = false;
-    Eigen::MatrixXd candidate_metric_cholesky_factor;
+    // Raw candidate coefficients `a = E z` from reduced coordinates `z`.
+    // For spectral-whitened blocks, `E^T D^T D E = I` and columns with
+    // numerically zero metric norm are omitted from the reduced chart.
+    Eigen::MatrixXd candidate_from_reduced;
     Eigen::VectorXd reduced_curvature_diagonal;
     int reduced_offset = 0;
   };
@@ -263,7 +268,9 @@ private:
       const BlockBasis& block_basis,
       const Eigen::VectorXd& right_hand_side) const;
 
-  void maybe_factorize_small_block_candidate_metric(
+  static int block_reduced_size(const BlockBasis& block_basis) noexcept;
+
+  void maybe_factorize_block_candidate_metric(
       BlockBasis* block_basis);
 
   ProjectionResult project_impl(
