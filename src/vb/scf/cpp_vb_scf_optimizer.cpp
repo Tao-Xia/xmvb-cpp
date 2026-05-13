@@ -2334,6 +2334,51 @@ double compute_nonredundant_retract_tangent_norm(
   return std::isfinite(tangent_norm) ? tangent_norm : 0.0;
 }
 
+class NonredundantRetractionMetric {
+public:
+  NonredundantRetractionMetric(
+      const OrbitalPreparationInput& orbital_preparation_input,
+      const NonredundantOrbitalSpace& space,
+      const SparseOrbitalParameterView& parameter_view)
+      : orbital_preparation_input_(orbital_preparation_input),
+        space_(space),
+        parameter_view_(parameter_view) {}
+
+  Eigen::VectorXd tangent(const Eigen::VectorXd& reduced_step) const {
+    return gather_nonredundant_retract_tangent(
+        orbital_preparation_input_,
+        space_,
+        parameter_view_,
+        reduced_step);
+  }
+
+  double norm(const Eigen::VectorXd& reduced_step) const {
+    const double tangent_norm = tangent(reduced_step).norm();
+    return std::isfinite(tangent_norm) ? tangent_norm : 0.0;
+  }
+
+  Eigen::VectorXd clip_to_radius(
+      const Eigen::VectorXd& reduced_step,
+      double trust_radius) const {
+    if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
+      return Eigen::VectorXd::Zero(reduced_step.size());
+    }
+    const double tangent_norm = norm(reduced_step);
+    if (!(tangent_norm > 0.0) || !std::isfinite(tangent_norm)) {
+      return Eigen::VectorXd::Zero(reduced_step.size());
+    }
+    if (tangent_norm <= trust_radius) {
+      return reduced_step;
+    }
+    return (trust_radius / tangent_norm) * reduced_step;
+  }
+
+private:
+  const OrbitalPreparationInput& orbital_preparation_input_;
+  const NonredundantOrbitalSpace& space_;
+  const SparseOrbitalParameterView& parameter_view_;
+};
+
 Eigen::VectorXd clip_nonredundant_reduced_step_to_retract_tangent_radius(
     const OrbitalPreparationInput& orbital_preparation_input,
     const NonredundantOrbitalSpace& space,
@@ -2758,54 +2803,25 @@ void append_nonredundant_truncated_newton_secant_pair(
   }
 }
 
-Eigen::VectorXd clip_reduced_step_to_trust_radius(
-    const Eigen::VectorXd& reduced_step,
+double solve_trust_region_metric_boundary_tau(
+    const Eigen::VectorXd& current_step_tangent,
+    const Eigen::VectorXd& search_direction_tangent,
     double trust_radius) {
-  if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
-    return Eigen::VectorXd::Zero(reduced_step.size());
+  if (current_step_tangent.size() != search_direction_tangent.size()) {
+    return 0.0;
   }
-  const double step_norm = reduced_step.norm();
-  if (!(step_norm > trust_radius) || !std::isfinite(step_norm)) {
-    return reduced_step;
-  }
-  return (trust_radius / step_norm) * reduced_step;
-}
-
-Eigen::VectorXd shrink_reduced_step_inside_trust_radius(
-    const Eigen::VectorXd& reduced_step,
-    double trust_radius) {
-  if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
-    return Eigen::VectorXd::Zero(reduced_step.size());
-  }
-  const double step_norm = reduced_step.norm();
-  if (!(step_norm > 0.0) || !std::isfinite(step_norm)) {
-    return Eigen::VectorXd::Zero(reduced_step.size());
-  }
-  constexpr double kInitialStepSafetyFraction = 0.95;
-  const double target_radius = kInitialStepSafetyFraction * trust_radius;
-  if (!(target_radius > 0.0) || !std::isfinite(target_radius)) {
-    return Eigen::VectorXd::Zero(reduced_step.size());
-  }
-  if (step_norm < target_radius) {
-    return reduced_step;
-  }
-  return (target_radius / step_norm) * reduced_step;
-}
-
-double solve_trust_region_boundary_tau(
-    const Eigen::VectorXd& current_step,
-    const Eigen::VectorXd& search_direction,
-    double trust_radius) {
-  const double a = search_direction.squaredNorm();
+  const double a = search_direction_tangent.squaredNorm();
   if (!(a > 0.0) || !std::isfinite(a) ||
       !(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
     return 0.0;
   }
-  const double b = 2.0 * current_step.dot(search_direction);
-  const double c = current_step.squaredNorm() - trust_radius * trust_radius;
-  const double discriminant = std::max(0.0, b * b - 4.0 * a * c);
+  // Solve ||J(s + tau p)||^2 = Delta^2 without materializing G = J^T J.
+  const double b = current_step_tangent.dot(search_direction_tangent);
+  const double c =
+      current_step_tangent.squaredNorm() - trust_radius * trust_radius;
+  const double discriminant = std::max(0.0, b * b - a * c);
   const double tau =
-      (-b + std::sqrt(discriminant)) / (2.0 * a);
+      (-b + std::sqrt(discriminant)) / a;
   if (!std::isfinite(tau)) {
     return 0.0;
   }
@@ -3320,6 +3336,7 @@ void maybe_update_exact_ctx_hybrid_strategy_state_from_hvp_operator(
 
 struct TruncatedNewtonKrylovSubspace {
   Eigen::MatrixXd orthonormal_basis;
+  Eigen::MatrixXd tangent_basis;
   Eigen::MatrixXd hessian_basis;
   Eigen::MatrixXd reduced_hessian;
   Eigen::VectorXd projected_gradient;
@@ -3505,6 +3522,9 @@ bool truncated_newton_krylov_subspace_is_usable(
       krylov_subspace.orthonormal_basis.rows() == reduced_size &&
       krylov_subspace.orthonormal_basis.cols() > 0 &&
       krylov_subspace.orthonormal_basis.allFinite() &&
+      krylov_subspace.tangent_basis.cols() ==
+          krylov_subspace.orthonormal_basis.cols() &&
+      krylov_subspace.tangent_basis.allFinite() &&
       krylov_subspace.hessian_basis.rows() == reduced_size &&
       krylov_subspace.hessian_basis.cols() ==
           krylov_subspace.orthonormal_basis.cols() &&
@@ -3532,11 +3552,16 @@ bool truncated_newton_step_is_usable(
 }
 
 bool append_truncated_newton_krylov_basis_vector(
+    const NonredundantRetractionMetric& retraction_metric,
     const Eigen::VectorXd& candidate_vector,
     const Eigen::VectorXd& hessian_times_candidate,
     std::vector<Eigen::VectorXd>* basis_vectors,
+    std::vector<Eigen::VectorXd>* tangent_basis_vectors,
     std::vector<Eigen::VectorXd>* hessian_basis_vectors) {
-  if (candidate_vector.size() != hessian_times_candidate.size() ||
+  if (basis_vectors == nullptr ||
+      tangent_basis_vectors == nullptr ||
+      hessian_basis_vectors == nullptr ||
+      candidate_vector.size() != hessian_times_candidate.size() ||
       candidate_vector.size() == 0 ||
       !candidate_vector.allFinite() ||
       !hessian_times_candidate.allFinite()) {
@@ -3545,15 +3570,17 @@ bool append_truncated_newton_krylov_basis_vector(
 
   Eigen::VectorXd orthogonal_vector = candidate_vector;
   Eigen::VectorXd orthogonal_hessian_vector = hessian_times_candidate;
-  const double candidate_norm = candidate_vector.norm();
+  Eigen::VectorXd orthogonal_tangent =
+      retraction_metric.tangent(candidate_vector);
+  const double candidate_norm = orthogonal_tangent.norm();
   if (!(candidate_norm > 0.0) || !std::isfinite(candidate_norm)) {
     return false;
   }
 
-  // The trust-region subproblem is solved in Euclidean reduced coordinates, so
-  // we store an orthonormal basis Q and the corresponding H Q columns. Later
-  // trust-radius shrinks can then re-solve the small Rayleigh-Ritz model
-  // without paying for more HVPs at the same accepted point.
+  // Orthonormalize in the accepted-point retraction metric
+  //   <u,v>_G = (J u)^T (J v).
+  // The reduced basis columns are G-orthonormal, while the cached tangent
+  // columns keep reorthogonalization and cached Ritz solves matrix-free.
   for (int orthogonalization_pass = 0;
        orthogonalization_pass < 2;
        ++orthogonalization_pass) {
@@ -3561,19 +3588,21 @@ bool append_truncated_newton_krylov_basis_vector(
          basis_index < basis_vectors->size();
          ++basis_index) {
       const double coefficient =
-          (*basis_vectors)[basis_index].dot(orthogonal_vector);
+          (*tangent_basis_vectors)[basis_index].dot(orthogonal_tangent);
       if (!std::isfinite(coefficient)) {
         return false;
       }
       orthogonal_vector.noalias() -=
           coefficient * (*basis_vectors)[basis_index];
+      orthogonal_tangent.noalias() -=
+          coefficient * (*tangent_basis_vectors)[basis_index];
       orthogonal_hessian_vector.noalias() -=
           coefficient * (*hessian_basis_vectors)[basis_index];
     }
   }
 
   constexpr double kLinearDependenceTolerance = 1.0e-10;
-  const double orthogonal_norm = orthogonal_vector.norm();
+  const double orthogonal_norm = orthogonal_tangent.norm();
   if (!(orthogonal_norm >
         kLinearDependenceTolerance * std::max(1.0, candidate_norm)) ||
       !std::isfinite(orthogonal_norm)) {
@@ -3581,6 +3610,7 @@ bool append_truncated_newton_krylov_basis_vector(
   }
 
   basis_vectors->push_back(orthogonal_vector / orthogonal_norm);
+  tangent_basis_vectors->push_back(orthogonal_tangent / orthogonal_norm);
   hessian_basis_vectors->push_back(orthogonal_hessian_vector / orthogonal_norm);
   return true;
 }
@@ -3588,9 +3618,11 @@ bool append_truncated_newton_krylov_basis_vector(
 TruncatedNewtonKrylovSubspace build_truncated_newton_krylov_subspace(
     const Eigen::VectorXd& reduced_gradient,
     const std::vector<Eigen::VectorXd>& basis_vectors,
+    const std::vector<Eigen::VectorXd>& tangent_basis_vectors,
     const std::vector<Eigen::VectorXd>& hessian_basis_vectors) {
   TruncatedNewtonKrylovSubspace krylov_subspace;
   if (basis_vectors.empty() ||
+      basis_vectors.size() != tangent_basis_vectors.size() ||
       basis_vectors.size() != hessian_basis_vectors.size()) {
     return krylov_subspace;
   }
@@ -3599,6 +3631,9 @@ TruncatedNewtonKrylovSubspace build_truncated_newton_krylov_subspace(
   const Eigen::Index basis_size =
       static_cast<Eigen::Index>(basis_vectors.size());
   krylov_subspace.orthonormal_basis.resize(reduced_size, basis_size);
+  krylov_subspace.tangent_basis.resize(
+      tangent_basis_vectors.front().size(),
+      basis_size);
   krylov_subspace.hessian_basis.resize(reduced_size, basis_size);
   krylov_subspace.reduced_hessian.resize(basis_size, basis_size);
   krylov_subspace.projected_gradient.resize(basis_size);
@@ -3606,6 +3641,8 @@ TruncatedNewtonKrylovSubspace build_truncated_newton_krylov_subspace(
   for (Eigen::Index column = 0; column < basis_size; ++column) {
     krylov_subspace.orthonormal_basis.col(column) =
         basis_vectors[column];
+    krylov_subspace.tangent_basis.col(column) =
+        tangent_basis_vectors[column];
     krylov_subspace.hessian_basis.col(column) =
         hessian_basis_vectors[column];
     krylov_subspace.projected_gradient[column] =
@@ -3806,16 +3843,16 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
       eigenvectors * eigen_coordinates;
   Eigen::VectorXd reduced_step =
       krylov_subspace.orthonormal_basis * subspace_coordinates;
-  double reduced_step_norm = reduced_step.norm();
-  if (!(reduced_step_norm > 0.0) || !std::isfinite(reduced_step_norm)) {
+  double step_metric_norm = subspace_coordinates.norm();
+  if (!(step_metric_norm > 0.0) || !std::isfinite(step_metric_norm)) {
     return result;
   }
-  if (reduced_step_norm >
+  if (step_metric_norm >
       trust_radius * (1.0 + 1.0e-8)) {
-    const double scale = trust_radius / reduced_step_norm;
+    const double scale = trust_radius / step_metric_norm;
     subspace_coordinates *= scale;
     reduced_step *= scale;
-    reduced_step_norm = reduced_step.norm();
+    step_metric_norm = subspace_coordinates.norm();
   }
   const Eigen::VectorXd reduced_hessian_times_step =
       krylov_subspace.hessian_basis * subspace_coordinates;
@@ -3839,8 +3876,9 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
   result.reduced_step = std::move(reduced_step);
   result.reduced_hessian_times_step = reduced_hessian_times_step;
   result.krylov_subspace = krylov_subspace;
+  result.retract_tangent_norm = step_metric_norm;
   result.reached_boundary =
-      reduced_step_norm >= (1.0 - 1.0e-8) * trust_radius;
+      step_metric_norm >= (1.0 - 1.0e-8) * trust_radius;
   result.encountered_negative_curvature =
       minimum_eigenvalue <= -kShiftToleranceFactor * spectral_scale;
   result.predicted_decrease = predicted_decrease;
@@ -3848,6 +3886,7 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
 }
 
 Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
+    const NonredundantRetractionMetric& retraction_metric,
     const NonredundantOrbitalSpace& space,
     const NonredundantOrbitalSpace::ProjectionResult& projection,
     double trust_radius,
@@ -3857,13 +3896,14 @@ Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
           space,
           transported_preconditioner,
           projection.reduced_gradient);
-  return clip_reduced_step_to_trust_radius(
+  return retraction_metric.clip_to_radius(
       -reduced_preconditioned_gradient,
       trust_radius);
 }
 
 bool
 assess_nonredundant_truncated_newton_transported_initial_step(
+    const NonredundantRetractionMetric& retraction_metric,
     const NonredundantOrbitalSpace& current_space,
     const NonredundantOrbitalSpace::ProjectionResult& current_projection,
     double trust_radius,
@@ -3929,6 +3969,7 @@ assess_nonredundant_truncated_newton_transported_initial_step(
 
   const Eigen::VectorXd diagonal_reference_step =
       build_nonredundant_preconditioned_reduced_gradient_step(
+          retraction_metric,
           current_space,
           current_projection,
           trust_radius,
@@ -4163,6 +4204,7 @@ double estimate_nonredundant_reduced_model_decrease(
 }
 
 TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
+    const NonredundantRetractionMetric& retraction_metric,
     const NonredundantOrbitalSpace& current_space,
     const NonredundantOrbitalSpace::ProjectionResult& current_projection,
     double trust_radius,
@@ -4175,6 +4217,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   TruncatedNewtonStepResult result;
   const Eigen::VectorXd fallback_step =
       build_nonredundant_preconditioned_reduced_gradient_step(
+          retraction_metric,
           current_space,
           current_projection,
           trust_radius,
@@ -4184,15 +4227,18 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   result.reduced_hessian_times_step =
       Eigen::VectorXd::Zero(current_projection.reduced_gradient.size());
   std::vector<Eigen::VectorXd> krylov_basis_vectors;
+  std::vector<Eigen::VectorXd> krylov_tangent_basis_vectors;
   std::vector<Eigen::VectorXd> krylov_hessian_basis_vectors;
   krylov_basis_vectors.reserve(
       std::max(0, max_cg_iterations) + (initial_reduced_step != nullptr ? 1 : 0));
+  krylov_tangent_basis_vectors.reserve(krylov_basis_vectors.capacity());
   krylov_hessian_basis_vectors.reserve(krylov_basis_vectors.capacity());
   auto finalize_result = [&]() -> TruncatedNewtonStepResult {
     result.krylov_subspace =
         build_truncated_newton_krylov_subspace(
             current_projection.reduced_gradient,
             krylov_basis_vectors,
+            krylov_tangent_basis_vectors,
             krylov_hessian_basis_vectors);
     return result;
   };
@@ -4206,7 +4252,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   const Eigen::VectorXd rhs = -current_projection.reduced_gradient;
   Eigen::VectorXd residual = rhs;
   if (initial_reduced_step != nullptr) {
-    const double initial_step_norm = initial_reduced_step->norm();
+    const double initial_step_norm = retraction_metric.norm(*initial_reduced_step);
     if (std::isfinite(initial_step_norm) &&
         initial_step_norm > 0.0 &&
         initial_step_norm < trust_radius) {
@@ -4228,9 +4274,11 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
             0.5 * result.reduced_step.dot(hessian_times_initial_step);
         residual.noalias() -= hessian_times_initial_step;
         append_truncated_newton_krylov_basis_vector(
+            retraction_metric,
             *initial_reduced_step,
             hessian_times_initial_step,
             &krylov_basis_vectors,
+            &krylov_tangent_basis_vectors,
             &krylov_hessian_basis_vectors);
       }
     }
@@ -4292,22 +4340,33 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const Eigen::VectorXd hessian_times_direction =
         hvp_operator->apply(search_direction);
     append_truncated_newton_krylov_basis_vector(
+        retraction_metric,
         search_direction,
         hessian_times_direction,
         &krylov_basis_vectors,
+        &krylov_tangent_basis_vectors,
         &krylov_hessian_basis_vectors);
     const double curvature =
         search_direction.dot(hessian_times_direction);
+    const Eigen::VectorXd current_step_tangent =
+        retraction_metric.tangent(result.reduced_step);
+    const Eigen::VectorXd search_direction_tangent =
+        retraction_metric.tangent(search_direction);
+    const double search_direction_metric_norm_squared =
+        search_direction_tangent.squaredNorm();
     if (!std::isfinite(curvature) ||
         curvature <=
-            kCurvatureTolerance * search_direction.squaredNorm()) {
+            kCurvatureTolerance *
+            std::max(search_direction.squaredNorm(),
+                     search_direction_metric_norm_squared)) {
       result.encountered_negative_curvature = true;
       result.reached_boundary = true;
-      if (search_direction.squaredNorm() > 0.0) {
+      if (search_direction_metric_norm_squared > 0.0 &&
+          std::isfinite(search_direction_metric_norm_squared)) {
         const double tau =
-            solve_trust_region_boundary_tau(
-                result.reduced_step,
-                search_direction,
+            solve_trust_region_metric_boundary_tau(
+                current_step_tangent,
+                search_direction_tangent,
                 trust_radius);
         result.predicted_decrease +=
             tau * residual.dot(search_direction) -
@@ -4332,12 +4391,14 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
 
     const Eigen::VectorXd candidate_step =
         result.reduced_step + alpha * search_direction;
-    if (candidate_step.norm() >= trust_radius) {
+    const double candidate_step_metric_norm =
+        retraction_metric.norm(candidate_step);
+    if (candidate_step_metric_norm >= trust_radius) {
       result.reached_boundary = true;
       const double tau =
-          solve_trust_region_boundary_tau(
-              result.reduced_step,
-              search_direction,
+          solve_trust_region_metric_boundary_tau(
+              current_step_tangent,
+              search_direction_tangent,
               trust_radius);
       result.predicted_decrease +=
           tau * residual.dot(search_direction) -
@@ -4355,6 +4416,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         alpha * residual.dot(search_direction) -
         0.5 * alpha * alpha * curvature;
     result.reduced_step = candidate_step;
+    result.retract_tangent_norm = candidate_step_metric_norm;
     result.reduced_hessian_times_step.noalias() +=
         alpha *
         hessian_times_direction;
@@ -4397,6 +4459,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         build_truncated_newton_krylov_subspace(
             current_projection.reduced_gradient,
             krylov_basis_vectors,
+            krylov_tangent_basis_vectors,
             krylov_hessian_basis_vectors);
     auto krylov_rescue_step =
         solve_trust_region_in_krylov_subspace(
@@ -4423,6 +4486,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
 }
 
 ExactCtxHybridRefinementResult maybe_refine_exact_ctx_step_with_full_operator(
+    const NonredundantRetractionMetric& retraction_metric,
     const NonredundantOrbitalSpace& current_space,
     const NonredundantOrbitalSpace::ProjectionResult& current_projection,
     double trust_radius,
@@ -4488,16 +4552,20 @@ ExactCtxHybridRefinementResult maybe_refine_exact_ctx_step_with_full_operator(
   }
   {
     std::vector<Eigen::VectorXd> full_probe_basis_vectors;
+    std::vector<Eigen::VectorXd> full_probe_tangent_basis_vectors;
     std::vector<Eigen::VectorXd> full_probe_hessian_basis_vectors;
     append_truncated_newton_krylov_basis_vector(
+        retraction_metric,
         cheap_step.reduced_step,
         full_hessian_times_step,
         &full_probe_basis_vectors,
+        &full_probe_tangent_basis_vectors,
         &full_probe_hessian_basis_vectors);
     result.step.krylov_subspace =
         build_truncated_newton_krylov_subspace(
             current_projection.reduced_gradient,
             full_probe_basis_vectors,
+            full_probe_tangent_basis_vectors,
             full_probe_hessian_basis_vectors);
   }
 
@@ -4570,6 +4638,7 @@ ExactCtxHybridRefinementResult maybe_refine_exact_ctx_step_with_full_operator(
 
   TruncatedNewtonStepResult refined_step =
       solve_nonredundant_truncated_newton_step(
+          retraction_metric,
           current_space,
           current_projection,
           trust_radius,
@@ -6006,6 +6075,10 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   exact_ctx_hybrid_refinement_max_cg_iterations());
           const OrbitalPreparationInput current_orbital_input =
               objective.last_input().orbital_preparation_input;
+          const NonredundantRetractionMetric retraction_metric(
+              current_orbital_input,
+              current_space,
+              parameter_view);
           const auto admit_energy_only_trial_screen = [&]() {
             const auto& objective_time_history =
                 objective.iteration_time_history_seconds();
@@ -6253,6 +6326,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     reduced_size)) {
               transported_warm_start_admitted =
                   assess_nonredundant_truncated_newton_transported_initial_step(
+                      retraction_metric,
                       current_space,
                       current_projection,
                       trust_radius,
@@ -6278,6 +6352,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             cached_cheap_krylov_subspace = TruncatedNewtonKrylovSubspace();
             truncated_newton_step =
                 solve_nonredundant_truncated_newton_step(
+                    retraction_metric,
                     current_space,
                     current_projection,
                     trust_radius,
@@ -6315,17 +6390,11 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               predicted_decrease <= 0.0) {
             reduced_step =
                 build_nonredundant_preconditioned_reduced_gradient_step(
+                    retraction_metric,
                     current_space,
                     current_projection,
                     trust_radius,
                     &transported_preconditioner);
-            reduced_step =
-                clip_nonredundant_reduced_step_to_retract_tangent_radius(
-                    current_orbital_input,
-                    current_space,
-                    parameter_view,
-                    reduced_step,
-                    trust_radius);
             predicted_decrease =
                 estimate_nonredundant_reduced_model_decrease(
                     current_projection,
@@ -6366,6 +6435,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             }
             const auto hybrid_refinement =
                 maybe_refine_exact_ctx_step_with_full_operator(
+                    retraction_metric,
                     current_space,
                     current_projection,
                     trust_radius,
@@ -6471,6 +6541,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                         retry_with_full_hvp_operator.get());
                 retry_step =
                     solve_nonredundant_truncated_newton_step(
+                        retraction_metric,
                         current_space,
                         current_projection,
                         trust_radius,
@@ -6508,17 +6579,11 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   predicted_decrease <= 0.0) {
                 reduced_step =
                     build_nonredundant_preconditioned_reduced_gradient_step(
+                        retraction_metric,
                         current_space,
                         current_projection,
                         trust_radius,
                         &transported_preconditioner);
-                reduced_step =
-                    clip_nonredundant_reduced_step_to_retract_tangent_radius(
-                        current_orbital_input,
-                        current_space,
-                        parameter_view,
-                        reduced_step,
-                        trust_radius);
                 predicted_decrease =
                     estimate_nonredundant_reduced_model_decrease(
                         current_projection,
