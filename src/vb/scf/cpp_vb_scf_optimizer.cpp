@@ -1074,12 +1074,6 @@ std::optional<bool> parse_env_optional_flag(
       std::strcmp(value, "FALSE") != 0;
 }
 
-bool truncated_newton_krylov_rescue_enabled() {
-  return parse_env_flag_with_default(
-      "XMVB_CPP_TN_ENABLE_KRYLOV_RESCUE",
-      false);
-}
-
 bool oeo_active_representative_accepted_point_canonicalization_enabled() {
   const auto enable_override =
       parse_env_optional_flag(
@@ -4447,36 +4441,40 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     residual_dot_preconditioned = next_residual_dot_preconditioned;
   }
 
+  // CG is used here to collect a local HVP subspace. The final candidate must be
+  // the trust-region minimizer in the accepted-point retraction metric
+  // ||J d||, not the raw Euclidean PCG accumulation, otherwise sparse charts
+  // solve the wrong spherical subproblem and tend to exhaust the radius.
+  const TruncatedNewtonKrylovSubspace krylov_subspace =
+      build_truncated_newton_krylov_subspace(
+          current_projection.reduced_gradient,
+          krylov_basis_vectors,
+          krylov_tangent_basis_vectors,
+          krylov_hessian_basis_vectors);
+  auto metric_trust_region_step =
+      solve_trust_region_in_krylov_subspace(
+          current_projection,
+          trust_radius,
+          krylov_subspace);
+  if (truncated_newton_step_is_usable(
+          metric_trust_region_step,
+          current_projection.reduced_gradient)) {
+    metric_trust_region_step.used_initial_step = result.used_initial_step;
+    metric_trust_region_step.warm_start_hvp_performed =
+        result.warm_start_hvp_performed;
+    metric_trust_region_step.encountered_negative_curvature =
+        metric_trust_region_step.encountered_negative_curvature ||
+        result.encountered_negative_curvature;
+    metric_trust_region_step.cg_iterations = result.cg_iterations;
+    return metric_trust_region_step;
+  }
+
   const bool result_step_is_usable =
       std::isfinite(result.reduced_step.norm()) &&
       result.reduced_step.squaredNorm() > 0.0 &&
       current_projection.reduced_gradient.dot(result.reduced_step) < 0.0 &&
       std::isfinite(result.predicted_decrease) &&
       result.predicted_decrease > 0.0;
-  if (!result_step_is_usable &&
-      truncated_newton_krylov_rescue_enabled()) {
-    const TruncatedNewtonKrylovSubspace krylov_rescue_subspace =
-        build_truncated_newton_krylov_subspace(
-            current_projection.reduced_gradient,
-            krylov_basis_vectors,
-            krylov_tangent_basis_vectors,
-            krylov_hessian_basis_vectors);
-    auto krylov_rescue_step =
-        solve_trust_region_in_krylov_subspace(
-            current_projection,
-            trust_radius,
-            krylov_rescue_subspace);
-    if (truncated_newton_step_is_usable(
-            krylov_rescue_step,
-            current_projection.reduced_gradient)) {
-      krylov_rescue_step.used_initial_step = result.used_initial_step;
-      krylov_rescue_step.warm_start_hvp_performed =
-          result.warm_start_hvp_performed;
-      krylov_rescue_step.used_krylov_rescue = true;
-      krylov_rescue_step.cg_iterations = result.cg_iterations;
-      return krylov_rescue_step;
-    }
-  }
   if (!result_step_is_usable) {
     result.reduced_step = fallback_step;
     result.reduced_hessian_times_step.resize(0);
