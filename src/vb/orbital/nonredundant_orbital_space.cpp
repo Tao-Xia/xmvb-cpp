@@ -25,9 +25,8 @@ namespace {
 
 constexpr int kLegacyOrbitalTypeOeo = 3;
 
+constexpr int kMaxExactMetricFactorizationDirections = 256;
 constexpr double kMinimumDenseMetricEigenvalue = 1.0e-12;
-constexpr double kCandidateMetricRelativeRankTolerance = 1.0e-10;
-constexpr double kCandidateMetricAbsoluteRankTolerance = 1.0e-12;
 
 double parse_env_double_with_default(
     const char* name,
@@ -1145,11 +1144,12 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       initialize_dense_full_support_metric_cache(&block_basis);
     }
 
-    // Start from the raw block-local candidate amplitudes `a` defined by the
-    // implicit tangent matrix `D`. The block may later replace those raw
-    // coordinates by a spectrally whitened chart `a = E z`, where
-    // `E^T D^T D E = I` and near-null directions are removed before the global
-    // reduced offset is assigned.
+    // Keep the reduced chart in the raw block-local candidate amplitudes `a`
+    // defined by the implicit direction matrix `D`. Rebuilding the accepted
+    // point should not allocate the dense Gram matrix `D^T D` or run an
+    // `O(N^3)` eigendecomposition on it. All metric actions for this chart stay
+    // implicit through `project_block_candidate_overlap` and
+    // `accumulate_block_candidate_combination`.
     if (block_basis.uses_dense_full_support_projector) {
       block_basis.candidate_metric_diagonal =
           build_dense_full_support_metric_diagonal(block_basis);
@@ -1157,6 +1157,8 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       block_basis.candidate_metric_diagonal =
           build_sparse_mixed_chart_metric_diagonal(block_basis);
     }
+    block_basis.reduced_offset = reduced_size_;
+    reduced_size_ += direction_count;
 
     if (ao_effective_h1e != nullptr) {
       const Eigen::MatrixXd block_effective_one_electron =
@@ -1171,18 +1173,13 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
               block_effective_one_electron);
       block_basis.reduced_curvature_diagonal =
           normalize_curvature_diagonal(candidate_curvature);
+      has_reduced_curvature_diagonal_ =
+          has_reduced_curvature_diagonal_ ||
+          (block_basis.reduced_curvature_diagonal.size() == direction_count);
     }
 
-    maybe_factorize_block_candidate_metric(&block_basis);
-    const int local_reduced_size = block_reduced_size(block_basis);
-    block_basis.reduced_offset = reduced_size_;
-    reduced_size_ += local_reduced_size;
-    has_reduced_curvature_diagonal_ =
-        has_reduced_curvature_diagonal_ ||
-        (local_reduced_size > 0 &&
-         block_basis.reduced_curvature_diagonal.size() == local_reduced_size);
-
     block_bases_.push_back(std::move(block_basis));
+    maybe_factorize_small_block_candidate_metric(&block_bases_.back());
   }
 }
 
@@ -2539,8 +2536,9 @@ NonredundantOrbitalSpace::project_impl(
         project_block_candidate_overlap(block_basis, packed_vector);
     const Eigen::VectorXd local_reduced =
         block_basis.has_exact_metric_factorization
-            ? block_basis.candidate_from_reduced.transpose() *
-                  candidate_overlap
+            ? block_basis.candidate_metric_cholesky_factor
+                  .triangularView<Eigen::Lower>()
+                  .solve(candidate_overlap)
             : (recover_tangent_coordinates
                    ? solve_block_candidate_metric(
                          block_basis,
@@ -2553,13 +2551,16 @@ NonredundantOrbitalSpace::project_impl(
       // The packed tangent projection must use the actual candidate
       // coefficients `a` in `D a`, not the reduced covector `D^T g` itself.
       // For exact-factorized blocks `local_reduced` is the whitened reduced
-      // coordinate `z = E^T D^T g`, so recover raw coefficients `a = E z`.
-      // For large blocks without the exact factorization we solve the implicit
-      // metric system `(D^T D) a = D^T v` whenever the caller asks for the
-      // packed tangent projection.
+      // coordinate `z = L^{-1} D^T g`, so recover `a = L^{-T} z`.  For large
+      // blocks without the exact factorization we solve the implicit metric
+      // system `(D^T D) a = D^T v` whenever the caller asks for the packed
+      // tangent projection.
       const Eigen::VectorXd packed_projection_coefficients =
           block_basis.has_exact_metric_factorization
-              ? block_basis.candidate_from_reduced * local_reduced
+              ? block_basis.candidate_metric_cholesky_factor
+                    .transpose()
+                    .triangularView<Eigen::Upper>()
+                    .solve(local_reduced)
               : (recover_tangent_coordinates
                      ? local_reduced
                      : solve_block_candidate_metric(
@@ -2604,9 +2605,9 @@ NonredundantOrbitalSpace::ProjectionResult
 NonredundantOrbitalSpace::project_vector(
     const Eigen::VectorXd& packed_vector) const {
   // `project_vector` recovers reduced coordinates for a packed tangent vector.
-  // Blocks with spectral whitening use `z = E^T D^T v` in an orthonormal
-  // tangent chart; unfactorized blocks still solve the implicit block metric
-  // equation `D^T D a = D^T v`.
+  // Large blocks still solve the implicit block metric equation
+  // `D^T D a = D^T v`; small blocks instead reuse their exact whitening
+  // factorization so `expand_step(a)` stays in an orthonormal tangent chart.
   return project_impl(
       packed_vector,
       true,
@@ -2645,7 +2646,7 @@ NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
   Eigen::VectorXd preconditioned = reduced_vector;
   for (const auto& block_basis : block_bases_) {
     const Eigen::Index local_size =
-        static_cast<Eigen::Index>(block_reduced_size(block_basis));
+        static_cast<Eigen::Index>(block_basis.candidate_metric_diagonal.size());
     if (local_size == 0) {
       continue;
     }
@@ -2669,13 +2670,15 @@ NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
               .sqrt();
     }
 
-    if (block_basis.has_exact_metric_factorization) {
-      // Spectrally whitened blocks already have identity reduced metric.
-    } else if (block_basis.uses_dense_full_support_projector) {
+    if (block_basis.uses_dense_full_support_projector) {
       local_vector =
           solve_dense_full_support_candidate_metric(
               block_basis,
               local_vector);
+    } else if (block_basis.has_exact_metric_factorization) {
+      // Exact-factorized blocks already use the whitened chart `z = L^{-1} D^T v`
+      // with identity reduced metric, so only the curvature scaling above is
+      // required here.
     } else {
       // Sparse large blocks keep the cheaper diagonal-only model. Re-entering
       // the iterative block metric solve here would nest one Krylov iteration
@@ -3016,11 +3019,14 @@ Eigen::VectorXd NonredundantOrbitalSpace::block_candidate_coefficients_from_redu
   const Eigen::VectorXd local_reduced =
       reduced_step.segment(
           block_basis.reduced_offset,
-          block_reduced_size(block_basis));
+          block_basis.candidate_metric_diagonal.size());
   if (!block_basis.has_exact_metric_factorization) {
     return local_reduced;
   }
-  return block_basis.candidate_from_reduced * local_reduced;
+  return block_basis.candidate_metric_cholesky_factor
+      .transpose()
+      .triangularView<Eigen::Upper>()
+      .solve(local_reduced);
 }
 
 Eigen::VectorXd NonredundantOrbitalSpace::apply_block_candidate_metric(
@@ -3124,28 +3130,19 @@ Eigen::VectorXd NonredundantOrbitalSpace::solve_block_candidate_metric(
   return solution;
 }
 
-int NonredundantOrbitalSpace::block_reduced_size(
-    const BlockBasis& block_basis) noexcept {
-  if (block_basis.has_exact_metric_factorization) {
-    return static_cast<int>(block_basis.candidate_from_reduced.cols());
-  }
-  return static_cast<int>(block_basis.candidate_metric_diagonal.size());
-}
-
-void NonredundantOrbitalSpace::maybe_factorize_block_candidate_metric(
+void NonredundantOrbitalSpace::maybe_factorize_small_block_candidate_metric(
     BlockBasis* block_basis) {
   const int direction_count =
       static_cast<int>(block_basis->candidate_metric_diagonal.size());
-  if (direction_count <= 0) {
+  if (direction_count <= 0 ||
+      direction_count > kMaxExactMetricFactorizationDirections) {
     return;
   }
 
-  // Build the accepted-point Gram matrix `G = D^T D` in the raw candidate
-  // amplitudes. The spectral factorization produces a coordinate map
-  // `a = E z` with `E = U_keep Lambda_keep^{-1/2}`. The reduced optimizer then
-  // sees `(D E)^T(D E) = I`, and eigenvectors whose metric norm is below the
-  // rank tolerance are removed from the chart instead of being handled by an
-  // ill-conditioned trust-region geometry.
+  // Small blocks can afford an exact factorization of `D^T D`. Whitening the
+  // raw candidate amplitudes removes the remaining active-space
+  // nonorthogonality from the reduced TN chart, so trust-region radii and
+  // Krylov residuals are measured in an actual orthonormal tangent basis.
   Eigen::MatrixXd candidate_metric =
       Eigen::MatrixXd::Zero(direction_count, direction_count);
   Eigen::VectorXd unit_direction =
@@ -3159,68 +3156,30 @@ void NonredundantOrbitalSpace::maybe_factorize_block_candidate_metric(
   candidate_metric =
       0.5 * (candidate_metric + candidate_metric.transpose());
 
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> metric_solver(
-      candidate_metric);
-  if (metric_solver.info() != Eigen::Success) {
+  Eigen::LLT<Eigen::MatrixXd> candidate_metric_llt(candidate_metric);
+  if (candidate_metric_llt.info() != Eigen::Success) {
     return;
-  }
-
-  const Eigen::VectorXd eigenvalues = metric_solver.eigenvalues();
-  double largest_eigenvalue = 0.0;
-  for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
-    const double eigenvalue = eigenvalues(index);
-    if (std::isfinite(eigenvalue)) {
-      largest_eigenvalue = std::max(largest_eigenvalue, eigenvalue);
-    }
-  }
-  if (!(largest_eigenvalue > 0.0)) {
-    return;
-  }
-
-  const double keep_threshold =
-      std::max(
-          kCandidateMetricAbsoluteRankTolerance,
-          kCandidateMetricRelativeRankTolerance * largest_eigenvalue);
-  int kept_rank = 0;
-  for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
-    const double eigenvalue = eigenvalues(index);
-    if (std::isfinite(eigenvalue) && eigenvalue > keep_threshold) {
-      ++kept_rank;
-    }
-  }
-  if (kept_rank <= 0) {
-    return;
-  }
-
-  Eigen::MatrixXd candidate_from_reduced =
-      Eigen::MatrixXd::Zero(direction_count, kept_rank);
-  int reduced_index = 0;
-  for (Eigen::Index eigen_index = 0;
-       eigen_index < eigenvalues.size();
-       ++eigen_index) {
-    const double eigenvalue = eigenvalues(eigen_index);
-    if (!std::isfinite(eigenvalue) || eigenvalue <= keep_threshold) {
-      continue;
-    }
-    candidate_from_reduced.col(reduced_index).noalias() =
-        metric_solver.eigenvectors().col(eigen_index) /
-        std::sqrt(eigenvalue);
-    ++reduced_index;
   }
 
   block_basis->has_exact_metric_factorization = true;
-  block_basis->candidate_from_reduced = std::move(candidate_from_reduced);
+  block_basis->candidate_metric_cholesky_factor =
+      candidate_metric_llt.matrixL();
 
   if (block_basis->reduced_curvature_diagonal.size() != direction_count) {
     return;
   }
 
+  const Eigen::MatrixXd candidate_from_reduced =
+      block_basis->candidate_metric_cholesky_factor
+          .transpose()
+          .triangularView<Eigen::Upper>()
+          .solve(Eigen::MatrixXd::Identity(direction_count, direction_count));
   Eigen::VectorXd transformed_reduced_curvature =
-      Eigen::VectorXd::Zero(kept_rank);
-  for (int reduced_index = 0; reduced_index < kept_rank; ++reduced_index) {
+      Eigen::VectorXd::Zero(direction_count);
+  for (int reduced_index = 0; reduced_index < direction_count; ++reduced_index) {
     transformed_reduced_curvature(reduced_index) =
         (block_basis->reduced_curvature_diagonal.array() *
-         block_basis->candidate_from_reduced.col(reduced_index).array().square())
+         candidate_from_reduced.col(reduced_index).array().square())
             .sum();
   }
   block_basis->reduced_curvature_diagonal =
