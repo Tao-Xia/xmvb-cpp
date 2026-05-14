@@ -25,8 +25,9 @@ namespace {
 
 constexpr int kLegacyOrbitalTypeOeo = 3;
 
-constexpr int kMaxExactMetricFactorizationDirections = 256;
 constexpr double kMinimumDenseMetricEigenvalue = 1.0e-12;
+constexpr double kCandidateMetricRelativeRankTolerance = 1.0e-10;
+constexpr double kCandidateMetricAbsoluteRankTolerance = 1.0e-12;
 
 double parse_env_double_with_default(
     const char* name,
@@ -187,6 +188,31 @@ Eigen::VectorXd linearize_local_sparse_normalized_step(
   const double tangent_overlap =
       normalized_orbital.dot(local_overlap * local_step);
   return local_step - normalized_orbital * tangent_overlap;
+}
+
+// Euclidean adjoint of `linearize_local_sparse_normalized_step()`.  The sparse
+// tangent map is `P step = step - q (q^T S step)`, with `q` the normalized
+// accepted local orbital, so its pullback is
+// `P^T g = g - (S q) (q^T g)`.
+Eigen::VectorXd apply_local_sparse_normalized_tangent_adjoint(
+    const Eigen::MatrixXd& local_overlap,
+    const Eigen::VectorXd& local_coefficients,
+    const Eigen::VectorXd& local_vector) {
+  const Eigen::VectorXd metric_times_coefficients =
+      local_overlap * local_coefficients;
+  const double squared_norm =
+      local_coefficients.dot(metric_times_coefficients);
+  if (!std::isfinite(squared_norm) ||
+      squared_norm <= std::numeric_limits<double>::epsilon()) {
+    throw std::runtime_error(
+        "sparse-support tangent adjoint encountered a non-positive local orbital norm");
+  }
+
+  const Eigen::VectorXd normalized_orbital =
+      local_coefficients / std::sqrt(squared_norm);
+  return local_vector -
+      (local_overlap * normalized_orbital) *
+          normalized_orbital.dot(local_vector);
 }
 
 std::vector<int> build_block_basis_function_indices(
@@ -1144,12 +1170,12 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       initialize_dense_full_support_metric_cache(&block_basis);
     }
 
-    // Keep the reduced chart in the raw block-local candidate amplitudes `a`
-    // defined by the implicit direction matrix `D`. Rebuilding the accepted
-    // point should not allocate the dense Gram matrix `D^T D` or run an
-    // `O(N^3)` eigendecomposition on it. All metric actions for this chart stay
-    // implicit through `project_block_candidate_overlap` and
-    // `accumulate_block_candidate_combination`.
+    // Start from the raw block-local candidate amplitudes `a` defined by the
+    // implicit direction matrix `D`. Sparse blocks are immediately converted to
+    // a retraction-tangent chart `a = E z`, where
+    // `E^T T^T T E = I` for the first-order sparse retraction tangent `T`.
+    // Dense full-support/OEO blocks keep their analytic raw metric formulas;
+    // materializing their full Gram matrix is not competitive.
     if (block_basis.uses_dense_full_support_projector) {
       block_basis.candidate_metric_diagonal =
           build_dense_full_support_metric_diagonal(block_basis);
@@ -1157,8 +1183,6 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       block_basis.candidate_metric_diagonal =
           build_sparse_mixed_chart_metric_diagonal(block_basis);
     }
-    block_basis.reduced_offset = reduced_size_;
-    reduced_size_ += direction_count;
 
     if (ao_effective_h1e != nullptr) {
       const Eigen::MatrixXd block_effective_one_electron =
@@ -1173,13 +1197,20 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
               block_effective_one_electron);
       block_basis.reduced_curvature_diagonal =
           normalize_curvature_diagonal(candidate_curvature);
-      has_reduced_curvature_diagonal_ =
-          has_reduced_curvature_diagonal_ ||
-          (block_basis.reduced_curvature_diagonal.size() == direction_count);
     }
 
+    if (!block_basis.uses_dense_full_support_projector) {
+      maybe_factorize_block_candidate_metric(&block_basis);
+    }
+    const int local_reduced_size = block_reduced_size(block_basis);
+    block_basis.reduced_offset = reduced_size_;
+    reduced_size_ += local_reduced_size;
+    has_reduced_curvature_diagonal_ =
+        has_reduced_curvature_diagonal_ ||
+        (local_reduced_size > 0 &&
+         block_basis.reduced_curvature_diagonal.size() == local_reduced_size);
+
     block_bases_.push_back(std::move(block_basis));
-    maybe_factorize_small_block_candidate_metric(&block_bases_.back());
   }
 }
 
@@ -2311,6 +2342,25 @@ Eigen::VectorXd NonredundantOrbitalSpace::project_block_candidate_overlap(
       local_vector[local_index] =
           packed_vector[projector.packed_indices[local_index]];
     }
+    Eigen::VectorXd local_coefficients =
+        Eigen::VectorXd::Zero(local_vector.size());
+    for (Eigen::Index local_index = 0;
+         local_index < local_coefficients.size();
+         ++local_index) {
+      local_coefficients[local_index] =
+          block_basis.occupied_orbitals(
+              projector.block_rows[static_cast<std::size_t>(local_index)],
+              occupied_index);
+    }
+    const Eigen::MatrixXd local_overlap =
+        build_local_sparse_overlap_metric(
+            block_basis.block_overlap_matrix,
+            projector.block_rows);
+    local_vector =
+        apply_local_sparse_normalized_tangent_adjoint(
+            local_overlap,
+            local_coefficients,
+            local_vector);
 
     if (occupied_index < n_inactive) {
       if (n_active > 0) {
@@ -2518,6 +2568,154 @@ void NonredundantOrbitalSpace::accumulate_block_candidate_combination(
   }
 }
 
+void NonredundantOrbitalSpace::accumulate_block_retract_tangent_combination(
+    const BlockBasis& block_basis,
+    const Eigen::VectorXd& candidate_coefficients,
+    Eigen::VectorXd* packed_vector) const {
+  if (block_basis.uses_dense_full_support_projector) {
+    accumulate_block_candidate_combination(
+        block_basis,
+        candidate_coefficients,
+        packed_vector);
+    return;
+  }
+
+  const BlockDirectionLayout layout =
+      build_block_direction_layout(
+          block_basis.n_inactive,
+          block_basis.n_occupied,
+          block_basis.n_virtual);
+  const int n_inactive = layout.n_inactive;
+  const int n_occupied = layout.n_occupied;
+  const int n_active = layout.n_active;
+  const int n_virtual = layout.n_virtual;
+  if (layout.direction_count == 0) {
+    return;
+  }
+
+  Eigen::Map<const Eigen::MatrixXd> inactive_active_coefficients(
+      candidate_coefficients.data(),
+      n_active,
+      n_inactive);
+  Eigen::Map<const Eigen::MatrixXd> active_shape_coefficients(
+      candidate_coefficients.data() + layout.inactive_active_count,
+      n_active,
+      n_active);
+  Eigen::Map<const Eigen::MatrixXd> occupied_virtual_coefficients(
+      candidate_coefficients.data() + layout.occupied_virtual_offset,
+      n_virtual,
+      n_occupied);
+
+  Eigen::MatrixXd inactive_active_step =
+      Eigen::MatrixXd::Zero(n_active, n_inactive);
+  Eigen::MatrixXd inactive_virtual_step =
+      Eigen::MatrixXd::Zero(n_virtual, n_inactive);
+  Eigen::MatrixXd active_inactive_step =
+      Eigen::MatrixXd::Zero(n_inactive, n_active);
+  Eigen::MatrixXd active_working_step =
+      active_shape_coefficients;
+  Eigen::MatrixXd active_virtual_step =
+      Eigen::MatrixXd::Zero(n_virtual, n_active);
+
+  if (n_inactive > 0 && n_active > 0) {
+    inactive_active_step.noalias() =
+        inactive_active_coefficients *
+        block_basis.inactive_right_transform;
+    active_inactive_step.noalias() =
+        -inactive_active_coefficients.transpose() *
+        block_basis.active_shape_matrix;
+    active_working_step.noalias() +=
+        inactive_active_coefficients *
+        block_basis.active_inactive_gauge_coefficients;
+  }
+  if (n_virtual > 0) {
+    if (n_inactive > 0) {
+      inactive_virtual_step.noalias() =
+          occupied_virtual_coefficients.leftCols(n_inactive) *
+          block_basis.inactive_right_transform;
+      if (n_active > 0) {
+        active_virtual_step.noalias() +=
+            occupied_virtual_coefficients.leftCols(n_inactive) *
+            block_basis.active_inactive_gauge_coefficients;
+      }
+    }
+    if (n_active > 0) {
+      active_virtual_step.noalias() +=
+          occupied_virtual_coefficients.rightCols(n_active) *
+          block_basis.active_shape_matrix;
+    }
+  }
+
+  // This is the sparse stored-coefficient tangent `T a` used by
+  // `retract_step()`: first form the raw mixed-chart local step, then project
+  // it to each support-local normalization tangent before scattering it into
+  // packed differentiable coefficients.
+  for (int occupied_index = 0;
+       occupied_index < n_occupied;
+       ++occupied_index) {
+    const auto& projector = block_basis.orbitals[occupied_index];
+    Eigen::VectorXd local_step =
+        Eigen::VectorXd::Zero(
+            static_cast<Eigen::Index>(projector.packed_indices.size()));
+    if (occupied_index < n_inactive) {
+      if (n_active > 0) {
+        local_step.noalias() +=
+            projector.active_working_masked *
+            inactive_active_step.col(occupied_index);
+      }
+      if (n_virtual > 0) {
+        local_step.noalias() +=
+            projector.internal_virtual_masked *
+            inactive_virtual_step.col(occupied_index);
+      }
+    } else {
+      const int active_index = occupied_index - n_inactive;
+      if (n_inactive > 0) {
+        local_step.noalias() +=
+            projector.inactive_working_masked *
+            active_inactive_step.col(active_index);
+      }
+      if (n_active > 0) {
+        local_step.noalias() +=
+            projector.active_working_masked *
+            active_working_step.col(active_index);
+      }
+      if (n_virtual > 0) {
+        local_step.noalias() +=
+            projector.internal_virtual_masked *
+            active_virtual_step.col(active_index);
+      }
+    }
+
+    Eigen::VectorXd local_coefficients =
+        Eigen::VectorXd::Zero(local_step.size());
+    for (Eigen::Index local_index = 0;
+         local_index < local_coefficients.size();
+         ++local_index) {
+      local_coefficients[local_index] =
+          block_basis.occupied_orbitals(
+              projector.block_rows[static_cast<std::size_t>(local_index)],
+              occupied_index);
+    }
+    const Eigen::MatrixXd local_overlap =
+        build_local_sparse_overlap_metric(
+            block_basis.block_overlap_matrix,
+            projector.block_rows);
+    const Eigen::VectorXd local_tangent =
+        linearize_local_sparse_normalized_step(
+            local_overlap,
+            local_coefficients,
+            local_step);
+
+    for (Eigen::Index local_index = 0;
+         local_index < local_tangent.size();
+         ++local_index) {
+      (*packed_vector)[projector.packed_indices[local_index]] +=
+          local_tangent[local_index];
+    }
+  }
+}
+
 NonredundantOrbitalSpace::ProjectionResult
 NonredundantOrbitalSpace::project_impl(
     const Eigen::VectorXd& packed_vector,
@@ -2536,9 +2734,8 @@ NonredundantOrbitalSpace::project_impl(
         project_block_candidate_overlap(block_basis, packed_vector);
     const Eigen::VectorXd local_reduced =
         block_basis.has_exact_metric_factorization
-            ? block_basis.candidate_metric_cholesky_factor
-                  .triangularView<Eigen::Lower>()
-                  .solve(candidate_overlap)
+            ? block_basis.candidate_from_reduced.transpose() *
+                  candidate_overlap
             : (recover_tangent_coordinates
                    ? solve_block_candidate_metric(
                          block_basis,
@@ -2549,27 +2746,30 @@ NonredundantOrbitalSpace::project_impl(
         local_reduced.size()) = local_reduced;
     if (build_packed_projection) {
       // The packed tangent projection must use the actual candidate
-      // coefficients `a` in `D a`, not the reduced covector `D^T g` itself.
-      // For exact-factorized blocks `local_reduced` is the whitened reduced
-      // coordinate `z = L^{-1} D^T g`, so recover `a = L^{-T} z`.  For large
-      // blocks without the exact factorization we solve the implicit metric
-      // system `(D^T D) a = D^T v` whenever the caller asks for the packed
-      // tangent projection.
+      // coefficients `a` in the accepted-point tangent, not the reduced
+      // covector itself. For exact-factorized sparse blocks `local_reduced` is
+      // the whitened coordinate `z = E^T T^T g`, so recover raw coefficients
+      // `a = E z`. For unfactorized blocks we solve the implicit metric system
+      // whenever the caller asks for the packed tangent projection.
       const Eigen::VectorXd packed_projection_coefficients =
           block_basis.has_exact_metric_factorization
-              ? block_basis.candidate_metric_cholesky_factor
-                    .transpose()
-                    .triangularView<Eigen::Upper>()
-                    .solve(local_reduced)
+              ? block_basis.candidate_from_reduced * local_reduced
               : (recover_tangent_coordinates
                      ? local_reduced
                      : solve_block_candidate_metric(
                            block_basis,
                            candidate_overlap));
-      accumulate_block_candidate_combination(
-          block_basis,
-          packed_projection_coefficients,
-          &result.packed_projected_gradient);
+      if (block_basis.uses_dense_full_support_projector) {
+        accumulate_block_candidate_combination(
+            block_basis,
+            packed_projection_coefficients,
+            &result.packed_projected_gradient);
+      } else {
+        accumulate_block_retract_tangent_combination(
+            block_basis,
+            packed_projection_coefficients,
+            &result.packed_projected_gradient);
+      }
     }
   }
 
@@ -2579,9 +2779,9 @@ NonredundantOrbitalSpace::project_impl(
 Eigen::VectorXd NonredundantOrbitalSpace::project_reduced_gradient(
     const Eigen::VectorXd& packed_gradient) const {
   // This is the hot-path pullback used by exact-context HVP evaluations.
-  // Small blocks may first whiten their candidate chart through an exact
-  // `D^T D` factorization, but we still skip reconstructing `D a` when the
-  // caller only needs reduced coordinates.
+  // Sparse blocks use the adjoint of the actual retraction tangent `T`, so the
+  // reduced gradient is the derivative of the finite sparse retraction rather
+  // than of the raw additive chart.
   return project_impl(
              packed_gradient,
              false,
@@ -2605,9 +2805,8 @@ NonredundantOrbitalSpace::ProjectionResult
 NonredundantOrbitalSpace::project_vector(
     const Eigen::VectorXd& packed_vector) const {
   // `project_vector` recovers reduced coordinates for a packed tangent vector.
-  // Large blocks still solve the implicit block metric equation
-  // `D^T D a = D^T v`; small blocks instead reuse their exact whitening
-  // factorization so `expand_step(a)` stays in an orthonormal tangent chart.
+  // Sparse blocks solve or reuse the factorization of `T^T T`, where `T` is
+  // the accepted-point first-order retraction map.
   return project_impl(
       packed_vector,
       true,
@@ -2646,7 +2845,7 @@ NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
   Eigen::VectorXd preconditioned = reduced_vector;
   for (const auto& block_basis : block_bases_) {
     const Eigen::Index local_size =
-        static_cast<Eigen::Index>(block_basis.candidate_metric_diagonal.size());
+        static_cast<Eigen::Index>(block_reduced_size(block_basis));
     if (local_size == 0) {
       continue;
     }
@@ -2670,15 +2869,13 @@ NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
               .sqrt();
     }
 
-    if (block_basis.uses_dense_full_support_projector) {
+    if (block_basis.has_exact_metric_factorization) {
+      // Retraction-whitened sparse blocks already have identity reduced metric.
+    } else if (block_basis.uses_dense_full_support_projector) {
       local_vector =
           solve_dense_full_support_candidate_metric(
               block_basis,
               local_vector);
-    } else if (block_basis.has_exact_metric_factorization) {
-      // Exact-factorized blocks already use the whitened chart `z = L^{-1} D^T v`
-      // with identity reduced metric, so only the curvature scaling above is
-      // required here.
     } else {
       // Sparse large blocks keep the cheaper diagonal-only model. Re-entering
       // the iterative block metric solve here would nest one Krylov iteration
@@ -3019,14 +3216,11 @@ Eigen::VectorXd NonredundantOrbitalSpace::block_candidate_coefficients_from_redu
   const Eigen::VectorXd local_reduced =
       reduced_step.segment(
           block_basis.reduced_offset,
-          block_basis.candidate_metric_diagonal.size());
+          block_reduced_size(block_basis));
   if (!block_basis.has_exact_metric_factorization) {
     return local_reduced;
   }
-  return block_basis.candidate_metric_cholesky_factor
-      .transpose()
-      .triangularView<Eigen::Upper>()
-      .solve(local_reduced);
+  return block_basis.candidate_from_reduced * local_reduced;
 }
 
 Eigen::VectorXd NonredundantOrbitalSpace::apply_block_candidate_metric(
@@ -3040,7 +3234,7 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_block_candidate_metric(
 
   Eigen::VectorXd packed_direction =
       Eigen::VectorXd::Zero(static_cast<Eigen::Index>(packed_parameter_size_));
-  accumulate_block_candidate_combination(
+  accumulate_block_retract_tangent_combination(
       block_basis,
       candidate_coefficients,
       &packed_direction);
@@ -3130,19 +3324,27 @@ Eigen::VectorXd NonredundantOrbitalSpace::solve_block_candidate_metric(
   return solution;
 }
 
-void NonredundantOrbitalSpace::maybe_factorize_small_block_candidate_metric(
+int NonredundantOrbitalSpace::block_reduced_size(
+    const BlockBasis& block_basis) noexcept {
+  if (block_basis.has_exact_metric_factorization) {
+    return static_cast<int>(block_basis.candidate_from_reduced.cols());
+  }
+  return static_cast<int>(block_basis.candidate_metric_diagonal.size());
+}
+
+void NonredundantOrbitalSpace::maybe_factorize_block_candidate_metric(
     BlockBasis* block_basis) {
   const int direction_count =
       static_cast<int>(block_basis->candidate_metric_diagonal.size());
-  if (direction_count <= 0 ||
-      direction_count > kMaxExactMetricFactorizationDirections) {
+  if (direction_count <= 0) {
     return;
   }
 
-  // Small blocks can afford an exact factorization of `D^T D`. Whitening the
-  // raw candidate amplitudes removes the remaining active-space
-  // nonorthogonality from the reduced TN chart, so trust-region radii and
-  // Krylov residuals are measured in an actual orthonormal tangent basis.
+  // Build the accepted-point sparse retraction tangent Gram matrix
+  // `T^T T`, where `T` is the linearization of `retract_step()` in packed
+  // stored coefficients. Its spectral factorization gives `a = E z` with
+  // `E^T T^T T E = I`; tangent-null directions are removed from the reduced
+  // chart instead of contaminating the trust-region geometry.
   Eigen::MatrixXd candidate_metric =
       Eigen::MatrixXd::Zero(direction_count, direction_count);
   Eigen::VectorXd unit_direction =
@@ -3156,30 +3358,68 @@ void NonredundantOrbitalSpace::maybe_factorize_small_block_candidate_metric(
   candidate_metric =
       0.5 * (candidate_metric + candidate_metric.transpose());
 
-  Eigen::LLT<Eigen::MatrixXd> candidate_metric_llt(candidate_metric);
-  if (candidate_metric_llt.info() != Eigen::Success) {
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> metric_solver(
+      candidate_metric);
+  if (metric_solver.info() != Eigen::Success) {
     return;
   }
 
+  const Eigen::VectorXd eigenvalues = metric_solver.eigenvalues();
+  double largest_eigenvalue = 0.0;
+  for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
+    const double eigenvalue = eigenvalues(index);
+    if (std::isfinite(eigenvalue)) {
+      largest_eigenvalue = std::max(largest_eigenvalue, eigenvalue);
+    }
+  }
+  if (!(largest_eigenvalue > 0.0)) {
+    return;
+  }
+
+  const double keep_threshold =
+      std::max(
+          kCandidateMetricAbsoluteRankTolerance,
+          kCandidateMetricRelativeRankTolerance * largest_eigenvalue);
+  int kept_rank = 0;
+  for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
+    const double eigenvalue = eigenvalues(index);
+    if (std::isfinite(eigenvalue) && eigenvalue > keep_threshold) {
+      ++kept_rank;
+    }
+  }
+  if (kept_rank <= 0) {
+    return;
+  }
+
+  Eigen::MatrixXd candidate_from_reduced =
+      Eigen::MatrixXd::Zero(direction_count, kept_rank);
+  int reduced_index = 0;
+  for (Eigen::Index eigen_index = 0;
+       eigen_index < eigenvalues.size();
+       ++eigen_index) {
+    const double eigenvalue = eigenvalues(eigen_index);
+    if (!std::isfinite(eigenvalue) || eigenvalue <= keep_threshold) {
+      continue;
+    }
+    candidate_from_reduced.col(reduced_index).noalias() =
+        metric_solver.eigenvectors().col(eigen_index) /
+        std::sqrt(eigenvalue);
+    ++reduced_index;
+  }
+
   block_basis->has_exact_metric_factorization = true;
-  block_basis->candidate_metric_cholesky_factor =
-      candidate_metric_llt.matrixL();
+  block_basis->candidate_from_reduced = std::move(candidate_from_reduced);
 
   if (block_basis->reduced_curvature_diagonal.size() != direction_count) {
     return;
   }
 
-  const Eigen::MatrixXd candidate_from_reduced =
-      block_basis->candidate_metric_cholesky_factor
-          .transpose()
-          .triangularView<Eigen::Upper>()
-          .solve(Eigen::MatrixXd::Identity(direction_count, direction_count));
   Eigen::VectorXd transformed_reduced_curvature =
-      Eigen::VectorXd::Zero(direction_count);
-  for (int reduced_index = 0; reduced_index < direction_count; ++reduced_index) {
+      Eigen::VectorXd::Zero(kept_rank);
+  for (int reduced_index = 0; reduced_index < kept_rank; ++reduced_index) {
     transformed_reduced_curvature(reduced_index) =
         (block_basis->reduced_curvature_diagonal.array() *
-         candidate_from_reduced.col(reduced_index).array().square())
+         block_basis->candidate_from_reduced.col(reduced_index).array().square())
             .sum();
   }
   block_basis->reduced_curvature_diagonal =
