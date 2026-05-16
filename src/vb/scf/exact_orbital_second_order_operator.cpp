@@ -4,7 +4,6 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdio>
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
@@ -29,7 +28,6 @@
 #include "vb/orbital/active_space_two_electron_backpropagator.hpp"
 #include "vb/orbital/active_space_two_electron_utils.hpp"
 #include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
-#include "vb/orbital/ao_effective_one_electron_builder.hpp"
 #include "vb/orbital/ao_effective_one_electron_graph_operator.hpp"
 #include "vb/scf/exact_ctx_memory_accounting.hpp"
 #include "vb/scf/exact_ctx_strategy_profile.hpp"
@@ -148,21 +146,6 @@ LowRankAoMatrix make_empty_low_rank_ao_matrix(int n_basis_functions) {
   LowRankAoMatrix matrix;
   matrix.left_factors.resize(n_basis_functions, 0);
   matrix.right_factors.resize(n_basis_functions, 0);
-  return matrix;
-}
-
-LowRankAoMatrix make_low_rank_ao_matrix(
-    const Eigen::Ref<const Eigen::MatrixXd>& left_factors,
-    const Eigen::Ref<const Eigen::MatrixXd>& right_factors,
-    const char* label) {
-  if (left_factors.rows() != right_factors.rows() ||
-      left_factors.cols() != right_factors.cols()) {
-    throw std::invalid_argument(
-        std::string(label) + " low-rank AO factors have inconsistent shapes");
-  }
-  LowRankAoMatrix matrix;
-  matrix.left_factors = left_factors;
-  matrix.right_factors = right_factors;
   return matrix;
 }
 
@@ -765,21 +748,6 @@ Eigen::MatrixXd materialize_low_rank_ao_matrix(
         matrix.right_factors.rows());
   }
   return matrix.left_factors * matrix.right_factors.transpose();
-}
-
-Eigen::MatrixXd apply_low_rank_ao_matrix(
-    const LowRankAoMatrix& matrix,
-    const Eigen::Ref<const Eigen::MatrixXd>& rhs,
-    const char* label) {
-  validate_low_rank_ao_matrix(matrix, label);
-  if (matrix.right_factors.rows() != rhs.rows()) {
-    throw std::invalid_argument(
-        std::string(label) + " low-rank AO multiply dimension mismatch");
-  }
-  if (matrix.left_factors.cols() == 0) {
-    return Eigen::MatrixXd::Zero(matrix.left_factors.rows(), rhs.cols());
-  }
-  return matrix.left_factors * (matrix.right_factors.transpose() * rhs);
 }
 
 Eigen::MatrixXd apply_metric_times_low_rank_ao_matrix(
@@ -1681,92 +1649,6 @@ double elapsed_wall_time_seconds(
   return std::chrono::duration<double>(
              std::chrono::steady_clock::now() - start_time)
       .count();
-}
-
-struct ProcessResidentSetSnapshot {
-  std::size_t vmrss_bytes = 0;
-  std::size_t vmhwm_bytes = 0;
-};
-
-bool exact_ctx_apply_rss_logging_enabled() {
-  const char* flag = std::getenv("XMVB_CPP_LOG_EXACT_CTX_APPLY_RSS");
-  if (flag == nullptr || flag[0] == '\0') {
-    return false;
-  }
-  return std::strcmp(flag, "0") != 0 &&
-      std::strcmp(flag, "false") != 0 &&
-      std::strcmp(flag, "FALSE") != 0;
-}
-
-std::size_t exact_ctx_apply_rss_logging_max_applies() {
-  const char* value = std::getenv("XMVB_CPP_LOG_EXACT_CTX_APPLY_RSS_MAX_APPLIES");
-  if (value == nullptr || value[0] == '\0') {
-    return 1;
-  }
-  const long long parsed = std::atoll(value);
-  if (parsed <= 0) {
-    throw std::invalid_argument(
-        "XMVB_CPP_LOG_EXACT_CTX_APPLY_RSS_MAX_APPLIES must be positive");
-  }
-  return static_cast<std::size_t>(parsed);
-}
-
-bool exact_ctx_structure_stage_logging_enabled() {
-  const char* flag = std::getenv("XMVB_CPP_LOG_EXACT_CTX_STRUCTURE_STAGE");
-  if (flag == nullptr || flag[0] == '\0') {
-    return false;
-  }
-  return std::strcmp(flag, "0") != 0 &&
-      std::strcmp(flag, "false") != 0 &&
-      std::strcmp(flag, "FALSE") != 0;
-}
-
-ProcessResidentSetSnapshot read_process_resident_set_snapshot() {
-  ProcessResidentSetSnapshot snapshot;
-  std::FILE* status = std::fopen("/proc/self/status", "r");
-  if (status == nullptr) {
-    return snapshot;
-  }
-  char line[512];
-  while (std::fgets(line, sizeof(line), status) != nullptr) {
-    long long kibibytes = 0;
-    if (std::sscanf(line, "VmRSS: %lld kB", &kibibytes) == 1) {
-      snapshot.vmrss_bytes =
-          static_cast<std::size_t>(kibibytes) * static_cast<std::size_t>(1024);
-    } else if (std::sscanf(line, "VmHWM: %lld kB", &kibibytes) == 1) {
-      snapshot.vmhwm_bytes =
-          static_cast<std::size_t>(kibibytes) * static_cast<std::size_t>(1024);
-    }
-  }
-  std::fclose(status);
-  return snapshot;
-}
-
-void maybe_log_exact_ctx_apply_rss_stage(
-    const char* stage,
-    std::size_t apply_index,
-    double elapsed_seconds) {
-  if (!exact_ctx_apply_rss_logging_enabled()) {
-    return;
-  }
-  if (stage == nullptr || stage[0] == '\0') {
-    stage = "unknown";
-  }
-  const ProcessResidentSetSnapshot snapshot =
-      read_process_resident_set_snapshot();
-  const double vmrss_mib =
-      static_cast<double>(snapshot.vmrss_bytes) / (1024.0 * 1024.0);
-  const double vmhwm_mib =
-      static_cast<double>(snapshot.vmhwm_bytes) / (1024.0 * 1024.0);
-  std::fprintf(
-      stderr,
-      "[exact_ctx_apply_rss] apply=%zu stage=%s elapsed=%.6f rss=%.2f MiB hwm=%.2f MiB\n",
-      apply_index,
-      stage,
-      elapsed_seconds,
-      vmrss_mib,
-      vmhwm_mib);
-  std::fflush(stderr);
 }
 
 Eigen::MatrixXd invert_self_adjoint_positive_definite(
@@ -2823,16 +2705,6 @@ struct ActiveSpaceGradientDirection {
   std::vector<double> packed_active_two_electron_gradient;
 };
 
-void validate_outer_response_structure_matrices(
-    const StructureAccumulationResult& directional_structure_matrices) {
-  throw_if_nonfinite(
-      directional_structure_matrices.overlap_matrix,
-      "exact outer-response directional overlap matrix");
-  throw_if_nonfinite(
-      directional_structure_matrices.hamiltonian_matrix,
-      "exact outer-response directional Hamiltonian matrix");
-}
-
 void validate_outer_response_pair_weights(
     const StructurePairWeightTables& structure_pair_weights) {
   throw_if_nonfinite(
@@ -2870,23 +2742,6 @@ void validate_selected_state_determinant_matrices(
         state.local_coefficient_matrix,
         label);
   }
-}
-
-void validate_directional_determinant_pair_weights(
-    const DeterminantPairWeightTablesFromCoefficients& pair_weights,
-    const char* label) {
-  throw_if_nonfinite(
-      pair_weights.ordered_hamiltonian_weights,
-      label);
-  throw_if_nonfinite(
-      pair_weights.ordered_overlap_weights,
-      label);
-  throw_if_nonfinite(
-      pair_weights.unordered_combined_hamiltonian_weights,
-      label);
-  throw_if_nonfinite(
-      pair_weights.unordered_combined_overlap_weights,
-      label);
 }
 
 void validate_same_spin_matrix_backward_contribution(
@@ -5172,25 +5027,6 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
   std::atomic<bool> parallel_failed(false);
   const int n_parallel_threads =
       choose_exact_ctx_directional_structure_threads(n_structures);
-  const bool log_structure_stage = exact_ctx_structure_stage_logging_enabled();
-  std::vector<double> thread_alpha_gather_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_beta_gather_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_same_spin_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_opposite_spin_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<std::size_t> thread_structure_pair_count(
-      std::max(1, n_parallel_threads),
-      0);
-  std::vector<std::size_t> thread_diagonal_structure_pair_count(
-      std::max(1, n_parallel_threads),
-      0);
 
 // The matrix-form directional builder mirrors the tiled forward structure path:
 // it visits only the unique alpha/beta support blocks touched by each
@@ -5246,12 +5082,6 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
         n_packed_active_pairs);
     LocalOppositeSpinChannelFamilyLocal accepted_alpha_channels;
     LocalOppositeSpinChannelFamilyLocal directional_alpha_channels;
-    double local_alpha_gather_wall_seconds = 0.0;
-    double local_beta_gather_wall_seconds = 0.0;
-    double local_same_spin_wall_seconds = 0.0;
-    double local_opposite_spin_wall_seconds = 0.0;
-    std::size_t local_structure_pair_count = 0;
-    std::size_t local_diagonal_structure_pair_count = 0;
 
 #pragma omp for schedule(dynamic)
     for (int right_structure = 0;
@@ -5284,15 +5114,7 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
               close_shell_same_spin &&
               left_block.close_shell_diagonal &&
               right_block.close_shell_diagonal;
-          ++local_structure_pair_count;
           if (structure_pair_close_shell_diagonal) {
-            ++local_diagonal_structure_pair_count;
-          }
-          if (structure_pair_close_shell_diagonal) {
-            const auto alpha_gather_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             gather_directional_spin_block_local(
                 &thread_alpha_provider,
                 left_block.alpha_support,
@@ -5307,15 +5129,7 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
                 &accepted_alpha_channels,
                 &directional_alpha_channel_builder,
                 &directional_alpha_channels);
-            if (log_structure_stage) {
-              local_alpha_gather_wall_seconds +=
-                  elapsed_wall_time_seconds(alpha_gather_start_time);
-            }
           } else {
-            const auto alpha_gather_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             gather_directional_spin_block_local(
                 &thread_alpha_provider,
                 left_block.alpha_support,
@@ -5330,14 +5144,6 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
                 &accepted_alpha_channels,
                 &directional_alpha_channel_builder,
                 &directional_alpha_channels);
-            if (log_structure_stage) {
-              local_alpha_gather_wall_seconds +=
-                  elapsed_wall_time_seconds(alpha_gather_start_time);
-            }
-            const auto beta_gather_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             gather_directional_spin_block_local(
                 shared_same_spin_pair_cache
                     ? &thread_alpha_provider
@@ -5354,19 +5160,11 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
                 nullptr,
                 nullptr,
                 nullptr);
-            if (log_structure_stage) {
-              local_beta_gather_wall_seconds +=
-                  elapsed_wall_time_seconds(beta_gather_start_time);
-            }
           }
 
           double directional_overlap = 0.0;
           double directional_hamiltonian = 0.0;
           if (structure_pair_close_shell_diagonal) {
-            const auto same_spin_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             const auto same_spin_contraction =
                 contract_close_shell_diagonal_directional_same_spin_structure_kernels_local(
                     left_block.local_diagonal_coefficients,
@@ -5375,16 +5173,8 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
                     alpha_total_subblock,
                     alpha_delta_overlap_subblock,
                     alpha_delta_total_subblock);
-            if (log_structure_stage) {
-              local_same_spin_wall_seconds +=
-                  elapsed_wall_time_seconds(same_spin_start_time);
-            }
             directional_overlap = same_spin_contraction.overlap;
             directional_hamiltonian = same_spin_contraction.hamiltonian;
-            const auto opposite_spin_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             directional_hamiltonian +=
                 contract_close_shell_diagonal_local_directional_opposite_spin_block_local(
                     left_block.local_diagonal_coefficients,
@@ -5397,15 +5187,7 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
                     n_active_orbitals,
                     delta_packed_active_two_electron_integrals,
                     &beta_projected_channel_block);
-            if (log_structure_stage) {
-              local_opposite_spin_wall_seconds +=
-                  elapsed_wall_time_seconds(opposite_spin_start_time);
-            }
           } else {
-            const auto same_spin_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             const auto same_spin_contraction =
                 contract_directional_same_spin_structure_kernels_local(
                     left_block.local_coefficients,
@@ -5419,16 +5201,8 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
                     beta_delta_overlap_subblock,
                     beta_delta_total_subblock,
                     &same_spin_scratch);
-            if (log_structure_stage) {
-              local_same_spin_wall_seconds +=
-                  elapsed_wall_time_seconds(same_spin_start_time);
-            }
             directional_overlap = same_spin_contraction.overlap;
             directional_hamiltonian = same_spin_contraction.hamiltonian;
-            const auto opposite_spin_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             directional_hamiltonian +=
                 contract_local_directional_opposite_spin_block_local(
                     left_block.local_coefficients,
@@ -5445,10 +5219,6 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
                     &beta_projected_channel_block,
                     &beta_push,
                     &image);
-            if (log_structure_stage) {
-              local_opposite_spin_wall_seconds +=
-                  elapsed_wall_time_seconds(opposite_spin_start_time);
-            }
           }
 
           result.overlap_matrix[linear_index] = directional_overlap;
@@ -5467,19 +5237,6 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
         }
       }
     }
-
-    thread_alpha_gather_wall_seconds[thread_index] =
-        local_alpha_gather_wall_seconds;
-    thread_beta_gather_wall_seconds[thread_index] =
-        local_beta_gather_wall_seconds;
-    thread_same_spin_wall_seconds[thread_index] =
-        local_same_spin_wall_seconds;
-    thread_opposite_spin_wall_seconds[thread_index] =
-        local_opposite_spin_wall_seconds;
-    thread_structure_pair_count[thread_index] =
-        local_structure_pair_count;
-    thread_diagonal_structure_pair_count[thread_index] =
-        local_diagonal_structure_pair_count;
   }
 
   if (parallel_exception) {
@@ -5496,46 +5253,6 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
   }
 
   symmetrize_structure_matrices_local(&result);
-  if (log_structure_stage) {
-    double alpha_gather_wall_seconds = 0.0;
-    double beta_gather_wall_seconds = 0.0;
-    double same_spin_wall_seconds = 0.0;
-    double opposite_spin_wall_seconds = 0.0;
-    std::size_t structure_pair_count = 0;
-    std::size_t diagonal_structure_pair_count = 0;
-    for (std::size_t thread_index = 0;
-         thread_index < thread_alpha_gather_wall_seconds.size();
-         ++thread_index) {
-      alpha_gather_wall_seconds +=
-          thread_alpha_gather_wall_seconds[thread_index];
-      beta_gather_wall_seconds +=
-          thread_beta_gather_wall_seconds[thread_index];
-      same_spin_wall_seconds +=
-          thread_same_spin_wall_seconds[thread_index];
-      opposite_spin_wall_seconds +=
-          thread_opposite_spin_wall_seconds[thread_index];
-      structure_pair_count +=
-          thread_structure_pair_count[thread_index];
-      diagonal_structure_pair_count +=
-          thread_diagonal_structure_pair_count[thread_index];
-    }
-    std::fprintf(
-        stderr,
-        "exact_ctx_structure_stage"
-        " mode=tiled threads=%d n_structures=%d"
-        " pairs=%zu diagonal_pairs=%zu"
-        " alpha_gather_s=%.6f beta_gather_s=%.6f"
-        " same_spin_s=%.6f opposite_spin_s=%.6f\n",
-        n_parallel_threads,
-        n_structures,
-        structure_pair_count,
-        diagonal_structure_pair_count,
-        alpha_gather_wall_seconds,
-        beta_gather_wall_seconds,
-        same_spin_wall_seconds,
-        opposite_spin_wall_seconds);
-    std::fflush(stderr);
-  }
   return result;
 }
 
@@ -6473,40 +6190,12 @@ build_selected_state_projected_directional_structure_matrices(
   std::atomic<bool> parallel_failed(false);
   const int n_parallel_threads =
       choose_exact_ctx_directional_structure_threads(n_structures);
-  const bool log_structure_stage = exact_ctx_structure_stage_logging_enabled();
   std::vector<Eigen::MatrixXd> thread_transformed_delta_hamiltonian_selected(
       std::max(1, n_parallel_threads),
       Eigen::MatrixXd::Zero(n_structures, n_selected_states));
   std::vector<Eigen::MatrixXd> thread_transformed_delta_overlap_selected(
       std::max(1, n_parallel_threads),
       Eigen::MatrixXd::Zero(n_structures, n_selected_states));
-  std::vector<double> thread_gather_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_pair_kernel_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_projection_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_alpha_gather_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_beta_gather_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_same_spin_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<double> thread_opposite_spin_wall_seconds(
-      std::max(1, n_parallel_threads),
-      0.0);
-  std::vector<std::size_t> thread_structure_pair_count(
-      std::max(1, n_parallel_threads),
-      0);
-  std::vector<std::size_t> thread_diagonal_structure_pair_count(
-      std::max(1, n_parallel_threads),
-      0);
 
 // The projected outer-response builder fuses the old
 //   structure-pair scalar accumulation + U^T (delta M) U_sel
@@ -6576,15 +6265,6 @@ build_selected_state_projected_directional_structure_matrices(
         thread_transformed_delta_hamiltonian_selected[thread_index];
     Eigen::MatrixXd& local_transformed_delta_overlap_selected =
         thread_transformed_delta_overlap_selected[thread_index];
-    double local_gather_wall_seconds = 0.0;
-    double local_pair_kernel_wall_seconds = 0.0;
-    double local_projection_wall_seconds = 0.0;
-    double local_alpha_gather_wall_seconds = 0.0;
-    double local_beta_gather_wall_seconds = 0.0;
-    double local_same_spin_wall_seconds = 0.0;
-    double local_opposite_spin_wall_seconds = 0.0;
-    std::size_t local_structure_pair_count = 0;
-    std::size_t local_diagonal_structure_pair_count = 0;
 
 // The projected outer-response reduction used to add each thread-local matrix
 // through one OpenMP critical section. That made the exact_ctx HVP depend on
@@ -6619,23 +6299,11 @@ build_selected_state_projected_directional_structure_matrices(
             continue;
           }
 
-          const auto gather_start_time =
-              log_structure_stage
-                  ? std::chrono::steady_clock::now()
-                  : std::chrono::steady_clock::time_point();
           const bool structure_pair_close_shell_diagonal =
               close_shell_same_spin &&
               left_block.close_shell_diagonal &&
               right_block.close_shell_diagonal;
-          ++local_structure_pair_count;
           if (structure_pair_close_shell_diagonal) {
-            ++local_diagonal_structure_pair_count;
-          }
-          if (structure_pair_close_shell_diagonal) {
-            const auto alpha_gather_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             gather_directional_spin_block_local(
                 &thread_alpha_provider,
                 left_block.alpha_support,
@@ -6650,15 +6318,7 @@ build_selected_state_projected_directional_structure_matrices(
                 &accepted_alpha_channels,
                 &directional_alpha_channel_builder,
                 &directional_alpha_channels);
-            if (log_structure_stage) {
-              local_alpha_gather_wall_seconds +=
-                  elapsed_wall_time_seconds(alpha_gather_start_time);
-            }
           } else {
-            const auto alpha_gather_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             gather_directional_spin_block_local(
                 &thread_alpha_provider,
                 left_block.alpha_support,
@@ -6673,14 +6333,6 @@ build_selected_state_projected_directional_structure_matrices(
                 &accepted_alpha_channels,
                 &directional_alpha_channel_builder,
                 &directional_alpha_channels);
-            if (log_structure_stage) {
-              local_alpha_gather_wall_seconds +=
-                  elapsed_wall_time_seconds(alpha_gather_start_time);
-            }
-            const auto beta_gather_start_time =
-                log_structure_stage
-                    ? std::chrono::steady_clock::now()
-                    : std::chrono::steady_clock::time_point();
             gather_directional_spin_block_local(
                 shared_same_spin_pair_cache
                     ? &thread_alpha_provider
@@ -6697,135 +6349,67 @@ build_selected_state_projected_directional_structure_matrices(
                 nullptr,
                 nullptr,
                 nullptr);
-            if (log_structure_stage) {
-              local_beta_gather_wall_seconds +=
-                  elapsed_wall_time_seconds(beta_gather_start_time);
-            }
-          }
-          if (log_structure_stage) {
-            local_gather_wall_seconds +=
-                elapsed_wall_time_seconds(gather_start_time);
           }
 
-          const auto pair_kernel_start_time =
-              log_structure_stage
-                  ? std::chrono::steady_clock::now()
-                  : std::chrono::steady_clock::time_point();
           const auto same_spin_contraction =
               structure_pair_close_shell_diagonal
-                  ? [&]() {
-                      const auto same_spin_start_time =
-                          log_structure_stage
-                              ? std::chrono::steady_clock::now()
-                              : std::chrono::steady_clock::time_point();
-                      const auto contraction =
-                          contract_close_shell_diagonal_directional_same_spin_structure_kernels_local(
-                              left_block.local_diagonal_coefficients,
-                              right_block.local_diagonal_coefficients,
-                              alpha_overlap_subblock,
-                              alpha_total_subblock,
-                              alpha_delta_overlap_subblock,
-                              alpha_delta_total_subblock);
-                      if (log_structure_stage) {
-                        local_same_spin_wall_seconds +=
-                            elapsed_wall_time_seconds(same_spin_start_time);
-                      }
-                      return contraction;
-                    }()
-                  : [&]() {
-                      const auto same_spin_start_time =
-                          log_structure_stage
-                              ? std::chrono::steady_clock::now()
-                              : std::chrono::steady_clock::time_point();
-                      const auto contraction =
-                          contract_directional_same_spin_structure_kernels_local(
-                              left_block.local_coefficients,
-                              right_block.local_coefficients,
-                              alpha_overlap_subblock,
-                              alpha_total_subblock,
-                              alpha_delta_overlap_subblock,
-                              alpha_delta_total_subblock,
-                              beta_overlap_subblock,
-                              beta_total_subblock,
-                              beta_delta_overlap_subblock,
-                              beta_delta_total_subblock,
-                              &same_spin_scratch);
-                      if (log_structure_stage) {
-                        local_same_spin_wall_seconds +=
-                            elapsed_wall_time_seconds(same_spin_start_time);
-                      }
-                      return contraction;
-                    }();
+                  ? contract_close_shell_diagonal_directional_same_spin_structure_kernels_local(
+                        left_block.local_diagonal_coefficients,
+                        right_block.local_diagonal_coefficients,
+                        alpha_overlap_subblock,
+                        alpha_total_subblock,
+                        alpha_delta_overlap_subblock,
+                        alpha_delta_total_subblock)
+                  : contract_directional_same_spin_structure_kernels_local(
+                        left_block.local_coefficients,
+                        right_block.local_coefficients,
+                        alpha_overlap_subblock,
+                        alpha_total_subblock,
+                        alpha_delta_overlap_subblock,
+                        alpha_delta_total_subblock,
+                        beta_overlap_subblock,
+                        beta_total_subblock,
+                        beta_delta_overlap_subblock,
+                        beta_delta_total_subblock,
+                        &same_spin_scratch);
           const double directional_overlap =
               same_spin_contraction.overlap;
           double directional_hamiltonian =
               same_spin_contraction.hamiltonian;
           directional_hamiltonian +=
               structure_pair_close_shell_diagonal
-                  ? [&]() {
-                      const auto opposite_spin_start_time =
-                          log_structure_stage
-                              ? std::chrono::steady_clock::now()
-                              : std::chrono::steady_clock::time_point();
-                      const double contraction =
-                          contract_close_shell_diagonal_local_directional_opposite_spin_block_local(
-                              left_block.local_diagonal_coefficients,
-                              right_block.local_diagonal_coefficients,
-                              accepted_alpha_channels,
-                              directional_alpha_channels,
-                              accepted_alpha_projection_block,
-                              directional_alpha_projection_block,
-                              two_electron_view,
-                              n_active_orbitals,
-                              delta_packed_active_two_electron_integrals,
-                              &beta_projected_channel_block);
-                      if (log_structure_stage) {
-                        local_opposite_spin_wall_seconds +=
-                            elapsed_wall_time_seconds(opposite_spin_start_time);
-                      }
-                      return contraction;
-                    }()
-                  : [&]() {
-                      const auto opposite_spin_start_time =
-                          log_structure_stage
-                              ? std::chrono::steady_clock::now()
-                              : std::chrono::steady_clock::time_point();
-                      const double contraction =
-                          contract_local_directional_opposite_spin_block_local(
-                              left_block.local_coefficients,
-                              right_block.local_coefficients,
-                              accepted_alpha_projection_block,
-                              directional_alpha_projection_block,
-                              accepted_alpha_channels,
-                              directional_alpha_channels,
-                              accepted_beta_projection_block,
-                              directional_beta_projection_block,
-                              two_electron_view,
-                              n_active_orbitals,
-                              delta_packed_active_two_electron_integrals,
-                              &beta_projected_channel_block,
-                              &beta_push,
-                              &image);
-                      if (log_structure_stage) {
-                        local_opposite_spin_wall_seconds +=
-                            elapsed_wall_time_seconds(opposite_spin_start_time);
-                      }
-                      return contraction;
-                    }();
-          if (log_structure_stage) {
-            local_pair_kernel_wall_seconds +=
-                elapsed_wall_time_seconds(pair_kernel_start_time);
-          }
+                  ? contract_close_shell_diagonal_local_directional_opposite_spin_block_local(
+                        left_block.local_diagonal_coefficients,
+                        right_block.local_diagonal_coefficients,
+                        accepted_alpha_channels,
+                        directional_alpha_channels,
+                        accepted_alpha_projection_block,
+                        directional_alpha_projection_block,
+                        two_electron_view,
+                        n_active_orbitals,
+                        delta_packed_active_two_electron_integrals,
+                        &beta_projected_channel_block)
+                  : contract_local_directional_opposite_spin_block_local(
+                        left_block.local_coefficients,
+                        right_block.local_coefficients,
+                        accepted_alpha_projection_block,
+                        directional_alpha_projection_block,
+                        accepted_alpha_channels,
+                        directional_alpha_channels,
+                        accepted_beta_projection_block,
+                        directional_beta_projection_block,
+                        two_electron_view,
+                        n_active_orbitals,
+                        delta_packed_active_two_electron_integrals,
+                        &beta_projected_channel_block,
+                        &beta_push,
+                        &image);
 
           directional_overlap_column[left_structure] = directional_overlap;
           directional_hamiltonian_column[left_structure] =
               directional_hamiltonian;
         }
 
-        const auto projection_start_time =
-            log_structure_stage
-                ? std::chrono::steady_clock::now()
-                : std::chrono::steady_clock::time_point();
         const auto directional_hamiltonian_column_head =
             directional_hamiltonian_column.head(right_structure + 1);
         const auto directional_overlap_column_head =
@@ -6912,10 +6496,6 @@ build_selected_state_projected_directional_structure_matrices(
             }
           }
         }
-        if (log_structure_stage) {
-          local_projection_wall_seconds +=
-              elapsed_wall_time_seconds(projection_start_time);
-        }
       } catch (...) {
         parallel_failed.store(true, std::memory_order_relaxed);
 #pragma omp critical(exact_ctx_projected_directional_structure_exception)
@@ -6926,31 +6506,8 @@ build_selected_state_projected_directional_structure_matrices(
         }
       }
     }
-
-    thread_gather_wall_seconds[thread_index] =
-        local_gather_wall_seconds;
-    thread_pair_kernel_wall_seconds[thread_index] =
-        local_pair_kernel_wall_seconds;
-    thread_projection_wall_seconds[thread_index] =
-        local_projection_wall_seconds;
-    thread_alpha_gather_wall_seconds[thread_index] =
-        local_alpha_gather_wall_seconds;
-    thread_beta_gather_wall_seconds[thread_index] =
-        local_beta_gather_wall_seconds;
-    thread_same_spin_wall_seconds[thread_index] =
-        local_same_spin_wall_seconds;
-    thread_opposite_spin_wall_seconds[thread_index] =
-        local_opposite_spin_wall_seconds;
-    thread_structure_pair_count[thread_index] =
-        local_structure_pair_count;
-    thread_diagonal_structure_pair_count[thread_index] =
-        local_diagonal_structure_pair_count;
   }
 
-  const auto reduction_start_time =
-      log_structure_stage
-          ? std::chrono::steady_clock::now()
-          : std::chrono::steady_clock::time_point();
   for (int reduction_thread = 0;
        reduction_thread < static_cast<int>(
            thread_transformed_delta_hamiltonian_selected.size());
@@ -6960,8 +6517,6 @@ build_selected_state_projected_directional_structure_matrices(
     result.transformed_delta_overlap_selected +=
         thread_transformed_delta_overlap_selected[reduction_thread];
   }
-  const double reduction_wall_seconds =
-      log_structure_stage ? elapsed_wall_time_seconds(reduction_start_time) : 0.0;
 
   if (parallel_exception) {
     try {
@@ -6984,58 +6539,6 @@ build_selected_state_projected_directional_structure_matrices(
   throw_if_nonfinite(
       result.transformed_delta_overlap_selected,
       "exact outer-response projected directional overlap");
-  if (log_structure_stage) {
-    double gather_wall_seconds = 0.0;
-    double pair_kernel_wall_seconds = 0.0;
-    double projection_wall_seconds = 0.0;
-    double alpha_gather_wall_seconds = 0.0;
-    double beta_gather_wall_seconds = 0.0;
-    double same_spin_wall_seconds = 0.0;
-    double opposite_spin_wall_seconds = 0.0;
-    std::size_t structure_pair_count = 0;
-    std::size_t diagonal_structure_pair_count = 0;
-    for (std::size_t thread_index = 0;
-         thread_index < thread_gather_wall_seconds.size();
-         ++thread_index) {
-      gather_wall_seconds += thread_gather_wall_seconds[thread_index];
-      pair_kernel_wall_seconds += thread_pair_kernel_wall_seconds[thread_index];
-      projection_wall_seconds += thread_projection_wall_seconds[thread_index];
-      alpha_gather_wall_seconds +=
-          thread_alpha_gather_wall_seconds[thread_index];
-      beta_gather_wall_seconds +=
-          thread_beta_gather_wall_seconds[thread_index];
-      same_spin_wall_seconds +=
-          thread_same_spin_wall_seconds[thread_index];
-      opposite_spin_wall_seconds +=
-          thread_opposite_spin_wall_seconds[thread_index];
-      structure_pair_count +=
-          thread_structure_pair_count[thread_index];
-      diagonal_structure_pair_count +=
-          thread_diagonal_structure_pair_count[thread_index];
-    }
-    std::fprintf(
-        stderr,
-        "exact_ctx_structure_stage"
-        " threads=%d n_structures=%d n_selected=%d"
-        " pairs=%zu diagonal_pairs=%zu"
-        " gather_s=%.6f pair_kernel_s=%.6f projection_s=%.6f reduction_s=%.6f"
-        " alpha_gather_s=%.6f beta_gather_s=%.6f"
-        " same_spin_s=%.6f opposite_spin_s=%.6f\n",
-        n_parallel_threads,
-        n_structures,
-        n_selected_states,
-        structure_pair_count,
-        diagonal_structure_pair_count,
-        gather_wall_seconds,
-        pair_kernel_wall_seconds,
-        projection_wall_seconds,
-        reduction_wall_seconds,
-        alpha_gather_wall_seconds,
-        beta_gather_wall_seconds,
-        same_spin_wall_seconds,
-        opposite_spin_wall_seconds);
-    std::fflush(stderr);
-  }
   return result;
 }
 
@@ -7043,16 +6546,6 @@ struct GeneralizedEigenDirectionalResponse {
   Eigen::MatrixXd delta_eigenvector_matrix;
   std::vector<double> delta_eigenvalues;
 };
-
-void validate_outer_response_eigensystem(
-    const GeneralizedEigenDirectionalResponse& directional_eigensystem) {
-  throw_if_nonfinite(
-      directional_eigensystem.delta_eigenvector_matrix,
-      "exact outer-response directional eigenvectors");
-  throw_if_nonfinite(
-      directional_eigensystem.delta_eigenvalues,
-      "exact outer-response directional eigenvalues");
-}
 
 GeneralizedEigenDirectionalResponse build_generalized_eigen_directional_response(
     const CppActiveSpaceSecondOrderContext& accepted_point_context,
@@ -8205,7 +7698,7 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
     const CppVbInput& input,
     const CppActiveSpaceSecondOrderContext& accepted_point_context,
     const ActiveSpaceGradientDirection& active_space_gradient_direction,
-    const AcceptedOrbitalPreparationCache* orbital_preparation_cache,
+    const AcceptedOrbitalPreparationCache& orbital_preparation_cache,
     std::vector<double>* symmetric_active_overlap_gradient_workspace,
     std::vector<double>* symmetric_active_one_electron_gradient_workspace) {
   const int n_inactive_doubly_occupied_orbitals =
@@ -8286,19 +7779,12 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
       input.orbital_preparation_input.n_basis_functions,
       input.orbital_preparation_input.n_basis_functions);
   const std::vector<double> orbital_value_gradient =
-      orbital_preparation_cache != nullptr
-          ? backpropagate_active_space_orbital_gradient(
-                total_active_auxiliary_gradient,
-                total_inactive_density_gradient_matrix,
-                input.orbital_preparation_input,
-                orbital_result,
-                *orbital_preparation_cache)
-          : ActiveSpaceOrbitalBackpropagator().backpropagate(
-                total_active_auxiliary_gradient,
-                total_inactive_density_gradient_matrix,
-                input.orbital_preparation_input,
-                orbital_result)
-                .orbital_value_gradient;
+      backpropagate_active_space_orbital_gradient(
+          total_active_auxiliary_gradient,
+          total_inactive_density_gradient_matrix,
+          input.orbital_preparation_input,
+          orbital_result,
+          orbital_preparation_cache);
   throw_if_nonfinite(
       orbital_value_gradient,
       "exact outer-response orbital-value gradient");
@@ -8655,7 +8141,6 @@ ExactOrbitalSecondOrderOperator::ExactOrbitalSecondOrderOperator(
               n_active_orbitals,
               &accepted_point_context_->prepared_active_space
                    .active_space_two_electron_result);
-      has_accepted_exact_two_electron_cache_ = true;
     }
 
     const auto accepted_orbital_backprop_inputs =
@@ -8766,21 +8251,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     apply_timing_totals_.total_apply_wall_time_seconds +=
         elapsed_wall_time_seconds(apply_start_time);
   };
-  const std::size_t apply_index = apply_timing_totals_.apply_count + 1;
-  const bool log_apply_rss =
-      exact_ctx_apply_rss_logging_enabled() &&
-      apply_index <= exact_ctx_apply_rss_logging_max_applies();
-  auto log_apply_rss_stage = [&](const char* stage) {
-    if (!log_apply_rss) {
-      return;
-    }
-    maybe_log_exact_ctx_apply_rss_stage(
-        stage,
-        apply_index,
-        elapsed_wall_time_seconds(apply_start_time));
-  };
-  log_apply_rss_stage("enter");
-
   Eigen::VectorXd response =
       Eigen::VectorXd::Zero(reduced_direction.size());
 
@@ -8843,7 +8313,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
       orbital_preparation_directional_result.delta_active_auxiliary_orbitals;
   apply_timing_totals_.core_setup_wall_time_seconds +=
       elapsed_wall_time_seconds(core_setup_start_time);
-  log_apply_rss_stage("after_core_setup");
   // `F11` and `delta F11` are explicitly symmetrized in the AO-H1E builder, so
   // the directional active-space matrix gradient only needs the two distinct
   // left contractions `delta F11 * T_active` and `F11 * delta T_active`.
@@ -8874,12 +8343,10 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
       n_basis_functions);
   apply_timing_totals_.ao_effective_one_electron_fused_wall_time_seconds +=
       elapsed_wall_time_seconds(ao_effective_one_electron_fused_start_time);
-  log_apply_rss_stage("after_ao_h1e_fused");
 
   const bool compute_outer_response =
       components.outer_response && exact_ctx_outer_response_enabled();
   std::vector<double> combined_core_orbital_value_gradient;
-  bool has_combined_core_orbital_value_gradient = false;
   Eigen::MatrixXd delta_ao_effective_h1e_times_active_auxiliary_orbitals;
   if (compute_outer_response) {
     // Full HVPs need `delta F11 * A_active` both for the direct-core
@@ -8912,7 +8379,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     Eigen::MatrixXd dense_active_two_electron_gradient_direction_storage;
     const Eigen::MatrixXd* dense_active_two_electron_gradient_direction =
         nullptr;
-    if (has_accepted_exact_two_electron_cache_ &&
+    if (accepted_exact_two_electron_cache_.n_basis_functions > 0 &&
         exact_ctx_workspace_exact_2e_enabled()) {
       apply_exact_packed_active_two_electron_adjoint_hessian_vector(
           accepted_exact_two_electron_cache_,
@@ -8939,7 +8406,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     }
     apply_timing_totals_.active_two_electron_wall_time_seconds +=
         elapsed_wall_time_seconds(active_two_electron_start_time);
-    log_apply_rss_stage("after_active_two_electron");
     if (dense_active_two_electron_gradient_direction != nullptr) {
       delta_auxiliary_active_gradient.noalias() +=
           *dense_active_two_electron_gradient_direction;
@@ -8967,10 +8433,8 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
         &combined_core_orbital_value_gradient,
         orbital_value_gradient,
         "direct-core");
-    has_combined_core_orbital_value_gradient = true;
     apply_timing_totals_.orbital_backprop_wall_time_seconds +=
         elapsed_wall_time_seconds(orbital_backprop_start_time);
-    log_apply_rss_stage("after_direct_core_orbital_backprop");
 
   }
 
@@ -8994,10 +8458,8 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
           &combined_core_orbital_value_gradient,
           fixed_upstream_orbital_value_gradient,
           "fixed-upstream");
-      has_combined_core_orbital_value_gradient = true;
       apply_timing_totals_.fixed_upstream_pullback_wall_time_seconds +=
           elapsed_wall_time_seconds(fixed_upstream_pullback_start_time);
-      log_apply_rss_stage("after_fixed_upstream_pullback");
   }
 
   if (compute_outer_response) {
@@ -9023,7 +8485,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
         &outer_response_delta_packed_active_two_electron_workspace_);
     apply_timing_totals_.outer_response_active_space_integrals_wall_time_seconds +=
         elapsed_wall_time_seconds(active_space_integrals_start_time);
-    log_apply_rss_stage("after_outer_active_space_integrals");
 
     ActiveSpaceGradientDirection directional_active_space_gradient;
     const ExactCtxOuterResponseApproximationMode outer_response_approximation_mode =
@@ -9047,7 +8508,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
               outer_response_delta_packed_active_two_electron_workspace_);
       apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
           elapsed_wall_time_seconds(active_gradient_start_time);
-      log_apply_rss_stage("after_outer_active_gradient_local_only");
     } else {
       const auto structure_matrices_start_time =
           std::chrono::steady_clock::now();
@@ -9061,7 +8521,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
               outer_response_delta_packed_active_two_electron_workspace_);
       apply_timing_totals_.outer_response_structure_matrices_wall_time_seconds +=
           elapsed_wall_time_seconds(structure_matrices_start_time);
-      log_apply_rss_stage("after_outer_structure_matrices");
 
       if (outer_response_approximation_mode ==
           ExactCtxOuterResponseApproximationMode::EnergyOnly) {
@@ -9073,7 +8532,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
                 projected_directional_structure_matrices);
         apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
             elapsed_wall_time_seconds(eigensystem_start_time);
-        log_apply_rss_stage("after_outer_eigensystem_energy_only");
 
         const auto active_gradient_start_time =
             std::chrono::steady_clock::now();
@@ -9091,7 +8549,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
                 directional_selected_state_energies);
         apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
             elapsed_wall_time_seconds(active_gradient_start_time);
-        log_apply_rss_stage("after_outer_active_gradient_energy_only");
       } else {
         const auto eigensystem_start_time =
             std::chrono::steady_clock::now();
@@ -9107,7 +8564,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
                       projected_directional_structure_matrices);
         apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
             elapsed_wall_time_seconds(eigensystem_start_time);
-        log_apply_rss_stage("after_outer_eigensystem");
 
         const auto active_gradient_start_time =
             std::chrono::steady_clock::now();
@@ -9129,7 +8585,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
                 directional_selected_state_response.delta_selected_eigenvalues);
         apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
             elapsed_wall_time_seconds(active_gradient_start_time);
-        log_apply_rss_stage("after_outer_active_gradient");
       }
     }
     validate_outer_response_active_gradient(
@@ -9142,23 +8597,21 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
             *current_input_,
             *accepted_point_context_,
             directional_active_space_gradient,
-            orbital_preparation_cache,
+            *orbital_preparation_cache,
             &outer_response_symmetric_active_overlap_gradient_workspace_,
             &outer_response_symmetric_active_one_electron_gradient_workspace_);
     add_orbital_value_gradient_in_place(
         &combined_core_orbital_value_gradient,
         outer_response_orbital_value_gradient,
         "outer-response");
-    has_combined_core_orbital_value_gradient = true;
     apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds +=
         elapsed_wall_time_seconds(orbital_pullback_start_time);
-    log_apply_rss_stage("after_outer_orbital_pullback");
 
     apply_timing_totals_.outer_response_wall_time_seconds +=
         elapsed_wall_time_seconds(outer_response_start_time);
   }
 
-  if (has_combined_core_orbital_value_gradient) {
+  if (!combined_core_orbital_value_gradient.empty()) {
     // Full exact_ctx matvecs used to project the direct-core/fixed-upstream
     // pullback and the outer-response pullback separately.  Both contributions
     // live in the same raw sparse-orbital coefficient chart, so combining them
@@ -9169,7 +8622,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
         parameter_view_.gather_from_full(combined_core_orbital_value_gradient);
     response += nonredundant_space_->project_reduced_gradient(packed_response);
   }
-  log_apply_rss_stage("before_return");
 
   record_apply_wall_time();
   return response;

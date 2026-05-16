@@ -1,6 +1,7 @@
 #include "vb/scf/cpp_vb_scf_optimizer.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cerrno>
 #include <chrono>
 #include <cmath>
@@ -4092,23 +4093,24 @@ build_nonredundant_truncated_newton_full_retry_warm_start(
 
   warm_start.used_cheap_step_warm_start = true;
   warm_start.initial_reduced_step = cheap_reduced_step;
-  if (auto* exact_ctx_full_hvp_operator =
-          dynamic_cast<ExactContextReducedHvpOperator*>(
-              full_hvp_operator);
-      exact_ctx_full_hvp_operator != nullptr &&
-      finite_vector_matches_size(
-          cheap_step.reduced_hessian_times_step,
-          reduced_size)) {
-    // The rejected cheap exact_ctx solve already formed the accepted-point
-    // core H*s. The full retry warm start only needs the missing relaxed
-    // outer-response correction for the same reduced direction.
-    warm_start.initial_hessian_times_step =
-        cheap_step.reduced_hessian_times_step +
-        exact_ctx_full_hvp_operator->apply_outer_response_only(
-            warm_start.initial_reduced_step);
-  } else {
-    warm_start.initial_hessian_times_step =
-        full_hvp_operator->apply(warm_start.initial_reduced_step);
+  {
+    auto* exact_ctx_full_hvp_operator =
+        static_cast<ExactContextReducedHvpOperator*>(full_hvp_operator);
+    assert(exact_ctx_full_hvp_operator != nullptr);
+    if (finite_vector_matches_size(
+            cheap_step.reduced_hessian_times_step,
+            reduced_size)) {
+      // The rejected cheap exact_ctx solve already formed the accepted-point
+      // core H*s. The full retry warm start only needs the missing relaxed
+      // outer-response correction for the same reduced direction.
+      warm_start.initial_hessian_times_step =
+          cheap_step.reduced_hessian_times_step +
+          exact_ctx_full_hvp_operator->apply_outer_response_only(
+              warm_start.initial_reduced_step);
+    } else {
+      warm_start.initial_hessian_times_step =
+          full_hvp_operator->apply(warm_start.initial_reduced_step);
+    }
   }
   return warm_start;
 }
@@ -4527,20 +4529,22 @@ ExactCtxHybridRefinementResult maybe_refine_exact_ctx_step_with_full_operator(
                  cheap_step.reduced_hessian_times_step.allFinite())
           ? &cheap_step.reduced_hessian_times_step
           : nullptr;
-  if (auto* exact_ctx_full_hvp_operator =
-          dynamic_cast<ExactContextReducedHvpOperator*>(full_hvp_operator);
-      exact_ctx_full_hvp_operator != nullptr &&
-      reference_cheap_core_hessian_times_step != nullptr) {
-    // The cheap exact_ctx solve already knows the accepted-point core H*s. When
-    // probing the full model on the same step, only the relaxed outer-response
-    // correction is missing.
-    full_hessian_times_step =
-        *reference_cheap_core_hessian_times_step +
-        exact_ctx_full_hvp_operator->apply_outer_response_only(
-            cheap_step.reduced_step);
-  } else {
-    full_hessian_times_step =
-        full_hvp_operator->apply(cheap_step.reduced_step);
+  {
+    auto* exact_ctx_full_hvp_operator =
+        static_cast<ExactContextReducedHvpOperator*>(full_hvp_operator);
+    assert(exact_ctx_full_hvp_operator != nullptr);
+    if (reference_cheap_core_hessian_times_step != nullptr) {
+      // The cheap exact_ctx solve already knows the accepted-point core H*s. When
+      // probing the full model on the same step, only the relaxed outer-response
+      // correction is missing.
+      full_hessian_times_step =
+          *reference_cheap_core_hessian_times_step +
+          exact_ctx_full_hvp_operator->apply_outer_response_only(
+              cheap_step.reduced_step);
+    } else {
+      full_hessian_times_step =
+          full_hvp_operator->apply(cheap_step.reduced_step);
+    }
   }
   result.used_full_model_probe = true;
   if (full_hessian_times_step.size() != current_projection.reduced_gradient.size() ||
@@ -5124,7 +5128,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
     result.initial_one_electron_reference_energy =
         objective.last_gradient_result().scf_result.one_electron_reference_energy;
     double previous_energy = energy;
-    bool has_previous_energy = true;
     final_gradient_l2_norm = gradient.norm();
     switch (options_.backend) {
       case CppVbScfOptimizerBackend::LegacyFortran: {
@@ -5183,9 +5186,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             ++n_iterations;
             record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
 
-            const double de = has_previous_energy ? (energy - previous_energy) : 0.0;
+            const double de = energy - previous_energy;
             previous_energy = energy;
-            has_previous_energy = true;
             if (std::abs(de) < options_.energy_tolerance &&
                 gxn < options_.gradient_tolerance) {
               result.converged = true;
@@ -5406,9 +5408,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           sync_result_from_objective(objective, &result);
           record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
           final_gradient_l2_norm = current_gradient.norm();
-          const double de = has_previous_energy ? (energy - previous_energy) : 0.0;
+          const double de = energy - previous_energy;
           previous_energy = energy;
-          has_previous_energy = true;
           if (std::abs(de) < options_.energy_tolerance &&
               final_gradient_l2_norm < options_.gradient_tolerance) {
             result.converged = true;
@@ -5518,9 +5519,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           sync_result_from_objective(objective, &result);
           record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
           final_gradient_l2_norm = current_gradient.norm();
-          const double de = has_previous_energy ? (energy - previous_energy) : 0.0;
+          const double de = energy - previous_energy;
           previous_energy = energy;
-          has_previous_energy = true;
           NonredundantOrbitalSpace next_space =
               build_nonredundant_space(objective, parameter_view);
           auto next_projection =
@@ -5738,9 +5738,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           sync_result_from_objective(objective, &result);
           record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
           final_gradient_l2_norm = current_gradient.norm();
-          const double de = has_previous_energy ? (energy - previous_energy) : 0.0;
+          const double de = energy - previous_energy;
           previous_energy = energy;
-          has_previous_energy = true;
           if (std::abs(de) < options_.energy_tolerance &&
               next_reduced_gradient_inf_norm <
                   options_.gradient_tolerance) {
@@ -5841,9 +5840,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
             final_gradient_l2_norm = current_gradient.norm();
 
-            const double de = has_previous_energy ? (energy - previous_energy) : 0.0;
+            const double de = energy - previous_energy;
             previous_energy = energy;
-            has_previous_energy = true;
             if (std::abs(de) < options_.energy_tolerance &&
                 result.gradient_inf_norm_history.back() <
                     polish_gradient_tolerance) {
@@ -6780,9 +6778,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           sync_result_from_objective(objective, &result);
           record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
           final_gradient_l2_norm = current_gradient.norm();
-          const double de = has_previous_energy ? (energy - previous_energy) : 0.0;
+          const double de = energy - previous_energy;
           previous_energy = energy;
-          has_previous_energy = true;
           NonredundantOrbitalSpace next_space =
               build_nonredundant_space(objective, parameter_view);
           auto next_projection =

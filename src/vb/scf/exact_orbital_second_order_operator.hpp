@@ -156,7 +156,6 @@ private:
   mutable std::vector<Eigen::MatrixXd>
       ao_h1e_partial_inactive_density_gradient_workspaces_;
   ExactPackedActiveTwoElectronAdjointCache accepted_exact_two_electron_cache_;
-  bool has_accepted_exact_two_electron_cache_ = false;
   mutable ExactPackedActiveTwoElectronApplyWorkspace
       accepted_exact_two_electron_apply_workspace_;
   mutable std::vector<double>
