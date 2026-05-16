@@ -1966,9 +1966,9 @@ int main(int argc, char** argv) {
     const Eigen::VectorXd analytic_fixed_upstream_only_response =
         exact_operator.apply_reduced_fixed_upstream_only(reduced_direction);
     const Eigen::VectorXd analytic_direct_core_response_uncached =
-        exact_operator.apply_reduced_core_direct_only_uncached(reduced_direction);
+        exact_operator.apply_reduced_core_direct_only(reduced_direction);
     const Eigen::VectorXd analytic_fixed_upstream_only_response_uncached =
-        exact_operator.apply_reduced_fixed_upstream_only_uncached(reduced_direction);
+        exact_operator.apply_reduced_fixed_upstream_only(reduced_direction);
     const Eigen::VectorXd analytic_full_response =
         exact_operator.apply_reduced_uncached(reduced_direction);
     const Eigen::VectorXd analytic_full_response_cached =

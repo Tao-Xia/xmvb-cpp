@@ -217,11 +217,9 @@ Eigen::VectorXd apply_component(
       return exact_operator.apply_reduced_without_outer_response_uncached(
           reduced_direction);
     case BenchmarkComponent::CoreDirectUncached:
-      return exact_operator.apply_reduced_core_direct_only_uncached(
-          reduced_direction);
+      return exact_operator.apply_reduced_core_direct_only(reduced_direction);
     case BenchmarkComponent::FixedUpstreamUncached:
-      return exact_operator.apply_reduced_fixed_upstream_only_uncached(
-          reduced_direction);
+      return exact_operator.apply_reduced_fixed_upstream_only(reduced_direction);
     case BenchmarkComponent::OuterOnlyUncached:
       return exact_operator.apply_reduced_outer_response_only_uncached(
           reduced_direction);

@@ -15,6 +15,25 @@ constexpr int kLegacyOrbitalTypeBdo = 2;
 // accumulated any accepted-step timing samples.
 constexpr int kAffordableStartupOuterResponseCostProxy = 1024;
 
+// Open-shell sparse-chart hybrid followup is tuned on 8-active-orbital
+// transition-metal systems.  The retry gate uses a separate lower bound.
+constexpr int kHybridFollowupExactActiveOrbitalThreshold = 8;
+constexpr int kRetryRejectedFullOperatorMinActiveOrbitals = 8;
+
+// Closed-shell sparse charts with more than this many active orbitals always
+// get CheapCoreOnly regardless of the cost proxy.
+constexpr int kStartupWindowMaxActiveOrbitals = 6;
+
+// Startup window parameters for expensive closed-shell sparse charts:
+// begin after one cheap accepted step, sample the full model for two
+// iterations, allow one extra if the gradient tail is still large, and keep
+// the tail Krylov budget short.
+constexpr int kStartupWindowBegin = 1;
+constexpr int kStartupWindowCount = 2;
+constexpr int kStartupWindowMaxExtraCount = 1;
+constexpr int kStartupWindowTailMaxCgIterations = 4;
+constexpr int kStartupWindowMultiStepMaxActiveOrbitals = 6;
+
 bool optimizer_chart_uses_sparse_orbital_support(
     const OrbitalPreparationInput& orbital_preparation_input) {
   if (orbital_preparation_input.orbital_type == kLegacyOrbitalTypeHao ||
@@ -59,10 +78,10 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
     strategy.startup_full_inner_solve_enable_max_active_orbitals = 0;
     strategy.allow_hybrid_followup_full_solve =
         system_profile.sparse_orbital_chart &&
-        system_profile.n_active_orbitals == 8;
+        system_profile.n_active_orbitals == kHybridFollowupExactActiveOrbitalThreshold;
     strategy.retry_rejected_step_with_full_operator =
         system_profile.sparse_orbital_chart &&
-        system_profile.n_active_orbitals >= 8;
+        system_profile.n_active_orbitals >= kRetryRejectedFullOperatorMinActiveOrbitals;
     return strategy;
   }
 
@@ -77,14 +96,14 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
       !system_profile.sparse_orbital_chart;
   if (!system_profile.sparse_orbital_chart ||
       system_profile.n_active_orbitals <= 0 ||
-      system_profile.n_active_orbitals > 6) {
+      system_profile.n_active_orbitals > kStartupWindowMaxActiveOrbitals) {
     strategy.kind = ExactCtxDefaultStrategyKind::CheapCoreOnly;
     strategy.startup_full_inner_solve_enable_max_active_orbitals = 0;
     strategy.allow_hybrid_followup_full_solve = false;
     return strategy;
   }
 
-  strategy.startup_full_inner_solve_enable_max_active_orbitals = 6;
+  strategy.startup_full_inner_solve_enable_max_active_orbitals = kStartupWindowMaxActiveOrbitals;
   if (system_profile.active_basis_cost_proxy <=
       kAffordableStartupOuterResponseCostProxy) {
     // With the current full-width AO-H1E and row-local exact-2e kernels, the
@@ -103,11 +122,11 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
   // budget.  This captures the historical 10698-class direction without
   // reintroducing a legacy-AO-only dependency.
   strategy.kind = ExactCtxDefaultStrategyKind::StartupWindowWithGradientTail;
-  strategy.startup_full_inner_solve_begin = 1;
-  strategy.startup_full_inner_solve_count = 2;
-  strategy.startup_full_inner_solve_max_extra_count = 1;
-  strategy.startup_full_inner_solve_tail_max_cg_iterations = 4;
-  strategy.startup_full_inner_solve_multi_step_max_active_orbitals = 6;
+  strategy.startup_full_inner_solve_begin = kStartupWindowBegin;
+  strategy.startup_full_inner_solve_count = kStartupWindowCount;
+  strategy.startup_full_inner_solve_max_extra_count = kStartupWindowMaxExtraCount;
+  strategy.startup_full_inner_solve_tail_max_cg_iterations = kStartupWindowTailMaxCgIterations;
+  strategy.startup_full_inner_solve_multi_step_max_active_orbitals = kStartupWindowMultiStepMaxActiveOrbitals;
   strategy.allow_hybrid_followup_full_solve = false;
   return strategy;
 }
@@ -117,8 +136,6 @@ const char* exact_ctx_default_strategy_kind_name(
   switch (kind) {
     case ExactCtxDefaultStrategyKind::CheapCoreOnly:
       return "cheap_core_only";
-    case ExactCtxDefaultStrategyKind::StartupFullOuterResponse:
-      return "startup_full_outer_response";
     case ExactCtxDefaultStrategyKind::StartupWindowWithGradientTail:
       return "startup_full_window_with_gradient_tail";
   }

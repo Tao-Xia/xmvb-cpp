@@ -89,13 +89,6 @@ struct AcceptedOuterResponseLinearResponseCache {
   Eigen::MatrixXd accepted_selected_eigenvector_columns;
   AcceptedSelectedStateGeneralizedEigenResponseOperator
       selected_state_eigen_response_operator;
-
-  SelectedStateProjectedDirectionalMatrices
-  build_projected_directional_structure_matrices(
-      const std::vector<double>& delta_active_orbital_overlap_matrix,
-      const std::vector<double>& delta_active_one_electron_matrix,
-      const std::vector<double>& delta_packed_active_two_electron_integrals)
-      const;
 };
 
 AcceptedOuterResponseLinearResponseCache

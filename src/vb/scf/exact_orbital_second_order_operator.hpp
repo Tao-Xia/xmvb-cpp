@@ -21,6 +21,22 @@ namespace xmvb::vb {
 struct AcceptedOrbitalPreparationCache;
 
 /**
+ * @brief Selects which HVP sub-components to include and whether to use the
+ * accepted-point orbital-preparation cache.
+ *
+ * The orbital Hessian-vector product decomposes into three additive
+ * contributions (direct core, fixed-upstream pullback, outer response) that
+ * can be independently toggled.  The cache flag controls whether the
+ * accepted-point orbital preparation intermediates are reused or rebuilt.
+ */
+struct HvpComponents {
+  bool direct_core_response = true;
+  bool fixed_upstream_pullback = true;
+  bool outer_response = true;
+  bool use_orbital_preparation_cache = true;
+};
+
+/**
  * @brief Accepted-point matrix-free orbital second-order operator.
  *
  * This module is the home for exact direct-action orbital Hessian contributions
@@ -204,25 +220,6 @@ public:
       const Eigen::VectorXd& reduced_direction) const;
 
   /**
-   * @brief Applies only the direct local/core upstream-delta contribution without cache shortcuts.
-   *
-   * This diagnostics hook bypasses the accepted-point orbital-preparation cache
-   * so the direct-core path can be compared against the cached implementation.
-   */
-  Eigen::VectorXd apply_reduced_core_direct_only_uncached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the fixed-upstream pullback contribution without cache shortcuts.
-   *
-   * This diagnostics hook bypasses the accepted-point orbital-preparation cache
-   * so the fixed-upstream pullback can be compared against the cached
-   * implementation.
-   */
-  Eigen::VectorXd apply_reduced_fixed_upstream_only_uncached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
    * @brief Applies only the relaxed outer-response part of the reduced HVP.
    *
    * The local/core accepted-point orbital chain is skipped, so callers can add
@@ -266,7 +263,7 @@ public:
    * @brief Exposes the accepted-point direct-core intermediates for debugging.
    *
    * This diagnostics hook follows the same uncached analytic path as
-   * `apply_reduced_core_direct_only_uncached()` and materializes the dense
+   * `apply_reduced_core_direct_only()` and materializes the dense
    * AO/orbital pullback blocks before the final reduced-space projection.
    */
   DirectCoreDiagnostics compute_direct_core_diagnostics(
@@ -320,10 +317,7 @@ private:
 
   Eigen::VectorXd apply_reduced_impl(
       const Eigen::VectorXd& reduced_direction,
-      bool include_direct_core_response,
-      bool include_fixed_upstream_pullback,
-      bool include_outer_response,
-      bool use_cached_orbital_preparation_cache) const;
+      HvpComponents components) const;
 
   std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context_;
   const CppVbInput* current_input_ = nullptr;

@@ -24,7 +24,6 @@ struct ExactCtxSystemProfile {
 
 enum class ExactCtxDefaultStrategyKind {
   CheapCoreOnly,
-  StartupFullOuterResponse,
   StartupWindowWithGradientTail,
 };
 

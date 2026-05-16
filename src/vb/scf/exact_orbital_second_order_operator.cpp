@@ -9553,108 +9553,143 @@ ExactOrbitalSecondOrderOperator::~ExactOrbitalSecondOrderOperator() = default;
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(
-      reduced_direction,
-      true,
-      true,
-      true,
-      exact_ctx_orbital_preparation_cache_enabled());
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = true,
+      .outer_response = true,
+      .use_orbital_preparation_cache = exact_ctx_orbital_preparation_cache_enabled(),
+  });
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_uncached(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, true, true, true, false);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = true,
+      .outer_response = true,
+      .use_orbital_preparation_cache = false,
+  });
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_cached(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, true, true, true, true);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = true,
+      .outer_response = true,
+      .use_orbital_preparation_cache = true,
+  });
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_without_outer_response(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(
-      reduced_direction,
-      true,
-      true,
-      false,
-      exact_ctx_orbital_preparation_cache_enabled());
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = true,
+      .outer_response = false,
+      .use_orbital_preparation_cache = exact_ctx_orbital_preparation_cache_enabled(),
+  });
 }
 
 Eigen::VectorXd
 ExactOrbitalSecondOrderOperator::apply_reduced_without_outer_response_uncached(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, true, true, false, false);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = true,
+      .outer_response = false,
+      .use_orbital_preparation_cache = false,
+  });
 }
 
 Eigen::VectorXd
 ExactOrbitalSecondOrderOperator::apply_reduced_without_outer_response_cached(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, true, true, false, true);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = true,
+      .outer_response = false,
+      .use_orbital_preparation_cache = true,
+  });
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_outer_response_only(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(
-      reduced_direction,
-      false,
-      false,
-      true,
-      exact_ctx_orbital_preparation_cache_enabled());
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = false,
+      .fixed_upstream_pullback = false,
+      .outer_response = true,
+      .use_orbital_preparation_cache = exact_ctx_orbital_preparation_cache_enabled(),
+  });
 }
 
 Eigen::VectorXd
 ExactOrbitalSecondOrderOperator::apply_reduced_outer_response_only_uncached(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, false, false, true, false);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = false,
+      .fixed_upstream_pullback = false,
+      .outer_response = true,
+      .use_orbital_preparation_cache = false,
+  });
 }
 
 Eigen::VectorXd
 ExactOrbitalSecondOrderOperator::apply_reduced_outer_response_only_cached(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, false, false, true, true);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = false,
+      .fixed_upstream_pullback = false,
+      .outer_response = true,
+      .use_orbital_preparation_cache = true,
+  });
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_core_direct_only(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, true, false, false, false);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = false,
+      .outer_response = false,
+      .use_orbital_preparation_cache = false,
+  });
 }
 
 Eigen::VectorXd
 ExactOrbitalSecondOrderOperator::apply_reduced_core_direct_only_cached(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, true, false, false, true);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = false,
+      .outer_response = false,
+      .use_orbital_preparation_cache = true,
+  });
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_fixed_upstream_only(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, false, true, false, false);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = false,
+      .fixed_upstream_pullback = true,
+      .outer_response = false,
+      .use_orbital_preparation_cache = false,
+  });
 }
 
 Eigen::VectorXd
 ExactOrbitalSecondOrderOperator::apply_reduced_fixed_upstream_only_cached(
     const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, false, true, false, true);
-}
-
-Eigen::VectorXd
-ExactOrbitalSecondOrderOperator::apply_reduced_core_direct_only_uncached(
-    const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, true, false, false, false);
-}
-
-Eigen::VectorXd
-ExactOrbitalSecondOrderOperator::apply_reduced_fixed_upstream_only_uncached(
-    const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced_impl(reduced_direction, false, true, false, false);
+  return apply_reduced_impl(reduced_direction, {
+      .direct_core_response = false,
+      .fixed_upstream_pullback = true,
+      .outer_response = false,
+      .use_orbital_preparation_cache = true,
+  });
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
     const Eigen::VectorXd& reduced_direction,
-    bool include_direct_core_response,
-    bool include_fixed_upstream_pullback,
-    bool include_outer_response,
-    bool use_cached_orbital_preparation_cache) const {
+    HvpComponents components) const {
   const auto apply_start_time = std::chrono::steady_clock::now();
   auto record_apply_wall_time = [&]() {
     ++apply_timing_totals_.apply_count;
@@ -9704,7 +9739,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
   }
 
   const AcceptedOrbitalPreparationCache* orbital_preparation_cache =
-      use_cached_orbital_preparation_cache && accepted_orbital_preparation_cache_
+      components.use_orbital_preparation_cache && accepted_orbital_preparation_cache_
           ? accepted_orbital_preparation_cache_.get()
           : nullptr;
   const ExactCtxInternalInactiveChart internal_chart =
@@ -9731,7 +9766,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
                 &internal_chart);
           }();
   const Eigen::VectorXd input_retract_tangent =
-      include_fixed_upstream_pullback
+      components.fixed_upstream_pullback
           ? nonredundant_space_->expand_retract_input_tangent(
                 current_input_->orbital_preparation_input,
                 reduced_direction)
@@ -9782,7 +9817,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
       total_ao_effective_one_electron_direction,
       current_input_->ao_integral_input,
       current_input_->orbital_preparation_input,
-      include_outer_response,
+      components.outer_response,
       &ao_h1e_symmetrized_gradient_workspace_,
       &ao_h1e_delta_h1e_workspace_,
       &ao_h1e_inactive_density_gradient_workspace_,
@@ -9797,7 +9832,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
   log_apply_rss_stage("after_ao_h1e_fused");
 
   const bool compute_outer_response =
-      include_outer_response && exact_ctx_outer_response_enabled();
+      components.outer_response && exact_ctx_outer_response_enabled();
   std::vector<double> combined_core_orbital_value_gradient;
   bool has_combined_core_orbital_value_gradient = false;
   Eigen::MatrixXd delta_ao_effective_h1e_times_active_auxiliary_orbitals;
@@ -9810,7 +9845,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
         delta_ao_effective_h1e * accepted_active_auxiliary_orbitals_;
   }
 
-  if (include_direct_core_response) {
+  if (components.direct_core_response) {
     Eigen::MatrixXd delta_auxiliary_active_gradient =
         basis_overlap *
         orbital_preparation_directional_result.delta_active_auxiliary_orbitals *
@@ -9912,7 +9947,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
 
   }
 
-  if (include_fixed_upstream_pullback &&
+  if (components.fixed_upstream_pullback &&
       accepted_total_active_auxiliary_gradient_.rows() == n_basis_functions &&
       accepted_total_active_auxiliary_gradient_.cols() == n_active_orbitals &&
       accepted_total_inactive_density_gradient_.size() == ao_matrix_size) {
