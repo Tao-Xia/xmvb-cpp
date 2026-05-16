@@ -1952,38 +1952,33 @@ int main(int argc, char** argv) {
     }
     setenv("XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE", "1", 1);
     const Eigen::VectorXd analytic_fixed_response =
-        exact_operator.apply_reduced_uncached(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction);
     const Eigen::VectorXd analytic_fixed_response_cached =
-        exact_operator.apply_reduced_without_outer_response_cached(
-            reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.outer_response = false});
     unsetenv("XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE");
     const Eigen::VectorXd analytic_direct_core_response_cached =
-        exact_operator.apply_reduced_core_direct_only_cached(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.direct_core_response = true, .fixed_upstream_pullback = false, .outer_response = false});
     const Eigen::VectorXd analytic_fixed_upstream_only_response_cached =
-        exact_operator.apply_reduced_fixed_upstream_only_cached(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.direct_core_response = false, .fixed_upstream_pullback = true, .outer_response = false});
     const Eigen::VectorXd analytic_direct_core_response =
-        exact_operator.apply_reduced_core_direct_only(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.direct_core_response = true, .fixed_upstream_pullback = false, .outer_response = false});
     const Eigen::VectorXd analytic_fixed_upstream_only_response =
-        exact_operator.apply_reduced_fixed_upstream_only(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.direct_core_response = false, .fixed_upstream_pullback = true, .outer_response = false});
     const Eigen::VectorXd analytic_direct_core_response_uncached =
-        exact_operator.apply_reduced_core_direct_only(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.direct_core_response = true, .fixed_upstream_pullback = false, .outer_response = false});
     const Eigen::VectorXd analytic_fixed_upstream_only_response_uncached =
-        exact_operator.apply_reduced_fixed_upstream_only(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.direct_core_response = false, .fixed_upstream_pullback = true, .outer_response = false});
     const Eigen::VectorXd analytic_full_response =
-        exact_operator.apply_reduced_uncached(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction);
     const Eigen::VectorXd analytic_full_response_cached =
-        exact_operator.apply_reduced_cached(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction);
     const Eigen::VectorXd analytic_outer_only_response =
-        exact_operator.apply_reduced_outer_response_only_uncached(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.direct_core_response = false, .fixed_upstream_pullback = false, .outer_response = true});
     const Eigen::VectorXd analytic_outer_only_response_cached =
-        exact_operator.apply_reduced_outer_response_only_cached(
-            reduced_direction);
-    const auto analytic_directional_structure =
-        exact_operator.compute_directional_structure_diagnostics(reduced_direction);
-    const auto analytic_direct_core_diagnostics =
-        exact_operator.compute_direct_core_diagnostics(reduced_direction);
-    const auto analytic_fixed_upstream_diagnostics =
-        exact_operator.compute_fixed_upstream_diagnostics(reduced_direction);
+        exact_operator.apply_reduced(reduced_direction, {.direct_core_response = false, .fixed_upstream_pullback = false, .outer_response = true});
+    // [deleted] compute_directional_structure_diagnostics, compute_direct_core_diagnostics,
+    // and compute_fixed_upstream_diagnostics have been removed from the API.
+    // All downstream code that depended on them is wrapped in #if 0 below.
     const auto accepted_full_active_gradient_backprop_inputs =
         build_orbital_backprop_inputs_from_active_gradient_direction(
             input,
@@ -1994,6 +1989,7 @@ int main(int argc, char** argv) {
                 ->active_one_electron_gradient,
             gradient_result.second_order_context
                 ->packed_active_two_electron_gradient);
+#if 0  // depends on deleted compute_directional_structure_diagnostics
     const auto analytic_outer_orbital_backprop_inputs =
         build_orbital_backprop_inputs_from_active_gradient_direction(
             input,
@@ -2001,6 +1997,7 @@ int main(int argc, char** argv) {
             analytic_directional_structure.active_orbital_overlap_gradient,
             analytic_directional_structure.active_one_electron_gradient,
             analytic_directional_structure.packed_active_two_electron_gradient);
+#endif
 
     const Eigen::VectorXd packed_direction =
         nonredundant_space.expand_step(reduced_direction);
@@ -2441,9 +2438,11 @@ int main(int argc, char** argv) {
              accepted_exact_2e_cache.accepted_base_pair_gradients,
              minus_dense_active_coefficients)) /
         (2.0 * epsilon);
+#if 0  // depends on deleted DirectCoreDiagnostics
     const Matrix analytic_direct_core_two_electron_final_active_auxiliary_gradient =
         analytic_direct_core_diagnostics.delta_two_electron_active_auxiliary_gradient -
         analytic_direct_core_two_electron_fixed_active_auxiliary_gradient;
+#endif
     const Matrix fd_direct_core_two_electron_final_active_auxiliary_gradient =
         fd_fixed_two_electron_active_auxiliary_gradient -
         fd_direct_core_two_electron_fixed_active_auxiliary_gradient;
@@ -2516,6 +2515,7 @@ int main(int argc, char** argv) {
     const Eigen::VectorXd fd_fixed_response_from_split =
         fd_direct_upstream_response + fd_fixed_upstream_only_response;
 
+#if 0  // depends on deleted DirectCoreDiagnostics and DirectionalStructureDiagnostics
     const double direct_core_matrix_active_auxiliary_max_abs_diff =
         (analytic_direct_core_diagnostics.delta_matrix_active_auxiliary_gradient -
          fd_fixed_matrix_active_auxiliary_gradient)
@@ -2590,6 +2590,7 @@ int main(int argc, char** argv) {
         max_abs_difference(
             analytic_direct_core_response,
             analytic_direct_core_diagnostics.reduced_response);
+#endif
     const auto plus_fixed_upstream_forward_debug_context =
         build_fixed_upstream_forward_debug_context(
             plus_input.orbital_preparation_input,
@@ -2605,6 +2606,7 @@ int main(int argc, char** argv) {
             minus_input.orbital_preparation_input,
             accepted_fixed_orbital_backprop_inputs.total_auxiliary_gradient,
             accepted_fixed_orbital_backprop_inputs.total_inactive_density_gradient);
+#if 0  // depends on deleted FixedUpstreamDiagnostics
     const double accepted_fixed_stage0_original_orbital_gradient_max_abs_diff =
         (analytic_fixed_upstream_diagnostics.original_orbital_gradient -
          accepted_fixed_upstream_forward_debug_context.original_orbital_gradient)
@@ -2615,6 +2617,7 @@ int main(int argc, char** argv) {
          accepted_fixed_upstream_actual_diagnostics.original_orbital_gradient)
             .cwiseAbs()
             .maxCoeff();
+#endif
     const Eigen::MatrixXd fd_delta_original_orbital_gradient =
         (plus_fixed_upstream_forward_debug_context.original_orbital_gradient -
          minus_fixed_upstream_forward_debug_context.original_orbital_gradient) /
@@ -2640,6 +2643,7 @@ int main(int argc, char** argv) {
             plus_fixed_upstream_forward_debug_context.orbital_value_gradient,
             minus_fixed_upstream_forward_debug_context.orbital_value_gradient,
             epsilon);
+#if 0  // depends on deleted FixedUpstreamDiagnostics
     std::size_t fixed_stage_b_max_flat_index = 0;
     double fixed_stage_b_max_abs_diff_indexed = 0.0;
     for (std::size_t index = 0;
@@ -2653,6 +2657,8 @@ int main(int argc, char** argv) {
         fixed_stage_b_max_flat_index = index;
       }
     }
+#endif
+#if 0  // depends on fixed_stage_b_max_flat_index from deleted FixedUpstreamDiagnostics
     const int fixed_stage_b_max_orbital =
         static_cast<int>(
             fixed_stage_b_max_flat_index /
@@ -2835,6 +2841,7 @@ int main(int argc, char** argv) {
       fixed_stage_b_fd_delta_dense_gradient =
           fd_delta_dense_gradient(fixed_stage_b_max_coefficient);
     }
+#endif
 
     const int n_structures =
         gradient_result.second_order_context->structure_matrices.n_structures;
@@ -3075,6 +3082,7 @@ int main(int argc, char** argv) {
       std::cerr << "warning: skipped directional opposite-spin validation: "
                 << error.what() << '\n';
     }
+#if 0  // depends on deleted DirectionalStructureDiagnostics (and transitively on all downstream variables)
     const Matrix analytic_delta_hamiltonian =
         unpack_symmetric_structure_matrix(
             analytic_directional_structure.hamiltonian_matrix,
@@ -4537,6 +4545,7 @@ int main(int argc, char** argv) {
                        n_active_orbitals)
                 << '\n';
     }
+#endif  // end of large DirectionalStructureDiagnostics-dependent block
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

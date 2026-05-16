@@ -21,19 +21,16 @@ namespace xmvb::vb {
 struct AcceptedOrbitalPreparationCache;
 
 /**
- * @brief Selects which HVP sub-components to include and whether to use the
- * accepted-point orbital-preparation cache.
+ * @brief Selects which HVP sub-components to include.
  *
  * The orbital Hessian-vector product decomposes into three additive
  * contributions (direct core, fixed-upstream pullback, outer response) that
- * can be independently toggled.  The cache flag controls whether the
- * accepted-point orbital preparation intermediates are reused or rebuilt.
+ * can be independently toggled.
  */
 struct HvpComponents {
   bool direct_core_response = true;
   bool fixed_upstream_pullback = true;
   bool outer_response = true;
-  bool use_orbital_preparation_cache = true;
 };
 
 /**
@@ -85,34 +82,6 @@ public:
     double outer_response_orbital_pullback_wall_time_seconds = 0.0;
   };
 
-  struct DirectionalStructureDiagnostics {
-    std::vector<double> active_orbital_overlap_matrix;
-    std::vector<double> active_one_electron_matrix;
-    std::vector<double> packed_active_two_electron_integrals;
-    std::vector<double> active_orbital_overlap_gradient;
-    std::vector<double> active_one_electron_gradient;
-    std::vector<double> packed_active_two_electron_gradient;
-    std::vector<double> overlap_matrix;
-    std::vector<double> hamiltonian_matrix;
-  };
-
-  struct DirectCoreDiagnostics {
-    Eigen::MatrixXd delta_matrix_active_auxiliary_gradient;
-    Eigen::MatrixXd delta_two_electron_active_auxiliary_gradient;
-    Eigen::MatrixXd delta_total_active_auxiliary_gradient;
-    Eigen::MatrixXd delta_ao_effective_one_electron_matrix;
-    Eigen::MatrixXd delta_ao_backpropagated_inactive_density_gradient;
-    Eigen::MatrixXd delta_total_inactive_density_gradient;
-    Eigen::VectorXd reduced_response;
-  };
-
-  struct FixedUpstreamDiagnostics {
-    Eigen::MatrixXd original_orbital_gradient;
-    std::vector<double> orbital_value_gradient;
-    Eigen::VectorXd packed_response;
-    Eigen::VectorXd reduced_response;
-  };
-
   ExactOrbitalSecondOrderOperator(
       std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context,
       const CppVbInput* current_input,
@@ -124,168 +93,14 @@ public:
   /**
    * @brief Applies the accepted-point reduced-space second-order model.
    *
-   * The returned vector lives in the same reduced coordinates as the input and
-   * includes both the accepted-point local core differentiation and the fully
-   * analytic relaxed structure/eigen response.
+   * The returned vector lives in the same reduced coordinates as the input.
+   * HvpComponents selects which sub-components (direct core, fixed-upstream
+   * pullback, outer response) are included.
    */
   Eigen::VectorXd apply_reduced(
-      const Eigen::VectorXd& reduced_direction) const;
+      const Eigen::VectorXd& reduced_direction,
+      HvpComponents components = {}) const;
 
-  /**
-   * @brief Applies the full accepted-point reduced HVP without cache shortcuts.
-   *
-   * This diagnostics hook keeps the historical rebuild-everything path
-   * available after the production entry point switches to the accepted-point
-   * orbital-preparation cache.
-   */
-  Eigen::VectorXd apply_reduced_uncached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies the full accepted-point reduced HVP with cache shortcuts.
-   *
-   * This diagnostics hook forces the accepted-point orbital-preparation cache
-   * on so cached and uncached full-model implementations can be compared
-   * explicitly before enabling the cached path in the optimizer.
-   */
-  Eigen::VectorXd apply_reduced_cached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the accepted-point local/core part of the reduced HVP.
-   *
-   * This skips the relaxed outer structure/eigen response while preserving the
-   * exact accepted-point orbital / active-space chain rule. It is used by the
-   * optimizer as a cheaper inexact Newton matvec when the full outer-response
-   * operator is too expensive to apply on every inner CG iteration.
-   */
-  Eigen::VectorXd apply_reduced_without_outer_response(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies the local/core reduced HVP without cache shortcuts.
-   *
-   * This diagnostics hook bypasses the accepted-point orbital-preparation
-   * cache so the cached cheap/core optimizer path can be checked explicitly.
-   */
-  Eigen::VectorXd apply_reduced_without_outer_response_uncached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies the accepted-point local/core reduced HVP with cache shortcuts.
-   *
-   * This diagnostics hook forces the accepted-point orbital-preparation cache
-   * on so cached and uncached cheap/core implementations can be compared
-   * explicitly before enabling the cached path in the optimizer.
-   */
-  Eigen::VectorXd apply_reduced_without_outer_response_cached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the direct local/core upstream-delta contribution.
-   *
-   * This diagnostics hook keeps the accepted-point orbital backpropagator
-   * linearized at the accepted input, but excludes the separate fixed-upstream
-   * pullback term.
-   */
-  Eigen::VectorXd apply_reduced_core_direct_only(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the direct local/core upstream-delta contribution with cache shortcuts.
-   *
-   * This diagnostics hook forces the accepted-point orbital-preparation cache
-   * on so cached and uncached implementations can be compared explicitly.
-   */
-  Eigen::VectorXd apply_reduced_core_direct_only_cached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the fixed-upstream orbital pullback contribution.
-   *
-   * This diagnostics hook isolates the derivative of the orbital backprop
-   * stage with respect to the orbital-preparation input while holding the
-   * accepted-point upstream adjoints fixed.
-   */
-  Eigen::VectorXd apply_reduced_fixed_upstream_only(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the fixed-upstream orbital pullback contribution with cache shortcuts.
-   *
-   * This diagnostics hook forces the accepted-point orbital-preparation cache
-   * on so cached and uncached implementations can be compared explicitly.
-   */
-  Eigen::VectorXd apply_reduced_fixed_upstream_only_cached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the relaxed outer-response part of the reduced HVP.
-   *
-   * The local/core accepted-point orbital chain is skipped, so callers can add
-   * this directional correction onto an already available cheap/core HVP result
-   * instead of recomputing the full exact_ctx matvec from scratch.
-   */
-  Eigen::VectorXd apply_reduced_outer_response_only(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the relaxed outer-response HVP without cache shortcuts.
-   *
-   * This diagnostics hook preserves a direct uncached baseline for the
-   * outer-response orbital pullback after the production path enables cache
-   * reuse by default.
-   */
-  Eigen::VectorXd apply_reduced_outer_response_only_uncached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Applies only the relaxed outer-response part of the reduced HVP with cache shortcuts.
-   *
-   * This diagnostics hook forces the accepted-point orbital-preparation cache
-   * on so cached and uncached outer-response pullbacks can be compared
-   * explicitly before enabling the cached path in the optimizer.
-   */
-  Eigen::VectorXd apply_reduced_outer_response_only_cached(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Returns the analytic directional structure matrices for one reduced direction.
-   *
-   * This is a diagnostics hook used to compare the accepted-point analytic
-   * `\delta H_str` / `\delta S_str` against finite differences of the full
-   * structure build.
-   */
-  DirectionalStructureDiagnostics compute_directional_structure_diagnostics(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Exposes the accepted-point direct-core intermediates for debugging.
-   *
-   * This diagnostics hook follows the same uncached analytic path as
-   * `apply_reduced_core_direct_only()` and materializes the dense
-   * AO/orbital pullback blocks before the final reduced-space projection.
-   */
-  DirectCoreDiagnostics compute_direct_core_diagnostics(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Exposes the raw fixed-upstream orbital pullback before reduction.
-   *
-   * This diagnostics hook isolates the directional derivative of the orbital
-   * normalization/scatter stage with accepted upstream adjoints held fixed, so
-   * raw sparse-slot, packed, and reduced responses can be compared separately.
-   */
-  FixedUpstreamDiagnostics compute_fixed_upstream_diagnostics(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /**
-   * @brief Expands one reduced direction into explicit block-local rotations.
-   *
-   * This is primarily used while porting old orbital-Hessian formulas into a
-   * direct-action form that works on accepted-point block rotations rather than
-   * on packed sparse coefficients.
-   */
   std::vector<NonredundantOrbitalSpace::BlockRotationDirection>
   expand_block_rotation_directions(
       const Eigen::VectorXd& reduced_direction) const;
@@ -306,7 +121,6 @@ private:
     double orbital_backprop_wall_time_seconds = 0.0;
     double fixed_upstream_pullback_wall_time_seconds = 0.0;
     double outer_response_wall_time_seconds = 0.0;
-    // Outer response sub-stage timings
     double outer_response_active_space_integrals_wall_time_seconds = 0.0;
     double outer_response_structure_matrices_wall_time_seconds = 0.0;
     double outer_response_eigensystem_wall_time_seconds = 0.0;
@@ -314,10 +128,6 @@ private:
     double outer_response_active_gradient_wall_time_seconds = 0.0;
     double outer_response_orbital_pullback_wall_time_seconds = 0.0;
   };
-
-  Eigen::VectorXd apply_reduced_impl(
-      const Eigen::VectorXd& reduced_direction,
-      HvpComponents components) const;
 
   std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context_;
   const CppVbInput* current_input_ = nullptr;

@@ -26,22 +26,14 @@ struct Options {
   int repeats = 1;
   int warmup = 0;
   bool nonredundant_adapt = false;
-  bool include_uncached = false;
   xmvb::vb::AoIntegralSource ao_integral_source =
       xmvb::vb::AoIntegralSource::Auto;
 };
 
 enum class BenchmarkComponent {
-  FullCached,
-  CoreOnlyCached,
-  CoreDirectCached,
-  FixedUpstreamCached,
-  OuterOnlyCached,
-  FullUncached,
-  CoreOnlyUncached,
-  CoreDirectUncached,
-  FixedUpstreamUncached,
-  OuterOnlyUncached,
+  Full,
+  CoreOnly,
+  OuterOnly,
 };
 
 struct AcceptedPointBenchmarkContext {
@@ -67,8 +59,7 @@ void print_usage() {
       << " [--repeats count]"
       << " [--warmup count]"
       << " [--ao-integral-source auto|legacy|libcint_cpp|runtime_hcore]"
-      << " [--nonredundant-adapt true|false]"
-      << " [--include-uncached true|false]\n";
+      << " [--nonredundant-adapt true|false]\n";
 }
 
 bool parse_bool_argument(const std::string& value) {
@@ -133,10 +124,6 @@ Options parse_arguments(int argc, char** argv) {
       options.nonredundant_adapt = parse_bool_argument(value);
       continue;
     }
-    if (name == "--include-uncached") {
-      options.include_uncached = parse_bool_argument(value);
-      continue;
-    }
     throw std::invalid_argument("unknown argument: " + name);
   }
   if (options.repeats <= 0) {
@@ -151,26 +138,12 @@ const char* bool_name(bool value) {
 
 const char* benchmark_component_name(BenchmarkComponent component) {
   switch (component) {
-    case BenchmarkComponent::FullCached:
-      return "full_cached";
-    case BenchmarkComponent::CoreOnlyCached:
-      return "core_only_cached";
-    case BenchmarkComponent::CoreDirectCached:
-      return "core_direct_cached";
-    case BenchmarkComponent::FixedUpstreamCached:
-      return "fixed_upstream_cached";
-    case BenchmarkComponent::OuterOnlyCached:
-      return "outer_only_cached";
-    case BenchmarkComponent::FullUncached:
-      return "full_uncached";
-    case BenchmarkComponent::CoreOnlyUncached:
-      return "core_only_uncached";
-    case BenchmarkComponent::CoreDirectUncached:
-      return "core_direct_uncached";
-    case BenchmarkComponent::FixedUpstreamUncached:
-      return "fixed_upstream_uncached";
-    case BenchmarkComponent::OuterOnlyUncached:
-      return "outer_only_uncached";
+    case BenchmarkComponent::Full:
+      return "full";
+    case BenchmarkComponent::CoreOnly:
+      return "core_only";
+    case BenchmarkComponent::OuterOnly:
+      return "outer_only";
   }
   return "unknown";
 }
@@ -197,32 +170,20 @@ Eigen::VectorXd apply_component(
     BenchmarkComponent component,
     const Eigen::VectorXd& reduced_direction) {
   switch (component) {
-    case BenchmarkComponent::FullCached:
-      return exact_operator.apply_reduced_cached(reduced_direction);
-    case BenchmarkComponent::CoreOnlyCached:
-      return exact_operator.apply_reduced_without_outer_response_cached(
-          reduced_direction);
-    case BenchmarkComponent::CoreDirectCached:
-      return exact_operator.apply_reduced_core_direct_only_cached(
-          reduced_direction);
-    case BenchmarkComponent::FixedUpstreamCached:
-      return exact_operator.apply_reduced_fixed_upstream_only_cached(
-          reduced_direction);
-    case BenchmarkComponent::OuterOnlyCached:
-      return exact_operator.apply_reduced_outer_response_only_cached(
-          reduced_direction);
-    case BenchmarkComponent::FullUncached:
-      return exact_operator.apply_reduced_uncached(reduced_direction);
-    case BenchmarkComponent::CoreOnlyUncached:
-      return exact_operator.apply_reduced_without_outer_response_uncached(
-          reduced_direction);
-    case BenchmarkComponent::CoreDirectUncached:
-      return exact_operator.apply_reduced_core_direct_only(reduced_direction);
-    case BenchmarkComponent::FixedUpstreamUncached:
-      return exact_operator.apply_reduced_fixed_upstream_only(reduced_direction);
-    case BenchmarkComponent::OuterOnlyUncached:
-      return exact_operator.apply_reduced_outer_response_only_uncached(
-          reduced_direction);
+    case BenchmarkComponent::Full:
+      return exact_operator.apply_reduced(reduced_direction);
+    case BenchmarkComponent::CoreOnly:
+      return exact_operator.apply_reduced(
+          reduced_direction,
+          {.direct_core_response = true,
+           .fixed_upstream_pullback = true,
+           .outer_response = false});
+    case BenchmarkComponent::OuterOnly:
+      return exact_operator.apply_reduced(
+          reduced_direction,
+          {.direct_core_response = false,
+           .fixed_upstream_pullback = false,
+           .outer_response = true});
   }
   throw std::invalid_argument("unsupported exact_ctx benchmark component");
 }
@@ -460,18 +421,9 @@ int main(int argc, char** argv) {
         build_benchmark_context(options, &loaded_ao_integral_source);
 
     std::vector<BenchmarkComponent> components = {
-        BenchmarkComponent::FullCached,
-        BenchmarkComponent::CoreOnlyCached,
-        BenchmarkComponent::CoreDirectCached,
-        BenchmarkComponent::FixedUpstreamCached,
-        BenchmarkComponent::OuterOnlyCached};
-    if (options.include_uncached) {
-      components.push_back(BenchmarkComponent::FullUncached);
-      components.push_back(BenchmarkComponent::CoreOnlyUncached);
-      components.push_back(BenchmarkComponent::CoreDirectUncached);
-      components.push_back(BenchmarkComponent::FixedUpstreamUncached);
-      components.push_back(BenchmarkComponent::OuterOnlyUncached);
-    }
+        BenchmarkComponent::Full,
+        BenchmarkComponent::CoreOnly,
+        BenchmarkComponent::OuterOnly};
 
     std::vector<BenchmarkMeasurement> measurements;
     measurements.reserve(components.size());
@@ -496,8 +448,6 @@ int main(int argc, char** argv) {
     std::cout << "warmup = " << options.warmup << '\n';
     std::cout << "nonredundant_adapt = "
               << bool_name(options.nonredundant_adapt) << '\n';
-    std::cout << "include_uncached = "
-              << bool_name(options.include_uncached) << '\n';
     std::cout << "supports_analytic_core_model = "
               << bool_name(first_diagnostics.supports_analytic_core_model) << '\n';
     std::cout << "outer_response_runtime_enabled = "

@@ -3110,8 +3110,11 @@ public:
 
   Eigen::VectorXd apply_core_only(
       const Eigen::VectorXd& reduced_direction) {
-    return exact_operator_.apply_reduced_without_outer_response(
-        reduced_direction);
+    return exact_operator_.apply_reduced(
+        reduced_direction,
+        {.direct_core_response = true,
+         .fixed_upstream_pullback = true,
+         .outer_response = false});
   }
 
   ExactOrbitalSecondOrderOperator::Diagnostics diagnostics() const {
@@ -3146,10 +3149,16 @@ private:
         include_outer_response_
             ? (include_core_response
                    ? exact_operator_.apply_reduced(reduced_direction)
-                   : exact_operator_.apply_reduced_outer_response_only(
-                         reduced_direction))
-            : exact_operator_.apply_reduced_without_outer_response(
-                  reduced_direction);
+                   : exact_operator_.apply_reduced(
+                         reduced_direction,
+                         {.direct_core_response = false,
+                          .fixed_upstream_pullback = false,
+                          .outer_response = true}))
+            : exact_operator_.apply_reduced(
+                  reduced_direction,
+                  {.direct_core_response = true,
+                   .fixed_upstream_pullback = true,
+                   .outer_response = false});
     if (include_core_response &&
         !include_outer_response_ &&
         sr1_outer_response_model_ != nullptr &&
