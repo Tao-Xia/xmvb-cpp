@@ -183,7 +183,7 @@ private:
     Eigen::MatrixXd inactive_plus_gauge_metric_matrix;
     Eigen::MatrixXd virtual_orbitals;
     std::vector<OrbitalProjector> orbitals;
-    bool uses_dense_full_support_projector = false;
+    bool has_full_ao_packed_support = false;
     Eigen::VectorXd candidate_metric_diagonal;
     bool has_exact_metric_factorization = false;
     Eigen::MatrixXd candidate_metric_cholesky_factor;
