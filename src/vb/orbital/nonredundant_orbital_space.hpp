@@ -9,16 +9,6 @@
 
 namespace xmvb::vb {
 
-/**
- * @brief Block-local nonredundant orbital-replacement space in packed parameters.
- *
- * The directions are generated from the current occupied orbitals and block-local
- * virtual orbitals. For partially overlapping sparse blocks, the block-local AO
- * support is the union of every member orbital support rather than the support
- * of one representative row. Each reduced coordinate corresponds to a
- * first-order orbital replacement direction represented directly in the packed
- * sparse coefficient vector used by the optimizer and HVP machinery.
- */
 class NonredundantOrbitalSpace {
 public:
   struct ProjectionResult {
@@ -84,13 +74,6 @@ private:
     std::vector<int> flat_indices;
     std::vector<int> packed_indices;
     std::vector<int> block_rows;
-    std::vector<int> flat_index_by_block_row;
-    std::vector<int> packed_index_by_block_row;
-    Eigen::MatrixXd occupied_masked;
-    Eigen::MatrixXd inactive_working_masked;
-    Eigen::MatrixXd active_working_masked;
-    Eigen::MatrixXd virtual_masked;
-    Eigen::MatrixXd internal_virtual_masked;
     // Physical tangent space basis U_p: (local_size × local_reduced_dim).
     // Columns are whitened tangent directions on the local `x^T S x = rho^2`
     // manifold.  `U_p^T U_p = I` by construction.
@@ -106,17 +89,8 @@ private:
     int n_occupied = 0;
     int n_virtual = 0;
     std::vector<int> basis_function_indices;
-    std::vector<int> occupied_orbital_indices;
     Eigen::MatrixXd block_overlap_matrix;
-    Eigen::MatrixXd occupied_orbitals;
-    Eigen::MatrixXd reference_occupied_orbitals;
-    Eigen::MatrixXd inactive_working_orbitals;
-    Eigen::MatrixXd active_working_orbitals;
-    Eigen::MatrixXd internal_virtual_orbitals;
-    Eigen::MatrixXd virtual_orbitals;
     std::vector<OrbitalProjector> orbitals;
-    bool has_full_ao_packed_support = false;
-    int reduced_offset = 0;
   };
 
   ProjectionResult project_impl(
