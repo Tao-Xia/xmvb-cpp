@@ -3082,6 +3082,54 @@ int main(int argc, char** argv) {
       std::cerr << "warning: skipped directional opposite-spin validation: "
                 << error.what() << '\n';
     }
+
+    // --- Minimal FD verification output (independent of deleted diagnostics) ---
+    {
+      const Eigen::VectorXd& analytic_response =
+          options.probe == "fixed" ? analytic_fixed_response
+                                   : analytic_full_response;
+      const Eigen::VectorXd& finite_difference_response =
+          options.probe == "fixed" ? fixed_fd_response : full_fd_response;
+      const double max_abs_diff =
+          max_abs_difference(analytic_response, finite_difference_response);
+      const double max_abs_fd = max_abs_value(finite_difference_response);
+      const double max_rel_diff =
+          max_abs_diff / std::max(1.0, max_abs_fd);
+
+      const double fixed_max_abs_diff_v =
+          max_abs_difference(analytic_fixed_response, fixed_fd_response);
+      const double fixed_max_rel_diff_v =
+          relative_max_abs_difference(analytic_fixed_response, fixed_fd_response);
+      const double full_max_abs_diff_v =
+          max_abs_difference(analytic_full_response, full_fd_response);
+      const double full_max_rel_diff_v =
+          relative_max_abs_difference(analytic_full_response, full_fd_response);
+
+      std::cout << std::setprecision(12);
+      std::cout << "input = " << options.input_path << '\n';
+      std::cout << "ao_integral_source = "
+                << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)
+                << '\n';
+      std::cout << "reduced_dimension = " << reduced_direction.size() << '\n';
+      std::cout << "probe_mode = " << options.probe << '\n';
+      std::cout << "finite_difference_step = " << finite_difference_step << '\n';
+      std::cout << "analytic_inf_norm = " << max_abs_value(analytic_response) << '\n';
+      std::cout << "fd_inf_norm = " << max_abs_fd << '\n';
+      std::cout << "max_abs_diff = " << max_abs_diff << '\n';
+      std::cout << "max_rel_diff = " << max_rel_diff << '\n';
+      std::cout << "fixed_max_abs_diff = " << fixed_max_abs_diff_v << '\n';
+      std::cout << "fixed_max_rel_diff = " << fixed_max_rel_diff_v << '\n';
+      std::cout << "full_max_abs_diff = " << full_max_abs_diff_v << '\n';
+      std::cout << "full_max_rel_diff = " << full_max_rel_diff_v << '\n';
+      std::cout << "accepted_sparse_orbital_norm_max_abs_diff = "
+                << accepted_sparse_orbital_norm_max_abs_diff << '\n';
+      std::cout << "retract_input_direction_max_abs_diff = "
+                << retract_input_direction_max_abs_diff << '\n';
+      std::cout << "analytic_retract_input_direction_max_abs_diff = "
+                << analytic_retract_input_direction_max_abs_diff << '\n';
+    }
+    // --- End minimal FD verification output ---
+
 #if 0  // depends on deleted DirectionalStructureDiagnostics (and transitively on all downstream variables)
     const Matrix analytic_delta_hamiltonian =
         unpack_symmetric_structure_matrix(

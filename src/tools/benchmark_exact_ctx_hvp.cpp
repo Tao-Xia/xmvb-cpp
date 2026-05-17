@@ -47,7 +47,7 @@ struct AcceptedPointBenchmarkContext {
 };
 
 struct BenchmarkMeasurement {
-  BenchmarkComponent component = BenchmarkComponent::FullCached;
+  BenchmarkComponent component = BenchmarkComponent::Full;
   double external_wall_time_seconds = 0.0;
   double response_inf_norm = 0.0;
   xmvb::vb::ExactOrbitalSecondOrderOperator::Diagnostics diagnostics;

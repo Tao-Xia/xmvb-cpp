@@ -8627,13 +8627,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
   return response;
 }
 
-std::vector<NonredundantOrbitalSpace::BlockRotationDirection>
-ExactOrbitalSecondOrderOperator::expand_block_rotation_directions(
-    const Eigen::VectorXd& reduced_direction) const {
-  return nonredundant_space_->expand_block_rotation_directions(
-      reduced_direction);
-}
-
 bool ExactOrbitalSecondOrderOperator::supports_analytic_core_model() const noexcept {
   if (accepted_point_context_ == nullptr ||
       current_input_ == nullptr ||
@@ -8680,11 +8673,7 @@ ExactOrbitalSecondOrderOperator::diagnostics() const {
   info.n_selected_states =
       static_cast<int>(accepted_point_context_->selected_state_indices.size());
   info.n_active_orbitals = accepted_point_context_->n_active_orbitals;
-  info.n_blocks =
-      static_cast<int>(
-          nonredundant_space_->expand_block_rotation_directions(
-              Eigen::VectorXd::Zero(nonredundant_space_->reduced_size()))
-              .size());
+  info.n_blocks = nonredundant_space_->n_blocks();
   info.uses_internal_inactive_chart =
       build_exact_ctx_internal_inactive_chart(
           current_input_->orbital_preparation_input,

@@ -101,10 +101,6 @@ public:
       const Eigen::VectorXd& reduced_direction,
       HvpComponents components = {}) const;
 
-  std::vector<NonredundantOrbitalSpace::BlockRotationDirection>
-  expand_block_rotation_directions(
-      const Eigen::VectorXd& reduced_direction) const;
-
   bool supports_analytic_core_model() const noexcept;
 
   Diagnostics diagnostics() const;
