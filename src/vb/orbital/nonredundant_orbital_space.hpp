@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include <Eigen/Core>
@@ -48,6 +49,14 @@ public:
     return use_block_preconditioner_by_default_;
   }
 
+  std::uint64_t rank_signature() const noexcept {
+    return rank_signature_;
+  }
+
+  // Reduced-space algebra expects vectors in the accepted-point NROS chart:
+  // packed vectors have `packed_parameter_size_` entries and reduced vectors
+  // have `reduced_size_` entries. These routines validate dimensions and
+  // finite values before applying the local tangent projectors.
   Eigen::VectorXd apply_inverse_reduced_curvature(
       const Eigen::VectorXd& reduced_vector) const;
 
@@ -60,6 +69,9 @@ public:
   Eigen::VectorXd expand_step(
       const Eigen::VectorXd& reduced_step) const;
 
+  // `expand_retract_input_tangent` returns a full sparse-orbital tangent table,
+  // while `retract_step` applies that tangent and renormalizes each sparse
+  // orbital in the AO-overlap metric used by the accepted point.
   Eigen::VectorXd expand_retract_input_tangent(
       const OrbitalPreparationInput& orbital_preparation_input,
       const Eigen::VectorXd& reduced_step) const;
@@ -80,6 +92,9 @@ private:
     Eigen::MatrixXd tangent_basis;
     // Diagonal of U_p^T (F_p - eps_p S_p) U_p for preconditioning.
     Eigen::VectorXd curvature_diagonal;
+    // Positive-definite local block approximation to
+    // U_p^T (F_p - eps_p S_p) U_p used by the block preconditioner.
+    Eigen::MatrixXd curvature_block;
     int local_reduced_offset = 0;
     int local_reduced_size = 0;
   };
@@ -101,8 +116,9 @@ private:
   std::vector<BlockBasis> block_bases_;
   int packed_parameter_size_ = 0;
   int reduced_size_ = 0;
+  std::uint64_t rank_signature_ = 1469598103934665603ull;
   bool has_reduced_curvature_diagonal_ = false;
-  bool use_block_preconditioner_by_default_ = true;
+  bool use_block_preconditioner_by_default_ = false;
 };
 
 }  // namespace xmvb::vb

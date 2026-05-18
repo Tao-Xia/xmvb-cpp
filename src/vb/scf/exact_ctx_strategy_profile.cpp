@@ -24,6 +24,14 @@ constexpr int kRetryRejectedFullOperatorMinActiveOrbitals = 8;
 // get CheapCoreOnly regardless of the cost proxy.
 constexpr int kStartupWindowMaxActiveOrbitals = 6;
 
+// Tiny closed-shell sparse charts are cheap enough that the full relaxed
+// accepted-point HVP is a calibration step, not a throughput risk.  F2-like
+// systems otherwise spend many accepted iterations shrinking the trust radius
+// against an under-calibrated cheap-core model.
+constexpr int kTinySparseCalibrationMaxActiveOrbitals = 2;
+constexpr int kTinySparseCalibrationMaxBasisFunctions = 64;
+constexpr int kTinySparseCalibrationStartupCount = 6;
+
 // Startup window parameters for expensive closed-shell sparse charts:
 // begin after one cheap accepted step, sample the full model for two
 // iterations, allow one extra if the gradient tail is still large, and keep
@@ -104,6 +112,31 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
   }
 
   strategy.startup_full_inner_solve_enable_max_active_orbitals = kStartupWindowMaxActiveOrbitals;
+  if (system_profile.n_active_orbitals <=
+          kTinySparseCalibrationMaxActiveOrbitals &&
+      system_profile.n_basis_functions <=
+          kTinySparseCalibrationMaxBasisFunctions) {
+    // Use a bounded full-model startup window to calibrate the trust-region
+    // model on very cheap closed-shell sparse charts.  The window is long
+    // enough to cover the usual F2-scale solve, then later cheap-model misses
+    // can still use full retry without making larger sparse workloads inherit
+    // an always-full exact-ctx path.
+    strategy.kind = ExactCtxDefaultStrategyKind::StartupWindowWithGradientTail;
+    strategy.startup_full_inner_solve_begin = 0;
+    strategy.startup_full_inner_solve_count =
+        kTinySparseCalibrationStartupCount;
+    strategy.startup_full_inner_solve_max_extra_count = 0;
+    strategy.startup_full_inner_solve_tail_max_cg_iterations =
+        kStartupWindowTailMaxCgIterations;
+    strategy.startup_full_inner_solve_multi_step_max_active_orbitals =
+        kTinySparseCalibrationMaxActiveOrbitals;
+    strategy.startup_full_inner_solve_enable_max_active_orbitals =
+        kTinySparseCalibrationMaxActiveOrbitals;
+    strategy.allow_hybrid_followup_full_solve = false;
+    strategy.retry_rejected_step_with_full_operator = true;
+    return strategy;
+  }
+
   if (system_profile.active_basis_cost_proxy <=
       kAffordableStartupOuterResponseCostProxy) {
     // With the current full-width AO-H1E and row-local exact-2e kernels, the
