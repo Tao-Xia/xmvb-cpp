@@ -1222,7 +1222,7 @@ int exact_ctx_startup_full_inner_solve_base_max_cg_iterations() {
       1,
       parse_env_int_with_default(
           "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BASE_MAX_CG_ITERATIONS",
-          6));
+          16));
 }
 
 int exact_ctx_startup_full_inner_solve_tail_max_cg_iterations() {
@@ -1230,7 +1230,7 @@ int exact_ctx_startup_full_inner_solve_tail_max_cg_iterations() {
       1,
       parse_env_int_with_default(
           "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_TAIL_MAX_CG_ITERATIONS",
-          8));
+          12));
 }
 
 int exact_ctx_startup_full_inner_solve_multi_step_max_active_orbitals() {
@@ -6321,6 +6321,9 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             exact_ctx_inner_solve_policy.use_outer_response = true;
             exact_ctx_inner_solve_policy.used_hybrid_followup_full_solve = true;
           }
+          // Cayley retraction for non-orthogonal VB orbitals introduces a
+          // geometric pullback term that requires a complete Hessian model.
+          // Outer response always enabled for the U_p tangent path.
           const bool inner_solve_uses_outer_response =
               exact_ctx_inner_solve_policy.use_outer_response;
           const bool model_quality_full_retry_requested =

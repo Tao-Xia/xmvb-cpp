@@ -1903,7 +1903,7 @@ int main(int argc, char** argv) {
     // Truncated-Newton already pays the main second-order cost on the
     // projected directions. A short full-space polish usually reaches the
     // legacy dual tolerance faster than continuing the reduced-space tail.
-    options.nonredundant_polish_max_iterations = 12;
+    options.nonredundant_polish_max_iterations = 40;
   }
   if (!user_specified_max_iterations) {
     // Keep the standalone SCF loop aligned with the legacy deck semantics:

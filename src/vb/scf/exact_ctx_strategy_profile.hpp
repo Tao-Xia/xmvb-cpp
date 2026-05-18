@@ -42,7 +42,7 @@ struct ExactCtxDefaultStrategy {
   int startup_full_inner_solve_begin = 0;
   int startup_full_inner_solve_count = 0;
   int startup_full_inner_solve_max_extra_count = 0;
-  int startup_full_inner_solve_tail_max_cg_iterations = 8;
+  int startup_full_inner_solve_tail_max_cg_iterations = 12;
   int startup_full_inner_solve_multi_step_max_active_orbitals = 8;
   int startup_full_inner_solve_enable_max_active_orbitals = 0;
   bool allow_hybrid_followup_full_solve = false;

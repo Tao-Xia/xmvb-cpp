@@ -8621,6 +8621,12 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     const Eigen::VectorXd packed_response =
         parameter_view_.gather_from_full(combined_core_orbital_value_gradient);
     response += nonredundant_space_->project_reduced_gradient(packed_response);
+
+    // Geometric pullback (retraction-induced Hessian) is not needed for the
+    // production U_p tangent path.  Per-orbital physical retraction is linear:
+    // R''(0) = 0.  The Cayley chart and its geometric pullback are retained
+    // as research-only code behind use_cayley_ guards in NonredundantOrbitalSpace.
+    // OLD code (retired): gradient scatter/gather + apply_geometric_pullback call.
   }
 
   record_apply_wall_time();

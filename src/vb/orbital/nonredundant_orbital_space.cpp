@@ -12,7 +12,6 @@
 #include <Eigen/Cholesky>
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
-
 #include "runtime/cpp_block_guess_builder.hpp"
 
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
@@ -20,6 +19,7 @@
 namespace xmvb::vb {
 
 namespace {
+
 
 double parse_env_double_with_default(const char* name, double default_value) {
   const char* value = std::getenv(name);
@@ -395,6 +395,12 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
   // the production default therefore stays with the safer diagonal scaling
   // unless the caller enables the block path explicitly.
   use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
+  // The per-orbital U_p physical tangent basis is the production path.
+  // Cayley S-orthonormal chart (XMVB_CPP_USE_CAYLEY_RETRACTION) is retired:
+  //   - HAO: gauge coupling from Q^T Q ≠ I causes gradient explosion / block failure.
+  //   - OEO: marginal HVP accuracy gain (1.65e-5 vs 6.95e-5) not worth the
+  //     code complexity, larger reduced space, and geometric pullback overhead.
+  (void)input.orbital_type;  // used only by retired Cayley path, suppress warning
 
   const Eigen::Map<const Eigen::MatrixXd> S(
       input.active_orbital_overlap_matrix.data(),
@@ -473,6 +479,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     bb.basis_function_indices = bf_indices;
     bb.block_overlap_matrix = block_S;
     bb.orbitals.reserve(nocc);
+
 
     // Build per-orbital projectors.
     for (int k = 0; k < nocc; ++k) {
@@ -671,11 +678,14 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     block_bases_.push_back(std::move(bb));
     ++block_index;
   }
-}
 
-// ===========================================================================
-// Runtime functions
-// ===========================================================================
+  // The dense local curvature block is retained as an opt-in diagnostic
+  // preconditioner.  Its clipped absolute spectrum is useful on some large
+  // sparse charts, but it can over-steer tiny nearly degenerate tangent spaces;
+  // the production default therefore stays with the safer diagonal scaling
+  // unless the caller enables the block path explicitly.
+  use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
+}
 
 NonredundantOrbitalSpace::ProjectionResult
 NonredundantOrbitalSpace::project_impl(
@@ -923,6 +933,7 @@ OrbitalPreparationInput NonredundantOrbitalSpace::retract_step(
   if (!std::isfinite(step_scale)) {
     throw std::invalid_argument("NROS retraction step scale is non-finite");
   }
+
   OrbitalPreparationInput trial = orbital_preparation_input;
   std::vector<double> updated = orbital_preparation_input.orbital_value_table;
   const Eigen::VectorXd tangent =
