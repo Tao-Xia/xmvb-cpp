@@ -80,108 +80,44 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
     const ExactCtxSystemProfile& system_profile) {
   ExactCtxDefaultStrategy strategy;
 
-  if (system_profile.open_shell) {
-    // Open-shell sparse charts (MnF2-class): the cheap core-only model
-    // systematically overestimates curvature because it misses the
-    // structure-relaxation Schur complement.  Accepted steps have low
-    // trust ratios (actual/predicted in [0.1, 0.75]) so the trust radius
-    // never expands, producing hundreds of tiny first-order steps.
-    //
-    // The full model (with outer response) is only ~2x as expensive per
-    // HVP on these systems, and it gives correct curvature.  Use it for
-    // every iteration by setting a startup window that covers the entire
-    // solve.  Hybrid followup and full-operator retry are kept as safety
-    // nets for any edge cases where the full model under-solves.
-    constexpr int kAlwaysFull = 500;  // effectively unlimited
-    strategy.kind =
-        ExactCtxDefaultStrategyKind::StartupWindowWithGradientTail;
-    strategy.prefer_internal_inactive_chart = false;
-    strategy.startup_full_inner_solve_begin = 0;
-    strategy.startup_full_inner_solve_count = kAlwaysFull;
-    strategy.startup_full_inner_solve_max_extra_count = 0;
-    strategy.startup_full_inner_solve_tail_max_cg_iterations = 12;
-    strategy.startup_full_inner_solve_enable_max_active_orbitals =
-        system_profile.n_active_orbitals;
-    strategy.startup_full_inner_solve_multi_step_max_active_orbitals =
-        system_profile.n_active_orbitals;
-    strategy.allow_hybrid_followup_full_solve =
-        system_profile.sparse_orbital_chart &&
-        system_profile.n_active_orbitals == kHybridFollowupExactActiveOrbitalThreshold;
-    strategy.retry_rejected_step_with_full_operator =
-        system_profile.sparse_orbital_chart &&
-        system_profile.n_active_orbitals >= kRetryRejectedFullOperatorMinActiveOrbitals;
-    return strategy;
-  }
-
-  // The internal inactive `(Q_i, T_a)` chart was intended as a cheaper
-  // accepted-point model for closed-shell sparse HAO/BDO systems, but current
-  // 240/241 production traces show the opposite: it sends both systems onto
-  // the slow TNHVP trajectory, while staying in the physical occupied chart
-  // reproduces the fast reference path. Keep the sparse-chart default on the
-  // physical occupied manifold unless the user explicitly forces the internal
-  // chart through the environment override.
-  strategy.prefer_internal_inactive_chart =
-      !system_profile.sparse_orbital_chart;
-  if (!system_profile.sparse_orbital_chart ||
-      system_profile.n_active_orbitals <= 0 ||
-      system_profile.n_active_orbitals > kStartupWindowMaxActiveOrbitals) {
-    strategy.kind = ExactCtxDefaultStrategyKind::CheapCoreOnly;
-    strategy.startup_full_inner_solve_enable_max_active_orbitals = 0;
-    strategy.allow_hybrid_followup_full_solve = false;
-    return strategy;
-  }
-
-  strategy.startup_full_inner_solve_enable_max_active_orbitals = kStartupWindowMaxActiveOrbitals;
-  if (system_profile.n_active_orbitals <=
-          kTinySparseCalibrationMaxActiveOrbitals &&
-      system_profile.n_basis_functions <=
-          kTinySparseCalibrationMaxBasisFunctions) {
-    // Use a bounded full-model startup window to calibrate the trust-region
-    // model on very cheap closed-shell sparse charts.  The window is long
-    // enough to cover the usual F2-scale solve, then later cheap-model misses
-    // can still use full retry without making larger sparse workloads inherit
-    // an always-full exact-ctx path.
-    strategy.kind = ExactCtxDefaultStrategyKind::StartupWindowWithGradientTail;
-    strategy.startup_full_inner_solve_begin = 0;
-    strategy.startup_full_inner_solve_count =
-        kTinySparseCalibrationStartupCount;
-    strategy.startup_full_inner_solve_max_extra_count = 0;
-    strategy.startup_full_inner_solve_tail_max_cg_iterations =
-        kStartupWindowTailMaxCgIterations;
-    strategy.startup_full_inner_solve_multi_step_max_active_orbitals =
-        kTinySparseCalibrationMaxActiveOrbitals;
-    strategy.startup_full_inner_solve_enable_max_active_orbitals =
-        kTinySparseCalibrationMaxActiveOrbitals;
-    strategy.allow_hybrid_followup_full_solve = false;
-    strategy.retry_rejected_step_with_full_operator = true;
-    return strategy;
-  }
-
-  // The cheap core-only model (no outer response) systematically overestimates
-  // Hessian curvature compared to the full relaxed model.  For sparse HAO
-  // charts this leads to poor predicted-vs-actual energy reduction ratios,
-  // trust-radius shrinkage, and first-order tail behaviour over many iterations.
-  //
-  // A short full-model startup window provides calibration steps that set the
-  // trust-region model correctly.  The window is short (3 steps) because the
-  // purpose is calibration, not convergence — the cheap model takes over once
-  // the trust radius and search direction are well-calibrated.
+  // Unified strategy: all systems start with cheap core-only.  The adaptive
+  // low-trust detection in HvpModelQualityState automatically switches to
+  // full-model (outer response) for a sustained period when the cheap model
+  // produces poor trust ratios.  A single full-model calibration step at
+  // iteration 0 sets the initial trust-region scale for sparse charts.
+  (void)kHybridFollowupExactActiveOrbitalThreshold;
+  (void)kRetryRejectedFullOperatorMinActiveOrbitals;
   (void)kAffordableStartupOuterResponseCostProxy;
   (void)kStartupWindowBegin;
   (void)kStartupWindowCount;
   (void)kStartupWindowMaxExtraCount;
   (void)kStartupWindowTailMaxCgIterations;
 
+  strategy.prefer_internal_inactive_chart =
+      !system_profile.sparse_orbital_chart;
+
+  // Non-sparse charts (OEO): cheap model is sufficient.
+  if (!system_profile.sparse_orbital_chart) {
+    strategy.kind = ExactCtxDefaultStrategyKind::CheapCoreOnly;
+    return strategy;
+  }
+
+  // All sparse HAO/BDO charts: one full-model calibration step to seed the
+  // trust-region, then cheap model with adaptive runtime upgrade to full
+  // model when low trust is detected.  The single calibration step gives
+  // enough reference curvature without the wall-time penalty of a longer
+  // startup window.
   constexpr int kCalibrationCount = 1;
-  constexpr int kCalibrationTailCg = 8;
+  constexpr int kCalibrationTailCg = 10;
   strategy.kind = ExactCtxDefaultStrategyKind::StartupWindowWithGradientTail;
   strategy.startup_full_inner_solve_begin = 0;
   strategy.startup_full_inner_solve_count = kCalibrationCount;
-  strategy.startup_full_inner_solve_max_extra_count = 0;
   strategy.startup_full_inner_solve_tail_max_cg_iterations = kCalibrationTailCg;
+  strategy.startup_full_inner_solve_enable_max_active_orbitals =
+      system_profile.n_active_orbitals;
   strategy.startup_full_inner_solve_multi_step_max_active_orbitals =
-      kStartupWindowMaxActiveOrbitals;
-  strategy.allow_hybrid_followup_full_solve = false;
+      system_profile.n_active_orbitals;
+  strategy.retry_rejected_step_with_full_operator = true;
   return strategy;
 }
 

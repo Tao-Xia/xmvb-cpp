@@ -1506,8 +1506,12 @@ struct HvpModelQualityState {
     }
     if (used_krylov_rescue_step || consecutive_cheap_rejects >= 2 ||
         consecutive_low_trust >= 2) {
+      // When the cheap model consistently produces low-trust steps, the
+      // outer response is needed for a sustained period — not just one
+      // iteration.  Short full-model bursts don't fix the underlying
+      // curvature mismatch and lead to ping-pong between cheap and full.
       force_full_inner_solve_remaining =
-          std::max(force_full_inner_solve_remaining, 1);
+          std::max(force_full_inner_solve_remaining, 8);
     }
     if (used_full_model_probe && !low_trust && !cheap_trial_rejected &&
         !projected_stall && trust_ratio >= 0.75) {
