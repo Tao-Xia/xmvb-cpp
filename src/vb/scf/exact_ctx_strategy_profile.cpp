@@ -22,7 +22,7 @@ constexpr int kRetryRejectedFullOperatorMinActiveOrbitals = 8;
 
 // Closed-shell sparse charts with more than this many active orbitals always
 // get CheapCoreOnly regardless of the cost proxy.
-constexpr int kStartupWindowMaxActiveOrbitals = 6;
+constexpr int kStartupWindowMaxActiveOrbitals = 8;
 
 // Tiny closed-shell sparse charts are cheap enough that the full relaxed
 // accepted-point HVP is a calibration step, not a throughput risk.  F2-like
@@ -81,9 +81,29 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
   ExactCtxDefaultStrategy strategy;
 
   if (system_profile.open_shell) {
-    strategy.kind = ExactCtxDefaultStrategyKind::CheapCoreOnly;
+    // Open-shell sparse charts (MnF2-class): the cheap core-only model
+    // systematically overestimates curvature because it misses the
+    // structure-relaxation Schur complement.  Accepted steps have low
+    // trust ratios (actual/predicted in [0.1, 0.75]) so the trust radius
+    // never expands, producing hundreds of tiny first-order steps.
+    //
+    // The full model (with outer response) is only ~2x as expensive per
+    // HVP on these systems, and it gives correct curvature.  Use it for
+    // every iteration by setting a startup window that covers the entire
+    // solve.  Hybrid followup and full-operator retry are kept as safety
+    // nets for any edge cases where the full model under-solves.
+    constexpr int kAlwaysFull = 500;  // effectively unlimited
+    strategy.kind =
+        ExactCtxDefaultStrategyKind::StartupWindowWithGradientTail;
     strategy.prefer_internal_inactive_chart = false;
-    strategy.startup_full_inner_solve_enable_max_active_orbitals = 0;
+    strategy.startup_full_inner_solve_begin = 0;
+    strategy.startup_full_inner_solve_count = kAlwaysFull;
+    strategy.startup_full_inner_solve_max_extra_count = 0;
+    strategy.startup_full_inner_solve_tail_max_cg_iterations = 12;
+    strategy.startup_full_inner_solve_enable_max_active_orbitals =
+        system_profile.n_active_orbitals;
+    strategy.startup_full_inner_solve_multi_step_max_active_orbitals =
+        system_profile.n_active_orbitals;
     strategy.allow_hybrid_followup_full_solve =
         system_profile.sparse_orbital_chart &&
         system_profile.n_active_orbitals == kHybridFollowupExactActiveOrbitalThreshold;
@@ -137,29 +157,30 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
     return strategy;
   }
 
-  if (system_profile.active_basis_cost_proxy <=
-      kAffordableStartupOuterResponseCostProxy) {
-    // With the current full-width AO-H1E and row-local exact-2e kernels, the
-    // accepted cheap model reaches 241-class closed-shell sparse solutions with
-    // lower wall time than paying for full outer-response startup solves. Keep
-    // full-model corrections available through the optimizer rejection/stall
-    // gates instead of spending them unconditionally at iterations 0 and 1.
-    strategy.kind = ExactCtxDefaultStrategyKind::CheapCoreOnly;
-    strategy.startup_full_inner_solve_enable_max_active_orbitals = 0;
-    strategy.allow_hybrid_followup_full_solve = false;
-    return strategy;
-  }
+  // The cheap core-only model (no outer response) systematically overestimates
+  // Hessian curvature compared to the full relaxed model.  For sparse HAO
+  // charts this leads to poor predicted-vs-actual energy reduction ratios,
+  // trust-radius shrinkage, and first-order tail behaviour over many iterations.
+  //
+  // A short full-model startup window provides calibration steps that set the
+  // trust-region model correctly.  The window is short (3 steps) because the
+  // purpose is calibration, not convergence — the cheap model takes over once
+  // the trust radius and search direction are well-calibrated.
+  (void)kAffordableStartupOuterResponseCostProxy;
+  (void)kStartupWindowBegin;
+  (void)kStartupWindowCount;
+  (void)kStartupWindowMaxExtraCount;
+  (void)kStartupWindowTailMaxCgIterations;
 
-  // Expensive closed-shell sparse charts should still sample the full model,
-  // but only after one cheap accepted step and with a tighter tail Krylov
-  // budget.  This captures the historical 10698-class direction without
-  // reintroducing a legacy-AO-only dependency.
+  constexpr int kCalibrationCount = 1;
+  constexpr int kCalibrationTailCg = 8;
   strategy.kind = ExactCtxDefaultStrategyKind::StartupWindowWithGradientTail;
-  strategy.startup_full_inner_solve_begin = kStartupWindowBegin;
-  strategy.startup_full_inner_solve_count = kStartupWindowCount;
-  strategy.startup_full_inner_solve_max_extra_count = kStartupWindowMaxExtraCount;
-  strategy.startup_full_inner_solve_tail_max_cg_iterations = kStartupWindowTailMaxCgIterations;
-  strategy.startup_full_inner_solve_multi_step_max_active_orbitals = kStartupWindowMultiStepMaxActiveOrbitals;
+  strategy.startup_full_inner_solve_begin = 0;
+  strategy.startup_full_inner_solve_count = kCalibrationCount;
+  strategy.startup_full_inner_solve_max_extra_count = 0;
+  strategy.startup_full_inner_solve_tail_max_cg_iterations = kCalibrationTailCg;
+  strategy.startup_full_inner_solve_multi_step_max_active_orbitals =
+      kStartupWindowMaxActiveOrbitals;
   strategy.allow_hybrid_followup_full_solve = false;
   return strategy;
 }

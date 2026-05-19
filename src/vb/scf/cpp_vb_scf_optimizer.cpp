@@ -2639,26 +2639,48 @@ int choose_nonredundant_truncated_newton_max_cg_iterations(
     // moderate, but stop starving exact_ctx after just two or three probes.
     //
     // Sparse HAO/BDO charts are more ill-conditioned than the corresponding
-    // full-AO OEO manifold, so the cheap exact-ctx solve needs a slightly
-    // larger Krylov budget before paying for any outer-response correction.
+    // full-AO OEO manifold, so the cheap exact-ctx solve needs a larger
+    // Krylov budget before paying for any outer-response correction.
     //
-    // Scale the budget with reduced dimension: high-dimensional reduced spaces
-    // (>500) need a larger Krylov subspace to approximate the Newton direction.
+    // Open-shell sparse systems (MnF2-class) are especially ill-conditioned
+    // and the cheap core-only model alone is insufficient — the outer
+    // response must be enabled from the start to get a correct Hessian.
+    //
+    // Budget scaling:
+    //   base sparse:    14 (up from 8 for OEO)
+    //   open-shell:     18 + outer response default
+    //   dim_scale:      +6 when reduced_dim > 800
+    //   stall_boost:    +6 on top of base
     const int dim_scale = bounded_reduced_size > 800 ? 6 : 0;
+    const bool open_shell_sparse =
+        sparse_orbital_chart && system_profile.open_shell;
+    const int sparse_base = sparse_orbital_chart
+        ? (open_shell_sparse ? 18 : 14)
+        : 8;
+    const int sparse_early = sparse_orbital_chart
+        ? (open_shell_sparse ? 24 : 18)
+        : 12;
+    const int sparse_mid = sparse_orbital_chart
+        ? (open_shell_sparse ? 20 : 16)
+        : 10;
+    const int sparse_stall = sparse_orbital_chart
+        ? (open_shell_sparse ? 28 : 20)
+        : 14;
+
     if (latest_objective_seconds <= 2.0e-2) {
       return std::min(
           bounded_reduced_size,
-          sparse_orbital_chart ? 14 + dim_scale : 12);
+          sparse_orbital_chart ? sparse_early + dim_scale : 12);
     }
     if (latest_objective_seconds <= 1.0e-1) {
       return std::min(
           bounded_reduced_size,
-          sparse_orbital_chart ? 12 + dim_scale : 10);
+          sparse_orbital_chart ? sparse_mid + dim_scale : 10);
     }
     const int default_budget =
         std::min(
             bounded_reduced_size,
-            sparse_orbital_chart ? 10 + dim_scale : 8);
+            sparse_orbital_chart ? sparse_base + dim_scale : 8);
     if (exact_ctx_stall_tail_boost_enabled(
             consecutive_projected_stall_count)) {
       // When the projected gradient stops contracting, the cheap exact-ctx
@@ -2667,7 +2689,7 @@ int choose_nonredundant_truncated_newton_max_cg_iterations(
       // accepted outer iterations with essentially linear tail behavior.
       const int stall_budget =
           sparse_orbital_chart
-              ? std::max(default_budget, 14)
+              ? std::max(default_budget, sparse_stall)
               : std::max(
                     default_budget,
                     exact_ctx_stall_tail_boost_max_cg_iterations());
