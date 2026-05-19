@@ -55,6 +55,21 @@ public:
       const std::vector<double>& hamiltonian_matrix,
       const std::vector<double>& overlap_matrix,
       int dimension) const;
+
+  /**
+   * @brief Davidson iterative solve for the lowest n_roots eigenpairs.
+   *
+   * Uses subspace restart to maintain orthogonality: when the active subspace
+   * exceeds max_subspace_dim, it is compressed to the best n_roots Ritz vectors
+   * plus the current correction vectors.  Matrix-vector products use the dense
+   * H and S matrices via Eigen (BLAS dsymv), which is optimal for structure
+   * matrices with O(N) nonzeros per row.
+   */
+  GeneralizedEigenResult solve_davidson(
+      const std::vector<double>& hamiltonian_matrix,
+      const std::vector<double>& overlap_matrix,
+      int dimension,
+      int n_roots) const;
 };
 
 }  // namespace xmvb::core

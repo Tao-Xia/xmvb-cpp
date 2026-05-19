@@ -422,6 +422,10 @@ target_link_libraries(benchmark_exact_ctx_hvp
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(benchmark_exact_ctx_hvp)
 
+add_executable(test_davidson core/linear_algebra/test_davidson.cpp)
+target_link_libraries(test_davidson PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
+xmvb_link_standalone_runtime(test_davidson)
+
 add_executable(check_exact_ao_h1e_builder
   tools/check_exact_ao_h1e_builder.cpp)
 target_link_libraries(check_exact_ao_h1e_builder
