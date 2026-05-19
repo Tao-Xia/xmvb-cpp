@@ -12,7 +12,6 @@
 namespace xmvb::vb {
 
 enum class CppVbScfOptimizerBackend {
-  LegacyFortran,
   Lbfgspp,
   NonredundantProjectedGradient,
   NonredundantLbfgspp,
@@ -40,12 +39,6 @@ inline const char* nonredundant_truncated_newton_hvp_mode_name(
 inline bool cpp_vb_scf_optimizer_backend_supported(
     CppVbScfOptimizerBackend backend) {
   switch (backend) {
-    case CppVbScfOptimizerBackend::LegacyFortran:
-#ifdef XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND
-      return true;
-#else
-      return false;
-#endif
     case CppVbScfOptimizerBackend::Lbfgspp:
     case CppVbScfOptimizerBackend::NonredundantProjectedGradient:
     case CppVbScfOptimizerBackend::NonredundantLbfgspp:
@@ -70,8 +63,6 @@ inline bool cpp_vb_scf_optimizer_backend_supported(
 inline const char* cpp_vb_scf_optimizer_backend_name(
     CppVbScfOptimizerBackend backend) {
   switch (backend) {
-    case CppVbScfOptimizerBackend::LegacyFortran:
-      return "legacy_fortran";
     case CppVbScfOptimizerBackend::Lbfgspp:
       return "lbfgspp";
     case CppVbScfOptimizerBackend::NonredundantProjectedGradient:

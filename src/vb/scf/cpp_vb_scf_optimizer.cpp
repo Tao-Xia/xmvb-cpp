@@ -29,23 +29,6 @@
 #include "vb/scf/exact_ctx_strategy_profile.hpp"
 #include "vb/scf/exact_orbital_second_order_operator.hpp"
 
-#ifdef XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND
-extern "C" void lbfgs_driver_(
-    int* n,
-    int* m,
-    double* x,
-    double* energy,
-    double* gradient,
-    int* diagco,
-    double* diag,
-    int* iprint,
-    double* eps,
-    double* xtol,
-    double* workspace,
-    int* iflag,
-    double* gxn);
-#endif
-
 namespace xmvb::vb {
 
 namespace {
@@ -77,7 +60,6 @@ bool optimizer_backend_uses_nonredundant_space(
     case CppVbScfOptimizerBackend::NonredundantLbfgspp:
     case CppVbScfOptimizerBackend::NonredundantTruncatedNewton:
       return true;
-    case CppVbScfOptimizerBackend::LegacyFortran:
     case CppVbScfOptimizerBackend::Lbfgspp:
     case CppVbScfOptimizerBackend::DeepVBHOnnx:
     case CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
@@ -5433,103 +5415,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
     double previous_energy = energy;
     final_gradient_l2_norm = gradient.norm();
     switch (options_.backend) {
-      case CppVbScfOptimizerBackend::LegacyFortran: {
-#ifdef XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND
-        const int m = options_.history_size;
-        std::vector<double> x(n);
-        std::memcpy(x.data(), parameter_vector.data(), sizeof(double) * n);
-        std::vector<double> gradient_buffer(n, 0.0);
-        std::memcpy(
-            gradient_buffer.data(),
-            gradient.data(),
-            sizeof(double) * n);
-        std::vector<double> workspace(
-            n * 2 * m + 1 +
-                2 * m,
-            0.0);
-        std::vector<double> diag(n, 1.0);
-
-        int diagco = 0;
-        int iprint[2] = {-1, 0};
-        int iflag = 0;
-        double eps = 1.0e-5;
-        double xtol = 1.0e-16;
-        double gxn = final_gradient_l2_norm;
-
-        auto evaluate_current_point = [&]() {
-          Eigen::Map<Eigen::VectorXd> parameter_map(x.data(), n);
-          Eigen::VectorXd gradient_map;
-          energy = objective(parameter_map, gradient_map);
-          std::memcpy(
-              gradient_buffer.data(),
-              gradient_map.data(),
-              sizeof(double) * n);
-          sync_result_from_objective(objective, &result);
-          final_gradient_l2_norm = gradient_map.norm();
-        };
-
-        while (true) {
-          lbfgs_driver_(
-              const_cast<int*>(&n),
-              const_cast<int*>(&m),
-              x.data(),
-              &energy,
-              gradient_buffer.data(),
-              &diagco,
-              diag.data(),
-              iprint,
-              &eps,
-              &xtol,
-              workspace.data(),
-              &iflag,
-              &gxn);
-
-          if (iflag == 1) {
-            evaluate_current_point();
-            ++n_iterations;
-            record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
-
-            const double de = energy - previous_energy;
-            previous_energy = energy;
-            if (std::abs(de) < options_.energy_tolerance &&
-                gxn < options_.gradient_tolerance) {
-              result.converged = true;
-              result.termination_reason = "legacy_dual_tolerance";
-              iflag = 0;
-              break;
-            }
-
-            if (n_iterations >= options_.max_iterations) {
-              result.termination_reason = "max_iterations";
-              break;
-            }
-
-            continue;
-          }
-
-          if (iflag == 0) {
-            result.converged = true;
-            if (result.termination_reason.empty()) {
-              result.termination_reason = "lbfgs_driver_finished";
-            }
-            break;
-          }
-
-          if (iflag == 2) {
-            result.termination_reason = "unexpected_diag_request";
-            break;
-          }
-
-          result.termination_reason = "lbfgs_driver_error";
-          break;
-        }
-        final_gradient_l2_norm = gxn;
-        break;
-#else
-        result.termination_reason = "legacy_fortran_backend_disabled";
-        break;
-#endif
-      }
 
       case CppVbScfOptimizerBackend::Lbfgspp: {
         LBFGSpp::LBFGSParam<double> param;
@@ -6347,8 +6232,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             exact_ctx_inner_solve_policy.use_outer_response = true;
             exact_ctx_inner_solve_policy.used_hybrid_followup_full_solve = true;
           }
-          // Cayley retraction for non-orthogonal VB orbitals introduces a
-          // geometric pullback term that requires a complete Hessian model.
           // Outer response always enabled for the U_p tangent path.
           const bool inner_solve_uses_outer_response =
               exact_ctx_inner_solve_policy.use_outer_response;

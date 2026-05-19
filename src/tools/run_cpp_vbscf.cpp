@@ -119,7 +119,6 @@ std::string format_index_name(
 const char* gradient_tolerance_metric_name(
     xmvb::vb::CppVbScfOptimizerBackend backend) {
   switch (backend) {
-    case xmvb::vb::CppVbScfOptimizerBackend::LegacyFortran:
     case xmvb::vb::CppVbScfOptimizerBackend::Lbfgspp:
       return "full_gradient_l2_norm";
     case xmvb::vb::CppVbScfOptimizerBackend::NonredundantProjectedGradient:
@@ -1428,15 +1427,6 @@ private:
 void apply_optimizer_backend_argument(
     const std::string& backend_name,
     xmvb::vb::CppVbScfOptimizerOptions* options) {
-  if (backend_name == "legacy_fortran") {
-    if (!xmvb::vb::cpp_vb_scf_optimizer_backend_supported(
-            xmvb::vb::CppVbScfOptimizerBackend::LegacyFortran)) {
-      throw std::invalid_argument(
-          "legacy_fortran backend is not enabled in this build");
-    }
-    options->backend = xmvb::vb::CppVbScfOptimizerBackend::LegacyFortran;
-    return;
-  }
   if (backend_name == "lbfgspp") {
     options->backend = xmvb::vb::CppVbScfOptimizerBackend::Lbfgspp;
     return;
@@ -1630,10 +1620,6 @@ void apply_adaptive_determinant_score_mode_argument(
 void print_usage() {
   std::cerr << "usage: run_cpp_vbscf <input.xmi> "
                "[--optimizer-backend lbfgspp|nonredundant_projected_gradient|nonredundant_lbfgspp|nonredundant_truncated_newton";
-  if (xmvb::vb::cpp_vb_scf_optimizer_backend_supported(
-          xmvb::vb::CppVbScfOptimizerBackend::LegacyFortran)) {
-    std::cerr << "|legacy_fortran";
-  }
   if (xmvb::vb::cpp_vb_scf_optimizer_backend_supported(
           xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx)) {
     std::cerr << "|deepvbh_onnx";

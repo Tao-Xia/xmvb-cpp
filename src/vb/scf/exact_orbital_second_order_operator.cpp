@@ -8583,8 +8583,6 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
 
     // Geometric pullback (retraction-induced Hessian) is not needed for the
     // production U_p tangent path.  Per-orbital physical retraction is linear:
-    // R''(0) = 0.  The Cayley chart and its geometric pullback are retained
-    // as research-only code behind use_cayley_ guards in NonredundantOrbitalSpace.
     // OLD code (retired): gradient scatter/gather + apply_geometric_pullback call.
   }
 

@@ -395,12 +395,6 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
   // the production default therefore stays with the safer diagonal scaling
   // unless the caller enables the block path explicitly.
   use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
-  // The per-orbital U_p physical tangent basis is the production path.
-  // Cayley S-orthonormal chart (XMVB_CPP_USE_CAYLEY_RETRACTION) is retired:
-  //   - HAO: gauge coupling from Q^T Q ≠ I causes gradient explosion / block failure.
-  //   - OEO: marginal HVP accuracy gain (1.65e-5 vs 6.95e-5) not worth the
-  //     code complexity, larger reduced space, and geometric pullback overhead.
-  (void)input.orbital_type;  // used only by retired Cayley path, suppress warning
 
   const Eigen::Map<const Eigen::MatrixXd> S(
       input.active_orbital_overlap_matrix.data(),
