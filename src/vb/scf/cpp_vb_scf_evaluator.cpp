@@ -1,5 +1,7 @@
 #include "vb/scf/cpp_vb_scf_evaluator.hpp"
+#include "vb/runtime_utils.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
@@ -123,10 +125,24 @@ CppVbScfResult CppVbScfEvaluator::evaluate(
       result.structure_matrices.overlap_matrix,
       result.n_structures);
 
-  const auto eigen_result = generalized_eigensolver_.solve(
-      result.structure_matrices.hamiltonian_matrix,
-      result.structure_matrices.overlap_matrix,
-      result.n_structures);
+  const bool use_davidson =
+      parse_env_flag_with_default(
+          "XMVB_CPP_ENABLE_DAVIDSON_EIGENSOLVER", false) &&
+      result.n_structures >= 300;
+  const int n_roots =
+      selected_state_indices.empty() ? 1
+      : *std::max_element(selected_state_indices.begin(),
+                          selected_state_indices.end()) + 1;
+  const auto eigen_result =
+      use_davidson
+          ? generalized_eigensolver_.solve_davidson(
+                result.structure_matrices.hamiltonian_matrix,
+                result.structure_matrices.overlap_matrix,
+                result.n_structures, n_roots)
+          : generalized_eigensolver_.solve(
+                result.structure_matrices.hamiltonian_matrix,
+                result.structure_matrices.overlap_matrix,
+                result.n_structures);
   result.electronic_state_energies = eigen_result.eigenvalues;
   result.eigenvector_matrix = eigen_result.eigenvector_matrix;
 

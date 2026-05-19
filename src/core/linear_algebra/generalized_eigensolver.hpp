@@ -55,6 +55,17 @@ public:
       const std::vector<double>& hamiltonian_matrix,
       const std::vector<double>& overlap_matrix,
       int dimension) const;
+
+  /**
+   * @brief Davidson-iterative solve for the lowest n_roots eigenpairs.
+   *
+   * For large structure spaces (N > ~300), O(k N^2) vs O(N^3) for LAPACK.
+   */
+  GeneralizedEigenResult solve_davidson(
+      const std::vector<double>& hamiltonian_matrix,
+      const std::vector<double>& overlap_matrix,
+      int dimension,
+      int n_roots) const;
 };
 
 }  // namespace xmvb::core
