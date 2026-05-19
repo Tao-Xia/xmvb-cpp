@@ -1,4 +1,5 @@
 #include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vb/runtime_utils.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -11,7 +12,6 @@
 #include <vector>
 
 #include <Eigen/Core>
-#include <cblas.h>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -95,34 +95,6 @@ void resize_for_overwrite(
   if (values->size() != size) {
     values->resize(size);
   }
-}
-
-bool parse_env_flag_with_default(
-    const char* variable_name,
-    bool default_value) {
-  const char* value = std::getenv(variable_name);
-  if (value == nullptr || value[0] == '\0') {
-    return default_value;
-  }
-  return std::strcmp(value, "0") != 0 &&
-      std::strcmp(value, "false") != 0 &&
-      std::strcmp(value, "FALSE") != 0;
-}
-
-int parse_env_int_with_default(
-    const char* variable_name,
-    int default_value) {
-  const char* value = std::getenv(variable_name);
-  if (value == nullptr || value[0] == '\0') {
-    return default_value;
-  }
-  char* end = nullptr;
-  const long parsed = std::strtol(value, &end, 10);
-  if (end == value || (end != nullptr && *end != '\0') || parsed <= 0 ||
-      parsed > std::numeric_limits<int>::max()) {
-    return default_value;
-  }
-  return static_cast<int>(parsed);
 }
 
 // Fused 2e HVP path retired: regressed >10x vs materialized on production.

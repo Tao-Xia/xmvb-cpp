@@ -15,21 +15,13 @@
 #include "runtime/cpp_block_guess_builder.hpp"
 
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vb/runtime_utils.hpp"
 
 namespace xmvb::vb {
 
 namespace {
 
 
-double parse_env_double_with_default(const char* name, double default_value) {
-  const char* value = std::getenv(name);
-  if (value == nullptr || value[0] == '\0') return default_value;
-  char* end = nullptr;
-  const double parsed = std::strtod(value, &end);
-  if (end == value || (end != nullptr && end[0] != '\0') || !std::isfinite(parsed))
-    return default_value;
-  return parsed;
-}
 
 double nonredundant_preconditioner_min_curvature() {
   return std::max(1.0e-12,

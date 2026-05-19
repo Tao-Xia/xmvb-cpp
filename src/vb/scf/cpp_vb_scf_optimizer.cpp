@@ -25,6 +25,7 @@
 #include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
 #include "vb/orbital/nonredundant_orbital_space.hpp"
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vb/runtime_utils.hpp"
 #include "vb/orbital/support_aware_mo_gauge_fix.hpp"
 #include "vb/scf/exact_ctx_strategy_profile.hpp"
 #include "vb/scf/exact_orbital_second_order_operator.hpp"
@@ -1037,18 +1038,6 @@ const char* bool_name(bool value) {
   return value ? "true" : "false";
 }
 
-bool parse_env_flag_with_default(
-    const char* variable_name,
-    bool default_value) {
-  const char* value = std::getenv(variable_name);
-  if (value == nullptr || value[0] == '\0') {
-    return default_value;
-  }
-  return std::strcmp(value, "0") != 0 &&
-      std::strcmp(value, "false") != 0 &&
-      std::strcmp(value, "FALSE") != 0;
-}
-
 std::optional<bool> parse_env_optional_flag(
     const char* variable_name) {
   const char* value = std::getenv(variable_name);
@@ -1078,43 +1067,6 @@ bool oeo_active_representative_accepted_point_canonicalization_enabled() {
   // transported secant pairs, and exact_ctx/TiCl convergence. Keep the
   // accepted-point reset off by default and reserve it for targeted debugging.
   return false;
-}
-
-int parse_env_int_with_default(
-    const char* variable_name,
-    int default_value) {
-  const char* value = std::getenv(variable_name);
-  if (value == nullptr || value[0] == '\0') {
-    return default_value;
-  }
-
-  errno = 0;
-  char* end = nullptr;
-  const long parsed = std::strtol(value, &end, 10);
-  if (errno != 0 || end == value || (end != nullptr && end[0] != '\0') ||
-      parsed < static_cast<long>(std::numeric_limits<int>::min()) ||
-      parsed > static_cast<long>(std::numeric_limits<int>::max())) {
-    return default_value;
-  }
-  return static_cast<int>(parsed);
-}
-
-double parse_env_double_with_default(
-    const char* variable_name,
-    double default_value) {
-  const char* value = std::getenv(variable_name);
-  if (value == nullptr || value[0] == '\0') {
-    return default_value;
-  }
-
-  errno = 0;
-  char* end = nullptr;
-  const double parsed = std::strtod(value, &end);
-  if (errno != 0 || end == value || (end != nullptr && end[0] != '\0') ||
-      !std::isfinite(parsed)) {
-    return default_value;
-  }
-  return parsed;
 }
 
 std::optional<bool> exact_ctx_inner_solve_outer_response_override() {
