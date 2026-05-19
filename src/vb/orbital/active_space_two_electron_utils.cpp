@@ -125,69 +125,14 @@ int parse_env_int_with_default(
   return static_cast<int>(parsed);
 }
 
-bool exact_2e_fused_hvp_enabled() {
-  // The current exact-2e cached-row direct kernel was intended to avoid
-  // materializing `pair_gradients`, but on restored 241 exact_ctx TNHVP runs it
-  // regressed the active-2e matvec by more than an order of magnitude versus
-  // the older materialized path. Keep the fused path opt-in for now so the
-  // fast materialized contraction remains the default until a blocked rewrite
-  // restores the expected locality without reintroducing OOM-prone growth.
-  return parse_env_flag_with_default(
-      "XMVB_CPP_ENABLE_EXACT_2E_FUSED_HVP",
-      false);
-}
-
-bool exact_2e_fused_hvp_supported_active_space(
-    int n_active_orbitals) {
-  // The fused single-thread kernels are specialized for the small active-space
-  // regime that dominates the current TN-HVP workloads. Larger active spaces
-  // automatically fall back to the materialized pair-gradient path.
-  return n_active_orbitals > 0 && n_active_orbitals <= 10;
-}
-
-bool exact_2e_fused_hvp_supported_integral_layout(
-    const AoIntegralInput& ao_integral_input) {
-  return !ao_integral_input.ao_two_electron_pair_graph_row_offsets.empty() ||
-      !ao_integral_input.ao_two_electron_pair_indices.empty();
-}
-
-bool exact_2e_fused_hvp_applicable(
-    const AoIntegralInput& ao_integral_input,
-    int n_active_orbitals) {
-  if (!exact_2e_fused_hvp_enabled() ||
-      !exact_2e_fused_hvp_supported_active_space(n_active_orbitals) ||
-      !exact_2e_fused_hvp_supported_integral_layout(ao_integral_input)) {
-    return false;
-  }
-  int n_threads = 1;
-#ifdef _OPENMP
-  n_threads = xmvb::effective_openmp_thread_count();
-#endif
-  return n_threads <= 1;
-}
-
-int exact_2e_cached_row_direct_max_threads(
-    int n_active_orbitals) {
-  int default_value = 1;
-  if (n_active_orbitals >= 7) {
-    default_value = 2;
-  }
-  return parse_env_int_with_default(
-      "XMVB_CPP_EXACT_2E_CACHED_ROW_DIRECT_MAX_THREADS",
-      default_value);
-}
-
-bool exact_2e_hvp_stage_logging_enabled() {
-  return parse_env_flag_with_default(
-      "XMVB_CPP_LOG_EXACT_2E_HVP_STAGES",
-      false);
-}
-
-int exact_2e_hvp_stage_logging_max_applies() {
-  return parse_env_int_with_default(
-      "XMVB_CPP_LOG_EXACT_2E_HVP_STAGES_MAX_APPLIES",
-      8);
-}
+// Fused 2e HVP path retired: regressed >10x vs materialized on production.
+bool exact_2e_fused_hvp_enabled() { return false; }
+bool exact_2e_fused_hvp_supported_active_space(int) { return false; }
+bool exact_2e_fused_hvp_supported_integral_layout(const AoIntegralInput&) { return false; }
+bool exact_2e_fused_hvp_applicable(const AoIntegralInput&, int) { return false; }
+int  exact_2e_cached_row_direct_max_threads(int) { return 0; }
+bool exact_2e_hvp_stage_logging_enabled() { return false; }
+int  exact_2e_hvp_stage_logging_max_applies() { return 0; }
 
 bool should_cache_accepted_base_pair_gradient_matrices(
     std::size_t n_ao_pairs,
@@ -6357,45 +6302,7 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
   }
   const std::size_t n_ao_pairs =
       n_basis_functions * (n_basis_functions + 1) / 2;
-  const std::size_t n_integrals =
-      ao_integral_input.ao_two_electron_integral_values.size();
-  static std::atomic<int> exact_2e_hvp_apply_counter{0};
-  const int apply_index =
-      exact_2e_hvp_apply_counter.fetch_add(1, std::memory_order_relaxed) + 1;
-  const bool log_exact_2e_hvp =
-      exact_2e_hvp_stage_logging_enabled() &&
-      apply_index <= exact_2e_hvp_stage_logging_max_applies();
-  const auto apply_start_time = std::chrono::steady_clock::now();
-  auto log_exact_2e_stage = [&](const char* stage, const char* path) {
-    if (!log_exact_2e_hvp) {
-      return;
-    }
-    const double elapsed_seconds =
-        std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - apply_start_time)
-            .count();
-    std::fprintf(
-        stderr,
-        "[exact_2e_hvp] apply=%d stage=%s elapsed=%.6f path=%s "
-        "n_basis=%d n_active=%d n_ao_pairs=%zu n_active_pairs=%zu "
-        "n_integrals=%zu mixed_bytes=%zu transformed_bytes=%zu pair_grad_bytes=%zu\n",
-        apply_index,
-        stage,
-        elapsed_seconds,
-        path,
-        n_basis_functions,
-        n_active_orbitals,
-        n_ao_pairs,
-        n_active_pairs,
-        n_integrals,
-        static_cast<std::size_t>(workspace->mixed_pair_coefficients.size()) * sizeof(double),
-        static_cast<std::size_t>(workspace->transformed_pair_coefficients.size()) *
-            sizeof(double),
-        static_cast<std::size_t>(workspace->pair_gradients.size()) * sizeof(double));
-    std::fflush(stderr);
-  };
   workspace->dense_active_direction = dense_active_direction;
-  log_exact_2e_stage("after_direction_copy", "unresolved");
 
   if (accepted_cache.active_pair_gradient_matrix.rows() !=
           static_cast<Eigen::Index>(n_active_pairs) ||
@@ -6424,45 +6331,31 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
       workspace->dense_active_direction,
       accepted_cache,
       &workspace->dense_active_gradient_direction);
-  log_exact_2e_stage("after_fixed_backprop", "unresolved");
-
   build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
       accepted_cache.accepted_dense_active_coefficients,
       workspace->dense_active_direction,
       accepted_cache,
       &workspace->mixed_pair_coefficients);
-  log_exact_2e_stage("after_mixed_pair_build", "unresolved");
 
-  if (apply_exact_ao_pair_graph_matrix_and_backprop_from_cached_rows(
-          ao_integral_input,
-          workspace->mixed_pair_coefficients,
-          accepted_cache,
-          &workspace->dense_active_gradient_direction)) {
-    log_exact_2e_stage("after_final_backprop", "cached_rows");
-  } else {
-    multiply_pair_coefficients_by_gradient_matrix(
-        workspace->mixed_pair_coefficients,
-        accepted_cache.active_pair_gradient_matrix,
-        &workspace->transformed_pair_coefficients);
-    log_exact_2e_stage("after_pair_gradient_transform", "materialized");
-    apply_exact_ao_pair_kernel(
-        ao_integral_input,
-        workspace->transformed_pair_coefficients,
-        n_basis_functions,
-        n_active_pairs,
-        &workspace->pair_gradients);
-    log_exact_2e_stage("after_pair_kernel", "materialized");
-    accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
-        workspace->pair_gradients,
-        accepted_cache.accepted_dense_active_coefficients,
-        accepted_cache,
-        &workspace->dense_active_gradient_direction);
-    log_exact_2e_stage("after_final_backprop", "materialized");
-  }
+  multiply_pair_coefficients_by_gradient_matrix(
+      workspace->mixed_pair_coefficients,
+      accepted_cache.active_pair_gradient_matrix,
+      &workspace->transformed_pair_coefficients);
+  apply_exact_ao_pair_kernel(
+      ao_integral_input,
+      workspace->transformed_pair_coefficients,
+      n_basis_functions,
+      n_active_pairs,
+      &workspace->pair_gradients);
+  accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
+      workspace->pair_gradients,
+      accepted_cache.accepted_dense_active_coefficients,
+      accepted_cache,
+      &workspace->dense_active_gradient_direction);
+
   if (dense_active_gradient_direction != nullptr) {
     *dense_active_gradient_direction =
         workspace->dense_active_gradient_direction;
-    log_exact_2e_stage("after_output_copy", "materialized");
   }
 }
 
