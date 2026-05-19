@@ -9,39 +9,6 @@ namespace {
 constexpr int kLegacyOrbitalTypeHao = 1;
 constexpr int kLegacyOrbitalTypeBdo = 2;
 
-// Use a simple AO-active cost proxy so the default startup policy can
-// distinguish affordable closed-shell sparse charts such as 241 from much more
-// expensive closed-shell sparse charts such as 10698 before the optimizer has
-// accumulated any accepted-step timing samples.
-constexpr int kAffordableStartupOuterResponseCostProxy = 1024;
-
-// Open-shell sparse-chart hybrid followup is tuned on 8-active-orbital
-// transition-metal systems.  The retry gate uses a separate lower bound.
-constexpr int kHybridFollowupExactActiveOrbitalThreshold = 8;
-constexpr int kRetryRejectedFullOperatorMinActiveOrbitals = 8;
-
-// Closed-shell sparse charts with more than this many active orbitals always
-// get CheapCoreOnly regardless of the cost proxy.
-constexpr int kStartupWindowMaxActiveOrbitals = 8;
-
-// Tiny closed-shell sparse charts are cheap enough that the full relaxed
-// accepted-point HVP is a calibration step, not a throughput risk.  F2-like
-// systems otherwise spend many accepted iterations shrinking the trust radius
-// against an under-calibrated cheap-core model.
-constexpr int kTinySparseCalibrationMaxActiveOrbitals = 2;
-constexpr int kTinySparseCalibrationMaxBasisFunctions = 64;
-constexpr int kTinySparseCalibrationStartupCount = 6;
-
-// Startup window parameters for expensive closed-shell sparse charts:
-// begin after one cheap accepted step, sample the full model for two
-// iterations, allow one extra if the gradient tail is still large, and keep
-// the tail Krylov budget short.
-constexpr int kStartupWindowBegin = 1;
-constexpr int kStartupWindowCount = 2;
-constexpr int kStartupWindowMaxExtraCount = 1;
-constexpr int kStartupWindowTailMaxCgIterations = 4;
-constexpr int kStartupWindowMultiStepMaxActiveOrbitals = 6;
-
 bool optimizer_chart_uses_sparse_orbital_support(
     const OrbitalPreparationInput& orbital_preparation_input) {
   if (orbital_preparation_input.orbital_type == kLegacyOrbitalTypeHao ||
@@ -80,19 +47,8 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
     const ExactCtxSystemProfile& system_profile) {
   ExactCtxDefaultStrategy strategy;
 
-  // Unified strategy: all systems start with cheap core-only.  The adaptive
-  // low-trust detection in HvpModelQualityState automatically switches to
-  // full-model (outer response) for a sustained period when the cheap model
-  // produces poor trust ratios.  A single full-model calibration step at
-  // iteration 0 sets the initial trust-region scale for sparse charts.
-  (void)kHybridFollowupExactActiveOrbitalThreshold;
-  (void)kRetryRejectedFullOperatorMinActiveOrbitals;
-  (void)kAffordableStartupOuterResponseCostProxy;
-  (void)kStartupWindowBegin;
-  (void)kStartupWindowCount;
-  (void)kStartupWindowMaxExtraCount;
-  (void)kStartupWindowTailMaxCgIterations;
-
+  // Unified strategy: all systems start with cheap core-only, with adaptive
+  // runtime upgrade to full-model when low trust is detected.
   strategy.prefer_internal_inactive_chart =
       !system_profile.sparse_orbital_chart;
 
@@ -130,11 +86,6 @@ const char* exact_ctx_default_strategy_kind_name(
       return "startup_full_window_with_gradient_tail";
   }
   return "unknown";
-}
-
-const char* exact_ctx_default_initial_inner_solve_policy_name(
-    const ExactCtxDefaultStrategy& strategy) {
-  return exact_ctx_default_strategy_kind_name(strategy.kind);
 }
 
 }  // namespace xmvb::vb

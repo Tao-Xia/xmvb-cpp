@@ -58,7 +58,4 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
 const char* exact_ctx_default_strategy_kind_name(
     ExactCtxDefaultStrategyKind kind);
 
-const char* exact_ctx_default_initial_inner_solve_policy_name(
-    const ExactCtxDefaultStrategy& strategy);
-
 }  // namespace xmvb::vb

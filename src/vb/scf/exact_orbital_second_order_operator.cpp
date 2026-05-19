@@ -943,47 +943,6 @@ std::size_t ao_pair_index_packed(int first, int second) {
   return second * (second + 1) / 2 + first;
 }
 
-std::vector<double> pack_symmetric_matrix(
-    const Eigen::MatrixXd& matrix) {
-  if (matrix.rows() != matrix.cols()) {
-    throw std::invalid_argument("symmetric AO matrix pack requires a square matrix");
-  }
-  const int n_basis_functions = static_cast<int>(matrix.rows());
-  const std::size_t n_ao_pairs =
-      n_basis_functions * (n_basis_functions + 1) / 2;
-  std::vector<double> packed(n_ao_pairs, 0.0);
-  for (int first = 0; first < n_basis_functions; ++first) {
-    for (int second = 0; second <= first; ++second) {
-      packed[ao_pair_index_packed(first, second)] =
-          first == second
-              ? matrix(first, second)
-              : 0.5 * (matrix(first, second) + matrix(second, first));
-    }
-  }
-  return packed;
-}
-
-std::vector<double> unpack_symmetric_matrix_from_pairs(
-    const std::vector<double>& packed_matrix,
-    int n_basis_functions) {
-  const std::size_t n_ao_pairs =
-      n_basis_functions * (n_basis_functions + 1) / 2;
-  if (packed_matrix.size() != n_ao_pairs) {
-    throw std::invalid_argument("packed AO-pair matrix size mismatch");
-  }
-  std::vector<double> full_matrix(
-      n_basis_functions * n_basis_functions,
-      0.0);
-  for (int first = 0; first < n_basis_functions; ++first) {
-    for (int second = 0; second <= first; ++second) {
-      const double value =
-          packed_matrix[ao_pair_index_packed(first, second)];
-      full_matrix[second * n_basis_functions + first] = value;
-      full_matrix[first * n_basis_functions + second] = value;
-    }
-  }
-  return full_matrix;
-}
 
 template <bool ValidateIntegralIndices, bool UsePrecomputedSymmetryShifts, bool UseLinearIndexCache>
 inline void accumulate_fused_ao_effective_one_electron_integral(

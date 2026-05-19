@@ -157,52 +157,6 @@ bool should_cache_accepted_base_pair_gradient_matrices(
       kMaxAcceptedBasePairGradientMatrixCacheBytes;
 }
 
-std::vector<double> build_full_active_pair_gradient_matrices_from_cache(
-    const std::vector<double>& packed_pair_gradients,
-    const ExactPackedActiveTwoElectronAdjointCache& cache) {
-  const int n_basis_functions = cache.n_basis_functions;
-  const int n_active_orbitals = cache.n_active_orbitals;
-  const std::size_t n_active_pairs = cache.active_pair_first_indices.size();
-  if (cache.active_pair_second_indices.size() != n_active_pairs) {
-    throw std::invalid_argument("exact 2e cache active-pair index size mismatch");
-  }
-  const std::size_t basis_count = n_basis_functions;
-  const std::size_t n_ao_pairs = basis_count * (basis_count + 1) / 2;
-  if (packed_pair_gradients.size() != n_ao_pairs * n_active_pairs) {
-    throw std::invalid_argument("packed pair gradient size mismatch");
-  }
-  const std::size_t active_count = n_active_orbitals;
-  const std::size_t n_active_square = active_count * active_count;
-  std::vector<double> full_pair_gradient_matrices(
-      n_ao_pairs * n_active_square,
-      0.0);
-
-#pragma omp parallel for schedule(static)
-  for (std::ptrdiff_t ao_pair_offset = 0;
-       ao_pair_offset < static_cast<std::ptrdiff_t>(n_ao_pairs);
-       ++ao_pair_offset) {
-    const std::size_t pair_index = ao_pair_offset;
-    const double* packed_row =
-        packed_pair_gradients.data() + pair_index * n_active_pairs;
-    double* full_matrix =
-        full_pair_gradient_matrices.data() + pair_index * n_active_square;
-    for (std::size_t active_pair_index = 0;
-         active_pair_index < n_active_pairs;
-         ++active_pair_index) {
-      const int first_active =
-          cache.active_pair_first_indices[active_pair_index];
-      const int second_active =
-          cache.active_pair_second_indices[active_pair_index];
-      const double packed_gradient = packed_row[active_pair_index];
-      const std::size_t first_row_offset = first_active * active_count;
-      const std::size_t second_row_offset = second_active * active_count;
-      full_matrix[first_row_offset + second_active] += packed_gradient;
-      full_matrix[second_row_offset + first_active] += packed_gradient;
-    }
-  }
-
-  return full_pair_gradient_matrices;
-}
 
 std::vector<double> build_full_active_pair_gradient_matrices_from_cache(
     const ExactCtxPairMatrix& packed_pair_gradients,
