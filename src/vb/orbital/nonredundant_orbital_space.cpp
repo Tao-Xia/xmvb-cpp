@@ -34,13 +34,13 @@ double parse_env_double_with_default(const char* name, double default_value) {
 double nonredundant_preconditioner_min_curvature() {
   return std::max(1.0e-12,
                   parse_env_double_with_default(
-                      "XMVB_CPP_NONREDUNDANT_PRECONDITIONER_MIN_CURVATURE", 1.0e-3));
+                      "XMVB_CPP_NONREDUNDANT_PRECONDITIONER_MIN_CURVATURE", 1.0e-4));
 }
 
 double nonredundant_preconditioner_max_curvature() {
   return std::max(nonredundant_preconditioner_min_curvature(),
                   parse_env_double_with_default(
-                      "XMVB_CPP_NONREDUNDANT_PRECONDITIONER_MAX_CURVATURE", 1.0e2));
+                      "XMVB_CPP_NONREDUNDANT_PRECONDITIONER_MAX_CURVATURE", 1.0e4));
 }
 
 // Extract the local AO overlap seen by one sparse orbital on its own support.
