@@ -6285,6 +6285,54 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
   }
 }
 
+void apply_exact_packed_active_two_electron_adjoint_hessian_vector_fused(
+    const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+    const AoIntegralInput& ao_integral_input,
+    const ExactCtxPairMatrix& directional_pair_products,
+    ExactPackedActiveTwoElectronApplyWorkspace* workspace,
+    Eigen::MatrixXd* dense_active_gradient_direction) {
+  if (workspace == nullptr) {
+    throw std::invalid_argument("exact 2e fused workspace must not be null");
+  }
+  const int n_basis_functions = ao_integral_input.n_basis_functions;
+  const int n_active_orbitals = accepted_cache.n_active_orbitals;
+  const std::size_t n_active_pairs =
+      accepted_cache.active_pair_first_indices.size();
+  const std::size_t n_ao_pairs =
+      n_basis_functions * (n_basis_functions + 1) / 2;
+
+  workspace->dense_active_direction = dense_active_direction;
+  workspace->dense_active_gradient_direction.resize(
+      n_basis_functions, n_active_orbitals);
+  workspace->dense_active_gradient_direction.setZero();
+
+  // Fixed backprop term (same as non-fused path).
+  accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
+      accepted_cache.accepted_base_pair_gradients,
+      workspace->dense_active_direction,
+      accepted_cache,
+      &workspace->dense_active_gradient_direction);
+
+  // Reuse forward K*mixed: pair_gradients = (K * mixed) * gradient_matrix.
+  // Saves one full apply_exact_ao_pair_kernel call (~500M FLOPs) per HVP.
+  workspace->pair_gradients.resize(n_ao_pairs, n_active_pairs);
+  workspace->pair_gradients.noalias() =
+      directional_pair_products * accepted_cache.active_pair_gradient_matrix;
+
+  // Final backprop (same as non-fused path).
+  accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
+      workspace->pair_gradients,
+      accepted_cache.accepted_dense_active_coefficients,
+      accepted_cache,
+      &workspace->dense_active_gradient_direction);
+
+  if (dense_active_gradient_direction != nullptr) {
+    *dense_active_gradient_direction =
+        workspace->dense_active_gradient_direction;
+  }
+}
+
 Eigen::MatrixXd apply_exact_packed_active_two_electron_adjoint_hessian_vector(
     const std::vector<double>& packed_active_two_electron_gradient,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,

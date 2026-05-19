@@ -281,4 +281,20 @@ Eigen::MatrixXd apply_exact_packed_active_two_electron_adjoint_hessian_vector(
     const ActiveSpaceTwoElectronResult* accepted_active_space_two_electron_result =
         nullptr);
 
+/**
+ * @brief Reuses pre-computed forward K*mixed to skip the 2e kernel.
+ *
+ * When both core-direct and outer-response are active, the forward pass
+ * already computed `directional_pair_products = K * mixed`.  This overload
+ * reuses that result via `pair_gradients = products * gradient_matrix`,
+ * avoiding one full `apply_exact_ao_pair_kernel` call per HVP.
+ */
+void apply_exact_packed_active_two_electron_adjoint_hessian_vector_fused(
+    const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+    const AoIntegralInput& ao_integral_input,
+    const ExactCtxPairMatrix& directional_pair_products,
+    ExactPackedActiveTwoElectronApplyWorkspace* workspace,
+    Eigen::MatrixXd* dense_active_gradient_direction);
+
 }  // namespace xmvb::vb
