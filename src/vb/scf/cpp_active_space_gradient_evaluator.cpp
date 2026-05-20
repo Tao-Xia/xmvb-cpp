@@ -1,5 +1,4 @@
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
-#include "vb/runtime_utils.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -479,18 +478,10 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
 
   stage_start_time = std::chrono::steady_clock::now();
-  const bool use_davidson = parse_env_flag_with_default(
-      "XMVB_CPP_ENABLE_DAVIDSON_EIGENSOLVER", false) &&
-      input.structure_data.n_structures >= 50;
-  context.eigen_result = use_davidson
-      ? generalized_eigensolver.solve_davidson(
-            context.structure_matrices.hamiltonian_matrix,
-            context.structure_matrices.overlap_matrix,
-            input.structure_data.n_structures, 8)
-      : generalized_eigensolver.solve(
-            context.structure_matrices.hamiltonian_matrix,
-            context.structure_matrices.overlap_matrix,
-            input.structure_data.n_structures);
+  context.eigen_result = generalized_eigensolver.solve(
+      context.structure_matrices.hamiltonian_matrix,
+      context.structure_matrices.overlap_matrix,
+      input.structure_data.n_structures);
   context.eigensolver_wall_time_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
   return context;
@@ -542,18 +533,10 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
 
   stage_start_time = std::chrono::steady_clock::now();
-  const bool use_davidson = parse_env_flag_with_default(
-      "XMVB_CPP_ENABLE_DAVIDSON_EIGENSOLVER", false) &&
-      input.structure_data.n_structures >= 50;
-  context.eigen_result = use_davidson
-      ? generalized_eigensolver.solve_davidson(
-            context.structure_matrices.hamiltonian_matrix,
-            context.structure_matrices.overlap_matrix,
-            input.structure_data.n_structures, 8)
-      : generalized_eigensolver.solve(
-            context.structure_matrices.hamiltonian_matrix,
-            context.structure_matrices.overlap_matrix,
-            input.structure_data.n_structures);
+  context.eigen_result = generalized_eigensolver.solve(
+      context.structure_matrices.hamiltonian_matrix,
+      context.structure_matrices.overlap_matrix,
+      input.structure_data.n_structures);
   context.eigensolver_wall_time_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
   return context;
