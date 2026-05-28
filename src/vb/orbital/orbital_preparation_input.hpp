@@ -97,15 +97,15 @@ struct OrbitalPreparationInput {
   /**
    * @brief Column-major AO overlap matrix.
    */
-  Eigen::MatrixXd active_orbital_overlap_matrix;
+  Eigen::MatrixXd ao_overlap_matrix;
 
   /**
    * @brief Legacy HF overlap matrix used by GUESS=AUTO block diagonalization.
    *
-   * This is distinct from `active_orbital_overlap_matrix` (`vb->ssf`) and is
+   * This is distinct from `ao_overlap_matrix` (`vb->ssf`) and is
    * the correct metric for reproducing legacy HF-driven AUTO guesses. When
    * this matrix is empty, the C++ guess path reuses
-   * `active_orbital_overlap_matrix` instead of storing a duplicate copy.
+   * `ao_overlap_matrix` instead of storing a duplicate copy.
    */
   Eigen::MatrixXd hf_overlap_matrix;
 

@@ -108,7 +108,7 @@ PfOrbitalGradResult finish_orbital_gradient_backpropagation(
       active_space_matrix_backpropagator.backpropagate(
           active_gradient_result.sso_grad,
           active_gradient_result.hho_grad,
-          input.orbital_preparation_input.active_orbital_overlap_matrix,
+          input.orbital_preparation_input.ao_overlap_matrix,
           active_gradient_result.ao_effective_one_electron_result.ao_effective_h1e,
           active_gradient_result.orbital_preparation_result.auxiliary_orbital_matrix,
           input.orbital_preparation_input.n_basis_functions,

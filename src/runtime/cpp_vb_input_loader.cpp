@@ -705,7 +705,7 @@ CppVbInputLoadResult load_cpp_vb_input_with_timings(
       support_chart.orbital_basis_counts;
   result.orbital_preparation_input.original_orbital_basis_counts =
       support_chart.original_orbital_basis_counts;
-  result.orbital_preparation_input.active_orbital_overlap_matrix =
+  result.orbital_preparation_input.ao_overlap_matrix =
       active_ao_overlap_matrix;
   result.orbital_preparation_input.ao_normalization =
       build_ao_normalization(result.orbital_preparation_input);

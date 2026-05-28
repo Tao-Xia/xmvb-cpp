@@ -100,7 +100,7 @@ std::vector<double> build_production_ao_h1e_backprop_input(
   const auto matrix_backpropagation_result = matrix_backpropagator.backpropagate(
       active_space_gradient_result.active_orbital_overlap_gradient,
       active_space_gradient_result.active_one_electron_gradient,
-      input.orbital_preparation_input.active_orbital_overlap_matrix,
+      input.orbital_preparation_input.ao_overlap_matrix,
       active_space_gradient_result.ao_effective_one_electron_result.ao_effective_h1e,
       active_space_gradient_result.orbital_preparation_result.auxiliary_orbital_matrix,
       input.orbital_preparation_input.n_basis_functions,

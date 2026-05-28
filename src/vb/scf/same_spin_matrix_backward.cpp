@@ -2254,12 +2254,12 @@ SameSpinPhiResult evaluate_same_spin_phi_with_optional_cache_local(
 Eigen::MatrixXd build_local_overlap_direction_matrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     int n_active_orbitals) {
   return build_overlap_submatrix(
       occ_L,
       occ_R,
-      delta_active_orbital_overlap_matrix,
+      delta_ao_overlap_matrix,
       n_active_orbitals);
 }
 
@@ -2285,7 +2285,7 @@ SingularSpinDirectionalData build_singular_spin_directional_data(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
   const auto& overlap_result = pair_evaluation.overlap_result;
@@ -2302,7 +2302,7 @@ SingularSpinDirectionalData build_singular_spin_directional_data(
       build_local_overlap_direction_matrix(
           occ_L,
           occ_R,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           n_active_orbitals);
   const DeterminantOverlapResolver overlap_resolver;
 
@@ -2445,7 +2445,7 @@ RegularSpinDirectionalData build_regular_spin_directional_data(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
   const auto& overlap_result = pair_evaluation.overlap_result;
@@ -2462,7 +2462,7 @@ RegularSpinDirectionalData build_regular_spin_directional_data(
       build_local_overlap_direction_matrix(
           occ_L,
           occ_R,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           n_active_orbitals);
   result.delta_overlap_determinant =
       result.overlap_determinant *
@@ -2727,7 +2727,7 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const DeterminantOverlapResult& overlap_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     int n_active_orbitals,
     double weight,
     double delta_weight,
@@ -2751,7 +2751,7 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
       build_local_overlap_direction_matrix(
           occ_L,
           occ_R,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           n_active_orbitals);
   const DeterminantOverlapResolver overlap_resolver;
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
@@ -4207,7 +4207,7 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
   // For the local-response we only need the partner-sector directional scalars
@@ -4248,7 +4248,7 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
                 active_space_two_electron_result,
                 pair_evaluation,
                 n_active_orbitals,
-                delta_active_orbital_overlap_matrix,
+                delta_ao_overlap_matrix,
                 delta_active_one_electron_matrix,
                 delta_packed_active_two_electron_integrals);
         set_symmetric_matrix_entry(
@@ -4275,7 +4275,7 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
               active_space_two_electron_result,
               pair_evaluation,
               n_active_orbitals,
-              delta_active_orbital_overlap_matrix,
+              delta_ao_overlap_matrix,
               delta_active_one_electron_matrix,
               delta_packed_active_two_electron_integrals);
       set_symmetric_matrix_entry(
@@ -4691,7 +4691,7 @@ void accumulate_spin_local_matrix_backward_tile(
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
     Eigen::MatrixXd* active_one_electron_gradient,
@@ -4757,7 +4757,7 @@ void accumulate_spin_local_matrix_backward_tile(
                 active_space_two_electron_result,
                 pair_evaluation,
                 n_active_orbitals,
-                delta_active_orbital_overlap_matrix,
+                delta_ao_overlap_matrix,
                 delta_active_one_electron_matrix,
                 delta_packed_active_two_electron_integrals);
 
@@ -4822,7 +4822,7 @@ void accumulate_spin_local_matrix_backward_tile(
               active_space_two_electron_result,
               pair_evaluation,
               n_active_orbitals,
-              delta_active_orbital_overlap_matrix,
+              delta_ao_overlap_matrix,
               delta_active_one_electron_matrix,
               delta_packed_active_two_electron_integrals);
 
@@ -4838,7 +4838,7 @@ void accumulate_spin_local_matrix_backward_tile(
           occ_L,
           occ_R,
           overlap_result,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           n_active_orbitals,
           hamiltonian_weight,
           delta_hamiltonian_weight,
@@ -4906,7 +4906,7 @@ void accumulate_spin_local_matrix_backward(
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
     Eigen::MatrixXd* active_one_electron_gradient,
@@ -4999,7 +4999,7 @@ void accumulate_spin_local_matrix_backward(
                     active_space_two_electron_result,
                     pair_evaluation,
                     n_active_orbitals,
-                    delta_active_orbital_overlap_matrix,
+                    delta_ao_overlap_matrix,
                     delta_active_one_electron_matrix,
                     delta_packed_active_two_electron_integrals);
 
@@ -5063,7 +5063,7 @@ void accumulate_spin_local_matrix_backward(
                   active_space_two_electron_result,
                   pair_evaluation,
                   n_active_orbitals,
-                  delta_active_orbital_overlap_matrix,
+                  delta_ao_overlap_matrix,
                   delta_active_one_electron_matrix,
                   delta_packed_active_two_electron_integrals);
 
@@ -5079,7 +5079,7 @@ void accumulate_spin_local_matrix_backward(
               occ_L,
               occ_R,
               overlap_result,
-              delta_active_orbital_overlap_matrix,
+              delta_ao_overlap_matrix,
               n_active_orbitals,
               hamiltonian_weight,
               delta_hamiltonian_weight,
@@ -5427,7 +5427,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
   // Local HVP tile path:
@@ -5461,7 +5461,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
           n_active_orbitals,
           active_one_electron_matrix,
           active_space_two_electron_result,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           delta_active_one_electron_matrix,
           delta_packed_active_two_electron_integrals);
   SameSpinDirectionalScalarMatrices beta_directional_scalars;
@@ -5474,7 +5474,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
             n_active_orbitals,
             active_one_electron_matrix,
             active_space_two_electron_result,
-            delta_active_orbital_overlap_matrix,
+            delta_ao_overlap_matrix,
             delta_active_one_electron_matrix,
             delta_packed_active_two_electron_integrals);
   }
@@ -5534,7 +5534,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
           n_active_orbitals,
           active_one_electron_matrix,
           active_space_two_electron_result,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           delta_active_one_electron_matrix,
           delta_packed_active_two_electron_integrals,
           &active_one_electron_gradient,
@@ -5599,7 +5599,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
             n_active_orbitals,
             active_one_electron_matrix,
             active_space_two_electron_result,
-            delta_active_orbital_overlap_matrix,
+            delta_ao_overlap_matrix,
             delta_active_one_electron_matrix,
             delta_packed_active_two_electron_integrals,
             &active_one_electron_gradient,
@@ -5818,7 +5818,7 @@ build_local_same_spin_matrix_backward_contribution(
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
   // Matrix-form local same-spin HVP:
@@ -5840,7 +5840,7 @@ build_local_same_spin_matrix_backward_contribution(
         n_active_orbitals,
         active_one_electron_matrix,
         active_space_two_electron_result,
-        delta_active_orbital_overlap_matrix,
+        delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
         delta_packed_active_two_electron_integrals);
   }
@@ -5864,7 +5864,7 @@ build_local_same_spin_matrix_backward_contribution(
           n_active_orbitals,
           active_one_electron_matrix,
           active_space_two_electron_result,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           delta_active_one_electron_matrix,
           delta_packed_active_two_electron_integrals);
   SameSpinDirectionalScalarMatrices beta_directional_scalars;
@@ -5877,7 +5877,7 @@ build_local_same_spin_matrix_backward_contribution(
             n_active_orbitals,
             active_one_electron_matrix,
             active_space_two_electron_result,
-            delta_active_orbital_overlap_matrix,
+            delta_ao_overlap_matrix,
             delta_active_one_electron_matrix,
             delta_packed_active_two_electron_integrals);
   }
@@ -5917,7 +5917,7 @@ build_local_same_spin_matrix_backward_contribution(
       n_active_orbitals,
       active_one_electron_matrix,
       active_space_two_electron_result,
-      delta_active_orbital_overlap_matrix,
+      delta_ao_overlap_matrix,
       delta_active_one_electron_matrix,
       delta_packed_active_two_electron_integrals,
       &active_one_electron_gradient,
@@ -5948,7 +5948,7 @@ build_local_same_spin_matrix_backward_contribution(
         n_active_orbitals,
         active_one_electron_matrix,
         active_space_two_electron_result,
-        delta_active_orbital_overlap_matrix,
+        delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
         delta_packed_active_two_electron_integrals,
         &active_one_electron_gradient,

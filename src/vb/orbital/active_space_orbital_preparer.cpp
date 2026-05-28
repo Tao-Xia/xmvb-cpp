@@ -45,7 +45,7 @@ void require_finite_vector(const std::vector<double>& values, const char* label)
 
 std::vector<double> normalize_sparse_orbitals(
     const OrbitalPreparationInput& input,
-    const Eigen::Map<const Eigen::MatrixXd>& active_orbital_overlap_matrix) {
+    const Eigen::Map<const Eigen::MatrixXd>& ao_overlap_matrix) {
   std::vector<double> normalized_values = input.orbital_value_table;
 
 #pragma omp parallel for schedule(static)
@@ -78,7 +78,7 @@ std::vector<double> normalize_sparse_orbitals(
             normalized_values[orbital_index * input.n_basis_functions +
                               right_index];
         squared_norm +=
-            left_value * right_value * active_orbital_overlap_matrix(left_basis_function, right_basis_function);
+            left_value * right_value * ao_overlap_matrix(left_basis_function, right_basis_function);
       }
     }
 
@@ -360,7 +360,7 @@ OrbitalPreparationResult ActiveSpaceOrbitalPreparer::prepare(
   }
 
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap_matrix(
-      input.active_orbital_overlap_matrix.data(),
+      input.ao_overlap_matrix.data(),
       input.n_basis_functions,
       input.n_basis_functions);
   const std::vector<double> normalized_orbital_values =

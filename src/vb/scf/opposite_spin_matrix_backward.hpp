@@ -76,7 +76,7 @@ build_local_opposite_spin_matrix_backward_contribution(
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals);
 
 }  // namespace xmvb::vb

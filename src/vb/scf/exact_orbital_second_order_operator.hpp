@@ -155,7 +155,7 @@ private:
   mutable ExactPackedActiveTwoElectronApplyWorkspace
       accepted_exact_two_electron_apply_workspace_;
   mutable std::vector<double>
-      outer_response_delta_active_orbital_overlap_matrix_workspace_;
+      outer_response_delta_ao_overlap_matrix_workspace_;
   mutable std::vector<double>
       outer_response_delta_active_one_electron_matrix_workspace_;
   mutable std::vector<double>
@@ -187,7 +187,7 @@ build_pairwise_local_opposite_spin_matrix_backward_reference(
     const CppVbInput& input,
     const CppActiveSpaceSecondOrderContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals);
 
@@ -206,7 +206,7 @@ build_pairwise_local_same_spin_matrix_backward_reference(
     const CppVbInput& input,
     const CppActiveSpaceSecondOrderContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals);
 

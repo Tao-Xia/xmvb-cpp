@@ -327,7 +327,7 @@ void normalize_sparse_guess(
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   const auto& overlap_matrix =
-      orbital_preparation_input.active_orbital_overlap_matrix;
+      orbital_preparation_input.ao_overlap_matrix;
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
     // Guess normalization uses the stored sparse support, not the legacy
     // differentiable parameter count. Expanded MO/HAO supports still need every
@@ -416,7 +416,7 @@ CppRestrictedHartreeFockResult solve_rhf_guess(
   }
 
   const auto& overlap_matrix =
-      orbital_preparation_input.active_orbital_overlap_matrix;
+      orbital_preparation_input.ao_overlap_matrix;
   const auto& hcore_matrix = ao_integral_input.ao_core_hamiltonian_matrix;
   std::vector<double> initial_density_projector(
       n_basis_functions * n_basis_functions,
@@ -499,7 +499,7 @@ CppRestrictedHartreeFockResult solve_rhf_guess(
   CppRestrictedHartreeFockSolver solver;
   return solver.solve(
       orbital_preparation_input.n_total_electrons,
-      orbital_preparation_input.active_orbital_overlap_matrix,
+      orbital_preparation_input.ao_overlap_matrix,
       ao_integral_input,
       initial_density_projector);
 }
@@ -529,7 +529,7 @@ void build_rhf_block_guess(
   const Eigen::Ref<const Eigen::MatrixXd> hf_overlap_matrix =
       have_explicit_hf_overlap
           ? orbital_preparation_input.hf_overlap_matrix
-          : orbital_preparation_input.active_orbital_overlap_matrix;
+          : orbital_preparation_input.ao_overlap_matrix;
   build_block_matrix_guess(
       libcint_input,
       rhf_result.fock_matrix,
@@ -599,7 +599,7 @@ void build_hcore_mo_guess(
   (void)libcint_input;
   const auto ao_normalization = build_ao_normalization(orbital_preparation_input);
   Eigen::MatrixXd overlap_matrix =
-      orbital_preparation_input.active_orbital_overlap_matrix;
+      orbital_preparation_input.ao_overlap_matrix;
   Eigen::MatrixXd orbital_matrix =
       ao_integral_input.ao_core_hamiltonian_matrix;
   std::vector<double> eigenvalues(n_basis_functions, 0.0);

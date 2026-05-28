@@ -185,7 +185,7 @@ Eigen::MatrixXd build_molden_order_overlap_matrix(
   const int n_basis_functions =
       input.orbital_preparation_input.n_basis_functions;
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap_internal(
-      input.orbital_preparation_input.active_orbital_overlap_matrix.data(),
+      input.orbital_preparation_input.ao_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
   const std::vector<int> molden_to_internal =

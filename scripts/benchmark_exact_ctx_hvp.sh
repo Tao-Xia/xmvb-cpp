@@ -16,7 +16,6 @@ usage: sbatch -c <threads> scripts/benchmark_exact_ctx_hvp.sh <input.xmi> [bench
 Defaults:
   repeats               1
   warmup                0
-  include_uncached      false
   output directory      current submit directory
 
 Optional environment overrides:
@@ -29,7 +28,7 @@ Examples:
   sbatch -c 1 scripts/benchmark_exact_ctx_hvp.sh test/241_VBSCF.xmi
   sbatch -c 8 scripts/benchmark_exact_ctx_hvp.sh test/241_VBSCF.xmi --repeats 3
   sbatch -c 32 scripts/benchmark_exact_ctx_hvp.sh test/10698_VBSCF.xmi \
-    --nonredundant-adapt false --include-uncached false
+    --nonredundant-adapt false
 EOF
 }
 
@@ -41,8 +40,17 @@ fi
 submit_dir="${SLURM_SUBMIT_DIR:-$PWD}"
 script_path="${BASH_SOURCE[0]}"
 script_dir="$(cd "$(dirname "${script_path}")" && pwd -P)"
+repo_root_helper="${script_dir}/xmvb_cpp_repo_root.sh"
+if [[ ! -f "${repo_root_helper}" && -n "${XMVB_CPP_REPO:-}" ]]; then
+  repo_root_helper="${XMVB_CPP_REPO}/scripts/xmvb_cpp_repo_root.sh"
+fi
+if [[ ! -f "${repo_root_helper}" ]]; then
+  echo "missing repo root helper: ${repo_root_helper}" >&2
+  echo "set XMVB_CPP_REPO when submitting a script copied by sbatch" >&2
+  exit 1
+fi
 
-source "${script_dir}/xmvb_cpp_repo_root.sh"
+source "${repo_root_helper}"
 
 if ! repo_root="$(xmvb_cpp_resolve_repo_root "${submit_dir}" "${script_path}" "${1}")"; then
   echo "failed to infer repo_root" >&2
@@ -103,7 +111,6 @@ command=(
   "${input_file}"
   "--repeats" "1"
   "--warmup" "0"
-  "--include-uncached" "false"
 )
 if (( ${#extra_args[@]} > 0 )); then
   command+=("${extra_args[@]}")

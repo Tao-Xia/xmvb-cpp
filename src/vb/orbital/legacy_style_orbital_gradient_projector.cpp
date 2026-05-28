@@ -13,7 +13,7 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
     const std::vector<double>& active_space_coulomb_exchange_matrix,
     const std::vector<double>& overlap_response_matrix,
     const std::vector<double>& active_density_matrix,
-    const std::vector<double>& active_orbital_overlap_matrix,
+    const std::vector<double>& ao_overlap_matrix,
     const std::vector<double>& ao_effective_h1e,
     const OrbitalPreparationInput& orbital_preparation_input,
     const OrbitalPreparationResult& orbital_preparation_result,
@@ -36,7 +36,7 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
       active_space_coulomb_exchange_matrix.size() != ao_matrix_size ||
       overlap_response_matrix.size() != ao_matrix_size ||
       active_density_matrix.size() != ao_matrix_size ||
-      active_orbital_overlap_matrix.size() != ao_matrix_size ||
+      ao_overlap_matrix.size() != ao_matrix_size ||
       ao_effective_h1e.size() != ao_matrix_size ||
       orbital_preparation_result.occupied_space_projector.size() != ao_matrix_size ||
       orbital_preparation_result.auxiliary_orbital_inverse_matrix.size() != ao_matrix_size) {
@@ -54,7 +54,7 @@ LegacyStyleOrbitalGradientProjectionResult LegacyStyleOrbitalGradientProjector::
   const Eigen::Map<const Eigen::MatrixXd> p22(
       active_density_matrix.data(), n_basis_functions, n_basis_functions);
   const Eigen::Map<const Eigen::MatrixXd> ssf(
-      active_orbital_overlap_matrix.data(), n_basis_functions, n_basis_functions);
+      ao_overlap_matrix.data(), n_basis_functions, n_basis_functions);
   const Eigen::Map<const Eigen::MatrixXd> f11(
       ao_effective_h1e.data(), n_basis_functions, n_basis_functions);
   const Eigen::Map<const Eigen::MatrixXd> a1(

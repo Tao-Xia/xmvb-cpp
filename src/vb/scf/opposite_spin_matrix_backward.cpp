@@ -102,12 +102,12 @@ void validate_local_state_coefficient_matrix(
 Eigen::MatrixXd build_local_overlap_direction_matrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     int n_active_orbitals) {
   return build_overlap_submatrix(
       occ_L,
       occ_R,
-      delta_active_orbital_overlap_matrix,
+      delta_ao_overlap_matrix,
       n_active_orbitals);
 }
 
@@ -259,7 +259,7 @@ RegularSpinDirectionalOverlapData build_regular_spin_directional_overlap_data(
     const std::vector<int>& occ_R,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
-    const std::vector<double>& delta_active_orbital_overlap_matrix) {
+    const std::vector<double>& delta_ao_overlap_matrix) {
   const auto& overlap_result = pair_evaluation.overlap_result;
   if (overlap_result.nullity != 0 || overlap_result.overlap_determinant == 0.0) {
     throw std::runtime_error(
@@ -274,7 +274,7 @@ RegularSpinDirectionalOverlapData build_regular_spin_directional_overlap_data(
       build_local_overlap_direction_matrix(
           occ_L,
           occ_R,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           n_active_orbitals);
   result.delta_overlap_determinant =
       result.overlap_determinant *
@@ -390,7 +390,7 @@ build_directional_opposite_spin_pair_data(
     int n_unique_determinants,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
   const std::size_t expected_size =
       n_unique_determinants *
@@ -430,7 +430,7 @@ build_directional_opposite_spin_pair_data(
               unique_determinants[right_unique_index],
               pair_evaluation,
               n_active_orbitals,
-              delta_active_orbital_overlap_matrix);
+              delta_ao_overlap_matrix);
       directional_entry.delta_overlap_determinant =
           overlap_data.delta_overlap_determinant;
       directional_entry.delta_inverse_overlap_submatrix =
@@ -3052,7 +3052,7 @@ build_local_opposite_spin_matrix_backward_contribution(
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_active_orbital_overlap_matrix,
+    const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
   validate_matrix_backward_inputs(same_spin_pair_cache, selected_states);
 
@@ -3090,7 +3090,7 @@ build_local_opposite_spin_matrix_backward_contribution(
           selected_states.n_unique_alpha,
           n_active_orbitals,
           active_space_two_electron_result,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           delta_packed_active_two_electron_integrals);
   const auto beta_directional_pair_data =
       build_directional_opposite_spin_pair_data(
@@ -3099,7 +3099,7 @@ build_local_opposite_spin_matrix_backward_contribution(
           selected_states.n_unique_beta,
           n_active_orbitals,
           active_space_two_electron_result,
-          delta_active_orbital_overlap_matrix,
+          delta_ao_overlap_matrix,
           delta_packed_active_two_electron_integrals);
 
   const int sparse_block_size = std::min(

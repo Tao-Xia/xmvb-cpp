@@ -158,7 +158,7 @@ double evaluate_total_energy_from_auxiliary(
        input.orbital_preparation_input.n_active_electrons) / 2;
 
   const Eigen::Map<const Eigen::MatrixXd> active_orbital_overlap_input(
-      input.orbital_preparation_input.active_orbital_overlap_matrix.data(),
+      input.orbital_preparation_input.ao_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
   const Eigen::Map<const Eigen::MatrixXd> auxiliary_matrix(
@@ -267,7 +267,7 @@ ActiveSpaceMatrices build_active_space_matrices(
        input.orbital_preparation_input.n_active_electrons) / 2;
 
   const Eigen::Map<const Eigen::MatrixXd> active_orbital_overlap_input(
-      input.orbital_preparation_input.active_orbital_overlap_matrix.data(),
+      input.orbital_preparation_input.ao_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
   const Eigen::Map<const Eigen::MatrixXd> auxiliary_matrix(
@@ -549,7 +549,7 @@ int main(int argc, char** argv) {
         active_space_matrix_backpropagator.backpropagate(
             active_space_gradient_result.active_orbital_overlap_gradient,
             active_space_gradient_result.active_one_electron_gradient,
-            input.orbital_preparation_input.active_orbital_overlap_matrix,
+            input.orbital_preparation_input.ao_overlap_matrix,
             active_space_gradient_result.ao_effective_one_electron_result.ao_effective_h1e,
             active_space_gradient_result.orbital_preparation_result.auxiliary_orbital_matrix,
             n_basis_functions,

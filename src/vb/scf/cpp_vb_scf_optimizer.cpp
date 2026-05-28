@@ -549,7 +549,7 @@ void refresh_cached_localized_representative_selector(
   }
 
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap_matrix(
-      orbital_preparation_input.active_orbital_overlap_matrix.data(),
+      orbital_preparation_input.ao_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
   physical_orbital_frame.inactive_physical_orbital_matrix =
@@ -949,7 +949,7 @@ Eigen::MatrixXd build_metric_preserving_oeo_repaired_normalized_orbital_matrix(
   // `(n_basis, n_active)`. Only the occupied active columns change; inactive
   // and virtual orbitals are copied through unchanged for final export.
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap_matrix(
-      orbital_preparation_input.active_orbital_overlap_matrix.data(),
+      orbital_preparation_input.ao_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
   const Eigen::MatrixXd repaired_active_physical_orbitals =
@@ -2176,7 +2176,7 @@ private:
             n_inactive_doubly_occupied_orbitals,
             n_active_orbitals);
     const Eigen::Map<const Eigen::MatrixXd> basis_overlap_matrix(
-        orbital_preparation_input.active_orbital_overlap_matrix.data(),
+        orbital_preparation_input.ao_overlap_matrix.data(),
         n_basis_functions,
         n_basis_functions);
 

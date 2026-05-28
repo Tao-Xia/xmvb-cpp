@@ -138,14 +138,14 @@ std::vector<std::vector<int>> detect_orbital_blocks(
 std::vector<double> build_ao_normalization(
     const OrbitalPreparationInput& orbital_preparation_input) {
   return build_ao_normalization(
-      orbital_preparation_input.active_orbital_overlap_matrix);
+      orbital_preparation_input.ao_overlap_matrix);
 }
 
 std::vector<double> build_ao_normalization(
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_matrix) {
   if (overlap_matrix.rows() != overlap_matrix.cols()) {
     throw std::invalid_argument(
-        "active_orbital_overlap_matrix must be square");
+        "ao_overlap_matrix must be square");
   }
 
   const int n_basis_functions = overlap_matrix.rows();
@@ -166,7 +166,7 @@ std::vector<double> build_ao_normalization(
     int n_basis_functions) {
   if (overlap_matrix.size() !=
       n_basis_functions * n_basis_functions) {
-    throw std::invalid_argument("active_orbital_overlap_matrix size does not match n_basis_functions");
+    throw std::invalid_argument("ao_overlap_matrix size does not match n_basis_functions");
   }
 
   std::vector<double> ao_normalization(n_basis_functions, 1.0);
@@ -367,7 +367,7 @@ void build_block_matrix_guess(
   build_block_matrix_guess(
       libcint_input,
       orbital_driving_matrix,
-      orbital_preparation_input.active_orbital_overlap_matrix,
+      orbital_preparation_input.ao_overlap_matrix,
       orbital_preparation_input,
       orbital_value_table);
 }
@@ -380,7 +380,7 @@ void build_block_matrix_guess(
   build_block_matrix_guess(
       libcint_input,
       orbital_driving_matrix,
-      orbital_preparation_input.active_orbital_overlap_matrix,
+      orbital_preparation_input.ao_overlap_matrix,
       orbital_preparation_input,
       orbital_value_table);
 }

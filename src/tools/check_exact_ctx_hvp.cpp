@@ -277,7 +277,7 @@ Eigen::VectorXd apply_active_space_gradient_direction_to_orbital_response(
       matrix_backpropagator.backpropagate(
           matrix_overlap_gradient,
           matrix_one_electron_gradient,
-          input.orbital_preparation_input.active_orbital_overlap_matrix,
+          input.orbital_preparation_input.ao_overlap_matrix,
           ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.orbital_preparation_input.n_basis_functions,
@@ -423,7 +423,7 @@ OrbitalBackpropInputs build_orbital_backprop_inputs(
       matrix_backpropagator.backpropagate(
           active_space_gradient_result.active_orbital_overlap_gradient,
           active_space_gradient_result.active_one_electron_gradient,
-          input.orbital_preparation_input.active_orbital_overlap_matrix,
+          input.orbital_preparation_input.ao_overlap_matrix,
           ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.orbital_preparation_input.n_basis_functions,
@@ -555,7 +555,7 @@ OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
       matrix_backpropagator.backpropagate(
           active_space_gradient_result.active_orbital_overlap_gradient,
           active_space_gradient_result.active_one_electron_gradient,
-          input.orbital_preparation_input.active_orbital_overlap_matrix,
+          input.orbital_preparation_input.ao_overlap_matrix,
           ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.orbital_preparation_input.n_basis_functions,
@@ -677,7 +677,7 @@ OrbitalBackpropInputs build_orbital_backprop_inputs_from_active_gradient_directi
       matrix_backpropagator.backpropagate(
           symmetric_active_orbital_overlap_gradient,
           symmetric_active_one_electron_gradient,
-          input.orbital_preparation_input.active_orbital_overlap_matrix,
+          input.orbital_preparation_input.ao_overlap_matrix,
           ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.orbital_preparation_input.n_basis_functions,
@@ -999,7 +999,7 @@ double inactive_overlap_inverse_identity_max_abs_diff(
   }
 
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-      input.orbital_preparation_input.active_orbital_overlap_matrix.data(),
+      input.orbital_preparation_input.ao_overlap_matrix.data(),
       input.orbital_preparation_input.n_basis_functions,
       input.orbital_preparation_input.n_basis_functions);
   const auto inactive_orbitals =
@@ -1105,7 +1105,7 @@ FixedUpstreamForwardDebugContext build_fixed_upstream_forward_debug_context(
   const int n_inactive_doubly_occupied_orbitals =
       (input.n_total_electrons - input.n_active_electrons) / 2;
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-      input.active_orbital_overlap_matrix.data(),
+      input.ao_overlap_matrix.data(),
       input.n_basis_functions,
       input.n_basis_functions);
   const Eigen::Map<const Eigen::MatrixXd> auxiliary_gradient_matrix(
@@ -1265,7 +1265,7 @@ FixedUpstreamTangentDebugContext build_fixed_upstream_tangent_debug_context(
   }
 
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-      input.active_orbital_overlap_matrix.data(),
+      input.ao_overlap_matrix.data(),
       input.n_basis_functions,
       input.n_basis_functions);
   std::vector<double> full_direction(
@@ -1343,7 +1343,7 @@ Eigen::MatrixXd build_fixed_upstream_delta_original_orbital_gradient(
           parameter_view,
           packed_direction);
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-      input.active_orbital_overlap_matrix.data(),
+      input.ao_overlap_matrix.data(),
       input.n_basis_functions,
       input.n_basis_functions);
   const Eigen::Map<const Eigen::MatrixXd> auxiliary_gradient_matrix(
@@ -2054,7 +2054,7 @@ int main(int argc, char** argv) {
     double accepted_sparse_orbital_norm_max_abs_diff = 0.0;
     {
       const Eigen::Map<const Matrix> basis_overlap_matrix(
-          input.orbital_preparation_input.active_orbital_overlap_matrix.data(),
+          input.orbital_preparation_input.ao_overlap_matrix.data(),
           input.orbital_preparation_input.n_basis_functions,
           input.orbital_preparation_input.n_basis_functions);
       for (int orbital_index = 0;
@@ -2684,7 +2684,7 @@ int main(int argc, char** argv) {
     double fixed_stage_b_fd_delta_dense_gradient = 0.0;
     if (fixed_stage_b_max_coefficient < fixed_stage_b_coefficient_count) {
       const Eigen::Map<const Matrix> basis_overlap_matrix(
-          input.orbital_preparation_input.active_orbital_overlap_matrix.data(),
+          input.orbital_preparation_input.ao_overlap_matrix.data(),
           input.orbital_preparation_input.n_basis_functions,
           input.orbital_preparation_input.n_basis_functions);
       Eigen::VectorXd normalized_vector =

@@ -389,7 +389,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
   use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
 
   const Eigen::Map<const Eigen::MatrixXd> S(
-      input.active_orbital_overlap_matrix.data(),
+      input.ao_overlap_matrix.data(),
       input.n_basis_functions, input.n_basis_functions);
   require_finite_matrix(S, "NROS AO overlap matrix");
   const auto blocks = detect_orbital_blocks(input);

@@ -365,7 +365,7 @@ CppOrbitalGradientResult CppOrbitalGradientEvaluator::evaluate_from_active_space
       active_space_matrix_backpropagator_.backpropagate(
           active_space_gradient_result.active_orbital_overlap_gradient,
           active_space_gradient_result.active_one_electron_gradient,
-          input.orbital_preparation_input.active_orbital_overlap_matrix,
+          input.orbital_preparation_input.ao_overlap_matrix,
           ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.orbital_preparation_input.n_basis_functions,
@@ -568,7 +568,7 @@ CppOrbitalGradientEvaluator::evaluate_sparse_orbital_gradient_with_fixed_active_
       active_space_matrix_backpropagator_.backpropagate(
           accepted_point_context.active_orbital_overlap_gradient,
           accepted_point_context.active_one_electron_gradient,
-          input.orbital_preparation_input.active_orbital_overlap_matrix,
+          input.orbital_preparation_input.ao_overlap_matrix,
           ao_effective_one_electron_result.ao_effective_h1e,
           orbital_result.auxiliary_orbital_matrix,
           input.orbital_preparation_input.n_basis_functions,

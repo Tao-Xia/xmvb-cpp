@@ -40,7 +40,7 @@ int infer_n_basis_functions(const LibcintInput& input);
  *
  * The libcint shell evaluators and integral kernels operate in the raw
  * Cartesian AO convention.  The rest of the modern C++ codebase uses the
- * normalized AO convention stored in `active_orbital_overlap_matrix`, so
+ * normalized AO convention stored in `ao_overlap_matrix`, so
  * callers multiply raw AO values or raw shell blocks by this vector at the
  * boundary.
  */

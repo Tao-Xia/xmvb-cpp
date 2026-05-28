@@ -362,7 +362,7 @@ ActiveOverlapSelectionResult select_active_overlap_matrix(
   ActiveOverlapSelectionResult result;
   if (options.active_overlap_source == ActiveOverlapSource::Input) {
     result.active_overlap_matrix =
-        load_result.input.orbital_preparation_input.active_orbital_overlap_matrix;
+        load_result.input.orbital_preparation_input.ao_overlap_matrix;
     return result;
   }
 

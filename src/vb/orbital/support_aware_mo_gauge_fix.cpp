@@ -322,7 +322,7 @@ SupportAwareInactiveMoGaugeTransform apply_support_aware_inactive_mo_gauge_fix(
 
   const int n_basis_functions = orbital_preparation_input->n_basis_functions;
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-      orbital_preparation_input->active_orbital_overlap_matrix.data(),
+      orbital_preparation_input->ao_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
 

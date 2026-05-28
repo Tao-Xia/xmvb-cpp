@@ -297,7 +297,7 @@ ActiveSpaceOrbitalBackpropagator::compute_diagnostics(
       input.n_active_orbitals);
 
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap_matrix(
-      input.active_orbital_overlap_matrix.data(),
+      input.ao_overlap_matrix.data(),
       input.n_basis_functions,
       input.n_basis_functions);
   const Eigen::Ref<const Eigen::MatrixXd> normalized_orbital_matrix =
