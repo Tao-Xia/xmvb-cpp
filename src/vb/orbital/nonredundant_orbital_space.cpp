@@ -1,6 +1,7 @@
 #include "vb/orbital/nonredundant_orbital_space.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -200,8 +201,6 @@ Eigen::MatrixXd build_block_virtual_orbitals(
   return virtuals;
 }
 
-}  // namespace
-
 // --- Non-member helpers used by the constructor ---
 
 Eigen::MatrixXd build_block_effective_one_electron_matrix(
@@ -337,6 +336,10 @@ Eigen::MatrixXd build_deterministic_orthonormal_tangent_basis(
   return basis.leftCols(admitted);
 }
 
+// FNV-1a-style hash mixing block/orbital/reduced-size into a running signature.
+// Used to detect tangent-space rank changes across SCF iterations so the
+// optimizer can invalidate cached Hessians or restart CG when the reduced
+// space dimension changes between accepted points.
 std::uint64_t mix_rank_signature(
     std::uint64_t signature,
     int block_index,
@@ -351,6 +354,8 @@ std::uint64_t mix_rank_signature(
   mix_one(static_cast<std::uint64_t>(local_reduced_size + 1));
   return signature;
 }
+
+}  // namespace
 
 // ===========================================================================
 // Constructor
@@ -381,17 +386,10 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       phys_orbital_matrix.cols() != input.n_orbitals)
     throw std::invalid_argument("physical orbital matrix shape mismatch");
 
-  // The dense local curvature block is retained as an opt-in diagnostic
-  // preconditioner.  Its clipped absolute spectrum is useful on some large
-  // sparse charts, but it can over-steer tiny nearly degenerate tangent spaces;
-  // the production default therefore stays with the safer diagonal scaling
-  // unless the caller enables the block path explicitly.
-  use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
-
-  const Eigen::Map<const Eigen::MatrixXd> S(
+  const Eigen::Map<const Eigen::MatrixXd> ao_overlap(
       input.ao_overlap_matrix.data(),
       input.n_basis_functions, input.n_basis_functions);
-  require_finite_matrix(S, "NROS AO overlap matrix");
+  require_finite_matrix(ao_overlap, "NROS AO overlap matrix");
   const auto blocks = detect_orbital_blocks(input);
 
   int block_index = 0;
@@ -443,7 +441,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     Eigen::MatrixXd block_S(nbasis, nbasis);
     for (int i = 0; i < nbasis; ++i)
       for (int j = 0; j < nbasis; ++j)
-        block_S(i, j) = S(bf_indices[i], bf_indices[j]);
+        block_S(i, j) = ao_overlap(bf_indices[i], bf_indices[j]);
 
     // Block-local virtual complement (from raw sparse coefficients).
     const Eigen::MatrixXd block_virt =
@@ -494,17 +492,21 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
         x_p[i] = input.orbital_value_table[proj.flat_indices[i]];
       require_finite_vector(x_p, "NROS local sparse orbital coefficients");
 
-      const Eigen::MatrixXd local_S =
+      const Eigen::MatrixXd orbital_metric =
           build_local_sparse_overlap_metric(block_S, proj.block_rows);
-      require_finite_matrix(local_S, "NROS local sparse overlap metric");
-      const Eigen::VectorXd Sx = local_S * x_p;
+      require_finite_matrix(orbital_metric, "NROS local sparse overlap metric");
+      const Eigen::VectorXd Sx = orbital_metric * x_p;
       const double rho2 = x_p.dot(Sx);
       if (!Sx.allFinite() || !std::isfinite(rho2)) {
         throw std::runtime_error(
             "NROS sparse orbital metric norm contains non-finite values");
       }
 
-      // Determine raw basis dimension.
+      // Determine raw basis dimension for this orbital's tangent generators.
+      // Inactive orbitals can rotate into any active or virtual direction.
+      // Active orbitals can rotate into inactive, other active (excluding self),
+      // and virtual directions.  Self-exclusion preserves orbital identity under
+      // the Gram-Schmidt chart.
       int raw_dim = 0;
       if (k < block_n_inactive) {
         raw_dim = n_active + nvirt;
@@ -524,16 +526,16 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
         continue;
       }
 
-      // Fill B_p by sampling block_occ_raw and block_virt on block_rows.
+      // Fill raw_generator by sampling block_occ_raw and block_virt on block_rows.
       // Raw sparse coefficients match the retraction coordinate system and
       // are always finite, unlike the auxiliary orbital matrix which may
       // contain infinity for HAO systems.
-      Eigen::MatrixXd B_p(local_size, raw_dim);
+      Eigen::MatrixXd raw_generator(local_size, raw_dim);
       int col = 0;
       if (k < block_n_inactive) {
         // inactive: [active cols of occ_raw, block_virt]
         if (n_active > 0) {
-          B_p.middleCols(col, n_active) =
+          raw_generator.middleCols(col, n_active) =
               gather_block_rows(block_occ_raw, proj.block_rows,
                                 block_n_inactive, n_active);
           col += n_active;
@@ -542,7 +544,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
         const int active_idx = k - block_n_inactive;
         // active: [inactive cols, active cols excl self, virtual]
         if (block_n_inactive > 0) {
-          B_p.middleCols(col, block_n_inactive) =
+          raw_generator.middleCols(col, block_n_inactive) =
               gather_block_rows(block_occ_raw, proj.block_rows, 0,
                                 block_n_inactive);
           col += block_n_inactive;
@@ -552,33 +554,33 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
           active_cols.reserve(n_active - 1);
           for (int j = 0; j < n_active; ++j)
             if (j != active_idx) active_cols.push_back(block_n_inactive + j);
-          B_p.middleCols(col, static_cast<int>(active_cols.size())) =
+          raw_generator.middleCols(col, static_cast<int>(active_cols.size())) =
               gather_block_rows_cols(block_occ_raw, proj.block_rows,
                                      active_cols);
           col += static_cast<int>(active_cols.size());
         }
       }
       if (nvirt > 0) {
-        B_p.middleCols(col, nvirt) =
+        raw_generator.middleCols(col, nvirt) =
             gather_block_rows(block_virt, proj.block_rows, 0, nvirt);
       }
-      require_finite_matrix(B_p, "NROS raw tangent generator");
+      require_finite_matrix(raw_generator, "NROS raw tangent generator");
 
-      // Drop near-zero columns of B_p before projection to avoid ill-conditioned
+      // Drop near-zero columns of raw_generator before projection to avoid ill-conditioned
       // Gram matrix.  Raw sparse coefficients for HAO orbitals with disjoint
       // support produce degenerate direction columns.
       {
         const double col_norm_threshold = 1.0e-12 * x_p.norm();
         Eigen::Index kept = 0;
-        for (Eigen::Index c = 0; c < B_p.cols(); ++c) {
-          if (B_p.col(c).norm() > col_norm_threshold) {
-            if (kept != c) B_p.col(kept) = B_p.col(c);
+        for (Eigen::Index c = 0; c < raw_generator.cols(); ++c) {
+          if (raw_generator.col(c).norm() > col_norm_threshold) {
+            if (kept != c) raw_generator.col(kept) = raw_generator.col(c);
             ++kept;
           }
         }
-        B_p = B_p.leftCols(kept);
+        raw_generator = raw_generator.leftCols(kept);
       }
-      if (B_p.cols() == 0) {
+      if (raw_generator.cols() == 0) {
         proj.tangent_basis = Eigen::MatrixXd::Zero(local_size, 0);
         proj.local_reduced_offset = reduced_size_;
         proj.local_reduced_size = 0;
@@ -592,9 +594,9 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       }
 
       // For non-orthogonal VB orbitals there is no sphere constraint, so the
-      // tangent space is B_p itself (the complement of other occupied orbitals).
+      // tangent space is raw_generator itself (the complement of other occupied orbitals).
       Eigen::MatrixXd U_p =
-          build_deterministic_orthonormal_tangent_basis(B_p);
+          build_deterministic_orthonormal_tangent_basis(raw_generator);
       if (U_p.cols() == 0 || !U_p.allFinite()) {
         proj.tangent_basis = Eigen::MatrixXd::Zero(local_size, 0);
         proj.local_reduced_offset = reduced_size_;
@@ -618,7 +620,10 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
           k,
           proj.local_reduced_size);
 
-      // Curvature diagonal: diag(U_p^T (F - eps S) U_p)
+      // Curvature: project the generalized Fock matrix U^T (F - eps S) U
+      // onto the tangent space, where eps = x^T F x / x^T S x is the orbital
+      // energy.  Fallback to identity if any intermediate is non-finite, so
+      // that NaN never poisons the reduced Newton solve.
       if (ao_effective_h1e != nullptr && proj.local_reduced_size > 0) {
         const Eigen::MatrixXd local_F =
             build_block_effective_one_electron_matrix_on_rows(
@@ -630,14 +635,14 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
                 proj.local_reduced_size,
                 proj.local_reduced_size);
         if (local_F.allFinite() &&
-            local_S.allFinite() &&
+            orbital_metric.allFinite() &&
             proj.tangent_basis.allFinite() &&
             rho2 > std::numeric_limits<double>::epsilon()) {
           const Eigen::VectorXd F_x = local_F * x_p;
           const double eps_p = x_p.dot(F_x) / rho2;
           if (F_x.allFinite() && std::isfinite(eps_p)) {
             const Eigen::MatrixXd F_U = local_F * proj.tangent_basis;
-            const Eigen::MatrixXd S_U = local_S * proj.tangent_basis;
+            const Eigen::MatrixXd S_U = orbital_metric * proj.tangent_basis;
             if (F_U.allFinite() && S_U.allFinite()) {
               block_curv =
                   proj.tangent_basis.transpose() *
@@ -664,12 +669,6 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     block_bases_.push_back(std::move(bb));
     ++block_index;
   }
-
-  // The dense local curvature block is retained as an opt-in diagnostic
-  // preconditioner.  Its clipped absolute spectrum is useful on some large
-  // sparse charts, but it can over-steer tiny nearly degenerate tangent spaces;
-  // the production default therefore stays with the safer diagonal scaling
-  // unless the caller enables the block path explicitly.
   use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
 }
 
@@ -696,27 +695,23 @@ NonredundantOrbitalSpace::project_impl(
       if (projector.local_reduced_size <= 0) continue;
       const Eigen::Index local_size =
           static_cast<Eigen::Index>(projector.packed_indices.size());
-      if (projector.tangent_basis.rows() != local_size ||
-          projector.tangent_basis.cols() != projector.local_reduced_size ||
-          !projector.tangent_basis.allFinite()) {
-        throw std::runtime_error("NROS projector tangent basis is invalid");
-      }
+      assert(projector.tangent_basis.rows() == local_size);
+      assert(projector.tangent_basis.cols() == projector.local_reduced_size);
+      assert(projector.tangent_basis.allFinite());
       Eigen::VectorXd g_p = Eigen::VectorXd::Zero(local_size);
       for (Eigen::Index i = 0; i < local_size; ++i) {
-        if (projector.packed_indices[i] < 0 ||
-            projector.packed_indices[i] >= packed_parameter_size_) {
-          throw std::runtime_error("NROS projector packed index is out of range");
-        }
+        assert(projector.packed_indices[i] >= 0 &&
+               projector.packed_indices[i] < packed_parameter_size_);
         g_p[i] = packed_vector[projector.packed_indices[i]];
       }
       const Eigen::VectorXd z_p = projector.tangent_basis.transpose() * g_p;
-      require_finite_vector(z_p, "NROS reduced projected block");
+      assert(z_p.allFinite());
       result.reduced_gradient.segment(
           projector.local_reduced_offset,
           projector.local_reduced_size) = z_p;
       if (build_packed_projection) {
         const Eigen::VectorXd dx_p = projector.tangent_basis * z_p;
-        require_finite_vector(dx_p, "NROS packed projected block");
+        assert(dx_p.allFinite());
         for (Eigen::Index i = 0; i < dx_p.size(); ++i)
           result.packed_projected_gradient[projector.packed_indices[i]] += dx_p[i];
       }
@@ -760,10 +755,8 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_inverse_reduced_curvature(
   for (const auto& bb : block_bases_) {
     for (const auto& p : bb.orbitals) {
       if (p.curvature_diagonal.size() == 0) continue;
-      if (p.curvature_diagonal.size() != p.local_reduced_size ||
-          !p.curvature_diagonal.allFinite()) {
-        continue;
-      }
+      assert(p.curvature_diagonal.size() == p.local_reduced_size);
+      assert(p.curvature_diagonal.allFinite());
       out.segment(p.local_reduced_offset, p.local_reduced_size).array() /=
           p.curvature_diagonal.array().max(kMin);
     }
@@ -833,10 +826,8 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_reduced_curvature(
         continue;
       }
       if (p.curvature_diagonal.size() == 0) continue;
-      if (p.curvature_diagonal.size() != p.local_reduced_size ||
-          !p.curvature_diagonal.allFinite()) {
-        continue;
-      }
+      assert(p.curvature_diagonal.size() == p.local_reduced_size);
+      assert(p.curvature_diagonal.allFinite());
       out.segment(p.local_reduced_offset, p.local_reduced_size).array() *=
           p.curvature_diagonal.array();
     }
@@ -855,20 +846,16 @@ Eigen::VectorXd NonredundantOrbitalSpace::expand_step(
   for (const auto& bb : block_bases_) {
     for (const auto& p : bb.orbitals) {
       if (p.local_reduced_size <= 0) continue;
-      if (p.tangent_basis.rows() !=
-              static_cast<Eigen::Index>(p.packed_indices.size()) ||
-          p.tangent_basis.cols() != p.local_reduced_size ||
-          !p.tangent_basis.allFinite()) {
-        throw std::runtime_error("NROS expansion tangent basis is invalid");
-      }
+      assert(p.tangent_basis.rows() ==
+                 static_cast<Eigen::Index>(p.packed_indices.size()));
+      assert(p.tangent_basis.cols() == p.local_reduced_size);
+      assert(p.tangent_basis.allFinite());
       const Eigen::VectorXd dx = p.tangent_basis *
           reduced_step.segment(p.local_reduced_offset, p.local_reduced_size);
-      require_finite_vector(dx, "NROS packed expansion block");
+      assert(dx.allFinite());
       for (Eigen::Index i = 0; i < dx.size(); ++i) {
-        if (p.packed_indices[i] < 0 ||
-            p.packed_indices[i] >= packed_parameter_size_) {
-          throw std::runtime_error("NROS expansion packed index is out of range");
-        }
+        assert(p.packed_indices[i] >= 0 &&
+               p.packed_indices[i] < packed_parameter_size_);
         packed[p.packed_indices[i]] += dx[i];
       }
     }
@@ -890,20 +877,16 @@ Eigen::VectorXd NonredundantOrbitalSpace::expand_retract_input_tangent(
   for (const auto& bb : block_bases_) {
     for (const auto& p : bb.orbitals) {
       if (p.local_reduced_size <= 0) continue;
-      if (p.tangent_basis.rows() !=
-              static_cast<Eigen::Index>(p.flat_indices.size()) ||
-          p.tangent_basis.cols() != p.local_reduced_size ||
-          !p.tangent_basis.allFinite()) {
-        throw std::runtime_error("NROS retraction tangent basis is invalid");
-      }
+      assert(p.tangent_basis.rows() ==
+                 static_cast<Eigen::Index>(p.flat_indices.size()));
+      assert(p.tangent_basis.cols() == p.local_reduced_size);
+      assert(p.tangent_basis.allFinite());
       const Eigen::VectorXd dx = p.tangent_basis *
           reduced_step.segment(p.local_reduced_offset, p.local_reduced_size);
-      require_finite_vector(dx, "NROS retraction tangent block");
+      assert(dx.allFinite());
       for (Eigen::Index i = 0; i < dx.size(); ++i) {
-        if (p.flat_indices[i] < 0 ||
-            p.flat_indices[i] >= tangent.size()) {
-          throw std::runtime_error("NROS retraction flat index is out of range");
-        }
+        assert(p.flat_indices[i] >= 0 &&
+               p.flat_indices[i] < tangent.size());
         tangent[p.flat_indices[i]] += dx[i];
       }
     }
