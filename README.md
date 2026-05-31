@@ -77,12 +77,6 @@ OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe src/test_molecule/F2.xmi --optimizer-ba
 
 Input files use the `.xmi` format. See `src/test_molecule/` for examples.
 
-## Citation
-
-If you use xmvb-cpp in your research, please cite the XMVB project:
-
-> Wei Wu, Lingchun Song, Yirong Mo, et al. *XMVB: A program for nonorthogonal valence bond computations.* J. Comput. Chem., 2024.
-
 ## License
 
 This project is licensed under the [MIT License](LICENSE).

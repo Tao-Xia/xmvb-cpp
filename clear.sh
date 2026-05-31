@@ -1,1 +1,0 @@
-rm *.mol *.tmp *.geo *.serr *.slog *.out
