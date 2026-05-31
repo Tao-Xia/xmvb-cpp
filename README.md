@@ -1,36 +1,36 @@
 # xmvb-cpp
 
-A modern C++17 implementation of **Valence Bond Self-Consistent Field (VBSCF)** and related electronic structure methods for quantum chemistry.
+A high-performance **Valence Bond Self-Consistent Field (VBSCF)** engine written in modern C++17.
 
-Valence Bond theory provides direct chemical insight into bonding, reactivity, and electron correlation that molecular orbital methods cannot. xmvb-cpp is the standalone, open-source C++ rewrite of [XMVB](https://github.com/xmvb/xmvb), a widely used VB program in computational chemistry research.
+Valence Bond theory provides direct chemical insight into bonding, reactivity, and electron correlation that molecular orbital methods cannot reveal. xmvb-cpp is an open-source C++ implementation of the [XMVB](https://github.com/xmvb/xmvb) valence bond program, designed for computational chemistry researchers who need VB-level analysis of molecular electronic structure.
 
 ## Features
 
-- **VBSCF optimization** with multiple optimizer backends (L-BFGS, Truncated Newton Hessian-vector products)
+- **VBSCF optimization** with multiple backends (L-BFGS, Truncated Newton Hessian-vector products)
 - **Hamiltonian and overlap matrix construction** for general VB structures
 - **Active-space orbital optimization** with flexible orbital constraints
 - **RI (Resolution-of-Identity)** integral approximation for two-electron terms
-- **Pfaffian VBSCF** ansatz support for open-shell and multi-reference systems
+- **Pfaffian VBSCF** ansatz for open-shell and multi-reference systems
 - **ML-assisted optimization** via DeepVBH (ONNX Runtime integration)
 - **Hartree-Fock and DFT initial guess** (libcint + libxc)
 - **OpenMP parallelization** for compute-intensive kernels
 - **Molden output** for orbital visualization
 
-## Project Structure
+## Architecture
 
 ```
 src/
-  core/            # Linear algebra, shared data structures
+  core/            Linear algebra, shared data structures
   vb/
-    matrices/      # Hamiltonian and overlap matrix builders
-    model/         # VB model definitions
-    orbital/       # Orbital optimization and active space
-    scf/           # SCF optimizer implementations
-  pfaffian_vbscf/  # Pfaffian-based VB methods
-  runtime/         # Input parsing, molecule/basis setup, integral preparation
-  tools/           # Benchmarking and diagnostic tools
-  third_party/     # Vendored dependencies (LBFGSpp)
-basis/             # Standard basis set library (Pople, Dunning, etc.)
+    matrices/      Hamiltonian and overlap matrix builders
+    model/         VB model definitions
+    orbital/       Orbital optimization and active space
+    scf/           SCF optimizer implementations
+  pfaffian_vbscf/  Pfaffian-based VB methods
+  runtime/         Input parsing, molecule/basis setup, integral preparation
+  tools/           Benchmarking and diagnostic tools
+  third_party/     Vendored dependencies (LBFGSpp)
+basis/             Standard basis set library (Pople, Dunning, etc.)
 ```
 
 ## Dependencies
@@ -46,41 +46,30 @@ basis/             # Standard basis set library (Pople, Dunning, etc.)
 
 ## Build
 
-Create the development environment with conda:
+Use a conda environment providing cmake, ninja, eigen, openblas (with LAPACKE headers), libxc, and libcint, then build with CMake:
 
 ```bash
-conda env create -f environment.yml
-conda activate xmvb-cpp-dev
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 ```
 
-Build with the provided script:
-
-```bash
-./build.sh
-```
-
-This produces `build/src/xmvb-cpp.exe` using Ninja.
+This produces `build/src/xmvb-cpp.exe`.
 
 To enable optional diagnostic and test targets:
 
 ```bash
-./build.sh build -DXMVB_CPP_BUILD_DEV_TARGETS=ON
+cmake -B build -G Ninja -DXMVB_CPP_BUILD_DEV_TARGETS=ON
+cmake --build build
 ```
 
 ## Usage
 
-Run a VBSCF calculation:
-
 ```bash
-OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe src/test_molecule/F2.xmi --optimizer-backend lbfgspp
+OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi> --optimizer-backend lbfgspp
 ```
 
 Input files use the `.xmi` format. See `src/test_molecule/` for examples.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
-
-## Contributing
-
-Contributions are welcome. Please open an issue or pull request on GitHub.
+[MIT](LICENSE)
