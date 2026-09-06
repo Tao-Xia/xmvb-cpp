@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 
 namespace xmvb::vb {
@@ -38,6 +39,20 @@ inline double parse_env_double_with_default(const char* name, double default_val
   if (end == value || (end != nullptr && end[0] != '\0') || !std::isfinite(parsed))
     return default_value;
   return parsed;
+}
+
+// Returns std::nullopt when the env var is unset or empty; otherwise parses
+// the same boolean convention as parse_env_flag_with_default ("0"/"false"/
+// "FALSE" → false, anything else → true). Used by callers that distinguish
+// "user did not specify" from "user explicitly disabled".
+inline std::optional<bool> parse_env_optional_flag(const char* variable_name) {
+  const char* value = std::getenv(variable_name);
+  if (value == nullptr || value[0] == '\0') {
+    return std::nullopt;
+  }
+  return std::strcmp(value, "0") != 0 &&
+      std::strcmp(value, "false") != 0 &&
+      std::strcmp(value, "FALSE") != 0;
 }
 
 }  // namespace xmvb::vb

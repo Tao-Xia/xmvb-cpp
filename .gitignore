@@ -22,7 +22,10 @@ deepvbscf_data_f2_scan/
 tmp_compare/
 
 # DeepVBH training outputs
-deepvbh/logs/
+deepvbh/
+
+# Interrupted in-place edits of basis files
+basis/sed??????
 
 # TeX intermediate files
 *.aux
