@@ -116,6 +116,12 @@ public:
   Diagnostics diagnostics() const;
 
 private:
+  Eigen::VectorXd apply_reduced_impl(
+      const Eigen::VectorXd& reduced_direction,
+      HvpComponents components,
+      const Eigen::VectorXd* precomputed_delta_ao_effective_h1e,
+      const Eigen::VectorXd* precomputed_inactive_density_gradient) const;
+
   struct ApplyTimingTotals {
     std::size_t apply_count = 0;
     std::size_t batch_apply_count = 0;

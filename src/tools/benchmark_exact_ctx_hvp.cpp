@@ -53,6 +53,12 @@ struct BenchmarkMeasurement {
   xmvb::vb::ExactOrbitalSecondOrderOperator::Diagnostics diagnostics;
 };
 
+struct BlockBenchmarkMeasurement {
+  double external_wall_time_seconds = 0.0;
+  double response_inf_norm = 0.0;
+  xmvb::vb::ExactOrbitalSecondOrderOperator::Diagnostics diagnostics;
+};
+
 void print_usage() {
   std::cerr
       << "usage: benchmark_exact_ctx_hvp <input.xmi>"
@@ -326,6 +332,50 @@ BenchmarkMeasurement run_component_benchmark(
   return measurement;
 }
 
+BlockBenchmarkMeasurement run_full_block_benchmark(
+    const AcceptedPointBenchmarkContext& context,
+    int warmup_count,
+    int repeat_count) {
+  Eigen::MatrixXd directions(context.reduced_direction.size(), 2);
+  directions.col(0) = context.reduced_direction;
+  directions.col(1) = context.reduced_direction.reverse();
+  directions.col(1).noalias() -=
+      directions.col(0) * directions.col(0).dot(directions.col(1));
+  if (!(directions.col(1).norm() > 0.0)) {
+    directions.col(1).setZero();
+    directions(0, 1) = 1.0;
+  }
+  directions.col(1).normalize();
+
+  if (warmup_count > 0) {
+    xmvb::vb::ExactOrbitalSecondOrderOperator warmup_operator(
+        context.second_order_context,
+        &context.input,
+        context.parameter_view,
+        context.nonredundant_space.get());
+    for (int repeat = 0; repeat < warmup_count; ++repeat) {
+      (void) warmup_operator.apply_reduced_batch(directions);
+    }
+  }
+  xmvb::vb::ExactOrbitalSecondOrderOperator exact_operator(
+      context.second_order_context,
+      &context.input,
+      context.parameter_view,
+      context.nonredundant_space.get());
+  const auto start_time = std::chrono::steady_clock::now();
+  Eigen::MatrixXd response;
+  for (int repeat = 0; repeat < repeat_count; ++repeat) {
+    response = exact_operator.apply_reduced_batch(directions);
+  }
+  const auto stop_time = std::chrono::steady_clock::now();
+  BlockBenchmarkMeasurement measurement;
+  measurement.external_wall_time_seconds =
+      std::chrono::duration<double>(stop_time - start_time).count();
+  measurement.response_inf_norm = response.cwiseAbs().maxCoeff();
+  measurement.diagnostics = exact_operator.diagnostics();
+  return measurement;
+}
+
 void print_measurement(const BenchmarkMeasurement& measurement) {
   const char* label = benchmark_component_name(measurement.component);
   const auto& diagnostics = measurement.diagnostics;
@@ -436,6 +486,8 @@ int main(int argc, char** argv) {
               options.warmup,
               options.repeats));
     }
+    const BlockBenchmarkMeasurement block_measurement =
+        run_full_block_benchmark(context, options.warmup, options.repeats);
 
     const auto& first_diagnostics = measurements.front().diagnostics;
     std::cout << std::setprecision(12);
@@ -481,6 +533,29 @@ int main(int argc, char** argv) {
     for (const BenchmarkMeasurement& measurement : measurements) {
       print_measurement(measurement);
     }
+    const double block_count = static_cast<double>(options.repeats);
+    const double block_average =
+        block_measurement.external_wall_time_seconds / block_count;
+    std::cout << "full_block_width = 2\n";
+    std::cout << "full_block_apply_count = "
+              << block_measurement.diagnostics.batch_apply_count << '\n';
+    std::cout << "full_block_response_inf_norm = "
+              << block_measurement.response_inf_norm << '\n';
+    std::cout << "full_block_external_avg_wall_time_seconds = "
+              << block_average << '\n';
+    std::cout << "full_block_external_avg_per_direction_seconds = "
+              << block_average / 2.0 << '\n';
+    std::cout << "full_block_diag_avg_h1e_wall_time_seconds = "
+              << average_wall_time_seconds(
+                     block_measurement.diagnostics
+                         .ao_effective_one_electron_fused_wall_time_seconds,
+                     block_measurement.diagnostics.batch_apply_count)
+              << '\n';
+    const double scalar_full_average =
+        measurements.front().external_wall_time_seconds /
+        static_cast<double>(options.repeats);
+    std::cout << "full_block_speedup_over_two_scalar = "
+              << (2.0 * scalar_full_average) / block_average << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

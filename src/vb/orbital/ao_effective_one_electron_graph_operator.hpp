@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "vb/orbital/ao_integral_input.hpp"
 
 namespace xmvb::vb {
@@ -155,5 +157,20 @@ void apply_fused_ao_effective_one_electron_graph(
     int n_threads,
     std::vector<double>* forward_output,
     std::vector<double>* transpose_output);
+
+/**
+ * @brief Applies the fixed AO-H1E graph to several directions in one sweep.
+ *
+ * Columns are independent AO-matrix vectorizations.  The graph topology and
+ * weights are read once per row/source while the short direction dimension is
+ * accumulated contiguously.
+ */
+void apply_fused_ao_effective_one_electron_graph_batch(
+    const Eigen::Ref<const Eigen::MatrixXd>& source_matrix_columns,
+    const Eigen::Ref<const Eigen::MatrixXd>& row_adjoint_columns,
+    const AoIntegralInput& ao_integral_input,
+    int n_threads,
+    Eigen::MatrixXd* forward_output_columns,
+    Eigen::MatrixXd* transpose_output_columns);
 
 }  // namespace xmvb::vb

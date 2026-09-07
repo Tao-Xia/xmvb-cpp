@@ -7631,15 +7631,106 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
   Eigen::MatrixXd responses(
       reduced_directions.rows(),
       reduced_directions.cols());
-  // The scalar kernel currently owns shared mutable workspaces.  Keep this
-  // first block implementation serial and exact; subsequent fusion moves the
-  // direction index inside the expensive contractions without changing the
-  // public optimizer interface or its numerical semantics.
+  if (reduced_directions.cols() <= 1 ||
+      !ao_effective_one_electron_graph_available(
+          current_input_->ao_integral_input)) {
+    for (Eigen::Index column = 0;
+         column < reduced_directions.cols();
+         ++column) {
+      responses.col(column) =
+          apply_reduced(reduced_directions.col(column), components);
+    }
+    return responses;
+  }
+  if (!supports_analytic_core_model()) {
+    throw std::runtime_error(
+        "exact_ctx analytic core HVP is unavailable for the current accepted point");
+  }
+
+  const int n_basis_functions =
+      current_input_->orbital_preparation_input.n_basis_functions;
+  const int n_active_orbitals =
+      current_input_->orbital_preparation_input.n_active_orbitals;
+  const int n_inactive_doubly_occupied_orbitals =
+      (current_input_->orbital_preparation_input.n_total_electrons -
+       current_input_->orbital_preparation_input.n_active_electrons) /
+      2;
+  const Eigen::Index ao_matrix_size =
+      static_cast<Eigen::Index>(n_basis_functions) * n_basis_functions;
+  const Eigen::Index n_directions = reduced_directions.cols();
+  Eigen::MatrixXd inactive_density_columns(ao_matrix_size, n_directions);
+  Eigen::MatrixXd symmetrized_pullback_columns(ao_matrix_size, n_directions);
+  for (Eigen::Index column = 0; column < n_directions; ++column) {
+    const Eigen::VectorXd packed_direction =
+        nonredundant_space_->expand_step(reduced_directions.col(column));
+    const auto dense_orbital_tangent_context =
+        build_dense_orbital_tangent_context(
+            current_input_->orbital_preparation_input,
+            parameter_view_,
+            packed_direction,
+            *accepted_orbital_preparation_cache_);
+    const auto directional_result =
+        build_orbital_preparation_directional_result(
+            current_input_->orbital_preparation_input,
+            dense_orbital_tangent_context,
+            n_inactive_doubly_occupied_orbitals,
+            n_active_orbitals,
+            *accepted_orbital_preparation_cache_);
+    Eigen::MatrixXd pullback_source = directional_result.delta_inactive_density;
+    pullback_source.noalias() +=
+        (directional_result.delta_active_auxiliary_orbitals *
+         accepted_hho_gradient_symmetric_) *
+        accepted_active_auxiliary_orbitals_.transpose();
+    inactive_density_columns.col(column) = Eigen::Map<const Eigen::VectorXd>(
+        directional_result.delta_inactive_density.data(), ao_matrix_size);
+    const Eigen::MatrixXd symmetrized_pullback =
+        pullback_source + pullback_source.transpose();
+    symmetrized_pullback_columns.col(column) =
+        Eigen::Map<const Eigen::VectorXd>(
+            symmetrized_pullback.data(), ao_matrix_size);
+  }
+
+  const auto batch_h1e_start_time = std::chrono::steady_clock::now();
+  Eigen::MatrixXd delta_h1e_columns;
+  Eigen::MatrixXd inactive_density_gradient_columns;
+  apply_fused_ao_effective_one_electron_graph_batch(
+      inactive_density_columns,
+      symmetrized_pullback_columns,
+      current_input_->ao_integral_input,
+      choose_exact_ctx_ao_h1e_threads(
+          current_input_->orbital_preparation_input,
+          components.outer_response),
+      &delta_h1e_columns,
+      &inactive_density_gradient_columns);
+  for (Eigen::Index column = 0; column < n_directions; ++column) {
+    Eigen::Map<Eigen::MatrixXd> delta_h1e(
+        delta_h1e_columns.col(column).data(),
+        n_basis_functions,
+        n_basis_functions);
+    for (int row = 0; row < n_basis_functions; ++row) {
+      for (int matrix_column = 0; matrix_column <= row; ++matrix_column) {
+        delta_h1e(row, matrix_column) += delta_h1e(matrix_column, row);
+        delta_h1e(matrix_column, row) = delta_h1e(row, matrix_column);
+      }
+    }
+  }
+  const double batch_h1e_seconds =
+      elapsed_wall_time_seconds(batch_h1e_start_time);
+  apply_timing_totals_.ao_effective_one_electron_fused_wall_time_seconds +=
+      batch_h1e_seconds;
+  apply_timing_totals_.total_apply_wall_time_seconds += batch_h1e_seconds;
+
   for (Eigen::Index column = 0;
        column < reduced_directions.cols();
        ++column) {
-    responses.col(column) =
-        apply_reduced(reduced_directions.col(column), components);
+    const Eigen::VectorXd delta_h1e = delta_h1e_columns.col(column);
+    const Eigen::VectorXd inactive_density_gradient =
+        inactive_density_gradient_columns.col(column);
+    responses.col(column) = apply_reduced_impl(
+        reduced_directions.col(column),
+        components,
+        &delta_h1e,
+        &inactive_density_gradient);
   }
   return responses;
 }
@@ -7647,6 +7738,14 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components) const {
+  return apply_reduced_impl(reduced_direction, components, nullptr, nullptr);
+}
+
+Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
+    const Eigen::VectorXd& reduced_direction,
+    HvpComponents components,
+    const Eigen::VectorXd* precomputed_delta_ao_effective_h1e,
+    const Eigen::VectorXd* precomputed_inactive_density_gradient) const {
   const auto apply_start_time = std::chrono::steady_clock::now();
   auto record_apply_wall_time = [&]() {
     ++apply_timing_totals_.apply_count;
@@ -7726,25 +7825,47 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
   total_ao_effective_one_electron_direction.noalias() +=
       delta_active_times_hho_symmetric *
       accepted_active_auxiliary_orbitals_.transpose();
-  const auto ao_effective_one_electron_fused_start_time =
-      std::chrono::steady_clock::now();
-  apply_fused_exact_ao_effective_one_electron_directional_operator(
-      orbital_preparation_directional_result.delta_inactive_density,
-      total_ao_effective_one_electron_direction,
-      current_input_->ao_integral_input,
-      current_input_->orbital_preparation_input,
-      components.outer_response,
-      &ao_h1e_symmetrized_gradient_workspace_,
-      &ao_h1e_delta_h1e_workspace_,
-      &ao_h1e_inactive_density_gradient_workspace_,
-      &ao_h1e_partial_delta_h1e_workspaces_,
-      &ao_h1e_partial_inactive_density_gradient_workspaces_);
+  const double* delta_ao_effective_h1e_data = nullptr;
+  const double* inactive_density_gradient_data = nullptr;
+  if (precomputed_delta_ao_effective_h1e != nullptr ||
+      precomputed_inactive_density_gradient != nullptr) {
+    if (precomputed_delta_ao_effective_h1e == nullptr ||
+        precomputed_inactive_density_gradient == nullptr ||
+        precomputed_delta_ao_effective_h1e->size() !=
+            static_cast<Eigen::Index>(ao_matrix_size) ||
+        precomputed_inactive_density_gradient->size() !=
+            static_cast<Eigen::Index>(ao_matrix_size)) {
+      throw std::invalid_argument(
+          "precomputed block AO-H1E response has inconsistent dimensions");
+    }
+    delta_ao_effective_h1e_data =
+        precomputed_delta_ao_effective_h1e->data();
+    inactive_density_gradient_data =
+        precomputed_inactive_density_gradient->data();
+  } else {
+    const auto ao_effective_one_electron_fused_start_time =
+        std::chrono::steady_clock::now();
+    apply_fused_exact_ao_effective_one_electron_directional_operator(
+        orbital_preparation_directional_result.delta_inactive_density,
+        total_ao_effective_one_electron_direction,
+        current_input_->ao_integral_input,
+        current_input_->orbital_preparation_input,
+        components.outer_response,
+        &ao_h1e_symmetrized_gradient_workspace_,
+        &ao_h1e_delta_h1e_workspace_,
+        &ao_h1e_inactive_density_gradient_workspace_,
+        &ao_h1e_partial_delta_h1e_workspaces_,
+        &ao_h1e_partial_inactive_density_gradient_workspaces_);
+    delta_ao_effective_h1e_data = ao_h1e_delta_h1e_workspace_.data();
+    inactive_density_gradient_data =
+        ao_h1e_inactive_density_gradient_workspace_.data();
+    apply_timing_totals_.ao_effective_one_electron_fused_wall_time_seconds +=
+        elapsed_wall_time_seconds(ao_effective_one_electron_fused_start_time);
+  }
   const Eigen::Map<const Eigen::MatrixXd> delta_ao_effective_h1e(
-      ao_h1e_delta_h1e_workspace_.data(),
+      delta_ao_effective_h1e_data,
       n_basis_functions,
       n_basis_functions);
-  apply_timing_totals_.ao_effective_one_electron_fused_wall_time_seconds +=
-      elapsed_wall_time_seconds(ao_effective_one_electron_fused_start_time);
 
   const bool compute_outer_response = components.outer_response;
   std::vector<double> combined_core_orbital_value_gradient;
@@ -7919,7 +8040,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     Eigen::MatrixXd total_inactive_density_direction =
         delta_ao_effective_h1e;
     const Eigen::Map<const Eigen::MatrixXd> ao_backpropagated_inactive_density(
-        ao_h1e_inactive_density_gradient_workspace_.data(),
+        inactive_density_gradient_data,
         n_basis_functions,
         n_basis_functions);
     total_inactive_density_direction.noalias() +=

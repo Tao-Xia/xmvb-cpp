@@ -752,4 +752,120 @@ void apply_fused_ao_effective_one_electron_graph(
   }
 }
 
+void apply_fused_ao_effective_one_electron_graph_batch(
+    const Eigen::Ref<const Eigen::MatrixXd>& source_matrix_columns,
+    const Eigen::Ref<const Eigen::MatrixXd>& row_adjoint_columns,
+    const AoIntegralInput& ao_integral_input,
+    int n_threads,
+    Eigen::MatrixXd* forward_output_columns,
+    Eigen::MatrixXd* transpose_output_columns) {
+  if (forward_output_columns == nullptr || transpose_output_columns == nullptr) {
+    throw std::invalid_argument("AO-H1E graph batch outputs must not be null");
+  }
+  const std::size_t matrix_size =
+      ao_matrix_size(ao_integral_input.n_basis_functions);
+  validate_graph_storage_shapes(ao_integral_input, matrix_size);
+  if (source_matrix_columns.rows() !=
+          static_cast<Eigen::Index>(matrix_size) ||
+      row_adjoint_columns.rows() !=
+          static_cast<Eigen::Index>(matrix_size) ||
+      source_matrix_columns.cols() != row_adjoint_columns.cols()) {
+    throw std::invalid_argument("AO-H1E graph batch input shape mismatch");
+  }
+  const Eigen::Index n_directions = source_matrix_columns.cols();
+  using DirectionMajorMatrix =
+      Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+  const DirectionMajorMatrix source_rows = source_matrix_columns;
+  const DirectionMajorMatrix adjoint_rows = row_adjoint_columns;
+  DirectionMajorMatrix forward_rows =
+      DirectionMajorMatrix::Zero(matrix_size, n_directions);
+  DirectionMajorMatrix transpose_rows =
+      DirectionMajorMatrix::Zero(matrix_size, n_directions);
+  forward_output_columns->resize(matrix_size, n_directions);
+  transpose_output_columns->resize(matrix_size, n_directions);
+  if (n_directions == 0) {
+    return;
+  }
+  n_threads = sanitize_graph_thread_count(n_threads);
+  const auto& row_offsets =
+      ao_integral_input.ao_effective_one_electron_graph_row_offsets;
+  const auto& source_indices =
+      ao_integral_input.ao_effective_one_electron_graph_source_indices;
+  const auto& signed_weights =
+      ao_integral_input.ao_effective_one_electron_graph_signed_weights;
+
+#pragma omp parallel for schedule(static) num_threads(n_threads) if(n_threads > 1)
+  for (std::ptrdiff_t row_offset = 0;
+       row_offset < static_cast<std::ptrdiff_t>(matrix_size);
+       ++row_offset) {
+    const Eigen::Index row = row_offset;
+    for (int edge_offset = row_offsets[row];
+         edge_offset < row_offsets[row + 1];
+         ++edge_offset) {
+      const Eigen::Index source = source_indices[edge_offset];
+      const double weight = signed_weights[edge_offset];
+      for (Eigen::Index direction = 0;
+           direction < n_directions;
+           ++direction) {
+        forward_rows(row, direction) +=
+            weight * source_rows(source, direction);
+      }
+    }
+  }
+
+  if (!transpose_graph_available(ao_integral_input)) {
+    // The source-owned companion is required for a lock-free fused transpose.
+    // Preserve exact semantics on older inputs without allocating a dense
+    // per-thread block accumulator.
+    for (Eigen::Index direction = 0;
+         direction < n_directions;
+         ++direction) {
+      std::vector<double> forward_column;
+      std::vector<double> transpose_column;
+      apply_fused_ao_effective_one_electron_graph(
+          source_matrix_columns.col(direction).data(),
+          row_adjoint_columns.col(direction).data(),
+          ao_integral_input,
+          n_threads,
+          &forward_column,
+          &transpose_column);
+      forward_output_columns->col(direction) = Eigen::Map<Eigen::VectorXd>(
+          forward_column.data(), forward_column.size());
+      transpose_output_columns->col(direction) = Eigen::Map<Eigen::VectorXd>(
+          transpose_column.data(), transpose_column.size());
+    }
+    return;
+  }
+
+  validate_transpose_graph_storage_shapes(ao_integral_input, matrix_size);
+  const auto& transpose_source_offsets =
+      ao_integral_input
+          .ao_effective_one_electron_graph_transpose_source_offsets;
+  const auto& transpose_row_indices =
+      ao_integral_input.ao_effective_one_electron_graph_transpose_row_indices;
+  const auto& transpose_signed_weights =
+      ao_integral_input
+          .ao_effective_one_electron_graph_transpose_signed_weights;
+#pragma omp parallel for schedule(static) num_threads(n_threads) if(n_threads > 1)
+  for (std::ptrdiff_t source_offset = 0;
+       source_offset < static_cast<std::ptrdiff_t>(matrix_size);
+       ++source_offset) {
+    const Eigen::Index source = source_offset;
+    for (int edge_offset = transpose_source_offsets[source];
+         edge_offset < transpose_source_offsets[source + 1];
+         ++edge_offset) {
+      const Eigen::Index row = transpose_row_indices[edge_offset];
+      const double weight = transpose_signed_weights[edge_offset];
+      for (Eigen::Index direction = 0;
+           direction < n_directions;
+           ++direction) {
+        transpose_rows(source, direction) +=
+            weight * adjoint_rows(row, direction);
+      }
+    }
+  }
+  *forward_output_columns = forward_rows;
+  *transpose_output_columns = transpose_rows;
+}
+
 }  // namespace xmvb::vb
