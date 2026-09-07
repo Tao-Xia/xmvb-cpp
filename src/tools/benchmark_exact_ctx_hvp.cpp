@@ -536,6 +536,7 @@ int main(int argc, char** argv) {
     const double block_count = static_cast<double>(options.repeats);
     const double block_average =
         block_measurement.external_wall_time_seconds / block_count;
+    constexpr double kBlockWidth = 2.0;
     std::cout << "full_block_width = 2\n";
     std::cout << "full_block_apply_count = "
               << block_measurement.diagnostics.batch_apply_count << '\n';
@@ -544,18 +545,24 @@ int main(int argc, char** argv) {
     std::cout << "full_block_external_avg_wall_time_seconds = "
               << block_average << '\n';
     std::cout << "full_block_external_avg_per_direction_seconds = "
-              << block_average / 2.0 << '\n';
+              << block_average / kBlockWidth << '\n';
     std::cout << "full_block_diag_avg_h1e_wall_time_seconds = "
               << average_wall_time_seconds(
                      block_measurement.diagnostics
                          .ao_effective_one_electron_fused_wall_time_seconds,
                      block_measurement.diagnostics.batch_apply_count)
               << '\n';
+    std::cout << "full_block_diag_avg_active_space_integrals_wall_time_seconds = "
+              << average_wall_time_seconds(
+                     block_measurement.diagnostics
+                         .outer_response_active_space_integrals_wall_time_seconds,
+                     block_measurement.diagnostics.batch_apply_count)
+              << '\n';
     const double scalar_full_average =
         measurements.front().external_wall_time_seconds /
         static_cast<double>(options.repeats);
     std::cout << "full_block_speedup_over_two_scalar = "
-              << (2.0 * scalar_full_average) / block_average << '\n';
+              << (kBlockWidth * scalar_full_average) / block_average << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

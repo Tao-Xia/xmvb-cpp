@@ -2078,7 +2078,8 @@ void build_active_space_directional_integrals(
     std::vector<double>* delta_ao_overlap_matrix_storage,
     std::vector<double>* delta_active_one_electron_matrix_storage,
     ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace* exact_2e_workspace,
-    std::vector<double>* delta_packed_active_two_electron_integrals) {
+    std::vector<double>* delta_packed_active_two_electron_integrals,
+    const Eigen::VectorXd* precomputed_delta_packed_active_two_electron) {
   const int n_basis_functions =
       input.orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals =
@@ -2136,14 +2137,27 @@ void build_active_space_directional_integrals(
         "dense active coefficient shapes are inconsistent in active-space directional integrals");
   }
 
-  compute_exact_packed_active_two_electron_integral_directional_derivative(
-      accepted_dense_active_coefficients,
-      delta_dense_active_coefficients,
-      input.ao_integral_input,
-      n_active_orbitals,
-      exact_2e_workspace,
-      delta_packed_active_two_electron_integrals,
-      &accepted_active_space_two_electron_result);
+  if (precomputed_delta_packed_active_two_electron != nullptr) {
+    const std::size_t packed_size =
+        packed_active_two_electron_integral_count(n_active_orbitals);
+    if (precomputed_delta_packed_active_two_electron->size() !=
+        static_cast<Eigen::Index>(packed_size)) {
+      throw std::invalid_argument(
+          "precomputed block delta GGO has inconsistent dimensions");
+    }
+    delta_packed_active_two_electron_integrals->assign(
+        precomputed_delta_packed_active_two_electron->data(),
+        precomputed_delta_packed_active_two_electron->data() + packed_size);
+  } else {
+    compute_exact_packed_active_two_electron_integral_directional_derivative(
+        accepted_dense_active_coefficients,
+        delta_dense_active_coefficients,
+        input.ao_integral_input,
+        n_active_orbitals,
+        exact_2e_workspace,
+        delta_packed_active_two_electron_integrals,
+        &accepted_active_space_two_electron_result);
+  }
 }
 
 struct StructurePairAdjoints {
@@ -7660,6 +7674,8 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
   const Eigen::Index n_directions = reduced_directions.cols();
   Eigen::MatrixXd inactive_density_columns(ao_matrix_size, n_directions);
   Eigen::MatrixXd symmetrized_pullback_columns(ao_matrix_size, n_directions);
+  std::vector<Eigen::MatrixXd> dense_active_directions;
+  dense_active_directions.reserve(n_directions);
   for (Eigen::Index column = 0; column < n_directions; ++column) {
     const Eigen::VectorXd packed_direction =
         nonredundant_space_->expand_step(reduced_directions.col(column));
@@ -7676,6 +7692,8 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
             n_inactive_doubly_occupied_orbitals,
             n_active_orbitals,
             *accepted_orbital_preparation_cache_);
+    dense_active_directions.push_back(
+        directional_result.delta_active_auxiliary_orbitals);
     Eigen::MatrixXd pullback_source = directional_result.delta_inactive_density;
     pullback_source.noalias() +=
         (directional_result.delta_active_auxiliary_orbitals *
@@ -7720,17 +7738,47 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
       batch_h1e_seconds;
   apply_timing_totals_.total_apply_wall_time_seconds += batch_h1e_seconds;
 
+  Eigen::MatrixXd delta_packed_active_two_electron_columns;
+  std::vector<ExactCtxPairMatrix> directional_pair_products;
+  if (components.outer_response) {
+    const auto batch_active_two_electron_start_time =
+        std::chrono::steady_clock::now();
+    delta_packed_active_two_electron_columns =
+        compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
+            accepted_exact_two_electron_cache_,
+            dense_active_directions,
+            current_input_->ao_integral_input,
+            &directional_pair_products);
+    const double batch_active_two_electron_seconds =
+        elapsed_wall_time_seconds(batch_active_two_electron_start_time);
+    apply_timing_totals_
+        .outer_response_active_space_integrals_wall_time_seconds +=
+        batch_active_two_electron_seconds;
+    apply_timing_totals_.total_apply_wall_time_seconds +=
+        batch_active_two_electron_seconds;
+  }
+
   for (Eigen::Index column = 0;
        column < reduced_directions.cols();
        ++column) {
     const Eigen::VectorXd delta_h1e = delta_h1e_columns.col(column);
     const Eigen::VectorXd inactive_density_gradient =
         inactive_density_gradient_columns.col(column);
+    const Eigen::VectorXd delta_packed_active_two_electron =
+        components.outer_response
+            ? delta_packed_active_two_electron_columns.col(column)
+            : Eigen::VectorXd();
     responses.col(column) = apply_reduced_impl(
         reduced_directions.col(column),
         components,
         &delta_h1e,
-        &inactive_density_gradient);
+        &inactive_density_gradient,
+        components.outer_response
+            ? &delta_packed_active_two_electron
+            : nullptr,
+        components.outer_response
+            ? &directional_pair_products[column]
+            : nullptr);
   }
   return responses;
 }
@@ -7738,14 +7786,17 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components) const {
-  return apply_reduced_impl(reduced_direction, components, nullptr, nullptr);
+  return apply_reduced_impl(
+      reduced_direction, components, nullptr, nullptr, nullptr, nullptr);
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components,
     const Eigen::VectorXd* precomputed_delta_ao_effective_h1e,
-    const Eigen::VectorXd* precomputed_inactive_density_gradient) const {
+    const Eigen::VectorXd* precomputed_inactive_density_gradient,
+    const Eigen::VectorXd* precomputed_delta_packed_active_two_electron,
+    const ExactCtxPairMatrix* precomputed_directional_pair_products) const {
   const auto apply_start_time = std::chrono::steady_clock::now();
   auto record_apply_wall_time = [&]() {
     ++apply_timing_totals_.apply_count;
@@ -7899,7 +7950,8 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
         &outer_response_delta_ao_overlap_matrix_workspace_,
         &outer_response_delta_active_one_electron_matrix_workspace_,
         &outer_response_exact_two_electron_directional_workspace_,
-        &outer_response_delta_packed_active_two_electron_workspace_);
+        &outer_response_delta_packed_active_two_electron_workspace_,
+        precomputed_delta_packed_active_two_electron);
     apply_timing_totals_.outer_response_active_space_integrals_wall_time_seconds +=
         elapsed_wall_time_seconds(active_space_integrals_start_time);
 
@@ -7991,17 +8043,19 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
     if (accepted_exact_two_electron_cache_.n_basis_functions > 0) {
       // Fused path: reuse forward K*mixed from outer response to skip
       // one apply_exact_ao_pair_kernel call (~500M FLOPs) per HVP.
+      const ExactCtxPairMatrix* directional_pair_products =
+          precomputed_directional_pair_products != nullptr
+              ? precomputed_directional_pair_products
+              : &outer_response_exact_two_electron_directional_workspace_
+                     .directional_pair_products;
       const bool can_fuse =
-          compute_outer_response &&
-          outer_response_exact_two_electron_directional_workspace_
-              .directional_pair_products.size() > 0;
+          compute_outer_response && directional_pair_products->size() > 0;
       if (can_fuse) {
         apply_exact_packed_active_two_electron_adjoint_hessian_vector_fused(
             accepted_exact_two_electron_cache_,
             delta_dense_active_coefficients,
             current_input_->ao_integral_input,
-            outer_response_exact_two_electron_directional_workspace_
-                .directional_pair_products,
+            *directional_pair_products,
             &accepted_exact_two_electron_apply_workspace_,
             &accepted_exact_two_electron_apply_workspace_
                  .dense_active_gradient_direction);

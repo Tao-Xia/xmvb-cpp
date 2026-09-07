@@ -219,6 +219,20 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
     std::vector<double>* delta_packed_active_two_electron_integrals);
 
 /**
+ * @brief Computes several cached exact `delta GGO` directions in one AO-pair sweep.
+ *
+ * The result has one packed active-2e derivative per column. Directional
+ * AO-pair coefficient blocks are concatenated so the fixed AO-pair graph is
+ * traversed once for the whole block.
+ */
+Eigen::MatrixXd
+compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
+    const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
+    const std::vector<Eigen::MatrixXd>& dense_active_directions,
+    const AoIntegralInput& ao_integral_input,
+    std::vector<ExactCtxPairMatrix>* directional_pair_products = nullptr);
+
+/**
  * @brief Precomputes accepted-point exact 2e HVP invariants.
  *
  * `accepted_dense_active_coefficients` is the accepted AO-by-active dense
