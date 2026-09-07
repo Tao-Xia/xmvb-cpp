@@ -613,6 +613,9 @@ struct TruncatedNewtonStepResult {
   bool encountered_negative_curvature = false;
   bool used_krylov_rescue = false;
   int cg_iterations = 0;
+  double projected_model_gradient_norm = 0.0;
+  double model_spectral_radius = 0.0;
+  double trust_region_shift = 0.0;
   double predicted_decrease = 0.0;
 };
 
@@ -679,7 +682,7 @@ void clamp_nonredundant_step_result_to_retract_tangent_radius(
 
 struct TruncatedNewtonTrialEvaluation {
   double actual_decrease = 0.0;
-  double trust_ratio = -std::numeric_limits<double>::infinity();
+  double predicted_decrease = 0.0;
 };
 
 struct RejectedTruncatedNewtonStepCache {
@@ -712,10 +715,6 @@ struct RejectedTruncatedNewtonStepCache {
                   trust_radius)
             : Eigen::VectorXd();
   }
-};
-
-struct AcceptedTruncatedNewtonStepControl {
-  double trust_radius = 0.0;
 };
 
 bool truncated_newton_krylov_subspace_is_usable(
@@ -805,10 +804,11 @@ bool append_truncated_newton_krylov_basis_vector(
     }
   }
 
-  constexpr double kLinearDependenceTolerance = 1.0e-10;
+  const double linear_dependence_tolerance =
+      std::sqrt(std::numeric_limits<double>::epsilon());
   const double orthogonal_norm = orthogonal_tangent.norm();
   if (!(orthogonal_norm >
-        kLinearDependenceTolerance * std::max(1.0, candidate_norm)) ||
+        linear_dependence_tolerance * candidate_norm) ||
       !std::isfinite(orthogonal_norm)) {
     return false;
   }
@@ -912,8 +912,7 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
   }
 
   const double radius_squared = trust_radius * trust_radius;
-  const double spectral_scale =
-      std::max(1.0, reduced_hessian.cwiseAbs().maxCoeff());
+  const double spectral_scale = reduced_hessian.cwiseAbs().maxCoeff();
   constexpr double kShiftToleranceFactor =
       64.0 * std::numeric_limits<double>::epsilon();
   constexpr double kRelativeRadiusTolerance = 1.0e-10;
@@ -927,7 +926,9 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
           const double denominator = eigenvalues[index] + lambda;
           const double denominator_floor =
               kShiftToleranceFactor *
-              std::max(1.0, std::abs(eigenvalues[index]) + std::abs(lambda));
+              std::max(
+                  spectral_scale,
+                  std::abs(eigenvalues[index]) + std::abs(lambda));
           if (!(denominator > denominator_floor) ||
               !std::isfinite(denominator)) {
             return false;
@@ -946,6 +947,7 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
       eigenvalues.minCoeff(&minimum_eigenvalue_index);
   Eigen::VectorXd eigen_coordinates;
   double coordinate_squared_norm = 0.0;
+  double trust_region_shift = 0.0;
   bool solved_subproblem = false;
   if (minimum_eigenvalue > kShiftToleranceFactor * spectral_scale &&
       solve_shifted_subspace_system(
@@ -960,7 +962,7 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
     if (lower_shift > 0.0 || minimum_eigenvalue <= 0.0) {
       lower_shift +=
           kShiftToleranceFactor *
-          std::max(1.0, std::abs(minimum_eigenvalue));
+          spectral_scale;
     }
     if (!solve_shifted_subspace_system(
             lower_shift,
@@ -972,17 +974,27 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
     if (coordinate_squared_norm <=
         radius_squared * (1.0 + kRelativeRadiusTolerance)) {
       solved_subproblem = true;
+      trust_region_shift = lower_shift;
       if (minimum_eigenvalue < 0.0) {
-        const double remaining_squared_radius =
-            radius_squared - coordinate_squared_norm;
-        if (remaining_squared_radius >
+        const double minimum_coordinate =
+            eigen_coordinates[minimum_eigenvalue_index];
+        const double other_coordinate_squared_norm =
+            std::max(
+                0.0,
+                coordinate_squared_norm -
+                    minimum_coordinate * minimum_coordinate);
+        const double available_minimum_coordinate_squared =
+            radius_squared - other_coordinate_squared_norm;
+        if (available_minimum_coordinate_squared >
             radius_squared * kRelativeRadiusTolerance) {
           const double augmentation_sign =
               projected_gradient_in_eigenbasis[minimum_eigenvalue_index] > 0.0
                   ? -1.0
                   : 1.0;
-          eigen_coordinates[minimum_eigenvalue_index] +=
-              augmentation_sign * std::sqrt(remaining_squared_radius);
+          eigen_coordinates[minimum_eigenvalue_index] =
+              augmentation_sign *
+              std::sqrt(available_minimum_coordinate_squared);
+          coordinate_squared_norm = radius_squared;
         }
       }
     } else {
@@ -1035,6 +1047,7 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
           coordinate_squared_norm = mid_squared_norm;
         }
       }
+      trust_region_shift = bisection_upper_shift;
       solved_subproblem = true;
     }
   }
@@ -1085,6 +1098,10 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
       step_metric_norm >= (1.0 - 1.0e-8) * trust_radius;
   result.encountered_negative_curvature =
       minimum_eigenvalue <= -kShiftToleranceFactor * spectral_scale;
+  result.projected_model_gradient_norm =
+      krylov_subspace.projected_gradient.norm();
+  result.model_spectral_radius = eigenvalues.cwiseAbs().maxCoeff();
+  result.trust_region_shift = trust_region_shift;
   result.predicted_decrease = predicted_decrease;
   return result;
 }
@@ -1105,41 +1122,90 @@ Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
       trust_radius);
 }
 
-AcceptedTruncatedNewtonStepControl
-assess_accepted_nonredundant_truncated_newton_step(
+double update_nonredundant_truncated_newton_trust_radius(
     double trust_radius,
     double minimum_step_size,
-    double max_trust_radius,
-    double reject_shrink,
-    double expand_ratio,
-    double boundary_fraction,
-    double trust_ratio,
-    const TruncatedNewtonStepResult& accepted_step) {
-  AcceptedTruncatedNewtonStepControl control;
-  const bool used_krylov_rescue_step =
-      accepted_step.used_krylov_rescue;
-
-  if (used_krylov_rescue_step) {
-    // A Krylov rescue step means the raw PCG model was numerically unreliable
-    // at the current radius. Keep the rescued step, but preserve the regularized
-    // trust-region behavior by contracting the next solve radius.
-    control.trust_radius =
-        std::max(minimum_step_size, reject_shrink * trust_radius);
-  } else if (trust_ratio < 0.25) {
-    control.trust_radius =
-        std::max(minimum_step_size, reject_shrink * trust_radius);
-  } else if (
-      trust_ratio > expand_ratio &&
-      (accepted_step.reached_boundary ||
-       truncated_newton_step_effective_norm(accepted_step) >=
-           boundary_fraction * trust_radius)) {
-    control.trust_radius =
-        std::min(max_trust_radius, 2.0 * trust_radius);
-  } else {
-    control.trust_radius = trust_radius;
+    const TruncatedNewtonTrialEvaluation& trial,
+    const TruncatedNewtonStepResult& model_step,
+    bool accepted) {
+  const double step_norm = truncated_newton_step_effective_norm(model_step);
+  const auto geometric_fallback = [&]() {
+    if (accepted && step_norm > 0.0 && std::isfinite(step_norm)) {
+      return std::max(minimum_step_size, step_norm);
+    }
+    return std::max(
+        minimum_step_size,
+        std::sqrt(minimum_step_size * trust_radius));
+  };
+  if (!(trust_radius > 0.0) || !std::isfinite(trust_radius) ||
+      !(step_norm > 0.0) || !std::isfinite(step_norm) ||
+      !(trial.predicted_decrease > 0.0) ||
+      !std::isfinite(trial.predicted_decrease) ||
+      !std::isfinite(trial.actual_decrease)) {
+    return geometric_fallback();
   }
 
-  return control;
+  if (!accepted) {
+    // Estimate how much of the trial scale remains trustworthy from the
+    // observed Taylor-model remainder.  This continuously contracts more for
+    // worse disagreement instead of applying a fixed rejection multiplier.
+    const double model_error =
+        std::abs(trial.actual_decrease - trial.predicted_decrease);
+    const double retained_model_fraction =
+        trial.predicted_decrease /
+        (trial.predicted_decrease + model_error);
+    const double candidate_radius = step_norm * retained_model_fraction;
+    return std::max(
+        minimum_step_size,
+        std::min(trust_radius, candidate_radius));
+  }
+
+  if (model_step.used_krylov_rescue) {
+    return std::max(minimum_step_size, step_norm);
+  }
+
+  // An interior minimizer contains no evidence that the current radius is
+  // restrictive.  Preserve it; repeatedly rescaling an interior radius by
+  // rho would turn otherwise valid Newton convergence into tiny first-order
+  // steps whenever the nonlinear retraction makes rho slightly smaller than
+  // one.
+  if (!model_step.reached_boundary) {
+    return std::max(minimum_step_size, trust_radius);
+  }
+
+  // The Ritz spectrum supplies a Cauchy-like length scale for the local
+  // quadratic model.  On a boundary step, extrapolate only as far as both the
+  // observed model agreement and that curvature length support.
+  const double effective_curvature =
+      model_step.model_spectral_radius + model_step.trust_region_shift;
+  const double curvature_floor =
+      std::numeric_limits<double>::epsilon() *
+      model_step.model_spectral_radius;
+  double spectral_radius = step_norm;
+  if (model_step.projected_model_gradient_norm > 0.0 &&
+      std::isfinite(model_step.projected_model_gradient_norm) &&
+      effective_curvature > 0.0 &&
+      std::isfinite(effective_curvature)) {
+    spectral_radius =
+        model_step.projected_model_gradient_norm /
+        std::max(curvature_floor, effective_curvature);
+  }
+  const double trust_ratio = trial.actual_decrease / trial.predicted_decrease;
+  const double overprediction_fraction = std::max(0.0, 1.0 - trust_ratio);
+  const double agreement_denominator =
+      std::max(
+          std::sqrt(std::numeric_limits<double>::epsilon()),
+          overprediction_fraction);
+  const double agreement_radius = step_norm / agreement_denominator;
+  const double curvature_radius = step_norm + spectral_radius;
+  const double candidate_radius =
+      std::max(
+          step_norm,
+          std::min(agreement_radius, curvature_radius));
+  if (!(candidate_radius > 0.0) || !std::isfinite(candidate_radius)) {
+    return geometric_fallback();
+  }
+  return std::max(minimum_step_size, candidate_radius);
 }
 
 double estimate_nonredundant_reduced_model_decrease(
@@ -2442,23 +2508,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
             std::max(
                 0,
                 options_.nonredundant_truncated_newton_transport_history_size));
-        // The trust-region subproblem still lives in reduced block-local
-        // nonredundant coordinates even though accepted trial points are
-        // lifted back to sparse coefficients. In that reduced chart,
-        // amplitudes much larger than O(1) no longer define meaningful local
-        // trust regions, so clamp the initial and maximum radii to a
-        // chart-scale value instead of the much looser raw-parameter default.
-        const double chart_scale_initial_step =
-            std::max(
-                options_.minimum_step_size,
-                std::min(1.0, options_.initial_step_size));
-        double trust_radius = chart_scale_initial_step;
-        const double max_trust_radius =
-            std::max(trust_radius, 8.0 * chart_scale_initial_step);
-        constexpr double kAcceptRatio = 0.1;
-        constexpr double kRejectShrink = 0.25;
-        constexpr double kExpandRatio = 0.75;
-        constexpr double kBoundaryFraction = 0.8;
+        double trust_radius =
+            std::max(options_.minimum_step_size, options_.initial_step_size);
         int rejected_trial_step_count_for_current_point = 0;
         RejectedTruncatedNewtonStepCache rejected_step_cache;
         TruncatedNewtonKrylovSubspace cached_krylov_subspace;
@@ -2564,8 +2615,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   OrbitalObjective::TrialEvaluation* accepted_trial_evaluation,
                   Eigen::VectorXd* accepted_trial_parameters,
                   Eigen::VectorXd* accepted_trial_gradient,
-                  double* accepted_trial_energy,
-                  double* accepted_trust_ratio) -> bool {
+                  double* accepted_trial_energy) -> bool {
                 if (trial_evaluation != nullptr) {
                   *trial_evaluation = TruncatedNewtonTrialEvaluation();
                 }
@@ -2620,6 +2670,10 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     effective_predicted_decrease <= 0.0) {
                   return false;
                 }
+                if (trial_evaluation != nullptr) {
+                  trial_evaluation->predicted_decrease =
+                      effective_predicted_decrease;
+                }
 
                 if (screen_with_energy_only) {
                   const double candidate_trial_energy =
@@ -2631,12 +2685,10 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                       actual_decrease / effective_predicted_decrease;
                   if (trial_evaluation != nullptr) {
                     trial_evaluation->actual_decrease = actual_decrease;
-                    trial_evaluation->trust_ratio = candidate_trust_ratio;
                   }
                   if (!std::isfinite(candidate_trial_energy) ||
                       !std::isfinite(candidate_trust_ratio) ||
-                      actual_decrease <= 0.0 ||
-                      candidate_trust_ratio < kAcceptRatio) {
+                      actual_decrease <= 0.0) {
                     return false;
                   }
                 }
@@ -2651,12 +2703,10 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     actual_decrease / effective_predicted_decrease;
                 if (trial_evaluation != nullptr) {
                   trial_evaluation->actual_decrease = actual_decrease;
-                  trial_evaluation->trust_ratio = candidate_trust_ratio;
                 }
                 if (!std::isfinite(candidate_trial_energy) ||
                     !std::isfinite(candidate_trust_ratio) ||
-                    actual_decrease <= 0.0 ||
-                    candidate_trust_ratio < kAcceptRatio) {
+                    actual_decrease <= 0.0) {
                   return false;
                 }
 
@@ -2667,7 +2717,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 *accepted_trial_gradient =
                     std::move(accepted_trial_evaluation->gradient);
                 *accepted_trial_energy = candidate_trial_energy;
-                *accepted_trust_ratio = candidate_trust_ratio;
                 return true;
               };
           auto try_nonredundant_descent_fallback_step =
@@ -2857,7 +2906,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           Eigen::VectorXd trial_parameters(current_parameters.size());
           Eigen::VectorXd trial_gradient(current_gradient.size());
           double trial_energy = energy;
-          double trust_ratio = 0.0;
           const bool screen_rejected_trials_with_energy_only =
               rejected_trial_step_count_for_current_point > 0 &&
               admit_energy_only_trial_screen();
@@ -2871,8 +2919,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   &accepted_trial_evaluation,
                   &trial_parameters,
                   &trial_gradient,
-                  &trial_energy,
-                  &trust_ratio);
+                  &trial_energy);
           if (!accepted_trial &&
               rejected_trial_step_count_for_current_point == 0 &&
               reduced_gradient_inf_norm >=
@@ -2885,7 +2932,11 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     &trial_gradient,
                     &trial_energy)) {
               accepted_trial = true;
-              trust_ratio = kAcceptRatio;
+              const double fallback_actual_decrease = energy - trial_energy;
+              trial_evaluation_cache.actual_decrease =
+                  fallback_actual_decrease;
+              trial_evaluation_cache.predicted_decrease =
+                  fallback_actual_decrease;
               truncated_newton_step.used_krylov_rescue = true;
               truncated_newton_step.reached_boundary = false;
               truncated_newton_step.encountered_negative_curvature = false;
@@ -2899,7 +2950,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           }
           if (!accepted_trial) {
             ++rejected_trial_step_count_for_current_point;
-            trust_radius *= kRejectShrink;
+            trust_radius =
+                update_nonredundant_truncated_newton_trust_radius(
+                    trust_radius,
+                    options_.minimum_step_size,
+                    trial_evaluation_cache,
+                    trial_step_for_current_trial,
+                    false);
             if (trust_radius <= options_.minimum_step_size) {
               result.termination_reason =
                   "nonredundant_truncated_newton_trust_radius_exhausted";
@@ -2947,16 +3004,13 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               gradient_infinity_norm(next_projection.reduced_gradient);
           final_projected_gradient_l2_norm =
               next_projection.reduced_gradient.norm();
-          const AcceptedTruncatedNewtonStepControl accepted_step_control =
-              assess_accepted_nonredundant_truncated_newton_step(
+          trust_radius =
+              update_nonredundant_truncated_newton_trust_radius(
                   trust_radius,
                   options_.minimum_step_size,
-                  max_trust_radius,
-                  kRejectShrink,
-                  kExpandRatio,
-                  kBoundaryFraction,
-                  trust_ratio,
-                  truncated_newton_step);
+                  trial_evaluation_cache,
+                  truncated_newton_step,
+                  true);
           if (nonredundant_rank_changed) {
             packed_secant_history.clear();
           }
@@ -2970,7 +3024,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 transport_history_size,
                 &packed_secant_history);
           }
-          trust_radius = accepted_step_control.trust_radius;
           if (std::abs(de) < options_.energy_tolerance &&
               gradient_infinity_norm(next_projection.reduced_gradient) <
                   options_.gradient_tolerance) {

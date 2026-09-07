@@ -386,6 +386,9 @@ void print_exact_ctx_policy_summary(
       "Inexact Newton forcing",
       "adaptive sqrt(projected gradient inf-norm)");
   print_log_field(
+      "Trust-radius update",
+      "Ritz spectrum + observed model remainder");
+  print_log_field(
       "Krylov safety limit",
       options.nonredundant_truncated_newton_max_cg_iterations > 0
           ? std::to_string(
