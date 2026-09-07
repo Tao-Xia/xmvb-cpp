@@ -11,6 +11,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <Eigen/Cholesky>
@@ -3350,57 +3351,8 @@ struct DirectionalSpinPairEntry {
   OppositeSpinPackedPairProjection delta_first_order_projection;
 };
 
-struct DirectionalSpinPairTile {
-  int row_tile = 0;
-  int column_tile = 0;
-  int row_begin = 0;
-  int row_end = 0;
-  int column_begin = 0;
-  int column_end = 0;
-  std::uint64_t last_access_stamp = 0;
-  std::vector<DirectionalSpinPairEntry> entries;
-
-  const DirectionalSpinPairEntry& entry(
-      int global_row,
-      int global_column) const {
-    const int local_row = global_row - row_begin;
-    const int local_column = global_column - column_begin;
-    return entries[(local_column) * (row_end - row_begin) + (local_row)];
-  }
-};
-
 std::size_t square_storage_size_local(int dimension) {
   return dimension * dimension;
-}
-
-int count_distinct_touched_tiles_local(
-    const std::vector<int>& indices,
-    int tile_size) {
-  if (tile_size <= 0) {
-    throw std::invalid_argument("tile_size must be positive");
-  }
-  if (indices.empty()) {
-    return 0;
-  }
-
-  int distinct_tile_count = 0;
-  int previous_tile = std::numeric_limits<int>::min();
-  for (const int index : indices) {
-    const int tile_index = index / tile_size;
-    if (tile_index != previous_tile) {
-      ++distinct_tile_count;
-      previous_tile = tile_index;
-    }
-  }
-  return distinct_tile_count;
-}
-
-int directional_structure_matrix_tile_size() {
-  return 256;
-}
-
-int directional_structure_matrix_tile_cache_tiles() {
-  return 4;
 }
 
 void reset_local_projection_block_local(
@@ -4145,9 +4097,14 @@ DirectionalSpinPairEntry build_directional_spin_pair_entry_local(
   return result;
 }
 
-class DirectionalSpinPairTileProvider {
+// One directional structure build visits a sparse, support-induced subset of
+// the accepted determinant-pair table. Memoize exactly that subset for the
+// lifetime of the build: no fixed tile shape, eviction budget, or recomputation
+// policy is needed, and untouched determinant pairs consume no directional
+// storage.
+class DirectionalSpinPairMemo {
 public:
-  DirectionalSpinPairTileProvider(
+  DirectionalSpinPairMemo(
       const std::vector<std::vector<int>>& unique_spin_determinants,
       const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
       const ActiveSpaceOneElectronResult& active_space_one_electron_result,
@@ -4155,9 +4112,7 @@ public:
       int n_active_orbitals,
       const std::vector<double>& delta_ao_overlap_matrix,
       const std::vector<double>& delta_active_one_electron_matrix,
-      const std::vector<double>& delta_packed_active_two_electron_integrals,
-      int tile_size,
-      int max_cached_tiles)
+      const std::vector<double>& delta_packed_active_two_electron_integrals)
       : unique_spin_determinants_(unique_spin_determinants),
         ordered_pair_cache_(ordered_pair_cache),
         active_space_one_electron_result_(active_space_one_electron_result),
@@ -4166,20 +4121,13 @@ public:
         delta_ao_overlap_matrix_(delta_ao_overlap_matrix),
         delta_active_one_electron_matrix_(delta_active_one_electron_matrix),
         delta_packed_active_two_electron_integrals_(
-            delta_packed_active_two_electron_integrals),
-        tile_size_(tile_size),
-        max_cached_tiles_(max_cached_tiles) {
-    if (tile_size_ <= 0 || max_cached_tiles_ <= 0) {
-      throw std::invalid_argument(
-          "directional spin tile provider requires positive cache settings");
-    }
+            delta_packed_active_two_electron_integrals) {
     const std::size_t expected_cache_entries =
         square_storage_size_local(static_cast<int>(unique_spin_determinants_.size()));
     if (ordered_pair_cache_.size() != expected_cache_entries) {
       throw std::invalid_argument(
           "ordered same-spin pair cache size does not match unique determinant count");
     }
-    cached_tiles_.reserve(max_cached_tiles_);
   }
 
   const SpinDeterminantPairEvaluation& pair_evaluation(
@@ -4204,96 +4152,33 @@ public:
         left_unique_index >= static_cast<int>(unique_spin_determinants_.size()) ||
         right_unique_index < 0 ||
         right_unique_index >= static_cast<int>(unique_spin_determinants_.size())) {
-      throw std::out_of_range("directional spin tile lookup index out of range");
+      throw std::out_of_range("directional spin pair lookup index out of range");
     }
 
-    const int row_tile = left_unique_index / tile_size_;
-    const int column_tile = right_unique_index / tile_size_;
-    DirectionalSpinPairTile* tile = find_or_build_tile(row_tile, column_tile);
-    tile->last_access_stamp = ++access_stamp_;
-    return tile->entry(left_unique_index, right_unique_index);
-  }
-
-  bool can_borrow_directional_projections_for_block(
-      const std::vector<int>& row_indices,
-      const std::vector<int>& column_indices) const {
-    const std::size_t required_tiles =
-        count_distinct_touched_tiles_local(
-            row_indices,
-            tile_size_) *
-        count_distinct_touched_tiles_local(
-            column_indices,
-            tile_size_);
-    return required_tiles <= max_cached_tiles_;
+    const std::size_t pair_index = ordered_spin_pair_storage_index(
+        left_unique_index,
+        right_unique_index,
+        static_cast<int>(unique_spin_determinants_.size()));
+    const auto cached = cached_entries_.find(pair_index);
+    if (cached != cached_entries_.end()) {
+      return cached->second;
+    }
+    auto inserted = cached_entries_.emplace(
+        pair_index,
+        build_directional_spin_pair_entry_local(
+            unique_spin_determinants_[left_unique_index],
+            unique_spin_determinants_[right_unique_index],
+            active_space_one_electron_result_,
+            active_space_two_electron_result_,
+            ordered_pair_cache_[pair_index],
+            n_active_orbitals_,
+            delta_ao_overlap_matrix_,
+            delta_active_one_electron_matrix_,
+            delta_packed_active_two_electron_integrals_));
+    return inserted.first->second;
   }
 
 private:
-  DirectionalSpinPairTile* find_or_build_tile(
-      int row_tile,
-      int column_tile) {
-    for (auto& tile : cached_tiles_) {
-      if (tile.row_tile == row_tile && tile.column_tile == column_tile) {
-        return &tile;
-      }
-    }
-
-    const int row_begin = row_tile * tile_size_;
-    const int column_begin = column_tile * tile_size_;
-    const int row_end = std::min(
-        row_begin + tile_size_,
-        static_cast<int>(unique_spin_determinants_.size()));
-    const int column_end = std::min(
-        column_begin + tile_size_,
-        static_cast<int>(unique_spin_determinants_.size()));
-
-    DirectionalSpinPairTile built_tile;
-    built_tile.row_tile = row_tile;
-    built_tile.column_tile = column_tile;
-    built_tile.row_begin = row_begin;
-    built_tile.row_end = row_end;
-    built_tile.column_begin = column_begin;
-    built_tile.column_end = column_end;
-    built_tile.last_access_stamp = ++access_stamp_;
-    built_tile.entries.resize(
-        (row_end - row_begin) * (column_end - column_begin));
-
-    for (int column_index = column_begin;
-         column_index < column_end;
-         ++column_index) {
-      for (int row_index = row_begin;
-           row_index < row_end;
-           ++row_index) {
-        built_tile.entries[(column_index - column_begin) * (row_end - row_begin) + (row_index - row_begin)] =
-            build_directional_spin_pair_entry_local(
-                unique_spin_determinants_[row_index],
-                unique_spin_determinants_[column_index],
-                active_space_one_electron_result_,
-                active_space_two_electron_result_,
-                pair_evaluation(row_index, column_index),
-                n_active_orbitals_,
-                delta_ao_overlap_matrix_,
-                delta_active_one_electron_matrix_,
-                delta_packed_active_two_electron_integrals_);
-      }
-    }
-
-    if (static_cast<int>(cached_tiles_.size()) == max_cached_tiles_) {
-      auto victim_iterator = cached_tiles_.begin();
-      for (auto iterator = cached_tiles_.begin();
-           iterator != cached_tiles_.end();
-           ++iterator) {
-        if (iterator->last_access_stamp < victim_iterator->last_access_stamp) {
-          victim_iterator = iterator;
-        }
-      }
-      *victim_iterator = std::move(built_tile);
-      return &(*victim_iterator);
-    }
-
-    cached_tiles_.push_back(std::move(built_tile));
-    return &cached_tiles_.back();
-  }
-
   const std::vector<std::vector<int>>& unique_spin_determinants_;
   const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache_;
   const ActiveSpaceOneElectronResult& active_space_one_electron_result_;
@@ -4302,14 +4187,11 @@ private:
   const std::vector<double>& delta_ao_overlap_matrix_;
   const std::vector<double>& delta_active_one_electron_matrix_;
   const std::vector<double>& delta_packed_active_two_electron_integrals_;
-  int tile_size_ = 0;
-  int max_cached_tiles_ = 0;
-  std::uint64_t access_stamp_ = 0;
-  std::vector<DirectionalSpinPairTile> cached_tiles_;
+  std::unordered_map<std::size_t, DirectionalSpinPairEntry> cached_entries_;
 };
 
 void gather_directional_spin_block_local(
-    DirectionalSpinPairTileProvider* tile_provider,
+    DirectionalSpinPairMemo* pair_memo,
     const std::vector<int>& row_indices,
     const std::vector<int>& column_indices,
     Eigen::MatrixXd* overlap_block,
@@ -4349,14 +4231,11 @@ void gather_directional_spin_block_local(
   if (gather_directional_channels) {
     directional_channel_builder->reset(directional_channel_family);
   }
-  // Borrowing directional tile payloads is safe only when the whole block fits
-  // inside the provider's tile cache. Otherwise later tile builds could evict
-  // an earlier tile before the local contraction consumes its projection.
+  // Node references in the memo remain stable across unordered-map rehashes,
+  // so local projection blocks can borrow entries without copying their sparse
+  // packed-pair payloads.
   const bool can_borrow_directional_projections =
-      directional_projection_block != nullptr &&
-      tile_provider->can_borrow_directional_projections_for_block(
-          row_indices,
-          column_indices);
+      directional_projection_block != nullptr;
 
   for (int column_local = 0;
        column_local < static_cast<int>(column_indices.size());
@@ -4367,9 +4246,9 @@ void gather_directional_spin_block_local(
          ++row_local) {
       const int row_global = row_indices[row_local];
       const auto& pair_evaluation =
-          tile_provider->pair_evaluation(row_global, column_global);
+          pair_memo->pair_evaluation(row_global, column_global);
       const auto& directional_entry =
-          tile_provider->entry(row_global, column_global);
+          pair_memo->entry(row_global, column_global);
       (*overlap_block)(row_local, column_local) =
           pair_evaluation.overlap_result.overlap_determinant;
       (*total_block)(row_local, column_local) =
@@ -4455,8 +4334,6 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
       same_spin_pair_cache.shares_same_spin_pair_cache_between_spins();
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  const int tile_size = directional_structure_matrix_tile_size();
-  const int max_cached_tiles = directional_structure_matrix_tile_cache_tiles();
   const int n_packed_active_pairs =
       packed_active_pair_count(n_active_orbitals);
   const auto& accepted_prepared_active_space =
@@ -4491,7 +4368,7 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
-    DirectionalSpinPairTileProvider thread_alpha_provider(
+    DirectionalSpinPairMemo thread_alpha_provider(
         same_spin_pair_cache.alpha_reuse_table.unique_determinants,
         same_spin_pair_cache.alpha_pair_cache_ref(),
         accepted_prepared_active_space.active_space_one_electron_result,
@@ -4499,10 +4376,8 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
         n_active_orbitals,
         delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals,
-        tile_size,
-        max_cached_tiles);
-    DirectionalSpinPairTileProvider thread_beta_provider(
+        delta_packed_active_two_electron_integrals);
+    DirectionalSpinPairMemo thread_beta_provider(
         same_spin_pair_cache.beta_reuse_table.unique_determinants,
         same_spin_pair_cache.beta_pair_cache_ref(),
         accepted_prepared_active_space.active_space_one_electron_result,
@@ -4510,9 +4385,7 @@ StructureAccumulationResult build_tiled_directional_structure_matrices(
         n_active_orbitals,
         delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals,
-        tile_size,
-        max_cached_tiles);
+        delta_packed_active_two_electron_integrals);
     Eigen::MatrixXd alpha_overlap_subblock;
     Eigen::MatrixXd alpha_total_subblock;
     Eigen::MatrixXd alpha_delta_overlap_subblock;
@@ -5624,8 +5497,6 @@ build_selected_state_projected_directional_structure_matrices(
       same_spin_pair_cache.shares_same_spin_pair_cache_between_spins();
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  const int tile_size = directional_structure_matrix_tile_size();
-  const int max_cached_tiles = directional_structure_matrix_tile_cache_tiles();
   const int n_packed_active_pairs =
       packed_active_pair_count(n_active_orbitals);
   const auto& accepted_prepared_active_space =
@@ -5662,7 +5533,7 @@ build_selected_state_projected_directional_structure_matrices(
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
-    DirectionalSpinPairTileProvider thread_alpha_provider(
+    DirectionalSpinPairMemo thread_alpha_provider(
         same_spin_pair_cache.alpha_reuse_table.unique_determinants,
         same_spin_pair_cache.alpha_pair_cache_ref(),
         accepted_prepared_active_space.active_space_one_electron_result,
@@ -5670,10 +5541,8 @@ build_selected_state_projected_directional_structure_matrices(
         n_active_orbitals,
         delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals,
-        tile_size,
-        max_cached_tiles);
-    DirectionalSpinPairTileProvider thread_beta_provider(
+        delta_packed_active_two_electron_integrals);
+    DirectionalSpinPairMemo thread_beta_provider(
         same_spin_pair_cache.beta_reuse_table.unique_determinants,
         same_spin_pair_cache.beta_pair_cache_ref(),
         accepted_prepared_active_space.active_space_one_electron_result,
@@ -5681,9 +5550,7 @@ build_selected_state_projected_directional_structure_matrices(
         n_active_orbitals,
         delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals,
-        tile_size,
-        max_cached_tiles);
+        delta_packed_active_two_electron_integrals);
     Eigen::MatrixXd alpha_overlap_subblock;
     Eigen::MatrixXd alpha_total_subblock;
     Eigen::MatrixXd alpha_delta_overlap_subblock;
