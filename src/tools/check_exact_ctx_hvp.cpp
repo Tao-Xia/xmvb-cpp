@@ -1980,6 +1980,35 @@ int main(int argc, char** argv) {
         exact_operator.apply_reduced(reduced_direction);
     const Eigen::VectorXd analytic_full_response_cached =
         exact_operator.apply_reduced(reduced_direction);
+    Eigen::VectorXd independent_reduced_direction =
+        Eigen::VectorXd::Zero(reduced_direction.size());
+    independent_reduced_direction[0] = 1.0;
+    independent_reduced_direction.noalias() -=
+        reduced_direction.dot(independent_reduced_direction) *
+        reduced_direction;
+    if (!(independent_reduced_direction.norm() >
+          std::sqrt(std::numeric_limits<double>::epsilon()))) {
+      independent_reduced_direction.setZero();
+      independent_reduced_direction[
+          std::min<Eigen::Index>(1, reduced_direction.size() - 1)] = 1.0;
+    }
+    independent_reduced_direction.normalize();
+    Eigen::MatrixXd reduced_direction_block(reduced_direction.size(), 2);
+    reduced_direction_block.col(0) = reduced_direction;
+    reduced_direction_block.col(1) = independent_reduced_direction;
+    const Eigen::MatrixXd analytic_full_response_block =
+        exact_operator.apply_reduced_batch(reduced_direction_block);
+    Eigen::MatrixXd analytic_full_response_block_reference(
+        reduced_direction.size(),
+        2);
+    analytic_full_response_block_reference.col(0) = analytic_full_response_cached;
+    analytic_full_response_block_reference.col(1) =
+        exact_operator.apply_reduced(independent_reduced_direction);
+    const double batch_max_abs_diff =
+        max_abs_value(
+            Eigen::MatrixXd(
+                analytic_full_response_block -
+                analytic_full_response_block_reference));
     const Eigen::VectorXd analytic_outer_only_response =
         exact_operator.apply_reduced(reduced_direction, {.direct_core_response = false, .fixed_upstream_pullback = false, .outer_response = true});
     const Eigen::VectorXd analytic_outer_only_response_cached =
@@ -2825,6 +2854,7 @@ int main(int argc, char** argv) {
       std::cout << "fixed_max_rel_diff = " << fixed_max_rel_diff_v << '\n';
       std::cout << "full_max_abs_diff = " << full_max_abs_diff_v << '\n';
       std::cout << "full_max_rel_diff = " << full_max_rel_diff_v << '\n';
+      std::cout << "batch_max_abs_diff = " << batch_max_abs_diff << '\n';
       std::cout << "accepted_sparse_orbital_norm_max_abs_diff = "
                 << accepted_sparse_orbital_norm_max_abs_diff << '\n';
       std::cout << "retract_input_direction_max_abs_diff = "
@@ -2836,6 +2866,13 @@ int main(int argc, char** argv) {
             "HVP relative error exceeds --max-rel-error: " +
             std::to_string(max_rel_diff) + " > " +
             std::to_string(options.max_relative_error));
+      }
+      const double batch_tolerance =
+          64.0 * std::numeric_limits<double>::epsilon() *
+          std::max(1.0, max_abs_value(analytic_full_response_block_reference));
+      if (batch_max_abs_diff > batch_tolerance) {
+        throw std::runtime_error(
+            "block HVP does not match scalar HVP applications");
       }
     }
     // --- End minimal FD verification output ---

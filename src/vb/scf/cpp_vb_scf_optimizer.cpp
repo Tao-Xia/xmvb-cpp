@@ -482,6 +482,18 @@ class ReducedHvpOperator {
 public:
   virtual ~ReducedHvpOperator() = default;
   virtual Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) = 0;
+  virtual Eigen::MatrixXd apply_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) {
+    Eigen::MatrixXd responses(
+        reduced_directions.rows(),
+        reduced_directions.cols());
+    for (Eigen::Index column = 0;
+         column < reduced_directions.cols();
+         ++column) {
+      responses.col(column) = apply(reduced_directions.col(column));
+    }
+    return responses;
+  }
 };
 
 class FullFiniteDifferenceReducedHvpOperator final : public ReducedHvpOperator {
@@ -563,6 +575,11 @@ public:
 
   Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) override {
     return exact_operator_.apply_reduced(reduced_direction);
+  }
+
+  Eigen::MatrixXd apply_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) override {
+    return exact_operator_.apply_reduced_batch(reduced_directions);
   }
 
   bool supports_analytic_core_model() const noexcept {

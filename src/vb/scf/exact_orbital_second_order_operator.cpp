@@ -7624,6 +7624,25 @@ ExactOrbitalSecondOrderOperator::ExactOrbitalSecondOrderOperator(
 
 ExactOrbitalSecondOrderOperator::~ExactOrbitalSecondOrderOperator() = default;
 
+Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
+    const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
+    HvpComponents components) const {
+  Eigen::MatrixXd responses(
+      reduced_directions.rows(),
+      reduced_directions.cols());
+  // The scalar kernel currently owns shared mutable workspaces.  Keep this
+  // first block implementation serial and exact; subsequent fusion moves the
+  // direction index inside the expensive contractions without changing the
+  // public optimizer interface or its numerical semantics.
+  for (Eigen::Index column = 0;
+       column < reduced_directions.cols();
+       ++column) {
+    responses.col(column) =
+        apply_reduced(reduced_directions.col(column), components);
+  }
+  return responses;
+}
+
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components) const {

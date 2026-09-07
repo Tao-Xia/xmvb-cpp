@@ -99,6 +99,17 @@ public:
       const Eigen::VectorXd& reduced_direction,
       HvpComponents components = {}) const;
 
+  /**
+   * @brief Applies the matrix-free operator to a block of directions.
+   *
+   * Columns are independent reduced-space directions.  This interface is the
+   * semantic foundation for fused block contractions; it never materializes
+   * the reduced Hessian.
+   */
+  Eigen::MatrixXd apply_reduced_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
+      HvpComponents components = {}) const;
+
   bool supports_analytic_core_model() const noexcept;
 
   Diagnostics diagnostics() const;
