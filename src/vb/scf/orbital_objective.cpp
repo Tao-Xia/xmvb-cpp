@@ -932,30 +932,6 @@ Eigen::MatrixXd build_metric_preserving_oeo_repaired_normalized_orbital_matrix(
   return repaired_normalized_orbital_matrix;
 }
 
-bool oeo_active_representative_accepted_point_canonicalization_enabled() {
-  const auto enable_override =
-      parse_env_optional_flag(
-          "XMVB_CPP_ENABLE_OEO_ACTIVE_REPRESENTATIVE_CANONICALIZATION");
-  if (enable_override.has_value()) {
-    return *enable_override;
-  }
-  const auto disable_override =
-      parse_env_optional_flag(
-          "XMVB_CPP_DISABLE_OEO_ACTIVE_REPRESENTATIVE_CANONICALIZATION");
-  if (disable_override.has_value()) {
-    return !*disable_override;
-  }
-  // The OEO representative choice is a gauge/output convention. Applying that
-  // reset at every accepted optimization point perturbs the common OEO chart,
-  // transported secant pairs, and exact_ctx/TiCl convergence. Keep the
-  // accepted-point reset off by default and reserve it for targeted debugging.
-  return false;
-}
-
-// ===========================================================================
-// OrbitalObjective method bodies.
-// ===========================================================================
-
 OrbitalObjective::OrbitalObjective(
     const CppVbInput& input,
     SparseOrbitalParameterView parameter_view,
@@ -982,22 +958,6 @@ double OrbitalObjective::operator()(
   const double energy = evaluation.energy;
   commit_trial_evaluation(std::move(evaluation));
   return energy;
-}
-
-void OrbitalObjective::set_oeo_active_reference_orbitals(
-    const Eigen::Ref<const Eigen::MatrixXd>& normalized_orbital_matrix) {
-  if (normalized_orbital_matrix.size() == 0) {
-    initial_oeo_reference_orbital_matrix_ = Eigen::MatrixXd();
-    return;
-  }
-  if (normalized_orbital_matrix.rows() !=
-          working_input_.orbital_preparation_input.n_basis_functions ||
-      normalized_orbital_matrix.cols() !=
-          working_input_.orbital_preparation_input.n_orbitals) {
-    throw std::invalid_argument(
-        "initial OEO reference orbital matrix dimensions do not match the optimizer chart");
-  }
-  initial_oeo_reference_orbital_matrix_ = normalized_orbital_matrix;
 }
 
 void OrbitalObjective::ensure_last_reference_energy_gradient() {
@@ -1131,11 +1091,6 @@ bool OrbitalObjective::canonicalize_orbital_chart_at_current_point(
     chart_changed = true;
   }
 
-  if (canonicalize_oeo_active_representative_at_current_point(
-          packed_secant_history)) {
-    chart_changed = true;
-  }
-
   if (!chart_changed) {
     return false;
   }
@@ -1171,163 +1126,7 @@ OrbitalObjective OrbitalObjective::make_probe_copy() const {
       scf_evaluator_);
   copy.probe_input_buffer_.orbital_preparation_input =
       working_input_.orbital_preparation_input;
-  copy.initial_oeo_reference_orbital_matrix_ =
-      initial_oeo_reference_orbital_matrix_;
   return copy;
-}
-
-bool OrbitalObjective::canonicalize_oeo_active_representative_at_current_point(
-    std::vector<PackedSecantPair>* packed_secant_history) {
-  // This accepted-point chart repair keeps the OEO auxiliary active block
-  // fixed while refreshing the inactive-null representative of the physical
-  // active orbitals. That representative choice is handled as an export gauge
-  // by default; enabling the accepted-point reset here restores the older
-  // behavior for targeted debugging.
-  if (!oeo_active_representative_accepted_point_canonicalization_enabled()) {
-    return false;
-  }
-  const auto& orbital_preparation_input =
-      working_input_.orbital_preparation_input;
-  if (orbital_preparation_input.orbital_type != kLegacyOrbitalTypeOeo) {
-    return false;
-  }
-  if (initial_oeo_reference_orbital_matrix_.size() == 0) {
-    return false;
-  }
-
-  const int n_basis_functions =
-      orbital_preparation_input.n_basis_functions;
-  const int n_inactive_doubly_occupied_orbitals =
-      (orbital_preparation_input.n_total_electrons -
-       orbital_preparation_input.n_active_electrons) / 2;
-  const int n_active_orbitals =
-      orbital_preparation_input.n_active_orbitals;
-  if (n_inactive_doubly_occupied_orbitals <= 0 || n_active_orbitals <= 0) {
-    return false;
-  }
-  if (initial_oeo_reference_orbital_matrix_.rows() != n_basis_functions ||
-      initial_oeo_reference_orbital_matrix_.cols() !=
-          orbital_preparation_input.n_orbitals) {
-    throw std::runtime_error(
-        "stored OEO active reference does not match the current orbital chart");
-  }
-
-  auto& orbital_result = last_gradient_result_.orbital_preparation_result;
-  const auto& physical_orbital_frame =
-      orbital_result.physical_orbital_frame;
-  if (physical_orbital_frame.normalized_orbital_matrix.rows() !=
-          n_basis_functions ||
-      physical_orbital_frame.normalized_orbital_matrix.cols() !=
-          orbital_preparation_input.n_orbitals ||
-      physical_orbital_frame.inactive_physical_orbital_matrix.rows() !=
-          n_basis_functions ||
-      physical_orbital_frame.inactive_physical_orbital_matrix.cols() !=
-          n_inactive_doubly_occupied_orbitals ||
-      physical_orbital_frame.active_physical_orbital_matrix.rows() !=
-          n_basis_functions ||
-      physical_orbital_frame.active_physical_orbital_matrix.cols() !=
-          n_active_orbitals ||
-      orbital_result.auxiliary_orbital_matrix.rows() != n_basis_functions ||
-      orbital_result.auxiliary_orbital_matrix.cols() <
-          n_inactive_doubly_occupied_orbitals + n_active_orbitals) {
-    throw std::runtime_error(
-        "cached OEO orbital preparation result is incomplete at the accepted point");
-  }
-
-  const Eigen::MatrixXd repaired_normalized_orbital_matrix =
-      build_metric_preserving_oeo_repaired_normalized_orbital_matrix(
-          orbital_preparation_input,
-          orbital_result,
-          initial_oeo_reference_orbital_matrix_);
-  const Eigen::MatrixXd repaired_active_physical_orbitals =
-      repaired_normalized_orbital_matrix.middleCols(
-          n_inactive_doubly_occupied_orbitals,
-          n_active_orbitals);
-  const Eigen::Map<const Eigen::MatrixXd> basis_overlap_matrix(
-      orbital_preparation_input.ao_overlap_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
-
-  constexpr double kRepresentativeChartTolerance = 1.0e-12;
-  const double representative_change =
-      (repaired_active_physical_orbitals -
-       physical_orbital_frame.active_physical_orbital_matrix)
-          .cwiseAbs()
-          .maxCoeff();
-  if (!(representative_change > kRepresentativeChartTolerance)) {
-    return false;
-  }
-
-  const LocalizedRepresentativeSelector repaired_selector =
-      build_localized_representative_selector(
-          orbital_result.physical_orbital_frame.inactive_physical_orbital_matrix,
-          orbital_result.physical_orbital_frame.inactive_orthonormal_orbital_matrix,
-          repaired_active_physical_orbitals,
-          orbital_result.auxiliary_orbital_matrix.middleCols(
-              n_inactive_doubly_occupied_orbitals,
-              n_active_orbitals),
-          basis_overlap_matrix);
-  transform_sparse_oeo_active_representative_gradient(
-      physical_orbital_frame.localized_representative_selector,
-      repaired_selector,
-      orbital_preparation_input,
-      &last_gradient_result_.sparse_orbital_energy_gradient);
-  if (!last_gradient_result_.sparse_orbital_reference_energy_gradient.empty()) {
-    transform_sparse_oeo_active_representative_gradient(
-        physical_orbital_frame.localized_representative_selector,
-        repaired_selector,
-        orbital_preparation_input,
-        &last_gradient_result_.sparse_orbital_reference_energy_gradient);
-  }
-  transport_packed_secant_history_with_oeo_active_representative_reset(
-      physical_orbital_frame.localized_representative_selector,
-      repaired_selector,
-      orbital_preparation_input,
-      parameter_view_,
-      packed_secant_history);
-
-  overwrite_sparse_orbitals_from_dense_physical_frame(
-      repaired_normalized_orbital_matrix,
-      &working_input_.orbital_preparation_input);
-
-  const Eigen::MatrixXd active_overlap_source =
-      basis_overlap_matrix * repaired_active_physical_orbitals;
-  const Eigen::Map<const Eigen::MatrixXd> inactive_auxiliary_transform(
-      orbital_result.inactive_auxiliary_transform.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const Eigen::MatrixXd inactive_active_overlap_matrix =
-      inactive_auxiliary_transform.leftCols(n_inactive_doubly_occupied_orbitals)
-          .transpose() *
-      active_overlap_source;
-  orbital_result.inactive_active_overlap_matrix.assign(
-      inactive_active_overlap_matrix.data(),
-      inactive_active_overlap_matrix.data() +
-          inactive_active_overlap_matrix.size());
-  orbital_result.physical_orbital_frame.normalized_orbital_matrix =
-      repaired_normalized_orbital_matrix;
-  orbital_result.physical_orbital_frame.active_physical_orbital_matrix =
-      repaired_active_physical_orbitals;
-  orbital_result.physical_orbital_frame.localized_representative_selector =
-      repaired_selector;
-
-  if (last_gradient_result_.second_order_context != nullptr) {
-    auto& cached_orbital_result =
-        last_gradient_result_
-            .second_order_context
-            ->prepared_active_space
-            .orbital_result;
-    cached_orbital_result.inactive_active_overlap_matrix =
-        orbital_result.inactive_active_overlap_matrix;
-    cached_orbital_result.physical_orbital_frame.normalized_orbital_matrix =
-        repaired_normalized_orbital_matrix;
-    cached_orbital_result.physical_orbital_frame.active_physical_orbital_matrix =
-        repaired_active_physical_orbitals;
-    cached_orbital_result.physical_orbital_frame.localized_representative_selector =
-        repaired_selector;
-  }
-
-  return true;
 }
 
 }  // namespace xmvb::vb

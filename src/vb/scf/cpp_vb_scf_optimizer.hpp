@@ -140,38 +140,18 @@ struct CppVbScfOptimizerOptions {
   int history_size = 100;
 
   /**
-   * @brief Maximum accepted full-space polish iterations after nonredundant convergence.
-   *
-   * This short refinement stage only applies to the
-   * `nonredundant_lbfgspp` backend after the projected-gradient criterion has
-   * been met.
-   */
-  int nonredundant_polish_max_iterations = 0;
-
-  /**
-   * @brief Relative tightening applied to the full-space gradient tolerance in polish.
-   *
-   * The polish stage targets
-   * `gradient_tolerance * nonredundant_polish_gradient_scale`.
-   */
-  double nonredundant_polish_gradient_scale = 0.25;
-
-  /**
    * @brief Maximum Krylov iterations for the nonredundant truncated-Newton backend.
    *
    * Each inner iteration requests one matrix-free reduced Hessian-vector product.
-   * A value of `0` enables the built-in auto budget, which spends more inner
-   * iterations only when a single relaxed gradient evaluation is cheap.
+   * A value of `0` uses the dimension-bounded safety limit of 32 iterations.
    */
   int nonredundant_truncated_newton_max_cg_iterations = 0;
 
   /**
    * @brief Relative finite-difference step used by the reduced-space HVP probes.
    *
-   * The current truncated-Newton backend scales its reduced-space probe
-   * displacement so the packed orbital step has an approximate Euclidean norm
-   * of this value. `exact_ctx` uses it as the direct-action probe scale, while
-   * `full_fd` uses it as the finite-difference displacement magnitude.
+   * This is used only by the diagnostic `full_fd` HVP. The analytic
+   * `exact_ctx` operator has no finite-difference step parameter.
    */
   double nonredundant_truncated_newton_hvp_step_size = 1.0e-3;
 

@@ -16,25 +16,12 @@
 #include "runtime/cpp_block_guess_builder.hpp"
 
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
-#include "vb/runtime_utils.hpp"
 
 namespace xmvb::vb {
 
 namespace {
 
 
-
-double nonredundant_preconditioner_min_curvature() {
-  return std::max(1.0e-12,
-                  parse_env_double_with_default(
-                      "XMVB_CPP_NONREDUNDANT_PRECONDITIONER_MIN_CURVATURE", 1.0e-4));
-}
-
-double nonredundant_preconditioner_max_curvature() {
-  return std::max(nonredundant_preconditioner_min_curvature(),
-                  parse_env_double_with_default(
-                      "XMVB_CPP_NONREDUNDANT_PRECONDITIONER_MAX_CURVATURE", 1.0e4));
-}
 
 // Extract the local AO overlap seen by one sparse orbital on its own support.
 Eigen::MatrixXd build_local_sparse_overlap_metric(
@@ -228,13 +215,17 @@ Eigen::MatrixXd build_block_effective_one_electron_matrix_on_rows(
 
 Eigen::VectorXd normalize_curvature_diagonal(const Eigen::VectorXd& diag) {
   if (diag.size() == 0) return Eigen::VectorXd::Zero(0);
-  Eigen::VectorXd out = diag;
-  const double lo = nonredundant_preconditioner_min_curvature();
-  const double hi = nonredundant_preconditioner_max_curvature();
+  Eigen::VectorXd out = diag.cwiseAbs();
+  double spectral_scale = 0.0;
   for (Eigen::Index i = 0; i < out.size(); ++i) {
-    double v = out[i];
-    if (!std::isfinite(v) || v <= 0.0) v = 1.0;
-    out[i] = std::clamp(v, lo, hi);
+    if (std::isfinite(out[i])) spectral_scale = std::max(spectral_scale, out[i]);
+  }
+  if (!(spectral_scale > 0.0)) return Eigen::VectorXd::Ones(diag.size());
+  const double spectral_floor =
+      std::sqrt(std::numeric_limits<double>::epsilon()) * spectral_scale;
+  for (Eigen::Index i = 0; i < out.size(); ++i) {
+    if (!std::isfinite(out[i])) out[i] = spectral_scale;
+    out[i] = std::max(out[i], spectral_floor);
   }
   return out;
 }
@@ -267,13 +258,17 @@ PositiveCurvatureBlock build_positive_curvature_block(
     return {identity, identity};
   }
 
-  const double lo = nonredundant_preconditioner_min_curvature();
-  const double hi = nonredundant_preconditioner_max_curvature();
-  Eigen::VectorXd safe_eigenvalues = solver.eigenvalues();
+  Eigen::VectorXd safe_eigenvalues = solver.eigenvalues().cwiseAbs();
+  const double spectral_scale = safe_eigenvalues.maxCoeff();
+  if (!(spectral_scale > 0.0) || !std::isfinite(spectral_scale)) {
+    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
+        curvature_block.rows(), curvature_block.rows());
+    return {identity, identity};
+  }
+  const double spectral_floor =
+      std::sqrt(std::numeric_limits<double>::epsilon()) * spectral_scale;
   for (Eigen::Index i = 0; i < safe_eigenvalues.size(); ++i) {
-    double value = std::abs(safe_eigenvalues[i]);
-    if (!std::isfinite(value) || value <= 0.0) value = 1.0;
-    safe_eigenvalues[i] = std::clamp(value, lo, hi);
+    safe_eigenvalues[i] = std::max(safe_eigenvalues[i], spectral_floor);
   }
   PositiveCurvatureBlock result;
   result.matrix = solver.eigenvectors() *

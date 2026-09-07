@@ -74,9 +74,6 @@ class OrbitalObjective {
     return last_gradient_result_.second_order_context;
   }
 
-  void set_oeo_active_reference_orbitals(
-      const Eigen::Ref<const Eigen::MatrixXd>& normalized_orbital_matrix);
-
   void ensure_last_reference_energy_gradient();
 
   const std::vector<double>& energy_history() const { return energy_history_; }
@@ -119,9 +116,6 @@ class OrbitalObjective {
   OrbitalObjective make_probe_copy() const;
 
  private:
-  bool canonicalize_oeo_active_representative_at_current_point(
-      std::vector<PackedSecantPair>* packed_secant_history);
-
   CppVbInput working_input_;
   mutable CppVbInput probe_input_buffer_;
   SparseOrbitalParameterView parameter_view_;
@@ -132,7 +126,6 @@ class OrbitalObjective {
   const CppVbScfEvaluator* scf_evaluator_ = nullptr;
 
   CppOrbitalGradientResult last_gradient_result_;
-  Eigen::MatrixXd initial_oeo_reference_orbital_matrix_;
   std::vector<double> energy_history_;
   std::vector<double> gradient_inf_norm_history_;
   std::vector<double> iteration_time_history_seconds_;
@@ -244,8 +237,6 @@ Eigen::MatrixXd build_metric_preserving_oeo_repaired_normalized_orbital_matrix(
     const OrbitalPreparationInput& orbital_preparation_input,
     const OrbitalPreparationResult& orbital_result,
     const Eigen::Ref<const Eigen::MatrixXd>& reference_normalized_orbital_matrix);
-
-bool oeo_active_representative_accepted_point_canonicalization_enabled();
 
 }  // namespace xmvb::vb
 

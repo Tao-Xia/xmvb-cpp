@@ -30,7 +30,6 @@
 #include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
 #include "vb/orbital/ao_effective_one_electron_graph_operator.hpp"
 #include "vb/scf/exact_ctx_memory_accounting.hpp"
-#include "vb/scf/exact_ctx_strategy_profile.hpp"
 #include "vb/scf/opposite_spin_matrix_backward.hpp"
 #include "vb/scf/same_spin_matrix_backward.hpp"
 #include "vb/scf/selected_state_determinant_matrices.hpp"
@@ -608,23 +607,6 @@ std::vector<std::size_t> build_ao_matrix_column_offsets(
   return column_offsets;
 }
 
-int positive_env_override_local(
-    const char* env_name,
-    int default_value) {
-  const char* env_value = std::getenv(env_name);
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return default_value;
-  }
-  const int parsed_value = std::stoi(env_value);
-  if (parsed_value <= 0) {
-    throw std::invalid_argument(
-        std::string(env_name) + " must be positive");
-  }
-  return parsed_value;
-}
-
-constexpr int kAffordableClosedShellSparseAoH1eFullWidthCostProxy = 1024;
-
 int exact_ctx_current_openmp_max_threads_local() {
   int omp_max_threads = 1;
 #ifdef _OPENMP
@@ -633,108 +615,22 @@ int exact_ctx_current_openmp_max_threads_local() {
   return std::max(1, omp_max_threads);
 }
 
-int exact_ctx_openmp_thread_cap() {
-  return positive_env_override_local(
-      "XMVB_CPP_EXACT_CTX_MAX_OMP_THREADS",
-      8);
-}
-
-int exact_ctx_ao_h1e_thread_cap() {
-  // Cheap closed-shell sparse charts such as 241 regress sharply if the
-  // dominant accepted-point AO-H1E sweep is artificially capped at 5-8
-  // threads. Restore the historical full-team default for this kernel while
-  // still honoring the same environment override when users want to cap it.
-  return positive_env_override_local(
-      "XMVB_CPP_EXACT_CTX_MAX_OMP_THREADS",
-      exact_ctx_current_openmp_max_threads_local());
-}
-
-int exact_ctx_ao_h1e_thread_divisor_default(
-    const ExactCtxSystemProfile& system_profile,
-    bool compute_outer_response) {
-  // The accepted-point AO-H1E graph is one of the dominant exact_ctx kernels.
-  // Same-node HVP benchmarks now show three distinct regimes:
-  //
-  // 1. Open-shell sparse charts such as MnF2 lose time if the AO-H1E graph is
-  //    widened aggressively. Keep the conservative historical divisor there.
-  // 2. Affordable closed-shell sparse charts such as 241 lose much more wall
-  //    time when the accepted-point AO-H1E sweep is throttled down to a small
-  //    team than they gain from bandwidth conservation. Restore full-width
-  //    OpenMP by default there.
-  // 3. More expensive closed-shell sparse charts still prefer a more
-  //    conservative width to avoid overshooting the memory-bandwidth knee.
-  //
-  // This heuristic only changes the default thread count. Users can still
-  // override it globally with `XMVB_CPP_EXACT_CTX_AO_H1E_THREAD_DIVISOR`.
-  if (system_profile.open_shell) {
-    return 32;
-  }
-  if (!system_profile.sparse_orbital_chart) {
-    return 32;
-  }
-  if (system_profile.active_basis_cost_proxy <=
-      kAffordableClosedShellSparseAoH1eFullWidthCostProxy) {
-    return 1;
-  }
-  return compute_outer_response ? 24 : 16;
-}
-
-int exact_ctx_effective_openmp_thread_limit(
-    int workload_limited_threads) {
-  const int omp_max_threads = exact_ctx_current_openmp_max_threads_local();
-  return std::max(
-      1,
-      std::min(
-          std::min(omp_max_threads, exact_ctx_openmp_thread_cap()),
-          workload_limited_threads));
-}
-
-int exact_ctx_effective_ao_h1e_thread_limit(
-    int workload_limited_threads) {
-  const int omp_max_threads = exact_ctx_current_openmp_max_threads_local();
-  return std::max(
-      1,
-      std::min(
-          std::min(omp_max_threads, exact_ctx_ao_h1e_thread_cap()),
-          workload_limited_threads));
-}
-
 int choose_exact_ctx_ao_h1e_threads(
     const OrbitalPreparationInput& orbital_preparation_input,
     bool compute_outer_response) {
-  // The fused AO-H1E sweep is still memory-bandwidth sensitive for open-shell
-  // and expensive charts, but affordable closed-shell sparse systems such as
-  // 241 regress badly if this accepted-point kernel is narrowed below the full
-  // OpenMP team. Keep the divisor policy for the former while restoring
-  // historical full-width behavior for the latter.
-  const ExactCtxSystemProfile system_profile =
-      build_exact_ctx_system_profile(orbital_preparation_input);
-  const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-  const int thread_divisor =
-      positive_env_override_local(
-          "XMVB_CPP_EXACT_CTX_AO_H1E_THREAD_DIVISOR",
-          exact_ctx_ao_h1e_thread_divisor_default(
-              system_profile,
-              compute_outer_response));
-  const int workload_limited_threads =
-      std::max(1, n_basis_functions / thread_divisor);
-  return exact_ctx_effective_ao_h1e_thread_limit(workload_limited_threads);
+  (void)compute_outer_response;
+  const int n_basis_functions = static_cast<int>(std::min<std::size_t>(
+      orbital_preparation_input.n_basis_functions,
+      static_cast<std::size_t>(std::numeric_limits<int>::max())));
+  return std::min(
+      exact_ctx_current_openmp_max_threads_local(),
+      std::max(1, n_basis_functions));
 }
 
-int choose_exact_ctx_directional_structure_threads(
-    int n_structures) {
-  // The directional structure builder allocates large thread-local tile
-  // providers. For a few hundred structures, oversubscribing this loop with
-  // dozens of threads mostly amplifies cache and allocation overhead.
-  // Keep the conservative default, but expose the divisor so cluster
-  // benchmarks can tune this stage without patching the source again.
-  const int thread_divisor =
-      positive_env_override_local(
-          "XMVB_CPP_EXACT_CTX_DIRECTIONAL_STRUCTURE_THREAD_DIVISOR",
-          48);
-  const int workload_limited_threads =
-      std::max(1, n_structures / thread_divisor);
-  return exact_ctx_effective_openmp_thread_limit(workload_limited_threads);
+int choose_exact_ctx_directional_structure_threads(int n_structures) {
+  return std::min(
+      exact_ctx_current_openmp_max_threads_local(),
+      std::max(1, n_structures));
 }
 
 std::size_t ao_pair_index_packed(int first, int second) {
@@ -3486,29 +3382,11 @@ int count_distinct_touched_tiles_local(
 }
 
 int directional_structure_matrix_tile_size() {
-  const char* env_value = std::getenv("XMVB_CPP_STRUCTURE_TILE_SIZE");
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return 256;
-  }
-  const int tile_size = std::atoi(env_value);
-  if (tile_size <= 0) {
-    throw std::invalid_argument(
-        "XMVB_CPP_STRUCTURE_TILE_SIZE must be a positive integer");
-  }
-  return tile_size;
+  return 256;
 }
 
 int directional_structure_matrix_tile_cache_tiles() {
-  const char* env_value = std::getenv("XMVB_CPP_STRUCTURE_TILE_CACHE_TILES");
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return 4;
-  }
-  const int cache_tiles = std::atoi(env_value);
-  if (cache_tiles <= 0) {
-    throw std::invalid_argument(
-        "XMVB_CPP_STRUCTURE_TILE_CACHE_TILES must be a positive integer");
-  }
-  return cache_tiles;
+  return 4;
 }
 
 void reset_local_projection_block_local(
@@ -7277,8 +7155,8 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
   // The outer-response adjoint is assembled in canonical pairwise storage, so
   // the orbital pullback must consume the symmetric active-space gradients
   // through the same vector-storage overload used by the fixed-adjoint path.
-  // The matrix overload applies a different SSO normalization and was the
-  // source of the large exact-ctx outer-response HVP mismatch on 241_VBSCF.
+  // The matrix overload applies a different SSO normalization and therefore
+  // does not represent the same physical pullback.
   std::vector<double> local_symmetric_active_overlap_gradient;
   std::vector<double> local_symmetric_active_one_electron_gradient;
   std::vector<double>& symmetric_active_overlap_gradient =
@@ -7365,62 +7243,6 @@ bool has_active_matrix_gradient(
 
 bool exact_ctx_stage1_analytic_core_enabled() {
   return true;
-}
-
-bool exact_ctx_outer_response_enabled() {
-  const char* flag = std::getenv("XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE");
-  if (flag == nullptr || flag[0] == '\0') {
-    return true;
-  }
-  return std::strcmp(flag, "0") == 0 ||
-      std::strcmp(flag, "false") == 0 ||
-      std::strcmp(flag, "FALSE") == 0;
-}
-
-enum class ExactCtxOuterResponseApproximationMode {
-  Full,
-  LocalOnly,
-  EnergyOnly,
-};
-
-ExactCtxOuterResponseApproximationMode
-exact_ctx_outer_response_approximation_mode() {
-  const char* mode = std::getenv("XMVB_CPP_EXACT_CTX_OUTER_RESPONSE_APPROX");
-  if (mode == nullptr || mode[0] == '\0' ||
-      std::strcmp(mode, "full") == 0 ||
-      std::strcmp(mode, "exact") == 0 ||
-      std::strcmp(mode, "none") == 0) {
-    return ExactCtxOuterResponseApproximationMode::Full;
-  }
-  if (std::strcmp(mode, "local_only") == 0 ||
-      std::strcmp(mode, "local") == 0) {
-    return ExactCtxOuterResponseApproximationMode::LocalOnly;
-  }
-  if (std::strcmp(mode, "energy_only") == 0 ||
-      std::strcmp(mode, "energy") == 0) {
-    return ExactCtxOuterResponseApproximationMode::EnergyOnly;
-  }
-  return ExactCtxOuterResponseApproximationMode::Full;
-}
-
-bool exact_ctx_outer_response_local_only_approximation_enabled() {
-  return exact_ctx_outer_response_approximation_mode() ==
-      ExactCtxOuterResponseApproximationMode::LocalOnly;
-}
-
-bool exact_ctx_outer_response_energy_only_approximation_enabled() {
-  return exact_ctx_outer_response_approximation_mode() ==
-      ExactCtxOuterResponseApproximationMode::EnergyOnly;
-}
-
-bool exact_ctx_workspace_exact_2e_enabled() {
-  const char* flag = std::getenv("XMVB_CPP_DISABLE_EXACT_2E_WORKSPACE_HVP");
-  if (flag == nullptr || flag[0] == '\0') {
-    return true;
-  }
-  return std::strcmp(flag, "0") == 0 ||
-      std::strcmp(flag, "false") == 0 ||
-      std::strcmp(flag, "FALSE") == 0;
 }
 
 struct AcceptedOrbitalBackpropInputs {
@@ -7904,8 +7726,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
   apply_timing_totals_.ao_effective_one_electron_fused_wall_time_seconds +=
       elapsed_wall_time_seconds(ao_effective_one_electron_fused_start_time);
 
-  const bool compute_outer_response =
-      components.outer_response && exact_ctx_outer_response_enabled();
+  const bool compute_outer_response = components.outer_response;
   std::vector<double> combined_core_orbital_value_gradient;
   Eigen::MatrixXd delta_ao_effective_h1e_times_active_auxiliary_orbitals;
   if (compute_outer_response) {
@@ -7941,107 +7762,46 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     apply_timing_totals_.outer_response_active_space_integrals_wall_time_seconds +=
         elapsed_wall_time_seconds(active_space_integrals_start_time);
 
-    ActiveSpaceGradientDirection directional_active_space_gradient;
-    const ExactCtxOuterResponseApproximationMode outer_response_approximation_mode =
-        exact_ctx_outer_response_approximation_mode();
-    if (outer_response_approximation_mode ==
-        ExactCtxOuterResponseApproximationMode::LocalOnly) {
-      const auto active_gradient_start_time =
-          std::chrono::steady_clock::now();
-      // The local-only approximation keeps the accepted selected states fixed
-      // and differentiates only the active-space local matrix elements.  This
-      // is the analytic truncation
-      //   T^sharp W_loc T p
-      // used to measure how much of the relaxed outer response is carried by
-      // the directional selected-state coefficient response.
-      directional_active_space_gradient =
-          build_local_active_space_gradient_direction_from_outer_response(
-              *current_input_,
-              *accepted_point_context_,
-              outer_response_delta_ao_overlap_matrix_workspace_,
-              outer_response_delta_active_one_electron_matrix_workspace_,
-              outer_response_delta_packed_active_two_electron_workspace_);
-      apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
-          elapsed_wall_time_seconds(active_gradient_start_time);
-    } else {
-      const auto structure_matrices_start_time =
-          std::chrono::steady_clock::now();
-      const auto projected_directional_structure_matrices =
-          build_selected_state_projected_directional_structure_matrices(
-              *current_input_,
-              *accepted_point_context_,
-              structure_coefficient_blocks_,
-              outer_response_delta_ao_overlap_matrix_workspace_,
-              outer_response_delta_active_one_electron_matrix_workspace_,
-              outer_response_delta_packed_active_two_electron_workspace_);
-      apply_timing_totals_.outer_response_structure_matrices_wall_time_seconds +=
-          elapsed_wall_time_seconds(structure_matrices_start_time);
+    const auto structure_matrices_start_time =
+        std::chrono::steady_clock::now();
+    const auto projected_directional_structure_matrices =
+        build_selected_state_projected_directional_structure_matrices(
+            *current_input_, *accepted_point_context_, structure_coefficient_blocks_,
+            outer_response_delta_ao_overlap_matrix_workspace_,
+            outer_response_delta_active_one_electron_matrix_workspace_,
+            outer_response_delta_packed_active_two_electron_workspace_);
+    apply_timing_totals_.outer_response_structure_matrices_wall_time_seconds +=
+        elapsed_wall_time_seconds(structure_matrices_start_time);
 
-      if (outer_response_approximation_mode ==
-          ExactCtxOuterResponseApproximationMode::EnergyOnly) {
-        const auto eigensystem_start_time =
-            std::chrono::steady_clock::now();
-        const std::vector<double> directional_selected_state_energies =
-            build_selected_state_energy_direction_from_outer_response(
-                *accepted_point_context_,
-                projected_directional_structure_matrices);
-        apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
-            elapsed_wall_time_seconds(eigensystem_start_time);
+    const auto eigensystem_start_time = std::chrono::steady_clock::now();
+    const auto directional_selected_state_response =
+        accepted_outer_response_cache_.selected_state_eigen_response_operator
+                .accepted_eigenvector_matrix_storage != nullptr
+            ? accepted_outer_response_cache_.selected_state_eigen_response_operator
+                  .apply(projected_directional_structure_matrices)
+            : build_selected_state_generalized_eigen_directional_response(
+                  *accepted_point_context_, projected_directional_structure_matrices);
+    apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
+        elapsed_wall_time_seconds(eigensystem_start_time);
 
-        const auto active_gradient_start_time =
-            std::chrono::steady_clock::now();
-        // Energy-only truncation freezes selected-state coefficients and keeps
-        // only the diagonal selected-root energy response.  This preserves the
-        // same-spin overlap-weight curvature omitted by local-only while still
-        // avoiding directional selected-state determinant matrices.
-        directional_active_space_gradient =
-            build_energy_only_active_space_gradient_direction_from_outer_response(
-                *current_input_,
-                *accepted_point_context_,
-                outer_response_delta_ao_overlap_matrix_workspace_,
-                outer_response_delta_active_one_electron_matrix_workspace_,
-                outer_response_delta_packed_active_two_electron_workspace_,
-                directional_selected_state_energies);
-        apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
-            elapsed_wall_time_seconds(active_gradient_start_time);
-      } else {
-        const auto eigensystem_start_time =
-            std::chrono::steady_clock::now();
-        const auto directional_selected_state_response =
-            accepted_outer_response_cache_
-                    .selected_state_eigen_response_operator
-                    .accepted_eigenvector_matrix_storage != nullptr
-                ? accepted_outer_response_cache_
-                      .selected_state_eigen_response_operator
-                      .apply(projected_directional_structure_matrices)
-                : build_selected_state_generalized_eigen_directional_response(
-                      *accepted_point_context_,
-                      projected_directional_structure_matrices);
-        apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
-            elapsed_wall_time_seconds(eigensystem_start_time);
-
-        const auto active_gradient_start_time =
-            std::chrono::steady_clock::now();
-        const SelectedStateDeterminantMatrices directional_selected_states =
-            build_selected_state_determinant_matrices_from_selected_columns(
-                current_input_->structure_data,
-                directional_selected_state_response.delta_selected_eigenvector_matrix,
-                accepted_point_context_->selected_state_indices,
-                accepted_point_context_->normalized_state_weights,
-                accepted_point_context_->same_spin_pair_cache);
-        directional_active_space_gradient =
-            build_active_space_gradient_direction_from_outer_response(
-                *current_input_,
-                *accepted_point_context_,
-                outer_response_delta_ao_overlap_matrix_workspace_,
-                outer_response_delta_active_one_electron_matrix_workspace_,
-                outer_response_delta_packed_active_two_electron_workspace_,
-                directional_selected_states,
-                directional_selected_state_response.delta_selected_eigenvalues);
-        apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
-            elapsed_wall_time_seconds(active_gradient_start_time);
-      }
-    }
+    const auto active_gradient_start_time = std::chrono::steady_clock::now();
+    const SelectedStateDeterminantMatrices directional_selected_states =
+        build_selected_state_determinant_matrices_from_selected_columns(
+            current_input_->structure_data,
+            directional_selected_state_response.delta_selected_eigenvector_matrix,
+            accepted_point_context_->selected_state_indices,
+            accepted_point_context_->normalized_state_weights,
+            accepted_point_context_->same_spin_pair_cache);
+    ActiveSpaceGradientDirection directional_active_space_gradient =
+        build_active_space_gradient_direction_from_outer_response(
+            *current_input_, *accepted_point_context_,
+            outer_response_delta_ao_overlap_matrix_workspace_,
+            outer_response_delta_active_one_electron_matrix_workspace_,
+            outer_response_delta_packed_active_two_electron_workspace_,
+            directional_selected_states,
+            directional_selected_state_response.delta_selected_eigenvalues);
+    apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
+        elapsed_wall_time_seconds(active_gradient_start_time);
     validate_outer_response_active_gradient(
         directional_active_space_gradient);
 
@@ -8087,8 +7847,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     Eigen::MatrixXd dense_active_two_electron_gradient_direction_storage;
     const Eigen::MatrixXd* dense_active_two_electron_gradient_direction =
         nullptr;
-    if (accepted_exact_two_electron_cache_.n_basis_functions > 0 &&
-        exact_ctx_workspace_exact_2e_enabled()) {
+    if (accepted_exact_two_electron_cache_.n_basis_functions > 0) {
       // Fused path: reuse forward K*mixed from outer response to skip
       // one apply_exact_ao_pair_kernel call (~500M FLOPs) per HVP.
       const bool can_fuse =
@@ -8239,11 +7998,9 @@ ExactOrbitalSecondOrderOperator::diagnostics() const {
     return info;
   }
   info.supports_analytic_core_model = supports_analytic_core_model();
-  info.outer_response_enabled = exact_ctx_outer_response_enabled();
-  info.outer_response_local_only_approximation =
-      exact_ctx_outer_response_local_only_approximation_enabled();
-  info.outer_response_energy_only_approximation =
-      exact_ctx_outer_response_energy_only_approximation_enabled();
+  info.outer_response_enabled = true;
+  info.outer_response_local_only_approximation = false;
+  info.outer_response_energy_only_approximation = false;
   info.used_reduced_curvature_diagonal =
       nonredundant_space_->has_reduced_curvature_diagonal();
   info.has_same_spin_matrix_form =

@@ -3,6 +3,11 @@
 Status: active
 Last updated: 2026-04-23
 
+> 2026-09-07 note: molecule/chart-specific optimizer policies and Exact-CTX
+> environment tuning hooks have been removed. Older entries below are retained
+> as benchmark history; their environment-variable recipes are no longer
+> supported defaults or valid runtime interfaces.
+
 This document tracks concrete performance work for the current
 `nonredundant_truncated_newton` + `exact_ctx` HVP path. It is intended to be
 updated whenever a performance change is implemented or benchmarked.

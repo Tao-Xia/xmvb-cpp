@@ -1,5 +1,10 @@
 # TNHVP Outer-Response 近似策略分析
 
+> **已退役（2026-09-07）**：本文记录的 core-only、local-only、
+> energy-only、SR1 和 hybrid full-retry 路径均已从生产代码删除。
+> `exact_ctx` 现在只表示物理 (U_p) 坐标上的完整解析 Hessian 作用。
+> 下文仅保留为历史分析，所列环境变量和运行方式不再有效。
+
 ## 1. 目标和当前 exact 路径
 
 TNHVP 在 `exact_ctx` 路径下已经有两种 reduced-space HVP：

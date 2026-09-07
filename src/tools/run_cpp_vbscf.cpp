@@ -31,7 +31,6 @@
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/scf/adaptive_structure_space_optimizer.hpp"
-#include "vb/scf/exact_ctx_strategy_profile.hpp"
 #include "vb/scf/cpp_vb_scf_optimizer.hpp"
 
 namespace {
@@ -352,79 +351,20 @@ std::string convergence_status_name(bool converged) {
   return converged ? "converged" : "not converged";
 }
 
-bool oeo_active_representative_accepted_point_canonicalization_enabled() {
-  const auto enable_override =
-      parse_env_optional_flag(
-          "XMVB_CPP_ENABLE_OEO_ACTIVE_REPRESENTATIVE_CANONICALIZATION");
-  if (enable_override.has_value()) {
-    return *enable_override;
-  }
-  const auto disable_override =
-      parse_env_optional_flag(
-          "XMVB_CPP_DISABLE_OEO_ACTIVE_REPRESENTATIVE_CANONICALIZATION");
-  if (disable_override.has_value()) {
-    return !*disable_override;
-  }
-  return false;
-}
-
 std::string exact_ctx_initial_outer_response_policy_name(
     const xmvb::vb::OrbitalPreparationInput& orbital_preparation_input) {
-  const xmvb::vb::ExactCtxDefaultStrategy strategy =
-      xmvb::vb::choose_exact_ctx_default_strategy(
-          xmvb::vb::build_exact_ctx_system_profile(
-              orbital_preparation_input));
-  const auto override =
-      parse_env_optional_flag("XMVB_CPP_EXACT_CTX_INNER_SOLVE_USE_OUTER_RESPONSE");
-  if (override.has_value()) {
-    return *override ? "forced_full_outer_response" : "forced_core_only";
-  }
+  (void)orbital_preparation_input;
+  return "full_exact_hessian";
+}
 
-  const int n_active_orbitals = orbital_preparation_input.n_active_orbitals;
-  if (n_active_orbitals >
-      parse_env_int_with_default(
-          "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_ENABLE_MAX_ACTIVE_ORBITALS",
-          strategy.startup_full_inner_solve_enable_max_active_orbitals)) {
-    return "cheap_core_only";
+std::string exact_ctx_physical_chart_name(
+    const xmvb::vb::OrbitalPreparationInput& orbital_input) {
+  for (const int basis_count : orbital_input.orbital_basis_counts) {
+    if (basis_count > 0 && basis_count < orbital_input.n_basis_functions) {
+      return "strict_sparse_U_p";
+    }
   }
-
-  const int full_inner_solve_begin =
-      std::max(
-          0,
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BEGIN",
-              strategy.startup_full_inner_solve_begin));
-  int full_inner_solve_count =
-      std::max(
-          0,
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_COUNT",
-              strategy.startup_full_inner_solve_count));
-  int max_extra_count =
-      std::max(
-          0,
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MAX_EXTRA_COUNT",
-              strategy.startup_full_inner_solve_max_extra_count));
-  if (n_active_orbitals >
-      std::max(
-          0,
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MULTI_STEP_MAX_ACTIVE_ORBITALS",
-              strategy.startup_full_inner_solve_multi_step_max_active_orbitals))) {
-    full_inner_solve_count = std::min(full_inner_solve_count, 1);
-    max_extra_count = 0;
-  }
-
-  if (full_inner_solve_count > 0 &&
-      full_inner_solve_begin == 0 &&
-      max_extra_count == 0) {
-    return "startup_full_outer_response";
-  }
-  if (full_inner_solve_count > 0 || max_extra_count > 0) {
-    return "startup_full_window_with_gradient_tail";
-  }
-  return "cheap_core_only";
+  return "full_ao_U_p";
 }
 
 void print_exact_ctx_policy_summary(
@@ -437,133 +377,27 @@ void print_exact_ctx_policy_summary(
     return;
   }
 
-  const auto& orbital_preparation_input = input.orbital_preparation_input;
-  const xmvb::vb::ExactCtxSystemProfile system_profile =
-      xmvb::vb::build_exact_ctx_system_profile(orbital_preparation_input);
-  const xmvb::vb::ExactCtxDefaultStrategy strategy =
-      xmvb::vb::choose_exact_ctx_default_strategy(system_profile);
-  const auto outer_response_override =
-      parse_env_optional_flag("XMVB_CPP_EXACT_CTX_INNER_SOLVE_USE_OUTER_RESPONSE");
-  const auto retry_rejected_step_override =
-      parse_env_optional_flag("XMVB_CPP_EXACT_CTX_RETRY_REJECTED_WITH_FULL_OPERATOR");
-  const auto hybrid_followup_full_solve_override =
-      parse_env_optional_flag("XMVB_CPP_EXACT_CTX_HYBRID_FOLLOWUP_FULL_SOLVE");
-  print_log_subsection_title("Exact-CTX Strategy");
+  const auto& orbital_input = input.orbital_preparation_input;
+  print_log_subsection_title("Exact-CTX Newton-Krylov");
   print_log_field(
-      "Initial inner solve",
-      exact_ctx_initial_outer_response_policy_name(orbital_preparation_input));
+      "Hessian model",
+      exact_ctx_initial_outer_response_policy_name(orbital_input));
   print_log_field(
-      "Outer-response override",
-      outer_response_override.has_value() ? bool_name(*outer_response_override) : "auto");
+      "Inexact Newton forcing",
+      "adaptive sqrt(projected gradient inf-norm)");
   print_log_field(
-      "Outer-response enabled",
-      bool_name(
-          !parse_env_flag_with_default(
-              "XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE",
-              false)));
+      "Krylov safety limit",
+      options.nonredundant_truncated_newton_max_cg_iterations > 0
+          ? std::to_string(
+                options.nonredundant_truncated_newton_max_cg_iterations)
+          : "32");
   print_log_field(
-      "Strategy profile",
-      xmvb::vb::exact_ctx_default_strategy_kind_name(strategy.kind));
-  print_log_field(
-      "Accepted-point canonicalization",
-      bool_name(
-          oeo_active_representative_accepted_point_canonicalization_enabled()));
-  print_log_field(
-      "Initial chart",
-      system_profile.sparse_orbital_chart ? "sparse_support" : "full_ao");
-  print_log_field(
-      "Active orbitals",
-      std::to_string(orbital_preparation_input.n_active_orbitals));
-  print_log_field(
-      "Startup full begin",
+      "Transport history",
       std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BEGIN",
-              strategy.startup_full_inner_solve_begin)));
+          options.nonredundant_truncated_newton_transport_history_size));
   print_log_field(
-      "Startup full count",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_COUNT",
-              strategy.startup_full_inner_solve_count)));
-  print_log_field(
-      "Startup full max extra",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MAX_EXTRA_COUNT",
-              strategy.startup_full_inner_solve_max_extra_count)));
-  print_log_field(
-      "Grad-ratio threshold",
-      format_fixed_double(
-          parse_env_double_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_GRAD_RATIO_THRESHOLD",
-              0.2),
-          12));
-  print_log_field(
-      "Base max CG iterations",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_BASE_MAX_CG_ITERATIONS",
-              6)));
-  print_log_field(
-      "Tail max CG iterations",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_TAIL_MAX_CG_ITERATIONS",
-              strategy.startup_full_inner_solve_tail_max_cg_iterations)));
-  print_log_field(
-      "Multi-step active cap",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_MULTI_STEP_MAX_ACTIVE_ORBITALS",
-              strategy.startup_full_inner_solve_multi_step_max_active_orbitals)));
-  print_log_field(
-      "Full inner-solve cap",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STARTUP_FULL_INNER_SOLVE_ENABLE_MAX_ACTIVE_ORBITALS",
-              strategy.startup_full_inner_solve_enable_max_active_orbitals)));
-  print_log_field(
-      "Full correction cap",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_FULL_MODEL_CORRECTION_ENABLE_MAX_ACTIVE_ORBITALS",
-              8)));
-  print_log_field(
-      "Hybrid followup cap",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_HYBRID_FOLLOWUP_FULL_ENABLE_MAX_ACTIVE_ORBITALS",
-              6)));
-  print_log_field(
-      "Hybrid followup full solve",
-      hybrid_followup_full_solve_override.has_value()
-          ? (*hybrid_followup_full_solve_override ? "forced" : "disabled")
-          : (strategy.allow_hybrid_followup_full_solve ? "auto" : "false"));
-  print_log_field(
-      "Stall correction cap",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_STALL_FULL_MODEL_CORRECTION_ENABLE_MAX_ACTIVE_ORBITALS",
-              6)));
-  print_log_field(
-      "Retry rejected with full op",
-      bool_name(
-          retry_rejected_step_override.has_value()
-              ? *retry_rejected_step_override
-              : strategy.retry_rejected_step_with_full_operator));
-  print_log_field(
-      "Hybrid refine max CG",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_HYBRID_REFINE_MAX_CG_ITERATIONS",
-              4)));
-  print_log_field(
-      "Sparse followup cooldown",
-      std::to_string(
-          parse_env_int_with_default(
-              "XMVB_CPP_EXACT_CTX_SPARSE_FOLLOWUP_PROBE_COOLDOWN",
-              2)));
+      "Physical chart",
+      exact_ctx_physical_chart_name(orbital_input));
 }
 
 void print_run_header(
@@ -652,18 +486,13 @@ void print_run_header(
           options.energy_tolerance,
           options.gradient_tolerance));
   print_log_field("Max iterations", std::to_string(options.max_iterations));
-  if (options.nonredundant_polish_max_iterations > 0) {
-    print_log_field(
-        "Nonredundant polish budget",
-        std::to_string(options.nonredundant_polish_max_iterations));
-  }
   if (options.backend ==
       xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "Max CG iterations",
         options.nonredundant_truncated_newton_max_cg_iterations > 0
             ? std::to_string(options.nonredundant_truncated_newton_max_cg_iterations)
-            : "auto");
+            : "32 (dimension bounded)");
   }
 
   print_exact_ctx_policy_summary(options, load_result.input);
@@ -1610,11 +1439,8 @@ void print_usage() {
                " [--verbose true|false]"
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
-               "\nDefaults: nonredundant_truncated_newton uses 1.5e-3 gradient "
-               "and 1e-6 energy tolerances unless explicitly overridden."
-               " [--nonredundant-polish-max-iterations <count>]"
-               " [--nonredundant-polish-gradient-scale <value>]"
-               " [--nonredundant-truncated-newton-max-cg-iterations <count|0=auto>]"
+               "\n"
+               " [--nonredundant-truncated-newton-max-cg-iterations <count|0=32>]"
                " [--nonredundant-truncated-newton-hvp-mode full_fd|exact_ctx]"
                " [--nonredundant-truncated-newton-hvp-step-size <value>]"
                " [--nonredundant-truncated-newton-transport-history-size <count>]"
@@ -1688,9 +1514,6 @@ int main(int argc, char** argv) {
   bool user_specified_ao_integral_source = false;
   bool user_specified_raw_structure_selection = false;
   bool user_specified_max_iterations = false;
-  bool user_specified_gradient_tolerance = false;
-  bool user_specified_energy_tolerance = false;
-  bool user_specified_nonredundant_polish_max_iterations = false;
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
@@ -1708,16 +1531,9 @@ int main(int argc, char** argv) {
       } else if (argument_name == "--verbose") {
         options.verbose = parse_bool_argument(argument_value);
       } else if (argument_name == "--gradient-tolerance") {
-        user_specified_gradient_tolerance = true;
         options.gradient_tolerance = std::stod(argument_value);
       } else if (argument_name == "--energy-tolerance") {
-        user_specified_energy_tolerance = true;
         options.energy_tolerance = std::stod(argument_value);
-      } else if (argument_name == "--nonredundant-polish-max-iterations") {
-        user_specified_nonredundant_polish_max_iterations = true;
-        options.nonredundant_polish_max_iterations = std::stoi(argument_value);
-      } else if (argument_name == "--nonredundant-polish-gradient-scale") {
-        options.nonredundant_polish_gradient_scale = std::stod(argument_value);
       } else if (
           argument_name ==
           "--nonredundant-truncated-newton-max-cg-iterations") {
@@ -1823,19 +1639,6 @@ int main(int argc, char** argv) {
       options.nonredundant_truncated_newton_hvp_mode ==
           xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction;
 
-  if (options.backend ==
-      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    // TNHVP spends most tail wall time on tiny projected-gradient improvements
-    // after the energy has stabilized. Use a slightly looser standalone default
-    // for this backend while preserving explicit command-line tolerances.
-    if (!user_specified_gradient_tolerance) {
-      options.gradient_tolerance = 1.5e-3;
-    }
-    if (!user_specified_energy_tolerance) {
-      options.energy_tolerance = 1.0e-6;
-    }
-  }
-
   if (structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
     if (options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx ||
         options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
@@ -1860,14 +1663,6 @@ int main(int argc, char** argv) {
   const auto command_start_steady_time = std::chrono::steady_clock::now();
   const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(input_path, load_options);
   const auto& input = load_result.input;
-  if (!user_specified_nonredundant_polish_max_iterations &&
-      options.backend ==
-          xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    // Truncated-Newton already pays the main second-order cost on the
-    // projected directions. A short full-space polish usually reaches the
-    // legacy dual tolerance faster than continuing the reduced-space tail.
-    options.nonredundant_polish_max_iterations = 40;
-  }
   if (!user_specified_max_iterations) {
     // Keep the standalone SCF loop aligned with the legacy deck semantics:
     // `.xmi` `itmax` controls the maximum iteration count, and omitted `itmax`
