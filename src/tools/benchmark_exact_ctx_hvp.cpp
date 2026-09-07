@@ -13,6 +13,7 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
 #include "vb/orbital/nonredundant_orbital_space.hpp"
+#include "vb/orbital/sparse_orbital_gauge_audit.hpp"
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_result.hpp"
@@ -26,6 +27,7 @@ struct Options {
   int repeats = 1;
   int warmup = 0;
   bool nonredundant_adapt = false;
+  bool gauge_audit = false;
   xmvb::vb::AoIntegralSource ao_integral_source =
       xmvb::vb::AoIntegralSource::Auto;
 };
@@ -65,7 +67,8 @@ void print_usage() {
       << " [--repeats count]"
       << " [--warmup count]"
       << " [--ao-integral-source auto|legacy|libcint_cpp|runtime_hcore]"
-      << " [--nonredundant-adapt true|false]\n";
+      << " [--nonredundant-adapt true|false]"
+      << " [--gauge-audit true|false]\n";
 }
 
 bool parse_bool_argument(const std::string& value) {
@@ -128,6 +131,10 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (name == "--nonredundant-adapt") {
       options.nonredundant_adapt = parse_bool_argument(value);
+      continue;
+    }
+    if (name == "--gauge-audit") {
+      options.gauge_audit = parse_bool_argument(value);
       continue;
     }
     throw std::invalid_argument("unknown argument: " + name);
@@ -521,6 +528,52 @@ int main(int argc, char** argv) {
               << space_diagnostics.minimum_relative_scaling_residual << '\n';
     std::cout << "nros_max_relative_scaling_residual = "
               << space_diagnostics.maximum_relative_scaling_residual << '\n';
+    if (options.gauge_audit) {
+      Eigen::MatrixXd current_packed_reduced_basis(
+          context.parameter_view.size(),
+          context.nonredundant_space->reduced_size());
+      for (int column = 0;
+           column < context.nonredundant_space->reduced_size();
+           ++column) {
+        Eigen::VectorXd unit = Eigen::VectorXd::Zero(
+            context.nonredundant_space->reduced_size());
+        unit[column] = 1.0;
+        current_packed_reduced_basis.col(column) =
+            context.nonredundant_space->expand_step(unit);
+      }
+      const auto gauge_audit = xmvb::vb::audit_sparse_orbital_gauge(
+          context.input.orbital_preparation_input,
+          context.parameter_view,
+          &current_packed_reduced_basis);
+      std::cout << "gauge_audit_parameter_dimension = "
+                << gauge_audit.gauge_parameter_dimension << '\n';
+      std::cout << "gauge_audit_support_constraint_rank = "
+                << gauge_audit.support_constraint_rank << '\n';
+      std::cout << "gauge_audit_admissible_parameter_dimension = "
+                << gauge_audit.admissible_gauge_parameter_dimension << '\n';
+      std::cout << "gauge_audit_gauge_rank = "
+                << gauge_audit.gauge_rank << '\n';
+      std::cout << "gauge_audit_quotient_dimension = "
+                << gauge_audit.quotient_dimension << '\n';
+      std::cout << "gauge_audit_physical_jacobian_rank = "
+                << gauge_audit.physical_jacobian_rank << '\n';
+      std::cout << "gauge_audit_physical_jacobian_nullity = "
+                << gauge_audit.physical_jacobian_nullity << '\n';
+      std::cout << "gauge_audit_unmapped_parameter_count = "
+                << gauge_audit.unmapped_parameter_count << '\n';
+      std::cout << "gauge_audit_relative_annihilation_residual = "
+                << gauge_audit.relative_gauge_annihilation_residual << '\n';
+      std::cout << "gauge_audit_max_principal_angle_sine = "
+                << gauge_audit.maximum_gauge_kernel_principal_angle_sine << '\n';
+      std::cout << "gauge_audit_current_reduced_dimension = "
+                << gauge_audit.current_reduced_dimension << '\n';
+      std::cout << "gauge_audit_current_physical_image_rank = "
+                << gauge_audit.current_physical_image_rank << '\n';
+      std::cout << "gauge_audit_current_retained_gauge_dimension = "
+                << gauge_audit.current_retained_gauge_dimension << '\n';
+      std::cout << "gauge_audit_current_missing_physical_dimension = "
+                << gauge_audit.current_missing_physical_dimension << '\n';
+    }
     std::cout << "repeats = " << options.repeats << '\n';
     std::cout << "warmup = " << options.warmup << '\n';
     std::cout << "nonredundant_adapt = "

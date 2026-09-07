@@ -111,6 +111,7 @@ set(XMVB_CPP_CORE_SOURCES
   vb/orbital/localized_representative_selector.cpp
   vb/orbital/nonredundant_optimizer_input_adapter.cpp
   vb/orbital/nonredundant_orbital_space.cpp
+  vb/orbital/sparse_orbital_gauge_audit.cpp
   vb/orbital/orbital_parameter_codec.cpp
   vb/orbital/sparse_orbital_parameter_view.cpp
   vb/orbital/support_aware_mo_gauge_fix.cpp
@@ -475,6 +476,14 @@ target_link_libraries(benchmark_exact_ctx_hvp
     xmvb_cpp_vb
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(benchmark_exact_ctx_hvp)
+
+add_executable(audit_sparse_orbital_gauge
+  tools/audit_sparse_orbital_gauge.cpp)
+target_link_libraries(audit_sparse_orbital_gauge
+  PRIVATE
+    xmvb_cpp_vb
+    xmvb_cpp_runtime)
+xmvb_link_standalone_runtime(audit_sparse_orbital_gauge)
 
 add_executable(test_davidson core/linear_algebra/test_davidson.cpp)
 target_link_libraries(test_davidson PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
