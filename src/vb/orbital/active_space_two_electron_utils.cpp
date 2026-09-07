@@ -5914,12 +5914,14 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
   workspace->delta_active_pair_matrix.resize(
       static_cast<Eigen::Index>(n_active_pairs),
       static_cast<Eigen::Index>(n_active_pairs));
-  workspace->delta_active_pair_matrix.noalias() =
+  const Eigen::MatrixXd directional_active_pair_contraction =
       workspace->directional_pair_coefficients.transpose() *
       workspace->base_pair_products;
-  workspace->delta_active_pair_matrix.noalias() +=
-      workspace->pair_coefficients.transpose() *
-      workspace->directional_pair_products;
+  // K is symmetric in the packed AO-pair basis, hence
+  // B^T K D = (D^T K B)^T. Form the directional tensor with one GEMM.
+  workspace->delta_active_pair_matrix =
+      directional_active_pair_contraction +
+      directional_active_pair_contraction.transpose();
 
   const std::size_t packed_size =
       n_active_pairs * (n_active_pairs + 1) / 2;
@@ -6016,12 +6018,14 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
   workspace->delta_active_pair_matrix.resize(
       static_cast<Eigen::Index>(n_active_pairs),
       static_cast<Eigen::Index>(n_active_pairs));
-  workspace->delta_active_pair_matrix.noalias() =
+  const Eigen::MatrixXd directional_active_pair_contraction =
       workspace->directional_pair_coefficients.transpose() *
       accepted_cache.accepted_base_pair_products;
-  workspace->delta_active_pair_matrix.noalias() +=
-      accepted_cache.accepted_pair_coefficients.transpose() *
-      workspace->directional_pair_products;
+  // Reuse symmetry of the accepted AO-pair kernel instead of multiplying the
+  // directional product by the accepted coefficients a second time.
+  workspace->delta_active_pair_matrix =
+      directional_active_pair_contraction +
+      directional_active_pair_contraction.transpose();
 
   const std::size_t packed_size =
       n_active_pairs * (n_active_pairs + 1) / 2;
@@ -6131,12 +6135,14 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
     if (directional_pair_products != nullptr) {
       (*directional_pair_products)[direction] = directional_products;
     }
-    Eigen::MatrixXd delta_active_pair_matrix =
+    const Eigen::MatrixXd directional_active_pair_contraction =
         directional_coefficients.transpose() *
         accepted_cache.accepted_base_pair_products;
-    delta_active_pair_matrix.noalias() +=
-        accepted_cache.accepted_pair_coefficients.transpose() *
-        directional_products;
+    // Apply the same symmetric-kernel identity independently to every block
+    // direction; the directional products remain available for direct-core HVP.
+    const Eigen::MatrixXd delta_active_pair_matrix =
+        directional_active_pair_contraction +
+        directional_active_pair_contraction.transpose();
     for (Eigen::Index left = 0; left < n_active_pairs; ++left) {
       for (Eigen::Index right = 0; right <= left; ++right) {
         const int packed_index =
