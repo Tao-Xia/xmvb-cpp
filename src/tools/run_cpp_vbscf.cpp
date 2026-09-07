@@ -1923,6 +1923,18 @@ int main(int argc, char** argv) {
         "Final projected |g|_2",
         format_scientific_double(result.final_projected_gradient_l2_norm, 8));
   }
+  if (options.backend ==
+      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+    print_log_field(
+        "Matrix-free HVP directions",
+        std::to_string(result.matrix_free_hvp_direction_count));
+    print_log_field(
+        "Block-HVP calls",
+        std::to_string(result.matrix_free_hvp_batch_count));
+    print_log_field(
+        "Matrix-free HVP wall time",
+        format_seconds(result.matrix_free_hvp_wall_time_seconds));
+  }
   print_log_subsection_title("Timing Breakdown (Wall Time)");
   print_log_field(
       "AO integral provider wall time",

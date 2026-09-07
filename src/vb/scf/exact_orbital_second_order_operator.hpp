@@ -62,6 +62,7 @@ public:
     int n_active_orbitals = 0;
     int n_blocks = 0;
     std::size_t apply_count = 0;
+    std::size_t batch_apply_count = 0;
     double total_apply_wall_time_seconds = 0.0;
     double core_setup_wall_time_seconds = 0.0;
     double ao_effective_one_electron_build_wall_time_seconds = 0.0;
@@ -117,6 +118,7 @@ public:
 private:
   struct ApplyTimingTotals {
     std::size_t apply_count = 0;
+    std::size_t batch_apply_count = 0;
     double total_apply_wall_time_seconds = 0.0;
     double core_setup_wall_time_seconds = 0.0;
     double ao_effective_one_electron_build_wall_time_seconds = 0.0;

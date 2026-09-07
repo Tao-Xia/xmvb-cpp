@@ -2915,6 +2915,17 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 (1.0 - 1.0e-8) * trust_radius;
             truncated_newton_step.predicted_decrease = predicted_decrease;
           }
+          if (const auto* exact_hvp_operator =
+                  dynamic_cast<const ExactContextReducedHvpOperator*>(
+                      hvp_operator.get())) {
+            const auto hvp_diagnostics = exact_hvp_operator->diagnostics();
+            result.matrix_free_hvp_direction_count +=
+                hvp_diagnostics.apply_count;
+            result.matrix_free_hvp_batch_count +=
+                hvp_diagnostics.batch_apply_count;
+            result.matrix_free_hvp_wall_time_seconds +=
+                hvp_diagnostics.total_apply_wall_time_seconds;
+          }
           TruncatedNewtonStepResult trial_step_for_current_trial =
               truncated_newton_step;
 

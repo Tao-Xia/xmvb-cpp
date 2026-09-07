@@ -7627,6 +7627,7 @@ ExactOrbitalSecondOrderOperator::~ExactOrbitalSecondOrderOperator() = default;
 Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
     const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
     HvpComponents components) const {
+  ++apply_timing_totals_.batch_apply_count;
   Eigen::MatrixXd responses(
       reduced_directions.rows(),
       reduced_directions.cols());
@@ -8031,6 +8032,7 @@ ExactOrbitalSecondOrderOperator::diagnostics() const {
   info.n_active_orbitals = accepted_point_context_->n_active_orbitals;
   info.n_blocks = nonredundant_space_->n_blocks();
   info.apply_count = apply_timing_totals_.apply_count;
+  info.batch_apply_count = apply_timing_totals_.batch_apply_count;
   info.total_apply_wall_time_seconds =
       apply_timing_totals_.total_apply_wall_time_seconds;
   info.core_setup_wall_time_seconds =
