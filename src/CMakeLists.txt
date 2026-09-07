@@ -699,6 +699,23 @@ add_dependencies(check_exact_active_space_builders xmvb_cpp_runtime_assets)
 add_dependencies(check_exact_two_electron_hvp xmvb_cpp_runtime_assets)
 add_dependencies(check_exact_ctx_hvp xmvb_cpp_runtime_assets)
 add_dependencies(benchmark_exact_ctx_hvp xmvb_cpp_runtime_assets)
+
+if (BUILD_TESTING)
+  add_test(
+    NAME exact_ctx_hvp_f2_finite_difference
+    COMMAND
+      check_exact_ctx_hvp
+      ${CMAKE_SOURCE_DIR}/src/test_molecule/F2.xmi
+      --step 1e-4
+      --probe full
+      --max-rel-error 1e-7)
+  set_tests_properties(
+    exact_ctx_hvp_f2_finite_difference
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+endif()
 add_dependencies(check_structure_expansion_signs xmvb_cpp_runtime_assets)
 add_dependencies(check_same_spin_overlap_gradient xmvb_cpp_runtime_assets)
 add_dependencies(check_structure_overlap_weight xmvb_cpp_runtime_assets)

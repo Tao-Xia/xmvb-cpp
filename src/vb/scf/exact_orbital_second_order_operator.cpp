@@ -49,11 +49,6 @@ struct AcceptedOrbitalPreparationCache {
   Eigen::MatrixXd normalized_orbitals;
   std::vector<double> inverse_norms;
   Eigen::MatrixXd basis_overlap_times_normalized;
-  Eigen::MatrixXd internal_inactive_orbitals;
-  Eigen::MatrixXd selector_inactive_right_inverse_transform;
-  Eigen::MatrixXd selector_inactive_inverse_transpose_right_transform;
-  Eigen::MatrixXd selector_active_inactive_coefficients;
-
   Eigen::MatrixXd inactive_overlap_inverse;
   Eigen::MatrixXd inactive_auxiliary;
   Eigen::MatrixXd inactive_density;
@@ -66,7 +61,6 @@ struct AcceptedOrbitalPreparationCache {
   Eigen::MatrixXd inactive_density_gradient_symmetric;
 
   bool has_inactive_orbitals = false;
-  bool uses_internal_inactive_chart = false;
   bool has_orthonormal_inactive_chart = false;
   bool has_pullback_cache = false;
 };
@@ -74,14 +68,6 @@ struct AcceptedOrbitalPreparationCache {
 namespace {
 
 constexpr int kLegacyOrbitalTypeOeo = 3;
-
-struct ExactCtxInternalInactiveChart {
-  Eigen::MatrixXd inactive_orbitals;
-  Eigen::MatrixXd inactive_right_inverse_transform;
-  Eigen::MatrixXd inactive_inverse_transpose_right_transform;
-  Eigen::MatrixXd active_inactive_coefficients;
-  bool enabled = false;
-};
 
 std::vector<double> scatter_dense_orbital_gradient_to_sparse_slots_local(
     const Eigen::Ref<const Eigen::MatrixXd>& original_orbital_gradient,
@@ -111,12 +97,6 @@ std::vector<double> scatter_dense_orbital_gradient_to_sparse_slots_local(
   }
   return orbital_value_gradient;
 }
-
-struct PhysicalOrbitalGradientBlocks {
-  Eigen::MatrixXd inactive_gradient;
-  Eigen::MatrixXd active_gradient;
-};
-
 
 struct FusedAoEffectiveOneElectronDirectionalResult {
   std::vector<double> delta_ao_effective_h1e;
@@ -244,138 +224,6 @@ bool orbitals_use_canonical_full_support(
   return true;
 }
 
-bool exact_ctx_supports_internal_inactive_chart(
-    const OrbitalPreparationInput& input,
-    const OrbitalPreparationResult& orbital_result,
-    int n_inactive_doubly_occupied_orbitals,
-    int n_active_orbitals) {
-  if (n_inactive_doubly_occupied_orbitals <= 0) {
-    return false;
-  }
-
-  const auto& physical_orbital_frame =
-      orbital_result.physical_orbital_frame;
-  const auto& selector =
-      physical_orbital_frame.localized_representative_selector;
-  return physical_orbital_frame.inactive_orthonormal_orbital_matrix.rows() ==
-          input.n_basis_functions &&
-      physical_orbital_frame.inactive_orthonormal_orbital_matrix.cols() ==
-          n_inactive_doubly_occupied_orbitals &&
-      physical_orbital_frame.normalized_orbital_matrix.rows() ==
-          input.n_basis_functions &&
-      physical_orbital_frame.normalized_orbital_matrix.cols() ==
-          input.n_orbitals &&
-      physical_orbital_frame.active_physical_orbital_matrix.rows() ==
-          input.n_basis_functions &&
-      physical_orbital_frame.active_physical_orbital_matrix.cols() ==
-          n_active_orbitals &&
-      orbital_result.auxiliary_orbital_matrix.rows() == input.n_basis_functions &&
-      orbital_result.auxiliary_orbital_matrix.cols() >=
-          n_inactive_doubly_occupied_orbitals + n_active_orbitals &&
-      selector.inactive_inverse_transpose_right_transform.rows() ==
-          n_inactive_doubly_occupied_orbitals &&
-      selector.inactive_inverse_transpose_right_transform.cols() ==
-          n_inactive_doubly_occupied_orbitals &&
-      selector.active_inactive_coefficients.rows() ==
-          n_inactive_doubly_occupied_orbitals &&
-      selector.active_inactive_coefficients.cols() == n_active_orbitals;
-}
-
-bool exact_ctx_internal_inactive_chart_runtime_enabled() {
-  const char* disable_flag =
-      std::getenv("XMVB_CPP_DISABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART");
-  if (disable_flag != nullptr &&
-      disable_flag[0] != '\0' &&
-      std::strcmp(disable_flag, "0") != 0 &&
-      std::strcmp(disable_flag, "false") != 0 &&
-      std::strcmp(disable_flag, "FALSE") != 0) {
-    return false;
-  }
-
-  const char* enable_flag =
-      std::getenv("XMVB_CPP_ENABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART");
-  if (enable_flag == nullptr || enable_flag[0] == '\0') {
-    // Leave the runtime gate open by default. The actual default policy is
-    // chosen later from the molecule/spin context in
-    // `exact_ctx_prefers_internal_inactive_chart()`. The `(Q_i, T_a)` internal
-    // chart remains available as an explicit override, but current production
-    // traces show that its value is system dependent and should not be treated
-    // as a generally better default than the physical occupied chart.
-    return true;
-  }
-  return std::strcmp(enable_flag, "0") != 0 &&
-      std::strcmp(enable_flag, "false") != 0 &&
-      std::strcmp(enable_flag, "FALSE") != 0;
-}
-
-bool exact_ctx_prefers_internal_inactive_chart(
-    const OrbitalPreparationInput& input,
-    int n_inactive_doubly_occupied_orbitals,
-    int n_active_orbitals) {
-  const char* enable_flag =
-      std::getenv("XMVB_CPP_ENABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART");
-  const bool force_enable =
-      enable_flag != nullptr &&
-      enable_flag[0] != '\0' &&
-      std::strcmp(enable_flag, "0") != 0 &&
-      std::strcmp(enable_flag, "false") != 0 &&
-      std::strcmp(enable_flag, "FALSE") != 0;
-  if (force_enable) {
-    return true;
-  }
-  (void)n_inactive_doubly_occupied_orbitals;
-  (void)n_active_orbitals;
-  const ExactCtxDefaultStrategy strategy =
-      choose_exact_ctx_default_strategy(
-          build_exact_ctx_system_profile(input));
-  return strategy.prefer_internal_inactive_chart;
-}
-
-ExactCtxInternalInactiveChart build_exact_ctx_internal_inactive_chart(
-    const OrbitalPreparationInput& input,
-    const OrbitalPreparationResult& orbital_result,
-    int n_inactive_doubly_occupied_orbitals,
-    int n_active_orbitals) {
-  ExactCtxInternalInactiveChart chart;
-  if (!exact_ctx_internal_inactive_chart_runtime_enabled()) {
-    return chart;
-  }
-  if (!exact_ctx_prefers_internal_inactive_chart(
-          input,
-          n_inactive_doubly_occupied_orbitals,
-          n_active_orbitals)) {
-    return chart;
-  }
-  if (!exact_ctx_supports_internal_inactive_chart(
-          input,
-          orbital_result,
-          n_inactive_doubly_occupied_orbitals,
-          n_active_orbitals)) {
-    return chart;
-  }
-
-  const auto& physical_orbital_frame =
-      orbital_result.physical_orbital_frame;
-  const auto& selector =
-      physical_orbital_frame.localized_representative_selector;
-
-  // exact_ctx works internally on the accepted-point chart `(Q_i, T_a)` while
-  // the optimizer still stores the localized physical representative
-  // `(C_i, C_a)`.  The fixed selector `(U_i^{-1}, U_i^{-T}, K_a)` is the
-  // small accepted-point Jacobian that lifts packed physical directions into
-  // the internal chart and later scatters internal HVP gradients back.
-  chart.inactive_orbitals =
-      physical_orbital_frame.inactive_orthonormal_orbital_matrix;
-  chart.inactive_inverse_transpose_right_transform =
-      selector.inactive_inverse_transpose_right_transform;
-  chart.inactive_right_inverse_transform =
-      selector.inactive_inverse_transpose_right_transform.transpose();
-  chart.active_inactive_coefficients =
-      selector.active_inactive_coefficients;
-  chart.enabled = true;
-  return chart;
-}
-
 bool exact_ctx_uses_orthonormal_inactive_chart(
     const OrbitalPreparationInput& input,
     int n_inactive_doubly_occupied_orbitals,
@@ -482,53 +330,6 @@ Eigen::MatrixXd apply_inactive_density_direction_to_basis_overlap_times_active(
   }
   return delta_inactive_auxiliary * inactive_active_overlap +
       inactive_auxiliary * delta_inactive_active_overlap;
-}
-
-Eigen::MatrixXd build_internal_inactive_density_pullback_gradient(
-    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient_symmetric,
-    const Eigen::Ref<const Eigen::MatrixXd>& internal_inactive_orbitals) {
-  if (inactive_density_gradient_symmetric.rows() != internal_inactive_orbitals.rows() ||
-      inactive_density_gradient_symmetric.cols() != internal_inactive_orbitals.rows()) {
-    throw std::invalid_argument(
-        "internal inactive-density pullback gradient has inconsistent dimensions");
-  }
-  return inactive_density_gradient_symmetric * internal_inactive_orbitals;
-}
-
-Eigen::MatrixXd build_internal_inactive_density_pullback_gradient_direction(
-    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_gradient_symmetric,
-    const Eigen::Ref<const Eigen::MatrixXd>& delta_internal_inactive_orbitals) {
-  if (inactive_density_gradient_symmetric.rows() != delta_internal_inactive_orbitals.rows() ||
-      inactive_density_gradient_symmetric.cols() != delta_internal_inactive_orbitals.rows()) {
-    throw std::invalid_argument(
-        "internal inactive-density pullback gradient direction has inconsistent dimensions");
-  }
-  return inactive_density_gradient_symmetric * delta_internal_inactive_orbitals;
-}
-
-PhysicalOrbitalGradientBlocks transport_internal_chart_gradient_to_physical(
-    const Eigen::Ref<const Eigen::MatrixXd>& internal_inactive_gradient,
-    const Eigen::Ref<const Eigen::MatrixXd>& internal_active_gradient,
-    const ExactCtxInternalInactiveChart& chart) {
-  if (!chart.enabled) {
-    throw std::invalid_argument(
-        "internal inactive chart transport requires an enabled chart");
-  }
-  if (internal_inactive_gradient.rows() != chart.inactive_orbitals.rows() ||
-      internal_inactive_gradient.cols() != chart.inactive_orbitals.cols() ||
-      internal_active_gradient.rows() != chart.inactive_orbitals.rows() ||
-      internal_active_gradient.cols() != chart.active_inactive_coefficients.cols()) {
-    throw std::invalid_argument(
-        "internal chart gradient transport has inconsistent dimensions");
-  }
-
-  PhysicalOrbitalGradientBlocks physical_gradient;
-  physical_gradient.active_gradient = internal_active_gradient;
-  physical_gradient.inactive_gradient =
-      (internal_inactive_gradient -
-       internal_active_gradient * chart.active_inactive_coefficients.transpose()) *
-      chart.inactive_inverse_transpose_right_transform;
-  return physical_gradient;
 }
 
 InactiveAuxiliaryDirectionResult build_delta_inactive_auxiliary_direction(
@@ -1666,18 +1467,13 @@ void throw_if_nonfinite(
 struct DenseOrbitalTangentContext {
   Eigen::MatrixXd normalized_orbitals;
   Eigen::MatrixXd delta_normalized_orbitals;
-  Eigen::MatrixXd internal_inactive_orbitals;
-  Eigen::MatrixXd delta_internal_inactive_orbitals;
-  Eigen::MatrixXd delta_internal_active_auxiliary_orbitals;
   std::vector<double> inverse_norms;
   std::vector<double> normalization_direction_projections;
-  bool uses_internal_inactive_chart = false;
 };
 
 
 AcceptedOrbitalPreparationCache build_accepted_orbital_preparation_cache(
     const OrbitalPreparationInput& input,
-    const OrbitalPreparationResult& orbital_result,
     const Eigen::Ref<const Eigen::MatrixXd>& total_active_auxiliary_gradient,
     const std::vector<double>& total_inactive_density_gradient) {
   const int n_basis_functions = input.n_basis_functions;
@@ -1752,79 +1548,28 @@ AcceptedOrbitalPreparationCache build_accepted_orbital_preparation_cache(
   cache.has_inactive_orbitals = n_inactive_doubly_occupied_orbitals > 0;
 
   if (cache.has_inactive_orbitals) {
-    const ExactCtxInternalInactiveChart internal_chart =
-        build_exact_ctx_internal_inactive_chart(
+    const auto inactive_orbitals =
+        cache.normalized_orbitals.leftCols(
+            n_inactive_doubly_occupied_orbitals);
+    const Eigen::MatrixXd inactive_overlap =
+        inactive_orbitals.transpose() * basis_overlap * inactive_orbitals;
+    cache.inactive_overlap_inverse =
+        invert_self_adjoint_positive_definite(
+            inactive_overlap,
+            "cached_inactive_overlap");
+    cache.has_orthonormal_inactive_chart =
+        exact_ctx_uses_orthonormal_inactive_chart(
             input,
-            orbital_result,
             n_inactive_doubly_occupied_orbitals,
-            n_active_orbitals);
-    cache.uses_internal_inactive_chart = internal_chart.enabled;
-    if (cache.uses_internal_inactive_chart) {
-      // In the internal chart the inactive block is represented directly by
-      // the accepted orthonormal frame `Q_i`, so the inactive density is
-      // `P_i = Q_i Q_i^T` and the active occupied variable is the already
-      // projected auxiliary block `T_a`.
-      cache.internal_inactive_orbitals = internal_chart.inactive_orbitals;
-      cache.selector_inactive_right_inverse_transform =
-          internal_chart.inactive_right_inverse_transform;
-      cache.selector_inactive_inverse_transpose_right_transform =
-          internal_chart.inactive_inverse_transpose_right_transform;
-      cache.selector_active_inactive_coefficients =
-          internal_chart.active_inactive_coefficients;
-      cache.inactive_overlap_inverse =
-          Eigen::MatrixXd::Identity(
-              n_inactive_doubly_occupied_orbitals,
-              n_inactive_doubly_occupied_orbitals);
-      cache.has_orthonormal_inactive_chart = true;
-      cache.inactive_auxiliary = internal_chart.inactive_orbitals;
-      cache.inactive_density =
-          internal_chart.inactive_orbitals *
-          internal_chart.inactive_orbitals.transpose();
-    } else {
-      const auto inactive_orbitals =
-          cache.normalized_orbitals.leftCols(
-              n_inactive_doubly_occupied_orbitals);
-      const Eigen::MatrixXd inactive_overlap =
-          inactive_orbitals.transpose() * basis_overlap * inactive_orbitals;
-      cache.inactive_overlap_inverse =
-          invert_self_adjoint_positive_definite(
-              inactive_overlap,
-              "cached_inactive_overlap");
-      cache.has_orthonormal_inactive_chart =
-          exact_ctx_uses_orthonormal_inactive_chart(
-              input,
-              n_inactive_doubly_occupied_orbitals,
-              cache.inactive_overlap_inverse);
-      cache.inactive_auxiliary =
-          build_inactive_auxiliary(
-              inactive_orbitals,
-              cache.inactive_overlap_inverse,
-              cache.has_orthonormal_inactive_chart);
-      cache.inactive_density =
-          cache.inactive_auxiliary * inactive_orbitals.transpose();
-      cache.internal_inactive_orbitals = inactive_orbitals;
-      cache.selector_inactive_right_inverse_transform =
-          Eigen::MatrixXd::Zero(
-              n_inactive_doubly_occupied_orbitals,
-              n_inactive_doubly_occupied_orbitals);
-      cache.selector_inactive_inverse_transpose_right_transform =
-          Eigen::MatrixXd::Zero(
-              n_inactive_doubly_occupied_orbitals,
-              n_inactive_doubly_occupied_orbitals);
-      cache.selector_active_inactive_coefficients =
-          Eigen::MatrixXd::Zero(
-              n_inactive_doubly_occupied_orbitals,
-              n_active_orbitals);
-    }
+            cache.inactive_overlap_inverse);
+    cache.inactive_auxiliary =
+        build_inactive_auxiliary(
+            inactive_orbitals,
+            cache.inactive_overlap_inverse,
+            cache.has_orthonormal_inactive_chart);
+    cache.inactive_density =
+        cache.inactive_auxiliary * inactive_orbitals.transpose();
   } else {
-    cache.internal_inactive_orbitals =
-        Eigen::MatrixXd::Zero(n_basis_functions, 0);
-    cache.selector_inactive_right_inverse_transform =
-        Eigen::MatrixXd::Zero(0, 0);
-    cache.selector_inactive_inverse_transpose_right_transform =
-        Eigen::MatrixXd::Zero(0, 0);
-    cache.selector_active_inactive_coefficients =
-        Eigen::MatrixXd::Zero(0, n_active_orbitals);
     cache.inactive_density =
         Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
   }
@@ -1847,32 +1592,6 @@ AcceptedOrbitalPreparationCache build_accepted_orbital_preparation_cache(
       cache.original_orbital_gradient.middleCols(
           0,
           n_active_orbitals) = total_active_auxiliary_gradient;
-    } else if (cache.uses_internal_inactive_chart) {
-      cache.inactive_density_gradient_symmetric =
-          inactive_density_gradient_matrix +
-          inactive_density_gradient_matrix.transpose();
-      const Eigen::MatrixXd internal_inactive_gradient =
-          build_internal_inactive_density_pullback_gradient(
-              cache.inactive_density_gradient_symmetric,
-              cache.internal_inactive_orbitals);
-      const ExactCtxInternalInactiveChart internal_chart = {
-          cache.internal_inactive_orbitals,
-          cache.selector_inactive_right_inverse_transform,
-          cache.selector_inactive_inverse_transpose_right_transform,
-          cache.selector_active_inactive_coefficients,
-          true};
-      const PhysicalOrbitalGradientBlocks physical_gradient =
-          transport_internal_chart_gradient_to_physical(
-              internal_inactive_gradient,
-              total_active_auxiliary_gradient,
-              internal_chart);
-      cache.original_orbital_gradient.leftCols(
-          n_inactive_doubly_occupied_orbitals) =
-          physical_gradient.inactive_gradient;
-      cache.original_orbital_gradient.middleCols(
-          n_inactive_doubly_occupied_orbitals,
-          n_active_orbitals) =
-          physical_gradient.active_gradient;
     } else {
       const auto inactive_orbitals =
           cache.normalized_orbitals.leftCols(
@@ -2002,30 +1721,6 @@ std::vector<double> backpropagate_active_space_orbital_gradient(
   if (n_inactive_doubly_occupied_orbitals == 0) {
     original_orbital_gradient.middleCols(0, input.n_active_orbitals) =
         active_auxiliary_gradient;
-  } else if (cache.uses_internal_inactive_chart) {
-    const Eigen::MatrixXd internal_inactive_density_gradient_symmetric =
-        inactive_density_gradient + inactive_density_gradient.transpose();
-    const Eigen::MatrixXd internal_inactive_gradient =
-        build_internal_inactive_density_pullback_gradient(
-            internal_inactive_density_gradient_symmetric,
-            cache.internal_inactive_orbitals);
-    const ExactCtxInternalInactiveChart internal_chart = {
-        cache.internal_inactive_orbitals,
-        cache.selector_inactive_right_inverse_transform,
-        cache.selector_inactive_inverse_transpose_right_transform,
-        cache.selector_active_inactive_coefficients,
-        true};
-    const PhysicalOrbitalGradientBlocks physical_gradient =
-        transport_internal_chart_gradient_to_physical(
-            internal_inactive_gradient,
-            active_auxiliary_gradient,
-            internal_chart);
-    original_orbital_gradient.leftCols(n_inactive_doubly_occupied_orbitals) =
-        physical_gradient.inactive_gradient;
-    original_orbital_gradient.middleCols(
-        n_inactive_doubly_occupied_orbitals,
-        input.n_active_orbitals) =
-        physical_gradient.active_gradient;
   } else {
     const auto inactive_orbitals =
         cache.normalized_orbitals.leftCols(n_inactive_doubly_occupied_orbitals);
@@ -2108,16 +1803,6 @@ DenseOrbitalTangentContext build_dense_orbital_tangent_context(
   result.inverse_norms = cache.inverse_norms;
   result.delta_normalized_orbitals =
       Eigen::MatrixXd::Zero(input.n_basis_functions, input.n_orbitals);
-  result.internal_inactive_orbitals = cache.internal_inactive_orbitals;
-  result.delta_internal_inactive_orbitals =
-      Eigen::MatrixXd::Zero(
-          cache.internal_inactive_orbitals.rows(),
-          cache.internal_inactive_orbitals.cols());
-  result.delta_internal_active_auxiliary_orbitals =
-      Eigen::MatrixXd::Zero(
-          input.n_basis_functions,
-          input.n_active_orbitals);
-  result.uses_internal_inactive_chart = cache.uses_internal_inactive_chart;
   result.normalization_direction_projections.assign(
       input.n_orbitals,
       0.0);
@@ -2169,37 +1854,6 @@ DenseOrbitalTangentContext build_dense_orbital_tangent_context(
         "packed direction size does not match cached orbital tangent traversal");
   }
 
-  const int n_inactive_doubly_occupied_orbitals =
-      (input.n_total_electrons - input.n_active_electrons) / 2;
-  if (cache.uses_internal_inactive_chart) {
-    if (n_inactive_doubly_occupied_orbitals > 0) {
-      const Eigen::MatrixXd physical_delta_inactive =
-          result.delta_normalized_orbitals.leftCols(
-              n_inactive_doubly_occupied_orbitals);
-      result.delta_internal_inactive_orbitals =
-          physical_delta_inactive *
-          cache.selector_inactive_right_inverse_transform;
-    }
-    if (input.n_active_orbitals > 0) {
-      result.delta_internal_active_auxiliary_orbitals =
-          result.delta_normalized_orbitals.middleCols(
-              n_inactive_doubly_occupied_orbitals,
-              input.n_active_orbitals) -
-          result.delta_internal_inactive_orbitals *
-              cache.selector_active_inactive_coefficients;
-    }
-  } else {
-    result.delta_internal_inactive_orbitals =
-        result.delta_normalized_orbitals.leftCols(
-            n_inactive_doubly_occupied_orbitals);
-    if (input.n_active_orbitals > 0) {
-      result.delta_internal_active_auxiliary_orbitals =
-          result.delta_normalized_orbitals.middleCols(
-              n_inactive_doubly_occupied_orbitals,
-              input.n_active_orbitals);
-    }
-  }
-
   return result;
 }
 
@@ -2232,34 +1886,6 @@ OrbitalPreparationDirectionalResult build_orbital_preparation_directional_result
       Eigen::MatrixXd::Zero(input.n_basis_functions, n_active_orbitals);
   result.basis_overlap_times_delta_active_orbitals =
       Eigen::MatrixXd::Zero(input.n_basis_functions, n_active_orbitals);
-  if (cache.uses_internal_inactive_chart) {
-    if (n_active_orbitals > 0) {
-      result.delta_active_auxiliary_orbitals =
-          orbital_tangent_context.delta_internal_active_auxiliary_orbitals;
-      result.basis_overlap_times_delta_active_orbitals =
-          basis_overlap * result.delta_active_auxiliary_orbitals;
-    } else {
-      result.delta_active_auxiliary_orbitals =
-          Eigen::MatrixXd::Zero(input.n_basis_functions, 0);
-      result.basis_overlap_times_delta_active_orbitals =
-          Eigen::MatrixXd::Zero(input.n_basis_functions, 0);
-    }
-    if (cache.has_inactive_orbitals && n_inactive_doubly_occupied_orbitals > 0) {
-      delta_inactive_density_low_rank =
-          build_inactive_density_direction_low_rank(
-              input.n_basis_functions,
-              cache.internal_inactive_orbitals,
-              orbital_tangent_context.delta_internal_inactive_orbitals,
-              cache.internal_inactive_orbitals,
-              orbital_tangent_context.delta_internal_inactive_orbitals);
-    }
-    result.delta_inactive_density_low_rank = delta_inactive_density_low_rank;
-    result.delta_inactive_density =
-        materialize_low_rank_ao_matrix(
-            result.delta_inactive_density_low_rank,
-            "cached orbital-preparation internal inactive-density direction");
-    return result;
-  }
   if (n_active_orbitals > 0) {
     delta_active_orbitals =
         orbital_tangent_context.delta_normalized_orbitals.middleCols(
@@ -2353,30 +1979,6 @@ std::vector<double> apply_fixed_upstream_orbital_pullback_direction(
     // original_orbital_gradient is just active_auxiliary_gradient,
     // delta is zero since the gradient doesn't depend on the direction.
     // Nothing to do.
-  } else if (cache.uses_internal_inactive_chart) {
-    const ExactCtxInternalInactiveChart internal_chart = {
-        cache.internal_inactive_orbitals,
-        cache.selector_inactive_right_inverse_transform,
-        cache.selector_inactive_inverse_transpose_right_transform,
-        cache.selector_active_inactive_coefficients,
-        true};
-    // Cached fixed-upstream on `(Q_i, T_a)` reuses the accepted symmetric
-    // inactive-density adjoint and only applies the selector Jacobian back to
-    // the physical occupied chart.
-    const Eigen::MatrixXd delta_internal_inactive_gradient =
-        build_internal_inactive_density_pullback_gradient_direction(
-            cache.inactive_density_gradient_symmetric,
-            orbital_tangent_context.delta_internal_inactive_orbitals);
-    const PhysicalOrbitalGradientBlocks delta_physical_gradient =
-        transport_internal_chart_gradient_to_physical(
-            delta_internal_inactive_gradient,
-            Eigen::MatrixXd::Zero(
-                input.n_basis_functions,
-                input.n_active_orbitals),
-            internal_chart);
-    delta_original_orbital_gradient.leftCols(
-        n_inactive_doubly_occupied_orbitals) =
-        delta_physical_gradient.inactive_gradient;
   } else {
     const auto inactive_orbitals =
         orbital_tangent_context.normalized_orbitals.leftCols(
@@ -8115,7 +7717,6 @@ ExactOrbitalSecondOrderOperator::ExactOrbitalSecondOrderOperator(
         std::make_unique<AcceptedOrbitalPreparationCache>(
             build_accepted_orbital_preparation_cache(
                 current_input_->orbital_preparation_input,
-                accepted_point_context_->prepared_active_space.orbital_result,
                 accepted_total_active_auxiliary_gradient_,
                 accepted_total_inactive_density_gradient_));
 
@@ -8643,8 +8244,6 @@ ExactOrbitalSecondOrderOperator::diagnostics() const {
       exact_ctx_outer_response_local_only_approximation_enabled();
   info.outer_response_energy_only_approximation =
       exact_ctx_outer_response_energy_only_approximation_enabled();
-  info.internal_inactive_chart_runtime_enabled =
-      exact_ctx_internal_inactive_chart_runtime_enabled();
   info.used_reduced_curvature_diagonal =
       nonredundant_space_->has_reduced_curvature_diagonal();
   info.has_same_spin_matrix_form =
@@ -8655,15 +8254,6 @@ ExactOrbitalSecondOrderOperator::diagnostics() const {
       static_cast<int>(accepted_point_context_->selected_state_indices.size());
   info.n_active_orbitals = accepted_point_context_->n_active_orbitals;
   info.n_blocks = nonredundant_space_->n_blocks();
-  info.uses_internal_inactive_chart =
-      build_exact_ctx_internal_inactive_chart(
-          current_input_->orbital_preparation_input,
-          accepted_point_context_->prepared_active_space.orbital_result,
-          (current_input_->orbital_preparation_input.n_total_electrons -
-           current_input_->orbital_preparation_input.n_active_electrons) /
-              2,
-          current_input_->orbital_preparation_input.n_active_orbitals)
-          .enabled;
   info.apply_count = apply_timing_totals_.apply_count;
   info.total_apply_wall_time_seconds =
       apply_timing_totals_.total_apply_wall_time_seconds;

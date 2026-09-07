@@ -239,16 +239,21 @@ Eigen::VectorXd normalize_curvature_diagonal(const Eigen::VectorXd& diag) {
   return out;
 }
 
-Eigen::MatrixXd build_positive_curvature_block(
+struct PositiveCurvatureBlock {
+  Eigen::MatrixXd matrix;
+  Eigen::MatrixXd inverse;
+};
+
+PositiveCurvatureBlock build_positive_curvature_block(
     const Eigen::MatrixXd& curvature_block) {
   if (curvature_block.rows() == 0) {
-    return Eigen::MatrixXd::Zero(0, 0);
+    return {Eigen::MatrixXd::Zero(0, 0), Eigen::MatrixXd::Zero(0, 0)};
   }
   if (curvature_block.rows() != curvature_block.cols() ||
       !curvature_block.allFinite()) {
-    return Eigen::MatrixXd::Identity(
-        curvature_block.rows(),
-        curvature_block.rows());
+    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
+        curvature_block.rows(), curvature_block.rows());
+    return {identity, identity};
   }
 
   const Eigen::MatrixXd sym_block =
@@ -257,9 +262,9 @@ Eigen::MatrixXd build_positive_curvature_block(
   if (solver.info() != Eigen::Success ||
       !solver.eigenvalues().allFinite() ||
       !solver.eigenvectors().allFinite()) {
-    return Eigen::MatrixXd::Identity(
-        curvature_block.rows(),
-        curvature_block.rows());
+    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
+        curvature_block.rows(), curvature_block.rows());
+    return {identity, identity};
   }
 
   const double lo = nonredundant_preconditioner_min_curvature();
@@ -270,9 +275,13 @@ Eigen::MatrixXd build_positive_curvature_block(
     if (!std::isfinite(value) || value <= 0.0) value = 1.0;
     safe_eigenvalues[i] = std::clamp(value, lo, hi);
   }
-  return solver.eigenvectors() *
-      safe_eigenvalues.asDiagonal() *
+  PositiveCurvatureBlock result;
+  result.matrix = solver.eigenvectors() *
+      safe_eigenvalues.asDiagonal() * solver.eigenvectors().transpose();
+  result.inverse = solver.eigenvectors() *
+      safe_eigenvalues.cwiseInverse().asDiagonal() *
       solver.eigenvectors().transpose();
+  return result;
 }
 
 Eigen::MatrixXd build_deterministic_orthonormal_tangent_basis(
@@ -366,7 +375,8 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     const SparseOrbitalParameterView& parameter_view,
     const Eigen::Ref<const Eigen::MatrixXd>& occ_basis_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& phys_orbital_matrix,
-    const Eigen::MatrixXd* ao_effective_h1e)
+    const Eigen::MatrixXd* ao_effective_h1e,
+    bool collect_structural_diagnostics)
     : packed_parameter_size_(parameter_view.size()) {
   if (ao_effective_h1e != nullptr &&
       (ao_effective_h1e->rows() != input.n_basis_functions ||
@@ -485,6 +495,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       // --- Build B_p directly from block matrices ---
       const Eigen::Index local_size =
           static_cast<Eigen::Index>(proj.block_rows.size());
+      proj.local_parameter_size = static_cast<int>(local_size);
 
       // Gather local coefficients.
       Eigen::VectorXd x_p = Eigen::VectorXd::Zero(local_size);
@@ -566,6 +577,36 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       }
       require_finite_matrix(raw_generator, "NROS raw tangent generator");
 
+      // Verify the algebraic quotient used by the strict-sparse chart. For an
+      // inactive orbital the whole block-local inactive span is gauge; for an
+      // active orbital only its own scaling direction is gauge. The physical
+      // generators and gauge generators together must span every coefficient
+      // on this orbital's fixed support, and their intersection must be zero.
+      if (collect_structural_diagnostics) {
+        Eigen::MatrixXd gauge_generator;
+        if (k < block_n_inactive) {
+          gauge_generator = gather_block_rows(
+              block_occ_raw,
+              proj.block_rows,
+              0,
+              block_n_inactive);
+        } else {
+          gauge_generator = x_p;
+        }
+        const Eigen::MatrixXd gauge_basis =
+            build_deterministic_orthonormal_tangent_basis(gauge_generator);
+        Eigen::MatrixXd combined_generator(
+            local_size,
+            gauge_generator.cols() + raw_generator.cols());
+        combined_generator << gauge_generator, raw_generator;
+        const Eigen::MatrixXd combined_basis =
+            build_deterministic_orthonormal_tangent_basis(combined_generator);
+        proj.local_gauge_rank = static_cast<int>(gauge_basis.cols());
+        proj.local_combined_rank = static_cast<int>(combined_basis.cols());
+        proj.expected_quotient_dimension =
+            proj.local_combined_rank - proj.local_gauge_rank;
+      }
+
       // Drop near-zero columns of raw_generator before projection to avoid ill-conditioned
       // Gram matrix.  Raw sparse coefficients for HAO orbitals with disjoint
       // support produce degenerate direction columns.
@@ -611,6 +652,20 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       }
 
       proj.tangent_basis = std::move(U_p);
+      if (collect_structural_diagnostics) {
+        proj.gauge_intersection_dimension =
+            proj.local_gauge_rank +
+            static_cast<int>(proj.tangent_basis.cols()) -
+            proj.local_combined_rank;
+        const double local_coefficient_norm = x_p.norm();
+        if (local_coefficient_norm > std::numeric_limits<double>::epsilon()) {
+          const Eigen::VectorXd scaling_residual =
+              x_p - proj.tangent_basis *
+                        (proj.tangent_basis.transpose() * x_p);
+          proj.relative_scaling_residual =
+              scaling_residual.norm() / local_coefficient_norm;
+        }
+      }
       proj.local_reduced_offset = reduced_size_;
       proj.local_reduced_size = static_cast<int>(proj.tangent_basis.cols());
       reduced_size_ += proj.local_reduced_size;
@@ -659,7 +714,10 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
         // Fock block is not numerically usable, fall back to the identity
         // instead of letting NaN curvature poison a reduced Newton solve.
         proj.curvature_diagonal = normalize_curvature_diagonal(curv);
-        proj.curvature_block = build_positive_curvature_block(block_curv);
+        PositiveCurvatureBlock positive_block =
+            build_positive_curvature_block(block_curv);
+        proj.curvature_block = std::move(positive_block.matrix);
+        proj.inverse_curvature_block = std::move(positive_block.inverse);
         has_reduced_curvature_diagonal_ = true;
       }
 
@@ -670,6 +728,50 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     ++block_index;
   }
   use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
+}
+
+NonredundantOrbitalSpace::StructuralDiagnostics
+NonredundantOrbitalSpace::structural_diagnostics() const noexcept {
+  StructuralDiagnostics diagnostics;
+  diagnostics.packed_parameter_size = packed_parameter_size_;
+  diagnostics.reduced_size = reduced_size_;
+  for (const auto& block_basis : block_bases_) {
+    for (const auto& projector : block_basis.orbitals) {
+      ++diagnostics.orbital_count;
+      if (projector.local_reduced_size >= projector.local_parameter_size) {
+        ++diagnostics.full_local_rank_orbital_count;
+      }
+      if (projector.local_reduced_size ==
+          std::max(0, projector.local_parameter_size - 1)) {
+        ++diagnostics.codimension_one_orbital_count;
+      }
+      if (projector.local_combined_rank < projector.local_parameter_size) {
+        ++diagnostics.incomplete_local_span_orbital_count;
+      }
+      if (projector.gauge_intersection_dimension != 0) {
+        ++diagnostics.gauge_intersection_orbital_count;
+      }
+      if (projector.local_reduced_size !=
+          projector.expected_quotient_dimension) {
+        ++diagnostics.quotient_dimension_mismatch_orbital_count;
+      }
+      diagnostics.total_gauge_rank += projector.local_gauge_rank;
+      diagnostics.total_expected_quotient_dimension +=
+          projector.expected_quotient_dimension;
+      diagnostics.minimum_relative_scaling_residual =
+          std::min(
+              diagnostics.minimum_relative_scaling_residual,
+              projector.relative_scaling_residual);
+      diagnostics.maximum_relative_scaling_residual =
+          std::max(
+              diagnostics.maximum_relative_scaling_residual,
+              projector.relative_scaling_residual);
+    }
+  }
+  if (diagnostics.orbital_count == 0) {
+    diagnostics.minimum_relative_scaling_residual = 0.0;
+  }
+  return diagnostics;
 }
 
 NonredundantOrbitalSpace::ProjectionResult
@@ -777,9 +879,9 @@ NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
   for (const auto& bb : block_bases_) {
     for (const auto& p : bb.orbitals) {
       if (p.local_reduced_size <= 0) continue;
-      if (p.curvature_block.rows() != p.local_reduced_size ||
-          p.curvature_block.cols() != p.local_reduced_size ||
-          !p.curvature_block.allFinite()) {
+      if (p.inverse_curvature_block.rows() != p.local_reduced_size ||
+          p.inverse_curvature_block.cols() != p.local_reduced_size ||
+          !p.inverse_curvature_block.allFinite()) {
         if (p.curvature_diagonal.size() == p.local_reduced_size &&
             p.curvature_diagonal.allFinite()) {
           out.segment(p.local_reduced_offset, p.local_reduced_size).array() /=
@@ -787,16 +889,12 @@ NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
         }
         continue;
       }
-      Eigen::LDLT<Eigen::MatrixXd> ldlt(p.curvature_block);
-      if (ldlt.info() != Eigen::Success) {
-        return apply_inverse_reduced_curvature(reduced_vector);
-      }
       const Eigen::VectorXd solved =
-          ldlt.solve(
-              reduced_vector.segment(
-                  p.local_reduced_offset,
-                  p.local_reduced_size));
-      if (ldlt.info() != Eigen::Success || !solved.allFinite()) {
+          p.inverse_curvature_block *
+          reduced_vector.segment(
+              p.local_reduced_offset,
+              p.local_reduced_size);
+      if (!solved.allFinite()) {
         return apply_inverse_reduced_curvature(reduced_vector);
       }
       out.segment(p.local_reduced_offset, p.local_reduced_size) = solved;

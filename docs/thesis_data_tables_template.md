@@ -91,11 +91,8 @@
 | 体系 | 策略 | 是否收敛 | first-step energy drop | 迭代数 | SCF wall time / s | rejected/rescue 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
 | `240_tnhvp` | default |  |  |  |  |  |
-| `240_tnhvp` | force internal inactive chart |  |  |  |  |  |
 | `benzene` | default |  |  |  |  |  |
-| `benzene` | force internal inactive chart |  |  |  |  |  |
 | `MnF2` | default |  |  |  |  |  |
-| `MnF2` | force internal inactive chart |  |  |  |  |  |
 
 ## 6. 第一批建议计算
 

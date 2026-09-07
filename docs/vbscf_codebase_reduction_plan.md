@@ -163,7 +163,7 @@ reviewing a multi-thousand-line file for every strategy change.
 Break the exact HVP subsystem along data-flow boundaries:
 
 - `exact_ctx_cache.*`: accepted-point cache ownership and validation.
-- `exact_ctx_orbital_chart.*`: physical/internal inactive chart conversion.
+- `exact_ctx_orbital_chart.*`: physical strict-sparse chart and retraction.
 - `exact_ctx_direct_action.*`: direct orbital HVP action.
 - `exact_ctx_response.*`: structure/eigen response contributions.
 - `exact_ctx_diagnostics.*`: timing, availability, and debug reporting.

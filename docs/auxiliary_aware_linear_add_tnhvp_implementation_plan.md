@@ -1,5 +1,8 @@
 # Auxiliary-Aware Linear-Add TNHVP Implementation Plan
 
+> **历史方案（已被物理 (U_p) 路径取代）**：mixed chart 不再是可选实现，
+> 也不能用于解释当前 exact HVP；本文仅保留为推导历史。
+
 本文档只基于当前代码状态、`docs/current_code_linear_add_mixed_chart_derivation.md` 的推导，以及 `docs/VBSCF_Hessian.pdf` 中的 Newton 变量和去冗余处理。目标不是实现 PDF 里的完整 Hessian 矩阵构造，也不是把 auxiliary-orbital 计算退化成纯 stored-coefficient 更新。更准确的目标是：把当前 TNHVP 的 matrix-free Hessian-vector action 放到与 PDF 一致的 auxiliary-aware linear-add 变量上，同时允许 mixed-chart 继续作为高效的计算表示、切空间基和预条件框架。旧文档中的策略结论不作为依据。
 
 ## 0. 边界：HVP 不是完整 Hessian 矩阵

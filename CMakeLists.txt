@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.16)
 
 project(xmvb_cpp_standalone LANGUAGES C CXX Fortran)
 
+include(CTest)
+
 file(TO_CMAKE_PATH "$ENV{CONDA_PREFIX}" XMVB_CONDA_PREFIX)
 
 option(

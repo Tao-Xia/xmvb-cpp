@@ -70,7 +70,7 @@
 
 | 体系 | 输入文件 | 用途 |
 | --- | --- | --- |
-| `240` internal deck | `test/240_tnhvp.xmi` | internal inactive chart on/off 的轨迹分叉 A/B；适合补充材料说明默认策略选择 |
+| `240` internal deck | `test/240_tnhvp.xmi` | 历史输入，仅用于物理严格稀疏坐标回归 |
 | `FeCl` | `test/FeCl.xmi` | 小型 open-shell OEO 补充例子；可作为 TiCl 的旁证 |
 | `C6H6.full` | `src/test_molecule/C6H6.full.xmi` | full-structure benzene exact deck；适合讨论 same-spin / unique-string / exact contraction 工程收益 |
 | `10698_RI` | `test/10698_RI.xmi` | 如果论文还要讨论 RI / low-rank 或 unique-spin pair 的工程优化，可单独放补充材料 |
@@ -141,7 +141,7 @@
 比较的开关只保留最少必要项：
 
 - default policy
-- internal inactive chart forced on/off
+- physical strict-sparse chart finite-difference consistency
 
 记录：
 

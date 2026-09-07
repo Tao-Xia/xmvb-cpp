@@ -53,8 +53,6 @@ public:
   struct Diagnostics {
     bool supports_analytic_core_model = false;
     bool outer_response_enabled = false;
-    bool internal_inactive_chart_runtime_enabled = false;
-    bool uses_internal_inactive_chart = false;
     bool used_reduced_curvature_diagonal = false;
     bool has_same_spin_matrix_form = false;
     bool has_opposite_spin_matrix_form = false;

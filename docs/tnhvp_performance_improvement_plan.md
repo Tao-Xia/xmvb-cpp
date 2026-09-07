@@ -280,8 +280,10 @@ active matrices directly into reusable operator-owned `std::vector<double>`
 buffers instead of forming two temporary `Eigen::MatrixXd` objects and then
 copying them into vectors.
 
-Also avoided constructing the uncached internal inactive chart on the cached
-HVP path. The uncached diagnostics path still builds that chart when needed.
+The former internal inactive-chart experiment has since been removed: its HVP
+did not represent the same physical coefficient chart as the optimizer and
+failed the FeCl2 finite-difference check. Exact-CTX now has only the physical
+strict-sparse chart path.
 
 Validation:
 

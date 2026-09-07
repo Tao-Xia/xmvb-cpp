@@ -167,21 +167,6 @@ bool parse_env_flag_with_default(
   return value.has_value() ? *value : default_value;
 }
 
-bool exact_ctx_internal_inactive_chart_runtime_enabled() {
-  if (parse_env_flag_with_default(
-          "XMVB_CPP_DISABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART",
-          false)) {
-    return false;
-  }
-  // The actual default selection is molecule-dependent inside exact-ctx:
-  // closed-shell systems keep the cheaper internal inactive chart, while
-  // open-shell systems fall back to the physical occupied chart unless the
-  // user explicitly forces this path on.
-  return parse_env_flag_with_default(
-      "XMVB_CPP_ENABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART",
-      true);
-}
-
 int parse_env_int_with_default(
     const char* variable_name,
     int default_value) {
@@ -476,14 +461,6 @@ void print_exact_ctx_policy_summary(
           !parse_env_flag_with_default(
               "XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE",
               false)));
-  print_log_field(
-      "Internal inactive chart",
-      bool_name(exact_ctx_internal_inactive_chart_runtime_enabled()));
-  print_log_field(
-      "Default inactive chart",
-      bool_name(
-          strategy.prefer_internal_inactive_chart &&
-          exact_ctx_internal_inactive_chart_runtime_enabled()));
   print_log_field(
       "Strategy profile",
       xmvb::vb::exact_ctx_default_strategy_kind_name(strategy.kind));

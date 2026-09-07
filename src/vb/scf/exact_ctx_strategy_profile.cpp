@@ -49,9 +49,6 @@ ExactCtxDefaultStrategy choose_exact_ctx_default_strategy(
 
   // Unified strategy: all systems start with cheap core-only, with adaptive
   // runtime upgrade to full-model when low trust is detected.
-  strategy.prefer_internal_inactive_chart =
-      !system_profile.sparse_orbital_chart;
-
   // Non-sparse charts (OEO): cheap model is sufficient.
   if (!system_profile.sparse_orbital_chart) {
     strategy.kind = ExactCtxDefaultStrategyKind::CheapCoreOnly;

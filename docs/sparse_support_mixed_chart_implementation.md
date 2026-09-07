@@ -1,5 +1,9 @@
 # Sparse-Support Mixed Chart 与几何回退实现方案
 
+> **历史文档（已废弃）**：文中的 internal mixed chart 已从生产代码删除；
+> 它与物理严格稀疏坐标的 HVP pullback 不一致。当前实现以每轨道固定
+> support 的物理 (U_p) 切空间为唯一坐标，本文件不得作为当前代码说明。
+
 ## 1. 目标
 
 本文档统一整理以下三件事：

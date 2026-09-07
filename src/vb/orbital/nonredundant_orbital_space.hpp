@@ -12,6 +12,21 @@ namespace xmvb::vb {
 
 class NonredundantOrbitalSpace {
 public:
+  struct StructuralDiagnostics {
+    int packed_parameter_size = 0;
+    int reduced_size = 0;
+    int orbital_count = 0;
+    int full_local_rank_orbital_count = 0;
+    int codimension_one_orbital_count = 0;
+    int incomplete_local_span_orbital_count = 0;
+    int gauge_intersection_orbital_count = 0;
+    int quotient_dimension_mismatch_orbital_count = 0;
+    int total_gauge_rank = 0;
+    int total_expected_quotient_dimension = 0;
+    double minimum_relative_scaling_residual = 1.0;
+    double maximum_relative_scaling_residual = 0.0;
+  };
+
   struct ProjectionResult {
     Eigen::VectorXd reduced_gradient;
     Eigen::VectorXd packed_projected_gradient;
@@ -22,7 +37,8 @@ public:
       const SparseOrbitalParameterView& parameter_view,
       const Eigen::Ref<const Eigen::MatrixXd>& occupied_orbital_basis_matrix,
       const Eigen::Ref<const Eigen::MatrixXd>& physical_orbital_matrix,
-      const Eigen::MatrixXd* ao_effective_h1e = nullptr);
+      const Eigen::MatrixXd* ao_effective_h1e = nullptr,
+      bool collect_structural_diagnostics = false);
 
   int reduced_size() const noexcept {
     return reduced_size_;
@@ -31,6 +47,8 @@ public:
   int n_blocks() const noexcept {
     return static_cast<int>(block_bases_.size());
   }
+
+  StructuralDiagnostics structural_diagnostics() const noexcept;
 
   Eigen::VectorXd project_reduced_gradient(
       const Eigen::VectorXd& packed_gradient) const;
@@ -95,6 +113,16 @@ private:
     // Positive-definite local block approximation to
     // U_p^T (F_p - eps_p S_p) U_p used by the block preconditioner.
     Eigen::MatrixXd curvature_block;
+    // Cached inverse action of curvature_block. The accepted-point block is
+    // immutable, so factoring it again in every Krylov iteration is wasted
+    // cubic work.
+    Eigen::MatrixXd inverse_curvature_block;
+    int local_parameter_size = 0;
+    int local_gauge_rank = 0;
+    int local_combined_rank = 0;
+    int expected_quotient_dimension = 0;
+    int gauge_intersection_dimension = 0;
+    double relative_scaling_residual = 0.0;
     int local_reduced_offset = 0;
     int local_reduced_size = 0;
   };

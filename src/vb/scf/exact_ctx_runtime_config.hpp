@@ -62,27 +62,6 @@ inline int exact_ctx_effective_openmp_thread_limit(
           workload_limited_threads));
 }
 
-inline bool exact_ctx_internal_inactive_chart_runtime_enabled() {
-  const char* disable_flag =
-      std::getenv("XMVB_CPP_DISABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART");
-  if (disable_flag != nullptr &&
-      disable_flag[0] != '\0' &&
-      std::strcmp(disable_flag, "0") != 0 &&
-      std::strcmp(disable_flag, "false") != 0 &&
-      std::strcmp(disable_flag, "FALSE") != 0) {
-    return false;
-  }
-
-  const char* enable_flag =
-      std::getenv("XMVB_CPP_ENABLE_EXACT_CTX_INTERNAL_INACTIVE_CHART");
-  if (enable_flag == nullptr || enable_flag[0] == '\0') {
-    return true;
-  }
-  return std::strcmp(enable_flag, "0") != 0 &&
-      std::strcmp(enable_flag, "false") != 0 &&
-      std::strcmp(enable_flag, "FALSE") != 0;
-}
-
 inline bool has_active_matrix_gradient(
     const CppActiveSpaceSecondOrderContext& context,
     int n_active_orbitals) {

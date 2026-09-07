@@ -1,5 +1,8 @@
 # Current-Code Derivation of Linear-Add Orbital Updates and the Mixed Chart
 
+> **标题中的“Current-Code”已经失效。** internal mixed chart 已删除，当前
+> TNHVP 只在固定 support 的物理 (U_p) 坐标中工作。本文件是历史快照。
+
 本文只使用两类依据：
 
 1. `docs/VBSCF_Hessian.pdf` 中的 VBSCF Hessian / Newton-Raphson 公式。

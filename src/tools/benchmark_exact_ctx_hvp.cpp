@@ -258,7 +258,8 @@ AcceptedPointBenchmarkContext build_benchmark_context(
               .leftCols(n_occupied_orbitals),
           normalized_orbital_matrix,
           &context.gradient_result->ao_effective_one_electron_result
-               .ao_effective_h1e);
+               .ao_effective_h1e,
+          true);
   context.reduced_direction =
       context.nonredundant_space->project_reduced_gradient(packed_gradient);
   if (context.reduced_direction.size() == 0) {
@@ -444,6 +445,30 @@ int main(int argc, char** argv) {
               << '\n';
     std::cout << "reduced_dimension = "
               << context.reduced_direction.size() << '\n';
+    const auto space_diagnostics =
+        context.nonredundant_space->structural_diagnostics();
+    std::cout << "packed_dimension = "
+              << space_diagnostics.packed_parameter_size << '\n';
+    std::cout << "nros_orbital_count = "
+              << space_diagnostics.orbital_count << '\n';
+    std::cout << "nros_full_local_rank_orbital_count = "
+              << space_diagnostics.full_local_rank_orbital_count << '\n';
+    std::cout << "nros_codimension_one_orbital_count = "
+              << space_diagnostics.codimension_one_orbital_count << '\n';
+    std::cout << "nros_incomplete_local_span_orbital_count = "
+              << space_diagnostics.incomplete_local_span_orbital_count << '\n';
+    std::cout << "nros_gauge_intersection_orbital_count = "
+              << space_diagnostics.gauge_intersection_orbital_count << '\n';
+    std::cout << "nros_quotient_dimension_mismatch_orbital_count = "
+              << space_diagnostics.quotient_dimension_mismatch_orbital_count << '\n';
+    std::cout << "nros_total_gauge_rank = "
+              << space_diagnostics.total_gauge_rank << '\n';
+    std::cout << "nros_total_expected_quotient_dimension = "
+              << space_diagnostics.total_expected_quotient_dimension << '\n';
+    std::cout << "nros_min_relative_scaling_residual = "
+              << space_diagnostics.minimum_relative_scaling_residual << '\n';
+    std::cout << "nros_max_relative_scaling_residual = "
+              << space_diagnostics.maximum_relative_scaling_residual << '\n';
     std::cout << "repeats = " << options.repeats << '\n';
     std::cout << "warmup = " << options.warmup << '\n';
     std::cout << "nonredundant_adapt = "
@@ -452,13 +477,6 @@ int main(int argc, char** argv) {
               << bool_name(first_diagnostics.supports_analytic_core_model) << '\n';
     std::cout << "outer_response_runtime_enabled = "
               << bool_name(first_diagnostics.outer_response_enabled) << '\n';
-    std::cout << "internal_inactive_chart_runtime_enabled = "
-              << bool_name(
-                     first_diagnostics.internal_inactive_chart_runtime_enabled)
-              << '\n';
-    std::cout << "uses_internal_inactive_chart = "
-              << bool_name(first_diagnostics.uses_internal_inactive_chart)
-              << '\n';
 
     for (const BenchmarkMeasurement& measurement : measurements) {
       print_measurement(measurement);

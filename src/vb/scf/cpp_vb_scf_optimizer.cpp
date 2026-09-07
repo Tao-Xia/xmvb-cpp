@@ -240,6 +240,22 @@ int exact_ctx_tail_full_inner_solve_enable_max_active_orbitals() {
           0));
 }
 
+double exact_ctx_open_shell_sparse_newton_tail_gradient_multiple() {
+  return std::max(
+      0.0,
+      parse_env_double_with_default(
+          "XMVB_CPP_EXACT_CTX_OPEN_SHELL_SPARSE_TAIL_GRADIENT_MULTIPLE",
+          16.0));
+}
+
+int exact_ctx_open_shell_sparse_newton_tail_max_cg_iterations() {
+  return std::max(
+      1,
+      parse_env_int_with_default(
+          "XMVB_CPP_EXACT_CTX_OPEN_SHELL_SPARSE_TAIL_MAX_CG_ITERATIONS",
+          16));
+}
+
 int exact_ctx_tail_full_inner_solve_min_consecutive_projected_stalls() {
   return std::max(
       0,
@@ -361,10 +377,12 @@ struct ExactCtxInnerSolvePolicy {
   bool used_gradient_tail_extension = false;
   bool used_hybrid_followup_full_solve = false;
   bool used_stall_tail_full_solve = false;
+  bool used_open_shell_sparse_newton_tail = false;
 };
 
 struct ExactCtxHybridStrategyState {
   bool request_followup = false;
+  bool open_shell_sparse_newton_tail_active = false;
   int hybrid_followup_cooldown_remaining = 0;
   int tail_full_solve_cooldown_remaining = 0;
   bool has_full_operator_cost_sample = false;
@@ -511,6 +529,8 @@ void maybe_log_exact_ctx_policy_decision(
          << bool_name(policy.used_hybrid_followup_full_solve)
          << " stall_full="
          << bool_name(policy.used_stall_tail_full_solve)
+         << " sparse_newton_tail="
+         << bool_name(policy.used_open_shell_sparse_newton_tail)
          << " full_corr_allowed="
          << bool_name(full_model_correction_allowed)
          << " full_retry_ready=" << bool_name(full_retry_available)
@@ -681,6 +701,24 @@ bool exact_ctx_stall_tail_full_inner_solve_allowed(
   return true;
 }
 
+bool exact_ctx_open_shell_sparse_newton_tail_allowed(
+    const ExactCtxSystemProfile& system_profile,
+    double current_projected_gradient_inf_norm,
+    double gradient_tolerance) {
+  if (!system_profile.open_shell ||
+      !system_profile.sparse_orbital_chart ||
+      system_profile.n_active_orbitals <= 0 ||
+      system_profile.n_active_orbitals > 8) {
+    return false;
+  }
+  const double gradient_multiple =
+      exact_ctx_open_shell_sparse_newton_tail_gradient_multiple();
+  return gradient_multiple > 0.0 &&
+      std::isfinite(current_projected_gradient_inf_norm) &&
+      current_projected_gradient_inf_norm <=
+          gradient_multiple * std::max(gradient_tolerance, 0.0);
+}
+
 ExactCtxInnerSolvePolicy choose_exact_ctx_inner_solve_policy(
     int accepted_iteration_index,
     const ExactCtxSystemProfile& system_profile,
@@ -707,6 +745,21 @@ ExactCtxInnerSolvePolicy choose_exact_ctx_inner_solve_policy(
   }
   const ExactCtxDefaultStrategy strategy =
       choose_exact_ctx_default_strategy(system_profile);
+  // Once a difficult open-shell sparse problem reaches the local Newton
+  // regime, keep the relaxed selected-state response in the model. Returning
+  // to the cheap core-only operator here can manufacture negative curvature,
+  // shrink the trust radius, and turn an otherwise accurate Newton tail into
+  // dozens of tiny first-order steps. Strict sparse support is unchanged: the
+  // full response acts in the same accepted-point per-orbital U_p chart.
+  if (hybrid_strategy_state.open_shell_sparse_newton_tail_active ||
+      exact_ctx_open_shell_sparse_newton_tail_allowed(
+          system_profile,
+          current_projected_gradient_inf_norm,
+          gradient_tolerance)) {
+    policy.use_outer_response = true;
+    policy.used_open_shell_sparse_newton_tail = true;
+    return policy;
+  }
   if (exact_ctx_hybrid_followup_full_inner_solve_allowed(
           system_profile,
           latest_objective_seconds,
@@ -1110,6 +1163,11 @@ int choose_nonredundant_truncated_newton_max_cg_iterations(
   if (options.nonredundant_truncated_newton_hvp_mode ==
       NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction) {
     if (exact_ctx_inner_solve_policy.use_outer_response) {
+      if (exact_ctx_inner_solve_policy.used_open_shell_sparse_newton_tail) {
+        return std::min(
+            bounded_reduced_size,
+            exact_ctx_open_shell_sparse_newton_tail_max_cg_iterations());
+      }
       // Full-model accepted-point solves are calibration or correction steps,
       // not the default steady-state path. Keep their Krylov budget
       // conservative because the optimizer should return to the cheaper
@@ -1879,10 +1937,6 @@ void maybe_log_exact_ctx_hvp_diagnostics(
          << bool_name(diagnostics.outer_response_local_only_approximation)
          << " outer_energy_only_approx="
          << bool_name(diagnostics.outer_response_energy_only_approximation)
-         << " internal_chart_runtime="
-         << bool_name(diagnostics.internal_inactive_chart_runtime_enabled)
-         << " internal_chart="
-         << bool_name(diagnostics.uses_internal_inactive_chart)
          << " apply_count=" << diagnostics.apply_count
          << " avg_apply_s=" << std::fixed << std::setprecision(6)
          << exact_ctx_average_stage_wall_time_seconds(
@@ -4724,6 +4778,20 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               objective.iteration_time_history_seconds().empty()
                   ? 0.0
                   : objective.iteration_time_history_seconds().back();
+          if (options_.nonredundant_truncated_newton_hvp_mode ==
+                  NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction &&
+              exact_ctx_open_shell_sparse_newton_tail_allowed(
+                  system_profile,
+                  reduced_gradient_inf_norm,
+                  options_.gradient_tolerance)) {
+            // Hysteresis is intentional. Near the solution, one inexact step
+            // can temporarily raise an individual gradient component above
+            // the entry threshold. Switching back to the core-only Hessian at
+            // that point destroys the local Newton model and caused rejected
+            // steps in MnF2. A chart rebuild resets this state above.
+            exact_ctx_hybrid_strategy_state
+                .open_shell_sparse_newton_tail_active = true;
+          }
           ExactCtxInnerSolvePolicy exact_ctx_inner_solve_policy =
               options_.nonredundant_truncated_newton_hvp_mode ==
                       NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction

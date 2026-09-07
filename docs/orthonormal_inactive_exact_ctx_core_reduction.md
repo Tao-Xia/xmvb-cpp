@@ -1,5 +1,9 @@
 # Orthonormal Inactive Exact-Context Core Reduction
 
+> **Retired design note.** The internal inactive chart described below was
+> removed after failing the FeCl2 physical-coordinate HVP finite-difference
+> check. Exact-CTX now acts only in the optimizer's physical (U_p) chart.
+
 ## 1. Goal
 
 This note records the implementation-level conclusion behind the proposed

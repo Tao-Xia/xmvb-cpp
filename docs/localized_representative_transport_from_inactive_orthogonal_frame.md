@@ -1,5 +1,9 @@
 # Localized Representative Transport From An Inactive-Orthogonal Working Frame
 
+> **Retired design note.** These transport formulas are not a production
+> TNHVP path. The attempted internal chart was removed because its HVP was not
+> the pullback of the optimizer's physical strict-sparse coordinate map.
+
 ## 1. Goal
 
 This note derives the exact coordinate relations needed if TNHVP uses an

@@ -38,7 +38,6 @@ enum class ExactCtxDefaultStrategyKind {
 struct ExactCtxDefaultStrategy {
   ExactCtxDefaultStrategyKind kind =
       ExactCtxDefaultStrategyKind::CheapCoreOnly;
-  bool prefer_internal_inactive_chart = false;
   int startup_full_inner_solve_begin = 0;
   int startup_full_inner_solve_count = 0;
   int startup_full_inner_solve_max_extra_count = 0;
