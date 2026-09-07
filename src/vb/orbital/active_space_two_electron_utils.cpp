@@ -6151,6 +6151,54 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
   return packed_directions;
 }
 
+Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
+    const std::vector<double>& packed_active_two_electron_gradient,
+    const ExactPackedActiveTwoElectronAdjointCache& accepted_cache) {
+  const int n_basis_functions = accepted_cache.n_basis_functions;
+  const int n_active_orbitals = accepted_cache.n_active_orbitals;
+  const std::size_t n_active_pairs =
+      accepted_cache.active_pair_first_indices.size();
+  const std::size_t expected_packed_size =
+      n_active_pairs * (n_active_pairs + 1) / 2;
+  const std::size_t n_ao_pairs =
+      static_cast<std::size_t>(n_basis_functions) *
+      (n_basis_functions + 1) / 2;
+  if (n_basis_functions <= 0 || n_active_orbitals <= 0 ||
+      accepted_cache.active_pair_second_indices.size() != n_active_pairs ||
+      packed_active_two_electron_gradient.size() != expected_packed_size ||
+      accepted_cache.accepted_base_pair_products.rows() !=
+          static_cast<Eigen::Index>(n_ao_pairs) ||
+      accepted_cache.accepted_base_pair_products.cols() !=
+          static_cast<Eigen::Index>(n_active_pairs) ||
+      accepted_cache.accepted_dense_active_coefficients.rows() !=
+          n_basis_functions ||
+      accepted_cache.accepted_dense_active_coefficients.cols() !=
+          n_active_orbitals) {
+    throw std::invalid_argument(
+        "cached exact active-2e adjoint pullback dimensions are inconsistent");
+  }
+
+  const auto active_pairs = build_active_pair_list(n_active_orbitals);
+  const ExactCtxPairMatrix active_pair_gradient_matrix =
+      build_active_pair_gradient_matrix(
+          packed_active_two_electron_gradient,
+          active_pairs);
+  ExactCtxPairMatrix pair_gradients(n_ao_pairs, n_active_pairs);
+  pair_gradients.noalias() =
+      accepted_cache.accepted_base_pair_products *
+      active_pair_gradient_matrix;
+
+  Eigen::MatrixXd dense_active_gradient = Eigen::MatrixXd::Zero(
+      n_basis_functions,
+      n_active_orbitals);
+  accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
+      pair_gradients,
+      accepted_cache.accepted_dense_active_coefficients,
+      accepted_cache,
+      &dense_active_gradient);
+  return dense_active_gradient;
+}
+
 ExactPackedActiveTwoElectronAdjointCache
 build_exact_packed_active_two_electron_adjoint_cache(
     const std::vector<double>& packed_active_two_electron_gradient,

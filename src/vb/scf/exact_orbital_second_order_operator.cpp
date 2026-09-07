@@ -7152,6 +7152,7 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
     const CppActiveSpaceSecondOrderContext& accepted_point_context,
     const ActiveSpaceGradientDirection& active_space_gradient_direction,
     const AcceptedOrbitalPreparationCache& orbital_preparation_cache,
+    const ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache,
     std::vector<double>* symmetric_active_overlap_gradient_workspace,
     std::vector<double>* symmetric_active_one_electron_gradient_workspace) {
   const int n_inactive_doubly_occupied_orbitals =
@@ -7202,17 +7203,31 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
           n_inactive_doubly_occupied_orbitals,
           n_active_orbitals);
 
-  ActiveSpaceTwoElectronBackpropagator active_space_two_electron_backpropagator;
-  const auto active_space_two_electron_backpropagation_result =
-      active_space_two_electron_backpropagator.backpropagate(
-          active_space_gradient_direction.packed_active_two_electron_gradient,
-          input.ao_integral_input.ao_two_electron_integral_values,
-          input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
-          active_space_two_electron_result,
-          input.orbital_preparation_input.n_basis_functions,
-          n_inactive_doubly_occupied_orbitals,
-          n_active_orbitals);
+  Eigen::MatrixXd active_two_electron_auxiliary_gradient;
+  if (exact_two_electron_cache != nullptr &&
+      exact_two_electron_cache->n_basis_functions > 0) {
+    active_two_electron_auxiliary_gradient =
+        backpropagate_exact_packed_active_two_electron_gradient(
+            active_space_gradient_direction
+                .packed_active_two_electron_gradient,
+            *exact_two_electron_cache);
+  } else {
+    ActiveSpaceTwoElectronBackpropagator
+        active_space_two_electron_backpropagator;
+    active_two_electron_auxiliary_gradient =
+        active_space_two_electron_backpropagator
+            .backpropagate(
+                active_space_gradient_direction
+                    .packed_active_two_electron_gradient,
+                input.ao_integral_input.ao_two_electron_integral_values,
+                input.ao_integral_input.ao_two_electron_integral_indices,
+                orbital_result,
+                active_space_two_electron_result,
+                input.orbital_preparation_input.n_basis_functions,
+                n_inactive_doubly_occupied_orbitals,
+                n_active_orbitals)
+            .active_auxiliary_orbital_gradient;
+  }
 
   AoEffectiveOneElectronBackpropagator ao_effective_one_electron_backpropagator;
   const auto ao_effective_one_electron_backpropagation_result =
@@ -7225,8 +7240,7 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
   Eigen::MatrixXd total_active_auxiliary_gradient =
       active_space_matrix_backpropagation_result.active_auxiliary_orbital_gradient;
   total_active_auxiliary_gradient.noalias() +=
-      active_space_two_electron_backpropagation_result
-          .active_auxiliary_orbital_gradient;
+      active_two_electron_auxiliary_gradient;
   const Eigen::Map<const Eigen::MatrixXd> total_inactive_density_gradient_matrix(
       total_inactive_density_gradient.data(),
       input.orbital_preparation_input.n_basis_functions,
@@ -7384,6 +7398,12 @@ std::vector<double> symmetrize_square_storage_average_local(
 }
 
 }  // namespace
+
+struct ExactOrbitalSecondOrderOperator::PrecomputedDirection {
+  Eigen::VectorXd packed_direction;
+  DenseOrbitalTangentContext dense_orbital_tangent_context;
+  OrbitalPreparationDirectionalResult orbital_preparation_directional_result;
+};
 
 OppositeSpinMatrixBackwardContribution
 build_pairwise_local_opposite_spin_matrix_backward_reference(
@@ -7674,24 +7694,29 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
   const Eigen::Index n_directions = reduced_directions.cols();
   Eigen::MatrixXd inactive_density_columns(ao_matrix_size, n_directions);
   Eigen::MatrixXd symmetrized_pullback_columns(ao_matrix_size, n_directions);
+  std::vector<PrecomputedDirection> precomputed_directions;
+  precomputed_directions.reserve(n_directions);
   std::vector<Eigen::MatrixXd> dense_active_directions;
   dense_active_directions.reserve(n_directions);
   for (Eigen::Index column = 0; column < n_directions; ++column) {
-    const Eigen::VectorXd packed_direction =
+    PrecomputedDirection precomputed;
+    precomputed.packed_direction =
         nonredundant_space_->expand_step(reduced_directions.col(column));
-    const auto dense_orbital_tangent_context =
+    precomputed.dense_orbital_tangent_context =
         build_dense_orbital_tangent_context(
             current_input_->orbital_preparation_input,
             parameter_view_,
-            packed_direction,
+            precomputed.packed_direction,
             *accepted_orbital_preparation_cache_);
-    const auto directional_result =
+    precomputed.orbital_preparation_directional_result =
         build_orbital_preparation_directional_result(
             current_input_->orbital_preparation_input,
-            dense_orbital_tangent_context,
+            precomputed.dense_orbital_tangent_context,
             n_inactive_doubly_occupied_orbitals,
             n_active_orbitals,
             *accepted_orbital_preparation_cache_);
+    const auto& directional_result =
+        precomputed.orbital_preparation_directional_result;
     dense_active_directions.push_back(
         directional_result.delta_active_auxiliary_orbitals);
     Eigen::MatrixXd pullback_source = directional_result.delta_inactive_density;
@@ -7706,6 +7731,7 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
     symmetrized_pullback_columns.col(column) =
         Eigen::Map<const Eigen::VectorXd>(
             symmetrized_pullback.data(), ao_matrix_size);
+    precomputed_directions.push_back(std::move(precomputed));
   }
 
   const auto batch_h1e_start_time = std::chrono::steady_clock::now();
@@ -7778,7 +7804,8 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
             : nullptr,
         components.outer_response
             ? &directional_pair_products[column]
-            : nullptr);
+            : nullptr,
+        &precomputed_directions[column]);
   }
   return responses;
 }
@@ -7787,7 +7814,13 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components) const {
   return apply_reduced_impl(
-      reduced_direction, components, nullptr, nullptr, nullptr, nullptr);
+      reduced_direction,
+      components,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr,
+      nullptr);
 }
 
 Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
@@ -7796,7 +7829,8 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
     const Eigen::VectorXd* precomputed_delta_ao_effective_h1e,
     const Eigen::VectorXd* precomputed_inactive_density_gradient,
     const Eigen::VectorXd* precomputed_delta_packed_active_two_electron,
-    const ExactCtxPairMatrix* precomputed_directional_pair_products) const {
+    const ExactCtxPairMatrix* precomputed_directional_pair_products,
+    const PrecomputedDirection* precomputed_direction) const {
   const auto apply_start_time = std::chrono::steady_clock::now();
   auto record_apply_wall_time = [&]() {
     ++apply_timing_totals_.apply_count;
@@ -7823,8 +7857,15 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
       n_basis_functions * n_basis_functions;
 
   const auto core_setup_start_time = std::chrono::steady_clock::now();
-  const Eigen::VectorXd packed_direction =
-      nonredundant_space_->expand_step(reduced_direction);
+  Eigen::VectorXd local_packed_direction;
+  if (precomputed_direction == nullptr) {
+    local_packed_direction =
+        nonredundant_space_->expand_step(reduced_direction);
+  }
+  const Eigen::VectorXd& packed_direction =
+      precomputed_direction != nullptr
+          ? precomputed_direction->packed_direction
+          : local_packed_direction;
   if (packed_direction.norm() == 0.0) {
     record_apply_wall_time();
     return Eigen::VectorXd::Zero(reduced_direction.size());
@@ -7832,25 +7873,41 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
 
   const AcceptedOrbitalPreparationCache* orbital_preparation_cache =
       accepted_orbital_preparation_cache_.get();
-  const auto dense_orbital_tangent_context =
-      build_dense_orbital_tangent_context(
-          current_input_->orbital_preparation_input,
-          parameter_view_,
-          packed_direction,
-          *orbital_preparation_cache);
+  DenseOrbitalTangentContext local_dense_orbital_tangent_context;
+  if (precomputed_direction == nullptr) {
+    local_dense_orbital_tangent_context =
+        build_dense_orbital_tangent_context(
+            current_input_->orbital_preparation_input,
+            parameter_view_,
+            packed_direction,
+            *orbital_preparation_cache);
+  }
+  const DenseOrbitalTangentContext& dense_orbital_tangent_context =
+      precomputed_direction != nullptr
+          ? precomputed_direction->dense_orbital_tangent_context
+          : local_dense_orbital_tangent_context;
   const Eigen::VectorXd input_retract_tangent =
       components.fixed_upstream_pullback
           ? nonredundant_space_->expand_retract_input_tangent(
                 current_input_->orbital_preparation_input,
                 reduced_direction)
           : Eigen::VectorXd();
-  const auto orbital_preparation_directional_result =
-      build_orbital_preparation_directional_result(
-          current_input_->orbital_preparation_input,
-          dense_orbital_tangent_context,
-          n_inactive_doubly_occupied_orbitals,
-          n_active_orbitals,
-          *orbital_preparation_cache);
+  OrbitalPreparationDirectionalResult
+      local_orbital_preparation_directional_result;
+  if (precomputed_direction == nullptr) {
+    local_orbital_preparation_directional_result =
+        build_orbital_preparation_directional_result(
+            current_input_->orbital_preparation_input,
+            dense_orbital_tangent_context,
+            n_inactive_doubly_occupied_orbitals,
+            n_active_orbitals,
+            *orbital_preparation_cache);
+  }
+  const OrbitalPreparationDirectionalResult&
+      orbital_preparation_directional_result =
+          precomputed_direction != nullptr
+              ? precomputed_direction->orbital_preparation_directional_result
+              : local_orbital_preparation_directional_result;
 
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
       current_input_->orbital_preparation_input.ao_overlap_matrix.data(),
@@ -8006,6 +8063,9 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
             *accepted_point_context_,
             directional_active_space_gradient,
             *orbital_preparation_cache,
+            accepted_exact_two_electron_cache_.n_basis_functions > 0
+                ? &accepted_exact_two_electron_cache_
+                : nullptr,
             &outer_response_symmetric_active_overlap_gradient_workspace_,
             &outer_response_symmetric_active_one_electron_gradient_workspace_);
     add_orbital_value_gradient_in_place(

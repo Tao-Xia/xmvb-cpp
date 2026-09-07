@@ -116,13 +116,16 @@ public:
   Diagnostics diagnostics() const;
 
 private:
+  struct PrecomputedDirection;
+
   Eigen::VectorXd apply_reduced_impl(
       const Eigen::VectorXd& reduced_direction,
       HvpComponents components,
       const Eigen::VectorXd* precomputed_delta_ao_effective_h1e,
       const Eigen::VectorXd* precomputed_inactive_density_gradient,
       const Eigen::VectorXd* precomputed_delta_packed_active_two_electron,
-      const ExactCtxPairMatrix* precomputed_directional_pair_products) const;
+      const ExactCtxPairMatrix* precomputed_directional_pair_products,
+      const PrecomputedDirection* precomputed_direction) const;
 
   struct ApplyTimingTotals {
     std::size_t apply_count = 0;

@@ -233,6 +233,18 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
     std::vector<ExactCtxPairMatrix>* directional_pair_products = nullptr);
 
 /**
+ * @brief Backpropagates a changing packed active-2e adjoint at a fixed point.
+ *
+ * The accepted cache already stores `K B(C)`.  Therefore an outer-response
+ * adjoint can be pulled back as `(K B(C)) G` without traversing the AO-pair
+ * integral graph again.  This is the transpose of the cached forward map and
+ * remains fully matrix-free with respect to the orbital Hessian.
+ */
+Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
+    const std::vector<double>& packed_active_two_electron_gradient,
+    const ExactPackedActiveTwoElectronAdjointCache& accepted_cache);
+
+/**
  * @brief Precomputes accepted-point exact 2e HVP invariants.
  *
  * `accepted_dense_active_coefficients` is the accepted AO-by-active dense
