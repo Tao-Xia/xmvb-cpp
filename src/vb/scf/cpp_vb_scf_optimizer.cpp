@@ -293,14 +293,15 @@ public:
     const double gradient_change_norm = reduced_gradient_change.norm();
     const double secant_curvature =
         reduced_step.dot(reduced_gradient_change);
-    constexpr double kMinimumSecantAlignment = 1.0e-8;
+    const double minimum_secant_alignment =
+        std::sqrt(std::numeric_limits<double>::epsilon());
     if (!(step_norm > 0.0) ||
         !(gradient_change_norm > 0.0) ||
         !std::isfinite(step_norm) ||
         !std::isfinite(gradient_change_norm) ||
         !std::isfinite(secant_curvature) ||
         secant_curvature <=
-            kMinimumSecantAlignment * step_norm * gradient_change_norm) {
+            minimum_secant_alignment * step_norm * gradient_change_norm) {
       return false;
     }
 
@@ -430,14 +431,15 @@ void append_nonredundant_truncated_newton_secant_pair(
   const double gradient_change_norm = packed_projected_gradient_change.norm();
   const double secant_curvature =
       packed_step.dot(packed_projected_gradient_change);
-  constexpr double kMinimumSecantAlignment = 1.0e-10;
+  const double minimum_secant_alignment =
+      std::sqrt(std::numeric_limits<double>::epsilon());
   if (!(step_norm > 0.0) ||
       !(gradient_change_norm > 0.0) ||
       !std::isfinite(step_norm) ||
       !std::isfinite(gradient_change_norm) ||
       !std::isfinite(secant_curvature) ||
       secant_curvature <=
-          kMinimumSecantAlignment * step_norm * gradient_change_norm) {
+          minimum_secant_alignment * step_norm * gradient_change_norm) {
     return;
   }
 
@@ -609,8 +611,6 @@ struct TruncatedNewtonStepResult {
   double retract_tangent_norm = 0.0;
   bool reached_boundary = false;
   bool encountered_negative_curvature = false;
-  bool used_initial_step = false;
-  bool warm_start_hvp_performed = false;
   bool used_krylov_rescue = false;
   int cg_iterations = 0;
   double predicted_decrease = 0.0;
@@ -716,9 +716,6 @@ struct RejectedTruncatedNewtonStepCache {
 
 struct AcceptedTruncatedNewtonStepControl {
   double trust_radius = 0.0;
-  bool stalled_projected_convergence = false;
-  int consecutive_projected_stall_count = 0;
-  bool previous_iteration_reliable_for_transport = false;
 };
 
 bool truncated_newton_krylov_subspace_is_usable(
@@ -1108,106 +1105,6 @@ Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
       trust_radius);
 }
 
-bool
-assess_nonredundant_truncated_newton_transported_initial_step(
-    const NonredundantRetractionMetric& retraction_metric,
-    const NonredundantOrbitalSpace& current_space,
-    const NonredundantOrbitalSpace::ProjectionResult& current_projection,
-    double trust_radius,
-    const Eigen::VectorXd& transported_initial_reduced_step,
-    bool previous_iteration_reliable) {
-  if (!previous_iteration_reliable) {
-    return false;
-  }
-  if (transported_initial_reduced_step.size() !=
-          current_projection.reduced_gradient.size() ||
-      transported_initial_reduced_step.size() == 0 ||
-      !transported_initial_reduced_step.allFinite()) {
-    return false;
-  }
-
-  const double step_norm = transported_initial_reduced_step.norm();
-  const double gradient_norm = current_projection.reduced_gradient.norm();
-  const double gradient_inf_norm =
-      gradient_infinity_norm(current_projection.reduced_gradient);
-  if (!(step_norm > 0.0) ||
-      !(gradient_norm > 0.0) ||
-      !(gradient_inf_norm > 0.0) ||
-      !std::isfinite(step_norm) ||
-      !std::isfinite(gradient_norm) ||
-      !std::isfinite(gradient_inf_norm)) {
-    return false;
-  }
-
-  const double descent_measure =
-      -current_projection.reduced_gradient.dot(
-          transported_initial_reduced_step);
-  const double directional_cosine =
-      descent_measure / std::max(
-          std::numeric_limits<double>::min(),
-          gradient_norm * step_norm);
-  if (!std::isfinite(directional_cosine) ||
-      directional_cosine <= 0.0) {
-    return false;
-  }
-
-  const Eigen::VectorXd transported_curvature =
-      current_space.apply_reduced_curvature(
-          transported_initial_reduced_step);
-  if (transported_curvature.size() !=
-          current_projection.reduced_gradient.size() ||
-      !transported_curvature.allFinite()) {
-    return false;
-  }
-
-  const double transported_predicted_decrease =
-      descent_measure -
-      0.5 * transported_initial_reduced_step.dot(transported_curvature);
-  const Eigen::VectorXd transported_surrogate_residual =
-      transported_curvature + current_projection.reduced_gradient;
-  const double surrogate_residual_ratio =
-      gradient_infinity_norm(transported_surrogate_residual) /
-      std::max(gradient_inf_norm, std::numeric_limits<double>::min());
-  if (!std::isfinite(surrogate_residual_ratio) ||
-      !std::isfinite(transported_predicted_decrease) ||
-      transported_predicted_decrease <= 0.0) {
-    return false;
-  }
-
-  const Eigen::VectorXd diagonal_reference_step =
-      build_nonredundant_preconditioned_reduced_gradient_step(
-          retraction_metric,
-          current_space,
-          current_projection,
-          trust_radius,
-          nullptr);
-  const Eigen::VectorXd diagonal_reference_curvature =
-      current_space.apply_reduced_curvature(diagonal_reference_step);
-  const double diagonal_reference_predicted_decrease =
-      -current_projection.reduced_gradient.dot(diagonal_reference_step) -
-      0.5 * diagonal_reference_step.dot(diagonal_reference_curvature);
-  double surrogate_predicted_decrease_ratio = 0.0;
-  if (std::isfinite(diagonal_reference_predicted_decrease) &&
-      diagonal_reference_predicted_decrease > 0.0) {
-    surrogate_predicted_decrease_ratio =
-        transported_predicted_decrease /
-        diagonal_reference_predicted_decrease;
-  }
-
-  // A transported step is only worth paying one extra H*s for if it still
-  // looks Newton-like in the current accepted-point diagonal model. Otherwise
-  // the warm start tends to poison the cheap solve and trigger the expensive
-  // same-iteration full retry path.
-  constexpr double kMinimumDirectionalCosine = 5.0e-2;
-  constexpr double kMaximumResidualRatio = 5.0e-1;
-  constexpr double kMinimumPredictedDecreaseRatio = 5.0e-1;
-  return
-      directional_cosine >= kMinimumDirectionalCosine &&
-      surrogate_residual_ratio <= kMaximumResidualRatio &&
-      surrogate_predicted_decrease_ratio >=
-          kMinimumPredictedDecreaseRatio;
-}
-
 AcceptedTruncatedNewtonStepControl
 assess_accepted_nonredundant_truncated_newton_step(
     double trust_radius,
@@ -1216,10 +1113,6 @@ assess_accepted_nonredundant_truncated_newton_step(
     double reject_shrink,
     double expand_ratio,
     double boundary_fraction,
-    double previous_projected_gradient_inf_norm,
-    double next_projected_gradient_inf_norm,
-    double gradient_tolerance,
-    int previous_consecutive_projected_stall_count,
     double trust_ratio,
     const TruncatedNewtonStepResult& accepted_step) {
   AcceptedTruncatedNewtonStepControl control;
@@ -1246,21 +1139,6 @@ assess_accepted_nonredundant_truncated_newton_step(
     control.trust_radius = trust_radius;
   }
 
-  control.stalled_projected_convergence =
-      next_projected_gradient_inf_norm >=
-      0.9 * std::max(
-                previous_projected_gradient_inf_norm,
-                gradient_tolerance);
-  control.consecutive_projected_stall_count =
-      control.stalled_projected_convergence
-          ? previous_consecutive_projected_stall_count + 1
-          : 0;
-  control.previous_iteration_reliable_for_transport =
-      !accepted_step.reached_boundary &&
-      !accepted_step.encountered_negative_curvature &&
-      !control.stalled_projected_convergence &&
-      trust_ratio >= expand_ratio &&
-      !used_krylov_rescue_step;
   return control;
 }
 
@@ -1283,8 +1161,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     int max_cg_iterations,
     ReducedHvpOperator* hvp_operator,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
-    const Eigen::VectorXd* initial_reduced_step = nullptr,
-    const Eigen::VectorXd* initial_hessian_times_step = nullptr) {
+    const Eigen::VectorXd* initial_reduced_step = nullptr) {
   TruncatedNewtonStepResult result;
   const Eigen::VectorXd fallback_step =
       build_nonredundant_preconditioned_reduced_gradient_step(
@@ -1327,15 +1204,8 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     if (std::isfinite(initial_step_norm) &&
         initial_step_norm > 0.0 &&
         initial_step_norm < trust_radius) {
-      result.used_initial_step = true;
-      Eigen::VectorXd hessian_times_initial_step;
-      if (initial_hessian_times_step != nullptr) {
-        hessian_times_initial_step = *initial_hessian_times_step;
-      } else {
-        result.warm_start_hvp_performed = true;
-        hessian_times_initial_step =
-            hvp_operator->apply(*initial_reduced_step);
-      }
+      const Eigen::VectorXd hessian_times_initial_step =
+          hvp_operator->apply(*initial_reduced_step);
 
       if (hessian_times_initial_step.allFinite()) {
         result.reduced_step = *initial_reduced_step;
@@ -1377,14 +1247,16 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     return finalize_result();
   }
 
-  const double initial_residual_inf_norm =
-      gradient_infinity_norm(residual);
-  // Use a dimensionless inexact-Newton condition.  An absolute floor derived
-  // from the outer gradient tolerance changes under objective rescaling and
-  // can stop the Krylov solve before it resolves the Newton direction.
+  const double initial_residual_inf_norm = gradient_infinity_norm(residual);
+  const double outer_gradient_inf_norm =
+      gradient_infinity_norm(current_projection.reduced_gradient);
+  // The inexact-Newton forcing term is an outer-iteration condition:
+  // ||H s + g|| <= eta_k ||g||.  In particular, a cached same-point trial
+  // changes the initial residual but must not redefine the requested Newton
+  // accuracy.
   const double residual_inf_target =
-      inexact_newton_forcing_term(initial_residual_inf_norm) *
-      initial_residual_inf_norm;
+      inexact_newton_forcing_term(outer_gradient_inf_norm) *
+      outer_gradient_inf_norm;
   if (initial_residual_inf_norm <= residual_inf_target) {
     if (result.reduced_step.squaredNorm() > 0.0 &&
         current_projection.reduced_gradient.dot(result.reduced_step) < 0.0 &&
@@ -1420,11 +1292,12 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         retraction_metric.tangent(search_direction);
     const double search_direction_metric_norm_squared =
         search_direction_tangent.squaredNorm();
+    const double curvature_scale =
+        search_direction.norm() * hessian_times_direction.norm();
     if (!std::isfinite(curvature) ||
+        !std::isfinite(curvature_scale) ||
         curvature <=
-            kCurvatureTolerance *
-            std::max(search_direction.squaredNorm(),
-                     search_direction_metric_norm_squared)) {
+            kCurvatureTolerance * curvature_scale) {
       result.encountered_negative_curvature = true;
       result.reached_boundary = true;
       if (search_direction_metric_norm_squared > 0.0 &&
@@ -1531,9 +1404,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   if (truncated_newton_step_is_usable(
           metric_trust_region_step,
           current_projection.reduced_gradient)) {
-    metric_trust_region_step.used_initial_step = result.used_initial_step;
-    metric_trust_region_step.warm_start_hvp_performed =
-        result.warm_start_hvp_performed;
     metric_trust_region_step.encountered_negative_curvature =
         metric_trust_region_step.encountered_negative_curvature ||
         result.encountered_negative_curvature;
@@ -2592,9 +2462,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
         int rejected_trial_step_count_for_current_point = 0;
         RejectedTruncatedNewtonStepCache rejected_step_cache;
         TruncatedNewtonKrylovSubspace cached_krylov_subspace;
-        Eigen::VectorXd previous_accepted_packed_step;
-        bool previous_accepted_iteration_reliable_for_transport = false;
-        int consecutive_projected_stall_count = 0;
 
         while (n_iterations < options_.max_iterations) {
           if (current_space.reduced_size() == 0) {
@@ -2902,43 +2769,11 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               };
           const Eigen::Index reduced_size =
               current_projection.reduced_gradient.size();
-          bool transported_warm_start_admitted = false;
           TruncatedNewtonTrialEvaluation trial_evaluation_cache;
-          Eigen::VectorXd transported_initial_reduced_step;
           const Eigen::VectorXd* initial_reduced_step_for_current_solve = nullptr;
           if (rejected_step_cache.has_cached_step(reduced_size)) {
             initial_reduced_step_for_current_solve =
                 &rejected_step_cache.cached_step;
-          }
-          if (initial_reduced_step_for_current_solve == nullptr &&
-              finite_nonzero_vector_matches_size(
-                  previous_accepted_packed_step,
-                  current_parameters.size())) {
-            transported_initial_reduced_step =
-                shrink_nonredundant_reduced_step_inside_retract_tangent_radius(
-                    current_orbital_input,
-                    current_space,
-                    parameter_view,
-                    current_space
-                        .project_vector(previous_accepted_packed_step)
-                        .reduced_gradient,
-                    trust_radius);
-            if (finite_nonzero_vector_matches_size(
-                    transported_initial_reduced_step,
-                    reduced_size)) {
-              transported_warm_start_admitted =
-                  assess_nonredundant_truncated_newton_transported_initial_step(
-                      retraction_metric,
-                      current_space,
-                      current_projection,
-                      trust_radius,
-                      transported_initial_reduced_step,
-                      previous_accepted_iteration_reliable_for_transport);
-              if (transported_warm_start_admitted) {
-                initial_reduced_step_for_current_solve =
-                    &transported_initial_reduced_step;
-              }
-            }
           }
 
           auto truncated_newton_step =
@@ -3094,14 +2929,8 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   &packed_secant_history);
           ++n_iterations;
           rejected_trial_step_count_for_current_point = 0;
-          previous_accepted_packed_step =
-              accepted_point_chart_reset ? Eigen::VectorXd() : packed_step;
           rejected_step_cache.clear();
           cached_krylov_subspace = TruncatedNewtonKrylovSubspace();
-          if (accepted_point_chart_reset) {
-            previous_accepted_iteration_reliable_for_transport = false;
-            consecutive_projected_stall_count = 0;
-          }
           sync_result_from_objective(objective, &result);
           record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
           final_gradient_l2_norm = current_gradient.norm();
@@ -3126,17 +2955,10 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   kRejectShrink,
                   kExpandRatio,
                   kBoundaryFraction,
-                  reduced_gradient_inf_norm,
-                  final_projected_gradient_inf_norm,
-                  options_.gradient_tolerance,
-                  consecutive_projected_stall_count,
                   trust_ratio,
                   truncated_newton_step);
           if (nonredundant_rank_changed) {
             packed_secant_history.clear();
-            previous_accepted_packed_step = Eigen::VectorXd();
-            previous_accepted_iteration_reliable_for_transport = false;
-            consecutive_projected_stall_count = 0;
           }
           if (!accepted_point_chart_reset && !nonredundant_rank_changed) {
             const Eigen::VectorXd packed_projected_gradient_change =
@@ -3149,10 +2971,6 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 &packed_secant_history);
           }
           trust_radius = accepted_step_control.trust_radius;
-          consecutive_projected_stall_count =
-              accepted_step_control.consecutive_projected_stall_count;
-          previous_accepted_iteration_reliable_for_transport =
-              accepted_step_control.previous_iteration_reliable_for_transport;
           if (std::abs(de) < options_.energy_tolerance &&
               gradient_infinity_norm(next_projection.reduced_gradient) <
                   options_.gradient_tolerance) {
