@@ -15,9 +15,7 @@
 #include <omp.h>
 #endif
 
-#include "vbscf/determinants/cofactor_differential.hpp"
 #include "vbscf/determinants/pair_storage.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/structures/block_kernels.hpp"
@@ -61,36 +59,6 @@ void throw_if_nonfinite(
   }
 }
 
-Eigen::MatrixXd build_spin_one_electron_block_matrix_local(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_active_orbitals) {
-  const int n_electrons = static_cast<int>(occ_L.size());
-  Eigen::MatrixXd one_electron_block(n_electrons, n_electrons);
-  for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    const int orbital_index_left = occ_L[left_column];
-    for (int right_row = 0; right_row < n_electrons; ++right_row) {
-      const int orbital_index_right = occ_R[right_row];
-      one_electron_block(right_row, left_column) =
-          h1e_act(orbital_index_right, orbital_index_left);
-    }
-  }
-  return one_electron_block;
-}
-
-Eigen::MatrixXd build_local_overlap_direction_matrix(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    int n_active_orbitals) {
-  return build_overlap_submatrix(
-      occ_L,
-      occ_R,
-      delta_ao_overlap_matrix,
-      n_active_orbitals);
-}
-
 double lookup_directional_active_two_electron_kernel_value(
     const std::vector<double>& delta_packed_active_two_electron_integrals,
     int row_packed_pair_index,
@@ -104,37 +72,6 @@ double lookup_directional_active_two_electron_kernel_value(
           column_packed_pair_index);
   return delta_packed_active_two_electron_integrals[
       packed_pair_of_pairs_index];
-}
-
-SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const ActiveSpaceOneElectronResult& active_space_one_electron_result,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const SpinDeterminantPairEvaluation& pair_evaluation,
-    int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
-  SameSpinPolynomialDirectionalPairData result;
-  const CofactorDifferential& cofactor =
-      cached_cofactor_differential(pair_evaluation);
-  const Eigen::MatrixXd ds = build_local_overlap_direction_matrix(
-      occ_L, occ_R, delta_ao_overlap_matrix, n_active_orbitals);
-  const Eigen::MatrixXd dh = build_spin_one_electron_block_matrix_local(
-      occ_L, occ_R, Eigen::Map<const Eigen::MatrixXd>(
-          delta_active_one_electron_matrix.data(), n_active_orbitals, n_active_orbitals),
-      n_active_orbitals);
-  const Eigen::MatrixXd dg = build_spin_antisymmetrized_interaction_direction(
-      occ_L, occ_R, delta_packed_active_two_electron_integrals);
-  result.cofactor_1st = cofactor.value();
-  result.delta_cofactor_1st = cofactor.first(ds);
-  result.delta_overlap_determinant = (result.cofactor_1st.cwiseProduct(ds)).sum();
-  result.delta_total_hamiltonian =
-      (dh.cwiseProduct(result.cofactor_1st)).sum() +
-      (dg.cwiseProduct(cofactor.second())).sum() +
-      (pair_evaluation.same_spin_overlap_hamiltonian_gradient.cwiseProduct(ds)).sum();
-  return result;
 }
 
 constexpr double kDirectionalStructureContributionTolerance = 1.0e-15;
@@ -166,43 +103,6 @@ struct LocalOppositeSpinChannelFamilyLocal {
   std::vector<int> packed_pair_indices;
   std::vector<Eigen::MatrixXd> alpha_channel_matrices;
 };
-
-int count_distinct_projection_block_pairs_local(
-    const LocalProjectionBlockLocal& projection_block,
-    int n_packed_active_pairs) {
-  if (projection_block.n_rows <= 0 ||
-      projection_block.n_cols <= 0 ||
-      n_packed_active_pairs <= 0) {
-    return 0;
-  }
-
-  std::vector<unsigned char> touched_mask(
-      n_packed_active_pairs,
-      0u);
-  int distinct_pair_count = 0;
-  for (int column_local = 0;
-       column_local < projection_block.n_cols;
-       ++column_local) {
-    for (int row_local = 0;
-         row_local < projection_block.n_rows;
-         ++row_local) {
-      const auto& projection =
-          projection_block.projection(row_local, column_local);
-      for (const int packed_pair_index : projection.packed_pair_indices) {
-        if (packed_pair_index < 0 ||
-            packed_pair_index >= n_packed_active_pairs) {
-          throw std::out_of_range(
-              "packed_pair_index outside local channel range");
-        }
-        if (touched_mask[packed_pair_index] == 0u) {
-          touched_mask[packed_pair_index] = 1u;
-          ++distinct_pair_count;
-        }
-      }
-    }
-  }
-  return distinct_pair_count;
-}
 
 int count_distinct_projection_block_pairs_union_local(
     const LocalProjectionBlockLocal& first_projection_block,
@@ -1037,46 +937,26 @@ double contract_close_shell_diagonal_local_directional_opposite_spin_block_local
 DirectionalSpinPairEntry build_directional_spin_pair_entry_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
-    const SameSpinPolynomialDirectionalPairData* precomputed_pair_data) {
+    const SameSpinPolynomialDirectionalPairData& directional_pair_data) {
   DirectionalSpinPairEntry result;
   result.overlap_determinant = pair_evaluation.overlap_result.overlap_determinant;
   result.total_hamiltonian = pair_evaluation.total_hamiltonian;
   if (occ_L.empty()) {
     return result;
   }
-  // One polynomial cofactor action covers regular and rank-deficient pairs
-  // without inverse-overlap cancellations or a rank-dependent derivative.
-
-  SameSpinPolynomialDirectionalPairData owned_directional_data;
-  if (precomputed_pair_data == nullptr) {
-    owned_directional_data = build_polynomial_spin_directional_data(
-        occ_L,
-        occ_R,
-        active_space_one_electron_result,
-        active_space_two_electron_result,
-        pair_evaluation,
-        n_active_orbitals,
-        delta_ao_overlap_matrix,
-        delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals);
-    precomputed_pair_data = &owned_directional_data;
-  }
   result.delta_overlap_determinant =
-      precomputed_pair_data->delta_overlap_determinant;
+      directional_pair_data.delta_overlap_determinant;
   result.delta_total_hamiltonian =
-      precomputed_pair_data->delta_total_hamiltonian;
+      directional_pair_data.delta_total_hamiltonian;
   result.delta_first_order_projection =
       build_sparse_packed_pair_projection_from_coefficients_local(
           occ_L,
           occ_R,
-          precomputed_pair_data->delta_cofactor_1st,
+          directional_pair_data.delta_cofactor_1st,
           true,
           n_active_orbitals);
   materialize_directional_projected_pair_values_local(
@@ -1098,24 +978,18 @@ public:
   DirectionalSpinPairMemo(
       const std::vector<std::vector<int>>& unique_spin_determinants,
       const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-      const ActiveSpaceOneElectronResult& active_space_one_electron_result,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_active_orbitals,
-      const std::vector<double>& delta_ao_overlap_matrix,
-      const std::vector<double>& delta_active_one_electron_matrix,
       const std::vector<double>& delta_packed_active_two_electron_integrals,
-      const std::vector<SameSpinPolynomialDirectionalPairData>*
-          precomputed_directional_pair_data = nullptr)
+      const std::vector<SameSpinPolynomialDirectionalPairData>&
+          directional_pair_data)
       : unique_spin_determinants_(unique_spin_determinants),
         ordered_pair_cache_(ordered_pair_cache),
-        active_space_one_electron_result_(active_space_one_electron_result),
         active_space_two_electron_result_(active_space_two_electron_result),
         n_active_orbitals_(n_active_orbitals),
-        delta_ao_overlap_matrix_(delta_ao_overlap_matrix),
-        delta_active_one_electron_matrix_(delta_active_one_electron_matrix),
         delta_packed_active_two_electron_integrals_(
             delta_packed_active_two_electron_integrals),
-        precomputed_directional_pair_data_(precomputed_directional_pair_data),
+        directional_pair_data_(directional_pair_data),
         cached_entries_(square_storage_size_local(
             static_cast<int>(unique_spin_determinants.size()))),
         entry_flags_(square_storage_size_local(
@@ -1125,6 +999,10 @@ public:
     if (ordered_pair_cache_.size() != expected_cache_entries) {
       throw std::invalid_argument(
           "ordered same-spin pair cache size does not match unique determinant count");
+    }
+    if (directional_pair_data_.size() != expected_cache_entries) {
+      throw std::invalid_argument(
+          "directional same-spin pair data does not match unique determinant count");
     }
   }
 
@@ -1158,25 +1036,14 @@ public:
         right_unique_index,
         static_cast<int>(unique_spin_determinants_.size()));
     std::call_once(entry_flags_[pair_index], [&]() {
-      const SameSpinPolynomialDirectionalPairData* precomputed_pair_data = nullptr;
-      if (precomputed_directional_pair_data_ != nullptr) {
-        if (precomputed_directional_pair_data_->size() != ordered_pair_cache_.size()) {
-          throw std::invalid_argument(
-              "precomputed directional pair cache has inconsistent dimensions");
-        }
-        precomputed_pair_data = &(*precomputed_directional_pair_data_)[pair_index];
-      }
       cached_entries_[pair_index] = build_directional_spin_pair_entry_local(
             unique_spin_determinants_[left_unique_index],
             unique_spin_determinants_[right_unique_index],
-            active_space_one_electron_result_,
             active_space_two_electron_result_,
             ordered_pair_cache_[pair_index],
             n_active_orbitals_,
-            delta_ao_overlap_matrix_,
-            delta_active_one_electron_matrix_,
             delta_packed_active_two_electron_integrals_,
-            precomputed_pair_data);
+            directional_pair_data_[pair_index]);
     });
     return cached_entries_[pair_index];
   }
@@ -1184,14 +1051,11 @@ public:
 private:
   const std::vector<std::vector<int>>& unique_spin_determinants_;
   const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache_;
-  const ActiveSpaceOneElectronResult& active_space_one_electron_result_;
   const ActiveSpaceTwoElectronResult& active_space_two_electron_result_;
   int n_active_orbitals_ = 0;
-  const std::vector<double>& delta_ao_overlap_matrix_;
-  const std::vector<double>& delta_active_one_electron_matrix_;
   const std::vector<double>& delta_packed_active_two_electron_integrals_;
-  const std::vector<SameSpinPolynomialDirectionalPairData>*
-      precomputed_directional_pair_data_ = nullptr;
+  const std::vector<SameSpinPolynomialDirectionalPairData>&
+      directional_pair_data_;
   std::vector<DirectionalSpinPairEntry> cached_entries_;
   std::vector<std::once_flag> entry_flags_;
 };
@@ -1400,12 +1264,10 @@ build_projected_structure_direction(
   DirectionalSpinPairMemo shared_projected_alpha_provider(
       same_spin_pair_cache.alpha_reuse_table.unique_determinants,
       same_spin_pair_cache.alpha_pair_cache_ref(),
-      accepted_prepared_active_space.active_space_one_electron_result,
       accepted_prepared_active_space.active_space_two_electron_result,
-      n_active_orbitals, delta_ao_overlap_matrix,
-      delta_active_one_electron_matrix,
+      n_active_orbitals,
       delta_packed_active_two_electron_integrals,
-      &directional_pair_cache.alpha.ordered_pair_data);
+      directional_pair_cache.alpha.ordered_pair_data);
   const auto& beta_directional_pair_data =
       directional_pair_cache.close_shell_same_spin
           ? directional_pair_cache.alpha.ordered_pair_data
@@ -1413,12 +1275,10 @@ build_projected_structure_direction(
   DirectionalSpinPairMemo shared_projected_beta_provider(
       same_spin_pair_cache.beta_reuse_table.unique_determinants,
       same_spin_pair_cache.beta_pair_cache_ref(),
-      accepted_prepared_active_space.active_space_one_electron_result,
       accepted_prepared_active_space.active_space_two_electron_result,
-      n_active_orbitals, delta_ao_overlap_matrix,
-      delta_active_one_electron_matrix,
+      n_active_orbitals,
       delta_packed_active_two_electron_integrals,
-      &beta_directional_pair_data);
+      beta_directional_pair_data);
   std::vector<Eigen::MatrixXd> thread_transformed_delta_hamiltonian_selected(
       std::max(1, n_parallel_threads),
       Eigen::MatrixXd::Zero(n_structures, n_selected_states));
