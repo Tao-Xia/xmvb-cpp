@@ -209,15 +209,15 @@ y_{\mathrm{nr}}.
 
 从当前代码结构看，最自然的切口是：
 
-- `src/vb/scf/cpp_active_space_gradient_evaluator.cpp`
+- `src/vbscf/derivatives/gradient/active_space_gradient_evaluator.cpp`
   - `build_active_space_gradient_forward_context(...)`
   - `accumulate_active_space_gradient(...)`
-- `src/vb/scf/cpp_orbital_gradient_evaluator.cpp`
+- `src/vbscf/derivatives/gradient/orbital_gradient_evaluator.cpp`
   - active-space layer backprop 到 AO / orbital 参数层
-- `src/vb/scf/cpp_vb_scf_optimizer.cpp`
+- `src/vbscf/optimization/vbscf_optimizer.cpp`
   - 现有 `MatrixFreeReducedHvpOperator`
-- `src/vb/orbital/legacy_style_orbital_gradient_projector.cpp`
-  - 当前最接近 old `Grdori` / original-orbital 投影语义的 C++ 实现
+- `src/vbscf/orbitals/orbital_pullback.cpp`
+  - 当前承载 old `Grdori` / original-orbital 投影语义的正式 pullback 实现
 
 也就是说：
 

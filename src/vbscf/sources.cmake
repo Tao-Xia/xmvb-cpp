@@ -1,8 +1,7 @@
 # VBSCF source ownership manifest.
 #
-# The physical migration from src/vb is intentionally incremental. Keeping the
-# ownership lists here makes module boundaries visible in the build before the
-# remaining implementation files move to their final directories.
+# Keep ownership lists grouped by domain so the target composition mirrors the
+# source tree. DeepVBH remains a separate compatibility target below.
 
 set(XMVB_VBSCF_APPROXIMATION_SOURCES
   vbscf/approx/approx_vbscf_cluster_quotient.cpp
@@ -68,7 +67,6 @@ set(XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES
 
 set(XMVB_VBSCF_LEGACY_SOURCES
   vbscf/legacy/orbitals/jacobi_diagonalizer.cpp
-  vbscf/legacy/orbitals/orbital_gradient_projector.cpp
   vbscf/legacy/structures/structure_overlap.cpp
 )
 
