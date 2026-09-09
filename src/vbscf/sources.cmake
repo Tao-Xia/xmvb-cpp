@@ -82,6 +82,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/hessian/responses/orbital_preparation_response.cpp
   vbscf/derivatives/hessian/responses/same_spin_accepted_weights.cpp
   vbscf/derivatives/hessian/responses/same_spin_backward.cpp
+  vbscf/derivatives/hessian/responses/same_spin_backward_kernels.cpp
   vbscf/derivatives/hessian/responses/same_spin_directional_weights.cpp
   vbscf/derivatives/hessian/responses/same_spin_directional_pair_cache.cpp
   vbscf/derivatives/hessian/responses/same_spin_local_weights.cpp
