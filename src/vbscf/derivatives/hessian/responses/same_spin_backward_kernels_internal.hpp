@@ -20,9 +20,6 @@ SameSpinMatrixBackwardContribution finalize_backward_contribution(
     SameSpinMatrixBackwardContribution result,
     const Eigen::MatrixXd& active_one_electron_gradient);
 
-bool should_use_same_spin_tile_backward(
-    const SelectedStateDeterminantMatrices& selected_states);
-
 void accumulate_spin_matrix_backward(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,

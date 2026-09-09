@@ -17,7 +17,6 @@ using detail::accumulate_spin_matrix_backward;
 using detail::build_dense_directional_exact_same_spin_weight_matrices;
 using detail::build_exact_same_spin_weight_matrices;
 using detail::build_local_same_spin_response_weight_matrices;
-using detail::build_support_sparse_directional_exact_same_spin_weight_matrices;
 using detail::build_support_sparse_directional_same_spin_backward_contribution_by_tiles;
 using detail::build_support_sparse_local_same_spin_backward_contribution_by_tiles;
 using detail::build_support_sparse_same_spin_backward_contribution_by_tiles;
@@ -25,7 +24,6 @@ using detail::finalize_backward_contribution;
 using detail::make_zero_backward_contribution;
 using detail::SameSpinExactWeightMatrices;
 using detail::SameSpinLocalResponseWeightMatrices;
-using detail::should_use_same_spin_tile_backward;
 using detail::validate_directional_selected_state_inputs;
 using detail::validate_full_matrix_same_spin_inputs;
 
@@ -39,8 +37,7 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
       selected_states,
       selected_state_energies);
 
-  if (should_use_support_sparse_selected_state_contractions(selected_states) &&
-      should_use_same_spin_tile_backward(selected_states)) {
+  if (should_use_support_sparse_selected_state_contractions(selected_states)) {
     return build_support_sparse_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,
@@ -123,8 +120,7 @@ build_directional_same_spin_matrix_backward_contribution(
       selected_state_energies,
       directional_selected_state_energies);
 
-  if (should_use_support_sparse_selected_state_contractions(selected_states) &&
-      should_use_same_spin_tile_backward(selected_states)) {
+  if (should_use_support_sparse_selected_state_contractions(selected_states)) {
     return build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,
@@ -135,19 +131,12 @@ build_directional_same_spin_matrix_backward_contribution(
   }
 
   const SameSpinExactWeightMatrices directional_weight_matrices =
-      should_use_support_sparse_selected_state_contractions(selected_states)
-          ? build_support_sparse_directional_exact_same_spin_weight_matrices(
-                same_spin_pair_cache,
-                selected_states,
-                directional_selected_states,
-                selected_state_energies,
-                directional_selected_state_energies)
-          : build_dense_directional_exact_same_spin_weight_matrices(
-                same_spin_pair_cache,
-                selected_states,
-                directional_selected_states,
-                selected_state_energies,
-                directional_selected_state_energies);
+      build_dense_directional_exact_same_spin_weight_matrices(
+          same_spin_pair_cache,
+          selected_states,
+          directional_selected_states,
+          selected_state_energies,
+          directional_selected_state_energies);
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
   const Eigen::MatrixXd alpha_total_partner_transfer_matrix =
@@ -216,8 +205,7 @@ build_local_same_spin_matrix_backward_contribution(
       selected_states,
       selected_state_energies);
 
-  if (should_use_support_sparse_selected_state_contractions(selected_states) &&
-      should_use_same_spin_tile_backward(selected_states)) {
+  if (should_use_support_sparse_selected_state_contractions(selected_states)) {
     return build_support_sparse_local_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,

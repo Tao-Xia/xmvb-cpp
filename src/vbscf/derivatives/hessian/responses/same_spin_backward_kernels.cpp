@@ -22,8 +22,6 @@ namespace detail {
 
 constexpr double kContributionTolerance = 1.0e-15;
 constexpr int kSameSpinBackwardPairTileSize = 64;
-constexpr std::size_t kSameSpinAcceptedTileMinDenseBytes =
-    256ull * 1024ull * 1024ull;
 
 std::size_t square_storage_size(int dimension) {
   return (dimension) * (dimension);
@@ -67,22 +65,6 @@ SameSpinMatrixBackwardContribution finalize_backward_contribution(
 
 int same_spin_backward_pair_tile_size() {
   return kSameSpinBackwardPairTileSize;
-}
-
-std::size_t same_spin_accepted_tile_min_dense_bytes() {
-  return kSameSpinAcceptedTileMinDenseBytes;
-}
-
-bool should_use_same_spin_tile_backward(
-    const SelectedStateDeterminantMatrices& selected_states) {
-  const std::size_t alpha_size =
-      static_cast<std::size_t>(selected_states.n_unique_alpha);
-  const std::size_t beta_size =
-      static_cast<std::size_t>(selected_states.n_unique_beta);
-  const std::size_t dense_weight_bytes =
-      4ull * sizeof(double) *
-      (alpha_size * alpha_size + beta_size * beta_size);
-  return dense_weight_bytes >= same_spin_accepted_tile_min_dense_bytes();
 }
 
 bool same_spin_local_tile_has_any_weight(
