@@ -1,14 +1,5 @@
 file(TO_CMAKE_PATH "$ENV{CONDA_PREFIX}" XMVB_CONDA_PREFIX)
 
-if (NOT DEFINED XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND)
-  set(
-    XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND
-    OFF
-    CACHE BOOL
-    "Enable the legacy Fortran L-BFGS backend inside the C++ VB optimizer."
-    FORCE)
-endif()
-
 if (NOT DEFINED XMVB_CPP_BUILD_DEV_TARGETS)
   set(
     XMVB_CPP_BUILD_DEV_TARGETS
@@ -17,22 +8,6 @@ if (NOT DEFINED XMVB_CPP_BUILD_DEV_TARGETS)
     "Build C++ comparison, diagnostic, and test targets in addition to xmvb-cpp.exe."
     FORCE)
 endif()
-
-# The standalone path is now pure C++. Keep the old cache variables pinned off
-# so existing build directories cannot silently pull runtime_c back in.
-set(
-  XMVB_CPP_BUILD_LEGACY_HF_RUNTIME
-  OFF
-  CACHE BOOL
-  "Build the legacy standalone HF/XINT runtime used by legacy orbital guesses and HF diagnostics."
-  FORCE)
-
-set(
-  XMVB_CPP_BUILD_RUNTIME_C_TOOLS
-  OFF
-  CACHE BOOL
-  "Build legacy comparison/diagnostic tools that still depend on runtime_c."
-  FORCE)
 
 option(
   XMVB_CPP_ENABLE_EIGEN_BLAS_BACKEND
@@ -94,11 +69,6 @@ target_include_directories(xmvb_cpp_vb
     ${LAPACK_INCLUDE}
     ${LAPACKE_INCLUDE}
     ${CINT_INCLUDE})
-if (XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND)
-  target_compile_definitions(
-    xmvb_cpp_vb
-    PUBLIC XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND=1)
-endif()
 if (XMVB_CPP_ENABLE_ONNX_RUNTIME)
   target_compile_definitions(
     xmvb_cpp_vb
@@ -120,17 +90,7 @@ else()
   target_link_libraries(xmvb_cpp_vb PUBLIC ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
 endif()
 
-set(
-  XMVB_CPP_RUNTIME_EXECUTABLE_PATH
-  "${CMAKE_BINARY_DIR}/src/driver/xmvb.exe"
-  CACHE FILEPATH
-  "Executable path used by the standalone runtime to locate basis/data assets.")
-
 add_library(xmvb_cpp_runtime STATIC ${XMVB_CPP_RUNTIME_SOURCES})
-target_compile_definitions(xmvb_cpp_runtime
-  PRIVATE
-    PATH_MAX=4096
-    XMVB_CPP_LEGACY_EXECUTABLE_PATH=\"${XMVB_CPP_RUNTIME_EXECUTABLE_PATH}\")
 target_include_directories(xmvb_cpp_runtime
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

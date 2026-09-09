@@ -76,15 +76,6 @@ if (NOT DEFINED XMVB_CPP_BUILD_DEV_TARGETS)
     FORCE)
 endif()
 
-if (NOT DEFINED XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND)
-  set(
-    XMVB_CPP_ENABLE_LEGACY_FORTRAN_BACKEND
-    OFF
-    CACHE BOOL
-    "Enable the legacy Fortran L-BFGS backend inside the C++ VB optimizer."
-    FORCE)
-endif()
-
 if (NOT DEFINED XMVB_CPP_ENABLE_ONNX_RUNTIME)
   set(
     XMVB_CPP_ENABLE_ONNX_RUNTIME
@@ -93,13 +84,6 @@ if (NOT DEFINED XMVB_CPP_ENABLE_ONNX_RUNTIME)
     "Enable the ONNX Runtime inference backend skeleton for DeepVBH deployment."
     FORCE)
 endif()
-
-set(
-  XMVB_CPP_RUNTIME_EXECUTABLE_PATH
-  "${CMAKE_BINARY_DIR}/src/xmvb-cpp.exe"
-  CACHE FILEPATH
-  "Executable path used by the standalone runtime to locate basis/data assets."
-  FORCE)
 
 set(LAPACK_TYPE "OpenBLAS" CACHE STRING "Type of LAPACK library")
 
