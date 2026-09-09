@@ -229,30 +229,6 @@ Best fix direction:
 - Or restructure the shell scatter so the innermost loop writes consecutive row
   indices inside one column-major column.
 
-### P1. Optional RI dense lower-factor cache reads packed RI factor rows from a column-major matrix with non-unit stride
-
-References:
-
-- `src/runtime/libcint_ri_integral_provider.cpp:81`
-- `src/runtime/libcint_ri_integral_provider.cpp:110`
-
-What happens:
-
-- `build_dense_lower_ao_factor_matrices(...)` walks `packed_factor_rows` with
-  fixed auxiliary row and increasing packed pair index.
-- The source comment correctly notes that packed-factor rows are not contiguous.
-
-Why this hurts:
-
-- This is an explicit row-wise read over a column-major source.
-- The path is gated by `XMVB_CPP_ENABLE_RI_AO_FACTOR_MATRIX_CACHE`, so impact
-  depends on runtime settings.
-
-Best fix direction:
-
-- If this cache becomes important, build it by source columns or pretranspose
-  once.
-
 ## Compatibility-Boundary Costs
 
 ### P2. Exact / RI two-electron builder and backpropagator still convert large row buffers to and from `MatrixXd`
@@ -344,4 +320,3 @@ For any dense `Eigen::MatrixXd` in this repository:
 - avoid treating logical rows as contiguous
 - avoid `.row(...).transpose()` in hot loops
 - isolate unavoidable row-oriented compatibility buffers to narrow shims
-

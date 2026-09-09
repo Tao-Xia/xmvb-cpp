@@ -35,21 +35,6 @@ struct LibcintRiIntegralProviderResult {
   Eigen::MatrixXd metric_whitened_ao_pair_factors;
 
   /**
-   * @brief Optional dense lower-triangle AO RI factors in column-major `[aux][ao][ao]`.
-   *
-   * Each auxiliary block occupies `n_basis_functions * n_basis_functions`
-   * doubles. Only the lower triangle is populated and the strict upper
-   * triangle is zero, so AO-side Coulomb additions can use full-buffer BLAS
-   * axpy kernels while `dsymm/dsyrk` still read only the referenced triangle.
-   *
-   * This cache is a pure performance optimization for the AO `h1e` RI operator.
-   * The packed representation above remains the canonical storage used by the
-   * active-space RI builders and by fallback code paths when the dense cache is
-   * intentionally skipped to save memory.
-   */
-  std::vector<double> metric_whitened_ao_factor_matrices_lower;
-
-  /**
    * @brief Optional packed AO pair metric `g_{PQ} = sum_A L_{A,P} L_{A,Q}`.
    *
    * The optimized standard-RI path now consumes `metric_whitened_ao_pair_factors`

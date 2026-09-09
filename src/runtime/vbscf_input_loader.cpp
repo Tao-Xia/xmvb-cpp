@@ -3,8 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 #include <chrono>
 #include <fstream>
 #include <optional>
@@ -39,28 +37,6 @@
 namespace xmvb::vb {
 
 namespace {
-
-bool load_progress_logging_enabled() {
-  const char* value = std::getenv("XMVB_CPP_LOG_LOAD_PROGRESS");
-  return value != nullptr && value[0] != '\0' && value[0] != '0';
-}
-
-bool ao_effective_one_electron_graph_enabled() {
-  const char* disable_flag = std::getenv("XMVB_CPP_DISABLE_AO_H1E_GRAPH");
-  return disable_flag == nullptr ||
-      disable_flag[0] == '\0' ||
-      disable_flag[0] == '0';
-}
-
-void log_load_stage(
-    const char* stage_name,
-    double seconds) {
-  if (!load_progress_logging_enabled()) {
-    return;
-  }
-  std::fprintf(stderr, "load_stage %s %.12f\n", stage_name, seconds);
-  std::fflush(stderr);
-}
 
 constexpr int kLibcintBasSlots = 8;
 constexpr int kLibcintPtrExpSlot = 5;
@@ -738,7 +714,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
       std::chrono::duration<double>(
           std::chrono::steady_clock::now() - ao_integral_provider_start_time)
           .count();
-  log_load_stage("ao_integral_provider", load_result.ao_integral_provider_seconds);
   const auto ao_integral_input_build_start_time = std::chrono::steady_clock::now();
   if (resolved_ao_integral_source == AoIntegralSource::RuntimeCoreHamiltonianOnly) {
     const Eigen::MatrixXd core_hamiltonian_matrix =
@@ -754,8 +729,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
     ao_input_build_options.build_pair_indices =
         !ao_input_build_options.build_pair_graph;
     ao_input_build_options.build_ao_effective_one_electron_graph =
-        options.build_ao_effective_one_electron_graph &&
-        ao_effective_one_electron_graph_enabled();
+        options.build_ao_effective_one_electron_graph;
     result.ao_integral_input = build_materialized_ao_integral_input(
         std::move(ao_integral_buffers),
         ao_input_build_options);
@@ -764,8 +738,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
       std::chrono::duration<double>(
           std::chrono::steady_clock::now() - ao_integral_input_build_start_time)
           .count();
-  log_load_stage("ao_integral_input_build", load_result.ao_integral_input_build_seconds);
-
   if (!options.skip_orbital_guess) {
     const auto orbital_guess_start_time = std::chrono::steady_clock::now();
     build_initial_orbital_guess(
@@ -789,7 +761,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - orbital_guess_start_time)
             .count();
-    log_load_stage("orbital_guess", load_result.orbital_guess_seconds);
   }
 
   const auto raw_structure_selection_start_time = std::chrono::steady_clock::now();
@@ -809,7 +780,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
       std::chrono::duration<double>(
           std::chrono::steady_clock::now() - raw_structure_selection_start_time)
           .count();
-  log_load_stage("raw_structure_selection", load_result.raw_structure_selection_seconds);
 
   VbScfStaticMoleculeMetadata static_molecule_metadata;
   static_molecule_metadata.n_atoms = resolved_n_atoms;
@@ -840,7 +810,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - structure_expansion_start_time)
             .count();
-    log_load_stage("structure_expansion", load_result.structure_expansion_seconds);
   }
   load_result.input = std::move(result);
   load_result.raw_structure_data = std::move(selected_raw_structure_data);
@@ -852,7 +821,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   load_result.nuclear_repulsion_energy = nuclear_repulsion_energy;
   load_result.total_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - total_start_time).count();
-  log_load_stage("load_total", load_result.total_seconds);
   return load_result;
 }
 

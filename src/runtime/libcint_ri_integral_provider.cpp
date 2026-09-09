@@ -2,9 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <cstdlib>
-#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -22,8 +19,6 @@ namespace xmvb::vb {
 namespace {
 
 constexpr int kWhitenColumnBlockSize = 256;
-constexpr std::size_t kDenseAoFactorMatrixCacheMaxBytes =
-    256ull * 1024ull * 1024ull;
 
 struct ThreeCenterShellTask {
   int primary_left_shell = 0;
@@ -36,88 +31,6 @@ int ao_pair_index(int first, int second) {
     return first * (first + 1) / 2 + second;
   }
   return second * (second + 1) / 2 + first;
-}
-
-bool ri_dense_ao_factor_cache_enabled() {
-  const char* value = std::getenv("XMVB_CPP_ENABLE_RI_AO_FACTOR_MATRIX_CACHE");
-  if (value == nullptr || value[0] == '\0') {
-    return false;
-  }
-  if (std::strcmp(value, "1") == 0 ||
-      std::strcmp(value, "true") == 0 ||
-      std::strcmp(value, "TRUE") == 0) {
-    return true;
-  }
-  if (std::strcmp(value, "0") == 0 ||
-      std::strcmp(value, "false") == 0 ||
-      std::strcmp(value, "FALSE") == 0) {
-    return false;
-  }
-  throw std::invalid_argument(
-      "XMVB_CPP_ENABLE_RI_AO_FACTOR_MATRIX_CACHE must be a boolean");
-}
-
-bool can_build_dense_lower_ao_factor_cache(
-    int n_auxiliary_functions,
-    int n_basis_functions) {
-  if (!ri_dense_ao_factor_cache_enabled()) {
-    return false;
-  }
-  const std::size_t matrix_size =
-      n_basis_functions *
-      n_basis_functions;
-  if (matrix_size == 0 ||
-      matrix_size >
-          std::numeric_limits<std::size_t>::max() /
-              n_auxiliary_functions) {
-    return false;
-  }
-  const std::size_t dense_value_count =
-      matrix_size * n_auxiliary_functions;
-  return dense_value_count <=
-      kDenseAoFactorMatrixCacheMaxBytes / sizeof(double);
-}
-
-std::vector<double> build_dense_lower_ao_factor_matrices(
-    const Eigen::Ref<const Eigen::MatrixXd>& packed_factor_rows,
-    int n_auxiliary_functions,
-    int n_basis_functions) {
-  const std::size_t matrix_size =
-      n_basis_functions *
-      n_basis_functions;
-  std::vector<double> dense_lower_factor_matrices(
-      n_auxiliary_functions * matrix_size,
-      0.0);
-
-#pragma omp parallel for schedule(static)
-  for (int auxiliary_index = 0;
-       auxiliary_index < n_auxiliary_functions;
-       ++auxiliary_index) {
-    double* dense_matrix =
-        dense_lower_factor_matrices.data() +
-        auxiliary_index * matrix_size;
-
-    std::size_t packed_index = 0;
-    for (int column = 0; column < n_basis_functions; ++column) {
-      for (int row = 0; row <= column; ++row) {
-        // `metric_whitened_ao_pair_factors` follow the same packed ordering that
-        // `unpack_packed_factor_row_lower_triangle()` consumes in the AO RI
-        // operator: outer loop over the physical row index of the lower
-        // triangle, inner loop over the physical column index.  For a
-        // column-major dense matrix that means writing entry `(column, row)`,
-        // not `(row, column)`.
-        //
-        // The source matrix is also column-major, so packed-factor rows are not
-        // contiguous. Access through `(auxiliary, packed_pair)` indexing rather
-        // than row-pointer arithmetic.
-        dense_matrix[
-            row * n_basis_functions +
-            column] =
-            packed_factor_rows(auxiliary_index, static_cast<Eigen::Index>(packed_index++));
-      }
-    }
-  }
-  return dense_lower_factor_matrices;
 }
 
 std::vector<ThreeCenterShellTask> build_three_center_shell_tasks(
@@ -302,15 +215,6 @@ LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
   }
   result.auxiliary_metric_matrix = auxiliary_metric;
   result.metric_whitened_ao_pair_factors = whitened_ao_pair_factors;
-  if (can_build_dense_lower_ao_factor_cache(
-          result.n_auxiliary_functions,
-          result.n_basis_functions)) {
-    result.metric_whitened_ao_factor_matrices_lower =
-        build_dense_lower_ao_factor_matrices(
-            whitened_ao_pair_factors,
-            result.n_auxiliary_functions,
-            result.n_basis_functions);
-  }
   return result;
 }
 
