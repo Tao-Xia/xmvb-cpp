@@ -75,6 +75,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/hessian/structure_response_cache.cpp
   vbscf/derivatives/hessian/responses/active_space_outer_response.cpp
   vbscf/derivatives/hessian/responses/opposite_spin_channels.cpp
+  vbscf/derivatives/hessian/responses/opposite_spin_pair_response.cpp
   vbscf/derivatives/hessian/responses/opposite_spin_response.cpp
   vbscf/derivatives/hessian/responses/orbital_preparation_response.cpp
   vbscf/derivatives/hessian/responses/same_spin_response.cpp

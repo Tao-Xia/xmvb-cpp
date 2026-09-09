@@ -14,9 +14,13 @@
 #include "vbscf/structures/support_local_contractions.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 
 namespace xmvb::vb {
+
+using detail::build_directional_opposite_spin_pair_data;
+using detail::DirectionalOppositeSpinPairData;
 
 namespace {
 
@@ -26,11 +30,6 @@ constexpr int kOppositeSpinBackwardSparseBlockSize = 32;
 constexpr int kOppositeSpinBackwardDenseBatchSize = 8;
 constexpr int kOppositeSpinBackwardOverlapBlockSize = 32;
 constexpr int kOppositeSpinBackwardUniqueTileSize = 64;
-
-struct DirectionalOppositeSpinPairData {
-  Eigen::MatrixXd delta_overlap_submatrix;
-  OppositeSpinPackedPairProjection delta_first_order_cofactor_projection;
-};
 
 int opposite_spin_backward_sparse_block_size() {
   return kOppositeSpinBackwardSparseBlockSize;
@@ -64,18 +63,6 @@ void validate_local_state_coefficient_matrix(
     throw std::invalid_argument(
         "selected-state local_coefficient_matrix shape does not match support dimensions");
   }
-}
-
-Eigen::MatrixXd build_local_overlap_direction_matrix(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    int n_active_orbitals) {
-  return build_overlap_submatrix(
-      occ_L,
-      occ_R,
-      delta_ao_overlap_matrix,
-      n_active_orbitals);
 }
 
 std::vector<int> build_retained_minor_indices_local(
@@ -221,184 +208,8 @@ void accumulate_singular_spin_overlap_gradient_from_dense_image_local(
   }
 }
 
-OppositeSpinPackedPairProjection build_sparse_packed_pair_projection_coefficients(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::MatrixXd& coefficient_matrix,
-    bool coefficient_matrix_is_right_by_left,
-    int n_orbitals) {
-  OppositeSpinPackedPairProjection projection;
-  if (occ_L.empty()) {
-    return projection;
-  }
-
-  const int n_packed_active_pairs = packed_active_pair_count(n_orbitals);
-  std::vector<double> dense_pair_values(
-      n_packed_active_pairs,
-      0.0);
-  std::vector<unsigned char> touched_mask(
-      n_packed_active_pairs,
-      0);
-  std::vector<int> touched_indices;
-  touched_indices.reserve(occ_L.size() * occ_R.size());
-
-  for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = occ_L[left_column];
-    for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = occ_R[right_row];
-      const int packed_pair_index = TwoElectronIndexer::packed_pair_index(
-          orbital_index_right,
-          orbital_index_left);
-      if (touched_mask[packed_pair_index] == 0) {
-        touched_mask[packed_pair_index] = 1;
-        touched_indices.push_back(packed_pair_index);
-      }
-      const double coefficient =
-          coefficient_matrix_is_right_by_left
-              ? coefficient_matrix(right_row, left_column)
-              : coefficient_matrix(left_column, right_row);
-      dense_pair_values[packed_pair_index] += coefficient;
-    }
-  }
-
-  projection.packed_pair_indices.reserve(touched_indices.size());
-  projection.packed_pair_values.reserve(touched_indices.size());
-  for (const int packed_pair_index : touched_indices) {
-    const double packed_pair_value =
-        dense_pair_values[packed_pair_index];
-    if (std::abs(packed_pair_value) <= kContributionTolerance) {
-      continue;
-    }
-    projection.packed_pair_indices.push_back(packed_pair_index);
-    projection.packed_pair_values.push_back(packed_pair_value);
-  }
-  return projection;
-}
-
-std::vector<double> apply_directional_active_two_electron_kernel_to_sparse_projection(
-    int n_active_orbitals,
-    const std::vector<int>& packed_pair_indices,
-    const std::vector<double>& packed_pair_values,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
-  const int n_packed_active_pairs = packed_active_pair_count(n_active_orbitals);
-  std::vector<double> projected_pair_values(
-      n_packed_active_pairs,
-      0.0);
-  if (delta_packed_active_two_electron_integrals.empty() ||
-      packed_pair_indices.empty()) {
-    return projected_pair_values;
-  }
-  for (std::size_t entry_index = 0;
-       entry_index < packed_pair_indices.size();
-       ++entry_index) {
-    const int packed_pair_index = packed_pair_indices[entry_index];
-    const double packed_pair_value = packed_pair_values[entry_index];
-    for (int row_pair = 0; row_pair < n_packed_active_pairs; ++row_pair) {
-      const int packed_pair_of_pairs_index =
-          TwoElectronIndexer::packed_pair_of_pairs_index(
-              row_pair,
-              packed_pair_index);
-      projected_pair_values[row_pair] +=
-          delta_packed_active_two_electron_integrals[
-              packed_pair_of_pairs_index] *
-          packed_pair_value;
-    }
-  }
-  return projected_pair_values;
-}
-
 bool dense_matrix_is_effectively_zero(const Eigen::MatrixXd& matrix) {
   return matrix.size() == 0 || matrix.cwiseAbs().maxCoeff() <= kContributionTolerance;
-}
-
-std::vector<DirectionalOppositeSpinPairData>
-build_directional_opposite_spin_pair_data(
-    const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-    int n_unique_determinants,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
-    const std::vector<SameSpinPolynomialDirectionalPairData>&
-        precomputed_directional_pair_data) {
-  const std::size_t expected_size =
-      n_unique_determinants *
-      n_unique_determinants;
-  if (ordered_pair_cache.size() != expected_size) {
-    throw std::invalid_argument(
-        "directional opposite-spin pair data requires a full ordered pair cache");
-  }
-  if (precomputed_directional_pair_data.size() != expected_size) {
-    throw std::invalid_argument(
-        "precomputed directional opposite-spin pair data has inconsistent dimensions");
-  }
-
-  std::vector<DirectionalOppositeSpinPairData> directional_pair_data(expected_size);
-  const ActiveSpaceTwoElectronView two_electron_view =
-      make_active_space_two_electron_view(active_space_two_electron_result);
-  for (int left_unique_index = 0;
-       left_unique_index < n_unique_determinants;
-       ++left_unique_index) {
-    for (int right_unique_index = 0;
-         right_unique_index < n_unique_determinants;
-         ++right_unique_index) {
-      const std::size_t ordered_pair_index = ordered_spin_pair_storage_index(
-          left_unique_index,
-          right_unique_index,
-          n_unique_determinants);
-      const auto& pair_evaluation = ordered_pair_cache[ordered_pair_index];
-      auto& directional_entry = directional_pair_data[ordered_pair_index];
-
-      if (unique_determinants[left_unique_index].empty()) {
-        continue;
-      }
-      directional_entry.delta_overlap_submatrix =
-          build_local_overlap_direction_matrix(
-              unique_determinants[left_unique_index],
-              unique_determinants[right_unique_index],
-              delta_ao_overlap_matrix, n_active_orbitals);
-      directional_entry.delta_first_order_cofactor_projection =
-          build_sparse_packed_pair_projection_coefficients(
-              unique_determinants[left_unique_index],
-              unique_determinants[right_unique_index],
-              precomputed_directional_pair_data[ordered_pair_index]
-                  .delta_cofactor_1st,
-              true,
-              n_active_orbitals);
-      auto& directional_first_order_projection =
-          directional_entry.delta_first_order_cofactor_projection;
-      directional_first_order_projection.projected_pair_values =
-          apply_active_space_two_electron_kernel_to_sparse_projection(
-              two_electron_view,
-              n_active_orbitals,
-              directional_first_order_projection.packed_pair_indices,
-              directional_first_order_projection.packed_pair_values);
-      const auto& accepted_first_order_projection =
-          pair_evaluation.opposite_spin_pair_cache.first_order_cofactor_projection;
-      const std::vector<double> delta_kernel_times_first_order =
-          apply_directional_active_two_electron_kernel_to_sparse_projection(
-              n_active_orbitals,
-              accepted_first_order_projection.packed_pair_indices,
-              accepted_first_order_projection.packed_pair_values,
-              delta_packed_active_two_electron_integrals);
-      if (directional_first_order_projection.projected_pair_values.size() <
-          delta_kernel_times_first_order.size()) {
-        directional_first_order_projection.projected_pair_values.resize(
-            delta_kernel_times_first_order.size(),
-            0.0);
-      }
-      for (std::size_t pair_index = 0;
-           pair_index < delta_kernel_times_first_order.size();
-           ++pair_index) {
-        directional_first_order_projection.projected_pair_values[pair_index] +=
-            delta_kernel_times_first_order[pair_index];
-      }
-
-
-    }
-  }
-  return directional_pair_data;
 }
 
 std::vector<Eigen::SparseMatrix<double, Eigen::ColMajor, int>> build_first_order_sparse_matrix_block(
