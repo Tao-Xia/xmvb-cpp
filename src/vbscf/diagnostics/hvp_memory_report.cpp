@@ -636,11 +636,6 @@ void append_exact_ctx_memory_breakdown(
       exact_ctx_matrix_bytes(cache.active_pair_gradient_matrix));
   breakdown->add_prefixed(
       prefix,
-      "accepted_active_pair_gradient_backprop_rows_buffer",
-      exact_ctx_vector_capacity_bytes(
-          cache.accepted_active_pair_gradient_backprop_rows_buffer));
-  breakdown->add_prefixed(
-      prefix,
       "accepted_dense_active_coefficients",
       exact_ctx_matrix_bytes(
           cache.accepted_dense_active_coefficients));
@@ -656,11 +651,6 @@ void append_exact_ctx_memory_breakdown(
       prefix,
       "accepted_base_pair_gradients",
       exact_ctx_matrix_bytes(cache.accepted_base_pair_gradients));
-  breakdown->add_prefixed(
-      prefix,
-      "accepted_base_pair_gradient_matrices_buffer",
-      exact_ctx_vector_capacity_bytes(
-          cache.accepted_base_pair_gradient_matrices_buffer));
 }
 
 void append_exact_ctx_memory_breakdown(

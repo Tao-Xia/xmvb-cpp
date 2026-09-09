@@ -31,10 +31,8 @@ struct ExactPackedActiveTwoElectronAdjointCache {
   ExactCtxPairMatrix accepted_pair_coefficients;
   ExactCtxPairMatrix accepted_base_pair_products;
   ExactCtxPairMatrix active_pair_gradient_matrix;
-  std::vector<double> accepted_active_pair_gradient_backprop_rows_buffer;
   ExactCtxDenseMatrix accepted_dense_active_coefficients;
   ExactCtxPairMatrix accepted_base_pair_gradients;
-  std::vector<double> accepted_base_pair_gradient_matrices_buffer;
 };
 
 /**
