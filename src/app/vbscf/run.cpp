@@ -1,0 +1,153 @@
+#include "app/vbscf/run.hpp"
+
+#include <chrono>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+#include "app/vbscf/report.hpp"
+#include "runtime/io/binary_file.hpp"
+#include "runtime/molden_file_writer.hpp"
+#include "runtime/trace/accepted_iteration_trace_writer.hpp"
+#include "runtime/vbscf_input_loader.hpp"
+#include "vb/scf/deepvbh_onnx_direct_final_optimizer.hpp"
+#include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
+#include "vbscf/adaptive/structure_space_optimizer.hpp"
+#include "vbscf/optimization/vbscf_optimizer.hpp"
+
+namespace xmvb::app::vbscf {
+
+namespace fs = std::filesystem;
+
+int run(Options command_line) {
+  const std::string& input_path = command_line.input_path;
+  auto& structure_space_mode = command_line.structure_mode;
+  auto& load_options = command_line.load;
+  auto& options = command_line.optimizer;
+  auto& run_backend = command_line.backend;
+  auto& adaptive_options = command_line.adaptive;
+  auto& deepvbh_options = command_line.deepvbh_hybrid;
+  auto& deepvbh_direct_options = command_line.deepvbh_direct;
+  const std::string& dump_trace_dir = command_line.trace_directory;
+  const std::string& dump_final_orbital_value_table_bin =
+      command_line.final_orbitals_path;
+  const bool user_specified_max_iterations =
+      command_line.max_iterations_explicit;
+
+  const auto command_start_time = std::chrono::system_clock::now();
+  const auto command_start_steady_time = std::chrono::steady_clock::now();
+  const auto load_result = xmvb::vb::load_vbscf_input_with_timings(input_path, load_options);
+  const auto& input = load_result.input;
+  if (!user_specified_max_iterations) {
+    // Keep the standalone SCF loop aligned with the legacy deck semantics:
+    // `.xmi` `itmax` controls the maximum iteration count, and omitted `itmax`
+    // falls back to the project default of 2000.
+    options.max_iterations = load_result.requested_scf_max_iterations;
+  }
+
+  xmvb::app::vbscf::print_header(
+      command_line,
+      load_result,
+      command_start_time);
+
+  std::shared_ptr<xmvb::runtime::AcceptedIterationTraceWriter> trace_writer;
+  if (options.verbose) {
+    options.accepted_iteration_callback = xmvb::app::vbscf::combine_callbacks(
+        std::move(options.accepted_iteration_callback),
+        xmvb::app::vbscf::iteration_logger());
+  }
+  if (!dump_trace_dir.empty()) {
+    trace_writer = std::make_shared<xmvb::runtime::AcceptedIterationTraceWriter>(
+        dump_trace_dir,
+        input_path,
+        load_result,
+        xmvb::app::vbscf::backend_name(run_backend, options.backend));
+    options.retain_accepted_iteration_trace = false;
+    options.accepted_iteration_callback_requires_reference_gradient = true;
+    options.accepted_iteration_callback_requires_full_snapshot = true;
+    options.accepted_iteration_callback = xmvb::app::vbscf::combine_callbacks(
+        std::move(options.accepted_iteration_callback),
+        [trace_writer](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
+          trace_writer->write_accepted_iteration(snapshot);
+        });
+  }
+
+  deepvbh_options.optimizer_options = options;
+  deepvbh_direct_options.optimizer_options = options;
+  xmvb::vb::VbScfOptimizerResult result;
+  std::optional<xmvb::vb::AdaptiveStructureSpaceOptimizerResult> adaptive_result;
+  if (structure_space_mode == xmvb::app::vbscf::StructureMode::AdaptiveMvp) {
+    xmvb::vb::AdaptiveStructureSpaceOptimizer optimizer(options, adaptive_options);
+    adaptive_result = optimizer.optimize({
+        load_result.input,
+        load_result.raw_structure_data,
+        load_result.nuclear_repulsion_energy});
+    result = adaptive_result->inner_result;
+  } else if (run_backend == xmvb::app::vbscf::Backend::DeepVBHOnnx) {
+    if (deepvbh_options.inference_options.onnx_model_path.empty()) {
+      throw std::invalid_argument(
+          "--onnx-model is required for --optimizer-backend deepvbh_onnx");
+    }
+    xmvb::vb::DeepVBHOnnxHybridOptimizer optimizer(deepvbh_options);
+    result = optimizer.optimize(
+        input,
+        load_result.raw_structure_data,
+        load_result.static_molecule_metadata,
+        load_result.nuclear_repulsion_energy);
+  } else if (
+      run_backend == xmvb::app::vbscf::Backend::DeepVBHOnnxDirectFinal) {
+    if (deepvbh_direct_options.inference_options.onnx_model_path.empty()) {
+      throw std::invalid_argument(
+          "--onnx-model is required for --optimizer-backend deepvbh_onnx_direct_final");
+    }
+    xmvb::vb::DeepVBHOnnxDirectFinalOptimizer optimizer(deepvbh_direct_options);
+    result = optimizer.optimize(
+        input,
+        load_result.raw_structure_data,
+        load_result.static_molecule_metadata,
+        load_result.nuclear_repulsion_energy);
+  } else {
+    xmvb::vb::VbScfOptimizer optimizer(options);
+    result = optimizer.optimize(input, load_result.nuclear_repulsion_energy);
+  }
+  if (trace_writer != nullptr) {
+    trace_writer->finalize(result);
+  }
+  if (!dump_final_orbital_value_table_bin.empty()) {
+    // The final orbital table is the minimal state needed for reduced-chart
+    // finite-difference diagnostics.  Keep this separate from trace dumping so
+    // production convergence tests do not pay for per-iteration matrix dumps.
+    xmvb::runtime::write_binary_container(
+        fs::path(dump_final_orbital_value_table_bin),
+        result.optimized_input.orbital_preparation_input.orbital_value_table);
+  }
+  const bool command_converged =
+      adaptive_result.has_value() ? adaptive_result->converged : result.converged;
+  std::optional<fs::path> molden_output_path;
+  if (load_result.request_molden_output) {
+    molden_output_path =
+        xmvb::vb::write_molden_file(fs::path(input_path), result.optimized_input);
+  }
+
+  std::optional<fs::path> trace_sample_directory;
+  if (trace_writer != nullptr) {
+    trace_sample_directory = trace_writer->sample_directory();
+  }
+  xmvb::app::vbscf::print_summary(
+      command_line,
+      load_result,
+      result,
+      adaptive_result,
+      trace_sample_directory,
+      molden_output_path,
+      command_start_time,
+      command_start_steady_time);
+
+  return command_converged ? 0 : 2;
+}
+
+}  // namespace xmvb::app::vbscf
+
