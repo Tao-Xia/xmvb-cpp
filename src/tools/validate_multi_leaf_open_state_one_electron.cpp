@@ -12,6 +12,8 @@
 #include <utility>
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/legacy/structures/structure_overlap.hpp"
@@ -20,7 +22,7 @@
 
 namespace {
 
-using Matrix = xmvb::vb::Matrix;
+using Matrix = Eigen::MatrixXd;
 using OrbitalPair = xmvb::vb::OrbitalPair;
 using LegacyTerm = xmvb::vb::LegacyStructureDeterminantTerm;
 using CanonicalDeterminantKey = std::pair<std::vector<int>, std::vector<int>>;
@@ -1961,8 +1963,8 @@ int main(int argc, char** argv) {
       const auto& prepared_active_space = timed_active_space.prepared_active_space;
       const auto& active_overlap_storage =
           prepared_active_space.orbital_result.active_orbital_overlap_matrix;
-      const auto& active_one_electron_storage =
-          prepared_active_space.active_space_one_electron_result.h1e_act;
+      const auto active_one_electron_storage = flatten_column_major_matrix(
+          prepared_active_space.active_space_one_electron_result.h1e_act);
       const int n_active_orbitals =
           load_result.input.orbital_preparation_input.n_active_orbitals;
       prepare_active_space_seconds =

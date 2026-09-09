@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
             core_h_block.left_ao_offset + row;
         const double direct_value = core_h_block.values[local_index];
         const double stored_value =
-            input.ao_integral_input.ao_core_hamiltonian_matrix[global_index];
+            input.ao_integral_input.ao_core_hamiltonian_matrix.data()[global_index];
         max_core_h_abs_diff =
             std::max(max_core_h_abs_diff, std::abs(direct_value - stored_value));
         max_core_h_abs_value =

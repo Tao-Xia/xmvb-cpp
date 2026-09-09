@@ -37,7 +37,7 @@ struct EnergyBreakdown {
 double evaluate_active_eigenvalue(
     const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
-    const std::vector<double>& active_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_h1e,
     const std::vector<double>& packed_active_eri) {
   xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
       xmvb::vb::VbScfAlgorithm::Original);
@@ -67,10 +67,14 @@ double compute_inf_norm(const std::vector<double>& values) {
   return inf_norm;
 }
 
+double compute_inf_norm(const Eigen::Ref<const Eigen::MatrixXd>& values) {
+  return values.cwiseAbs().maxCoeff();
+}
+
 double compute_one_electron_reference_energy(
-    const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_h1e,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
   double one_electron_reference_energy = 0.0;
   for (int column = 0; column < n_basis_functions; ++column) {
@@ -78,16 +82,17 @@ double compute_one_electron_reference_energy(
       const std::size_t index =
           column * n_basis_functions + row;
       one_electron_reference_energy +=
-          inactive_density_matrix[index] *
-          (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
+          inactive_density_matrix.data()[index] *
+          (ao_effective_h1e.data()[index] +
+           ao_core_hamiltonian_matrix.data()[index]);
     }
   }
   return one_electron_reference_energy;
 }
 
 void accumulate_g11_statistics(
-    const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& g11_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& g11_matrix,
     int n_basis_functions,
     EnergyBreakdown* breakdown) {
   if (breakdown == nullptr) {
@@ -98,15 +103,19 @@ void accumulate_g11_statistics(
       const std::size_t index =
           column * n_basis_functions + row;
       const double contribution =
-          inactive_density_matrix[index] * g11_matrix[index];
+          inactive_density_matrix.data()[index] * g11_matrix.data()[index];
       if (row == column) {
         breakdown->g11_diag_energy += contribution;
         breakdown->g11_diag_inf_norm =
-            std::max(breakdown->g11_diag_inf_norm, std::abs(g11_matrix[index]));
+            std::max(
+                breakdown->g11_diag_inf_norm,
+                std::abs(g11_matrix.data()[index]));
       } else {
         breakdown->g11_offdiag_energy += contribution;
         breakdown->g11_offdiag_inf_norm =
-            std::max(breakdown->g11_offdiag_inf_norm, std::abs(g11_matrix[index]));
+            std::max(
+                breakdown->g11_offdiag_inf_norm,
+                std::abs(g11_matrix.data()[index]));
       }
     }
   }

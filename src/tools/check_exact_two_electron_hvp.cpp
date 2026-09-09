@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
+#include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
@@ -71,35 +72,6 @@ Eigen::MatrixXd build_dense_active_direction(
   const double norm = std::sqrt(norm_sq);
   direction /= norm;
   return direction;
-}
-
-Eigen::MatrixXd extract_dense_active_block(
-    const std::vector<double>& full_auxiliary_gradient,
-    int n_basis_functions,
-    int n_inactive_doubly_occupied_orbitals,
-    int n_active_orbitals) {
-  const std::size_t expected_size =
-      n_basis_functions * n_basis_functions;
-  if (full_auxiliary_gradient.size() != expected_size) {
-    throw std::invalid_argument("full auxiliary gradient size mismatch");
-  }
-
-  Eigen::MatrixXd dense_active_gradient =
-      Eigen::MatrixXd::Zero(n_basis_functions, n_active_orbitals);
-  for (int basis_function_index = 0;
-       basis_function_index < n_basis_functions;
-       ++basis_function_index) {
-    for (int active_orbital_index = 0;
-         active_orbital_index < n_active_orbitals;
-         ++active_orbital_index) {
-      const int column_index =
-          n_inactive_doubly_occupied_orbitals + active_orbital_index;
-      dense_active_gradient(basis_function_index, active_orbital_index) =
-          full_auxiliary_gradient[column_index * n_basis_functions +
-                                  basis_function_index];
-    }
-  }
-  return dense_active_gradient;
 }
 
 double max_abs_difference(
@@ -176,9 +148,10 @@ int main(int argc, char** argv) {
             &gradient_result.active_space_two_electron_result);
 
     std::vector<double> plus_auxiliary_matrix =
-        gradient_result.orbital_preparation_result.auxiliary_orbital_matrix;
+        xmvb::vb::flatten_matrix_column_major(
+            gradient_result.orbital_preparation_result.auxiliary_orbital_matrix);
     std::vector<double> minus_auxiliary_matrix =
-        gradient_result.orbital_preparation_result.auxiliary_orbital_matrix;
+        plus_auxiliary_matrix;
     for (int basis_function_index = 0;
          basis_function_index < n_basis_functions;
          ++basis_function_index) {
@@ -217,18 +190,10 @@ int main(int argc, char** argv) {
             n_inactive_doubly_occupied_orbitals,
             n_active_orbitals);
 
-    const auto plus_dense_active_gradient =
-        extract_dense_active_block(
-            plus_backpropagation_result.auxiliary_orbital_gradient,
-            n_basis_functions,
-            n_inactive_doubly_occupied_orbitals,
-            n_active_orbitals);
-    const auto minus_dense_active_gradient =
-        extract_dense_active_block(
-            minus_backpropagation_result.auxiliary_orbital_gradient,
-            n_basis_functions,
-            n_inactive_doubly_occupied_orbitals,
-            n_active_orbitals);
+    const auto& plus_dense_active_gradient =
+        plus_backpropagation_result.active_auxiliary_orbital_gradient;
+    const auto& minus_dense_active_gradient =
+        minus_backpropagation_result.active_auxiliary_orbital_gradient;
     const Eigen::MatrixXd finite_difference_dense_active_gradient_direction =
         (plus_dense_active_gradient - minus_dense_active_gradient) /
         (2.0 * options.step);

@@ -99,8 +99,8 @@ int main(int argc, char** argv) {
     const auto orbital_result =
         orbital_preparer.prepare(input.orbital_preparation_input);
     const auto& ri_cache = xmvb::vb::ensure_cpp_vb_input_ri_cache(input);
-    const std::vector<double>& inactive_density =
-        orbital_result.inactive_density_matrix;
+    const std::vector<double> inactive_density =
+        flatten_matrix(orbital_result.inactive_density_matrix);
 
     const auto dense_p =
         xmvb::vb::apply_ao_effective_one_electron_ri_operator(

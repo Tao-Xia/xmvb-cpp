@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
+#include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/legacy/structures/structure_overlap.hpp"
 #include "vbscf/structures/union_graph_rank_predictor.hpp"
 #include "vbscf/structures/union_graph_screening.hpp"
@@ -313,8 +314,9 @@ int main(int argc, char** argv) {
     const auto started_at = std::chrono::steady_clock::now();
     const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
-    const auto& active_overlap_storage =
-        load_result.input.orbital_preparation_input.ao_overlap_matrix;
+    const auto active_overlap_storage =
+        xmvb::vb::flatten_matrix_column_major(
+            load_result.input.orbital_preparation_input.ao_overlap_matrix);
     const int n_active_orbitals =
         load_result.input.orbital_preparation_input.n_active_orbitals;
 

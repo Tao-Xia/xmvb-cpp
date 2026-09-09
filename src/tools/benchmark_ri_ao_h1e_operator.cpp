@@ -185,15 +185,17 @@ int main(int argc, char** argv) {
         flatten_matrix(random_symmetric_gradient);
     const auto production_backprop_gradient =
         build_production_ao_h1e_backprop_input(input);
+    const auto inactive_density_storage =
+        flatten_matrix(orbital_result.inactive_density_matrix);
 
     const auto inactive_dense = time_operator(
-        orbital_result.inactive_density_matrix,
+        inactive_density_storage,
         ri_cache,
         n_basis_functions,
         false,
         options.repeats);
     const auto inactive_low_rank = time_operator(
-        orbital_result.inactive_density_matrix,
+        inactive_density_storage,
         ri_cache,
         n_basis_functions,
         true,

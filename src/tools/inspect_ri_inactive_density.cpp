@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
 
     const auto ri_from_original =
         xmvb::vb::apply_ao_effective_one_electron_ri_operator(
-            orbital_result.inactive_density_matrix,
+            flatten_matrix(orbital_result.inactive_density_matrix),
             ri_cache,
             n_basis_functions,
             {.attempt_spectral_factorization = true});

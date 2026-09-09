@@ -198,10 +198,10 @@ int main(int argc, char** argv) {
           throw std::runtime_error("analytic overlap split diagnostic requires nullity == 0");
         }
 
-        xmvb::vb::Matrix alpha_same_spin_inverse_overlap_gradient;
-        xmvb::vb::Matrix beta_same_spin_inverse_overlap_gradient;
-        xmvb::vb::Matrix alpha_opposite_spin_inverse_overlap_gradient;
-        xmvb::vb::Matrix beta_opposite_spin_inverse_overlap_gradient;
+        Matrix alpha_same_spin_inverse_overlap_gradient;
+        Matrix beta_same_spin_inverse_overlap_gradient;
+        Matrix alpha_opposite_spin_inverse_overlap_gradient;
+        Matrix beta_opposite_spin_inverse_overlap_gradient;
         xmvb::vb::SameSpinPhiResult alpha_phi_result =
             xmvb::vb::compute_same_spin_original_phi(
                 load_result.input.structure_data.alpha_det[determinant_index_left],
@@ -231,10 +231,10 @@ int main(int argc, char** argv) {
                 baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
                 &alpha_opposite_spin_inverse_overlap_gradient,
                 &beta_opposite_spin_inverse_overlap_gradient);
-        const xmvb::vb::Matrix alpha_inverse_overlap_gradient =
+        const Matrix alpha_inverse_overlap_gradient =
             alpha_same_spin_inverse_overlap_gradient +
             alpha_opposite_spin_inverse_overlap_gradient;
-        const xmvb::vb::Matrix beta_inverse_overlap_gradient =
+        const Matrix beta_inverse_overlap_gradient =
             beta_same_spin_inverse_overlap_gradient +
             beta_opposite_spin_inverse_overlap_gradient;
 
@@ -244,9 +244,9 @@ int main(int argc, char** argv) {
         const double beta_ham_det_weight =
             pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant *
             (alpha_phi_result.total_phi + beta_phi_result.total_phi + opposite_spin_phi);
-        const xmvb::vb::Matrix zero_alpha_inverse =
+        const Matrix zero_alpha_inverse =
             Matrix::Zero(alpha_inverse_overlap_gradient.rows(), alpha_inverse_overlap_gradient.cols());
-        const xmvb::vb::Matrix zero_beta_inverse =
+        const Matrix zero_beta_inverse =
             Matrix::Zero(beta_inverse_overlap_gradient.rows(), beta_inverse_overlap_gradient.cols());
 
         xmvb::vb::accumulate_spin_overlap_gradient(

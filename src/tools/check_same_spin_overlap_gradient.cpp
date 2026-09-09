@@ -7,6 +7,8 @@
 #include <utility>
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/determinants/determinant_hamiltonian.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
@@ -121,7 +123,7 @@ double evaluate_same_spin_hamiltonian(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const std::vector<double>& active_orbital_overlap_matrix,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const std::vector<double>& packed_active_two_electron_integrals,
     xmvb::vb::VbScfAlgorithm algorithm) {
@@ -170,9 +172,9 @@ double evaluate_opposite_spin_hamiltonian(
   if (alpha_overlap_result.nullity >= 2 || beta_overlap_result.nullity >= 2) {
     return 0.0;
   }
-  const xmvb::vb::Matrix alpha_cofactor_1st =
+  const Eigen::MatrixXd alpha_cofactor_1st =
       xmvb::vb::calc_cofactor_1st(alpha_overlap_result);
-  const xmvb::vb::Matrix beta_cofactor_1st =
+  const Eigen::MatrixXd beta_cofactor_1st =
       xmvb::vb::calc_cofactor_1st(beta_overlap_result);
   double hamiltonian = 0.0;
   for (int alpha_left_column = 0;
@@ -220,7 +222,7 @@ double evaluate_full_pair_hamiltonian(
     const std::vector<int>& beta_occ_L,
     const std::vector<int>& beta_occ_R,
     const std::vector<double>& active_orbital_overlap_matrix,
-    const std::vector<double>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const std::vector<double>& packed_active_two_electron_integrals,
     xmvb::vb::VbScfAlgorithm algorithm) {
@@ -310,7 +312,7 @@ int main(int argc, char** argv) {
       const auto det_ovlp_result =
           overlap_resolver.resolve_matrix(overlap_submatrix);
 
-      xmvb::vb::Matrix inverse_overlap_gradient;
+      Eigen::MatrixXd inverse_overlap_gradient;
       xmvb::vb::SameSpinPhiResult phi_result =
           xmvb::vb::compute_same_spin_original_phi(
               occ_L,
@@ -359,8 +361,8 @@ int main(int argc, char** argv) {
           overlap_resolver.resolve_matrix(alpha_overlap_submatrix);
       const auto beta_overlap_result =
           overlap_resolver.resolve_matrix(beta_overlap_submatrix);
-      xmvb::vb::Matrix alpha_inverse_overlap_gradient;
-      xmvb::vb::Matrix beta_inverse_overlap_gradient;
+      Eigen::MatrixXd alpha_inverse_overlap_gradient;
+      Eigen::MatrixXd beta_inverse_overlap_gradient;
       const double opposite_phi = xmvb::vb::compute_opposite_spin_original_phi(
           alpha_occ_L,
           alpha_occ_R,
@@ -418,8 +420,8 @@ int main(int argc, char** argv) {
           overlap_resolver.resolve_matrix(alpha_overlap_submatrix);
       const auto beta_overlap_result =
           overlap_resolver.resolve_matrix(beta_overlap_submatrix);
-      xmvb::vb::Matrix alpha_inverse_overlap_gradient;
-      xmvb::vb::Matrix beta_inverse_overlap_gradient;
+      Eigen::MatrixXd alpha_inverse_overlap_gradient;
+      Eigen::MatrixXd beta_inverse_overlap_gradient;
       xmvb::vb::SameSpinPhiResult alpha_phi_result =
           xmvb::vb::compute_same_spin_original_phi(
               alpha_occ_L,

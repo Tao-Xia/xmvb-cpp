@@ -86,8 +86,10 @@ int main(int argc, char** argv) {
     double max_core_h_abs_diff = 0.0;
     double max_core_h_abs_value = 0.0;
     for (std::size_t index = 0; index < provider_buffers.ao_core_hamiltonian_matrix.size(); ++index) {
-      const double provider_value = provider_buffers.ao_core_hamiltonian_matrix[index];
-      const double legacy_value = legacy.ao_core_hamiltonian_matrix[index];
+      const double provider_value =
+          provider_buffers.ao_core_hamiltonian_matrix.data()[index];
+      const double legacy_value =
+          legacy.ao_core_hamiltonian_matrix.data()[index];
       max_core_h_abs_diff =
           std::max(max_core_h_abs_diff, std::abs(provider_value - legacy_value));
       max_core_h_abs_value =

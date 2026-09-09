@@ -69,14 +69,14 @@ const char* active_space_representation_name(
 
 double compute_matrix_inner_product(
     const std::vector<double>& left,
-    const std::vector<double>& right) {
-  if (left.size() != right.size()) {
+    const Eigen::Ref<const Eigen::MatrixXd>& right) {
+  if (left.size() != static_cast<std::size_t>(right.size())) {
     throw std::invalid_argument("matrix inner-product size mismatch");
   }
 
   double result = 0.0;
   for (std::size_t index = 0; index < left.size(); ++index) {
-    result += left[index] * right[index];
+    result += left[index] * right.data()[index];
   }
   return result;
 }
@@ -128,8 +128,8 @@ Options parse_arguments(int argc, char** argv) {
 
 double compute_one_electron_reference_energy(
     const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_h1e,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
   double one_electron_reference_energy = 0.0;
   for (int column = 0; column < n_basis_functions; ++column) {
@@ -138,7 +138,8 @@ double compute_one_electron_reference_energy(
           column * n_basis_functions + row;
       one_electron_reference_energy +=
           inactive_density_matrix[index] *
-          (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
+          (ao_effective_h1e.data()[index] +
+           ao_core_hamiltonian_matrix.data()[index]);
     }
   }
   return one_electron_reference_energy;
@@ -148,7 +149,7 @@ double evaluate_total_energy_from_auxiliary(
     const xmvb::vb::VbScfInput& input,
     const std::vector<double>& auxiliary_orbital_matrix,
     const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
     double nuclear_repulsion_energy,
     xmvb::vb::VbScfAlgorithm algorithm) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
@@ -259,7 +260,7 @@ double evaluate_total_energy_from_auxiliary(
 ActiveSpaceMatrices build_active_space_matrices(
     const xmvb::vb::VbScfInput& input,
     const std::vector<double>& auxiliary_orbital_matrix,
-    const std::vector<double>& ao_effective_h1e) {
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
   const int n_inactive_doubly_occupied_orbitals =
@@ -343,7 +344,8 @@ ActiveSpaceMatrices build_active_space_matrices(
   result.active_orbital_overlap_matrix.assign(
       active_orbital_overlap_matrix.data(),
       active_orbital_overlap_matrix.data() + active_orbital_overlap_matrix.size());
-  result.h1e_act = active_space_one_electron_result.h1e_act;
+  result.h1e_act = xmvb::vb::flatten_matrix_column_major(
+      active_space_one_electron_result.h1e_act);
   result.packed_active_two_electron_integrals =
       active_space_two_electron_result.packed_active_two_electron_integrals;
   return result;

@@ -14,6 +14,7 @@
 #include <Eigen/LU>
 
 #include "runtime/cpp_vb_input_loader.hpp"
+#include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/structures/structure_expander.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
@@ -24,6 +25,7 @@ namespace {
 
 using Pair = std::pair<int, int>;
 using PairOverlapKey = std::pair<Pair, Pair>;
+using Matrix = Eigen::MatrixXd;
 
 enum class CandidateKind {
   ExactTerms,
@@ -471,7 +473,7 @@ double single_pair_overlap(
   return overlap_value;
 }
 
-xmvb::vb::Matrix build_pair_overlap_kernel(
+Matrix build_pair_overlap_kernel(
     const StructureGeminalExpansion& left_structure,
     const StructureGeminalExpansion& right_structure,
     const std::vector<double>& orbital_overlap_matrix,
@@ -486,7 +488,7 @@ xmvb::vb::Matrix build_pair_overlap_kernel(
     throw std::runtime_error("pair overlap kernel expects equal pair counts");
   }
 
-  xmvb::vb::Matrix pair_overlap_matrix(n_left_pairs, n_right_pairs);
+  Matrix pair_overlap_matrix(n_left_pairs, n_right_pairs);
   for (int row = 0; row < n_left_pairs; ++row) {
     for (int column = 0; column < n_right_pairs; ++column) {
       pair_overlap_matrix(row, column) = single_pair_overlap(
@@ -503,7 +505,7 @@ xmvb::vb::Matrix build_pair_overlap_kernel(
   return pair_overlap_matrix;
 }
 
-double matrix_permanent_ryser(const xmvb::vb::Matrix& matrix) {
+double matrix_permanent_ryser(const Matrix& matrix) {
   if (matrix.rows() != matrix.cols()) {
     throw std::invalid_argument("permanent requires a square matrix");
   }
@@ -603,12 +605,12 @@ std::vector<int> build_structure_support(
   return support_orbitals;
 }
 
-xmvb::vb::Matrix build_spatial_overlap_support(
+Matrix build_spatial_overlap_support(
     const std::vector<int>& support_orbitals,
     const std::vector<double>& orbital_overlap_matrix,
     int n_active_orbitals) {
   const int support_size = static_cast<int>(support_orbitals.size());
-  xmvb::vb::Matrix support_overlap(support_size, support_size);
+  Matrix support_overlap(support_size, support_size);
   for (int row = 0; row < support_size; ++row) {
     for (int column = 0; column < support_size; ++column) {
       support_overlap(row, column) = active_overlap_element(
@@ -621,7 +623,7 @@ xmvb::vb::Matrix build_spatial_overlap_support(
   return support_overlap;
 }
 
-xmvb::vb::Matrix build_spin_orbital_overlap_support(
+Matrix build_spin_orbital_overlap_support(
     const std::vector<int>& support_orbitals,
     const std::vector<double>& orbital_overlap_matrix,
     int n_active_orbitals) {
@@ -630,14 +632,14 @@ xmvb::vb::Matrix build_spin_orbital_overlap_support(
       orbital_overlap_matrix,
       n_active_orbitals);
   const int support_size = spatial_overlap.rows();
-  xmvb::vb::Matrix spin_overlap =
-      xmvb::vb::Matrix::Zero(2 * support_size, 2 * support_size);
+  Matrix spin_overlap =
+      Matrix::Zero(2 * support_size, 2 * support_size);
   spin_overlap.topLeftCorner(support_size, support_size) = spatial_overlap;
   spin_overlap.bottomRightCorner(support_size, support_size) = spatial_overlap;
   return spin_overlap;
 }
 
-xmvb::vb::Matrix build_pairing_matrix(
+Matrix build_pairing_matrix(
     const std::vector<Pair>& pairs,
     const std::vector<int>& support_orbitals) {
   const int support_size = static_cast<int>(support_orbitals.size());
@@ -648,8 +650,8 @@ xmvb::vb::Matrix build_pairing_matrix(
         support_position);
   }
 
-  xmvb::vb::Matrix pairing_matrix =
-      xmvb::vb::Matrix::Zero(2 * support_size, 2 * support_size);
+  Matrix pairing_matrix =
+      Matrix::Zero(2 * support_size, 2 * support_size);
   for (const auto& pair : pairs) {
     const auto left_iterator = support_index.find(pair.first);
     const auto right_iterator = support_index.find(pair.second);
@@ -671,7 +673,7 @@ xmvb::vb::Matrix build_pairing_matrix(
   return pairing_matrix;
 }
 
-double skew_symmetric_pfaffian(xmvb::vb::Matrix matrix) {
+double skew_symmetric_pfaffian(Matrix matrix) {
   if (matrix.rows() != matrix.cols()) {
     throw std::invalid_argument("Pfaffian requires a square matrix");
   }
@@ -740,8 +742,8 @@ double pfaffian_metric_candidate(
   right_pairing_matrix *= right_pairing_sign;
 
   const int spin_dimension = spin_orbital_overlap.rows();
-  xmvb::vb::Matrix pfaffian_matrix =
-      xmvb::vb::Matrix::Zero(2 * spin_dimension, 2 * spin_dimension);
+  Matrix pfaffian_matrix =
+      Matrix::Zero(2 * spin_dimension, 2 * spin_dimension);
   pfaffian_matrix.topLeftCorner(spin_dimension, spin_dimension) =
       left_pairing_matrix;
   pfaffian_matrix.topRightCorner(spin_dimension, spin_dimension) =
@@ -848,8 +850,9 @@ int main(int argc, char** argv) {
     const int swapped_term_phase = parse_pair_swapped_term_phase(options.pair_phase_mode);
     const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
-    const auto& active_overlap_matrix =
-        load_result.input.orbital_preparation_input.ao_overlap_matrix;
+    const auto active_overlap_matrix =
+        xmvb::vb::flatten_matrix_column_major(
+            load_result.input.orbital_preparation_input.ao_overlap_matrix);
     const int n_active_orbitals =
         load_result.input.orbital_preparation_input.n_active_orbitals;
 
@@ -893,10 +896,8 @@ int main(int argc, char** argv) {
       throw std::runtime_error("no structures selected for validation");
     }
 
-    const std::vector<double> zero_h1e(
-        n_active_orbitals *
-            n_active_orbitals,
-        0.0);
+    const Eigen::MatrixXd zero_h1e =
+        Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
     const std::vector<double> zero_eri(
         packed_active_two_electron_size(n_active_orbitals),
         0.0);
