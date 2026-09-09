@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -49,6 +50,42 @@ constexpr std::size_t kSameSpinAcceptedTileMinDenseBytes =
 
 std::size_t square_storage_size(int dimension) {
   return (dimension) * (dimension);
+}
+
+SameSpinMatrixBackwardContribution make_zero_backward_contribution(
+    int n_active_orbitals) {
+  SameSpinMatrixBackwardContribution result;
+  result.active_orbital_overlap_gradient.assign(
+      square_storage_size(n_active_orbitals),
+      0.0);
+  result.active_one_electron_gradient.assign(
+      square_storage_size(n_active_orbitals),
+      0.0);
+  result.packed_active_two_electron_gradient.assign(
+      packed_active_two_electron_integral_count(n_active_orbitals),
+      0.0);
+  return result;
+}
+
+void account_for_close_shell_spin_reuse(
+    Eigen::MatrixXd* active_one_electron_gradient,
+    SameSpinMatrixBackwardContribution* result) {
+  *active_one_electron_gradient *= 2.0;
+  for (double& value : result->active_orbital_overlap_gradient) {
+    value *= 2.0;
+  }
+  for (double& value : result->packed_active_two_electron_gradient) {
+    value *= 2.0;
+  }
+}
+
+SameSpinMatrixBackwardContribution finalize_backward_contribution(
+    SameSpinMatrixBackwardContribution result,
+    const Eigen::MatrixXd& active_one_electron_gradient) {
+  result.active_one_electron_gradient.assign(
+      active_one_electron_gradient.data(),
+      active_one_electron_gradient.data() + active_one_electron_gradient.size());
+  return result;
 }
 
 int same_spin_backward_pair_tile_size() {
@@ -653,16 +690,8 @@ build_support_sparse_same_spin_backward_contribution_by_tiles(
   // This removes the persistent O(N_unique^2) same-spin weight matrices from
   // the accepted-point support-sparse path while keeping the exact pair-local
   // gradient formulas unchanged.
-  SameSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.active_one_electron_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
+  SameSpinMatrixBackwardContribution result =
+      make_zero_backward_contribution(n_active_orbitals);
 
   Eigen::MatrixXd active_one_electron_gradient =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
@@ -720,13 +749,9 @@ build_support_sparse_same_spin_backward_contribution_by_tiles(
   }
 
   if (close_shell_same_spin) {
-    active_one_electron_gradient *= 2.0;
-    for (double& value : result.active_orbital_overlap_gradient) {
-      value *= 2.0;
-    }
-    for (double& value : result.packed_active_two_electron_gradient) {
-      value *= 2.0;
-    }
+    account_for_close_shell_spin_reuse(
+        &active_one_electron_gradient,
+        &result);
   } else {
     const int beta_tile_size =
         std::min(selected_states.n_unique_beta, tile_size);
@@ -773,10 +798,9 @@ build_support_sparse_same_spin_backward_contribution_by_tiles(
     }
   }
 
-  result.active_one_electron_gradient.assign(
-      active_one_electron_gradient.data(),
-      active_one_electron_gradient.data() + active_one_electron_gradient.size());
-  return result;
+  return finalize_backward_contribution(
+      std::move(result),
+      active_one_electron_gradient);
 }
 
 SameSpinMatrixBackwardContribution
@@ -792,16 +816,8 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
   //   consume that tile immediately in the same-spin pair-cache backward,
   //   and discard it. The product rule terms use support-local mixed
   //   contractions, so no union-support global weight matrix is allocated.
-  SameSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.active_one_electron_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
+  SameSpinMatrixBackwardContribution result =
+      make_zero_backward_contribution(n_active_orbitals);
 
   Eigen::MatrixXd active_one_electron_gradient =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
@@ -861,13 +877,9 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
   }
 
   if (close_shell_same_spin) {
-    active_one_electron_gradient *= 2.0;
-    for (double& value : result.active_orbital_overlap_gradient) {
-      value *= 2.0;
-    }
-    for (double& value : result.packed_active_two_electron_gradient) {
-      value *= 2.0;
-    }
+    account_for_close_shell_spin_reuse(
+        &active_one_electron_gradient,
+        &result);
   } else {
     const int beta_tile_size =
         std::min(selected_states.n_unique_beta, tile_size);
@@ -916,10 +928,9 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
     }
   }
 
-  result.active_one_electron_gradient.assign(
-      active_one_electron_gradient.data(),
-      active_one_electron_gradient.data() + active_one_electron_gradient.size());
-  return result;
+  return finalize_backward_contribution(
+      std::move(result),
+      active_one_electron_gradient);
 }
 
 SameSpinMatrixBackwardContribution
@@ -940,16 +951,8 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
   // This removes the global accepted W and local-response dW matrices from the
   // support-sparse local HVP path. Tile workspaces are declared once and reset
   // per tile rather than reallocated inside the pair loops.
-  SameSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.active_one_electron_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
+  SameSpinMatrixBackwardContribution result =
+      make_zero_backward_contribution(n_active_orbitals);
 
   Eigen::MatrixXd active_one_electron_gradient =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
@@ -1032,13 +1035,9 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
   }
 
   if (close_shell_same_spin) {
-    active_one_electron_gradient *= 2.0;
-    for (double& value : result.active_orbital_overlap_gradient) {
-      value *= 2.0;
-    }
-    for (double& value : result.packed_active_two_electron_gradient) {
-      value *= 2.0;
-    }
+    account_for_close_shell_spin_reuse(
+        &active_one_electron_gradient,
+        &result);
   } else {
     const int beta_tile_size =
         std::min(selected_states.n_unique_beta, tile_size);
@@ -1098,10 +1097,9 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
     }
   }
 
-  result.active_one_electron_gradient.assign(
-      active_one_electron_gradient.data(),
-      active_one_electron_gradient.data() + active_one_electron_gradient.size());
-  return result;
+  return finalize_backward_contribution(
+      std::move(result),
+      active_one_electron_gradient);
 }
 
 }  // namespace
@@ -1166,16 +1164,8 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
       exact_weight_matrices.alpha_partner_total_transfer_matrix +
       exact_weight_matrices.alpha_singular_partner_transfer_matrix;
 
-  SameSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.active_one_electron_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
+  SameSpinMatrixBackwardContribution result =
+      make_zero_backward_contribution(n_active_orbitals);
 
   Eigen::MatrixXd active_one_electron_gradient =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
@@ -1191,13 +1181,9 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
       &result.active_orbital_overlap_gradient,
       &result.packed_active_two_electron_gradient);
   if (close_shell_same_spin) {
-    active_one_electron_gradient *= 2.0;
-    for (double& value : result.active_orbital_overlap_gradient) {
-      value *= 2.0;
-    }
-    for (double& value : result.packed_active_two_electron_gradient) {
-      value *= 2.0;
-    }
+    account_for_close_shell_spin_reuse(
+        &active_one_electron_gradient,
+        &result);
   } else {
     const Eigen::MatrixXd beta_total_partner_transfer_matrix =
         exact_weight_matrices.beta_partner_total_transfer_matrix +
@@ -1215,10 +1201,9 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
         &result.packed_active_two_electron_gradient);
   }
 
-  result.active_one_electron_gradient.assign(
-      active_one_electron_gradient.data(),
-      active_one_electron_gradient.data() + active_one_electron_gradient.size());
-  return result;
+  return finalize_backward_contribution(
+      std::move(result),
+      active_one_electron_gradient);
 }
 
 SameSpinMatrixBackwardContribution
@@ -1270,16 +1255,8 @@ build_directional_same_spin_matrix_backward_contribution(
       directional_weight_matrices.alpha_partner_total_transfer_matrix +
       directional_weight_matrices.alpha_singular_partner_transfer_matrix;
 
-  SameSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.active_one_electron_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
+  SameSpinMatrixBackwardContribution result =
+      make_zero_backward_contribution(n_active_orbitals);
 
   Eigen::MatrixXd active_one_electron_gradient =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
@@ -1295,13 +1272,9 @@ build_directional_same_spin_matrix_backward_contribution(
       &result.active_orbital_overlap_gradient,
       &result.packed_active_two_electron_gradient);
   if (close_shell_same_spin) {
-    active_one_electron_gradient *= 2.0;
-    for (double& value : result.active_orbital_overlap_gradient) {
-      value *= 2.0;
-    }
-    for (double& value : result.packed_active_two_electron_gradient) {
-      value *= 2.0;
-    }
+    account_for_close_shell_spin_reuse(
+        &active_one_electron_gradient,
+        &result);
   } else {
     const Eigen::MatrixXd beta_total_partner_transfer_matrix =
         directional_weight_matrices.beta_partner_total_transfer_matrix +
@@ -1319,10 +1292,9 @@ build_directional_same_spin_matrix_backward_contribution(
         &result.packed_active_two_electron_gradient);
   }
 
-  result.active_one_electron_gradient.assign(
-      active_one_electron_gradient.data(),
-      active_one_electron_gradient.data() + active_one_electron_gradient.size());
-  return result;
+  return finalize_backward_contribution(
+      std::move(result),
+      active_one_electron_gradient);
 }
 
 SameSpinMatrixBackwardContribution
@@ -1389,16 +1361,8 @@ build_local_same_spin_matrix_backward_contribution(
               : beta_directional_scalars,
           close_shell_same_spin);
 
-  SameSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.active_one_electron_gradient.assign(
-      square_storage_size(n_active_orbitals),
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
+  SameSpinMatrixBackwardContribution result =
+      make_zero_backward_contribution(n_active_orbitals);
 
   Eigen::MatrixXd active_one_electron_gradient =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
@@ -1423,13 +1387,9 @@ build_local_same_spin_matrix_backward_contribution(
       &result.active_orbital_overlap_gradient,
       &result.packed_active_two_electron_gradient);
   if (close_shell_same_spin) {
-    active_one_electron_gradient *= 2.0;
-    for (double& value : result.active_orbital_overlap_gradient) {
-      value *= 2.0;
-    }
-    for (double& value : result.packed_active_two_electron_gradient) {
-      value *= 2.0;
-    }
+    account_for_close_shell_spin_reuse(
+        &active_one_electron_gradient,
+        &result);
   } else {
     const Eigen::MatrixXd beta_total_partner_transfer_matrix =
         exact_weight_matrices.beta_partner_total_transfer_matrix +
@@ -1456,10 +1416,9 @@ build_local_same_spin_matrix_backward_contribution(
         &result.packed_active_two_electron_gradient);
   }
 
-  result.active_one_electron_gradient.assign(
-      active_one_electron_gradient.data(),
-      active_one_electron_gradient.data() + active_one_electron_gradient.size());
-  return result;
+  return finalize_backward_contribution(
+      std::move(result),
+      active_one_electron_gradient);
 }
 
 }  // namespace xmvb::vb
