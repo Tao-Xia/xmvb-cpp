@@ -9,6 +9,13 @@
 
 namespace xmvb::vb::detail {
 
+SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    int n_unique_determinants,
+    int n_active_orbitals,
+    const ActiveSpaceIntegralDirectionView& direction);
+
 void accumulate_one_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
