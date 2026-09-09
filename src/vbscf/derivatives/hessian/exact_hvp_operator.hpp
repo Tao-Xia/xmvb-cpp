@@ -12,8 +12,6 @@
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/derivatives/hessian/structure_response_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
-#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
@@ -196,40 +194,5 @@ private:
   AcceptedOuterResponseLinearResponseCache accepted_outer_response_cache_;
   mutable ApplyTimingTotals apply_timing_totals_;
 };
-
-/**
- * @brief Pairwise analytic reference for the local opposite-spin outer response.
- *
- * This diagnostics helper exposes the currently trusted pairwise fallback so
- * matrix-form implementations can be compared against the exact per-pair
- * local-response algebra without reconstructing the whole HVP.
- */
-OppositeSpinMatrixBackwardContribution
-build_pairwise_local_opposite_spin_matrix_backward_reference(
-    const VbScfInput& input,
-    const AcceptedPointContext& accepted_point_context,
-    const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals);
-
-/**
- * @brief Pairwise analytic reference for the local same-spin outer response.
- *
- * This diagnostics helper exposes the trusted pairwise same-spin local term,
- * but returns the active overlap / one-electron channels with true matrix
- * semantics. The raw determinant-level canonical sweep stores off-diagonal
- * HHO/SSO asymmetrically; matrix-form same-spin compression loses that
- * bookkeeping detail and only preserves the physically relevant symmetric
- * matrix.
- */
-SameSpinMatrixBackwardContribution
-build_pairwise_local_same_spin_matrix_backward_reference(
-    const VbScfInput& input,
-    const AcceptedPointContext& accepted_point_context,
-    const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals);
 
 }  // namespace xmvb::vb
