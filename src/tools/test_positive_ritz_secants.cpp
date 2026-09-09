@@ -2,7 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 
-#include "vb/scf/positive_ritz_secants.hpp"
+#include "vbscf/optimization/krylov/positive_ritz_secants.hpp"
 
 namespace {
 void require(bool condition, const char* message) {

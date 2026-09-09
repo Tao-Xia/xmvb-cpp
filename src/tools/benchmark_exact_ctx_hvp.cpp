@@ -16,7 +16,7 @@
 #include <Eigen/QR>
 
 #include "tools/curvature_decomposition.hpp"
-#include "vb/scf/orthonormal_hvp_basis.hpp"
+#include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
 #include "vb/scf/reduced_hessian_reference.hpp"
 
 #include "runtime/cpp_vb_input_loader.hpp"

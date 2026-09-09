@@ -16,7 +16,7 @@
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
-#include "vb/scf/cpp_vb_scf_evaluator.hpp"
+#include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -434,7 +434,7 @@ double evaluate_energy_component(
     xmvb::vb::VBSCFAlgorithm algorithm,
     double nuclear_repulsion_energy,
     EnergyComponent component) {
-  xmvb::vb::CppVbScfEvaluator evaluator(algorithm);
+  xmvb::vb::VbScfEvaluator evaluator(algorithm);
   const auto result = evaluator.evaluate(input, nuclear_repulsion_energy);
   switch (component) {
     case EnergyComponent::Total:

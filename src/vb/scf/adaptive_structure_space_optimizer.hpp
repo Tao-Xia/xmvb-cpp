@@ -6,7 +6,7 @@
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/raw_structure_subspace_selector.hpp"
-#include "vb/scf/cpp_vb_scf_optimizer.hpp"
+#include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace xmvb::vb {
 
@@ -64,7 +64,7 @@ struct AdaptiveStructureSpaceOptimizerResult {
   std::vector<int> selected_raw_structure_indices;
   std::vector<AdaptiveStructureSpaceIterationSummary> iteration_summaries;
   double total_wall_time_seconds = 0.0;
-  CppVbScfOptimizerResult inner_result;
+  VbScfOptimizerResult inner_result;
 };
 
 inline const char* adaptive_structure_space_seed_selection_name(
@@ -75,14 +75,14 @@ inline const char* adaptive_structure_space_seed_selection_name(
 class AdaptiveStructureSpaceOptimizer {
 public:
   AdaptiveStructureSpaceOptimizer(
-      CppVbScfOptimizerOptions optimizer_options,
+      VbScfOptimizerOptions optimizer_options,
       AdaptiveStructureSpaceOptimizerOptions options = {});
 
   AdaptiveStructureSpaceOptimizerResult optimize(
       const CppVbInputLoadResult& load_result) const;
 
 private:
-  CppVbScfOptimizerOptions optimizer_options_;
+  VbScfOptimizerOptions optimizer_options_;
   AdaptiveStructureSpaceOptimizerOptions options_;
 };
 

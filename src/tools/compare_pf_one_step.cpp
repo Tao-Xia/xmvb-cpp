@@ -17,7 +17,7 @@
 #include "pfaffian_vbscf/types/pf_basis_data.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
-#include "vb/scf/cpp_vb_scf_evaluator.hpp"
+#include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -215,7 +215,7 @@ xmvb::vb::CppVbInput stepped_input(
 double eval_det_energy(
     const xmvb::vb::CppVbInput& input,
     double e_nuc) {
-  xmvb::vb::CppVbScfEvaluator eval;
+  xmvb::vb::VbScfEvaluator eval;
   return eval.evaluate(input, e_nuc).total_energy;
 }
 

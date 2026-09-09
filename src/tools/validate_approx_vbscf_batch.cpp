@@ -8,7 +8,7 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/approx/approx_vbscf_evaluator.hpp"
 #include "vb/matrices/structure_matrix_evaluator.hpp"
-#include "vb/scf/cpp_vb_scf_evaluator.hpp"
+#include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -144,7 +144,7 @@ TimedSampleResult evaluate_sample(
   sample.approx_seconds = elapsed_seconds(approx_start);
 
   const auto exact_start = Clock::now();
-  xmvb::vb::CppVbScfEvaluator scf_evaluator(
+  xmvb::vb::VbScfEvaluator scf_evaluator(
       xmvb::vb::VBSCFAlgorithm::Original);
   const auto scf_result =
       scf_evaluator.evaluate(

@@ -9,7 +9,7 @@
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
-#include "vb/scf/cpp_vb_scf_evaluator.hpp"
+#include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -111,7 +111,7 @@ double evaluate_reference_energy(
     const xmvb::vb::CppVbInput& input,
     xmvb::vb::VBSCFAlgorithm algorithm,
     double nuclear_repulsion_energy) {
-  xmvb::vb::CppVbScfEvaluator evaluator(algorithm);
+  xmvb::vb::VbScfEvaluator evaluator(algorithm);
   return evaluator.evaluate(input, nuclear_repulsion_energy).one_electron_reference_energy;
 }
 

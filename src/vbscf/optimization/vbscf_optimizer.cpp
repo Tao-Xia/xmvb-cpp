@@ -1,4 +1,4 @@
-#include "vb/scf/cpp_vb_scf_optimizer.hpp"
+#include "vbscf/optimization/vbscf_optimizer.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -28,12 +28,12 @@
 #include "vb/runtime_utils.hpp"
 #include "vb/orbital/support_aware_mo_gauge_fix.hpp"
 #include "vb/scf/exact_orbital_second_order_operator.hpp"
-#include "vb/scf/orbital_objective.hpp"
-#include "vb/scf/optimizer_types.hpp"
-#include "vb/scf/orthonormal_hvp_basis.hpp"
-#include "vb/scf/positive_conjugate_basis.hpp"
-#include "vb/scf/positive_ritz_secants.hpp"
-#include "vb/scf/spectral_trust_region.hpp"
+#include "vbscf/optimization/vbscf_objective.hpp"
+#include "vbscf/optimization/optimizer_types.hpp"
+#include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
+#include "vbscf/optimization/krylov/positive_conjugate_basis.hpp"
+#include "vbscf/optimization/krylov/positive_ritz_secants.hpp"
+#include "vbscf/optimization/trust_region/spectral_trust_region.hpp"
 #include "vb/scf/scf_vector_utilities.hpp"
 
 namespace xmvb::vb {
@@ -43,15 +43,15 @@ namespace {
 constexpr double kLineSearchExpansionFactor = 10.0;
 
 bool optimizer_backend_uses_nonredundant_space(
-    CppVbScfOptimizerBackend backend) {
+    VbScfOptimizerBackend backend) {
   switch (backend) {
-    case CppVbScfOptimizerBackend::NonredundantProjectedGradient:
-    case CppVbScfOptimizerBackend::NonredundantLbfgspp:
-    case CppVbScfOptimizerBackend::NonredundantTruncatedNewton:
+    case VbScfOptimizerBackend::NonredundantProjectedGradient:
+    case VbScfOptimizerBackend::NonredundantLbfgspp:
+    case VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return true;
-    case CppVbScfOptimizerBackend::Lbfgspp:
-    case CppVbScfOptimizerBackend::DeepVBHOnnx:
-    case CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
+    case VbScfOptimizerBackend::Lbfgspp:
+    case VbScfOptimizerBackend::DeepVBHOnnx:
+    case VbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
       return false;
   }
   return false;
@@ -80,7 +80,7 @@ double inexact_newton_forcing_term(double gradient_norm) {
 }
 
 NonredundantOrbitalSpace build_nonredundant_space(
-    const OrbitalObjective& objective,
+    const VbScfObjective& objective,
     const SparseOrbitalParameterView& parameter_view) {
   const auto& orbital_preparation_input =
       objective.last_input().orbital_preparation_input;
@@ -264,7 +264,7 @@ Eigen::VectorXd shrink_nonredundant_reduced_step_inside_retract_tangent_radius(
 }
 
 int choose_nonredundant_truncated_newton_max_cg_iterations(
-    const CppVbScfOptimizerOptions& options,
+    const VbScfOptimizerOptions& options,
     int reduced_size) {
   if (options.nonredundant_truncated_newton_max_cg_iterations > 0) {
     return std::min(
@@ -276,8 +276,8 @@ int choose_nonredundant_truncated_newton_max_cg_iterations(
 }
 
 int choose_nonredundant_truncated_newton_transport_history_size(
-    const CppVbScfOptimizerOptions& options,
-    const OrbitalObjective& objective) {
+    const VbScfOptimizerOptions& options,
+    const VbScfObjective& objective) {
   (void)objective;
   return std::max(
       0,
@@ -503,7 +503,7 @@ public:
 class FullFiniteDifferenceReducedHvpOperator final : public ReducedHvpOperator {
 public:
   FullFiniteDifferenceReducedHvpOperator(
-      const OrbitalObjective& objective,
+      const VbScfObjective& objective,
       const NonredundantOrbitalSpace& current_space,
       const NonredundantOrbitalSpace::ProjectionResult& current_projection,
       const OrbitalPreparationInput& current_orbital_input,
@@ -547,7 +547,7 @@ public:
             epsilon);
     const Eigen::VectorXd trial_parameters =
         parameter_view_.pack(trial_orbital_input);
-    const OrbitalObjective::TrialEvaluation trial_evaluation =
+    const VbScfObjective::TrialEvaluation trial_evaluation =
         probe_objective_.evaluate_trial_without_committing(trial_parameters);
     return
         (current_space_.project_reduced_gradient(trial_evaluation.gradient) -
@@ -556,7 +556,7 @@ public:
   }
 
 private:
-  OrbitalObjective probe_objective_;
+  VbScfObjective probe_objective_;
   const NonredundantOrbitalSpace& current_space_;
   Eigen::VectorXd current_reduced_gradient_;
   OrbitalPreparationInput current_orbital_input_;
@@ -568,7 +568,7 @@ private:
 class ExactContextReducedHvpOperator final : public ReducedHvpOperator {
 public:
   ExactContextReducedHvpOperator(
-      const OrbitalObjective& objective,
+      const VbScfObjective& objective,
       const NonredundantOrbitalSpace& current_space)
       : exact_operator_(
             objective.last_second_order_context(),
@@ -1298,7 +1298,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
 }
 
 bool try_armijo_backtracking_direction(
-    OrbitalObjective* objective,
+    VbScfObjective* objective,
     const Eigen::VectorXd& current_parameters,
     double current_energy,
     const Eigen::VectorXd& current_gradient,
@@ -1374,7 +1374,7 @@ bool try_build_nonredundant_lifted_trial_parameters(
 }
 
 bool try_armijo_backtracking_nonredundant_direction(
-    OrbitalObjective* objective,
+    VbScfObjective* objective,
     const OrbitalPreparationInput& current_orbital_input,
     const NonredundantOrbitalSpace& current_space,
     const SparseOrbitalParameterView& parameter_view,
@@ -1438,7 +1438,7 @@ bool try_armijo_backtracking_nonredundant_direction(
 }
 
 bool try_armijo_backtracking_step(
-    OrbitalObjective* objective,
+    VbScfObjective* objective,
     const Eigen::VectorXd& current_parameters,
     double current_energy,
     const Eigen::VectorXd& current_gradient,
@@ -1467,17 +1467,17 @@ bool try_armijo_backtracking_step(
 }
 
 void sync_result_from_objective(
-    const OrbitalObjective& objective,
-    CppVbScfOptimizerResult* result);
+    const VbScfObjective& objective,
+    VbScfOptimizerResult* result);
 
 void record_accepted_iteration_snapshot(
-    OrbitalObjective* objective,
+    VbScfObjective* objective,
     int iteration,
-    const CppVbScfOptimizerOptions& options,
-    CppVbScfOptimizerResult* result);
+    const VbScfOptimizerOptions& options,
+    VbScfOptimizerResult* result);
 
 bool try_steepest_descent_armijo_fallback(
-    OrbitalObjective* objective,
+    VbScfObjective* objective,
     const LBFGSpp::LBFGSParam<double>& param,
     const Eigen::VectorXd& start_parameters,
     const Eigen::VectorXd& start_gradient,
@@ -1575,8 +1575,8 @@ bool try_steepest_descent_armijo_fallback(
 }
 
 void sync_result_from_objective(
-    const OrbitalObjective& objective,
-    CppVbScfOptimizerResult* result) {
+    const VbScfObjective& objective,
+    VbScfOptimizerResult* result) {
   result->total_energy_history = objective.energy_history();
   result->gradient_inf_norm_history = objective.gradient_inf_norm_history();
   result->iteration_time_history_seconds = objective.iteration_time_history_seconds();
@@ -1584,10 +1584,10 @@ void sync_result_from_objective(
 }
 
 void record_accepted_iteration_snapshot(
-    OrbitalObjective* objective,
+    VbScfObjective* objective,
     int accepted_iteration_index,
-    const CppVbScfOptimizerOptions& options,
-    CppVbScfOptimizerResult* result) {
+    const VbScfOptimizerOptions& options,
+    VbScfOptimizerResult* result) {
   if (!options.retain_accepted_iteration_trace && !options.accepted_iteration_callback) {
     return;
   }
@@ -1604,7 +1604,7 @@ void record_accepted_iteration_snapshot(
     objective->ensure_last_reference_energy_gradient();
   }
   const auto& gradient_result = objective->last_gradient_result();
-  CppVbScfAcceptedIterationSnapshot snapshot;
+  VbScfAcceptedIterationSnapshot snapshot;
   snapshot.accepted_iteration_index = accepted_iteration_index;
   snapshot.has_full_payload = include_full_payload;
   for (const double value : gradient_result.sparse_orbital_energy_gradient) {
@@ -1647,27 +1647,27 @@ void record_accepted_iteration_snapshot(
 
 }  // namespace
 
-CppVbScfOptimizer::CppVbScfOptimizer(
-    CppVbScfOptimizerOptions options)
+VbScfOptimizer::VbScfOptimizer(
+    VbScfOptimizerOptions options)
     : orbital_gradient_evaluator_(options.algorithm),
       scf_evaluator_(options.algorithm),
       options_(options) {}
 
-CppVbScfOptimizer::CppVbScfOptimizer(
+VbScfOptimizer::VbScfOptimizer(
     CppOrbitalGradientEvaluator orbital_gradient_evaluator,
-    CppVbScfEvaluator scf_evaluator,
-    CppVbScfOptimizerOptions options)
+    VbScfEvaluator scf_evaluator,
+    VbScfOptimizerOptions options)
     : orbital_gradient_evaluator_(std::move(orbital_gradient_evaluator)),
       scf_evaluator_(std::move(scf_evaluator)),
       options_(options) {}
 
-CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
+VbScfOptimizerResult VbScfOptimizer::optimize(
     const CppVbInput& input,
     double nuclear_repulsion_energy) const {
   return optimize(input, {0}, {1.0}, nuclear_repulsion_energy);
 }
 
-CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
+VbScfOptimizerResult VbScfOptimizer::optimize(
     const CppVbInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -1699,16 +1699,16 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
     throw std::invalid_argument(
         "nonredundant_truncated_newton_transport_history_size must be nonnegative");
   }
-  if (!cpp_vb_scf_optimizer_backend_supported(options_.backend)) {
+  if (!vbscf_optimizer_backend_supported(options_.backend)) {
     throw std::invalid_argument(
         "requested optimizer backend is not enabled in this build");
   }
-  if (options_.backend == CppVbScfOptimizerBackend::DeepVBHOnnx) {
+  if (options_.backend == VbScfOptimizerBackend::DeepVBHOnnx) {
     throw std::invalid_argument(
         "deepvbh_onnx requires DeepVBHOnnxHybridOptimizer and runtime metadata");
   }
 
-  CppVbScfOptimizerResult result;
+  VbScfOptimizerResult result;
   const auto optimization_start_time = std::chrono::steady_clock::now();
 
   // For `guess=mo`, numerical parity with the legacy VBSCF implementation is
@@ -1729,7 +1729,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
       parameter_view.pack(optimizer_input->orbital_preparation_input);
   Eigen::MatrixXd initial_normalized_orbital_matrix;
 
-  OrbitalObjective objective(
+  VbScfObjective objective(
       *optimizer_input,
       parameter_view,
       selected_state_indices,
@@ -1759,7 +1759,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
     final_gradient_l2_norm = gradient.norm();
     switch (options_.backend) {
 
-      case CppVbScfOptimizerBackend::Lbfgspp: {
+      case VbScfOptimizerBackend::Lbfgspp: {
         LBFGSpp::LBFGSParam<double> param;
         param.m = options_.history_size;
         param.epsilon = 0.0;
@@ -1966,7 +1966,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
         break;
       }
 
-      case CppVbScfOptimizerBackend::NonredundantProjectedGradient: {
+      case VbScfOptimizerBackend::NonredundantProjectedGradient: {
         Eigen::VectorXd current_parameters = parameter_vector;
         Eigen::VectorXd current_gradient = gradient;
         NonredundantOrbitalSpace current_space =
@@ -2072,7 +2072,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
         break;
       }
 
-      case CppVbScfOptimizerBackend::NonredundantLbfgspp: {
+      case VbScfOptimizerBackend::NonredundantLbfgspp: {
         const int history_size = options_.history_size;
         LBFGSpp::BFGSMat<double> inverse_hessian;
         inverse_hessian.reset(n, history_size);
@@ -2298,7 +2298,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
         break;
       }
 
-      case CppVbScfOptimizerBackend::NonredundantTruncatedNewton: {
+      case VbScfOptimizerBackend::NonredundantTruncatedNewton: {
         Eigen::VectorXd current_parameters = parameter_vector;
         Eigen::VectorXd current_gradient = gradient;
         NonredundantOrbitalSpace current_space =
@@ -2418,7 +2418,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                   bool screen_with_energy_only,
                   TruncatedNewtonTrialEvaluation* trial_evaluation,
                   Eigen::VectorXd* accepted_packed_step,
-                  OrbitalObjective::TrialEvaluation* accepted_trial_evaluation,
+                  VbScfObjective::TrialEvaluation* accepted_trial_evaluation,
                   Eigen::VectorXd* accepted_trial_parameters,
                   Eigen::VectorXd* accepted_trial_gradient,
                   double* accepted_trial_energy) -> bool {
@@ -2498,7 +2498,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                     return false;
                   }
                 }
-                OrbitalObjective::TrialEvaluation candidate_trial_evaluation =
+                VbScfObjective::TrialEvaluation candidate_trial_evaluation =
                     objective.evaluate_trial_without_committing(
                         candidate_trial_parameters);
                 const double candidate_trial_energy =
@@ -2527,7 +2527,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               };
           auto try_nonredundant_descent_fallback_step =
               [&](Eigen::VectorXd* accepted_packed_step,
-                  OrbitalObjective* accepted_trial_objective,
+                  VbScfObjective* accepted_trial_objective,
                   Eigen::VectorXd* accepted_trial_parameters,
                   Eigen::VectorXd* accepted_trial_gradient,
                   double* accepted_trial_energy) -> bool {
@@ -2589,7 +2589,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
                 // from a reduced step that already fits inside the current
                 // trust radius avoids burning many full objective evaluations
                 // just to rediscover the same radius contraction.
-                OrbitalObjective fallback_objective =
+                VbScfObjective fallback_objective =
                     objective.make_probe_copy();
                 Eigen::VectorXd fallback_parameters(current_parameters.size());
                 Eigen::VectorXd fallback_gradient(current_gradient.size());
@@ -2733,7 +2733,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               truncated_newton_step;
 
           Eigen::VectorXd packed_step(current_parameters.size());
-          OrbitalObjective::TrialEvaluation accepted_trial_evaluation;
+          VbScfObjective::TrialEvaluation accepted_trial_evaluation;
           Eigen::VectorXd trial_parameters(current_parameters.size());
           Eigen::VectorXd trial_gradient(current_gradient.size());
           double trial_energy = energy;
@@ -2894,7 +2894,7 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
         break;
       }
 
-      case CppVbScfOptimizerBackend::DeepVBHOnnx:
+      case VbScfOptimizerBackend::DeepVBHOnnx:
         result.termination_reason =
             "deepvbh_onnx_requires_hybrid_optimizer";
         break;

@@ -69,71 +69,7 @@ find_path(EIGEN3_INCLUDE_DIR Eigen/Core
     include/eigen3
   REQUIRED)
 
-set(XMVB_CPP_CORE_SOURCES
-  core/linear_algebra/generalized_eigensolver.cpp
-  vb/approx/approx_vbscf_cluster_quotient.cpp
-  vb/approx/approx_vbscf_evaluator.cpp
-  vb/approx/approx_vbscf_metric.cpp
-  vb/approx/approx_vbscf_pair_cluster.cpp
-  vb/approx/approx_vbscf_resonance.cpp
-  vb/approx/approx_vbscf_resonance_functional.cpp
-  vb/matrices/determinant_hamiltonian_resolver.cpp
-  vb/matrices/determinant_overlap_resolver.cpp
-  vb/matrices/full_determinant_pair_evaluator.cpp
-  vb/matrices/full_structure_expander.cpp
-  vb/matrices/full_structure_builder.cpp
-  vb/matrices/legacy_structure_overlap.cpp
-  vb/matrices/cpp_vb_input_ri_cache.cpp
-  vb/matrices/prepared_active_space_context.cpp
-  vb/matrices/same_spin_pair_cache.cpp
-  vb/matrices/union_graph_rank_predictor.cpp
-  vb/matrices/raw_structure_subspace_selector.cpp
-  vb/matrices/spin_pair_utils.cpp
-  vb/matrices/cofactor_differential.cpp
-  vb/matrices/structure_matrix_evaluator.cpp
-  vb/matrices/two_electron_indexer.cpp
-  vb/matrices/union_graph_screening.cpp
-  vb/model/deepvbh_jax_inference_runner.cpp
-  vb/orbital/active_space_matrix_backpropagator.cpp
-  vb/orbital/active_space_one_electron_builder.cpp
-  vb/orbital/active_space_orbital_backpropagator.cpp
-  vb/orbital/active_space_orbital_preparer.cpp
-  vb/orbital/ao_two_electron_pair_index_utils.cpp
-  vb/orbital/active_space_two_electron_backpropagator.cpp
-  vb/orbital/active_space_two_electron_builder.cpp
-  vb/orbital/active_space_two_electron_utils.cpp
-  vb/orbital/ao_effective_one_electron_backpropagator.cpp
-  vb/orbital/ao_effective_one_electron_builder.cpp
-  vb/orbital/ao_effective_one_electron_graph_operator.cpp
-  vb/orbital/ao_effective_one_electron_ri_operator.cpp
-  vb/orbital/libcint_input_utils.cpp
-  vb/orbital/legacy_style_orbital_gradient_projector.cpp
-  vb/orbital/legacy_jacobi_diagonalizer.cpp
-  vb/orbital/localized_representative_selector.cpp
-  vb/orbital/nonredundant_optimizer_input_adapter.cpp
-  vb/orbital/nonredundant_orbital_space.cpp
-  vb/orbital/sparse_orbital_gauge_audit.cpp
-  vb/orbital/orbital_parameter_codec.cpp
-  vb/orbital/sparse_orbital_parameter_view.cpp
-  vb/orbital/support_aware_mo_gauge_fix.cpp
-  vb/orbital/ri_active_space_two_electron_builder.cpp
-  vb/scf/selected_state_determinant_matrices.cpp
-  vb/scf/opposite_spin_matrix_channels.cpp
-  vb/scf/opposite_spin_matrix_backward.cpp
-  vb/scf/same_spin_matrix_backward.cpp
-  vb/scf/exact_ctx_memory_accounting.cpp
-  vb/scf/exact_orbital_second_order_operator.cpp
-  vb/scf/exact_orbital_second_order_operator_outer_response_cache.cpp
-  vb/scf/cpp_active_space_gradient_result_utils.cpp
-  vb/scf/cpp_active_space_gradient_evaluator.cpp
-  vb/scf/adaptive_structure_space_optimizer.cpp
-  vb/scf/deepvbh_onnx_direct_final_optimizer.cpp
-  vb/scf/deepvbh_onnx_hybrid_optimizer.cpp
-  vb/scf/cpp_orbital_gradient_evaluator.cpp
-  vb/scf/cpp_vb_scf_evaluator.cpp
-  vb/scf/orbital_objective.cpp
-  vb/scf/cpp_vb_scf_optimizer.cpp
-  )
+include(vbscf/sources.cmake)
 
 set(XMVB_CPP_RUNTIME_CORE_SOURCES
   runtime/cpp_block_guess_builder.cpp

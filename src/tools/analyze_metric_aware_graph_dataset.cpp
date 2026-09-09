@@ -18,7 +18,8 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/legacy_structure_overlap.hpp"
 #include "vb/matrices/union_graph_screening.hpp"
-#include "vb/scf/cpp_vb_scf_optimizer.hpp"
+#include "vb/orbital/active_space_orbital_preparer.hpp"
+#include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace {
 
@@ -361,23 +362,24 @@ ActiveOverlapSelectionResult select_active_overlap_matrix(
     const xmvb::vb::CppVbInputLoadResult& load_result) {
   ActiveOverlapSelectionResult result;
   if (options.active_overlap_source == ActiveOverlapSource::Input) {
-    result.active_overlap_matrix =
-        load_result.input.orbital_preparation_input.ao_overlap_matrix;
+    result.active_overlap_matrix = xmvb::vb::ActiveSpaceOrbitalPreparer{}
+        .prepare(load_result.input.orbital_preparation_input)
+        .active_orbital_overlap_matrix;
     return result;
   }
 
   // The structure-pair analysis needs the final active-space metric SSO in the
   // optimized orbital basis. `active_overlap_matrix` stores that M x M spatial
   // overlap in column-major order, where M is the number of active orbitals.
-  xmvb::vb::CppVbScfOptimizerOptions optimizer_options;
-  optimizer_options.backend = xmvb::vb::CppVbScfOptimizerBackend::Lbfgspp;
+  xmvb::vb::VbScfOptimizerOptions optimizer_options;
+  optimizer_options.backend = xmvb::vb::VbScfOptimizerBackend::Lbfgspp;
   optimizer_options.max_iterations = options.optimizer_max_iterations;
   optimizer_options.gradient_tolerance = options.optimizer_gradient_tolerance;
   optimizer_options.energy_tolerance = options.optimizer_energy_tolerance;
   optimizer_options.verbose = false;
   optimizer_options.retain_accepted_iteration_trace = true;
 
-  xmvb::vb::CppVbScfOptimizer optimizer(optimizer_options);
+  xmvb::vb::VbScfOptimizer optimizer(optimizer_options);
   const auto optimization_result = optimizer.optimize(
       load_result.input,
       load_result.nuclear_repulsion_energy);

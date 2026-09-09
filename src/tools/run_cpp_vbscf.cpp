@@ -31,7 +31,7 @@
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/scf/adaptive_structure_space_optimizer.hpp"
-#include "vb/scf/cpp_vb_scf_optimizer.hpp"
+#include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace {
 
@@ -116,16 +116,16 @@ std::string format_index_name(
 }
 
 const char* gradient_tolerance_metric_name(
-    xmvb::vb::CppVbScfOptimizerBackend backend) {
+    xmvb::vb::VbScfOptimizerBackend backend) {
   switch (backend) {
-    case xmvb::vb::CppVbScfOptimizerBackend::Lbfgspp:
+    case xmvb::vb::VbScfOptimizerBackend::Lbfgspp:
       return "full_gradient_l2_norm";
-    case xmvb::vb::CppVbScfOptimizerBackend::NonredundantProjectedGradient:
-    case xmvb::vb::CppVbScfOptimizerBackend::NonredundantLbfgspp:
-    case xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton:
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp:
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return "projected_gradient_inf_norm";
-    case xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx:
-    case xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
+    case xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx:
+    case xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
       return "full_gradient_inf_norm";
   }
   return "unknown";
@@ -368,10 +368,10 @@ std::string exact_ctx_physical_chart_name(
 }
 
 void print_exact_ctx_policy_summary(
-    const xmvb::vb::CppVbScfOptimizerOptions& options,
+    const xmvb::vb::VbScfOptimizerOptions& options,
     const xmvb::vb::CppVbInput& input) {
   if (options.backend !=
-          xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton ||
+          xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton ||
       options.nonredundant_truncated_newton_hvp_mode !=
           xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction) {
     return;
@@ -406,7 +406,7 @@ void print_exact_ctx_policy_summary(
 void print_run_header(
     const std::string& input_path,
     const xmvb::vb::CppVbInputLoadResult& load_result,
-    const xmvb::vb::CppVbScfOptimizerOptions& options,
+    const xmvb::vb::VbScfOptimizerOptions& options,
     StructureSpaceMode structure_space_mode,
     const std::chrono::system_clock::time_point& start_time) {
   const fs::path absolute_input_path = fs::absolute(fs::path(input_path));
@@ -423,9 +423,9 @@ void print_run_header(
   print_log_field("SCF algorithm", "VBSCF");
   print_log_field(
       "Optimizer backend",
-      xmvb::vb::cpp_vb_scf_optimizer_backend_name(options.backend));
+      xmvb::vb::vbscf_optimizer_backend_name(options.backend));
   if (options.backend ==
-      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+      xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "HVP mode",
         xmvb::vb::nonredundant_truncated_newton_hvp_mode_name(
@@ -490,7 +490,7 @@ void print_run_header(
           options.gradient_tolerance));
   print_log_field("Max iterations", std::to_string(options.max_iterations));
   if (options.backend ==
-      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+      xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "Max CG iterations",
         options.nonredundant_truncated_newton_max_cg_iterations > 0
@@ -501,10 +501,10 @@ void print_run_header(
   print_exact_ctx_policy_summary(options, load_result.input);
 }
 
-std::function<void(const xmvb::vb::CppVbScfAcceptedIterationSnapshot&)>
+std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
 compose_accepted_iteration_callbacks(
-    std::function<void(const xmvb::vb::CppVbScfAcceptedIterationSnapshot&)> first,
-    std::function<void(const xmvb::vb::CppVbScfAcceptedIterationSnapshot&)> second) {
+    std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> first,
+    std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)> second) {
   if (!first) {
     return second;
   }
@@ -512,13 +512,13 @@ compose_accepted_iteration_callbacks(
     return first;
   }
   return [first = std::move(first), second = std::move(second)](
-             const xmvb::vb::CppVbScfAcceptedIterationSnapshot& snapshot) {
+             const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
     first(snapshot);
     second(snapshot);
   };
 }
 
-std::function<void(const xmvb::vb::CppVbScfAcceptedIterationSnapshot&)>
+std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
 build_terminal_iteration_logger() {
   // Mirror the legacy CLI monitor: keep the initial accepted snapshot only as
   // the energy reference for `DE`, then print one fixed-width row per accepted
@@ -544,7 +544,7 @@ build_terminal_iteration_logger() {
   print_log_rule('-');
   std::cout.flush();
 
-  return [state](const xmvb::vb::CppVbScfAcceptedIterationSnapshot& snapshot) {
+  return [state](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
     const auto iteration_time = std::chrono::steady_clock::now();
     const double elapsed_seconds =
         std::chrono::duration<double>(iteration_time - state->previous_iteration_time)
@@ -893,7 +893,7 @@ public:
       const fs::path& dataset_root,
       const std::string& input_file_path,
       const xmvb::vb::CppVbInputLoadResult& load_result,
-      const xmvb::vb::CppVbScfOptimizerOptions& optimizer_options)
+      const xmvb::vb::VbScfOptimizerOptions& optimizer_options)
       : dataset_root_(fs::absolute(dataset_root)),
         sample_dir_(reserve_sample_directory(dataset_root_, fs::path(input_file_path))),
         static_dir_(sample_dir_ / "static"),
@@ -908,7 +908,7 @@ public:
         source_raw_structure_count_(load_result.source_raw_structure_count),
         algorithm_name_("original"),
         optimizer_backend_name_(
-            xmvb::vb::cpp_vb_scf_optimizer_backend_name(optimizer_options.backend)),
+            xmvb::vb::vbscf_optimizer_backend_name(optimizer_options.backend)),
         n_structures_(load_result.raw_structure_data.n_structures),
         n_total_electrons_(load_result.raw_structure_data.n_total_electrons),
         n_active_electrons_(load_result.raw_structure_data.n_active_electrons),
@@ -929,7 +929,7 @@ public:
   }
 
   void write_accepted_iteration(
-      const xmvb::vb::CppVbScfAcceptedIterationSnapshot& snapshot) {
+      const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
     const std::string step_name =
         format_index_name("step", snapshot.accepted_iteration_index);
     const fs::path step_dir = steps_dir_ / step_name;
@@ -1005,7 +1005,7 @@ public:
   }
 
   void finalize(
-      const xmvb::vb::CppVbScfOptimizerResult& result) {
+      const xmvb::vb::VbScfOptimizerResult& result) {
     write_metadata_file(&result);
   }
 
@@ -1155,7 +1155,7 @@ private:
   }
 
   void write_metadata_file(
-      const xmvb::vb::CppVbScfOptimizerResult* result) const {
+      const xmvb::vb::VbScfOptimizerResult* result) const {
     std::ostringstream metadata_stream;
     metadata_stream << "{\n"
                     << "  \"format_version\": 5,\n"
@@ -1235,42 +1235,42 @@ private:
 
 void apply_optimizer_backend_argument(
     const std::string& backend_name,
-    xmvb::vb::CppVbScfOptimizerOptions* options) {
+    xmvb::vb::VbScfOptimizerOptions* options) {
   if (backend_name == "lbfgspp") {
-    options->backend = xmvb::vb::CppVbScfOptimizerBackend::Lbfgspp;
+    options->backend = xmvb::vb::VbScfOptimizerBackend::Lbfgspp;
     return;
   }
   if (backend_name == "nonredundant_projected_gradient") {
     options->backend =
-        xmvb::vb::CppVbScfOptimizerBackend::NonredundantProjectedGradient;
+        xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient;
     return;
   }
   if (backend_name == "nonredundant_lbfgspp") {
     options->backend =
-        xmvb::vb::CppVbScfOptimizerBackend::NonredundantLbfgspp;
+        xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp;
     return;
   }
   if (backend_name == "nonredundant_truncated_newton") {
     options->backend =
-        xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton;
+        xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton;
     return;
   }
   if (backend_name == "deepvbh_onnx") {
-    if (!xmvb::vb::cpp_vb_scf_optimizer_backend_supported(
-            xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx)) {
+    if (!xmvb::vb::vbscf_optimizer_backend_supported(
+            xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx)) {
       throw std::invalid_argument(
           "deepvbh_onnx backend is not enabled in this build");
     }
-    options->backend = xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx;
+    options->backend = xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx;
     return;
   }
   if (backend_name == "deepvbh_onnx_direct_final") {
-    if (!xmvb::vb::cpp_vb_scf_optimizer_backend_supported(
-            xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
+    if (!xmvb::vb::vbscf_optimizer_backend_supported(
+            xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
       throw std::invalid_argument(
           "deepvbh_onnx_direct_final backend is not enabled in this build");
     }
-    options->backend = xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal;
+    options->backend = xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal;
     return;
   }
   throw std::invalid_argument("invalid optimizer backend: " + backend_name);
@@ -1278,7 +1278,7 @@ void apply_optimizer_backend_argument(
 
 void apply_nonredundant_truncated_newton_hvp_mode_argument(
     const std::string& mode_name,
-    xmvb::vb::CppVbScfOptimizerOptions* options) {
+    xmvb::vb::VbScfOptimizerOptions* options) {
   if (mode_name == "full_fd") {
     options->nonredundant_truncated_newton_hvp_mode =
         xmvb::vb::NonredundantTruncatedNewtonHvpMode::FullFiniteDifference;
@@ -1429,12 +1429,12 @@ void apply_adaptive_determinant_score_mode_argument(
 void print_usage() {
   std::cerr << "usage: run_cpp_vbscf <input.xmi> "
                "[--optimizer-backend lbfgspp|nonredundant_projected_gradient|nonredundant_lbfgspp|nonredundant_truncated_newton";
-  if (xmvb::vb::cpp_vb_scf_optimizer_backend_supported(
-          xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx)) {
+  if (xmvb::vb::vbscf_optimizer_backend_supported(
+          xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx)) {
     std::cerr << "|deepvbh_onnx";
   }
-  if (xmvb::vb::cpp_vb_scf_optimizer_backend_supported(
-          xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
+  if (xmvb::vb::vbscf_optimizer_backend_supported(
+          xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
     std::cerr << "|deepvbh_onnx_direct_final";
   }
   std::cerr << "] [--structure-space-mode standard|adaptive_mvp]"
@@ -1489,7 +1489,7 @@ int main(int argc, char** argv) {
   load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
   load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
   load_options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Auto;
-  xmvb::vb::CppVbScfOptimizerOptions options;
+  xmvb::vb::VbScfOptimizerOptions options;
   xmvb::vb::AdaptiveStructureSpaceOptimizerOptions adaptive_options;
   // The CLI path only needs accepted-iterate snapshots when trace dumping is
   // explicitly requested. Keep the default optimizer API behavior unchanged,
@@ -1631,20 +1631,20 @@ int main(int argc, char** argv) {
     }
   }
   if (!user_specified_ao_integral_source &&
-      (options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx ||
-       options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
+      (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx ||
+       options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
     load_options.ao_integral_source =
         xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
   }
   load_options.build_ao_effective_one_electron_graph =
       options.backend ==
-          xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton &&
+          xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton &&
       options.nonredundant_truncated_newton_hvp_mode ==
           xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction;
 
   if (structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
-    if (options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx ||
-        options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
+    if (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx ||
+        options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
       throw std::invalid_argument(
           "adaptive_mvp currently supports only standard C++ VBSCF optimizer backends");
     }
@@ -1697,20 +1697,20 @@ int main(int argc, char** argv) {
     options.accepted_iteration_callback_requires_full_snapshot = true;
     options.accepted_iteration_callback = compose_accepted_iteration_callbacks(
         std::move(options.accepted_iteration_callback),
-        [trace_writer](const xmvb::vb::CppVbScfAcceptedIterationSnapshot& snapshot) {
+        [trace_writer](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
           trace_writer->write_accepted_iteration(snapshot);
         });
   }
 
   deepvbh_options.optimizer_options = options;
   deepvbh_direct_options.optimizer_options = options;
-  xmvb::vb::CppVbScfOptimizerResult result;
+  xmvb::vb::VbScfOptimizerResult result;
   std::optional<xmvb::vb::AdaptiveStructureSpaceOptimizerResult> adaptive_result;
   if (structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
     xmvb::vb::AdaptiveStructureSpaceOptimizer optimizer(options, adaptive_options);
     adaptive_result = optimizer.optimize(load_result);
     result = adaptive_result->inner_result;
-  } else if (options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx) {
+  } else if (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx) {
     if (deepvbh_options.inference_options.onnx_model_path.empty()) {
       throw std::invalid_argument(
           "--onnx-model is required for --optimizer-backend deepvbh_onnx");
@@ -1722,7 +1722,7 @@ int main(int argc, char** argv) {
         load_result.static_molecule_metadata,
         load_result.nuclear_repulsion_energy);
   } else if (
-      options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
+      options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
     if (deepvbh_direct_options.inference_options.onnx_model_path.empty()) {
       throw std::invalid_argument(
           "--onnx-model is required for --optimizer-backend deepvbh_onnx_direct_final");
@@ -1734,7 +1734,7 @@ int main(int argc, char** argv) {
         load_result.static_molecule_metadata,
         load_result.nuclear_repulsion_energy);
   } else {
-    xmvb::vb::CppVbScfOptimizer optimizer(options);
+    xmvb::vb::VbScfOptimizer optimizer(options);
     result = optimizer.optimize(input, load_result.nuclear_repulsion_energy);
   }
   if (trace_writer != nullptr) {
@@ -1808,12 +1808,12 @@ int main(int argc, char** argv) {
   if (molden_output_path.has_value()) {
     print_log_field("Molden output", molden_output_path->string());
   }
-  if (options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnx) {
+  if (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx) {
     print_log_field(
         "ONNX model",
         fs::absolute(deepvbh_options.inference_options.onnx_model_path).string());
   } else if (
-      options.backend == xmvb::vb::CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
+      options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
     print_log_field(
         "ONNX model",
         fs::absolute(deepvbh_direct_options.inference_options.onnx_model_path).string());
@@ -1911,11 +1911,11 @@ int main(int argc, char** argv) {
       "Final gradient |g|_2",
       format_scientific_double(result.final_gradient_l2_norm, 8));
   if (options.backend ==
-          xmvb::vb::CppVbScfOptimizerBackend::NonredundantProjectedGradient ||
+          xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient ||
       options.backend ==
-          xmvb::vb::CppVbScfOptimizerBackend::NonredundantLbfgspp ||
+          xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp ||
       options.backend ==
-          xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+          xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "Final projected |g|_inf",
         format_scientific_double(result.final_projected_gradient_inf_norm, 8));
@@ -1924,7 +1924,7 @@ int main(int argc, char** argv) {
         format_scientific_double(result.final_projected_gradient_l2_norm, 8));
   }
   if (options.backend ==
-      xmvb::vb::CppVbScfOptimizerBackend::NonredundantTruncatedNewton) {
+      xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "Matrix-free HVP directions",
         std::to_string(result.matrix_free_hvp_direction_count));

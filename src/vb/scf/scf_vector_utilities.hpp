@@ -3,9 +3,8 @@
 
 // Small numerical and validation helpers shared across the SCF optimizer
 // line-search, truncated-Newton, and outer-loop code. Kept header-only and
-// inline so that split TUs (vb/scf/line_search.cpp, vb/scf/orbital_objective.cpp,
-// vb/scf/cpp_vb_scf_optimizer.cpp, ...) can call them without introducing a
-// dedicated source file or another compatibility layer.
+// inline so that split optimizer translation units can call them without
+// introducing a dedicated source file or another compatibility layer.
 
 #include <cmath>
 #include <limits>

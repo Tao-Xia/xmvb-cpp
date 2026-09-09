@@ -14,7 +14,7 @@
 #include "vb/orbital/active_space_orbital_backpropagator.hpp"
 #include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
-#include "vb/scf/cpp_vb_scf_evaluator.hpp"
+#include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -100,7 +100,7 @@ double evaluate_reference_energy(
     const xmvb::vb::CppVbInput& input,
     xmvb::vb::VBSCFAlgorithm algorithm,
     double nuclear_repulsion_energy) {
-  xmvb::vb::CppVbScfEvaluator evaluator(algorithm);
+  xmvb::vb::VbScfEvaluator evaluator(algorithm);
   return evaluator.evaluate(input, nuclear_repulsion_energy).one_electron_reference_energy;
 }
 
@@ -163,8 +163,9 @@ int main(int argc, char** argv) {
         0.0);
     for (std::size_t index = 0; index < base_inactive_density_gradient.size(); ++index) {
       base_inactive_density_gradient[index] =
-          gradient_result.ao_effective_one_electron_result.ao_effective_h1e[index] +
-          input.ao_integral_input.ao_core_hamiltonian_matrix[index];
+          gradient_result.ao_effective_one_electron_result
+              .ao_effective_h1e.data()[index] +
+          input.ao_integral_input.ao_core_hamiltonian_matrix.data()[index];
     }
 
     std::vector<double> current_backprop_matrix;
@@ -193,18 +194,13 @@ int main(int argc, char** argv) {
     const std::vector<double> zero_auxiliary_gradient(
         gradient_result.orbital_preparation_result.auxiliary_orbital_matrix.size(),
         0.0);
-    const std::vector<double> zero_active_overlap_gradient(
-        input.orbital_preparation_input.n_active_orbitals *
-            input.orbital_preparation_input.n_active_orbitals,
-        0.0);
-
     const std::vector<double> custom_reference_gradient =
         use_ri
             ? orbital_backpropagator.backpropagate(
                   zero_auxiliary_gradient,
-                  zero_active_overlap_gradient,
                   custom_total_gradient,
-                  input.orbital_preparation_input)
+                  input.orbital_preparation_input,
+                  gradient_result.orbital_preparation_result)
                   .orbital_value_gradient
             : gradient_result.sparse_orbital_reference_energy_gradient;
 

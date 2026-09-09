@@ -348,8 +348,8 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
     const FullDeterminantStructureExpander& expander,
     std::vector<std::optional<FullDeterminantStructureData>>* single_structure_cache,
     const CppVbInput& current_input,
-    const CppVbScfOptimizerResult& current_result,
-    const CppVbScfAcceptedIterationSnapshot& current_snapshot,
+    const VbScfOptimizerResult& current_result,
+    const VbScfAcceptedIterationSnapshot& current_snapshot,
     VBSCFAlgorithm algorithm,
     AdaptiveDeterminantScoreMode score_mode) {
   const auto scoring_start_time = std::chrono::steady_clock::now();
@@ -590,9 +590,9 @@ std::vector<int> select_candidates_to_add(
   return selected_candidates;
 }
 
-CppVbScfOptimizerOptions build_inner_optimizer_options(
-    const CppVbScfOptimizerOptions& base_options) {
-  CppVbScfOptimizerOptions inner_options = base_options;
+VbScfOptimizerOptions build_inner_optimizer_options(
+    const VbScfOptimizerOptions& base_options) {
+  VbScfOptimizerOptions inner_options = base_options;
   inner_options.retain_accepted_iteration_trace = true;
   inner_options.accepted_iteration_callback = nullptr;
   return inner_options;
@@ -601,7 +601,7 @@ CppVbScfOptimizerOptions build_inner_optimizer_options(
 }  // namespace
 
 AdaptiveStructureSpaceOptimizer::AdaptiveStructureSpaceOptimizer(
-    CppVbScfOptimizerOptions optimizer_options,
+    VbScfOptimizerOptions optimizer_options,
     AdaptiveStructureSpaceOptimizerOptions options)
     : optimizer_options_(std::move(optimizer_options)),
       options_(std::move(options)) {
@@ -630,14 +630,14 @@ AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
       load_result.raw_structure_data,
       current_selected_raw_structure_indices,
       expander);
-  const CppVbScfOptimizerOptions inner_options =
+  const VbScfOptimizerOptions inner_options =
       build_inner_optimizer_options(optimizer_options_);
 
   for (int outer_iteration_index = 0;
        outer_iteration_index < options_.max_outer_iterations;
        ++outer_iteration_index) {
     const auto outer_iteration_start_time = std::chrono::steady_clock::now();
-    CppVbScfOptimizer optimizer(inner_options);
+    VbScfOptimizer optimizer(inner_options);
     auto current_inner_result =
         optimizer.optimize(current_input, load_result.nuclear_repulsion_energy);
     result.inner_result = current_inner_result;

@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <vector>
 
-#include "vb/scf/orthonormal_hvp_basis.hpp"
+#include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
 
 namespace {
 void require(bool condition, const char* message) {

@@ -1,4 +1,4 @@
-#include "vb/scf/orbital_objective.hpp"
+#include "vbscf/optimization/vbscf_objective.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -932,14 +932,14 @@ Eigen::MatrixXd build_metric_preserving_oeo_repaired_normalized_orbital_matrix(
   return repaired_normalized_orbital_matrix;
 }
 
-OrbitalObjective::OrbitalObjective(
+VbScfObjective::VbScfObjective(
     const CppVbInput& input,
     SparseOrbitalParameterView parameter_view,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy,
     const CppOrbitalGradientEvaluator* orbital_gradient_evaluator,
-    const CppVbScfEvaluator* scf_evaluator)
+    const VbScfEvaluator* scf_evaluator)
     : working_input_(input),
       probe_input_buffer_(input),
       parameter_view_(std::move(parameter_view)),
@@ -949,7 +949,7 @@ OrbitalObjective::OrbitalObjective(
       orbital_gradient_evaluator_(orbital_gradient_evaluator),
       scf_evaluator_(scf_evaluator) {}
 
-double OrbitalObjective::operator()(
+double VbScfObjective::operator()(
     const Eigen::VectorXd& parameter_vector,
     Eigen::VectorXd& gradient) {
   TrialEvaluation evaluation =
@@ -960,14 +960,14 @@ double OrbitalObjective::operator()(
   return energy;
 }
 
-void OrbitalObjective::ensure_last_reference_energy_gradient() {
+void VbScfObjective::ensure_last_reference_energy_gradient() {
   orbital_gradient_evaluator_->populate_reference_energy_gradient(
       working_input_,
       &last_gradient_result_);
 }
 
-OrbitalObjective::TrialEvaluation
-OrbitalObjective::evaluate_trial_without_committing(
+VbScfObjective::TrialEvaluation
+VbScfObjective::evaluate_trial_without_committing(
     const Eigen::VectorXd& parameter_vector) const {
   const auto iteration_start_time = std::chrono::steady_clock::now();
   // TN trial acceptance only needs a scratch orbital point.  Do not copy the
@@ -1006,7 +1006,7 @@ OrbitalObjective::evaluate_trial_without_committing(
   return evaluation;
 }
 
-void OrbitalObjective::commit_trial_evaluation(TrialEvaluation evaluation) {
+void VbScfObjective::commit_trial_evaluation(TrialEvaluation evaluation) {
   if (!evaluation.valid) {
     throw std::invalid_argument("cannot commit an invalid orbital trial evaluation");
   }
@@ -1023,7 +1023,7 @@ void OrbitalObjective::commit_trial_evaluation(TrialEvaluation evaluation) {
   objective_wall_time_seconds_ += evaluation.wall_time_seconds;
 }
 
-double OrbitalObjective::evaluate_energy_only(
+double VbScfObjective::evaluate_energy_only(
     const Eigen::VectorXd& parameter_vector) const {
   if (scf_evaluator_ == nullptr) {
     throw std::runtime_error("energy-only objective evaluation requires a live SCF evaluator");
@@ -1052,7 +1052,7 @@ double OrbitalObjective::evaluate_energy_only(
   return energy;
 }
 
-bool OrbitalObjective::canonicalize_orbital_chart_at_current_point(
+bool VbScfObjective::canonicalize_orbital_chart_at_current_point(
     Eigen::VectorXd* parameter_vector,
     Eigen::VectorXd* gradient,
     std::vector<PackedSecantPair>* packed_secant_history) {
@@ -1111,12 +1111,12 @@ bool OrbitalObjective::canonicalize_orbital_chart_at_current_point(
   return true;
 }
 
-OrbitalObjective OrbitalObjective::make_probe_copy() const {
+VbScfObjective VbScfObjective::make_probe_copy() const {
   // HVP finite-difference probes and TN trial evaluations only need the
   // current immutable inputs plus the evaluator handles. Reconstruct a fresh
   // objective instead of copying the last accepted gradient result and
   // second-order context into another large object.
-  OrbitalObjective copy(
+  VbScfObjective copy(
       working_input_,
       parameter_view_,
       selected_state_indices_,
