@@ -961,8 +961,6 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
     owned_directional_pair_cache = build_same_spin_directional_pair_cache(
         same_spin_pair_cache,
         n_active_orbitals,
-        active_one_electron_matrix,
-        active_space_two_electron_result,
         delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
         delta_packed_active_two_electron_integrals);
@@ -1122,8 +1120,6 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
 SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     int n_active_orbitals,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
@@ -1136,8 +1132,6 @@ SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
       static_cast<int>(
           same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()),
       n_active_orbitals,
-      active_one_electron_matrix,
-      active_space_two_electron_result,
       delta_ao_overlap_matrix,
       delta_active_one_electron_matrix,
       delta_packed_active_two_electron_integrals);
@@ -1148,8 +1142,6 @@ SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
         static_cast<int>(
             same_spin_pair_cache.beta_reuse_table.unique_determinants.size()),
         n_active_orbitals,
-        active_one_electron_matrix,
-        active_space_two_electron_result,
         delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
         delta_packed_active_two_electron_integrals);
@@ -1403,8 +1395,6 @@ build_local_same_spin_matrix_backward_contribution(
     owned_directional_pair_cache = build_same_spin_directional_pair_cache(
         same_spin_pair_cache,
         n_active_orbitals,
-        active_one_electron_matrix,
-        active_space_two_electron_result,
         delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
         delta_packed_active_two_electron_integrals);

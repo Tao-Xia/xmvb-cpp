@@ -3021,8 +3021,6 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants,
     int n_active_orbitals,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals) {
@@ -3060,8 +3058,6 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
           build_polynomial_spin_directional_data(
               occ_L,
               occ_R,
-              active_one_electron_matrix,
-              active_space_two_electron_result,
               pair_evaluation,
               n_active_orbitals,
               delta_ao_overlap_matrix,
@@ -3166,4 +3162,3 @@ SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matric
 
 
 }  // namespace xmvb::vb::detail
-

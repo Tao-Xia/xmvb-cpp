@@ -155,8 +155,6 @@ Eigen::MatrixXd build_local_overlap_direction_matrix(
 SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
     const std::vector<double>& delta_ao_overlap_matrix,

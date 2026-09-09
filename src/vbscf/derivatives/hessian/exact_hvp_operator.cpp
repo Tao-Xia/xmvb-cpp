@@ -1404,10 +1404,6 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
         build_same_spin_directional_pair_cache(
             accepted_point_context_->same_spin_pair_cache,
             current_input_->orbital_preparation_input.n_active_orbitals,
-            accepted_point_context_->prepared_active_space
-                .active_space_one_electron_result.h1e_act,
-            accepted_point_context_->prepared_active_space
-                .active_space_two_electron_result,
             outer_response_delta_ao_overlap_matrix_workspace_,
             outer_response_delta_active_one_electron_matrix_workspace_,
             outer_response_delta_packed_active_two_electron_workspace_);
