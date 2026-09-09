@@ -75,7 +75,7 @@ double lookup_directional_active_two_electron_kernel_value(
 }
 
 constexpr double kDirectionalStructureContributionTolerance = 1.0e-15;
-struct LocalProjectionBlockLocal {
+struct ProjectionBlock {
   struct ProjectionSlot {
     const OppositeSpinPackedPairProjection* borrowed_projection = nullptr;
     OppositeSpinPackedPairProjection owned_projection;
@@ -99,14 +99,14 @@ struct LocalProjectionBlockLocal {
   }
 };
 
-struct LocalOppositeSpinChannelFamilyLocal {
+struct OppositeSpinChannelFamily {
   std::vector<int> packed_pair_indices;
   std::vector<Eigen::MatrixXd> alpha_channel_matrices;
 };
 
-int count_distinct_projection_block_pairs_union_local(
-    const LocalProjectionBlockLocal& first_projection_block,
-    const LocalProjectionBlockLocal& second_projection_block,
+int count_projection_pair_union(
+    const ProjectionBlock& first_projection_block,
+    const ProjectionBlock& second_projection_block,
     int n_packed_active_pairs) {
   if (first_projection_block.n_rows != second_projection_block.n_rows ||
       first_projection_block.n_cols != second_projection_block.n_cols) {
@@ -160,10 +160,10 @@ int count_distinct_projection_block_pairs_union_local(
   return distinct_pair_count;
 }
 
-LocalOppositeSpinChannelFamilyLocal build_local_channel_family_local(
-    const LocalProjectionBlockLocal& projection_block,
+OppositeSpinChannelFamily build_channel_family(
+    const ProjectionBlock& projection_block,
     int n_packed_active_pairs) {
-  LocalOppositeSpinChannelFamilyLocal channel_family;
+  OppositeSpinChannelFamily channel_family;
   if (projection_block.n_rows <= 0 ||
       projection_block.n_cols <= 0 ||
       n_packed_active_pairs <= 0) {
@@ -223,8 +223,8 @@ LocalOppositeSpinChannelFamilyLocal build_local_channel_family_local(
  * would add avoidable O(n_pairs) work. This builder tracks only the touched
  * packed pairs and resets those entries between block gathers.
  */
-struct LocalOppositeSpinChannelFamilyBuilderLocal {
-  explicit LocalOppositeSpinChannelFamilyBuilderLocal(
+struct OppositeSpinChannelBuilder {
+  explicit OppositeSpinChannelBuilder(
       int n_packed_active_pairs)
       : channel_index_by_packed_pair(
             n_packed_active_pairs,
@@ -233,7 +233,7 @@ struct LocalOppositeSpinChannelFamilyBuilderLocal {
         n_packed_active_pairs);
   }
 
-  void reset(LocalOppositeSpinChannelFamilyLocal* channel_family) {
+  void reset(OppositeSpinChannelFamily* channel_family) {
     for (const int packed_pair_index : touched_packed_pair_indices) {
       channel_index_by_packed_pair[packed_pair_index] = -1;
     }
@@ -247,7 +247,7 @@ struct LocalOppositeSpinChannelFamilyBuilderLocal {
       int n_cols,
       int row_local,
       int column_local,
-      LocalOppositeSpinChannelFamilyLocal* channel_family) {
+      OppositeSpinChannelFamily* channel_family) {
     for (std::size_t entry_index = 0;
          entry_index < projection.packed_pair_indices.size();
          ++entry_index) {
@@ -299,14 +299,14 @@ struct DirectionalSpinPairEntry {
   OppositeSpinPackedPairProjection delta_first_order_projection;
 };
 
-std::size_t square_storage_size_local(int dimension) {
+std::size_t square_storage_size(int dimension) {
   return dimension * dimension;
 }
 
-void reset_local_projection_block_local(
+void reset_projection_block(
     int n_rows,
     int n_cols,
-    LocalProjectionBlockLocal* local_projection_block) {
+    ProjectionBlock* local_projection_block) {
   if (local_projection_block == nullptr) {
     return;
   }
@@ -318,7 +318,7 @@ void reset_local_projection_block_local(
       n_rows * n_cols);
 }
 
-double frobenius_inner_product_local(
+double frobenius_inner_product(
     const Eigen::MatrixXd& left_matrix,
     const Eigen::MatrixXd& right_matrix) {
   if (left_matrix.size() == 0) {
@@ -332,7 +332,7 @@ double frobenius_inner_product_local(
       1);
 }
 
-double contract_structure_pair_kernel_local(
+double contract_structure_pair_kernel(
     const Eigen::MatrixXd& left_coefficients,
     const Eigen::MatrixXd& right_coefficients,
     const Eigen::MatrixXd& alpha_kernel,
@@ -347,10 +347,10 @@ double contract_structure_pair_kernel_local(
   beta_push->noalias() = right_coefficients * beta_kernel.transpose();
   image->resize(alpha_kernel.rows(), beta_kernel.rows());
   image->noalias() = alpha_kernel * (*beta_push);
-  return frobenius_inner_product_local(left_coefficients, *image);
+  return frobenius_inner_product(left_coefficients, *image);
 }
 
-struct DirectionalSameSpinContractionScratchLocal {
+struct SameSpinContractionScratch {
   Eigen::MatrixXd alpha_overlap_push;
   Eigen::MatrixXd alpha_total_push;
   Eigen::MatrixXd alpha_delta_overlap_push;
@@ -361,13 +361,13 @@ struct DirectionalSameSpinContractionScratchLocal {
   Eigen::MatrixXd beta_delta_total_push;
 };
 
-struct DirectionalSameSpinContractionResultLocal {
+struct DirectionalSameSpinContribution {
   double overlap = 0.0;
   double hamiltonian = 0.0;
 };
 
-DirectionalSameSpinContractionResultLocal
-contract_close_shell_diagonal_directional_same_spin_structure_kernels_local(
+DirectionalSameSpinContribution
+contract_close_shell_same_spin_direction(
     const std::vector<double>& left_diagonal_coefficients,
     const std::vector<double>& right_diagonal_coefficients,
     const Eigen::MatrixXd& overlap_subblock,
@@ -378,7 +378,7 @@ contract_close_shell_diagonal_directional_same_spin_structure_kernels_local(
   //   C_L = diag(l), C_R = diag(r), alpha == beta,
   // so the directional same-spin contraction reduces to one gathered spin
   // channel and a factor of two for the duplicated alpha/beta contribution.
-  DirectionalSameSpinContractionResultLocal result;
+  DirectionalSameSpinContribution result;
   result.overlap =
       2.0 *
       contract_diagonal_structure_pair_kernel(
@@ -401,7 +401,7 @@ contract_close_shell_diagonal_directional_same_spin_structure_kernels_local(
   return result;
 }
 
-void build_left_alpha_push_local(
+void build_left_alpha_push(
     const Eigen::MatrixXd& left_coefficients,
     const Eigen::MatrixXd& right_coefficients,
     const Eigen::MatrixXd& alpha_kernel,
@@ -410,7 +410,7 @@ void build_left_alpha_push_local(
   alpha_push->noalias() = alpha_kernel.transpose() * left_coefficients;
 }
 
-void build_right_beta_push_local(
+void build_right_beta_push(
     const Eigen::MatrixXd& left_coefficients,
     const Eigen::MatrixXd& right_coefficients,
     const Eigen::MatrixXd& beta_kernel,
@@ -419,8 +419,8 @@ void build_right_beta_push_local(
   beta_push->noalias() = right_coefficients * beta_kernel.transpose();
 }
 
-DirectionalSameSpinContractionResultLocal
-contract_directional_same_spin_structure_kernels_local(
+DirectionalSameSpinContribution
+contract_same_spin_direction(
     const Eigen::MatrixXd& left_coefficients,
     const Eigen::MatrixXd& right_coefficients,
     const Eigen::MatrixXd& alpha_overlap_subblock,
@@ -431,7 +431,7 @@ contract_directional_same_spin_structure_kernels_local(
     const Eigen::MatrixXd& beta_total_subblock,
     const Eigen::MatrixXd& beta_delta_overlap_subblock,
     const Eigen::MatrixXd& beta_delta_total_subblock,
-    DirectionalSameSpinContractionScratchLocal* scratch) {
+    SameSpinContractionScratch* scratch) {
   if (left_coefficients.size() == 0 || right_coefficients.size() == 0) {
     return {};
   }
@@ -445,78 +445,78 @@ contract_directional_same_spin_structure_kernels_local(
   //   L: n_alpha_left x n_beta_left
   //   R: n_alpha_right x n_beta_right
   //   A^T L and R B^T: n_alpha_right x n_beta_left.
-  build_left_alpha_push_local(
+  build_left_alpha_push(
       left_coefficients,
       right_coefficients,
       alpha_overlap_subblock,
       &scratch->alpha_overlap_push);
-  build_left_alpha_push_local(
+  build_left_alpha_push(
       left_coefficients,
       right_coefficients,
       alpha_total_subblock,
       &scratch->alpha_total_push);
-  build_left_alpha_push_local(
+  build_left_alpha_push(
       left_coefficients,
       right_coefficients,
       alpha_delta_overlap_subblock,
       &scratch->alpha_delta_overlap_push);
-  build_left_alpha_push_local(
+  build_left_alpha_push(
       left_coefficients,
       right_coefficients,
       alpha_delta_total_subblock,
       &scratch->alpha_delta_total_push);
-  build_right_beta_push_local(
+  build_right_beta_push(
       left_coefficients,
       right_coefficients,
       beta_overlap_subblock,
       &scratch->beta_overlap_push);
-  build_right_beta_push_local(
+  build_right_beta_push(
       left_coefficients,
       right_coefficients,
       beta_total_subblock,
       &scratch->beta_total_push);
-  build_right_beta_push_local(
+  build_right_beta_push(
       left_coefficients,
       right_coefficients,
       beta_delta_overlap_subblock,
       &scratch->beta_delta_overlap_push);
-  build_right_beta_push_local(
+  build_right_beta_push(
       left_coefficients,
       right_coefficients,
       beta_delta_total_subblock,
       &scratch->beta_delta_total_push);
 
-  DirectionalSameSpinContractionResultLocal result;
+  DirectionalSameSpinContribution result;
   result.overlap =
-      frobenius_inner_product_local(
+      frobenius_inner_product(
           scratch->alpha_delta_overlap_push,
           scratch->beta_overlap_push) +
-      frobenius_inner_product_local(
+      frobenius_inner_product(
           scratch->alpha_overlap_push,
           scratch->beta_delta_overlap_push);
   result.hamiltonian =
-      frobenius_inner_product_local(
+      frobenius_inner_product(
           scratch->alpha_delta_total_push,
           scratch->beta_overlap_push) +
-      frobenius_inner_product_local(
+      frobenius_inner_product(
           scratch->alpha_total_push,
           scratch->beta_delta_overlap_push) +
-      frobenius_inner_product_local(
+      frobenius_inner_product(
           scratch->alpha_delta_overlap_push,
           scratch->beta_total_push) +
-      frobenius_inner_product_local(
+      frobenius_inner_product(
           scratch->alpha_overlap_push,
           scratch->beta_delta_total_push);
   return result;
 }
 
-std::vector<double> apply_directional_active_two_electron_kernel_to_sparse_projection_local(
+std::vector<double> apply_directional_two_electron_kernel(
     int n_active_orbitals,
     const std::vector<int>& packed_pair_indices,
     const std::vector<double>& packed_pair_values,
     const std::vector<double>& delta_packed_active_two_electron_integrals);
 
-void materialize_directional_projected_pair_values_local(
+void materialize_directional_projected_pair_values(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_orbitals,
     const OppositeSpinPackedPairProjection& accepted_projection,
@@ -531,7 +531,7 @@ void materialize_directional_projected_pair_values_local(
           directional_projection->packed_pair_indices,
           directional_projection->packed_pair_values);
   const std::vector<double> delta_kernel_times_accepted =
-      apply_directional_active_two_electron_kernel_to_sparse_projection_local(
+      apply_directional_two_electron_kernel(
           n_orbitals,
           accepted_projection.packed_pair_indices,
           accepted_projection.packed_pair_values,
@@ -551,7 +551,7 @@ void materialize_directional_projected_pair_values_local(
 }
 
 OppositeSpinPackedPairProjection
-build_sparse_packed_pair_projection_from_coefficients_local(
+build_sparse_packed_pair_projection(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const Eigen::MatrixXd& coefficient_matrix,
@@ -610,7 +610,7 @@ build_sparse_packed_pair_projection_from_coefficients_local(
   return projection;
 }
 
-std::vector<double> apply_directional_active_two_electron_kernel_to_sparse_projection_local(
+std::vector<double> apply_directional_two_electron_kernel(
     int n_active_orbitals,
     const std::vector<int>& packed_pair_indices,
     const std::vector<double>& packed_pair_values,
@@ -643,7 +643,7 @@ std::vector<double> apply_directional_active_two_electron_kernel_to_sparse_proje
   return projected_pair_values;
 }
 
-double project_sparse_projection_onto_packed_pair_local(
+double project_sparse_pair(
     const OppositeSpinPackedPairProjection& sparse_projection,
     int target_packed_pair_index,
     const ActiveSpaceTwoElectronView& two_electron_view,
@@ -670,7 +670,7 @@ double project_sparse_projection_onto_packed_pair_local(
   return projected_value;
 }
 
-double project_directional_sparse_projection_onto_packed_pair_local(
+double project_directional_sparse_pair(
     const OppositeSpinPackedPairProjection& accepted_projection,
     const OppositeSpinPackedPairProjection& directional_projection,
     int target_packed_pair_index,
@@ -684,7 +684,7 @@ double project_directional_sparse_projection_onto_packed_pair_local(
         target_packed_pair_index];
   }
   double projected_value =
-      project_sparse_projection_onto_packed_pair_local(
+      project_sparse_pair(
           directional_projection,
           target_packed_pair_index,
           two_electron_view,
@@ -702,8 +702,8 @@ double project_directional_sparse_projection_onto_packed_pair_local(
   return projected_value;
 }
 
-void build_local_projected_channel_block_local(
-    const LocalProjectionBlockLocal& local_projection_block,
+void build_projected_channel_block(
+    const ProjectionBlock& local_projection_block,
     int target_packed_pair_index,
     const ActiveSpaceTwoElectronView& two_electron_view,
     int n_orbitals,
@@ -722,7 +722,7 @@ void build_local_projected_channel_block_local(
               row_local,
               column_local);
       (*projected_channel_block)(row_local, column_local) =
-          project_sparse_projection_onto_packed_pair_local(
+          project_sparse_pair(
               projection,
               target_packed_pair_index,
               two_electron_view,
@@ -731,9 +731,9 @@ void build_local_projected_channel_block_local(
   }
 }
 
-void build_local_directional_projected_channel_block_local(
-    const LocalProjectionBlockLocal& accepted_projection_block,
-    const LocalProjectionBlockLocal& directional_projection_block,
+void build_directional_projected_channel_block(
+    const ProjectionBlock& accepted_projection_block,
+    const ProjectionBlock& directional_projection_block,
     int target_packed_pair_index,
     const ActiveSpaceTwoElectronView& two_electron_view,
     int n_orbitals,
@@ -757,7 +757,7 @@ void build_local_directional_projected_channel_block_local(
               row_local,
               column_local);
       (*projected_channel_block)(row_local, column_local) =
-          project_directional_sparse_projection_onto_packed_pair_local(
+          project_directional_sparse_pair(
               accepted_projection,
               directional_projection,
               target_packed_pair_index,
@@ -768,15 +768,15 @@ void build_local_directional_projected_channel_block_local(
   }
 }
 
-double contract_local_directional_opposite_spin_block_local(
+double contract_opposite_spin_direction(
     const Eigen::MatrixXd& left_coefficients,
     const Eigen::MatrixXd& right_coefficients,
-    const LocalProjectionBlockLocal& accepted_alpha_projection_block,
-    const LocalProjectionBlockLocal& directional_alpha_projection_block,
-    const LocalOppositeSpinChannelFamilyLocal& accepted_alpha_channels,
-    const LocalOppositeSpinChannelFamilyLocal& directional_alpha_channels,
-    const LocalProjectionBlockLocal& accepted_beta_projection_block,
-    const LocalProjectionBlockLocal& directional_beta_projection_block,
+    const ProjectionBlock& accepted_alpha_projection_block,
+    const ProjectionBlock& directional_alpha_projection_block,
+    const OppositeSpinChannelFamily& accepted_alpha_channels,
+    const OppositeSpinChannelFamily& directional_alpha_channels,
+    const ProjectionBlock& accepted_beta_projection_block,
+    const ProjectionBlock& directional_beta_projection_block,
     const ActiveSpaceTwoElectronView& two_electron_view,
     int n_orbitals,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
@@ -785,12 +785,12 @@ double contract_local_directional_opposite_spin_block_local(
     Eigen::MatrixXd* image) {
   const int n_packed_active_pairs = packed_active_pair_count(n_orbitals);
   const int alpha_channel_count =
-      count_distinct_projection_block_pairs_union_local(
+      count_projection_pair_union(
           accepted_alpha_projection_block,
           directional_alpha_projection_block,
           n_packed_active_pairs);
   const int beta_channel_count =
-      count_distinct_projection_block_pairs_union_local(
+      count_projection_pair_union(
           accepted_beta_projection_block,
           directional_beta_projection_block,
           n_packed_active_pairs);
@@ -799,7 +799,7 @@ double contract_local_directional_opposite_spin_block_local(
     for (std::size_t channel_index = 0;
          channel_index < accepted_alpha_channels.packed_pair_indices.size();
          ++channel_index) {
-      build_local_directional_projected_channel_block_local(
+      build_directional_projected_channel_block(
           accepted_beta_projection_block,
           directional_beta_projection_block,
           accepted_alpha_channels.packed_pair_indices[channel_index],
@@ -808,7 +808,7 @@ double contract_local_directional_opposite_spin_block_local(
           delta_packed_active_two_electron_integrals,
           beta_projected_channel_block);
       contraction +=
-          contract_structure_pair_kernel_local(
+          contract_structure_pair_kernel(
               left_coefficients,
               right_coefficients,
               accepted_alpha_channels.alpha_channel_matrices[channel_index],
@@ -819,14 +819,14 @@ double contract_local_directional_opposite_spin_block_local(
     for (std::size_t channel_index = 0;
          channel_index < directional_alpha_channels.packed_pair_indices.size();
          ++channel_index) {
-      build_local_projected_channel_block_local(
+      build_projected_channel_block(
           accepted_beta_projection_block,
           directional_alpha_channels.packed_pair_indices[channel_index],
           two_electron_view,
           n_orbitals,
           beta_projected_channel_block);
       contraction +=
-          contract_structure_pair_kernel_local(
+          contract_structure_pair_kernel(
               left_coefficients,
               right_coefficients,
               directional_alpha_channels.alpha_channel_matrices[channel_index],
@@ -835,18 +835,18 @@ double contract_local_directional_opposite_spin_block_local(
               image);
     }
   } else {
-    const LocalOppositeSpinChannelFamilyLocal accepted_beta_channels =
-        build_local_channel_family_local(
+    const OppositeSpinChannelFamily accepted_beta_channels =
+        build_channel_family(
             accepted_beta_projection_block,
             n_packed_active_pairs);
-    const LocalOppositeSpinChannelFamilyLocal directional_beta_channels =
-        build_local_channel_family_local(
+    const OppositeSpinChannelFamily directional_beta_channels =
+        build_channel_family(
             directional_beta_projection_block,
             n_packed_active_pairs);
     for (std::size_t channel_index = 0;
          channel_index < accepted_beta_channels.packed_pair_indices.size();
          ++channel_index) {
-      build_local_directional_projected_channel_block_local(
+      build_directional_projected_channel_block(
           accepted_alpha_projection_block,
           directional_alpha_projection_block,
           accepted_beta_channels.packed_pair_indices[channel_index],
@@ -855,7 +855,7 @@ double contract_local_directional_opposite_spin_block_local(
           delta_packed_active_two_electron_integrals,
           beta_projected_channel_block);
       contraction +=
-          contract_structure_pair_kernel_local(
+          contract_structure_pair_kernel(
               left_coefficients,
               right_coefficients,
               *beta_projected_channel_block,
@@ -866,14 +866,14 @@ double contract_local_directional_opposite_spin_block_local(
     for (std::size_t channel_index = 0;
          channel_index < directional_beta_channels.packed_pair_indices.size();
          ++channel_index) {
-      build_local_projected_channel_block_local(
+      build_projected_channel_block(
           accepted_alpha_projection_block,
           directional_beta_channels.packed_pair_indices[channel_index],
           two_electron_view,
           n_orbitals,
           beta_projected_channel_block);
       contraction +=
-          contract_structure_pair_kernel_local(
+          contract_structure_pair_kernel(
               left_coefficients,
               right_coefficients,
               *beta_projected_channel_block,
@@ -885,13 +885,13 @@ double contract_local_directional_opposite_spin_block_local(
   return contraction;
 }
 
-double contract_close_shell_diagonal_local_directional_opposite_spin_block_local(
+double contract_close_shell_opposite_spin_direction(
     const std::vector<double>& left_diagonal_coefficients,
     const std::vector<double>& right_diagonal_coefficients,
-    const LocalOppositeSpinChannelFamilyLocal& accepted_alpha_channels,
-    const LocalOppositeSpinChannelFamilyLocal& directional_alpha_channels,
-    const LocalProjectionBlockLocal& accepted_projection_block,
-    const LocalProjectionBlockLocal& directional_projection_block,
+    const OppositeSpinChannelFamily& accepted_alpha_channels,
+    const OppositeSpinChannelFamily& directional_alpha_channels,
+    const ProjectionBlock& accepted_projection_block,
+    const ProjectionBlock& directional_projection_block,
     const ActiveSpaceTwoElectronView& two_electron_view,
     int n_orbitals,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
@@ -900,7 +900,7 @@ double contract_close_shell_diagonal_local_directional_opposite_spin_block_local
   for (std::size_t channel_index = 0;
        channel_index < accepted_alpha_channels.packed_pair_indices.size();
        ++channel_index) {
-    build_local_directional_projected_channel_block_local(
+    build_directional_projected_channel_block(
         accepted_projection_block,
         directional_projection_block,
         accepted_alpha_channels.packed_pair_indices[channel_index],
@@ -918,7 +918,7 @@ double contract_close_shell_diagonal_local_directional_opposite_spin_block_local
   for (std::size_t channel_index = 0;
        channel_index < directional_alpha_channels.packed_pair_indices.size();
        ++channel_index) {
-    build_local_projected_channel_block_local(
+    build_projected_channel_block(
         accepted_projection_block,
         directional_alpha_channels.packed_pair_indices[channel_index],
         two_electron_view,
@@ -934,7 +934,7 @@ double contract_close_shell_diagonal_local_directional_opposite_spin_block_local
   return contraction;
 }
 
-DirectionalSpinPairEntry build_directional_spin_pair_entry_local(
+DirectionalSpinPairEntry build_directional_spin_pair_entry(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -953,13 +953,13 @@ DirectionalSpinPairEntry build_directional_spin_pair_entry_local(
   result.delta_total_hamiltonian =
       directional_pair_data.delta_total_hamiltonian;
   result.delta_first_order_projection =
-      build_sparse_packed_pair_projection_from_coefficients_local(
+      build_sparse_packed_pair_projection(
           occ_L,
           occ_R,
           directional_pair_data.delta_cofactor_1st,
           true,
           n_active_orbitals);
-  materialize_directional_projected_pair_values_local(
+  materialize_directional_projected_pair_values(
       active_space_two_electron_result,
       n_active_orbitals,
       pair_evaluation.opposite_spin_pair_cache.first_order_cofactor_projection,
@@ -990,12 +990,12 @@ public:
         delta_packed_active_two_electron_integrals_(
             delta_packed_active_two_electron_integrals),
         directional_pair_data_(directional_pair_data),
-        cached_entries_(square_storage_size_local(
+        cached_entries_(square_storage_size(
             static_cast<int>(unique_spin_determinants.size()))),
-        entry_flags_(square_storage_size_local(
+        entry_flags_(square_storage_size(
             static_cast<int>(unique_spin_determinants.size()))) {
     const std::size_t expected_cache_entries =
-        square_storage_size_local(static_cast<int>(unique_spin_determinants_.size()));
+        square_storage_size(static_cast<int>(unique_spin_determinants_.size()));
     if (ordered_pair_cache_.size() != expected_cache_entries) {
       throw std::invalid_argument(
           "ordered same-spin pair cache size does not match unique determinant count");
@@ -1036,7 +1036,7 @@ public:
         right_unique_index,
         static_cast<int>(unique_spin_determinants_.size()));
     std::call_once(entry_flags_[pair_index], [&]() {
-      cached_entries_[pair_index] = build_directional_spin_pair_entry_local(
+      cached_entries_[pair_index] = build_directional_spin_pair_entry(
             unique_spin_determinants_[left_unique_index],
             unique_spin_determinants_[right_unique_index],
             active_space_two_electron_result_,
@@ -1060,7 +1060,7 @@ private:
   std::vector<std::once_flag> entry_flags_;
 };
 
-void gather_directional_spin_block_local(
+void gather_directional_spin_block(
     DirectionalSpinPairMemo* pair_memo,
     const std::vector<int>& row_indices,
     const std::vector<int>& column_indices,
@@ -1068,12 +1068,12 @@ void gather_directional_spin_block_local(
     Eigen::MatrixXd* total_block,
     Eigen::MatrixXd* delta_overlap_block,
     Eigen::MatrixXd* delta_total_block,
-    LocalProjectionBlockLocal* accepted_projection_block,
-    LocalProjectionBlockLocal* directional_projection_block,
-    LocalOppositeSpinChannelFamilyBuilderLocal* accepted_channel_builder,
-    LocalOppositeSpinChannelFamilyLocal* accepted_channel_family,
-    LocalOppositeSpinChannelFamilyBuilderLocal* directional_channel_builder,
-    LocalOppositeSpinChannelFamilyLocal* directional_channel_family) {
+    ProjectionBlock* accepted_projection_block,
+    ProjectionBlock* directional_projection_block,
+    OppositeSpinChannelBuilder* accepted_channel_builder,
+    OppositeSpinChannelFamily* accepted_channel_family,
+    OppositeSpinChannelBuilder* directional_channel_builder,
+    OppositeSpinChannelFamily* directional_channel_family) {
   const bool gather_accepted_channels =
       accepted_channel_builder != nullptr ||
       accepted_channel_family != nullptr;
@@ -1087,11 +1087,11 @@ void gather_directional_spin_block_local(
   total_block->resize(overlap_block->rows(), overlap_block->cols());
   delta_overlap_block->resize(overlap_block->rows(), overlap_block->cols());
   delta_total_block->resize(overlap_block->rows(), overlap_block->cols());
-  reset_local_projection_block_local(
+  reset_projection_block(
       overlap_block->rows(),
       overlap_block->cols(),
       accepted_projection_block);
-  reset_local_projection_block_local(
+  reset_projection_block(
       overlap_block->rows(),
       overlap_block->cols(),
       directional_projection_block);
@@ -1311,17 +1311,17 @@ build_projected_structure_direction(
     Eigen::MatrixXd beta_projected_channel_block;
     Eigen::MatrixXd beta_push;
     Eigen::MatrixXd image;
-    DirectionalSameSpinContractionScratchLocal same_spin_scratch;
-    LocalProjectionBlockLocal accepted_alpha_projection_block;
-    LocalProjectionBlockLocal directional_alpha_projection_block;
-    LocalProjectionBlockLocal accepted_beta_projection_block;
-    LocalProjectionBlockLocal directional_beta_projection_block;
-    LocalOppositeSpinChannelFamilyBuilderLocal accepted_alpha_channel_builder(
+    SameSpinContractionScratch same_spin_scratch;
+    ProjectionBlock accepted_alpha_projection_block;
+    ProjectionBlock directional_alpha_projection_block;
+    ProjectionBlock accepted_beta_projection_block;
+    ProjectionBlock directional_beta_projection_block;
+    OppositeSpinChannelBuilder accepted_alpha_channel_builder(
         n_packed_active_pairs);
-    LocalOppositeSpinChannelFamilyBuilderLocal directional_alpha_channel_builder(
+    OppositeSpinChannelBuilder directional_alpha_channel_builder(
         n_packed_active_pairs);
-    LocalOppositeSpinChannelFamilyLocal accepted_alpha_channels;
-    LocalOppositeSpinChannelFamilyLocal directional_alpha_channels;
+    OppositeSpinChannelFamily accepted_alpha_channels;
+    OppositeSpinChannelFamily directional_alpha_channels;
     Eigen::VectorXd directional_overlap_column =
         Eigen::VectorXd::Zero(n_structures);
     Eigen::VectorXd directional_hamiltonian_column =
@@ -1373,7 +1373,7 @@ build_projected_structure_direction(
               left_block.close_shell_diagonal &&
               right_block.close_shell_diagonal;
           if (structure_pair_close_shell_diagonal) {
-            gather_directional_spin_block_local(
+            gather_directional_spin_block(
                 &shared_projected_alpha_provider,
                 left_block.alpha_support,
                 right_block.alpha_support,
@@ -1388,7 +1388,7 @@ build_projected_structure_direction(
                 &directional_alpha_channel_builder,
                 &directional_alpha_channels);
           } else {
-            gather_directional_spin_block_local(
+            gather_directional_spin_block(
                 &shared_projected_alpha_provider,
                 left_block.alpha_support,
                 right_block.alpha_support,
@@ -1402,7 +1402,7 @@ build_projected_structure_direction(
                 &accepted_alpha_channels,
                 &directional_alpha_channel_builder,
                 &directional_alpha_channels);
-            gather_directional_spin_block_local(
+            gather_directional_spin_block(
                 shared_same_spin_pair_cache
                     ? &shared_projected_alpha_provider
                     : &shared_projected_beta_provider,
@@ -1422,14 +1422,14 @@ build_projected_structure_direction(
 
           const auto same_spin_contraction =
               structure_pair_close_shell_diagonal
-                  ? contract_close_shell_diagonal_directional_same_spin_structure_kernels_local(
+                  ? contract_close_shell_same_spin_direction(
                         left_block.local_diagonal_coefficients,
                         right_block.local_diagonal_coefficients,
                         alpha_overlap_subblock,
                         alpha_total_subblock,
                         alpha_delta_overlap_subblock,
                         alpha_delta_total_subblock)
-                  : contract_directional_same_spin_structure_kernels_local(
+                  : contract_same_spin_direction(
                         left_block.local_coefficients,
                         right_block.local_coefficients,
                         alpha_overlap_subblock,
@@ -1447,7 +1447,7 @@ build_projected_structure_direction(
               same_spin_contraction.hamiltonian;
           directional_hamiltonian +=
               structure_pair_close_shell_diagonal
-                  ? contract_close_shell_diagonal_local_directional_opposite_spin_block_local(
+                  ? contract_close_shell_opposite_spin_direction(
                         left_block.local_diagonal_coefficients,
                         right_block.local_diagonal_coefficients,
                         accepted_alpha_channels,
@@ -1458,7 +1458,7 @@ build_projected_structure_direction(
                         n_active_orbitals,
                         delta_packed_active_two_electron_integrals,
                         &beta_projected_channel_block)
-                  : contract_local_directional_opposite_spin_block_local(
+                  : contract_opposite_spin_direction(
                         left_block.local_coefficients,
                         right_block.local_coefficients,
                         accepted_alpha_projection_block,
