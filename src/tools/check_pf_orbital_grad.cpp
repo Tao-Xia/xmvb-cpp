@@ -174,7 +174,7 @@ Options parse_args(int argc, char** argv) {
 }
 
 double eval_total_energy(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::pfaffian_vbscf::PfBasisData& basis,
     double e_nuc) {
   xmvb::pfaffian_vbscf::PfScfEval eval;
@@ -182,7 +182,7 @@ double eval_total_energy(
 }
 
 double eval_spin_adapted_total_energy(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::pfaffian_vbscf::PfSpinAdaptedBasisData& basis,
     double e_nuc) {
   xmvb::pfaffian_vbscf::PfSpinAdaptedScfEval eval;
@@ -282,8 +282,8 @@ int main(int argc, char** argv) {
 
     for (int i = 0; i < n_report; ++i) {
       const int param_idx = ranked[i].second;
-      xmvb::vb::CppVbInput plus_input = load.input;
-      xmvb::vb::CppVbInput minus_input = load.input;
+      xmvb::vb::VbScfInput plus_input = load.input;
+      xmvb::vb::VbScfInput minus_input = load.input;
       plus_input.orbital_preparation_input.orbital_value_table[param_idx] +=
           opt.step;
       minus_input.orbital_preparation_input.orbital_value_table[param_idx] -=

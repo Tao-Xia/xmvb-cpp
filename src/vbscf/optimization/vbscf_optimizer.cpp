@@ -25,7 +25,7 @@
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vb/runtime_utils.hpp"
+#include "vbscf/core/runtime_checks.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 #include "vbscf/optimization/vbscf_objective.hpp"
@@ -1662,13 +1662,13 @@ VbScfOptimizer::VbScfOptimizer(
       options_(options) {}
 
 VbScfOptimizerResult VbScfOptimizer::optimize(
-    const CppVbInput& input,
+    const VbScfInput& input,
     double nuclear_repulsion_energy) const {
   return optimize(input, {0}, {1.0}, nuclear_repulsion_energy);
 }
 
 VbScfOptimizerResult VbScfOptimizer::optimize(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
@@ -1717,8 +1717,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   // support block partition so the reduced coordinates, projected gradients,
   // and exact-context orbital derivatives all live on the same variational
   // manifold as the reference `.xmo` calculation.
-  std::optional<CppVbInput> adapted_optimizer_input;
-  const CppVbInput* optimizer_input = &input;
+  std::optional<VbScfInput> adapted_optimizer_input;
+  const VbScfInput* optimizer_input = &input;
   if (optimizer_backend_uses_nonredundant_space(options_.backend)) {
     adapted_optimizer_input = build_nonredundant_optimizer_input(input);
     optimizer_input = &adapted_optimizer_input.value();

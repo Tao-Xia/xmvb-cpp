@@ -30,7 +30,7 @@
 #include "vb/scf/deepvbh_onnx_direct_final_optimizer.hpp"
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
-#include "vb/scf/adaptive_structure_space_optimizer.hpp"
+#include "vbscf/adaptive/structure_space_optimizer.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace {
@@ -369,7 +369,7 @@ std::string exact_ctx_physical_chart_name(
 
 void print_exact_ctx_policy_summary(
     const xmvb::vb::VbScfOptimizerOptions& options,
-    const xmvb::vb::CppVbInput& input) {
+    const xmvb::vb::VbScfInput& input) {
   if (options.backend !=
           xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton ||
       options.nonredundant_truncated_newton_hvp_mode !=

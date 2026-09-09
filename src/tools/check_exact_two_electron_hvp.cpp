@@ -143,7 +143,7 @@ int main(int argc, char** argv) {
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceGradientEvaluator evaluator(
-        xmvb::vb::VBSCFAlgorithm::Original);
+        xmvb::vb::VbScfAlgorithm::Original);
     const auto gradient_result =
         evaluator.evaluate(
             input,

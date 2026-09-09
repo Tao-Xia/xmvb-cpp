@@ -1,4 +1,4 @@
-#include "vb/approx/approx_vbscf_pair_cluster.hpp"
+#include "vbscf/approx/approx_vbscf_pair_cluster.hpp"
 
 #include <utility>
 #include <vector>

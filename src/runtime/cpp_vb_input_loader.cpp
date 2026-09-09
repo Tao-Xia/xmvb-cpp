@@ -582,7 +582,7 @@ CppVbInputLoadResult load_cpp_vb_input_with_timings(
     const CppVbInputLoadOptions& options) {
   const auto total_start_time = std::chrono::steady_clock::now();
   CppVbInputLoadResult load_result;
-  CppVbInput result;
+  VbScfInput result;
   const InputDeck input_deck =
       parse_input_deck_model(input_file_path);
   const InputDeckMetadata& input_deck_metadata = input_deck.metadata;
@@ -862,7 +862,7 @@ CppVbInputLoadResult load_cpp_vb_input_with_timings(
   return load_result;
 }
 
-CppVbInput load_cpp_vb_input(
+VbScfInput load_cpp_vb_input(
     const std::string& input_file_path,
     const CppVbInputLoadOptions& options) {
   return load_cpp_vb_input_with_timings(input_file_path, options).input;

@@ -76,7 +76,7 @@ void validate_state_selection(
 
 }  // namespace
 
-VbScfEvaluator::VbScfEvaluator(VBSCFAlgorithm algorithm)
+VbScfEvaluator::VbScfEvaluator(VbScfAlgorithm algorithm)
     : matrix_evaluator_(algorithm),
       generalized_eigensolver_() {}
 
@@ -87,13 +87,13 @@ VbScfEvaluator::VbScfEvaluator(
       generalized_eigensolver_(std::move(generalized_eigensolver)) {}
 
 VbScfResult VbScfEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     double nuclear_repulsion_energy) const {
   return evaluate(input, {0}, {1.0}, nuclear_repulsion_energy);
 }
 
 VbScfResult VbScfEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
@@ -153,7 +153,7 @@ VbScfResult VbScfEvaluator::evaluate(
 }
 
 double VbScfEvaluator::evaluate_energy_only(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {

@@ -314,7 +314,7 @@ void write_mo_section(
 
 fs::path write_molden_file(
     const fs::path& input_file_path,
-    const CppVbInput& input) {
+    const VbScfInput& input) {
   validate_libcint_input(input.libcint_input);
   validate_orbital_input(input.orbital_preparation_input);
 

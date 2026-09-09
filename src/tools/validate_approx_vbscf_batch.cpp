@@ -6,10 +6,10 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/approx/approx_vbscf_evaluator.hpp"
+#include "vbscf/approx/approx_vbscf_evaluator.hpp"
 #include "vbscf/structures/structure_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -124,7 +124,7 @@ TimedSampleResult evaluate_sample(
       load_result.input.orbital_preparation_input.n_active_electrons;
 
   xmvb::vb::StructureMatrixEvaluator matrix_evaluator(
-      xmvb::vb::VBSCFAlgorithm::Original);
+      xmvb::vb::VbScfAlgorithm::Original);
   const auto approx_start = Clock::now();
   const auto prepared_active_space =
       matrix_evaluator.prepare_active_space(load_result.input);
@@ -145,7 +145,7 @@ TimedSampleResult evaluate_sample(
 
   const auto exact_start = Clock::now();
   xmvb::vb::VbScfEvaluator scf_evaluator(
-      xmvb::vb::VBSCFAlgorithm::Original);
+      xmvb::vb::VbScfAlgorithm::Original);
   const auto scf_result =
       scf_evaluator.evaluate(
           load_result.input,

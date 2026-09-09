@@ -1,4 +1,4 @@
-#include "vb/approx/approx_vbscf_resonance.hpp"
+#include "vbscf/approx/approx_vbscf_resonance.hpp"
 
 #include <algorithm>
 #include <vector>

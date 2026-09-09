@@ -51,11 +51,11 @@ LibcintRiIntegralProviderOptions apply_environment_overrides(
 }  // namespace
 
 const LibcintRiIntegralProviderResult& ensure_cpp_vb_input_ri_cache(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const LibcintRiIntegralProviderOptions& options) {
   if (input.ri_integral_provider_result == nullptr) {
     if (input.libcint_input.n_atoms <= 0 || input.libcint_input.n_shells <= 0) {
-      throw std::invalid_argument("CppVbInput does not contain a valid libcint input");
+      throw std::invalid_argument("VbScfInput does not contain a valid libcint input");
     }
     LibcintRiIntegralProvider provider;
     const LibcintRiIntegralProviderOptions resolved_options =

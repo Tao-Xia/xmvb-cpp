@@ -83,7 +83,7 @@ public:
 
   ExactHvpOperator(
       std::shared_ptr<const AcceptedPointContext> accepted_point_context,
-      const CppVbInput* current_input,
+      const VbScfInput* current_input,
       SparseParameterLayout parameter_view,
       const OrbitalChart* nonredundant_space);
 
@@ -148,7 +148,7 @@ private:
   };
 
   std::shared_ptr<const AcceptedPointContext> accepted_point_context_;
-  const CppVbInput* current_input_ = nullptr;
+  const VbScfInput* current_input_ = nullptr;
   SparseParameterLayout parameter_view_;
   const OrbitalChart* nonredundant_space_ = nullptr;
   Eigen::MatrixXd accepted_active_auxiliary_orbitals_;
@@ -206,7 +206,7 @@ private:
  */
 OppositeSpinMatrixBackwardContribution
 build_pairwise_local_opposite_spin_matrix_backward_reference(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
@@ -225,7 +225,7 @@ build_pairwise_local_opposite_spin_matrix_backward_reference(
  */
 SameSpinMatrixBackwardContribution
 build_pairwise_local_same_spin_matrix_backward_reference(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,

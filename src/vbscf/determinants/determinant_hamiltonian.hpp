@@ -7,7 +7,7 @@
 #include "vbscf/determinants/determinant_types.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -24,7 +24,7 @@ public:
    * @brief Constructs a resolver with the default overlap resolver.
    */
   explicit DeterminantHamiltonianResolver(
-      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original);
+      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
 
   /**
    * @brief Constructs a resolver using an overlap resolver instance.
@@ -34,7 +34,7 @@ public:
    */
   explicit DeterminantHamiltonianResolver(
       DeterminantOverlapResolver overlap_resolver,
-      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original);
+      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
 
   /**
    * @brief Evaluates determinant-level Hamiltonian and overlap quantities.

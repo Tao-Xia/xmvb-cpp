@@ -17,7 +17,7 @@ namespace xmvb::vb {
 
 namespace {
 
-bool use_standard_ri_ao_effective_one_electron_path(const CppVbInput& input) {
+bool use_standard_ri_ao_effective_one_electron_path(const VbScfInput& input) {
   return input.standard_two_electron_mode ==
       StandardTwoElectronMode::ResolutionOfIdentity;
 }
@@ -39,7 +39,7 @@ std::vector<int> collect_differentiable_parameter_indices(
 }
 
 std::vector<double> build_reference_energy_inactive_density_gradient(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const OrbitalPreparationResult& orbital_result,
     const AoEffectiveOneElectronResult& ao_effective_one_electron_result,
     const AoEffectiveOneElectronBackpropagator& ao_effective_one_electron_backpropagator) {
@@ -167,7 +167,7 @@ std::vector<double> build_ri_active_pair_factor_gradient(
 }
 
 std::vector<double> build_reference_energy_orbital_gradient(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const OrbitalPreparationResult& orbital_result,
     const AoEffectiveOneElectronResult& ao_effective_one_electron_result,
     const AoEffectiveOneElectronBackpropagator& ao_effective_one_electron_backpropagator,
@@ -194,7 +194,7 @@ std::vector<double> build_reference_energy_orbital_gradient(
 }  // namespace
 
 OrbitalGradientEvaluator::OrbitalGradientEvaluator(
-    VBSCFAlgorithm algorithm,
+    VbScfAlgorithm algorithm,
     double finite_difference_step)
     : active_space_gradient_evaluator_(algorithm),
       orbital_preparer_(),
@@ -232,13 +232,13 @@ OrbitalGradientEvaluator::OrbitalGradientEvaluator(
 }
 
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     double nuclear_repulsion_energy) const {
   return evaluate(input, {0}, {1.0}, nuclear_repulsion_energy);
 }
 
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     ActiveSpaceGradientResult active_space_gradient_result) const {
   auto result = evaluate_without_reference_energy_gradient(
       input,
@@ -252,7 +252,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate(
 }
 
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate_without_reference_energy_gradient(
-    const CppVbInput& input,
+    const VbScfInput& input,
     double nuclear_repulsion_energy) const {
   return evaluate_without_reference_energy_gradient(
       input,
@@ -263,7 +263,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_without_reference_energ
 
 OrbitalGradientResult
 OrbitalGradientEvaluator::evaluate_without_reference_energy_gradient(
-    const CppVbInput& input,
+    const VbScfInput& input,
     ActiveSpaceGradientResult active_space_gradient_result) const {
   const auto total_start_time = std::chrono::steady_clock::now();
   if (input.orbital_preparation_input.orbital_value_table.empty()) {
@@ -276,7 +276,7 @@ OrbitalGradientEvaluator::evaluate_without_reference_energy_gradient(
 }
 
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
@@ -293,7 +293,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate(
 }
 
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate_without_reference_energy_gradient(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
@@ -314,7 +314,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_without_reference_energ
 }
 
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradient_result(
-    const CppVbInput& input,
+    const VbScfInput& input,
     ActiveSpaceGradientResult active_space_gradient_result,
     const std::chrono::steady_clock::time_point& total_start_time) const {
   const int n_inactive_doubly_occupied_orbitals =
@@ -490,7 +490,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradi
 
 OrbitalGradientResult
 OrbitalGradientEvaluator::evaluate_without_reference_energy_gradient_with_fixed_active_space_adjoint(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     double nuclear_repulsion_energy) const {
   const auto total_start_time = std::chrono::steady_clock::now();
@@ -511,7 +511,7 @@ OrbitalGradientEvaluator::evaluate_without_reference_energy_gradient_with_fixed_
 
 std::vector<double>
 OrbitalGradientEvaluator::evaluate_sparse_orbital_gradient_with_fixed_active_space_adjoint(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     double nuclear_repulsion_energy) const {
   if (input.orbital_preparation_input.orbital_value_table.empty()) {
@@ -662,7 +662,7 @@ OrbitalGradientEvaluator::evaluate_sparse_orbital_gradient_with_fixed_active_spa
 }
 
 void OrbitalGradientEvaluator::populate_reference_energy_gradient(
-    const CppVbInput& input,
+    const VbScfInput& input,
     OrbitalGradientResult* result) const {
   if (result == nullptr) {
     throw std::invalid_argument("result must not be null");

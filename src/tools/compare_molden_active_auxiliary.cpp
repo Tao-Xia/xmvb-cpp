@@ -20,7 +20,7 @@
 
 namespace {
 
-using xmvb::vb::CppVbInput;
+using xmvb::vb::VbScfInput;
 using xmvb::vb::CppVbInputLoadOptions;
 using xmvb::vb::load_cpp_vb_input_with_timings;
 
@@ -181,7 +181,7 @@ std::vector<int> build_molden_to_internal_ao_permutation(
 }
 
 Eigen::MatrixXd build_molden_order_overlap_matrix(
-    const CppVbInput& input) {
+    const VbScfInput& input) {
   const int n_basis_functions =
       input.orbital_preparation_input.n_basis_functions;
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap_internal(
@@ -496,7 +496,7 @@ int main(int argc, char** argv) {
         xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
     const auto load_result =
         load_cpp_vb_input_with_timings(input_path, load_options);
-    const CppVbInput& input = load_result.input;
+    const VbScfInput& input = load_result.input;
 
     const int n_basis_functions =
         input.orbital_preparation_input.n_basis_functions;

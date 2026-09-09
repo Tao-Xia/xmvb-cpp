@@ -210,7 +210,7 @@ struct VbScfOptimizerResult {
   /**
    * @brief Optimized matrix-builder input, including orbital parameters.
    */
-  CppVbInput optimized_input;
+  VbScfInput optimized_input;
 };
 
 }  // namespace xmvb::vb

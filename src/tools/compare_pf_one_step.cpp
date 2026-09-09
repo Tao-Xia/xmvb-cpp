@@ -18,7 +18,7 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -36,7 +36,7 @@ struct StepResult {
   double step = 0.0;
   double trial_energy = 0.0;
   int backtracks = 0;
-  xmvb::vb::CppVbInput trial_input;
+  xmvb::vb::VbScfInput trial_input;
 };
 
 /**
@@ -198,12 +198,12 @@ double cosine_similarity(
   return lhs.dot(rhs) / (lhs_norm * rhs_norm);
 }
 
-xmvb::vb::CppVbInput stepped_input(
-    const xmvb::vb::CppVbInput& input,
+xmvb::vb::VbScfInput stepped_input(
+    const xmvb::vb::VbScfInput& input,
     const std::vector<int>& diff_idx,
     const Eigen::VectorXd& direction,
     double step) {
-  xmvb::vb::CppVbInput trial = input;
+  xmvb::vb::VbScfInput trial = input;
   for (Eigen::Index i = 0; i < direction.size(); ++i) {
     const int param_idx = diff_idx[i];
     trial.orbital_preparation_input.orbital_value_table[param_idx] +=
@@ -213,14 +213,14 @@ xmvb::vb::CppVbInput stepped_input(
 }
 
 double eval_det_energy(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     double e_nuc) {
   xmvb::vb::VbScfEvaluator eval;
   return eval.evaluate(input, e_nuc).total_energy;
 }
 
 double eval_pf_energy(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::pfaffian_vbscf::PfBasisData& basis,
     double e_nuc) {
   xmvb::pfaffian_vbscf::PfScfEval eval;
@@ -229,7 +229,7 @@ double eval_pf_energy(
 
 template <typename EvalFn>
 StepResult backtracking_step(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const std::vector<int>& diff_idx,
     const Eigen::VectorXd& grad,
     double energy0,
@@ -244,7 +244,7 @@ StepResult backtracking_step(
 
   double step = init_step;
   for (int bt = 0; bt < max_backtracks; ++bt) {
-    xmvb::vb::CppVbInput trial = stepped_input(input, diff_idx, direction, step);
+    xmvb::vb::VbScfInput trial = stepped_input(input, diff_idx, direction, step);
     const double trial_energy = eval_energy(trial);
     if (std::isfinite(trial_energy) &&
         trial_energy <= energy0 + armijo * step * gtd) {
@@ -310,7 +310,7 @@ int main(int argc, char** argv) {
         opt.init_step,
         opt.armijo,
         opt.max_backtracks,
-        [&](const xmvb::vb::CppVbInput& trial) {
+        [&](const xmvb::vb::VbScfInput& trial) {
           return eval_det_energy(trial, load.nuclear_repulsion_energy);
         });
     const auto pf_step = backtracking_step(
@@ -321,7 +321,7 @@ int main(int argc, char** argv) {
         opt.init_step,
         opt.armijo,
         opt.max_backtracks,
-        [&](const xmvb::vb::CppVbInput& trial) {
+        [&](const xmvb::vb::VbScfInput& trial) {
           return eval_pf_energy(trial, basis, load.nuclear_repulsion_energy);
         });
 

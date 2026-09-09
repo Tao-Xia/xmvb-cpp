@@ -1,4 +1,4 @@
-#include "vb/approx/approx_vbscf_cluster_quotient.hpp"
+#include "vbscf/approx/approx_vbscf_cluster_quotient.hpp"
 
 #include <cmath>
 #include <utility>

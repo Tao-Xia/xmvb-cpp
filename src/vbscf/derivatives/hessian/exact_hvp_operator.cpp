@@ -1814,7 +1814,7 @@ std::vector<double> apply_fixed_upstream_orbital_pullback_direction(
 }
 
 void build_active_space_directional_integrals(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceTwoElectronResult& accepted_active_space_two_electron_result,
     const Eigen::MatrixXd& accepted_active_auxiliary_orbitals,
     const Eigen::MatrixXd& accepted_basis_overlap_times_active_auxiliary_orbitals,
@@ -3920,7 +3920,7 @@ void gather_directional_spin_block_local(
 }
 
 StructureAccumulationResult build_tiled_directional_structure_matrices(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const std::vector<StructureCoefficientBlock>& coefficient_blocks,
     const std::vector<double>& delta_ao_overlap_matrix,
@@ -4375,7 +4375,7 @@ void accumulate_opposite_spin_two_electron_gradient_contribution_local(
 
 void accumulate_active_space_gradient_pair_with_adjoints_local(
     const StructurePairAdjoints& pair_adjoints,
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantPairEvaluation& determinant_pair_evaluation,
@@ -4553,7 +4553,7 @@ void accumulate_active_space_gradient_pair_with_adjoints_local(
 
 void accumulate_active_space_gradient_pair_local_response_with_adjoints_local(
     const StructurePairAdjoints& pair_adjoints,
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantPairEvaluation& determinant_pair_evaluation,
@@ -4785,7 +4785,7 @@ void accumulate_active_space_gradient_pair_local_response_with_adjoints_local(
 
 void accumulate_active_space_gradient_pair_opposite_spin_local_response_with_adjoints_local(
     const StructurePairAdjoints& pair_adjoints,
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantPairEvaluation& determinant_pair_evaluation,
@@ -4922,7 +4922,7 @@ void accumulate_active_space_gradient_pair_opposite_spin_local_response_with_adj
 DeterminantPairEvaluation evaluate_active_space_determinant_pair_local(
     const SameSpinPairCacheContext* same_spin_pair_cache,
     const DeterminantPairEvaluator& pair_evaluator,
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<double>& active_orbital_overlap_matrix,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -4976,7 +4976,7 @@ double contract_active_space_direction(
 
 double compute_determinant_pair_directional_scalar(
     const StructurePairAdjoints& pair_adjoints,
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantPairEvaluation& determinant_pair_evaluation,
@@ -5010,7 +5010,7 @@ double compute_determinant_pair_directional_scalar(
 }
 
 StructureAccumulationResult build_directional_structure_matrices(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const std::vector<StructureCoefficientBlock>& coefficient_blocks,
     const std::vector<double>& delta_ao_overlap_matrix,
@@ -5051,7 +5051,7 @@ StructureAccumulationResult build_directional_structure_matrices(
 
 SelectedStateProjectedDirectionalMatrices
 build_selected_state_projected_directional_structure_matrices(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const std::vector<StructureCoefficientBlock>& coefficient_blocks,
     const std::vector<double>& delta_ao_overlap_matrix,
@@ -5925,7 +5925,7 @@ StructurePairAdjoints determinant_pair_structure_adjoints(
 }
 
 ActiveSpaceGradientDirection build_pairwise_active_space_gradient_direction_from_structure_weights(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const StructurePairWeightTables& structure_pair_weights,
     bool skip_opposite_spin) {
@@ -6022,7 +6022,7 @@ ActiveSpaceGradientDirection build_pairwise_active_space_gradient_direction_from
 
 ActiveSpaceGradientDirection
 build_pairwise_active_space_gradient_direction_from_determinant_pair_weights(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     bool skip_opposite_spin) {
@@ -6121,7 +6121,7 @@ build_pairwise_active_space_gradient_direction_from_determinant_pair_weights(
 
 ActiveSpaceGradientDirection
 build_pairwise_local_active_space_gradient_direction_from_determinant_pair_weights(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     bool skip_opposite_spin,
@@ -6227,7 +6227,7 @@ build_pairwise_local_active_space_gradient_direction_from_determinant_pair_weigh
 
 ActiveSpaceGradientDirection
 build_pairwise_opposite_spin_local_active_space_gradient_direction_from_determinant_pair_weights(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
@@ -6367,7 +6367,7 @@ void accumulate_scaled_same_spin_contribution(
 
 ActiveSpaceGradientDirection
 build_local_active_space_gradient_direction_from_outer_response(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -6503,7 +6503,7 @@ std::vector<double> build_selected_state_energy_direction_from_outer_response(
 
 ActiveSpaceGradientDirection
 build_energy_only_active_space_gradient_direction_from_outer_response(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -6560,7 +6560,7 @@ build_energy_only_active_space_gradient_direction_from_outer_response(
 }
 
 ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_response(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -6637,7 +6637,7 @@ void write_symmetric_active_matrix_average_local(
 }
 
 std::vector<double> build_orbital_value_gradient_from_active_space_gradient_direction(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const ActiveSpaceGradientDirection& active_space_gradient_direction,
     const AcceptedOrbitalPreparationCache& orbital_preparation_cache,
@@ -6769,7 +6769,7 @@ struct AcceptedOrbitalBackpropInputs {
 
 AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
     const AcceptedPointContext& accepted_point_context,
-    const CppVbInput& input) {
+    const VbScfInput& input) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
   const int n_inactive_doubly_occupied_orbitals =
@@ -6896,7 +6896,7 @@ struct ExactHvpOperator::PrecomputedDirection {
 
 OppositeSpinMatrixBackwardContribution
 build_pairwise_local_opposite_spin_matrix_backward_reference(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
@@ -6920,7 +6920,7 @@ build_pairwise_local_opposite_spin_matrix_backward_reference(
 
 SameSpinMatrixBackwardContribution
 build_pairwise_local_same_spin_matrix_backward_reference(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
@@ -6953,7 +6953,7 @@ build_pairwise_local_same_spin_matrix_backward_reference(
 
 ExactHvpOperator::ExactHvpOperator(
     std::shared_ptr<const AcceptedPointContext> accepted_point_context,
-    const CppVbInput* current_input,
+    const VbScfInput* current_input,
     SparseParameterLayout parameter_view,
     const OrbitalChart* nonredundant_space)
     : accepted_point_context_(std::move(accepted_point_context)),

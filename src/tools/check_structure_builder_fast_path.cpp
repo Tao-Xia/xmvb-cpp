@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
     }
 
     xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
-        xmvb::vb::VBSCFAlgorithm::Original);
+        xmvb::vb::VbScfAlgorithm::Original);
     const auto pair_evaluator = structure_builder.make_pair_evaluator();
     const auto same_spin_pair_cache = xmvb::vb::build_same_spin_pair_cache_context(
         load_result.input.structure_data.alpha_det,

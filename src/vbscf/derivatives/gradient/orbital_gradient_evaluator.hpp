@@ -12,7 +12,7 @@
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -32,7 +32,7 @@ public:
    * @brief Creates an evaluator with default helper components.
    */
   explicit OrbitalGradientEvaluator(
-      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original,
+      VbScfAlgorithm algorithm = VbScfAlgorithm::Original,
       double finite_difference_step = 1.0e-5);
 
   /**
@@ -56,7 +56,7 @@ public:
    * @return OrbitalGradientResult Baseline result and orbital gradient.
    */
   OrbitalGradientResult evaluate(
-      const CppVbInput& input,
+      const VbScfInput& input,
       double nuclear_repulsion_energy = 0.0) const;
 
   /**
@@ -67,7 +67,7 @@ public:
    * gradient later from the cached intermediates in the returned result.
    */
   OrbitalGradientResult evaluate_without_reference_energy_gradient(
-      const CppVbInput& input,
+      const VbScfInput& input,
       double nuclear_repulsion_energy = 0.0) const;
 
   /**
@@ -80,7 +80,7 @@ public:
    * @return OrbitalGradientResult Baseline result and orbital gradient.
    */
   OrbitalGradientResult evaluate(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;
@@ -92,14 +92,14 @@ public:
    * the lower orbital/AO pullback plus the exact `E11` orbital gradient.
    */
   OrbitalGradientResult evaluate(
-      const CppVbInput& input,
+      const VbScfInput& input,
       ActiveSpaceGradientResult active_space_gradient_result) const;
 
   /**
    * @brief Evaluates a state-averaged orbital gradient without the exact `E11` orbital gradient.
    */
   OrbitalGradientResult evaluate_without_reference_energy_gradient(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;
@@ -108,7 +108,7 @@ public:
    * @brief Evaluates the orbital gradient pullback from a precomputed active-space result.
    */
   OrbitalGradientResult evaluate_without_reference_energy_gradient(
-      const CppVbInput& input,
+      const VbScfInput& input,
       ActiveSpaceGradientResult active_space_gradient_result) const;
 
   /**
@@ -120,7 +120,7 @@ public:
    * cheap reduced-curvature diagonal and the future full exact direct-action operator.
    */
   OrbitalGradientResult evaluate_without_reference_energy_gradient_with_fixed_active_space_adjoint(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const AcceptedPointContext& accepted_point_context,
       double nuclear_repulsion_energy) const;
 
@@ -133,7 +133,7 @@ public:
    * integral and bookkeeping copies on every `H v` application.
    */
   std::vector<double> evaluate_sparse_orbital_gradient_with_fixed_active_space_adjoint(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const AcceptedPointContext& accepted_point_context,
       double nuclear_repulsion_energy) const;
 
@@ -141,7 +141,7 @@ public:
    * @brief Populates the exact `E11` orbital gradient if it is not already present.
    */
   void populate_reference_energy_gradient(
-      const CppVbInput& input,
+      const VbScfInput& input,
       OrbitalGradientResult* result) const;
 
 private:
@@ -155,7 +155,7 @@ private:
   double finite_difference_step_ = 1.0e-5;
 
   OrbitalGradientResult evaluate_from_active_space_gradient_result(
-      const CppVbInput& input,
+      const VbScfInput& input,
       ActiveSpaceGradientResult active_space_gradient_result,
       const std::chrono::steady_clock::time_point& total_start_time) const;
 };

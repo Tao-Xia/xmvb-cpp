@@ -2,7 +2,7 @@
 
 #include <Eigen/Core>
 
-#include "vb/model/vb_dimensions.hpp"
+#include "vbscf/core/dimensions.hpp"
 
 namespace xmvb::vb {
 

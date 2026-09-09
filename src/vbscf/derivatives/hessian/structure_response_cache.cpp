@@ -138,7 +138,7 @@ build_accepted_selected_state_generalized_eigen_response_operator(
 
 AcceptedOuterResponseLinearResponseCache
 build_accepted_outer_response_linear_response_cache(
-    const CppVbInput* input,
+    const VbScfInput* input,
     const AcceptedPointContext* accepted_point_context,
     const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks) {
   if (input == nullptr || accepted_point_context == nullptr ||

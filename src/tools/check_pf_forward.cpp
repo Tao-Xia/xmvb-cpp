@@ -16,7 +16,7 @@
 #include "pfaffian_vbscf/types/pf_basis_data.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -183,7 +183,7 @@ double det_amp(
  */
 void build_exact_mats(
     const xmvb::pfaffian_vbscf::PfBasisData& basis,
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::pfaffian_vbscf::PfActiveSpaceData& act,
     Matrix* s_exact,
     Matrix* h1e_exact,
@@ -193,7 +193,7 @@ void build_exact_mats(
   }
 
   xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder det_builder(
-      xmvb::vb::VBSCFAlgorithm::Original);
+      xmvb::vb::VbScfAlgorithm::Original);
   const auto det_build =
       det_builder.build_with_pair_evaluations(
           input.structure_data.alpha_det,

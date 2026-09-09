@@ -5,12 +5,12 @@
 # remaining implementation files move to their final directories.
 
 set(XMVB_VBSCF_APPROXIMATION_SOURCES
-  vb/approx/approx_vbscf_cluster_quotient.cpp
-  vb/approx/approx_vbscf_evaluator.cpp
-  vb/approx/approx_vbscf_metric.cpp
-  vb/approx/approx_vbscf_pair_cluster.cpp
-  vb/approx/approx_vbscf_resonance.cpp
-  vb/approx/approx_vbscf_resonance_functional.cpp
+  vbscf/approx/approx_vbscf_cluster_quotient.cpp
+  vbscf/approx/approx_vbscf_evaluator.cpp
+  vbscf/approx/approx_vbscf_metric.cpp
+  vbscf/approx/approx_vbscf_pair_cluster.cpp
+  vbscf/approx/approx_vbscf_resonance.cpp
+  vbscf/approx/approx_vbscf_resonance_functional.cpp
 )
 
 set(XMVB_VBSCF_DETERMINANT_SOURCES
@@ -97,7 +97,7 @@ set(XMVB_VBSCF_WORKFLOW_SOURCES
 )
 
 set(XMVB_VBSCF_ADAPTIVE_SOURCES
-  vb/scf/adaptive_structure_space_optimizer.cpp
+  vbscf/adaptive/structure_space_optimizer.cpp
 )
 
 # Experimental models remain linked for compatibility, but production VBSCF

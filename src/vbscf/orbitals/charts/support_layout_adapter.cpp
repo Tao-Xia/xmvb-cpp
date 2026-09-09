@@ -501,8 +501,8 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
   return adapted_input;
 }
 
-CppVbInput build_nonredundant_optimizer_input(
-    const CppVbInput& input) {
+VbScfInput build_nonredundant_optimizer_input(
+    const VbScfInput& input) {
   // The nonredundant optimizer must start from the same physical sparse-orbital
   // chart that the VB objective, restart artifacts, and Molden export use.
   // Pre-orthonormalizing the full-support OEO inactive block changes the

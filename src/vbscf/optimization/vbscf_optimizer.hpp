@@ -7,7 +7,7 @@
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/optimization/vbscf_optimizer_result.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -92,7 +92,7 @@ struct VbScfOptimizerOptions {
   /**
    * @brief Determinant evaluation algorithm used in the C++ VBSCF path.
    */
-  VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original;
+  VbScfAlgorithm algorithm = VbScfAlgorithm::Original;
 
   /**
    * @brief Maximum number of accepted optimization iterations.
@@ -243,14 +243,14 @@ public:
    * @brief Optimizes the ground-state orbital parameters.
    */
   VbScfOptimizerResult optimize(
-      const CppVbInput& input,
+      const VbScfInput& input,
       double nuclear_repulsion_energy = 0.0) const;
 
   /**
    * @brief Optimizes a selected-state or state-averaged objective.
    */
   VbScfOptimizerResult optimize(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;

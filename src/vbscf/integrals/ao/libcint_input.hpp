@@ -9,7 +9,7 @@ namespace xmvb::vb {
  *
  * These arrays mirror the molecule-static `atm`, `bas`, `basidx`, and `env`
  * buffers currently prepared inside the legacy runtime. Keeping them inside
- * `CppVbInput` allows the C++ side to gradually take ownership of AO integral
+ * `VbScfInput` allows the C++ side to gradually take ownership of AO integral
  * generation without depending on legacy integral materialization forever.
  */
 struct LibcintInput {

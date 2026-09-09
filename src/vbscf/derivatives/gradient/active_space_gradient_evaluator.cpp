@@ -425,7 +425,7 @@ double selected_state_average_energy(
 }
 
 ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceOrbitalPreparer& orbital_preparer,
     const AoEffectiveOneElectronBuilder& ao_effective_one_electron_builder,
     const ActiveSpaceOneElectronBuilder& active_space_one_electron_builder,
@@ -488,7 +488,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
 }
 
 ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
-    const CppVbInput& input,
+    const VbScfInput& input,
     TimedPreparedActiveSpaceContext timed_active_space_context,
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
     const xmvb::core::GeneralizedEigensolver& generalized_eigensolver) {
@@ -544,7 +544,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
 
 std::shared_ptr<AcceptedPointContext>
 finalize_active_space_second_order_context(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_weights,
     const ActiveSpaceGradientResult& gradient_result,
@@ -604,7 +604,7 @@ finalize_active_space_second_order_context(
 }
 
 void populate_scf_result(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_weights,
     double nuclear_repulsion_energy,
@@ -647,7 +647,7 @@ void populate_scf_result(
 }
 
 void initialize_active_space_gradient_result(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_weights,
     double nuclear_repulsion_energy,
@@ -710,7 +710,7 @@ void accumulate_additive_vector(
 DeterminantPairEvaluation evaluate_active_space_determinant_pair(
     const SameSpinPairCacheContext* same_spin_pair_cache,
     const DeterminantPairEvaluator& pair_evaluator,
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<double>& active_orbital_overlap_matrix,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -736,7 +736,7 @@ DeterminantPairEvaluation evaluate_active_space_determinant_pair(
 
 void accumulate_active_space_gradient_pair_with_adjoints(
     const StructurePairAdjoints& pair_adjoints,
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const DeterminantPairEvaluation& determinant_pair_evaluation,
@@ -909,7 +909,7 @@ void accumulate_active_space_gradient_pair_with_adjoints(
 }
 
 void accumulate_active_space_gradient_pair(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const StructurePairWeightTables& structure_pair_weights,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -943,7 +943,7 @@ void accumulate_active_space_gradient_pair(
 }
 
 void accumulate_active_space_gradient_unordered_pair(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const StructurePairWeightTables& structure_pair_weights,
     const std::vector<double>& active_orbital_overlap_matrix,
     const SameSpinPairCacheContext* same_spin_pair_cache,
@@ -1043,7 +1043,7 @@ void accumulate_active_space_gradient_unordered_pair(
 }
 
 void accumulate_active_space_gradient(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_weights,
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
@@ -1286,7 +1286,7 @@ void accumulate_active_space_gradient(
 }  // namespace
 
 ActiveSpaceGradientEvaluator::ActiveSpaceGradientEvaluator(
-    VBSCFAlgorithm algorithm)
+    VbScfAlgorithm algorithm)
     : orbital_preparer_(),
       ao_effective_one_electron_builder_(),
       active_space_one_electron_builder_(),
@@ -1309,13 +1309,13 @@ ActiveSpaceGradientEvaluator::ActiveSpaceGradientEvaluator(
       generalized_eigensolver_(std::move(generalized_eigensolver)) {}
 
 ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     double nuclear_repulsion_energy) const {
   return evaluate(input, {0}, {1.0}, nuclear_repulsion_energy);
 }
 
 ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
@@ -1365,7 +1365,7 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
 }
 
 ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     TimedPreparedActiveSpaceContext timed_prepared_active_space_context,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -1415,7 +1415,7 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
 
 ActiveSpaceGradientResult
 ActiveSpaceGradientEvaluator::evaluate_with_fixed_active_space_adjoint(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     double nuclear_repulsion_energy) const {
   const auto total_start_time = std::chrono::steady_clock::now();
@@ -1462,7 +1462,7 @@ ActiveSpaceGradientEvaluator::evaluate_with_fixed_active_space_adjoint(
 
 TimedPreparedActiveSpaceContext
 ActiveSpaceGradientEvaluator::prepare_timed_active_space_context_for_probe(
-    const CppVbInput& input) const {
+    const VbScfInput& input) const {
   return prepare_timed_active_space_context(
       input,
       orbital_preparer_,

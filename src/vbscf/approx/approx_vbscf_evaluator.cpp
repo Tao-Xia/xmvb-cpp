@@ -1,4 +1,4 @@
-#include "vb/approx/approx_vbscf_evaluator.hpp"
+#include "vbscf/approx/approx_vbscf_evaluator.hpp"
 
 #include <algorithm>
 #include <cmath>

@@ -14,7 +14,7 @@
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -26,7 +26,7 @@ enum class Component {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Auto;
   Component component = Component::Overlap;
@@ -55,7 +55,7 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -131,13 +131,13 @@ double compute_one_electron_reference_energy(
 }
 
 double evaluate_total_energy_from_active_space(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::ActiveSpaceGradientResult& baseline,
     const std::vector<double>& active_orbital_overlap_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     const std::vector<double>& packed_active_two_electron_integrals,
     double nuclear_repulsion_energy,
-    xmvb::vb::VBSCFAlgorithm algorithm) {
+    xmvb::vb::VbScfAlgorithm algorithm) {
   xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(algorithm);
   const auto structure_matrices = structure_builder.build(
       input.structure_data.alpha_det,

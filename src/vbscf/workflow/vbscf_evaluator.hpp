@@ -6,7 +6,7 @@
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/structure_evaluator.hpp"
 #include "vbscf/core/vbscf_result.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -25,7 +25,7 @@ public:
    * @brief Creates an evaluator with default helper components.
    */
   explicit VbScfEvaluator(
-      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original);
+      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
 
   /**
    * @brief Creates an evaluator with explicit helper components.
@@ -42,7 +42,7 @@ public:
    * @return VbScfResult Structure matrices plus generalized-eigen data.
    */
   VbScfResult evaluate(
-      const CppVbInput& input,
+      const VbScfInput& input,
       double nuclear_repulsion_energy = 0.0) const;
 
   /**
@@ -55,7 +55,7 @@ public:
    * @return VbScfResult Structure matrices plus generalized-eigen data.
    */
   VbScfResult evaluate(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;
@@ -68,7 +68,7 @@ public:
    * or the accepted-point second-order context.
    */
   double evaluate_energy_only(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;

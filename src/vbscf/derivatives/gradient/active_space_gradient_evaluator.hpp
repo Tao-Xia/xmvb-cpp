@@ -11,7 +11,7 @@
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_result.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 
 namespace xmvb::vb {
@@ -36,7 +36,7 @@ public:
    * @brief Creates an evaluator with default helper components.
    */
   explicit ActiveSpaceGradientEvaluator(
-      VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original);
+      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
 
   /**
    * @brief Creates an evaluator with explicit helper components.
@@ -53,14 +53,14 @@ public:
    * @brief Evaluates the ground-state active-space analytic gradient.
    */
   ActiveSpaceGradientResult evaluate(
-      const CppVbInput& input,
+      const VbScfInput& input,
       double nuclear_repulsion_energy = 0.0) const;
 
   /**
    * @brief Evaluates a state-averaged active-space analytic gradient.
    */
   ActiveSpaceGradientResult evaluate(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;
@@ -69,7 +69,7 @@ public:
    * @brief Evaluates a state-averaged gradient reusing a prebuilt active-space context.
    */
   ActiveSpaceGradientResult evaluate(
-      const CppVbInput& input,
+      const VbScfInput& input,
       TimedPreparedActiveSpaceContext timed_prepared_active_space_context,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
@@ -85,7 +85,7 @@ public:
    * and generalized-eigen response on every HVP application.
    */
   ActiveSpaceGradientResult evaluate_with_fixed_active_space_adjoint(
-      const CppVbInput& input,
+      const VbScfInput& input,
       const AcceptedPointContext& accepted_point_context,
       double nuclear_repulsion_energy = 0.0) const;
 
@@ -97,7 +97,7 @@ public:
    * `ActiveSpaceGradientResult`.
    */
   TimedPreparedActiveSpaceContext prepare_timed_active_space_context_for_probe(
-      const CppVbInput& input) const;
+      const VbScfInput& input) const;
 
 private:
   ActiveSpaceOrbitalPreparer orbital_preparer_;

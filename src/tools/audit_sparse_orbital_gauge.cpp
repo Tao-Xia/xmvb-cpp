@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto loaded =
         xmvb::vb::load_cpp_vb_input_with_timings(argv[1], load_options);
-    const xmvb::vb::CppVbInput input = nonredundant_adapt
+    const xmvb::vb::VbScfInput input = nonredundant_adapt
         ? xmvb::vb::build_nonredundant_optimizer_input(loaded.input)
         : loaded.input;
     const xmvb::vb::SparseParameterLayout parameter_view(

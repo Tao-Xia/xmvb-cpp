@@ -50,7 +50,7 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
  * manifold and converged energy, so this helper currently forwards the input
  * unchanged.
  */
-CppVbInput build_nonredundant_optimizer_input(
-    const CppVbInput& input);
+VbScfInput build_nonredundant_optimizer_input(
+    const VbScfInput& input);
 
 }  // namespace xmvb::vb

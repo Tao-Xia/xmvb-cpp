@@ -17,7 +17,7 @@
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -40,7 +40,7 @@ enum class EnergyComponent {
 struct Options {
   std::string input_path;
   std::string orbital_value_table_bin_path;
-  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   xmvb::vb::AoIntegralSource ao_integral_source =
       xmvb::vb::AoIntegralSource::Auto;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
@@ -343,7 +343,7 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -430,8 +430,8 @@ Options parse_arguments(int argc, char** argv) {
 }
 
 double evaluate_energy_component(
-    const xmvb::vb::CppVbInput& input,
-    xmvb::vb::VBSCFAlgorithm algorithm,
+    const xmvb::vb::VbScfInput& input,
+    xmvb::vb::VbScfAlgorithm algorithm,
     double nuclear_repulsion_energy,
     EnergyComponent component) {
   xmvb::vb::VbScfEvaluator evaluator(algorithm);
@@ -554,11 +554,11 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
         xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
-    const xmvb::vb::CppVbInput diagnostic_input_template =
+    const xmvb::vb::VbScfInput diagnostic_input_template =
         options.nonredundant_adapt
             ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)
             : load_result.input;
-    xmvb::vb::CppVbInput diagnostic_input = diagnostic_input_template;
+    xmvb::vb::VbScfInput diagnostic_input = diagnostic_input_template;
     if (!options.orbital_value_table_bin_path.empty()) {
       diagnostic_input.orbital_preparation_input.orbital_value_table =
           read_f64_binary_file(options.orbital_value_table_bin_path);
@@ -758,8 +758,8 @@ int main(int argc, char** argv) {
 
       for (int report_index = 0; report_index < n_to_report; ++report_index) {
         const int parameter_index = ranked_parameters[report_index].second;
-        xmvb::vb::CppVbInput plus_input = diagnostic_input;
-        xmvb::vb::CppVbInput minus_input = diagnostic_input;
+        xmvb::vb::VbScfInput plus_input = diagnostic_input;
+        xmvb::vb::VbScfInput minus_input = diagnostic_input;
         plus_input.orbital_preparation_input.orbital_value_table[parameter_index] +=
             options.step;
         minus_input.orbital_preparation_input.orbital_value_table[parameter_index] -=
@@ -862,8 +862,8 @@ int main(int argc, char** argv) {
         // the direction by some packed-space norm.
         const double effective_step = options.step;
 
-        xmvb::vb::CppVbInput plus_input = diagnostic_input;
-        xmvb::vb::CppVbInput minus_input = diagnostic_input;
+        xmvb::vb::VbScfInput plus_input = diagnostic_input;
+        xmvb::vb::VbScfInput minus_input = diagnostic_input;
         // Reduced nonredundant coordinates represent accepted-point orbital
         // replacement directions. Mirror the optimizer manifold by applying the
         // same finite orbital increment lift here instead of perturbing the

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vb/model/vb_wavefunction_data.hpp"
+#include "vbscf/core/wavefunction_data.hpp"
 #include "vbscf/orbitals/orbital_parameter_vector.hpp"
 #include "vbscf/orbitals/orbital_space.hpp"
 

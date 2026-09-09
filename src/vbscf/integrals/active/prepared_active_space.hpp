@@ -42,7 +42,7 @@ double compute_one_electron_reference_energy(
     int n_basis_functions);
 
 TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceOrbitalPreparer& orbital_preparer,
     const AoEffectiveOneElectronBuilder& ao_effective_one_electron_builder,
     const ActiveSpaceOneElectronBuilder& active_space_one_electron_builder,

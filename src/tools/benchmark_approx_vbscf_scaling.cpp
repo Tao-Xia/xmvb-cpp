@@ -8,9 +8,9 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/approx/approx_vbscf_evaluator.hpp"
+#include "vbscf/approx/approx_vbscf_evaluator.hpp"
 #include "vbscf/structures/structure_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -196,7 +196,7 @@ SampleTimingResult benchmark_sample(
           load_result.raw_structure_data.spin_multiplicity);
 
   xmvb::vb::StructureMatrixEvaluator matrix_evaluator(
-      xmvb::vb::VBSCFAlgorithm::Original);
+      xmvb::vb::VbScfAlgorithm::Original);
   const auto active_prepare_start = Clock::now();
   const auto prepared_active_space =
       matrix_evaluator.prepare_active_space(load_result.input);

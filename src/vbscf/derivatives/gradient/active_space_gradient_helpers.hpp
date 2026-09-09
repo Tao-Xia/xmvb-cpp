@@ -15,7 +15,7 @@ namespace xmvb::vb {
  * paths share this result-layout contract.
  */
 void initialize_active_space_gradient_probe_result(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const TimedPreparedActiveSpaceContext& timed_active_space_context,
     ActiveSpaceGradientResult* result);
 
@@ -26,7 +26,7 @@ void initialize_active_space_gradient_probe_result(
  * caller no longer needs to retain the temporary `TimedPreparedActiveSpaceContext`.
  */
 void initialize_active_space_gradient_probe_result(
-    const CppVbInput& input,
+    const VbScfInput& input,
     TimedPreparedActiveSpaceContext&& timed_active_space_context,
     ActiveSpaceGradientResult* result);
 

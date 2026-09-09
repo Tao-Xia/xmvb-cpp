@@ -87,7 +87,7 @@ double inf_norm(const std::vector<double>& values) {
 }
 
 std::vector<double> build_production_ao_h1e_backprop_input(
-    const xmvb::vb::CppVbInput& input) {
+    const xmvb::vb::VbScfInput& input) {
   const int n_inactive_doubly_occupied_orbitals =
       (input.orbital_preparation_input.n_total_electrons -
        input.orbital_preparation_input.n_active_electrons) / 2;

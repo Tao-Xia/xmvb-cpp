@@ -11,7 +11,7 @@ namespace xmvb {
  * @brief Copy-on-write vector wrapper for large mostly-immutable buffers.
  *
  * Copies share the backing storage until a mutable operation is requested.
- * This keeps `CppVbInput` copies cheap while preserving a `std::vector`-like
+ * This keeps `VbScfInput` copies cheap while preserving a `std::vector`-like
  * interface for existing numerical kernels.
  */
 template <typename T>

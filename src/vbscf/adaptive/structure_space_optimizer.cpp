@@ -1,4 +1,4 @@
-#include "vb/scf/adaptive_structure_space_optimizer.hpp"
+#include "vbscf/adaptive/structure_space_optimizer.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -120,8 +120,8 @@ std::vector<int> build_seed_raw_structure_indices(
   return selected_indices;
 }
 
-CppVbInput build_input_for_selected_raw_structures(
-    const CppVbInput& orbital_template,
+VbScfInput build_input_for_selected_raw_structures(
+    const VbScfInput& orbital_template,
     const RawStructureData& raw_structure_data,
     const std::vector<int>& selected_raw_structure_indices,
     const FullDeterminantStructureExpander& expander) {
@@ -129,7 +129,7 @@ CppVbInput build_input_for_selected_raw_structures(
     throw std::invalid_argument("selected_raw_structure_indices must not be empty");
   }
 
-  CppVbInput input;
+  VbScfInput input;
   input.orbital_preparation_input = orbital_template.orbital_preparation_input;
   input.ao_integral_input = orbital_template.ao_integral_input;
   input.libcint_input = orbital_template.libcint_input;
@@ -347,10 +347,10 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
     const RawStructureData& raw_structure_data,
     const FullDeterminantStructureExpander& expander,
     std::vector<std::optional<FullDeterminantStructureData>>* single_structure_cache,
-    const CppVbInput& current_input,
+    const VbScfInput& current_input,
     const VbScfOptimizerResult& current_result,
     const VbScfAcceptedIterationSnapshot& current_snapshot,
-    VBSCFAlgorithm algorithm,
+    VbScfAlgorithm algorithm,
     AdaptiveDeterminantScoreMode score_mode) {
   const auto scoring_start_time = std::chrono::steady_clock::now();
   CandidateScoreBatch score_batch;
@@ -625,7 +625,7 @@ AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
   std::vector<std::optional<FullDeterminantStructureData>> single_structure_cache(
       load_result.raw_structure_data.n_structures);
 
-  CppVbInput current_input = build_input_for_selected_raw_structures(
+  VbScfInput current_input = build_input_for_selected_raw_structures(
       load_result.input,
       load_result.raw_structure_data,
       current_selected_raw_structure_indices,

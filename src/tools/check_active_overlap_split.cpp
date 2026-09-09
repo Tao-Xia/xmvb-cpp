@@ -16,7 +16,7 @@
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/structures/structure_types.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -25,7 +25,7 @@ using Matrix =
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   int count = 4;
   double step = 1.0e-6;
 };
@@ -54,7 +54,7 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }

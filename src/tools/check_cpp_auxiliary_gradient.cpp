@@ -22,13 +22,13 @@
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   int count = 8;
   double step = 1.0e-6;
 };
@@ -46,13 +46,13 @@ struct FiniteDifferenceChainBreakdown {
 };
 
 bool use_standard_ri_active_space_path(
-    const xmvb::vb::CppVbInput& input) {
+    const xmvb::vb::VbScfInput& input) {
   return input.standard_two_electron_mode ==
       xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity;
 }
 
 bool has_materialized_ao_two_electron_integrals(
-    const xmvb::vb::CppVbInput& input) {
+    const xmvb::vb::VbScfInput& input) {
   return !input.ao_integral_input.ao_two_electron_integral_values.empty();
 }
 
@@ -100,7 +100,7 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -145,12 +145,12 @@ double compute_one_electron_reference_energy(
 }
 
 double evaluate_total_energy_from_auxiliary(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const std::vector<double>& auxiliary_orbital_matrix,
     const std::vector<double>& inactive_density_matrix,
     const std::vector<double>& ao_effective_h1e,
     double nuclear_repulsion_energy,
-    xmvb::vb::VBSCFAlgorithm algorithm) {
+    xmvb::vb::VbScfAlgorithm algorithm) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
   const int n_inactive_doubly_occupied_orbitals =
@@ -257,7 +257,7 @@ double evaluate_total_energy_from_auxiliary(
 }
 
 ActiveSpaceMatrices build_active_space_matrices(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const std::vector<double>& auxiliary_orbital_matrix,
     const std::vector<double>& ao_effective_h1e) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
@@ -447,7 +447,7 @@ std::vector<double> build_total_ao_effective_one_electron_gradient(
 }
 
 double evaluate_ao_effective_one_electron_objective(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const std::vector<double>& inactive_density_matrix,
     const std::vector<double>& ao_effective_one_electron_gradient) {
   xmvb::vb::AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;

@@ -14,7 +14,7 @@ namespace xmvb::vb {
 
 namespace {
 
-bool use_standard_ri_active_space_path(const CppVbInput& input) {
+bool use_standard_ri_active_space_path(const VbScfInput& input) {
   return input.standard_two_electron_mode ==
       StandardTwoElectronMode::ResolutionOfIdentity;
 }
@@ -53,7 +53,7 @@ double compute_one_electron_reference_energy(
 }
 
 TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const ActiveSpaceOrbitalPreparer& orbital_preparer,
     const AoEffectiveOneElectronBuilder& ao_effective_one_electron_builder,
     const ActiveSpaceOneElectronBuilder& active_space_one_electron_builder,

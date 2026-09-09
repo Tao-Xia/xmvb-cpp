@@ -3,7 +3,7 @@
 namespace xmvb::vb {
 
 StructureMatrixEvaluator::
-    StructureMatrixEvaluator(VBSCFAlgorithm algorithm)
+    StructureMatrixEvaluator(VbScfAlgorithm algorithm)
     : orbital_preparer_(),
       ao_effective_one_electron_builder_(),
       active_space_one_electron_builder_(),
@@ -24,7 +24,7 @@ StructureMatrixEvaluator::
       structure_builder_(std::move(structure_builder)) {}
 
 PreparedActiveSpaceContext StructureMatrixEvaluator::prepare_active_space(
-    const CppVbInput& input) const {
+    const VbScfInput& input) const {
   return prepare_timed_active_space_context(
              input,
              orbital_preparer_,
@@ -35,7 +35,7 @@ PreparedActiveSpaceContext StructureMatrixEvaluator::prepare_active_space(
 }
 
 StructureAccumulationResult StructureMatrixEvaluator::evaluate(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const PreparedActiveSpaceContext& prepared_active_space) const {
   return structure_builder_.build(
       input.structure_data.alpha_det,

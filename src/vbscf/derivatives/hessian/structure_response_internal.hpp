@@ -81,7 +81,7 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
  * selected-state bookkeeping are cached once here and reused.
  */
 struct AcceptedOuterResponseLinearResponseCache {
-  const CppVbInput* input = nullptr;
+  const VbScfInput* input = nullptr;
   const AcceptedPointContext* accepted_point_context = nullptr;
   const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks =
       nullptr;
@@ -93,7 +93,7 @@ struct AcceptedOuterResponseLinearResponseCache {
 
 AcceptedOuterResponseLinearResponseCache
 build_accepted_outer_response_linear_response_cache(
-    const CppVbInput* input,
+    const VbScfInput* input,
     const AcceptedPointContext* accepted_point_context,
     const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks);
 

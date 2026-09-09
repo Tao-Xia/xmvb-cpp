@@ -13,7 +13,7 @@
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -30,7 +30,7 @@ enum class Mode {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   Mode mode = Mode::Same;
   Spin spin = Spin::Alpha;
   int determinant_index_left = 0;
@@ -61,7 +61,7 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -124,7 +124,7 @@ double evaluate_same_spin_hamiltonian(
     const std::vector<double>& h1e_act,
     int n_active_orbitals,
     const std::vector<double>& packed_active_two_electron_integrals,
-    xmvb::vb::VBSCFAlgorithm algorithm) {
+    xmvb::vb::VbScfAlgorithm algorithm) {
   xmvb::vb::DeterminantOverlapResolver overlap_resolver;
   xmvb::vb::DeterminantHamiltonianResolver hamiltonian_resolver(algorithm);
   const auto overlap_submatrix = xmvb::vb::build_overlap_submatrix(
@@ -223,7 +223,7 @@ double evaluate_full_pair_hamiltonian(
     const std::vector<double>& h1e_act,
     int n_active_orbitals,
     const std::vector<double>& packed_active_two_electron_integrals,
-    xmvb::vb::VBSCFAlgorithm algorithm) {
+    xmvb::vb::VbScfAlgorithm algorithm) {
   xmvb::vb::DeterminantOverlapResolver overlap_resolver;
   xmvb::vb::DeterminantHamiltonianResolver hamiltonian_resolver(algorithm);
   const auto alpha_overlap_submatrix = xmvb::vb::build_overlap_submatrix(

@@ -53,7 +53,7 @@ class VbScfObjective {
   using TrialEvaluation = VbScfObjectiveTrialEvaluation;
 
   VbScfObjective(
-      const CppVbInput& input,
+      const VbScfInput& input,
       SparseParameterLayout parameter_view,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
@@ -64,7 +64,7 @@ class VbScfObjective {
   double operator()(const Eigen::VectorXd& parameter_vector,
                     Eigen::VectorXd& gradient);
 
-  const CppVbInput& last_input() const { return working_input_; }
+  const VbScfInput& last_input() const { return working_input_; }
   const OrbitalGradientResult& last_gradient_result() const {
     return last_gradient_result_;
   }
@@ -115,8 +115,8 @@ class VbScfObjective {
   VbScfObjective make_probe_copy() const;
 
  private:
-  CppVbInput working_input_;
-  mutable CppVbInput probe_input_buffer_;
+  VbScfInput working_input_;
+  mutable VbScfInput probe_input_buffer_;
   SparseParameterLayout parameter_view_;
   std::vector<int> selected_state_indices_;
   std::vector<double> state_average_weights_;

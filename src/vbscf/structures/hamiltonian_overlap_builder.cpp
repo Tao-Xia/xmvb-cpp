@@ -1093,14 +1093,14 @@ const DeterminantPairEvaluation& FullDeterminantStructureBuildResult::pair_evalu
 }
 
 FullDeterminantStructureHamiltonianOverlapBuilder::FullDeterminantStructureHamiltonianOverlapBuilder(
-    VBSCFAlgorithm algorithm)
+    VbScfAlgorithm algorithm)
     : determinant_overlap_resolver_(),
       determinant_hamiltonian_resolver_(algorithm) {}
 
 FullDeterminantStructureHamiltonianOverlapBuilder::FullDeterminantStructureHamiltonianOverlapBuilder(
     DeterminantOverlapResolver determinant_overlap_resolver,
     DeterminantHamiltonianResolver determinant_hamiltonian_resolver,
-    VBSCFAlgorithm algorithm)
+    VbScfAlgorithm algorithm)
     : determinant_overlap_resolver_(std::move(determinant_overlap_resolver)),
       determinant_hamiltonian_resolver_(std::move(determinant_hamiltonian_resolver)) {
   (void)algorithm;

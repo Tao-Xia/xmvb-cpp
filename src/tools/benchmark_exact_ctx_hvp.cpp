@@ -27,7 +27,7 @@
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -52,7 +52,7 @@ enum class BenchmarkComponent {
 };
 
 struct AcceptedPointBenchmarkContext {
-  xmvb::vb::CppVbInput input;
+  xmvb::vb::VbScfInput input;
   std::shared_ptr<xmvb::vb::OrbitalGradientResult> gradient_result;
   std::shared_ptr<const xmvb::vb::AcceptedPointContext>
       second_order_context;
@@ -278,7 +278,7 @@ AcceptedPointBenchmarkContext build_benchmark_context(
   }
 
   xmvb::vb::OrbitalGradientEvaluator evaluator(
-      xmvb::vb::VBSCFAlgorithm::Original);
+      xmvb::vb::VbScfAlgorithm::Original);
   context.gradient_result =
       std::make_shared<xmvb::vb::OrbitalGradientResult>(
           evaluator.evaluate_without_reference_energy_gradient(
@@ -421,7 +421,7 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
   std::cout << "audit_sampled_generalized_max = " << relative.eigenvalues().tail(1)[0] << '\n';
 
   auto finite_difference = [&](const Eigen::VectorXd& v, double step) -> Eigen::VectorXd {
-    OrbitalGradientEvaluator evaluator(VBSCFAlgorithm::Original);
+    OrbitalGradientEvaluator evaluator(VbScfAlgorithm::Original);
     auto plus = context.input, minus = context.input;
     plus.orbital_preparation_input = space.retract_step(context.input.orbital_preparation_input, v, step);
     minus.orbital_preparation_input = space.retract_step(context.input.orbital_preparation_input, v, -step);

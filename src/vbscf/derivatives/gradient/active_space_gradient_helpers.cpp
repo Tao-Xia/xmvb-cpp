@@ -7,7 +7,7 @@
 namespace xmvb::vb {
 
 void initialize_active_space_gradient_probe_result(
-    const CppVbInput& input,
+    const VbScfInput& input,
     const TimedPreparedActiveSpaceContext& timed_active_space_context,
     ActiveSpaceGradientResult* result) {
   if (result == nullptr) {
@@ -51,7 +51,7 @@ void initialize_active_space_gradient_probe_result(
 }
 
 void initialize_active_space_gradient_probe_result(
-    const CppVbInput& input,
+    const VbScfInput& input,
     TimedPreparedActiveSpaceContext&& timed_active_space_context,
     ActiveSpaceGradientResult* result) {
   if (result == nullptr) {

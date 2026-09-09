@@ -15,7 +15,7 @@
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -35,12 +35,12 @@ struct EnergyBreakdown {
 };
 
 double evaluate_active_eigenvalue(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
     const std::vector<double>& active_h1e,
     const std::vector<double>& packed_active_eri) {
   xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
-      xmvb::vb::VBSCFAlgorithm::Original);
+      xmvb::vb::VbScfAlgorithm::Original);
   const auto structure_matrices = structure_builder.build(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
@@ -113,7 +113,7 @@ void accumulate_g11_statistics(
 }
 
 EnergyBreakdown build_exact_breakdown(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
     double nuclear_repulsion_energy) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
@@ -169,7 +169,7 @@ EnergyBreakdown build_exact_breakdown(
 }
 
 EnergyBreakdown build_ri_breakdown(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
     double nuclear_repulsion_energy) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;

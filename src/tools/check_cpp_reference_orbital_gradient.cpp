@@ -10,13 +10,13 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   int count = 8;
   double step = 1.0e-6;
 };
@@ -81,7 +81,7 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--algorithm") {
       if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
+        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
       } else {
         throw std::invalid_argument("invalid algorithm: " + argument_value);
       }
@@ -108,8 +108,8 @@ Options parse_arguments(int argc, char** argv) {
 }
 
 double evaluate_reference_energy(
-    const xmvb::vb::CppVbInput& input,
-    xmvb::vb::VBSCFAlgorithm algorithm,
+    const xmvb::vb::VbScfInput& input,
+    xmvb::vb::VbScfAlgorithm algorithm,
     double nuclear_repulsion_energy) {
   xmvb::vb::VbScfEvaluator evaluator(algorithm);
   return evaluator.evaluate(input, nuclear_repulsion_energy).one_electron_reference_energy;
@@ -179,8 +179,8 @@ int main(int argc, char** argv) {
 
     for (int report_index = 0; report_index < n_to_report; ++report_index) {
       const int parameter_index = ranked_parameters[report_index].second;
-      xmvb::vb::CppVbInput plus_input = load_result.input;
-      xmvb::vb::CppVbInput minus_input = load_result.input;
+      xmvb::vb::VbScfInput plus_input = load_result.input;
+      xmvb::vb::VbScfInput minus_input = load_result.input;
       plus_input.orbital_preparation_input.orbital_value_table[
           parameter_index] += options.step;
       minus_input.orbital_preparation_input.orbital_value_table[

@@ -1,5 +1,5 @@
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
-#include "vb/runtime_utils.hpp"
+#include "vbscf/core/runtime_checks.hpp"
 
 #include <atomic>
 #include <chrono>

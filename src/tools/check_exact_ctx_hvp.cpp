@@ -26,7 +26,7 @@
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -236,7 +236,7 @@ Eigen::MatrixXd extract_active_auxiliary_gradient_block(
 }
 
 Eigen::VectorXd apply_active_space_gradient_direction_to_orbital_response(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const xmvb::vb::SparseParameterLayout& parameter_view,
     const xmvb::vb::OrbitalChart& nonredundant_space,
@@ -409,7 +409,7 @@ struct OrbitalBackpropInputs {
 };
 
 OrbitalBackpropInputs build_orbital_backprop_inputs(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::ActiveSpaceGradientResult& active_space_gradient_result) {
   if (input.standard_two_electron_mode ==
       xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity) {
@@ -540,7 +540,7 @@ OrbitalBackpropInputs build_orbital_backprop_inputs(
 }
 
 OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::ActiveSpaceGradientResult& active_space_gradient_result) {
   if (input.standard_two_electron_mode ==
       xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity) {
@@ -626,7 +626,7 @@ OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
 }
 
 OrbitalBackpropInputs build_orbital_backprop_inputs_from_active_gradient_direction(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
@@ -997,7 +997,7 @@ int count_support_slot_changes(
 }
 
 double inactive_overlap_inverse_identity_max_abs_diff(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result) {
   const int n_inactive_doubly_occupied_orbitals =
       (input.orbital_preparation_input.n_total_electrons -
@@ -1785,7 +1785,7 @@ std::vector<double> symmetric_average_storage(
 }
 
 Eigen::VectorXd backpropagate_active_gradient_direction_to_orbital_response(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const xmvb::vb::SparseParameterLayout& parameter_view,
     const xmvb::vb::OrbitalChart& nonredundant_space,
@@ -1869,7 +1869,7 @@ int main(int argc, char** argv) {
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto load_result =
         xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
-    xmvb::vb::CppVbInput input =
+    xmvb::vb::VbScfInput input =
         options.nonredundant_adapt
             ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)
             : load_result.input;
@@ -1890,9 +1890,9 @@ int main(int argc, char** argv) {
     }
 
     xmvb::vb::OrbitalGradientEvaluator evaluator(
-        xmvb::vb::VBSCFAlgorithm::Original);
+        xmvb::vb::VbScfAlgorithm::Original);
     xmvb::vb::ActiveSpaceGradientEvaluator active_space_evaluator(
-        xmvb::vb::VBSCFAlgorithm::Original);
+        xmvb::vb::VbScfAlgorithm::Original);
     const auto gradient_result =
         evaluator.evaluate_without_reference_energy_gradient(
             input,
@@ -2044,8 +2044,8 @@ int main(int argc, char** argv) {
             packed_direction);
     const double epsilon =
         finite_difference_step / std::max(1.0, packed_direction.norm());
-    xmvb::vb::CppVbInput plus_input = input;
-    xmvb::vb::CppVbInput minus_input = input;
+    xmvb::vb::VbScfInput plus_input = input;
+    xmvb::vb::VbScfInput minus_input = input;
     plus_input.orbital_preparation_input =
         nonredundant_space.retract_step(
             input.orbital_preparation_input,

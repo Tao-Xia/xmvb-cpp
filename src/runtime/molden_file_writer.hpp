@@ -23,6 +23,6 @@ namespace xmvb::vb {
  */
 std::filesystem::path write_molden_file(
     const std::filesystem::path& input_file_path,
-    const CppVbInput& input);
+    const VbScfInput& input);
 
 }  // namespace xmvb::vb

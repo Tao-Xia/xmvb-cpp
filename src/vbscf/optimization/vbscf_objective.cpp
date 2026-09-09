@@ -14,7 +14,7 @@
 #include "vbscf/orbitals/gauge/localized_representative.hpp"
 #include "vbscf/orbitals/orbital_preparation_input.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
-#include "vb/runtime_utils.hpp"
+#include "vbscf/core/runtime_checks.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/optimization/vector_operations.hpp"
 
@@ -933,7 +933,7 @@ Eigen::MatrixXd build_metric_preserving_oeo_repaired_normalized_orbital_matrix(
 }
 
 VbScfObjective::VbScfObjective(
-    const CppVbInput& input,
+    const VbScfInput& input,
     SparseParameterLayout parameter_view,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,

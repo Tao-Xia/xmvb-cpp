@@ -554,7 +554,7 @@ backpropagate_ri_active_pair_factors(
 ActiveSpaceTwoElectronBackpropagationResult
 ActiveSpaceTwoElectronBackpropagator::backpropagate(
     const std::vector<double>& ri_active_pair_factor_gradient,
-    const CppVbInput& input,
+    const VbScfInput& input,
     const OrbitalPreparationResult& orbital_preparation_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_basis_functions,

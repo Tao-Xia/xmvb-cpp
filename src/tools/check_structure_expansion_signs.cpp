@@ -12,7 +12,7 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
-#include "vb/vb_model_flags.hpp"
+#include "vbscf/core/model_flags.hpp"
 
 namespace {
 
@@ -426,7 +426,7 @@ int main(int argc, char** argv) {
 
     xmvb::core::GeneralizedEigensolver generalized_eigensolver;
     xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
-        xmvb::vb::VBSCFAlgorithm::Original);
+        xmvb::vb::VbScfAlgorithm::Original);
 
     std::cout << std::setprecision(12);
     std::cout << "input_path = " << options.input_path << '\n';

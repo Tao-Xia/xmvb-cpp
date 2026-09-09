@@ -26,7 +26,7 @@ enum class PfTwoElectronMode {
 /**
  * @brief End-to-end input bundle for the C++ VB matrix path.
  */
-struct CppVbInput {
+struct VbScfInput {
   /**
    * @brief Expanded determinant/structure data derived from the raw VB structures.
    */
@@ -82,5 +82,8 @@ struct CppVbInput {
   mutable std::shared_ptr<const LibcintRiIntegralProviderResult>
       ri_integral_provider_result;
 };
+
+// Temporary source-compatibility alias for the excluded DeepVBH integration.
+using CppVbInput = VbScfInput;
 
 }  // namespace xmvb::vb

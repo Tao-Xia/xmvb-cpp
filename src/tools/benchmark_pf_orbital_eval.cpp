@@ -141,7 +141,7 @@ void print_summary(
 
 template <typename Basis>
 void accumulate_benchmark(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const Basis& basis,
     double nuclear_repulsion_energy,
     int repeat,

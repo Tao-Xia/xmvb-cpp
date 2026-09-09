@@ -76,7 +76,7 @@ struct CppVbInputLoadOptions {
 };
 
 struct CppVbInputLoadResult {
-  CppVbInput input;
+  VbScfInput input;
   RawStructureData raw_structure_data;
   CppVbStaticMoleculeMetadata static_molecule_metadata;
   RuntimeExtractionTimings runtime_timings{};
@@ -106,9 +106,9 @@ struct CppVbInputLoadResult {
  * numerical kernels also remain in C++.
  *
  * @param input_file_path Input deck used to initialize the runtime bundle.
- * @return CppVbInput Fully populated matrix-builder input.
+ * @return VbScfInput Fully populated matrix-builder input.
  */
-CppVbInput load_cpp_vb_input(
+VbScfInput load_cpp_vb_input(
     const std::string& input_file_path,
     const CppVbInputLoadOptions& options = {});
 
