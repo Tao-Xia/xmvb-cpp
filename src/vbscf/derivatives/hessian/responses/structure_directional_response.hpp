@@ -20,10 +20,4 @@ build_selected_state_projected_directional_structure_matrices(
     const std::vector<double>& delta_packed_active_two_electron_integrals,
     const SameSpinDirectionalPairCache& directional_pair_cache);
 
-SelectedStateGeneralizedEigenDirectionalResponse
-build_selected_state_generalized_eigen_directional_response(
-    const AcceptedPointContext& accepted_point_context,
-    const SelectedStateProjectedDirectionalMatrices&
-        projected_directional_structure_matrices);
-
 }  // namespace xmvb::vb
