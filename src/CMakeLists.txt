@@ -31,7 +31,7 @@ find_path(EIGEN3_INCLUDE_DIR Eigen/Core
 
 include(vbscf/sources.cmake)
 
-set(XMVB_CPP_RUNTIME_CORE_SOURCES
+set(XMVB_RUNTIME_SOURCES
   runtime/orbital_block_guess_builder.cpp
   runtime/closed_shell_fock_builder.cpp
   runtime/orbital_initial_guess_builder.cpp
@@ -51,7 +51,25 @@ set(XMVB_CPP_RUNTIME_CORE_SOURCES
   runtime/materialized_ao_integral_input_builder.cpp
 )
 
-set(XMVB_CPP_RUNTIME_SOURCES ${XMVB_CPP_RUNTIME_CORE_SOURCES})
+# Keep runtime ownership as strict as the canonical VBSCF manifest. A new
+# translation unit must be assigned here before it can enter the build.
+file(
+  GLOB _xmvb_discovered_runtime_sources
+  CONFIGURE_DEPENDS
+  RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+  "${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.cpp")
+set(_xmvb_declared_runtime_sources ${XMVB_RUNTIME_SOURCES})
+list(SORT _xmvb_declared_runtime_sources)
+list(SORT _xmvb_discovered_runtime_sources)
+if (NOT "${_xmvb_declared_runtime_sources}" STREQUAL
+    "${_xmvb_discovered_runtime_sources}")
+  message(FATAL_ERROR
+    "src/CMakeLists.txt does not own every runtime .cpp exactly once.\n"
+    "Declared: ${_xmvb_declared_runtime_sources}\n"
+    "Discovered: ${_xmvb_discovered_runtime_sources}")
+endif()
+unset(_xmvb_declared_runtime_sources)
+unset(_xmvb_discovered_runtime_sources)
 
 add_library(xmvb_cpp_openmp INTERFACE)
 target_link_libraries(xmvb_cpp_openmp
@@ -90,7 +108,7 @@ else()
   target_link_libraries(xmvb_cpp_vb PUBLIC ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
 endif()
 
-add_library(xmvb_cpp_runtime STATIC ${XMVB_CPP_RUNTIME_SOURCES})
+add_library(xmvb_cpp_runtime STATIC ${XMVB_RUNTIME_SOURCES})
 target_include_directories(xmvb_cpp_runtime
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
