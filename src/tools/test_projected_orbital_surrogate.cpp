@@ -4,8 +4,8 @@
 
 #include <Eigen/Cholesky>
 
-#include "vb/orbital/normalized_orbital_curvature.hpp"
-#include "vb/orbital/projected_orbital_surrogate.hpp"
+#include "vbscf/optimization/preconditioners/normalized_orbital_curvature.hpp"
+#include "vbscf/optimization/preconditioners/projected_orbital_surrogate.hpp"
 
 namespace {
 void require(bool condition, const char* message) {

@@ -4,8 +4,8 @@
 
 #include <Eigen/Core>
 
-#include "vb/orbital/libcint_input.hpp"
-#include "vb/orbital/orbital_preparation_input.hpp"
+#include "vbscf/integrals/ao/libcint_input.hpp"
+#include "vbscf/orbitals/orbital_preparation_input.hpp"
 #include "vbscf/orbitals/charts/orbital_block_partition.hpp"
 
 namespace xmvb::vb {

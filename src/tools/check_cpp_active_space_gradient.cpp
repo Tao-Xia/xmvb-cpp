@@ -12,7 +12,7 @@
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/full_structure_builder.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 

@@ -1,7 +1,7 @@
 #include <iostream>
 #include <stdexcept>
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/active_space_orbital_backpropagator.hpp"
+#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/orbitals/orbital_pullback.hpp"
 
 int main() {
   try {

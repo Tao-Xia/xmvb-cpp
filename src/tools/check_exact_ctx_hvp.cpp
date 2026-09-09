@@ -14,10 +14,10 @@
 #include <Eigen/LU>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/orbital/active_space_matrix_backpropagator.hpp"
-#include "vb/orbital/active_space_orbital_backpropagator.hpp"
-#include "vb/orbital/active_space_two_electron_backpropagator.hpp"
-#include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
+#include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
+#include "vbscf/orbitals/orbital_pullback.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
+#include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"

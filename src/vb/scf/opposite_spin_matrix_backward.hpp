@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "vb/matrices/same_spin_pair_cache.hpp"
-#include "vb/orbital/active_space_two_electron_result.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_result.hpp"
 #include "vb/scf/selected_state_determinant_matrices.hpp"
 
 namespace xmvb::vb {

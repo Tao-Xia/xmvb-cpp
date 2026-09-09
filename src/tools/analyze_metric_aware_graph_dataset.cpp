@@ -18,7 +18,7 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/legacy_structure_overlap.hpp"
 #include "vb/matrices/union_graph_screening.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
+#include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace {

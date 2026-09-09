@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vb/orbital/orbital_preparation_input.hpp"
+#include "vbscf/orbitals/orbital_preparation_input.hpp"
 
 namespace xmvb::vb {
 

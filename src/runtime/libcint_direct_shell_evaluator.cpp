@@ -66,7 +66,7 @@ void cint3c2e_cart_optimizer(
     double* env);
 }
 
-#include "vb/orbital/libcint_input_utils.hpp"
+#include "vbscf/integrals/ao/libcint_input_validation.hpp"
 
 namespace xmvb::vb {
 

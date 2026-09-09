@@ -9,9 +9,9 @@
 #include <Eigen/Core>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/orbital/active_space_one_electron_builder.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/ao_effective_one_electron_builder.hpp"
+#include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
+#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 
 namespace {
 

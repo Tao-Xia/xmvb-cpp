@@ -4,7 +4,7 @@
 #include <string>
 
 #include "runtime/input_deck_model.hpp"
-#include "vb/orbital/libcint_input.hpp"
+#include "vbscf/integrals/ao/libcint_input.hpp"
 
 namespace xmvb::vb {
 

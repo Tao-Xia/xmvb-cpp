@@ -4,12 +4,12 @@
 #include <vector>
 
 #include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/orbital/active_space_matrix_backpropagator.hpp"
-#include "vb/orbital/active_space_orbital_backpropagator.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/active_space_two_electron_backpropagator.hpp"
-#include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
-#include "vb/orbital/ao_effective_one_electron_builder.hpp"
+#include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
+#include "vbscf/orbitals/orbital_pullback.hpp"
+#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
+#include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
+#include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_result.hpp"
 #include "vb/vbscf_algorithm.hpp"

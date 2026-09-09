@@ -10,8 +10,8 @@
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/cpp_vb_input_ri_cache.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/ao_effective_one_electron_ri_operator.hpp"
+#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/integrals/ao/ao_effective_one_electron_ri_operator.hpp"
 
 namespace {
 

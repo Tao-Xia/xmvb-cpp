@@ -17,7 +17,7 @@
 #include "vb/matrices/same_spin_pair_cache.hpp"
 #include "vb/matrices/spin_pair_utils.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 
 namespace {
 

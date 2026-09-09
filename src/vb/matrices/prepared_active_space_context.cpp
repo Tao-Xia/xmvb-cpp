@@ -8,7 +8,7 @@
 #include <Eigen/Core>
 
 #include "vb/matrices/cpp_vb_input_ri_cache.hpp"
-#include "vb/orbital/ri_active_space_two_electron_builder.hpp"
+#include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
 
 namespace xmvb::vb {
 

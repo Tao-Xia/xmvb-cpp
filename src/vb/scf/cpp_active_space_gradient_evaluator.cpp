@@ -24,7 +24,7 @@
 #include "vb/matrices/spin_pair_utils.hpp"
 #include "vb/matrices/structure_types.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
 #include "vb/scf/cpp_active_space_gradient_result_utils.hpp"
 #include "vb/scf/exact_ctx_memory_accounting.hpp"

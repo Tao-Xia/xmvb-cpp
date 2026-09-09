@@ -4,7 +4,7 @@
 
 #include <Eigen/Core>
 
-#include "vb/orbital/ao_integral_input.hpp"
+#include "vbscf/integrals/ao/ao_integral_input.hpp"
 
 namespace xmvb::vb {
 

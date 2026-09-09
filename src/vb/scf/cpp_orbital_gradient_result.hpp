@@ -5,8 +5,8 @@
 #include <memory>
 #include <vector>
 
-#include "vb/orbital/ao_effective_one_electron_result.hpp"
-#include "vb/orbital/orbital_preparation_result.hpp"
+#include "vbscf/integrals/ao/ao_effective_one_electron_result.hpp"
+#include "vbscf/orbitals/orbital_preparation_result.hpp"
 #include "vb/scf/cpp_vb_scf_result.hpp"
 
 namespace xmvb::vb {

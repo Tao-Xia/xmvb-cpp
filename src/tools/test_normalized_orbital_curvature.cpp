@@ -4,7 +4,7 @@
 
 #include <Eigen/QR>
 
-#include "vb/orbital/normalized_orbital_curvature.hpp"
+#include "vbscf/optimization/preconditioners/normalized_orbital_curvature.hpp"
 
 namespace {
 void require(bool condition, const char* message) {

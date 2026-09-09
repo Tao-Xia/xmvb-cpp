@@ -77,6 +77,7 @@ ABI-wide namespace change with file ownership changes.
 6. Remove forwarding headers after downstream users have migrated.
 
 Migrated slices now include `optimization`, the single-step evaluator in
-`workflow`, the orbital chart/gauge layer, and its independent chart audit.
-Remaining files listed in `sources.cmake` retain their legacy paths but already
-have explicit logical ownership.
+`workflow`, the complete orbital/chart/gauge layer, AO and active-space
+`integrals`, and the independent chart audit. Legacy orbital algorithms are
+isolated under `legacy/orbitals`. Remaining files listed in `sources.cmake`
+retain their legacy paths but already have explicit logical ownership.

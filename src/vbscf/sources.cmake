@@ -33,30 +33,39 @@ set(XMVB_VBSCF_DETERMINANT_AND_STRUCTURE_SOURCES
   vb/scf/selected_state_determinant_matrices.cpp
 )
 
-set(XMVB_VBSCF_ORBITAL_AND_INTEGRAL_SOURCES
-  vb/orbital/active_space_matrix_backpropagator.cpp
-  vb/orbital/active_space_one_electron_builder.cpp
-  vb/orbital/active_space_orbital_backpropagator.cpp
-  vb/orbital/active_space_orbital_preparer.cpp
-  vb/orbital/ao_two_electron_pair_index_utils.cpp
-  vb/orbital/active_space_two_electron_backpropagator.cpp
-  vb/orbital/active_space_two_electron_builder.cpp
-  vb/orbital/active_space_two_electron_utils.cpp
-  vb/orbital/ao_effective_one_electron_backpropagator.cpp
-  vb/orbital/ao_effective_one_electron_builder.cpp
-  vb/orbital/ao_effective_one_electron_graph_operator.cpp
-  vb/orbital/ao_effective_one_electron_ri_operator.cpp
-  vb/orbital/libcint_input_utils.cpp
-  vb/orbital/legacy_style_orbital_gradient_projector.cpp
-  vb/orbital/legacy_jacobi_diagonalizer.cpp
+set(XMVB_VBSCF_ORBITAL_SOURCES
+  vbscf/orbitals/orbital_parameter_codec.cpp
+  vbscf/orbitals/orbital_preparer.cpp
+  vbscf/orbitals/orbital_pullback.cpp
   vbscf/orbitals/gauge/localized_representative.cpp
   vbscf/orbitals/charts/orbital_block_partition.cpp
   vbscf/orbitals/charts/support_layout_adapter.cpp
   vbscf/orbitals/charts/orbital_chart.cpp
-  vb/orbital/orbital_parameter_codec.cpp
   vbscf/orbitals/charts/sparse_parameter_layout.cpp
   vbscf/orbitals/gauge/support_preserving_gauge.cpp
-  vb/orbital/ri_active_space_two_electron_builder.cpp
+)
+
+set(XMVB_VBSCF_AO_INTEGRAL_SOURCES
+  vbscf/integrals/ao/ao_effective_one_electron_backpropagator.cpp
+  vbscf/integrals/ao/ao_effective_one_electron_builder.cpp
+  vbscf/integrals/ao/ao_effective_one_electron_graph_operator.cpp
+  vbscf/integrals/ao/ao_effective_one_electron_ri_operator.cpp
+  vbscf/integrals/ao/libcint_input_validation.cpp
+  vbscf/integrals/ao/two_electron_pair_index.cpp
+)
+
+set(XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES
+  vbscf/integrals/active/active_space_matrix_backpropagator.cpp
+  vbscf/integrals/active/active_space_one_electron_builder.cpp
+  vbscf/integrals/active/active_space_two_electron_backpropagator.cpp
+  vbscf/integrals/active/active_space_two_electron_builder.cpp
+  vbscf/integrals/active/active_two_electron_operator.cpp
+  vbscf/integrals/active/ri_active_space_two_electron_builder.cpp
+)
+
+set(XMVB_VBSCF_LEGACY_SOURCES
+  vbscf/legacy/orbitals/jacobi_diagonalizer.cpp
+  vbscf/legacy/orbitals/orbital_gradient_projector.cpp
 )
 
 set(XMVB_VBSCF_DERIVATIVE_SOURCES
@@ -101,11 +110,14 @@ set(XMVB_CPP_CORE_SOURCES
   core/linear_algebra/generalized_eigensolver.cpp
   ${XMVB_VBSCF_APPROXIMATION_SOURCES}
   ${XMVB_VBSCF_DETERMINANT_AND_STRUCTURE_SOURCES}
-  ${XMVB_VBSCF_ORBITAL_AND_INTEGRAL_SOURCES}
+  ${XMVB_VBSCF_ORBITAL_SOURCES}
+  ${XMVB_VBSCF_AO_INTEGRAL_SOURCES}
+  ${XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES}
   ${XMVB_VBSCF_DERIVATIVE_SOURCES}
   ${XMVB_VBSCF_DIAGNOSTIC_SOURCES}
   ${XMVB_VBSCF_OPTIMIZATION_SOURCES}
   ${XMVB_VBSCF_WORKFLOW_SOURCES}
   ${XMVB_VBSCF_ADAPTIVE_SOURCES}
   ${XMVB_VBSCF_EXPERIMENTAL_SOURCES}
+  ${XMVB_VBSCF_LEGACY_SOURCES}
 )

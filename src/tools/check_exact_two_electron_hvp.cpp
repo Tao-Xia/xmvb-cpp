@@ -8,8 +8,8 @@
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
-#include "vb/orbital/active_space_two_electron_backpropagator.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 
 namespace {
 

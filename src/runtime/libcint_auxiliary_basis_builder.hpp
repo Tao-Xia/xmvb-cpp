@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vb/orbital/libcint_input.hpp"
+#include "vbscf/integrals/ao/libcint_input.hpp"
 
 namespace xmvb::vb {
 

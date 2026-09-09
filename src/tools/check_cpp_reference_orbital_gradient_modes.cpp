@@ -11,8 +11,8 @@
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/matrices/cpp_vb_input_ri_cache.hpp"
-#include "vb/orbital/active_space_orbital_backpropagator.hpp"
-#include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
+#include "vbscf/orbitals/orbital_pullback.hpp"
+#include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"

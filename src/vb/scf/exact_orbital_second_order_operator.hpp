@@ -7,7 +7,7 @@
 
 #include "vb/matrices/cpp_vb_input.hpp"
 #include "vb/matrices/structure_coefficient_blocks.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"

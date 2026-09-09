@@ -13,7 +13,7 @@
 #include "vb/matrices/cofactor_differential.hpp"
 #include "vb/matrices/support_local_contraction_kernels.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vb/scf/same_spin_matrix_backward.hpp"
 
 namespace xmvb::vb {

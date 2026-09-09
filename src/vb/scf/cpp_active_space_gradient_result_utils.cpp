@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 
 namespace xmvb::vb {
 

@@ -10,7 +10,7 @@
 #include "vb/matrices/cpp_vb_input_ri_cache.hpp"
 #include "vb/matrices/eigen_matrix_storage_utils.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
 
 namespace xmvb::vb {

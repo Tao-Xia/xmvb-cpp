@@ -5,8 +5,8 @@
 #include <limits>
 #include <stdexcept>
 
-#include "vb/orbital/ao_effective_one_electron_graph_operator.hpp"
-#include "vb/orbital/ao_two_electron_pair_index_utils.hpp"
+#include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
+#include "vbscf/integrals/ao/two_electron_pair_index.hpp"
 
 namespace xmvb::vb {
 

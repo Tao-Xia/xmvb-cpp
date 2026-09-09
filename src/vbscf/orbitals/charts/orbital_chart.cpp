@@ -15,8 +15,8 @@
 #include <Eigen/SVD>
 #include "vbscf/orbitals/charts/orbital_block_partition.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vb/orbital/normalized_orbital_curvature.hpp"
-#include "vb/orbital/projected_orbital_surrogate.hpp"
+#include "vbscf/optimization/preconditioners/normalized_orbital_curvature.hpp"
+#include "vbscf/optimization/preconditioners/projected_orbital_surrogate.hpp"
 
 namespace xmvb::vb {
 

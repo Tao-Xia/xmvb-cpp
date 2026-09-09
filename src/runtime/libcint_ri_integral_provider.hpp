@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "runtime/libcint_auxiliary_basis_builder.hpp"
-#include "vb/orbital/libcint_input.hpp"
+#include "vbscf/integrals/ao/libcint_input.hpp"
 
 namespace xmvb::vb {
 

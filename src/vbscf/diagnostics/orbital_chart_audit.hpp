@@ -2,7 +2,7 @@
 
 #include <Eigen/Core>
 
-#include "vb/orbital/orbital_preparation_input.hpp"
+#include "vbscf/orbitals/orbital_preparation_input.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 
 namespace xmvb::vb {

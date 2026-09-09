@@ -29,7 +29,7 @@
 #include "runtime/materialized_ao_integral_input_builder.hpp"
 #include "vb/matrices/full_structure_expander.hpp"
 #include "vb/matrices/raw_structure_subspace_selector.hpp"
-#include "vb/orbital/libcint_input_utils.hpp"
+#include "vbscf/integrals/ao/libcint_input_validation.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 

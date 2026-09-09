@@ -12,7 +12,7 @@
 #include <Eigen/Eigenvalues>
 
 #include "vbscf/orbitals/gauge/localized_representative.hpp"
-#include "vb/orbital/orbital_preparation_input.hpp"
+#include "vbscf/orbitals/orbital_preparation_input.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 #include "vb/runtime_utils.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"

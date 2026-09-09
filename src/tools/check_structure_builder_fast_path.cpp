@@ -11,7 +11,7 @@
 #include "vb/matrices/full_structure_builder.hpp"
 #include "vb/matrices/prepared_active_space_context.hpp"
 #include "vb/matrices/same_spin_pair_cache.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 
 namespace {
 

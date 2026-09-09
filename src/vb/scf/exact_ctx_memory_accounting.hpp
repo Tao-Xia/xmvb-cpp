@@ -11,7 +11,7 @@
 #include "vb/matrices/same_spin_pair_cache.hpp"
 #include "vb/matrices/structure_coefficient_blocks.hpp"
 #include "vb/matrices/structure_types.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
 #include "vb/scf/exact_orbital_second_order_operator_outer_response_internal.hpp"
 
