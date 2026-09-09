@@ -1,4 +1,6 @@
 #include "vb/matrices/spin_pair_utils.hpp"
+#include "vb/matrices/cofactor_differential.hpp"
+#include <Eigen/LU>
 
 #include <algorithm>
 #include <stdexcept>
@@ -9,6 +11,37 @@
 #include "vb/orbital/active_space_two_electron_utils.hpp"
 
 namespace xmvb::vb {
+
+Eigen::MatrixXd build_spin_antisymmetrized_interaction_matrix(
+    const std::vector<int>& occ_L, const std::vector<int>& occ_R,
+    int n_active_orbitals, const ActiveSpaceTwoElectronView& view) {
+  const int n=occ_L.size(), m=n*(n-1)/2;
+  Eigen::MatrixXd g(m,m);
+  for (int j=1;j<n;++j) for (int i=0;i<j;++i)
+    for (int l=1;l<n;++l) for (int k=0;k<l;++k) {
+      const auto pair=TwoElectronIndexer::packed_pair_index;
+      g(j*(j-1)/2+i,l*(l-1)/2+k) =
+          lookup_active_space_two_electron_kernel_value(view,pair(occ_R[i],occ_L[k]),pair(occ_R[j],occ_L[l]),n_active_orbitals) -
+          lookup_active_space_two_electron_kernel_value(view,pair(occ_R[i],occ_L[l]),pair(occ_R[j],occ_L[k]),n_active_orbitals);
+    }
+  return g;
+}
+
+Eigen::MatrixXd build_spin_antisymmetrized_interaction_direction(
+    const std::vector<int>& occ_L, const std::vector<int>& occ_R,
+    const std::vector<double>& packed_direction) {
+  const int n=occ_L.size(), m=n*(n-1)/2;
+  Eigen::MatrixXd g=Eigen::MatrixXd::Zero(m,m);
+  if (packed_direction.empty()) return g;
+  for (int j=1;j<n;++j) for (int i=0;i<j;++i)
+    for (int l=1;l<n;++l) for (int k=0;k<l;++k) {
+      const auto index=TwoElectronIndexer::two_electron_storage_index;
+      g(j*(j-1)/2+i,l*(l-1)/2+k) =
+          packed_direction[index(occ_R[i],occ_L[k],occ_R[j],occ_L[l])] -
+          packed_direction[index(occ_R[i],occ_L[l],occ_R[j],occ_L[k])];
+    }
+  return g;
+}
 
 namespace {
 
@@ -620,6 +653,9 @@ Eigen::MatrixXd build_inverse_overlap_submatrix_from_result(
 
 Eigen::MatrixXd build_overlap_submatrix_from_result(
     const DeterminantOverlapResult& det_ovlp_result) {
+  if (det_ovlp_result.overlap_submatrix.rows() == det_ovlp_result.n_electrons &&
+      det_ovlp_result.overlap_submatrix.cols() == det_ovlp_result.n_electrons)
+    return det_ovlp_result.overlap_submatrix;
   if (det_ovlp_result.n_electrons < 0) {
     throw std::invalid_argument("det_ovlp_result.n_electrons must be non-negative");
   }
@@ -683,12 +719,12 @@ double calc_second_order_cofactor(
 
   if (det_ovlp_result.nullity == 0 &&
       det_ovlp_result.overlap_determinant != 0.0) {
-    const Eigen::MatrixXd cofactor_1st = calc_cofactor_1st(det_ovlp_result);
-    return (cofactor_1st(right_first, left_first) *
-                cofactor_1st(right_second, left_second) -
-            cofactor_1st(right_first, left_second) *
-                cofactor_1st(right_second, left_first)) /
-        det_ovlp_result.overlap_determinant;
+    const Eigen::MatrixXd minor = build_deleted_minor_matrix(
+        build_overlap_submatrix_from_result(det_ovlp_result),
+        {right_first, right_second}, {left_first, left_second});
+    const double sign = ((right_first + right_second + left_first + left_second) % 2 == 0)
+                            ? 1.0 : -1.0;
+    return sign * (minor.rows() == 0 ? 1.0 : minor.determinant());
   }
 
   require_svd_overlap_result(det_ovlp_result);
@@ -891,37 +927,7 @@ Eigen::MatrixXd build_directional_first_cofactor_matrix(
     return delta_cofactor;
   }
 
-  if (det_ovlp_result.nullity == 0 &&
-      det_ovlp_result.overlap_determinant != 0.0) {
-    const Eigen::MatrixXd inverse_overlap_submatrix =
-        build_inverse_overlap_submatrix_from_result(det_ovlp_result);
-    const double delta_overlap_determinant =
-        (calc_cofactor_1st(det_ovlp_result).cwiseProduct(delta_overlap_block)).sum();
-    const Eigen::MatrixXd delta_inverse_overlap_submatrix =
-        -inverse_overlap_submatrix *
-        delta_overlap_block *
-        inverse_overlap_submatrix;
-    delta_cofactor =
-        delta_overlap_determinant *
-        inverse_overlap_submatrix.transpose();
-    delta_cofactor.noalias() +=
-        det_ovlp_result.overlap_determinant *
-        delta_inverse_overlap_submatrix.transpose();
-    return delta_cofactor;
-  }
-
-  for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    for (int right_row = 0; right_row < n_electrons; ++right_row) {
-      delta_cofactor(right_row, left_column) =
-          calc_directional_deleted_minor_determinant(
-              overlap_block,
-              delta_overlap_block,
-              {right_row},
-              {left_column},
-              overlap_resolver);
-    }
-  }
-  return delta_cofactor;
+  return CofactorDifferential(overlap_block).first(delta_overlap_block);
 }
 
 SameSpinPhiResult compute_same_spin_original_phi(

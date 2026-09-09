@@ -100,29 +100,11 @@ std::size_t structure_matrix_index(
 }
 
 int structure_matrix_tile_size() {
-  const char* env_value = std::getenv("XMVB_CPP_STRUCTURE_TILE_SIZE");
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return 256;
-  }
-  const int tile_size = std::atoi(env_value);
-  if (tile_size <= 0) {
-    throw std::invalid_argument(
-        "XMVB_CPP_STRUCTURE_TILE_SIZE must be a positive integer");
-  }
-  return tile_size;
+  return 256;
 }
 
 int structure_matrix_tile_cache_tiles() {
-  const char* env_value = std::getenv("XMVB_CPP_STRUCTURE_TILE_CACHE_TILES");
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return 4;
-  }
-  const int cache_tiles = std::atoi(env_value);
-  if (cache_tiles <= 0) {
-    throw std::invalid_argument(
-        "XMVB_CPP_STRUCTURE_TILE_CACHE_TILES must be a positive integer");
-  }
-  return cache_tiles;
+  return 4;
 }
 
 int forward_structure_matrix_thread_count(int n_structures) {

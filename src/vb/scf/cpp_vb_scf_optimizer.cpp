@@ -30,6 +30,10 @@
 #include "vb/scf/exact_orbital_second_order_operator.hpp"
 #include "vb/scf/orbital_objective.hpp"
 #include "vb/scf/optimizer_types.hpp"
+#include "vb/scf/orthonormal_hvp_basis.hpp"
+#include "vb/scf/positive_conjugate_basis.hpp"
+#include "vb/scf/positive_ritz_secants.hpp"
+#include "vb/scf/spectral_trust_region.hpp"
 #include "vb/scf/scf_vector_utilities.hpp"
 
 namespace xmvb::vb {
@@ -58,8 +62,8 @@ const char* bool_name(bool value) {
   return value ? "true" : "false";
 }
 
-double inexact_newton_forcing_term(double gradient_inf_norm) {
-  if (!std::isfinite(gradient_inf_norm) || gradient_inf_norm <= 0.0) {
+double inexact_newton_forcing_term(double gradient_norm) {
+  if (!std::isfinite(gradient_norm) || gradient_norm <= 0.0) {
     return 0.5;
   }
   // Dembo-Eisenstat-Steihaug style inexact Newton forcing. Far from a
@@ -70,7 +74,7 @@ double inexact_newton_forcing_term(double gradient_inf_norm) {
   constexpr double kMinimumForcingTerm = 1.0e-3;
   constexpr double kMaximumForcingTerm = 0.5;
   return std::clamp(
-      std::sqrt(gradient_inf_norm),
+      std::sqrt(gradient_norm),
       kMinimumForcingTerm,
       kMaximumForcingTerm);
 }
@@ -768,72 +772,7 @@ bool truncated_newton_step_is_usable(
       step.reduced_step.squaredNorm() > 0.0 &&
       std::isfinite(step.predicted_decrease) &&
       step.predicted_decrease > 0.0 &&
-      reduced_gradient.dot(step.reduced_step) < 0.0;
-}
-
-bool append_truncated_newton_krylov_basis_vector(
-    const NonredundantRetractionMetric& retraction_metric,
-    const Eigen::VectorXd& candidate_vector,
-    const Eigen::VectorXd& hessian_times_candidate,
-    std::vector<Eigen::VectorXd>* basis_vectors,
-    std::vector<Eigen::VectorXd>* tangent_basis_vectors,
-    std::vector<Eigen::VectorXd>* hessian_basis_vectors) {
-  if (basis_vectors == nullptr ||
-      tangent_basis_vectors == nullptr ||
-      hessian_basis_vectors == nullptr ||
-      candidate_vector.size() != hessian_times_candidate.size() ||
-      candidate_vector.size() == 0 ||
-      !candidate_vector.allFinite() ||
-      !hessian_times_candidate.allFinite()) {
-    return false;
-  }
-
-  Eigen::VectorXd orthogonal_vector = candidate_vector;
-  Eigen::VectorXd orthogonal_hessian_vector = hessian_times_candidate;
-  Eigen::VectorXd orthogonal_tangent =
-      retraction_metric.tangent(candidate_vector);
-  const double candidate_norm = orthogonal_tangent.norm();
-  if (!(candidate_norm > 0.0) || !std::isfinite(candidate_norm)) {
-    return false;
-  }
-
-  // Orthonormalize in the accepted-point retraction metric
-  //   <u,v>_G = (J u)^T (J v).
-  // The reduced basis columns are G-orthonormal, while the cached tangent
-  // columns keep reorthogonalization and cached Ritz solves matrix-free.
-  for (int orthogonalization_pass = 0;
-       orthogonalization_pass < 2;
-       ++orthogonalization_pass) {
-    for (std::size_t basis_index = 0;
-         basis_index < basis_vectors->size();
-         ++basis_index) {
-      const double coefficient =
-          (*tangent_basis_vectors)[basis_index].dot(orthogonal_tangent);
-      if (!std::isfinite(coefficient)) {
-        return false;
-      }
-      orthogonal_vector.noalias() -=
-          coefficient * (*basis_vectors)[basis_index];
-      orthogonal_tangent.noalias() -=
-          coefficient * (*tangent_basis_vectors)[basis_index];
-      orthogonal_hessian_vector.noalias() -=
-          coefficient * (*hessian_basis_vectors)[basis_index];
-    }
-  }
-
-  const double linear_dependence_tolerance =
-      std::sqrt(std::numeric_limits<double>::epsilon());
-  const double orthogonal_norm = orthogonal_tangent.norm();
-  if (!(orthogonal_norm >
-        linear_dependence_tolerance * candidate_norm) ||
-      !std::isfinite(orthogonal_norm)) {
-    return false;
-  }
-
-  basis_vectors->push_back(orthogonal_vector / orthogonal_norm);
-  tangent_basis_vectors->push_back(orthogonal_tangent / orthogonal_norm);
-  hessian_basis_vectors->push_back(orthogonal_hessian_vector / orthogonal_norm);
-  return true;
+      reduced_gradient.dot(step.reduced_step) <= 0.0;
 }
 
 TruncatedNewtonKrylovSubspace build_truncated_newton_krylov_subspace(
@@ -880,7 +819,7 @@ TruncatedNewtonKrylovSubspace build_truncated_newton_krylov_subspace(
   krylov_subspace.reduced_hessian =
       0.5 *
       (krylov_subspace.reduced_hessian +
-       krylov_subspace.reduced_hessian.transpose());
+       krylov_subspace.reduced_hessian.transpose()).eval();
   if (!truncated_newton_krylov_subspace_is_usable(
           krylov_subspace,
           reduced_size)) {
@@ -928,150 +867,14 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
     return result;
   }
 
-  const double radius_squared = trust_radius * trust_radius;
-  const double spectral_scale = reduced_hessian.cwiseAbs().maxCoeff();
+  const auto spectral_solution = solve_spectral_trust_region(
+      eigenvalues, projected_gradient_in_eigenbasis, trust_radius);
+  const Eigen::VectorXd& eigen_coordinates = spectral_solution.step;
+  const double trust_region_shift = spectral_solution.shift;
+  const double minimum_eigenvalue = eigenvalues.minCoeff();
+  const double spectral_scale = eigenvalues.cwiseAbs().maxCoeff();
   constexpr double kShiftToleranceFactor =
       64.0 * std::numeric_limits<double>::epsilon();
-  constexpr double kRelativeRadiusTolerance = 1.0e-10;
-  auto solve_shifted_subspace_system =
-      [&](double lambda,
-          Eigen::VectorXd* eigen_coordinates,
-          double* squared_norm) -> bool {
-        eigen_coordinates->resize(eigenvalues.size());
-        *squared_norm = 0.0;
-        for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
-          const double denominator = eigenvalues[index] + lambda;
-          const double denominator_floor =
-              kShiftToleranceFactor *
-              std::max(
-                  spectral_scale,
-                  std::abs(eigenvalues[index]) + std::abs(lambda));
-          if (!(denominator > denominator_floor) ||
-              !std::isfinite(denominator)) {
-            return false;
-          }
-          (*eigen_coordinates)[index] =
-              -projected_gradient_in_eigenbasis[index] / denominator;
-          *squared_norm +=
-              (*eigen_coordinates)[index] * (*eigen_coordinates)[index];
-        }
-        return std::isfinite(*squared_norm) &&
-            eigen_coordinates->allFinite();
-      };
-
-  Eigen::Index minimum_eigenvalue_index = 0;
-  const double minimum_eigenvalue =
-      eigenvalues.minCoeff(&minimum_eigenvalue_index);
-  Eigen::VectorXd eigen_coordinates;
-  double coordinate_squared_norm = 0.0;
-  double trust_region_shift = 0.0;
-  bool solved_subproblem = false;
-  if (minimum_eigenvalue > kShiftToleranceFactor * spectral_scale &&
-      solve_shifted_subspace_system(
-          0.0,
-          &eigen_coordinates,
-          &coordinate_squared_norm) &&
-      coordinate_squared_norm <=
-          radius_squared * (1.0 + kRelativeRadiusTolerance)) {
-    solved_subproblem = true;
-  } else {
-    double lower_shift = std::max(0.0, -minimum_eigenvalue);
-    if (lower_shift > 0.0 || minimum_eigenvalue <= 0.0) {
-      lower_shift +=
-          kShiftToleranceFactor *
-          spectral_scale;
-    }
-    if (!solve_shifted_subspace_system(
-            lower_shift,
-            &eigen_coordinates,
-            &coordinate_squared_norm)) {
-      return result;
-    }
-
-    if (coordinate_squared_norm <=
-        radius_squared * (1.0 + kRelativeRadiusTolerance)) {
-      solved_subproblem = true;
-      trust_region_shift = lower_shift;
-      if (minimum_eigenvalue < 0.0) {
-        const double minimum_coordinate =
-            eigen_coordinates[minimum_eigenvalue_index];
-        const double other_coordinate_squared_norm =
-            std::max(
-                0.0,
-                coordinate_squared_norm -
-                    minimum_coordinate * minimum_coordinate);
-        const double available_minimum_coordinate_squared =
-            radius_squared - other_coordinate_squared_norm;
-        if (available_minimum_coordinate_squared >
-            radius_squared * kRelativeRadiusTolerance) {
-          const double augmentation_sign =
-              projected_gradient_in_eigenbasis[minimum_eigenvalue_index] > 0.0
-                  ? -1.0
-                  : 1.0;
-          eigen_coordinates[minimum_eigenvalue_index] =
-              augmentation_sign *
-              std::sqrt(available_minimum_coordinate_squared);
-          coordinate_squared_norm = radius_squared;
-        }
-      }
-    } else {
-      double upper_shift =
-          std::max(1.0, std::max(2.0 * lower_shift, lower_shift + 1.0));
-      Eigen::VectorXd upper_coordinates;
-      double upper_squared_norm = 0.0;
-      bool bracketed = false;
-      for (int expansion_iteration = 0;
-           expansion_iteration < 64;
-           ++expansion_iteration) {
-        if (!solve_shifted_subspace_system(
-                upper_shift,
-                &upper_coordinates,
-                &upper_squared_norm)) {
-          return result;
-        }
-        if (upper_squared_norm <= radius_squared) {
-          bracketed = true;
-          break;
-        }
-        upper_shift = std::max(2.0 * upper_shift, upper_shift + 1.0);
-      }
-      if (!bracketed) {
-        return result;
-      }
-
-      double bisection_lower_shift = lower_shift;
-      double bisection_upper_shift = upper_shift;
-      eigen_coordinates = upper_coordinates;
-      coordinate_squared_norm = upper_squared_norm;
-      for (int bisection_iteration = 0;
-           bisection_iteration < 64;
-           ++bisection_iteration) {
-        const double mid_shift =
-            0.5 * (bisection_lower_shift + bisection_upper_shift);
-        Eigen::VectorXd mid_coordinates;
-        double mid_squared_norm = 0.0;
-        if (!solve_shifted_subspace_system(
-                mid_shift,
-                &mid_coordinates,
-                &mid_squared_norm)) {
-          return result;
-        }
-        if (mid_squared_norm > radius_squared) {
-          bisection_lower_shift = mid_shift;
-        } else {
-          bisection_upper_shift = mid_shift;
-          eigen_coordinates = std::move(mid_coordinates);
-          coordinate_squared_norm = mid_squared_norm;
-        }
-      }
-      trust_region_shift = bisection_upper_shift;
-      solved_subproblem = true;
-    }
-  }
-
-  if (!solved_subproblem || !eigen_coordinates.allFinite()) {
-    return result;
-  }
 
   Eigen::VectorXd subspace_coordinates =
       eigenvectors * eigen_coordinates;
@@ -1103,7 +906,7 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
       0.5 * subspace_coordinates.dot(reduced_model_hessian_step);
   if (!std::isfinite(predicted_decrease) ||
       predicted_decrease <= 0.0 ||
-      current_projection.reduced_gradient.dot(reduced_step) >= 0.0) {
+      current_projection.reduced_gradient.dot(reduced_step) > 0.0) {
     return result;
   }
 
@@ -1264,6 +1067,22 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       std::max(0, max_cg_iterations) + (initial_reduced_step != nullptr ? 1 : 0));
   krylov_tangent_basis_vectors.reserve(krylov_basis_vectors.capacity());
   krylov_hessian_basis_vectors.reserve(krylov_basis_vectors.capacity());
+  auto append_and_apply = [&](const Eigen::VectorXd& direction,
+                              Eigen::VectorXd* image) {
+    // U_p^T U_p = I and the sparse retraction is additive. Thus reduced
+    // Euclidean orthogonalization is the accepted-point retraction metric.
+    // Recompute the packed tangent from the admitted q; never evolve it
+    // independently through cancellation-prone projection recurrences.
+    const bool admitted = append_orthonormal_hvp_direction(
+        direction,
+        [&](const Eigen::VectorXd& q) { return hvp_operator->apply(q); },
+        &krylov_basis_vectors, &krylov_hessian_basis_vectors, image);
+    if (admitted) {
+      krylov_tangent_basis_vectors.push_back(
+          retraction_metric.tangent(krylov_basis_vectors.back()));
+    }
+    return admitted;
+  };
   auto finalize_result = [&]() -> TruncatedNewtonStepResult {
     result.krylov_subspace =
         build_truncated_newton_krylov_subspace(
@@ -1287,23 +1106,14 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     if (std::isfinite(initial_step_norm) &&
         initial_step_norm > 0.0 &&
         initial_step_norm < trust_radius) {
-      const Eigen::VectorXd hessian_times_initial_step =
-          hvp_operator->apply(*initial_reduced_step);
-
-      if (hessian_times_initial_step.allFinite()) {
+      Eigen::VectorXd hessian_times_initial_step;
+      if (append_and_apply(*initial_reduced_step, &hessian_times_initial_step)) {
         result.reduced_step = *initial_reduced_step;
         result.reduced_hessian_times_step = hessian_times_initial_step;
         result.predicted_decrease =
             rhs.dot(result.reduced_step) -
             0.5 * result.reduced_step.dot(hessian_times_initial_step);
         residual.noalias() -= hessian_times_initial_step;
-        append_truncated_newton_krylov_basis_vector(
-            retraction_metric,
-            *initial_reduced_step,
-            hessian_times_initial_step,
-            &krylov_basis_vectors,
-            &krylov_tangent_basis_vectors,
-            &krylov_hessian_basis_vectors);
       }
     }
   }
@@ -1314,10 +1124,10 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
           transported_preconditioner,
           residual);
   Eigen::VectorXd search_direction = preconditioned_residual;
-  double residual_dot_preconditioned =
+  double residual_dot_search =
       residual.dot(preconditioned_residual);
-  if (!std::isfinite(residual_dot_preconditioned) ||
-      residual_dot_preconditioned <= 0.0) {
+  if (!std::isfinite(residual_dot_search) ||
+      residual_dot_search <= 0.0) {
     if (result.reduced_step.squaredNorm() > 0.0 &&
         current_projection.reduced_gradient.dot(result.reduced_step) < 0.0 &&
         std::isfinite(result.predicted_decrease) &&
@@ -1330,17 +1140,15 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     return finalize_result();
   }
 
-  const double initial_residual_inf_norm = gradient_infinity_norm(residual);
-  const double outer_gradient_inf_norm =
-      gradient_infinity_norm(current_projection.reduced_gradient);
+  const double initial_residual_norm = residual.stableNorm();
+  const double outer_gradient_norm =
+      current_projection.reduced_gradient.stableNorm();
   // The inexact-Newton forcing term is an outer-iteration condition:
-  // ||H s + g|| <= eta_k ||g||.  In particular, a cached same-point trial
-  // changes the initial residual but must not redefine the requested Newton
-  // accuracy.
-  const double residual_inf_target =
-      inexact_newton_forcing_term(outer_gradient_inf_norm) *
-      outer_gradient_inf_norm;
-  if (initial_residual_inf_norm <= residual_inf_target) {
+  // ||H s + g|| <= eta_k ||g||. A cached same-point trial changes the
+  // initial residual but must not redefine the requested Newton accuracy.
+  const double residual_target =
+      inexact_newton_forcing_term(outer_gradient_norm) * outer_gradient_norm;
+  if (initial_residual_norm <= residual_target) {
     if (result.reduced_step.squaredNorm() > 0.0 &&
         current_projection.reduced_gradient.dot(result.reduced_step) < 0.0 &&
         std::isfinite(result.predicted_decrease) &&
@@ -1353,20 +1161,16 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     return finalize_result();
   }
 
+  PositiveConjugateBasis conjugate_basis;
   constexpr double kCurvatureTolerance =
       64.0 * std::numeric_limits<double>::epsilon();
   for (int cg_iteration = 0;
        cg_iteration < max_cg_iterations;
        ++cg_iteration) {
-    const Eigen::VectorXd hessian_times_direction =
-        hvp_operator->apply(search_direction);
-    append_truncated_newton_krylov_basis_vector(
-        retraction_metric,
-        search_direction,
-        hessian_times_direction,
-        &krylov_basis_vectors,
-        &krylov_tangent_basis_vectors,
-        &krylov_hessian_basis_vectors);
+    Eigen::VectorXd hessian_times_direction;
+    if (!append_and_apply(search_direction, &hessian_times_direction)) {
+      break;
+    }
     const double curvature =
         search_direction.dot(hessian_times_direction);
     const Eigen::VectorXd current_step_tangent =
@@ -1379,32 +1183,26 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         search_direction.norm() * hessian_times_direction.norm();
     if (!std::isfinite(curvature) ||
         !std::isfinite(curvature_scale) ||
-        curvature <=
-            kCurvatureTolerance * curvature_scale) {
+        curvature <= kCurvatureTolerance * curvature_scale) {
       result.encountered_negative_curvature = true;
       result.reached_boundary = true;
       if (search_direction_metric_norm_squared > 0.0 &&
           std::isfinite(search_direction_metric_norm_squared)) {
-        const double tau =
-            solve_trust_region_metric_boundary_tau(
-                current_step_tangent,
-                search_direction_tangent,
-                trust_radius);
+        const double tau = solve_trust_region_metric_boundary_tau(
+            current_step_tangent,
+            search_direction_tangent,
+            trust_radius);
         result.predicted_decrease +=
             tau * residual.dot(search_direction) -
             0.5 * tau * tau * curvature;
-        result.reduced_step.noalias() +=
-            tau *
-            search_direction;
+        result.reduced_step.noalias() += tau * search_direction;
         result.reduced_hessian_times_step.noalias() +=
-            tau *
-            hessian_times_direction;
+            tau * hessian_times_direction;
       }
       break;
     }
 
-    const double alpha =
-        residual_dot_preconditioned / curvature;
+    const double alpha = residual_dot_search / curvature;
     if (!std::isfinite(alpha) || alpha <= 0.0) {
       result.reduced_step = fallback_step;
       result.reduced_hessian_times_step.resize(0);
@@ -1417,20 +1215,16 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         retraction_metric.norm(candidate_step);
     if (candidate_step_metric_norm >= trust_radius) {
       result.reached_boundary = true;
-      const double tau =
-          solve_trust_region_metric_boundary_tau(
-              current_step_tangent,
-              search_direction_tangent,
-              trust_radius);
+      const double tau = solve_trust_region_metric_boundary_tau(
+          current_step_tangent,
+          search_direction_tangent,
+          trust_radius);
       result.predicted_decrease +=
           tau * residual.dot(search_direction) -
           0.5 * tau * tau * curvature;
-      result.reduced_step.noalias() +=
-          tau *
-          search_direction;
+      result.reduced_step.noalias() += tau * search_direction;
       result.reduced_hessian_times_step.noalias() +=
-          tau *
-          hessian_times_direction;
+          tau * hessian_times_direction;
       break;
     }
 
@@ -1440,11 +1234,11 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     result.reduced_step = candidate_step;
     result.retract_tangent_norm = candidate_step_metric_norm;
     result.reduced_hessian_times_step.noalias() +=
-        alpha *
-        hessian_times_direction;
-    residual.noalias() -= alpha * hessian_times_direction;
+        alpha * hessian_times_direction;
+    residual = rhs - result.reduced_hessian_times_step;
+    conjugate_basis.append(search_direction, hessian_times_direction);
     result.cg_iterations = cg_iteration + 1;
-    if (gradient_infinity_norm(residual) <= residual_inf_target) {
+    if (residual.stableNorm() <= residual_target) {
       break;
     }
 
@@ -1459,20 +1253,15 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         next_residual_dot_preconditioned <= 0.0) {
       break;
     }
-    const double beta =
-        next_residual_dot_preconditioned / residual_dot_preconditioned;
-    if (!std::isfinite(beta) || beta < 0.0) {
-      break;
-    }
     search_direction =
-        preconditioned_residual + beta * search_direction;
-    residual_dot_preconditioned = next_residual_dot_preconditioned;
+        conjugate_basis.orthogonalize(preconditioned_residual);
+    residual_dot_search = residual.dot(search_direction);
+
   }
 
-  // CG is used here to collect a local HVP subspace. The final candidate must be
-  // the trust-region minimizer in the accepted-point retraction metric
-  // ||J d||, not the raw Euclidean PCG accumulation, otherwise sparse charts
-  // solve the wrong spherical subproblem and tend to exhaust the radius.
+  // U_p^T U_p = I makes this a Euclidean spherical subproblem. A CG line
+  // truncated at the boundary need not minimize over the entire collected
+  // subspace; solve that projected model explicitly, including negative modes.
   const TruncatedNewtonKrylovSubspace krylov_subspace =
       build_truncated_newton_krylov_subspace(
           current_projection.reduced_gradient,
@@ -2871,6 +2660,20 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
               current_projection,
               trust_radius,
               &truncated_newton_step);
+          if (!reused_krylov_subspace) {
+            ++result.matrix_free_subproblem_count;
+            if (truncated_newton_step.reduced_hessian_times_step.size() ==
+                current_projection.reduced_gradient.size()) {
+              const double gradient_norm = current_projection.reduced_gradient.stableNorm();
+              const Eigen::VectorXd kkt_residual = current_projection.reduced_gradient +
+                  truncated_newton_step.reduced_hessian_times_step +
+                  truncated_newton_step.trust_region_shift * truncated_newton_step.reduced_step;
+              if (kkt_residual.stableNorm() <=
+                  inexact_newton_forcing_term(gradient_norm) * gradient_norm) {
+                ++result.matrix_free_residual_converged_count;
+              }
+            }
+          }
           if (truncated_newton_krylov_subspace_is_usable(
                   truncated_newton_step.krylov_subspace,
                   current_projection.reduced_gradient.size())) {
@@ -3007,6 +2810,24 @@ CppVbScfOptimizerResult CppVbScfOptimizer::optimize(
           current_parameters = trial_parameters;
           current_gradient = std::move(trial_gradient);
           energy = trial_energy;
+          // Cache evaluated curvature as approximate preconditioning data,
+          // before canonicalization transports packed steps and covectors.
+          // It is never reused as an exact Hessian action at the next point.
+          if (transport_history_size > 1 &&
+              truncated_newton_krylov_subspace_is_usable(
+                  cached_krylov_subspace, current_space.reduced_size())) {
+            const auto pairs = positive_ritz_secants(
+                cached_krylov_subspace.orthonormal_basis,
+                cached_krylov_subspace.hessian_basis,
+                cached_krylov_subspace.reduced_hessian,
+                transport_history_size - 1);
+            for (const auto& pair : pairs) {
+              append_nonredundant_truncated_newton_secant_pair(
+                  current_space.expand_step(pair.direction),
+                  current_space.expand_step(pair.image),
+                  transport_history_size, &packed_secant_history);
+            }
+          }
           const bool accepted_point_chart_reset =
               objective.canonicalize_orbital_chart_at_current_point(
                   &current_parameters,

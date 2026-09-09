@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 
 #include <vector>
+#include <memory>
 
 #include "vb/matrices/determinant_hamiltonian_resolver.hpp"
 #include "vb/matrices/determinant_overlap_resolver.hpp"
@@ -10,7 +11,12 @@
 
 namespace xmvb::vb {
 
+class CofactorDifferential;
+
 struct SpinDeterminantPairEvaluation {
+  // Accepted-point polynomial cofactor factorization. Shared ownership keeps
+  // copies of pair evaluations cheap while all HVP consumers reuse one SVD.
+  std::shared_ptr<const CofactorDifferential> cofactor_differential;
   /**
    * @brief Cached same-spin `\phi` payload for one ordered determinant pair.
    *
@@ -28,6 +34,10 @@ struct SpinDeterminantPairEvaluation {
   // factorization, so we cache the exact occupied-block overlap gradient of
   // the same-spin Hamiltonian directly in `(right, left)` matrix form.
   Eigen::MatrixXd same_spin_overlap_hamiltonian_gradient;
+  // Accepted occupied-block Hamiltonian factors reused by every HVP at this
+  // orbital point. Their dimensions are n and n(n-1)/2, respectively.
+  Eigen::MatrixXd same_spin_one_electron_block;
+  Eigen::MatrixXd same_spin_antisymmetrized_interaction;
   DeterminantOverlapResult overlap_result;
   double one_electron_hamiltonian = 0.0;
   double total_hamiltonian = 0.0;

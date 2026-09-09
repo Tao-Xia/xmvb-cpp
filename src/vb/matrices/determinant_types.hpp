@@ -18,6 +18,9 @@ struct DeterminantOverlapResult {
    */
   int n_electrons = 0;
 
+  // Preserve the actual accepted block for inverse-free cofactor derivatives.
+  Eigen::MatrixXd overlap_submatrix;
+
   /**
    * @brief Algebraic determinant of the overlap submatrix.
    *

@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -13,38 +12,6 @@ namespace xmvb::vb {
 namespace {
 
 constexpr double kNormalizedWeightTolerance = 1e-10;
-constexpr double kSupportSparseContractionSavingsThreshold = 0.8;
-
-enum class SupportSparseSelectedStateMode {
-  kAuto,
-  kOn,
-  kOff,
-};
-
-SupportSparseSelectedStateMode selected_state_support_sparse_mode() {
-  const char* env_value = std::getenv("XMVB_CPP_SELECTED_STATE_SUPPORT_SPARSE");
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return SupportSparseSelectedStateMode::kAuto;
-  }
-  std::string mode(env_value);
-  std::transform(
-      mode.begin(),
-      mode.end(),
-      mode.begin(),
-      [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
-  if (mode == "auto") {
-    return SupportSparseSelectedStateMode::kAuto;
-  }
-  if (mode == "on" || mode == "true" || mode == "1") {
-    return SupportSparseSelectedStateMode::kOn;
-  }
-  if (mode == "off" || mode == "false" || mode == "0") {
-    return SupportSparseSelectedStateMode::kOff;
-  }
-  throw std::invalid_argument(
-      "XMVB_CPP_SELECTED_STATE_SUPPORT_SPARSE must be one of auto/on/off");
-}
-
 double estimate_dense_selected_state_contraction_work(
     const SelectedStateDeterminantMatrices& selected_state_matrices) {
   const double n_unique_alpha =
@@ -576,14 +543,6 @@ build_selected_state_determinant_matrices_from_selected_columns(
 
 bool should_use_support_sparse_selected_state_contractions(
     const SelectedStateDeterminantMatrices& selected_state_matrices) {
-  const SupportSparseSelectedStateMode mode =
-      selected_state_support_sparse_mode();
-  if (mode == SupportSparseSelectedStateMode::kOn) {
-    return true;
-  }
-  if (mode == SupportSparseSelectedStateMode::kOff) {
-    return false;
-  }
   if (!selected_state_support_is_actually_trimmed(selected_state_matrices)) {
     return false;
   }
@@ -597,11 +556,9 @@ bool should_use_support_sparse_selected_state_contractions(
     return false;
   }
 
-  // Keep the dense BLAS path when the trimmed supports are not materially
-  // smaller. The sparse path pays extra gather/scatter overhead and only wins
-  // when the per-state supports cut a meaningful fraction of the contraction.
-  return sparse_work <=
-      kSupportSparseContractionSavingsThreshold * dense_work;
+  // Select the representation from its contraction count. No input identity,
+  // environment override, or molecule-specific threshold enters the choice.
+  return sparse_work < dense_work;
 }
 
 std::vector<double> gather_selected_state_energies(

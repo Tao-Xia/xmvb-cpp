@@ -27,6 +27,41 @@ struct SameSpinMatrixBackwardContribution {
   std::vector<double> packed_active_two_electron_gradient;
 };
 
+/** Directional polynomial data for one ordered unique-spin determinant pair. */
+struct SameSpinPolynomialDirectionalPairData {
+  double delta_overlap_determinant = 0.0;
+  double delta_total_hamiltonian = 0.0;
+  Eigen::MatrixXd cofactor_1st;
+  Eigen::MatrixXd delta_cofactor_1st;
+  Eigen::MatrixXd delta_same_spin_overlap_hamiltonian_gradient;
+};
+
+/**
+ * Directional pair data and scalar matrices shared by all outer-response
+ * consumers in one matrix-free Hessian application.
+ */
+struct SameSpinDirectionalScalarMatrices {
+  Eigen::MatrixXd delta_overlap_determinant_matrix;
+  Eigen::MatrixXd delta_regular_total_hamiltonian_matrix;
+  Eigen::MatrixXd delta_singular_total_hamiltonian_matrix;
+  std::vector<SameSpinPolynomialDirectionalPairData> ordered_pair_data;
+};
+
+struct SameSpinDirectionalPairCache {
+  SameSpinDirectionalScalarMatrices alpha;
+  SameSpinDirectionalScalarMatrices beta;
+  bool close_shell_same_spin = false;
+};
+
+SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    const std::vector<double>& delta_ao_overlap_matrix,
+    const std::vector<double>& delta_active_one_electron_matrix,
+    const std::vector<double>& delta_packed_active_two_electron_integrals);
+
 /**
  * @brief Builds matrix-form same-spin / one-electron backward contribution.
  *
@@ -99,6 +134,7 @@ build_local_same_spin_matrix_backward_contribution(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals);
+    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const SameSpinDirectionalPairCache* directional_pair_cache = nullptr);
 
 }  // namespace xmvb::vb

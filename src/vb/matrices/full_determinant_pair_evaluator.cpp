@@ -3,6 +3,7 @@
 #include <utility>
 
 #include "vb/matrices/spin_pair_utils.hpp"
+#include "vb/matrices/cofactor_differential.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/orbital/active_space_two_electron_utils.hpp"
 
@@ -24,6 +25,8 @@ PreparedSpinDeterminantPair prepare_spin_determinant_pair(
   PreparedSpinDeterminantPair result;
   if (occ_L.empty()) {
     result.evaluation.overlap_result.overlap_determinant = 1.0;
+    result.evaluation.cofactor_differential =
+        std::make_shared<const CofactorDifferential>(Eigen::MatrixXd(0, 0));
     return result;
   }
 
@@ -35,6 +38,8 @@ PreparedSpinDeterminantPair prepare_spin_determinant_pair(
 
   result.evaluation.overlap_result =
       determinant_overlap_resolver.resolve_matrix(result.overlap_submatrix);
+  result.evaluation.cofactor_differential =
+      std::make_shared<const CofactorDifferential>(result.overlap_submatrix);
   cache_first_order_cofactor(&result.evaluation.overlap_result);
 
   return result;

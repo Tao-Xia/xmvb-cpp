@@ -378,13 +378,13 @@ void print_exact_ctx_policy_summary(
   }
 
   const auto& orbital_input = input.orbital_preparation_input;
-  print_log_subsection_title("Exact-CTX Newton-Krylov");
+  print_log_subsection_title("Exact-CTX Matrix-Free Newton");
   print_log_field(
       "Hessian model",
       exact_ctx_initial_outer_response_policy_name(orbital_input));
   print_log_field(
       "Inexact Newton forcing",
-      "adaptive sqrt(projected gradient inf-norm)");
+      "adaptive sqrt(projected gradient 2-norm)");
   print_log_field(
       "Trust-radius update",
       "Ritz spectrum + observed model remainder");
@@ -1931,6 +1931,10 @@ int main(int argc, char** argv) {
     print_log_field(
         "Block-HVP calls",
         std::to_string(result.matrix_free_hvp_batch_count));
+    print_log_field(
+        "Inner solves meeting KKT target",
+        std::to_string(result.matrix_free_residual_converged_count) + " / " +
+            std::to_string(result.matrix_free_subproblem_count));
     print_log_field(
         "Matrix-free HVP wall time",
         format_seconds(result.matrix_free_hvp_wall_time_seconds));

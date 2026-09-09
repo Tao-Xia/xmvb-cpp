@@ -35,6 +35,10 @@ struct SparseOrbitalGaugeAudit {
   int current_physical_image_rank = 0;
   int current_retained_gauge_dimension = 0;
   int current_missing_physical_dimension = 0;
+
+  // Euclidean-orthonormal columns spanning the exact support-admissible gauge.
+  // Exposed for independent gauge/quotient overlap and gradient checks.
+  Eigen::MatrixXd packed_gauge_basis;
 };
 
 SparseOrbitalGaugeAudit audit_sparse_orbital_gauge(

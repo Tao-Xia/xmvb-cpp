@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cassert>
 #include <cmath>
-#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -13,54 +12,16 @@
 #include <Eigen/Cholesky>
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
+#include <Eigen/SVD>
 #include "runtime/cpp_block_guess_builder.hpp"
 
 #include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vb/orbital/normalized_orbital_curvature.hpp"
+#include "vb/orbital/projected_orbital_surrogate.hpp"
 
 namespace xmvb::vb {
 
 namespace {
-
-
-
-// Extract the local AO overlap seen by one sparse orbital on its own support.
-Eigen::MatrixXd build_local_sparse_overlap_metric(
-    const Eigen::MatrixXd& block_overlap,
-    const std::vector<int>& block_rows) {
-  const Eigen::Index n = static_cast<Eigen::Index>(block_rows.size());
-  Eigen::MatrixXd local(n, n);
-  for (Eigen::Index i = 0; i < n; ++i)
-    for (Eigen::Index j = 0; j < n; ++j)
-      local(i, j) = block_overlap(block_rows[i], block_rows[j]);
-  return local;
-}
-
-// Gather selected rows and a column range from a block matrix.
-Eigen::MatrixXd gather_block_rows(
-    const Eigen::MatrixXd& src,
-    const std::vector<int>& rows,
-    int col_begin, int col_count) {
-  const Eigen::Index n = static_cast<Eigen::Index>(rows.size());
-  Eigen::MatrixXd out(n, col_count);
-  for (Eigen::Index i = 0; i < n; ++i)
-    for (int j = 0; j < col_count; ++j)
-      out(i, j) = src(rows[i], col_begin + j);
-  return out;
-}
-
-// Gather selected rows and selected columns from a block matrix.
-Eigen::MatrixXd gather_block_rows_cols(
-    const Eigen::MatrixXd& src,
-    const std::vector<int>& rows,
-    const std::vector<int>& cols) {
-  const Eigen::Index nr = static_cast<Eigen::Index>(rows.size());
-  const Eigen::Index nc = static_cast<Eigen::Index>(cols.size());
-  Eigen::MatrixXd out(nr, nc);
-  for (Eigen::Index i = 0; i < nr; ++i)
-    for (Eigen::Index j = 0; j < nc; ++j)
-      out(i, j) = src(rows[i], cols[j]);
-  return out;
-}
 
 void require_finite_matrix(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix,
@@ -133,85 +94,7 @@ BlockOrbitalMapping build_block_orbital_mapping(
   return m;
 }
 
-Eigen::VectorXd gather_block_orbital_from_dense_matrix(
-    const Eigen::Ref<const Eigen::MatrixXd>& mat,
-    int orbital_index,
-    const std::vector<int>& bf_indices) {
-  Eigen::VectorXd block_col =
-      Eigen::VectorXd::Zero(static_cast<Eigen::Index>(bf_indices.size()));
-  for (Eigen::Index i = 0; i < block_col.size(); ++i)
-    block_col[i] = mat(bf_indices[i], orbital_index);
-  return block_col;
-}
-
-Eigen::MatrixXd build_block_virtual_orbitals(
-    const Eigen::MatrixXd& block_occupied,
-    const Eigen::MatrixXd& block_overlap) {
-  const int nbasis = static_cast<int>(block_overlap.rows());
-  const int nocc = static_cast<int>(block_occupied.cols());
-  const int nvirt = nbasis - nocc;
-  if (nvirt <= 0) return Eigen::MatrixXd::Zero(nbasis, 0);
-
-  // Occupied projector → metric eigensystem on complement space.
-  const Eigen::MatrixXd occ_overlap =
-      block_occupied.transpose() * block_overlap * block_occupied;
-  Eigen::LDLT<Eigen::MatrixXd> occ_ldlt(occ_overlap);
-  if (occ_ldlt.info() != Eigen::Success)
-    throw std::runtime_error("failed to factorize occupied block overlap");
-  const Eigen::MatrixXd occ_metric_action =
-      occ_ldlt.solve(block_occupied.transpose() * block_overlap);
-  const Eigen::MatrixXd P_comp =
-      Eigen::MatrixXd::Identity(nbasis, nbasis) -
-      block_occupied * occ_metric_action;
-  const Eigen::MatrixXd virt_overlap =
-      P_comp.transpose() * block_overlap * P_comp;
-
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(virt_overlap);
-  if (solver.info() != Eigen::Success)
-    throw std::runtime_error("failed to diagonalize virtual block overlap");
-
-  constexpr double kTol = 1.0e-10;
-  Eigen::MatrixXd virtuals(nbasis, nvirt);
-  int col = 0;
-  // Eigenvalues are in increasing order. Iterate from the largest.
-  for (int e = static_cast<int>(solver.eigenvalues().size()) - 1;
-       e >= 0 && col < nvirt; --e) {
-    if (!(solver.eigenvalues()[e] > kTol)) continue;
-    Eigen::VectorXd v = P_comp * solver.eigenvectors().col(e);
-    const double norm = v.dot(block_overlap * v);
-    if (!(norm > std::numeric_limits<double>::epsilon()) || !std::isfinite(norm))
-      continue;
-    virtuals.col(col++) = v / std::sqrt(norm);
-  }
-  if (col != nvirt)
-    throw std::runtime_error("failed to build the full block-local virtual space");
-  return virtuals;
-}
-
 // --- Non-member helpers used by the constructor ---
-
-Eigen::MatrixXd build_block_effective_one_electron_matrix(
-    const Eigen::Ref<const Eigen::MatrixXd>& ao_h1e,
-    int n_basis,
-    const std::vector<int>& bf_indices) {
-  const int n = static_cast<int>(bf_indices.size());
-  Eigen::MatrixXd block(n, n);
-  for (int i = 0; i < n; ++i)
-    for (int j = 0; j < n; ++j)
-      block(i, j) = ao_h1e(bf_indices[i], bf_indices[j]);
-  return block;
-}
-
-Eigen::MatrixXd build_block_effective_one_electron_matrix_on_rows(
-    const Eigen::MatrixXd& block_h1e,
-    const std::vector<int>& rows) {
-  const Eigen::Index n = static_cast<Eigen::Index>(rows.size());
-  Eigen::MatrixXd local(n, n);
-  for (Eigen::Index i = 0; i < n; ++i)
-    for (Eigen::Index j = 0; j < n; ++j)
-      local(i, j) = block_h1e(rows[i], rows[j]);
-  return local;
-}
 
 Eigen::VectorXd normalize_curvature_diagonal(const Eigen::VectorXd& diag) {
   if (diag.size() == 0) return Eigen::VectorXd::Zero(0);
@@ -279,65 +162,131 @@ PositiveCurvatureBlock build_positive_curvature_block(
   return result;
 }
 
-Eigen::MatrixXd build_deterministic_orthonormal_tangent_basis(
-    const Eigen::MatrixXd& tangent_generators) {
-  if (tangent_generators.rows() == 0 ||
-      tangent_generators.cols() == 0 ||
-      !tangent_generators.allFinite()) {
-    return Eigen::MatrixXd::Zero(tangent_generators.rows(), 0);
+Eigen::MatrixXd build_exact_local_sparse_quotient_basis(
+    const OrbitalPreparationInput& input,
+    int orbital_index,
+    int n_inactive,
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_orbitals,
+    const std::vector<int>& local_basis_indices) {
+  const int local_size = static_cast<int>(local_basis_indices.size());
+  const bool is_active = orbital_index >= n_inactive;
+  const int source_count = n_inactive + (is_active ? 1 : 0);
+  if (local_size == 0) return Eigen::MatrixXd::Zero(0, 0);
+  if (source_count == 0) {
+    return Eigen::MatrixXd::Identity(local_size, local_size);
   }
 
-  const Eigen::Index rows = tangent_generators.rows();
-  const Eigen::Index max_cols = tangent_generators.cols();
-  Eigen::MatrixXd basis(rows, max_cols);
-  Eigen::Index admitted = 0;
-
-  const double generator_norm = tangent_generators.norm();
-  const double absolute_floor =
-      std::max(1.0e-12, 1.0e-10 * generator_norm);
-  for (Eigen::Index column = 0; column < max_cols; ++column) {
-    Eigen::VectorXd vector = tangent_generators.col(column);
-    const double original_norm = vector.norm();
-    if (!(original_norm > absolute_floor) ||
-        !std::isfinite(original_norm)) {
-      continue;
+  Eigen::MatrixXd gauge_sources = Eigen::MatrixXd::Zero(
+      input.n_basis_functions, source_count);
+  if (n_inactive > 0) {
+    gauge_sources.leftCols(n_inactive) = inactive_orbitals;
+  }
+  if (is_active) {
+    const int count =
+        stored_sparse_orbital_coefficient_count(input, orbital_index);
+    for (int coefficient = 0; coefficient < count; ++coefficient) {
+      const int basis = input.orbital_basis_index_table[
+          orbital_index * input.n_basis_functions + coefficient] - 1;
+      gauge_sources(basis, n_inactive) = input.orbital_value_table[
+          orbital_index * input.n_basis_functions + coefficient];
     }
+  }
+  require_finite_matrix(gauge_sources, "NROS global gauge sources");
 
-    // Modified Gram-Schmidt in the deterministic raw-generator order.  A
-    // second pass removes residual components left by nearly dependent sparse
-    // directions without invoking a degenerate eigensystem whose basis can
-    // rotate between runs.
-    for (int pass = 0; pass < 2; ++pass) {
-      for (Eigen::Index existing = 0; existing < admitted; ++existing) {
-        const double coefficient = basis.col(existing).dot(vector);
-        if (!std::isfinite(coefficient)) {
-          return Eigen::MatrixXd::Zero(rows, 0);
-        }
-        vector.noalias() -= coefficient * basis.col(existing);
+  std::vector<char> is_allowed(input.n_basis_functions, 0);
+  for (const int basis : local_basis_indices) {
+    if (basis < 0 || basis >= input.n_basis_functions) {
+      throw std::runtime_error("invalid local AO index in exact quotient");
+    }
+    is_allowed[basis] = 1;
+  }
+  int forbidden_count = 0;
+  for (const char allowed : is_allowed) {
+    if (!allowed) ++forbidden_count;
+  }
+  Eigen::MatrixXd forbidden_sources(forbidden_count, source_count);
+  int forbidden_row = 0;
+  for (int basis = 0; basis < input.n_basis_functions; ++basis) {
+    if (!is_allowed[basis]) {
+      forbidden_sources.row(forbidden_row++) = gauge_sources.row(basis);
+    }
+  }
+
+  Eigen::MatrixXd admissible_source_parameters;
+  if (forbidden_count == 0) {
+    admissible_source_parameters =
+        Eigen::MatrixXd::Identity(source_count, source_count);
+  } else {
+    Eigen::JacobiSVD<Eigen::MatrixXd> constraint_svd(
+        forbidden_sources, Eigen::ComputeFullV);
+    if (constraint_svd.info() != Eigen::Success) {
+      throw std::runtime_error(
+          "failed to factor exact sparse gauge constraints");
+    }
+    const double sigma_max = constraint_svd.singularValues().size() > 0
+        ? constraint_svd.singularValues()[0]
+        : 0.0;
+    const double tolerance =
+        std::numeric_limits<double>::epsilon() *
+        static_cast<double>(
+            std::max(forbidden_sources.rows(), forbidden_sources.cols())) *
+        sigma_max;
+    int constraint_rank = 0;
+    for (Eigen::Index index = 0;
+         index < constraint_svd.singularValues().size();
+         ++index) {
+      if (constraint_svd.singularValues()[index] > tolerance) {
+        ++constraint_rank;
       }
     }
+    admissible_source_parameters =
+        constraint_svd.matrixV().rightCols(source_count - constraint_rank);
+  }
 
-    const double orthogonal_norm = vector.norm();
-    if (!(orthogonal_norm >
-          std::max(absolute_floor, 1.0e-8 * original_norm)) ||
-        !std::isfinite(orthogonal_norm)) {
-      continue;
-    }
-    vector /= orthogonal_norm;
+  Eigen::MatrixXd local_gauge_generators(
+      local_size, admissible_source_parameters.cols());
+  for (int row = 0; row < local_size; ++row) {
+    local_gauge_generators.row(row) =
+        gauge_sources.row(local_basis_indices[row]) *
+        admissible_source_parameters;
+  }
+  if (local_gauge_generators.cols() == 0) {
+    return Eigen::MatrixXd::Identity(local_size, local_size);
+  }
 
+  // LAPACKE requires the actual column-major stride, not a transpose view.
+  const Eigen::MatrixXd local_gauge_transpose =
+      local_gauge_generators.transpose();
+  Eigen::JacobiSVD<Eigen::MatrixXd> gauge_svd(
+      local_gauge_transpose, Eigen::ComputeFullV);
+  if (gauge_svd.info() != Eigen::Success) {
+    throw std::runtime_error("failed to factor exact local sparse gauge");
+  }
+  const double sigma_max = gauge_svd.singularValues().size() > 0
+      ? gauge_svd.singularValues()[0]
+      : 0.0;
+  const double tolerance =
+      std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max(
+          local_gauge_generators.rows(),
+          local_gauge_generators.cols())) *
+      sigma_max;
+  int gauge_rank = 0;
+  for (Eigen::Index index = 0;
+       index < gauge_svd.singularValues().size();
+       ++index) {
+    if (gauge_svd.singularValues()[index] > tolerance) ++gauge_rank;
+  }
+  Eigen::MatrixXd quotient_basis =
+      gauge_svd.matrixV().rightCols(local_size - gauge_rank);
+  for (Eigen::Index column = 0; column < quotient_basis.cols(); ++column) {
     Eigen::Index pivot = 0;
-    vector.cwiseAbs().maxCoeff(&pivot);
-    if (vector[pivot] < 0.0) {
-      vector *= -1.0;
+    quotient_basis.col(column).cwiseAbs().maxCoeff(&pivot);
+    if (quotient_basis(pivot, column) < 0.0) {
+      quotient_basis.col(column) *= -1.0;
     }
-
-    basis.col(admitted) = std::move(vector);
-    ++admitted;
   }
-  if (admitted == 0 || !basis.leftCols(admitted).allFinite()) {
-    return Eigen::MatrixXd::Zero(rows, 0);
-  }
-  return basis.leftCols(admitted);
+  return quotient_basis;
 }
 
 // FNV-1a-style hash mixing block/orbital/reduced-size into a running signature.
@@ -395,6 +344,17 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       input.ao_overlap_matrix.data(),
       input.n_basis_functions, input.n_basis_functions);
   require_finite_matrix(ao_overlap, "NROS AO overlap matrix");
+  Eigen::MatrixXd global_inactive_orbitals = Eigen::MatrixXd::Zero(
+      input.n_basis_functions, n_inactive);
+  for (int orbital = 0; orbital < n_inactive; ++orbital) {
+    const int count = stored_sparse_orbital_coefficient_count(input, orbital);
+    for (int coefficient = 0; coefficient < count; ++coefficient) {
+      const int basis = input.orbital_basis_index_table[
+          orbital * input.n_basis_functions + coefficient] - 1;
+      global_inactive_orbitals(basis, orbital) = input.orbital_value_table[
+          orbital * input.n_basis_functions + coefficient];
+    }
+  }
   const auto blocks = detect_orbital_blocks(input);
 
   int block_index = 0;
@@ -409,38 +369,24 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
     const std::vector<int> bf_indices =
         build_block_basis_function_indices(input, block);
     const int nbasis = static_cast<int>(bf_indices.size());
-    if (nbasis < static_cast<int>(occ_block.size()))
-      throw std::runtime_error("block basis count smaller than occupied count");
 
     std::unordered_map<int, int> bf_to_row;
     bf_to_row.reserve(bf_indices.size());
     for (int r = 0; r < nbasis; ++r)
       bf_to_row.emplace(bf_indices[r], r);
 
-    // Build block-local occupied matrices.
-    // block_occ_raw: from orbital_value_table (raw sparse coefficients).
-    // block_occ_basis: from occ_basis_matrix (orthogonal AO occupied orbitals).
+    // Blocks group storage only; every gauge uses the global inactive span.
     const int nocc = static_cast<int>(occ_block.size());
     int block_n_inactive = 0;
-    Eigen::MatrixXd block_occ_raw = Eigen::MatrixXd::Zero(nbasis, nocc);
-    Eigen::MatrixXd block_occ_basis = Eigen::MatrixXd::Zero(nbasis, nocc);
     std::vector<BlockOrbitalMapping> mappings;
     mappings.reserve(nocc);
     for (int k = 0; k < nocc; ++k) {
       const int orb = occ_block[k];
-      const int ncoeff = stored_sparse_orbital_coefficient_count(input, orb);
-      for (int c = 0; c < ncoeff; ++c) {
-        const int bf = input.orbital_basis_index_table[
-            orb * input.n_basis_functions + c] - 1;
-        block_occ_raw(bf_to_row.at(bf), k) =
-            input.orbital_value_table[orb * input.n_basis_functions + c];
-      }
-      block_occ_basis.col(k) =
-          gather_block_orbital_from_dense_matrix(occ_basis_matrix, orb, bf_indices);
       mappings.push_back(build_block_orbital_mapping(input, orb, bf_to_row));
+      mappings.back().coefficient_count =
+          parameter_view.orbital_coefficient_count(orb);
       if (orb < n_inactive) ++block_n_inactive;
     }
-    const int n_active = nocc - block_n_inactive;
 
     // Block-local overlap.
     Eigen::MatrixXd block_S(nbasis, nbasis);
@@ -448,23 +394,9 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       for (int j = 0; j < nbasis; ++j)
         block_S(i, j) = ao_overlap(bf_indices[i], bf_indices[j]);
 
-    // Block-local virtual complement (from raw sparse coefficients).
-    const Eigen::MatrixXd block_virt =
-        build_block_virtual_orbitals(block_occ_raw, block_S);
-    require_finite_matrix(block_virt, "NROS block virtual orbital basis");
-    const int nvirt = static_cast<int>(block_virt.cols());
-    if (n_active + nvirt == 0 && block_n_inactive == 0) continue;
-
-    // Block-local Fock submatrix (for curvature).
-    Eigen::MatrixXd block_h1e;
-    if (ao_effective_h1e != nullptr)
-      block_h1e = build_block_effective_one_electron_matrix(
-          *ao_effective_h1e, input.n_basis_functions, bf_indices);
-
     BlockBasis bb;
     bb.n_inactive = block_n_inactive;
     bb.n_occupied = nocc;
-    bb.n_virtual = nvirt;
     bb.basis_function_indices = bf_indices;
     bb.block_overlap_matrix = block_S;
     bb.orbitals.reserve(nocc);
@@ -487,7 +419,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
         proj.block_rows.push_back(m.block_row_for_slot[c]);
       }
 
-      // --- Build B_p directly from block matrices ---
+      // Construct the quotient directly on the differentiable sparse slots.
       const Eigen::Index local_size =
           static_cast<Eigen::Index>(proj.block_rows.size());
       proj.local_parameter_size = static_cast<int>(local_size);
@@ -498,142 +430,20 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
         x_p[i] = input.orbital_value_table[proj.flat_indices[i]];
       require_finite_vector(x_p, "NROS local sparse orbital coefficients");
 
-      const Eigen::MatrixXd orbital_metric =
-          build_local_sparse_overlap_metric(block_S, proj.block_rows);
-      require_finite_matrix(orbital_metric, "NROS local sparse overlap metric");
-      const Eigen::VectorXd Sx = orbital_metric * x_p;
-      const double rho2 = x_p.dot(Sx);
-      if (!Sx.allFinite() || !std::isfinite(rho2)) {
-        throw std::runtime_error(
-            "NROS sparse orbital metric norm contains non-finite values");
+      std::vector<int> local_basis_indices(local_size);
+      for (Eigen::Index row = 0; row < local_size; ++row) {
+        local_basis_indices[row] = bf_indices[proj.block_rows[row]];
       }
-
-      // Determine raw basis dimension for this orbital's tangent generators.
-      // Inactive orbitals can rotate into any active or virtual direction.
-      // Active orbitals can rotate into inactive, other active (excluding self),
-      // and virtual directions.  Self-exclusion preserves orbital identity under
-      // the Gram-Schmidt chart.
-      int raw_dim = 0;
-      if (k < block_n_inactive) {
-        raw_dim = n_active + nvirt;
-      } else {
-        raw_dim = block_n_inactive + (n_active > 0 ? n_active - 1 : 0) + nvirt;
+      Eigen::MatrixXd U_p = build_exact_local_sparse_quotient_basis(
+          input, m.orbital_index, n_inactive,
+          global_inactive_orbitals, local_basis_indices);
+      proj.local_gauge_rank = static_cast<int>(local_size - U_p.cols());
+      proj.local_combined_rank = static_cast<int>(local_size);
+      proj.expected_quotient_dimension = static_cast<int>(U_p.cols());
+      if (!U_p.allFinite()) {
+        throw std::runtime_error("non-finite strict-sparse quotient basis");
       }
-      if (raw_dim == 0) {
-        proj.tangent_basis = Eigen::MatrixXd::Zero(local_size, 0);
-        proj.local_reduced_offset = reduced_size_;
-        proj.local_reduced_size = 0;
-        rank_signature_ = mix_rank_signature(
-            rank_signature_,
-            block_index,
-            k,
-            proj.local_reduced_size);
-        bb.orbitals.push_back(std::move(proj));
-        continue;
-      }
-
-      // Fill raw_generator by sampling block_occ_raw and block_virt on block_rows.
-      // Raw sparse coefficients match the retraction coordinate system and
-      // are always finite, unlike the auxiliary orbital matrix which may
-      // contain infinity for HAO systems.
-      Eigen::MatrixXd raw_generator(local_size, raw_dim);
-      int col = 0;
-      if (k < block_n_inactive) {
-        // inactive: [active cols of occ_raw, block_virt]
-        if (n_active > 0) {
-          raw_generator.middleCols(col, n_active) =
-              gather_block_rows(block_occ_raw, proj.block_rows,
-                                block_n_inactive, n_active);
-          col += n_active;
-        }
-      } else {
-        const int active_idx = k - block_n_inactive;
-        // active: [inactive cols, active cols excl self, virtual]
-        if (block_n_inactive > 0) {
-          raw_generator.middleCols(col, block_n_inactive) =
-              gather_block_rows(block_occ_raw, proj.block_rows, 0,
-                                block_n_inactive);
-          col += block_n_inactive;
-        }
-        if (n_active > 0) {
-          std::vector<int> active_cols;
-          active_cols.reserve(n_active - 1);
-          for (int j = 0; j < n_active; ++j)
-            if (j != active_idx) active_cols.push_back(block_n_inactive + j);
-          raw_generator.middleCols(col, static_cast<int>(active_cols.size())) =
-              gather_block_rows_cols(block_occ_raw, proj.block_rows,
-                                     active_cols);
-          col += static_cast<int>(active_cols.size());
-        }
-      }
-      if (nvirt > 0) {
-        raw_generator.middleCols(col, nvirt) =
-            gather_block_rows(block_virt, proj.block_rows, 0, nvirt);
-      }
-      require_finite_matrix(raw_generator, "NROS raw tangent generator");
-
-      // Verify the algebraic quotient used by the strict-sparse chart. For an
-      // inactive orbital the whole block-local inactive span is gauge; for an
-      // active orbital only its own scaling direction is gauge. The physical
-      // generators and gauge generators together must span every coefficient
-      // on this orbital's fixed support, and their intersection must be zero.
-      if (collect_structural_diagnostics) {
-        Eigen::MatrixXd gauge_generator;
-        if (k < block_n_inactive) {
-          gauge_generator = gather_block_rows(
-              block_occ_raw,
-              proj.block_rows,
-              0,
-              block_n_inactive);
-        } else {
-          gauge_generator = x_p;
-        }
-        const Eigen::MatrixXd gauge_basis =
-            build_deterministic_orthonormal_tangent_basis(gauge_generator);
-        Eigen::MatrixXd combined_generator(
-            local_size,
-            gauge_generator.cols() + raw_generator.cols());
-        combined_generator << gauge_generator, raw_generator;
-        const Eigen::MatrixXd combined_basis =
-            build_deterministic_orthonormal_tangent_basis(combined_generator);
-        proj.local_gauge_rank = static_cast<int>(gauge_basis.cols());
-        proj.local_combined_rank = static_cast<int>(combined_basis.cols());
-        proj.expected_quotient_dimension =
-            proj.local_combined_rank - proj.local_gauge_rank;
-      }
-
-      // Drop near-zero columns of raw_generator before projection to avoid ill-conditioned
-      // Gram matrix.  Raw sparse coefficients for HAO orbitals with disjoint
-      // support produce degenerate direction columns.
-      {
-        const double col_norm_threshold = 1.0e-12 * x_p.norm();
-        Eigen::Index kept = 0;
-        for (Eigen::Index c = 0; c < raw_generator.cols(); ++c) {
-          if (raw_generator.col(c).norm() > col_norm_threshold) {
-            if (kept != c) raw_generator.col(kept) = raw_generator.col(c);
-            ++kept;
-          }
-        }
-        raw_generator = raw_generator.leftCols(kept);
-      }
-      if (raw_generator.cols() == 0) {
-        proj.tangent_basis = Eigen::MatrixXd::Zero(local_size, 0);
-        proj.local_reduced_offset = reduced_size_;
-        proj.local_reduced_size = 0;
-        rank_signature_ = mix_rank_signature(
-            rank_signature_,
-            block_index,
-            k,
-            proj.local_reduced_size);
-        bb.orbitals.push_back(std::move(proj));
-        continue;
-      }
-
-      // For non-orthogonal VB orbitals there is no sphere constraint, so the
-      // tangent space is raw_generator itself (the complement of other occupied orbitals).
-      Eigen::MatrixXd U_p =
-          build_deterministic_orthonormal_tangent_basis(raw_generator);
-      if (U_p.cols() == 0 || !U_p.allFinite()) {
+      if (U_p.cols() == 0) {
         proj.tangent_basis = Eigen::MatrixXd::Zero(local_size, 0);
         proj.local_reduced_offset = reduced_size_;
         proj.local_reduced_size = 0;
@@ -670,44 +480,40 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
           k,
           proj.local_reduced_size);
 
-      // Curvature: project the generalized Fock matrix U^T (F - eps S) U
-      // onto the tangent space, where eps = x^T F x / x^T S x is the orbital
-      // energy.  Fallback to identity if any intermediate is non-finite, so
-      // that NaN never poisons the reduced Newton solve.
+      // Pull back the normalized, inactive-projected one-electron surrogate
+      // into the same additive sparse chart as the exact HVP. Other inactive
+      // orbitals remain fixed for an inactive target; all are removed for an
+      // active target. Frozen coefficients contribute but have zero tangent.
       if (ao_effective_h1e != nullptr && proj.local_reduced_size > 0) {
-        const Eigen::MatrixXd local_F =
-            build_block_effective_one_electron_matrix_on_rows(
-                block_h1e, proj.block_rows);
-        Eigen::VectorXd curv =
-            Eigen::VectorXd::Ones(proj.local_reduced_size);
-        Eigen::MatrixXd block_curv =
-            Eigen::MatrixXd::Identity(
-                proj.local_reduced_size,
-                proj.local_reduced_size);
-        if (local_F.allFinite() &&
-            orbital_metric.allFinite() &&
-            proj.tangent_basis.allFinite() &&
-            rho2 > std::numeric_limits<double>::epsilon()) {
-          const Eigen::VectorXd F_x = local_F * x_p;
-          const double eps_p = x_p.dot(F_x) / rho2;
-          if (F_x.allFinite() && std::isfinite(eps_p)) {
-            const Eigen::MatrixXd F_U = local_F * proj.tangent_basis;
-            const Eigen::MatrixXd S_U = orbital_metric * proj.tangent_basis;
-            if (F_U.allFinite() && S_U.allFinite()) {
-              block_curv =
-                  proj.tangent_basis.transpose() *
-                  (F_U - eps_p * S_U);
-              block_curv =
-                  0.5 * (block_curv + block_curv.transpose());
-              for (int d = 0; d < proj.local_reduced_size; ++d) {
-                curv[d] = block_curv(d, d);
-              }
-            }
-          }
+        const auto& stored_rows = m.block_row_for_slot;
+        const bool inactive_target = m.orbital_index < n_inactive;
+        Eigen::MatrixXd fixed_inactive(input.n_basis_functions,
+            n_inactive - (inactive_target ? 1 : 0));
+        int fixed_column = 0;
+        for (int j = 0; j < n_inactive; ++j) {
+          if (j != m.orbital_index)
+            fixed_inactive.col(fixed_column++) = global_inactive_orbitals.col(j);
         }
-        // The diagonal is a preconditioner only.  If the local effective
-        // Fock block is not numerically usable, fall back to the identity
-        // instead of letting NaN curvature poison a reduced Newton solve.
+        std::vector<int> stored_support(stored_rows.size());
+        for (std::size_t j = 0; j < stored_rows.size(); ++j)
+          stored_support[j] = bf_indices[stored_rows[j]];
+        const auto surrogate = projected_orbital_surrogate(
+            *ao_effective_h1e, ao_overlap, fixed_inactive, stored_support);
+        Eigen::VectorXd stored_x(stored_rows.size());
+        for (Eigen::Index j = 0; j < stored_x.size(); ++j)
+          stored_x[j] = input.orbital_value_table[
+              m.orbital_index * input.n_basis_functions + j];
+        Eigen::MatrixXd stored_U = Eigen::MatrixXd::Zero(
+            stored_x.size(), proj.local_reduced_size);
+        stored_U.topRows(local_size) = proj.tangent_basis;
+        Eigen::MatrixXd block_curv = normalized_orbital_curvature(
+            surrogate.one_electron, surrogate.overlap, stored_x, stored_U);
+        // The inactive density is an unweighted occupied-space projector;
+        // its frozen mean-field energy differential is 2 * tr(F11 dP).
+        if (inactive_target) block_curv *= 2.0;
+        const Eigen::VectorXd curv = block_curv.diagonal();
+        // Positive spectral regularization is used only for preconditioning;
+        // negative curvature in the exact HVP model is left untouched.
         proj.curvature_diagonal = normalize_curvature_diagonal(curv);
         PositiveCurvatureBlock positive_block =
             build_positive_curvature_block(block_curv);

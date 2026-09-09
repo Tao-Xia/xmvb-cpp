@@ -143,9 +143,8 @@ build_selected_state_determinant_matrices_from_selected_columns(
 /**
  * @brief Returns whether support-sparse selected-state contractions should run.
  *
- * The decision is automatic by default and compares the full unique-spin
- * contraction footprint against the trimmed per-state support blocks. Set
- * `XMVB_CPP_SELECTED_STATE_SUPPORT_SPARSE=on|off|auto` to override.
+ * The decision compares the full unique-spin contraction work against the
+ * trimmed per-state support work; it has no molecule-specific override.
  */
 bool should_use_support_sparse_selected_state_contractions(
     const SelectedStateDeterminantMatrices& selected_state_matrices);

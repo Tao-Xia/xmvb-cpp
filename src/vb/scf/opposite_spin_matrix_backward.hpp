@@ -8,6 +8,8 @@
 
 namespace xmvb::vb {
 
+struct SameSpinDirectionalPairCache;
+
 /**
  * @brief Matrix-form opposite-spin backward contribution on unique spin pairs.
  *
@@ -77,6 +79,7 @@ build_local_opposite_spin_matrix_backward_contribution(
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals);
+    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const SameSpinDirectionalPairCache* directional_pair_cache = nullptr);
 
 }  // namespace xmvb::vb

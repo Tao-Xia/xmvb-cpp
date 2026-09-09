@@ -15,7 +15,6 @@ namespace xmvb::vb {
 
 namespace {
 
-constexpr int kLegacyOrbitalTypeOeo = 3;
 
 std::vector<double> compute_sparse_orbital_squared_norms(
     const OrbitalPreparationInput& input,
@@ -148,41 +147,6 @@ void validate_orbital_preparation_result(
     throw std::invalid_argument(
         "inactive-active overlap cache dimensions do not match orbital input");
   }
-}
-
-ActiveSpaceOrbitalBackpropagationResult scatter_dense_orbital_gradient_to_sparse_slots(
-    const Eigen::Ref<const Eigen::MatrixXd>& original_orbital_gradient,
-    const OrbitalPreparationInput& input) {
-  if (original_orbital_gradient.rows() != input.n_basis_functions ||
-      original_orbital_gradient.cols() != input.n_orbitals) {
-    throw std::invalid_argument("original orbital gradient shape mismatch");
-  }
-
-  std::vector<double> orbital_value_gradient(input.orbital_value_table.size(), 0.0);
-  for (std::size_t orbital_index = 0; orbital_index < input.n_orbitals; ++orbital_index) {
-    const int coefficient_count =
-        stored_sparse_orbital_coefficient_count(input, orbital_index);
-    for (int coefficient_index = 0;
-         coefficient_index < coefficient_count;
-         ++coefficient_index) {
-      const int basis_function_index =
-          input.orbital_basis_index_table[orbital_index *
-                                              input.n_basis_functions +
-                                          coefficient_index] -
-          1;
-      if (basis_function_index < 0 || basis_function_index >= input.n_basis_functions) {
-        throw std::runtime_error(
-            "invalid sparse orbital basis index while scattering dense orbital gradient");
-      }
-      orbital_value_gradient[orbital_index * input.n_basis_functions +
-                             coefficient_index] =
-          original_orbital_gradient(basis_function_index, orbital_index);
-    }
-  }
-
-  ActiveSpaceOrbitalBackpropagationResult result;
-  result.orbital_value_gradient = std::move(orbital_value_gradient);
-  return result;
 }
 
 ActiveSpaceOrbitalBackpropagationResult backpropagate_normalization_to_raw_slots(
@@ -391,23 +355,8 @@ ActiveSpaceOrbitalBackpropagator::compute_diagnostics(
         input.n_active_orbitals) = original_active_gradient;
   }
 
-  // Legacy `orbtyp=oeo` normalizes the occupied physical orbitals inside
-  // `Orbprep` and then accumulates `Grdbas(J, I)` directly on that normalized
-  // coefficient chart. The extra per-orbital normalization pullback used by
-  // the generic sparse-orbital path changes the OEO representative semantics
-  // and is the main suspect for the open-shell active-orbital drift relative
-  // to legacy XMVB. Preserve the legacy OEO chart here.
-  if (input.orbital_type == kLegacyOrbitalTypeOeo) {
-    ActiveSpaceOrbitalBackpropagationDiagnostics diagnostics;
-    diagnostics.original_orbital_gradient = std::move(original_orbital_gradient);
-    diagnostics.orbital_value_gradient =
-        scatter_dense_orbital_gradient_to_sparse_slots(
-            diagnostics.original_orbital_gradient,
-            input)
-            .orbital_value_gradient;
-    return diagnostics;
-  }
-
+  // Both full-AO OEO and sparse orbitals are optimized as raw coefficients.
+  // Their normalized forward map requires the same chain-rule pullback.
   const std::vector<double> squared_norms =
       compute_sparse_orbital_squared_norms(input, basis_overlap_matrix);
   ActiveSpaceOrbitalBackpropagationDiagnostics diagnostics;

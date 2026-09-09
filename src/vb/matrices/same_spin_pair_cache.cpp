@@ -9,6 +9,7 @@
 #include "core/openmp_utils.hpp"
 #include "vb/matrices/determinant_pair_storage_utils.hpp"
 #include "vb/matrices/spin_pair_utils.hpp"
+#include "vb/matrices/cofactor_differential.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/orbital/active_space_two_electron_utils.hpp"
 
@@ -292,97 +293,6 @@ void attach_opposite_spin_pair_cache(
   }
 }
 
-std::vector<int> build_retained_minor_indices(
-    int dimension,
-    const std::vector<int>& deleted_indices) {
-  std::vector<int> retained_indices;
-  retained_indices.reserve(
-      dimension - static_cast<int>(deleted_indices.size()));
-  for (int index = 0; index < dimension; ++index) {
-    if (std::find(deleted_indices.begin(), deleted_indices.end(), index) ==
-        deleted_indices.end()) {
-      retained_indices.push_back(index);
-    }
-  }
-  return retained_indices;
-}
-
-void scatter_minor_cofactor_to_overlap_block_gradient(
-    const Eigen::MatrixXd& minor_cofactor,
-    const std::vector<int>& retained_rows,
-    const std::vector<int>& retained_cols,
-    double scale,
-    Eigen::MatrixXd* overlap_block_gradient) {
-  if (overlap_block_gradient == nullptr) {
-    throw std::invalid_argument("overlap_block_gradient must not be null");
-  }
-  if (minor_cofactor.rows() != static_cast<int>(retained_rows.size()) ||
-      minor_cofactor.cols() != static_cast<int>(retained_cols.size())) {
-    throw std::invalid_argument(
-        "minor cofactor dimensions do not match retained deleted-minor indices");
-  }
-  if (std::abs(scale) <= kContributionTolerance) {
-    return;
-  }
-
-  for (int retained_col = 0;
-       retained_col < static_cast<int>(retained_cols.size());
-       ++retained_col) {
-    const int overlap_col = retained_cols[retained_col];
-    for (int retained_row = 0;
-         retained_row < static_cast<int>(retained_rows.size());
-         ++retained_row) {
-      const int overlap_row = retained_rows[retained_row];
-      (*overlap_block_gradient)(overlap_row, overlap_col) +=
-          scale * minor_cofactor(retained_row, retained_col);
-    }
-  }
-}
-
-void accumulate_deleted_minor_pullback_to_overlap_block_gradient(
-    const Eigen::MatrixXd& overlap_block,
-    const std::vector<int>& deleted_rows,
-    const std::vector<int>& deleted_cols,
-    double scale,
-    const DeterminantOverlapResolver& overlap_resolver,
-    Eigen::MatrixXd* overlap_block_gradient) {
-  if (overlap_block_gradient == nullptr) {
-    throw std::invalid_argument("overlap_block_gradient must not be null");
-  }
-  if (std::abs(scale) <= kContributionTolerance) {
-    return;
-  }
-
-  const std::vector<int> retained_rows =
-      build_retained_minor_indices(overlap_block.rows(), deleted_rows);
-  const std::vector<int> retained_cols =
-      build_retained_minor_indices(overlap_block.cols(), deleted_cols);
-  if (retained_rows.empty() || retained_cols.empty()) {
-    return;
-  }
-
-  const Eigen::MatrixXd minor =
-      build_deleted_minor_matrix(overlap_block, deleted_rows, deleted_cols);
-  const DeterminantOverlapResult minor_result =
-      overlap_resolver.resolve_matrix(minor);
-  const Eigen::MatrixXd minor_cofactor =
-      calc_cofactor_1st(minor_result);
-  if (minor_cofactor.size() == 0) {
-    return;
-  }
-
-  scatter_minor_cofactor_to_overlap_block_gradient(
-      minor_cofactor,
-      retained_rows,
-      retained_cols,
-      scale * calc_deleted_minor_sign(
-                  overlap_block.rows(),
-                  overlap_block.cols(),
-                  deleted_rows,
-                  deleted_cols),
-      overlap_block_gradient);
-}
-
 Eigen::MatrixXd build_spin_one_electron_block_matrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
@@ -400,103 +310,25 @@ Eigen::MatrixXd build_spin_one_electron_block_matrix(
   return one_electron_block;
 }
 
-Eigen::MatrixXd build_singular_same_spin_hamiltonian_overlap_gradient(
+Eigen::MatrixXd build_polynomial_same_spin_hamiltonian_overlap_gradient(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const DeterminantOverlapResult& overlap_result,
-    const DeterminantOverlapResolver& overlap_resolver) {
-  const int n_electrons = static_cast<int>(occ_L.size());
-  Eigen::MatrixXd overlap_gradient =
-      Eigen::MatrixXd::Zero(n_electrons, n_electrons);
-  if (n_electrons == 0 || overlap_result.nullity > 3) {
-    return overlap_gradient;
-  }
-
-  const Eigen::MatrixXd overlap_block =
-      build_overlap_submatrix_from_result(overlap_result);
-  const Eigen::MatrixXd one_electron_block =
-      build_spin_one_electron_block_matrix(
-          occ_L,
-          occ_R,
-          h1e_act);
-
-  for (int left_column = 0; left_column < n_electrons; ++left_column) {
-    for (int right_row = 0; right_row < n_electrons; ++right_row) {
-      const double coefficient = one_electron_block(right_row, left_column);
-      if (std::abs(coefficient) <= kContributionTolerance) {
-        continue;
-      }
-      accumulate_deleted_minor_pullback_to_overlap_block_gradient(
-          overlap_block,
-          {right_row},
-          {left_column},
-          coefficient,
-          overlap_resolver,
-          &overlap_gradient);
-    }
-  }
-
-  if (n_electrons < 2) {
-    return overlap_gradient;
-  }
-
-  const ActiveSpaceTwoElectronView two_electron_view =
-      make_active_space_two_electron_view(active_space_two_electron_result);
-  for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[left_first];
-    for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[right_first];
-      const int direct_left_pair_index = TwoElectronIndexer::packed_pair_index(
-          orbital_index_right_first,
-          orbital_index_left_first);
-      for (int left_second = left_first + 1;
-           left_second < n_electrons;
-           ++left_second) {
-        const int orbital_index_left_second = occ_L[left_second];
-        const int exchange_left_pair_index = TwoElectronIndexer::packed_pair_index(
-            orbital_index_right_first,
-            orbital_index_left_second);
-        for (int right_second = right_first + 1;
-             right_second < n_electrons;
-             ++right_second) {
-          const int orbital_index_right_second =
-              occ_R[right_second];
-          const int direct_right_pair_index = TwoElectronIndexer::packed_pair_index(
-              orbital_index_right_second,
-              orbital_index_left_second);
-          const int exchange_right_pair_index = TwoElectronIndexer::packed_pair_index(
-              orbital_index_right_second,
-              orbital_index_left_first);
-          const double interaction_value =
-              lookup_active_space_two_electron_kernel_value(
-                  two_electron_view,
-                  direct_left_pair_index,
-                  direct_right_pair_index,
-                  n_active_orbitals) -
-              lookup_active_space_two_electron_kernel_value(
-                  two_electron_view,
-                  exchange_left_pair_index,
-                  exchange_right_pair_index,
-                  n_active_orbitals);
-          if (std::abs(interaction_value) <= kContributionTolerance) {
-            continue;
-          }
-          accumulate_deleted_minor_pullback_to_overlap_block_gradient(
-              overlap_block,
-              {right_first, right_second},
-              {left_first, left_second},
-              interaction_value,
-              overlap_resolver,
-              &overlap_gradient);
-        }
-      }
-    }
-  }
-
-  return overlap_gradient;
+    SpinDeterminantPairEvaluation* pair_evaluation) {
+  if (pair_evaluation == nullptr)
+    throw std::invalid_argument("same-spin polynomial cache output must not be null");
+  const CofactorDifferential& cofactor = cached_cofactor_differential(*pair_evaluation);
+  pair_evaluation->same_spin_one_electron_block =
+      build_spin_one_electron_block_matrix(occ_L, occ_R, h1e_act);
+  pair_evaluation->same_spin_antisymmetrized_interaction =
+      build_spin_antisymmetrized_interaction_matrix(
+      occ_L, occ_R, n_active_orbitals,
+      make_active_space_two_electron_view(active_space_two_electron_result));
+  return cofactor.first(pair_evaluation->same_spin_one_electron_block) +
+      cofactor.second_contraction_gradient(
+          pair_evaluation->same_spin_antisymmetrized_interaction);
 }
 
 std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
@@ -620,7 +452,6 @@ void populate_same_spin_phi_cache_entries(
     throw std::invalid_argument(
         "same-spin phi cache population size does not match unique-spin dimensions");
   }
-  const DeterminantOverlapResolver overlap_resolver;
   const int n_threads =
       same_spin_pair_cache_thread_count(n_unique_determinants);
 
@@ -653,18 +484,16 @@ void populate_same_spin_phi_cache_entries(
         pair_evaluation.same_spin_total_phi = phi_result.total_phi;
         pair_evaluation.same_spin_inverse_overlap_gradient =
             std::move(inverse_overlap_gradient);
-        continue;
       }
 
       pair_evaluation.same_spin_overlap_hamiltonian_gradient =
-          build_singular_same_spin_hamiltonian_overlap_gradient(
+          build_polynomial_same_spin_hamiltonian_overlap_gradient(
               unique_spin_determinants[left_index],
               unique_spin_determinants[right_index],
               h1e_act,
               n_orbitals,
               active_space_two_electron_result,
-              pair_evaluation.overlap_result,
-              overlap_resolver);
+              &pair_evaluation);
     }
   }
 }
@@ -719,6 +548,9 @@ std::size_t estimate_same_spin_pair_cache_bytes(
   }
   const std::size_t n_packed_active_pairs =
       packed_active_pair_count(n_orbitals);
+  const std::size_t max_occupied_pair_count =
+      static_cast<std::size_t>(max_electron_count) *
+      static_cast<std::size_t>(std::max(0, max_electron_count - 1)) / 2;
 
   // A cached same-spin pair keeps one `SpinDeterminantPairEvaluation`, plus
   // the dominant dynamic overlap payload:
@@ -739,7 +571,8 @@ std::size_t estimate_same_spin_pair_cache_bytes(
       max_electron_count *
           max_electron_count +
       4ull * max_electron_count *
-          max_electron_count;
+          max_electron_count +
+      4ull * max_occupied_pair_count * max_occupied_pair_count;
   const std::size_t per_pair_int_count =
       4ull * max_electron_count *
       max_electron_count;

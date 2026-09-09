@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -11,9 +10,11 @@
 #include <Eigen/SparseCore>
 
 #include "vb/matrices/spin_pair_utils.hpp"
+#include "vb/matrices/cofactor_differential.hpp"
 #include "vb/matrices/support_local_contraction_kernels.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "vb/scf/same_spin_matrix_backward.hpp"
 
 namespace xmvb::vb {
 
@@ -26,59 +27,25 @@ constexpr int kOppositeSpinBackwardDenseBatchSize = 8;
 constexpr int kOppositeSpinBackwardOverlapBlockSize = 32;
 constexpr int kOppositeSpinBackwardUniqueTileSize = 64;
 
-struct RegularSpinDirectionalOverlapData {
-  double overlap_determinant = 0.0;
-  double delta_overlap_determinant = 0.0;
-  Eigen::MatrixXd inverse_overlap_submatrix;
-  Eigen::MatrixXd delta_inverse_overlap_submatrix;
-  Eigen::MatrixXd cofactor_1st;
-  Eigen::MatrixXd delta_cofactor_1st;
-};
-
 struct DirectionalOppositeSpinPairData {
-  double delta_overlap_determinant = 0.0;
-  Eigen::MatrixXd delta_inverse_overlap_submatrix;
+  Eigen::MatrixXd delta_overlap_submatrix;
   OppositeSpinPackedPairProjection delta_first_order_cofactor_projection;
-  OppositeSpinPackedPairProjection delta_inverse_overlap_projection;
 };
-
-int positive_env_override(
-    const char* env_name,
-    int default_value) {
-  const char* env_value = std::getenv(env_name);
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return default_value;
-  }
-  const int parsed_value = std::stoi(env_value);
-  if (parsed_value <= 0) {
-    throw std::invalid_argument(
-        std::string(env_name) + " must be positive");
-  }
-  return parsed_value;
-}
 
 int opposite_spin_backward_sparse_block_size() {
-  return positive_env_override(
-      "XMVB_CPP_OPPOSITE_SPIN_BACKWARD_SPARSE_BLOCK_SIZE",
-      kOppositeSpinBackwardSparseBlockSize);
+  return kOppositeSpinBackwardSparseBlockSize;
 }
 
 int opposite_spin_backward_dense_batch_size() {
-  return positive_env_override(
-      "XMVB_CPP_OPPOSITE_SPIN_BACKWARD_DENSE_BATCH_SIZE",
-      kOppositeSpinBackwardDenseBatchSize);
+  return kOppositeSpinBackwardDenseBatchSize;
 }
 
 int opposite_spin_backward_overlap_block_size() {
-  return positive_env_override(
-      "XMVB_CPP_OPPOSITE_SPIN_BACKWARD_OVERLAP_BLOCK_SIZE",
-      kOppositeSpinBackwardOverlapBlockSize);
+  return kOppositeSpinBackwardOverlapBlockSize;
 }
 
 int opposite_spin_backward_unique_tile_size() {
-  return positive_env_override(
-      "XMVB_CPP_OPPOSITE_SPIN_BACKWARD_UNIQUE_TILE_SIZE",
-      kOppositeSpinBackwardUniqueTileSize);
+  return kOppositeSpinBackwardUniqueTileSize;
 }
 
 bool selected_state_has_local_support(
@@ -254,45 +221,6 @@ void accumulate_singular_spin_overlap_gradient_from_dense_image_local(
   }
 }
 
-RegularSpinDirectionalOverlapData build_regular_spin_directional_overlap_data(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const SpinDeterminantPairEvaluation& pair_evaluation,
-    int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix) {
-  const auto& overlap_result = pair_evaluation.overlap_result;
-  if (overlap_result.nullity != 0 || overlap_result.overlap_determinant == 0.0) {
-    throw std::runtime_error(
-        "opposite-spin local-response requires a non-singular same-spin pair");
-  }
-
-  RegularSpinDirectionalOverlapData result;
-  result.overlap_determinant = overlap_result.overlap_determinant;
-  result.inverse_overlap_submatrix =
-      build_inverse_overlap_submatrix_from_result(overlap_result);
-  const Eigen::MatrixXd delta_overlap_submatrix =
-      build_local_overlap_direction_matrix(
-          occ_L,
-          occ_R,
-          delta_ao_overlap_matrix,
-          n_active_orbitals);
-  result.delta_overlap_determinant =
-      result.overlap_determinant *
-      (result.inverse_overlap_submatrix * delta_overlap_submatrix).trace();
-  result.delta_inverse_overlap_submatrix =
-      -result.inverse_overlap_submatrix *
-      delta_overlap_submatrix *
-      result.inverse_overlap_submatrix;
-  result.cofactor_1st = calc_cofactor_1st(overlap_result);
-  result.delta_cofactor_1st =
-      result.delta_overlap_determinant *
-      result.inverse_overlap_submatrix.transpose();
-  result.delta_cofactor_1st.noalias() +=
-      result.overlap_determinant *
-      result.delta_inverse_overlap_submatrix.transpose();
-  return result;
-}
-
 OppositeSpinPackedPairProjection build_sparse_packed_pair_projection_coefficients(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
@@ -391,13 +319,20 @@ build_directional_opposite_spin_pair_data(
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
+    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const std::vector<SameSpinPolynomialDirectionalPairData>*
+        precomputed_directional_pair_data) {
   const std::size_t expected_size =
       n_unique_determinants *
       n_unique_determinants;
   if (ordered_pair_cache.size() != expected_size) {
     throw std::invalid_argument(
         "directional opposite-spin pair data requires a full ordered pair cache");
+  }
+  if (precomputed_directional_pair_data != nullptr &&
+      precomputed_directional_pair_data->size() != expected_size) {
+    throw std::invalid_argument(
+        "precomputed directional opposite-spin pair data has inconsistent dimensions");
   }
 
   std::vector<DirectionalOppositeSpinPairData> directional_pair_data(expected_size);
@@ -419,28 +354,27 @@ build_directional_opposite_spin_pair_data(
       if (unique_determinants[left_unique_index].empty()) {
         continue;
       }
-      if (pair_evaluation.overlap_result.nullity != 0 ||
-          pair_evaluation.overlap_result.overlap_determinant == 0.0) {
-        continue;
-      }
-
-      const RegularSpinDirectionalOverlapData overlap_data =
-          build_regular_spin_directional_overlap_data(
+      directional_entry.delta_overlap_submatrix =
+          build_local_overlap_direction_matrix(
               unique_determinants[left_unique_index],
               unique_determinants[right_unique_index],
-              pair_evaluation,
-              n_active_orbitals,
-              delta_ao_overlap_matrix);
-      directional_entry.delta_overlap_determinant =
-          overlap_data.delta_overlap_determinant;
-      directional_entry.delta_inverse_overlap_submatrix =
-          overlap_data.delta_inverse_overlap_submatrix;
+              delta_ao_overlap_matrix, n_active_orbitals);
+      Eigen::MatrixXd owned_delta_cofactor;
+      const Eigen::MatrixXd* delta_cofactor = nullptr;
+      if (precomputed_directional_pair_data != nullptr) {
+        delta_cofactor = &(*precomputed_directional_pair_data)[ordered_pair_index]
+                              .delta_cofactor_1st;
+      } else {
+        owned_delta_cofactor = cached_cofactor_differential(pair_evaluation).first(
+            directional_entry.delta_overlap_submatrix);
+        delta_cofactor = &owned_delta_cofactor;
+      }
 
       directional_entry.delta_first_order_cofactor_projection =
           build_sparse_packed_pair_projection_coefficients(
               unique_determinants[left_unique_index],
               unique_determinants[right_unique_index],
-              overlap_data.delta_cofactor_1st,
+              *delta_cofactor,
               true,
               n_active_orbitals);
       auto& directional_first_order_projection =
@@ -472,41 +406,7 @@ build_directional_opposite_spin_pair_data(
             delta_kernel_times_first_order[pair_index];
       }
 
-      directional_entry.delta_inverse_overlap_projection =
-          build_sparse_packed_pair_projection_coefficients(
-              unique_determinants[left_unique_index],
-              unique_determinants[right_unique_index],
-              overlap_data.delta_inverse_overlap_submatrix,
-              false,
-              n_active_orbitals);
-      auto& directional_inverse_projection =
-          directional_entry.delta_inverse_overlap_projection;
-      directional_inverse_projection.projected_pair_values =
-          apply_active_space_two_electron_kernel_to_sparse_projection(
-              two_electron_view,
-              n_active_orbitals,
-              directional_inverse_projection.packed_pair_indices,
-              directional_inverse_projection.packed_pair_values);
-      const auto& accepted_inverse_projection =
-          pair_evaluation.opposite_spin_pair_cache.inverse_overlap_projection;
-      const std::vector<double> delta_kernel_times_inverse =
-          apply_directional_active_two_electron_kernel_to_sparse_projection(
-              n_active_orbitals,
-              accepted_inverse_projection.packed_pair_indices,
-              accepted_inverse_projection.packed_pair_values,
-              delta_packed_active_two_electron_integrals);
-      if (directional_inverse_projection.projected_pair_values.size() <
-          delta_kernel_times_inverse.size()) {
-        directional_inverse_projection.projected_pair_values.resize(
-            delta_kernel_times_inverse.size(),
-            0.0);
-      }
-      for (std::size_t pair_index = 0;
-           pair_index < delta_kernel_times_inverse.size();
-           ++pair_index) {
-        directional_inverse_projection.projected_pair_values[pair_index] +=
-            delta_kernel_times_inverse[pair_index];
-      }
+
     }
   }
   return directional_pair_data;
@@ -1241,68 +1141,24 @@ void validate_directional_selected_state_inputs(
   }
 }
 
-void accumulate_regular_spin_overlap_gradient_direction_local(
+void accumulate_spin_overlap_gradient_direction_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    double overlap_determinant,
-    double delta_overlap_determinant,
-    const Eigen::MatrixXd& inverse_overlap_submatrix,
-    const Eigen::MatrixXd& delta_inverse_overlap_submatrix,
-    double determinant_overlap_weight,
-    double delta_determinant_overlap_weight,
-    const Eigen::MatrixXd& inverse_overlap_gradient,
-    const Eigen::MatrixXd& delta_inverse_overlap_gradient,
+    const CofactorDifferential& cofactor,
+    const Eigen::MatrixXd& delta_overlap_submatrix,
+    const Eigen::MatrixXd& cofactor_weight,
+    const Eigen::MatrixXd& delta_cofactor_weight,
     int n_active_orbitals,
     std::vector<double>* active_orbital_overlap_gradient) {
-  if (active_orbital_overlap_gradient == nullptr) {
-    throw std::invalid_argument("active_orbital_overlap_gradient must not be null");
-  }
-  if (overlap_determinant == 0.0) {
-    throw std::invalid_argument(
-        "directional overlap gradient requires non-zero overlap_determinant");
-  }
-
-  const Eigen::MatrixXd inverse_overlap_transpose = inverse_overlap_submatrix.transpose();
-  const Eigen::MatrixXd delta_inverse_overlap_transpose =
-      delta_inverse_overlap_submatrix.transpose();
-  Eigen::MatrixXd overlap_submatrix_gradient_direction =
-      (delta_determinant_overlap_weight * overlap_determinant +
-       determinant_overlap_weight * delta_overlap_determinant) *
-      inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() +=
-      determinant_overlap_weight * overlap_determinant *
-      delta_inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() -=
-      delta_overlap_determinant *
-      inverse_overlap_transpose *
-      inverse_overlap_gradient *
-      inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() -=
-      overlap_determinant *
-      delta_inverse_overlap_transpose *
-      inverse_overlap_gradient *
-      inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() -=
-      overlap_determinant *
-      inverse_overlap_transpose *
-      delta_inverse_overlap_gradient *
-      inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() -=
-      overlap_determinant *
-      inverse_overlap_transpose *
-      inverse_overlap_gradient *
-      delta_inverse_overlap_transpose;
-
-  for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = occ_L[left_column];
-    for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = occ_R[right_row];
-      (*active_orbital_overlap_gradient)[orbital_index_left *
-                                             n_active_orbitals +
-                                         orbital_index_right] +=
-          overlap_submatrix_gradient_direction(right_row, left_column);
-    }
-  }
+  // E = <W, C(S)>: d(grad_S E) = C''(S)[dS,W] + C'(S)[dW].
+  // Tile weights use left-by-right storage, hence the transposes here.
+  const Eigen::MatrixXd gradient_direction =
+      cofactor.mixed(delta_overlap_submatrix, cofactor_weight.transpose()) +
+      cofactor.first(delta_cofactor_weight.transpose());
+  for (int left = 0; left < static_cast<int>(occ_L.size()); ++left)
+    for (int right = 0; right < static_cast<int>(occ_R.size()); ++right)
+      (*active_orbital_overlap_gradient)[occ_L[left] * n_active_orbitals + occ_R[right]] +=
+          gradient_direction(right, left);
 }
 
 void validate_matrix_backward_inputs(
@@ -2649,57 +2505,6 @@ void accumulate_local_alpha_overlap_gradient(
                     selected_states.n_unique_alpha);
             const auto& alpha_pair_evaluation =
                 same_spin_pair_cache.alpha_pair_cache_ref()[ordered_pair_index];
-            if (alpha_pair_evaluation.overlap_result.nullity != 0 ||
-                alpha_pair_evaluation.overlap_result.overlap_determinant ==
-                    0.0) {
-              continue;
-            }
-
-            const auto& inverse_projection =
-                alpha_pair_evaluation
-                    .opposite_spin_pair_cache
-                    .inverse_overlap_projection;
-            const auto& directional_inverse_projection =
-                alpha_directional_pair_data[ordered_pair_index]
-                    .delta_inverse_overlap_projection;
-            if (inverse_projection.packed_pair_indices.empty() &&
-                directional_inverse_projection.packed_pair_indices.empty()) {
-              continue;
-            }
-
-            double determinant_overlap_weight = 0.0;
-            double delta_determinant_overlap_weight = 0.0;
-            for (std::size_t entry_index = 0;
-                 entry_index < inverse_projection.packed_pair_indices.size();
-                 ++entry_index) {
-              const int packed_pair_index =
-                  inverse_projection.packed_pair_indices[entry_index];
-              const double accepted_dense_value =
-                  alpha_pair_weight_tiles(alpha_tile_index, packed_pair_index);
-              const double directional_dense_value =
-                  directional_alpha_pair_weight_tiles(
-                      alpha_tile_index,
-                      packed_pair_index);
-              determinant_overlap_weight +=
-                  inverse_projection.packed_pair_values[entry_index] *
-                  accepted_dense_value;
-              delta_determinant_overlap_weight +=
-                  inverse_projection.packed_pair_values[entry_index] *
-                  directional_dense_value;
-            }
-            for (std::size_t entry_index = 0;
-                 entry_index <
-                     directional_inverse_projection.packed_pair_indices.size();
-                 ++entry_index) {
-              const int packed_pair_index =
-                  directional_inverse_projection.packed_pair_indices[entry_index];
-              const double accepted_dense_value =
-                  alpha_pair_weight_tiles(alpha_tile_index, packed_pair_index);
-              delta_determinant_overlap_weight +=
-                  directional_inverse_projection.packed_pair_values[entry_index] *
-                  accepted_dense_value;
-            }
-
             build_inverse_overlap_gradient_from_tile_matrix(
                 unique_alpha_determinants[alpha_left_id],
                 unique_alpha_determinants[alpha_right_id],
@@ -2712,20 +2517,11 @@ void accumulate_local_alpha_overlap_gradient(
                 directional_alpha_pair_weight_tiles,
                 alpha_tile_index,
                 &delta_inverse_overlap_gradient);
-            const Eigen::MatrixXd inverse_overlap_submatrix =
-                build_inverse_overlap_submatrix_from_result(
-                    alpha_pair_evaluation.overlap_result);
-            accumulate_regular_spin_overlap_gradient_direction_local(
+            accumulate_spin_overlap_gradient_direction_local(
                 unique_alpha_determinants[alpha_left_id],
                 unique_alpha_determinants[alpha_right_id],
-                alpha_pair_evaluation.overlap_result.overlap_determinant,
-                alpha_directional_pair_data[ordered_pair_index]
-                    .delta_overlap_determinant,
-                inverse_overlap_submatrix,
-                alpha_directional_pair_data[ordered_pair_index]
-                    .delta_inverse_overlap_submatrix,
-                determinant_overlap_weight,
-                delta_determinant_overlap_weight,
+                cached_cofactor_differential(alpha_pair_evaluation),
+                alpha_directional_pair_data[ordered_pair_index].delta_overlap_submatrix,
                 inverse_overlap_gradient,
                 delta_inverse_overlap_gradient,
                 n_active_orbitals,
@@ -2813,57 +2609,6 @@ void accumulate_local_beta_overlap_gradient(
                     selected_states.n_unique_beta);
             const auto& beta_pair_evaluation =
                 same_spin_pair_cache.beta_pair_cache_ref()[ordered_pair_index];
-            if (beta_pair_evaluation.overlap_result.nullity != 0 ||
-                beta_pair_evaluation.overlap_result.overlap_determinant ==
-                    0.0) {
-              continue;
-            }
-
-            const auto& inverse_projection =
-                beta_pair_evaluation
-                    .opposite_spin_pair_cache
-                    .inverse_overlap_projection;
-            const auto& directional_inverse_projection =
-                beta_directional_pair_data[ordered_pair_index]
-                    .delta_inverse_overlap_projection;
-            if (inverse_projection.packed_pair_indices.empty() &&
-                directional_inverse_projection.packed_pair_indices.empty()) {
-              continue;
-            }
-
-            double determinant_overlap_weight = 0.0;
-            double delta_determinant_overlap_weight = 0.0;
-            for (std::size_t entry_index = 0;
-                 entry_index < inverse_projection.packed_pair_indices.size();
-                 ++entry_index) {
-              const int packed_pair_index =
-                  inverse_projection.packed_pair_indices[entry_index];
-              const double accepted_dense_value =
-                  beta_pair_weight_tiles(beta_tile_index, packed_pair_index);
-              const double directional_dense_value =
-                  directional_beta_pair_weight_tiles(
-                      beta_tile_index,
-                      packed_pair_index);
-              determinant_overlap_weight +=
-                  inverse_projection.packed_pair_values[entry_index] *
-                  accepted_dense_value;
-              delta_determinant_overlap_weight +=
-                  inverse_projection.packed_pair_values[entry_index] *
-                  directional_dense_value;
-            }
-            for (std::size_t entry_index = 0;
-                 entry_index <
-                     directional_inverse_projection.packed_pair_indices.size();
-                 ++entry_index) {
-              const int packed_pair_index =
-                  directional_inverse_projection.packed_pair_indices[entry_index];
-              const double accepted_dense_value =
-                  beta_pair_weight_tiles(beta_tile_index, packed_pair_index);
-              delta_determinant_overlap_weight +=
-                  directional_inverse_projection.packed_pair_values[entry_index] *
-                  accepted_dense_value;
-            }
-
             build_inverse_overlap_gradient_from_tile_matrix(
                 unique_beta_determinants[beta_left_id],
                 unique_beta_determinants[beta_right_id],
@@ -2876,20 +2621,11 @@ void accumulate_local_beta_overlap_gradient(
                 directional_beta_pair_weight_tiles,
                 beta_tile_index,
                 &delta_inverse_overlap_gradient);
-            const Eigen::MatrixXd inverse_overlap_submatrix =
-                build_inverse_overlap_submatrix_from_result(
-                    beta_pair_evaluation.overlap_result);
-            accumulate_regular_spin_overlap_gradient_direction_local(
+            accumulate_spin_overlap_gradient_direction_local(
                 unique_beta_determinants[beta_left_id],
                 unique_beta_determinants[beta_right_id],
-                beta_pair_evaluation.overlap_result.overlap_determinant,
-                beta_directional_pair_data[ordered_pair_index]
-                    .delta_overlap_determinant,
-                inverse_overlap_submatrix,
-                beta_directional_pair_data[ordered_pair_index]
-                    .delta_inverse_overlap_submatrix,
-                determinant_overlap_weight,
-                delta_determinant_overlap_weight,
+                cached_cofactor_differential(beta_pair_evaluation),
+                beta_directional_pair_data[ordered_pair_index].delta_overlap_submatrix,
                 inverse_overlap_gradient,
                 delta_inverse_overlap_gradient,
                 n_active_orbitals,
@@ -3053,7 +2789,8 @@ build_local_opposite_spin_matrix_backward_contribution(
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
+    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const SameSpinDirectionalPairCache* directional_pair_cache) {
   validate_matrix_backward_inputs(same_spin_pair_cache, selected_states);
 
   OppositeSpinMatrixBackwardContribution result;
@@ -3091,7 +2828,17 @@ build_local_opposite_spin_matrix_backward_contribution(
           n_active_orbitals,
           active_space_two_electron_result,
           delta_ao_overlap_matrix,
-          delta_packed_active_two_electron_integrals);
+          delta_packed_active_two_electron_integrals,
+          directional_pair_cache == nullptr
+              ? nullptr
+              : &directional_pair_cache->alpha.ordered_pair_data);
+  const std::vector<SameSpinPolynomialDirectionalPairData>*
+      beta_precomputed_pair_data = nullptr;
+  if (directional_pair_cache != nullptr) {
+    beta_precomputed_pair_data = directional_pair_cache->close_shell_same_spin
+        ? &directional_pair_cache->alpha.ordered_pair_data
+        : &directional_pair_cache->beta.ordered_pair_data;
+  }
   const auto beta_directional_pair_data =
       build_directional_opposite_spin_pair_data(
           same_spin_pair_cache.beta_reuse_table.unique_determinants,
@@ -3100,7 +2847,8 @@ build_local_opposite_spin_matrix_backward_contribution(
           n_active_orbitals,
           active_space_two_electron_result,
           delta_ao_overlap_matrix,
-          delta_packed_active_two_electron_integrals);
+          delta_packed_active_two_electron_integrals,
+          beta_precomputed_pair_data);
 
   const int sparse_block_size = std::min(
       n_packed_active_pairs,

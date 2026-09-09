@@ -94,6 +94,8 @@ GramEigensystem factorize_right_gram(const Eigen::MatrixXd& matrix) {
 }
 
 int matrix_numerical_rank_from_gram(const Eigen::MatrixXd& matrix) {
+  // LAPACKE-backed Eigen decompositions must not receive a 0-by-0 matrix.
+  if (matrix.rows() == 0 || matrix.cols() == 0) return 0;
   return factorize_right_gram(matrix).rank;
 }
 
@@ -237,6 +239,7 @@ SparseOrbitalGaugeAudit audit_sparse_orbital_gauge(
         gauge_svd.decomposition.matrixU().leftCols(gauge_svd.rank);
   }
   audit.quotient_dimension = packed_dimension - audit.gauge_rank;
+  audit.packed_gauge_basis = packed_gauge_basis;
 
   // Independently differentiate the physical map
   //   x -> (P_I, horizontal variations of [O_I c_A]).

@@ -30,12 +30,9 @@ struct ActiveSpaceOrbitalBackpropagationDiagnostics {
  * density, occupied projector, and inactive-overlap inverse inside every
  * orbital pullback.
  *
- * The legacy `orbtyp=oeo` path is special. Historical XMVB normalizes the
- * physical orbitals inside `Orbprep` and then differentiates on that
- * normalized coefficient chart. For parity with the legacy open-shell OEO
- * representative, this backpropagator preserves that chart instead of pushing
- * the per-orbital normalization map all the way back to the raw coefficient
- * slots.
+ * Full-AO OEO and support-constrained orbitals both use raw coefficients as
+ * optimization variables. The normalization pullback is required for both;
+ * a gradient on normalized coefficients is not interchangeable with this one.
  */
 class ActiveSpaceOrbitalBackpropagator {
 public:

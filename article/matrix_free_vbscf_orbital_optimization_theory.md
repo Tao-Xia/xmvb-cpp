@@ -10,6 +10,11 @@ This document establishes the mathematical formulation underlying a general matr
 
 The central objective is to obtain Newton-like local convergence without constructing or storing the orbital Hessian. The derivation below separates the physical orbital manifold, its gauge redundancies, the relaxed electronic Hessian, and its matrix-free action. Statements concerning the current implementation are collected separately in Section 11 and should not be interpreted as part of the formal theory.
 
+Full-AO OEO orbitals correspond to identity support maps, rather than
+localized HAO supports. Their normalization and inactive-projector
+derivatives, together with stable determinant-cofactor HVP actions, are
+documented in [Full-AO OEO derivative corrections](full_ao_oeo_derivative_validation.md).
+
 ## 1. Variational VBSCF energy
 
 Let $\mathbf S$ denote the AO overlap matrix and let
@@ -37,7 +42,7 @@ $$
 \tag{3}
 $$
 
-Here, $\mathbf H_{\mathrm{VB}}$ and $\mathbf S_{\mathrm{VB}}$ are the Hamiltonian and overlap matrices in the nonorthogonal VB structure basis. For an isolated state, the orbitally relaxed energy is
+Here, $\mathbf H_{\mathrm{VB}}$ and $\mathbf S_{\mathrm{VB}}$ are the Hamiltonian and overlap matrices in the nonorthogonal VB structure basis. For the lowest state, the orbitally relaxed energy is
 
 $$
 \mathcal E(\mathbf C)
@@ -51,7 +56,7 @@ $$
 \tag{4}
 $$
 
-For a state-averaged calculation with normalized weights $w_s$,
+For an isolated excited state, one follows the corresponding stationary eigenvalue branch of eq 2 rather than the unconstrained minimum in eq 4. For a state-averaged calculation with normalized weights $w_s$,
 
 $$
 \mathcal E_{\mathrm{SA}}(\mathbf C)
@@ -262,7 +267,7 @@ $$
 \tag{22}
 $$
 
-Crucially, $\mathcal G_{\mathrm{sp}}$ is generally a global space. When different orbitals have different supports, it need not decompose into a direct sum of independent per-orbital gauge spaces.
+The gauge sources depend on the **complete inactive span**, including orbitals assigned to other storage blocks. Nevertheless, under the fixed, independently specified column supports of eq 8, the constraints separate by target column. Consequently, the gauge in eq 21 **does** decompose into per-target spaces, provided each is obtained by enforcing off-support cancellation on the full source orbitals. Restricting the source orbitals first and declaring the restricted vectors to be gauge is not equivalent. This corrects the earlier claim that a dense global quotient was intrinsically necessary.
 
 ### 3.4 Characterization of the physical null space
 
@@ -400,6 +405,51 @@ Thus, the number of redundant variables follows from the actual support-constrai
 
 For numerical robustness, eqs 24--27 should be implemented using a rank-revealing QR factorization or singular-value decomposition. The numerical rank criterion must scale with the operator norm and machine precision rather than with molecule-specific thresholds.
 
+### 4.1 Exact factorization by target orbital
+
+Let $\mathbf F_p$ collect the gauge source columns for target orbital $p$:
+$\mathbf F_p=\mathbf C_{\mathrm I}$ for an inactive target, and
+$\mathbf F_p=[\mathbf C_{\mathrm I}\ \mathbf c_p]$ for an active target.
+Let $\mathbf R_p$ inject only **differentiable** slots. Stored but fixed slots are
+treated as forbidden variations, just like off-support entries. Then define
+
+$$
+\mathbf N_p=\operatorname{null}\!\left[
+(\mathbf I-\mathbf R_p\mathbf R_p^{\mathrm T})\mathbf F_p
+\right],
+\qquad
+\mathbf G_p=\mathbf R_p^{\mathrm T}\mathbf F_p\mathbf N_p,
+\qquad
+\mathbf U_p=\operatorname{orth}\!\left(\ker\mathbf G_p^{\mathrm T}\right).
+\tag{27a}
+$$
+
+Columns of $\mathbf K$ and $\mathbf L$, and the individual diagonal entries of
+$\mathbf D$, act on distinct target columns. The off-support constraints do not
+couple different targets. Thus, up to the parameter enumeration,
+
+$$
+\mathcal G_{\mathrm{sp}}=\bigoplus_p\operatorname{range}(\mathbf G_p),
+\qquad
+\mathbf U=\operatorname{blockdiag}(\mathbf U_1,\ldots,\mathbf U_{n_{\mathrm{orb}}}),
+\qquad
+n_{\mathrm{red}}=\sum_p\left[m_p-\operatorname{rank}(\mathbf G_p)\right].
+\tag{27b}
+$$
+
+This proves equivalence to the global constraint construction in eqs 23--27.
+Each $\mathbf U_p$ is the full Euclidean orthogonal complement of the admissible
+gauge, so it contains no gauge direction and loses no direction modulo gauge.
+A complete inactive source combination may cancel outside a target support even
+when none of its individual source columns lies within that support. Equation
+27a retains such combinations; a column-containment heuristic would miss them.
+
+The production implementation uses eq 27a and stores only local dense blocks,
+requiring $O(\sum_p m_p n_{\mathrm{red},p})$ basis storage instead of
+$O(m n_{\mathrm{red}})$. Its gradient pullback and step expansion remain exact
+adjoints. It uses the raw Euclidean coefficient metric for now; physical metric
+whitening is a separate change and is not implied by removal of gauge directions.
+
 ## 5. A natural quotient metric
 
 Euclidean distances between raw sparse coefficients are not invariant to AO scaling or to the choice of orbital representatives. A physically meaningful trust-region norm should instead measure changes in the inactive subspace and projected active rays.
@@ -467,7 +517,7 @@ $$
 \tag{31}
 $$
 
-Equation 31 vanishes on the gauge directions of eqs 19 and 20. Subject to local identifiability of the physical orbital variables, it induces a positive-definite metric on the quotient in eq 22. If $\mathbf U$ is orthonormal in this induced metric, then the Euclidean norm of the reduced coordinate vector has an immediate physical meaning:
+Equation 31 vanishes on the gauge directions of eqs 19 and 20. On a regular stratum where the gauge rank is constant, it defines a positive-definite metric on the quotient tangent space at a fixed representative. If $\mathbf U$ is orthonormal in this induced metric, then the Euclidean norm of the reduced coordinate vector has an immediate physical meaning:
 
 $$
 \delta\mathbf x=\mathbf U\mathbf d,
@@ -478,7 +528,7 @@ $$
 \tag{32}
 $$
 
-This construction makes the trust radius, Krylov orthogonalization, and convergence tests independent of arbitrary raw coefficient scaling.
+The metric removes dependence on independent orbital scalings, but full invariance under active additions from a moving inactive span requires care: differentiating $\mathbf c_p\mapsto\mathbf c_p+\mathbf C_{\mathrm I}\boldsymbol\ell_p$ also changes the active tangent by $\delta\mathbf C_{\mathrm I}\boldsymbol\ell_p$. To obtain a representative-independent bundle metric, one may first use the canonical representative $\mathbf c_p=\mathbf b_p$ and differentiate that section, or introduce the corresponding connection. Equation 31 is therefore a proposed local metric, not a claim that the current code implements an invariant Riemannian Newton method.
 
 ## 6. Directional derivatives of the orbital-preparation map
 
@@ -714,7 +764,7 @@ $$
 \tag{50}
 $$
 
-The pseudoinverse in eq 50 is evaluated in the projected response space after removal of the reference-state normalization mode. A matrix-free application first solves
+If $\mathbf z=(\mathbf a,E)$ includes the Lagrange multiplier, $\mathscr L_{\mathbf z\mathbf z}$ is the bordered KKT matrix. For a simple eigenvalue and a positive-definite structure overlap it is nonsingular, and the dagger denotes its ordinary inverse. Alternatively, eliminating the normalization constraint gives a projected inverse on the nonreference response space. These two formulations must not be mixed. A matrix-free application first solves
 
 $$
 \delta\mathbf z
@@ -797,7 +847,7 @@ $$
 \tag{56}
 $$
 
-Equation 56 is unsuitable near degeneracies. A general implementation should instead solve the projected block response equation or an equivalent Sylvester equation for a near-degenerate state subspace. This avoids unstable division by individual energy gaps and provides a consistent foundation for state-averaged orbital optimization.
+Equation 56 exposes the genuine conditioning problem near degeneracies. A projected or block response solve does not remove the physical inverse-gap sensitivity of an isolated state. At an exact crossing an individual ordered eigenvalue may cease to be differentiable. A smoothly isolated cluster with equal weights can instead be treated by a subspace response or Sylvester equation; internal cluster rotations then cancel from the averaged objective. Unequal weights or state-specific tracking require an explicit differentiability assumption.
 
 ## 9. Reduced pullback gradient and Hessian
 
@@ -928,6 +978,111 @@ $$
 
 and solve the reduced trust-region problem in $\operatorname{span}(\mathbf Q)$. Residual directions, preconditioned residuals, and transported Ritz vectors may be added in blocks. Recycling changes only how the Newton equation is solved; it does not alter the Hessian operator defined by eqs 50--63.
 
+In the current Euclidean quotient chart, basis construction must preserve the
+identity $\mathbf Y=\mathbf H_k\mathbf Q$ numerically, not only in exact
+arithmetic. For a candidate direction $\mathbf p$, first orthogonalize and
+normalize the direction itself:
+
+$$
+\mathbf a=\mathbf Q^{\mathrm T}\mathbf p,
+\qquad
+\beta=\left\lVert\mathbf p-\mathbf Q\mathbf a\right\rVert,
+\qquad
+\mathbf q=\frac{\mathbf p-\mathbf Q\mathbf a}{\beta},
+\qquad
+\mathbf y=\mathbf H_k\mathbf q.
+\tag{65a}
+$$
+
+Reorthogonalization and preliminary scaling of $\mathbf p$ are used in finite
+precision. The original search-direction action is then reconstructed as
+
+$$
+\mathbf H_k\mathbf p=\mathbf Y\mathbf a+\beta\mathbf y.
+\tag{65b}
+$$
+
+This uses one HVP per admitted direction and keeps each cached image a direct
+application to its normalized basis vector. Computing $\mathbf H_k\mathbf p$
+first and then forming $(\mathbf H_k\mathbf p-\mathbf Y\mathbf a)/\beta$
+instead can amplify cancellation when $\beta$ is small. Independently updating
+both reduced basis vectors and packed tangents by projection recurrences can
+also destroy their mutual consistency. The implementation now regenerates each
+packed tangent from its admitted reduced vector. A small-gradient molecular
+regression that exposed both failures is documented in the validation record.
+
+For the current Euclidean quotient chart, the small trust-region problem must
+be solved as a constrained quadratic problem, including singular and indefinite
+models. With $\mathbf h=\mathbf Q^{\mathrm T}\mathbf g_k$ and
+$\mathbf T=\mathbf Q^{\mathrm T}\mathbf H_k\mathbf Q$, its global optimality
+conditions are
+
+$$
+(\mathbf T+\lambda\mathbf I)\mathbf z=-\mathbf h,
+\qquad \mathbf T+\lambda\mathbf I\succeq\mathbf 0,
+\qquad \lambda\geq 0,
+\qquad \lVert\mathbf z\rVert\leq\Delta,
+\qquad \lambda(\lVert\mathbf z\rVert-\Delta)=0.
+\tag{65c}
+$$
+
+These conditions certify a minimum of the **projected** model. To see
+sufficiency, let $m(\mathbf z)=\mathbf h^{\mathrm T}\mathbf z+
+\tfrac12\mathbf z^{\mathrm T}\mathbf T\mathbf z$. For any feasible
+$\mathbf w$,
+
+$$
+m(\mathbf w)-m(\mathbf z)
+=\frac12(\mathbf w-\mathbf z)^{\mathrm T}
+ (\mathbf T+\lambda\mathbf I)(\mathbf w-\mathbf z)
++\frac{\lambda}{2}(\lVert\mathbf z\rVert^2-\lVert\mathbf w\rVert^2)
+\geq 0.
+\tag{65d}
+$$
+
+In the eigenbasis of $\mathbf T$, let $\theta_j$ and $\widehat h_j$ be the
+eigenvalues and gradient components. At
+$\lambda_0=\max(0,-\theta_{\min})$, a singular denominator is not a solver
+failure: the endpoint is evaluated by a pseudoinverse if its null-space
+gradient vanishes; otherwise the secular root lies above that endpoint. In the
+indefinite hard case, the pseudoinverse solution is completed along a
+minimum-eigenvalue direction to reach the boundary. The implementation scales
+to a unit ball and keeps the excess shift $\lambda-\lambda_0$ separate to avoid
+losing a small positive denominator through cancellation.
+
+The accuracy of the actual returned step, $\mathbf s=\mathbf Q\mathbf z$, can
+be measured using its full reduced-coordinate KKT residual. This is not in
+general the residual of an intermediate CG accumulation:
+
+$$
+\mathbf r=\mathbf g_k+\mathbf H_k\mathbf s+\lambda\mathbf s,
+\qquad
+\lVert\mathbf r\rVert_2\leq\eta_k\lVert\mathbf g_k\rVert_2.
+\tag{65e}
+$$
+
+One candidate algorithm expands the subspace when this test fails, using
+$-\mathbf M_k^{-1}\mathbf r$, orthogonalized against the current basis before
+one fresh HVP is evaluated. The projected trust-region problem is then solved
+again. A preconditioner accelerates this expansion; it does not replace the
+Hessian in the quadratic model. An experimental implementation used the bounded
+square-root forcing rule with the gradient 2-norm, making the inner rule
+invariant under orthogonal changes of basis, but not arbitrary AO or energy
+rescaling. It passed small-model tests but increased MnF2 HVP work and was not
+adopted. Production retains CG-based subspace generation. The subsequent
+consistency correction uses the Euclidean 2-norm in both the forcing rule and
+the CG residual test, and restores conjugacy using cached HVP information.
+It separately reports how many fresh subproblem solutions meet the full 2-norm
+KKT residual target with the same forcing fraction.
+Neither the inherited forcing floor nor a finite HVP safety limit establishes
+asymptotically quadratic convergence.
+
+Hitting the HVP safety limit alone must not be interpreted as meeting the
+inner residual target. A small residual does not exclude negative curvature
+outside the sampled subspace. In particular, first-order outer stopping does
+not certify a local minimum at a saddle with zero gradient. These limitations
+must be distinguished from the exact small-model guarantee in eq 65c.
+
 The step acceptance ratio is
 
 $$
@@ -944,22 +1099,350 @@ $$
 
 Both the trust radius and the required inner accuracy should be adapted from $\rho_k$, the Newton residual, and the observed spectral information. Fixed system-dependent HVP or CG budgets are not part of the mathematical algorithm.
 
+### 10.1 Coordinate-consistent local preconditioning model
+
+The inexpensive one-electron model used for preconditioning must be
+distinguished from the exact relaxed VBSCF Hessian. For a target orbital, let
+$\mathbf c$ contain **all stored coefficients**, including any fixed entries,
+and let $\mathbf F$ and $\mathbf S$ denote its real symmetric local effective
+one-electron and overlap matrices. In the current implementation these are the
+inactive-projected pullbacks of eq 66i, not raw AO principal submatrices.
+Freeze these matrices while defining the surrogate
+
+$$
+\varepsilon(\mathbf c)
+=\frac{\mathbf c^{\mathrm T}\mathbf F\mathbf c}
+       {\mathbf c^{\mathrm T}\mathbf S\mathbf c},
+\qquad
+\omega=\mathbf c^{\mathrm T}\mathbf S\mathbf c>0,
+\qquad
+\mathbf a=(\mathbf F-\varepsilon\mathbf S)\mathbf c,
+\qquad
+\mathbf b=\mathbf S\mathbf c.
+\tag{66a}
+$$
+
+Direct differentiation gives
+
+$$
+\nabla_{\mathbf c}\varepsilon=\frac{2\mathbf a}{\omega},
+\qquad
+\nabla^2_{\mathbf c}\varepsilon
+=\frac{2}{\omega}(\mathbf F-\varepsilon\mathbf S)
+-\frac{4}{\omega^2}
+ (\mathbf a\mathbf b^{\mathrm T}+\mathbf b\mathbf a^{\mathrm T}).
+\tag{66b}
+$$
+
+Let $\mathbf V$ embed the local quotient basis into stored-coefficient space,
+with zero rows on fixed coefficients, so that the local additive chart is
+$\mathbf c(\mathbf d)=\mathbf c+\mathbf V\mathbf d$. Its curvature is
+
+$$
+\mathbf C
+=\mathbf V^{\mathrm T}
+  \nabla^2_{\mathbf c}\varepsilon\,\mathbf V.
+\tag{66c}
+$$
+
+Euclidean orthogonality to orbital scaling does not imply
+$\mathbf V^{\mathrm T}\mathbf S\mathbf c=\mathbf 0$. Consequently, the
+second term in eq 66b cannot generally be omitted in the present chart.
+Fixed coefficients also contribute to $\omega$, $\varepsilon$, $\mathbf a$,
+and $\mathbf b$, despite having zero variations. With $\mathbf V$ held fixed,
+rescaling all stored coefficients by a nonzero scalar $t$ gives
+$\mathbf C(t\mathbf c)=t^{-2}\mathbf C(\mathbf c)$; replacing the quotient
+basis by $\mathbf V\mathbf R$ gives $\mathbf R^{\mathrm T}\mathbf C\mathbf R$.
+These identities and independent gradient finite differences are automated
+tests of the implemented surrogate, not assumptions about its fidelity to the
+many-electron Hessian.
+
+Only small per-orbital blocks are formed. The inactive blocks carry the
+double-occupancy weight derived in section 10.5; active blocks retain the unit
+Rayleigh surrogate. Their existing positive spectral
+regularization and inverse action define the base preconditioner, augmented
+by transported positive-curvature L-BFGS secants. Negative curvature is not
+removed from the exact HVP operator or from the projected trust-region model.
+The surrogate omits the variation of the effective one-electron matrix and
+many-electron response, and is not a physical-metric whitening or a proof of
+invariance under arbitrary inactive-orbital mixing.
+
+### 10.2 Stable inner conjugate directions
+
+In the Euclidean quotient chart, the inner norm must not depend on an arbitrary
+orthogonal change of quotient basis. The production forcing function retains
+its inherited bounds but now takes $\lVert\mathbf g_k\rVert_2$, and the CG
+residual is checked in the same 2-norm. This corrects orthogonal-basis dependence
+of the inner norm; it does not make the rule invariant under arbitrary
+nonorthogonal transformations or energy-unit rescaling. The unchanged outer
+stopping criterion still uses a projected infinity norm.
+
+The three-term preconditioned-CG recurrence can lose conjugacy in finite
+precision even when its Euclidean HVP cache remains consistent. Let
+$\mathbf M^{-1}$ be the fixed positive preconditioner for one inner solve,
+$\mathbf r_j=-\mathbf g_k-\mathbf H_k\mathbf s_j$, and
+$\mathbf z_j=\mathbf M^{-1}\mathbf r_j$. For previously admitted positive-
+curvature directions, restore conjugacy by two passes of
+
+$$
+\mathbf p_j\leftarrow\mathbf z_j,
+\qquad
+\mathbf p_j\leftarrow\mathbf p_j-
+\sum_{i<j}\mathbf p_i
+\frac{(\mathbf H_k\mathbf p_i)^{\mathrm T}\mathbf p_j}
+     {\mathbf p_i^{\mathrm T}\mathbf H_k\mathbf p_i}.
+\tag{66d}
+$$
+
+The summands are applied sequentially within each pass. In exact arithmetic,
+mutual conjugacy and positive curvature make these projections well-defined.
+The line-minimizing update is
+
+$$
+\alpha_j=
+\frac{\mathbf r_j^{\mathrm T}\mathbf p_j}
+     {\mathbf p_j^{\mathrm T}\mathbf H_k\mathbf p_j},
+\qquad
+\mathbf s_{j+1}=\mathbf s_j+\alpha_j\mathbf p_j,
+\qquad
+\mathbf r_{j+1}=-\mathbf g_k-\mathbf H_k\mathbf s_{j+1}.
+\tag{66e}
+$$
+
+The implementation reconstructs the residual from the accumulated step image
+instead of subtracting successive residual updates. Reorthogonalization uses
+already cached images and introduces no additional HVPs. Direction and image
+storage is linear in the reduced dimension times the inner subspace dimension;
+no dense orbital Hessian is assembled. Positive-definite quadratic tests verify
+conjugacy, a fresh residual, and one HVP per admitted direction at condition
+numbers $10^2$ and $10^6$. These tests do not assert stability for arbitrarily
+ill-conditioned models. Negative-curvature and boundary exits continue to use
+the spectral trust-region solver; reaching the inner work limit still does not
+certify the final-step residual target.
+
+### 10.3 Recycling evaluated curvature into the preconditioner
+
+Discarding the inner HVP subspace after each accepted step loses information
+that can be useful without being treated as a new-point Hessian. Diagonalize
+the small projected matrix from eq 65 and retain its soft positive modes:
+
+$$
+\mathbf T\mathbf z_i=\theta_i\mathbf z_i,
+\qquad
+\mathbf s_i=\mathbf Q\mathbf z_i,
+\qquad
+\mathbf y_i=\mathbf Y\mathbf z_i=\mathbf H_k\mathbf s_i,
+\qquad \theta_i>0.
+\tag{66f}
+$$
+
+The **full images** $\mathbf Y\mathbf z_i$ must be used. Replacing them by
+$\theta_i\mathbf s_i$ discards the component outside the sampled subspace.
+In the fixed chart, these pairs satisfy
+$\mathbf s_i^{\mathrm T}\mathbf y_j=\theta_i\delta_{ij}$. For a positive
+inverse preconditioner $\mathbf B$, the inverse-BFGS update is
+
+$$
+\mathbf B^+
+=\left(\mathbf I-\frac{\mathbf s_i\mathbf y_i^{\mathrm T}}
+                              {\mathbf s_i^{\mathrm T}\mathbf y_i}\right)
+ \mathbf B
+ \left(\mathbf I-\frac{\mathbf y_i\mathbf s_i^{\mathrm T}}
+                              {\mathbf s_i^{\mathrm T}\mathbf y_i}\right)
+ +\frac{\mathbf s_i\mathbf s_i^{\mathrm T}}
+             {\mathbf s_i^{\mathrm T}\mathbf y_i}.
+\tag{66g}
+$$
+
+Positive curvature preserves positive definiteness. Mutual conjugacy preserves
+previous secant equations within this set, so a complete positive-definite
+quadratic model recovers its inverse after all independent pairs have been
+applied. This identity is tested on a small synthetic model; production uses
+the limited-memory two-loop action, not an assembled inverse matrix.
+
+The implementation expands the sampled directions and covectors into packed
+space before accepted-point gauge canonicalization, transports them with the
+existing step and gradient maps, then projects them into the next quotient.
+Their curvature is rechecked before admission. At a different point they are
+**approximate preconditioning data**, not exact current HVPs; projection and
+nonlinear motion need not preserve their secant equations. Every new-point
+quadratic model still uses fresh exact HVPs. Rank changes clear the history.
+
+The existing history capacity is unchanged. At most one fewer than that
+capacity is filled with positive Ritz pairs, reserving space for the actual
+accepted-step secant when it is admissible. Soft modes are appended last;
+negative and numerically zero Ritz values are excluded only from the positive
+preconditioner, not from the Newton model. This recycling performs no additional
+HVP evaluations. Its benefit depends on curvature persistence between points;
+neither recycling nor the unchanged inner work cap guarantees quadratic
+convergence.
+
+### 10.4 Inactive-projected local surrogate
+
+Normalization alone does not make the preconditioner consistent with the
+physical variables in section 3. For an inactive target $p$, let $\mathbf B_p$
+contain all other inactive columns. For an active target, let $\mathbf B_p$
+contain the entire inactive space. Hold this excluded span fixed and define
+
+$$
+\mathbf G_p=\mathbf B_p^{\mathrm T}\mathbf S_{\mathrm{AO}}\mathbf B_p,
+\qquad
+\mathbf R_p=\mathbf I-\mathbf B_p\mathbf G_p^{-1}
+                         \mathbf B_p^{\mathrm T}\mathbf S_{\mathrm{AO}}.
+\tag{66h}
+$$
+
+For an empty excluded span, $\mathbf R_p=\mathbf I$. The nonempty span must
+have full rank in the AO-overlap metric. These are global inactive spans, not
+spans truncated to the target's storage block. Let $\mathbf L_p$ inject the stored
+strictly sparse coefficients into AO space. The local matrices supplied to
+eqs 66a--66c are
+
+$$
+\mathbf F_p=(\mathbf R_p\mathbf L_p)^{\mathrm T}
+              \mathbf F_{\mathrm{AO}}(\mathbf R_p\mathbf L_p),
+\qquad
+\mathbf S_p=(\mathbf R_p\mathbf L_p)^{\mathrm T}
+              \mathbf S_{\mathrm{AO}}(\mathbf R_p\mathbf L_p).
+\tag{66i}
+$$
+
+The projected representatives may be dense in AO space; this does not enlarge
+the optimization variables or alter their exact sparse support. Inactive
+directions are projected out before constructing the normalized local model,
+not by modifying the exact relaxed HVP afterward.
+
+For an inactive target, the surrogate has an independent projector-trace
+interpretation. Write $\mathbf x=\mathbf L_p\mathbf c$ and
+$\mathbf P(\mathbf A)=\mathbf A(\mathbf A^{\mathrm T}\mathbf S_{\mathrm{AO}}
+\mathbf A)^{-1}\mathbf A^{\mathrm T}$, with $\mathbf P(\varnothing)=\mathbf 0$,
+in the convention of section 3. With
+$\mathbf x$ independent of the excluded span,
+
+$$
+\begin{aligned}
+\mathbf P([\mathbf B_p,\mathbf x])-\mathbf P(\mathbf B_p)
+&=\frac{(\mathbf R_p\mathbf x)(\mathbf R_p\mathbf x)^{\mathrm T}}
+        {(\mathbf R_p\mathbf x)^{\mathrm T}\mathbf S_{\mathrm{AO}}
+         (\mathbf R_p\mathbf x)},
+\\
+\operatorname{Tr}\!\left[
+ \mathbf F_{\mathrm{AO}}\bigl(\mathbf P([\mathbf B_p,\mathbf x])-
+                              \mathbf P(\mathbf B_p)\bigr)\right]
+&=\frac{\mathbf c^{\mathrm T}\mathbf F_p\mathbf c}
+       {\mathbf c^{\mathrm T}\mathbf S_p\mathbf c}.
+\end{aligned}
+\tag{66j}
+$$
+
+The first identity follows by an invertible column operation replacing
+$\mathbf x$ with $\mathbf R_p\mathbf x$, whose overlap with $\mathbf B_p$
+is zero. The resulting Gram matrix is block diagonal; its inverse gives the
+rank-one difference directly. Thus eq 66b gives the exact frozen-target
+curvature of this projector-trace surrogate. For active targets it describes
+the normalized inactive-projected ray. Equation 66j is an unweighted identity;
+the production inactive block includes the physical double-occupancy factor
+derived below. Active blocks remain unit-weight ray models, not exact
+active-space occupation or many-electron response models.
+
+A nonsingular change of basis within the fixed excluded span leaves
+$\mathbf R_p$, $\mathbf F_p$, and $\mathbf S_p$ unchanged. Adding an excluded
+inactive component to the target also leaves the projected representative
+unchanged whenever that addition is compatible with the specified support.
+Tests verify these identities and differentiate an independently evaluated
+full projector-trace energy. The raw, unprojected normalized model fails the
+same fixed-span gauge-annihilation fixture. Fixed stored coefficients remain
+in the normalized representative while having zero tangent rows.
+
+The implementation solves the small excluded-space Gram system and forms
+only the projected support columns and local surrogate blocks. It constructs
+neither the global orbital Hessian nor its inverse. Couplings among changing
+targets, changes of the effective Fock matrix, and relaxed structure response
+remain absent from the preconditioner and present in the exact HVP. Fixed-span
+invariance does not imply covariance of the entire block-diagonal approximation
+under arbitrary simultaneous mixing of target and excluded orbitals.
+
+### 10.5 Double occupancy of the inactive reference
+
+The unweighted projector identity must be distinguished from the reference
+energy convention used in the code. Let $\mathbf P_{\mathrm I}$ be the
+inactive projector density of section 3, without an occupation factor, and
+let $\mathcal G$ be the linear Coulomb--exchange map. This map is self-adjoint
+under the matrix trace pairing. With the core Hamiltonian $\mathbf h$,
+
+$$
+\begin{aligned}
+\mathbf F_{11}&=\mathbf h+\mathcal G(\mathbf P_{\mathrm I}),\\
+E_{11}&=\operatorname{Tr}\!\left[
+ \mathbf P_{\mathrm I}(\mathbf h+\mathbf F_{11})\right],\\
+\mathrm d E_{11}&=2\operatorname{Tr}
+ \left[\mathbf F_{11}\,\mathrm d\mathbf P_{\mathrm I}\right].
+\end{aligned}
+\tag{66k}
+$$
+
+The last equality follows by differentiating both occurrences of the density
+in the quadratic interaction term and using self-adjointness of $\mathcal G$.
+Along an additive target-orbital path, dots denote derivatives at the accepted
+point. A second differentiation gives
+
+$$
+\frac{\mathrm d^2 E_{11}}{\mathrm d t^2}
+=2\operatorname{Tr}
+  \left[\mathbf F_{11}\ddot{\mathbf P}_{\mathrm I}\right]
+ +2\operatorname{Tr}
+  \left[\dot{\mathbf P}_{\mathrm I}
+             \mathcal G(\dot{\mathbf P}_{\mathrm I})\right].
+\tag{66l}
+$$
+
+For an inactive target with the other inactive orbitals fixed, eq 66j implies
+that the first term is exactly twice the directional curvature of the local
+Rayleigh surrogate with the accepted $\mathbf F_{11}$ frozen. Consequently,
+the local matrices entering positive spectral regularization are
+
+$$
+\widehat{\mathbf C}_p=w_p\mathbf C_p,
+\qquad
+w_p=\begin{cases}
+2,&p\in\mathrm I,\\
+1,&p\in\mathrm A.
+\end{cases}
+\tag{66m}
+$$
+
+Here the inactive value is fixed by double occupancy, not fitted to any
+molecule, residual, or iteration count. The active value preserves the
+existing unit-ray approximation; it is not a statement that all active
+orbitals have physical occupation one. The field-response term in eq 66l,
+active-density couplings, cross-target curvature, and relaxed structure
+response still belong to the exact HVP, not this local approximation. Thus
+eq 66m improves the reference-energy weighting without claiming an exact
+VBSCF block Hessian.
+
+Independent tests differentiate a projector-density quadratic energy with a
+self-adjoint linear interaction map and recover both terms of eq 66l.
+A separate production-space test checks the stationary one-electron gap
+curvature and its inverse for inactive and active targets; removing the
+inactive factor makes that test fail. No HVP formula, quotient basis, stopping
+tolerance, or inner budget is changed by this weighting.
+
 ## 11. Implications for the present implementation
 
 The current exact-context HVP differentiates orbital normalization, the inactive projector, active-space integrals, and the outer VB structure response. Its agreement with directional finite differences is evidence that the HVP is consistent with the present raw-coordinate computational graph.
 
-However, this agreement does not validate the physical quotient coordinates. The present nonredundant-space construction requires revision for the following reasons:
+However, this agreement does not validate the physical quotient coordinates. The pre-fix nonredundant-space construction required revision for the following reasons:
 
-1. **The inactive gauge is global.** Treating the restriction of another inactive orbital to the support of orbital $p$ as a local gauge vector is generally invalid. A support-restricted orbital is not, in general, a member of the original inactive span.
+1. **Gauge sources must use the global inactive span.** Treating the restriction of another inactive orbital to the support of orbital $p$ as a local gauge vector is generally invalid. A support-restricted orbital is not, in general, a member of the original inactive span.
 2. **Inactive additions to active orbitals are redundant.** Directions of the form $\delta\mathbf c_{\mathrm A,p}=\mathbf C_{\mathrm I}\boldsymbol\ell_p$ are annihilated by the projector in eq 14, up to an irrelevant active-orbital scaling induced by normalization. Retaining these directions introduces exact or near-zero modes.
 3. **The existing rank diagnostics are not independent validation.** They test rank and intersection properties using the same per-orbital gauge model employed to construct the basis. They can therefore pass even if the assumed gauge space is physically incorrect.
-4. **Euclidean local orthogonalization is coordinate dependent.** Although it can define a valid algebraic complement in special cases, it does not provide the physical norm required for a transferable trust-region method.
+4. **Euclidean local orthogonalization is coordinate dependent.** Orthogonalizing against the correct admissible gauge defines a valid algebraic complement, but does not by itself provide a representative-independent physical norm for the trust-region method.
 
-The immediate algorithmic priority is therefore to construct and test the global support-constrained quotient in eqs 21--27. Only after this correction should the Krylov or recycled block solver be judged, because its spectrum and convergence behavior depend directly on whether redundant zero modes have been removed correctly.
+The corrected production construction uses the exact factorization in eqs 27a and 27b. The previous occupied/virtual generator and its empirical rank cutoffs have been removed. The independent full global construction remains a diagnostic oracle. Changing the quotient basis also changes the finite local Newton model and preconditioner, so removal of redundant variables alone does not guarantee fewer iterations or lower wall time.
 
 ### 11.1 Initial global-gauge audit
 
-An independent diagnostic was constructed using two routes: (i) the support-constrained algebraic gauge action in eqs 19--25 and (ii) the null space of the explicitly differentiated physical map in eq 18. The following results were obtained for the optimizer-adapted input representations. The column labeled "retained gauge" is the nullity of the physical Jacobian after restriction to the current reduced basis; "missing physical" is the rank deficit of its physical image.
+An independent diagnostic was constructed using two routes: (i) the support-constrained algebraic gauge action in eqs 19--25 and (ii) the null space of the explicitly differentiated physical map in eq 18. The following pre-fix results were obtained at the initial optimizer-adapted input representations. They are finite-precision rank observations at those points, not a proof of constant rank along all optimization trajectories. The column labeled "retained gauge" is the nullity of the physical Jacobian after restriction to the current reduced basis; "missing physical" is the rank deficit of its physical image.
 
 | System | Packed dimension | Current reduced dimension | Exact quotient dimension | Retained gauge | Missing physical | Relative gauge-annihilation residual | Maximum principal-angle sine |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -968,7 +1451,50 @@ An independent diagnostic was constructed using two routes: (i) the support-cons
 | MnF$_2$ | 1140 | 1019 | 957 | 62 | 0 | $5.04\times10^{-15}$ | $6.99\times10^{-8}$ |
 | FeCl$_2$ | 4488 | 3855 | 3655 | 200 | 0 | $2.55\times10^{-16}$ | $1.47\times10^{-7}$ |
 
-For all four systems, the algebraic gauge rank equals the independently determined physical-Jacobian nullity. The corresponding subspaces agree to numerical precision. The current coordinate space spans the complete physical image in these tests, but retains a system-dependent number of redundant directions. The observed excess dimensions are consistent with inactive additions to active orbitals that are retained by the present per-orbital construction.
+At these four initial points, the algebraic gauge rank equals the independently determined physical-Jacobian nullity. The subspaces agree within the reported numerical resolution. The large audit uses the Gram matrix of the physical Jacobian; this squares conditioning and cannot reliably classify arbitrarily small nonzero singular values. Synthetic regression tests additionally use a direct SVD and finite differences of the physical map. The pre-fix coordinate space spans the complete physical image in these tests, but retains a system-dependent number of redundant directions. The observed excess dimensions are consistent with inactive additions to active orbitals retained by the old per-orbital construction.
+
+### 11.2 Corrected construction and regression results
+
+The implementation of eq 27a removes all retained gauge directions at the four
+audited initial points, giving reduced dimensions 42, 432, 957, and 3655,
+respectively. The independent physical-Jacobian audit finds no missing physical
+directions. Seven synthetic tests additionally exercise unequal supports,
+off-support cancellation, frozen stored coefficients, full support, inactive
+basis changes, absent inactive or active spaces, and a zero-dimensional quotient.
+Directional finite differences of the relaxed HVP pass on all four molecular
+inputs. Complete runs converge, but the coordinate-only correction exposed an
+HVP-subspace consistency bug and a severe MnF2 performance regression. Correcting
+the subspace accumulation reduces MnF2 from 119 to 44 iterations. The subsequent
+spectral-endpoint correction (eqs 65c and 65d) reduces this to 37 iterations and
+865 HVP directions, still above the 18-iteration, 413-HVP pre-fix reference;
+this is not yet a successful overall performance change. A residual-expanded
+candidate increased HVP work on the larger tests and was not retained. The
+production implementation now reports the final-step residual diagnostic of
+eq 65e. Subsequent coordinate-consistent preconditioning, Euclidean inner norms,
+conjugacy restoration, and positive Ritz-secant recycling (eqs 66a--66g) give
+21 MnF2 iterations and 437 HVP directions at the same default stopping settings.
+These changes do not improve every input at those settings: 241 uses one more
+iteration and one more HVP, while FeCl2 uses more HVPs but reaches a lower energy
+and gradient norm. The subsequent inactive-projection correction (eqs 66h--66j)
+improves those intermediate results: F2, 241, MnF2, and FeCl2 use respectively
+5 / 14, 10 / 39, 19 / 255, and 7 / 224 iterations / HVP directions, with smaller
+final projected gradient norms on all four inputs. The double-occupancy
+weighting (eq 66m) then gives 5 / 11, 10 / 39, 14 / 165, and 6 / 192,
+respectively. These are default-tolerance endpoints, not identical final
+gradient norms; in particular the FeCl2 endpoint is higher in energy by
+approximately $4.1\times10^{-8}$ Eh while its gradient norm is smaller.
+No per-system budgets were added. The FeCl2 full residual target remains unmet within the inner budget,
+so these results do not establish asymptotically quadratic convergence.
+Reproduction commands, numerical residuals, convergence data, and limitations are recorded in
+[Sparse quotient correction: validation record](sparse_quotient_fix_validation.md).
+
+A subsequent [direction-resolved consistency audit](matrix_free_curvature_decomposition_diagnostics.md)
+finds a FeCl2 endpoint linearity discrepancy of approximately 1.2% in the
+evaluated complete HVP, localized to its outer-response contribution. The
+earlier finite-difference agreements hold for the directions and points
+tested, not for every combination used by an inner subspace model. This
+unresolved discrepancy must be addressed before treating the implementation
+as a validated exact Hessian action in convergence arguments.
 
 ## 12. Verification requirements
 
@@ -1038,7 +1564,7 @@ The comparison must use a common accepted-point quotient chart. Rebuilding unrel
 
 ### 12.6 Representation invariance
 
-Whenever a gauge transformation preserves the specified strict supports, the energy, physical gradient, and reduced Hessian spectrum must be invariant under that transformation. This is the decisive test that the optimizer operates on physical orbital variables rather than on arbitrary orbital representatives.
+Whenever a gauge transformation preserves the specified strict supports, the energy and transported physical derivatives must agree. Raw coordinate Hessian eigenvalues are not generally invariant under a nonorthogonal coordinate transformation, and away from stationarity a Hessian also acquires a gradient-dependent chart-curvature term. Spectral comparisons require a common physical metric and consistent tangent transport; they are not valid for unrelated Euclidean coordinate bases.
 
 ## 13. Central design principle
 
@@ -1056,3 +1582,10 @@ $$
 $$
 
 An explicit Hessian and a matrix-free Hessian differ only in representation. If the quotient geometry, structure response, and directional integral transformations are exact, the matrix-free method can reproduce the local convergence of an explicit Newton method while avoiding quadratic Hessian storage and unnecessary Hessian construction.
+
+Implementation-level correctness and performance evidence are recorded in
+`article/full_ao_oeo_derivative_validation.md` and
+`article/matrix_free_hvp_performance_validation.md`, respectively.
+The latter also defines the small-system explicit reduced-Hessian reference
+used to compare matrix-free actions and future subproblem solvers without
+allowing dense Hessian assembly to enter the production optimization path.

@@ -13,6 +13,14 @@ namespace xmvb::vb {
 
 struct ActiveSpaceTwoElectronView;
 
+Eigen::MatrixXd build_spin_antisymmetrized_interaction_matrix(
+    const std::vector<int>& occ_L, const std::vector<int>& occ_R,
+    int n_active_orbitals, const ActiveSpaceTwoElectronView& view);
+
+Eigen::MatrixXd build_spin_antisymmetrized_interaction_direction(
+    const std::vector<int>& occ_L, const std::vector<int>& occ_R,
+    const std::vector<double>& packed_direction);
+
 struct SameSpinPhiResult {
   double one_electron_phi = 0.0;
   double total_phi = 0.0;

@@ -186,6 +186,12 @@ struct CppVbScfOptimizerResult {
   /** Number of block-HVP calls (each may contain multiple directions). */
   std::size_t matrix_free_hvp_batch_count = 0;
 
+  /** Fresh HVP-subspace solves; same-point cached-radius retries are excluded. */
+  std::size_t matrix_free_subproblem_count = 0;
+  /** Fresh solves passing a post-hoc full 2-norm KKT check with the current
+   * forcing fraction and the same Euclidean norm as the CG iteration. */
+  std::size_t matrix_free_residual_converged_count = 0;
+
   /** Wall time spent inside exact reduced Hessian actions. */
   double matrix_free_hvp_wall_time_seconds = 0.0;
 

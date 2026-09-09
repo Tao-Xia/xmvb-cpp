@@ -1,4 +1,5 @@
 #include "vb/scf/exact_ctx_memory_accounting.hpp"
+#include "vb/matrices/cofactor_differential.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -90,7 +91,8 @@ std::size_t projection_bytes(const OppositeSpinPackedPairProjection& projection)
 }
 
 std::size_t overlap_result_bytes(const DeterminantOverlapResult& result) {
-  return exact_ctx_matrix_bytes(result.inverse_overlap_submatrix) +
+  return exact_ctx_matrix_bytes(result.overlap_submatrix) +
+      exact_ctx_matrix_bytes(result.inverse_overlap_submatrix) +
       exact_ctx_matrix_bytes(result.first_order_cofactor_matrix) +
       exact_ctx_vector_bytes(result.singular_values) +
       exact_ctx_matrix_bytes(result.matrix_U) +
@@ -99,8 +101,13 @@ std::size_t overlap_result_bytes(const DeterminantOverlapResult& result) {
 
 std::size_t same_spin_pair_dynamic_bytes(
     const SpinDeterminantPairEvaluation& evaluation) {
-  return exact_ctx_matrix_bytes(evaluation.same_spin_inverse_overlap_gradient) +
+  return (evaluation.cofactor_differential
+              ? evaluation.cofactor_differential->dynamic_bytes()
+              : 0) +
+      exact_ctx_matrix_bytes(evaluation.same_spin_inverse_overlap_gradient) +
       exact_ctx_matrix_bytes(evaluation.same_spin_overlap_hamiltonian_gradient) +
+      exact_ctx_matrix_bytes(evaluation.same_spin_one_electron_block) +
+      exact_ctx_matrix_bytes(evaluation.same_spin_antisymmetrized_interaction) +
       overlap_result_bytes(evaluation.overlap_result) +
       projection_bytes(evaluation.opposite_spin_pair_cache.first_order_cofactor_projection) +
       projection_bytes(evaluation.opposite_spin_pair_cache.inverse_overlap_projection);

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <cstdlib>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -9,31 +8,12 @@
 
 namespace xmvb::vb {
 
-inline int packed_gradient_positive_env_override(
-    const char* env_name,
-    int default_value) {
-  const char* env_value = std::getenv(env_name);
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return default_value;
-  }
-  const int parsed_value = std::stoi(env_value);
-  if (parsed_value <= 0) {
-    throw std::invalid_argument(
-        std::string(env_name) + " must be positive");
-  }
-  return parsed_value;
-}
-
 inline int packed_gradient_stripe_size() {
-  return packed_gradient_positive_env_override(
-      "XMVB_CPP_PACKED_GRADIENT_STRIPE_SIZE",
-      8192);
+  return 8192;
 }
 
 inline int packed_gradient_stripe_cache_slots() {
-  return packed_gradient_positive_env_override(
-      "XMVB_CPP_PACKED_GRADIENT_STRIPE_CACHE_SLOTS",
-      4);
+  return 4;
 }
 
 /**

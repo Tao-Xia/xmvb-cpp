@@ -88,8 +88,8 @@ public:
       const Eigen::VectorXd& reduced_step) const;
 
   // `expand_retract_input_tangent` returns a full sparse-orbital tangent table,
-  // while `retract_step` applies that tangent and renormalizes each sparse
-  // orbital in the AO-overlap metric used by the accepted point.
+  // while `retract_step` adds that tangent on the immutable sparse support.
+  // Normalization belongs to the downstream orbital preparation map.
   Eigen::VectorXd expand_retract_input_tangent(
       const OrbitalPreparationInput& orbital_preparation_input,
       const Eigen::VectorXd& reduced_step) const;
@@ -104,14 +104,14 @@ private:
     std::vector<int> flat_indices;
     std::vector<int> packed_indices;
     std::vector<int> block_rows;
-    // Physical tangent space basis U_p: (local_size × local_reduced_dim).
-    // Columns are whitened tangent directions on the local `x^T S x = rho^2`
-    // manifold.  `U_p^T U_p = I` by construction.
+    // Euclidean complement of the support-admissible global gauge for this
+    // target orbital. U_p^T U_p = I; this is not physical-metric whitening.
     Eigen::MatrixXd tangent_basis;
-    // Diagonal of U_p^T (F_p - eps_p S_p) U_p for preconditioning.
+    // Positive diagonal/block approximations of the complete normalized,
+    // inactive-projected one-electron curvature in the additive quotient chart.
     Eigen::VectorXd curvature_diagonal;
-    // Positive-definite local block approximation to
-    // U_p^T (F_p - eps_p S_p) U_p used by the block preconditioner.
+    // Positive spectral regularization of that local surrogate curvature;
+    // this is not the exact relaxed VBSCF Hessian block.
     Eigen::MatrixXd curvature_block;
     // Cached inverse action of curvature_block. The accepted-point block is
     // immutable, so factoring it again in every Krylov iteration is wasted
@@ -130,7 +130,6 @@ private:
   struct BlockBasis {
     int n_inactive = 0;
     int n_occupied = 0;
-    int n_virtual = 0;
     std::vector<int> basis_function_indices;
     Eigen::MatrixXd block_overlap_matrix;
     std::vector<OrbitalProjector> orbitals;

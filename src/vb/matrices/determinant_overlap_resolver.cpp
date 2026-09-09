@@ -44,6 +44,7 @@ DeterminantOverlapResult DeterminantOverlapResolver::resolve_matrix(
 
   DeterminantOverlapResult result;
   result.n_electrons = overlap_matrix.rows();
+  result.overlap_submatrix = overlap_matrix;
 
   Eigen::MatrixXd overlap_matrix_copy = overlap_matrix;
   Eigen::FullPivLU<Eigen::MatrixXd> lu(overlap_matrix_copy);

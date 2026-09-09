@@ -2,8 +2,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <cstring>
-#include <cstdlib>
 #include <stdexcept>
 #include <vector>
 
@@ -11,6 +9,7 @@
 #include <cblas.h>
 
 #include "vb/matrices/spin_pair_utils.hpp"
+#include "vb/matrices/cofactor_differential.hpp"
 #include "vb/matrices/support_local_contraction_kernels.hpp"
 #include "vb/matrices/two_electron_indexer.hpp"
 #include "vb/orbital/active_space_two_electron_utils.hpp"
@@ -18,7 +17,6 @@
 namespace xmvb::vb {
 
 namespace {
-
 
 constexpr double kContributionTolerance = 1.0e-15;
 constexpr int kSameSpinBackwardPairTileSize = 64;
@@ -30,46 +28,15 @@ std::size_t square_storage_size(int dimension) {
 }
 
 int same_spin_backward_pair_tile_size() {
-  const char* env_value = std::getenv("XMVB_CPP_SAME_SPIN_BACKWARD_PAIR_TILE_SIZE");
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return kSameSpinBackwardPairTileSize;
-  }
-  const int parsed_value = std::stoi(env_value);
-  if (parsed_value <= 0) {
-    throw std::invalid_argument(
-        "XMVB_CPP_SAME_SPIN_BACKWARD_PAIR_TILE_SIZE must be positive");
-  }
-  return parsed_value;
+  return kSameSpinBackwardPairTileSize;
 }
 
 std::size_t same_spin_accepted_tile_min_dense_bytes() {
-  const char* env_value =
-      std::getenv("XMVB_CPP_SAME_SPIN_ACCEPTED_TILE_MIN_DENSE_BYTES");
-  if (env_value == nullptr || env_value[0] == '\0') {
-    return kSameSpinAcceptedTileMinDenseBytes;
-  }
-  return std::strtoull(env_value, nullptr, 10);
+  return kSameSpinAcceptedTileMinDenseBytes;
 }
 
 bool should_use_same_spin_accepted_tile_backward(
     const SelectedStateDeterminantMatrices& selected_states) {
-  const char* env_value =
-      std::getenv("XMVB_CPP_SAME_SPIN_ACCEPTED_TILE_BACKWARD");
-  if (env_value != nullptr && env_value[0] != '\0') {
-    if (std::strcmp(env_value, "1") == 0 ||
-        std::strcmp(env_value, "on") == 0 ||
-        std::strcmp(env_value, "true") == 0 ||
-        std::strcmp(env_value, "yes") == 0) {
-      return true;
-    }
-    if (std::strcmp(env_value, "0") == 0 ||
-        std::strcmp(env_value, "off") == 0 ||
-        std::strcmp(env_value, "false") == 0 ||
-        std::strcmp(env_value, "no") == 0) {
-      return false;
-    }
-  }
-
   const std::size_t alpha_size =
       static_cast<std::size_t>(selected_states.n_unique_alpha);
   const std::size_t beta_size =
@@ -82,43 +49,11 @@ bool should_use_same_spin_accepted_tile_backward(
 
 bool should_use_same_spin_local_tile_backward(
     const SelectedStateDeterminantMatrices& selected_states) {
-  const char* env_value =
-      std::getenv("XMVB_CPP_SAME_SPIN_LOCAL_TILE_BACKWARD");
-  if (env_value != nullptr && env_value[0] != '\0') {
-    if (std::strcmp(env_value, "1") == 0 ||
-        std::strcmp(env_value, "on") == 0 ||
-        std::strcmp(env_value, "true") == 0 ||
-        std::strcmp(env_value, "yes") == 0) {
-      return true;
-    }
-    if (std::strcmp(env_value, "0") == 0 ||
-        std::strcmp(env_value, "off") == 0 ||
-        std::strcmp(env_value, "false") == 0 ||
-        std::strcmp(env_value, "no") == 0) {
-      return false;
-    }
-  }
   return should_use_same_spin_accepted_tile_backward(selected_states);
 }
 
 bool should_use_same_spin_directional_tile_backward(
     const SelectedStateDeterminantMatrices& selected_states) {
-  const char* env_value =
-      std::getenv("XMVB_CPP_SAME_SPIN_DIRECTIONAL_TILE_BACKWARD");
-  if (env_value != nullptr && env_value[0] != '\0') {
-    if (std::strcmp(env_value, "1") == 0 ||
-        std::strcmp(env_value, "on") == 0 ||
-        std::strcmp(env_value, "true") == 0 ||
-        std::strcmp(env_value, "yes") == 0) {
-      return true;
-    }
-    if (std::strcmp(env_value, "0") == 0 ||
-        std::strcmp(env_value, "off") == 0 ||
-        std::strcmp(env_value, "false") == 0 ||
-        std::strcmp(env_value, "no") == 0) {
-      return false;
-    }
-  }
   return should_use_same_spin_accepted_tile_backward(selected_states);
 }
 
@@ -231,33 +166,6 @@ struct SameSpinLocalResponseWeightMatrices {
   Eigen::MatrixXd beta_delta_hamiltonian_weight_matrix;
   Eigen::MatrixXd beta_delta_overlap_weight_matrix;
   Eigen::MatrixXd beta_delta_partner_total_transfer_matrix;
-};
-
-struct SameSpinDirectionalScalarMatrices {
-  Eigen::MatrixXd delta_overlap_determinant_matrix;
-  Eigen::MatrixXd delta_regular_total_hamiltonian_matrix;
-  Eigen::MatrixXd delta_singular_total_hamiltonian_matrix;
-};
-
-struct RegularSpinDirectionalData {
-  double overlap_determinant = 0.0;
-  double delta_overlap_determinant = 0.0;
-  Eigen::MatrixXd inverse_overlap_submatrix;
-  Eigen::MatrixXd delta_inverse_overlap_submatrix;
-  Eigen::MatrixXd cofactor_1st;
-  Eigen::MatrixXd delta_cofactor_1st;
-  double same_spin_total_phi = 0.0;
-  double delta_same_spin_total_phi = 0.0;
-  Eigen::MatrixXd same_spin_inverse_overlap_gradient;
-  Eigen::MatrixXd delta_same_spin_inverse_overlap_gradient;
-};
-
-struct SingularSpinDirectionalData {
-  double delta_overlap_determinant = 0.0;
-  double delta_total_hamiltonian = 0.0;
-  Eigen::MatrixXd cofactor_1st;
-  Eigen::MatrixXd delta_cofactor_1st;
-  Eigen::MatrixXd delta_same_spin_overlap_hamiltonian_gradient;
 };
 
 struct SameSpinAcceptedTileWeights {
@@ -1909,61 +1817,10 @@ void accumulate_overlap_block_gradient_contribution_local(
   }
 }
 
-void accumulate_same_spin_two_electron_gradient_contribution_local(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::MatrixXd& cofactor_1st,
-    double overlap_determinant,
-    double weight,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  if (packed_active_two_electron_gradient == nullptr) {
-    throw std::invalid_argument("packed_active_two_electron_gradient must not be null");
-  }
-  if (std::abs(weight) <= kContributionTolerance) {
-    return;
-  }
-
-  const int n_electrons = static_cast<int>(occ_L.size());
-  const double cofactor_scale = weight / overlap_determinant;
-  for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[left_first];
-    for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[right_first];
-      const double cofactor_11 = cofactor_1st(right_first, left_first);
-      for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orbital_index_left_second = occ_L[left_second];
-        const double cofactor_12 = cofactor_1st(right_first, left_second);
-        for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
-          const int orbital_index_right_second = occ_R[right_second];
-          const double cofactor_22 = cofactor_1st(right_second, left_second);
-          const double cofactor_21 = cofactor_1st(right_second, left_first);
-          const double second_order_cofactor =
-              cofactor_scale * (cofactor_11 * cofactor_22 - cofactor_12 * cofactor_21);
-
-          const int direct_index = TwoElectronIndexer::two_electron_storage_index(
-              orbital_index_right_first,
-              orbital_index_left_first,
-              orbital_index_right_second,
-              orbital_index_left_second);
-          const int exchange_index = TwoElectronIndexer::two_electron_storage_index(
-              orbital_index_right_first,
-              orbital_index_left_second,
-              orbital_index_right_second,
-              orbital_index_left_first);
-          (*packed_active_two_electron_gradient)[direct_index] +=
-              second_order_cofactor;
-          (*packed_active_two_electron_gradient)[exchange_index] -=
-              second_order_cofactor;
-        }
-      }
-    }
-  }
-}
-
 void accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const DeterminantOverlapResult& overlap_result,
+    const CofactorDifferential& cofactor,
     double weight,
     std::vector<double>* packed_active_two_electron_gradient) {
   if (packed_active_two_electron_gradient == nullptr) {
@@ -1978,6 +1835,7 @@ void accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local
     return;
   }
 
+  const Eigen::MatrixXd second = cofactor.second();
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
     const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
@@ -1987,13 +1845,8 @@ void accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local
         for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
           const int orbital_index_right_second = occ_R[right_second];
           const double second_order_cofactor =
-              weight *
-              calc_second_order_cofactor(
-                  overlap_result,
-                  right_first,
-                  right_second,
-                  left_first,
-                  left_second);
+              weight * second(right_second*(right_second-1)/2+right_first,
+                     left_second*(left_second-1)/2+left_first);
           if (std::abs(second_order_cofactor) <= kContributionTolerance) {
             continue;
           }
@@ -2018,194 +1871,6 @@ void accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local
   }
 }
 
-std::vector<int> build_retained_minor_indices_local(
-    int dimension,
-    const std::vector<int>& deleted_indices) {
-  std::vector<int> retained_indices;
-  retained_indices.reserve(
-      dimension - static_cast<int>(deleted_indices.size()));
-  for (int index = 0; index < dimension; ++index) {
-    if (std::find(deleted_indices.begin(), deleted_indices.end(), index) ==
-        deleted_indices.end()) {
-      retained_indices.push_back(index);
-    }
-  }
-  return retained_indices;
-}
-
-void scatter_minor_cofactor_to_overlap_block_gradient_local(
-    const Eigen::MatrixXd& minor_cofactor,
-    const std::vector<int>& retained_rows,
-    const std::vector<int>& retained_cols,
-    double scale,
-    Eigen::MatrixXd* overlap_block_gradient) {
-  if (overlap_block_gradient == nullptr) {
-    throw std::invalid_argument("overlap_block_gradient must not be null");
-  }
-  if (std::abs(scale) <= kContributionTolerance ||
-      minor_cofactor.size() == 0) {
-    return;
-  }
-  if (minor_cofactor.rows() != static_cast<int>(retained_rows.size()) ||
-      minor_cofactor.cols() != static_cast<int>(retained_cols.size())) {
-    throw std::invalid_argument(
-        "minor cofactor dimensions do not match retained deleted-minor indices");
-  }
-
-  for (int retained_col = 0;
-       retained_col < static_cast<int>(retained_cols.size());
-       ++retained_col) {
-    const int overlap_col = retained_cols[retained_col];
-    for (int retained_row = 0;
-         retained_row < static_cast<int>(retained_rows.size());
-         ++retained_row) {
-      const int overlap_row = retained_rows[retained_row];
-      (*overlap_block_gradient)(overlap_row, overlap_col) +=
-          scale * minor_cofactor(retained_row, retained_col);
-    }
-  }
-}
-
-void accumulate_directional_deleted_minor_pullback_to_overlap_block_gradient_local(
-    const Eigen::MatrixXd& overlap_block,
-    const Eigen::MatrixXd& delta_overlap_block,
-    const std::vector<int>& deleted_rows,
-    const std::vector<int>& deleted_cols,
-    double coefficient,
-    double delta_coefficient,
-    const DeterminantOverlapResolver& overlap_resolver,
-    Eigen::MatrixXd* delta_overlap_gradient) {
-  if (delta_overlap_gradient == nullptr) {
-    throw std::invalid_argument("delta_overlap_gradient must not be null");
-  }
-  if ((std::abs(coefficient) <= kContributionTolerance &&
-       std::abs(delta_coefficient) <= kContributionTolerance)) {
-    return;
-  }
-
-  const std::vector<int> retained_rows =
-      build_retained_minor_indices_local(overlap_block.rows(), deleted_rows);
-  const std::vector<int> retained_cols =
-      build_retained_minor_indices_local(overlap_block.cols(), deleted_cols);
-  if (retained_rows.empty() || retained_cols.empty()) {
-    return;
-  }
-
-  const Eigen::MatrixXd minor =
-      build_deleted_minor_matrix(overlap_block, deleted_rows, deleted_cols);
-  const Eigen::MatrixXd delta_minor =
-      build_deleted_minor_matrix(
-          delta_overlap_block,
-          deleted_rows,
-          deleted_cols);
-  const DeterminantOverlapResult minor_result =
-      overlap_resolver.resolve_matrix(minor);
-  const Eigen::MatrixXd minor_cofactor =
-      calc_cofactor_1st(minor_result);
-  const Eigen::MatrixXd delta_minor_cofactor =
-      build_directional_first_cofactor_matrix(
-          minor,
-          delta_minor,
-          minor_result,
-          overlap_resolver);
-  const double deleted_minor_sign = calc_deleted_minor_sign(
-      overlap_block.rows(),
-      overlap_block.cols(),
-      deleted_rows,
-      deleted_cols);
-  scatter_minor_cofactor_to_overlap_block_gradient_local(
-      minor_cofactor,
-      retained_rows,
-      retained_cols,
-      deleted_minor_sign * delta_coefficient,
-      delta_overlap_gradient);
-  scatter_minor_cofactor_to_overlap_block_gradient_local(
-      delta_minor_cofactor,
-      retained_rows,
-      retained_cols,
-      deleted_minor_sign * coefficient,
-      delta_overlap_gradient);
-}
-
-void accumulate_directional_second_order_cofactor_pullback_local(
-    const Eigen::MatrixXd& overlap_block,
-    const Eigen::MatrixXd& delta_overlap_block,
-    int right_first,
-    int right_second,
-    int left_first,
-    int left_second,
-    double coefficient,
-    double delta_coefficient,
-    const DeterminantOverlapResolver& overlap_resolver,
-    Eigen::MatrixXd* delta_overlap_gradient) {
-  if (delta_overlap_gradient == nullptr) {
-    throw std::invalid_argument("delta_overlap_gradient must not be null");
-  }
-  if (std::abs(coefficient) <= kContributionTolerance &&
-      std::abs(delta_coefficient) <= kContributionTolerance) {
-    return;
-  }
-
-  const int n_electrons = overlap_block.rows();
-  const int minor_dimension = n_electrons - 2;
-  if (minor_dimension <= 0) {
-    return;
-  }
-
-  Eigen::MatrixXd minor(minor_dimension, minor_dimension);
-  Eigen::MatrixXd delta_minor(minor_dimension, minor_dimension);
-  int minor_row = 0;
-  for (int row = 0; row < n_electrons; ++row) {
-    if (row == right_first || row == right_second) {
-      continue;
-    }
-    int minor_col = 0;
-    for (int col = 0; col < n_electrons; ++col) {
-      if (col == left_first || col == left_second) {
-        continue;
-      }
-      minor(minor_row, minor_col) = overlap_block(row, col);
-      delta_minor(minor_row, minor_col) = delta_overlap_block(row, col);
-      ++minor_col;
-    }
-    ++minor_row;
-  }
-
-  const DeterminantOverlapResult minor_result =
-      overlap_resolver.resolve_matrix(minor);
-  const Eigen::MatrixXd minor_cofactor =
-      calc_cofactor_1st(minor_result);
-  const Eigen::MatrixXd delta_minor_cofactor =
-      build_directional_first_cofactor_matrix(
-          minor,
-          delta_minor,
-          minor_result,
-          overlap_resolver);
-  const double sign =
-      ((right_first + right_second + left_first + left_second) % 2 == 0)
-          ? 1.0
-          : -1.0;
-
-  minor_row = 0;
-  for (int row = 0; row < n_electrons; ++row) {
-    if (row == right_first || row == right_second) {
-      continue;
-    }
-    int minor_col = 0;
-    for (int col = 0; col < n_electrons; ++col) {
-      if (col == left_first || col == left_second) {
-        continue;
-      }
-      (*delta_overlap_gradient)(row, col) +=
-          sign *
-          (delta_coefficient * minor_cofactor(minor_row, minor_col) +
-           coefficient * delta_minor_cofactor(minor_row, minor_col));
-      ++minor_col;
-    }
-    ++minor_row;
-  }
-}
-
 Eigen::MatrixXd build_spin_one_electron_block_matrix_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
@@ -2223,34 +1888,6 @@ Eigen::MatrixXd build_spin_one_electron_block_matrix_local(
   return one_electron_block;
 }
 
-SameSpinPhiResult evaluate_same_spin_phi_with_optional_cache_local(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const SpinDeterminantPairEvaluation& pair_evaluation,
-    Eigen::MatrixXd* inverse_overlap_gradient) {
-  if (pair_evaluation.has_same_spin_phi_cache) {
-    if (inverse_overlap_gradient != nullptr) {
-      *inverse_overlap_gradient = pair_evaluation.same_spin_inverse_overlap_gradient;
-    }
-    return {
-        pair_evaluation.same_spin_one_electron_phi,
-        pair_evaluation.same_spin_total_phi,
-    };
-  }
-
-  return compute_same_spin_original_phi(
-      occ_L,
-      occ_R,
-      h1e_act,
-      n_active_orbitals,
-      active_space_two_electron_result,
-      pair_evaluation.overlap_result,
-      inverse_overlap_gradient);
-}
-
 Eigen::MatrixXd build_local_overlap_direction_matrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
@@ -2263,356 +1900,40 @@ Eigen::MatrixXd build_local_overlap_direction_matrix(
       n_active_orbitals);
 }
 
-double lookup_directional_active_two_electron_kernel_value(
+SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    const SpinDeterminantPairEvaluation& pair_evaluation,
+    int n_active_orbitals,
+    const std::vector<double>& delta_ao_overlap_matrix,
+    const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
-    int row_packed_pair_index,
-    int column_packed_pair_index) {
-  if (delta_packed_active_two_electron_integrals.empty()) {
-    return 0.0;
-  }
-  const int packed_pair_of_pairs_index =
-      TwoElectronIndexer::packed_pair_of_pairs_index(
-          row_packed_pair_index,
-          column_packed_pair_index);
-  return delta_packed_active_two_electron_integrals[
-      packed_pair_of_pairs_index];
-}
-
-SingularSpinDirectionalData build_singular_spin_directional_data(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const SpinDeterminantPairEvaluation& pair_evaluation,
-    int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
-  const auto& overlap_result = pair_evaluation.overlap_result;
-  if (overlap_result.nullity == 0 &&
-      overlap_result.overlap_determinant != 0.0) {
-    throw std::runtime_error(
-        "singular spin directional data requires a singular determinant pair");
-  }
-
-  SingularSpinDirectionalData result;
-  const Eigen::MatrixXd overlap_block =
-      build_overlap_submatrix_from_result(overlap_result);
-  const Eigen::MatrixXd delta_overlap_submatrix =
-      build_local_overlap_direction_matrix(
-          occ_L,
-          occ_R,
-          delta_ao_overlap_matrix,
-          n_active_orbitals);
-  const DeterminantOverlapResolver overlap_resolver;
-
-  result.cofactor_1st = calc_cofactor_1st(overlap_result);
-  result.delta_overlap_determinant =
-      (result.cofactor_1st.cwiseProduct(delta_overlap_submatrix)).sum();
-  result.delta_cofactor_1st =
-      build_directional_first_cofactor_matrix(
-          overlap_block,
-          delta_overlap_submatrix,
-          overlap_result,
-          overlap_resolver);
-
-  const Eigen::MatrixXd one_electron_block =
-      build_spin_one_electron_block_matrix_local(
-          occ_L,
-          occ_R,
-          active_one_electron_matrix);
-  const Eigen::MatrixXd delta_one_electron_block =
-      build_spin_one_electron_block_matrix_local(
-          occ_L,
-          occ_R,
-          Eigen::Map<const Eigen::MatrixXd>(
-              delta_active_one_electron_matrix.data(),
-              n_active_orbitals,
-              n_active_orbitals));
+    bool need_overlap_gradient = true) {
+  SameSpinPolynomialDirectionalPairData result;
+  const CofactorDifferential& cofactor =
+      cached_cofactor_differential(pair_evaluation);
+  const Eigen::MatrixXd ds = build_local_overlap_direction_matrix(
+      occ_L, occ_R, delta_ao_overlap_matrix, n_active_orbitals);
+  const Eigen::MatrixXd dh = build_spin_one_electron_block_matrix_local(
+      occ_L, occ_R, Eigen::Map<const Eigen::MatrixXd>(
+          delta_active_one_electron_matrix.data(), n_active_orbitals, n_active_orbitals));
+  const Eigen::MatrixXd dg = build_spin_antisymmetrized_interaction_direction(
+      occ_L, occ_R, delta_packed_active_two_electron_integrals);
+  result.cofactor_1st = cofactor.value();
+  result.delta_cofactor_1st = cofactor.first(ds);
+  result.delta_overlap_determinant = (result.cofactor_1st.cwiseProduct(ds)).sum();
   result.delta_total_hamiltonian =
-      (delta_one_electron_block.cwiseProduct(result.cofactor_1st)).sum() +
-      (one_electron_block.cwiseProduct(result.delta_cofactor_1st)).sum();
-  result.delta_same_spin_overlap_hamiltonian_gradient =
-      Eigen::MatrixXd::Zero(
-          static_cast<int>(occ_R.size()),
-          static_cast<int>(occ_L.size()));
-
-  for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      accumulate_directional_deleted_minor_pullback_to_overlap_block_gradient_local(
-          overlap_block,
-          delta_overlap_submatrix,
-          {right_row},
-          {left_column},
-          one_electron_block(right_row, left_column),
-          delta_one_electron_block(right_row, left_column),
-          overlap_resolver,
-          &result.delta_same_spin_overlap_hamiltonian_gradient);
-    }
-  }
-
-  const ActiveSpaceTwoElectronView two_electron_view =
-      make_active_space_two_electron_view(active_space_two_electron_result);
-  const int n_electrons = static_cast<int>(occ_L.size());
-  for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[left_first];
-    for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[right_first];
-      const int direct_left_pair_index = TwoElectronIndexer::packed_pair_index(
-          orbital_index_right_first,
-          orbital_index_left_first);
-      for (int left_second = left_first + 1;
-           left_second < n_electrons;
-           ++left_second) {
-        const int orbital_index_left_second = occ_L[left_second];
-        const int exchange_left_pair_index = TwoElectronIndexer::packed_pair_index(
-            orbital_index_right_first,
-            orbital_index_left_second);
-        for (int right_second = right_first + 1;
-             right_second < n_electrons;
-             ++right_second) {
-          const int orbital_index_right_second =
-              occ_R[right_second];
-          const int direct_right_pair_index = TwoElectronIndexer::packed_pair_index(
-              orbital_index_right_second,
-              orbital_index_left_second);
-          const int exchange_right_pair_index = TwoElectronIndexer::packed_pair_index(
-              orbital_index_right_second,
-              orbital_index_left_first);
-          const double interaction_value =
-              lookup_active_space_two_electron_kernel_value(
-                  two_electron_view,
-                  direct_left_pair_index,
-                  direct_right_pair_index,
-                  n_active_orbitals) -
-              lookup_active_space_two_electron_kernel_value(
-                  two_electron_view,
-                  exchange_left_pair_index,
-                  exchange_right_pair_index,
-                  n_active_orbitals);
-          const double delta_interaction_value =
-              lookup_directional_active_two_electron_kernel_value(
-                  delta_packed_active_two_electron_integrals,
-                  direct_left_pair_index,
-                  direct_right_pair_index) -
-              lookup_directional_active_two_electron_kernel_value(
-                  delta_packed_active_two_electron_integrals,
-                  exchange_left_pair_index,
-                  exchange_right_pair_index);
-          const double second_order_cofactor =
-              calc_second_order_cofactor(
-                  overlap_result,
-                  right_first,
-                  right_second,
-                  left_first,
-                  left_second);
-          const double directional_second_order_cofactor =
-              calc_directional_second_order_cofactor(
-                  overlap_block,
-                  delta_overlap_submatrix,
-                  overlap_result,
-                  right_first,
-                  right_second,
-                  left_first,
-                  left_second,
-                  overlap_resolver);
-          result.delta_total_hamiltonian +=
-              delta_interaction_value * second_order_cofactor +
-              interaction_value * directional_second_order_cofactor;
-          accumulate_directional_second_order_cofactor_pullback_local(
-              overlap_block,
-              delta_overlap_submatrix,
-              right_first,
-              right_second,
-              left_first,
-              left_second,
-              interaction_value,
-              delta_interaction_value,
-              overlap_resolver,
-              &result.delta_same_spin_overlap_hamiltonian_gradient);
-        }
-      }
-    }
-  }
-
-  return result;
-}
-
-RegularSpinDirectionalData build_regular_spin_directional_data(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const SpinDeterminantPairEvaluation& pair_evaluation,
-    int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
-  const auto& overlap_result = pair_evaluation.overlap_result;
-  if (overlap_result.nullity != 0 || overlap_result.overlap_determinant == 0.0) {
-    throw std::runtime_error(
-        "regular spin directional data requires a non-singular determinant pair");
-  }
-
-  RegularSpinDirectionalData result;
-  result.overlap_determinant = overlap_result.overlap_determinant;
-  result.inverse_overlap_submatrix =
-      build_inverse_overlap_submatrix_from_result(overlap_result);
-  const Eigen::MatrixXd delta_overlap_submatrix =
-      build_local_overlap_direction_matrix(
-          occ_L,
-          occ_R,
-          delta_ao_overlap_matrix,
-          n_active_orbitals);
-  result.delta_overlap_determinant =
-      result.overlap_determinant *
-      (result.inverse_overlap_submatrix * delta_overlap_submatrix).trace();
-  result.delta_inverse_overlap_submatrix =
-      -result.inverse_overlap_submatrix *
-      delta_overlap_submatrix *
-      result.inverse_overlap_submatrix;
-
-  result.cofactor_1st = calc_cofactor_1st(overlap_result);
-  result.delta_cofactor_1st =
-      result.delta_overlap_determinant *
-      result.inverse_overlap_submatrix.transpose();
-  result.delta_cofactor_1st.noalias() +=
-      result.overlap_determinant *
-      result.delta_inverse_overlap_submatrix.transpose();
-
-  const Eigen::MatrixXd one_electron_block =
-      build_spin_one_electron_block_matrix_local(
-          occ_L,
-          occ_R,
-          active_one_electron_matrix);
-
-  const Eigen::MatrixXd delta_one_electron_block =
-      build_spin_one_electron_block_matrix_local(
-          occ_L,
-          occ_R,
-          Eigen::Map<const Eigen::MatrixXd>(
-              delta_active_one_electron_matrix.data(),
-              n_active_orbitals,
-              n_active_orbitals));
-          
-  const SameSpinPhiResult same_spin_phi_result =
-      evaluate_same_spin_phi_with_optional_cache_local(
-          occ_L,
-          occ_R,
-          active_one_electron_matrix,
-          n_active_orbitals,
-          active_space_two_electron_result,
-          pair_evaluation,
-          &result.same_spin_inverse_overlap_gradient);
-  result.same_spin_total_phi = same_spin_phi_result.total_phi;
-  result.delta_same_spin_inverse_overlap_gradient =
-      delta_one_electron_block.transpose();
-  result.delta_same_spin_total_phi =
-      (delta_one_electron_block.cwiseProduct(
-           result.inverse_overlap_submatrix.transpose()))
-          .sum();
-  result.delta_same_spin_total_phi +=
-      (one_electron_block.cwiseProduct(
-           result.delta_inverse_overlap_submatrix.transpose()))
-          .sum();
-
-  const ActiveSpaceTwoElectronView two_electron_view =
-      make_active_space_two_electron_view(active_space_two_electron_result);
-  const int n_electrons = static_cast<int>(occ_L.size());
-  for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[left_first];
-    for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[right_first];
-      const int direct_left_pair_index = TwoElectronIndexer::packed_pair_index(
-          orbital_index_right_first,
-          orbital_index_left_first);
-      for (int left_second = left_first + 1;
-           left_second < n_electrons;
-           ++left_second) {
-        const int orbital_index_left_second = occ_L[left_second];
-        const int exchange_left_pair_index = TwoElectronIndexer::packed_pair_index(
-            orbital_index_right_first,
-            orbital_index_left_second);
-        for (int right_second = right_first + 1;
-             right_second < n_electrons;
-             ++right_second) {
-          const int orbital_index_right_second =
-              occ_R[right_second];
-          const int direct_right_pair_index = TwoElectronIndexer::packed_pair_index(
-              orbital_index_right_second,
-              orbital_index_left_second);
-          const int exchange_right_pair_index = TwoElectronIndexer::packed_pair_index(
-              orbital_index_right_second,
-              orbital_index_left_first);
-          const double interaction_value =
-              lookup_active_space_two_electron_kernel_value(
-                  two_electron_view,
-                  direct_left_pair_index,
-                  direct_right_pair_index,
-                  n_active_orbitals) -
-              lookup_active_space_two_electron_kernel_value(
-                  two_electron_view,
-                  exchange_left_pair_index,
-                  exchange_right_pair_index,
-                  n_active_orbitals);
-          const double delta_interaction_value =
-              lookup_directional_active_two_electron_kernel_value(
-                  delta_packed_active_two_electron_integrals,
-                  direct_left_pair_index,
-                  direct_right_pair_index) -
-              lookup_directional_active_two_electron_kernel_value(
-                  delta_packed_active_two_electron_integrals,
-                  exchange_left_pair_index,
-                  exchange_right_pair_index);
-
-          const double x11 =
-              result.inverse_overlap_submatrix(left_first, right_first);
-          const double x22 =
-              result.inverse_overlap_submatrix(left_second, right_second);
-          const double x12 =
-              result.inverse_overlap_submatrix(left_second, right_first);
-          const double x21 =
-              result.inverse_overlap_submatrix(left_first, right_second);
-          const double dx11 =
-              result.delta_inverse_overlap_submatrix(left_first, right_first);
-          const double dx22 =
-              result.delta_inverse_overlap_submatrix(left_second, right_second);
-          const double dx12 =
-              result.delta_inverse_overlap_submatrix(left_second, right_first);
-          const double dx21 =
-              result.delta_inverse_overlap_submatrix(left_first, right_second);
-          const double wedge = x11 * x22 - x12 * x21;
-          const double delta_wedge =
-              dx11 * x22 + x11 * dx22 - dx12 * x21 - x12 * dx21;
-          result.delta_same_spin_total_phi +=
-              delta_interaction_value * wedge +
-              interaction_value * delta_wedge;
-
-          result.delta_same_spin_inverse_overlap_gradient(
-              left_first,
-              right_first) +=
-              delta_interaction_value * x22 +
-              interaction_value * dx22;
-          result.delta_same_spin_inverse_overlap_gradient(
-              left_second,
-              right_second) +=
-              delta_interaction_value * x11 +
-              interaction_value * dx11;
-          result.delta_same_spin_inverse_overlap_gradient(
-              left_second,
-              right_first) -=
-              delta_interaction_value * x21 +
-              interaction_value * dx21;
-          result.delta_same_spin_inverse_overlap_gradient(
-              left_first,
-              right_second) -=
-              delta_interaction_value * x12 +
-              interaction_value * dx12;
-        }
-      }
-    }
-  }
-
+      (dh.cwiseProduct(result.cofactor_1st)).sum() +
+      (dg.cwiseProduct(cofactor.second())).sum() +
+      (pair_evaluation.same_spin_overlap_hamiltonian_gradient.cwiseProduct(ds)).sum();
+  if (need_overlap_gradient)
+    result.delta_same_spin_overlap_hamiltonian_gradient =
+        cofactor.mixed(ds, pair_evaluation.same_spin_one_electron_block) +
+        cofactor.first(dh) +
+        cofactor.second_contraction_gradient_direction(
+            ds, pair_evaluation.same_spin_antisymmetrized_interaction, dg);
   return result;
 }
 
@@ -2643,90 +1964,10 @@ void accumulate_directional_one_electron_gradient_contribution_local(
   }
 }
 
-void accumulate_directional_same_spin_two_electron_gradient_contribution_local(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::MatrixXd& cofactor_1st,
-    const Eigen::MatrixXd& delta_cofactor_1st,
-    double overlap_determinant,
-    double delta_overlap_determinant,
-    double weight,
-    double delta_weight,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  if (packed_active_two_electron_gradient == nullptr) {
-    throw std::invalid_argument("packed_active_two_electron_gradient must not be null");
-  }
-  if ((std::abs(weight) <= kContributionTolerance &&
-       std::abs(delta_weight) <= kContributionTolerance) ||
-      overlap_determinant == 0.0) {
-    return;
-  }
-
-  const int n_electrons = static_cast<int>(occ_L.size());
-  const double inv_overlap_determinant = 1.0 / overlap_determinant;
-  const double delta_prefactor =
-      delta_weight * inv_overlap_determinant -
-      weight * delta_overlap_determinant *
-          inv_overlap_determinant * inv_overlap_determinant;
-  const double prefactor = weight * inv_overlap_determinant;
-  for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[left_first];
-    for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[right_first];
-      const double cofactor_11 = cofactor_1st(right_first, left_first);
-      const double delta_cofactor_11 =
-          delta_cofactor_1st(right_first, left_first);
-      for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orbital_index_left_second = occ_L[left_second];
-        const double cofactor_12 = cofactor_1st(right_first, left_second);
-        const double delta_cofactor_12 =
-            delta_cofactor_1st(right_first, left_second);
-        for (int right_second = right_first + 1;
-             right_second < n_electrons;
-             ++right_second) {
-          const int orbital_index_right_second =
-              occ_R[right_second];
-          const double cofactor_22 = cofactor_1st(right_second, left_second);
-          const double cofactor_21 = cofactor_1st(right_second, left_first);
-          const double delta_cofactor_22 =
-              delta_cofactor_1st(right_second, left_second);
-          const double delta_cofactor_21 =
-              delta_cofactor_1st(right_second, left_first);
-          const double wedge =
-              cofactor_11 * cofactor_22 - cofactor_12 * cofactor_21;
-          const double delta_wedge =
-              delta_cofactor_11 * cofactor_22 +
-              cofactor_11 * delta_cofactor_22 -
-              delta_cofactor_12 * cofactor_21 -
-              cofactor_12 * delta_cofactor_21;
-          const double directional_second_order_cofactor =
-              delta_prefactor * wedge +
-              prefactor * delta_wedge;
-
-          const int direct_index = TwoElectronIndexer::two_electron_storage_index(
-              orbital_index_right_first,
-              orbital_index_left_first,
-              orbital_index_right_second,
-              orbital_index_left_second);
-          const int exchange_index = TwoElectronIndexer::two_electron_storage_index(
-              orbital_index_right_first,
-              orbital_index_left_second,
-              orbital_index_right_second,
-              orbital_index_left_first);
-          (*packed_active_two_electron_gradient)[direct_index] +=
-              directional_second_order_cofactor;
-          (*packed_active_two_electron_gradient)[exchange_index] -=
-              directional_second_order_cofactor;
-        }
-      }
-    }
-  }
-}
-
 void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
-    const DeterminantOverlapResult& overlap_result,
+    const CofactorDifferential& cofactor,
     const std::vector<double>& delta_ao_overlap_matrix,
     int n_active_orbitals,
     double weight,
@@ -2745,15 +1986,14 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
     return;
   }
 
-  const Eigen::MatrixXd overlap_block =
-      build_overlap_submatrix_from_result(overlap_result);
   const Eigen::MatrixXd delta_overlap_submatrix =
       build_local_overlap_direction_matrix(
           occ_L,
           occ_R,
           delta_ao_overlap_matrix,
           n_active_orbitals);
-  const DeterminantOverlapResolver overlap_resolver;
+  const Eigen::MatrixXd second = cofactor.second();
+  const Eigen::MatrixXd delta_second = cofactor.second_first(delta_overlap_submatrix);
   for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
     const int orbital_index_left_first = occ_L[left_first];
     for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
@@ -2763,22 +2003,11 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
         for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
           const int orbital_index_right_second = occ_R[right_second];
           const double second_order_cofactor =
-              calc_second_order_cofactor(
-                  overlap_result,
-                  right_first,
-                  right_second,
-                  left_first,
-                  left_second);
+              second(right_second*(right_second-1)/2+right_first,
+                     left_second*(left_second-1)/2+left_first);
           const double directional_second_order_cofactor =
-              calc_directional_second_order_cofactor(
-                  overlap_block,
-                  delta_overlap_submatrix,
-                  overlap_result,
-                  right_first,
-                  right_second,
-                  left_first,
-                  left_second,
-                  overlap_resolver);
+              delta_second(right_second*(right_second-1)/2+right_first,
+                           left_second*(left_second-1)/2+left_first);
           const double total_directional_second_order_cofactor =
               delta_weight * second_order_cofactor +
               weight * directional_second_order_cofactor;
@@ -2803,70 +2032,6 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
               total_directional_second_order_cofactor;
         }
       }
-    }
-  }
-}
-
-void accumulate_regular_spin_overlap_gradient_direction_local(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    double overlap_determinant,
-    double delta_overlap_determinant,
-    const Eigen::MatrixXd& inverse_overlap_submatrix,
-    const Eigen::MatrixXd& delta_inverse_overlap_submatrix,
-    double determinant_overlap_weight,
-    double delta_determinant_overlap_weight,
-    const Eigen::MatrixXd& inverse_overlap_gradient,
-    const Eigen::MatrixXd& delta_inverse_overlap_gradient,
-    int n_active_orbitals,
-    std::vector<double>* active_orbital_overlap_gradient) {
-  if (active_orbital_overlap_gradient == nullptr) {
-    throw std::invalid_argument("active_orbital_overlap_gradient must not be null");
-  }
-  if (overlap_determinant == 0.0) {
-    throw std::invalid_argument(
-        "directional overlap gradient requires non-zero overlap_determinant");
-  }
-
-  const Eigen::MatrixXd inverse_overlap_transpose = inverse_overlap_submatrix.transpose();
-  const Eigen::MatrixXd delta_inverse_overlap_transpose =
-      delta_inverse_overlap_submatrix.transpose();
-  Eigen::MatrixXd overlap_submatrix_gradient_direction =
-      (delta_determinant_overlap_weight * overlap_determinant +
-       determinant_overlap_weight * delta_overlap_determinant) *
-      inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() +=
-      determinant_overlap_weight * overlap_determinant *
-      delta_inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() -=
-      delta_overlap_determinant *
-      inverse_overlap_transpose *
-      inverse_overlap_gradient *
-      inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() -=
-      overlap_determinant *
-      delta_inverse_overlap_transpose *
-      inverse_overlap_gradient *
-      inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() -=
-      overlap_determinant *
-      inverse_overlap_transpose *
-      delta_inverse_overlap_gradient *
-      inverse_overlap_transpose;
-  overlap_submatrix_gradient_direction.noalias() -=
-      overlap_determinant *
-      inverse_overlap_transpose *
-      inverse_overlap_gradient *
-      delta_inverse_overlap_transpose;
-
-  for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = occ_L[left_column];
-    for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = occ_R[right_row];
-      (*active_orbital_overlap_gradient)[orbital_index_left *
-                                             n_active_orbitals +
-                                         orbital_index_right] +=
-          overlap_submatrix_gradient_direction(right_row, left_column);
     }
   }
 }
@@ -4227,6 +3392,7 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
       Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
   scalar_matrices.delta_singular_total_hamiltonian_matrix =
       Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
+  scalar_matrices.ordered_pair_data.resize(expected_size);
 
   for (int left_id = 0; left_id < n_unique_determinants; ++left_id) {
     for (int right_id = left_id; right_id < n_unique_determinants; ++right_id) {
@@ -4238,37 +3404,9 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
       const auto& occ_L = unique_determinants[left_id];
       const auto& occ_R = unique_determinants[right_id];
       const auto& overlap_result = pair_evaluation.overlap_result;
-      if (overlap_result.nullity == 0 &&
-          overlap_result.overlap_determinant != 0.0) {
-        const RegularSpinDirectionalData directional_data =
-            build_regular_spin_directional_data(
-                occ_L,
-                occ_R,
-                active_one_electron_matrix,
-                active_space_two_electron_result,
-                pair_evaluation,
-                n_active_orbitals,
-                delta_ao_overlap_matrix,
-                delta_active_one_electron_matrix,
-                delta_packed_active_two_electron_integrals);
-        set_symmetric_matrix_entry(
-            &scalar_matrices.delta_overlap_determinant_matrix,
-            left_id,
-            right_id,
-            directional_data.delta_overlap_determinant);
-        set_symmetric_matrix_entry(
-            &scalar_matrices.delta_regular_total_hamiltonian_matrix,
-            left_id,
-            right_id,
-            directional_data.delta_overlap_determinant *
-                    directional_data.same_spin_total_phi +
-                directional_data.overlap_determinant *
-                    directional_data.delta_same_spin_total_phi);
-        continue;
-      }
 
-      const SingularSpinDirectionalData directional_data =
-          build_singular_spin_directional_data(
+      SameSpinPolynomialDirectionalPairData directional_data =
+          build_polynomial_spin_directional_data(
               occ_L,
               occ_R,
               active_one_electron_matrix,
@@ -4278,13 +3416,26 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
               delta_ao_overlap_matrix,
               delta_active_one_electron_matrix,
               delta_packed_active_two_electron_integrals);
+      const std::size_t forward_index = ordered_spin_pair_storage_index(
+          left_id, right_id, n_unique_determinants);
+      scalar_matrices.ordered_pair_data[forward_index] = directional_data;
+      if (left_id != right_id) {
+        SameSpinPolynomialDirectionalPairData transposed = directional_data;
+        transposed.cofactor_1st.transposeInPlace();
+        transposed.delta_cofactor_1st.transposeInPlace();
+        transposed.delta_same_spin_overlap_hamiltonian_gradient.transposeInPlace();
+        scalar_matrices.ordered_pair_data[ordered_spin_pair_storage_index(
+            right_id, left_id, n_unique_determinants)] = std::move(transposed);
+      }
       set_symmetric_matrix_entry(
           &scalar_matrices.delta_overlap_determinant_matrix,
           left_id,
           right_id,
           directional_data.delta_overlap_determinant);
       set_symmetric_matrix_entry(
-          &scalar_matrices.delta_singular_total_hamiltonian_matrix,
+          (overlap_result.nullity == 0 && overlap_result.overlap_determinant != 0.0
+               ? &scalar_matrices.delta_regular_total_hamiltonian_matrix
+               : &scalar_matrices.delta_singular_total_hamiltonian_matrix),
           left_id,
           right_id,
           directional_data.delta_total_hamiltonian);
@@ -4456,7 +3607,6 @@ void accumulate_spin_matrix_backward_tile(
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,
     std::vector<double>* packed_active_two_electron_gradient) {
-  Eigen::MatrixXd scaled_inverse_overlap_gradient;
   for (int left_local = 0;
        left_local < hamiltonian_weight_tile.rows();
        ++left_local) {
@@ -4487,60 +3637,6 @@ void accumulate_spin_matrix_backward_tile(
       const auto& overlap_result = pair_evaluation.overlap_result;
       const bool has_hamiltonian_weight =
           std::abs(hamiltonian_weight) > kContributionTolerance;
-      const bool is_regular_pair =
-          overlap_result.nullity == 0 &&
-          overlap_result.overlap_determinant != 0.0;
-
-      if (is_regular_pair) {
-        if (!pair_evaluation.has_same_spin_phi_cache) {
-          throw std::runtime_error(
-              "matrix-form same-spin backward requires cached same-spin phi payloads");
-        }
-
-        if (has_hamiltonian_weight) {
-          const Eigen::MatrixXd cofactor_1st =
-              calc_cofactor_1st(overlap_result);
-          accumulate_one_electron_gradient_contribution_local(
-              occ_L,
-              occ_R,
-              cofactor_1st,
-              hamiltonian_weight,
-              active_one_electron_gradient);
-          accumulate_same_spin_two_electron_gradient_contribution_local(
-              occ_L,
-              occ_R,
-              cofactor_1st,
-              overlap_result.overlap_determinant,
-              hamiltonian_weight,
-              packed_active_two_electron_gradient);
-          scaled_inverse_overlap_gradient =
-              hamiltonian_weight *
-              pair_evaluation.same_spin_inverse_overlap_gradient;
-        } else {
-          const int n_electrons = static_cast<int>(occ_L.size());
-          scaled_inverse_overlap_gradient.setZero(n_electrons, n_electrons);
-        }
-
-        const double determinant_overlap_weight =
-            overlap_weight +
-            partner_total +
-            (has_hamiltonian_weight
-                 ? hamiltonian_weight * pair_evaluation.same_spin_total_phi
-                 : 0.0);
-        if (!has_hamiltonian_weight &&
-            std::abs(determinant_overlap_weight) <= kContributionTolerance) {
-          continue;
-        }
-        accumulate_spin_overlap_gradient(
-            occ_L,
-            occ_R,
-            overlap_result,
-            determinant_overlap_weight,
-            scaled_inverse_overlap_gradient,
-            n_active_orbitals,
-            active_orbital_overlap_gradient);
-        continue;
-      }
 
       const double determinant_overlap_weight =
           overlap_weight + partner_total;
@@ -4564,7 +3660,7 @@ void accumulate_spin_matrix_backward_tile(
         accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local(
             occ_L,
             occ_R,
-            overlap_result,
+            cached_cofactor_differential(pair_evaluation),
             hamiltonian_weight,
             packed_active_two_electron_gradient);
         if (pair_evaluation.same_spin_overlap_hamiltonian_gradient.rows() !=
@@ -4572,7 +3668,7 @@ void accumulate_spin_matrix_backward_tile(
             pair_evaluation.same_spin_overlap_hamiltonian_gradient.cols() !=
                 static_cast<int>(occ_L.size())) {
           throw std::runtime_error(
-              "matrix-form same-spin backward requires cached singular overlap Hamiltonian gradients");
+              "matrix-form same-spin backward requires cached overlap Hamiltonian gradients");
         }
         accumulate_overlap_block_gradient_contribution_local(
             occ_L,
@@ -4679,6 +3775,7 @@ template <
 void accumulate_spin_local_matrix_backward_tile(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    const std::vector<SameSpinPolynomialDirectionalPairData>& ordered_directional_data,
     const HWeight& hamiltonian_weight_tile,
     const SWeight& overlap_weight_tile,
     const TWeight& partner_total_transfer_tile,
@@ -4701,8 +3798,6 @@ void accumulate_spin_local_matrix_backward_tile(
   // all six scalar adjoints are tile-local. Reuse matrix workspaces across the
   // ordered-pair sweep to avoid allocating temporary inverse-gradient matrices
   // inside the hot loop.
-  Eigen::MatrixXd inverse_overlap_gradient;
-  Eigen::MatrixXd delta_inverse_overlap_gradient;
   for (int left_local = 0;
        left_local < hamiltonian_weight_tile.rows();
        ++left_local) {
@@ -4740,91 +3835,10 @@ void accumulate_spin_local_matrix_backward_tile(
       const auto& occ_L = unique_determinants[left_id];
       const auto& occ_R = unique_determinants[right_id];
       const auto& overlap_result = pair_evaluation.overlap_result;
-      const bool is_regular_pair =
-          overlap_result.nullity == 0 &&
-          overlap_result.overlap_determinant != 0.0;
-      if (is_regular_pair) {
-        if (!pair_evaluation.has_same_spin_phi_cache) {
-          throw std::runtime_error(
-              "same-spin local-response requires cached same-spin phi payloads");
-        }
 
-        const RegularSpinDirectionalData directional_data =
-            build_regular_spin_directional_data(
-                occ_L,
-                occ_R,
-                active_one_electron_matrix,
-                active_space_two_electron_result,
-                pair_evaluation,
-                n_active_orbitals,
-                delta_ao_overlap_matrix,
-                delta_active_one_electron_matrix,
-                delta_packed_active_two_electron_integrals);
-
-        accumulate_directional_one_electron_gradient_contribution_local(
-            occ_L,
-            occ_R,
-            directional_data.cofactor_1st,
-            directional_data.delta_cofactor_1st,
-            hamiltonian_weight,
-            delta_hamiltonian_weight,
-            active_one_electron_gradient);
-        accumulate_directional_same_spin_two_electron_gradient_contribution_local(
-            occ_L,
-            occ_R,
-            directional_data.cofactor_1st,
-            directional_data.delta_cofactor_1st,
-            directional_data.overlap_determinant,
-            directional_data.delta_overlap_determinant,
-            hamiltonian_weight,
-            delta_hamiltonian_weight,
-            packed_active_two_electron_gradient);
-
-        const double determinant_overlap_weight =
-            overlap_weight +
-            partner_total +
-            hamiltonian_weight * directional_data.same_spin_total_phi;
-        const double delta_determinant_overlap_weight =
-            delta_overlap_weight +
-            delta_partner_total +
-            delta_hamiltonian_weight * directional_data.same_spin_total_phi +
-            hamiltonian_weight * directional_data.delta_same_spin_total_phi;
-        inverse_overlap_gradient.noalias() =
-            hamiltonian_weight *
-            directional_data.same_spin_inverse_overlap_gradient;
-        delta_inverse_overlap_gradient.noalias() =
-            delta_hamiltonian_weight *
-            directional_data.same_spin_inverse_overlap_gradient;
-        delta_inverse_overlap_gradient.noalias() +=
-            hamiltonian_weight *
-            directional_data.delta_same_spin_inverse_overlap_gradient;
-        accumulate_regular_spin_overlap_gradient_direction_local(
-            occ_L,
-            occ_R,
-            directional_data.overlap_determinant,
-            directional_data.delta_overlap_determinant,
-            directional_data.inverse_overlap_submatrix,
-            directional_data.delta_inverse_overlap_submatrix,
-            determinant_overlap_weight,
-            delta_determinant_overlap_weight,
-            inverse_overlap_gradient,
-            delta_inverse_overlap_gradient,
-            n_active_orbitals,
-            active_orbital_overlap_gradient);
-        continue;
-      }
-
-      const SingularSpinDirectionalData directional_data =
-          build_singular_spin_directional_data(
-              occ_L,
-              occ_R,
-              active_one_electron_matrix,
-              active_space_two_electron_result,
-              pair_evaluation,
-              n_active_orbitals,
-              delta_ao_overlap_matrix,
-              delta_active_one_electron_matrix,
-              delta_packed_active_two_electron_integrals);
+      const SameSpinPolynomialDirectionalPairData& directional_data =
+          ordered_directional_data[ordered_spin_pair_storage_index(
+              left_id, right_id, n_unique_determinants)];
 
       accumulate_directional_one_electron_gradient_contribution_local(
           occ_L,
@@ -4837,7 +3851,7 @@ void accumulate_spin_local_matrix_backward_tile(
       accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contribution_local(
           occ_L,
           occ_R,
-          overlap_result,
+          cached_cofactor_differential(pair_evaluation),
           delta_ao_overlap_matrix,
           n_active_orbitals,
           hamiltonian_weight,
@@ -4849,7 +3863,7 @@ void accumulate_spin_local_matrix_backward_tile(
           pair_evaluation.same_spin_overlap_hamiltonian_gradient.cols() !=
               static_cast<int>(occ_L.size())) {
         throw std::runtime_error(
-            "same-spin local-response requires cached singular overlap Hamiltonian gradients");
+            "same-spin local-response requires cached overlap Hamiltonian gradients");
       }
       accumulate_overlap_block_gradient_contribution_local(
           occ_L,
@@ -4896,6 +3910,7 @@ void accumulate_spin_local_matrix_backward_tile(
 void accumulate_spin_local_matrix_backward(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    const std::vector<SameSpinPolynomialDirectionalPairData>& ordered_directional_data,
     const Eigen::MatrixXd& hamiltonian_weight_matrix,
     const Eigen::MatrixXd& overlap_weight_matrix,
     const Eigen::MatrixXd& partner_total_transfer_matrix,
@@ -4982,90 +3997,10 @@ void accumulate_spin_local_matrix_backward(
           const auto& occ_L = unique_determinants[left_id];
           const auto& occ_R = unique_determinants[right_id];
           const auto& overlap_result = pair_evaluation.overlap_result;
-          const bool is_regular_pair =
-              overlap_result.nullity == 0 &&
-              overlap_result.overlap_determinant != 0.0;
-          if (is_regular_pair) {
-            if (!pair_evaluation.has_same_spin_phi_cache) {
-              throw std::runtime_error(
-                  "same-spin local-response requires cached same-spin phi payloads");
-            }
 
-            const RegularSpinDirectionalData directional_data =
-                build_regular_spin_directional_data(
-                    occ_L,
-                    occ_R,
-                    active_one_electron_matrix,
-                    active_space_two_electron_result,
-                    pair_evaluation,
-                    n_active_orbitals,
-                    delta_ao_overlap_matrix,
-                    delta_active_one_electron_matrix,
-                    delta_packed_active_two_electron_integrals);
-
-            accumulate_directional_one_electron_gradient_contribution_local(
-                occ_L,
-                occ_R,
-                directional_data.cofactor_1st,
-                directional_data.delta_cofactor_1st,
-                hamiltonian_weight,
-                delta_hamiltonian_weight,
-                active_one_electron_gradient);
-            accumulate_directional_same_spin_two_electron_gradient_contribution_local(
-                occ_L,
-                occ_R,
-                directional_data.cofactor_1st,
-                directional_data.delta_cofactor_1st,
-                directional_data.overlap_determinant,
-                directional_data.delta_overlap_determinant,
-                hamiltonian_weight,
-                delta_hamiltonian_weight,
-                packed_active_two_electron_gradient);
-
-            const double determinant_overlap_weight =
-                overlap_weight +
-                partner_total +
-                hamiltonian_weight * directional_data.same_spin_total_phi;
-            const double delta_determinant_overlap_weight =
-                delta_overlap_weight +
-                delta_partner_total +
-                delta_hamiltonian_weight * directional_data.same_spin_total_phi +
-                hamiltonian_weight * directional_data.delta_same_spin_total_phi;
-            const Eigen::MatrixXd inverse_overlap_gradient =
-                hamiltonian_weight *
-                directional_data.same_spin_inverse_overlap_gradient;
-            const Eigen::MatrixXd delta_inverse_overlap_gradient =
-                delta_hamiltonian_weight *
-                    directional_data.same_spin_inverse_overlap_gradient +
-                hamiltonian_weight *
-                    directional_data.delta_same_spin_inverse_overlap_gradient;
-            accumulate_regular_spin_overlap_gradient_direction_local(
-                occ_L,
-                occ_R,
-                directional_data.overlap_determinant,
-                directional_data.delta_overlap_determinant,
-                directional_data.inverse_overlap_submatrix,
-                directional_data.delta_inverse_overlap_submatrix,
-                determinant_overlap_weight,
-                delta_determinant_overlap_weight,
-                inverse_overlap_gradient,
-                delta_inverse_overlap_gradient,
-                n_active_orbitals,
-                active_orbital_overlap_gradient);
-            continue;
-          }
-
-          const SingularSpinDirectionalData directional_data =
-              build_singular_spin_directional_data(
-                  occ_L,
-                  occ_R,
-                  active_one_electron_matrix,
-                  active_space_two_electron_result,
-                  pair_evaluation,
-                  n_active_orbitals,
-                  delta_ao_overlap_matrix,
-                  delta_active_one_electron_matrix,
-                  delta_packed_active_two_electron_integrals);
+          const SameSpinPolynomialDirectionalPairData& directional_data =
+              ordered_directional_data[ordered_spin_pair_storage_index(
+                  left_id, right_id, n_unique_determinants)];
 
           accumulate_directional_one_electron_gradient_contribution_local(
               occ_L,
@@ -5078,7 +4013,7 @@ void accumulate_spin_local_matrix_backward(
           accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contribution_local(
               occ_L,
               occ_R,
-              overlap_result,
+              cached_cofactor_differential(pair_evaluation),
               delta_ao_overlap_matrix,
               n_active_orbitals,
               hamiltonian_weight,
@@ -5090,7 +4025,7 @@ void accumulate_spin_local_matrix_backward(
               pair_evaluation.same_spin_overlap_hamiltonian_gradient.cols() !=
                   static_cast<int>(occ_L.size())) {
             throw std::runtime_error(
-                "same-spin local-response requires cached singular overlap Hamiltonian gradients");
+                "same-spin local-response requires cached overlap Hamiltonian gradients");
           }
           accumulate_overlap_block_gradient_contribution_local(
               occ_L,
@@ -5429,7 +4364,8 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
+    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const SameSpinDirectionalPairCache* precomputed_directional_pair_cache) {
   // Local HVP tile path:
   //   keep only partner directional scalar matrices,
   //   build accepted/directional W tiles on demand from support-local C blocks,
@@ -5453,31 +4389,28 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  const SameSpinDirectionalScalarMatrices alpha_directional_scalars =
-      build_directional_pair_scalar_matrices(
-          same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          selected_states.n_unique_alpha,
-          n_active_orbitals,
-          active_one_electron_matrix,
-          active_space_two_electron_result,
-          delta_ao_overlap_matrix,
-          delta_active_one_electron_matrix,
-          delta_packed_active_two_electron_integrals);
-  SameSpinDirectionalScalarMatrices beta_directional_scalars;
-  if (!close_shell_same_spin) {
-    beta_directional_scalars =
-        build_directional_pair_scalar_matrices(
-            same_spin_pair_cache.beta_reuse_table.unique_determinants,
-            same_spin_pair_cache.beta_pair_cache_ref(),
-            selected_states.n_unique_beta,
-            n_active_orbitals,
-            active_one_electron_matrix,
-            active_space_two_electron_result,
-            delta_ao_overlap_matrix,
-            delta_active_one_electron_matrix,
-            delta_packed_active_two_electron_integrals);
+  SameSpinDirectionalPairCache owned_directional_pair_cache;
+  if (precomputed_directional_pair_cache == nullptr) {
+    owned_directional_pair_cache = build_same_spin_directional_pair_cache(
+        same_spin_pair_cache,
+        n_active_orbitals,
+        active_one_electron_matrix,
+        active_space_two_electron_result,
+        delta_ao_overlap_matrix,
+        delta_active_one_electron_matrix,
+        delta_packed_active_two_electron_integrals);
+    precomputed_directional_pair_cache = &owned_directional_pair_cache;
   }
+  if (precomputed_directional_pair_cache->close_shell_same_spin !=
+      close_shell_same_spin) {
+    throw std::invalid_argument(
+        "precomputed same-spin directional cache has inconsistent spin sharing");
+  }
+  const auto& alpha_directional_scalars =
+      precomputed_directional_pair_cache->alpha;
+  const auto& beta_directional_scalars = close_shell_same_spin
+      ? precomputed_directional_pair_cache->alpha
+      : precomputed_directional_pair_cache->beta;
 
   const int tile_size = same_spin_backward_pair_tile_size();
   SameSpinLocalTileWeights tile_weights;
@@ -5522,6 +4455,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
       accumulate_spin_local_matrix_backward_tile(
           same_spin_pair_cache.alpha_reuse_table.unique_determinants,
           same_spin_pair_cache.alpha_pair_cache_ref(),
+          alpha_directional_scalars.ordered_pair_data,
           tile_weights.hamiltonian,
           tile_weights.overlap,
           tile_weights.partner_total,
@@ -5587,6 +4521,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
         accumulate_spin_local_matrix_backward_tile(
             same_spin_pair_cache.beta_reuse_table.unique_determinants,
             same_spin_pair_cache.beta_pair_cache_ref(),
+            beta_directional_scalars.ordered_pair_data,
             tile_weights.hamiltonian,
             tile_weights.overlap,
             tile_weights.partner_total,
@@ -5616,6 +4551,44 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
 }
 
 }  // namespace
+
+SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    const std::vector<double>& delta_ao_overlap_matrix,
+    const std::vector<double>& delta_active_one_electron_matrix,
+    const std::vector<double>& delta_packed_active_two_electron_integrals) {
+  SameSpinDirectionalPairCache result;
+  result.close_shell_same_spin =
+      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
+  result.alpha = build_directional_pair_scalar_matrices(
+      same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+      same_spin_pair_cache.alpha_pair_cache_ref(),
+      static_cast<int>(
+          same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()),
+      n_active_orbitals,
+      active_one_electron_matrix,
+      active_space_two_electron_result,
+      delta_ao_overlap_matrix,
+      delta_active_one_electron_matrix,
+      delta_packed_active_two_electron_integrals);
+  if (!result.close_shell_same_spin) {
+    result.beta = build_directional_pair_scalar_matrices(
+        same_spin_pair_cache.beta_reuse_table.unique_determinants,
+        same_spin_pair_cache.beta_pair_cache_ref(),
+        static_cast<int>(
+            same_spin_pair_cache.beta_reuse_table.unique_determinants.size()),
+        n_active_orbitals,
+        active_one_electron_matrix,
+        active_space_two_electron_result,
+        delta_ao_overlap_matrix,
+        delta_active_one_electron_matrix,
+        delta_packed_active_two_electron_integrals);
+  }
+  return result;
+}
 
 SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
@@ -5820,7 +4793,8 @@ build_local_same_spin_matrix_backward_contribution(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
+    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const SameSpinDirectionalPairCache* precomputed_directional_pair_cache) {
   // Matrix-form local same-spin HVP:
   // 1. compress accepted determinant/structure adjoints onto unique-spin pair weights,
   // 2. compress partner directional scalars onto `δW`,
@@ -5842,7 +4816,8 @@ build_local_same_spin_matrix_backward_contribution(
         active_space_two_electron_result,
         delta_ao_overlap_matrix,
         delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals);
+        delta_packed_active_two_electron_integrals,
+        precomputed_directional_pair_cache);
   }
 
   const SameSpinExactWeightMatrices exact_weight_matrices =
@@ -5856,31 +4831,28 @@ build_local_same_spin_matrix_backward_contribution(
       exact_weight_matrices.alpha_partner_total_transfer_matrix +
       exact_weight_matrices.alpha_singular_partner_transfer_matrix;
 
-  const SameSpinDirectionalScalarMatrices alpha_directional_scalars =
-      build_directional_pair_scalar_matrices(
-          same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          selected_states.n_unique_alpha,
-          n_active_orbitals,
-          active_one_electron_matrix,
-          active_space_two_electron_result,
-          delta_ao_overlap_matrix,
-          delta_active_one_electron_matrix,
-          delta_packed_active_two_electron_integrals);
-  SameSpinDirectionalScalarMatrices beta_directional_scalars;
-  if (!close_shell_same_spin) {
-    beta_directional_scalars =
-        build_directional_pair_scalar_matrices(
-            same_spin_pair_cache.beta_reuse_table.unique_determinants,
-            same_spin_pair_cache.beta_pair_cache_ref(),
-            selected_states.n_unique_beta,
-            n_active_orbitals,
-            active_one_electron_matrix,
-            active_space_two_electron_result,
-            delta_ao_overlap_matrix,
-            delta_active_one_electron_matrix,
-            delta_packed_active_two_electron_integrals);
+  SameSpinDirectionalPairCache owned_directional_pair_cache;
+  if (precomputed_directional_pair_cache == nullptr) {
+    owned_directional_pair_cache = build_same_spin_directional_pair_cache(
+        same_spin_pair_cache,
+        n_active_orbitals,
+        active_one_electron_matrix,
+        active_space_two_electron_result,
+        delta_ao_overlap_matrix,
+        delta_active_one_electron_matrix,
+        delta_packed_active_two_electron_integrals);
+    precomputed_directional_pair_cache = &owned_directional_pair_cache;
   }
+  if (precomputed_directional_pair_cache->close_shell_same_spin !=
+      close_shell_same_spin) {
+    throw std::invalid_argument(
+        "precomputed same-spin directional cache has inconsistent spin sharing");
+  }
+  const auto& alpha_directional_scalars =
+      precomputed_directional_pair_cache->alpha;
+  const auto& beta_directional_scalars = close_shell_same_spin
+      ? precomputed_directional_pair_cache->alpha
+      : precomputed_directional_pair_cache->beta;
   const SameSpinLocalResponseWeightMatrices local_weight_matrices =
       build_local_same_spin_response_weight_matrices(
           selected_states,
@@ -5907,6 +4879,7 @@ build_local_same_spin_matrix_backward_contribution(
   accumulate_spin_local_matrix_backward(
       same_spin_pair_cache.alpha_reuse_table.unique_determinants,
       same_spin_pair_cache.alpha_pair_cache_ref(),
+      alpha_directional_scalars.ordered_pair_data,
       exact_weight_matrices.alpha_hamiltonian_weight_matrix,
       exact_weight_matrices.alpha_overlap_weight_matrix,
       alpha_total_partner_transfer_matrix,
@@ -5938,6 +4911,7 @@ build_local_same_spin_matrix_backward_contribution(
     accumulate_spin_local_matrix_backward(
         same_spin_pair_cache.beta_reuse_table.unique_determinants,
         same_spin_pair_cache.beta_pair_cache_ref(),
+        beta_directional_scalars.ordered_pair_data,
         exact_weight_matrices.beta_hamiltonian_weight_matrix,
         exact_weight_matrices.beta_overlap_weight_matrix,
         beta_total_partner_transfer_matrix,
