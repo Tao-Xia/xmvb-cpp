@@ -34,6 +34,7 @@
 #include "vbscf/optimization/krylov/positive_conjugate_basis.hpp"
 #include "vbscf/optimization/krylov/positive_ritz_secants.hpp"
 #include "vbscf/optimization/preconditioners/transported_lbfgs_preconditioner.hpp"
+#include "vbscf/optimization/reduced_hvp_operator.hpp"
 #include "vbscf/optimization/trust_region/retraction_metric.hpp"
 #include "vbscf/optimization/trust_region/spectral_trust_region.hpp"
 #include "vbscf/optimization/vector_operations.hpp"
@@ -59,10 +60,6 @@ bool optimizer_backend_uses_nonredundant_space(
   return false;
 }
 
-
-const char* bool_name(bool value) {
-  return value ? "true" : "false";
-}
 
 double inexact_newton_forcing_term(double gradient_norm) {
   if (!std::isfinite(gradient_norm) || gradient_norm <= 0.0) {
@@ -170,141 +167,6 @@ double solve_trust_region_metric_boundary_tau(
     return 0.0;
   }
   return std::max(0.0, tau);
-}
-
-class ReducedHvpOperator {
-public:
-  virtual ~ReducedHvpOperator() = default;
-  virtual Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) = 0;
-  virtual Eigen::MatrixXd apply_batch(
-      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) {
-    Eigen::MatrixXd responses(
-        reduced_directions.rows(),
-        reduced_directions.cols());
-    for (Eigen::Index column = 0;
-         column < reduced_directions.cols();
-         ++column) {
-      responses.col(column) = apply(reduced_directions.col(column));
-    }
-    return responses;
-  }
-};
-
-class FullFiniteDifferenceReducedHvpOperator final : public ReducedHvpOperator {
-public:
-  FullFiniteDifferenceReducedHvpOperator(
-      const VbScfObjective& objective,
-      const OrbitalChart& current_space,
-      const OrbitalChart::ProjectionResult& current_projection,
-      const OrbitalPreparationInput& current_orbital_input,
-      const SparseParameterLayout& parameter_view,
-      const Eigen::VectorXd& current_parameters,
-      double hvp_step_size)
-      : probe_objective_(objective.make_probe_copy()),
-        current_space_(current_space),
-        current_reduced_gradient_(current_projection.reduced_gradient),
-        current_orbital_input_(current_orbital_input),
-        parameter_view_(parameter_view),
-        current_parameters_(current_parameters),
-        hvp_step_size_(hvp_step_size) {}
-
-  Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) override {
-    if (reduced_direction.size() == 0) {
-      return Eigen::VectorXd::Zero(0);
-    }
-
-    const Eigen::VectorXd packed_direction =
-        gather_nonredundant_retract_tangent(
-            current_orbital_input_,
-            current_space_,
-            parameter_view_,
-            reduced_direction);
-    const double packed_direction_norm = packed_direction.norm();
-    if (!(packed_direction_norm > 0.0) || !std::isfinite(packed_direction_norm)) {
-      return Eigen::VectorXd::Zero(reduced_direction.size());
-    }
-
-    const double epsilon =
-        hvp_step_size_ / std::max(1.0, packed_direction_norm);
-    if (!(epsilon > 0.0) || !std::isfinite(epsilon)) {
-      throw std::runtime_error("invalid finite-difference step for reduced HVP");
-    }
-
-    const OrbitalPreparationInput trial_orbital_input =
-        current_space_.retract_step(
-            current_orbital_input_,
-            reduced_direction,
-            epsilon);
-    const Eigen::VectorXd trial_parameters =
-        parameter_view_.pack(trial_orbital_input);
-    const VbScfObjective::TrialEvaluation trial_evaluation =
-        probe_objective_.evaluate_trial_without_committing(trial_parameters);
-    return
-        (current_space_.project_reduced_gradient(trial_evaluation.gradient) -
-         current_reduced_gradient_) /
-        epsilon;
-  }
-
-private:
-  VbScfObjective probe_objective_;
-  const OrbitalChart& current_space_;
-  Eigen::VectorXd current_reduced_gradient_;
-  OrbitalPreparationInput current_orbital_input_;
-  SparseParameterLayout parameter_view_;
-  Eigen::VectorXd current_parameters_;
-  double hvp_step_size_ = 0.0;
-};
-
-class ExactContextReducedHvpOperator final : public ReducedHvpOperator {
-public:
-  ExactContextReducedHvpOperator(
-      const VbScfObjective& objective,
-      const OrbitalChart& current_space)
-      : exact_operator_(
-            objective.last_second_order_context(),
-            &objective.last_input(),
-            SparseParameterLayout(
-                objective.last_input().orbital_preparation_input),
-            &current_space) {}
-
-  Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) override {
-    return exact_operator_.apply_reduced(reduced_direction);
-  }
-
-  Eigen::MatrixXd apply_batch(
-      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) override {
-    return exact_operator_.apply_reduced_batch(reduced_directions);
-  }
-
-  bool supports_analytic_core_model() const noexcept {
-    return exact_operator_.supports_analytic_core_model();
-  }
-
-  ExactHvpOperator::Diagnostics diagnostics() const {
-    return exact_operator_.diagnostics();
-  }
-
-private:
-  ExactHvpOperator exact_operator_;
-};
-
-std::string build_exact_ctx_unavailable_message(
-    const ExactContextReducedHvpOperator& hvp_operator) {
-  const auto info = hvp_operator.diagnostics();
-  std::ostringstream message;
-  message << "exact_ctx HVP is unavailable"
-          << ": supports_analytic_core_model="
-          << bool_name(info.supports_analytic_core_model)
-          << " outer_response_enabled="
-          << bool_name(info.outer_response_enabled)
-          << " has_same_spin_matrix_form="
-          << bool_name(info.has_same_spin_matrix_form)
-          << " has_opposite_spin_matrix_form="
-          << bool_name(info.has_opposite_spin_matrix_form)
-          << " n_selected_states=" << info.n_selected_states
-          << " n_active_orbitals=" << info.n_active_orbitals
-          << " n_blocks=" << info.n_blocks;
-  return message.str();
 }
 
 struct TruncatedNewtonKrylovSubspace {
@@ -2047,7 +1909,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
                   current_projection,
                   objective.last_input().orbital_preparation_input,
                   parameter_view,
-                  current_parameters,
                   options_.nonredundant_truncated_newton_hvp_step_size);
               break;
             case NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction: {
