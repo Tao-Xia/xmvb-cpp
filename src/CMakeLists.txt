@@ -176,7 +176,8 @@ endif()
 
 add_executable(run_cpp_vbscf
   app/vbscf/main.cpp
-  app/vbscf/options.cpp)
+  app/vbscf/options.cpp
+  app/vbscf/report.cpp)
 set_target_properties(run_cpp_vbscf PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
 target_link_libraries(run_cpp_vbscf
   PRIVATE
