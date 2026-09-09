@@ -83,7 +83,6 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
 )
 
 set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
-  vbscf/diagnostics/hvp_memory_report.cpp
   vbscf/diagnostics/orbital_chart_audit.cpp
 )
 

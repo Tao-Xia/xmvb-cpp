@@ -16,7 +16,6 @@
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_response.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
-#include "vbscf/diagnostics/hvp_memory_report.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space_outer_response.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital_preparation_response.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
@@ -1023,83 +1022,20 @@ ExactHvpOperator::ExactHvpOperator(
                 accepted_total_active_auxiliary_gradient_,
                 accepted_total_inactive_density_gradient_));
 
-      if (accepted_point_context_->same_spin_pair_cache.enabled()) {
-        structure_coefficient_blocks_ =
-            build_structure_coefficient_blocks(
-                current_input_->structure_data.determinant_to_structure_terms,
-                current_input_->structure_data.n_structures,
-                accepted_point_context_->same_spin_pair_cache.alpha_reuse_table,
-                accepted_point_context_->same_spin_pair_cache.beta_reuse_table,
-                true);
-        accepted_outer_response_cache_ =
-            build_accepted_outer_response_linear_response_cache(
-                current_input_,
-                accepted_point_context_.get(),
-                &structure_coefficient_blocks_);
-      }
-
-    ExactCtxMemoryBreakdown memory_breakdown;
-    memory_breakdown.add(
-        "exact_operator.accepted_active_auxiliary_orbitals",
-        exact_ctx_matrix_bytes(accepted_active_auxiliary_orbitals_));
-    memory_breakdown.add(
-        "exact_operator.accepted_basis_overlap_times_active_auxiliary_orbitals",
-        exact_ctx_matrix_bytes(
-            accepted_basis_overlap_times_active_auxiliary_orbitals_));
-    memory_breakdown.add(
-        "exact_operator.accepted_ao_effective_one_electron_times_active_auxiliary_orbitals",
-        exact_ctx_matrix_bytes(
-            accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_));
-    memory_breakdown.add(
-        "exact_operator.accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals",
-        exact_ctx_matrix_bytes(
-            accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_));
-    memory_breakdown.add(
-        "exact_operator.accepted_dense_active_coefficients",
-        exact_ctx_matrix_bytes(accepted_dense_active_coefficients_));
-    memory_breakdown.add(
-        "exact_operator.accepted_sso_gradient_symmetric",
-        exact_ctx_matrix_bytes(accepted_sso_gradient_symmetric_));
-    memory_breakdown.add(
-        "exact_operator.accepted_hho_gradient_symmetric",
-        exact_ctx_matrix_bytes(accepted_hho_gradient_symmetric_));
-    memory_breakdown.add(
-        "exact_operator.accepted_active_auxiliary_orbitals_times_hho_gradient_symmetric",
-        exact_ctx_matrix_bytes(
-            accepted_active_auxiliary_orbitals_times_hho_gradient_symmetric_));
-    memory_breakdown.add(
-        "exact_operator.accepted_total_active_auxiliary_gradient",
-        exact_ctx_matrix_bytes(accepted_total_active_auxiliary_gradient_));
-    memory_breakdown.add(
-        "exact_operator.accepted_total_inactive_density_gradient",
-        exact_ctx_vector_capacity_bytes(
-            accepted_total_inactive_density_gradient_));
-    memory_breakdown.add(
-        "exact_operator.zero_core_hamiltonian",
-        exact_ctx_matrix_bytes(zero_core_hamiltonian_));
-    append_exact_ctx_memory_breakdown(
-        "exact_operator.accepted_exact_two_electron_cache",
-        accepted_exact_two_electron_cache_,
-        &memory_breakdown);
-    append_exact_ctx_memory_breakdown(
-        "exact_operator.accepted_exact_two_electron_apply_workspace",
-        accepted_exact_two_electron_apply_workspace_,
-        &memory_breakdown);
-    append_exact_ctx_memory_breakdown(
-        "exact_operator.outer_response_exact_two_electron_directional_workspace",
-        outer_response_exact_two_electron_directional_workspace_,
-        &memory_breakdown);
-    append_exact_ctx_memory_breakdown(
-        "exact_operator.structure_coefficient_blocks",
-        structure_coefficient_blocks_,
-        &memory_breakdown);
-    append_exact_ctx_memory_breakdown(
-        "exact_operator.accepted_outer_response_cache",
-        accepted_outer_response_cache_,
-        &memory_breakdown);
-    maybe_log_exact_ctx_memory_breakdown(
-        "exact_operator",
-        memory_breakdown);
+    if (accepted_point_context_->same_spin_pair_cache.enabled()) {
+      structure_coefficient_blocks_ =
+          build_structure_coefficient_blocks(
+              current_input_->structure_data.determinant_to_structure_terms,
+              current_input_->structure_data.n_structures,
+              accepted_point_context_->same_spin_pair_cache.alpha_reuse_table,
+              accepted_point_context_->same_spin_pair_cache.beta_reuse_table,
+              true);
+      accepted_outer_response_cache_ =
+          build_accepted_outer_response_linear_response_cache(
+              current_input_,
+              accepted_point_context_.get(),
+              &structure_coefficient_blocks_);
+    }
   }
 }
 

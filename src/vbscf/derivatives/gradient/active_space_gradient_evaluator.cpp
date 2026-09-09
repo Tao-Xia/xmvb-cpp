@@ -27,7 +27,6 @@
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
-#include "vbscf/diagnostics/hvp_memory_report.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
@@ -587,19 +586,6 @@ finalize_active_space_second_order_context(
             normalized_weights,
             context->same_spin_pair_cache);
   }
-  // Accepted-point exact_ctx memory can become the dominant footprint on
-  // medium systems long before the SCF iteration finishes. Keep the breakdown
-  // behind an env-gated logger so production runs stay unchanged, while
-  // compute-node diagnostics can attribute large resident sets to concrete
-  // accepted-context payloads.
-  ExactCtxMemoryBreakdown memory_breakdown;
-  append_exact_ctx_memory_breakdown(
-      "accepted_point_context",
-      *context,
-      &memory_breakdown);
-  maybe_log_exact_ctx_memory_breakdown(
-      "accepted_point_context",
-      memory_breakdown);
   return context;
 }
 
