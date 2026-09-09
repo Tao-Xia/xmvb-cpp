@@ -23,8 +23,7 @@ build_directional_opposite_spin_pair_data(
     int n_unique_determinants,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const ActiveSpaceIntegralDirectionView& direction,
     const std::vector<SameSpinPolynomialDirectionalPairData>&
         precomputed_directional_pair_data);
 

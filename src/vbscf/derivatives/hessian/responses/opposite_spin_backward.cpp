@@ -160,8 +160,7 @@ build_local_opposite_spin_matrix_backward_contribution(
           selected_states.n_unique_alpha,
           n_active_orbitals,
           active_space_two_electron_result,
-          direction.overlap,
-          direction.packed_two_electron,
+          direction,
           directional_pair_cache.alpha.ordered_pair_data);
   const auto& beta_same_spin_pairs =
       directional_pair_cache.close_shell_same_spin
@@ -174,8 +173,7 @@ build_local_opposite_spin_matrix_backward_contribution(
           selected_states.n_unique_beta,
           n_active_orbitals,
           active_space_two_electron_result,
-          direction.overlap,
-          direction.packed_two_electron,
+          direction,
           beta_same_spin_pairs);
   const PackedGradientBlocking blocking =
       choose_packed_gradient_blocking(n_packed_pairs);
