@@ -1313,14 +1313,20 @@ void gather_directional_spin_block_local(
 }  // namespace
 
 SelectedStateProjectedDirectionalMatrices
-build_selected_state_projected_directional_structure_matrices(
-    const VbScfInput& input,
-    const AcceptedPointContext& accepted_point_context,
-    const std::vector<StructureCoefficientBlock>& coefficient_blocks,
+build_projected_structure_direction(
+    const AcceptedOuterResponseContext& accepted,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
     const SameSpinDirectionalPairCache& directional_pair_cache) {
+  if (accepted.input == nullptr || accepted.accepted_point_context == nullptr ||
+      accepted.structure_coefficient_blocks == nullptr) {
+    throw std::invalid_argument(
+        "projected structure direction requires a complete accepted context");
+  }
+  const auto& input = *accepted.input;
+  const auto& accepted_point_context = *accepted.accepted_point_context;
+  const auto& coefficient_blocks = *accepted.structure_coefficient_blocks;
   const int n_determinants =
       static_cast<int>(input.structure_data.alpha_det.size());
   const int n_structures = input.structure_data.n_structures;

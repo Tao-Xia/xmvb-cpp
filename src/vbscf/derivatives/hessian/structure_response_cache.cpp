@@ -136,8 +136,7 @@ build_accepted_selected_state_generalized_eigen_response_operator(
 
 }  // namespace
 
-AcceptedOuterResponseLinearResponseCache
-build_accepted_outer_response_linear_response_cache(
+AcceptedOuterResponseContext build_accepted_outer_response_context(
     const VbScfInput* input,
     const AcceptedPointContext* accepted_point_context,
     const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks) {
@@ -147,32 +146,14 @@ build_accepted_outer_response_linear_response_cache(
         "accepted outer-response cache inputs must not be null");
   }
 
-  AcceptedOuterResponseLinearResponseCache cache;
-  cache.input = input;
-  cache.accepted_point_context = accepted_point_context;
-  cache.structure_coefficient_blocks = structure_coefficient_blocks;
-  cache.selected_state_indices = accepted_point_context->selected_state_indices;
-  cache.selected_state_eigen_response_operator =
+  AcceptedOuterResponseContext context;
+  context.input = input;
+  context.accepted_point_context = accepted_point_context;
+  context.structure_coefficient_blocks = structure_coefficient_blocks;
+  context.selected_state_eigen_response_operator =
       build_accepted_selected_state_generalized_eigen_response_operator(
           *accepted_point_context);
-  const int n_structures =
-      cache.selected_state_eigen_response_operator.n_structures;
-  const int n_selected_states =
-      static_cast<int>(cache.selected_state_indices.size());
-  const auto accepted_eigenvector_matrix =
-      cache.selected_state_eigen_response_operator.accepted_eigenvector_matrix_view();
-  cache.accepted_selected_eigenvector_columns =
-      Eigen::MatrixXd::Zero(n_structures, n_selected_states);
-  for (int selected_state_offset = 0;
-       selected_state_offset < n_selected_states;
-       ++selected_state_offset) {
-    const int state_index =
-        cache.selected_state_indices[static_cast<std::size_t>(
-            selected_state_offset)];
-    cache.accepted_selected_eigenvector_columns.col(selected_state_offset) =
-        accepted_eigenvector_matrix.col(state_index);
-  }
-  return cache;
+  return context;
 }
 
 SelectedStateGeneralizedEigenDirectionalResponse

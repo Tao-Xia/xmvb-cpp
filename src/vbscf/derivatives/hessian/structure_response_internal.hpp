@@ -74,25 +74,23 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
 };
 
 /**
- * @brief Frozen accepted-point outer-response data reused across HVP applies.
+ * @brief Frozen accepted-point outer-response context reused across HVP applies.
  *
- * The current implementation still rebuilds directional projected structure
- * columns for each direction, but all accepted-point eigensystem metadata and
- * selected-state bookkeeping are cached once here and reused.
+ * This object is the authoritative source of all base-point quantities used by
+ * the outer response. Directional data are supplied separately for each HVP,
+ * so a response cannot accidentally combine objects from different accepted
+ * points.
  */
-struct AcceptedOuterResponseLinearResponseCache {
+struct AcceptedOuterResponseContext {
   const VbScfInput* input = nullptr;
   const AcceptedPointContext* accepted_point_context = nullptr;
   const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks =
       nullptr;
-  std::vector<int> selected_state_indices;
-  Eigen::MatrixXd accepted_selected_eigenvector_columns;
   AcceptedSelectedStateGeneralizedEigenResponseOperator
       selected_state_eigen_response_operator;
 };
 
-AcceptedOuterResponseLinearResponseCache
-build_accepted_outer_response_linear_response_cache(
+AcceptedOuterResponseContext build_accepted_outer_response_context(
     const VbScfInput* input,
     const AcceptedPointContext* accepted_point_context,
     const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks);

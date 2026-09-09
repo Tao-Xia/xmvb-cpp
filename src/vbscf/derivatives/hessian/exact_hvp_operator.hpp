@@ -191,7 +191,7 @@ private:
   // Frozen accepted-point selected-state response metadata.  Each HVP still
   // builds fresh directional structure columns, but gap/gauge data and selected
   // eigenvector bookkeeping are reused across Krylov matvecs.
-  AcceptedOuterResponseLinearResponseCache accepted_outer_response_cache_;
+  AcceptedOuterResponseContext accepted_outer_response_context_;
   mutable ApplyTimingTotals apply_timing_totals_;
 };
 

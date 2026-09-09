@@ -1030,8 +1030,8 @@ ExactHvpOperator::ExactHvpOperator(
               accepted_point_context_->same_spin_pair_cache.alpha_reuse_table,
               accepted_point_context_->same_spin_pair_cache.beta_reuse_table,
               true);
-      accepted_outer_response_cache_ =
-          build_accepted_outer_response_linear_response_cache(
+      accepted_outer_response_context_ =
+          build_accepted_outer_response_context(
               current_input_,
               accepted_point_context_.get(),
               &structure_coefficient_blocks_);
@@ -1412,8 +1412,8 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
             outer_response_delta_active_one_electron_matrix_workspace_,
             outer_response_delta_packed_active_two_electron_workspace_);
     const auto projected_directional_structure_matrices =
-        build_selected_state_projected_directional_structure_matrices(
-            *current_input_, *accepted_point_context_, structure_coefficient_blocks_,
+        build_projected_structure_direction(
+            accepted_outer_response_context_,
             outer_response_delta_ao_overlap_matrix_workspace_,
             outer_response_delta_active_one_electron_matrix_workspace_,
             outer_response_delta_packed_active_two_electron_workspace_,
@@ -1423,7 +1423,7 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
 
     const auto eigensystem_start_time = std::chrono::steady_clock::now();
     const auto directional_selected_state_response =
-        accepted_outer_response_cache_.selected_state_eigen_response_operator.apply(
+        accepted_outer_response_context_.selected_state_eigen_response_operator.apply(
             projected_directional_structure_matrices);
     apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
         elapsed_wall_time_seconds(eigensystem_start_time);
