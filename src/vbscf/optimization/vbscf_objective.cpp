@@ -15,7 +15,7 @@
 #include "vbscf/orbitals/orbital_preparation_input.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
-#include "vbscf/optimization/vector_operations.hpp"
+#include "vbscf/optimization/optimization_checks.hpp"
 
 namespace xmvb::vb {
 

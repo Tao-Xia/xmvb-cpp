@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "vbscf/optimization/vector_operations.hpp"
+#include "vbscf/optimization/optimization_checks.hpp"
 
 namespace xmvb::vb {
 
@@ -206,4 +206,3 @@ bool try_steepest_descent_armijo_fallback(
 
 
 }  // namespace xmvb::vb
-

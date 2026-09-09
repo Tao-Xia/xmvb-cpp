@@ -11,7 +11,7 @@
 #include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
 #include "vbscf/optimization/krylov/positive_conjugate_basis.hpp"
 #include "vbscf/optimization/trust_region/spectral_trust_region.hpp"
-#include "vbscf/optimization/vector_operations.hpp"
+#include "vbscf/optimization/optimization_checks.hpp"
 
 namespace xmvb::vb {
 

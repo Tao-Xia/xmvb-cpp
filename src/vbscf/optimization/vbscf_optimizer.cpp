@@ -33,7 +33,7 @@
 #include "vbscf/optimization/reduced_hvp_operator.hpp"
 #include "vbscf/optimization/trust_region/retraction_metric.hpp"
 #include "vbscf/optimization/trust_region/truncated_newton_solver.hpp"
-#include "vbscf/optimization/vector_operations.hpp"
+#include "vbscf/optimization/optimization_checks.hpp"
 
 namespace xmvb::vb {
 

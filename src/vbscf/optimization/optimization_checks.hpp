@@ -1,5 +1,4 @@
-#ifndef XMVB_VB_SCF_SCF_VECTOR_UTILITIES_HPP_
-#define XMVB_VB_SCF_SCF_VECTOR_UTILITIES_HPP_
+#pragma once
 
 // Small numerical and validation helpers shared across the SCF optimizer
 // line-search, truncated-Newton, and outer-loop code. Kept header-only and
@@ -90,5 +89,3 @@ inline bool finite_nonzero_vector_matches_size(
 }
 
 }  // namespace xmvb::vb
-
-#endif  // XMVB_VB_SCF_SCF_VECTOR_UTILITIES_HPP_
