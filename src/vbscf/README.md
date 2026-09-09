@@ -1,9 +1,9 @@
 # VBSCF module architecture
 
-This directory is the canonical home of the C++ VBSCF implementation. The
-legacy `src/vb` tree is being migrated incrementally so that file moves never
-hide numerical changes. During the migration, `sources.cmake` records ownership
-for files that have not moved yet.
+This directory is the canonical home of the C++ VBSCF implementation. The only
+VBSCF-related files intentionally left under `src/vb` are the tracked DeepVBH
+prototype and the six forwarding headers required to compile it. They form a
+compatibility island and must not be used by new production code.
 
 ## Dependency direction
 
@@ -19,9 +19,9 @@ core
   -> workflow
 ```
 
-`approx`, `legacy`, and `experimental` are terminal modules. Production code
-must not include from them. In particular, DeepVBH belongs to `experimental`
-and is not part of the matrix-free VBSCF optimizer.
+`approx` and `legacy` are terminal modules. Production code must not include
+from them. DeepVBH remains outside this tree under `src/vb` and is not part of
+the matrix-free VBSCF optimizer.
 
 ## Target layout
 
@@ -46,7 +46,6 @@ vbscf/
   diagnostics/           Audits and memory/performance reporting
   approx/                Optional approximate models
   legacy/                Compatibility-only implementations
-  experimental/          DeepVBH and other research prototypes
 ```
 
 ## Naming rules
@@ -66,19 +65,17 @@ vbscf/
 The namespace remains `xmvb::vb` during physical migration to avoid mixing an
 ABI-wide namespace change with file ownership changes.
 
-## Migration policy
+## Compatibility policy
 
-1. Move one coherent module at a time without changing numerical behavior.
-2. Update all production includes to the canonical path.
-3. Keep a thin forwarding header at the old public path for one migration
-   window; forwarding headers contain no implementation.
-4. Build and run the complete regression suite.
-5. Commit the module migration with a clean worktree.
-6. Remove forwarding headers after downstream users have migrated.
+1. New code includes only `vbscf/...` headers.
+2. Compatibility headers contain aliases only, never implementation.
+3. A compatibility header must have a tracked consumer; unused aliases are
+   removed instead of being kept as speculative API surface.
+4. DeepVBH compatibility is isolated under `src/vb/scf` until that prototype
+   is migrated or retired separately.
 
-Migrated slices now include `optimization`, the single-step evaluator in
+The canonical tree owns `optimization`, the single-step evaluator in
 `workflow`, the complete orbital/chart/gauge layer, AO and active-space
 `integrals`, `determinants`, `structures`, `derivatives/gradient`,
-`derivatives/hessian`, and diagnostics. Legacy orbital and structure algorithms
-are isolated under `legacy`. Remaining files listed in `sources.cmake` retain
-their legacy paths but already have explicit logical ownership.
+`derivatives/hessian`, diagnostics, and adaptive structure-space algorithms.
+Legacy orbital and structure algorithms are isolated under `legacy`.

@@ -9,7 +9,7 @@
 
 Related notes:
 
-- [src/vb/unique_spin_structure_contraction.md](../src/vb/unique_spin_structure_contraction.md)
+- [article/unique_spin_structure_contraction.md](../article/unique_spin_structure_contraction.md)
 - [docs/query_driven_unique_spin_contraction.md](./query_driven_unique_spin_contraction.md)
 - [docs/outer_response_linear_response_predecomposition.md](./outer_response_linear_response_predecomposition.md)
 
