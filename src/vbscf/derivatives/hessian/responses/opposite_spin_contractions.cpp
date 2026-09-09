@@ -17,6 +17,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_overlap_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_packed_contractions_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_tile_kernels_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 
 namespace xmvb::vb {

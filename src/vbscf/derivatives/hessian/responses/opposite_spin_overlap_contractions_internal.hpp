@@ -8,8 +8,6 @@
 
 namespace xmvb::vb::detail {
 
-inline constexpr int kOppositeSpinUniqueTileSize = 64;
-
 void accumulate_alpha_overlap_gradient(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
