@@ -264,7 +264,6 @@ void print_header(
     const std::chrono::system_clock::time_point& start_time) {
   const std::string& input_path = command.input_path;
   const auto& options = command.optimizer;
-  const Backend run_backend = command.backend;
   const fs::path absolute_input_path = fs::absolute(fs::path(input_path));
   const auto& orbital_input = load_result.input.orbital_preparation_input;
   const std::string basis_set_name = simplify_basis_name(load_result.basis_name);
@@ -279,9 +278,8 @@ void print_header(
   print_log_field("SCF algorithm", "VBSCF");
   print_log_field(
       "Optimizer backend",
-      xmvb::app::vbscf::backend_name(run_backend, options.backend));
-  if (run_backend == xmvb::app::vbscf::Backend::Core &&
-      options.backend ==
+      xmvb::vb::vbscf_optimizer_backend_name(options.backend));
+  if (options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "HVP mode",
@@ -336,17 +334,14 @@ void print_header(
   print_log_subsection_title("Convergence Targets");
   print_log_field(
       "Gradient metric",
-      run_backend == xmvb::app::vbscf::Backend::Core
-          ? gradient_tolerance_metric_name(options.backend)
-          : "full_gradient_inf_norm");
+      gradient_tolerance_metric_name(options.backend));
   print_log_field(
       "Convergence threshold",
       format_convergence_threshold_summary(
           options.energy_tolerance,
           options.gradient_tolerance));
   print_log_field("Max iterations", std::to_string(options.max_iterations));
-  if (run_backend == xmvb::app::vbscf::Backend::Core &&
-      options.backend ==
+  if (options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "Max CG iterations",
@@ -355,9 +350,7 @@ void print_header(
             : "32 (dimension bounded)");
   }
 
-  if (run_backend == xmvb::app::vbscf::Backend::Core) {
-    print_exact_ctx_policy_summary(options, load_result.input);
-  }
+  print_exact_ctx_policy_summary(options, load_result.input);
 }
 
 std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
@@ -453,9 +446,6 @@ void print_summary(
     const std::chrono::steady_clock::time_point& command_start_steady_time) {
   const auto& input = load_result.input;
   const auto& options = command.optimizer;
-  const auto run_backend = command.backend;
-  const auto& deepvbh_options = command.deepvbh_hybrid;
-  const auto& deepvbh_direct_options = command.deepvbh_direct;
   const bool command_converged = result.converged;
   const double initial_electronic_energy =
       result.initial_total_energy - load_result.nuclear_repulsion_energy;
@@ -504,17 +494,6 @@ void print_summary(
   if (molden_output_path.has_value()) {
     print_log_field("Molden output", molden_output_path->string());
   }
-  if (run_backend == xmvb::app::vbscf::Backend::DeepVBHOnnx) {
-    print_log_field(
-        "ONNX model",
-        fs::absolute(deepvbh_options.inference_options.onnx_model_path).string());
-  } else if (
-      run_backend == xmvb::app::vbscf::Backend::DeepVBHOnnxDirectFinal) {
-    print_log_field(
-        "ONNX model",
-        fs::absolute(deepvbh_direct_options.inference_options.onnx_model_path).string());
-  }
-
   print_log_field(
       "Selected raw structures",
       std::to_string(load_result.raw_structure_data.n_structures));
@@ -562,8 +541,7 @@ void print_summary(
   print_log_field(
       "Final gradient |g|_2",
       format_scientific_double(result.final_gradient_l2_norm, 8));
-  if (run_backend == xmvb::app::vbscf::Backend::Core &&
-      core_backend_reports_projected_gradient(options.backend)) {
+  if (core_backend_reports_projected_gradient(options.backend)) {
     print_log_field(
         "Final projected |g|_inf",
         format_scientific_double(result.final_projected_gradient_inf_norm, 8));
@@ -571,8 +549,7 @@ void print_summary(
         "Final projected |g|_2",
         format_scientific_double(result.final_projected_gradient_l2_norm, 8));
   }
-  if (run_backend == xmvb::app::vbscf::Backend::Core &&
-      options.backend ==
+  if (options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "Matrix-free HVP directions",

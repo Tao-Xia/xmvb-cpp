@@ -182,7 +182,6 @@ add_executable(xmvb
 set_target_properties(xmvb PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
 target_link_libraries(xmvb
   PRIVATE
-    xmvb_cpp_deepvbh
     xmvb_cpp_vb
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(xmvb)

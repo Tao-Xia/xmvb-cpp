@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
-#include <stdexcept>
 #include <string>
 #include <utility>
 
@@ -13,8 +12,6 @@
 #include "runtime/molden_file_writer.hpp"
 #include "runtime/trace/accepted_iteration_trace_writer.hpp"
 #include "runtime/vbscf_input_loader.hpp"
-#include "vb/scf/deepvbh_onnx_direct_final_optimizer.hpp"
-#include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace xmvb::app::vbscf {
@@ -25,9 +22,6 @@ int run(Options command_line) {
   const std::string& input_path = command_line.input_path;
   auto& load_options = command_line.load;
   auto& options = command_line.optimizer;
-  auto& run_backend = command_line.backend;
-  auto& deepvbh_options = command_line.deepvbh_hybrid;
-  auto& deepvbh_direct_options = command_line.deepvbh_direct;
   const std::string& dump_trace_dir = command_line.trace_directory;
   const std::string& dump_final_orbital_value_table_bin =
       command_line.final_orbitals_path;
@@ -61,7 +55,7 @@ int run(Options command_line) {
         dump_trace_dir,
         input_path,
         load_result,
-        xmvb::app::vbscf::backend_name(run_backend, options.backend));
+        xmvb::vb::vbscf_optimizer_backend_name(options.backend));
     options.retain_accepted_iteration_trace = false;
     options.accepted_iteration_callback_requires_reference_gradient = true;
     options.accepted_iteration_callback_requires_full_snapshot = true;
@@ -72,36 +66,9 @@ int run(Options command_line) {
         });
   }
 
-  deepvbh_options.optimizer_options = options;
-  deepvbh_direct_options.optimizer_options = options;
-  xmvb::vb::VbScfOptimizerResult result;
-  if (run_backend == xmvb::app::vbscf::Backend::DeepVBHOnnx) {
-    if (deepvbh_options.inference_options.onnx_model_path.empty()) {
-      throw std::invalid_argument(
-          "--onnx-model is required for --optimizer-backend deepvbh_onnx");
-    }
-    xmvb::vb::DeepVBHOnnxHybridOptimizer optimizer(deepvbh_options);
-    result = optimizer.optimize(
-        input,
-        load_result.raw_structure_data,
-        load_result.static_molecule_metadata,
-        load_result.nuclear_repulsion_energy);
-  } else if (
-      run_backend == xmvb::app::vbscf::Backend::DeepVBHOnnxDirectFinal) {
-    if (deepvbh_direct_options.inference_options.onnx_model_path.empty()) {
-      throw std::invalid_argument(
-          "--onnx-model is required for --optimizer-backend deepvbh_onnx_direct_final");
-    }
-    xmvb::vb::DeepVBHOnnxDirectFinalOptimizer optimizer(deepvbh_direct_options);
-    result = optimizer.optimize(
-        input,
-        load_result.raw_structure_data,
-        load_result.static_molecule_metadata,
-        load_result.nuclear_repulsion_energy);
-  } else {
-    xmvb::vb::VbScfOptimizer optimizer(options);
-    result = optimizer.optimize(input, load_result.nuclear_repulsion_energy);
-  }
+  xmvb::vb::VbScfOptimizer optimizer(options);
+  const xmvb::vb::VbScfOptimizerResult result =
+      optimizer.optimize(input, load_result.nuclear_repulsion_energy);
   if (trace_writer != nullptr) {
     trace_writer->finalize(result);
   }
