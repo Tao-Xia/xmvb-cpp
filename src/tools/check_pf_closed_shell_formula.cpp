@@ -18,7 +18,7 @@
 #include "pfaffian_vbscf/matrices/pf_pair_kernel_common.hpp"
 #include "pfaffian_vbscf/scf/pf_basis_factory.hpp"
 #include "pfaffian_vbscf/tensor/pf_tensor_contractor.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace {
@@ -768,7 +768,7 @@ ExactTwoElectronChannels evaluate_exact_two_electron_channels_generic(
 int main(int argc, char** argv) {
   try {
     const Options opt = parse_args(argc, argv);
-    const auto load = xmvb::vb::load_cpp_vb_input_with_timings(opt.input_path);
+    const auto load = xmvb::vb::load_vbscf_input_with_timings(opt.input_path);
     xmvb::pfaffian_vbscf::PfActBuilder act_builder;
     const auto act = act_builder.build(load.input);
 

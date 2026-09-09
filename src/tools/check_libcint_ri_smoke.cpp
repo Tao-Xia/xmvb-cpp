@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "runtime/libcint_auxiliary_basis_builder.hpp"
 #include "runtime/libcint_direct_shell_evaluator.hpp"
 
@@ -180,7 +180,7 @@ double three_center_transpose_max_abs_diff(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
 
     xmvb::vb::LibcintAuxiliaryBasisBuilder builder;

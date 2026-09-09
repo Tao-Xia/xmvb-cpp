@@ -13,7 +13,7 @@
 
 #include <Eigen/LU>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/structures/structure_expander.hpp"
@@ -848,7 +848,7 @@ int main(int argc, char** argv) {
     const Options options = parse_arguments(argc, argv);
     const auto selected_candidates = parse_candidate_selection(options.candidate);
     const int swapped_term_phase = parse_pair_swapped_term_phase(options.pair_phase_mode);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
     const auto active_overlap_matrix =
         xmvb::vb::flatten_matrix_column_major(

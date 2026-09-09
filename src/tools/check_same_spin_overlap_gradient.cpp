@@ -9,7 +9,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/determinants/determinant_hamiltonian.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
@@ -273,7 +273,7 @@ double evaluate_full_pair_hamiltonian(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     xmvb::vb::ActiveSpaceGradientEvaluator active_space_evaluator(options.algorithm);
     const auto baseline =
         active_space_evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);

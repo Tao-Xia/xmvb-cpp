@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/structures/structure_types.hpp"

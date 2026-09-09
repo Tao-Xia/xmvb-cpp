@@ -15,7 +15,7 @@
 #include "pfaffian_vbscf/scf/pf_orbital_grad_eval.hpp"
 #include "pfaffian_vbscf/scf/pf_scf_eval.hpp"
 #include "pfaffian_vbscf/types/pf_basis_data.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vbscf/core/algorithm.hpp"
@@ -271,7 +271,7 @@ StepResult backtracking_step(
 int main(int argc, char** argv) {
   try {
     const Options opt = parse_args(argc, argv);
-    const auto load = xmvb::vb::load_cpp_vb_input_with_timings(opt.input_path);
+    const auto load = xmvb::vb::load_vbscf_input_with_timings(opt.input_path);
     const int n_act = load.input.orbital_preparation_input.n_active_orbitals;
     if (load.input.structure_data.alpha_det.empty() ||
         load.input.structure_data.beta_det.empty()) {

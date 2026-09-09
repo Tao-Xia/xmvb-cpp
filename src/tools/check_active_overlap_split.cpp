@@ -10,7 +10,7 @@
 #include <Eigen/Core>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
@@ -149,7 +149,7 @@ double evaluate_ground_state_energy(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     xmvb::vb::ActiveSpaceGradientEvaluator evaluator(options.algorithm);
     const auto baseline =
         evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);

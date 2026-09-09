@@ -1,4 +1,4 @@
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -577,11 +577,11 @@ int configured_openmp_thread_count() {
 
 }  // namespace
 
-CppVbInputLoadResult load_cpp_vb_input_with_timings(
+VbScfInputLoadResult load_vbscf_input_with_timings(
     const std::string& input_file_path,
     const CppVbInputLoadOptions& options) {
   const auto total_start_time = std::chrono::steady_clock::now();
-  CppVbInputLoadResult load_result;
+  VbScfInputLoadResult load_result;
   VbScfInput result;
   const InputDeck input_deck =
       parse_input_deck_model(input_file_path);
@@ -862,10 +862,10 @@ CppVbInputLoadResult load_cpp_vb_input_with_timings(
   return load_result;
 }
 
-VbScfInput load_cpp_vb_input(
+VbScfInput load_vbscf_input(
     const std::string& input_file_path,
     const CppVbInputLoadOptions& options) {
-  return load_cpp_vb_input_with_timings(input_file_path, options).input;
+  return load_vbscf_input_with_timings(input_file_path, options).input;
 }
 
 }  // namespace xmvb::vb

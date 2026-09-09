@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/core/algorithm.hpp"
 
@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
     xmvb::vb::CppVbInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
 
     xmvb::vb::OrbitalGradientEvaluator evaluator(options.algorithm);
 

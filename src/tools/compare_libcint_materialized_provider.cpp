@@ -7,7 +7,7 @@
 #include <string>
 #include <unordered_map>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "runtime/libcint_materialized_integral_provider.hpp"
 
 namespace {
@@ -75,7 +75,7 @@ std::unordered_map<std::uint64_t, double> build_integral_lookup(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
 
     xmvb::vb::LibcintMaterializedIntegralProvider provider;
     const auto provider_buffers = provider.build(

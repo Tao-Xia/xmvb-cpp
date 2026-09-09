@@ -14,7 +14,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/structures/reference/raw_structure_overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
@@ -1938,7 +1938,7 @@ int main(int argc, char** argv) {
           &work_collector,
           &state_collector);
     } else {
-      const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+      const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
       const auto& raw_structure_data = load_result.raw_structure_data;
 
       if (raw_structure_data.spin_multiplicity != 1) {

@@ -14,7 +14,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "runtime/libcint_compat.hpp"
 #include "runtime/legacy_shell_utils.hpp"
 
@@ -22,7 +22,7 @@ namespace {
 
 using xmvb::vb::VbScfInput;
 using xmvb::vb::CppVbInputLoadOptions;
-using xmvb::vb::load_cpp_vb_input_with_timings;
+using xmvb::vb::load_vbscf_input_with_timings;
 
 struct MoldenOrbitals {
   Eigen::MatrixXd coefficients_in_molden_order;
@@ -495,7 +495,7 @@ int main(int argc, char** argv) {
     load_options.ao_integral_source =
         xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
     const auto load_result =
-        load_cpp_vb_input_with_timings(input_path, load_options);
+        load_vbscf_input_with_timings(input_path, load_options);
     const VbScfInput& input = load_result.input;
 
     const int n_basis_functions =

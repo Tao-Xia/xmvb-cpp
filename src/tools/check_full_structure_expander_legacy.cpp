@@ -8,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/structures/structure_expander.hpp"
 
 namespace {
@@ -269,7 +269,7 @@ int main(int argc, char** argv) {
     xmvb::vb::CppVbInputLoadOptions load_options;
     load_options.expand_selected_raw_structures = false;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& raw_structure_data = load_result.raw_structure_data;
 
     const int n_inactive_doubly_occupied_orbitals =

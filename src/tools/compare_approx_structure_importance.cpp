@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/approx/approx_vbscf_evaluator.hpp"
 #include "vbscf/structures/structure_evaluator.hpp"
 #include "vbscf/core/algorithm.hpp"
@@ -207,7 +207,7 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode =
         options.standard_two_electron_mode;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(
+        xmvb::vb::load_vbscf_input_with_timings(
             options.input_path,
             load_options);
 

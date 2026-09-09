@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vb/model/deepvbh_jax_inference_runner.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vb/scf/cpp_vb_scf_optimizer.hpp"

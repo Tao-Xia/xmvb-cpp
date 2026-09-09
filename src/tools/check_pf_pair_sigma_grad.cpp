@@ -13,7 +13,7 @@
 #include "pfaffian_vbscf/matrices/pf_act_builder.hpp"
 #include "pfaffian_vbscf/scf/pf_basis_factory.hpp"
 #include "pfaffian_vbscf/scf/pf_overlap_metric_gradient.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 
 namespace {
 
@@ -237,7 +237,7 @@ void print_component(
 int main(int argc, char** argv) {
   try {
     const Options opt = parse_args(argc, argv);
-    const auto load = xmvb::vb::load_cpp_vb_input_with_timings(opt.input_path);
+    const auto load = xmvb::vb::load_vbscf_input_with_timings(opt.input_path);
     xmvb::pfaffian_vbscf::PfActBuilder act_builder;
     const auto act = act_builder.build(load.input);
 

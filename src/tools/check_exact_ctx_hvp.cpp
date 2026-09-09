@@ -13,7 +13,7 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
 #include "vbscf/orbitals/orbital_pullback.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
@@ -1868,7 +1868,7 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     xmvb::vb::VbScfInput input =
         options.nonredundant_adapt
             ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)

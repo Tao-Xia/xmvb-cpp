@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/diagnostics/orbital_chart_audit.hpp"
@@ -43,7 +43,7 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto loaded =
-        xmvb::vb::load_cpp_vb_input_with_timings(argv[1], load_options);
+        xmvb::vb::load_vbscf_input_with_timings(argv[1], load_options);
     const xmvb::vb::VbScfInput input = nonredundant_adapt
         ? xmvb::vb::build_nonredundant_optimizer_input(loaded.input)
         : loaded.input;

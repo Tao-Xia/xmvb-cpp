@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/structures/reference/raw_structure_overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
     xmvb::vb::CppVbInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
     const auto& raw_structure_data = load_result.raw_structure_data;
 

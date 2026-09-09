@@ -10,7 +10,7 @@
 #include <Eigen/Core>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
@@ -220,7 +220,7 @@ int main(int argc, char** argv) {
     load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     xmvb::vb::ActiveSpaceGradientEvaluator evaluator(options.algorithm);
     const auto result = evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const auto& gradient = component_gradient(result, options.component);

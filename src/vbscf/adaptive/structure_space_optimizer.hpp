@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/structures/subspace_selector.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 
@@ -79,7 +79,7 @@ public:
       AdaptiveStructureSpaceOptimizerOptions options = {});
 
   AdaptiveStructureSpaceOptimizerResult optimize(
-      const CppVbInputLoadResult& load_result) const;
+      const VbScfInputLoadResult& load_result) const;
 
 private:
   VbScfOptimizerOptions optimizer_options_;

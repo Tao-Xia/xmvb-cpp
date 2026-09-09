@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
@@ -530,7 +530,7 @@ int main(int argc, char** argv) {
     load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
     load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(
+        xmvb::vb::load_vbscf_input_with_timings(
             options.input_path,
             load_options);
     const auto& input = load_result.input;

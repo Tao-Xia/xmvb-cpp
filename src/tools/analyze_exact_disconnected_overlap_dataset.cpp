@@ -14,7 +14,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/structures/reference/raw_structure_overlap.hpp"
 #include "vbscf/structures/union_graph_screening.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
@@ -350,7 +350,7 @@ void print_connected_component_details(
 
 ActiveOverlapSelectionResult select_active_overlap_matrix(
     const Options& options,
-    const xmvb::vb::CppVbInputLoadResult& load_result) {
+    const xmvb::vb::VbScfInputLoadResult& load_result) {
   ActiveOverlapSelectionResult result;
   if (options.active_overlap_source == ActiveOverlapSource::Input) {
     result.active_overlap_matrix = xmvb::vb::ActiveSpaceOrbitalPreparer{}
@@ -437,7 +437,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     const auto started_at = std::chrono::steady_clock::now();
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
     const auto overlap_selection = select_active_overlap_matrix(options, load_result);
     const auto& active_overlap_storage = overlap_selection.active_overlap_matrix;

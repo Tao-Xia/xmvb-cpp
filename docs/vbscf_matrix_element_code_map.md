@@ -16,7 +16,7 @@
 
 ```text
 run_cpp_vbscf.cpp
-  -> load_cpp_vb_input_with_timings(...)
+  -> load_vbscf_input_with_timings(...)
   -> CppVbScfOptimizer::optimize(...)
     -> OrbitalObjective::operator() / evaluate_energy_only(...)
       -> CppOrbitalGradientEvaluator
@@ -44,7 +44,7 @@ run_cpp_vbscf.cpp
 
 真正的 CLI 入口在 `src/tools/run_cpp_vbscf.cpp`。
 
-- `load_cpp_vb_input_with_timings(...)` 负责把 `.xmi`、积分、轨道初猜、structure 数据装配成 `CppVbInput`
+- `load_vbscf_input_with_timings(...)` 负责把 `.xmi`、积分、轨道初猜、structure 数据装配成 `CppVbInput`
 - 然后根据 backend 选择优化器
 - 标准路径最终进入 `CppVbScfOptimizer::optimize(...)`
 

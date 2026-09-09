@@ -68,7 +68,7 @@ set(XMVB_CPP_RUNTIME_CORE_SOURCES
   runtime/input_deck_raw_structures.cpp
   runtime/molden_file_writer.cpp
   runtime/cpp_restricted_hartree_fock.cpp
-  runtime/cpp_vb_input_loader.cpp
+  runtime/vbscf_input_loader.cpp
   runtime/libcint_auxiliary_basis_builder.cpp
   runtime/libcint_direct_shell_evaluator.cpp
   runtime/libcint_materialized_integral_provider.cpp

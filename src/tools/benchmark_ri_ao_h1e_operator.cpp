@@ -8,7 +8,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
@@ -169,7 +169,7 @@ TimedRunResult time_operator(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
     const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
 

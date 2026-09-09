@@ -9,7 +9,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/orbitals/orbital_pullback.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
@@ -126,7 +126,7 @@ std::vector<double> lower_triangle_half_diagonal(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
     const bool use_ri = input.ao_integral_input.ao_two_electron_integral_values.empty();
 

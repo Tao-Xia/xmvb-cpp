@@ -7,7 +7,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 
 namespace xmvb::vb {

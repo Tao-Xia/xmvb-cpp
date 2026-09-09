@@ -75,7 +75,7 @@ struct CppVbInputLoadOptions {
   bool build_ao_effective_one_electron_graph = true;
 };
 
-struct CppVbInputLoadResult {
+struct VbScfInputLoadResult {
   VbScfInput input;
   RawStructureData raw_structure_data;
   CppVbStaticMoleculeMetadata static_molecule_metadata;
@@ -108,11 +108,11 @@ struct CppVbInputLoadResult {
  * @param input_file_path Input deck used to initialize the runtime bundle.
  * @return VbScfInput Fully populated matrix-builder input.
  */
-VbScfInput load_cpp_vb_input(
+VbScfInput load_vbscf_input(
     const std::string& input_file_path,
     const CppVbInputLoadOptions& options = {});
 
-CppVbInputLoadResult load_cpp_vb_input_with_timings(
+VbScfInputLoadResult load_vbscf_input_with_timings(
     const std::string& input_file_path,
     const CppVbInputLoadOptions& options = {});
 

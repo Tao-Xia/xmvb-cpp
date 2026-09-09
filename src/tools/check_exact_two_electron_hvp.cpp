@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceGradientEvaluator evaluator(

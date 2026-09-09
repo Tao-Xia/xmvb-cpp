@@ -609,7 +609,7 @@ AdaptiveStructureSpaceOptimizer::AdaptiveStructureSpaceOptimizer(
 }
 
 AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
-    const CppVbInputLoadResult& load_result) const {
+    const VbScfInputLoadResult& load_result) const {
   if (load_result.raw_structure_data.n_structures <= 0) {
     throw std::invalid_argument("adaptive optimizer requires non-empty raw structure data");
   }

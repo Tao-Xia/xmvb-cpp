@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
@@ -553,7 +553,7 @@ int main(int argc, char** argv) {
     load_options.ao_integral_source = options.ao_integral_source;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const xmvb::vb::VbScfInput diagnostic_input_template =
         options.nonredundant_adapt
             ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)

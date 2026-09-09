@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "runtime/libcint_ri_integral_provider.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
@@ -67,7 +67,7 @@ Options parse_arguments(int argc, char** argv) {
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;

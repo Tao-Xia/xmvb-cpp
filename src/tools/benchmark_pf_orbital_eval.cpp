@@ -9,7 +9,7 @@
 #include "pfaffian_vbscf/scf/pf_basis_factory.hpp"
 #include "pfaffian_vbscf/scf/pf_orbital_grad_eval.hpp"
 #include "pfaffian_vbscf/scf/pf_spin_adapted_basis_factory.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 
 namespace {
 
@@ -230,7 +230,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_args(argc, argv);
     const auto load =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path);
 
     if (options.spin_adapted) {
       xmvb::pfaffian_vbscf::PfSpinAdaptedBasisFactoryOptions basis_options;

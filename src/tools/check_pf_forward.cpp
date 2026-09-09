@@ -14,7 +14,7 @@
 #include "pfaffian_vbscf/matrices/pf_pair_kernels.hpp"
 #include "pfaffian_vbscf/scf/pf_basis_factory.hpp"
 #include "pfaffian_vbscf/types/pf_basis_data.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/core/algorithm.hpp"
 
@@ -327,7 +327,7 @@ Matrix dense_mat(
 int main(int argc, char** argv) {
   try {
     const Options opt = parse_args(argc, argv);
-    const auto load = xmvb::vb::load_cpp_vb_input_with_timings(opt.input_path);
+    const auto load = xmvb::vb::load_vbscf_input_with_timings(opt.input_path);
     if (static_cast<int>(load.input.structure_data.alpha_det.size()) > opt.max_dets) {
       throw std::runtime_error("determinant count exceeds --max-dets");
     }

@@ -19,7 +19,7 @@
 #include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
 #include "vbscf/diagnostics/reduced_hessian_reference.hpp"
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/diagnostics/orbital_chart_audit.hpp"
@@ -248,7 +248,7 @@ AcceptedPointBenchmarkContext build_benchmark_context(
   load_options.standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Exact;
   const auto load_result =
-      xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+      xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
   if (loaded_ao_integral_source != nullptr) {
     *loaded_ao_integral_source = load_result.ao_integral_source;
   }

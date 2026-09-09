@@ -9,7 +9,7 @@
 #include "pfaffian_vbscf/scf/pf_spin_adapted_scf_eval.hpp"
 #include "pfaffian_vbscf/scf/pf_scf_eval.hpp"
 #include "pfaffian_vbscf/types/pf_pair_profile.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 
 namespace {
 
@@ -176,7 +176,7 @@ void print_profile(
 int main(int argc, char** argv) {
   try {
     const Options opt = parse_args(argc, argv);
-    auto load = xmvb::vb::load_cpp_vb_input_with_timings(opt.input_path);
+    auto load = xmvb::vb::load_vbscf_input_with_timings(opt.input_path);
     load.input.pf_two_electron_mode = opt.two_electron_mode;
     const int n_act = load.input.orbital_preparation_input.n_active_orbitals;
     if (load.input.structure_data.alpha_det.empty() ||

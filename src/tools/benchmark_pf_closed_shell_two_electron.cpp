@@ -11,7 +11,7 @@
 #include "pfaffian_vbscf/matrices/pf_act_builder.hpp"
 #include "pfaffian_vbscf/scf/pf_basis_factory.hpp"
 #include "pfaffian_vbscf/tensor/pf_tensor_contractor.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 
 namespace {
 
@@ -216,7 +216,7 @@ int main(int argc, char** argv) {
   try {
     const Options opt = parse_args(argc, argv);
     const auto load =
-        xmvb::vb::load_cpp_vb_input_with_timings(opt.input_path);
+        xmvb::vb::load_vbscf_input_with_timings(opt.input_path);
 
     xmvb::pfaffian_vbscf::PfBasisFactoryOptions basis_options;
     basis_options.n_states = opt.k;

@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vb/model/deepvbh_jax_inference_runner.hpp"
 #include "vb/scf/cpp_vb_scf_evaluator.hpp"
@@ -175,7 +175,7 @@ int main(int argc, char** argv) {
   }
 
   try {
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(input_path);
     xmvb::vb::CppVbScfEvaluator exact_evaluator(xmvb::vb::VBSCFAlgorithm::Original);
     const auto exact_result = exact_evaluator.evaluate(
         load_result.input,

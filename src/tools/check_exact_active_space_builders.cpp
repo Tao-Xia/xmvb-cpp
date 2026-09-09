@@ -13,7 +13,7 @@
 #include <omp.h>
 #endif
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
@@ -426,7 +426,7 @@ int main(int argc, char** argv) {
     xmvb::vb::CppVbInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;

@@ -7,7 +7,7 @@
 #include <Eigen/Core>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
@@ -290,7 +290,7 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Auto;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(argv[1], load_options);
+        xmvb::vb::load_vbscf_input_with_timings(argv[1], load_options);
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;

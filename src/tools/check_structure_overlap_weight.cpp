@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/core/algorithm.hpp"
 
@@ -96,7 +96,7 @@ double evaluate_ground_state_energy(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     xmvb::vb::ActiveSpaceGradientEvaluator evaluator(options.algorithm);
     const auto result = evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const int n_structures = result.scf_result.n_structures;

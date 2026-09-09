@@ -25,7 +25,7 @@
 #include <omp.h>
 #endif
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "runtime/molden_file_writer.hpp"
 #include "vb/scf/deepvbh_onnx_direct_final_optimizer.hpp"
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
@@ -405,7 +405,7 @@ void print_exact_ctx_policy_summary(
 
 void print_run_header(
     const std::string& input_path,
-    const xmvb::vb::CppVbInputLoadResult& load_result,
+    const xmvb::vb::VbScfInputLoadResult& load_result,
     const xmvb::vb::VbScfOptimizerOptions& options,
     StructureSpaceMode structure_space_mode,
     const std::chrono::system_clock::time_point& start_time) {
@@ -892,7 +892,7 @@ public:
   AcceptedIterationTraceDatasetWriter(
       const fs::path& dataset_root,
       const std::string& input_file_path,
-      const xmvb::vb::CppVbInputLoadResult& load_result,
+      const xmvb::vb::VbScfInputLoadResult& load_result,
       const xmvb::vb::VbScfOptimizerOptions& optimizer_options)
       : dataset_root_(fs::absolute(dataset_root)),
         sample_dir_(reserve_sample_directory(dataset_root_, fs::path(input_file_path))),
@@ -1015,7 +1015,7 @@ public:
 
 private:
   void write_static_files(
-      const xmvb::vb::CppVbInputLoadResult& load_result) const {
+      const xmvb::vb::VbScfInputLoadResult& load_result) const {
     const auto& static_molecule_metadata = load_result.static_molecule_metadata;
     const auto structure_occupancy = build_structure_occupancy(
         load_result.raw_structure_data,
@@ -1664,7 +1664,7 @@ int main(int argc, char** argv) {
 
   const auto command_start_time = std::chrono::system_clock::now();
   const auto command_start_steady_time = std::chrono::steady_clock::now();
-  const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(input_path, load_options);
+  const auto load_result = xmvb::vb::load_vbscf_input_with_timings(input_path, load_options);
   const auto& input = load_result.input;
   if (!user_specified_max_iterations) {
     // Keep the standalone SCF loop aligned with the legacy deck semantics:

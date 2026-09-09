@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/cpp_vb_input_loader.hpp"
+#include "runtime/vbscf_input_loader.hpp"
 #include "runtime/molden_file_writer.hpp"
 
 namespace fs = std::filesystem;
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     }
 
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(input_path, load_options);
     const fs::path molden_path =
         xmvb::vb::write_molden_file(output_stem_path, load_result.input);
     std::cout << molden_path.string() << '\n';
