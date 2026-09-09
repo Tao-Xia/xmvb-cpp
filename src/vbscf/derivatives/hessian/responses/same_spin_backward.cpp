@@ -1,7 +1,7 @@
 #include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_tile_weights_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/same_spin_weight_builder_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_matrix_weights_internal.hpp"
 
 #include <algorithm>
 #include <cmath>
