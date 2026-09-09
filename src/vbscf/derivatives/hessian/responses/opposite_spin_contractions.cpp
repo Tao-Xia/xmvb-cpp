@@ -15,7 +15,8 @@
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin_contractions_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_overlap_contractions_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_packed_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 
 namespace xmvb::vb {
@@ -921,20 +922,6 @@ void accumulate_directional_beta_pair_matrix_tile(
 
 namespace detail {
 
-void validate_directional_selected_state_inputs(
-    const SelectedStateDeterminantMatrices& selected_states,
-    const SelectedStateDeterminantMatrices& directional_selected_states) {
-  if (selected_states.n_unique_alpha != directional_selected_states.n_unique_alpha ||
-      selected_states.n_unique_beta != directional_selected_states.n_unique_beta ||
-      selected_states.n_determinants != directional_selected_states.n_determinants ||
-      selected_states.selected_state_indices !=
-          directional_selected_states.selected_state_indices ||
-      selected_states.states.size() != directional_selected_states.states.size()) {
-    throw std::invalid_argument(
-        "directional selected-state matrices do not match accepted-point dimensions");
-  }
-}
-
 void accumulate_spin_overlap_gradient_direction_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
@@ -953,22 +940,6 @@ void accumulate_spin_overlap_gradient_direction_local(
     for (int right = 0; right < static_cast<int>(occ_R.size()); ++right)
       (*active_orbital_overlap_gradient)[occ_L[left] * n_active_orbitals + occ_R[right]] +=
           gradient_direction(right, left);
-}
-
-void validate_opposite_spin_backward_inputs(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states) {
-  if (!same_spin_pair_cache.enabled()) {
-    throw std::invalid_argument(
-        "matrix-form opposite-spin backward requires an enabled same-spin cache");
-  }
-  if (selected_states.n_unique_alpha !=
-          static_cast<int>(same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()) ||
-      selected_states.n_unique_beta !=
-          static_cast<int>(same_spin_pair_cache.beta_reuse_table.unique_determinants.size())) {
-    throw std::invalid_argument(
-        "selected-state dimensions do not match same-spin cache reuse tables");
-  }
 }
 
 void accumulate_opposite_spin_packed_gradient_by_tiles(

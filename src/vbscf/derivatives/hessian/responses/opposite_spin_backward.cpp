@@ -4,7 +4,8 @@
 #include <stdexcept>
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin_contractions_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_overlap_contractions_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_packed_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
@@ -33,6 +34,36 @@ int require_packed_pair_count(
   return alpha_count;
 }
 
+void validate_backward_inputs(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states) {
+  if (!same_spin_pair_cache.enabled()) {
+    throw std::invalid_argument(
+        "matrix-form opposite-spin backward requires an enabled same-spin cache");
+  }
+  if (selected_states.n_unique_alpha !=
+          static_cast<int>(same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()) ||
+      selected_states.n_unique_beta !=
+          static_cast<int>(same_spin_pair_cache.beta_reuse_table.unique_determinants.size())) {
+    throw std::invalid_argument(
+        "selected-state dimensions do not match same-spin cache reuse tables");
+  }
+}
+
+void validate_directional_states(
+    const SelectedStateDeterminantMatrices& selected_states,
+    const SelectedStateDeterminantMatrices& directional_selected_states) {
+  if (selected_states.n_unique_alpha != directional_selected_states.n_unique_alpha ||
+      selected_states.n_unique_beta != directional_selected_states.n_unique_beta ||
+      selected_states.n_determinants != directional_selected_states.n_determinants ||
+      selected_states.selected_state_indices !=
+          directional_selected_states.selected_state_indices ||
+      selected_states.states.size() != directional_selected_states.states.size()) {
+    throw std::invalid_argument(
+        "directional selected-state matrices do not match accepted-point dimensions");
+  }
+}
+
 OppositeSpinMatrixBackwardContribution make_zero_contribution(
     int n_active_orbitals) {
   OppositeSpinMatrixBackwardContribution result;
@@ -59,9 +90,7 @@ build_opposite_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals) {
-  detail::validate_opposite_spin_backward_inputs(
-      same_spin_pair_cache,
-      selected_states);
+  validate_backward_inputs(same_spin_pair_cache, selected_states);
   OppositeSpinMatrixBackwardContribution result =
       make_zero_contribution(n_active_orbitals);
   const int n_packed_pairs = require_packed_pair_count(same_spin_pair_cache);
@@ -97,12 +126,8 @@ build_directional_opposite_spin_matrix_backward_contribution(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     int n_active_orbitals) {
-  detail::validate_opposite_spin_backward_inputs(
-      same_spin_pair_cache,
-      selected_states);
-  detail::validate_directional_selected_state_inputs(
-      selected_states,
-      directional_selected_states);
+  validate_backward_inputs(same_spin_pair_cache, selected_states);
+  validate_directional_states(selected_states, directional_selected_states);
   OppositeSpinMatrixBackwardContribution result =
       make_zero_contribution(n_active_orbitals);
   const int n_packed_pairs = require_packed_pair_count(same_spin_pair_cache);
@@ -143,9 +168,7 @@ build_local_opposite_spin_matrix_backward_contribution(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairCache& directional_pair_cache) {
-  detail::validate_opposite_spin_backward_inputs(
-      same_spin_pair_cache,
-      selected_states);
+  validate_backward_inputs(same_spin_pair_cache, selected_states);
   OppositeSpinMatrixBackwardContribution result =
       make_zero_contribution(n_active_orbitals);
   const int n_packed_pairs = require_packed_pair_count(same_spin_pair_cache);
