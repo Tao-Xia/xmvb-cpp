@@ -1958,12 +1958,12 @@ int main(int argc, char** argv) {
     if (!exact_operator.supports_analytic_core_model()) {
       throw std::runtime_error("exact_ctx analytic core model is unavailable");
     }
-    setenv("XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE", "1", 1);
     const Eigen::VectorXd analytic_fixed_response =
-        exact_operator.apply_reduced(reduced_direction);
+        exact_operator.apply_reduced(
+            reduced_direction,
+            {.outer_response = false});
     const Eigen::VectorXd analytic_fixed_response_cached =
         exact_operator.apply_reduced(reduced_direction, {.outer_response = false});
-    unsetenv("XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE");
     const Eigen::VectorXd analytic_direct_core_response_cached =
         exact_operator.apply_reduced(reduced_direction, {.direct_core_response = true, .fixed_upstream_pullback = false, .outer_response = false});
     const Eigen::VectorXd analytic_fixed_upstream_only_response_cached =
