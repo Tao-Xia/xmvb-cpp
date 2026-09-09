@@ -76,7 +76,7 @@ double occupied_active_pair_count(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode =
         options.standard_two_electron_mode;
     const auto load_result =

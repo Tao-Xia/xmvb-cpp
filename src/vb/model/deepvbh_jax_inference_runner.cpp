@@ -363,7 +363,7 @@ std::vector<std::uint8_t> build_orbital_basis_mask(
 
 std::vector<std::uint8_t> build_orbital_shell_dense_mask(
     const OrbitalPreparationInput& orbital_preparation_input,
-    const CppVbStaticMoleculeMetadata& static_molecule_metadata,
+    const VbScfStaticMoleculeMetadata& static_molecule_metadata,
     const std::vector<std::uint8_t>& orbital_basis_mask) {
   const int n_orbitals = orbital_preparation_input.n_orbitals;
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
@@ -530,7 +530,7 @@ StructurePairTopology build_structure_pair_topology(
 PreparedOnnxFeatures prepare_onnx_features(
     const CppVbInput& input,
     const RawStructureData& raw_structure_data,
-    const CppVbStaticMoleculeMetadata& static_molecule_metadata) {
+    const VbScfStaticMoleculeMetadata& static_molecule_metadata) {
   PreparedOnnxFeatures prepared;
   prepared.structure_occupancy = build_structure_occupancy(
       raw_structure_data,
@@ -602,7 +602,7 @@ fs::path write_single_step_inference_sample(
     const fs::path& work_directory,
     const CppVbInput& input,
     const RawStructureData& raw_structure_data,
-    const CppVbStaticMoleculeMetadata& static_molecule_metadata,
+    const VbScfStaticMoleculeMetadata& static_molecule_metadata,
     const StructureAccumulationResult& structure_matrices,
     double one_electron_reference_energy,
     double nuclear_repulsion_energy) {
@@ -1172,7 +1172,7 @@ OnnxRuntimeInferenceOutput run_onnx_runtime_inference(
     const DeepVBHJaxInferenceOptions& options,
     const CppVbInput& input,
     const RawStructureData& raw_structure_data,
-    const CppVbStaticMoleculeMetadata& static_molecule_metadata,
+    const VbScfStaticMoleculeMetadata& static_molecule_metadata,
     const PreparedInferenceInput& prepared_input,
     double nuclear_repulsion_energy,
     const fs::path& prediction_directory) {
@@ -1426,7 +1426,7 @@ OnnxRuntimeInferenceOutput run_onnx_runtime_inference(
     const DeepVBHJaxInferenceOptions& options,
     const CppVbInput& input,
     const RawStructureData& raw_structure_data,
-    const CppVbStaticMoleculeMetadata& static_molecule_metadata,
+    const VbScfStaticMoleculeMetadata& static_molecule_metadata,
     const PreparedInferenceInput& prepared_input,
     double nuclear_repulsion_energy,
     const fs::path& prediction_directory) {
@@ -1460,7 +1460,7 @@ DeepVBHJaxInferenceRunner::DeepVBHJaxInferenceRunner(
 DeepVBHJaxPrediction DeepVBHJaxInferenceRunner::predict(
     const CppVbInput& input,
     const RawStructureData& raw_structure_data,
-    const CppVbStaticMoleculeMetadata& static_molecule_metadata,
+    const VbScfStaticMoleculeMetadata& static_molecule_metadata,
     double nuclear_repulsion_energy) const {
   if (options_.backend == "python_jax" && options_.checkpoint_path.empty()) {
     throw std::invalid_argument("DeepVBH checkpoint_path must not be empty");

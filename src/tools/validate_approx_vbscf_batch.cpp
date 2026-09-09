@@ -108,7 +108,7 @@ TimedSampleResult evaluate_sample(
   TimedSampleResult sample;
   sample.input_path = input_path;
 
-  xmvb::vb::CppVbInputLoadOptions load_options;
+  xmvb::vb::VbScfInputLoadOptions load_options;
   load_options.standard_two_electron_mode = standard_two_electron_mode;
   const auto load_start = Clock::now();
   const auto load_result =

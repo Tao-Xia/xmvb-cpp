@@ -146,7 +146,7 @@ std::vector<double> build_raw_legacy_structure_overlap_matrix(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);

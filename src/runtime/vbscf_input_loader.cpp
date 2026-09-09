@@ -27,6 +27,7 @@
 #include "runtime/libcint_direct_shell_evaluator.hpp"
 #include "runtime/libcint_materialized_integral_provider.hpp"
 #include "runtime/materialized_ao_integral_input_builder.hpp"
+#include "runtime/orbital_initial_guess_builder.hpp"
 #include "vbscf/structures/structure_expander.hpp"
 #include "vbscf/structures/subspace_selector.hpp"
 #include "vbscf/integrals/ao/libcint_input_validation.hpp"
@@ -525,7 +526,7 @@ namespace {
 
 bool should_use_standard_ri_two_electron_mode(
     bool input_requests_ri_two_electron_mode,
-    const CppVbInputLoadOptions& options) {
+    const VbScfInputLoadOptions& options) {
   switch (options.standard_two_electron_mode) {
     case StandardTwoElectronMode::Exact:
       return false;
@@ -546,7 +547,7 @@ int configured_openmp_thread_count();
 
 AoIntegralSource resolve_ao_integral_source(
     bool use_standard_ri_two_electron_mode,
-    const CppVbInputLoadOptions& options) {
+    const VbScfInputLoadOptions& options) {
   switch (options.ao_integral_source) {
     case AoIntegralSource::Auto:
       return use_standard_ri_two_electron_mode
@@ -579,7 +580,7 @@ int configured_openmp_thread_count() {
 
 VbScfInputLoadResult load_vbscf_input_with_timings(
     const std::string& input_file_path,
-    const CppVbInputLoadOptions& options) {
+    const VbScfInputLoadOptions& options) {
   const auto total_start_time = std::chrono::steady_clock::now();
   VbScfInputLoadResult load_result;
   VbScfInput result;
@@ -676,11 +677,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
       static_topology.n_basis_functions *
           resolved_n_orbitals,
       0.0);
-  if (!options.skip_orbital_guess &&
-      options.orbital_guess_source != OrbitalGuessSource::Cpp) {
-    throw std::runtime_error(
-        "only the pure C++ orbital guess path is supported");
-  }
   InputDeckOrbitalSupportBuildInput support_build_input;
   support_build_input.n_atoms = resolved_n_atoms;
   support_build_input.n_basis_functions = static_topology.n_basis_functions;
@@ -770,8 +766,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
           .count();
   log_load_stage("ao_integral_input_build", load_result.ao_integral_input_build_seconds);
 
-  if (!options.skip_orbital_guess &&
-      options.orbital_guess_source == OrbitalGuessSource::Cpp) {
+  if (!options.skip_orbital_guess) {
     const auto orbital_guess_start_time = std::chrono::steady_clock::now();
     build_initial_orbital_guess(
         input_file_path,
@@ -816,7 +811,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
           .count();
   log_load_stage("raw_structure_selection", load_result.raw_structure_selection_seconds);
 
-  CppVbStaticMoleculeMetadata static_molecule_metadata;
+  VbScfStaticMoleculeMetadata static_molecule_metadata;
   static_molecule_metadata.n_atoms = resolved_n_atoms;
   static_molecule_metadata.n_shells = static_topology.n_shells;
   static_molecule_metadata.atomic_numbers = atomic_numbers;
@@ -852,7 +847,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   load_result.static_molecule_metadata = std::move(static_molecule_metadata);
   load_result.runtime_timings = runtime_timings;
   load_result.basis_name = primary_basis_build_result.basis_file_path.string();
-  load_result.orbital_guess_source = options.orbital_guess_source;
   load_result.raw_structure_selection = options.raw_structure_selection;
   load_result.source_raw_structure_count = source_raw_structure_count;
   load_result.nuclear_repulsion_energy = nuclear_repulsion_energy;
@@ -864,7 +858,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
 
 VbScfInput load_vbscf_input(
     const std::string& input_file_path,
-    const CppVbInputLoadOptions& options) {
+    const VbScfInputLoadOptions& options) {
   return load_vbscf_input_with_timings(input_file_path, options).input;
 }
 

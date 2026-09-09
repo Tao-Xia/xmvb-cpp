@@ -193,7 +193,7 @@ DeepVBHOnnxDirectFinalOptimizer::DeepVBHOnnxDirectFinalOptimizer(
 CppVbScfOptimizerResult DeepVBHOnnxDirectFinalOptimizer::optimize(
     const CppVbInput& input,
     const RawStructureData& raw_structure_data,
-    const CppVbStaticMoleculeMetadata& static_molecule_metadata,
+    const VbScfStaticMoleculeMetadata& static_molecule_metadata,
     double nuclear_repulsion_energy) const {
   return optimize(
       input,
@@ -207,7 +207,7 @@ CppVbScfOptimizerResult DeepVBHOnnxDirectFinalOptimizer::optimize(
 CppVbScfOptimizerResult DeepVBHOnnxDirectFinalOptimizer::optimize(
     const CppVbInput& input,
     const RawStructureData& raw_structure_data,
-    const CppVbStaticMoleculeMetadata& static_molecule_metadata,
+    const VbScfStaticMoleculeMetadata& static_molecule_metadata,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {

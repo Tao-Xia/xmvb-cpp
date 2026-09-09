@@ -23,15 +23,12 @@ struct Options {
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Exact;
   xmvb::vb::AoIntegralSource ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-  xmvb::vb::OrbitalGuessSource orbital_guess_source =
-      xmvb::vb::OrbitalGuessSource::Cpp;
 };
 
 void print_usage() {
   std::cerr << "usage: check_exact_ao_h1e_builder <input.xmi>"
                " [--standard-two-electron-mode exact|auto]"
-               " [--ao-integral-source auto|libcint_cpp|runtime_hcore]"
-               " [--orbital-guess-source cpp]\n";
+               " [--ao-integral-source auto|libcint_cpp|runtime_hcore]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -70,15 +67,6 @@ Options parse_arguments(int argc, char** argv) {
       } else {
         throw std::invalid_argument(
             "invalid --ao-integral-source value: " + value);
-      }
-      continue;
-    }
-    if (name == "--orbital-guess-source") {
-      if (value == "cpp") {
-        options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
-      } else {
-        throw std::invalid_argument(
-            "invalid --orbital-guess-source value: " + value);
       }
       continue;
     }
@@ -191,10 +179,9 @@ xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     load_options.ao_integral_source = options.ao_integral_source;
-    load_options.orbital_guess_source = options.orbital_guess_source;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
@@ -251,9 +238,6 @@ int main(int argc, char** argv) {
     std::cout << std::setprecision(15);
     std::cout << "ao_integral_source = "
               << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)
-              << '\n';
-    std::cout << "orbital_guess_source = "
-              << xmvb::vb::orbital_guess_source_name(load_result.orbital_guess_source)
               << '\n';
     std::cout << "standard_two_electron_mode = "
               << xmvb::vb::standard_two_electron_mode_name(

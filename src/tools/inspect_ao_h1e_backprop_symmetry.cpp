@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
         input.ao_integral_input.ao_two_electron_integral_values.empty()
             ? backpropagator.backpropagate(
                   orbital_result.inactive_density_matrix,
-                  xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+                  xmvb::vb::ensure_vbscf_input_ri_cache(input),
                   n_basis_functions)
             : backpropagator.backpropagate(
                   orbital_result.inactive_density_matrix,

@@ -174,7 +174,7 @@ int main(int argc, char** argv) {
       current_backprop_matrix =
           ao_backpropagator.backpropagate(
               gradient_result.orbital_preparation_result.inactive_density_matrix,
-              xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+              xmvb::vb::ensure_vbscf_input_ri_cache(input),
               input.ao_integral_input.n_basis_functions)
               .inactive_density_gradient;
       custom_backprop_matrix = lower_triangle_half_diagonal(

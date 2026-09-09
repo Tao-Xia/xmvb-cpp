@@ -21,7 +21,7 @@
 namespace {
 
 using xmvb::vb::VbScfInput;
-using xmvb::vb::CppVbInputLoadOptions;
+using xmvb::vb::VbScfInputLoadOptions;
 using xmvb::vb::load_vbscf_input_with_timings;
 
 struct MoldenOrbitals {
@@ -490,7 +490,7 @@ int main(int argc, char** argv) {
     const std::string current_molden_path = argv[2];
     const std::string reference_molden_path = argv[3];
 
-    CppVbInputLoadOptions load_options;
+    VbScfInputLoadOptions load_options;
     load_options.skip_orbital_guess = true;
     load_options.ao_integral_source =
         xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;

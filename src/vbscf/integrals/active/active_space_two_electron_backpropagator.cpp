@@ -589,7 +589,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
     dense_active_coefficients = &cached_dense_active_coefficients;
   }
 
-  const auto& ao_ri_result = ensure_cpp_vb_input_ri_cache(input);
+  const auto& ao_ri_result = ensure_vbscf_input_ri_cache(input);
   return backpropagate_ri_active_pair_factors(
       ri_active_pair_factor_gradient,
       ao_ri_result,

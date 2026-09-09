@@ -175,7 +175,7 @@ SampleTimingResult benchmark_sample(
   SampleTimingResult result;
   result.input_path = input_path;
 
-  xmvb::vb::CppVbInputLoadOptions load_options;
+  xmvb::vb::VbScfInputLoadOptions load_options;
   load_options.standard_two_electron_mode =
       options.standard_two_electron_mode;
   const auto load_start = Clock::now();

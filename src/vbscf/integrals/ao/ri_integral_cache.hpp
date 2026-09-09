@@ -8,7 +8,7 @@ namespace xmvb::vb {
 /**
  * @brief Returns a molecule-static AO-side RI cache, building it on demand.
  */
-const LibcintRiIntegralProviderResult& ensure_cpp_vb_input_ri_cache(
+const LibcintRiIntegralProviderResult& ensure_vbscf_input_ri_cache(
     const VbScfInput& input,
     const LibcintRiIntegralProviderOptions& options = {});
 

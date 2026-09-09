@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 
-#include "runtime/orbital_initial_guess_builder.hpp"
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/subspace_selector.hpp"
 #include "vbscf/structures/structure_types.hpp"
@@ -27,7 +26,7 @@ enum class RawStructureSource {
   GeneratedFromStructureClassCpp,
 };
 
-struct CppVbStaticMoleculeMetadata {
+struct VbScfStaticMoleculeMetadata {
   int n_atoms = 0;
   int n_shells = 0;
   std::vector<int> atomic_numbers;
@@ -57,14 +56,11 @@ struct RuntimeExtractionTimings {
   double total_seconds = 0.0;
 };
 
-struct CppVbInputLoadOptions {
+struct VbScfInputLoadOptions {
   // `Auto` now prefers the C++ materialized AO integral provider for exact
   // integrals and uses the pure C++ H-core-only fallback only when the deck
   // requests the RI path.
   AoIntegralSource ao_integral_source = AoIntegralSource::Auto;
-  // The standalone executable now owns orbital initialization entirely inside
-  // the C++ loader, so keep the pure C++ guess path as the default.
-  OrbitalGuessSource orbital_guess_source = OrbitalGuessSource::Cpp;
   StandardTwoElectronMode standard_two_electron_mode = StandardTwoElectronMode::Auto;
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
   bool skip_orbital_guess = false;
@@ -78,12 +74,11 @@ struct CppVbInputLoadOptions {
 struct VbScfInputLoadResult {
   VbScfInput input;
   RawStructureData raw_structure_data;
-  CppVbStaticMoleculeMetadata static_molecule_metadata;
+  VbScfStaticMoleculeMetadata static_molecule_metadata;
   RuntimeExtractionTimings runtime_timings{};
   std::string basis_name;
   double nuclear_repulsion_energy = 0.0;
   AoIntegralSource ao_integral_source = AoIntegralSource::Auto;
-  OrbitalGuessSource orbital_guess_source = OrbitalGuessSource::Cpp;
   StandardTwoElectronMode standard_two_electron_mode = StandardTwoElectronMode::Auto;
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
   RawStructureSource raw_structure_source = RawStructureSource::Unknown;
@@ -110,10 +105,10 @@ struct VbScfInputLoadResult {
  */
 VbScfInput load_vbscf_input(
     const std::string& input_file_path,
-    const CppVbInputLoadOptions& options = {});
+    const VbScfInputLoadOptions& options = {});
 
 VbScfInputLoadResult load_vbscf_input_with_timings(
     const std::string& input_file_path,
-    const CppVbInputLoadOptions& options = {});
+    const VbScfInputLoadOptions& options = {});
 
 }  // namespace xmvb::vb

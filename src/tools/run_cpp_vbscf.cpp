@@ -442,9 +442,7 @@ void print_run_header(
   print_log_field(
       "Two-electron mode",
       xmvb::vb::standard_two_electron_mode_name(load_result.standard_two_electron_mode));
-  print_log_field(
-      "Orbital guess",
-      xmvb::vb::orbital_guess_source_name(load_result.orbital_guess_source));
+  print_log_field("Orbital guess", "standalone C++");
   print_log_field(
       "Molden output",
       load_result.request_molden_output ? "requested" : "not requested");
@@ -901,8 +899,6 @@ public:
         source_input_path_(fs::absolute(fs::path(input_file_path)).string()),
         ao_integral_source_name_(
             xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)),
-        orbital_guess_source_name_(
-            xmvb::vb::orbital_guess_source_name(load_result.orbital_guess_source)),
         raw_structure_selection_name_(
             xmvb::vb::raw_structure_selection_mode_name(load_result.raw_structure_selection)),
         source_raw_structure_count_(load_result.source_raw_structure_count),
@@ -1167,8 +1163,7 @@ private:
                     << "\",\n"
                     << "  \"ao_integral_source\": \""
                     << escape_json_string(ao_integral_source_name_) << "\",\n"
-                    << "  \"orbital_guess_source\": \""
-                    << escape_json_string(orbital_guess_source_name_) << "\",\n"
+                    << "  \"orbital_guess_source\": \"cpp\",\n"
                     << "  \"raw_structure_selection\": \""
                     << escape_json_string(raw_structure_selection_name_) << "\",\n"
                     << "  \"source_raw_structure_count\": "
@@ -1214,7 +1209,6 @@ private:
   fs::path steps_dir_;
   std::string source_input_path_;
   std::string ao_integral_source_name_;
-  std::string orbital_guess_source_name_;
   std::string raw_structure_selection_name_;
   int source_raw_structure_count_ = 0;
   std::string algorithm_name_;
@@ -1322,7 +1316,7 @@ void apply_structure_space_mode_argument(
 
 void apply_raw_structure_selection_argument(
     const std::string& selection_name,
-    xmvb::vb::CppVbInputLoadOptions* options) {
+    xmvb::vb::VbScfInputLoadOptions* options) {
   if (selection_name == "full") {
     options->raw_structure_selection = xmvb::vb::RawStructureSelectionMode::Full;
     return;
@@ -1336,7 +1330,7 @@ void apply_raw_structure_selection_argument(
 
 void apply_ao_integral_source_argument(
     const std::string& source_name,
-    xmvb::vb::CppVbInputLoadOptions* options) {
+    xmvb::vb::VbScfInputLoadOptions* options) {
   if (options == nullptr) {
     throw std::invalid_argument("load options must not be null");
   }
@@ -1355,22 +1349,9 @@ void apply_ao_integral_source_argument(
   throw std::invalid_argument("invalid AO integral source: " + source_name);
 }
 
-void apply_orbital_guess_source_argument(
-    const std::string& source_name,
-    xmvb::vb::CppVbInputLoadOptions* options) {
-  if (options == nullptr) {
-    throw std::invalid_argument("load options must not be null");
-  }
-  if (source_name == "cpp") {
-    options->orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
-    return;
-  }
-  throw std::invalid_argument("invalid orbital guess source: " + source_name);
-}
-
 void apply_standard_two_electron_mode_argument(
     const std::string& mode_name,
-    xmvb::vb::CppVbInputLoadOptions* options) {
+    xmvb::vb::VbScfInputLoadOptions* options) {
   if (options == nullptr) {
     throw std::invalid_argument("load options must not be null");
   }
@@ -1450,7 +1431,6 @@ void print_usage() {
                " [--standard-two-electron-mode auto|exact|ri]"
                " [--ao-integral-source auto|libcint_cpp|runtime_hcore]"
                " [--skip-orbital-guess true|false]"
-               " [--orbital-guess-source cpp]"
                " [--raw-structure-selection full|covalent]"
                " [--adaptive-seed-selection full|covalent]"
                " [--adaptive-determinant-score-mode proposal_all|outside_only]"
@@ -1485,9 +1465,8 @@ int main(int argc, char** argv) {
 
   const std::string input_path = argv[1];
   StructureSpaceMode structure_space_mode = StructureSpaceMode::Standard;
-  xmvb::vb::CppVbInputLoadOptions load_options;
+  xmvb::vb::VbScfInputLoadOptions load_options;
   load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-  load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
   load_options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Auto;
   xmvb::vb::VbScfOptimizerOptions options;
   xmvb::vb::AdaptiveStructureSpaceOptimizerOptions adaptive_options;
@@ -1565,8 +1544,6 @@ int main(int argc, char** argv) {
         apply_standard_two_electron_mode_argument(argument_value, &load_options);
       } else if (argument_name == "--skip-orbital-guess") {
         load_options.skip_orbital_guess = parse_bool_argument(argument_value);
-      } else if (argument_name == "--orbital-guess-source") {
-        apply_orbital_guess_source_argument(argument_value, &load_options);
       } else if (argument_name == "--raw-structure-selection") {
         user_specified_raw_structure_selection = true;
         apply_raw_structure_selection_argument(argument_value, &load_options);

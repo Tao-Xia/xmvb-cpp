@@ -214,7 +214,7 @@ double evaluate_total_energy_from_auxiliary(
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_active_space_two_electron_builder;
     active_space_two_electron_result =
         ri_active_space_two_electron_builder.build(
-            xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+            xmvb::vb::ensure_vbscf_input_ri_cache(input),
             active_only_orbital_result,
             n_basis_functions,
             n_active_orbitals,
@@ -323,7 +323,7 @@ ActiveSpaceMatrices build_active_space_matrices(
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_active_space_two_electron_builder;
     active_space_two_electron_result =
         ri_active_space_two_electron_builder.build(
-            xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+            xmvb::vb::ensure_vbscf_input_ri_cache(input),
             active_only_orbital_result,
             n_basis_functions,
             n_active_orbitals,
@@ -461,7 +461,7 @@ double evaluate_ao_effective_one_electron_objective(
           : ao_effective_one_electron_builder.build(
                 inactive_density_matrix,
                 input.ao_integral_input.ao_core_hamiltonian_matrix,
-                xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+                xmvb::vb::ensure_vbscf_input_ri_cache(input),
                 input.ao_integral_input.n_basis_functions);
   return compute_matrix_inner_product(
       ao_effective_one_electron_gradient,
@@ -526,9 +526,8 @@ FiniteDifferenceChainBreakdown finite_difference_chain_breakdown(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-    load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(
             options.input_path,
@@ -606,7 +605,7 @@ int main(int argc, char** argv) {
                   input.ao_integral_input)
             : ao_effective_one_electron_backpropagator.backpropagate(
                   total_ao_effective_one_electron_gradient,
-                  xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+                  xmvb::vb::ensure_vbscf_input_ri_cache(input),
                   n_basis_functions);
 
     std::vector<std::pair<double, int>> ranked_entries;

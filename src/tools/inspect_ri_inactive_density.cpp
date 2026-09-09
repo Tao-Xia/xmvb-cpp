@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;
     const auto orbital_result =
         orbital_preparer.prepare(input.orbital_preparation_input);
-    const auto& ri_cache = xmvb::vb::ensure_cpp_vb_input_ri_cache(input);
+    const auto& ri_cache = xmvb::vb::ensure_vbscf_input_ri_cache(input);
 
     const Eigen::Map<const Matrix> inactive_density(
         orbital_result.inactive_density_matrix.data(),

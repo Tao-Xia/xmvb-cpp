@@ -51,7 +51,7 @@ TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
   const bool use_ri_active_space = use_standard_ri_active_space_path(input);
   const LibcintRiIntegralProviderResult* ao_ri_result = nullptr;
   if (use_ri_active_space) {
-    ao_ri_result = &ensure_cpp_vb_input_ri_cache(input);
+    ao_ri_result = &ensure_vbscf_input_ri_cache(input);
   }
 
   auto stage_start_time = std::chrono::steady_clock::now();

@@ -120,8 +120,7 @@ double evaluate_reference_energy(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    xmvb::vb::CppVbInputLoadOptions load_options;
-    load_options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
 

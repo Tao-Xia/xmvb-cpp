@@ -74,7 +74,7 @@ std::vector<double> build_reference_energy_inactive_density_gradient(
                         input.orbital_preparation_input.n_active_orbitals,
                     0.0),
                 orbital_result,
-                ensure_cpp_vb_input_ri_cache(input),
+                ensure_vbscf_input_ri_cache(input),
                 input.ao_integral_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,
                 input.orbital_preparation_input.n_active_orbitals)
@@ -405,7 +405,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradi
           ? ao_effective_one_electron_backpropagator_.backpropagate(
                 active_space_gradient_result.active_one_electron_gradient,
                 orbital_result,
-                ensure_cpp_vb_input_ri_cache(input),
+                ensure_vbscf_input_ri_cache(input),
                 input.ao_integral_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,
                 input.orbital_preparation_input.n_active_orbitals)
@@ -602,7 +602,7 @@ OrbitalGradientEvaluator::evaluate_sparse_orbital_gradient_with_fixed_active_spa
           ? ao_effective_one_electron_backpropagator_.backpropagate(
                 accepted_point_context.active_one_electron_gradient,
                 orbital_result,
-                ensure_cpp_vb_input_ri_cache(input),
+                ensure_vbscf_input_ri_cache(input),
                 input.ao_integral_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,
                 input.orbital_preparation_input.n_active_orbitals)

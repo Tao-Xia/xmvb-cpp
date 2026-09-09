@@ -111,7 +111,7 @@ int main(int argc, char** argv) {
     const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
     const int n_basis_functions = input.ao_integral_input.n_basis_functions;
-    const auto& ri_cache = xmvb::vb::ensure_cpp_vb_input_ri_cache(input);
+    const auto& ri_cache = xmvb::vb::ensure_vbscf_input_ri_cache(input);
 
     std::mt19937 generator(options.seed);
     double max_dense_low_rank_diff_general = 0.0;

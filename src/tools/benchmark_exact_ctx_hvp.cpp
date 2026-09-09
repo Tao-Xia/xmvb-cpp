@@ -243,7 +243,7 @@ Eigen::VectorXd apply_component(
 AcceptedPointBenchmarkContext build_benchmark_context(
     const Options& options,
     xmvb::vb::AoIntegralSource* loaded_ao_integral_source) {
-  xmvb::vb::CppVbInputLoadOptions load_options;
+  xmvb::vb::VbScfInputLoadOptions load_options;
   load_options.ao_integral_source = options.ao_integral_source;
   load_options.standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Exact;

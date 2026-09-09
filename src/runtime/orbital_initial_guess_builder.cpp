@@ -368,7 +368,7 @@ void normalize_sparse_guess(
   }
 }
 
-bool supports_cpp_rhf_auto_guess(
+bool supports_rhf_auto_guess(
     const OrbitalPreparationInput& orbital_preparation_input) {
   return orbital_preparation_input.spin_multiplicity == 1 &&
          orbital_preparation_input.n_total_electrons >= 0 &&
@@ -740,14 +740,6 @@ void build_unit_guess(
 
 }  // namespace
 
-const char* orbital_guess_source_name(OrbitalGuessSource source) {
-  switch (source) {
-    case OrbitalGuessSource::Cpp:
-      return "cpp";
-  }
-  return "unknown";
-}
-
 bool initial_orbital_guess_supported(int guess_type) noexcept {
   return guess_type == kGuessTypeAuto ||
          guess_type == kGuessTypeUnit ||
@@ -779,7 +771,7 @@ void build_initial_orbital_guess(
       // hcore-only load modes the C++ path no longer has a materialized AO 2e
       // tensor, so fall back to the one-electron block guess instead of
       // requiring the legacy HF/vbguess runtime.
-      if (supports_cpp_rhf_auto_guess(*orbital_preparation_input) &&
+      if (supports_rhf_auto_guess(*orbital_preparation_input) &&
           has_materialized_ao_two_electron_integrals(ao_integral_input)) {
         build_rhf_block_guess(
             libcint_input,
@@ -801,7 +793,7 @@ void build_initial_orbital_guess(
       // Legacy `vb_moguess` uses HF canonical orbitals for `GUESS=MO`, not the
       // one-electron hcore eigensystem. Match that behavior whenever the C++
       // path can form an RHF reference; otherwise keep the old hcore fallback.
-      if (supports_cpp_rhf_auto_guess(*orbital_preparation_input) &&
+      if (supports_rhf_auto_guess(*orbital_preparation_input) &&
           has_materialized_ao_two_electron_integrals(ao_integral_input)) {
         build_rhf_mo_guess(
             input_file_path,

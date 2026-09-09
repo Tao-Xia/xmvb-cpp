@@ -5,7 +5,7 @@
 
 namespace xmvb::vb {
 
-const LibcintRiIntegralProviderResult& ensure_cpp_vb_input_ri_cache(
+const LibcintRiIntegralProviderResult& ensure_vbscf_input_ri_cache(
     const VbScfInput& input,
     const LibcintRiIntegralProviderOptions& options) {
   if (input.ri_integral_provider_result == nullptr) {

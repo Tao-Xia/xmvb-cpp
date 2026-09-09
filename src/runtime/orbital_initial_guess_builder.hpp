@@ -9,12 +9,6 @@
 
 namespace xmvb::vb {
 
-enum class OrbitalGuessSource {
-  Cpp,
-};
-
-const char* orbital_guess_source_name(OrbitalGuessSource source);
-
 bool initial_orbital_guess_supported(int guess_type) noexcept;
 
 /**

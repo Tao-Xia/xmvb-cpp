@@ -187,7 +187,7 @@ EnergyBreakdown build_ri_breakdown(
       (input.orbital_preparation_input.n_total_electrons -
        input.orbital_preparation_input.n_active_electrons) / 2;
 
-  const auto& ri_cache = xmvb::vb::ensure_cpp_vb_input_ri_cache(input);
+  const auto& ri_cache = xmvb::vb::ensure_vbscf_input_ri_cache(input);
 
   xmvb::vb::AoEffectiveOneElectronBuilder ao_builder;
   xmvb::vb::AoEffectiveOneElectronResult ao_result;
@@ -282,11 +282,9 @@ int main(int argc, char** argv) {
           "usage: compare_exact_ri_energy_decomposition <input.xmi>");
     }
 
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.ao_integral_source =
         xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
-    load_options.orbital_guess_source =
-        xmvb::vb::OrbitalGuessSource::Cpp;
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Auto;
     const auto load_result =
@@ -319,7 +317,7 @@ int main(int argc, char** argv) {
     const auto ri_ao_result = ao_builder.build(
         orbital_result.inactive_density_matrix,
         input.ao_integral_input.ao_core_hamiltonian_matrix,
-        xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+        xmvb::vb::ensure_vbscf_input_ri_cache(input),
         n_basis_functions);
     xmvb::vb::ActiveSpaceOneElectronBuilder active_h1e_builder;
     const auto exact_active_h1e = active_h1e_builder.build(
@@ -341,7 +339,7 @@ int main(int argc, char** argv) {
         n_active_orbitals);
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_eri_builder;
     const auto ri_eri = ri_eri_builder.build(
-        xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+        xmvb::vb::ensure_vbscf_input_ri_cache(input),
         orbital_result,
         n_basis_functions,
         n_active_orbitals,

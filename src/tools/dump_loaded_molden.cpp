@@ -13,7 +13,6 @@ namespace {
 void print_usage() {
   std::cerr
       << "usage: dump_loaded_molden <input.xmi> <output_stem.xmi>"
-      << " [--orbital-guess-source cpp|legacy]"
       << " [--skip-orbital-guess true|false]"
       << " [--ao-integral-source auto|legacy|libcint_cpp|runtime_hcore]\n";
 }
@@ -28,22 +27,9 @@ bool parse_bool_argument(const std::string& value) {
   throw std::invalid_argument("invalid boolean value: " + value);
 }
 
-void apply_orbital_guess_source_argument(
-    const std::string& source_name,
-    xmvb::vb::CppVbInputLoadOptions* options) {
-  if (options == nullptr) {
-    throw std::invalid_argument("load options must not be null");
-  }
-  if (source_name == "cpp") {
-    options->orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
-    return;
-  }
-  throw std::invalid_argument("invalid orbital guess source: " + source_name);
-}
-
 void apply_ao_integral_source_argument(
     const std::string& source_name,
-    xmvb::vb::CppVbInputLoadOptions* options) {
+    xmvb::vb::VbScfInputLoadOptions* options) {
   if (options == nullptr) {
     throw std::invalid_argument("load options must not be null");
   }
@@ -73,16 +59,14 @@ int main(int argc, char** argv) {
 
     const std::string input_path = argv[1];
     const fs::path output_stem_path = argv[2];
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.ao_integral_source =
         xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
 
     for (int argument_index = 3; argument_index < argc; argument_index += 2) {
       const std::string argument_name = argv[argument_index];
       const std::string argument_value = argv[argument_index + 1];
-      if (argument_name == "--orbital-guess-source") {
-        apply_orbital_guess_source_argument(argument_value, &load_options);
-      } else if (argument_name == "--skip-orbital-guess") {
+      if (argument_name == "--skip-orbital-guess") {
         load_options.skip_orbital_guess = parse_bool_argument(argument_value);
       } else if (argument_name == "--ao-integral-source") {
         apply_ao_integral_source_argument(argument_value, &load_options);

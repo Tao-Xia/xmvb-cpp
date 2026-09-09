@@ -56,7 +56,7 @@ public:
   DeepVBHJaxPrediction predict(
       const CppVbInput& input,
       const RawStructureData& raw_structure_data,
-      const CppVbStaticMoleculeMetadata& static_molecule_metadata,
+      const VbScfStaticMoleculeMetadata& static_molecule_metadata,
       double nuclear_repulsion_energy) const;
 
 private:

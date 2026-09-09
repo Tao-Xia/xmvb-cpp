@@ -266,7 +266,7 @@ int main(int argc, char** argv) {
     const Options options = parse_arguments(argc, argv);
     std::cerr << "stage=load\n";
     std::cerr.flush();
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.expand_selected_raw_structures = false;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
