@@ -105,10 +105,6 @@ set(XMVB_VBSCF_WORKFLOW_SOURCES
   vbscf/workflow/vbscf_evaluator.cpp
 )
 
-set(XMVB_VBSCF_ADAPTIVE_SOURCES
-  vbscf/adaptive/structure_space_optimizer.cpp
-)
-
 # Keep the ownership manifest complete. Adding a VBSCF translation unit without
 # assigning it to one of the domain lists above is a configuration error.
 set(_xmvb_declared_vbscf_sources
@@ -121,8 +117,7 @@ set(_xmvb_declared_vbscf_sources
   ${XMVB_VBSCF_DERIVATIVE_SOURCES}
   ${XMVB_VBSCF_DIAGNOSTIC_SOURCES}
   ${XMVB_VBSCF_OPTIMIZATION_SOURCES}
-  ${XMVB_VBSCF_WORKFLOW_SOURCES}
-  ${XMVB_VBSCF_ADAPTIVE_SOURCES})
+  ${XMVB_VBSCF_WORKFLOW_SOURCES})
 file(
   GLOB_RECURSE _xmvb_discovered_vbscf_sources
   CONFIGURE_DEPENDS
@@ -183,5 +178,4 @@ set(XMVB_CPP_CORE_SOURCES
   ${XMVB_VBSCF_DIAGNOSTIC_SOURCES}
   ${XMVB_VBSCF_OPTIMIZATION_SOURCES}
   ${XMVB_VBSCF_WORKFLOW_SOURCES}
-  ${XMVB_VBSCF_ADAPTIVE_SOURCES}
 )

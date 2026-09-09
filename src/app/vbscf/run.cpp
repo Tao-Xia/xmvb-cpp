@@ -15,7 +15,6 @@
 #include "runtime/vbscf_input_loader.hpp"
 #include "vb/scf/deepvbh_onnx_direct_final_optimizer.hpp"
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
-#include "vbscf/adaptive/structure_space_optimizer.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace xmvb::app::vbscf {
@@ -24,11 +23,9 @@ namespace fs = std::filesystem;
 
 int run(Options command_line) {
   const std::string& input_path = command_line.input_path;
-  auto& structure_space_mode = command_line.structure_mode;
   auto& load_options = command_line.load;
   auto& options = command_line.optimizer;
   auto& run_backend = command_line.backend;
-  auto& adaptive_options = command_line.adaptive;
   auto& deepvbh_options = command_line.deepvbh_hybrid;
   auto& deepvbh_direct_options = command_line.deepvbh_direct;
   const std::string& dump_trace_dir = command_line.trace_directory;
@@ -78,15 +75,7 @@ int run(Options command_line) {
   deepvbh_options.optimizer_options = options;
   deepvbh_direct_options.optimizer_options = options;
   xmvb::vb::VbScfOptimizerResult result;
-  std::optional<xmvb::vb::AdaptiveStructureSpaceOptimizerResult> adaptive_result;
-  if (structure_space_mode == xmvb::app::vbscf::StructureMode::AdaptiveMvp) {
-    xmvb::vb::AdaptiveStructureSpaceOptimizer optimizer(options, adaptive_options);
-    adaptive_result = optimizer.optimize({
-        load_result.input,
-        load_result.raw_structure_data,
-        load_result.nuclear_repulsion_energy});
-    result = adaptive_result->inner_result;
-  } else if (run_backend == xmvb::app::vbscf::Backend::DeepVBHOnnx) {
+  if (run_backend == xmvb::app::vbscf::Backend::DeepVBHOnnx) {
     if (deepvbh_options.inference_options.onnx_model_path.empty()) {
       throw std::invalid_argument(
           "--onnx-model is required for --optimizer-backend deepvbh_onnx");
@@ -124,8 +113,7 @@ int run(Options command_line) {
         fs::path(dump_final_orbital_value_table_bin),
         result.optimized_input.orbital_preparation_input.orbital_value_table);
   }
-  const bool command_converged =
-      adaptive_result.has_value() ? adaptive_result->converged : result.converged;
+  const bool command_converged = result.converged;
   std::optional<fs::path> molden_output_path;
   if (load_result.request_molden_output) {
     molden_output_path =
@@ -140,7 +128,6 @@ int run(Options command_line) {
       command_line,
       load_result,
       result,
-      adaptive_result,
       trace_sample_directory,
       molden_output_path,
       command_start_time,
@@ -150,4 +137,3 @@ int run(Options command_line) {
 }
 
 }  // namespace xmvb::app::vbscf
-

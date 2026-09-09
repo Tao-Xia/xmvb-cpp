@@ -4,7 +4,6 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
-#include <cstdint>
 #include <ctime>
 #include <cstdlib>
 #include <filesystem>
@@ -266,7 +265,6 @@ void print_header(
   const std::string& input_path = command.input_path;
   const auto& options = command.optimizer;
   const Backend run_backend = command.backend;
-  const StructureMode structure_space_mode = command.structure_mode;
   const fs::path absolute_input_path = fs::absolute(fs::path(input_path));
   const auto& orbital_input = load_result.input.orbital_preparation_input;
   const std::string basis_set_name = simplify_basis_name(load_result.basis_name);
@@ -290,7 +288,6 @@ void print_header(
         xmvb::vb::nonredundant_truncated_newton_hvp_mode_name(
             options.nonredundant_truncated_newton_hvp_mode));
   }
-  print_log_field("Structure space", xmvb::app::vbscf::structure_mode_name(structure_space_mode));
   print_log_field("Basis set", basis_set_name);
   if (!load_result.basis_name.empty() && load_result.basis_name != basis_set_name) {
     print_log_field("Basis file", load_result.basis_name);
@@ -450,7 +447,6 @@ void print_summary(
     const Options& command,
     const vb::VbScfInputLoadResult& load_result,
     const vb::VbScfOptimizerResult& result,
-    const std::optional<vb::AdaptiveStructureSpaceOptimizerResult>& adaptive_result,
     const std::optional<std::filesystem::path>& trace_sample_directory,
     const std::optional<std::filesystem::path>& molden_output_path,
     const std::chrono::system_clock::time_point& command_start_time,
@@ -458,11 +454,9 @@ void print_summary(
   const auto& input = load_result.input;
   const auto& options = command.optimizer;
   const auto run_backend = command.backend;
-  const auto& adaptive_options = command.adaptive;
   const auto& deepvbh_options = command.deepvbh_hybrid;
   const auto& deepvbh_direct_options = command.deepvbh_direct;
-  const bool command_converged =
-      adaptive_result.has_value() ? adaptive_result->converged : result.converged;
+  const bool command_converged = result.converged;
   const double initial_electronic_energy =
       result.initial_total_energy - load_result.nuclear_repulsion_energy;
   const double final_electronic_energy =
@@ -480,17 +474,12 @@ void print_summary(
       std::chrono::duration<double>(
           std::chrono::steady_clock::now() - command_start_steady_time)
           .count();
-  const double optimizer_wall_time_seconds =
-      adaptive_result.has_value() ? adaptive_result->total_wall_time_seconds
-                                  : result.total_wall_time_seconds;
+  const double optimizer_wall_time_seconds = result.total_wall_time_seconds;
   const int effective_thread_count = allocated_cpu_thread_count();
 
   print_log_subsection_title("SCF Summary");
   print_log_field("Status", convergence_status_name(command_converged));
-  print_log_field(
-      "Termination reason",
-      adaptive_result.has_value() ? adaptive_result->termination_reason
-                                  : result.termination_reason);
+  print_log_field("Termination reason", result.termination_reason);
   print_log_field("Iterations", std::to_string(result.n_iterations));
   print_log_field("Start time", format_timestamp(command_start_time));
   print_log_field("Finish time", format_timestamp(command_finish_time));
@@ -526,56 +515,12 @@ void print_summary(
         fs::absolute(deepvbh_direct_options.inference_options.onnx_model_path).string());
   }
 
-  if (adaptive_result.has_value()) {
-    double adaptive_total_scoring_wall_time_seconds = 0.0;
-    std::uint64_t adaptive_total_boundary_pair_evaluation_count = 0;
-    for (const auto& iteration_summary : adaptive_result->iteration_summaries) {
-      adaptive_total_scoring_wall_time_seconds +=
-          iteration_summary.scoring_wall_time_seconds;
-      adaptive_total_boundary_pair_evaluation_count +=
-          iteration_summary.boundary_pair_evaluation_count;
-    }
-    const auto& last_iteration_summary = adaptive_result->iteration_summaries.back();
-    print_log_field(
-        "Adaptive seed selection",
-        xmvb::vb::adaptive_structure_space_seed_selection_name(
-            adaptive_options.seed_selection));
-    print_log_field(
-        "Adaptive determinant score",
-        xmvb::vb::adaptive_determinant_score_mode_name(
-            adaptive_options.determinant_score_mode));
-    print_log_field(
-        "Selected raw structures",
-        std::to_string(adaptive_result->selected_raw_structure_indices.size()));
-    print_log_field(
-        "Expanded determinants",
-        std::to_string(result.optimized_input.structure_data.alpha_det.size()));
-    print_log_field(
-        "Adaptive outer iterations",
-        std::to_string(adaptive_result->iteration_summaries.size()));
-    print_log_field(
-        "Last proposal determinants",
-        std::to_string(last_iteration_summary.unique_proposal_determinant_count));
-    print_log_field(
-        "Last outside determinants",
-        std::to_string(last_iteration_summary.unique_outside_determinant_count));
-    print_log_field(
-        "Last shared determinants",
-        std::to_string(last_iteration_summary.unique_shared_determinant_count));
-    print_log_field(
-        "Boundary pair evaluations",
-        std::to_string(adaptive_total_boundary_pair_evaluation_count));
-    print_log_field(
-        "Adaptive scoring wall time",
-        format_seconds(adaptive_total_scoring_wall_time_seconds));
-  } else {
-    print_log_field(
-        "Selected raw structures",
-        std::to_string(load_result.raw_structure_data.n_structures));
-    print_log_field(
-        "Expanded determinants",
-        std::to_string(input.structure_data.alpha_det.size()));
-  }
+  print_log_field(
+      "Selected raw structures",
+      std::to_string(load_result.raw_structure_data.n_structures));
+  print_log_field(
+      "Expanded determinants",
+      std::to_string(input.structure_data.alpha_det.size()));
 
   print_log_subsection_title("Energy and Gradient");
   print_log_field(

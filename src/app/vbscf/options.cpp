@@ -34,16 +34,6 @@ const char* backend_name(
   return "unknown";
 }
 
-const char* structure_mode_name(StructureMode mode) {
-  switch (mode) {
-    case StructureMode::Standard:
-      return "standard";
-    case StructureMode::AdaptiveMvp:
-      return "adaptive_mvp";
-  }
-  return "unknown";
-}
-
 void apply_optimizer_backend_argument(
     const std::string& backend_name,
     xmvb::vb::VbScfOptimizerOptions* options,
@@ -120,23 +110,6 @@ bool parse_bool_argument(const std::string& value) {
   throw std::invalid_argument("invalid boolean value: " + value);
 }
 
-void apply_structure_space_mode_argument(
-    const std::string& mode_name,
-    StructureMode* mode) {
-  if (mode == nullptr) {
-    throw std::invalid_argument("mode must not be null");
-  }
-  if (mode_name == "standard") {
-    *mode = StructureMode::Standard;
-    return;
-  }
-  if (mode_name == "adaptive_mvp") {
-    *mode = StructureMode::AdaptiveMvp;
-    return;
-  }
-  throw std::invalid_argument("invalid structure space mode: " + mode_name);
-}
-
 void apply_raw_structure_selection_argument(
     const std::string& selection_name,
     xmvb::vb::VbScfInputLoadOptions* options) {
@@ -194,42 +167,6 @@ void apply_standard_two_electron_mode_argument(
   throw std::invalid_argument("invalid standard two-electron mode: " + mode_name);
 }
 
-void apply_adaptive_seed_selection_argument(
-    const std::string& selection_name,
-    xmvb::vb::AdaptiveStructureSpaceOptimizerOptions* options) {
-  if (options == nullptr) {
-    throw std::invalid_argument("adaptive options must not be null");
-  }
-  if (selection_name == "full") {
-    options->seed_selection = xmvb::vb::RawStructureSelectionMode::Full;
-    return;
-  }
-  if (selection_name == "covalent") {
-    options->seed_selection = xmvb::vb::RawStructureSelectionMode::Covalent;
-    return;
-  }
-  throw std::invalid_argument("invalid adaptive seed selection: " + selection_name);
-}
-
-void apply_adaptive_determinant_score_mode_argument(
-    const std::string& mode_name,
-    xmvb::vb::AdaptiveStructureSpaceOptimizerOptions* options) {
-  if (options == nullptr) {
-    throw std::invalid_argument("adaptive options must not be null");
-  }
-  if (mode_name == "proposal_all") {
-    options->determinant_score_mode =
-        xmvb::vb::AdaptiveDeterminantScoreMode::ProposalAll;
-    return;
-  }
-  if (mode_name == "outside_only") {
-    options->determinant_score_mode =
-        xmvb::vb::AdaptiveDeterminantScoreMode::OutsideOnly;
-    return;
-  }
-  throw std::invalid_argument("invalid adaptive determinant score mode: " + mode_name);
-}
-
 void print_usage() {
   std::cerr << "usage: xmvb-cpp.exe <input.xmi> "
                "[--optimizer-backend lbfgspp|nonredundant_projected_gradient|nonredundant_lbfgspp|nonredundant_truncated_newton";
@@ -237,8 +174,7 @@ void print_usage() {
     std::cerr << "|deepvbh_onnx";
     std::cerr << "|deepvbh_onnx_direct_final";
   }
-  std::cerr << "] [--structure-space-mode standard|adaptive_mvp]"
-               " [--max-iterations <count>]"
+  std::cerr << "] [--max-iterations <count>]"
                " [--verbose true|false]"
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
@@ -251,16 +187,6 @@ void print_usage() {
                " [--ao-integral-source auto|libcint_cpp|runtime_hcore]"
                " [--skip-orbital-guess true|false]"
                " [--raw-structure-selection full|covalent]"
-               " [--adaptive-seed-selection full|covalent]"
-               " [--adaptive-determinant-score-mode proposal_all|outside_only]"
-               " [--adaptive-max-outer-iterations <count>]"
-               " [--adaptive-max-topology-distance <count>]"
-               " [--adaptive-max-neighbors-per-structure <count>]"
-               " [--adaptive-max-candidate-pool-size <count>]"
-               " [--adaptive-batch-size <count>]"
-               " [--adaptive-max-total-structures <count>]"
-               " [--adaptive-minimum-candidate-score <value>]"
-               " [--adaptive-verbose true|false]"
                " [--dump-trace-dir <dataset_root>]"
                " [--dump-final-orbital-value-table-bin <path>]"
                " [--onnx-model <path>]"
@@ -284,13 +210,11 @@ bool parse_options(int argc, char** argv, Options* parsed_options) {
   }
 
   const std::string input_path = argv[1];
-  StructureMode structure_space_mode = StructureMode::Standard;
   xmvb::vb::VbScfInputLoadOptions load_options;
   load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
   load_options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Auto;
   xmvb::vb::VbScfOptimizerOptions options;
   Backend run_backend = Backend::Core;
-  xmvb::vb::AdaptiveStructureSpaceOptimizerOptions adaptive_options;
   // The CLI path only needs accepted-iterate snapshots when trace dumping is
   // explicitly requested. Keep the default optimizer API behavior unchanged,
   // but disable trace retention here so routine runs avoid the extra
@@ -315,7 +239,6 @@ bool parse_options(int argc, char** argv, Options* parsed_options) {
   std::string dump_trace_dir;
   std::string dump_final_orbital_value_table_bin;
   bool user_specified_ao_integral_source = false;
-  bool user_specified_raw_structure_selection = false;
   bool user_specified_max_iterations = false;
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
@@ -323,8 +246,6 @@ bool parse_options(int argc, char** argv, Options* parsed_options) {
     try {
       if (argument_name == "--optimizer-backend") {
         apply_optimizer_backend_argument(argument_value, &options, &run_backend);
-      } else if (argument_name == "--structure-space-mode") {
-        apply_structure_space_mode_argument(argument_value, &structure_space_mode);
       } else if (argument_name == "--max-iterations") {
         user_specified_max_iterations = true;
         options.max_iterations = std::stoi(argument_value);
@@ -363,28 +284,7 @@ bool parse_options(int argc, char** argv, Options* parsed_options) {
       } else if (argument_name == "--skip-orbital-guess") {
         load_options.skip_orbital_guess = parse_bool_argument(argument_value);
       } else if (argument_name == "--raw-structure-selection") {
-        user_specified_raw_structure_selection = true;
         apply_raw_structure_selection_argument(argument_value, &load_options);
-      } else if (argument_name == "--adaptive-seed-selection") {
-        apply_adaptive_seed_selection_argument(argument_value, &adaptive_options);
-      } else if (argument_name == "--adaptive-determinant-score-mode") {
-        apply_adaptive_determinant_score_mode_argument(argument_value, &adaptive_options);
-      } else if (argument_name == "--adaptive-max-outer-iterations") {
-        adaptive_options.max_outer_iterations = std::stoi(argument_value);
-      } else if (argument_name == "--adaptive-max-topology-distance") {
-        adaptive_options.max_topology_distance = std::stoi(argument_value);
-      } else if (argument_name == "--adaptive-max-neighbors-per-structure") {
-        adaptive_options.max_neighbors_per_structure = std::stoi(argument_value);
-      } else if (argument_name == "--adaptive-max-candidate-pool-size") {
-        adaptive_options.max_candidate_pool_size = std::stoi(argument_value);
-      } else if (argument_name == "--adaptive-batch-size") {
-        adaptive_options.batch_size = std::stoi(argument_value);
-      } else if (argument_name == "--adaptive-max-total-structures") {
-        adaptive_options.max_total_structures = std::stoi(argument_value);
-      } else if (argument_name == "--adaptive-minimum-candidate-score") {
-        adaptive_options.minimum_candidate_score = std::stod(argument_value);
-      } else if (argument_name == "--adaptive-verbose") {
-        adaptive_options.verbose = parse_bool_argument(argument_value);
       } else if (argument_name == "--dump-trace-dir") {
         dump_trace_dir = argument_value;
       } else if (argument_name == "--dump-final-orbital-value-table-bin") {
@@ -436,32 +336,11 @@ bool parse_options(int argc, char** argv, Options* parsed_options) {
       options.nonredundant_truncated_newton_hvp_mode ==
           xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction;
 
-  if (structure_space_mode == StructureMode::AdaptiveMvp) {
-    if (uses_deepvbh_backend(run_backend)) {
-      throw std::invalid_argument(
-          "adaptive_mvp currently supports only standard C++ VBSCF optimizer backends");
-    }
-    if (!dump_trace_dir.empty()) {
-      throw std::invalid_argument(
-          "--dump-trace-dir is not yet supported with --structure-space-mode adaptive_mvp");
-    }
-    if (user_specified_raw_structure_selection &&
-        load_options.raw_structure_selection != xmvb::vb::RawStructureSelectionMode::Full) {
-      throw std::invalid_argument(
-          "--raw-structure-selection is only for standard mode; "
-          "use --adaptive-seed-selection in adaptive_mvp mode");
-    }
-    load_options.raw_structure_selection = xmvb::vb::RawStructureSelectionMode::Full;
-    load_options.expand_selected_raw_structures = false;
-  }
-
   Options parsed;
   parsed.input_path = input_path;
-  parsed.structure_mode = structure_space_mode;
   parsed.load = std::move(load_options);
   parsed.optimizer = std::move(options);
   parsed.backend = run_backend;
-  parsed.adaptive = std::move(adaptive_options);
   parsed.deepvbh_hybrid = std::move(deepvbh_options);
   parsed.deepvbh_direct = std::move(deepvbh_direct_options);
   parsed.trace_directory = std::move(dump_trace_dir);
