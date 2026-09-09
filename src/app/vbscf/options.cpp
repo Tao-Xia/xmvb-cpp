@@ -231,7 +231,7 @@ void apply_adaptive_determinant_score_mode_argument(
 }
 
 void print_usage() {
-  std::cerr << "usage: run_cpp_vbscf <input.xmi> "
+  std::cerr << "usage: xmvb-cpp.exe <input.xmi> "
                "[--optimizer-backend lbfgspp|nonredundant_projected_gradient|nonredundant_lbfgspp|nonredundant_truncated_newton";
   if (deepvbh_backend_supported()) {
     std::cerr << "|deepvbh_onnx";

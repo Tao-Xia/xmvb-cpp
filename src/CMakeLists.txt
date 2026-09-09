@@ -174,18 +174,18 @@ if (XMVB_CPP_ENABLE_ONNX_RUNTIME)
     PUBLIC ${ONNXRUNTIME_LIB})
 endif()
 
-add_executable(run_cpp_vbscf
+add_executable(xmvb
   app/vbscf/main.cpp
   app/vbscf/options.cpp
   app/vbscf/report.cpp
   app/vbscf/run.cpp)
-set_target_properties(run_cpp_vbscf PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
-target_link_libraries(run_cpp_vbscf
+set_target_properties(xmvb PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
+target_link_libraries(xmvb
   PRIVATE
     xmvb_cpp_deepvbh
     xmvb_cpp_vb
     xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(run_cpp_vbscf)
+xmvb_link_standalone_runtime(xmvb)
 
 file(
   GLOB_RECURSE XMVB_CPP_RUNTIME_BASIS_INPUTS
@@ -211,7 +211,7 @@ add_custom_command(
 add_custom_target(
   xmvb_cpp_runtime_assets
   DEPENDS ${XMVB_CPP_RUNTIME_ASSET_STAMP})
-add_dependencies(run_cpp_vbscf xmvb_cpp_runtime_assets)
+add_dependencies(xmvb xmvb_cpp_runtime_assets)
 
 if (XMVB_CPP_BUILD_DEV_TARGETS)
   include(tools/targets.cmake)

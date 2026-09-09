@@ -669,7 +669,7 @@ document the failure and its current localization.
 From the repository root, build and run the automated regressions:
 
 ```bash
-cmake --build build --target test_projected_orbital_surrogate test_positive_ritz_secants test_positive_conjugate_basis test_normalized_orbital_curvature test_spectral_trust_region test_orthonormal_hvp_basis test_sparse_orbital_quotient check_exact_ctx_hvp audit_sparse_orbital_gauge run_cpp_vbscf -j 4
+cmake --build build --target test_projected_orbital_surrogate test_positive_ritz_secants test_positive_conjugate_basis test_normalized_orbital_curvature test_spectral_trust_region test_orthonormal_hvp_basis test_sparse_orbital_quotient check_exact_ctx_hvp audit_sparse_orbital_gauge xmvb -j 4
 ctest --test-dir build -R 'projected_orbital_surrogate|positive_ritz_secants|positive_conjugate_basis|normalized_orbital_curvature|spectral_trust_region|orthonormal_hvp_basis|sparse_orbital_quotient|exact_ctx_hvp_f2_finite_difference' --output-on-failure
 ```
 

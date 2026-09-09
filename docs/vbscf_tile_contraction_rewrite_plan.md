@@ -1253,7 +1253,7 @@ tile 版本。
 验证：
 
 ```text
-cmake --build build --target run_cpp_vbscf -j8
+cmake --build build --target xmvb -j8
 cmake --build build --target check_exact_ctx_hvp -j8
 F2 lbfgspp support_sparse=off/on: converged
 F2 check_exact_ctx_hvp support_sparse=off/on:
@@ -1355,7 +1355,7 @@ tile size 调优参数。
 验证：
 
 ```text
-cmake --build build --target run_cpp_vbscf check_exact_ctx_hvp -j8
+cmake --build build --target xmvb check_exact_ctx_hvp -j8
 F2 check_exact_ctx_hvp with XMVB_CPP_OPPOSITE_SPIN_OVERLAP_TILE=on:
   opposite_spin_fixed_sso_max_abs_diff = 0
   local_opposite_spin_sso_max_abs_diff = 2.8e-17
@@ -1492,7 +1492,7 @@ XMVB_CPP_SAME_SPIN_LOCAL_TILE_BACKWARD=on|off
 验证：
 
 ```text
-cmake --build build --target run_cpp_vbscf check_exact_ctx_hvp -j8
+cmake --build build --target xmvb check_exact_ctx_hvp -j8
 F2 check_exact_ctx_hvp with XMVB_CPP_SAME_SPIN_LOCAL_TILE_BACKWARD=on:
   matrix_vs_pairwise_local_same_spin_sso_max_abs_diff = 1.7e-16
   matrix_vs_pairwise_local_same_spin_hho_max_abs_diff = 1.4e-17
@@ -1583,7 +1583,7 @@ union support matrix。
 验证：
 
 ```text
-cmake --build build --target run_cpp_vbscf check_exact_ctx_hvp -j8
+cmake --build build --target xmvb check_exact_ctx_hvp -j8
 F2 with XMVB_CPP_SAME_SPIN_DIRECTIONAL_TILE_BACKWARD=on:
   matrix_form_sum_sso_max_abs_diff = 3.3e-16
   matrix_form_sum_hho_max_abs_diff = 2.4e-16
@@ -1648,7 +1648,7 @@ packed-gradient 也统一走 tile path。
 验证：
 
 ```text
-cmake --build build --target run_cpp_vbscf check_exact_ctx_hvp -j8
+cmake --build build --target xmvb check_exact_ctx_hvp -j8
 F2 with XMVB_CPP_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on:
   analytic_state_opposite_spin_sso_max_abs_diff = 0
   matrix_form_sum_sso_max_abs_diff = 3.3e-16
@@ -1739,7 +1739,7 @@ local-response tile path 中 accepted/directional dense weight tile 是否为零
 验证：
 
 ```text
-cmake --build build --target run_cpp_vbscf check_exact_ctx_hvp -j8
+cmake --build build --target xmvb check_exact_ctx_hvp -j8
 F2 all tile switches forced:
   matrix_form_sum_sso_max_abs_diff = 3.3e-16
   matrix_form_sum_hho_max_abs_diff = 2.4e-16
@@ -1796,7 +1796,7 @@ per-packed-pair std::vector<Eigen::MatrixXd> tile bundle
 验证：
 
 ```text
-cmake --build build --target run_cpp_vbscf check_exact_ctx_hvp -j8
+cmake --build build --target xmvb check_exact_ctx_hvp -j8
 F2 default check_exact_ctx_hvp after cleanup:
   matrix_form_sum_sso_max_abs_diff = 3.33066907388e-16
   matrix_form_sum_hho_max_abs_diff = 2.42861286637e-16

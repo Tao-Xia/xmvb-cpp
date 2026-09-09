@@ -47,7 +47,7 @@ measured blocker for the production path.
 5. Prefer direct local code over cross-module helper layering. Only extract a
    helper when it removes a stable abstraction boundary rather than hiding one
    short mathematical routine behind another file.
-6. Each cleanup step must build `run_cpp_vbscf` before moving to the next step.
+6. Each cleanup step must build `xmvb` before moving to the next step.
 
 ## Phase 1: Local Simplification
 
@@ -106,7 +106,7 @@ navigation cost for reviewers.
   AO effective-one-electron linear-index cache are now built in one parallel
   pass over `g2eidx` instead of rescanning the same large index table twice.
 - Done: stopped building the exact_ctx-only AO-H1E sparse graph on the normal
-  `run_cpp_vbscf` `lbfgspp` / non-exact_ctx load path. The loader now keeps
+  `xmvb` `lbfgspp` / non-exact_ctx load path. The loader now keeps
   that expensive graph build behind an explicit load option, and the CLI only
   enables it for `nonredundant_truncated_newton + exact_ctx`, so routine VBSCF
   runs no longer pay to materialize a cache they never use.
@@ -200,7 +200,7 @@ Delete tools tied to retired branches immediately when the branch is removed.
 After each cleanup patch:
 
 1. Run `rg` for deleted module names and retired keywords.
-2. Build `cmake --build build --target run_cpp_vbscf -j8`.
+2. Build `cmake --build build --target xmvb -j8`.
 3. When SCF/orbital logic changes, run at least the F2 smoke test.
 4. For TNHVP changes, run the exact-ctx HVP diagnostic or sbatch benchmark used
    for current development.

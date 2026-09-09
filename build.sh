@@ -381,7 +381,7 @@ cmake_args+=("${extra_args[@]}")
 cmake "${cmake_args[@]}"
 repair_ninja_metadata_if_needed "${build_dir}"
 
-cmake --build "${build_dir}" --target run_cpp_vbscf -j "${jobs}"
+cmake --build "${build_dir}" --target xmvb -j "${jobs}"
 
 build_dir_abs="$(cd "${build_dir}" && pwd)"
 ln -sfn "${build_dir_abs}/compile_commands.json" compile_commands.json
