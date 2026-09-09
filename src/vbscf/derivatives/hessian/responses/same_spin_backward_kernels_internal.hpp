@@ -51,8 +51,6 @@ void accumulate_spin_local_matrix_backward(
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,
     std::vector<double>* packed_active_two_electron_gradient);

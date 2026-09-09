@@ -280,8 +280,6 @@ build_local_same_spin_matrix_backward_contribution(
       active_one_electron_matrix,
       active_space_two_electron_result,
       direction.overlap,
-      direction.one_electron,
-      direction.packed_two_electron,
       &active_one_electron_gradient,
       &result.active_orbital_overlap_gradient,
       &result.packed_active_two_electron_gradient);
@@ -308,8 +306,6 @@ build_local_same_spin_matrix_backward_contribution(
         active_one_electron_matrix,
         active_space_two_electron_result,
         direction.overlap,
-        direction.one_electron,
-        direction.packed_two_electron,
         &active_one_electron_gradient,
         &result.active_orbital_overlap_gradient,
         &result.packed_active_two_electron_gradient);
