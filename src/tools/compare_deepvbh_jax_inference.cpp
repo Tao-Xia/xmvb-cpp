@@ -176,15 +176,14 @@ int main(int argc, char** argv) {
 
   try {
     const auto load_result = xmvb::vb::load_vbscf_input_with_timings(input_path);
-    xmvb::vb::CppVbScfEvaluator exact_evaluator(xmvb::vb::VBSCFAlgorithm::Original);
+    xmvb::vb::CppVbScfEvaluator exact_evaluator;
     const auto exact_result = exact_evaluator.evaluate(
         load_result.input,
         load_result.nuclear_repulsion_energy);
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;
     xmvb::vb::AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;
     xmvb::vb::ActiveSpaceOneElectronBuilder active_space_one_electron_builder;
-    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
-        xmvb::vb::VBSCFAlgorithm::Original);
+    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
     const int n_inactive_doubly_occupied_orbitals =
         (load_result.input.orbital_preparation_input.n_total_electrons -
          load_result.input.orbital_preparation_input.n_active_electrons) /

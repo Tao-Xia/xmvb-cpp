@@ -14,7 +14,6 @@
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -26,7 +25,6 @@ enum class Component {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Auto;
   Component component = Component::Overlap;
@@ -36,7 +34,6 @@ struct Options {
 
 void print_usage() {
   std::cerr << "usage: check_cpp_active_space_gradient <input.xmi> "
-               "[--algorithm original] "
                "[--standard-two-electron-mode auto|exact|ri] "
                "[--component overlap|one_electron|two_electron] "
                "[--count N] [--step h]\n";
@@ -53,14 +50,6 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
-    if (argument_name == "--algorithm") {
-      if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
-      } else {
-        throw std::invalid_argument("invalid algorithm: " + argument_value);
-      }
-      continue;
-    }
     if (argument_name == "--standard-two-electron-mode") {
       if (argument_value == "auto") {
         options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Auto;
@@ -136,9 +125,8 @@ double evaluate_total_energy_from_active_space(
     const std::vector<double>& active_orbital_overlap_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     const std::vector<double>& packed_active_two_electron_integrals,
-    double nuclear_repulsion_energy,
-    xmvb::vb::VbScfAlgorithm algorithm) {
-  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(algorithm);
+    double nuclear_repulsion_energy) {
+  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
   const auto structure_matrices = structure_builder.build(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
@@ -220,7 +208,7 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
-    xmvb::vb::ActiveSpaceGradientEvaluator evaluator(options.algorithm);
+    xmvb::vb::ActiveSpaceGradientEvaluator evaluator;
     const auto result = evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const auto& gradient = component_gradient(result, options.component);
     const std::vector<double> baseline_packed_two =
@@ -249,7 +237,6 @@ int main(int argc, char** argv) {
     const int n_to_report =
         std::min(options.count, static_cast<int>(ranked_entries.size()));
     std::cout << std::setprecision(12);
-    std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
     std::cout << "standard_two_electron_mode = "
               << xmvb::vb::standard_two_electron_mode_name(
                      load_result.standard_two_electron_mode)
@@ -301,16 +288,14 @@ int main(int argc, char** argv) {
           plus_overlap,
           plus_one,
           plus_two,
-          load_result.nuclear_repulsion_energy,
-          options.algorithm);
+          load_result.nuclear_repulsion_energy);
       const double minus_energy = evaluate_total_energy_from_active_space(
           load_result.input,
           result,
           minus_overlap,
           minus_one,
           minus_two,
-          load_result.nuclear_repulsion_energy,
-          options.algorithm);
+          load_result.nuclear_repulsion_energy);
       const double finite_difference = (plus_energy - minus_energy) / (2.0 * options.step);
       const double analytic = gradient[entry_index];
       const double absolute_error = std::abs(analytic - finite_difference);

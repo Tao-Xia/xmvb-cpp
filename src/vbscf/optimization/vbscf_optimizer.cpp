@@ -198,8 +198,8 @@ void record_accepted_iteration_snapshot(
 
 VbScfOptimizer::VbScfOptimizer(
     VbScfOptimizerOptions options)
-    : orbital_gradient_evaluator_(options.algorithm),
-      scf_evaluator_(options.algorithm),
+    : orbital_gradient_evaluator_(),
+      scf_evaluator_(),
       options_(options) {}
 
 VbScfOptimizer::VbScfOptimizer(

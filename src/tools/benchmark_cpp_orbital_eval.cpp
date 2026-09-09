@@ -8,13 +8,11 @@
 
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Auto;
   int repeat = 10;
@@ -23,7 +21,6 @@ struct Options {
 
 void print_usage() {
   std::cerr << "usage: benchmark_cpp_orbital_eval <input.xmi> "
-               "[--algorithm original] "
                "[--standard-two-electron-mode auto|exact|ri] "
                "[--repeat N] [--warmup N]\n";
 }
@@ -39,14 +36,6 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
-    if (argument_name == "--algorithm") {
-      if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
-      } else {
-        throw std::invalid_argument("invalid algorithm: " + argument_value);
-      }
-      continue;
-    }
     if (argument_name == "--standard-two-electron-mode") {
       if (argument_value == "auto") {
         options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Auto;
@@ -97,9 +86,6 @@ void print_summary(
     double mean_ao_h1e_backprop_dt,
     double loop_wall_time_seconds) {
   std::cout << std::setprecision(12);
-  std::cout << "algorithm = "
-            << xmvb::vb::vb_scf_algorithm_name(options.algorithm)
-            << '\n';
   std::cout << "standard_two_electron_mode = "
             << xmvb::vb::standard_two_electron_mode_name(resolved_mode)
             << '\n';
@@ -132,7 +118,7 @@ int main(int argc, char** argv) {
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
 
-    xmvb::vb::OrbitalGradientEvaluator evaluator(options.algorithm);
+    xmvb::vb::OrbitalGradientEvaluator evaluator;
 
     // Keep all repeats in the same process so RI-cache construction and process
     // startup noise are not repeatedly mixed into the timing comparison.

@@ -114,8 +114,7 @@ int main(int argc, char** argv) {
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
 
-    xmvb::vb::ActiveSpaceGradientEvaluator evaluator(
-        xmvb::vb::VbScfAlgorithm::Original);
+    xmvb::vb::ActiveSpaceGradientEvaluator evaluator;
     const auto gradient_result =
         evaluator.evaluate(
             input,

@@ -8,7 +8,6 @@
 #include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -27,8 +26,7 @@ public:
   /**
    * @brief Creates an evaluator with default helper components.
    */
-  explicit StructureMatrixEvaluator(
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
+  StructureMatrixEvaluator();
 
   /**
    * @brief Creates an evaluator with explicit helper components.

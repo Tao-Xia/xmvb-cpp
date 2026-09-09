@@ -17,7 +17,6 @@
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -40,7 +39,6 @@ enum class EnergyComponent {
 struct Options {
   std::string input_path;
   std::string orbital_value_table_bin_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   xmvb::vb::AoIntegralSource ao_integral_source =
       xmvb::vb::AoIntegralSource::Auto;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
@@ -317,7 +315,6 @@ std::vector<double> read_f64_binary_file(const std::string& path) {
 void print_usage() {
   std::cerr << "usage: check_cpp_orbital_gradient <input.xmi> "
                "[--orbital-value-table-bin <path>] "
-               "[--algorithm original] "
                "[--ao-integral-source auto|legacy|libcint_cpp|runtime_hcore] "
                "[--standard-two-electron-mode auto|exact|ri] "
                "[--component total|reference|nonreference] "
@@ -341,14 +338,6 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
-    if (argument_name == "--algorithm") {
-      if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
-      } else {
-        throw std::invalid_argument("invalid algorithm: " + argument_value);
-      }
-      continue;
-    }
     if (argument_name == "--orbital-value-table-bin") {
       options.orbital_value_table_bin_path = argument_value;
       continue;
@@ -431,10 +420,9 @@ Options parse_arguments(int argc, char** argv) {
 
 double evaluate_energy_component(
     const xmvb::vb::VbScfInput& input,
-    xmvb::vb::VbScfAlgorithm algorithm,
     double nuclear_repulsion_energy,
     EnergyComponent component) {
-  xmvb::vb::VbScfEvaluator evaluator(algorithm);
+  xmvb::vb::VbScfEvaluator evaluator;
   const auto result = evaluator.evaluate(input, nuclear_repulsion_energy);
   switch (component) {
     case EnergyComponent::Total:
@@ -578,7 +566,7 @@ int main(int argc, char** argv) {
           &diagnostic_input.orbital_preparation_input);
     }
 
-    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator(options.algorithm);
+    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator;
     auto gradient_result =
         gradient_evaluator.evaluate(diagnostic_input, load_result.nuclear_repulsion_energy);
     if (options.component != EnergyComponent::Total) {
@@ -590,11 +578,9 @@ int main(int argc, char** argv) {
         build_selected_sparse_gradient(gradient_result, options.component);
     const double initial_component_energy = evaluate_energy_component(
         diagnostic_input,
-        options.algorithm,
         load_result.nuclear_repulsion_energy,
         options.component);
     std::cout << std::setprecision(12);
-    std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
     std::cout << "ao_integral_source = "
               << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source) << '\n';
     std::cout << "orbital_value_table_override = "
@@ -676,10 +662,8 @@ int main(int argc, char** argv) {
       std::cout << "reported_parameters = " << n_to_report << '\n';
 
       if (options.print_analytic_branch_decomposition) {
-        xmvb::vb::ActiveSpaceGradientEvaluator active_space_gradient_evaluator(
-            options.algorithm);
-        xmvb::vb::OrbitalGradientEvaluator orbital_gradient_evaluator(
-            options.algorithm);
+        xmvb::vb::ActiveSpaceGradientEvaluator active_space_gradient_evaluator;
+        xmvb::vb::OrbitalGradientEvaluator orbital_gradient_evaluator;
         const auto active_space_gradient_result =
             active_space_gradient_evaluator.evaluate(
                 diagnostic_input,
@@ -767,12 +751,10 @@ int main(int argc, char** argv) {
 
         const double plus_energy = evaluate_energy_component(
             plus_input,
-            options.algorithm,
             load_result.nuclear_repulsion_energy,
             options.component);
         const double minus_energy = evaluate_energy_component(
             minus_input,
-            options.algorithm,
             load_result.nuclear_repulsion_energy,
             options.component);
         const double finite_difference = (plus_energy - minus_energy) / (2.0 * options.step);
@@ -881,12 +863,10 @@ int main(int argc, char** argv) {
 
         const double plus_energy = evaluate_energy_component(
             plus_input,
-            options.algorithm,
             load_result.nuclear_repulsion_energy,
             options.component);
         const double minus_energy = evaluate_energy_component(
             minus_input,
-            options.algorithm,
             load_result.nuclear_repulsion_energy,
             options.component);
         const double finite_difference = (plus_energy - minus_energy) / (2.0 * effective_step);

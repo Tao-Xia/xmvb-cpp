@@ -350,7 +350,6 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
     const VbScfInput& current_input,
     const VbScfOptimizerResult& current_result,
     const VbScfAcceptedIterationSnapshot& current_snapshot,
-    VbScfAlgorithm algorithm,
     AdaptiveDeterminantScoreMode score_mode) {
   const auto scoring_start_time = std::chrono::steady_clock::now();
   CandidateScoreBatch score_batch;
@@ -464,7 +463,7 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
 
   const DeterminantPairEvaluator pair_evaluator{
       DeterminantOverlapResolver(),
-      DeterminantHamiltonianResolver(algorithm)};
+      DeterminantHamiltonianResolver()};
   const int n_active_orbitals =
       current_input.orbital_preparation_input.n_active_orbitals;
   std::vector<double> row_hamiltonian(
@@ -721,7 +720,6 @@ AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
         current_input,
         current_inner_result,
         current_snapshot,
-        optimizer_options_.algorithm,
         options_.determinant_score_mode);
     summary.unique_proposal_determinant_count =
         candidate_score_batch.unique_proposal_determinant_count;

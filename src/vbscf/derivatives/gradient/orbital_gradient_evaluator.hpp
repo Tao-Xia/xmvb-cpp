@@ -12,7 +12,6 @@
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -32,7 +31,6 @@ public:
    * @brief Creates an evaluator with default helper components.
    */
   explicit OrbitalGradientEvaluator(
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original,
       double finite_difference_step = 1.0e-5);
 
   /**

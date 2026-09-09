@@ -319,18 +319,12 @@ DeterminantHamiltonianResult calc_same_spin_hamiltonian(
 }
 
 
-DeterminantHamiltonianResolver::DeterminantHamiltonianResolver(
-    VbScfAlgorithm algorithm)
-    : overlap_resolver_() {
-  (void)algorithm;
-}
+DeterminantHamiltonianResolver::DeterminantHamiltonianResolver()
+    : overlap_resolver_() {}
 
 DeterminantHamiltonianResolver::DeterminantHamiltonianResolver(
-    DeterminantOverlapResolver overlap_resolver,
-    VbScfAlgorithm algorithm)
-    : overlap_resolver_(std::move(overlap_resolver)) {
-  (void)algorithm;
-}
+    DeterminantOverlapResolver overlap_resolver)
+    : overlap_resolver_(std::move(overlap_resolver)) {}
 
 DeterminantHamiltonianResult DeterminantHamiltonianResolver::resolve(
     const std::vector<int>& occ_L,

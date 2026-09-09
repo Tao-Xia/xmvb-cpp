@@ -16,7 +16,6 @@
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/structures/structure_types.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -25,7 +24,6 @@ using Matrix =
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   int count = 4;
   double step = 1.0e-6;
 };
@@ -37,7 +35,6 @@ struct StructurePairAdjoints {
 
 void print_usage() {
   std::cerr << "usage: check_active_overlap_split <input.xmi> "
-               "[--algorithm original] "
                "[--count N] [--step h]\n";
 }
 
@@ -52,14 +49,6 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
-    if (argument_name == "--algorithm") {
-      if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
-      } else {
-        throw std::invalid_argument("invalid algorithm: " + argument_value);
-      }
-      continue;
-    }
     if (argument_name == "--count") {
       options.count = std::stoi(argument_value);
       continue;
@@ -150,7 +139,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
-    xmvb::vb::ActiveSpaceGradientEvaluator evaluator(options.algorithm);
+    xmvb::vb::ActiveSpaceGradientEvaluator evaluator;
     const auto baseline =
         evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const int n_active_orbitals = load_result.input.orbital_preparation_input.n_active_orbitals;
@@ -306,10 +295,9 @@ int main(int argc, char** argv) {
           return left.second < right.second;
         });
 
-    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(options.algorithm);
+    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
     const int n_to_report = std::min(options.count, static_cast<int>(ranked_entries.size()));
     std::cout << std::setprecision(12);
-    std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
     std::cout << "finite_difference_step = " << options.step << '\n';
     std::cout << "reported_entries = " << n_to_report << '\n';
 

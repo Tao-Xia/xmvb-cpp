@@ -2,13 +2,12 @@
 
 namespace xmvb::vb {
 
-StructureMatrixEvaluator::
-    StructureMatrixEvaluator(VbScfAlgorithm algorithm)
+StructureMatrixEvaluator::StructureMatrixEvaluator()
     : orbital_preparer_(),
       ao_effective_one_electron_builder_(),
       active_space_one_electron_builder_(),
       active_space_two_electron_builder_(),
-      structure_builder_(algorithm) {}
+      structure_builder_() {}
 
 StructureMatrixEvaluator::
     StructureMatrixEvaluator(

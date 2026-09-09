@@ -1092,19 +1092,15 @@ const DeterminantPairEvaluation& FullDeterminantStructureBuildResult::pair_evalu
       determinant_index_right)];
 }
 
-FullDeterminantStructureHamiltonianOverlapBuilder::FullDeterminantStructureHamiltonianOverlapBuilder(
-    VbScfAlgorithm algorithm)
+FullDeterminantStructureHamiltonianOverlapBuilder::FullDeterminantStructureHamiltonianOverlapBuilder()
     : determinant_overlap_resolver_(),
-      determinant_hamiltonian_resolver_(algorithm) {}
+      determinant_hamiltonian_resolver_() {}
 
 FullDeterminantStructureHamiltonianOverlapBuilder::FullDeterminantStructureHamiltonianOverlapBuilder(
     DeterminantOverlapResolver determinant_overlap_resolver,
-    DeterminantHamiltonianResolver determinant_hamiltonian_resolver,
-    VbScfAlgorithm algorithm)
+    DeterminantHamiltonianResolver determinant_hamiltonian_resolver)
     : determinant_overlap_resolver_(std::move(determinant_overlap_resolver)),
-      determinant_hamiltonian_resolver_(std::move(determinant_hamiltonian_resolver)) {
-  (void)algorithm;
-}
+      determinant_hamiltonian_resolver_(std::move(determinant_hamiltonian_resolver)) {}
 
 
 StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(

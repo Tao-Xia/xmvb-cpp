@@ -5,13 +5,12 @@
 #include <vector>
 
 #include "runtime/vbscf_input_loader.hpp"
-#include "vbscf/core/vbscf_input.hpp"
+#include "vb/scf/cpp_vb_input.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/structures/structure_types.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -25,7 +24,6 @@ struct DeepVBHJaxInferenceOptions {
   std::string device = "gpu";
   std::string dtype = "float32";
   bool keep_work_directory = false;
-  VBSCFAlgorithm algorithm = VBSCFAlgorithm::Original;
 };
 
 struct DeepVBHJaxPrediction {

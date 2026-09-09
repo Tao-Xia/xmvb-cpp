@@ -15,7 +15,6 @@
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -39,8 +38,7 @@ double evaluate_active_eigenvalue(
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
     const Eigen::Ref<const Eigen::MatrixXd>& active_h1e,
     const std::vector<double>& packed_active_eri) {
-  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
-      xmvb::vb::VbScfAlgorithm::Original);
+  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
   const auto structure_matrices = structure_builder.build(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,

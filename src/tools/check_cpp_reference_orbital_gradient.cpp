@@ -10,13 +10,11 @@
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   int count = 8;
   double step = 1.0e-6;
 };
@@ -64,7 +62,6 @@ std::vector<int> collect_differentiable_parameter_indices(
 
 void print_usage() {
   std::cerr << "usage: check_cpp_reference_orbital_gradient <input.xmi> "
-               "[--algorithm original] "
                "[--count N] [--step h]\n";
 }
 
@@ -79,14 +76,6 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
-    if (argument_name == "--algorithm") {
-      if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
-      } else {
-        throw std::invalid_argument("invalid algorithm: " + argument_value);
-      }
-      continue;
-    }
     if (argument_name == "--count") {
       options.count = std::stoi(argument_value);
       continue;
@@ -109,9 +98,8 @@ Options parse_arguments(int argc, char** argv) {
 
 double evaluate_reference_energy(
     const xmvb::vb::VbScfInput& input,
-    xmvb::vb::VbScfAlgorithm algorithm,
     double nuclear_repulsion_energy) {
-  xmvb::vb::VbScfEvaluator evaluator(algorithm);
+  xmvb::vb::VbScfEvaluator evaluator;
   return evaluator.evaluate(input, nuclear_repulsion_energy).one_electron_reference_energy;
 }
 
@@ -124,7 +112,7 @@ int main(int argc, char** argv) {
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
 
-    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator(options.algorithm);
+    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator;
     auto gradient_result = gradient_evaluator.evaluate_without_reference_energy_gradient(
         load_result.input,
         load_result.nuclear_repulsion_energy);
@@ -161,7 +149,6 @@ int main(int argc, char** argv) {
     const int n_to_report =
         std::min(options.count, static_cast<int>(ranked_parameters.size()));
     std::cout << std::setprecision(12);
-    std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
     std::cout << "initial_reference_energy = "
               << gradient_result.scf_result.one_electron_reference_energy << '\n';
     std::cout << "analytic_reference_gradient_inf_norm = ";
@@ -188,12 +175,10 @@ int main(int argc, char** argv) {
       const double plus_energy =
           evaluate_reference_energy(
               plus_input,
-              options.algorithm,
               load_result.nuclear_repulsion_energy);
       const double minus_energy =
           evaluate_reference_energy(
               minus_input,
-              options.algorithm,
               load_result.nuclear_repulsion_energy);
       const double finite_difference = (plus_energy - minus_energy) / (2.0 * options.step);
       const double analytic =

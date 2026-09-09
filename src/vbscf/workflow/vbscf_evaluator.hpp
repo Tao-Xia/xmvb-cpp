@@ -6,7 +6,6 @@
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/structure_evaluator.hpp"
 #include "vbscf/core/vbscf_result.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -24,8 +23,7 @@ public:
   /**
    * @brief Creates an evaluator with default helper components.
    */
-  explicit VbScfEvaluator(
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
+  VbScfEvaluator();
 
   /**
    * @brief Creates an evaluator with explicit helper components.

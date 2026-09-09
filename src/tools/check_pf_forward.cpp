@@ -16,7 +16,6 @@
 #include "pfaffian_vbscf/types/pf_basis_data.hpp"
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -192,8 +191,7 @@ void build_exact_mats(
     throw std::invalid_argument("output matrices must not be null");
   }
 
-  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder det_builder(
-      xmvb::vb::VbScfAlgorithm::Original);
+  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder det_builder;
   const auto det_build =
       det_builder.build_with_pair_evaluations(
           input.structure_data.alpha_det,

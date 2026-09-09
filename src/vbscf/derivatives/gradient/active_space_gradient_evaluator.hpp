@@ -11,7 +11,6 @@
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_result.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 
 namespace xmvb::vb {
@@ -35,8 +34,7 @@ public:
   /**
    * @brief Creates an evaluator with default helper components.
    */
-  explicit ActiveSpaceGradientEvaluator(
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
+  ActiveSpaceGradientEvaluator();
 
   /**
    * @brief Creates an evaluator with explicit helper components.

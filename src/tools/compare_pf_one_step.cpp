@@ -18,7 +18,6 @@
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 

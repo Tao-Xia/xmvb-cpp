@@ -425,8 +425,7 @@ int main(int argc, char** argv) {
             .prepared_active_space;
 
     xmvb::core::GeneralizedEigensolver generalized_eigensolver;
-    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
-        xmvb::vb::VbScfAlgorithm::Original);
+    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
 
     std::cout << std::setprecision(12);
     std::cout << "input_path = " << options.input_path << '\n';

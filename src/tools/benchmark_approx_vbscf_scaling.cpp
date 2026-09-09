@@ -10,7 +10,6 @@
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/approx/approx_vbscf_evaluator.hpp"
 #include "vbscf/structures/structure_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -195,8 +194,7 @@ SampleTimingResult benchmark_sample(
           result.n_active_electrons,
           load_result.raw_structure_data.spin_multiplicity);
 
-  xmvb::vb::StructureMatrixEvaluator matrix_evaluator(
-      xmvb::vb::VbScfAlgorithm::Original);
+  xmvb::vb::StructureMatrixEvaluator matrix_evaluator;
   const auto active_prepare_start = Clock::now();
   const auto prepared_active_space =
       matrix_evaluator.prepare_active_space(load_result.input);

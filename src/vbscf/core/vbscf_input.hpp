@@ -88,7 +88,4 @@ struct VbScfInput {
   mutable std::shared_ptr<const RiAoFactorization> ri_factorization;
 };
 
-// Temporary source-compatibility alias for the excluded DeepVBH integration.
-using CppVbInput = VbScfInput;
-
 }  // namespace xmvb::vb

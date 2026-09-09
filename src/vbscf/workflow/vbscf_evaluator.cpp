@@ -76,8 +76,8 @@ void validate_state_selection(
 
 }  // namespace
 
-VbScfEvaluator::VbScfEvaluator(VbScfAlgorithm algorithm)
-    : matrix_evaluator_(algorithm),
+VbScfEvaluator::VbScfEvaluator()
+    : matrix_evaluator_(),
       generalized_eigensolver_() {}
 
 VbScfEvaluator::VbScfEvaluator(

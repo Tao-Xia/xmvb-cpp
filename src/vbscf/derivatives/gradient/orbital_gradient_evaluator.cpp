@@ -194,9 +194,8 @@ std::vector<double> build_reference_energy_orbital_gradient(
 }  // namespace
 
 OrbitalGradientEvaluator::OrbitalGradientEvaluator(
-    VbScfAlgorithm algorithm,
     double finite_difference_step)
-    : active_space_gradient_evaluator_(algorithm),
+    : active_space_gradient_evaluator_(),
       orbital_preparer_(),
       ao_effective_one_electron_builder_(),
       ao_effective_one_electron_backpropagator_(),

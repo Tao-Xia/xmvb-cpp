@@ -11,7 +11,6 @@
 #include "vbscf/approx/approx_vbscf_evaluator.hpp"
 #include "vbscf/structures/structure_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -154,8 +153,7 @@ void print_exact_comparison(
     const xmvb::vb::VbScfInputLoadResult& load_result,
     const xmvb::vb::ApproxVbScfModel& model,
     const xmvb::vb::ApproxVbScfPairScfResult& pair_scf_result) {
-  xmvb::vb::VbScfEvaluator scf_evaluator(
-      xmvb::vb::VbScfAlgorithm::Original);
+  xmvb::vb::VbScfEvaluator scf_evaluator;
   const auto scf_result =
       scf_evaluator.evaluate(
           load_result.input,
@@ -229,8 +227,7 @@ int main(int argc, char** argv) {
             options.input_path,
             load_options);
 
-    xmvb::vb::StructureMatrixEvaluator matrix_evaluator(
-        xmvb::vb::VbScfAlgorithm::Original);
+    xmvb::vb::StructureMatrixEvaluator matrix_evaluator;
     const auto prepared_active_space =
         matrix_evaluator.prepare_active_space(load_result.input);
 

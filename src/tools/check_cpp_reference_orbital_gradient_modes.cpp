@@ -15,7 +15,6 @@
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -24,7 +23,6 @@ using Matrix =
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   int count = 4;
   double step = 1.0e-6;
 };
@@ -70,19 +68,13 @@ Options parse_arguments(int argc, char** argv) {
   if (argc < 2 || ((argc - 2) % 2 != 0)) {
     throw std::invalid_argument(
         "usage: check_cpp_reference_orbital_gradient_modes <input.xmi> "
-        "[--algorithm original] [--count N] [--step h]");
+        "[--count N] [--step h]");
   }
   Options options;
   options.input_path = argv[1];
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string name = argv[argument_index];
     const std::string value = argv[argument_index + 1];
-    if (name == "--algorithm") {
-      if (value != "original") {
-        throw std::invalid_argument("invalid algorithm: " + value);
-      }
-      continue;
-    }
     if (name == "--count") {
       options.count = std::stoi(value);
       continue;
@@ -98,9 +90,8 @@ Options parse_arguments(int argc, char** argv) {
 
 double evaluate_reference_energy(
     const xmvb::vb::VbScfInput& input,
-    xmvb::vb::VbScfAlgorithm algorithm,
     double nuclear_repulsion_energy) {
-  xmvb::vb::VbScfEvaluator evaluator(algorithm);
+  xmvb::vb::VbScfEvaluator evaluator;
   return evaluator.evaluate(input, nuclear_repulsion_energy).one_electron_reference_energy;
 }
 
@@ -130,7 +121,7 @@ int main(int argc, char** argv) {
     const auto& input = load_result.input;
     const bool use_ri = input.ao_integral_input.ao_two_electron_integral_values.empty();
 
-    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator(options.algorithm);
+    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator;
     auto gradient_result = gradient_evaluator.evaluate_without_reference_energy_gradient(
         input,
         load_result.nuclear_repulsion_energy);
@@ -223,12 +214,10 @@ int main(int argc, char** argv) {
       const double plus_energy =
           evaluate_reference_energy(
               plus_input,
-              options.algorithm,
               load_result.nuclear_repulsion_energy);
       const double minus_energy =
           evaluate_reference_energy(
               minus_input,
-              options.algorithm,
               load_result.nuclear_repulsion_energy);
       const double finite_difference = (plus_energy - minus_energy) / (2.0 * options.step);
 

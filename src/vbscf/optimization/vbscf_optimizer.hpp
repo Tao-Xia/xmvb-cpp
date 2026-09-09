@@ -7,7 +7,6 @@
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/optimization/vbscf_optimizer_result.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -88,11 +87,6 @@ struct VbScfOptimizerOptions {
    */
   VbScfOptimizerBackend backend =
       VbScfOptimizerBackend::NonredundantLbfgspp;
-
-  /**
-   * @brief Determinant evaluation algorithm used in the C++ VBSCF path.
-   */
-  VbScfAlgorithm algorithm = VbScfAlgorithm::Original;
 
   /**
    * @brief Maximum number of accepted optimization iterations.

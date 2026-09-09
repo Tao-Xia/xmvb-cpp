@@ -22,13 +22,11 @@
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VbScfAlgorithm algorithm = xmvb::vb::VbScfAlgorithm::Original;
   int count = 8;
   double step = 1.0e-6;
 };
@@ -83,7 +81,6 @@ double compute_matrix_inner_product(
 
 void print_usage() {
   std::cerr << "usage: check_cpp_auxiliary_gradient <input.xmi> "
-               "[--algorithm original] "
                "[--count N] [--step h]\n";
 }
 
@@ -98,14 +95,6 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
-    if (argument_name == "--algorithm") {
-      if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VbScfAlgorithm::Original;
-      } else {
-        throw std::invalid_argument("invalid algorithm: " + argument_value);
-      }
-      continue;
-    }
     if (argument_name == "--count") {
       options.count = std::stoi(argument_value);
       continue;
@@ -150,8 +139,7 @@ double evaluate_total_energy_from_auxiliary(
     const std::vector<double>& auxiliary_orbital_matrix,
     const std::vector<double>& inactive_density_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
-    double nuclear_repulsion_energy,
-    xmvb::vb::VbScfAlgorithm algorithm) {
+    double nuclear_repulsion_energy) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
   const int n_inactive_doubly_occupied_orbitals =
@@ -231,7 +219,7 @@ double evaluate_total_energy_from_auxiliary(
             n_active_orbitals);
   }
 
-  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(algorithm);
+  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
   const auto structure_matrices = structure_builder.build(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
@@ -540,7 +528,7 @@ int main(int argc, char** argv) {
         (input.orbital_preparation_input.n_total_electrons -
          input.orbital_preparation_input.n_active_electrons) / 2;
 
-    xmvb::vb::ActiveSpaceGradientEvaluator active_space_gradient_evaluator(options.algorithm);
+    xmvb::vb::ActiveSpaceGradientEvaluator active_space_gradient_evaluator;
     const auto active_space_gradient_result =
         active_space_gradient_evaluator.evaluate(input, load_result.nuclear_repulsion_energy);
     xmvb::vb::ActiveSpaceMatrixBackpropagator active_space_matrix_backpropagator;
@@ -660,7 +648,6 @@ int main(int argc, char** argv) {
         std::min(options.count, static_cast<int>(ranked_inactive_density_entries.size()));
 
     std::cout << std::setprecision(12);
-    std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
     std::cout << "initial_total_energy = " << active_space_gradient_result.scf_result.total_energy
               << '\n';
     std::cout << "active_space_representation = "
@@ -719,15 +706,13 @@ int main(int argc, char** argv) {
           plus_auxiliary,
           baseline_inactive_density,
           active_space_gradient_result.ao_effective_one_electron_result.ao_effective_h1e,
-          load_result.nuclear_repulsion_energy,
-          options.algorithm);
+          load_result.nuclear_repulsion_energy);
       const double minus_energy = evaluate_total_energy_from_auxiliary(
           input,
           minus_auxiliary,
           baseline_inactive_density,
           active_space_gradient_result.ao_effective_one_electron_result.ao_effective_h1e,
-          load_result.nuclear_repulsion_energy,
-          options.algorithm);
+          load_result.nuclear_repulsion_energy);
       const ActiveSpaceMatrices plus_matrices = build_active_space_matrices(
           input,
           plus_auxiliary,

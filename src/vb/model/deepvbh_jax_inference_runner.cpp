@@ -731,7 +731,6 @@ fs::path write_single_step_inference_sample(
                          << "  \"sample_name\": \"inference_sample\",\n"
                          << "  \"source_input_path\": \"\",\n"
                          << "  \"optimizer_backend\": \"inference\",\n"
-                         << "  \"algorithm\": \"original\",\n"
                          << "  \"n_structures\": " << raw_structure_data.n_structures << ",\n"
                          << "  \"n_total_electrons\": " << raw_structure_data.n_total_electrons << ",\n"
                          << "  \"n_active_electrons\": " << raw_structure_data.n_active_electrons << ",\n"
@@ -1454,7 +1453,7 @@ DeepVBHJaxInferenceRunner::DeepVBHJaxInferenceRunner(
     : orbital_preparer_(),
       ao_effective_one_electron_builder_(),
       active_space_one_electron_builder_(),
-      structure_builder_(options.algorithm),
+      structure_builder_(),
       options_(std::move(options)) {}
 
 DeepVBHJaxPrediction DeepVBHJaxInferenceRunner::predict(

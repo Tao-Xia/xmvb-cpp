@@ -240,15 +240,13 @@ DeepVBHOnnxHybridOptimizer::DeepVBHOnnxHybridOptimizer(
     : inference_runner_([&options]() {
         options.optimizer_options.backend = CppVbScfOptimizerBackend::DeepVBHOnnx;
         options.inference_options.backend = "onnx_runtime";
-        options.inference_options.algorithm = options.optimizer_options.algorithm;
         return options.inference_options;
       }()),
-      orbital_gradient_evaluator_(options.optimizer_options.algorithm),
-      scf_evaluator_(options.optimizer_options.algorithm),
+      orbital_gradient_evaluator_(),
+      scf_evaluator_(),
       options_(std::move(options)) {
   options_.optimizer_options.backend = CppVbScfOptimizerBackend::DeepVBHOnnx;
   options_.inference_options.backend = "onnx_runtime";
-  options_.inference_options.algorithm = options_.optimizer_options.algorithm;
 }
 
 CppVbScfOptimizerResult DeepVBHOnnxHybridOptimizer::optimize(
@@ -272,10 +270,6 @@ CppVbScfOptimizerResult DeepVBHOnnxHybridOptimizer::optimize(
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
-  if (options_.optimizer_options.algorithm != VBSCFAlgorithm::Original) {
-    throw std::invalid_argument(
-        "deepvbh_onnx currently supports only the original VBSCF algorithm");
-  }
   if (options_.optimizer_options.max_iterations <= 0) {
     throw std::invalid_argument("max_iterations must be positive");
   }

@@ -27,7 +27,6 @@
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -277,8 +276,7 @@ AcceptedPointBenchmarkContext build_benchmark_context(
       throw std::runtime_error("invalid orbital-value-table file");
   }
 
-  xmvb::vb::OrbitalGradientEvaluator evaluator(
-      xmvb::vb::VbScfAlgorithm::Original);
+  xmvb::vb::OrbitalGradientEvaluator evaluator;
   context.gradient_result =
       std::make_shared<xmvb::vb::OrbitalGradientResult>(
           evaluator.evaluate_without_reference_energy_gradient(
@@ -421,7 +419,7 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
   std::cout << "audit_sampled_generalized_max = " << relative.eigenvalues().tail(1)[0] << '\n';
 
   auto finite_difference = [&](const Eigen::VectorXd& v, double step) -> Eigen::VectorXd {
-    OrbitalGradientEvaluator evaluator(VbScfAlgorithm::Original);
+    OrbitalGradientEvaluator evaluator;
     auto plus = context.input, minus = context.input;
     plus.orbital_preparation_input = space.retract_step(context.input.orbital_preparation_input, v, step);
     minus.orbital_preparation_input = space.retract_step(context.input.orbital_preparation_input, v, -step);

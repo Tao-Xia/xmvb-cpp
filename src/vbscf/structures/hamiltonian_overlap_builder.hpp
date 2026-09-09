@@ -9,7 +9,6 @@
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
 #include "vbscf/structures/structure_types.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace xmvb::vb {
 
@@ -45,8 +44,7 @@ public:
   /**
    * @brief Creates a builder with default helper components.
    */
-  explicit FullDeterminantStructureHamiltonianOverlapBuilder(
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
+  FullDeterminantStructureHamiltonianOverlapBuilder();
 
   /**
    * @brief Creates a builder with explicit helper components.
@@ -56,8 +54,7 @@ public:
    */
   FullDeterminantStructureHamiltonianOverlapBuilder(
       DeterminantOverlapResolver determinant_overlap_resolver,
-      DeterminantHamiltonianResolver determinant_hamiltonian_resolver,
-      VbScfAlgorithm algorithm = VbScfAlgorithm::Original);
+      DeterminantHamiltonianResolver determinant_hamiltonian_resolver);
 
   /**
    * @brief Builds structure-level matrices from explicit full-determinant data.

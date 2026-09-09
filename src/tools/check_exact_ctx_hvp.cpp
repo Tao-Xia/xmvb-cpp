@@ -26,7 +26,6 @@
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
-#include "vbscf/core/algorithm.hpp"
 
 namespace {
 
@@ -1889,10 +1888,8 @@ int main(int argc, char** argv) {
       }
     }
 
-    xmvb::vb::OrbitalGradientEvaluator evaluator(
-        xmvb::vb::VbScfAlgorithm::Original);
-    xmvb::vb::ActiveSpaceGradientEvaluator active_space_evaluator(
-        xmvb::vb::VbScfAlgorithm::Original);
+    xmvb::vb::OrbitalGradientEvaluator evaluator;
+    xmvb::vb::ActiveSpaceGradientEvaluator active_space_evaluator;
     const auto gradient_result =
         evaluator.evaluate_without_reference_energy_gradient(
             input,
