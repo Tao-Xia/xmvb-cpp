@@ -19,18 +19,18 @@ if (NOT DEFINED XMVB_CPP_BUILD_DEV_TARGETS)
 endif()
 
 set(
-  XMVB_CPP_HAVE_TEST_SOURCES
+  XMVB_CPP_HAVE_LEGACY_TEST_SOURCES
   FALSE)
 if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests")
-  set(XMVB_CPP_HAVE_TEST_SOURCES TRUE)
+  set(XMVB_CPP_HAVE_LEGACY_TEST_SOURCES TRUE)
 endif()
 
 if (XMVB_CPP_BUILD_DEV_TARGETS AND
-    NOT XMVB_CPP_HAVE_TEST_SOURCES)
-  message(WARNING
-    "XMVB_CPP_BUILD_DEV_TARGETS=ON but ${CMAKE_CURRENT_SOURCE_DIR}/tests is absent in "
-    "this repository export. Building standalone diagnostic tools only; skipping "
-    "targets that depend on omitted test sources.")
+    NOT XMVB_CPP_HAVE_LEGACY_TEST_SOURCES)
+  message(STATUS
+    "Optional legacy tests are absent from ${CMAKE_CURRENT_SOURCE_DIR}/tests. "
+    "Building the maintained root-level VBSCF tests and standalone diagnostics; "
+    "skipping only targets that depend on the omitted legacy test sources.")
 endif()
 
 # The standalone path is now pure C++. Keep the old cache variables pinned off
@@ -422,49 +422,7 @@ target_link_libraries(audit_sparse_orbital_gauge
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(audit_sparse_orbital_gauge)
 
-add_executable(test_sparse_orbital_quotient ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_sparse_orbital_quotient.cpp)
-target_link_libraries(test_sparse_orbital_quotient PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_sparse_orbital_quotient)
-
-add_executable(test_orbital_block_partition ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_orbital_block_partition.cpp)
-target_link_libraries(test_orbital_block_partition PRIVATE xmvb_cpp_vb)
-
-add_executable(test_orthonormal_hvp_basis ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_orthonormal_hvp_basis.cpp)
-target_link_libraries(test_orthonormal_hvp_basis PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_orthonormal_hvp_basis)
-
-add_executable(test_reduced_hessian_reference ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_reduced_hessian_reference.cpp)
-target_link_libraries(test_reduced_hessian_reference PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_reduced_hessian_reference)
-
-add_executable(test_spectral_trust_region ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_spectral_trust_region.cpp)
-target_link_libraries(test_spectral_trust_region PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_spectral_trust_region)
-
-add_executable(test_normalized_orbital_curvature ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_normalized_orbital_curvature.cpp)
-target_link_libraries(test_normalized_orbital_curvature PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_normalized_orbital_curvature)
-
-add_executable(test_projected_orbital_surrogate ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_projected_orbital_surrogate.cpp)
-target_link_libraries(test_projected_orbital_surrogate PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_projected_orbital_surrogate)
-
-add_executable(test_positive_conjugate_basis ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_positive_conjugate_basis.cpp)
-target_link_libraries(test_positive_conjugate_basis PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_positive_conjugate_basis)
-
-add_executable(test_positive_ritz_secants ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_positive_ritz_secants.cpp)
-add_executable(test_curvature_decomposition ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_curvature_decomposition.cpp)
-add_executable(test_oeo_normalization_pullback ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_oeo_normalization_pullback.cpp)
-add_executable(test_cofactor_differential ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_cofactor_differential.cpp)
-target_link_libraries(test_cofactor_differential PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_cofactor_differential)
-target_link_libraries(test_oeo_normalization_pullback PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_oeo_normalization_pullback)
-target_link_libraries(test_curvature_decomposition PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_curvature_decomposition)
-target_link_libraries(test_positive_ritz_secants PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(test_positive_ritz_secants)
+include(${CMAKE_SOURCE_DIR}/tests/vbscf/targets.cmake)
 
 add_executable(test_davidson core/linear_algebra/test_davidson.cpp)
 target_link_libraries(test_davidson PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
@@ -689,71 +647,6 @@ add_dependencies(check_exact_two_electron_hvp xmvb_cpp_runtime_assets)
 add_dependencies(check_exact_ctx_hvp xmvb_cpp_runtime_assets)
 add_dependencies(benchmark_exact_ctx_hvp xmvb_cpp_runtime_assets)
 
-if (BUILD_TESTING)
-  add_test(NAME orbital_block_partition COMMAND test_orbital_block_partition)
-  add_test(NAME curvature_decomposition COMMAND test_curvature_decomposition)
-  add_test(NAME oeo_normalization_pullback COMMAND test_oeo_normalization_pullback)
-  add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
-  set_tests_properties(oeo_normalization_pullback PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME curvature_audit_f2 COMMAND benchmark_exact_ctx_hvp
-    ${CMAKE_SOURCE_DIR}/src/test_molecule/F2.xmi
-    --nonredundant-adapt true --curvature-audit-directions 6)
-  set_tests_properties(curvature_audit_f2 PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
-    PASS_REGULAR_EXPRESSION "audit_total_hvp_calls =")
-  add_test(NAME dense_reduced_hessian_f2 COMMAND benchmark_exact_ctx_hvp
-    ${CMAKE_SOURCE_DIR}/src/test_molecule/F2.xmi
-    --repeats 1 --dense-reference-block-width 4)
-  set_tests_properties(dense_reduced_hessian_f2 PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
-    PASS_REGULAR_EXPRESSION "dense_reference_action_relative_error =")
-  add_test(NAME projected_orbital_surrogate COMMAND test_projected_orbital_surrogate)
-  set_tests_properties(projected_orbital_surrogate PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME positive_ritz_secants COMMAND test_positive_ritz_secants)
-  set_tests_properties(positive_ritz_secants PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME positive_conjugate_basis COMMAND test_positive_conjugate_basis)
-  set_tests_properties(positive_conjugate_basis PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME normalized_orbital_curvature COMMAND test_normalized_orbital_curvature)
-  set_tests_properties(normalized_orbital_curvature PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME spectral_trust_region COMMAND test_spectral_trust_region)
-  set_tests_properties(spectral_trust_region PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME orthonormal_hvp_basis COMMAND test_orthonormal_hvp_basis)
-  set_tests_properties(orthonormal_hvp_basis PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME reduced_hessian_reference COMMAND test_reduced_hessian_reference)
-  set_tests_properties(reduced_hessian_reference PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME sparse_orbital_quotient COMMAND test_sparse_orbital_quotient)
-  set_tests_properties(sparse_orbital_quotient PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(
-    NAME exact_ctx_hvp_f2_finite_difference
-    COMMAND
-      check_exact_ctx_hvp
-      ${CMAKE_SOURCE_DIR}/src/test_molecule/F2.xmi
-      --step 1e-4
-      --probe full
-      --max-rel-error 1e-7)
-  add_test(NAME exact_ctx_hvp_f2_oeo_finite_difference
-    COMMAND check_exact_ctx_hvp
-      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_OEO.xmi
-      --step 1e-4 --probe full --nonredundant-adapt true --max-rel-error 1e-7)
-  set_tests_properties(exact_ctx_hvp_f2_oeo_finite_difference PROPERTIES
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  set_tests_properties(
-    exact_ctx_hvp_f2_finite_difference
-    PROPERTIES
-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-      ENVIRONMENT
-        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
-endif()
 add_dependencies(check_structure_expansion_signs xmvb_cpp_runtime_assets)
 add_dependencies(check_same_spin_overlap_gradient xmvb_cpp_runtime_assets)
 add_dependencies(check_structure_overlap_weight xmvb_cpp_runtime_assets)
@@ -786,7 +679,7 @@ if (_xmvb_dev_tool_targets)
 endif()
 endif()
 
-if (XMVB_CPP_BUILD_DEV_TARGETS AND XMVB_CPP_HAVE_TEST_SOURCES)
+if (XMVB_CPP_BUILD_DEV_TARGETS AND XMVB_CPP_HAVE_LEGACY_TEST_SOURCES)
   get_property(_xmvb_targets_before_dev_tests DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 
   add_executable(generalized_eigensolver_test
