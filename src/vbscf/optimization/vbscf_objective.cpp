@@ -15,8 +15,8 @@
 #include "vbscf/orbitals/orbital_preparation_input.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 #include "vb/runtime_utils.hpp"
-#include "vb/scf/cpp_active_space_second_order_context.hpp"
-#include "vb/scf/scf_vector_utilities.hpp"
+#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/optimization/vector_operations.hpp"
 
 namespace xmvb::vb {
 
@@ -938,7 +938,7 @@ VbScfObjective::VbScfObjective(
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy,
-    const CppOrbitalGradientEvaluator* orbital_gradient_evaluator,
+    const OrbitalGradientEvaluator* orbital_gradient_evaluator,
     const VbScfEvaluator* scf_evaluator)
     : working_input_(input),
       probe_input_buffer_(input),

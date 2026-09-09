@@ -10,10 +10,10 @@
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vb/scf/cpp_active_space_second_order_context.hpp"
-#include "vb/scf/exact_orbital_second_order_operator_outer_response_internal.hpp"
-#include "vb/scf/opposite_spin_matrix_backward.hpp"
-#include "vb/scf/same_spin_matrix_backward.hpp"
+#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/derivatives/hessian/structure_response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
@@ -48,7 +48,7 @@ struct HvpComponents {
  *   orbital space as `J^T \delta \lambda`.
  *
  */
-class ExactOrbitalSecondOrderOperator {
+class ExactHvpOperator {
 public:
   struct Diagnostics {
     bool supports_analytic_core_model = false;
@@ -81,13 +81,13 @@ public:
     double outer_response_orbital_pullback_wall_time_seconds = 0.0;
   };
 
-  ExactOrbitalSecondOrderOperator(
-      std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context,
+  ExactHvpOperator(
+      std::shared_ptr<const AcceptedPointContext> accepted_point_context,
       const CppVbInput* current_input,
       SparseParameterLayout parameter_view,
       const OrbitalChart* nonredundant_space);
 
-  ~ExactOrbitalSecondOrderOperator();
+  ~ExactHvpOperator();
 
   /**
    * @brief Applies the accepted-point reduced-space second-order model.
@@ -147,7 +147,7 @@ private:
     double outer_response_orbital_pullback_wall_time_seconds = 0.0;
   };
 
-  std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context_;
+  std::shared_ptr<const AcceptedPointContext> accepted_point_context_;
   const CppVbInput* current_input_ = nullptr;
   SparseParameterLayout parameter_view_;
   const OrbitalChart* nonredundant_space_ = nullptr;
@@ -207,7 +207,7 @@ private:
 OppositeSpinMatrixBackwardContribution
 build_pairwise_local_opposite_spin_matrix_backward_reference(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -226,7 +226,7 @@ build_pairwise_local_opposite_spin_matrix_backward_reference(
 SameSpinMatrixBackwardContribution
 build_pairwise_local_same_spin_matrix_backward_reference(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,

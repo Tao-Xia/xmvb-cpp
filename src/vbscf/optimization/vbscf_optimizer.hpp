@@ -4,7 +4,7 @@
 #include <vector>
 
 #include "vbscf/core/vbscf_input.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/optimization/vbscf_optimizer_result.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
@@ -235,7 +235,7 @@ public:
    * @brief Creates an optimizer with explicit helper components.
    */
   VbScfOptimizer(
-      CppOrbitalGradientEvaluator orbital_gradient_evaluator,
+      OrbitalGradientEvaluator orbital_gradient_evaluator,
       VbScfEvaluator scf_evaluator,
       VbScfOptimizerOptions options);
 
@@ -256,7 +256,7 @@ public:
       double nuclear_repulsion_energy) const;
 
 private:
-  CppOrbitalGradientEvaluator orbital_gradient_evaluator_;
+  OrbitalGradientEvaluator orbital_gradient_evaluator_;
   VbScfEvaluator scf_evaluator_;
   VbScfOptimizerOptions options_;
 };

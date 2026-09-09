@@ -12,8 +12,8 @@
 #include "vbscf/structures/coefficient_blocks.hpp"
 #include "vbscf/structures/structure_types.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
-#include "vb/scf/cpp_active_space_second_order_context.hpp"
-#include "vb/scf/exact_orbital_second_order_operator_outer_response_internal.hpp"
+#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/derivatives/hessian/structure_response_internal.hpp"
 
 namespace xmvb::vb {
 
@@ -124,7 +124,7 @@ void append_exact_ctx_memory_breakdown(
 
 void append_exact_ctx_memory_breakdown(
     const std::string& prefix,
-    const CppActiveSpaceSecondOrderContext& context,
+    const AcceptedPointContext& context,
     ExactCtxMemoryBreakdown* breakdown);
 
 void append_exact_ctx_memory_breakdown(

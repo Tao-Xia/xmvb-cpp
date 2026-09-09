@@ -13,7 +13,7 @@
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_ri_operator.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 
 namespace {
 
@@ -92,7 +92,7 @@ std::vector<double> build_production_ao_h1e_backprop_input(
       (input.orbital_preparation_input.n_total_electrons -
        input.orbital_preparation_input.n_active_electrons) / 2;
 
-  xmvb::vb::CppActiveSpaceGradientEvaluator active_space_gradient_evaluator;
+  xmvb::vb::ActiveSpaceGradientEvaluator active_space_gradient_evaluator;
   const auto active_space_gradient_result =
       active_space_gradient_evaluator.evaluate(input);
 

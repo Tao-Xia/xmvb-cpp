@@ -86,13 +86,13 @@ VbScfEvaluator::VbScfEvaluator(
     : matrix_evaluator_(std::move(matrix_evaluator)),
       generalized_eigensolver_(std::move(generalized_eigensolver)) {}
 
-CppVbScfResult VbScfEvaluator::evaluate(
+VbScfResult VbScfEvaluator::evaluate(
     const CppVbInput& input,
     double nuclear_repulsion_energy) const {
   return evaluate(input, {0}, {1.0}, nuclear_repulsion_energy);
 }
 
-CppVbScfResult VbScfEvaluator::evaluate(
+VbScfResult VbScfEvaluator::evaluate(
     const CppVbInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -108,7 +108,7 @@ CppVbScfResult VbScfEvaluator::evaluate(
   const std::vector<double> normalized_weights =
       normalize_state_average_weights(state_average_weights);
 
-  CppVbScfResult result;
+  VbScfResult result;
   result.n_structures = input.structure_data.n_structures;
   result.nuclear_repulsion_energy = nuclear_repulsion_energy;
   result.selected_state_indices = selected_state_indices;

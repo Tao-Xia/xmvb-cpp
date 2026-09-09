@@ -7,7 +7,7 @@
 
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/coefficient_blocks.hpp"
-#include "vb/scf/cpp_active_space_second_order_context.hpp"
+#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 
 namespace xmvb::vb {
 
@@ -82,7 +82,7 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
  */
 struct AcceptedOuterResponseLinearResponseCache {
   const CppVbInput* input = nullptr;
-  const CppActiveSpaceSecondOrderContext* accepted_point_context = nullptr;
+  const AcceptedPointContext* accepted_point_context = nullptr;
   const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks =
       nullptr;
   std::vector<int> selected_state_indices;
@@ -94,7 +94,7 @@ struct AcceptedOuterResponseLinearResponseCache {
 AcceptedOuterResponseLinearResponseCache
 build_accepted_outer_response_linear_response_cache(
     const CppVbInput* input,
-    const CppActiveSpaceSecondOrderContext* accepted_point_context,
+    const AcceptedPointContext* accepted_point_context,
     const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks);
 
 }  // namespace xmvb::vb

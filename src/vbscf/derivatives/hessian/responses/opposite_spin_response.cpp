@@ -1,4 +1,4 @@
-#include "vb/scf/opposite_spin_matrix_backward.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +14,7 @@
 #include "vbscf/structures/support_local_contractions.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
-#include "vb/scf/same_spin_matrix_backward.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 
 namespace xmvb::vb {
 

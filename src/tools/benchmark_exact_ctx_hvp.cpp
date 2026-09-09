@@ -17,16 +17,16 @@
 
 #include "tools/curvature_decomposition.hpp"
 #include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
-#include "vb/scf/reduced_hessian_reference.hpp"
+#include "vbscf/diagnostics/reduced_hessian_reference.hpp"
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/diagnostics/orbital_chart_audit.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
-#include "vb/scf/cpp_orbital_gradient_result.hpp"
-#include "vb/scf/exact_orbital_second_order_operator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
+#include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -53,8 +53,8 @@ enum class BenchmarkComponent {
 
 struct AcceptedPointBenchmarkContext {
   xmvb::vb::CppVbInput input;
-  std::shared_ptr<xmvb::vb::CppOrbitalGradientResult> gradient_result;
-  std::shared_ptr<const xmvb::vb::CppActiveSpaceSecondOrderContext>
+  std::shared_ptr<xmvb::vb::OrbitalGradientResult> gradient_result;
+  std::shared_ptr<const xmvb::vb::AcceptedPointContext>
       second_order_context;
   xmvb::vb::SparseParameterLayout parameter_view;
   std::unique_ptr<xmvb::vb::OrbitalChart> nonredundant_space;
@@ -66,14 +66,14 @@ struct BenchmarkMeasurement {
   BenchmarkComponent component = BenchmarkComponent::Full;
   double external_wall_time_seconds = 0.0;
   double response_inf_norm = 0.0;
-  xmvb::vb::ExactOrbitalSecondOrderOperator::Diagnostics diagnostics;
+  xmvb::vb::ExactHvpOperator::Diagnostics diagnostics;
 };
 
 struct BlockBenchmarkMeasurement {
   double external_wall_time_seconds = 0.0;
   double response_inf_norm = 0.0;
   double scalar_reference_relative_error = 0.0;
-  xmvb::vb::ExactOrbitalSecondOrderOperator::Diagnostics diagnostics;
+  xmvb::vb::ExactHvpOperator::Diagnostics diagnostics;
 };
 
 void print_usage() {
@@ -218,7 +218,7 @@ double average_wall_time_seconds(
 }
 
 Eigen::VectorXd apply_component(
-    const xmvb::vb::ExactOrbitalSecondOrderOperator& exact_operator,
+    const xmvb::vb::ExactHvpOperator& exact_operator,
     BenchmarkComponent component,
     const Eigen::VectorXd& reduced_direction) {
   switch (component) {
@@ -277,10 +277,10 @@ AcceptedPointBenchmarkContext build_benchmark_context(
       throw std::runtime_error("invalid orbital-value-table file");
   }
 
-  xmvb::vb::CppOrbitalGradientEvaluator evaluator(
+  xmvb::vb::OrbitalGradientEvaluator evaluator(
       xmvb::vb::VBSCFAlgorithm::Original);
   context.gradient_result =
-      std::make_shared<xmvb::vb::CppOrbitalGradientResult>(
+      std::make_shared<xmvb::vb::OrbitalGradientResult>(
           evaluator.evaluate_without_reference_energy_gradient(
           context.input,
           {0},
@@ -344,11 +344,11 @@ AcceptedPointBenchmarkContext build_benchmark_context(
 void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budget) {
   using namespace xmvb::vb;
   const auto& space = *context.nonredundant_space;
-  ExactOrbitalSecondOrderOperator op(context.second_order_context, &context.input,
+  ExactHvpOperator op(context.second_order_context, &context.input,
       context.parameter_view, &space);
-  ExactOrbitalSecondOrderOperator core_op(context.second_order_context, &context.input,
+  ExactHvpOperator core_op(context.second_order_context, &context.input,
       context.parameter_view, &space);
-  ExactOrbitalSecondOrderOperator outer_op(context.second_order_context, &context.input,
+  ExactHvpOperator outer_op(context.second_order_context, &context.input,
       context.parameter_view, &space);
   const Eigen::VectorXd g = space.project_reduced_gradient(
       context.parameter_view.gather_from_full(context.gradient_result->sparse_orbital_energy_gradient));
@@ -421,7 +421,7 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
   std::cout << "audit_sampled_generalized_max = " << relative.eigenvalues().tail(1)[0] << '\n';
 
   auto finite_difference = [&](const Eigen::VectorXd& v, double step) -> Eigen::VectorXd {
-    CppOrbitalGradientEvaluator evaluator(VBSCFAlgorithm::Original);
+    OrbitalGradientEvaluator evaluator(VBSCFAlgorithm::Original);
     auto plus = context.input, minus = context.input;
     plus.orbital_preparation_input = space.retract_step(context.input.orbital_preparation_input, v, step);
     minus.orbital_preparation_input = space.retract_step(context.input.orbital_preparation_input, v, -step);
@@ -512,7 +512,7 @@ BenchmarkMeasurement run_component_benchmark(
     int warmup_count,
     int repeat_count) {
   if (warmup_count > 0) {
-    xmvb::vb::ExactOrbitalSecondOrderOperator warmup_operator(
+    xmvb::vb::ExactHvpOperator warmup_operator(
         context.second_order_context,
         &context.input,
         context.parameter_view,
@@ -528,7 +528,7 @@ BenchmarkMeasurement run_component_benchmark(
     }
   }
 
-  xmvb::vb::ExactOrbitalSecondOrderOperator exact_operator(
+  xmvb::vb::ExactHvpOperator exact_operator(
       context.second_order_context,
       &context.input,
       context.parameter_view,
@@ -578,7 +578,7 @@ BlockBenchmarkMeasurement run_full_block_benchmark(
       qr.householderQ() * Eigen::MatrixXd::Identity(dimension, width);
 
   if (warmup_count > 0) {
-    xmvb::vb::ExactOrbitalSecondOrderOperator warmup_operator(
+    xmvb::vb::ExactHvpOperator warmup_operator(
         context.second_order_context,
         &context.input,
         context.parameter_view,
@@ -587,7 +587,7 @@ BlockBenchmarkMeasurement run_full_block_benchmark(
       (void) warmup_operator.apply_reduced_batch(directions);
     }
   }
-  xmvb::vb::ExactOrbitalSecondOrderOperator exact_operator(
+  xmvb::vb::ExactHvpOperator exact_operator(
       context.second_order_context,
       &context.input,
       context.parameter_view,
@@ -603,7 +603,7 @@ BlockBenchmarkMeasurement run_full_block_benchmark(
       std::chrono::duration<double>(stop_time - start_time).count();
   measurement.response_inf_norm = response.cwiseAbs().maxCoeff();
   measurement.diagnostics = exact_operator.diagnostics();
-  xmvb::vb::ExactOrbitalSecondOrderOperator scalar_reference_operator(
+  xmvb::vb::ExactHvpOperator scalar_reference_operator(
       context.second_order_context,
       &context.input,
       context.parameter_view,
@@ -627,7 +627,7 @@ void run_dense_reduced_hessian_reference(
     const AcceptedPointBenchmarkContext& context,
     int block_width) {
   if (block_width <= 0) return;
-  xmvb::vb::ExactOrbitalSecondOrderOperator exact_operator(
+  xmvb::vb::ExactHvpOperator exact_operator(
       context.second_order_context,
       &context.input,
       context.parameter_view,

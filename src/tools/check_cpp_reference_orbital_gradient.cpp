@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
@@ -125,7 +125,7 @@ int main(int argc, char** argv) {
     const auto load_result =
         xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
 
-    xmvb::vb::CppOrbitalGradientEvaluator gradient_evaluator(options.algorithm);
+    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator(options.algorithm);
     auto gradient_result = gradient_evaluator.evaluate_without_reference_energy_gradient(
         load_result.input,
         load_result.nuclear_repulsion_energy);

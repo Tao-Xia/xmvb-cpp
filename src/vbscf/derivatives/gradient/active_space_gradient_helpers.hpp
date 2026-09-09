@@ -2,7 +2,7 @@
 
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
-#include "vb/scf/cpp_active_space_gradient_result.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_result.hpp"
 
 namespace xmvb::vb {
 
@@ -10,14 +10,14 @@ namespace xmvb::vb {
  * @brief Initializes one active-space gradient result from a prepared probe context.
  *
  * This helper fills the reusable orbital-preparation and active-space input
- * tensors inside `CppActiveSpaceGradientResult` while zero-initializing the
+ * tensors inside `ActiveSpaceGradientResult` while zero-initializing the
  * active-space adjoint buffers. The production gradient and exact_ctx HVP
  * paths share this result-layout contract.
  */
 void initialize_active_space_gradient_probe_result(
     const CppVbInput& input,
     const TimedPreparedActiveSpaceContext& timed_active_space_context,
-    CppActiveSpaceGradientResult* result);
+    ActiveSpaceGradientResult* result);
 
 /**
  * @brief Move-based probe-result initializer for one prepared active-space context.
@@ -28,6 +28,6 @@ void initialize_active_space_gradient_probe_result(
 void initialize_active_space_gradient_probe_result(
     const CppVbInput& input,
     TimedPreparedActiveSpaceContext&& timed_active_space_context,
-    CppActiveSpaceGradientResult* result);
+    ActiveSpaceGradientResult* result);
 
 }  // namespace xmvb::vb

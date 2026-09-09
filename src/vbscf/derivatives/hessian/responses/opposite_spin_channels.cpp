@@ -1,4 +1,4 @@
-#include "vb/scf/opposite_spin_matrix_channels.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_channels.hpp"
 
 #include <cstddef>
 #include <stdexcept>

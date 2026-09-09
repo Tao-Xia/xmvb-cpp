@@ -15,7 +15,7 @@
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/structures/structure_types.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
-    xmvb::vb::CppActiveSpaceGradientEvaluator evaluator(options.algorithm);
+    xmvb::vb::ActiveSpaceGradientEvaluator evaluator(options.algorithm);
     const auto baseline =
         evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const int n_active_orbitals = load_result.input.orbital_preparation_input.n_active_orbitals;

@@ -72,18 +72,18 @@ set(XMVB_VBSCF_LEGACY_SOURCES
 )
 
 set(XMVB_VBSCF_DERIVATIVE_SOURCES
-  vb/scf/opposite_spin_matrix_channels.cpp
-  vb/scf/opposite_spin_matrix_backward.cpp
-  vb/scf/same_spin_matrix_backward.cpp
-  vb/scf/exact_ctx_memory_accounting.cpp
-  vb/scf/exact_orbital_second_order_operator.cpp
-  vb/scf/exact_orbital_second_order_operator_outer_response_cache.cpp
-  vb/scf/cpp_active_space_gradient_result_utils.cpp
-  vb/scf/cpp_active_space_gradient_evaluator.cpp
-  vb/scf/cpp_orbital_gradient_evaluator.cpp
+  vbscf/derivatives/gradient/active_space_gradient_helpers.cpp
+  vbscf/derivatives/gradient/active_space_gradient_evaluator.cpp
+  vbscf/derivatives/gradient/orbital_gradient_evaluator.cpp
+  vbscf/derivatives/hessian/exact_hvp_operator.cpp
+  vbscf/derivatives/hessian/structure_response_cache.cpp
+  vbscf/derivatives/hessian/responses/opposite_spin_channels.cpp
+  vbscf/derivatives/hessian/responses/opposite_spin_response.cpp
+  vbscf/derivatives/hessian/responses/same_spin_response.cpp
 )
 
 set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
+  vbscf/diagnostics/hvp_memory_report.cpp
   vbscf/diagnostics/orbital_chart_audit.cpp
 )
 

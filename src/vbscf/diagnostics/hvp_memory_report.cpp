@@ -1,4 +1,4 @@
-#include "vb/scf/exact_ctx_memory_accounting.hpp"
+#include "vbscf/diagnostics/hvp_memory_report.hpp"
 #include "vbscf/determinants/cofactor_differential.hpp"
 
 #include <algorithm>
@@ -535,7 +535,7 @@ void append_exact_ctx_memory_breakdown(
 
 void append_exact_ctx_memory_breakdown(
     const std::string& prefix,
-    const CppActiveSpaceSecondOrderContext& context,
+    const AcceptedPointContext& context,
     ExactCtxMemoryBreakdown* breakdown) {
   if (breakdown == nullptr) {
     throw std::invalid_argument("memory breakdown must not be null");

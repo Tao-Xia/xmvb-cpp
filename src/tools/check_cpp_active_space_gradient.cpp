@@ -13,7 +13,7 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -132,7 +132,7 @@ double compute_one_electron_reference_energy(
 
 double evaluate_total_energy_from_active_space(
     const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceGradientResult& baseline,
+    const xmvb::vb::ActiveSpaceGradientResult& baseline,
     const std::vector<double>& active_orbital_overlap_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     const std::vector<double>& packed_active_two_electron_integrals,
@@ -162,7 +162,7 @@ double evaluate_total_energy_from_active_space(
 }
 
 const std::vector<double>& component_gradient(
-    const xmvb::vb::CppActiveSpaceGradientResult& result,
+    const xmvb::vb::ActiveSpaceGradientResult& result,
     Component component) {
   switch (component) {
     case Component::Overlap:
@@ -221,7 +221,7 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
         xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
-    xmvb::vb::CppActiveSpaceGradientEvaluator evaluator(options.algorithm);
+    xmvb::vb::ActiveSpaceGradientEvaluator evaluator(options.algorithm);
     const auto result = evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const auto& gradient = component_gradient(result, options.component);
     const std::vector<double> baseline_packed_two =

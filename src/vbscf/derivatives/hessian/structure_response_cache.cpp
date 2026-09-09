@@ -1,4 +1,4 @@
-#include "vb/scf/exact_orbital_second_order_operator_outer_response_internal.hpp"
+#include "vbscf/derivatives/hessian/structure_response_internal.hpp"
 
 #include <cmath>
 #include <limits>
@@ -39,7 +39,7 @@ void throw_if_nonfinite_vector(
 
 AcceptedSelectedStateGeneralizedEigenResponseOperator
 build_accepted_selected_state_generalized_eigen_response_operator(
-    const CppActiveSpaceSecondOrderContext& accepted_point_context) {
+    const AcceptedPointContext& accepted_point_context) {
   const int n_structures = accepted_point_context.structure_matrices.n_structures;
   const int n_selected_states =
       static_cast<int>(accepted_point_context.selected_state_indices.size());
@@ -139,7 +139,7 @@ build_accepted_selected_state_generalized_eigen_response_operator(
 AcceptedOuterResponseLinearResponseCache
 build_accepted_outer_response_linear_response_cache(
     const CppVbInput* input,
-    const CppActiveSpaceSecondOrderContext* accepted_point_context,
+    const AcceptedPointContext* accepted_point_context,
     const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks) {
   if (input == nullptr || accepted_point_context == nullptr ||
       structure_coefficient_blocks == nullptr) {

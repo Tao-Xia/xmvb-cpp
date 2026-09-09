@@ -21,7 +21,7 @@
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -428,7 +428,7 @@ std::vector<double> build_ri_active_pair_factor_gradient(
 }
 
 std::vector<double> build_total_ao_effective_one_electron_gradient(
-    const xmvb::vb::CppActiveSpaceGradientResult& active_space_gradient_result,
+    const xmvb::vb::ActiveSpaceGradientResult& active_space_gradient_result,
     const xmvb::vb::ActiveSpaceMatrixBackpropagationResult& matrix_backpropagation_result) {
   std::vector<double> total_ao_effective_one_electron_gradient =
       matrix_backpropagation_result.ao_effective_one_electron_gradient;
@@ -469,7 +469,7 @@ double evaluate_ao_effective_one_electron_objective(
 FiniteDifferenceChainBreakdown finite_difference_chain_breakdown(
     const ActiveSpaceMatrices& plus_matrices,
     const ActiveSpaceMatrices& minus_matrices,
-    const xmvb::vb::CppActiveSpaceGradientResult& active_space_gradient_result,
+    const xmvb::vb::ActiveSpaceGradientResult& active_space_gradient_result,
     double step) {
   if (plus_matrices.active_orbital_overlap_matrix.size() !=
           minus_matrices.active_orbital_overlap_matrix.size() ||
@@ -539,7 +539,7 @@ int main(int argc, char** argv) {
         (input.orbital_preparation_input.n_total_electrons -
          input.orbital_preparation_input.n_active_electrons) / 2;
 
-    xmvb::vb::CppActiveSpaceGradientEvaluator active_space_gradient_evaluator(options.algorithm);
+    xmvb::vb::ActiveSpaceGradientEvaluator active_space_gradient_evaluator(options.algorithm);
     const auto active_space_gradient_result =
         active_space_gradient_evaluator.evaluate(input, load_result.nuclear_repulsion_energy);
     xmvb::vb::ActiveSpaceMatrixBackpropagator active_space_matrix_backpropagator;

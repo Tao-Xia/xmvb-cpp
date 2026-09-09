@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 
@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
         xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
 
-    xmvb::vb::CppActiveSpaceGradientEvaluator evaluator(
+    xmvb::vb::ActiveSpaceGradientEvaluator evaluator(
         xmvb::vb::VBSCFAlgorithm::Original);
     const auto gradient_result =
         evaluator.evaluate(

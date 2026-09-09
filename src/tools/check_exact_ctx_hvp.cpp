@@ -21,11 +21,11 @@
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
-#include "vb/scf/exact_orbital_second_order_operator.hpp"
-#include "vb/scf/opposite_spin_matrix_backward.hpp"
-#include "vb/scf/same_spin_matrix_backward.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -237,7 +237,7 @@ Eigen::MatrixXd extract_active_auxiliary_gradient_block(
 
 Eigen::VectorXd apply_active_space_gradient_direction_to_orbital_response(
     const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const xmvb::vb::SparseParameterLayout& parameter_view,
     const xmvb::vb::OrbitalChart& nonredundant_space,
     const std::vector<double>& active_orbital_overlap_gradient,
@@ -410,7 +410,7 @@ struct OrbitalBackpropInputs {
 
 OrbitalBackpropInputs build_orbital_backprop_inputs(
     const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceGradientResult& active_space_gradient_result) {
+    const xmvb::vb::ActiveSpaceGradientResult& active_space_gradient_result) {
   if (input.standard_two_electron_mode ==
       xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity) {
     throw std::invalid_argument(
@@ -541,7 +541,7 @@ OrbitalBackpropInputs build_orbital_backprop_inputs(
 
 OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
     const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceGradientResult& active_space_gradient_result) {
+    const xmvb::vb::ActiveSpaceGradientResult& active_space_gradient_result) {
   if (input.standard_two_electron_mode ==
       xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity) {
     throw std::invalid_argument(
@@ -627,7 +627,7 @@ OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
 
 OrbitalBackpropInputs build_orbital_backprop_inputs_from_active_gradient_direction(
     const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
     const std::vector<double>& packed_active_two_electron_gradient,
@@ -1549,7 +1549,7 @@ struct GeneralizedEigenDirectionalResponse {
 };
 
 GeneralizedEigenDirectionalResponse build_generalized_eigen_directional_response(
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const Matrix& delta_hamiltonian,
     const Matrix& delta_overlap) {
   const int n_structures = accepted_point_context.structure_matrices.n_structures;
@@ -1683,7 +1683,7 @@ StructurePairWeightTables build_structure_pair_weight_tables(
 }
 
 StructurePairWeightTables build_directional_structure_pair_weight_tables(
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const GeneralizedEigenDirectionalResponse& directional_eigensystem) {
   const int n_structures = accepted_point_context.structure_matrices.n_structures;
   const Matrix eigenvector_matrix =
@@ -1786,7 +1786,7 @@ std::vector<double> symmetric_average_storage(
 
 Eigen::VectorXd backpropagate_active_gradient_direction_to_orbital_response(
     const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const xmvb::vb::SparseParameterLayout& parameter_view,
     const xmvb::vb::OrbitalChart& nonredundant_space,
     const std::vector<double>& active_orbital_overlap_gradient,
@@ -1889,9 +1889,9 @@ int main(int argc, char** argv) {
       }
     }
 
-    xmvb::vb::CppOrbitalGradientEvaluator evaluator(
+    xmvb::vb::OrbitalGradientEvaluator evaluator(
         xmvb::vb::VBSCFAlgorithm::Original);
-    xmvb::vb::CppActiveSpaceGradientEvaluator active_space_evaluator(
+    xmvb::vb::ActiveSpaceGradientEvaluator active_space_evaluator(
         xmvb::vb::VBSCFAlgorithm::Original);
     const auto gradient_result =
         evaluator.evaluate_without_reference_energy_gradient(
@@ -1950,7 +1950,7 @@ int main(int argc, char** argv) {
       reduced_direction /= reduced_direction.norm();
     }
 
-    xmvb::vb::ExactOrbitalSecondOrderOperator exact_operator(
+    xmvb::vb::ExactHvpOperator exact_operator(
         gradient_result.second_order_context,
         &input,
         parameter_view,

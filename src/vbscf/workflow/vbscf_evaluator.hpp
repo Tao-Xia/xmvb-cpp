@@ -5,7 +5,7 @@
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/structure_evaluator.hpp"
-#include "vb/scf/cpp_vb_scf_result.hpp"
+#include "vbscf/core/vbscf_result.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace xmvb::vb {
@@ -39,9 +39,9 @@ public:
    *
    * @param input C++ VB input bundle.
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
-   * @return CppVbScfResult Structure matrices plus generalized-eigen data.
+   * @return VbScfResult Structure matrices plus generalized-eigen data.
    */
-  CppVbScfResult evaluate(
+  VbScfResult evaluate(
       const CppVbInput& input,
       double nuclear_repulsion_energy = 0.0) const;
 
@@ -52,9 +52,9 @@ public:
    * @param selected_state_indices Zero-based state indices.
    * @param state_average_weights Non-negative state-averaging weights.
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
-   * @return CppVbScfResult Structure matrices plus generalized-eigen data.
+   * @return VbScfResult Structure matrices plus generalized-eigen data.
    */
-  CppVbScfResult evaluate(
+  VbScfResult evaluate(
       const CppVbInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,

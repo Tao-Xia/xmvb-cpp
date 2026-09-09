@@ -3,7 +3,7 @@
 
 #include <Eigen/Core>
 
-#include "vb/scf/reduced_hessian_reference.hpp"
+#include "vbscf/diagnostics/reduced_hessian_reference.hpp"
 
 namespace {
 void require(bool condition, const char* message) {

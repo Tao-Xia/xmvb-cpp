@@ -27,14 +27,14 @@
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/runtime_utils.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
-#include "vb/scf/exact_orbital_second_order_operator.hpp"
+#include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 #include "vbscf/optimization/vbscf_objective.hpp"
 #include "vbscf/optimization/optimizer_types.hpp"
 #include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
 #include "vbscf/optimization/krylov/positive_conjugate_basis.hpp"
 #include "vbscf/optimization/krylov/positive_ritz_secants.hpp"
 #include "vbscf/optimization/trust_region/spectral_trust_region.hpp"
-#include "vb/scf/scf_vector_utilities.hpp"
+#include "vbscf/optimization/vector_operations.hpp"
 
 namespace xmvb::vb {
 
@@ -590,12 +590,12 @@ public:
     return exact_operator_.supports_analytic_core_model();
   }
 
-  ExactOrbitalSecondOrderOperator::Diagnostics diagnostics() const {
+  ExactHvpOperator::Diagnostics diagnostics() const {
     return exact_operator_.diagnostics();
   }
 
 private:
-  ExactOrbitalSecondOrderOperator exact_operator_;
+  ExactHvpOperator exact_operator_;
 };
 
 std::string build_exact_ctx_unavailable_message(
@@ -1654,7 +1654,7 @@ VbScfOptimizer::VbScfOptimizer(
       options_(options) {}
 
 VbScfOptimizer::VbScfOptimizer(
-    CppOrbitalGradientEvaluator orbital_gradient_evaluator,
+    OrbitalGradientEvaluator orbital_gradient_evaluator,
     VbScfEvaluator scf_evaluator,
     VbScfOptimizerOptions options)
     : orbital_gradient_evaluator_(std::move(orbital_gradient_evaluator)),

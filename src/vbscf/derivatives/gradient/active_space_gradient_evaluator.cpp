@@ -1,4 +1,4 @@
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -25,11 +25,11 @@
 #include "vbscf/structures/structure_types.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
-#include "vb/scf/cpp_active_space_second_order_context.hpp"
-#include "vb/scf/cpp_active_space_gradient_result_utils.hpp"
-#include "vb/scf/exact_ctx_memory_accounting.hpp"
-#include "vb/scf/opposite_spin_matrix_backward.hpp"
-#include "vb/scf/same_spin_matrix_backward.hpp"
+#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
+#include "vbscf/diagnostics/hvp_memory_report.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
@@ -542,18 +542,18 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
   return context;
 }
 
-std::shared_ptr<CppActiveSpaceSecondOrderContext>
+std::shared_ptr<AcceptedPointContext>
 finalize_active_space_second_order_context(
     const CppVbInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_weights,
-    const CppActiveSpaceGradientResult& gradient_result,
+    const ActiveSpaceGradientResult& gradient_result,
     ActiveSpaceGradientForwardContext* forward_context) {
   if (forward_context == nullptr) {
     throw std::invalid_argument("forward_context must not be null");
   }
 
-  auto context = std::make_shared<CppActiveSpaceSecondOrderContext>();
+  auto context = std::make_shared<AcceptedPointContext>();
   // Move the heavy accepted-point payload out of the transient forward context
   // once the relaxed gradient has finished using it. This keeps the future
   // second-order cache alive without duplicating the large unique-spin tables.
@@ -609,7 +609,7 @@ void populate_scf_result(
     const std::vector<double>& normalized_weights,
     double nuclear_repulsion_energy,
     const ActiveSpaceGradientForwardContext& forward_context,
-    CppVbScfResult* scf_result) {
+    VbScfResult* scf_result) {
   const auto& prepared_active_space =
       forward_context.timed_active_space_context.prepared_active_space;
   const auto& structure_matrices = forward_context.structure_matrices;
@@ -652,7 +652,7 @@ void initialize_active_space_gradient_result(
     const std::vector<double>& normalized_weights,
     double nuclear_repulsion_energy,
     const ActiveSpaceGradientForwardContext& forward_context,
-    CppActiveSpaceGradientResult* result) {
+    ActiveSpaceGradientResult* result) {
   const auto& timings = forward_context.timed_active_space_context.timings;
   const auto& prepared_active_space =
       forward_context.timed_active_space_context.prepared_active_space;
@@ -1048,7 +1048,7 @@ void accumulate_active_space_gradient(
     const std::vector<double>& normalized_weights,
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
     const ActiveSpaceGradientForwardContext& forward_context,
-    CppActiveSpaceGradientResult* result) {
+    ActiveSpaceGradientResult* result) {
   const auto& prepared_active_space =
       forward_context.timed_active_space_context.prepared_active_space;
   const auto& active_orbital_overlap_matrix =
@@ -1285,7 +1285,7 @@ void accumulate_active_space_gradient(
 
 }  // namespace
 
-CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
+ActiveSpaceGradientEvaluator::ActiveSpaceGradientEvaluator(
     VBSCFAlgorithm algorithm)
     : orbital_preparer_(),
       ao_effective_one_electron_builder_(),
@@ -1294,7 +1294,7 @@ CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
       structure_builder_(algorithm),
       generalized_eigensolver_() {}
 
-CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
+ActiveSpaceGradientEvaluator::ActiveSpaceGradientEvaluator(
     ActiveSpaceOrbitalPreparer orbital_preparer,
     AoEffectiveOneElectronBuilder ao_effective_one_electron_builder,
     ActiveSpaceOneElectronBuilder active_space_one_electron_builder,
@@ -1308,13 +1308,13 @@ CppActiveSpaceGradientEvaluator::CppActiveSpaceGradientEvaluator(
       structure_builder_(std::move(structure_builder)),
       generalized_eigensolver_(std::move(generalized_eigensolver)) {}
 
-CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
+ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
     const CppVbInput& input,
     double nuclear_repulsion_energy) const {
   return evaluate(input, {0}, {1.0}, nuclear_repulsion_energy);
 }
 
-CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
+ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
     const CppVbInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
@@ -1337,7 +1337,7 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
       active_space_two_electron_builder_,
       structure_builder_,
       generalized_eigensolver_);
-  CppActiveSpaceGradientResult result;
+  ActiveSpaceGradientResult result;
   initialize_active_space_gradient_result(
       input,
       selected_state_indices,
@@ -1364,7 +1364,7 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
   return result;
 }
 
-CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
+ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
     const CppVbInput& input,
     TimedPreparedActiveSpaceContext timed_prepared_active_space_context,
     const std::vector<int>& selected_state_indices,
@@ -1386,7 +1386,7 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
       std::move(timed_prepared_active_space_context),
       structure_builder_,
       generalized_eigensolver_);
-  CppActiveSpaceGradientResult result;
+  ActiveSpaceGradientResult result;
   initialize_active_space_gradient_result(
       input,
       selected_state_indices,
@@ -1413,10 +1413,10 @@ CppActiveSpaceGradientResult CppActiveSpaceGradientEvaluator::evaluate(
   return result;
 }
 
-CppActiveSpaceGradientResult
-CppActiveSpaceGradientEvaluator::evaluate_with_fixed_active_space_adjoint(
+ActiveSpaceGradientResult
+ActiveSpaceGradientEvaluator::evaluate_with_fixed_active_space_adjoint(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     double nuclear_repulsion_energy) const {
   const auto total_start_time = std::chrono::steady_clock::now();
   if (input.structure_data.n_structures <= 0) {
@@ -1431,7 +1431,7 @@ CppActiveSpaceGradientEvaluator::evaluate_with_fixed_active_space_adjoint(
           active_space_one_electron_builder_,
           active_space_two_electron_builder_);
 
-  CppActiveSpaceGradientResult result;
+  ActiveSpaceGradientResult result;
   initialize_active_space_gradient_probe_result(
       input,
       std::move(timed_active_space_context),
@@ -1461,7 +1461,7 @@ CppActiveSpaceGradientEvaluator::evaluate_with_fixed_active_space_adjoint(
 }
 
 TimedPreparedActiveSpaceContext
-CppActiveSpaceGradientEvaluator::prepare_timed_active_space_context_for_probe(
+ActiveSpaceGradientEvaluator::prepare_timed_active_space_context_for_probe(
     const CppVbInput& input) const {
   return prepare_timed_active_space_context(
       input,

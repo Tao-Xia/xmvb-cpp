@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "vbscf/core/vbscf_input.hpp"
-#include "vb/scf/cpp_vb_scf_result.hpp"
+#include "vbscf/core/vbscf_result.hpp"
 
 namespace xmvb::vb {
 
@@ -205,7 +205,7 @@ struct VbScfOptimizerResult {
   /**
    * @brief Last accepted single-step VBSCF result.
    */
-  CppVbScfResult scf_result;
+  VbScfResult scf_result;
 
   /**
    * @brief Optimized matrix-builder input, including orbital parameters.

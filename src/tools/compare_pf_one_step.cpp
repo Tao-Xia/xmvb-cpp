@@ -16,7 +16,7 @@
 #include "pfaffian_vbscf/scf/pf_scf_eval.hpp"
 #include "pfaffian_vbscf/types/pf_basis_data.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
@@ -286,7 +286,7 @@ int main(int argc, char** argv) {
     const auto diff_idx =
         collect_differentiable_parameter_indices(load.input.orbital_preparation_input);
 
-    xmvb::vb::CppOrbitalGradientEvaluator det_grad_eval;
+    xmvb::vb::OrbitalGradientEvaluator det_grad_eval;
     const auto det_grad_result =
         det_grad_eval.evaluate_without_reference_energy_gradient(
             load.input,

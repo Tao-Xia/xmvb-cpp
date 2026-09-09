@@ -14,8 +14,8 @@
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
@@ -448,7 +448,7 @@ double evaluate_energy_component(
 }
 
 std::vector<double> build_selected_sparse_gradient(
-    const xmvb::vb::CppOrbitalGradientResult& gradient_result,
+    const xmvb::vb::OrbitalGradientResult& gradient_result,
     EnergyComponent component) {
   switch (component) {
     case EnergyComponent::Total:
@@ -486,7 +486,7 @@ double sparse_gradient_inf_norm_for_indices(
 }
 
 void zero_all_active_space_gradients(
-    xmvb::vb::CppActiveSpaceGradientResult* result) {
+    xmvb::vb::ActiveSpaceGradientResult* result) {
   if (result == nullptr) {
     throw std::invalid_argument("active-space gradient result must not be null");
   }
@@ -578,7 +578,7 @@ int main(int argc, char** argv) {
           &diagnostic_input.orbital_preparation_input);
     }
 
-    xmvb::vb::CppOrbitalGradientEvaluator gradient_evaluator(options.algorithm);
+    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator(options.algorithm);
     auto gradient_result =
         gradient_evaluator.evaluate(diagnostic_input, load_result.nuclear_repulsion_energy);
     if (options.component != EnergyComponent::Total) {
@@ -676,9 +676,9 @@ int main(int argc, char** argv) {
       std::cout << "reported_parameters = " << n_to_report << '\n';
 
       if (options.print_analytic_branch_decomposition) {
-        xmvb::vb::CppActiveSpaceGradientEvaluator active_space_gradient_evaluator(
+        xmvb::vb::ActiveSpaceGradientEvaluator active_space_gradient_evaluator(
             options.algorithm);
-        xmvb::vb::CppOrbitalGradientEvaluator orbital_gradient_evaluator(
+        xmvb::vb::OrbitalGradientEvaluator orbital_gradient_evaluator(
             options.algorithm);
         const auto active_space_gradient_result =
             active_space_gradient_evaluator.evaluate(

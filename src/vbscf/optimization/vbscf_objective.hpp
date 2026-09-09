@@ -22,14 +22,14 @@
 
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
-#include "vb/scf/cpp_orbital_gradient_result.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vbscf/optimization/optimizer_types.hpp"
 
 namespace xmvb::vb {
 
-struct CppActiveSpaceSecondOrderContext;
+struct AcceptedPointContext;
 class LocalizedRepresentativeSelector;
 struct OrbitalPreparationResult;
 struct SupportPreservingGaugeTransform;
@@ -40,7 +40,7 @@ struct SupportPreservingGaugeTransform;
 // the gradient, wall time, and the inputs that produced it.
 struct VbScfObjectiveTrialEvaluation {
   OrbitalPreparationInput orbital_preparation_input;
-  CppOrbitalGradientResult gradient_result;
+  OrbitalGradientResult gradient_result;
   Eigen::VectorXd gradient;
   double energy = 0.0;
   double gradient_inf_norm = 0.0;
@@ -58,17 +58,17 @@ class VbScfObjective {
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy,
-      const CppOrbitalGradientEvaluator* orbital_gradient_evaluator,
+      const OrbitalGradientEvaluator* orbital_gradient_evaluator,
       const VbScfEvaluator* scf_evaluator);
 
   double operator()(const Eigen::VectorXd& parameter_vector,
                     Eigen::VectorXd& gradient);
 
   const CppVbInput& last_input() const { return working_input_; }
-  const CppOrbitalGradientResult& last_gradient_result() const {
+  const OrbitalGradientResult& last_gradient_result() const {
     return last_gradient_result_;
   }
-  const std::shared_ptr<CppActiveSpaceSecondOrderContext>&
+  const std::shared_ptr<AcceptedPointContext>&
   last_second_order_context() const {
     return last_gradient_result_.second_order_context;
   }
@@ -121,10 +121,10 @@ class VbScfObjective {
   std::vector<int> selected_state_indices_;
   std::vector<double> state_average_weights_;
   double nuclear_repulsion_energy_ = 0.0;
-  const CppOrbitalGradientEvaluator* orbital_gradient_evaluator_ = nullptr;
+  const OrbitalGradientEvaluator* orbital_gradient_evaluator_ = nullptr;
   const VbScfEvaluator* scf_evaluator_ = nullptr;
 
-  CppOrbitalGradientResult last_gradient_result_;
+  OrbitalGradientResult last_gradient_result_;
   std::vector<double> energy_history_;
   std::vector<double> gradient_inf_norm_history_;
   std::vector<double> iteration_time_history_seconds_;

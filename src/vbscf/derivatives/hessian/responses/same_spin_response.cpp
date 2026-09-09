@@ -1,4 +1,4 @@
-#include "vb/scf/same_spin_matrix_backward.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 
 #include <algorithm>
 #include <cmath>

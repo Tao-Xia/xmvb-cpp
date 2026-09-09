@@ -1,4 +1,4 @@
-#include "vb/scf/cpp_active_space_gradient_result_utils.hpp"
+#include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
 
 #include <stdexcept>
 
@@ -9,7 +9,7 @@ namespace xmvb::vb {
 void initialize_active_space_gradient_probe_result(
     const CppVbInput& input,
     const TimedPreparedActiveSpaceContext& timed_active_space_context,
-    CppActiveSpaceGradientResult* result) {
+    ActiveSpaceGradientResult* result) {
   if (result == nullptr) {
     throw std::invalid_argument("result must not be null");
   }
@@ -53,7 +53,7 @@ void initialize_active_space_gradient_probe_result(
 void initialize_active_space_gradient_probe_result(
     const CppVbInput& input,
     TimedPreparedActiveSpaceContext&& timed_active_space_context,
-    CppActiveSpaceGradientResult* result) {
+    ActiveSpaceGradientResult* result) {
   if (result == nullptr) {
     throw std::invalid_argument("result must not be null");
   }

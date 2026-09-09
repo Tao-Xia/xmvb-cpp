@@ -7,7 +7,7 @@
 #include <string>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
     const auto load_result =
         xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
 
-    xmvb::vb::CppOrbitalGradientEvaluator evaluator(options.algorithm);
+    xmvb::vb::OrbitalGradientEvaluator evaluator(options.algorithm);
 
     // Keep all repeats in the same process so RI-cache construction and process
     // startup noise are not repeatedly mixed into the timing comparison.

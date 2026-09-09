@@ -13,7 +13,7 @@
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/orbitals/orbital_pullback.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
     const auto& input = load_result.input;
     const bool use_ri = input.ao_integral_input.ao_two_electron_integral_values.empty();
 
-    xmvb::vb::CppOrbitalGradientEvaluator gradient_evaluator(options.algorithm);
+    xmvb::vb::OrbitalGradientEvaluator gradient_evaluator(options.algorithm);
     auto gradient_result = gradient_evaluator.evaluate_without_reference_energy_gradient(
         input,
         load_result.nuclear_repulsion_energy);

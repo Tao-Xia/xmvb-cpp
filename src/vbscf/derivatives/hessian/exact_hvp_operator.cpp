@@ -1,4 +1,4 @@
-#include "vb/scf/exact_orbital_second_order_operator.hpp"
+#include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -31,9 +31,9 @@
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
-#include "vb/scf/exact_ctx_memory_accounting.hpp"
-#include "vb/scf/opposite_spin_matrix_backward.hpp"
-#include "vb/scf/same_spin_matrix_backward.hpp"
+#include "vbscf/diagnostics/hvp_memory_report.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
@@ -3921,7 +3921,7 @@ void gather_directional_spin_block_local(
 
 StructureAccumulationResult build_tiled_directional_structure_matrices(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const std::vector<StructureCoefficientBlock>& coefficient_blocks,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -5011,7 +5011,7 @@ double compute_determinant_pair_directional_scalar(
 
 StructureAccumulationResult build_directional_structure_matrices(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const std::vector<StructureCoefficientBlock>& coefficient_blocks,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -5052,7 +5052,7 @@ StructureAccumulationResult build_directional_structure_matrices(
 SelectedStateProjectedDirectionalMatrices
 build_selected_state_projected_directional_structure_matrices(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const std::vector<StructureCoefficientBlock>& coefficient_blocks,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -5486,7 +5486,7 @@ struct GeneralizedEigenDirectionalResponse {
 };
 
 GeneralizedEigenDirectionalResponse build_generalized_eigen_directional_response(
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const StructureAccumulationResult& directional_structure_matrices) {
   const int n_structures = accepted_point_context.structure_matrices.n_structures;
   if (n_structures <= 0) {
@@ -5631,7 +5631,7 @@ GeneralizedEigenDirectionalResponse build_generalized_eigen_directional_response
 
 SelectedStateGeneralizedEigenDirectionalResponse
 build_selected_state_generalized_eigen_directional_response(
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const SelectedStateProjectedDirectionalMatrices&
         projected_directional_structure_matrices) {
   const int n_structures = accepted_point_context.structure_matrices.n_structures;
@@ -5843,7 +5843,7 @@ build_selected_state_generalized_eigen_directional_response(
 }
 
 StructurePairWeightTables build_directional_structure_pair_weight_tables(
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const GeneralizedEigenDirectionalResponse& directional_eigensystem) {
   const int n_structures = accepted_point_context.structure_matrices.n_structures;
   if (directional_eigensystem.delta_eigenvector_matrix.rows() != n_structures ||
@@ -5926,7 +5926,7 @@ StructurePairAdjoints determinant_pair_structure_adjoints(
 
 ActiveSpaceGradientDirection build_pairwise_active_space_gradient_direction_from_structure_weights(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const StructurePairWeightTables& structure_pair_weights,
     bool skip_opposite_spin) {
   const int n_active_orbitals =
@@ -6023,7 +6023,7 @@ ActiveSpaceGradientDirection build_pairwise_active_space_gradient_direction_from
 ActiveSpaceGradientDirection
 build_pairwise_active_space_gradient_direction_from_determinant_pair_weights(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     bool skip_opposite_spin) {
   const int n_active_orbitals =
@@ -6122,7 +6122,7 @@ build_pairwise_active_space_gradient_direction_from_determinant_pair_weights(
 ActiveSpaceGradientDirection
 build_pairwise_local_active_space_gradient_direction_from_determinant_pair_weights(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     bool skip_opposite_spin,
     const std::vector<double>& delta_ao_overlap_matrix,
@@ -6228,7 +6228,7 @@ build_pairwise_local_active_space_gradient_direction_from_determinant_pair_weigh
 ActiveSpaceGradientDirection
 build_pairwise_opposite_spin_local_active_space_gradient_direction_from_determinant_pair_weights(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -6368,7 +6368,7 @@ void accumulate_scaled_same_spin_contribution(
 ActiveSpaceGradientDirection
 build_local_active_space_gradient_direction_from_outer_response(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
@@ -6441,7 +6441,7 @@ build_local_active_space_gradient_direction_from_outer_response(
 }
 
 std::vector<double> build_selected_state_energy_direction_from_outer_response(
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const SelectedStateProjectedDirectionalMatrices&
         projected_directional_structure_matrices) {
   const int n_structures =
@@ -6504,7 +6504,7 @@ std::vector<double> build_selected_state_energy_direction_from_outer_response(
 ActiveSpaceGradientDirection
 build_energy_only_active_space_gradient_direction_from_outer_response(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
@@ -6561,7 +6561,7 @@ build_energy_only_active_space_gradient_direction_from_outer_response(
 
 ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_response(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
@@ -6638,7 +6638,7 @@ void write_symmetric_active_matrix_average_local(
 
 std::vector<double> build_orbital_value_gradient_from_active_space_gradient_direction(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const ActiveSpaceGradientDirection& active_space_gradient_direction,
     const AcceptedOrbitalPreparationCache& orbital_preparation_cache,
     const ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache,
@@ -6748,7 +6748,7 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
 }
 
 bool has_active_matrix_gradient(
-    const CppActiveSpaceSecondOrderContext& context,
+    const AcceptedPointContext& context,
     int n_active_orbitals) {
   const std::size_t active_matrix_size =
       n_active_orbitals * n_active_orbitals;
@@ -6768,7 +6768,7 @@ struct AcceptedOrbitalBackpropInputs {
 };
 
 AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const CppVbInput& input) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
@@ -6888,7 +6888,7 @@ std::vector<double> symmetrize_square_storage_average_local(
 
 }  // namespace
 
-struct ExactOrbitalSecondOrderOperator::PrecomputedDirection {
+struct ExactHvpOperator::PrecomputedDirection {
   Eigen::VectorXd packed_direction;
   DenseOrbitalTangentContext dense_orbital_tangent_context;
   OrbitalPreparationDirectionalResult orbital_preparation_directional_result;
@@ -6897,7 +6897,7 @@ struct ExactOrbitalSecondOrderOperator::PrecomputedDirection {
 OppositeSpinMatrixBackwardContribution
 build_pairwise_local_opposite_spin_matrix_backward_reference(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -6921,7 +6921,7 @@ build_pairwise_local_opposite_spin_matrix_backward_reference(
 SameSpinMatrixBackwardContribution
 build_pairwise_local_same_spin_matrix_backward_reference(
     const CppVbInput& input,
-    const CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const AcceptedPointContext& accepted_point_context,
     const DeterminantPairWeightTablesFromCoefficients& determinant_pair_weights,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_active_one_electron_matrix,
@@ -6951,8 +6951,8 @@ build_pairwise_local_same_spin_matrix_backward_reference(
   return result;
 }
 
-ExactOrbitalSecondOrderOperator::ExactOrbitalSecondOrderOperator(
-    std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context,
+ExactHvpOperator::ExactHvpOperator(
+    std::shared_ptr<const AcceptedPointContext> accepted_point_context,
     const CppVbInput* current_input,
     SparseParameterLayout parameter_view,
     const OrbitalChart* nonredundant_space)
@@ -7145,9 +7145,9 @@ ExactOrbitalSecondOrderOperator::ExactOrbitalSecondOrderOperator(
   }
 }
 
-ExactOrbitalSecondOrderOperator::~ExactOrbitalSecondOrderOperator() = default;
+ExactHvpOperator::~ExactHvpOperator() = default;
 
-Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
+Eigen::MatrixXd ExactHvpOperator::apply_reduced_batch(
     const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
     HvpComponents components) const {
   ++apply_timing_totals_.batch_apply_count;
@@ -7299,7 +7299,7 @@ Eigen::MatrixXd ExactOrbitalSecondOrderOperator::apply_reduced_batch(
   return responses;
 }
 
-Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
+Eigen::VectorXd ExactHvpOperator::apply_reduced(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components) const {
   return apply_reduced_impl(
@@ -7312,7 +7312,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced(
       nullptr);
 }
 
-Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
+Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components,
     const Eigen::VectorXd* precomputed_delta_ao_effective_h1e,
@@ -7727,7 +7727,7 @@ Eigen::VectorXd ExactOrbitalSecondOrderOperator::apply_reduced_impl(
   return response;
 }
 
-bool ExactOrbitalSecondOrderOperator::supports_analytic_core_model() const noexcept {
+bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
   if (accepted_point_context_ == nullptr ||
       current_input_ == nullptr ||
       nonredundant_space_ == nullptr) {
@@ -7750,8 +7750,8 @@ bool ExactOrbitalSecondOrderOperator::supports_analytic_core_model() const noexc
       has_active_matrix_gradient(*accepted_point_context_, n_active_orbitals);
 }
 
-ExactOrbitalSecondOrderOperator::Diagnostics
-ExactOrbitalSecondOrderOperator::diagnostics() const {
+ExactHvpOperator::Diagnostics
+ExactHvpOperator::diagnostics() const {
   Diagnostics info;
   if (accepted_point_context_ == nullptr || nonredundant_space_ == nullptr) {
     return info;
