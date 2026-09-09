@@ -118,7 +118,7 @@ Eigen::MatrixXd build_ao_pair_to_active_pair_coefficients(
 }  // namespace
 
 ActiveSpaceTwoElectronResult RiActiveSpaceTwoElectronBuilder::build(
-    const LibcintRiIntegralProviderResult& ao_ri_result,
+    const RiAoFactorization& ao_ri_result,
     const OrbitalPreparationResult& orbital_preparation_result,
     int n_basis_functions,
     int n_active_orbitals,

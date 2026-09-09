@@ -324,7 +324,7 @@ inline void accumulate_ao_effective_one_electron_backprop_integral(
 AoEffectiveOneElectronBackpropagationResult
 backpropagate_ao_effective_one_electron_ri(
     const std::vector<double>& ao_effective_one_electron_gradient,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
@@ -334,7 +334,7 @@ backpropagate_ao_effective_one_electron_ri(
   if (ao_effective_one_electron_gradient.size() != matrix_size) {
     throw std::invalid_argument("ao_effective_one_electron_gradient size mismatch");
   }
-  if (ri_integral_provider_result.n_basis_functions != n_basis_functions) {
+  if (ri_factorization.n_basis_functions != n_basis_functions) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
 
@@ -349,7 +349,7 @@ backpropagate_ao_effective_one_electron_ri(
           std::vector<double>(
               unsymmetrized_g11_gradient.data(),
               unsymmetrized_g11_gradient.data() + unsymmetrized_g11_gradient.size()),
-          ri_integral_provider_result,
+          ri_factorization,
           n_basis_functions,
           {.attempt_spectral_factorization = true});
   inactive_density_gradient_storage =
@@ -366,7 +366,7 @@ AoEffectiveOneElectronBackpropagationResult
 backpropagate_ao_effective_one_electron_ri(
     const std::vector<double>& active_one_electron_gradient,
     const OrbitalPreparationResult& orbital_result,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) {
@@ -380,7 +380,7 @@ backpropagate_ao_effective_one_electron_ri(
   std::vector<double> inactive_density_gradient_storage =
       apply_ao_effective_one_electron_ri_operator(
           low_rank_factors,
-          ri_integral_provider_result,
+          ri_factorization,
           n_basis_functions);
   inactive_density_gradient_storage =
       encode_symmetric_gradient_as_unsymmetrized_storage(
@@ -759,22 +759,22 @@ AoEffectiveOneElectronBackpropagator::backpropagate(
 AoEffectiveOneElectronBackpropagationResult
 AoEffectiveOneElectronBackpropagator::backpropagate(
     const std::vector<double>& ao_effective_one_electron_gradient,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) const {
   return backpropagate_ao_effective_one_electron_ri(
       ao_effective_one_electron_gradient,
-      ri_integral_provider_result,
+      ri_factorization,
       n_basis_functions);
 }
 
 AoEffectiveOneElectronBackpropagationResult
 AoEffectiveOneElectronBackpropagator::backpropagate(
     const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_one_electron_gradient,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) const {
   return backpropagate_ao_effective_one_electron_ri(
       flatten_matrix_column_major(ao_effective_one_electron_gradient),
-      ri_integral_provider_result,
+      ri_factorization,
       n_basis_functions);
 }
 
@@ -782,14 +782,14 @@ AoEffectiveOneElectronBackpropagationResult
 AoEffectiveOneElectronBackpropagator::backpropagate(
     const std::vector<double>& active_one_electron_gradient,
     const OrbitalPreparationResult& orbital_result,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) const {
   return backpropagate_ao_effective_one_electron_ri(
       active_one_electron_gradient,
       orbital_result,
-      ri_integral_provider_result,
+      ri_factorization,
       n_basis_functions,
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);

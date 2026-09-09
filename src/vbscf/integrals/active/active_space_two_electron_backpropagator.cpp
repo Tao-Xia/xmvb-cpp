@@ -492,7 +492,7 @@ ActiveSpaceTwoElectronBackpropagationResult backpropagate_packed_active_two_elec
 ActiveSpaceTwoElectronBackpropagationResult
 backpropagate_ri_active_pair_factors(
     const std::vector<double>& ri_active_pair_factor_gradient,
-    const LibcintRiIntegralProviderResult& ao_ri_result,
+    const RiAoFactorization& ao_ri_result,
     const std::vector<double>& dense_active_coefficients,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,

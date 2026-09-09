@@ -609,25 +609,25 @@ AdaptiveStructureSpaceOptimizer::AdaptiveStructureSpaceOptimizer(
 }
 
 AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
-    const VbScfInputLoadResult& load_result) const {
-  if (load_result.raw_structure_data.n_structures <= 0) {
+    const AdaptiveStructureSpaceInput& adaptive_input) const {
+  if (adaptive_input.raw_structure_data.n_structures <= 0) {
     throw std::invalid_argument("adaptive optimizer requires non-empty raw structure data");
   }
 
   AdaptiveStructureSpaceOptimizerResult result;
   const auto optimization_start_time = std::chrono::steady_clock::now();
   const auto topology_signatures =
-      build_topology_signatures(load_result.raw_structure_data);
+      build_topology_signatures(adaptive_input.raw_structure_data);
   const FullDeterminantStructureExpander expander;
   auto current_selected_raw_structure_indices = build_seed_raw_structure_indices(
-      load_result.raw_structure_data,
+      adaptive_input.raw_structure_data,
       options_.seed_selection);
   std::vector<std::optional<FullDeterminantStructureData>> single_structure_cache(
-      load_result.raw_structure_data.n_structures);
+      adaptive_input.raw_structure_data.n_structures);
 
   VbScfInput current_input = build_input_for_selected_raw_structures(
-      load_result.input,
-      load_result.raw_structure_data,
+      adaptive_input.input,
+      adaptive_input.raw_structure_data,
       current_selected_raw_structure_indices,
       expander);
   const VbScfOptimizerOptions inner_options =
@@ -639,7 +639,7 @@ AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
     const auto outer_iteration_start_time = std::chrono::steady_clock::now();
     VbScfOptimizer optimizer(inner_options);
     auto current_inner_result =
-        optimizer.optimize(current_input, load_result.nuclear_repulsion_energy);
+        optimizer.optimize(current_input, adaptive_input.nuclear_repulsion_energy);
     result.inner_result = current_inner_result;
     if (!current_inner_result.converged) {
       AdaptiveStructureSpaceIterationSummary summary;
@@ -678,7 +678,7 @@ AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
     summary.total_energy = current_inner_result.final_total_energy;
 
     if (static_cast<int>(current_selected_raw_structure_indices.size()) >=
-        load_result.raw_structure_data.n_structures) {
+        adaptive_input.raw_structure_data.n_structures) {
       summary.outer_iteration_wall_time_seconds =
           std::chrono::duration<double>(
               std::chrono::steady_clock::now() - outer_iteration_start_time)
@@ -715,7 +715,7 @@ AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
 
     auto candidate_score_batch = score_candidate_pool_with_aggregated_determinants(
         candidate_pool,
-        load_result.raw_structure_data,
+        adaptive_input.raw_structure_data,
         expander,
         &single_structure_cache,
         current_input,
@@ -794,7 +794,7 @@ AdaptiveStructureSpaceOptimizerResult AdaptiveStructureSpaceOptimizer::optimize(
         current_selected_raw_structure_indices.end());
     current_input = build_input_for_selected_raw_structures(
         current_inner_result.optimized_input,
-        load_result.raw_structure_data,
+        adaptive_input.raw_structure_data,
         current_selected_raw_structure_indices,
         expander);
   }

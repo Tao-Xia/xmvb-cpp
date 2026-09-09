@@ -93,7 +93,7 @@ void scatter_three_center_shell_block(
 
 }  // namespace
 
-LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
+RiAoFactorization build_libcint_ri_factorization(
     const LibcintInput& primary_input,
     const LibcintInput& auxiliary_input,
     double metric_eigenvalue_cutoff) {
@@ -101,9 +101,8 @@ LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
     throw std::invalid_argument("metric_eigenvalue_cutoff must be non-negative");
   }
 
-  LibcintRiIntegralProviderResult result;
-  result.auxiliary_input = auxiliary_input;
-  LibcintDirectShellEvaluator evaluator(primary_input, result.auxiliary_input);
+  RiAoFactorization result;
+  LibcintDirectShellEvaluator evaluator(primary_input, auxiliary_input);
 
   result.n_basis_functions = evaluator.n_basis_functions();
   result.n_auxiliary_functions = evaluator.n_auxiliary_basis_functions();
@@ -117,7 +116,7 @@ LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
       result.n_auxiliary_functions,
       result.n_auxiliary_functions);
   auxiliary_metric.setZero();
-  for (int left_shell = 0; left_shell < result.auxiliary_input.n_shells; ++left_shell) {
+  for (int left_shell = 0; left_shell < auxiliary_input.n_shells; ++left_shell) {
     for (int right_shell = 0; right_shell <= left_shell; ++right_shell) {
       const auto block =
           evaluator.evaluate_auxiliary_metric_shell_pair(left_shell, right_shell);
@@ -147,7 +146,7 @@ LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
     for (int left_shell = 0; left_shell < primary_input.n_shells; ++left_shell) {
       for (int right_shell = 0; right_shell <= left_shell; ++right_shell) {
         for (int auxiliary_shell = 0;
-             auxiliary_shell < result.auxiliary_input.n_shells;
+             auxiliary_shell < auxiliary_input.n_shells;
              ++auxiliary_shell) {
           const auto block =
               evaluator.evaluate_three_center_shell_block(left_shell, right_shell, auxiliary_shell);
@@ -161,11 +160,11 @@ LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
     const auto three_center_tasks =
         build_three_center_shell_tasks(
             primary_input.n_shells,
-            result.auxiliary_input.n_shells);
+            auxiliary_input.n_shells);
 
 #pragma omp parallel
     {
-      LibcintDirectShellEvaluator local_evaluator(primary_input, result.auxiliary_input);
+      LibcintDirectShellEvaluator local_evaluator(primary_input, auxiliary_input);
 #pragma omp for schedule(dynamic)
       for (std::ptrdiff_t task_index = 0;
            task_index < static_cast<std::ptrdiff_t>(three_center_tasks.size());
@@ -218,24 +217,36 @@ LibcintRiIntegralProviderResult build_libcint_ri_integral_provider_result(
   return result;
 }
 
-LibcintRiIntegralProviderResult LibcintRiIntegralProvider::build(
+RiAoFactorization LibcintRiIntegralProvider::build(
     const LibcintInput& primary_input,
     const LibcintRiIntegralProviderOptions& options) const {
   LibcintAuxiliaryBasisBuilder auxiliary_basis_builder;
   const LibcintInput auxiliary_input = auxiliary_basis_builder.build(
       primary_input,
       options.auxiliary_basis_options);
-  return build_libcint_ri_integral_provider_result(
+  return build_libcint_ri_factorization(
       primary_input,
       auxiliary_input,
       options.metric_eigenvalue_cutoff);
 }
 
-LibcintRiIntegralProviderResult LibcintRiIntegralProvider::build(
+RiAoFactorization LibcintRiIntegralProvider::build(
+    const LibcintInput& primary_input,
+    const LibcintInput* explicit_auxiliary_input) const {
+  if (explicit_auxiliary_input != nullptr) {
+    return build(
+        primary_input,
+        *explicit_auxiliary_input,
+        LibcintRiIntegralProviderOptions{});
+  }
+  return build(primary_input, LibcintRiIntegralProviderOptions{});
+}
+
+RiAoFactorization LibcintRiIntegralProvider::build(
     const LibcintInput& primary_input,
     const LibcintInput& auxiliary_input,
     const LibcintRiIntegralProviderOptions& options) const {
-  return build_libcint_ri_integral_provider_result(
+  return build_libcint_ri_factorization(
       primary_input,
       auxiliary_input,
       options.metric_eigenvalue_cutoff);

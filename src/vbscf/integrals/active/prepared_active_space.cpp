@@ -49,7 +49,7 @@ TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
   TimedPreparedActiveSpaceContext timed_context;
   auto& context = timed_context.prepared_active_space;
   const bool use_ri_active_space = use_standard_ri_active_space_path(input);
-  const LibcintRiIntegralProviderResult* ao_ri_result = nullptr;
+  const RiAoFactorization* ao_ri_result = nullptr;
   if (use_ri_active_space) {
     ao_ri_result = &ensure_vbscf_input_ri_cache(input);
   }

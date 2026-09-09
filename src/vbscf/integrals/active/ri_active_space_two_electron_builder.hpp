@@ -1,7 +1,7 @@
 #pragma once
 
-#include "runtime/libcint_ri_integral_provider.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
+#include "vbscf/integrals/ao/ri_factorization.hpp"
 #include "vbscf/orbitals/orbital_preparation_result.hpp"
 
 namespace xmvb::vb {
@@ -16,7 +16,7 @@ struct RiActiveSpaceTwoElectronBuilderOptions {
 class RiActiveSpaceTwoElectronBuilder {
 public:
   ActiveSpaceTwoElectronResult build(
-      const LibcintRiIntegralProviderResult& ao_ri_result,
+      const RiAoFactorization& ao_ri_result,
       const OrbitalPreparationResult& orbital_preparation_result,
       int n_basis_functions,
       int n_active_orbitals,

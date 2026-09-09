@@ -1685,7 +1685,10 @@ int main(int argc, char** argv) {
   std::optional<xmvb::vb::AdaptiveStructureSpaceOptimizerResult> adaptive_result;
   if (structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
     xmvb::vb::AdaptiveStructureSpaceOptimizer optimizer(options, adaptive_options);
-    adaptive_result = optimizer.optimize(load_result);
+    adaptive_result = optimizer.optimize({
+        load_result.input,
+        load_result.raw_structure_data,
+        load_result.nuclear_repulsion_energy});
     result = adaptive_result->inner_result;
   } else if (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx) {
     if (deepvbh_options.inference_options.onnx_model_path.empty()) {

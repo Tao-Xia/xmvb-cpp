@@ -9,7 +9,8 @@
 
 namespace xmvb::vb {
 
-struct LibcintRiIntegralProviderResult;
+class RiAoFactorizationProvider;
+struct RiAoFactorization;
 
 enum class StandardTwoElectronMode {
   Auto,
@@ -69,18 +70,22 @@ struct VbScfInput {
   /**
    * @brief Requested Pf two-electron representation.
    *
-   * `Auto` preserves the current environment-variable fallback behavior.
+   * `Auto` lets the consuming Pf evaluator select its default representation.
    */
   PfTwoElectronMode pf_two_electron_mode = PfTwoElectronMode::Auto;
 
   /**
-   * @brief Optional molecule-static AO-side RI cache shared across copies.
-   *
-   * This is populated lazily by the Pf-RI path and reused across repeated SCF
-   * objective/gradient evaluations.
+   * @brief Runtime-injected backend for lazily building AO-side RI factors.
    */
-  mutable std::shared_ptr<const LibcintRiIntegralProviderResult>
-      ri_integral_provider_result;
+  std::shared_ptr<const RiAoFactorizationProvider> ri_factorization_provider;
+
+  /**
+   * @brief Optional molecule-static AO-side RI factorization shared across copies.
+   *
+   * This numerical cache is populated through `ri_factorization_provider` and
+   * reused across repeated SCF objective/gradient evaluations.
+   */
+  mutable std::shared_ptr<const RiAoFactorization> ri_factorization;
 };
 
 // Temporary source-compatibility alias for the excluded DeepVBH integration.

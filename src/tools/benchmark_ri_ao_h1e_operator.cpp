@@ -140,7 +140,7 @@ struct TimedRunResult {
 
 TimedRunResult time_operator(
     const std::vector<double>& input_matrix,
-    const xmvb::vb::LibcintRiIntegralProviderResult& ri_cache,
+    const xmvb::vb::RiAoFactorization& ri_cache,
     int n_basis_functions,
     bool attempt_spectral_factorization,
     int repeats) {

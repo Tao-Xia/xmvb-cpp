@@ -7,8 +7,8 @@
 
 #include <Eigen/Core>
 
-#include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/structures/structure_types.hpp"
 
 namespace xmvb::vb {
 

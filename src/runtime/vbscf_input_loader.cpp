@@ -5,6 +5,7 @@
 #include <cmath>
 #include <chrono>
 #include <fstream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -24,6 +25,7 @@
 #include "runtime/libcint_compat.hpp"
 #include "runtime/libcint_direct_shell_evaluator.hpp"
 #include "runtime/libcint_materialized_integral_provider.hpp"
+#include "runtime/libcint_ri_integral_provider.hpp"
 #include "runtime/materialized_ao_integral_input_builder.hpp"
 #include "runtime/orbital_initial_guess_builder.hpp"
 #include "vbscf/structures/structure_expander.hpp"
@@ -696,6 +698,8 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         original_orbital_preparation_input.orbital_basis_index_table;
   }
   result.libcint_input = primary_libcint_input;
+  result.ri_factorization_provider =
+      std::make_shared<const LibcintRiIntegralProvider>();
   if (use_standard_ri_two_electron_mode) {
     LibcintAuxiliaryBasisBuilder auxiliary_basis_builder;
     result.auxiliary_libcint_input =

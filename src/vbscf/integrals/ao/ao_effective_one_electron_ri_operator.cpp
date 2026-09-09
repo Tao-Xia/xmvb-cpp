@@ -272,7 +272,7 @@ void symmetrize_in_place(
 }
 
 std::vector<double> apply_low_rank_ri_operator(
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions,
     const SpectralFactorization& factorization) {
   const std::size_t matrix_size =
@@ -283,10 +283,10 @@ std::vector<double> apply_low_rank_ri_operator(
   }
 
   const auto& packed_factor_matrix =
-      ri_integral_provider_result.metric_whitened_ao_pair_factors;
+      ri_factorization.metric_whitened_ao_pair_factors;
   int n_threads = 1;
   n_threads = ri_auxiliary_thread_count(
-      ri_integral_provider_result.n_auxiliary_functions);
+      ri_factorization.n_auxiliary_functions);
   std::vector<std::vector<double>> partial_outputs(
       n_threads,
       std::vector<double>(matrix_size, 0.0));
@@ -312,7 +312,7 @@ std::vector<double> apply_low_rank_ri_operator(
 
 #pragma omp for schedule(static)
     for (std::ptrdiff_t auxiliary_offset = 0;
-         auxiliary_offset < ri_integral_provider_result.n_auxiliary_functions;
+         auxiliary_offset < ri_factorization.n_auxiliary_functions;
          ++auxiliary_offset) {
       unpack_packed_factor_row_lower_triangle(
           packed_factor_matrix,
@@ -416,7 +416,7 @@ std::vector<double> apply_low_rank_ri_operator(
 
 std::vector<double> apply_dense_ri_operator(
     const Eigen::Ref<const Eigen::MatrixXd>& input_matrix,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) {
   const std::size_t matrix_size =
       n_basis_functions * n_basis_functions;
@@ -424,11 +424,11 @@ std::vector<double> apply_dense_ri_operator(
   const auto weighted_packed_input =
       build_weighted_packed_symmetric_matrix(input_matrix);
   const auto& packed_factor_matrix =
-      ri_integral_provider_result.metric_whitened_ao_pair_factors;
+      ri_factorization.metric_whitened_ao_pair_factors;
 
   int n_threads = 1;
   n_threads = ri_auxiliary_thread_count(
-      ri_integral_provider_result.n_auxiliary_functions);
+      ri_factorization.n_auxiliary_functions);
   std::vector<std::vector<double>> partial_outputs(
       n_threads,
       std::vector<double>(matrix_size, 0.0));
@@ -452,7 +452,7 @@ std::vector<double> apply_dense_ri_operator(
 
 #pragma omp for schedule(static)
     for (std::ptrdiff_t auxiliary_offset = 0;
-         auxiliary_offset < ri_integral_provider_result.n_auxiliary_functions;
+         auxiliary_offset < ri_factorization.n_auxiliary_functions;
          ++auxiliary_offset) {
       const double coulomb_projection =
           packed_row_symmetric_matrix_dot(
@@ -522,13 +522,13 @@ std::vector<double> apply_dense_ri_operator(
 
 std::vector<double> apply_ao_effective_one_electron_ri_operator(
     const std::vector<double>& input_matrix,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions,
     const AoEffectiveOneElectronRiOperatorOptions& options) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
-  if (ri_integral_provider_result.n_basis_functions != n_basis_functions) {
+  if (ri_factorization.n_basis_functions != n_basis_functions) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
 
@@ -539,9 +539,9 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
   }
 
   const std::size_t n_packed_pairs = packed_pair_count(n_basis_functions);
-  if (ri_integral_provider_result.metric_whitened_ao_pair_factors.rows() !=
-          ri_integral_provider_result.n_auxiliary_functions ||
-      ri_integral_provider_result.metric_whitened_ao_pair_factors.cols() !=
+  if (ri_factorization.metric_whitened_ao_pair_factors.rows() !=
+          ri_factorization.n_auxiliary_functions ||
+      ri_factorization.metric_whitened_ao_pair_factors.cols() !=
           static_cast<Eigen::Index>(n_packed_pairs)) {
     throw std::invalid_argument("RI AO pair-factor matrix shape mismatch");
   }
@@ -554,31 +554,31 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
       build_spectral_factorization(input, options);
   if (spectral_factorization.use_low_rank_path) {
     return apply_low_rank_ri_operator(
-        ri_integral_provider_result,
+        ri_factorization,
         n_basis_functions,
         spectral_factorization);
   }
   return apply_dense_ri_operator(
       input,
-      ri_integral_provider_result,
+      ri_factorization,
       n_basis_functions);
 }
 
 std::vector<double> apply_ao_effective_one_electron_ri_operator(
     const AoEffectiveOneElectronRiLowRankFactors& low_rank_factors,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
-  if (ri_integral_provider_result.n_basis_functions != n_basis_functions) {
+  if (ri_factorization.n_basis_functions != n_basis_functions) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
 
   const std::size_t n_packed_pairs = packed_pair_count(n_basis_functions);
-  if (ri_integral_provider_result.metric_whitened_ao_pair_factors.rows() !=
-          ri_integral_provider_result.n_auxiliary_functions ||
-      ri_integral_provider_result.metric_whitened_ao_pair_factors.cols() !=
+  if (ri_factorization.metric_whitened_ao_pair_factors.rows() !=
+          ri_factorization.n_auxiliary_functions ||
+      ri_factorization.metric_whitened_ao_pair_factors.cols() !=
           static_cast<Eigen::Index>(n_packed_pairs)) {
     throw std::invalid_argument("RI AO pair-factor matrix shape mismatch");
   }
@@ -588,7 +588,7 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
           low_rank_factors,
           n_basis_functions);
   return apply_low_rank_ri_operator(
-      ri_integral_provider_result,
+      ri_factorization,
       n_basis_functions,
       spectral_factorization);
 }

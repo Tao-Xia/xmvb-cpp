@@ -4,7 +4,7 @@
 # enabled.  Keeping the target ownership beside the tests prevents the main
 # production build file from accumulating test-specific wiring.
 
-set(_xmvb_vbscf_runtime_unit_targets
+set(_xmvb_vbscf_unit_targets
   test_cofactor_differential
   test_curvature_decomposition
   test_normalized_orbital_curvature
@@ -15,20 +15,15 @@ set(_xmvb_vbscf_runtime_unit_targets
   test_projected_orbital_surrogate
   test_reduced_hessian_reference
   test_sparse_orbital_quotient
-  test_spectral_trust_region)
+  test_spectral_trust_region
+  test_orbital_block_partition)
 
-foreach(target_name IN LISTS _xmvb_vbscf_runtime_unit_targets)
+foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
   add_executable(
     ${target_name}
     ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/${target_name}.cpp)
-  target_link_libraries(${target_name} PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
-  xmvb_link_standalone_runtime(${target_name})
+  target_link_libraries(${target_name} PRIVATE xmvb_cpp_vb)
 endforeach()
-
-add_executable(
-  test_orbital_block_partition
-  ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_orbital_block_partition.cpp)
-target_link_libraries(test_orbital_block_partition PRIVATE xmvb_cpp_vb)
 
 if (BUILD_TESTING)
   add_test(NAME orbital_block_partition COMMAND test_orbital_block_partition)
@@ -106,4 +101,4 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
 endif()
 
-unset(_xmvb_vbscf_runtime_unit_targets)
+unset(_xmvb_vbscf_unit_targets)

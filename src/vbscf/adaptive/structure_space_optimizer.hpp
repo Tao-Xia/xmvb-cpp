@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/subspace_selector.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 
@@ -67,6 +67,12 @@ struct AdaptiveStructureSpaceOptimizerResult {
   VbScfOptimizerResult inner_result;
 };
 
+struct AdaptiveStructureSpaceInput {
+  VbScfInput input;
+  RawStructureData raw_structure_data;
+  double nuclear_repulsion_energy = 0.0;
+};
+
 inline const char* adaptive_structure_space_seed_selection_name(
     RawStructureSelectionMode mode) {
   return raw_structure_selection_mode_name(mode);
@@ -79,7 +85,7 @@ public:
       AdaptiveStructureSpaceOptimizerOptions options = {});
 
   AdaptiveStructureSpaceOptimizerResult optimize(
-      const VbScfInputLoadResult& load_result) const;
+      const AdaptiveStructureSpaceInput& input) const;
 
 private:
   VbScfOptimizerOptions optimizer_options_;

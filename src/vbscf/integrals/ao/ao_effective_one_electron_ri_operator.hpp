@@ -4,7 +4,7 @@
 
 #include <vector>
 
-#include "runtime/libcint_ri_integral_provider.hpp"
+#include "vbscf/integrals/ao/ri_factorization.hpp"
 
 namespace xmvb::vb {
 
@@ -61,7 +61,7 @@ struct AoEffectiveOneElectronRiLowRankFactors {
  */
 std::vector<double> apply_ao_effective_one_electron_ri_operator(
     const std::vector<double>& input_matrix,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions,
     const AoEffectiveOneElectronRiOperatorOptions& options = {});
 
@@ -74,7 +74,7 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
  */
 std::vector<double> apply_ao_effective_one_electron_ri_operator(
     const AoEffectiveOneElectronRiLowRankFactors& low_rank_factors,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions);
 
 }  // namespace xmvb::vb

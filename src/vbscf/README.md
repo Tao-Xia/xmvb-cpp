@@ -27,6 +27,11 @@ as the one-way dependent
 `xmvb_cpp_deepvbh` compatibility library; `xmvb_cpp_vb` and
 `xmvb_cpp_runtime` never link against it.
 
+The standalone `runtime` is a one-way client of this module. Canonical
+`vbscf/...` sources must not include `runtime/...` headers. Backend-generated
+data enters through numerical value contracts or injected provider interfaces;
+this rule is enforced when CMake configures the source manifest.
+
 ## Target layout
 
 ```text

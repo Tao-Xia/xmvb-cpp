@@ -4,9 +4,9 @@
 
 #include <vector>
 
-#include "runtime/libcint_ri_integral_provider.hpp"
 #include "vbscf/integrals/ao/ao_integral_input.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagation_result.hpp"
+#include "vbscf/integrals/ao/ri_factorization.hpp"
 #include "vbscf/orbitals/orbital_preparation_result.hpp"
 
 namespace xmvb::vb {
@@ -45,12 +45,12 @@ public:
    */
   AoEffectiveOneElectronBackpropagationResult backpropagate(
       const std::vector<double>& ao_effective_one_electron_gradient,
-      const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+      const RiAoFactorization& ri_factorization,
       int n_basis_functions) const;
 
   AoEffectiveOneElectronBackpropagationResult backpropagate(
       const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_one_electron_gradient,
-      const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+      const RiAoFactorization& ri_factorization,
       int n_basis_functions) const;
 
   /**
@@ -67,7 +67,7 @@ public:
   AoEffectiveOneElectronBackpropagationResult backpropagate(
       const std::vector<double>& active_one_electron_gradient,
       const OrbitalPreparationResult& orbital_result,
-      const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+      const RiAoFactorization& ri_factorization,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,
       int n_active_orbitals) const;

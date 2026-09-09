@@ -4,9 +4,9 @@
 
 #include <vector>
 
-#include "runtime/libcint_ri_integral_provider.hpp"
 #include "vbscf/integrals/ao/ao_integral_input.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_result.hpp"
+#include "vbscf/integrals/ao/ri_factorization.hpp"
 #include "vbscf/orbitals/orbital_preparation_result.hpp"
 
 namespace xmvb::vb {
@@ -49,13 +49,13 @@ public:
   AoEffectiveOneElectronResult build(
       const std::vector<double>& inactive_density_matrix,
       const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
-      const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+      const RiAoFactorization& ri_factorization,
       int n_basis_functions) const;
 
   AoEffectiveOneElectronResult build(
       const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
       const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
-      const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+      const RiAoFactorization& ri_factorization,
       int n_basis_functions) const;
 
   /**
@@ -68,7 +68,7 @@ public:
   AoEffectiveOneElectronResult build(
       const OrbitalPreparationResult& orbital_result,
       const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
-      const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+      const RiAoFactorization& ri_factorization,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals) const;
 

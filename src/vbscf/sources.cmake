@@ -135,6 +135,29 @@ endif()
 unset(_xmvb_declared_vbscf_sources)
 unset(_xmvb_discovered_vbscf_sources)
 
+# The standalone runtime prepares input decks and backend services on top of
+# the numerical VBSCF library.  Keep that dependency one-way: canonical VBSCF
+# sources may consume injected contracts, but must never include runtime headers.
+file(
+  GLOB_RECURSE _xmvb_vbscf_dependency_files
+  CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_LIST_DIR}/*.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/*.hpp")
+foreach(_xmvb_vbscf_dependency_file IN LISTS _xmvb_vbscf_dependency_files)
+  file(
+    STRINGS "${_xmvb_vbscf_dependency_file}"
+    _xmvb_runtime_includes
+    REGEX "^[ \t]*#[ \t]*include[ \t]*\"runtime/")
+  if (_xmvb_runtime_includes)
+    message(FATAL_ERROR
+      "Canonical VBSCF source includes a runtime header: "
+      "${_xmvb_vbscf_dependency_file}\n${_xmvb_runtime_includes}")
+  endif()
+endforeach()
+unset(_xmvb_runtime_includes)
+unset(_xmvb_vbscf_dependency_file)
+unset(_xmvb_vbscf_dependency_files)
+
 # DeepVBH is a separate compatibility target. It may depend on VBSCF and the
 # standalone runtime, but neither production layer may depend on it.
 set(XMVB_DEEPVBH_SOURCES

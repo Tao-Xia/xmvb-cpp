@@ -168,7 +168,7 @@ inline void accumulate_ao_effective_one_electron_integral(
 AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
@@ -180,14 +180,14 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
       ao_core_hamiltonian_matrix.cols() != n_basis_functions) {
     throw std::invalid_argument("AO matrix sizes do not match n_basis_functions");
   }
-  if (ri_integral_provider_result.n_basis_functions != n_basis_functions) {
+  if (ri_factorization.n_basis_functions != n_basis_functions) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
 
   std::vector<double> g11_storage =
       apply_ao_effective_one_electron_ri_operator(
           flatten_matrix_column_major(inactive_density_matrix),
-          ri_integral_provider_result,
+          ri_factorization,
           n_basis_functions,
           {.attempt_spectral_factorization = true});
   const Eigen::Map<const Eigen::MatrixXd> g11(
@@ -207,7 +207,7 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
 AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
     const AoEffectiveOneElectronRiLowRankFactors& inactive_density_factors,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
@@ -217,7 +217,7 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
       ao_core_hamiltonian_matrix.cols() != n_basis_functions) {
     throw std::invalid_argument("AO core Hamiltonian shape does not match n_basis_functions");
   }
-  if (ri_integral_provider_result.n_basis_functions != n_basis_functions) {
+  if (ri_factorization.n_basis_functions != n_basis_functions) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
 
@@ -227,7 +227,7 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron_ri(
   std::vector<double> g11_storage =
       apply_ao_effective_one_electron_ri_operator(
           inactive_density_factors,
-          ri_integral_provider_result,
+          ri_factorization,
           n_basis_functions);
   const Eigen::Map<const Eigen::MatrixXd> g11(
       g11_storage.data(),
@@ -633,7 +633,7 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const std::vector<double>& inactive_density_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) const {
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
@@ -650,26 +650,26 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
   return build(
       inactive_density_matrix_map,
       ao_core_hamiltonian_matrix,
-      ri_integral_provider_result,
+      ri_factorization,
       n_basis_functions);
 }
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions) const {
   return build_ao_effective_one_electron_ri(
       inactive_density_matrix,
       ao_core_hamiltonian_matrix,
-      ri_integral_provider_result,
+      ri_factorization,
       n_basis_functions);
 }
 
 AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
     const OrbitalPreparationResult& orbital_result,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
-    const LibcintRiIntegralProviderResult& ri_integral_provider_result,
+    const RiAoFactorization& ri_factorization,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals) const {
   if (n_inactive_doubly_occupied_orbitals < 0 ||
@@ -689,7 +689,7 @@ AoEffectiveOneElectronResult AoEffectiveOneElectronBuilder::build(
           .n_negative_components = 0,
       },
       ao_core_hamiltonian_matrix,
-      ri_integral_provider_result,
+      ri_factorization,
       n_basis_functions);
 }
 
