@@ -28,7 +28,7 @@ struct SameSpinLocalResponseWeightMatrices {
   Eigen::MatrixXd beta_delta_partner_total_transfer_matrix;
 };
 
-SameSpinExactWeightMatrices build_exact_same_spin_weight_matrices(
+SameSpinExactWeightMatrices build_dense_exact_same_spin_weight_matrices(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies);
@@ -46,19 +46,6 @@ build_dense_directional_exact_same_spin_weight_matrices(
     const SelectedStateDeterminantMatrices& directional_selected_states,
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies);
-
-SameSpinExactWeightMatrices
-build_support_sparse_directional_exact_same_spin_weight_matrices(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const SelectedStateDeterminantMatrices& directional_selected_states,
-    const std::vector<double>& selected_state_energies,
-    const std::vector<double>& directional_selected_state_energies);
-
-void validate_full_matrix_same_spin_inputs(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const std::vector<double>& selected_state_energies);
 
 SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matrices(
     const SelectedStateDeterminantMatrices& selected_states,

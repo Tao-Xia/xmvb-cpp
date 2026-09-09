@@ -15,7 +15,7 @@ using detail::account_for_close_shell_spin_reuse;
 using detail::accumulate_spin_local_matrix_backward;
 using detail::accumulate_spin_matrix_backward;
 using detail::build_dense_directional_exact_same_spin_weight_matrices;
-using detail::build_exact_same_spin_weight_matrices;
+using detail::build_dense_exact_same_spin_weight_matrices;
 using detail::build_local_same_spin_response_weight_matrices;
 using detail::build_support_sparse_directional_same_spin_backward_contribution_by_tiles;
 using detail::build_support_sparse_local_same_spin_backward_contribution_by_tiles;
@@ -25,14 +25,40 @@ using detail::make_zero_backward_contribution;
 using detail::SameSpinExactWeightMatrices;
 using detail::SameSpinLocalResponseWeightMatrices;
 using detail::validate_directional_selected_state_inputs;
-using detail::validate_full_matrix_same_spin_inputs;
+
+namespace {
+
+void validate_backward_inputs(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    const std::vector<double>& selected_state_energies) {
+  if (!same_spin_pair_cache.enabled()) {
+    throw std::invalid_argument(
+        "same-spin matrix backward requires an enabled same-spin cache");
+  }
+  if (selected_states.states.size() != selected_state_energies.size()) {
+    throw std::invalid_argument(
+        "selected_state_energies must align with selected_states.states");
+  }
+  if (static_cast<int>(
+          same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()) !=
+          selected_states.n_unique_alpha ||
+      static_cast<int>(
+          same_spin_pair_cache.beta_reuse_table.unique_determinants.size()) !=
+          selected_states.n_unique_beta) {
+    throw std::invalid_argument(
+        "same-spin cache dimensions do not match selected-state matrices");
+  }
+}
+
+}  // namespace
 
 SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     int n_active_orbitals) {
-  validate_full_matrix_same_spin_inputs(
+  validate_backward_inputs(
       same_spin_pair_cache,
       selected_states,
       selected_state_energies);
@@ -50,7 +76,7 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
   // while replacing the previous full determinant-pair scatter with dense
   // matrix products on the unique-spin spaces.
   const SameSpinExactWeightMatrices exact_weight_matrices =
-      build_exact_same_spin_weight_matrices(
+      build_dense_exact_same_spin_weight_matrices(
           same_spin_pair_cache,
           selected_states,
           selected_state_energies);
@@ -110,7 +136,7 @@ build_directional_same_spin_matrix_backward_contribution(
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies,
     int n_active_orbitals) {
-  validate_full_matrix_same_spin_inputs(
+  validate_backward_inputs(
       same_spin_pair_cache,
       selected_states,
       selected_state_energies);
@@ -200,7 +226,7 @@ build_local_same_spin_matrix_backward_contribution(
   // 2. compress partner directional scalars onto `δW`,
   // 3. sweep only the ordered unique-spin pairs to accumulate the exact local
   //    response on `(δS_act, δh_act, δg_act)`.
-  validate_full_matrix_same_spin_inputs(
+  validate_backward_inputs(
       same_spin_pair_cache,
       selected_states,
       selected_state_energies);
@@ -218,7 +244,7 @@ build_local_same_spin_matrix_backward_contribution(
   }
 
   const SameSpinExactWeightMatrices exact_weight_matrices =
-      build_exact_same_spin_weight_matrices(
+      build_dense_exact_same_spin_weight_matrices(
           same_spin_pair_cache,
           selected_states,
           selected_state_energies);
