@@ -92,6 +92,7 @@ set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
 )
 
 set(XMVB_VBSCF_OPTIMIZATION_SOURCES
+  vbscf/optimization/trust_region/retraction_metric.cpp
   vbscf/optimization/vbscf_objective.cpp
   vbscf/optimization/vbscf_optimizer.cpp
 )
