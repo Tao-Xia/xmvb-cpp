@@ -96,7 +96,7 @@ std::size_t same_spin_accepted_tile_min_dense_bytes() {
   return kSameSpinAcceptedTileMinDenseBytes;
 }
 
-bool should_use_same_spin_accepted_tile_backward(
+bool should_use_same_spin_tile_backward(
     const SelectedStateDeterminantMatrices& selected_states) {
   const std::size_t alpha_size =
       static_cast<std::size_t>(selected_states.n_unique_alpha);
@@ -106,16 +106,6 @@ bool should_use_same_spin_accepted_tile_backward(
       4ull * sizeof(double) *
       (alpha_size * alpha_size + beta_size * beta_size);
   return dense_weight_bytes >= same_spin_accepted_tile_min_dense_bytes();
-}
-
-bool should_use_same_spin_local_tile_backward(
-    const SelectedStateDeterminantMatrices& selected_states) {
-  return should_use_same_spin_accepted_tile_backward(selected_states);
-}
-
-bool should_use_same_spin_directional_tile_backward(
-    const SelectedStateDeterminantMatrices& selected_states) {
-  return should_use_same_spin_accepted_tile_backward(selected_states);
 }
 
 bool same_spin_local_tile_has_any_weight(
@@ -1141,7 +1131,7 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
       selected_state_energies);
 
   if (should_use_support_sparse_selected_state_contractions(selected_states) &&
-      should_use_same_spin_accepted_tile_backward(selected_states)) {
+      should_use_same_spin_tile_backward(selected_states)) {
     return build_support_sparse_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,
@@ -1225,7 +1215,7 @@ build_directional_same_spin_matrix_backward_contribution(
       directional_selected_state_energies);
 
   if (should_use_support_sparse_selected_state_contractions(selected_states) &&
-      should_use_same_spin_directional_tile_backward(selected_states)) {
+      should_use_same_spin_tile_backward(selected_states)) {
     return build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,
@@ -1318,7 +1308,7 @@ build_local_same_spin_matrix_backward_contribution(
       selected_state_energies);
 
   if (should_use_support_sparse_selected_state_contractions(selected_states) &&
-      should_use_same_spin_local_tile_backward(selected_states)) {
+      should_use_same_spin_tile_backward(selected_states)) {
     return build_support_sparse_local_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,
