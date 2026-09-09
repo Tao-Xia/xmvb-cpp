@@ -28,7 +28,7 @@ ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_re
     const ActiveSpaceIntegralDirectionView& integral_direction,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     const std::vector<double>& directional_selected_state_energies,
-    const SameSpinDirectionalPairCache* directional_pair_cache = nullptr);
+    const SameSpinDirectionalPairCache& directional_pair_cache);
 
 std::vector<double> build_orbital_value_gradient_from_active_space_gradient_direction(
     const VbScfInput& input,

@@ -1438,7 +1438,7 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
             active_space_integral_direction,
             directional_selected_states,
             directional_selected_state_response.delta_selected_eigenvalues,
-            &directional_pair_cache);
+            directional_pair_cache);
     apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
         elapsed_wall_time_seconds(active_gradient_start_time);
     validate_outer_response_active_gradient(

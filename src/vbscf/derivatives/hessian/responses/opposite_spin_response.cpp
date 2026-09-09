@@ -320,7 +320,7 @@ build_directional_opposite_spin_pair_data(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>& delta_ao_overlap_matrix,
     const std::vector<double>& delta_packed_active_two_electron_integrals,
-    const std::vector<SameSpinPolynomialDirectionalPairData>*
+    const std::vector<SameSpinPolynomialDirectionalPairData>&
         precomputed_directional_pair_data) {
   const std::size_t expected_size =
       n_unique_determinants *
@@ -329,8 +329,7 @@ build_directional_opposite_spin_pair_data(
     throw std::invalid_argument(
         "directional opposite-spin pair data requires a full ordered pair cache");
   }
-  if (precomputed_directional_pair_data != nullptr &&
-      precomputed_directional_pair_data->size() != expected_size) {
+  if (precomputed_directional_pair_data.size() != expected_size) {
     throw std::invalid_argument(
         "precomputed directional opposite-spin pair data has inconsistent dimensions");
   }
@@ -359,22 +358,12 @@ build_directional_opposite_spin_pair_data(
               unique_determinants[left_unique_index],
               unique_determinants[right_unique_index],
               delta_ao_overlap_matrix, n_active_orbitals);
-      Eigen::MatrixXd owned_delta_cofactor;
-      const Eigen::MatrixXd* delta_cofactor = nullptr;
-      if (precomputed_directional_pair_data != nullptr) {
-        delta_cofactor = &(*precomputed_directional_pair_data)[ordered_pair_index]
-                              .delta_cofactor_1st;
-      } else {
-        owned_delta_cofactor = cached_cofactor_differential(pair_evaluation).first(
-            directional_entry.delta_overlap_submatrix);
-        delta_cofactor = &owned_delta_cofactor;
-      }
-
       directional_entry.delta_first_order_cofactor_projection =
           build_sparse_packed_pair_projection_coefficients(
               unique_determinants[left_unique_index],
               unique_determinants[right_unique_index],
-              *delta_cofactor,
+              precomputed_directional_pair_data[ordered_pair_index]
+                  .delta_cofactor_1st,
               true,
               n_active_orbitals);
       auto& directional_first_order_projection =
@@ -2788,9 +2777,8 @@ build_local_opposite_spin_matrix_backward_contribution(
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
-    const SameSpinDirectionalPairCache* directional_pair_cache) {
+    const ActiveSpaceIntegralDirectionView& direction,
+    const SameSpinDirectionalPairCache& directional_pair_cache) {
   validate_matrix_backward_inputs(same_spin_pair_cache, selected_states);
 
   OppositeSpinMatrixBackwardContribution result;
@@ -2827,18 +2815,13 @@ build_local_opposite_spin_matrix_backward_contribution(
           selected_states.n_unique_alpha,
           n_active_orbitals,
           active_space_two_electron_result,
-          delta_ao_overlap_matrix,
-          delta_packed_active_two_electron_integrals,
-          directional_pair_cache == nullptr
-              ? nullptr
-              : &directional_pair_cache->alpha.ordered_pair_data);
-  const std::vector<SameSpinPolynomialDirectionalPairData>*
-      beta_precomputed_pair_data = nullptr;
-  if (directional_pair_cache != nullptr) {
-    beta_precomputed_pair_data = directional_pair_cache->close_shell_same_spin
-        ? &directional_pair_cache->alpha.ordered_pair_data
-        : &directional_pair_cache->beta.ordered_pair_data;
-  }
+          direction.overlap,
+          direction.packed_two_electron,
+          directional_pair_cache.alpha.ordered_pair_data);
+  const auto& beta_precomputed_pair_data =
+      directional_pair_cache.close_shell_same_spin
+          ? directional_pair_cache.alpha.ordered_pair_data
+          : directional_pair_cache.beta.ordered_pair_data;
   const auto beta_directional_pair_data =
       build_directional_opposite_spin_pair_data(
           same_spin_pair_cache.beta_reuse_table.unique_determinants,
@@ -2846,8 +2829,8 @@ build_local_opposite_spin_matrix_backward_contribution(
           selected_states.n_unique_beta,
           n_active_orbitals,
           active_space_two_electron_result,
-          delta_ao_overlap_matrix,
-          delta_packed_active_two_electron_integrals,
+          direction.overlap,
+          direction.packed_two_electron,
           beta_precomputed_pair_data);
 
   const int sparse_block_size = std::min(

@@ -929,10 +929,8 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
-    const SameSpinDirectionalPairCache* precomputed_directional_pair_cache) {
+    const ActiveSpaceIntegralDirectionView& direction,
+    const SameSpinDirectionalPairCache& directional_pair_cache) {
   // Local HVP tile path:
   //   keep only partner directional scalar matrices,
   //   build accepted/directional W tiles on demand from support-local C blocks,
@@ -956,26 +954,16 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  SameSpinDirectionalPairCache owned_directional_pair_cache;
-  if (precomputed_directional_pair_cache == nullptr) {
-    owned_directional_pair_cache = build_same_spin_directional_pair_cache(
-        same_spin_pair_cache,
-        n_active_orbitals,
-        {delta_ao_overlap_matrix,
-         delta_active_one_electron_matrix,
-         delta_packed_active_two_electron_integrals});
-    precomputed_directional_pair_cache = &owned_directional_pair_cache;
-  }
-  if (precomputed_directional_pair_cache->close_shell_same_spin !=
+  if (directional_pair_cache.close_shell_same_spin !=
       close_shell_same_spin) {
     throw std::invalid_argument(
         "precomputed same-spin directional cache has inconsistent spin sharing");
   }
   const auto& alpha_directional_scalars =
-      precomputed_directional_pair_cache->alpha;
+      directional_pair_cache.alpha;
   const auto& beta_directional_scalars = close_shell_same_spin
-      ? precomputed_directional_pair_cache->alpha
-      : precomputed_directional_pair_cache->beta;
+      ? directional_pair_cache.alpha
+      : directional_pair_cache.beta;
 
   const int tile_size = same_spin_backward_pair_tile_size();
   SameSpinLocalTileWeights tile_weights;
@@ -1033,9 +1021,9 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
           n_active_orbitals,
           active_one_electron_matrix,
           active_space_two_electron_result,
-          delta_ao_overlap_matrix,
-          delta_active_one_electron_matrix,
-          delta_packed_active_two_electron_integrals,
+          direction.overlap,
+          direction.one_electron,
+          direction.packed_two_electron,
           &active_one_electron_gradient,
           &result.active_orbital_overlap_gradient,
           &result.packed_active_two_electron_gradient);
@@ -1099,9 +1087,9 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
             n_active_orbitals,
             active_one_electron_matrix,
             active_space_two_electron_result,
-            delta_ao_overlap_matrix,
-            delta_active_one_electron_matrix,
-            delta_packed_active_two_electron_integrals,
+            direction.overlap,
+            direction.one_electron,
+            direction.packed_two_electron,
             &active_one_electron_gradient,
             &result.active_orbital_overlap_gradient,
             &result.packed_active_two_electron_gradient);
@@ -1348,10 +1336,8 @@ build_local_same_spin_matrix_backward_contribution(
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
-    const SameSpinDirectionalPairCache* precomputed_directional_pair_cache) {
+    const ActiveSpaceIntegralDirectionView& direction,
+    const SameSpinDirectionalPairCache& directional_pair_cache) {
   // Matrix-form local same-spin HVP:
   // 1. compress accepted determinant/structure adjoints onto unique-spin pair weights,
   // 2. compress partner directional scalars onto `δW`,
@@ -1371,10 +1357,8 @@ build_local_same_spin_matrix_backward_contribution(
         n_active_orbitals,
         active_one_electron_matrix,
         active_space_two_electron_result,
-        delta_ao_overlap_matrix,
-        delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals,
-        precomputed_directional_pair_cache);
+        direction,
+        directional_pair_cache);
   }
 
   const SameSpinExactWeightMatrices exact_weight_matrices =
@@ -1388,26 +1372,16 @@ build_local_same_spin_matrix_backward_contribution(
       exact_weight_matrices.alpha_partner_total_transfer_matrix +
       exact_weight_matrices.alpha_singular_partner_transfer_matrix;
 
-  SameSpinDirectionalPairCache owned_directional_pair_cache;
-  if (precomputed_directional_pair_cache == nullptr) {
-    owned_directional_pair_cache = build_same_spin_directional_pair_cache(
-        same_spin_pair_cache,
-        n_active_orbitals,
-        {delta_ao_overlap_matrix,
-         delta_active_one_electron_matrix,
-         delta_packed_active_two_electron_integrals});
-    precomputed_directional_pair_cache = &owned_directional_pair_cache;
-  }
-  if (precomputed_directional_pair_cache->close_shell_same_spin !=
+  if (directional_pair_cache.close_shell_same_spin !=
       close_shell_same_spin) {
     throw std::invalid_argument(
         "precomputed same-spin directional cache has inconsistent spin sharing");
   }
   const auto& alpha_directional_scalars =
-      precomputed_directional_pair_cache->alpha;
+      directional_pair_cache.alpha;
   const auto& beta_directional_scalars = close_shell_same_spin
-      ? precomputed_directional_pair_cache->alpha
-      : precomputed_directional_pair_cache->beta;
+      ? directional_pair_cache.alpha
+      : directional_pair_cache.beta;
   const SameSpinLocalResponseWeightMatrices local_weight_matrices =
       build_local_same_spin_response_weight_matrices(
           selected_states,
@@ -1445,9 +1419,9 @@ build_local_same_spin_matrix_backward_contribution(
       n_active_orbitals,
       active_one_electron_matrix,
       active_space_two_electron_result,
-      delta_ao_overlap_matrix,
-      delta_active_one_electron_matrix,
-      delta_packed_active_two_electron_integrals,
+      direction.overlap,
+      direction.one_electron,
+      direction.packed_two_electron,
       &active_one_electron_gradient,
       &result.active_orbital_overlap_gradient,
       &result.packed_active_two_electron_gradient);
@@ -1477,9 +1451,9 @@ build_local_same_spin_matrix_backward_contribution(
         n_active_orbitals,
         active_one_electron_matrix,
         active_space_two_electron_result,
-        delta_ao_overlap_matrix,
-        delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals,
+        direction.overlap,
+        direction.one_electron,
+        direction.packed_two_electron,
         &active_one_electron_gradient,
         &result.active_orbital_overlap_gradient,
         &result.packed_active_two_electron_gradient);

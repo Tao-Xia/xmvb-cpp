@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space_direction.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
 
@@ -78,8 +79,7 @@ build_local_opposite_spin_matrix_backward_contribution(
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
-    const SameSpinDirectionalPairCache* directional_pair_cache = nullptr);
+    const ActiveSpaceIntegralDirectionView& direction,
+    const SameSpinDirectionalPairCache& directional_pair_cache);
 
 }  // namespace xmvb::vb
