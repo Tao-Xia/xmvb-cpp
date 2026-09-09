@@ -2,11 +2,9 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
 #include <ctime>
 #include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -113,71 +111,8 @@ const char* bool_name(bool value) {
   return value ? "true" : "false";
 }
 
-bool parse_env_flag_with_default(
-    const char* variable_name,
-    bool default_value);
-int parse_env_int_with_default(
-    const char* variable_name,
-    int default_value);
-double parse_env_double_with_default(
-    const char* variable_name,
-    double default_value);
-
 constexpr int kLogRuleWidth = 88;
 constexpr int kLogLabelWidth = 34;
-
-std::optional<bool> parse_env_optional_flag(
-    const char* variable_name) {
-  const char* value = std::getenv(variable_name);
-  if (value == nullptr || value[0] == '\0') {
-    return std::nullopt;
-  }
-  return std::strcmp(value, "0") != 0 &&
-      std::strcmp(value, "false") != 0 &&
-      std::strcmp(value, "FALSE") != 0;
-}
-
-bool parse_env_flag_with_default(
-    const char* variable_name,
-    bool default_value) {
-  const auto value = parse_env_optional_flag(variable_name);
-  return value.has_value() ? *value : default_value;
-}
-
-int parse_env_int_with_default(
-    const char* variable_name,
-    int default_value) {
-  const char* value = std::getenv(variable_name);
-  if (value == nullptr || value[0] == '\0') {
-    return default_value;
-  }
-  char* end = nullptr;
-  errno = 0;
-  const long parsed = std::strtol(value, &end, 10);
-  if (errno != 0 || end == value || (end != nullptr && end[0] != '\0') ||
-      parsed < static_cast<long>(std::numeric_limits<int>::min()) ||
-      parsed > static_cast<long>(std::numeric_limits<int>::max())) {
-    return default_value;
-  }
-  return static_cast<int>(parsed);
-}
-
-double parse_env_double_with_default(
-    const char* variable_name,
-    double default_value) {
-  const char* value = std::getenv(variable_name);
-  if (value == nullptr || value[0] == '\0') {
-    return default_value;
-  }
-  char* end = nullptr;
-  errno = 0;
-  const double parsed = std::strtod(value, &end);
-  if (errno != 0 || end == value || (end != nullptr && end[0] != '\0') ||
-      !std::isfinite(parsed)) {
-    return default_value;
-  }
-  return parsed;
-}
 
 const char* env_value_or_unset(const char* variable_name) {
   const char* value = std::getenv(variable_name);
@@ -846,9 +781,6 @@ int main(int argc, char** argv) {
         apply_optimizer_backend_argument(argument_value, &options, &run_backend);
       } else if (argument_name == "--structure-space-mode") {
         apply_structure_space_mode_argument(argument_value, &structure_space_mode);
-      } else if (argument_name == "--algorithm") {
-        throw std::invalid_argument(
-            "--algorithm is no longer supported; use the standard VBSCF input deck");
       } else if (argument_name == "--max-iterations") {
         user_specified_max_iterations = true;
         options.max_iterations = std::stoi(argument_value);
