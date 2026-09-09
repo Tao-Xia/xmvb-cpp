@@ -103,6 +103,37 @@ set(XMVB_VBSCF_ADAPTIVE_SOURCES
   vbscf/adaptive/structure_space_optimizer.cpp
 )
 
+# Keep the ownership manifest complete. Adding a VBSCF translation unit without
+# assigning it to one of the domain lists above is a configuration error.
+set(_xmvb_declared_vbscf_sources
+  ${XMVB_VBSCF_APPROXIMATION_SOURCES}
+  ${XMVB_VBSCF_DETERMINANT_SOURCES}
+  ${XMVB_VBSCF_STRUCTURE_SOURCES}
+  ${XMVB_VBSCF_ORBITAL_SOURCES}
+  ${XMVB_VBSCF_AO_INTEGRAL_SOURCES}
+  ${XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES}
+  ${XMVB_VBSCF_DERIVATIVE_SOURCES}
+  ${XMVB_VBSCF_DIAGNOSTIC_SOURCES}
+  ${XMVB_VBSCF_OPTIMIZATION_SOURCES}
+  ${XMVB_VBSCF_WORKFLOW_SOURCES}
+  ${XMVB_VBSCF_ADAPTIVE_SOURCES})
+file(
+  GLOB_RECURSE _xmvb_discovered_vbscf_sources
+  CONFIGURE_DEPENDS
+  RELATIVE "${CMAKE_CURRENT_LIST_DIR}/.."
+  "${CMAKE_CURRENT_LIST_DIR}/*.cpp")
+list(SORT _xmvb_declared_vbscf_sources)
+list(SORT _xmvb_discovered_vbscf_sources)
+if (NOT "${_xmvb_declared_vbscf_sources}" STREQUAL
+    "${_xmvb_discovered_vbscf_sources}")
+  message(FATAL_ERROR
+    "src/vbscf/sources.cmake does not own every VBSCF .cpp exactly once.\n"
+    "Declared: ${_xmvb_declared_vbscf_sources}\n"
+    "Discovered: ${_xmvb_discovered_vbscf_sources}")
+endif()
+unset(_xmvb_declared_vbscf_sources)
+unset(_xmvb_discovered_vbscf_sources)
+
 # DeepVBH is a separate compatibility target. It may depend on VBSCF and the
 # standalone runtime, but neither production layer may depend on it.
 set(XMVB_DEEPVBH_SOURCES

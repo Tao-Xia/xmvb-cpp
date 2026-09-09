@@ -2,26 +2,28 @@
 
 This directory is the canonical home of the C++ VBSCF implementation. The only
 VBSCF-related files intentionally left under `src/vb` are the tracked DeepVBH
-prototype and the six forwarding headers required to compile it. They form a
+prototype and its forwarding headers. They form a
 compatibility island and must not be used by new production code.
 
-## Dependency direction
+## Responsibility flow
 
-Production modules follow this acyclic dependency chain:
+The main evaluation flow is:
 
 ```text
-core
-  -> orbitals + integrals
-  -> determinants
-  -> structures
-  -> derivatives
-  -> optimization
-  -> workflow
+input contracts
+  -> orbital preparation + AO/active integral transformation
+  -> determinant-pair kernels and caches
+  -> structure Hamiltonian/overlap assembly
+  -> energy/gradient evaluation
+  -> matrix-free HVP responses
+  -> orbital optimization
 ```
 
-`approx` and `legacy` are terminal modules. Production code must not include
-from them. DeepVBH remains outside this tree under `src/vb` and is not part of
-the matrix-free VBSCF optimizer. Its sources build as the one-way dependent
+`core` owns aggregate input/result contracts, so it may reference value types
+from lower numerical domains. `approx` is an optional side path and
+`diagnostics` contains audits only. DeepVBH remains outside this tree under
+`src/vb` and is not part of the matrix-free VBSCF optimizer. Its sources build
+as the one-way dependent
 `xmvb_cpp_deepvbh` compatibility library; `xmvb_cpp_vb` and
 `xmvb_cpp_runtime` never link against it.
 
@@ -29,13 +31,14 @@ the matrix-free VBSCF optimizer. Its sources build as the one-way dependent
 
 ```text
 vbscf/
-  core/                 Stable data types and dimensions
+  core/                 Aggregate input/result and algorithm contracts
   orbitals/
     charts/             HAO and full-AO OEO coordinate maps
     gauge/              Support-preserving gauge operations
   integrals/            AO and active-space integral transformations
   determinants/         Determinant overlap and Hamiltonian kernels
   structures/           VB structure expansion and state matrices
+    reference/          Raw-expansion reference implementations
   derivatives/
     gradient/            Gradient evaluation and chart pullback
     hessian/             Matrix-free HVP orchestration and accepted contexts
@@ -46,9 +49,8 @@ vbscf/
     trust_region/        Trust-region model solvers and radius updates
   workflow/              End-to-end VBSCF evaluation and orchestration
   adaptive/              Adaptive structure-space algorithms
-  diagnostics/           Audits and memory/performance reporting
+  diagnostics/           Numerical and coordinate audits
   approx/                Optional approximate models
-  legacy/                Compatibility-only implementations
 ```
 
 ## Naming rules
@@ -65,8 +67,9 @@ vbscf/
 - HAO and full-AO OEO charts are named explicitly and are not selected by raw
   integer orbital-type flags inside optimization code.
 
-The namespace remains `xmvb::vb` during physical migration to avoid mixing an
-ABI-wide namespace change with file ownership changes.
+The namespace remains `xmvb::vb` to preserve the existing public API while the
+physical module boundaries are now expressed by directories and build-source
+ownership.
 
 ## Compatibility policy
 
@@ -81,4 +84,7 @@ The canonical tree owns `optimization`, the single-step evaluator in
 `workflow`, the complete orbital/chart/gauge layer, AO and active-space
 `integrals`, `determinants`, `structures`, `derivatives/gradient`,
 `derivatives/hessian`, diagnostics, and adaptive structure-space algorithms.
-Legacy orbital and structure algorithms are isolated under `legacy`.
+Algorithms retained for exact comparison are colocated with their owning
+domain and named explicitly, for example
+`structures/reference/raw_structure_overlap` and
+`orbitals/gauge/legacy_jacobi_diagonalizer`.

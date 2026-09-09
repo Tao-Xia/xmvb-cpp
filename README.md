@@ -20,17 +20,23 @@ Valence Bond theory provides direct chemical insight into bonding, reactivity, a
 
 ```
 src/
-  core/            Linear algebra, shared data structures
-  vb/
-    matrices/      Hamiltonian and overlap matrix builders
-    model/         VB model definitions
-    orbital/       Orbital optimization and active space
-    scf/           SCF optimizer implementations
+  core/            Shared numerical infrastructure
+  vbscf/           Canonical C++ VBSCF implementation
+    orbitals/      Sparse/full-AO charts, gauges, and pullbacks
+    integrals/     AO and active-space integral operators
+    determinants/  Determinant-pair algebra and caches
+    structures/    VB structure expansion and state matrices
+    derivatives/   Gradient and matrix-free Hessian-vector products
+    optimization/  L-BFGS and trust-region Newton solvers
+    workflow/      End-to-end VBSCF evaluation
+  vb/              DeepVBH compatibility island only
   pfaffian_vbscf/  Pfaffian-based VB methods
   runtime/         Input parsing, molecule/basis setup, integral preparation
   tools/           Benchmarking and diagnostic tools
   third_party/     Vendored dependencies (LBFGSpp)
 basis/             Standard basis set library (Pople, Dunning, etc.)
+testdata/vbscf/    Versioned VBSCF regression decks
+tests/vbscf/       Unit and numerical-regression tests
 ```
 
 ## Dependencies
@@ -68,7 +74,8 @@ cmake --build build
 OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi> --optimizer-backend lbfgspp
 ```
 
-Input files use the `.xmi` format. See `src/test_molecule/` for examples.
+Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
+regression decks and `src/test_molecule/F2.xmi` for the compact HAO smoke case.
 
 ## License
 
