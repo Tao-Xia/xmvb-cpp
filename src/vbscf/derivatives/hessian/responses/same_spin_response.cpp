@@ -1118,9 +1118,7 @@ SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
       static_cast<int>(
           same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()),
       n_active_orbitals,
-      direction.overlap,
-      direction.one_electron,
-      direction.packed_two_electron);
+      direction);
   if (!result.close_shell_same_spin) {
     result.beta = build_directional_pair_scalar_matrices(
         same_spin_pair_cache.beta_reuse_table.unique_determinants,
@@ -1128,9 +1126,7 @@ SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
         static_cast<int>(
             same_spin_pair_cache.beta_reuse_table.unique_determinants.size()),
         n_active_orbitals,
-        direction.overlap,
-        direction.one_electron,
-        direction.packed_two_electron);
+        direction);
   }
   return result;
 }

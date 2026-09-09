@@ -174,20 +174,18 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
     const std::vector<int>& occ_R,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const ActiveSpaceIntegralDirectionView& direction,
     bool need_overlap_gradient) {
   SameSpinPolynomialDirectionalPairData result;
   const CofactorDifferential& cofactor =
       cached_cofactor_differential(pair_evaluation);
   const Eigen::MatrixXd ds = build_local_overlap_direction_matrix(
-      occ_L, occ_R, delta_ao_overlap_matrix, n_active_orbitals);
+      occ_L, occ_R, direction.overlap, n_active_orbitals);
   const Eigen::MatrixXd dh = build_spin_one_electron_block_matrix_local(
       occ_L, occ_R, Eigen::Map<const Eigen::MatrixXd>(
-          delta_active_one_electron_matrix.data(), n_active_orbitals, n_active_orbitals));
+          direction.one_electron.data(), n_active_orbitals, n_active_orbitals));
   const Eigen::MatrixXd dg = build_spin_antisymmetrized_interaction_direction(
-      occ_L, occ_R, delta_packed_active_two_electron_integrals);
+      occ_L, occ_R, direction.packed_two_electron);
   result.cofactor_1st = cofactor.value();
   result.delta_cofactor_1st = cofactor.first(ds);
   result.delta_overlap_determinant = (result.cofactor_1st.cwiseProduct(ds)).sum();
@@ -209,9 +207,7 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants,
     int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
+    const ActiveSpaceIntegralDirectionView& direction) {
   const std::size_t expected_size = square_storage_size(n_unique_determinants);
   if (ordered_pair_cache.size() != expected_size ||
       unique_determinants.size() !=
@@ -242,9 +238,7 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
               unique_determinants[right_id],
               pair_evaluation,
               n_active_orbitals,
-              delta_ao_overlap_matrix,
-              delta_active_one_electron_matrix,
-              delta_packed_active_two_electron_integrals);
+              direction);
       scalars.ordered_pair_data[forward_index] = directional_data;
       if (left_id != right_id) {
         SameSpinPolynomialDirectionalPairData transposed = directional_data;

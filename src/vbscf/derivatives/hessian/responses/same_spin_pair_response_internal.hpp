@@ -36,9 +36,7 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
     const std::vector<int>& occ_R,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const ActiveSpaceIntegralDirectionView& direction,
     bool need_overlap_gradient = true);
 
 void accumulate_directional_one_electron_gradient_contribution_local(
