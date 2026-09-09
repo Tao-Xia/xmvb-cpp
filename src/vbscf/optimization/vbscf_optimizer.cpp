@@ -26,6 +26,7 @@
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 #include "vbscf/optimization/vbscf_objective.hpp"
+#include "vbscf/optimization/backends/projected_gradient_backend.hpp"
 #include "vbscf/optimization/optimizer_types.hpp"
 #include "vbscf/optimization/optimizer_session.hpp"
 #include "vbscf/optimization/line_search.hpp"
@@ -362,108 +363,17 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
       }
 
       case VbScfOptimizerBackend::NonredundantProjectedGradient: {
-        Eigen::VectorXd current_parameters = parameter_vector;
-        Eigen::VectorXd current_gradient = gradient;
-        OrbitalChart current_space =
-            build_orbital_chart(objective, parameter_view);
-        auto current_projection =
-            current_space.project_gradient(current_gradient);
-
-        for (int iteration = 0; iteration < options_.max_iterations; ++iteration) {
-          if (current_space.reduced_size() == 0) {
-            result.termination_reason = "nonredundant_space_empty";
-            break;
-          }
-
-          const double reduced_gradient_inf_norm =
-              gradient_infinity_norm(current_projection.reduced_gradient);
-          if (iteration == 0 &&
-              reduced_gradient_inf_norm < options_.gradient_tolerance) {
-            result.converged = true;
-            result.termination_reason =
-                "nonredundant_projected_gradient_initial_tolerance";
-            final_gradient_l2_norm = current_projection.reduced_gradient.norm();
-            break;
-          }
-
-          const Eigen::VectorXd reduced_search_direction =
-              -current_space.apply_inverse_reduced_block_preconditioner(
-                  current_projection.reduced_gradient);
-          const Eigen::VectorXd search_direction =
-              gather_nonredundant_retract_tangent(
-                  objective.last_input().orbital_preparation_input,
-                  current_space,
-                  parameter_view,
-                  reduced_search_direction);
-          // The accepted point remains in packed sparse coefficients, so the
-          // projected-gradient backend must use the actual retraction tangent
-          // rather than the raw additive chart when testing descent and Armijo.
-          const double directional_derivative =
-              current_gradient.dot(search_direction);
-          if (!std::isfinite(directional_derivative) ||
-              directional_derivative >= 0.0) {
-            result.termination_reason =
-                "nonredundant_projected_gradient_non_descent_direction";
-            final_gradient_l2_norm = current_projection.reduced_gradient.norm();
-            break;
-          }
-
-          const OrbitalPreparationInput current_orbital_input =
-              objective.last_input().orbital_preparation_input;
-          Eigen::VectorXd accepted_parameters(current_parameters.size());
-          Eigen::VectorXd accepted_gradient(current_gradient.size());
-          double accepted_energy = energy;
-          if (!try_armijo_backtracking_nonredundant_direction(
-                  &objective,
-                  current_orbital_input,
-                  current_space,
-                  parameter_view,
-                  current_parameters,
-                  energy,
-                  current_gradient,
-                  reduced_search_direction,
-                  search_direction,
-                  std::min(1.0, options_.initial_step_size),
-                  options_.minimum_step_size,
-                  options_.armijo_constant,
-                  &accepted_parameters,
-                  &accepted_gradient,
-                  &accepted_energy)) {
-            result.termination_reason =
-                "nonredundant_projected_gradient_line_search_failed";
-            final_gradient_l2_norm = current_projection.reduced_gradient.norm();
-            break;
-          }
-
-          current_parameters = std::move(accepted_parameters);
-          current_gradient = std::move(accepted_gradient);
-          energy = accepted_energy;
-          objective.canonicalize_orbital_chart_at_current_point(
-              &current_parameters,
-              &current_gradient);
-          ++n_iterations;
-          sync_result_from_objective(objective, &result);
-          record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
-          final_gradient_l2_norm = current_gradient.norm();
-          const double de = energy - previous_energy;
-          previous_energy = energy;
-          OrbitalChart next_space =
-              build_orbital_chart(objective, parameter_view);
-          auto next_projection =
-              next_space.project_gradient(current_gradient);
-          if (std::abs(de) < options_.energy_tolerance &&
-              gradient_infinity_norm(next_projection.reduced_gradient) <
-                  options_.gradient_tolerance) {
-            result.converged = true;
-            result.termination_reason =
-                "nonredundant_projected_gradient_dual_tolerance";
-            final_gradient_l2_norm = next_projection.reduced_gradient.norm();
-            break;
-          }
-
-          current_space = std::move(next_space);
-          current_projection = std::move(next_projection);
-        }
+        const auto backend_result =
+            optimizer_detail::run_projected_gradient_backend(
+                &objective,
+                parameter_view,
+                options_,
+                parameter_vector,
+                gradient,
+                energy,
+                &result);
+        n_iterations = backend_result.n_iterations;
+        final_gradient_l2_norm = backend_result.final_gradient_l2_norm;
         break;
       }
 

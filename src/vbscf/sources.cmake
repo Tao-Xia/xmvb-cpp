@@ -87,6 +87,7 @@ set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
 )
 
 set(XMVB_VBSCF_OPTIMIZATION_SOURCES
+  vbscf/optimization/backends/projected_gradient_backend.cpp
   vbscf/optimization/line_search.cpp
   vbscf/optimization/optimizer_session.cpp
   vbscf/optimization/preconditioners/transported_lbfgs_preconditioner.cpp
