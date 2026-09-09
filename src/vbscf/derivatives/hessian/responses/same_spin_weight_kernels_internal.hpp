@@ -14,6 +14,11 @@ struct SameSpinPairScalarMatrices {
   Eigen::MatrixXd singular_total_hamiltonian_matrix;
 };
 
+struct SingleChannelSameSpinWeightMatrices {
+  Eigen::MatrixXd alpha_weight_matrix;
+  Eigen::MatrixXd beta_weight_matrix;
+};
+
 double max_abs_dense_matrix(const Eigen::MatrixXd& matrix);
 
 void multiply_left_symmetric(
@@ -63,5 +68,13 @@ std::vector<int> build_merged_support_indices(
 SameSpinPairScalarMatrices build_pair_scalar_matrices(
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants);
+
+SingleChannelSameSpinWeightMatrices
+build_same_spin_weight_matrices_from_partner_kernels(
+    const SelectedStateDeterminantMatrices& selected_states,
+    const Eigen::MatrixXd& alpha_partner_kernel_matrix,
+    const Eigen::MatrixXd& beta_partner_kernel_matrix,
+    const std::vector<double>& per_state_scales,
+    bool close_shell_same_spin);
 
 }  // namespace xmvb::vb::detail
