@@ -3,10 +3,10 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/matrices/same_spin_pair_cache.hpp"
-#include "vb/matrices/structure_types.hpp"
-#include "vb/scf/selected_state_determinant_matrices.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/determinants/same_spin_pair_cache.hpp"
+#include "vbscf/structures/structure_types.hpp"
+#include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
 

@@ -5,8 +5,8 @@
 
 #include <Eigen/Core>
 
-#include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/structure_coefficient_blocks.hpp"
+#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/structures/coefficient_blocks.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
@@ -14,7 +14,7 @@
 #include "vb/scf/exact_orbital_second_order_operator_outer_response_internal.hpp"
 #include "vb/scf/opposite_spin_matrix_backward.hpp"
 #include "vb/scf/same_spin_matrix_backward.hpp"
-#include "vb/scf/selected_state_determinant_matrices.hpp"
+#include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
 

@@ -10,8 +10,8 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vb/vb_model_flags.hpp"
 
 namespace {

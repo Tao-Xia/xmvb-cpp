@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/full_structure_expander.hpp"
+#include "vbscf/structures/structure_expander.hpp"
 
 namespace {
 

@@ -2,7 +2,7 @@
 
 #include <filesystem>
 
-#include "vb/matrices/cpp_vb_input.hpp"
+#include "vbscf/core/vbscf_input.hpp"
 
 namespace xmvb::vb {
 

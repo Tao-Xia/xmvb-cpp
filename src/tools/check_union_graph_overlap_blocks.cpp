@@ -8,10 +8,10 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/legacy_structure_overlap.hpp"
-#include "vb/matrices/union_graph_rank_predictor.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/union_graph_screening.hpp"
+#include "vbscf/legacy/structures/structure_overlap.hpp"
+#include "vbscf/structures/union_graph_rank_predictor.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/structures/union_graph_screening.hpp"
 
 namespace {
 

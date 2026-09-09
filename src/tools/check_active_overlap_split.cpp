@@ -11,10 +11,10 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/structure_types.hpp"
+#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/structures/structure_types.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 

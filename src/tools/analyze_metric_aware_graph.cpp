@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/union_graph_screening.hpp"
+#include "vbscf/structures/union_graph_screening.hpp"
 
 namespace {
 

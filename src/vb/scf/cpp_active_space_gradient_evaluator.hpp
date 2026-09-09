@@ -3,9 +3,9 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
+#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"

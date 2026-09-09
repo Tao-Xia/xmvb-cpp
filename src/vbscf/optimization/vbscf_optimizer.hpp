@@ -3,7 +3,7 @@
 #include <functional>
 #include <vector>
 
-#include "vb/matrices/cpp_vb_input.hpp"
+#include "vbscf/core/vbscf_input.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vbscf/optimization/vbscf_optimizer_result.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"

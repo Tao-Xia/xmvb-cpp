@@ -20,7 +20,7 @@
 
 #include <Eigen/Core>
 
-#include "vb/matrices/cpp_vb_input.hpp"
+#include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_result.hpp"

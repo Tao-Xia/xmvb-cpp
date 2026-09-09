@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vb/matrices/cpp_vb_input.hpp"
+#include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
 #include "vbscf/orbitals/orbital_preparation_result.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagation_result.hpp"

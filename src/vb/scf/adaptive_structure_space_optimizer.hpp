@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/raw_structure_subspace_selector.hpp"
+#include "vbscf/structures/subspace_selector.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace xmvb::vb {

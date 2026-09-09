@@ -5,8 +5,8 @@
 
 #include <Eigen/Core>
 
-#include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/structure_coefficient_blocks.hpp"
+#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/structures/coefficient_blocks.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
 
 namespace xmvb::vb {

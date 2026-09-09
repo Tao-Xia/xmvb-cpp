@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vb/matrices/structure_types.hpp"
+#include "vbscf/structures/structure_types.hpp"
 
 namespace xmvb::vb {
 

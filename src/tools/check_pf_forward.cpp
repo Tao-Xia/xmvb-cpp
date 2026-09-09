@@ -15,7 +15,7 @@
 #include "pfaffian_vbscf/scf/pf_basis_factory.hpp"
 #include "pfaffian_vbscf/types/pf_basis_data.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {

@@ -5,9 +5,9 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/structure_types.hpp"
+#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/structures/structure_types.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"

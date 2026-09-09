@@ -2,9 +2,9 @@
 
 #include <vector>
 
-#include "vb/matrices/same_spin_pair_cache.hpp"
+#include "vbscf/determinants/same_spin_pair_cache.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
-#include "vb/scf/selected_state_determinant_matrices.hpp"
+#include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
 

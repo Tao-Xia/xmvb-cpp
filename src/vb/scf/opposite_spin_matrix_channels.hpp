@@ -5,8 +5,8 @@
 #include <Eigen/Core>
 #include <Eigen/SparseCore>
 
-#include "vb/matrices/full_determinant_pair_evaluator.hpp"
-#include "vb/matrices/same_spin_pair_cache.hpp"
+#include "vbscf/determinants/determinant_pair_evaluator.hpp"
+#include "vbscf/determinants/same_spin_pair_cache.hpp"
 
 namespace xmvb::vb {
 

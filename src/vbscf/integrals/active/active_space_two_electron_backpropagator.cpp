@@ -11,9 +11,9 @@
 #endif
 
 #include "core/openmp_utils.hpp"
-#include "vb/matrices/eigen_matrix_storage_utils.hpp"
-#include "vb/matrices/cpp_vb_input_ri_cache.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/integrals/ao/ri_integral_cache.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace xmvb::vb {
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
+#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vb/scf/cpp_active_space_gradient_result.hpp"
 
 namespace xmvb::vb {

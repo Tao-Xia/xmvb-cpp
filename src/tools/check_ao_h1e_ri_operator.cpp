@@ -9,7 +9,7 @@
 #include <Eigen/Core>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/cpp_vb_input_ri_cache.hpp"
+#include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_ri_operator.hpp"
 
 namespace {

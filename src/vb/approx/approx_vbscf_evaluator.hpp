@@ -7,7 +7,7 @@
 #include "vb/approx/approx_vbscf_cluster_quotient.hpp"
 #include "vb/approx/approx_vbscf_metric.hpp"
 #include "vb/approx/approx_vbscf_resonance_functional.hpp"
-#include "vb/matrices/structure_types.hpp"
+#include "vbscf/structures/structure_types.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
 
 namespace xmvb::vb {

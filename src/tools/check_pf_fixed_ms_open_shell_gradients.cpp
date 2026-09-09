@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "pfaffian_vbscf/kernel/pf_fixed_ms_open_shell_kernel.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace {
 

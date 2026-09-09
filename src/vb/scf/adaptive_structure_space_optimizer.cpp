@@ -12,10 +12,10 @@
 
 #include <Eigen/Core>
 
-#include "vb/matrices/determinant_hamiltonian_resolver.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/full_determinant_pair_evaluator.hpp"
-#include "vb/matrices/full_structure_expander.hpp"
+#include "vbscf/determinants/determinant_hamiltonian.hpp"
+#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/determinants/determinant_pair_evaluator.hpp"
+#include "vbscf/structures/structure_expander.hpp"
 
 namespace xmvb::vb {
 
@@ -462,7 +462,7 @@ CandidateScoreBatch score_candidate_pool_with_aggregated_determinants(
     }
   }
 
-  const FullDeterminantPairEvaluator pair_evaluator{
+  const DeterminantPairEvaluator pair_evaluator{
       DeterminantOverlapResolver(),
       DeterminantHamiltonianResolver(algorithm)};
   const int n_active_orbitals =

@@ -13,10 +13,10 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/legacy_structure_overlap.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/matrices/union_graph_screening.hpp"
+#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/legacy/structures/structure_overlap.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/structures/union_graph_screening.hpp"
 
 namespace {
 

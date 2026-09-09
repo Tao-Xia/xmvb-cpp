@@ -29,7 +29,7 @@
 #include "runtime/molden_file_writer.hpp"
 #include "vb/scf/deepvbh_onnx_direct_final_optimizer.hpp"
 #include "vb/scf/deepvbh_onnx_hybrid_optimizer.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vb/scf/adaptive_structure_space_optimizer.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 

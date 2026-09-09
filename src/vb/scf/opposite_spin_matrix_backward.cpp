@@ -9,10 +9,10 @@
 #include <Eigen/Core>
 #include <Eigen/SparseCore>
 
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/cofactor_differential.hpp"
-#include "vb/matrices/support_local_contraction_kernels.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/cofactor_differential.hpp"
+#include "vbscf/structures/support_local_contractions.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vb/scf/same_spin_matrix_backward.hpp"
 

@@ -7,10 +7,10 @@
 #include <Eigen/Core>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/matrices/same_spin_pair_cache.hpp"
-#include "vb/matrices/structure_coefficient_blocks.hpp"
-#include "vb/matrices/structure_types.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/determinants/same_spin_pair_cache.hpp"
+#include "vbscf/structures/coefficient_blocks.hpp"
+#include "vbscf/structures/structure_types.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
 #include "vb/scf/exact_orbital_second_order_operator_outer_response_internal.hpp"

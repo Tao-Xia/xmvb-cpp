@@ -4,9 +4,9 @@
 #include <vector>
 
 #include "runtime/cpp_initial_guess_builder.hpp"
-#include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/raw_structure_subspace_selector.hpp"
-#include "vb/matrices/structure_types.hpp"
+#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/structures/subspace_selector.hpp"
+#include "vbscf/structures/structure_types.hpp"
 
 namespace xmvb::vb {
 

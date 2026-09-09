@@ -18,13 +18,13 @@
 #include <Eigen/Core>
 #include <cblas.h>
 
-#include "vb/matrices/structure_coefficient_blocks.hpp"
-#include "vb/matrices/structure_block_kernels.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/determinant_pair_storage_utils.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/cofactor_differential.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/structures/coefficient_blocks.hpp"
+#include "vbscf/structures/block_kernels.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/determinants/pair_storage.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/cofactor_differential.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/orbitals/orbital_pullback.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
@@ -34,7 +34,7 @@
 #include "vb/scf/exact_ctx_memory_accounting.hpp"
 #include "vb/scf/opposite_spin_matrix_backward.hpp"
 #include "vb/scf/same_spin_matrix_backward.hpp"
-#include "vb/scf/selected_state_determinant_matrices.hpp"
+#include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
 
@@ -4378,7 +4378,7 @@ void accumulate_active_space_gradient_pair_with_adjoints_local(
     const CppVbInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const FullDeterminantPairEvaluation& determinant_pair_evaluation,
+    const DeterminantPairEvaluation& determinant_pair_evaluation,
     int determinant_index_left,
     int determinant_index_right,
     int n_active_orbitals,
@@ -4556,7 +4556,7 @@ void accumulate_active_space_gradient_pair_local_response_with_adjoints_local(
     const CppVbInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const FullDeterminantPairEvaluation& determinant_pair_evaluation,
+    const DeterminantPairEvaluation& determinant_pair_evaluation,
     int determinant_index_left,
     int determinant_index_right,
     int n_active_orbitals,
@@ -4788,7 +4788,7 @@ void accumulate_active_space_gradient_pair_opposite_spin_local_response_with_adj
     const CppVbInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const FullDeterminantPairEvaluation& determinant_pair_evaluation,
+    const DeterminantPairEvaluation& determinant_pair_evaluation,
     int determinant_index_left,
     int determinant_index_right,
     int n_active_orbitals,
@@ -4919,9 +4919,9 @@ void accumulate_active_space_gradient_pair_opposite_spin_local_response_with_adj
       packed_active_two_electron_gradient);
 }
 
-FullDeterminantPairEvaluation evaluate_active_space_determinant_pair_local(
+DeterminantPairEvaluation evaluate_active_space_determinant_pair_local(
     const SameSpinPairCacheContext* same_spin_pair_cache,
-    const FullDeterminantPairEvaluator& pair_evaluator,
+    const DeterminantPairEvaluator& pair_evaluator,
     const CppVbInput& input,
     const std::vector<double>& active_orbital_overlap_matrix,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
@@ -4979,7 +4979,7 @@ double compute_determinant_pair_directional_scalar(
     const CppVbInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const FullDeterminantPairEvaluation& determinant_pair_evaluation,
+    const DeterminantPairEvaluation& determinant_pair_evaluation,
     int determinant_index_left,
     int determinant_index_right,
     int n_active_orbitals,
@@ -5952,7 +5952,7 @@ ActiveSpaceGradientDirection build_pairwise_active_space_gradient_direction_from
   Eigen::MatrixXd active_one_electron_gradient_matrix =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
-  const FullDeterminantPairEvaluator pair_evaluator =
+  const DeterminantPairEvaluator pair_evaluator =
       structure_builder.make_pair_evaluator();
   const auto& accepted_prepared_active_space =
       accepted_point_context.prepared_active_space;
@@ -6060,7 +6060,7 @@ build_pairwise_active_space_gradient_direction_from_determinant_pair_weights(
   Eigen::MatrixXd active_one_electron_gradient_matrix =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
-  const FullDeterminantPairEvaluator pair_evaluator =
+  const DeterminantPairEvaluator pair_evaluator =
       structure_builder.make_pair_evaluator();
   const auto& accepted_prepared_active_space =
       accepted_point_context.prepared_active_space;
@@ -6163,7 +6163,7 @@ build_pairwise_local_active_space_gradient_direction_from_determinant_pair_weigh
   Eigen::MatrixXd active_one_electron_gradient_matrix =
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
-  const FullDeterminantPairEvaluator pair_evaluator =
+  const DeterminantPairEvaluator pair_evaluator =
       structure_builder.make_pair_evaluator();
   const auto& accepted_prepared_active_space =
       accepted_point_context.prepared_active_space;
@@ -6262,7 +6262,7 @@ build_pairwise_opposite_spin_local_active_space_gradient_direction_from_determin
       0.0);
 
   FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
-  const FullDeterminantPairEvaluator pair_evaluator =
+  const DeterminantPairEvaluator pair_evaluator =
       structure_builder.make_pair_evaluator();
   const auto& accepted_prepared_active_space =
       accepted_point_context.prepared_active_space;

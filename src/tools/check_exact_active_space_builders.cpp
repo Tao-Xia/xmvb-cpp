@@ -14,7 +14,7 @@
 #endif
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"

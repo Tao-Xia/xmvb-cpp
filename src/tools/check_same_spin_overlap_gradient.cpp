@@ -8,10 +8,10 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/determinant_hamiltonian_resolver.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/determinants/determinant_hamiltonian.hpp"
+#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 

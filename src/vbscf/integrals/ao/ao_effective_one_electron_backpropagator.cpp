@@ -14,7 +14,7 @@
 #endif
 
 #include "core/openmp_utils.hpp"
-#include "vb/matrices/eigen_matrix_storage_utils.hpp"
+#include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_ri_operator.hpp"
 

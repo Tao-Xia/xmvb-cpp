@@ -9,8 +9,8 @@
 #include <Eigen/Core>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/legacy_structure_overlap.hpp"
-#include "vb/matrices/structure_matrix_evaluator.hpp"
+#include "vbscf/legacy/structures/structure_overlap.hpp"
+#include "vbscf/structures/structure_evaluator.hpp"
 
 namespace {
 

@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/matrices/same_spin_pair_cache.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/determinants/same_spin_pair_cache.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 
 namespace {

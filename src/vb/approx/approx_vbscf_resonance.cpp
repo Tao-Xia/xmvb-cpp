@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace xmvb::vb {
 

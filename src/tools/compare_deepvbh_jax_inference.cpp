@@ -9,7 +9,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vb/model/deepvbh_jax_inference_runner.hpp"
 #include "vb/scf/cpp_vb_scf_evaluator.hpp"
 

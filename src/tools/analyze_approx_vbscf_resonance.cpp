@@ -8,7 +8,7 @@
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vb/approx/approx_vbscf_evaluator.hpp"
 #include "vb/approx/approx_vbscf_resonance.hpp"
-#include "vb/matrices/structure_matrix_evaluator.hpp"
+#include "vbscf/structures/structure_evaluator.hpp"
 #include "vb/vbscf_algorithm.hpp"
 
 namespace {

@@ -17,20 +17,20 @@
 #endif
 
 #include "core/openmp_utils.hpp"
-#include "vb/matrices/determinant_pair_storage_utils.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/matrices/same_spin_pair_cache.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/structure_types.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/determinants/pair_storage.hpp"
+#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/determinants/same_spin_pair_cache.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/structures/structure_types.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
 #include "vb/scf/cpp_active_space_gradient_result_utils.hpp"
 #include "vb/scf/exact_ctx_memory_accounting.hpp"
 #include "vb/scf/opposite_spin_matrix_backward.hpp"
 #include "vb/scf/same_spin_matrix_backward.hpp"
-#include "vb/scf/selected_state_determinant_matrices.hpp"
+#include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
 
@@ -443,7 +443,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
 
   const auto& prepared_active_space =
       context.timed_active_space_context.prepared_active_space;
-  const FullDeterminantPairEvaluator cache_builder =
+  const DeterminantPairEvaluator cache_builder =
       structure_builder.make_pair_evaluator();
   // The active-space objective and adjoint touch the same ordered alpha/beta
   // determinant-pair reuse pattern. Build that cache once here so the forward
@@ -497,7 +497,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
 
   const auto& prepared_active_space =
       context.timed_active_space_context.prepared_active_space;
-  const FullDeterminantPairEvaluator cache_builder =
+  const DeterminantPairEvaluator cache_builder =
       structure_builder.make_pair_evaluator();
   // Reuse the accepted orbital/integral layer but rebuild the
   // determinant-topology-dependent same-spin cache and structure matrices for
@@ -707,9 +707,9 @@ void accumulate_additive_vector(
   }
 }
 
-FullDeterminantPairEvaluation evaluate_active_space_determinant_pair(
+DeterminantPairEvaluation evaluate_active_space_determinant_pair(
     const SameSpinPairCacheContext* same_spin_pair_cache,
-    const FullDeterminantPairEvaluator& pair_evaluator,
+    const DeterminantPairEvaluator& pair_evaluator,
     const CppVbInput& input,
     const std::vector<double>& active_orbital_overlap_matrix,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
@@ -739,7 +739,7 @@ void accumulate_active_space_gradient_pair_with_adjoints(
     const CppVbInput& input,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const FullDeterminantPairEvaluation& determinant_pair_evaluation,
+    const DeterminantPairEvaluation& determinant_pair_evaluation,
     int determinant_index_left,
     int determinant_index_right,
     int n_active_orbitals,
@@ -913,7 +913,7 @@ void accumulate_active_space_gradient_pair(
     const StructurePairWeightTables& structure_pair_weights,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const FullDeterminantPairEvaluation& determinant_pair_evaluation,
+    const DeterminantPairEvaluation& determinant_pair_evaluation,
     int determinant_index_left,
     int determinant_index_right,
     int n_active_orbitals,
@@ -947,7 +947,7 @@ void accumulate_active_space_gradient_unordered_pair(
     const StructurePairWeightTables& structure_pair_weights,
     const std::vector<double>& active_orbital_overlap_matrix,
     const SameSpinPairCacheContext* same_spin_pair_cache,
-    const FullDeterminantPairEvaluator& pair_evaluator,
+    const DeterminantPairEvaluator& pair_evaluator,
     const ActiveSpaceOneElectronResult& active_space_one_electron_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int determinant_index_left,
@@ -1131,7 +1131,7 @@ void accumulate_active_space_gradient(
   }
 
   if (n_threads == 1) {
-    const FullDeterminantPairEvaluator pair_evaluator =
+    const DeterminantPairEvaluator pair_evaluator =
         structure_builder.make_pair_evaluator();
     Eigen::Map<Eigen::MatrixXd> active_one_electron_gradient(
         result->active_one_electron_gradient.data(),
@@ -1188,7 +1188,7 @@ void accumulate_active_space_gradient(
 
 #pragma omp parallel num_threads(n_threads)
     {
-      const FullDeterminantPairEvaluator pair_evaluator =
+      const DeterminantPairEvaluator pair_evaluator =
           structure_builder.make_pair_evaluator();
       int thread_index = 0;
 #ifdef _OPENMP

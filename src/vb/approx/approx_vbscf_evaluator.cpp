@@ -6,7 +6,7 @@
 #include <numeric>
 #include <utility>
 
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 
 namespace xmvb::vb {

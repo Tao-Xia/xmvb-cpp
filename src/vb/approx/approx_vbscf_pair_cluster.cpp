@@ -3,8 +3,8 @@
 #include <utility>
 #include <vector>
 
-#include "vb/matrices/full_determinant_pair_evaluator.hpp"
-#include "vb/matrices/legacy_structure_overlap.hpp"
+#include "vbscf/determinants/determinant_pair_evaluator.hpp"
+#include "vbscf/legacy/structures/structure_overlap.hpp"
 
 namespace xmvb::vb {
 
@@ -91,7 +91,7 @@ evaluate_approx_vbscf_pair_cluster_matrix_element(
 
   const auto determinant_terms =
       enumerate_legacy_determinant_terms(make_orbital_pairs(pairs));
-  const FullDeterminantPairEvaluator determinant_pair_evaluator;
+  const DeterminantPairEvaluator determinant_pair_evaluator;
 
   for (const auto& left_term : determinant_terms) {
     for (const auto& right_term : determinant_terms) {

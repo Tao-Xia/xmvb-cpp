@@ -20,7 +20,7 @@
 #include "pfaffian_vbscf/scf/pf_basis_factory.hpp"
 #include "pfaffian_vbscf/tensor/pf_tensor_contractor.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace {
 

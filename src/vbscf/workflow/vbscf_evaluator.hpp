@@ -3,8 +3,8 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/matrices/structure_matrix_evaluator.hpp"
+#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/structures/structure_evaluator.hpp"
 #include "vb/scf/cpp_vb_scf_result.hpp"
 #include "vb/vbscf_algorithm.hpp"
 

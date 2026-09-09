@@ -8,8 +8,8 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/cpp_vb_input_ri_cache.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
+#include "vbscf/integrals/ao/ri_integral_cache.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
 #include "vbscf/orbitals/orbital_preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"

@@ -14,11 +14,11 @@
 #include <Eigen/LU>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/full_structure_expander.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/structures/structure_expander.hpp"
+#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace {
 

@@ -20,8 +20,8 @@
 #include <onnxruntime_cxx_api.h>
 #endif
 
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace xmvb::vb {
 

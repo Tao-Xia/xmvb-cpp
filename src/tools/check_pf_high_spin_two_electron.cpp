@@ -13,8 +13,8 @@
 
 #include "pfaffian_vbscf/kernel/pf_high_spin_open_shell_hamiltonian.hpp"
 #include "pfaffian_vbscf/tensor/pf_tensor_contractor.hpp"
-#include "vb/matrices/full_determinant_pair_evaluator.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/determinants/determinant_pair_evaluator.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace {
 
@@ -305,7 +305,7 @@ ExactStatePairResult exact_state_pair_evaluation(
 
   const auto flat_overlap = flatten_matrix(spatial_overlap);
   const auto flat_one_electron = flatten_matrix(one_electron);
-  const xmvb::vb::FullDeterminantPairEvaluator evaluator;
+  const xmvb::vb::DeterminantPairEvaluator evaluator;
 
   ExactStatePairResult result;
   for (const auto& left_term : left_terms) {

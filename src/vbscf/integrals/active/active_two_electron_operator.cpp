@@ -18,8 +18,8 @@
 #endif
 
 #include "core/openmp_utils.hpp"
-#include "vb/matrices/eigen_matrix_storage_utils.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace xmvb::vb {
 

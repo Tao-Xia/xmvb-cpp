@@ -1,5 +1,5 @@
 #include "vb/scf/exact_ctx_memory_accounting.hpp"
-#include "vb/matrices/cofactor_differential.hpp"
+#include "vbscf/determinants/cofactor_differential.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -9,7 +9,7 @@
 #include <string>
 #include <utility>
 
-#include "vb/matrices/determinant_types.hpp"
+#include "vbscf/determinants/determinant_types.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_result.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_result.hpp"

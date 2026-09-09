@@ -7,8 +7,8 @@
 
 #include <Eigen/Sparse>
 
-#include "vb/matrices/same_spin_pair_cache.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
+#include "vbscf/determinants/same_spin_pair_cache.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
 
 namespace xmvb::vb {
 

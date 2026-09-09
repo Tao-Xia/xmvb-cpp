@@ -5,7 +5,7 @@
 #include <vector>
 
 #include "runtime/input_deck_metadata.hpp"
-#include "vb/matrices/structure_types.hpp"
+#include "vbscf/structures/structure_types.hpp"
 
 namespace xmvb::vb {
 

@@ -12,11 +12,11 @@
 #include <Eigen/LU>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/matrices/same_spin_pair_cache.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/determinants/same_spin_pair_cache.hpp"
+#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_two_electron_operator.hpp"
 
 namespace {

@@ -10,7 +10,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_closed_shell_fock_builder.hpp"
-#include "vb/matrices/eigen_matrix_storage_utils.hpp"
+#include "vbscf/core/eigen_storage.hpp"
 
 namespace xmvb::vb {
 

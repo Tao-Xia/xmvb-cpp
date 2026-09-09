@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "vb/matrices/cpp_vb_input.hpp"
+#include "vbscf/core/vbscf_input.hpp"
 #include "vb/scf/cpp_vb_scf_result.hpp"
 
 namespace xmvb::vb {

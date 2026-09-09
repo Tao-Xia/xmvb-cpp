@@ -78,6 +78,7 @@ ABI-wide namespace change with file ownership changes.
 
 Migrated slices now include `optimization`, the single-step evaluator in
 `workflow`, the complete orbital/chart/gauge layer, AO and active-space
-`integrals`, and the independent chart audit. Legacy orbital algorithms are
-isolated under `legacy/orbitals`. Remaining files listed in `sources.cmake`
-retain their legacy paths but already have explicit logical ownership.
+`integrals`, `determinants`, `structures`, and the independent chart audit.
+Legacy orbital and structure algorithms are isolated under `legacy`. Remaining
+files listed in `sources.cmake` retain their legacy paths but already have
+explicit logical ownership.

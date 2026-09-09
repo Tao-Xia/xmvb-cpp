@@ -9,7 +9,7 @@
 #include "pfaffian_vbscf/kernel/pf_fixed_ms_open_shell_kernel.hpp"
 #include "pfaffian_vbscf/math/antisymm_codec.hpp"
 #include "pfaffian_vbscf/matrices/pf_matrix_builder.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace {
 
