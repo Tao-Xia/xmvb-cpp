@@ -26,6 +26,7 @@
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 #include "vbscf/optimization/vbscf_objective.hpp"
+#include "vbscf/optimization/backends/lbfgs_backends.hpp"
 #include "vbscf/optimization/backends/projected_gradient_backend.hpp"
 #include "vbscf/optimization/optimizer_types.hpp"
 #include "vbscf/optimization/optimizer_session.hpp"
@@ -38,12 +39,6 @@
 #include "vbscf/optimization/optimization_checks.hpp"
 
 namespace xmvb::vb {
-
-namespace {
-
-constexpr double kLineSearchExpansionFactor = 10.0;
-
-}  // namespace
 
 using optimizer_detail::build_orbital_chart;
 using optimizer_detail::choose_truncated_newton_max_cg_iterations;
@@ -156,209 +151,16 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     switch (options_.backend) {
 
       case VbScfOptimizerBackend::Lbfgspp: {
-        LBFGSpp::LBFGSParam<double> param;
-        param.m = options_.history_size;
-        param.epsilon = 0.0;
-        param.epsilon_rel = 0.0;
-        param.past = 0;
-        param.delta = 0.0;
-        param.max_iterations = 0;
-        param.max_linesearch = 20;
-        param.min_step = options_.minimum_step_size;
-        // Let the primary line search expand beyond the nominal unit trial
-        // step, while still clamping it to a finite orbital-parameter radius.
-        param.max_step =
-            std::max(
-                options_.initial_step_size,
-                options_.initial_step_size * kLineSearchExpansionFactor);
-        param.ftol = options_.armijo_constant;
-        param.wolfe = 0.9;
-        param.linesearch = LBFGSpp::LBFGS_LINESEARCH_BACKTRACKING_STRONG_WOLFE;
-        param.check_param();
-
-        LBFGSpp::BFGSMat<double> inverse_hessian;
-        inverse_hessian.reset(n, param.m);
-
-        Eigen::VectorXd current_parameters = parameter_vector;
-        Eigen::VectorXd current_gradient = gradient;
-        Eigen::VectorXd previous_parameters(n);
-        Eigen::VectorXd previous_gradient(n);
-        Eigen::VectorXd search_direction = -current_gradient;
-        double last_robust_step = std::min(1.0, options_.initial_step_size);
-        bool has_robust_step_history = false;
-        bool last_iteration_used_fallback = false;
-        constexpr double kCurvatureEpsilon = std::numeric_limits<double>::epsilon();
-        constexpr double kTinyStepFactor = 10.0;
-        constexpr double kRobustStepShrinkRatio = 0.1;
-        constexpr double kSuspiciousPrimaryStepRatio = 0.1;
-
-        for (int iteration = 0; iteration < options_.max_iterations; ++iteration) {
-          if (search_direction.dot(current_gradient) >= 0.0) {
-            search_direction = -current_gradient;
-          }
-          double directional_derivative = current_gradient.dot(search_direction);
-          if (directional_derivative >= 0.0) {
-            result.termination_reason = "lbfgspp_non_descent_direction";
-            break;
-          }
-
-          previous_parameters = current_parameters;
-          previous_gradient = current_gradient;
-          const double reference_energy = energy;
-          const double previous_gradient_inf_norm =
-              gradient_infinity_norm(previous_gradient);
-          double step = std::min(1.0, options_.initial_step_size);
-          if (last_iteration_used_fallback && has_robust_step_history) {
-            step = std::max(
-                param.min_step,
-                std::min(last_robust_step, param.max_step));
-          }
-          bool used_fallback = false;
-          bool reset_inverse_hessian = false;
-          std::string primary_line_search_error;
-
-          try {
-            LBFGSpp::LineSearchMoreThuente<double>::LineSearch(
-                objective,
-                param,
-                previous_parameters,
-                search_direction,
-                param.max_step,
-                step,
+        const auto backend_result =
+            optimizer_detail::run_full_space_lbfgs_backend(
+                &objective,
+                options_,
+                parameter_vector,
+                gradient,
                 energy,
-                current_gradient,
-                directional_derivative,
-                current_parameters);
-          } catch (const std::exception& error) {
-            primary_line_search_error = error.what();
-          }
-
-          Eigen::VectorXd parameter_step = current_parameters - previous_parameters;
-          const double primary_gradient_inf_norm =
-              gradient_infinity_norm(current_gradient);
-          const bool stalled_line_search =
-              primary_line_search_error.empty() &&
-              (is_effectively_zero_step(parameter_step, previous_parameters) ||
-               line_search_made_no_meaningful_progress(
-                   reference_energy,
-                   energy,
-                   previous_gradient_inf_norm,
-                   primary_gradient_inf_norm,
-                   options_.gradient_tolerance));
-          const bool suspicious_primary_step =
-              primary_line_search_error.empty() &&
-              has_robust_step_history &&
-              step < kSuspiciousPrimaryStepRatio * last_robust_step;
-          const bool should_try_fallback =
-              !primary_line_search_error.empty() ||
-              (previous_gradient_inf_norm >= options_.gradient_tolerance &&
-               (stalled_line_search ||
-                step <= kTinyStepFactor * param.min_step ||
-                suspicious_primary_step));
-          if (should_try_fallback) {
-            const Eigen::VectorXd primary_parameters = current_parameters;
-            const Eigen::VectorXd primary_gradient = current_gradient;
-            const double primary_energy = energy;
-            double fallback_step =
-                has_robust_step_history
-                    ? last_robust_step
-                    : std::max(
-                          param.min_step,
-                          std::min(
-                              std::min(1.0, options_.initial_step_size),
-                              param.max_step));
-            Eigen::VectorXd fallback_parameters;
-            Eigen::VectorXd fallback_gradient;
-            double fallback_energy = reference_energy;
-            if (try_steepest_descent_armijo_fallback(
-                    &objective,
-                    param,
-                    previous_parameters,
-                    previous_gradient,
-                    reference_energy,
-                    fallback_step,
-                    &fallback_parameters,
-                    &fallback_gradient,
-                    &fallback_energy,
-                    &fallback_step)) {
-              const bool should_replace_primary =
-                  !primary_line_search_error.empty() ||
-                  stalled_line_search ||
-                  step <= kTinyStepFactor * param.min_step ||
-                  suspicious_primary_step ||
-                  fallback_energy < primary_energy;
-              if (should_replace_primary) {
-                current_parameters = std::move(fallback_parameters);
-                current_gradient = std::move(fallback_gradient);
-                energy = fallback_energy;
-                step = fallback_step;
-                parameter_step = current_parameters - previous_parameters;
-                used_fallback = true;
-                reset_inverse_hessian = true;
-              } else {
-                current_parameters = primary_parameters;
-                current_gradient = primary_gradient;
-                energy = primary_energy;
-              }
-            } else if (!primary_line_search_error.empty() ||
-                       stalled_line_search) {
-              energy = objective(previous_parameters, current_gradient);
-              current_parameters = previous_parameters;
-              sync_result_from_objective(objective, &result);
-              final_gradient_l2_norm = current_gradient.norm();
-              result.termination_reason =
-                  !primary_line_search_error.empty()
-                      ? std::string("lbfgspp_line_search: ") +
-                            primary_line_search_error
-                      : "lbfgspp_line_search_stalled";
-              break;
-            }
-          }
-
-          if (step > kTinyStepFactor * param.min_step &&
-              (!has_robust_step_history ||
-               step >= kRobustStepShrinkRatio * last_robust_step)) {
-            last_robust_step = step;
-            has_robust_step_history = true;
-          }
-          last_iteration_used_fallback = used_fallback;
-
-          const bool accepted_point_chart_reset =
-              objective.canonicalize_orbital_chart_at_current_point(
-                  &current_parameters,
-                  &current_gradient);
-          if (accepted_point_chart_reset) {
-            reset_inverse_hessian = true;
-          }
-
-          ++n_iterations;
-          sync_result_from_objective(objective, &result);
-          record_accepted_iteration_snapshot(&objective, n_iterations, options_, &result);
-          final_gradient_l2_norm = current_gradient.norm();
-          const double de = energy - previous_energy;
-          previous_energy = energy;
-          if (std::abs(de) < options_.energy_tolerance &&
-              final_gradient_l2_norm < options_.gradient_tolerance) {
-            result.converged = true;
-            result.termination_reason = "lbfgspp_dual_tolerance";
-            break;
-          }
-
-          Eigen::VectorXd gradient_step = current_gradient - previous_gradient;
-          if (reset_inverse_hessian) {
-            inverse_hessian.reset(n, param.m);
-          }
-          if (!reset_inverse_hessian &&
-              parameter_step.dot(gradient_step) >
-              kCurvatureEpsilon * gradient_step.squaredNorm()) {
-            inverse_hessian.add_correction(parameter_step, gradient_step);
-          }
-          inverse_hessian.apply_Hv(current_gradient, -1.0, search_direction);
-          if (used_fallback &&
-              search_direction.dot(current_gradient) >= 0.0) {
-            search_direction = -current_gradient;
-          }
-        }
+                &result);
+        n_iterations = backend_result.n_iterations;
+        final_gradient_l2_norm = backend_result.final_gradient_l2_norm;
         break;
       }
 
