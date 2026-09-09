@@ -4,7 +4,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
 #include "vbscf/determinants/determinant_pair_evaluator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
 

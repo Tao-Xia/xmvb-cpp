@@ -18,7 +18,7 @@
 #include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space_outer_response.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital_preparation_response.hpp"
-#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
 #include "vbscf/derivatives/hessian/responses/structure_directional_response.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
 

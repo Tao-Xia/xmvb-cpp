@@ -28,7 +28,7 @@
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
-#include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace xmvb::vb {
