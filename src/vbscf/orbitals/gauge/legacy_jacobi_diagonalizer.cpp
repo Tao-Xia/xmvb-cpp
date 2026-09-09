@@ -1,4 +1,4 @@
-#include "vbscf/legacy/orbitals/jacobi_diagonalizer.hpp"
+#include "vbscf/orbitals/gauge/legacy_jacobi_diagonalizer.hpp"
 
 #include <cmath>
 #include <limits>

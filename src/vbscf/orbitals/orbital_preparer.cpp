@@ -10,7 +10,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/LU>
 
-#include "vbscf/legacy/orbitals/jacobi_diagonalizer.hpp"
+#include "vbscf/orbitals/gauge/legacy_jacobi_diagonalizer.hpp"
 #include "vbscf/orbitals/gauge/localized_representative.hpp"
 
 #ifdef _OPENMP

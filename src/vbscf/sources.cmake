@@ -36,6 +36,7 @@ set(XMVB_VBSCF_ORBITAL_SOURCES
   vbscf/orbitals/orbital_parameter_codec.cpp
   vbscf/orbitals/orbital_preparer.cpp
   vbscf/orbitals/orbital_pullback.cpp
+  vbscf/orbitals/gauge/legacy_jacobi_diagonalizer.cpp
   vbscf/orbitals/gauge/localized_representative.cpp
   vbscf/orbitals/charts/orbital_block_partition.cpp
   vbscf/orbitals/charts/support_layout_adapter.cpp
@@ -64,10 +65,6 @@ set(XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES
   vbscf/integrals/active/ri_active_space_two_electron_builder.cpp
   vbscf/integrals/active/prepared_active_space.cpp
   vbscf/integrals/active/two_electron_indexer.cpp
-)
-
-set(XMVB_VBSCF_LEGACY_SOURCES
-  vbscf/legacy/orbitals/jacobi_diagonalizer.cpp
 )
 
 set(XMVB_VBSCF_DERIVATIVE_SOURCES
@@ -129,5 +126,4 @@ set(XMVB_CPP_CORE_SOURCES
   ${XMVB_VBSCF_OPTIMIZATION_SOURCES}
   ${XMVB_VBSCF_WORKFLOW_SOURCES}
   ${XMVB_VBSCF_ADAPTIVE_SOURCES}
-  ${XMVB_VBSCF_LEGACY_SOURCES}
 )
