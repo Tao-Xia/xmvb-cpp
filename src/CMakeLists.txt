@@ -78,9 +78,9 @@ target_link_libraries(xmvb_cpp_openmp
     OpenMP::OpenMP_C
     OpenMP::OpenMP_CXX)
 
-add_library(xmvb_cpp_vb STATIC ${XMVB_CPP_CORE_SOURCES})
-set_target_properties(xmvb_cpp_vb PROPERTIES OUTPUT_NAME xmvb-vbscf)
-target_include_directories(xmvb_cpp_vb
+add_library(xmvb_vbscf STATIC ${XMVB_VBSCF_SOURCES})
+set_target_properties(xmvb_vbscf PROPERTIES OUTPUT_NAME xmvb-vbscf)
+target_include_directories(xmvb_vbscf
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/LBFGSpp/include
@@ -90,23 +90,23 @@ target_include_directories(xmvb_cpp_vb
     ${CINT_INCLUDE})
 if (XMVB_CPP_ENABLE_ONNX_RUNTIME)
   target_compile_definitions(
-    xmvb_cpp_vb
+    xmvb_vbscf
     PUBLIC XMVB_CPP_ENABLE_ONNX_RUNTIME=1)
 endif()
 if (XMVB_CPP_ENABLE_EIGEN_BLAS_BACKEND)
   target_compile_definitions(
-    xmvb_cpp_vb
+    xmvb_vbscf
     PUBLIC
       EIGEN_USE_BLAS=1
       EIGEN_USE_LAPACKE=1)
 endif()
-target_link_libraries(xmvb_cpp_vb PUBLIC ${LAPACKE_LIB} xmvb_cpp_openmp)
+target_link_libraries(xmvb_vbscf PUBLIC ${LAPACKE_LIB} xmvb_cpp_openmp)
 if (LAPACK_TYPE STREQUAL "OpenBLAS")
-  target_link_libraries(xmvb_cpp_vb PUBLIC ${LAPACK_LIB})
+  target_link_libraries(xmvb_vbscf PUBLIC ${LAPACK_LIB})
 elseif (LAPACK_TYPE STREQUAL "refBLAS")
-  target_link_libraries(xmvb_cpp_vb PUBLIC lapacke cblas lapack)
+  target_link_libraries(xmvb_vbscf PUBLIC lapacke cblas lapack)
 else()
-  target_link_libraries(xmvb_cpp_vb PUBLIC ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
+  target_link_libraries(xmvb_vbscf PUBLIC ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
 endif()
 
 add_library(xmvb_cpp_runtime STATIC ${XMVB_RUNTIME_SOURCES})
@@ -121,14 +121,14 @@ target_include_directories(xmvb_cpp_runtime
     ${LAPACK_INCLUDE}
     ${LAPACKE_INCLUDE}
     ${CINT_INCLUDE})
-target_link_libraries(xmvb_cpp_runtime PUBLIC xmvb_cpp_vb xmvb_cpp_openmp)
+target_link_libraries(xmvb_cpp_runtime PUBLIC xmvb_vbscf xmvb_cpp_openmp)
 
 function(xmvb_link_standalone_runtime target_name)
   target_link_libraries(${target_name}
     PRIVATE
       ${CINT_LIB}
       xmvb_cpp_openmp
-      xmvb_cpp_vb
+      xmvb_vbscf
       m)
   if (LAPACK_TYPE STREQUAL "OpenBLAS")
     target_link_libraries(${target_name} PRIVATE ${LAPACKE_LIB} ${LAPACK_LIB})
@@ -182,7 +182,7 @@ add_executable(xmvb
 set_target_properties(xmvb PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
 target_link_libraries(xmvb
   PRIVATE
-    xmvb_cpp_vb
+    xmvb_vbscf
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(xmvb)
 

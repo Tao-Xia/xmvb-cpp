@@ -22,7 +22,7 @@ foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
   add_executable(
     ${target_name}
     ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/${target_name}.cpp)
-  target_link_libraries(${target_name} PRIVATE xmvb_cpp_vb)
+  target_link_libraries(${target_name} PRIVATE xmvb_vbscf)
 endforeach()
 
 if (BUILD_TESTING)

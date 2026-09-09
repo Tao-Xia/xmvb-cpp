@@ -24,7 +24,7 @@ from lower numerical domains. `approx` is an optional side path and
 `diagnostics` contains audits only. DeepVBH remains outside this tree under
 `src/vb` and is not part of the matrix-free VBSCF optimizer. Its sources build
 as the one-way dependent
-`xmvb_cpp_deepvbh` compatibility library; `xmvb_cpp_vb` and
+`xmvb_cpp_deepvbh` compatibility library; `xmvb_vbscf` and
 `xmvb_cpp_runtime` never link against it.
 
 The standalone `runtime` is a one-way client of this module. Canonical

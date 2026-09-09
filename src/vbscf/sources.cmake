@@ -166,7 +166,7 @@ set(XMVB_DEEPVBH_SOURCES
   vb/scf/deepvbh_onnx_hybrid_optimizer.cpp
 )
 
-set(XMVB_CPP_CORE_SOURCES
+set(XMVB_VBSCF_SOURCES
   core/linear_algebra/generalized_eigensolver.cpp
   ${XMVB_VBSCF_APPROXIMATION_SOURCES}
   ${XMVB_VBSCF_DETERMINANT_SOURCES}
