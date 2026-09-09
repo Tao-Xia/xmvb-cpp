@@ -673,7 +673,7 @@ cmake --build build --target test_projected_orbital_surrogate test_positive_ritz
 ctest --test-dir build -R 'projected_orbital_surrogate|positive_ritz_secants|positive_conjugate_basis|normalized_orbital_curvature|spectral_trust_region|orthonormal_hvp_basis|sparse_orbital_quotient|exact_ctx_hvp_f2_finite_difference' --output-on-failure
 ```
 
-Audit each input (`src/test_molecule/F2.xmi`, `testdata/vbscf/241_VBSCF.xmi`,
+Audit each input (`testdata/vbscf/F2.xmi`, `testdata/vbscf/241_VBSCF.xmi`,
 `testdata/vbscf/MnF2.xmi`, `testdata/vbscf/FeCl2.xmi`):
 
 ```bash

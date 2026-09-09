@@ -54,8 +54,8 @@ for cache disabled.
 
 Two C6H6 inputs were measured:
 
-1. `src/test_molecule/C6H6.xmi`
-2. `src/test_molecule/C6H6.full.xmi`
+1. `testdata/vbscf/C6H6.xmi`
+2. `testdata/vbscf/C6H6.full.xmi`
 
 The first input is a small selected-space case; the second is the full-space
 case where unique-spin reuse is substantial.
@@ -227,7 +227,7 @@ The exact structure-builder was also measured directly with
 build/src/check_structure_builder_fast_path
 ```
 
-on `src/test_molecule/C6H6.full.xmi`.
+on `testdata/vbscf/C6H6.full.xmi`.
 
 With cache enabled:
 

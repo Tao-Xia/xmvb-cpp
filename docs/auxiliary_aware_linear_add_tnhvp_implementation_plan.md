@@ -358,7 +358,7 @@ cmake --build build --target run_cpp_vbscf -j8
 本地 smoke 只检查可运行性：
 
 ```bash
-OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe src/test_molecule/F2.xmi --optimizer-backend lbfgspp
+OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe testdata/vbscf/F2.xmi --optimizer-backend lbfgspp
 ```
 
 真正算法验收必须提交到计算节点，使用 240、241、FeCl2、MnF2：

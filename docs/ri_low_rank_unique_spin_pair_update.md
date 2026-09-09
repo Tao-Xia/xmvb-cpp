@@ -1012,7 +1012,7 @@ build/src/check_ri_low_rank_unique_spin_pair <input.xmi>
 ```bash
 env OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   build/src/check_ri_low_rank_unique_spin_pair \
-  src/test_molecule/F2.xmi \
+  testdata/vbscf/F2.xmi \
   --max-pair-checks 16 \
   --max-rank-update-checks 8
 ```

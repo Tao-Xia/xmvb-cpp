@@ -278,7 +278,7 @@ The explicit references can be reproduced with
 
 ```bash
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
-  ./build/src/benchmark_exact_ctx_hvp src/test_molecule/F2.xmi \
+  ./build/src/benchmark_exact_ctx_hvp testdata/vbscf/F2.xmi \
   --repeats 1 --dense-reference-block-width 4
 
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \

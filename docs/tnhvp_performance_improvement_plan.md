@@ -148,7 +148,7 @@ Detailed structure-stage logging:
 - previous pair-kernel time was about `0.198-0.207 s` per logged apply
 - new pair-kernel time is about `0.064-0.066 s` on the fast applies
 
-#### `test/10698_VBSCF.xmi`
+#### `testdata/vbscf/10698_VBSCF.xmi`
 
 Benchmark comparison:
 
@@ -418,7 +418,7 @@ transforms.
 
 Tried routing the outer-response `delta GGO` directional derivative through the
 accepted exact-2e HVP cache. This reused accepted AO-pair coefficient/product
-buffers but was slower on `test/10698_VBSCF.xmi`:
+buffers but was slower on `testdata/vbscf/10698_VBSCF.xmi`:
 
 | metric | before | experiment |
 | --- | ---: | ---: |
@@ -507,7 +507,7 @@ Minimum checks after each nontrivial implementation:
 cmake --build build --target run_cpp_vbscf check_exact_ctx_hvp benchmark_exact_ctx_hvp -j8
 
 env OMP_NUM_THREADS=1 build/src/check_exact_ctx_hvp \
-  src/test_molecule/F2.xmi --nonredundant-adapt true --ao-integral-source libcint_cpp
+  testdata/vbscf/F2.xmi --nonredundant-adapt true --ao-integral-source libcint_cpp
 
 env OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   build/src/benchmark_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi \

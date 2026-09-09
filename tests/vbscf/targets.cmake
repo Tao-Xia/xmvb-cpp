@@ -39,14 +39,14 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
 
   add_test(NAME curvature_audit_f2 COMMAND benchmark_exact_ctx_hvp
-    ${CMAKE_SOURCE_DIR}/src/test_molecule/F2.xmi
+    ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
     --nonredundant-adapt true --curvature-audit-directions 6)
   set_tests_properties(curvature_audit_f2 PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
     PASS_REGULAR_EXPRESSION "audit_total_hvp_calls =")
 
   add_test(NAME dense_reduced_hessian_f2 COMMAND benchmark_exact_ctx_hvp
-    ${CMAKE_SOURCE_DIR}/src/test_molecule/F2.xmi
+    ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
     --repeats 1 --dense-reference-block-width 4)
   set_tests_properties(dense_reduced_hessian_f2 PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
@@ -81,7 +81,7 @@ if (BUILD_TESTING)
     NAME exact_ctx_hvp_f2_finite_difference
     COMMAND
       check_exact_ctx_hvp
-      ${CMAKE_SOURCE_DIR}/src/test_molecule/F2.xmi
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
       --step 1e-4
       --probe full
       --max-rel-error 1e-7)

@@ -1275,7 +1275,7 @@ Implementation status:
    `MaxRSS=2200384K`,
    `full_cached_external_avg_wall_time_seconds=3.950472327`,
    `outer_only_cached_external_avg_wall_time_seconds=3.78322635867`;
-   `1941006` (`test/10698_VBSCF.xmi`) completed in `00:04:16` with batch-step
+   `1941006` (`testdata/vbscf/10698_VBSCF.xmi`) completed in `00:04:16` with batch-step
    `MaxRSS=12004112K`,
    `full_cached_external_avg_wall_time_seconds=12.943628066`,
    `outer_only_cached_external_avg_wall_time_seconds=12.2217528767`;

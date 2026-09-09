@@ -54,11 +54,9 @@ fort.*
 *.xdat
 *.xmo
 
-# Local benchmark decks, launcher copies, and runtime outputs live under
-# test/ and test_molecule/. They are intentionally kept outside the tracked
-# benchmark-code baseline.
+# Local benchmark decks and launcher copies under test/ stay outside the
+# tracked baseline. Canonical regression inputs live under testdata/vbscf/.
 test/
-test_molecule/
 
 # Local research notes and scratch artifacts that should stay outside the
 # benchmark-code baseline.

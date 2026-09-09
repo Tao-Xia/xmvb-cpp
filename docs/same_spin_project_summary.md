@@ -622,9 +622,9 @@ OMP_NUM_THREADS=1 XMVB_CPP_LOG_OBJECTIVE_PROGRESS=1 \
 
 对 same-spin 本项目而言，RI 的结论和 exact 完全一致：same-spin adjoint 已经降到毫秒级，不再是主瓶颈。
 
-### 6.2 exact deck 的辅助 benchmark：`src/test_molecule/C6H6.xmi`
+### 6.2 exact deck 的辅助 benchmark：`testdata/vbscf/C6H6.xmi`
 
-`src/test_molecule/C6H6.xmi` 本身就是 exact deck，因为 `$ctrl` 写的是
+`testdata/vbscf/C6H6.xmi` 本身就是 exact deck，因为 `$ctrl` 写的是
 
 ```text
 int=libcint
@@ -634,7 +634,7 @@ int=libcint
 
 ```bash
 OMP_NUM_THREADS=1 \
-  build/src/benchmark_cpp_orbital_eval src/test_molecule/C6H6.xmi \
+  build/src/benchmark_cpp_orbital_eval testdata/vbscf/C6H6.xmi \
   --standard-two-electron-mode exact \
   --repeat 1 --warmup 0
 ```
@@ -677,7 +677,7 @@ OMP_NUM_THREADS=1 \
 
 ```bash
 OMP_NUM_THREADS=1 \
-  build/src/check_cpp_active_space_gradient src/test_molecule/F2.xmi \
+  build/src/check_cpp_active_space_gradient testdata/vbscf/F2.xmi \
   --standard-two-electron-mode exact \
   --component two_electron \
   --count 4 --step 1e-6
@@ -695,7 +695,7 @@ $$
 
 ```bash
 OMP_NUM_THREADS=1 \
-  build/src/check_cpp_orbital_gradient src/test_molecule/F2.xmi \
+  build/src/check_cpp_orbital_gradient testdata/vbscf/F2.xmi \
   --standard-two-electron-mode exact \
   --count 2 --step 1e-6
 ```

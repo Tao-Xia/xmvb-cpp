@@ -57,12 +57,12 @@
 
 | 体系 | 输入文件 | 类型 | 主要用途 | 优先级 |
 | --- | --- | --- | --- | --- |
-| `F2` | `src/test_molecule/F2.xmi` | closed-shell, HAO, 2e/2o, 很小 | 正确性/有限差分/小体系 sanity check | 必做 |
+| `F2` | `testdata/vbscf/F2.xmi` | closed-shell, HAO, 2e/2o, 很小 | 正确性/有限差分/小体系 sanity check | 必做 |
 | `C6H6` (benzene) | `testdata/vbscf/241_VBSCF.xmi` | closed-shell, HAO, 6e/6o, 12 atoms, 120 AO, 175 structures, 400 dets | 正文 closed-shell sparse HAO 主 benchmark；收敛与 wall-time 主表 | 必做 |
 | `MnF2` | `testdata/vbscf/MnF2.xmi` | open-shell, HAO, 9e/8o, sextet, 124 AO, 216 structures, 224 dets | 几何/图表敏感难体系；验证 open-shell sparse 情况 | 必做 |
 | `TiCl` | `test/TiCl.xmi` | open-shell, OEO, 5e/7o, quartet | 小型 OEO 迁移性检查；避免论文只在 HAO 上成立 | 建议做 |
 | `FeCl2` | `testdata/vbscf/FeCl2.xmi` | open-shell, OEO, 10e/8o, quintet, 136 AO, 420 structures, 448 dets | 生产级 OEO 体系；证明默认策略没有拖坏较大活性空间过渡金属体系 | 必做 |
-| `10698_VBSCF` | `test/10698_VBSCF.xmi` | larger closed-shell HAO deck, 22 atoms, 210 AO, 6e/6o, 175 structures, 400 dets | 较大 deck 的性能/阶段耗时/扩展性主 benchmark | 建议做 |
+| `10698_VBSCF` | `testdata/vbscf/10698_VBSCF.xmi` | larger closed-shell HAO deck, 22 atoms, 210 AO, 6e/6o, 175 structures, 400 dets | 较大 deck 的性能/阶段耗时/扩展性主 benchmark | 建议做 |
 
 ## 4. 建议放入补充材料的体系
 
@@ -72,7 +72,7 @@
 | --- | --- | --- |
 | `240` internal deck | `test/240_tnhvp.xmi` | 历史输入，仅用于物理严格稀疏坐标回归 |
 | `FeCl` | `test/FeCl.xmi` | 小型 open-shell OEO 补充例子；可作为 TiCl 的旁证 |
-| `C6H6.full` | `src/test_molecule/C6H6.full.xmi` | full-structure benzene exact deck；适合讨论 same-spin / unique-string / exact contraction 工程收益 |
+| `C6H6.full` | `testdata/vbscf/C6H6.full.xmi` | full-structure benzene exact deck；适合讨论 same-spin / unique-string / exact contraction 工程收益 |
 | `10698_RI` | `test/10698_RI.xmi` | 如果论文还要讨论 RI / low-rank 或 unique-spin pair 的工程优化，可单独放补充材料 |
 
 ## 5. 建议论文里的表格设计

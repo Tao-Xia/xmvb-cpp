@@ -75,7 +75,7 @@ OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi> --optimizer-backend lbfgspp
 ```
 
 Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
-regression decks and `src/test_molecule/F2.xmi` for the compact HAO smoke case.
+regression decks and `testdata/vbscf/F2.xmi` for the compact HAO smoke case.
 
 ## License
 

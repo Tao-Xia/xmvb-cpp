@@ -163,7 +163,7 @@ w_{\mathrm{packed}} \xrightarrow{Q^{\mathrm T}} w_{\mathrm{nr}}
 
 ```bash
 env OMP_NUM_THREADS=1 XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1 \
-  build/src/check_exact_ctx_hvp src/test_molecule/F2.xmi --step 1e-3
+  build/src/check_exact_ctx_hvp testdata/vbscf/F2.xmi --step 1e-3
 ```
 
 得到：
@@ -185,7 +185,7 @@ env OMP_NUM_THREADS=1 XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1 \
 运行：
 
 ```bash
-env OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe src/test_molecule/F2.xmi \
+env OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe testdata/vbscf/F2.xmi \
   --optimizer-backend nonredundant_truncated_newton \
   --nonredundant-truncated-newton-hvp-mode exact_ctx
 ```
@@ -210,7 +210,7 @@ env OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe src/test_molecule/F2.xmi \
 
 ```bash
 env OMP_NUM_THREADS=1 XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1 \
-  build/src/xmvb-cpp.exe src/test_molecule/F2.xmi \
+  build/src/xmvb-cpp.exe testdata/vbscf/F2.xmi \
   --optimizer-backend nonredundant_truncated_newton \
   --nonredundant-truncated-newton-hvp-mode exact_ctx
 ```

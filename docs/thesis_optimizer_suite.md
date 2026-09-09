@@ -4,11 +4,11 @@
 
 | 标签 | 输入文件 | 论文角色 |
 | --- | --- | --- |
-| `F2` | `test/F2.xmi` | 小体系正确性与 sanity check |
+| `F2` | `testdata/vbscf/F2.xmi` | 小体系正确性与 sanity check |
 | `benzene` | `testdata/vbscf/241_VBSCF.xmi` | closed-shell sparse HAO 主 benchmark |
 | `MnF2` | `testdata/vbscf/MnF2.xmi` | difficult open-shell sparse HAO |
 | `FeCl2` | `testdata/vbscf/FeCl2.xmi` | 生产级 open-shell OEO |
-| `10698` | `test/10698_VBSCF.xmi` | larger closed-shell HAO benchmark deck |
+| `10698` | `testdata/vbscf/10698_VBSCF.xmi` | larger closed-shell HAO benchmark deck |
 | `240` | `test/240_tnhvp.xmi` | 补充材料里的 internal benchmark deck |
 
 每个体系默认提交三路计算：
