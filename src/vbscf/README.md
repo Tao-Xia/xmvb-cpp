@@ -21,7 +21,9 @@ core
 
 `approx` and `legacy` are terminal modules. Production code must not include
 from them. DeepVBH remains outside this tree under `src/vb` and is not part of
-the matrix-free VBSCF optimizer.
+the matrix-free VBSCF optimizer. Its sources build as the one-way dependent
+`xmvb_cpp_deepvbh` compatibility library; `xmvb_cpp_vb` and
+`xmvb_cpp_runtime` never link against it.
 
 ## Target layout
 

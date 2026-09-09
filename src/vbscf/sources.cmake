@@ -101,10 +101,9 @@ set(XMVB_VBSCF_ADAPTIVE_SOURCES
   vbscf/adaptive/structure_space_optimizer.cpp
 )
 
-# Experimental models remain linked for compatibility, but production VBSCF
-# modules must never depend on them. They will become an optional target after
-# the core dependency cycles have been removed.
-set(XMVB_VBSCF_EXPERIMENTAL_SOURCES
+# DeepVBH is a separate compatibility target. It may depend on VBSCF and the
+# standalone runtime, but neither production layer may depend on it.
+set(XMVB_DEEPVBH_SOURCES
   vb/model/deepvbh_jax_inference_runner.cpp
   vb/scf/deepvbh_onnx_direct_final_optimizer.cpp
   vb/scf/deepvbh_onnx_hybrid_optimizer.cpp
@@ -123,6 +122,5 @@ set(XMVB_CPP_CORE_SOURCES
   ${XMVB_VBSCF_OPTIMIZATION_SOURCES}
   ${XMVB_VBSCF_WORKFLOW_SOURCES}
   ${XMVB_VBSCF_ADAPTIVE_SOURCES}
-  ${XMVB_VBSCF_EXPERIMENTAL_SOURCES}
   ${XMVB_VBSCF_LEGACY_SOURCES}
 )

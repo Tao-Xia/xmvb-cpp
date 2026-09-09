@@ -103,12 +103,6 @@ if (XMVB_CPP_ENABLE_ONNX_RUNTIME)
   target_compile_definitions(
     xmvb_cpp_vb
     PUBLIC XMVB_CPP_ENABLE_ONNX_RUNTIME=1)
-  target_include_directories(
-    xmvb_cpp_vb
-    PUBLIC ${ONNXRUNTIME_INCLUDE_DIR})
-  target_link_libraries(
-    xmvb_cpp_vb
-    PUBLIC ${ONNXRUNTIME_LIB})
 endif()
 if (XMVB_CPP_ENABLE_EIGEN_BLAS_BACKEND)
   target_compile_definitions(
@@ -178,11 +172,35 @@ function(xmvb_mark_targets_exclude_from_all)
   endforeach()
 endfunction()
 
+add_library(xmvb_cpp_deepvbh STATIC ${XMVB_DEEPVBH_SOURCES})
+set_target_properties(xmvb_cpp_deepvbh PROPERTIES OUTPUT_NAME xmvb-deepvbh)
+target_include_directories(xmvb_cpp_deepvbh
+  PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_BINARY_DIR}/src/vbutil
+    ${CMAKE_BINARY_DIR}/src/vbscf
+    ${CMAKE_BINARY_DIR}/src/vbci
+    ${CMAKE_BINARY_DIR}/src/vbpt2
+    ${EIGEN3_INCLUDE_DIR})
+target_link_libraries(xmvb_cpp_deepvbh PUBLIC xmvb_cpp_runtime)
+if (XMVB_CPP_ENABLE_ONNX_RUNTIME)
+  target_compile_definitions(
+    xmvb_cpp_deepvbh
+    PUBLIC XMVB_CPP_ENABLE_ONNX_RUNTIME=1)
+  target_include_directories(
+    xmvb_cpp_deepvbh
+    PRIVATE ${ONNXRUNTIME_INCLUDE_DIR})
+  target_link_libraries(
+    xmvb_cpp_deepvbh
+    PUBLIC ${ONNXRUNTIME_LIB})
+endif()
+
 add_executable(run_cpp_vbscf
   tools/run_cpp_vbscf.cpp)
 set_target_properties(run_cpp_vbscf PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
 target_link_libraries(run_cpp_vbscf
   PRIVATE
+    xmvb_cpp_deepvbh
     xmvb_cpp_vb
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(run_cpp_vbscf)

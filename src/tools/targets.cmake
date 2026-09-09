@@ -395,6 +395,7 @@ add_executable(compare_deepvbh_jax_inference
   tools/compare_deepvbh_jax_inference.cpp)
 target_link_libraries(compare_deepvbh_jax_inference
   PRIVATE
+    xmvb_cpp_deepvbh
     xmvb_cpp_vb
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(compare_deepvbh_jax_inference)
@@ -451,4 +452,3 @@ xmvb_mark_targets_exclude_from_all(${_xmvb_dev_tool_targets})
 if (_xmvb_dev_tool_targets)
   add_custom_target(xmvb_cpp_dev_tools DEPENDS ${_xmvb_dev_tool_targets})
 endif()
-
