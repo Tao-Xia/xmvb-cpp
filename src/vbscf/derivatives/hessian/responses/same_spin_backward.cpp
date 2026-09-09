@@ -31,7 +31,6 @@ using detail::accumulate_beta_accepted_tile_weights;
 using detail::accumulate_beta_directional_tile_weights;
 using detail::accumulate_beta_local_tile_weights;
 using detail::build_dense_directional_exact_same_spin_weight_matrices;
-using detail::build_directional_pair_scalar_matrices;
 using detail::build_exact_same_spin_weight_matrices;
 using detail::build_local_same_spin_response_weight_matrices;
 using detail::build_polynomial_spin_directional_data;
@@ -1093,32 +1092,6 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
 }
 
 }  // namespace
-
-SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    int n_active_orbitals,
-    const ActiveSpaceIntegralDirectionView& direction) {
-  SameSpinDirectionalPairCache result;
-  result.close_shell_same_spin =
-      same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  result.alpha = build_directional_pair_scalar_matrices(
-      same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-      same_spin_pair_cache.alpha_pair_cache_ref(),
-      static_cast<int>(
-          same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()),
-      n_active_orbitals,
-      direction);
-  if (!result.close_shell_same_spin) {
-    result.beta = build_directional_pair_scalar_matrices(
-        same_spin_pair_cache.beta_reuse_table.unique_determinants,
-        same_spin_pair_cache.beta_pair_cache_ref(),
-        static_cast<int>(
-            same_spin_pair_cache.beta_reuse_table.unique_determinants.size()),
-        n_active_orbitals,
-        direction);
-  }
-  return result;
-}
 
 SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
