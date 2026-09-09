@@ -15,7 +15,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/QR>
 
-#include "tools/curvature_decomposition.hpp"
+#include "vbscf/diagnostics/curvature_decomposition.hpp"
 #include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
 #include "vbscf/diagnostics/reduced_hessian_reference.hpp"
 

@@ -278,7 +278,7 @@ Representative reproduction commands, executed from the repository root:
 
 ```sh
 ctest --test-dir build --output-on-failure
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 build/src/benchmark_exact_ctx_hvp src/tools/test_inputs/F2_OEO.xmi --nonredundant-adapt true --curvature-audit-directions 6
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 build/src/benchmark_exact_ctx_hvp testdata/vbscf/F2_OEO.xmi --nonredundant-adapt true --curvature-audit-directions 6
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 build/src/check_exact_ctx_hvp test/FeCl2.xmi --step 1e-5 --probe full --nonredundant-adapt true --max-rel-error 1e-7
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 build/src/benchmark_exact_ctx_hvp test/FeCl2.xmi --nonredundant-adapt true --orbital-value-table-bin /tmp/xmvb-oeo-fix.Cdw3GW/FeCl2.final.bin --curvature-audit-directions 32
 ```

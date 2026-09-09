@@ -1,6 +1,6 @@
 #include <iostream>
 #include <stdexcept>
-#include "tools/curvature_decomposition.hpp"
+#include "vbscf/diagnostics/curvature_decomposition.hpp"
 
 int main() {
   try {

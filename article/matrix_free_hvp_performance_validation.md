@@ -282,7 +282,7 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
   --repeats 1 --dense-reference-block-width 4
 
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
-  ./build/src/benchmark_exact_ctx_hvp src/tools/test_inputs/F2_OEO.xmi \
+  ./build/src/benchmark_exact_ctx_hvp testdata/vbscf/F2_OEO.xmi \
   --repeats 1 --nonredundant-adapt true \
   --dense-reference-block-width 8
 ```

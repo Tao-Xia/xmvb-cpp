@@ -422,41 +422,41 @@ target_link_libraries(audit_sparse_orbital_gauge
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(audit_sparse_orbital_gauge)
 
-add_executable(test_sparse_orbital_quotient tools/test_sparse_orbital_quotient.cpp)
+add_executable(test_sparse_orbital_quotient ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_sparse_orbital_quotient.cpp)
 target_link_libraries(test_sparse_orbital_quotient PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_sparse_orbital_quotient)
 
-add_executable(test_orbital_block_partition tools/test_orbital_block_partition.cpp)
+add_executable(test_orbital_block_partition ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_orbital_block_partition.cpp)
 target_link_libraries(test_orbital_block_partition PRIVATE xmvb_cpp_vb)
 
-add_executable(test_orthonormal_hvp_basis tools/test_orthonormal_hvp_basis.cpp)
+add_executable(test_orthonormal_hvp_basis ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_orthonormal_hvp_basis.cpp)
 target_link_libraries(test_orthonormal_hvp_basis PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_orthonormal_hvp_basis)
 
-add_executable(test_reduced_hessian_reference tools/test_reduced_hessian_reference.cpp)
+add_executable(test_reduced_hessian_reference ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_reduced_hessian_reference.cpp)
 target_link_libraries(test_reduced_hessian_reference PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_reduced_hessian_reference)
 
-add_executable(test_spectral_trust_region tools/test_spectral_trust_region.cpp)
+add_executable(test_spectral_trust_region ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_spectral_trust_region.cpp)
 target_link_libraries(test_spectral_trust_region PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_spectral_trust_region)
 
-add_executable(test_normalized_orbital_curvature tools/test_normalized_orbital_curvature.cpp)
+add_executable(test_normalized_orbital_curvature ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_normalized_orbital_curvature.cpp)
 target_link_libraries(test_normalized_orbital_curvature PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_normalized_orbital_curvature)
 
-add_executable(test_projected_orbital_surrogate tools/test_projected_orbital_surrogate.cpp)
+add_executable(test_projected_orbital_surrogate ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_projected_orbital_surrogate.cpp)
 target_link_libraries(test_projected_orbital_surrogate PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_projected_orbital_surrogate)
 
-add_executable(test_positive_conjugate_basis tools/test_positive_conjugate_basis.cpp)
+add_executable(test_positive_conjugate_basis ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_positive_conjugate_basis.cpp)
 target_link_libraries(test_positive_conjugate_basis PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_positive_conjugate_basis)
 
-add_executable(test_positive_ritz_secants tools/test_positive_ritz_secants.cpp)
-add_executable(test_curvature_decomposition tools/test_curvature_decomposition.cpp)
-add_executable(test_oeo_normalization_pullback tools/test_oeo_normalization_pullback.cpp)
-add_executable(test_cofactor_differential tools/test_cofactor_differential.cpp)
+add_executable(test_positive_ritz_secants ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_positive_ritz_secants.cpp)
+add_executable(test_curvature_decomposition ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_curvature_decomposition.cpp)
+add_executable(test_oeo_normalization_pullback ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_oeo_normalization_pullback.cpp)
+add_executable(test_cofactor_differential ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_cofactor_differential.cpp)
 target_link_libraries(test_cofactor_differential PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_cofactor_differential)
 target_link_libraries(test_oeo_normalization_pullback PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
@@ -742,7 +742,7 @@ if (BUILD_TESTING)
       --max-rel-error 1e-7)
   add_test(NAME exact_ctx_hvp_f2_oeo_finite_difference
     COMMAND check_exact_ctx_hvp
-      ${CMAKE_SOURCE_DIR}/src/tools/test_inputs/F2_OEO.xmi
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_OEO.xmi
       --step 1e-4 --probe full --nonredundant-adapt true --max-rel-error 1e-7)
   set_tests_properties(exact_ctx_hvp_f2_oeo_finite_difference PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
