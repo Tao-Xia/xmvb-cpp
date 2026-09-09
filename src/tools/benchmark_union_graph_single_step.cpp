@@ -13,7 +13,7 @@
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
-#include "vbscf/legacy/structures/structure_overlap.hpp"
+#include "vbscf/structures/reference/raw_structure_overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vbscf/structures/union_graph_rank_predictor.hpp"
 #include "vbscf/structures/union_graph_screening.hpp"

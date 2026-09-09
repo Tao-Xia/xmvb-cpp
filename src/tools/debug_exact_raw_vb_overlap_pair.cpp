@@ -10,7 +10,7 @@
 
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
-#include "vbscf/legacy/structures/structure_overlap.hpp"
+#include "vbscf/structures/reference/raw_structure_overlap.hpp"
 #include "vbscf/structures/union_graph_screening.hpp"
 
 namespace {

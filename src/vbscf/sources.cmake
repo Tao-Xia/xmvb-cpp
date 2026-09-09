@@ -23,6 +23,7 @@ set(XMVB_VBSCF_DETERMINANT_SOURCES
 
 set(XMVB_VBSCF_STRUCTURE_SOURCES
   vbscf/structures/hamiltonian_overlap_builder.cpp
+  vbscf/structures/reference/raw_structure_overlap.cpp
   vbscf/structures/selected_state_coefficients.cpp
   vbscf/structures/structure_evaluator.cpp
   vbscf/structures/structure_expander.cpp
@@ -67,7 +68,6 @@ set(XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES
 
 set(XMVB_VBSCF_LEGACY_SOURCES
   vbscf/legacy/orbitals/jacobi_diagonalizer.cpp
-  vbscf/legacy/structures/structure_overlap.cpp
 )
 
 set(XMVB_VBSCF_DERIVATIVE_SOURCES
