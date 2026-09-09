@@ -5,6 +5,8 @@
 #include <utility>
 
 namespace xmvb::app::vbscf {
+namespace {
+
 void apply_optimizer_backend_argument(
     const std::string& backend_name,
     xmvb::vb::VbScfOptimizerOptions* options) {
@@ -138,13 +140,12 @@ void print_usage() {
                "default optimizer backend: nonredundant_lbfgspp\n";
 }
 
-bool parse_options(int argc, char** argv, Options* parsed_options) {
-  if (parsed_options == nullptr) {
-    throw std::invalid_argument("parsed_options must not be null");
-  }
+}  // namespace
+
+std::optional<Options> parse_options(int argc, char** argv) {
   if (argc < 2 || ((argc - 2) % 2 != 0)) {
     print_usage();
-    return false;
+    return std::nullopt;
   }
 
   const std::string input_path = argv[1];
@@ -218,11 +219,11 @@ bool parse_options(int argc, char** argv, Options* parsed_options) {
       } else {
         std::cerr << "unknown argument: " << argument_name << '\n';
         print_usage();
-        return false;
+        return std::nullopt;
       }
     } catch (const std::exception& error) {
       std::cerr << error.what() << '\n';
-      return false;
+      return std::nullopt;
     }
   }
   load_options.build_ao_effective_one_electron_graph =
@@ -238,8 +239,7 @@ bool parse_options(int argc, char** argv, Options* parsed_options) {
   parsed.trace_directory = std::move(dump_trace_dir);
   parsed.final_orbitals_path = std::move(dump_final_orbital_value_table_bin);
   parsed.max_iterations_explicit = user_specified_max_iterations;
-  *parsed_options = std::move(parsed);
-  return true;
+  return parsed;
 }
 
 }  // namespace xmvb::app::vbscf

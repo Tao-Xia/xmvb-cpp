@@ -49,10 +49,6 @@ const char* gradient_tolerance_metric_name(
   return "unknown";
 }
 
-const char* bool_name(bool value) {
-  return value ? "true" : "false";
-}
-
 constexpr int kLogRuleWidth = 88;
 constexpr int kLogLabelWidth = 34;
 
@@ -206,12 +202,6 @@ std::string convergence_status_name(bool converged) {
   return converged ? "converged" : "not converged";
 }
 
-std::string exact_ctx_initial_outer_response_policy_name(
-    const xmvb::vb::OrbitalPreparationInput& orbital_preparation_input) {
-  (void)orbital_preparation_input;
-  return "full_exact_hessian";
-}
-
 std::string exact_ctx_physical_chart_name(
     const xmvb::vb::OrbitalPreparationInput& orbital_input) {
   for (const int basis_count : orbital_input.orbital_basis_counts) {
@@ -236,7 +226,7 @@ void print_exact_ctx_policy_summary(
   print_log_subsection_title("Exact-CTX Matrix-Free Newton");
   print_log_field(
       "Hessian model",
-      exact_ctx_initial_outer_response_policy_name(orbital_input));
+      "full_exact_hessian");
   print_log_field(
       "Inexact Newton forcing",
       "adaptive sqrt(projected gradient 2-norm)");

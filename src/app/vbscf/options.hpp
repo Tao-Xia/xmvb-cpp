@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include "runtime/vbscf_input_loader.hpp"
@@ -16,7 +17,6 @@ struct Options {
   bool max_iterations_explicit = false;
 };
 
-bool parse_options(int argc, char** argv, Options* parsed_options);
-void print_usage();
+std::optional<Options> parse_options(int argc, char** argv);
 
 }  // namespace xmvb::app::vbscf
