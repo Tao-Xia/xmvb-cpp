@@ -41,7 +41,7 @@ The goal of this note is to write down:
 
 The current comparison is between:
 
-- `test/241_VBSCF.xmi`
+- `testdata/vbscf/241_VBSCF.xmi`
 - `test/10698_VBSCF.xmi`
 
 Lightweight deck inspection shows:

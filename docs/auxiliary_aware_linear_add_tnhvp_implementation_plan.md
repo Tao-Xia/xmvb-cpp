@@ -366,7 +366,7 @@ OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe src/test_molecule/F2.xmi --optimizer-ba
 ```bash
 CPUS_PER_TASK=32 OMP_NUM_THREADS=32 \
   BENCHMARK_DIR=benchmarks/linear_add_hvp_241_$(date +%Y%m%d_%H%M%S) \
-  bash scripts/submit_vb_optimizer_benchmark_triplet.sh test/241_VBSCF.xmi
+  bash scripts/submit_vb_optimizer_benchmark_triplet.sh testdata/vbscf/241_VBSCF.xmi
 
 CPUS_PER_TASK=32 OMP_NUM_THREADS=32 \
   BENCHMARK_DIR=benchmarks/linear_add_hvp_240_$(date +%Y%m%d_%H%M%S) \
@@ -374,11 +374,11 @@ CPUS_PER_TASK=32 OMP_NUM_THREADS=32 \
 
 CPUS_PER_TASK=32 OMP_NUM_THREADS=32 \
   BENCHMARK_DIR=benchmarks/linear_add_hvp_fecl2_$(date +%Y%m%d_%H%M%S) \
-  bash scripts/submit_vb_optimizer_benchmark_triplet.sh test/FeCl2.xmi
+  bash scripts/submit_vb_optimizer_benchmark_triplet.sh testdata/vbscf/FeCl2.xmi
 
 CPUS_PER_TASK=32 OMP_NUM_THREADS=32 \
   BENCHMARK_DIR=benchmarks/linear_add_hvp_mnf2_$(date +%Y%m%d_%H%M%S) \
-  bash scripts/submit_vb_optimizer_benchmark_triplet.sh test/MnF2.xmi
+  bash scripts/submit_vb_optimizer_benchmark_triplet.sh testdata/vbscf/MnF2.xmi
 ```
 
 提交后用：

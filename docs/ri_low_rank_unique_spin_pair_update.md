@@ -1041,7 +1041,7 @@ sbatch -c 32 --partition=6526Y --account=weiwu --time=00:30:00 \
   --wrap="cd /pool1/home/xiatao/project/xmvb-cpp && \
   env OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   build/src/check_ri_low_rank_unique_spin_pair \
-  test/241_VBSCF.xmi \
+  testdata/vbscf/241_VBSCF.xmi \
   --max-pair-checks 128 \
   --max-rank-update-checks 64"
 ```
@@ -1095,7 +1095,7 @@ sbatch -c 32 --partition=6526Y --account=weiwu --time=00:30:00 \
   --wrap="cd /pool1/home/xiatao/project/xmvb-cpp && \
   env OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   build/src/check_ri_low_rank_unique_spin_pair \
-  test/MnF2.xmi \
+  testdata/vbscf/MnF2.xmi \
   --max-pair-checks 128 \
   --max-rank-update-checks 64"
 ```

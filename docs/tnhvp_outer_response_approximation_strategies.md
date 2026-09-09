@@ -133,8 +133,8 @@ P_{k,\mathrm{sel}} T_k p .
 
 建议验证体系至少包括：
 
-- `test/241_VBSCF.xmi`；
-- `test/MnF2.xmi`；
+- `testdata/vbscf/241_VBSCF.xmi`；
+- `testdata/vbscf/MnF2.xmi`；
 - 一个更大的 deck，例如已有 benchmark 中的 `10698_VBSCF`。
 
 ## 4. 策略 A：缺失曲率的 L-SR1 / L-BFGS 近似
@@ -314,7 +314,7 @@ M_0 = 0.
 
 ### 4.7 初步 241_VBSCF 结果
 
-在 `6526Y` 上对 `test/241_VBSCF.xmi` 做了第一轮 A/B 测试：
+在 `6526Y` 上对 `testdata/vbscf/241_VBSCF.xmi` 做了第一轮 A/B 测试：
 
 | 模式 | Slurm job | accepted iterations | SCF iteration wall time | 现象 |
 | --- | ---: | ---: | ---: | --- |
@@ -475,7 +475,7 @@ T p.
 
 ### 6.1.1 Local-only 的 241_VBSCF 实测
 
-在 `6526Y` 上用 32 线程测试 `test/241_VBSCF.xmi`。第一组使用默认 hybrid
+在 `6526Y` 上用 32 线程测试 `testdata/vbscf/241_VBSCF.xmi`。第一组使用默认 hybrid
 TNHVP 策略，即前几步允许 full outer-response，之后回到 core-only：
 
 | 模式 | Slurm job | accepted iterations | SCF iteration wall time | weighted full-outer apply | weighted outer stage | 现象 |
@@ -554,7 +554,7 @@ directional selected-state coefficients，因此只保留 same-spin overlap-weig
 
 ### 6.2.1 Energy-only 的 241_VBSCF 实测
 
-在 `6526Y` 上用 32 线程测试 `test/241_VBSCF.xmi`：
+在 `6526Y` 上用 32 线程测试 `testdata/vbscf/241_VBSCF.xmi`：
 
 | 模式 | Slurm job | accepted iterations | SCF iteration wall time | outer stage | 现象 |
 | --- | ---: | ---: | ---: | ---: | --- |

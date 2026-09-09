@@ -9,10 +9,10 @@
 | 分子/体系 | 输入文件 | 角色 |
 | --- | --- | --- |
 | `F2` | `src/test_molecule/F2.xmi` | 正确性与 sanity check |
-| `benzene` | `test/241_VBSCF.xmi` | closed-shell sparse HAO 主 benchmark |
-| `MnF2` | `test/MnF2.xmi` | open-shell sparse HAO 困难体系 |
+| `benzene` | `testdata/vbscf/241_VBSCF.xmi` | closed-shell sparse HAO 主 benchmark |
+| `MnF2` | `testdata/vbscf/MnF2.xmi` | open-shell sparse HAO 困难体系 |
 | `TiCl` | `test/TiCl.xmi` | 小型 open-shell OEO 迁移性检查 |
-| `FeCl2` | `test/FeCl2.xmi` | 生产级 open-shell OEO 体系 |
+| `FeCl2` | `testdata/vbscf/FeCl2.xmi` | 生产级 open-shell OEO 体系 |
 | `10698_VBSCF` | `test/10698_VBSCF.xmi` | larger closed-shell HAO benchmark deck |
 
 如果时间不够，`TiCl` 可以延后；其余 5 个优先。

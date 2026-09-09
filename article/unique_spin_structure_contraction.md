@@ -1269,9 +1269,9 @@ Implementation status:
    the shared target by stripe;
 3. compute-node validation is now recorded entirely through `sbatch`, not
    local large-system runs:
-   `1941005` (`test/241_VBSCF.xmi`) completed in `00:00:45` with batch-step
+   `1941005` (`testdata/vbscf/241_VBSCF.xmi`) completed in `00:00:45` with batch-step
    `MaxRSS=2136304K`;
-   `1941007` (`test/241_VBSCF.xmi`) completed in `00:01:18` with batch-step
+   `1941007` (`testdata/vbscf/241_VBSCF.xmi`) completed in `00:01:18` with batch-step
    `MaxRSS=2200384K`,
    `full_cached_external_avg_wall_time_seconds=3.950472327`,
    `outer_only_cached_external_avg_wall_time_seconds=3.78322635867`;

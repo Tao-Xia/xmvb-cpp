@@ -47,7 +47,7 @@ come next.
 
 ## 2. Empirical Facts From The Restored `241_VBSCF` Path
 
-The restored TNHVP run on `test/241_VBSCF.xmi` reproduced the old accepted
+The restored TNHVP run on `testdata/vbscf/241_VBSCF.xmi` reproduced the old accepted
 energies for the first two iterations:
 
 $$
