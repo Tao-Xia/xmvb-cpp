@@ -16,7 +16,7 @@
 #include <omp.h>
 #endif
 
-#include "runtime/cpp_block_guess_builder.hpp"
+#include "runtime/orbital_block_guess_builder.hpp"
 #include "runtime/generated_raw_structure_builder.hpp"
 #include "runtime/input_deck_keywords.hpp"
 #include "runtime/input_deck_model.hpp"
@@ -773,7 +773,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   if (!options.skip_orbital_guess &&
       options.orbital_guess_source == OrbitalGuessSource::Cpp) {
     const auto orbital_guess_start_time = std::chrono::steady_clock::now();
-    build_cpp_initial_guess(
+    build_initial_orbital_guess(
         input_file_path,
         input_deck_metadata.guess_type,
         result.libcint_input,

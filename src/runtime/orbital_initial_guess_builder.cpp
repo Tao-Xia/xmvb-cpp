@@ -1,4 +1,4 @@
-#include "runtime/cpp_initial_guess_builder.hpp"
+#include "runtime/orbital_initial_guess_builder.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -12,8 +12,8 @@
 
 #include <Eigen/Core>
 #include "lapacke.h"
-#include "runtime/cpp_block_guess_builder.hpp"
-#include "runtime/cpp_restricted_hartree_fock.hpp"
+#include "runtime/orbital_block_guess_builder.hpp"
+#include "runtime/restricted_hartree_fock.hpp"
 #include "runtime/input_deck_keywords.hpp"
 #include "runtime/libcint_compat.hpp"
 
@@ -394,7 +394,7 @@ void build_hcore_block_guess(
       orbital_value_table);
 }
 
-CppRestrictedHartreeFockResult solve_rhf_guess(
+RestrictedHartreeFockResult solve_rhf_guess(
     const LibcintInput& libcint_input,
     const AoIntegralInput& ao_integral_input,
     const OrbitalPreparationInput& orbital_preparation_input) {
@@ -496,7 +496,7 @@ CppRestrictedHartreeFockResult solve_rhf_guess(
     }
   }
 
-  CppRestrictedHartreeFockSolver solver;
+  RestrictedHartreeFockSolver solver;
   return solver.solve(
       orbital_preparation_input.n_total_electrons,
       orbital_preparation_input.ao_overlap_matrix,
@@ -748,7 +748,7 @@ const char* orbital_guess_source_name(OrbitalGuessSource source) {
   return "unknown";
 }
 
-bool cpp_initial_guess_supported(int guess_type) noexcept {
+bool initial_orbital_guess_supported(int guess_type) noexcept {
   return guess_type == kGuessTypeAuto ||
          guess_type == kGuessTypeUnit ||
          guess_type == kGuessTypeMo ||
@@ -756,7 +756,7 @@ bool cpp_initial_guess_supported(int guess_type) noexcept {
          guess_type == kGuessTypeRdci;
 }
 
-void build_cpp_initial_guess(
+void build_initial_orbital_guess(
     const std::string& input_file_path,
     int guess_type,
     const LibcintInput& libcint_input,

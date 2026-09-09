@@ -7,7 +7,7 @@ implemented in:
 
 - `src/vb/orbital/nonredundant_orbital_space.hpp`
 - `src/vb/orbital/nonredundant_orbital_space.cpp`
-- `src/runtime/cpp_block_guess_builder.cpp`
+- `src/runtime/orbital_block_guess_builder.cpp`
 - `src/vb/scf/cpp_vb_scf_optimizer.cpp`
 
 The emphasis here is on the method that is actually used by the present

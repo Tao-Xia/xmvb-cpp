@@ -1,4 +1,4 @@
-#include "runtime/cpp_closed_shell_fock_builder.hpp"
+#include "runtime/closed_shell_fock_builder.hpp"
 
 #include <algorithm>
 #include <array>
@@ -130,7 +130,7 @@ void symmetrize_in_place(Eigen::MatrixXd* matrix) {
 
 }  // namespace
 
-Eigen::MatrixXd CppClosedShellFockBuilder::build(
+Eigen::MatrixXd ClosedShellFockBuilder::build(
     const Eigen::Ref<const Eigen::MatrixXd>& density_projector,
     const AoIntegralInput& ao_integral_input) const {
   const int n_basis_functions = ao_integral_input.n_basis_functions;

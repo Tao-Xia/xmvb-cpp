@@ -1,4 +1,4 @@
-#include "runtime/cpp_restricted_hartree_fock.hpp"
+#include "runtime/restricted_hartree_fock.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +9,7 @@
 #include <Eigen/LU>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_closed_shell_fock_builder.hpp"
+#include "runtime/closed_shell_fock_builder.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 
 namespace xmvb::vb {
@@ -189,11 +189,11 @@ double compute_electronic_energy(
 
 }  // namespace
 
-CppRestrictedHartreeFockSolver::CppRestrictedHartreeFockSolver(
-    CppRestrictedHartreeFockOptions options)
+RestrictedHartreeFockSolver::RestrictedHartreeFockSolver(
+    RestrictedHartreeFockOptions options)
     : options_(options) {}
 
-CppRestrictedHartreeFockResult CppRestrictedHartreeFockSolver::solve(
+RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
     int n_total_electrons,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
     const AoIntegralInput& ao_integral_input) const {
@@ -204,7 +204,7 @@ CppRestrictedHartreeFockResult CppRestrictedHartreeFockSolver::solve(
       {});
 }
 
-CppRestrictedHartreeFockResult CppRestrictedHartreeFockSolver::solve(
+RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
     int n_total_electrons,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
     const AoIntegralInput& ao_integral_input,
@@ -242,7 +242,7 @@ CppRestrictedHartreeFockResult CppRestrictedHartreeFockSolver::solve(
       symmetrize_matrix(ao_integral_input.ao_core_hamiltonian_matrix);
 
   core::GeneralizedEigensolver eigensolver;
-  CppClosedShellFockBuilder fock_builder;
+  ClosedShellFockBuilder fock_builder;
 
   auto core_eigen_result = eigensolver.solve(
       flatten_matrix_column_major(symmetric_core_hamiltonian),
@@ -267,7 +267,7 @@ CppRestrictedHartreeFockResult CppRestrictedHartreeFockSolver::solve(
         n_occupied_orbitals);
   }
 
-  CppRestrictedHartreeFockResult result;
+  RestrictedHartreeFockResult result;
   result.orbital_energies = Eigen::Map<const Eigen::VectorXd>(
       core_eigen_result.eigenvalues.data(),
       static_cast<Eigen::Index>(core_eigen_result.eigenvalues.size()));

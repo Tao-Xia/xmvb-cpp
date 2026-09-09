@@ -12,7 +12,7 @@ namespace xmvb::vb {
  * The input density is the spinless occupied-orbital projector used by the
  * legacy RHF code path, i.e. `D = C_occ C_occ^T` without an extra factor of 2.
  */
-class CppClosedShellFockBuilder {
+class ClosedShellFockBuilder {
 public:
   Eigen::MatrixXd build(
       const Eigen::Ref<const Eigen::MatrixXd>& density_projector,

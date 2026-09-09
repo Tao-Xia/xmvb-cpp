@@ -57,9 +57,9 @@ find_path(EIGEN3_INCLUDE_DIR Eigen/Core
 include(vbscf/sources.cmake)
 
 set(XMVB_CPP_RUNTIME_CORE_SOURCES
-  runtime/cpp_block_guess_builder.cpp
-  runtime/cpp_closed_shell_fock_builder.cpp
-  runtime/cpp_initial_guess_builder.cpp
+  runtime/orbital_block_guess_builder.cpp
+  runtime/closed_shell_fock_builder.cpp
+  runtime/orbital_initial_guess_builder.cpp
   runtime/generated_raw_structure_builder.cpp
   runtime/input_deck_model.cpp
   runtime/input_deck_metadata.cpp
@@ -67,7 +67,7 @@ set(XMVB_CPP_RUNTIME_CORE_SOURCES
   runtime/input_deck_orbital_support_builder.cpp
   runtime/input_deck_raw_structures.cpp
   runtime/molden_file_writer.cpp
-  runtime/cpp_restricted_hartree_fock.cpp
+  runtime/restricted_hartree_fock.cpp
   runtime/vbscf_input_loader.cpp
   runtime/libcint_auxiliary_basis_builder.cpp
   runtime/libcint_direct_shell_evaluator.cpp

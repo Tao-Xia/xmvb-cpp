@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/cpp_initial_guess_builder.hpp"
+#include "runtime/orbital_initial_guess_builder.hpp"
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/subspace_selector.hpp"
 #include "vbscf/structures/structure_types.hpp"

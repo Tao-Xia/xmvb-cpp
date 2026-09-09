@@ -73,9 +73,9 @@ navigation cost for reviewers.
 - Done: removed the duplicated `get_sparse_coefficient_count(...)` helper from
   the main `src/vb` / `src/runtime` production path.
 - Done: converted the RHF result/Fock path to Eigen-owned dense types:
-  `CppRestrictedHartreeFockResult` now stores
+  `RestrictedHartreeFockResult` now stores
   `Eigen::MatrixXd` / `Eigen::VectorXd`, and
-  `CppClosedShellFockBuilder` now returns `Eigen::MatrixXd`.
+  `ClosedShellFockBuilder` now returns `Eigen::MatrixXd`.
 - Done: removed the duplicated `get_orbital_basis_count(...)` path from
   runtime/orbital code and switched the remaining production callers to
   `stored_sparse_orbital_coefficient_count(...)` so sparse-support length has

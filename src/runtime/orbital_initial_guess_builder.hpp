@@ -15,7 +15,7 @@ enum class OrbitalGuessSource {
 
 const char* orbital_guess_source_name(OrbitalGuessSource source);
 
-bool cpp_initial_guess_supported(int guess_type) noexcept;
+bool initial_orbital_guess_supported(int guess_type) noexcept;
 
 /**
  * @brief Builds the standalone C++ orbital guess for the requested GUESS mode.
@@ -25,7 +25,7 @@ bool cpp_initial_guess_supported(int guess_type) noexcept;
  * from `InputDeck` and remaps those coefficients onto the current VB sparse-
  * orbital layout without calling the legacy C runtime `vbguess` path.
  */
-void build_cpp_initial_guess(
+void build_initial_orbital_guess(
     const std::string& input_file_path,
     int guess_type,
     const LibcintInput& libcint_input,

@@ -8,7 +8,7 @@
 
 namespace xmvb::vb {
 
-struct CppRestrictedHartreeFockOptions {
+struct RestrictedHartreeFockOptions {
   int max_iterations = 96;
   double density_tolerance = 1.0e-8;
   double old_density_weight = 0.20;
@@ -16,7 +16,7 @@ struct CppRestrictedHartreeFockOptions {
   int diis_start_iteration = 2;
 };
 
-struct CppRestrictedHartreeFockResult {
+struct RestrictedHartreeFockResult {
   bool converged = false;
   int iterations = 0;
   double electronic_energy = 0.0;
@@ -26,24 +26,24 @@ struct CppRestrictedHartreeFockResult {
   Eigen::MatrixXd fock_matrix;
 };
 
-class CppRestrictedHartreeFockSolver {
+class RestrictedHartreeFockSolver {
 public:
-  explicit CppRestrictedHartreeFockSolver(
-      CppRestrictedHartreeFockOptions options = {});
+  explicit RestrictedHartreeFockSolver(
+      RestrictedHartreeFockOptions options = {});
 
-  CppRestrictedHartreeFockResult solve(
+  RestrictedHartreeFockResult solve(
       int n_total_electrons,
       const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
       const AoIntegralInput& ao_integral_input) const;
 
-  CppRestrictedHartreeFockResult solve(
+  RestrictedHartreeFockResult solve(
       int n_total_electrons,
       const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
       const AoIntegralInput& ao_integral_input,
       const std::vector<double>& initial_density_projector) const;
 
 private:
-  CppRestrictedHartreeFockOptions options_;
+  RestrictedHartreeFockOptions options_;
 };
 
 }  // namespace xmvb::vb
