@@ -42,6 +42,51 @@ enum class StructureSpaceMode {
   AdaptiveMvp,
 };
 
+enum class RunOptimizerBackend {
+  Core,
+  DeepVBHOnnx,
+  DeepVBHOnnxDirectFinal,
+};
+
+bool deepvbh_onnx_backend_supported() {
+#ifdef XMVB_CPP_ENABLE_ONNX_RUNTIME
+  return true;
+#else
+  return false;
+#endif
+}
+
+bool uses_deepvbh_backend(RunOptimizerBackend backend) {
+  return backend != RunOptimizerBackend::Core;
+}
+
+bool core_backend_reports_projected_gradient(
+    xmvb::vb::VbScfOptimizerBackend backend) {
+  switch (backend) {
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp:
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
+      return true;
+    case xmvb::vb::VbScfOptimizerBackend::Lbfgspp:
+      return false;
+  }
+  return false;
+}
+
+const char* run_optimizer_backend_name(
+    RunOptimizerBackend run_backend,
+    xmvb::vb::VbScfOptimizerBackend core_backend) {
+  switch (run_backend) {
+    case RunOptimizerBackend::Core:
+      return xmvb::vb::vbscf_optimizer_backend_name(core_backend);
+    case RunOptimizerBackend::DeepVBHOnnx:
+      return "deepvbh_onnx";
+    case RunOptimizerBackend::DeepVBHOnnxDirectFinal:
+      return "deepvbh_onnx_direct_final";
+  }
+  return "unknown";
+}
+
 const char* structure_space_mode_name(StructureSpaceMode mode) {
   switch (mode) {
     case StructureSpaceMode::Standard:
@@ -124,9 +169,6 @@ const char* gradient_tolerance_metric_name(
     case xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return "projected_gradient_inf_norm";
-    case xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx:
-    case xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
-      return "full_gradient_inf_norm";
   }
   return "unknown";
 }
@@ -407,6 +449,7 @@ void print_run_header(
     const std::string& input_path,
     const xmvb::vb::VbScfInputLoadResult& load_result,
     const xmvb::vb::VbScfOptimizerOptions& options,
+    RunOptimizerBackend run_backend,
     StructureSpaceMode structure_space_mode,
     const std::chrono::system_clock::time_point& start_time) {
   const fs::path absolute_input_path = fs::absolute(fs::path(input_path));
@@ -423,8 +466,9 @@ void print_run_header(
   print_log_field("SCF algorithm", "VBSCF");
   print_log_field(
       "Optimizer backend",
-      xmvb::vb::vbscf_optimizer_backend_name(options.backend));
-  if (options.backend ==
+      run_optimizer_backend_name(run_backend, options.backend));
+  if (run_backend == RunOptimizerBackend::Core &&
+      options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "HVP mode",
@@ -480,14 +524,17 @@ void print_run_header(
   print_log_subsection_title("Convergence Targets");
   print_log_field(
       "Gradient metric",
-      gradient_tolerance_metric_name(options.backend));
+      run_backend == RunOptimizerBackend::Core
+          ? gradient_tolerance_metric_name(options.backend)
+          : "full_gradient_inf_norm");
   print_log_field(
       "Convergence threshold",
       format_convergence_threshold_summary(
           options.energy_tolerance,
           options.gradient_tolerance));
   print_log_field("Max iterations", std::to_string(options.max_iterations));
-  if (options.backend ==
+  if (run_backend == RunOptimizerBackend::Core &&
+      options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "Max CG iterations",
@@ -496,7 +543,9 @@ void print_run_header(
             : "32 (dimension bounded)");
   }
 
-  print_exact_ctx_policy_summary(options, load_result.input);
+  if (run_backend == RunOptimizerBackend::Core) {
+    print_exact_ctx_policy_summary(options, load_result.input);
+  }
 }
 
 std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
@@ -891,7 +940,7 @@ public:
       const fs::path& dataset_root,
       const std::string& input_file_path,
       const xmvb::vb::VbScfInputLoadResult& load_result,
-      const xmvb::vb::VbScfOptimizerOptions& optimizer_options)
+      const std::string& optimizer_backend_name)
       : dataset_root_(fs::absolute(dataset_root)),
         sample_dir_(reserve_sample_directory(dataset_root_, fs::path(input_file_path))),
         static_dir_(sample_dir_ / "static"),
@@ -902,9 +951,7 @@ public:
         raw_structure_selection_name_(
             xmvb::vb::raw_structure_selection_mode_name(load_result.raw_structure_selection)),
         source_raw_structure_count_(load_result.source_raw_structure_count),
-        algorithm_name_("original"),
-        optimizer_backend_name_(
-            xmvb::vb::vbscf_optimizer_backend_name(optimizer_options.backend)),
+        optimizer_backend_name_(optimizer_backend_name),
         n_structures_(load_result.raw_structure_data.n_structures),
         n_total_electrons_(load_result.raw_structure_data.n_total_electrons),
         n_active_electrons_(load_result.raw_structure_data.n_active_electrons),
@@ -1169,7 +1216,6 @@ private:
                     << "  \"source_raw_structure_count\": "
                     << source_raw_structure_count_ << ",\n"
                     << "  \"optimizer_backend\": \"" << optimizer_backend_name_ << "\",\n"
-                    << "  \"algorithm\": \"" << algorithm_name_ << "\",\n"
                     << "  \"n_structures\": " << n_structures_ << ",\n"
                     << "  \"n_total_electrons\": " << n_total_electrons_ << ",\n"
                     << "  \"n_active_electrons\": " << n_active_electrons_ << ",\n"
@@ -1211,7 +1257,6 @@ private:
   std::string ao_integral_source_name_;
   std::string raw_structure_selection_name_;
   int source_raw_structure_count_ = 0;
-  std::string algorithm_name_;
   std::string optimizer_backend_name_;
   int n_structures_ = 0;
   int n_total_electrons_ = 0;
@@ -1229,42 +1274,48 @@ private:
 
 void apply_optimizer_backend_argument(
     const std::string& backend_name,
-    xmvb::vb::VbScfOptimizerOptions* options) {
+    xmvb::vb::VbScfOptimizerOptions* options,
+    RunOptimizerBackend* run_backend) {
+  if (options == nullptr || run_backend == nullptr) {
+    throw std::invalid_argument("optimizer backend outputs must not be null");
+  }
   if (backend_name == "lbfgspp") {
+    *run_backend = RunOptimizerBackend::Core;
     options->backend = xmvb::vb::VbScfOptimizerBackend::Lbfgspp;
     return;
   }
   if (backend_name == "nonredundant_projected_gradient") {
+    *run_backend = RunOptimizerBackend::Core;
     options->backend =
         xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient;
     return;
   }
   if (backend_name == "nonredundant_lbfgspp") {
+    *run_backend = RunOptimizerBackend::Core;
     options->backend =
         xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp;
     return;
   }
   if (backend_name == "nonredundant_truncated_newton") {
+    *run_backend = RunOptimizerBackend::Core;
     options->backend =
         xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton;
     return;
   }
   if (backend_name == "deepvbh_onnx") {
-    if (!xmvb::vb::vbscf_optimizer_backend_supported(
-            xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx)) {
+    if (!deepvbh_onnx_backend_supported()) {
       throw std::invalid_argument(
           "deepvbh_onnx backend is not enabled in this build");
     }
-    options->backend = xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx;
+    *run_backend = RunOptimizerBackend::DeepVBHOnnx;
     return;
   }
   if (backend_name == "deepvbh_onnx_direct_final") {
-    if (!xmvb::vb::vbscf_optimizer_backend_supported(
-            xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
+    if (!deepvbh_onnx_backend_supported()) {
       throw std::invalid_argument(
           "deepvbh_onnx_direct_final backend is not enabled in this build");
     }
-    options->backend = xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal;
+    *run_backend = RunOptimizerBackend::DeepVBHOnnxDirectFinal;
     return;
   }
   throw std::invalid_argument("invalid optimizer backend: " + backend_name);
@@ -1410,12 +1461,8 @@ void apply_adaptive_determinant_score_mode_argument(
 void print_usage() {
   std::cerr << "usage: run_cpp_vbscf <input.xmi> "
                "[--optimizer-backend lbfgspp|nonredundant_projected_gradient|nonredundant_lbfgspp|nonredundant_truncated_newton";
-  if (xmvb::vb::vbscf_optimizer_backend_supported(
-          xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx)) {
+  if (deepvbh_onnx_backend_supported()) {
     std::cerr << "|deepvbh_onnx";
-  }
-  if (xmvb::vb::vbscf_optimizer_backend_supported(
-          xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
     std::cerr << "|deepvbh_onnx_direct_final";
   }
   std::cerr << "] [--structure-space-mode standard|adaptive_mvp]"
@@ -1469,6 +1516,7 @@ int main(int argc, char** argv) {
   load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
   load_options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Auto;
   xmvb::vb::VbScfOptimizerOptions options;
+  RunOptimizerBackend run_backend = RunOptimizerBackend::Core;
   xmvb::vb::AdaptiveStructureSpaceOptimizerOptions adaptive_options;
   // The CLI path only needs accepted-iterate snapshots when trace dumping is
   // explicitly requested. Keep the default optimizer API behavior unchanged,
@@ -1501,7 +1549,7 @@ int main(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     try {
       if (argument_name == "--optimizer-backend") {
-        apply_optimizer_backend_argument(argument_value, &options);
+        apply_optimizer_backend_argument(argument_value, &options, &run_backend);
       } else if (argument_name == "--structure-space-mode") {
         apply_structure_space_mode_argument(argument_value, &structure_space_mode);
       } else if (argument_name == "--algorithm") {
@@ -1608,8 +1656,7 @@ int main(int argc, char** argv) {
     }
   }
   if (!user_specified_ao_integral_source &&
-      (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx ||
-       options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal)) {
+      uses_deepvbh_backend(run_backend)) {
     load_options.ao_integral_source =
         xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
   }
@@ -1620,8 +1667,7 @@ int main(int argc, char** argv) {
           xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction;
 
   if (structure_space_mode == StructureSpaceMode::AdaptiveMvp) {
-    if (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx ||
-        options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
+    if (uses_deepvbh_backend(run_backend)) {
       throw std::invalid_argument(
           "adaptive_mvp currently supports only standard C++ VBSCF optimizer backends");
     }
@@ -1654,6 +1700,7 @@ int main(int argc, char** argv) {
       input_path,
       load_result,
       options,
+      run_backend,
       structure_space_mode,
       command_start_time);
 
@@ -1668,7 +1715,7 @@ int main(int argc, char** argv) {
         dump_trace_dir,
         input_path,
         load_result,
-        options);
+        run_optimizer_backend_name(run_backend, options.backend));
     options.retain_accepted_iteration_trace = false;
     options.accepted_iteration_callback_requires_reference_gradient = true;
     options.accepted_iteration_callback_requires_full_snapshot = true;
@@ -1690,7 +1737,7 @@ int main(int argc, char** argv) {
         load_result.raw_structure_data,
         load_result.nuclear_repulsion_energy});
     result = adaptive_result->inner_result;
-  } else if (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx) {
+  } else if (run_backend == RunOptimizerBackend::DeepVBHOnnx) {
     if (deepvbh_options.inference_options.onnx_model_path.empty()) {
       throw std::invalid_argument(
           "--onnx-model is required for --optimizer-backend deepvbh_onnx");
@@ -1702,7 +1749,7 @@ int main(int argc, char** argv) {
         load_result.static_molecule_metadata,
         load_result.nuclear_repulsion_energy);
   } else if (
-      options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
+      run_backend == RunOptimizerBackend::DeepVBHOnnxDirectFinal) {
     if (deepvbh_direct_options.inference_options.onnx_model_path.empty()) {
       throw std::invalid_argument(
           "--onnx-model is required for --optimizer-backend deepvbh_onnx_direct_final");
@@ -1788,12 +1835,12 @@ int main(int argc, char** argv) {
   if (molden_output_path.has_value()) {
     print_log_field("Molden output", molden_output_path->string());
   }
-  if (options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnx) {
+  if (run_backend == RunOptimizerBackend::DeepVBHOnnx) {
     print_log_field(
         "ONNX model",
         fs::absolute(deepvbh_options.inference_options.onnx_model_path).string());
   } else if (
-      options.backend == xmvb::vb::VbScfOptimizerBackend::DeepVBHOnnxDirectFinal) {
+      run_backend == RunOptimizerBackend::DeepVBHOnnxDirectFinal) {
     print_log_field(
         "ONNX model",
         fs::absolute(deepvbh_direct_options.inference_options.onnx_model_path).string());
@@ -1890,12 +1937,8 @@ int main(int argc, char** argv) {
   print_log_field(
       "Final gradient |g|_2",
       format_scientific_double(result.final_gradient_l2_norm, 8));
-  if (options.backend ==
-          xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient ||
-      options.backend ==
-          xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp ||
-      options.backend ==
-          xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
+  if (run_backend == RunOptimizerBackend::Core &&
+      core_backend_reports_projected_gradient(options.backend)) {
     print_log_field(
         "Final projected |g|_inf",
         format_scientific_double(result.final_projected_gradient_inf_norm, 8));
@@ -1903,7 +1946,8 @@ int main(int argc, char** argv) {
         "Final projected |g|_2",
         format_scientific_double(result.final_projected_gradient_l2_norm, 8));
   }
-  if (options.backend ==
+  if (run_backend == RunOptimizerBackend::Core &&
+      options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     print_log_field(
         "Matrix-free HVP directions",

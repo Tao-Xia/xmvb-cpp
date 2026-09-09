@@ -15,8 +15,6 @@ enum class VbScfOptimizerBackend {
   NonredundantProjectedGradient,
   NonredundantLbfgspp,
   NonredundantTruncatedNewton,
-  DeepVBHOnnx,
-  DeepVBHOnnxDirectFinal,
 };
 
 enum class NonredundantTruncatedNewtonHvpMode {
@@ -35,30 +33,6 @@ inline const char* nonredundant_truncated_newton_hvp_mode_name(
   return "unknown";
 }
 
-inline bool vbscf_optimizer_backend_supported(
-    VbScfOptimizerBackend backend) {
-  switch (backend) {
-    case VbScfOptimizerBackend::Lbfgspp:
-    case VbScfOptimizerBackend::NonredundantProjectedGradient:
-    case VbScfOptimizerBackend::NonredundantLbfgspp:
-    case VbScfOptimizerBackend::NonredundantTruncatedNewton:
-      return true;
-    case VbScfOptimizerBackend::DeepVBHOnnx:
-#ifdef XMVB_CPP_ENABLE_ONNX_RUNTIME
-      return true;
-#else
-      return false;
-#endif
-    case VbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
-#ifdef XMVB_CPP_ENABLE_ONNX_RUNTIME
-      return true;
-#else
-      return false;
-#endif
-  }
-  return false;
-}
-
 inline const char* vbscf_optimizer_backend_name(
     VbScfOptimizerBackend backend) {
   switch (backend) {
@@ -70,10 +44,6 @@ inline const char* vbscf_optimizer_backend_name(
       return "nonredundant_lbfgspp";
     case VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return "nonredundant_truncated_newton";
-    case VbScfOptimizerBackend::DeepVBHOnnx:
-      return "deepvbh_onnx";
-    case VbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
-      return "deepvbh_onnx_direct_final";
   }
   return "unknown";
 }

@@ -49,8 +49,6 @@ bool optimizer_backend_uses_nonredundant_space(
     case VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return true;
     case VbScfOptimizerBackend::Lbfgspp:
-    case VbScfOptimizerBackend::DeepVBHOnnx:
-    case VbScfOptimizerBackend::DeepVBHOnnxDirectFinal:
       return false;
   }
   return false;
@@ -248,15 +246,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     throw std::invalid_argument(
         "nonredundant_truncated_newton_transport_history_size must be nonnegative");
   }
-  if (!vbscf_optimizer_backend_supported(options_.backend)) {
-    throw std::invalid_argument(
-        "requested optimizer backend is not enabled in this build");
-  }
-  if (options_.backend == VbScfOptimizerBackend::DeepVBHOnnx) {
-    throw std::invalid_argument(
-        "deepvbh_onnx requires DeepVBHOnnxHybridOptimizer and runtime metadata");
-  }
-
   VbScfOptimizerResult result;
   const auto optimization_start_time = std::chrono::steady_clock::now();
 
@@ -1442,10 +1431,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
         break;
       }
 
-      case VbScfOptimizerBackend::DeepVBHOnnx:
-        result.termination_reason =
-            "deepvbh_onnx_requires_hybrid_optimizer";
-        break;
     }
   } catch (const std::exception& error) {
     result.termination_reason = error.what();

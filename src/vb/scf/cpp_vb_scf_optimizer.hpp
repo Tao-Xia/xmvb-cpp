@@ -12,11 +12,6 @@ using CppVbScfOptimizerBackend = VbScfOptimizerBackend;
 using CppVbScfOptimizerOptions = VbScfOptimizerOptions;
 using CppVbScfOptimizer = VbScfOptimizer;
 
-inline bool cpp_vb_scf_optimizer_backend_supported(
-    CppVbScfOptimizerBackend backend) {
-  return vbscf_optimizer_backend_supported(backend);
-}
-
 inline const char* cpp_vb_scf_optimizer_backend_name(
     CppVbScfOptimizerBackend backend) {
   return vbscf_optimizer_backend_name(backend);

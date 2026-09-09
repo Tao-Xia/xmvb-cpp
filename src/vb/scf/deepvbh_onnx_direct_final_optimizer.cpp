@@ -175,16 +175,12 @@ void append_fallback_trace(
 DeepVBHOnnxDirectFinalOptimizer::DeepVBHOnnxDirectFinalOptimizer(
     DeepVBHOnnxDirectFinalOptimizerOptions options)
     : inference_runner_([&options]() {
-        options.optimizer_options.backend =
-            CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal;
         options.inference_options.backend = "onnx_runtime";
         return options.inference_options;
       }()),
       orbital_gradient_evaluator_(),
       scf_evaluator_(),
       options_(std::move(options)) {
-  options_.optimizer_options.backend =
-      CppVbScfOptimizerBackend::DeepVBHOnnxDirectFinal;
   options_.inference_options.backend = "onnx_runtime";
 }
 
