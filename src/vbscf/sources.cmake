@@ -95,6 +95,7 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/preconditioners/transported_lbfgs_preconditioner.cpp
   vbscf/optimization/reduced_hvp_operator.cpp
   vbscf/optimization/trust_region/retraction_metric.cpp
+  vbscf/optimization/trust_region/truncated_newton_solver.cpp
   vbscf/optimization/vbscf_objective.cpp
   vbscf/optimization/vbscf_optimizer.cpp
 )
