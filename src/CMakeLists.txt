@@ -175,7 +175,7 @@ if (XMVB_CPP_ENABLE_ONNX_RUNTIME)
 endif()
 
 add_executable(run_cpp_vbscf
-  tools/run_cpp_vbscf.cpp)
+  app/vbscf/main.cpp)
 set_target_properties(run_cpp_vbscf PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
 target_link_libraries(run_cpp_vbscf
   PRIVATE
