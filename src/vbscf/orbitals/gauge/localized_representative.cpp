@@ -1,4 +1,4 @@
-#include "vb/orbital/localized_representative_selector.hpp"
+#include "vbscf/orbitals/gauge/localized_representative.hpp"
 
 #include <cmath>
 #include <stdexcept>

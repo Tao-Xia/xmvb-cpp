@@ -30,8 +30,8 @@
 #include "vb/matrices/full_structure_expander.hpp"
 #include "vb/matrices/raw_structure_subspace_selector.hpp"
 #include "vb/orbital/libcint_input_utils.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
-#include "vb/orbital/support_aware_mo_gauge_fix.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 
 #include <Eigen/Core>
 
@@ -787,7 +787,7 @@ CppVbInputLoadResult load_cpp_vb_input_with_timings(
       // reference. The support-aware gauge fix below is therefore only
       // allowed to act when some other upstream path has already changed that
       // recorded chart.
-      apply_support_aware_inactive_mo_gauge_fix(
+      apply_support_preserving_inactive_gauge(
           &result.orbital_preparation_input);
     }
     load_result.orbital_guess_seconds =

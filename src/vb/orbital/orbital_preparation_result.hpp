@@ -4,7 +4,7 @@
 
 #include <vector>
 
-#include "vb/orbital/physical_orbital_frame.hpp"
+#include "vbscf/orbitals/orbital_frame.hpp"
 
 namespace xmvb::vb {
 

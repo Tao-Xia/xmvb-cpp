@@ -1,4 +1,4 @@
-#include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
+#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 
 #include <algorithm>
 #include <numeric>

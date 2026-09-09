@@ -1,4 +1,4 @@
-#include "vb/orbital/support_aware_mo_gauge_fix.hpp"
+#include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +10,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/LU>
 
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 
 namespace xmvb::vb {
 
@@ -249,9 +249,9 @@ bool dense_matrix_is_effectively_identity(const Eigen::MatrixXd& matrix) {
   return true;
 }
 
-SupportAwareInactiveMoGaugeTransform finalize_transform(
+SupportPreservingGaugeTransform finalize_transform(
     const Eigen::MatrixXd& right_transform) {
-  SupportAwareInactiveMoGaugeTransform result;
+  SupportPreservingGaugeTransform result;
   result.n_inactive_orbitals = static_cast<int>(right_transform.cols());
   result.chart_changed = !dense_matrix_is_effectively_identity(right_transform);
   result.right_transform.assign(
@@ -273,7 +273,7 @@ SupportAwareInactiveMoGaugeTransform finalize_transform(
 
 }  // namespace
 
-bool orbital_input_has_support_aware_mo_gauge_reference(
+bool orbital_input_has_support_preserving_gauge_reference(
     const OrbitalPreparationInput& orbital_preparation_input) {
   return orbital_preparation_input.mo_gauge_reference_orbital_basis_counts.size() ==
           orbital_preparation_input.n_orbitals &&
@@ -282,7 +282,7 @@ bool orbital_input_has_support_aware_mo_gauge_reference(
               orbital_preparation_input.n_basis_functions;
 }
 
-SupportAwareInactiveMoGaugeTransform apply_support_aware_inactive_mo_gauge_fix(
+SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
     const OrbitalPreparationInput& reference_layout,
     OrbitalPreparationInput* orbital_preparation_input) {
   if (orbital_preparation_input == nullptr) {
@@ -451,10 +451,10 @@ SupportAwareInactiveMoGaugeTransform apply_support_aware_inactive_mo_gauge_fix(
   return finalize_transform(inactive_right_transform);
 }
 
-SupportAwareInactiveMoGaugeTransform apply_support_aware_inactive_mo_gauge_fix(
+SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
     OrbitalPreparationInput* orbital_preparation_input) {
   if (orbital_preparation_input == nullptr ||
-      !orbital_input_has_support_aware_mo_gauge_reference(
+      !orbital_input_has_support_preserving_gauge_reference(
           *orbital_preparation_input)) {
     return {};
   }
@@ -476,13 +476,13 @@ SupportAwareInactiveMoGaugeTransform apply_support_aware_inactive_mo_gauge_fix(
       orbital_preparation_input->mo_gauge_reference_orbital_basis_counts;
   reference_layout.orbital_basis_index_table =
       orbital_preparation_input->mo_gauge_reference_orbital_basis_index_table;
-  return apply_support_aware_inactive_mo_gauge_fix(
+  return apply_support_preserving_inactive_gauge(
       reference_layout,
       orbital_preparation_input);
 }
 
 void transform_sparse_inactive_orbital_gradient(
-    const SupportAwareInactiveMoGaugeTransform& transform,
+    const SupportPreservingGaugeTransform& transform,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* sparse_orbital_gradient) {
   if (sparse_orbital_gradient == nullptr) {

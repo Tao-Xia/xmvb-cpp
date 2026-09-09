@@ -21,12 +21,12 @@
 #include <Eigen/Eigenvalues>
 #include <LBFGS.h>
 
-#include "vb/orbital/localized_representative_selector.hpp"
-#include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
-#include "vb/orbital/nonredundant_orbital_space.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/gauge/localized_representative.hpp"
+#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
+#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/runtime_utils.hpp"
-#include "vb/orbital/support_aware_mo_gauge_fix.hpp"
+#include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 #include "vb/scf/exact_orbital_second_order_operator.hpp"
 #include "vbscf/optimization/vbscf_objective.hpp"
 #include "vbscf/optimization/optimizer_types.hpp"
@@ -79,9 +79,9 @@ double inexact_newton_forcing_term(double gradient_norm) {
       kMaximumForcingTerm);
 }
 
-NonredundantOrbitalSpace build_nonredundant_space(
+OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
-    const SparseOrbitalParameterView& parameter_view) {
+    const SparseParameterLayout& parameter_view) {
   const auto& orbital_preparation_input =
       objective.last_input().orbital_preparation_input;
   const auto& orbital_preparation_result =
@@ -98,7 +98,7 @@ NonredundantOrbitalSpace build_nonredundant_space(
   const int n_occupied_orbitals =
       n_inactive_doubly_occupied_orbitals +
       orbital_preparation_input.n_active_orbitals;
-  return NonredundantOrbitalSpace(
+  return OrbitalChart(
       orbital_preparation_input,
       parameter_view,
       orbital_preparation_result.auxiliary_orbital_matrix.leftCols(n_occupied_orbitals),
@@ -107,8 +107,8 @@ NonredundantOrbitalSpace build_nonredundant_space(
 }
 
 Eigen::VectorXd build_nonredundant_preconditioned_gradient_direction(
-    const NonredundantOrbitalSpace& space,
-    const NonredundantOrbitalSpace::ProjectionResult& projection) {
+    const OrbitalChart& space,
+    const OrbitalChart::ProjectionResult& projection) {
   // The reduced coordinates are either the orthogonalized tangent chart or the
   // direct nonredundant orbital-replacement amplitudes used by the full-AO
   // fast path. Use the full block preconditioner rather than only the
@@ -126,8 +126,8 @@ Eigen::VectorXd build_nonredundant_preconditioned_gradient_direction(
 // match `retract_step()` rather than the raw additive chart.
 Eigen::VectorXd gather_nonredundant_retract_tangent(
     const OrbitalPreparationInput& orbital_preparation_input,
-    const NonredundantOrbitalSpace& space,
-    const SparseOrbitalParameterView& parameter_view,
+    const OrbitalChart& space,
+    const SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& reduced_step) {
   const Eigen::VectorXd full_tangent =
       space.expand_retract_input_tangent(
@@ -149,8 +149,8 @@ Eigen::VectorXd gather_nonredundant_retract_tangent(
 
 double compute_nonredundant_retract_tangent_norm(
     const OrbitalPreparationInput& orbital_preparation_input,
-    const NonredundantOrbitalSpace& space,
-    const SparseOrbitalParameterView& parameter_view,
+    const OrbitalChart& space,
+    const SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& reduced_step) {
   if (reduced_step.size() == 0) {
     return 0.0;
@@ -169,8 +169,8 @@ class NonredundantRetractionMetric {
 public:
   NonredundantRetractionMetric(
       const OrbitalPreparationInput& orbital_preparation_input,
-      const NonredundantOrbitalSpace& space,
-      const SparseOrbitalParameterView& parameter_view)
+      const OrbitalChart& space,
+      const SparseParameterLayout& parameter_view)
       : orbital_preparation_input_(orbital_preparation_input),
         space_(space),
         parameter_view_(parameter_view) {}
@@ -206,14 +206,14 @@ public:
 
 private:
   const OrbitalPreparationInput& orbital_preparation_input_;
-  const NonredundantOrbitalSpace& space_;
-  const SparseOrbitalParameterView& parameter_view_;
+  const OrbitalChart& space_;
+  const SparseParameterLayout& parameter_view_;
 };
 
 Eigen::VectorXd clip_nonredundant_reduced_step_to_retract_tangent_radius(
     const OrbitalPreparationInput& orbital_preparation_input,
-    const NonredundantOrbitalSpace& space,
-    const SparseOrbitalParameterView& parameter_view,
+    const OrbitalChart& space,
+    const SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& reduced_step,
     double trust_radius) {
   if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
@@ -236,8 +236,8 @@ Eigen::VectorXd clip_nonredundant_reduced_step_to_retract_tangent_radius(
 
 Eigen::VectorXd shrink_nonredundant_reduced_step_inside_retract_tangent_radius(
     const OrbitalPreparationInput& orbital_preparation_input,
-    const NonredundantOrbitalSpace& space,
-    const SparseOrbitalParameterView& parameter_view,
+    const OrbitalChart& space,
+    const SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& reduced_step,
     double trust_radius) {
   if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
@@ -287,7 +287,7 @@ int choose_nonredundant_truncated_newton_transport_history_size(
 class TransportedReducedLbfgsPreconditioner {
 public:
   explicit TransportedReducedLbfgsPreconditioner(
-      const NonredundantOrbitalSpace* space)
+      const OrbitalChart* space)
       : space_(space) {}
 
   bool try_add_pair(
@@ -366,13 +366,13 @@ private:
     double inverse_curvature = 0.0;
   };
 
-  const NonredundantOrbitalSpace* space_ = nullptr;
+  const OrbitalChart* space_ = nullptr;
   std::vector<Pair> pairs_;
 };
 
 TransportedReducedLbfgsPreconditioner
 build_nonredundant_truncated_newton_preconditioner(
-    const NonredundantOrbitalSpace& current_space,
+    const OrbitalChart& current_space,
     const std::vector<PackedSecantPair>& packed_secant_history,
     int max_history_size) {
   TransportedReducedLbfgsPreconditioner preconditioner(&current_space);
@@ -404,7 +404,7 @@ build_nonredundant_truncated_newton_preconditioner(
 }
 
 Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
-    const NonredundantOrbitalSpace& current_space,
+    const OrbitalChart& current_space,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd& reduced_vector) {
   if (transported_preconditioner == nullptr ||
@@ -504,10 +504,10 @@ class FullFiniteDifferenceReducedHvpOperator final : public ReducedHvpOperator {
 public:
   FullFiniteDifferenceReducedHvpOperator(
       const VbScfObjective& objective,
-      const NonredundantOrbitalSpace& current_space,
-      const NonredundantOrbitalSpace::ProjectionResult& current_projection,
+      const OrbitalChart& current_space,
+      const OrbitalChart::ProjectionResult& current_projection,
       const OrbitalPreparationInput& current_orbital_input,
-      const SparseOrbitalParameterView& parameter_view,
+      const SparseParameterLayout& parameter_view,
       const Eigen::VectorXd& current_parameters,
       double hvp_step_size)
       : probe_objective_(objective.make_probe_copy()),
@@ -557,10 +557,10 @@ public:
 
 private:
   VbScfObjective probe_objective_;
-  const NonredundantOrbitalSpace& current_space_;
+  const OrbitalChart& current_space_;
   Eigen::VectorXd current_reduced_gradient_;
   OrbitalPreparationInput current_orbital_input_;
-  SparseOrbitalParameterView parameter_view_;
+  SparseParameterLayout parameter_view_;
   Eigen::VectorXd current_parameters_;
   double hvp_step_size_ = 0.0;
 };
@@ -569,11 +569,11 @@ class ExactContextReducedHvpOperator final : public ReducedHvpOperator {
 public:
   ExactContextReducedHvpOperator(
       const VbScfObjective& objective,
-      const NonredundantOrbitalSpace& current_space)
+      const OrbitalChart& current_space)
       : exact_operator_(
             objective.last_second_order_context(),
             &objective.last_input(),
-            SparseOrbitalParameterView(
+            SparseParameterLayout(
                 objective.last_input().orbital_preparation_input),
             &current_space) {}
 
@@ -652,9 +652,9 @@ double truncated_newton_step_effective_norm(
 
 void clamp_nonredundant_step_result_to_retract_tangent_radius(
     const OrbitalPreparationInput& orbital_preparation_input,
-    const NonredundantOrbitalSpace& current_space,
-    const SparseOrbitalParameterView& parameter_view,
-    const NonredundantOrbitalSpace::ProjectionResult& current_projection,
+    const OrbitalChart& current_space,
+    const SparseParameterLayout& parameter_view,
+    const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     TruncatedNewtonStepResult* step) {
   if (step == nullptr ||
@@ -719,8 +719,8 @@ struct RejectedTruncatedNewtonStepCache {
 
   void update(
       const OrbitalPreparationInput& orbital_preparation_input,
-      const NonredundantOrbitalSpace& current_space,
-      const SparseOrbitalParameterView& parameter_view,
+      const OrbitalChart& current_space,
+      const SparseParameterLayout& parameter_view,
       const TruncatedNewtonStepResult& model_step,
       Eigen::Index expected_size,
       double trust_radius) {
@@ -829,7 +829,7 @@ TruncatedNewtonKrylovSubspace build_truncated_newton_krylov_subspace(
 }
 
 TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
-    const NonredundantOrbitalSpace::ProjectionResult& current_projection,
+    const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     const TruncatedNewtonKrylovSubspace& krylov_subspace) {
   TruncatedNewtonStepResult result;
@@ -928,8 +928,8 @@ TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
 
 Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
     const NonredundantRetractionMetric& retraction_metric,
-    const NonredundantOrbitalSpace& space,
-    const NonredundantOrbitalSpace::ProjectionResult& projection,
+    const OrbitalChart& space,
+    const OrbitalChart::ProjectionResult& projection,
     double trust_radius,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner) {
   const Eigen::VectorXd reduced_preconditioned_gradient =
@@ -1029,7 +1029,7 @@ double update_nonredundant_truncated_newton_trust_radius(
 }
 
 double estimate_nonredundant_reduced_model_decrease(
-    const NonredundantOrbitalSpace::ProjectionResult& projection,
+    const OrbitalChart::ProjectionResult& projection,
     const Eigen::VectorXd& reduced_step,
     ReducedHvpOperator* hvp_operator) {
   const Eigen::VectorXd reduced_hessian_step =
@@ -1041,8 +1041,8 @@ double estimate_nonredundant_reduced_model_decrease(
 
 TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const NonredundantRetractionMetric& retraction_metric,
-    const NonredundantOrbitalSpace& current_space,
-    const NonredundantOrbitalSpace::ProjectionResult& current_projection,
+    const OrbitalChart& current_space,
+    const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     int max_cg_iterations,
     ReducedHvpOperator* hvp_operator,
@@ -1344,8 +1344,8 @@ bool try_armijo_backtracking_direction(
 
 bool try_build_nonredundant_lifted_trial_parameters(
     const OrbitalPreparationInput& current_orbital_input,
-    const NonredundantOrbitalSpace& current_space,
-    const SparseOrbitalParameterView& parameter_view,
+    const OrbitalChart& current_space,
+    const SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& reduced_step,
     Eigen::VectorXd* trial_parameters) {
   const Eigen::VectorXd current_parameters =
@@ -1376,8 +1376,8 @@ bool try_build_nonredundant_lifted_trial_parameters(
 bool try_armijo_backtracking_nonredundant_direction(
     VbScfObjective* objective,
     const OrbitalPreparationInput& current_orbital_input,
-    const NonredundantOrbitalSpace& current_space,
-    const SparseOrbitalParameterView& parameter_view,
+    const OrbitalChart& current_space,
+    const SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& current_parameters,
     double current_energy,
     const Eigen::VectorXd& current_gradient,
@@ -1723,7 +1723,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     adapted_optimizer_input = build_nonredundant_optimizer_input(input);
     optimizer_input = &adapted_optimizer_input.value();
   }
-  const SparseOrbitalParameterView parameter_view(
+  const SparseParameterLayout parameter_view(
       optimizer_input->orbital_preparation_input);
   Eigen::VectorXd parameter_vector =
       parameter_view.pack(optimizer_input->orbital_preparation_input);
@@ -1969,8 +1969,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
       case VbScfOptimizerBackend::NonredundantProjectedGradient: {
         Eigen::VectorXd current_parameters = parameter_vector;
         Eigen::VectorXd current_gradient = gradient;
-        NonredundantOrbitalSpace current_space =
-            build_nonredundant_space(objective, parameter_view);
+        OrbitalChart current_space =
+            build_orbital_chart(objective, parameter_view);
         auto current_projection =
             current_space.project_gradient(current_gradient);
 
@@ -2052,8 +2052,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
           final_gradient_l2_norm = current_gradient.norm();
           const double de = energy - previous_energy;
           previous_energy = energy;
-          NonredundantOrbitalSpace next_space =
-              build_nonredundant_space(objective, parameter_view);
+          OrbitalChart next_space =
+              build_orbital_chart(objective, parameter_view);
           auto next_projection =
               next_space.project_gradient(current_gradient);
           if (std::abs(de) < options_.energy_tolerance &&
@@ -2079,8 +2079,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
 
         Eigen::VectorXd current_parameters = parameter_vector;
         Eigen::VectorXd current_gradient = gradient;
-        NonredundantOrbitalSpace current_space =
-            build_nonredundant_space(objective, parameter_view);
+        OrbitalChart current_space =
+            build_orbital_chart(objective, parameter_view);
         auto current_projection =
             current_space.project_gradient(current_gradient);
         Eigen::VectorXd previous_parameters(n);
@@ -2185,8 +2185,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
           current_gradient = std::move(accepted_gradient);
           energy = accepted_energy;
 
-          NonredundantOrbitalSpace next_space =
-              build_nonredundant_space(objective, parameter_view);
+          OrbitalChart next_space =
+              build_orbital_chart(objective, parameter_view);
           auto next_projection =
               next_space.project_gradient(current_gradient);
           double next_reduced_gradient_inf_norm =
@@ -2236,7 +2236,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
               result.termination_reason = "nonredundant_lbfgspp_line_search_stalled";
               break;
             }
-            next_space = build_nonredundant_space(objective, parameter_view);
+            next_space = build_orbital_chart(objective, parameter_view);
             next_projection =
                 next_space.project_gradient(current_gradient);
             next_reduced_gradient_inf_norm =
@@ -2251,7 +2251,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
                   &current_parameters,
                   &current_gradient);
           if (accepted_point_chart_reset) {
-            next_space = build_nonredundant_space(objective, parameter_view);
+            next_space = build_orbital_chart(objective, parameter_view);
             next_projection =
                 next_space.project_gradient(current_gradient);
             next_reduced_gradient_inf_norm =
@@ -2301,8 +2301,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
       case VbScfOptimizerBackend::NonredundantTruncatedNewton: {
         Eigen::VectorXd current_parameters = parameter_vector;
         Eigen::VectorXd current_gradient = gradient;
-        NonredundantOrbitalSpace current_space =
-            build_nonredundant_space(objective, parameter_view);
+        OrbitalChart current_space =
+            build_orbital_chart(objective, parameter_view);
         auto current_projection =
             current_space.project_gradient(current_gradient);
         double final_projected_gradient_inf_norm =
@@ -2842,8 +2842,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
           final_gradient_l2_norm = current_gradient.norm();
           const double de = energy - previous_energy;
           previous_energy = energy;
-          NonredundantOrbitalSpace next_space =
-              build_nonredundant_space(objective, parameter_view);
+          OrbitalChart next_space =
+              build_orbital_chart(objective, parameter_view);
           auto next_projection =
               next_space.project_gradient(current_gradient);
           const bool nonredundant_rank_changed =
@@ -2920,8 +2920,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   result.final_gradient_l2_norm = final_gradient_l2_norm;
   if (optimizer_backend_uses_nonredundant_space(options_.backend) &&
       !final_projected_gradient_ready) {
-    const NonredundantOrbitalSpace final_space =
-        build_nonredundant_space(objective, parameter_view);
+    const OrbitalChart final_space =
+        build_orbital_chart(objective, parameter_view);
     const Eigen::VectorXd final_packed_gradient =
         parameter_view.gather_from_full(
             objective.last_gradient_result().sparse_orbital_energy_gradient);

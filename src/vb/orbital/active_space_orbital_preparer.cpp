@@ -11,7 +11,7 @@
 #include <Eigen/LU>
 
 #include "vb/orbital/legacy_jacobi_diagonalizer.hpp"
-#include "vb/orbital/localized_representative_selector.hpp"
+#include "vbscf/orbitals/gauge/localized_representative.hpp"
 
 #ifdef _OPENMP
 #include <omp.h>

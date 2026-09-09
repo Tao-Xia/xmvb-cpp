@@ -6,11 +6,9 @@
 
 #include "vb/orbital/libcint_input.hpp"
 #include "vb/orbital/orbital_preparation_input.hpp"
+#include "vbscf/orbitals/charts/orbital_block_partition.hpp"
 
 namespace xmvb::vb {
-
-std::vector<std::vector<int>> detect_orbital_blocks(
-    const OrbitalPreparationInput& orbital_preparation_input);
 
 std::vector<double> build_ao_normalization(
     const OrbitalPreparationInput& orbital_preparation_input);

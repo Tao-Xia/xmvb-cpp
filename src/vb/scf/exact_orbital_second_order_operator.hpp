@@ -8,8 +8,8 @@
 #include "vb/matrices/cpp_vb_input.hpp"
 #include "vb/matrices/structure_coefficient_blocks.hpp"
 #include "vb/orbital/active_space_two_electron_utils.hpp"
-#include "vb/orbital/nonredundant_orbital_space.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/scf/cpp_active_space_second_order_context.hpp"
 #include "vb/scf/exact_orbital_second_order_operator_outer_response_internal.hpp"
 #include "vb/scf/opposite_spin_matrix_backward.hpp"
@@ -84,8 +84,8 @@ public:
   ExactOrbitalSecondOrderOperator(
       std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context,
       const CppVbInput* current_input,
-      SparseOrbitalParameterView parameter_view,
-      const NonredundantOrbitalSpace* nonredundant_space);
+      SparseParameterLayout parameter_view,
+      const OrbitalChart* nonredundant_space);
 
   ~ExactOrbitalSecondOrderOperator();
 
@@ -149,8 +149,8 @@ private:
 
   std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context_;
   const CppVbInput* current_input_ = nullptr;
-  SparseOrbitalParameterView parameter_view_;
-  const NonredundantOrbitalSpace* nonredundant_space_ = nullptr;
+  SparseParameterLayout parameter_view_;
+  const OrbitalChart* nonredundant_space_ = nullptr;
   Eigen::MatrixXd accepted_active_auxiliary_orbitals_;
   // Accepted-point active-auxiliary contractions stay constant across all HVP
   // applications at one optimizer iterate, so caching them once avoids

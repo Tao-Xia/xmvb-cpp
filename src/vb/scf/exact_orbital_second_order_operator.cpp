@@ -1459,7 +1459,7 @@ std::vector<double> backpropagate_active_space_orbital_gradient(
 
 DenseOrbitalTangentContext build_dense_orbital_tangent_context(
     const OrbitalPreparationInput& input,
-    const SparseOrbitalParameterView& parameter_view,
+    const SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& packed_direction,
     const AcceptedOrbitalPreparationCache& cache) {
   DenseOrbitalTangentContext result;
@@ -6954,8 +6954,8 @@ build_pairwise_local_same_spin_matrix_backward_reference(
 ExactOrbitalSecondOrderOperator::ExactOrbitalSecondOrderOperator(
     std::shared_ptr<const CppActiveSpaceSecondOrderContext> accepted_point_context,
     const CppVbInput* current_input,
-    SparseOrbitalParameterView parameter_view,
-    const NonredundantOrbitalSpace* nonredundant_space)
+    SparseParameterLayout parameter_view,
+    const OrbitalChart* nonredundant_space)
     : accepted_point_context_(std::move(accepted_point_context)),
       current_input_(current_input),
       parameter_view_(std::move(parameter_view)),

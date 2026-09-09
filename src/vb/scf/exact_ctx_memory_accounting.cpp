@@ -14,7 +14,7 @@
 #include "vb/orbital/active_space_two_electron_result.hpp"
 #include "vb/orbital/ao_effective_one_electron_result.hpp"
 #include "vb/orbital/orbital_preparation_result.hpp"
-#include "vb/orbital/physical_orbital_frame.hpp"
+#include "vbscf/orbitals/orbital_frame.hpp"
 
 namespace xmvb::vb {
 

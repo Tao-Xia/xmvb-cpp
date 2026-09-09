@@ -18,9 +18,9 @@
 #include "vb/orbital/active_space_orbital_backpropagator.hpp"
 #include "vb/orbital/active_space_two_electron_backpropagator.hpp"
 #include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
-#include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
-#include "vb/orbital/nonredundant_orbital_space.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
+#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vb/scf/exact_orbital_second_order_operator.hpp"
@@ -238,8 +238,8 @@ Eigen::MatrixXd extract_active_auxiliary_gradient_block(
 Eigen::VectorXd apply_active_space_gradient_direction_to_orbital_response(
     const xmvb::vb::CppVbInput& input,
     const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
-    const xmvb::vb::NonredundantOrbitalSpace& nonredundant_space,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
+    const xmvb::vb::OrbitalChart& nonredundant_space,
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
     const std::vector<double>& packed_active_two_electron_gradient,
@@ -907,8 +907,8 @@ Matrix backpropagate_exact_2e_pair_gradients_for_debug(
 }
 
 Eigen::VectorXd project_full_orbital_gradient_to_reduced(
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
-    const xmvb::vb::NonredundantOrbitalSpace& nonredundant_space,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
+    const xmvb::vb::OrbitalChart& nonredundant_space,
     const std::vector<double>& sparse_orbital_energy_gradient) {
   const Eigen::VectorXd packed_gradient =
       parameter_view.gather_from_full(sparse_orbital_energy_gradient);
@@ -1265,7 +1265,7 @@ struct FixedUpstreamTangentDebugContext {
 
 FixedUpstreamTangentDebugContext build_fixed_upstream_tangent_debug_context(
     const xmvb::vb::OrbitalPreparationInput& input,
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& packed_direction) {
   if (packed_direction.size() != parameter_view.size()) {
     throw std::invalid_argument(
@@ -1339,7 +1339,7 @@ FixedUpstreamTangentDebugContext build_fixed_upstream_tangent_debug_context(
 
 Eigen::MatrixXd build_fixed_upstream_delta_original_orbital_gradient(
     const xmvb::vb::OrbitalPreparationInput& input,
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& packed_direction,
     const std::vector<double>& total_auxiliary_gradient,
     const std::vector<double>& total_inactive_density_gradient) {
@@ -1787,8 +1787,8 @@ std::vector<double> symmetric_average_storage(
 Eigen::VectorXd backpropagate_active_gradient_direction_to_orbital_response(
     const xmvb::vb::CppVbInput& input,
     const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
-    const xmvb::vb::NonredundantOrbitalSpace& nonredundant_space,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
+    const xmvb::vb::OrbitalChart& nonredundant_space,
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
     const std::vector<double>& packed_active_two_electron_gradient) {
@@ -1903,7 +1903,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error("accepted-point second-order context is unavailable");
     }
 
-    xmvb::vb::SparseOrbitalParameterView parameter_view(
+    xmvb::vb::SparseParameterLayout parameter_view(
         input.orbital_preparation_input);
     const Eigen::VectorXd packed_gradient =
         parameter_view.gather_from_full(
@@ -1922,7 +1922,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "nonredundant-space diagnostic requires the cached physical orbital frame");
     }
-    xmvb::vb::NonredundantOrbitalSpace nonredundant_space(
+    xmvb::vb::OrbitalChart nonredundant_space(
         input.orbital_preparation_input,
         parameter_view,
         gradient_result.orbital_preparation_result

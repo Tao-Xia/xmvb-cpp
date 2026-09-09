@@ -7,8 +7,8 @@
 #include <Eigen/Cholesky>
 #include <Eigen/SVD>
 
-#include "vb/orbital/nonredundant_orbital_space.hpp"
-#include "vb/orbital/sparse_orbital_gauge_audit.hpp"
+#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/diagnostics/orbital_chart_audit.hpp"
 
 namespace {
 using namespace xmvb::vb;
@@ -84,9 +84,9 @@ Eigen::VectorXd physical_map(const OrbitalPreparationInput& input) {
 
 void check(const std::string& name, const OrbitalPreparationInput& input,
            int expected_dimension) {
-  const SparseOrbitalParameterView view(input);
+  const SparseParameterLayout view(input);
   const Eigen::MatrixXd c = dense(input);
-  NonredundantOrbitalSpace space(input, view, c, c, nullptr, true);
+  OrbitalChart space(input, view, c, c, nullptr, true);
   require(space.reduced_size() == expected_dimension,
           name + ": expected dimension " + std::to_string(expected_dimension) +
           ", got " + std::to_string(space.reduced_size()));
@@ -94,7 +94,7 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
   for (int j = 0; j < u.cols(); ++j) {
     u.col(j) = space.expand_step(Eigen::VectorXd::Unit(u.cols(), j));
   }
-  const auto audit = audit_sparse_orbital_gauge(input, view, &u);
+  const auto audit = audit_orbital_chart(input, view, &u);
   require(audit.gauge_rank == audit.physical_jacobian_nullity,
           name + ": independent kernel mismatch");
   require(audit.current_retained_gauge_dimension == 0 &&
@@ -152,8 +152,8 @@ void check_occupation_curvature() {
   for (const int inactive_count : {0, 1}) {
     auto input = make_input(c, {{0, 1, 2}}, inactive_count);
     input.ao_overlap_matrix.setIdentity();
-    const SparseOrbitalParameterView view(input);
-    const NonredundantOrbitalSpace space(input, view, c, c, &f);
+    const SparseParameterLayout view(input);
+    const OrbitalChart space(input, view, c, c, &f);
     Eigen::MatrixXd u(3, space.reduced_size()), action(2, 2), inverse(2, 2);
     require(space.reduced_size() == 2, "invalid occupation fixture rank");
     for (int j = 0; j < 2; ++j) {

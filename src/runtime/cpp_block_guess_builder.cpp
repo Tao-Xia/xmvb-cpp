@@ -24,39 +24,6 @@ bool has_legacy_block_metadata(
              orbital_preparation_input.n_blocks;
 }
 
-std::vector<std::vector<int>> build_legacy_orbital_blocks(
-    const OrbitalPreparationInput& orbital_preparation_input) {
-  std::vector<std::vector<int>> blocks;
-  blocks.reserve(orbital_preparation_input.n_blocks);
-
-  for (std::size_t block_index = 0;
-       block_index < orbital_preparation_input.n_blocks;
-       ++block_index) {
-    const int orbital_count =
-        orbital_preparation_input.block_orbital_counts[block_index];
-    if (orbital_count <= 0) {
-      continue;
-    }
-
-    std::vector<int> block;
-    block.reserve(orbital_count);
-    for (int orbital_offset = 0; orbital_offset < orbital_count; ++orbital_offset) {
-      const int orbital_index =
-          orbital_preparation_input.block_members
-              [block_index *
-                   orbital_preparation_input.block_storage_dimension +
-               orbital_offset];
-      if (orbital_index < 0 || orbital_index >= orbital_preparation_input.n_orbitals) {
-        throw std::runtime_error("legacy block metadata contains an out-of-range orbital index");
-      }
-      block.push_back(orbital_index);
-    }
-    blocks.push_back(std::move(block));
-  }
-
-  return blocks;
-}
-
 int get_block_basis_count(
     const OrbitalPreparationInput& orbital_preparation_input,
     int block_index,
@@ -75,65 +42,6 @@ int get_block_basis_count(
 }
 
 }  // namespace
-
-std::vector<std::vector<int>> detect_orbital_blocks(
-    const OrbitalPreparationInput& orbital_preparation_input) {
-  if (has_legacy_block_metadata(orbital_preparation_input)) {
-    return build_legacy_orbital_blocks(orbital_preparation_input);
-  }
-
-  const int n_orbitals = orbital_preparation_input.n_orbitals;
-  const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-
-  std::vector<std::vector<int>> blocks;
-  blocks.reserve(n_orbitals);
-  std::vector<int> block_max_basis_counts;
-  block_max_basis_counts.reserve(n_orbitals);
-
-  for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
-    const int orbital_basis_count =
-        stored_sparse_orbital_coefficient_count(
-            orbital_preparation_input,
-            orbital_index);
-    bool appended_to_existing_block = false;
-    for (std::size_t block_index = 0; block_index < blocks.size(); ++block_index) {
-      const int representative_orbital = blocks[block_index].front();
-      const int representative_basis_count = block_max_basis_counts[block_index];
-      int overlap_basis_count = 0;
-      for (int coefficient_index = 0; coefficient_index < orbital_basis_count; ++coefficient_index) {
-        const int basis_function_index =
-            orbital_preparation_input.orbital_basis_index_table
-                [orbital_index * n_basis_functions + coefficient_index];
-        for (int representative_index = 0;
-             representative_index < representative_basis_count;
-             ++representative_index) {
-          const int representative_basis_function =
-              orbital_preparation_input.orbital_basis_index_table
-                  [representative_orbital * n_basis_functions +
-                   representative_index];
-          if (basis_function_index == representative_basis_function) {
-            ++overlap_basis_count;
-            break;
-          }
-        }
-      }
-
-      if (overlap_basis_count == orbital_basis_count &&
-          orbital_basis_count == representative_basis_count) {
-        blocks[block_index].push_back(orbital_index);
-        appended_to_existing_block = true;
-        break;
-      }
-    }
-
-    if (!appended_to_existing_block) {
-      blocks.push_back({orbital_index});
-      block_max_basis_counts.push_back(orbital_basis_count);
-    }
-  }
-
-  return blocks;
-}
 
 std::vector<double> build_ao_normalization(
     const OrbitalPreparationInput& orbital_preparation_input) {

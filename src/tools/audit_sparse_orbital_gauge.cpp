@@ -6,10 +6,10 @@
 #include <string>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
-#include "vb/orbital/nonredundant_orbital_space.hpp"
-#include "vb/orbital/sparse_orbital_gauge_audit.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
+#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/diagnostics/orbital_chart_audit.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 
 namespace {
 
@@ -24,7 +24,7 @@ bool parse_bool(const std::string& value) {
 int main(int argc, char** argv) {
   if (argc != 2 && argc != 4) {
     std::cerr
-        << "usage: audit_sparse_orbital_gauge <input.xmi> "
+        << "usage: audit_orbital_chart <input.xmi> "
         << "[--nonredundant-adapt true|false]\n";
     return EXIT_FAILURE;
   }
@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
     const xmvb::vb::CppVbInput input = nonredundant_adapt
         ? xmvb::vb::build_nonredundant_optimizer_input(loaded.input)
         : loaded.input;
-    const xmvb::vb::SparseOrbitalParameterView parameter_view(
+    const xmvb::vb::SparseParameterLayout parameter_view(
         input.orbital_preparation_input);
     const auto& orbital = input.orbital_preparation_input;
     Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(
@@ -62,14 +62,14 @@ int main(int argc, char** argv) {
     const int occupied_count =
         (orbital.n_total_electrons - orbital.n_active_electrons) / 2 +
         orbital.n_active_orbitals;
-    const xmvb::vb::NonredundantOrbitalSpace space(
+    const xmvb::vb::OrbitalChart space(
         orbital, parameter_view, coefficients.leftCols(occupied_count),
         coefficients, nullptr, true);
     Eigen::MatrixXd basis(parameter_view.size(), space.reduced_size());
     for (int j = 0; j < basis.cols(); ++j) {
       basis.col(j) = space.expand_step(Eigen::VectorXd::Unit(basis.cols(), j));
     }
-    const auto audit = xmvb::vb::audit_sparse_orbital_gauge(
+    const auto audit = xmvb::vb::audit_orbital_chart(
         orbital, parameter_view, &basis);
 
     std::cout << std::setprecision(12);
@@ -114,7 +114,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error("quotient audit did not pass");
     }
   } catch (const std::exception& exception) {
-    std::cerr << "audit_sparse_orbital_gauge failed: "
+    std::cerr << "audit_orbital_chart failed: "
               << exception.what() << '\n';
     return EXIT_FAILURE;
   }

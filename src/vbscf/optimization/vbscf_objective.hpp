@@ -21,7 +21,7 @@
 #include <Eigen/Core>
 
 #include "vb/matrices/cpp_vb_input.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_result.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
@@ -32,7 +32,7 @@ namespace xmvb::vb {
 struct CppActiveSpaceSecondOrderContext;
 class LocalizedRepresentativeSelector;
 struct OrbitalPreparationResult;
-struct SupportAwareInactiveMoGaugeTransform;
+struct SupportPreservingGaugeTransform;
 
 // One accepted or trialed orbital point evaluated without committing state.
 // Carries everything the optimizer needs to decide whether to accept the
@@ -54,7 +54,7 @@ class VbScfObjective {
 
   VbScfObjective(
       const CppVbInput& input,
-      SparseOrbitalParameterView parameter_view,
+      SparseParameterLayout parameter_view,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy,
@@ -117,7 +117,7 @@ class VbScfObjective {
  private:
   CppVbInput working_input_;
   mutable CppVbInput probe_input_buffer_;
-  SparseOrbitalParameterView parameter_view_;
+  SparseParameterLayout parameter_view_;
   std::vector<int> selected_state_indices_;
   std::vector<double> state_average_weights_;
   double nuclear_repulsion_energy_ = 0.0;
@@ -175,7 +175,7 @@ void transform_sparse_oeo_active_representative_gradient(
     std::vector<double>* sparse_orbital_gradient);
 
 void transform_sparse_inactive_orbital_step(
-    const SupportAwareInactiveMoGaugeTransform& transform,
+    const SupportPreservingGaugeTransform& transform,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* sparse_orbital_step);
 
@@ -186,26 +186,26 @@ void transform_sparse_oeo_active_representative_step(
     std::vector<double>* sparse_orbital_step);
 
 std::vector<double> build_full_sparse_vector_from_packed(
-    const SparseOrbitalParameterView& parameter_view,
+    const SparseParameterLayout& parameter_view,
     const OrbitalPreparationInput& orbital_preparation_input,
     const Eigen::VectorXd& packed_vector);
 
 void overwrite_packed_vector_from_full_sparse(
-    const SparseOrbitalParameterView& parameter_view,
+    const SparseParameterLayout& parameter_view,
     const std::vector<double>& full_sparse_vector,
     Eigen::VectorXd* packed_vector);
 
 void transport_packed_secant_history_with_support_aware_inactive_gauge(
-    const SupportAwareInactiveMoGaugeTransform& transform,
+    const SupportPreservingGaugeTransform& transform,
     const OrbitalPreparationInput& orbital_preparation_input,
-    const SparseOrbitalParameterView& parameter_view,
+    const SparseParameterLayout& parameter_view,
     std::vector<PackedSecantPair>* packed_secant_history);
 
 void transport_packed_secant_history_with_oeo_active_representative_reset(
     const LocalizedRepresentativeSelector& source_selector,
     const LocalizedRepresentativeSelector& target_selector,
     const OrbitalPreparationInput& orbital_preparation_input,
-    const SparseOrbitalParameterView& parameter_view,
+    const SparseParameterLayout& parameter_view,
     std::vector<PackedSecantPair>* packed_secant_history);
 
 void refresh_cached_localized_representative_selector(

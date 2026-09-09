@@ -1,4 +1,4 @@
-#include "vb/orbital/nonredundant_orbital_space.hpp"
+#include "vbscf/orbitals/charts/orbital_chart.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -13,9 +13,8 @@
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
-#include "runtime/cpp_block_guess_builder.hpp"
-
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/orbital_block_partition.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/orbital/normalized_orbital_curvature.hpp"
 #include "vb/orbital/projected_orbital_surrogate.hpp"
 
@@ -191,7 +190,7 @@ Eigen::MatrixXd build_exact_local_sparse_quotient_basis(
           orbital_index * input.n_basis_functions + coefficient];
     }
   }
-  require_finite_matrix(gauge_sources, "NROS global gauge sources");
+  require_finite_matrix(gauge_sources, "orbital-chart global gauge sources");
 
   std::vector<char> is_allowed(input.n_basis_functions, 0);
   for (const int basis : local_basis_indices) {
@@ -314,9 +313,9 @@ std::uint64_t mix_rank_signature(
 // Constructor
 // ===========================================================================
 
-NonredundantOrbitalSpace::NonredundantOrbitalSpace(
+OrbitalChart::OrbitalChart(
     const OrbitalPreparationInput& input,
-    const SparseOrbitalParameterView& parameter_view,
+    const SparseParameterLayout& parameter_view,
     const Eigen::Ref<const Eigen::MatrixXd>& occ_basis_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& phys_orbital_matrix,
     const Eigen::MatrixXd* ao_effective_h1e,
@@ -343,7 +342,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
   const Eigen::Map<const Eigen::MatrixXd> ao_overlap(
       input.ao_overlap_matrix.data(),
       input.n_basis_functions, input.n_basis_functions);
-  require_finite_matrix(ao_overlap, "NROS AO overlap matrix");
+  require_finite_matrix(ao_overlap, "orbital-chart AO overlap matrix");
   Eigen::MatrixXd global_inactive_orbitals = Eigen::MatrixXd::Zero(
       input.n_basis_functions, n_inactive);
   for (int orbital = 0; orbital < n_inactive; ++orbital) {
@@ -428,7 +427,7 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
       Eigen::VectorXd x_p = Eigen::VectorXd::Zero(local_size);
       for (Eigen::Index i = 0; i < local_size; ++i)
         x_p[i] = input.orbital_value_table[proj.flat_indices[i]];
-      require_finite_vector(x_p, "NROS local sparse orbital coefficients");
+      require_finite_vector(x_p, "orbital-chart local sparse orbital coefficients");
 
       std::vector<int> local_basis_indices(local_size);
       for (Eigen::Index row = 0; row < local_size; ++row) {
@@ -531,8 +530,8 @@ NonredundantOrbitalSpace::NonredundantOrbitalSpace(
   use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
 }
 
-NonredundantOrbitalSpace::StructuralDiagnostics
-NonredundantOrbitalSpace::structural_diagnostics() const noexcept {
+OrbitalChart::StructuralDiagnostics
+OrbitalChart::structural_diagnostics() const noexcept {
   StructuralDiagnostics diagnostics;
   diagnostics.packed_parameter_size = packed_parameter_size_;
   diagnostics.reduced_size = reduced_size_;
@@ -575,8 +574,8 @@ NonredundantOrbitalSpace::structural_diagnostics() const noexcept {
   return diagnostics;
 }
 
-NonredundantOrbitalSpace::ProjectionResult
-NonredundantOrbitalSpace::project_impl(
+OrbitalChart::ProjectionResult
+OrbitalChart::project_impl(
     const Eigen::VectorXd& packed_vector,
     bool recover_tangent_coordinates,
     bool build_packed_projection) const {
@@ -584,7 +583,7 @@ NonredundantOrbitalSpace::project_impl(
   require_finite_vector_size(
       packed_vector,
       static_cast<Eigen::Index>(packed_parameter_size_),
-      "NROS packed projection input");
+      "orbital-chart packed projection input");
   ProjectionResult result;
   result.reduced_gradient =
       Eigen::VectorXd::Zero(static_cast<Eigen::Index>(reduced_size_));
@@ -620,38 +619,38 @@ NonredundantOrbitalSpace::project_impl(
       }
     }
   }
-  require_finite_vector(result.reduced_gradient, "NROS reduced projection");
+  require_finite_vector(result.reduced_gradient, "orbital-chart reduced projection");
   if (build_packed_projection) {
     require_finite_vector(
         result.packed_projected_gradient,
-        "NROS packed projection");
+        "orbital-chart packed projection");
   }
   return result;
 }
 
-Eigen::VectorXd NonredundantOrbitalSpace::project_reduced_gradient(
+Eigen::VectorXd OrbitalChart::project_reduced_gradient(
     const Eigen::VectorXd& packed_gradient) const {
   return project_impl(packed_gradient, false, false).reduced_gradient;
 }
 
-NonredundantOrbitalSpace::ProjectionResult
-NonredundantOrbitalSpace::project_gradient(
+OrbitalChart::ProjectionResult
+OrbitalChart::project_gradient(
     const Eigen::VectorXd& packed_gradient) const {
   return project_impl(packed_gradient, false, true);
 }
 
-NonredundantOrbitalSpace::ProjectionResult
-NonredundantOrbitalSpace::project_vector(
+OrbitalChart::ProjectionResult
+OrbitalChart::project_vector(
     const Eigen::VectorXd& packed_vector) const {
   return project_impl(packed_vector, true, true);
 }
 
-Eigen::VectorXd NonredundantOrbitalSpace::apply_inverse_reduced_curvature(
+Eigen::VectorXd OrbitalChart::apply_inverse_reduced_curvature(
     const Eigen::VectorXd& reduced_vector) const {
   require_finite_vector_size(
       reduced_vector,
       static_cast<Eigen::Index>(reduced_size_),
-      "NROS inverse-curvature input");
+      "orbital-chart inverse-curvature input");
   if (!has_reduced_curvature_diagonal_) return reduced_vector;
   Eigen::VectorXd out = reduced_vector;
   constexpr double kMin = 1.0e-12;
@@ -668,12 +667,12 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_inverse_reduced_curvature(
 }
 
 Eigen::VectorXd
-NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
+OrbitalChart::apply_inverse_reduced_block_preconditioner(
     const Eigen::VectorXd& reduced_vector) const {
   require_finite_vector_size(
       reduced_vector,
       static_cast<Eigen::Index>(reduced_size_),
-      "NROS block inverse-curvature input");
+      "orbital-chart block inverse-curvature input");
   if (!has_reduced_curvature_diagonal_) return reduced_vector;
 
   Eigen::VectorXd out = reduced_vector;
@@ -704,12 +703,12 @@ NonredundantOrbitalSpace::apply_inverse_reduced_block_preconditioner(
   return out.allFinite() ? out : apply_inverse_reduced_curvature(reduced_vector);
 }
 
-Eigen::VectorXd NonredundantOrbitalSpace::apply_reduced_curvature(
+Eigen::VectorXd OrbitalChart::apply_reduced_curvature(
     const Eigen::VectorXd& reduced_vector) const {
   require_finite_vector_size(
       reduced_vector,
       static_cast<Eigen::Index>(reduced_size_),
-      "NROS curvature input");
+      "orbital-chart curvature input");
   if (!has_reduced_curvature_diagonal_) return reduced_vector;
   Eigen::VectorXd out = reduced_vector;
   for (const auto& bb : block_bases_) {
@@ -734,12 +733,12 @@ Eigen::VectorXd NonredundantOrbitalSpace::apply_reduced_curvature(
   return out.allFinite() ? out : reduced_vector;
 }
 
-Eigen::VectorXd NonredundantOrbitalSpace::expand_step(
+Eigen::VectorXd OrbitalChart::expand_step(
     const Eigen::VectorXd& reduced_step) const {
   require_finite_vector_size(
       reduced_step,
       static_cast<Eigen::Index>(reduced_size_),
-      "NROS reduced expansion input");
+      "orbital-chart reduced expansion input");
   Eigen::VectorXd packed =
       Eigen::VectorXd::Zero(static_cast<Eigen::Index>(packed_parameter_size_));
   for (const auto& bb : block_bases_) {
@@ -759,17 +758,17 @@ Eigen::VectorXd NonredundantOrbitalSpace::expand_step(
       }
     }
   }
-  require_finite_vector(packed, "NROS packed expansion");
+  require_finite_vector(packed, "orbital-chart packed expansion");
   return packed;
 }
 
-Eigen::VectorXd NonredundantOrbitalSpace::expand_retract_input_tangent(
+Eigen::VectorXd OrbitalChart::expand_retract_input_tangent(
     const OrbitalPreparationInput& orbital_preparation_input,
     const Eigen::VectorXd& reduced_step) const {
   require_finite_vector_size(
       reduced_step,
       static_cast<Eigen::Index>(reduced_size_),
-      "NROS retraction tangent input");
+      "orbital-chart retraction tangent input");
   Eigen::VectorXd tangent = Eigen::VectorXd::Zero(
       static_cast<Eigen::Index>(
           orbital_preparation_input.orbital_value_table.size()));
@@ -790,16 +789,16 @@ Eigen::VectorXd NonredundantOrbitalSpace::expand_retract_input_tangent(
       }
     }
   }
-  require_finite_vector(tangent, "NROS retraction tangent");
+  require_finite_vector(tangent, "orbital-chart retraction tangent");
   return tangent;
 }
 
-OrbitalPreparationInput NonredundantOrbitalSpace::retract_step(
+OrbitalPreparationInput OrbitalChart::retract_step(
     const OrbitalPreparationInput& orbital_preparation_input,
     const Eigen::VectorXd& reduced_step,
     double step_scale) const {
   if (!std::isfinite(step_scale)) {
-    throw std::invalid_argument("NROS retraction step scale is non-finite");
+    throw std::invalid_argument("orbital-chart retraction step scale is non-finite");
   }
 
   OrbitalPreparationInput trial = orbital_preparation_input;
@@ -809,13 +808,13 @@ OrbitalPreparationInput NonredundantOrbitalSpace::retract_step(
           orbital_preparation_input,
           reduced_step);
   if (tangent.size() != static_cast<Eigen::Index>(updated.size())) {
-    throw std::runtime_error("NROS retraction tangent size mismatch");
+    throw std::runtime_error("orbital-chart retraction tangent size mismatch");
   }
   for (Eigen::Index i = 0; i < tangent.size(); ++i) {
     updated[static_cast<std::size_t>(i)] += step_scale * tangent[i];
     if (!std::isfinite(updated[static_cast<std::size_t>(i)])) {
       throw std::runtime_error(
-          "NROS retraction produced non-finite sparse coefficients");
+          "orbital-chart retraction produced non-finite sparse coefficients");
     }
   }
   trial.orbital_value_table = std::move(updated);

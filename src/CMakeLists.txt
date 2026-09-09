@@ -426,6 +426,9 @@ add_executable(test_sparse_orbital_quotient tools/test_sparse_orbital_quotient.c
 target_link_libraries(test_sparse_orbital_quotient PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_sparse_orbital_quotient)
 
+add_executable(test_orbital_block_partition tools/test_orbital_block_partition.cpp)
+target_link_libraries(test_orbital_block_partition PRIVATE xmvb_cpp_vb)
+
 add_executable(test_orthonormal_hvp_basis tools/test_orthonormal_hvp_basis.cpp)
 target_link_libraries(test_orthonormal_hvp_basis PRIVATE xmvb_cpp_vb xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(test_orthonormal_hvp_basis)
@@ -687,6 +690,7 @@ add_dependencies(check_exact_ctx_hvp xmvb_cpp_runtime_assets)
 add_dependencies(benchmark_exact_ctx_hvp xmvb_cpp_runtime_assets)
 
 if (BUILD_TESTING)
+  add_test(NAME orbital_block_partition COMMAND test_orbital_block_partition)
   add_test(NAME curvature_decomposition COMMAND test_curvature_decomposition)
   add_test(NAME oeo_normalization_pullback COMMAND test_oeo_normalization_pullback)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)

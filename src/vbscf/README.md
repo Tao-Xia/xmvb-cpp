@@ -76,6 +76,7 @@ ABI-wide namespace change with file ownership changes.
 5. Commit the module migration with a clean worktree.
 6. Remove forwarding headers after downstream users have migrated.
 
-The first migrated slice is `optimization` plus the single-step evaluator in
-`workflow`. Remaining files listed in `sources.cmake` retain their legacy paths
-but already have explicit logical ownership.
+Migrated slices now include `optimization`, the single-step evaluator in
+`workflow`, the orbital chart/gauge layer, and its independent chart audit.
+Remaining files listed in `sources.cmake` retain their legacy paths but already
+have explicit logical ownership.

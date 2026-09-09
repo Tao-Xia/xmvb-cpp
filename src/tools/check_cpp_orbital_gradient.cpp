@@ -11,9 +11,9 @@
 #include <vector>
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
-#include "vb/orbital/nonredundant_orbital_space.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
+#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
@@ -569,7 +569,7 @@ int main(int argc, char** argv) {
       }
     }
     if (options.parameter_roundtrip) {
-      xmvb::vb::SparseOrbitalParameterView parameter_view(
+      xmvb::vb::SparseParameterLayout parameter_view(
           diagnostic_input.orbital_preparation_input);
       const Eigen::VectorXd packed_parameters =
           parameter_view.pack(diagnostic_input.orbital_preparation_input);
@@ -790,7 +790,7 @@ int main(int argc, char** argv) {
                   << '\n';
       }
     } else {
-      xmvb::vb::SparseOrbitalParameterView parameter_view(
+      xmvb::vb::SparseParameterLayout parameter_view(
           diagnostic_input.orbital_preparation_input);
       const Eigen::VectorXd packed_parameters =
           parameter_view.pack(diagnostic_input.orbital_preparation_input);
@@ -802,7 +802,7 @@ int main(int argc, char** argv) {
       const int n_occupied =
           n_inactive +
           diagnostic_input.orbital_preparation_input.n_active_orbitals;
-      xmvb::vb::NonredundantOrbitalSpace nonredundant_space(
+      xmvb::vb::OrbitalChart nonredundant_space(
           diagnostic_input.orbital_preparation_input,
           parameter_view,
           gradient_result.orbital_preparation_result.auxiliary_orbital_matrix.leftCols(

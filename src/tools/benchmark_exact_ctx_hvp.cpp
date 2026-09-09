@@ -20,10 +20,10 @@
 #include "vb/scf/reduced_hessian_reference.hpp"
 
 #include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
-#include "vb/orbital/nonredundant_orbital_space.hpp"
-#include "vb/orbital/sparse_orbital_gauge_audit.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
+#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/diagnostics/orbital_chart_audit.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
 #include "vb/scf/cpp_orbital_gradient_result.hpp"
 #include "vb/scf/exact_orbital_second_order_operator.hpp"
@@ -56,8 +56,8 @@ struct AcceptedPointBenchmarkContext {
   std::shared_ptr<xmvb::vb::CppOrbitalGradientResult> gradient_result;
   std::shared_ptr<const xmvb::vb::CppActiveSpaceSecondOrderContext>
       second_order_context;
-  xmvb::vb::SparseOrbitalParameterView parameter_view;
-  std::unique_ptr<xmvb::vb::NonredundantOrbitalSpace> nonredundant_space;
+  xmvb::vb::SparseParameterLayout parameter_view;
+  std::unique_ptr<xmvb::vb::OrbitalChart> nonredundant_space;
   Eigen::VectorXd reduced_direction;
   double nuclear_repulsion_energy = 0.0;
 };
@@ -259,11 +259,11 @@ AcceptedPointBenchmarkContext build_benchmark_context(
           : load_result.input,
       nullptr,
       nullptr,
-      xmvb::vb::SparseOrbitalParameterView(load_result.input.orbital_preparation_input),
+      xmvb::vb::SparseParameterLayout(load_result.input.orbital_preparation_input),
       nullptr,
       Eigen::VectorXd()};
   context.parameter_view =
-      xmvb::vb::SparseOrbitalParameterView(context.input.orbital_preparation_input);
+      xmvb::vb::SparseParameterLayout(context.input.orbital_preparation_input);
   context.nuclear_repulsion_energy = load_result.nuclear_repulsion_energy;
   if (!options.orbital_value_table_bin_path.empty()) {
     auto& values = context.input.orbital_preparation_input.orbital_value_table;
@@ -314,7 +314,7 @@ AcceptedPointBenchmarkContext build_benchmark_context(
   // used by TNHVP.  We use the projected accepted-point gradient direction so
   // every component is probed on the same physically relevant step vector.
   context.nonredundant_space =
-      std::make_unique<xmvb::vb::NonredundantOrbitalSpace>(
+      std::make_unique<xmvb::vb::OrbitalChart>(
           context.input.orbital_preparation_input,
           context.parameter_view,
           context.gradient_result->orbital_preparation_result
@@ -844,7 +844,7 @@ int main(int argc, char** argv) {
         current_packed_reduced_basis.col(column) =
             context.nonredundant_space->expand_step(unit);
       }
-      const auto gauge_audit = xmvb::vb::audit_sparse_orbital_gauge(
+      const auto gauge_audit = xmvb::vb::audit_orbital_chart(
           context.input.orbital_preparation_input,
           context.parameter_view,
           &current_packed_reduced_basis);

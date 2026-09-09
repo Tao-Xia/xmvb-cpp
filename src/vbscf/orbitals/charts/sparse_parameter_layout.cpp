@@ -1,4 +1,4 @@
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
+#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 
 #include <stdexcept>
 
@@ -133,7 +133,7 @@ void enforce_strict_sparse_orbital_support(
   }
 }
 
-SparseOrbitalParameterView::SparseOrbitalParameterView(
+SparseParameterLayout::SparseParameterLayout(
     const OrbitalPreparationInput& orbital_preparation_input)
     : n_orbitals_(orbital_preparation_input.n_orbitals),
       n_basis_functions_(orbital_preparation_input.n_basis_functions),
@@ -143,7 +143,7 @@ SparseOrbitalParameterView::SparseOrbitalParameterView(
       flat_to_packed_index_(total_slot_count_, -1) {
   if (n_orbitals_ <= 0 || n_basis_functions_ <= 0) {
     throw std::invalid_argument(
-        "SparseOrbitalParameterView requires positive orbital dimensions");
+        "SparseParameterLayout requires positive orbital dimensions");
   }
 
   differentiable_parameter_indices_.reserve(
@@ -173,14 +173,14 @@ SparseOrbitalParameterView::SparseOrbitalParameterView(
   }
 }
 
-int SparseOrbitalParameterView::orbital_coefficient_count(int orbital_index) const {
+int SparseParameterLayout::orbital_coefficient_count(int orbital_index) const {
   if (orbital_index < 0 || orbital_index >= n_orbitals_) {
     throw std::out_of_range("orbital index is out of range");
   }
   return orbital_coefficient_counts_[orbital_index];
 }
 
-int SparseOrbitalParameterView::packed_index(
+int SparseParameterLayout::packed_index(
     int orbital_index,
     int coefficient_index) const {
   if (orbital_index < 0 || orbital_index >= n_orbitals_ ||
@@ -192,7 +192,7 @@ int SparseOrbitalParameterView::packed_index(
   return flat_to_packed_index_[flat_index];
 }
 
-Eigen::VectorXd SparseOrbitalParameterView::pack(
+Eigen::VectorXd SparseParameterLayout::pack(
     const OrbitalPreparationInput& orbital_preparation_input) const {
   if (static_cast<int>(orbital_preparation_input.orbital_value_table.size()) !=
       total_slot_count_) {
@@ -215,7 +215,7 @@ Eigen::VectorXd SparseOrbitalParameterView::pack(
   return packed_parameters;
 }
 
-Eigen::VectorXd SparseOrbitalParameterView::gather_from_full(
+Eigen::VectorXd SparseParameterLayout::gather_from_full(
     const std::vector<double>& full_vector) const {
   if (static_cast<int>(full_vector.size()) != total_slot_count_) {
     throw std::invalid_argument("full vector size does not match orbital_value_table");
@@ -236,7 +236,7 @@ Eigen::VectorXd SparseOrbitalParameterView::gather_from_full(
   return packed_vector;
 }
 
-void SparseOrbitalParameterView::unpack(
+void SparseParameterLayout::unpack(
     const Eigen::VectorXd& packed_parameters,
     OrbitalPreparationInput* orbital_preparation_input) const {
   if (orbital_preparation_input == nullptr) {

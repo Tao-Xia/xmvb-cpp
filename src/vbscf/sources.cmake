@@ -49,13 +49,13 @@ set(XMVB_VBSCF_ORBITAL_AND_INTEGRAL_SOURCES
   vb/orbital/libcint_input_utils.cpp
   vb/orbital/legacy_style_orbital_gradient_projector.cpp
   vb/orbital/legacy_jacobi_diagonalizer.cpp
-  vb/orbital/localized_representative_selector.cpp
-  vb/orbital/nonredundant_optimizer_input_adapter.cpp
-  vb/orbital/nonredundant_orbital_space.cpp
-  vb/orbital/sparse_orbital_gauge_audit.cpp
+  vbscf/orbitals/gauge/localized_representative.cpp
+  vbscf/orbitals/charts/orbital_block_partition.cpp
+  vbscf/orbitals/charts/support_layout_adapter.cpp
+  vbscf/orbitals/charts/orbital_chart.cpp
   vb/orbital/orbital_parameter_codec.cpp
-  vb/orbital/sparse_orbital_parameter_view.cpp
-  vb/orbital/support_aware_mo_gauge_fix.cpp
+  vbscf/orbitals/charts/sparse_parameter_layout.cpp
+  vbscf/orbitals/gauge/support_preserving_gauge.cpp
   vb/orbital/ri_active_space_two_electron_builder.cpp
 )
 
@@ -69,6 +69,10 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vb/scf/cpp_active_space_gradient_result_utils.cpp
   vb/scf/cpp_active_space_gradient_evaluator.cpp
   vb/scf/cpp_orbital_gradient_evaluator.cpp
+)
+
+set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
+  vbscf/diagnostics/orbital_chart_audit.cpp
 )
 
 set(XMVB_VBSCF_OPTIMIZATION_SOURCES
@@ -99,6 +103,7 @@ set(XMVB_CPP_CORE_SOURCES
   ${XMVB_VBSCF_DETERMINANT_AND_STRUCTURE_SOURCES}
   ${XMVB_VBSCF_ORBITAL_AND_INTEGRAL_SOURCES}
   ${XMVB_VBSCF_DERIVATIVE_SOURCES}
+  ${XMVB_VBSCF_DIAGNOSTIC_SOURCES}
   ${XMVB_VBSCF_OPTIMIZATION_SOURCES}
   ${XMVB_VBSCF_WORKFLOW_SOURCES}
   ${XMVB_VBSCF_ADAPTIVE_SOURCES}

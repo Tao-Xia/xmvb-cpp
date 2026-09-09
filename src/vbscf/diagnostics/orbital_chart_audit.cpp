@@ -1,4 +1,4 @@
-#include "vb/orbital/sparse_orbital_gauge_audit.hpp"
+#include "vbscf/diagnostics/orbital_chart_audit.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -101,9 +101,9 @@ int matrix_numerical_rank_from_gram(const Eigen::MatrixXd& matrix) {
 
 }  // namespace
 
-SparseOrbitalGaugeAudit audit_sparse_orbital_gauge(
+OrbitalChartAudit audit_orbital_chart(
     const OrbitalPreparationInput& input,
-    const SparseOrbitalParameterView& parameter_view,
+    const SparseParameterLayout& parameter_view,
     const Eigen::MatrixXd* current_packed_reduced_basis) {
   if (input.n_basis_functions <= 0 || input.n_orbitals <= 0 ||
       input.n_active_orbitals < 0) {
@@ -119,7 +119,7 @@ SparseOrbitalGaugeAudit audit_sparse_orbital_gauge(
     throw std::invalid_argument("invalid occupied partition in gauge audit");
   }
 
-  SparseOrbitalGaugeAudit audit;
+  OrbitalChartAudit audit;
   audit.packed_dimension = packed_dimension;
   audit.gauge_parameter_dimension =
       n_inactive * n_inactive + n_inactive * n_active + n_active;
