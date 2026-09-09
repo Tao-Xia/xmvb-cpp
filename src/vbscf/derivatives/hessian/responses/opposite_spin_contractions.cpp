@@ -1,4 +1,4 @@
-#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -15,7 +15,7 @@
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin_response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 
 namespace xmvb::vb {

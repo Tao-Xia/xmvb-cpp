@@ -8,7 +8,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"

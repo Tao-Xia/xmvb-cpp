@@ -21,7 +21,7 @@
 #include "vbscf/structures/block_kernels.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_channels.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 
 namespace xmvb::vb {
 namespace {

@@ -1,10 +1,10 @@
-#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 
 #include <algorithm>
 #include <stdexcept>
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin_response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"

@@ -24,7 +24,7 @@
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin_response.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 
 namespace {
