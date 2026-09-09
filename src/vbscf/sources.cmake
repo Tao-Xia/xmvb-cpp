@@ -82,6 +82,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/hessian/responses/opposite_spin_response.cpp
   vbscf/derivatives/hessian/responses/orbital_preparation_response.cpp
   vbscf/derivatives/hessian/responses/same_spin_response.cpp
+  vbscf/derivatives/hessian/responses/structure_directional_response.cpp
 )
 
 set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
