@@ -36,6 +36,9 @@ bool selected_state_has_close_shell_diagonal(
     int n_unique_alpha,
     int n_unique_beta);
 
+bool selected_state_has_local_support(
+    const SelectedStateDeterminantCoefficients& state_coefficients);
+
 void accumulate_diagonal_kernel_image_global(
     const std::vector<double>& diagonal_coefficients,
     const Eigen::MatrixXd& partner_kernel_matrix,
@@ -64,6 +67,22 @@ void scatter_add_dense_submatrix(
 std::vector<int> build_merged_support_indices(
     const std::vector<int>& first,
     const std::vector<int>& second);
+
+void accumulate_selected_state_alpha_image(
+    const SelectedStateDeterminantCoefficients& state_coefficients,
+    const Eigen::MatrixXd& beta_kernel_subblock,
+    double scale,
+    Eigen::MatrixXd* global_alpha_weight_matrix,
+    Eigen::MatrixXd* beta_push,
+    Eigen::MatrixXd* alpha_image);
+
+void accumulate_selected_state_beta_image(
+    const SelectedStateDeterminantCoefficients& state_coefficients,
+    const Eigen::MatrixXd& alpha_kernel_subblock,
+    double scale,
+    Eigen::MatrixXd* global_beta_weight_matrix,
+    Eigen::MatrixXd* alpha_push,
+    Eigen::MatrixXd* beta_image);
 
 SameSpinPairScalarMatrices build_pair_scalar_matrices(
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
