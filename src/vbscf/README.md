@@ -38,7 +38,8 @@ vbscf/
   structures/           VB structure expansion and state matrices
   derivatives/
     gradient/            Gradient evaluation and chart pullback
-    hessian/             Matrix-free exact HVP and response operators
+    hessian/             Matrix-free HVP orchestration and accepted contexts
+      responses/         Orbital, same-spin, and opposite-spin responses
   optimization/
     krylov/              Matrix-free subspace primitives
     preconditioners/     Reduced-space preconditioners
