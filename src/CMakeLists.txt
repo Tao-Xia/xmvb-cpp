@@ -49,12 +49,13 @@ set(XMVB_RUNTIME_SOURCES
   runtime/libcint_materialized_integral_provider.cpp
   runtime/libcint_ri_integral_provider.cpp
   runtime/materialized_ao_integral_input_builder.cpp
+  runtime/trace/accepted_iteration_trace_writer.cpp
 )
 
 # Keep runtime ownership as strict as the canonical VBSCF manifest. A new
 # translation unit must be assigned here before it can enter the build.
 file(
-  GLOB _xmvb_discovered_runtime_sources
+  GLOB_RECURSE _xmvb_discovered_runtime_sources
   CONFIGURE_DEPENDS
   RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.cpp")
