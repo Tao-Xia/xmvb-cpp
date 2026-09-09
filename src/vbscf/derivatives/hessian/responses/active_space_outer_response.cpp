@@ -136,9 +136,7 @@ static ActiveSpaceGradientDirection
 build_local_active_space_gradient_direction_from_outer_response(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const ActiveSpaceIntegralDirectionView& integral_direction,
     const SameSpinDirectionalPairCache* directional_pair_cache = nullptr) {
   if (!accepted_point_context.use_matrix_form_opposite_spin) {
     throw std::runtime_error(
@@ -173,9 +171,9 @@ build_local_active_space_gradient_direction_from_outer_response(
           accepted_point_context.prepared_active_space
               .active_space_one_electron_result.h1e_act,
           accepted_point_context.prepared_active_space.active_space_two_electron_result,
-          delta_ao_overlap_matrix,
-          delta_active_one_electron_matrix,
-          delta_packed_active_two_electron_integrals,
+          integral_direction.overlap,
+          integral_direction.one_electron,
+          integral_direction.packed_two_electron,
           directional_pair_cache);
   validate_same_spin_matrix_backward_contribution(
       matrix_form_local_same_spin_response,
@@ -186,8 +184,8 @@ build_local_active_space_gradient_direction_from_outer_response(
           accepted_point_context.selected_state_matrices,
           input.orbital_preparation_input.n_active_orbitals,
           accepted_point_context.prepared_active_space.active_space_two_electron_result,
-          delta_ao_overlap_matrix,
-          delta_packed_active_two_electron_integrals,
+          integral_direction.overlap,
+          integral_direction.packed_two_electron,
           directional_pair_cache);
   validate_opposite_spin_matrix_backward_contribution(
       matrix_form_local_opposite_spin_response,
@@ -210,9 +208,7 @@ build_local_active_space_gradient_direction_from_outer_response(
 ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_response(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const ActiveSpaceIntegralDirectionView& integral_direction,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     const std::vector<double>& directional_selected_state_energies,
     const SameSpinDirectionalPairCache* directional_pair_cache) {
@@ -223,9 +219,7 @@ ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_re
       build_local_active_space_gradient_direction_from_outer_response(
           input,
           accepted_point_context,
-          delta_ao_overlap_matrix,
-          delta_active_one_electron_matrix,
-          delta_packed_active_two_electron_integrals,
+          integral_direction,
           directional_pair_cache);
   if (!accepted_point_context.use_full_matrix_form_adjoint) {
     throw std::runtime_error(

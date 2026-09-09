@@ -6,6 +6,7 @@
 
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space_direction.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital_preparation_response.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_response.hpp"
@@ -24,9 +25,7 @@ void validate_outer_response_active_gradient(
 ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_response(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const ActiveSpaceIntegralDirectionView& integral_direction,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     const std::vector<double>& directional_selected_state_energies,
     const SameSpinDirectionalPairCache* directional_pair_cache = nullptr);

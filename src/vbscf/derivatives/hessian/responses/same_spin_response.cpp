@@ -961,9 +961,9 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
     owned_directional_pair_cache = build_same_spin_directional_pair_cache(
         same_spin_pair_cache,
         n_active_orbitals,
-        delta_ao_overlap_matrix,
-        delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals);
+        {delta_ao_overlap_matrix,
+         delta_active_one_electron_matrix,
+         delta_packed_active_two_electron_integrals});
     precomputed_directional_pair_cache = &owned_directional_pair_cache;
   }
   if (precomputed_directional_pair_cache->close_shell_same_spin !=
@@ -1120,9 +1120,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
 SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     int n_active_orbitals,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
+    const ActiveSpaceIntegralDirectionView& direction) {
   SameSpinDirectionalPairCache result;
   result.close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
@@ -1132,9 +1130,9 @@ SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
       static_cast<int>(
           same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()),
       n_active_orbitals,
-      delta_ao_overlap_matrix,
-      delta_active_one_electron_matrix,
-      delta_packed_active_two_electron_integrals);
+      direction.overlap,
+      direction.one_electron,
+      direction.packed_two_electron);
   if (!result.close_shell_same_spin) {
     result.beta = build_directional_pair_scalar_matrices(
         same_spin_pair_cache.beta_reuse_table.unique_determinants,
@@ -1142,9 +1140,9 @@ SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
         static_cast<int>(
             same_spin_pair_cache.beta_reuse_table.unique_determinants.size()),
         n_active_orbitals,
-        delta_ao_overlap_matrix,
-        delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals);
+        direction.overlap,
+        direction.one_electron,
+        direction.packed_two_electron);
   }
   return result;
 }
@@ -1395,9 +1393,9 @@ build_local_same_spin_matrix_backward_contribution(
     owned_directional_pair_cache = build_same_spin_directional_pair_cache(
         same_spin_pair_cache,
         n_active_orbitals,
-        delta_ao_overlap_matrix,
-        delta_active_one_electron_matrix,
-        delta_packed_active_two_electron_integrals);
+        {delta_ao_overlap_matrix,
+         delta_active_one_electron_matrix,
+         delta_packed_active_two_electron_integrals});
     precomputed_directional_pair_cache = &owned_directional_pair_cache;
   }
   if (precomputed_directional_pair_cache->close_shell_same_spin !=

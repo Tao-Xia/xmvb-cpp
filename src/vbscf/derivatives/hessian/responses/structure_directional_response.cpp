@@ -1179,9 +1179,7 @@ void gather_directional_spin_block_local(
 SelectedStateProjectedDirectionalMatrices
 build_projected_structure_direction(
     const AcceptedOuterResponseContext& accepted,
-    const std::vector<double>& delta_ao_overlap_matrix,
-    const std::vector<double>& delta_active_one_electron_matrix,
-    const std::vector<double>& delta_packed_active_two_electron_integrals,
+    const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairCache& directional_pair_cache) {
   if (accepted.input == nullptr || accepted.accepted_point_context == nullptr ||
       accepted.structure_coefficient_blocks == nullptr) {
@@ -1191,6 +1189,10 @@ build_projected_structure_direction(
   const auto& input = *accepted.input;
   const auto& accepted_point_context = *accepted.accepted_point_context;
   const auto& coefficient_blocks = *accepted.structure_coefficient_blocks;
+  const auto& delta_ao_overlap_matrix = direction.overlap;
+  const auto& delta_active_one_electron_matrix = direction.one_electron;
+  const auto& delta_packed_active_two_electron_integrals =
+      direction.packed_two_electron;
   const int n_determinants =
       static_cast<int>(input.structure_data.alpha_det.size());
   const int n_structures = input.structure_data.n_structures;

@@ -1400,19 +1400,19 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
     // The polynomial pair response is consumed first by the projected
     // structure action and later by the local same-spin adjoint. Build it once
     // for this HVP direction so both stages share the same cofactor actions.
+    const ActiveSpaceIntegralDirectionView active_space_integral_direction{
+        outer_response_delta_ao_overlap_matrix_workspace_,
+        outer_response_delta_active_one_electron_matrix_workspace_,
+        outer_response_delta_packed_active_two_electron_workspace_};
     const SameSpinDirectionalPairCache directional_pair_cache =
         build_same_spin_directional_pair_cache(
             accepted_point_context_->same_spin_pair_cache,
             current_input_->orbital_preparation_input.n_active_orbitals,
-            outer_response_delta_ao_overlap_matrix_workspace_,
-            outer_response_delta_active_one_electron_matrix_workspace_,
-            outer_response_delta_packed_active_two_electron_workspace_);
+            active_space_integral_direction);
     const auto projected_directional_structure_matrices =
         build_projected_structure_direction(
             accepted_outer_response_context_,
-            outer_response_delta_ao_overlap_matrix_workspace_,
-            outer_response_delta_active_one_electron_matrix_workspace_,
-            outer_response_delta_packed_active_two_electron_workspace_,
+            active_space_integral_direction,
             directional_pair_cache);
     apply_timing_totals_.outer_response_structure_matrices_wall_time_seconds +=
         elapsed_wall_time_seconds(structure_matrices_start_time);
@@ -1435,9 +1435,7 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
     ActiveSpaceGradientDirection directional_active_space_gradient =
         build_active_space_gradient_direction_from_outer_response(
             *current_input_, *accepted_point_context_,
-            outer_response_delta_ao_overlap_matrix_workspace_,
-            outer_response_delta_active_one_electron_matrix_workspace_,
-            outer_response_delta_packed_active_two_electron_workspace_,
+            active_space_integral_direction,
             directional_selected_states,
             directional_selected_state_response.delta_selected_eigenvalues,
             &directional_pair_cache);
