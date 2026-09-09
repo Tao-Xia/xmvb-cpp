@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
-#include "vbscf/integrals/active/active_two_electron_operator.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 
 namespace xmvb::vb {
 

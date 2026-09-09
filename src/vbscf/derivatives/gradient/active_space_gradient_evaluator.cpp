@@ -24,7 +24,7 @@
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/structures/structure_types.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
-#include "vbscf/integrals/active/active_two_electron_operator.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
 #include "vbscf/diagnostics/hvp_memory_report.hpp"

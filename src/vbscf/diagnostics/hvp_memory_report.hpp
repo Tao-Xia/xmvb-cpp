@@ -11,7 +11,7 @@
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
 #include "vbscf/structures/coefficient_blocks.hpp"
 #include "vbscf/structures/structure_types.hpp"
-#include "vbscf/integrals/active/active_two_electron_operator.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_response.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/derivatives/hessian/structure_response_internal.hpp"
 

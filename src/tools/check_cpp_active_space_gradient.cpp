@@ -12,7 +12,7 @@
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/cpp_vb_input_loader.hpp"
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
-#include "vbscf/integrals/active/active_two_electron_operator.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/core/algorithm.hpp"
 

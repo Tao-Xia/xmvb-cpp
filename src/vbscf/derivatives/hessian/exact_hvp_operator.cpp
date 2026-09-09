@@ -28,7 +28,7 @@
 #include "vbscf/orbitals/orbital_pullback.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
-#include "vbscf/integrals/active/active_two_electron_operator.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_response.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
 #include "vbscf/diagnostics/hvp_memory_report.hpp"

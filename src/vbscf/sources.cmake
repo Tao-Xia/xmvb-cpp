@@ -59,8 +59,8 @@ set(XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES
   vbscf/integrals/active/active_space_one_electron_builder.cpp
   vbscf/integrals/active/active_space_two_electron_backpropagator.cpp
   vbscf/integrals/active/active_space_two_electron_builder.cpp
-  vbscf/integrals/active/active_two_electron_kernel.cpp
-  vbscf/integrals/active/active_two_electron_operator.cpp
+  vbscf/integrals/active/active_space_two_electron_kernel.cpp
+  vbscf/integrals/active/active_space_two_electron_response.cpp
   vbscf/integrals/active/ri_active_space_two_electron_builder.cpp
   vbscf/integrals/active/prepared_active_space.cpp
   vbscf/integrals/active/two_electron_indexer.cpp

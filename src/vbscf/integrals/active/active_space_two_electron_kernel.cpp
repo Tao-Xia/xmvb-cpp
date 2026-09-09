@@ -1,4 +1,4 @@
-#include "vbscf/integrals/active/active_two_electron_operator.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 
 #include <cmath>
 #include <stdexcept>
@@ -402,4 +402,3 @@ std::vector<double> reconstruct_packed_active_two_electron_integrals(
 
 
 }  // namespace xmvb::vb
-
