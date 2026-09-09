@@ -1,6 +1,4 @@
 #include "vbscf/integrals/active/active_space_two_electron_response.hpp"
-#include "vbscf/core/runtime_checks.hpp"
-
 #include <atomic>
 #include <stdexcept>
 #include <vector>

@@ -14,7 +14,6 @@
 #include "vbscf/orbitals/gauge/localized_representative.hpp"
 #include "vbscf/orbitals/orbital_preparation_input.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
-#include "vbscf/core/runtime_checks.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/optimization/vector_operations.hpp"
 

@@ -1,8 +1,6 @@
 #include "vbscf/integrals/active/prepared_active_space.hpp"
 
 #include <chrono>
-#include <cstdlib>
-#include <cstring>
 #include <stdexcept>
 
 #include <Eigen/Core>
@@ -17,16 +15,6 @@ namespace {
 bool use_standard_ri_active_space_path(const VbScfInput& input) {
   return input.standard_two_electron_mode ==
       StandardTwoElectronMode::ResolutionOfIdentity;
-}
-
-bool reconstruct_packed_ri_active_space_integrals_enabled() {
-  const char* disable_flag = std::getenv("XMVB_CPP_DISABLE_RI_ACTIVE_PACKED_GGO");
-  if (disable_flag == nullptr || disable_flag[0] == '\0') {
-    return true;
-  }
-  return std::strcmp(disable_flag, "0") == 0 ||
-      std::strcmp(disable_flag, "false") == 0 ||
-      std::strcmp(disable_flag, "FALSE") == 0;
 }
 
 }  // namespace
@@ -123,8 +111,7 @@ TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
                 // packed active-space `GGO` cache so determinant-pair kernels
                 // can use direct lookups instead of repeating auxiliary-length
                 // dot products inside the hot loops.
-                .reconstruct_packed_integrals =
-                    reconstruct_packed_ri_active_space_integrals_enabled(),
+                .reconstruct_packed_integrals = true,
             });
   } else {
     context.active_space_two_electron_result =
