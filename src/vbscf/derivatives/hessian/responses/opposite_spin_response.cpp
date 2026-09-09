@@ -15,29 +15,19 @@
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_response.hpp"
 
 namespace xmvb::vb {
 
-using detail::build_directional_opposite_spin_pair_data;
 using detail::DirectionalOppositeSpinPairData;
 
 namespace {
 
 
 constexpr double kContributionTolerance = 1.0e-15;
-constexpr int kOppositeSpinBackwardSparseBlockSize = 32;
-constexpr int kOppositeSpinBackwardDenseBatchSize = 8;
 constexpr int kOppositeSpinBackwardOverlapBlockSize = 32;
 constexpr int kOppositeSpinBackwardUniqueTileSize = 64;
-
-int opposite_spin_backward_sparse_block_size() {
-  return kOppositeSpinBackwardSparseBlockSize;
-}
-
-int opposite_spin_backward_dense_batch_size() {
-  return kOppositeSpinBackwardDenseBatchSize;
-}
 
 int opposite_spin_backward_overlap_block_size() {
   return kOppositeSpinBackwardOverlapBlockSize;
@@ -927,6 +917,10 @@ void accumulate_directional_beta_pair_matrix_tile(
   }
 }
 
+}  // namespace
+
+namespace detail {
+
 void validate_directional_selected_state_inputs(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states) {
@@ -961,7 +955,7 @@ void accumulate_spin_overlap_gradient_direction_local(
           gradient_direction(right, left);
 }
 
-void validate_matrix_backward_inputs(
+void validate_opposite_spin_backward_inputs(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states) {
   if (!same_spin_pair_cache.enabled()) {
@@ -2437,246 +2431,6 @@ void accumulate_local_beta_overlap_gradient(
   }
 }
 
-}  // namespace
-
-OppositeSpinMatrixBackwardContribution build_opposite_spin_matrix_backward_contribution(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    int n_active_orbitals) {
-  validate_matrix_backward_inputs(same_spin_pair_cache, selected_states);
-
-  OppositeSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      n_active_orbitals *
-          n_active_orbitals,
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
-
-  const int n_alpha_packed_active_pairs =
-      infer_n_packed_active_pairs(
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          "alpha");
-  const int n_beta_packed_active_pairs =
-      infer_n_packed_active_pairs(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          "beta");
-  if (n_alpha_packed_active_pairs != n_beta_packed_active_pairs) {
-    throw std::invalid_argument(
-        "alpha/beta same-spin caches disagree on n_packed_active_pairs");
-  }
-
-  const int n_packed_active_pairs = n_alpha_packed_active_pairs;
-  if (n_packed_active_pairs == 0) {
-    return result;
-  }
-
-  // Rebuild opposite-spin packed-pair channel matrices on demand from the
-  // unique same-spin cache. Sparse packed-pair blocks and unique-spin tiles
-  // bound the working set without the old dense provider layer.
-  const int sparse_block_size = std::min(
-      n_packed_active_pairs,
-      opposite_spin_backward_sparse_block_size());
-  const int dense_batch_size = std::min(
-      n_packed_active_pairs,
-      opposite_spin_backward_dense_batch_size());
-
-  // Opposite-spin packed 2e adjoint:
-  //   dE / dG(Q,P) = sum_n w_n < U_alpha(P), C^(n) U_beta(Q) [C^(n)]^T >.
-  //
-  // Build packed-pair sparse families in bounded blocks and contract each
-  // selected-state image on a unique-spin tile. No production path builds the
-  // old packed_pair -> N_unique^2 dense image.
-  accumulate_opposite_spin_packed_gradient_by_tiles(
-      same_spin_pair_cache,
-      selected_states,
-      n_packed_active_pairs,
-      sparse_block_size,
-      dense_batch_size,
-      &result.packed_active_two_electron_gradient);
-
-  // Opposite-spin overlap adjoint:
-  // alpha-side uses S_beta .* (G x_beta), beta-side uses S_alpha .* (G x_alpha).
-  accumulate_alpha_overlap_gradient(
-      same_spin_pair_cache,
-      selected_states,
-      n_active_orbitals,
-      &result.active_orbital_overlap_gradient);
-  accumulate_beta_overlap_gradient(
-      same_spin_pair_cache,
-      selected_states,
-      n_active_orbitals,
-      &result.active_orbital_overlap_gradient);
-
-  return result;
-}
-
-OppositeSpinMatrixBackwardContribution
-build_directional_opposite_spin_matrix_backward_contribution(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const SelectedStateDeterminantMatrices& directional_selected_states,
-    int n_active_orbitals) {
-  validate_matrix_backward_inputs(same_spin_pair_cache, selected_states);
-  validate_directional_selected_state_inputs(
-      selected_states,
-      directional_selected_states);
-
-  OppositeSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      n_active_orbitals *
-          n_active_orbitals,
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
-
-  const int n_alpha_packed_active_pairs =
-      infer_n_packed_active_pairs(
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          "alpha");
-  const int n_beta_packed_active_pairs =
-      infer_n_packed_active_pairs(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          "beta");
-  if (n_alpha_packed_active_pairs != n_beta_packed_active_pairs) {
-    throw std::invalid_argument(
-        "alpha/beta same-spin caches disagree on n_packed_active_pairs");
-  }
-
-  const int n_packed_active_pairs = n_alpha_packed_active_pairs;
-  if (n_packed_active_pairs == 0) {
-    return result;
-  }
-
-  const int sparse_block_size = std::min(
-      n_packed_active_pairs,
-      opposite_spin_backward_sparse_block_size());
-  const int dense_batch_size = std::min(
-      n_packed_active_pairs,
-      opposite_spin_backward_dense_batch_size());
-
-  accumulate_directional_opposite_spin_packed_gradient_by_tiles(
-      same_spin_pair_cache,
-      selected_states,
-      directional_selected_states,
-      n_packed_active_pairs,
-      sparse_block_size,
-      dense_batch_size,
-      &result.packed_active_two_electron_gradient);
-
-  accumulate_directional_alpha_overlap_gradient(
-      same_spin_pair_cache,
-      selected_states,
-      directional_selected_states,
-      n_active_orbitals,
-      &result.active_orbital_overlap_gradient);
-  accumulate_directional_beta_overlap_gradient(
-      same_spin_pair_cache,
-      selected_states,
-      directional_selected_states,
-      n_active_orbitals,
-      &result.active_orbital_overlap_gradient);
-
-  return result;
-}
-
-OppositeSpinMatrixBackwardContribution
-build_local_opposite_spin_matrix_backward_contribution(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache) {
-  validate_matrix_backward_inputs(same_spin_pair_cache, selected_states);
-
-  OppositeSpinMatrixBackwardContribution result;
-  result.active_orbital_overlap_gradient.assign(
-      n_active_orbitals *
-          n_active_orbitals,
-      0.0);
-  result.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(n_active_orbitals),
-      0.0);
-
-  const int n_alpha_packed_active_pairs =
-      infer_n_packed_active_pairs(
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          "alpha");
-  const int n_beta_packed_active_pairs =
-      infer_n_packed_active_pairs(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          "beta");
-  if (n_alpha_packed_active_pairs != n_beta_packed_active_pairs) {
-    throw std::invalid_argument(
-        "alpha/beta same-spin caches disagree on n_packed_active_pairs");
-  }
-
-  const int n_packed_active_pairs = n_alpha_packed_active_pairs;
-  if (n_packed_active_pairs == 0) {
-    return result;
-  }
-
-  const auto alpha_directional_pair_data =
-      build_directional_opposite_spin_pair_data(
-          same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          selected_states.n_unique_alpha,
-          n_active_orbitals,
-          active_space_two_electron_result,
-          direction.overlap,
-          direction.packed_two_electron,
-          directional_pair_cache.alpha.ordered_pair_data);
-  const auto& beta_precomputed_pair_data =
-      directional_pair_cache.close_shell_same_spin
-          ? directional_pair_cache.alpha.ordered_pair_data
-          : directional_pair_cache.beta.ordered_pair_data;
-  const auto beta_directional_pair_data =
-      build_directional_opposite_spin_pair_data(
-          same_spin_pair_cache.beta_reuse_table.unique_determinants,
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          selected_states.n_unique_beta,
-          n_active_orbitals,
-          active_space_two_electron_result,
-          direction.overlap,
-          direction.packed_two_electron,
-          beta_precomputed_pair_data);
-
-  const int sparse_block_size = std::min(
-      n_packed_active_pairs,
-      opposite_spin_backward_sparse_block_size());
-  const int dense_batch_size = std::min(
-      n_packed_active_pairs,
-      opposite_spin_backward_dense_batch_size());
-
-  accumulate_local_opposite_spin_packed_gradient_by_tiles(
-      same_spin_pair_cache,
-      alpha_directional_pair_data,
-      beta_directional_pair_data,
-      selected_states,
-      n_packed_active_pairs,
-      sparse_block_size,
-      dense_batch_size,
-      &result.packed_active_two_electron_gradient);
-
-  accumulate_local_alpha_overlap_gradient(
-      same_spin_pair_cache,
-      alpha_directional_pair_data,
-      beta_directional_pair_data,
-      selected_states,
-      n_active_orbitals,
-      &result.active_orbital_overlap_gradient);
-  accumulate_local_beta_overlap_gradient(
-      same_spin_pair_cache,
-      alpha_directional_pair_data,
-      beta_directional_pair_data,
-      selected_states,
-      n_active_orbitals,
-      &result.active_orbital_overlap_gradient);
-
-  return result;
-}
+}  // namespace detail
 
 }  // namespace xmvb::vb
