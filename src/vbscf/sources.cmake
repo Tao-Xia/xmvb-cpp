@@ -38,6 +38,7 @@ set(XMVB_VBSCF_ORBITAL_SOURCES
   vbscf/orbitals/gauge/legacy_jacobi_diagonalizer.cpp
   vbscf/orbitals/gauge/localized_representative.cpp
   vbscf/orbitals/charts/orbital_block_partition.cpp
+  vbscf/orbitals/charts/orbital_chart_canonicalization.cpp
   vbscf/orbitals/charts/support_layout_adapter.cpp
   vbscf/orbitals/charts/orbital_chart.cpp
   vbscf/orbitals/charts/sparse_parameter_layout.cpp

@@ -12,6 +12,7 @@
 #include "vbscf/orbitals/gauge/localized_representative.hpp"
 #include "vbscf/orbitals/charts/support_layout_adapter.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/orbital_chart_canonicalization.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
 #include "vbscf/optimization/vbscf_objective.hpp"
