@@ -1,9 +1,12 @@
 #include "vbscf/derivatives/hessian/responses/same_spin_pair_response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_weight_builder_internal.hpp"
 
 #include <cmath>
 #include <stdexcept>
+#include <utility>
 
 #include "vbscf/determinants/cofactor_differential.hpp"
+#include "vbscf/determinants/pair_storage.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 
@@ -12,6 +15,20 @@ namespace xmvb::vb::detail {
 namespace {
 
 constexpr double kContributionTolerance = 1.0e-15;
+
+std::size_t square_storage_size(int dimension) {
+  return static_cast<std::size_t>(dimension) *
+      static_cast<std::size_t>(dimension);
+}
+
+void set_symmetric_entry(
+    Eigen::MatrixXd* matrix,
+    int row,
+    int column,
+    double value) {
+  (*matrix)(row, column) = value;
+  (*matrix)(column, row) = value;
+}
 
 }  // namespace
 
@@ -185,6 +202,80 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
         cofactor.second_contraction_gradient_direction(
             ds, pair_evaluation.same_spin_antisymmetrized_interaction, dg);
   return result;
+}
+
+SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    int n_unique_determinants,
+    int n_active_orbitals,
+    const std::vector<double>& delta_ao_overlap_matrix,
+    const std::vector<double>& delta_active_one_electron_matrix,
+    const std::vector<double>& delta_packed_active_two_electron_integrals) {
+  const std::size_t expected_size = square_storage_size(n_unique_determinants);
+  if (ordered_pair_cache.size() != expected_size ||
+      unique_determinants.size() !=
+          static_cast<std::size_t>(n_unique_determinants)) {
+    throw std::invalid_argument(
+        "same-spin pair data do not match unique determinant dimensions");
+  }
+
+  SameSpinDirectionalScalarMatrices scalars;
+  scalars.delta_overlap_determinant_matrix =
+      Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
+  scalars.delta_regular_total_hamiltonian_matrix =
+      Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
+  scalars.delta_singular_total_hamiltonian_matrix =
+      Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
+  scalars.ordered_pair_data.resize(expected_size);
+
+  for (int left_id = 0; left_id < n_unique_determinants; ++left_id) {
+    for (int right_id = left_id; right_id < n_unique_determinants; ++right_id) {
+      const std::size_t forward_index = ordered_spin_pair_storage_index(
+          left_id,
+          right_id,
+          n_unique_determinants);
+      const auto& pair_evaluation = ordered_pair_cache[forward_index];
+      SameSpinPolynomialDirectionalPairData directional_data =
+          build_polynomial_spin_directional_data(
+              unique_determinants[left_id],
+              unique_determinants[right_id],
+              pair_evaluation,
+              n_active_orbitals,
+              delta_ao_overlap_matrix,
+              delta_active_one_electron_matrix,
+              delta_packed_active_two_electron_integrals);
+      scalars.ordered_pair_data[forward_index] = directional_data;
+      if (left_id != right_id) {
+        SameSpinPolynomialDirectionalPairData transposed = directional_data;
+        transposed.cofactor_1st.transposeInPlace();
+        transposed.delta_cofactor_1st.transposeInPlace();
+        transposed.delta_same_spin_overlap_hamiltonian_gradient
+            .transposeInPlace();
+        scalars.ordered_pair_data[ordered_spin_pair_storage_index(
+            right_id,
+            left_id,
+            n_unique_determinants)] = std::move(transposed);
+      }
+
+      set_symmetric_entry(
+          &scalars.delta_overlap_determinant_matrix,
+          left_id,
+          right_id,
+          directional_data.delta_overlap_determinant);
+      Eigen::MatrixXd* directional_hamiltonian =
+          pair_evaluation.overlap_result.nullity == 0 &&
+                  pair_evaluation.overlap_result.overlap_determinant != 0.0
+              ? &scalars.delta_regular_total_hamiltonian_matrix
+              : &scalars.delta_singular_total_hamiltonian_matrix;
+      set_symmetric_entry(
+          directional_hamiltonian,
+          left_id,
+          right_id,
+          directional_data.delta_total_hamiltonian);
+    }
+  }
+  return scalars;
 }
 
 void accumulate_directional_one_electron_gradient_contribution_local(
