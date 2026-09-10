@@ -1422,41 +1422,4 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_with_pair_evaluations(
 }
 
 
-StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::build(
-    const FullDeterminantStructureData& input) const 
-{
-  const Eigen::Map<const Eigen::MatrixXd> h1e_act(
-      input.h1e_act.data(),
-      input.n_active_orbitals,
-      input.n_active_orbitals);
-  return build(
-      input.alpha_det,
-      input.beta_det,
-      input.determinant_to_structure_terms,
-      input.ovlp_act,
-      h1e_act,
-      input.n_active_orbitals,
-      input.eri_act,
-      input.n_structures);
-}
-
-FullDeterminantStructureBuildResult
-FullDeterminantStructureHamiltonianOverlapBuilder::build_with_pair_evaluations(
-    const FullDeterminantStructureData& input) const {
-  const Eigen::Map<const Eigen::MatrixXd> h1e_act(
-      input.h1e_act.data(),
-      input.n_active_orbitals,
-      input.n_active_orbitals);
-  return build_with_pair_evaluations(
-      input.alpha_det,
-      input.beta_det,
-      input.determinant_to_structure_terms,
-      input.ovlp_act,
-      h1e_act,
-      input.n_active_orbitals,
-      input.eri_act,
-      input.n_structures);
-}
-
-
 }  // namespace xmvb::vb

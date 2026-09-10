@@ -143,17 +143,6 @@ public:
       const std::vector<double>& eri_act,
       int n_structures) const;
 
-  /**
-   * @brief Builds structure-level matrices from an explicit input object.
-   *
-   * @param input Explicit full-determinant data model.
-   * @return StructureAccumulationResult Structure Hamiltonian and overlap matrices.
-   */
-  StructureAccumulationResult build(const FullDeterminantStructureData& input) const;
-
-  FullDeterminantStructureBuildResult build_with_pair_evaluations(
-      const FullDeterminantStructureData& input) const;
-
 private:
   FullDeterminantStructureBuildResult build_impl(
       const std::vector<std::vector<int>>& alpha_det,

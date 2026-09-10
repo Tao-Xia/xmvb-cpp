@@ -3,8 +3,6 @@
 #include <cstddef>
 #include <vector>
 
-#include "core/containers/shared_vector.hpp"
-
 namespace xmvb::vb {
 
 /**
@@ -122,11 +120,12 @@ struct RawStructureData {
 };
 
 /**
- * @brief Explicit full-determinant input for structure Hamiltonian assembly.
+ * @brief Combinatorial expansion of VB structures into full determinants.
  *
- * This object contains all data needed by the structure builder to evaluate
- * structure-level Hamiltonian and overlap matrices. All orbital matrices use
- * column-major storage.
+ * This object owns topology only: occupied-orbital index lists and the sparse
+ * determinant-to-structure incidence relation. Physical overlap, Hamiltonian,
+ * and integral data are supplied separately through their Eigen-based
+ * numerical contracts.
  */
 struct FullDeterminantStructureData {
   /**
@@ -135,39 +134,19 @@ struct FullDeterminantStructureData {
   int n_structures = 0;
 
   /**
-   * @brief Number of active orbitals.
-   */
-  int n_active_orbitals = 0;
-
-  /**
    * @brief Zero-based alpha occupied orbitals for each full determinant.
    */
-  SharedVector<std::vector<int>> alpha_det;
+  std::vector<std::vector<int>> alpha_det;
 
   /**
    * @brief Zero-based beta occupied orbitals for each full determinant.
    */
-  SharedVector<std::vector<int>> beta_det;
+  std::vector<std::vector<int>> beta_det;
 
   /**
    * @brief Determinant-to-structure expansion coefficients.
    */
-  SharedVector<std::vector<StructureExpansionTerm>> determinant_to_structure_terms;
-
-  /**
-   * @brief Column-major active-space orbital overlap matrix `ovlp_act`.
-   */
-  SharedVector<double> ovlp_act;
-
-  /**
-   * @brief Column-major one-electron Hamiltonian matrix.
-   */
-  SharedVector<double> h1e_act;
-
-  /**
-   * @brief Packed two-electron integral storage using the packed pair index map.
-   */
-  SharedVector<double> eri_act;
+  std::vector<std::vector<StructureExpansionTerm>> determinant_to_structure_terms;
 };
 
 }  // namespace xmvb::vb

@@ -158,11 +158,14 @@ directories and build-source ownership.
 
 1. Each algorithm has one maintained implementation; compatibility aliases and
    inactive alternatives are deleted.
-2. Reference implementations are retained only when they provide an
+2. Dense physical vectors and matrices use Eigen value types. `std::vector` is
+   reserved for ragged combinatorial topology, packed-index storage, and raw
+   I/O buffers; copy-on-write numerical container wrappers are not used.
+3. Reference implementations are retained only when they provide an
    independent mathematical correctness check used by the test suite.
-3. Source names describe their mathematical or software responsibility, never
+4. Source names describe their mathematical or software responsibility, never
    an implementation language or a superseded program.
-4. Unused source files, targets, options, and experimental branches are removed
+5. Unused source files, targets, options, and experimental branches are removed
    rather than preserved for possible future use.
 
 The canonical tree owns `optimization`, the single-step evaluator in
