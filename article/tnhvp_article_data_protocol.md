@@ -34,7 +34,7 @@ $$
 \mathbf U_k^{\mathrm T}\mathbf U_k=\mathbf I
 $$
 
-in the additive sparse-coefficient chart. The columns of $\mathbf U_k$ remove
+in the additive sparse-coefficient chart. The columns of the quotient basis remove
 all support-admissible inactive-orbital and scaling gauge directions. Strict
 sparsity is preserved by the retraction; OEO is represented by full AO support,
 not by a separate optimizer.
@@ -121,14 +121,19 @@ $$
 \mathbf H_k=\mathbf A_k+\mathbf R_k,
 $$
 
-where $\mathbf A_k$ contains the direct and fixed-upstream orbital response and
-$\mathbf R_k$ contains the relaxed structure response. Both remain available
+where the first operator contains the direct and fixed-upstream orbital response
+and the second contains the relaxed structure response. Both remain available
 only as matrix-free actions. The existing local orbital blocks provide the
-lowest-cost positive approximation to $\mathbf A_k$.
+lowest-cost positive approximation to the first operator.
 
 The next solver candidate should use a Davidson-type trust-region correction
-space. Given an orthonormal basis $\mathbf Q_j$ and exact images
-$\mathbf Y_j=\mathbf H_k\mathbf Q_j$, it solves the small symmetric
+space. Its orthonormal basis and exact images satisfy
+
+$$
+\mathbf Y_j=\mathbf H_k\mathbf Q_j.
+$$
+
+It solves the small symmetric
 trust-region problem, forms the full KKT residual, and generates a new
 preconditioned correction direction. The basis expansion is driven by observed
 residual components and Ritz information, rather than by a fixed number of
