@@ -39,6 +39,9 @@ bool selected_state_has_close_shell_diagonal(
 bool selected_state_has_local_support(
     const SelectedStateDeterminantCoefficients& state_coefficients);
 
+void validate_local_state_coefficient_matrix(
+    const SelectedStateDeterminantCoefficients& state_coefficients);
+
 void accumulate_diagonal_kernel_image_global(
     const std::vector<double>& diagonal_coefficients,
     const Eigen::MatrixXd& partner_kernel_matrix,
