@@ -5,7 +5,7 @@
 #include <memory>
 #include <vector>
 
-#include "vbscf/integrals/ao/ao_effective_one_electron_result.hpp"
+#include "vbscf/integrals/ao/one_electron/result.hpp"
 #include "vbscf/orbitals/preparation/result.hpp"
 #include "vbscf/core/vbscf_result.hpp"
 

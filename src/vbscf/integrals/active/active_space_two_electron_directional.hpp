@@ -6,7 +6,7 @@
 
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_response_types.hpp"
-#include "vbscf/integrals/ao/ao_integral_input.hpp"
+#include "vbscf/integrals/ao/contracts/input.hpp"
 
 namespace xmvb::vb {
 

@@ -7,7 +7,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/ao/ri_integral_cache.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"

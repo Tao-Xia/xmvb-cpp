@@ -12,7 +12,7 @@
 
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_directional.hpp"
-#include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
+#include "vbscf/integrals/ao/one_electron/graph_operator.hpp"
 
 namespace xmvb::vb {
 

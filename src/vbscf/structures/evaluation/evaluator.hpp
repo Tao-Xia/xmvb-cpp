@@ -7,7 +7,7 @@
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
-#include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
+#include "vbscf/integrals/ao/one_electron/builder.hpp"
 
 namespace xmvb::vb {
 

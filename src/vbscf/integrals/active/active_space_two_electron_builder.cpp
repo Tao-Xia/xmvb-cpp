@@ -12,7 +12,7 @@
 
 #include "core/parallel/openmp.hpp"
 #include "vbscf/core/eigen_storage.hpp"
-#include "vbscf/integrals/ao/two_electron_pair_index.hpp"
+#include "vbscf/integrals/ao/pairs/two_electron_index.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace xmvb::vb {

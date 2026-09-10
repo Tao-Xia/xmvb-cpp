@@ -18,7 +18,7 @@
 #include "vbscf/orbitals/pullback/operator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
-#include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
+#include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
 #include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"

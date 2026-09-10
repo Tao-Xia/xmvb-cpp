@@ -1,9 +1,9 @@
-#include "vbscf/integrals/ao/ri_integral_cache.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
 
 #include <memory>
 #include <stdexcept>
 
-#include "vbscf/integrals/ao/ri_factorization_provider.hpp"
+#include "vbscf/integrals/ao/ri/provider.hpp"
 
 namespace xmvb::vb {
 

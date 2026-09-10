@@ -3,8 +3,8 @@
 #include <memory>
 
 #include "vbscf/structures/expansion/types.hpp"
-#include "vbscf/integrals/ao/ao_integral_input.hpp"
-#include "vbscf/integrals/ao/libcint_input.hpp"
+#include "vbscf/integrals/ao/contracts/input.hpp"
+#include "vbscf/integrals/ao/libcint/input.hpp"
 #include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::vb {

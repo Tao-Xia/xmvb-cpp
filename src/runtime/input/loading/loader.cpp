@@ -30,7 +30,7 @@
 #include "runtime/orbitals/guess/initial.hpp"
 #include "vbscf/structures/expansion/expander.hpp"
 #include "vbscf/structures/selection/subspace/selector.hpp"
-#include "vbscf/integrals/ao/libcint_input_validation.hpp"
+#include "vbscf/integrals/ao/libcint/validation.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
 

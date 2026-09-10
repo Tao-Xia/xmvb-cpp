@@ -1,7 +1,7 @@
 #pragma once
 
 #include "vbscf/core/vbscf_input.hpp"
-#include "vbscf/integrals/ao/ri_factorization.hpp"
+#include "vbscf/integrals/ao/ri/factorization.hpp"
 
 namespace xmvb::vb {
 

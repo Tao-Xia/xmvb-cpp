@@ -1,4 +1,4 @@
-#include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
+#include "vbscf/integrals/ao/one_electron/graph_operator.hpp"
 
 #include <algorithm>
 #include <cstddef>

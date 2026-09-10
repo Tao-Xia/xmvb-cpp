@@ -10,9 +10,9 @@
 #include <Eigen/Core>
 
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/integrals/ao/ri_integral_cache.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
-#include "vbscf/integrals/ao/ao_effective_one_electron_ri_operator.hpp"
+#include "vbscf/integrals/ao/one_electron/ri_operator.hpp"
 
 namespace {
 

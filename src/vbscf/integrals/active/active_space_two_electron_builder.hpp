@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vbscf/integrals/ao/ao_integral_input.hpp"
+#include "vbscf/integrals/ao/contracts/input.hpp"
 #include "vbscf/orbitals/preparation/result.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
 

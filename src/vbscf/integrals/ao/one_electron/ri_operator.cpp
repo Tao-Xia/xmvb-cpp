@@ -1,4 +1,4 @@
-#include "vbscf/integrals/ao/ao_effective_one_electron_ri_operator.hpp"
+#include "vbscf/integrals/ao/one_electron/ri_operator.hpp"
 
 #include <algorithm>
 #include <cmath>

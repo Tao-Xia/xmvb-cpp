@@ -1,4 +1,4 @@
-#include "vbscf/integrals/ao/libcint_input_validation.hpp"
+#include "vbscf/integrals/ao/libcint/validation.hpp"
 
 #include <cmath>
 #include <stdexcept>

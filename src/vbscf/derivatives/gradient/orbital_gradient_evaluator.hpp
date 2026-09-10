@@ -8,8 +8,8 @@
 #include "vbscf/orbitals/pullback/operator.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
-#include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
-#include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
+#include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
+#include "vbscf/integrals/ao/one_electron/builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
 

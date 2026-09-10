@@ -5,7 +5,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/ao/ri_integral_cache.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
 
 namespace xmvb::vb {

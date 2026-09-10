@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <vector>
 
-#include "vbscf/integrals/ao/ao_integral_input.hpp"
+#include "vbscf/integrals/ao/contracts/input.hpp"
 
 namespace xmvb::vb {
 

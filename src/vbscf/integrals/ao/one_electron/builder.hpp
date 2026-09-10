@@ -4,9 +4,9 @@
 
 #include <vector>
 
-#include "vbscf/integrals/ao/ao_integral_input.hpp"
-#include "vbscf/integrals/ao/ao_effective_one_electron_result.hpp"
-#include "vbscf/integrals/ao/ri_factorization.hpp"
+#include "vbscf/integrals/ao/contracts/input.hpp"
+#include "vbscf/integrals/ao/one_electron/result.hpp"
+#include "vbscf/integrals/ao/ri/factorization.hpp"
 #include "vbscf/orbitals/preparation/result.hpp"
 
 namespace xmvb::vb {

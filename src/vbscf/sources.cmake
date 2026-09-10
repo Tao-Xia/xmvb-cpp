@@ -36,13 +36,13 @@ set(XMVB_VBSCF_ORBITAL_SOURCES
 )
 
 set(XMVB_VBSCF_AO_INTEGRAL_SOURCES
-  vbscf/integrals/ao/ao_effective_one_electron_backpropagator.cpp
-  vbscf/integrals/ao/ao_effective_one_electron_builder.cpp
-  vbscf/integrals/ao/ao_effective_one_electron_graph_operator.cpp
-  vbscf/integrals/ao/ao_effective_one_electron_ri_operator.cpp
-  vbscf/integrals/ao/libcint_input_validation.cpp
-  vbscf/integrals/ao/ri_integral_cache.cpp
-  vbscf/integrals/ao/two_electron_pair_index.cpp
+  vbscf/integrals/ao/one_electron/backpropagator.cpp
+  vbscf/integrals/ao/one_electron/builder.cpp
+  vbscf/integrals/ao/one_electron/graph_operator.cpp
+  vbscf/integrals/ao/one_electron/ri_operator.cpp
+  vbscf/integrals/ao/libcint/validation.cpp
+  vbscf/integrals/ao/ri/cache.cpp
+  vbscf/integrals/ao/pairs/two_electron_index.cpp
 )
 
 set(XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES

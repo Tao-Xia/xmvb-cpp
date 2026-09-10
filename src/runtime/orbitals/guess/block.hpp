@@ -4,7 +4,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/ao/libcint_input.hpp"
+#include "vbscf/integrals/ao/libcint/input.hpp"
 #include "vbscf/orbitals/preparation/input.hpp"
 #include "vbscf/orbitals/charts/partition.hpp"
 

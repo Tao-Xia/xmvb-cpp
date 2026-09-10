@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vbscf/integrals/ao/libcint_input.hpp"
+#include "vbscf/integrals/ao/libcint/input.hpp"
 
 namespace xmvb::vb {
 

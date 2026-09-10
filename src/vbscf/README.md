@@ -44,7 +44,14 @@ vbscf/
     gauge/              Support-preserving gauge operations
     preparation/        Validated orbital frames and preparation contracts
     pullback/           Coordinate-map adjoint and its result contract
-  integrals/            AO and active-space integral transformations
+  integrals/
+    ao/
+      contracts/        Backend-neutral AO integral input
+      libcint/          libcint input and validation
+      one_electron/     Effective one-electron construction and pullback
+      pairs/            Packed AO-pair indexing
+      ri/               RI factorization contracts and cache
+    active/             Active-space integral transformations and responses
   determinants/         Determinant overlap and Hamiltonian kernels
   structures/
     assembly/           Hamiltonian/overlap matrices and contractions

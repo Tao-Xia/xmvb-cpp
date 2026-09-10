@@ -1,4 +1,4 @@
-#include "vbscf/integrals/ao/two_electron_pair_index.hpp"
+#include "vbscf/integrals/ao/pairs/two_electron_index.hpp"
 
 #include <algorithm>
 #include <atomic>

@@ -12,8 +12,8 @@
 #include <omp.h>
 #endif
 
-#include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
-#include "vbscf/integrals/ao/ao_integral_input.hpp"
+#include "vbscf/integrals/ao/one_electron/graph_operator.hpp"
+#include "vbscf/integrals/ao/contracts/input.hpp"
 #include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::vb::detail {
