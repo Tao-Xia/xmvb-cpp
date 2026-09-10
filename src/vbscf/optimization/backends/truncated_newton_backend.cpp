@@ -266,13 +266,13 @@ BackendRunResult run_truncated_newton_backend(
           *accepted_trial_energy = candidate_trial_energy;
           return true;
         };
-    auto try_nonredundant_descent_fallback_step =
+    auto try_safeguarded_nonredundant_descent_step =
         [&](Eigen::VectorXd* accepted_packed_step,
             VbScfObjective* accepted_trial_objective,
             Eigen::VectorXd* accepted_trial_parameters,
             Eigen::VectorXd* accepted_trial_gradient,
             double* accepted_trial_energy) -> bool {
-          Eigen::VectorXd fallback_reduced_direction =
+          Eigen::VectorXd descent_reduced_direction =
               -apply_nonredundant_truncated_newton_preconditioner(
                   current_space,
                   &transported_preconditioner,
@@ -282,7 +282,7 @@ BackendRunResult run_truncated_newton_backend(
                   current_orbital_input,
                   current_space,
                   parameter_view,
-                  fallback_reduced_direction);
+                  descent_reduced_direction);
           double directional_derivative =
               current_gradient.dot(search_direction);
           if (!std::isfinite(directional_derivative) ||
@@ -290,14 +290,14 @@ BackendRunResult run_truncated_newton_backend(
               is_effectively_zero_step(
                   search_direction,
                   current_parameters)) {
-            fallback_reduced_direction =
+            descent_reduced_direction =
                 -current_projection.reduced_gradient;
             search_direction =
                 gather_nonredundant_retract_tangent(
                     current_orbital_input,
                     current_space,
                     parameter_view,
-                    fallback_reduced_direction);
+                    descent_reduced_direction);
             directional_derivative =
                 current_gradient.dot(search_direction);
           }
@@ -316,7 +316,7 @@ BackendRunResult run_truncated_newton_backend(
                       reduced_search_direction_norm > 0.0
                   ? trust_radius / reduced_search_direction_norm
                   : options.minimum_step_size;
-          const double initial_fallback_step =
+          const double initial_descent_step =
               std::max(
                   options.minimum_step_size,
                   std::min(
@@ -324,43 +324,43 @@ BackendRunResult run_truncated_newton_backend(
                           std::min(1.0, options.initial_step_size),
                           1.0 / std::max(1.0, reduced_gradient_inf_norm)),
                       trust_radius_limited_initial_step));
-          // The descent fallback is entered only after the current
+          // The safeguarded descent step is considered only after the current
           // accepted-point Newton model already failed to produce an
           // acceptable trust-region step. Starting the Armijo backtrack
           // from a reduced step that already fits inside the current
           // trust radius avoids burning many full objective evaluations
           // just to rediscover the same radius contraction.
-          VbScfObjective fallback_objective =
+          VbScfObjective descent_objective =
               objective->make_probe_copy();
-          Eigen::VectorXd fallback_parameters(current_parameters.size());
-          Eigen::VectorXd fallback_gradient(current_gradient.size());
-          double fallback_energy = energy;
+          Eigen::VectorXd descent_parameters(current_parameters.size());
+          Eigen::VectorXd descent_gradient(current_gradient.size());
+          double descent_energy = energy;
           if (!try_armijo_backtracking_nonredundant_direction(
-                  &fallback_objective,
+                  &descent_objective,
                   current_orbital_input,
                   current_space,
                   parameter_view,
                   current_parameters,
                   energy,
                   current_gradient,
-                  fallback_reduced_direction,
+                  descent_reduced_direction,
                   search_direction,
-                  initial_fallback_step,
+                  initial_descent_step,
                   options.minimum_step_size,
                   options.armijo_constant,
-                  &fallback_parameters,
-                  &fallback_gradient,
-                  &fallback_energy)) {
+                  &descent_parameters,
+                  &descent_gradient,
+                  &descent_energy)) {
             return false;
           }
   
           *accepted_packed_step =
-              fallback_parameters - current_parameters;
+              descent_parameters - current_parameters;
           *accepted_trial_objective =
-              std::move(fallback_objective);
-          *accepted_trial_parameters = std::move(fallback_parameters);
-          *accepted_trial_gradient = std::move(fallback_gradient);
-          *accepted_trial_energy = fallback_energy;
+              std::move(descent_objective);
+          *accepted_trial_parameters = std::move(descent_parameters);
+          *accepted_trial_gradient = std::move(descent_gradient);
+          *accepted_trial_energy = descent_energy;
           return true;
         };
     const Eigen::Index reduced_size =
@@ -497,18 +497,18 @@ BackendRunResult run_truncated_newton_backend(
         reduced_gradient_inf_norm >=
             8.0 * options.gradient_tolerance &&
         model_step.encountered_negative_curvature) {
-      if (try_nonredundant_descent_fallback_step(
+      if (try_safeguarded_nonredundant_descent_step(
               &packed_step,
               objective,
               &trial_parameters,
               &trial_gradient,
               &trial_energy)) {
         accepted_trial = true;
-        const double fallback_actual_decrease = energy - trial_energy;
+        const double safeguarded_actual_decrease = energy - trial_energy;
         trial_evaluation_cache.actual_decrease =
-            fallback_actual_decrease;
+            safeguarded_actual_decrease;
         trial_evaluation_cache.predicted_decrease =
-            fallback_actual_decrease;
+            safeguarded_actual_decrease;
         truncated_newton_step.used_krylov_rescue = true;
         truncated_newton_step.reached_boundary = false;
         truncated_newton_step.encountered_negative_curvature = false;

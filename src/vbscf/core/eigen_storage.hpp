@@ -60,8 +60,8 @@ inline std::vector<double> copy_matrix_to_row_major_buffer(
 /**
  * @brief Flattens one column-major Eigen matrix into column-major storage.
  *
- * Use this only at compatibility boundaries that still consume raw contiguous
- * buffers but already follow the repository-wide column-major convention.
+ * Use this only for kernels whose numerical contract is a contiguous
+ * column-major buffer.
  */
 inline std::vector<double> flatten_matrix_column_major(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix) {

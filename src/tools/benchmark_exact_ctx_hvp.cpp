@@ -41,8 +41,6 @@ struct Options {
   int dense_reference_block_width = 0;
   int block_width = 2;
   std::string orbital_value_table_bin_path;
-  xmvb::vb::AoIntegralSource ao_integral_source =
-      xmvb::vb::AoIntegralSource::Auto;
 };
 
 enum class BenchmarkComponent {
@@ -81,7 +79,6 @@ void print_usage() {
       << "usage: benchmark_exact_ctx_hvp <input.xmi>"
       << " [--repeats count]"
       << " [--warmup count]"
-      << " [--ao-integral-source auto|libcint|runtime_hcore]"
       << " [--nonredundant-adapt true|false]"
       << " [--gauge-audit true|false]\n";
   std::cerr << " [--curvature-audit-directions count|0=disabled]\n";
@@ -111,20 +108,6 @@ int parse_positive_or_zero_int(
   return parsed;
 }
 
-xmvb::vb::AoIntegralSource parse_ao_integral_source(
-    const std::string& value) {
-  if (value == "auto") {
-    return xmvb::vb::AoIntegralSource::Auto;
-  }
-  if (value == "libcint") {
-    return xmvb::vb::AoIntegralSource::LibcintMaterialized;
-  }
-  if (value == "runtime_hcore") {
-    return xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-  }
-  throw std::invalid_argument("invalid AO integral source: " + value);
-}
-
 Options parse_arguments(int argc, char** argv) {
   if (argc < 2 || ((argc - 2) % 2 != 0)) {
     print_usage();
@@ -142,10 +125,6 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (name == "--warmup") {
       options.warmup = parse_positive_or_zero_int(value, "--warmup");
-      continue;
-    }
-    if (name == "--ao-integral-source") {
-      options.ao_integral_source = parse_ao_integral_source(value);
       continue;
     }
     if (name == "--nonredundant-adapt") {
@@ -241,17 +220,12 @@ Eigen::VectorXd apply_component(
 }
 
 AcceptedPointBenchmarkContext build_benchmark_context(
-    const Options& options,
-    xmvb::vb::AoIntegralSource* loaded_ao_integral_source) {
+    const Options& options) {
   xmvb::vb::VbScfInputLoadOptions load_options;
-  load_options.ao_integral_source = options.ao_integral_source;
   load_options.standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Exact;
   const auto load_result =
       xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
-  if (loaded_ao_integral_source != nullptr) {
-    *loaded_ao_integral_source = load_result.ao_integral_source;
-  }
 
   AcceptedPointBenchmarkContext context{
       options.nonredundant_adapt
@@ -768,10 +742,8 @@ void print_measurement(const BenchmarkMeasurement& measurement) {
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    xmvb::vb::AoIntegralSource loaded_ao_integral_source =
-        xmvb::vb::AoIntegralSource::Auto;
     const AcceptedPointBenchmarkContext context =
-        build_benchmark_context(options, &loaded_ao_integral_source);
+        build_benchmark_context(options);
 
     std::vector<BenchmarkComponent> components = {
         BenchmarkComponent::Full,
@@ -801,9 +773,6 @@ int main(int argc, char** argv) {
     for (std::size_t j = 1; j < energies.size(); ++j)
       nearest_gap = std::min(nearest_gap, std::abs(energies[j]-energies[0]));
     std::cout << "selected_state_nearest_gap = " << nearest_gap << '\n';
-    std::cout << "ao_integral_source = "
-              << xmvb::vb::ao_integral_source_name(loaded_ao_integral_source)
-              << '\n';
     std::cout << "reduced_dimension = "
               << context.reduced_direction.size() << '\n';
     const auto space_diagnostics =

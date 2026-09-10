@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/libcint_compat.hpp"
+#include "runtime/libcint_c_api.hpp"
 #include "runtime/gaussian_shell_normalization.hpp"
 
 namespace xmvb::vb {

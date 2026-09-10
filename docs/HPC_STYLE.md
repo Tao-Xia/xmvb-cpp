@@ -17,12 +17,12 @@ This repository contains performance-sensitive numerical chemistry code. New cod
 - If the data has matrix semantics, store it as `Eigen::MatrixXd`.
 - If the data has vector semantics, store it as `Eigen::VectorXd`.
 - `std::vector<T>` is for true 1D data only: index lists, sparse/picked entries, packed-triangle storage, raw IO buffers, or other layouts that are genuinely not dense Eigen matrices.
-- If a legacy kernel still needs one row-contiguous compatibility buffer, keep that buffer local, name it with a `_buffer` suffix, and convert at the boundary with explicit helpers such as `copy_matrix_to_legacy_row_buffer(...)` and `copy_legacy_row_buffer_to_matrix(...)`.
+- If a numerical kernel requires one row-contiguous buffer, keep that buffer local, name it with a `_buffer` suffix, and convert at the boundary with `copy_matrix_to_row_major_buffer(...)` and `copy_row_major_buffer_to_matrix(...)`.
 - Do not add aliases such as `using Matrix = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::ColMajor>;`.
 - Do not introduce new row-major dense storage in C++ code.
-- Existing row-major legacy or interoperability paths must be treated as migration debt. Isolate them, document the reason, and prefer converting at the boundary into column-major storage.
+- Row-major kernel boundaries must be isolated and documented; all public and cross-module matrix interfaces remain column-major.
 - Prefer direct `Eigen::Map<const Eigen::MatrixXd>` or `Eigen::Ref<const Eigen::MatrixXd>` forms over introducing project-local shorthand aliases.
-- Do not do row-pointer arithmetic on `Eigen::MatrixXd`. In column-major storage, columns are contiguous and rows are generally strided. If a legacy kernel truly needs one row as a contiguous buffer, make that copy explicitly at the boundary.
+- Do not do row-pointer arithmetic on `Eigen::MatrixXd`. In column-major storage, columns are contiguous and rows are generally strided. If a kernel requires one row as a contiguous buffer, make that copy explicitly at the boundary.
 
 ## Debug And Monitoring Code
 

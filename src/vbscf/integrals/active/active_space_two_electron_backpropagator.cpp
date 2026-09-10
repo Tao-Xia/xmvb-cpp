@@ -555,7 +555,6 @@ ActiveSpaceTwoElectronBackpropagationResult
 ActiveSpaceTwoElectronBackpropagator::backpropagate(
     const std::vector<double>& ri_active_pair_factor_gradient,
     const VbScfInput& input,
-    const OrbitalPreparationResult& orbital_preparation_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -572,28 +571,19 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
     throw std::invalid_argument("invalid active-orbital column range");
   }
 
-  const std::vector<double>* dense_active_coefficients = nullptr;
-  std::vector<double> cached_dense_active_coefficients;
-  std::vector<double> fallback_dense_active_coefficients;
   if (active_space_two_electron_result.dense_active_coefficients.size() == 0) {
-    fallback_dense_active_coefficients =
-        build_dense_active_coefficients(
-            orbital_preparation_result,
-            n_basis_functions,
-            n_active_orbitals);
-    dense_active_coefficients = &fallback_dense_active_coefficients;
-  } else {
-    cached_dense_active_coefficients =
-        copy_matrix_to_row_major_buffer(
-            active_space_two_electron_result.dense_active_coefficients);
-    dense_active_coefficients = &cached_dense_active_coefficients;
+    throw std::invalid_argument(
+        "RI active-space result is missing dense active coefficients");
   }
+  const std::vector<double> dense_active_coefficients =
+      copy_matrix_to_row_major_buffer(
+          active_space_two_electron_result.dense_active_coefficients);
 
   const auto& ao_ri_result = ensure_vbscf_input_ri_cache(input);
   return backpropagate_ri_active_pair_factors(
       ri_active_pair_factor_gradient,
       ao_ri_result,
-      *dense_active_coefficients,
+      dense_active_coefficients,
       n_basis_functions,
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
@@ -653,7 +643,6 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
     const std::vector<double>& packed_active_two_electron_gradient,
     const std::vector<double>& ao_two_electron_integral_values,
     const std::vector<int>& ao_two_electron_integral_indices,
-    const OrbitalPreparationResult& orbital_preparation_result,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -669,22 +658,13 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
     throw std::invalid_argument("invalid active-orbital column range");
   }
 
-  const std::vector<double>* dense_active_coefficients = nullptr;
-  std::vector<double> cached_dense_active_coefficients;
-  std::vector<double> fallback_dense_active_coefficients;
   if (active_space_two_electron_result.dense_active_coefficients.size() == 0) {
-    fallback_dense_active_coefficients =
-        build_dense_active_coefficients(
-            orbital_preparation_result,
-            n_basis_functions,
-            n_active_orbitals);
-    dense_active_coefficients = &fallback_dense_active_coefficients;
-  } else {
-    cached_dense_active_coefficients =
-        copy_matrix_to_row_major_buffer(
-            active_space_two_electron_result.dense_active_coefficients);
-    dense_active_coefficients = &cached_dense_active_coefficients;
+    throw std::invalid_argument(
+        "active-space result is missing dense active coefficients");
   }
+  const std::vector<double> dense_active_coefficients =
+      copy_matrix_to_row_major_buffer(
+          active_space_two_electron_result.dense_active_coefficients);
   const std::vector<double>* cached_dense_ao_pair_products = nullptr;
   std::vector<double> cached_dense_ao_pair_products_storage;
   if (active_space_two_electron_result.dense_ao_pair_products.size() != 0) {
@@ -697,7 +677,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
       packed_active_two_electron_gradient,
       ao_two_electron_integral_values,
       ao_two_electron_integral_indices,
-      *dense_active_coefficients,
+      dense_active_coefficients,
       cached_dense_ao_pair_products,
       n_basis_functions,
       n_inactive_doubly_occupied_orbitals,

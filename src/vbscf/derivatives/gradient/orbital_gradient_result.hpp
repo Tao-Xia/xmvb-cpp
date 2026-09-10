@@ -120,11 +120,6 @@ struct OrbitalGradientResult {
   std::vector<double> packed_active_two_electron_integrals;
 
   /**
-   * @brief Historical configuration field retained for evaluator compatibility.
-   */
-  double finite_difference_step = 0.0;
-
-  /**
    * @brief Flat indices of the explicit sparse orbital coefficients.
    */
   std::vector<int> differentiable_parameter_indices;

@@ -819,7 +819,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
       cache_context.beta_pair_cache.clear();
     }
   } else {
-    // Pure RI fallback — no materialized packed integrals.
+    // Direct RI representation — no materialized packed integrals.
     // Streamed callers can skip the dense `G u` / `G x` images entirely and
     // keep only the sparse packed-pair coefficients in the cache.
     std::vector<double> reconstructed_eri;

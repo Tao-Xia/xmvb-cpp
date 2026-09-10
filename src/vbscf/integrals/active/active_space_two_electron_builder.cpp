@@ -1157,13 +1157,13 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
           active_auxiliary_orbitals,
           n_basis_functions,
           n_active_orbitals);
-  std::vector<int> fallback_pair_indices;
+  std::vector<int> derived_pair_indices;
   if (ao_two_electron_pair_indices == nullptr || ao_two_electron_pair_indices->empty()) {
-    fallback_pair_indices =
+    derived_pair_indices =
         build_ao_two_electron_pair_indices(
             ao_two_electron_integral_indices,
             n_basis_functions);
-    ao_two_electron_pair_indices = &fallback_pair_indices;
+    ao_two_electron_pair_indices = &derived_pair_indices;
   } else if (ao_two_electron_pair_indices->size() !=
              ao_two_electron_integral_values.size() * 2) {
     throw std::invalid_argument("AO two-electron pair index/value sizes are inconsistent");
@@ -1189,13 +1189,13 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
   if (ao_two_electron_integral_indices.size() != ao_two_electron_integral_values.size() * 4) {
     throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
   }
-  std::vector<int> fallback_pair_indices;
+  std::vector<int> derived_pair_indices;
   if (ao_two_electron_pair_indices == nullptr || ao_two_electron_pair_indices->empty()) {
-    fallback_pair_indices =
+    derived_pair_indices =
         build_ao_two_electron_pair_indices(
             ao_two_electron_integral_indices,
             n_basis_functions);
-    ao_two_electron_pair_indices = &fallback_pair_indices;
+    ao_two_electron_pair_indices = &derived_pair_indices;
   } else if (ao_two_electron_pair_indices->size() !=
              ao_two_electron_integral_values.size() * 2) {
     throw std::invalid_argument("AO two-electron pair index/value sizes are inconsistent");

@@ -231,7 +231,7 @@ LibcintShellBlock LibcintDirectShellEvaluator::evaluate_one_electron_shell_pair(
           input_.n_shells,
           const_cast<double*>(input_.env.data()));
       if (status != 0) {
-        // The standalone C++ code uses the same AO normalization convention as
+        // The runtime uses the same AO normalization convention as
         // Every AO matrix lives in the
         // diagonally normalized Cartesian AO basis.  Core-H and ERI shell
         // blocks were already converted at this boundary; overlap must be

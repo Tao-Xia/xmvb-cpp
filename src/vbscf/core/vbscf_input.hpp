@@ -25,7 +25,7 @@ enum class PfTwoElectronMode {
 };
 
 /**
- * @brief End-to-end input bundle for the C++ VB matrix path.
+ * @brief End-to-end input bundle for the VBSCF matrix path.
  */
 struct VbScfInput {
   /**
@@ -44,25 +44,24 @@ struct VbScfInput {
   AoIntegralInput ao_integral_input;
 
   /**
-   * @brief Raw libcint arrays retained for future C++-native integral generation.
+   * @brief Primary-basis libcint input used by AO integral providers.
    */
   LibcintInput libcint_input;
 
   /**
    * @brief Optional explicit RI auxiliary basis parsed from the input/runtime.
    *
-   * When present, the standard RI path should prefer this basis over any
-   * generated fallback so `INT=RI` follows the same auxiliary-basis semantics
-   * as the runtime.
+   * When present, the RI path uses this basis. Otherwise the RI provider
+   * generates the auxiliary basis defined by its numerical contract.
    */
   LibcintInput auxiliary_libcint_input;
 
   /**
    * @brief Requested standard-VB two-electron representation.
    *
-   * This mode selects how the active-space two-electron intermediates are
-   * built. The AO-integral source may still choose an exact or Hcore-only path
-   * independently so RI runs can skip exact AO four-center materialization.
+   * This mode selects both the AO integral preparation and the active-space
+   * two-electron representation. Exact mode materializes four-center AO
+   * integrals; RI mode builds the factorized representation directly.
    */
   StandardTwoElectronMode standard_two_electron_mode =
       StandardTwoElectronMode::Auto;

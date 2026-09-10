@@ -6,7 +6,7 @@
 namespace xmvb::vb {
 
 /**
- * @brief Rebuilds auxiliary occupied and virtual orbitals in pure C++.
+ * @brief Rebuilds auxiliary occupied and virtual orbitals.
  *
  * This class is the C++ replacement for the orbital-preparation part of
  * `Orbprep`. It constructs the auxiliary orbital matrix and the active-space

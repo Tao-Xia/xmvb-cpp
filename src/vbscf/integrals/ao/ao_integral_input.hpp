@@ -8,7 +8,7 @@
 namespace xmvb::vb {
 
 /**
- * @brief Raw AO integral data required by the C++ VBSCF matrix builders.
+ * @brief Raw AO integral data required by the VBSCF matrix builders.
  */
 struct AoIntegralInput {
   /**

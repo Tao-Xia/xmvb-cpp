@@ -39,8 +39,6 @@ enum class EnergyComponent {
 struct Options {
   std::string input_path;
   std::string orbital_value_table_bin_path;
-  xmvb::vb::AoIntegralSource ao_integral_source =
-      xmvb::vb::AoIntegralSource::Auto;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Auto;
   EnergyComponent component = EnergyComponent::Total;
@@ -203,19 +201,6 @@ std::pair<int, int> parse_orbital_range_argument(const std::string& value) {
   return {std::stoi(begin_text), std::stoi(end_text)};
 }
 
-xmvb::vb::AoIntegralSource parse_ao_integral_source(const std::string& value) {
-  if (value == "auto") {
-    return xmvb::vb::AoIntegralSource::Auto;
-  }
-  if (value == "libcint") {
-    return xmvb::vb::AoIntegralSource::LibcintMaterialized;
-  }
-  if (value == "runtime_hcore") {
-    return xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-  }
-  throw std::invalid_argument("invalid AO integral source: " + value);
-}
-
 std::vector<std::unordered_set<int>> collect_orbital_support_sets(
     const xmvb::vb::OrbitalPreparationInput& orbital_preparation_input) {
   std::vector<std::unordered_set<int>> support_sets(
@@ -315,7 +300,6 @@ std::vector<double> read_f64_binary_file(const std::string& path) {
 void print_usage() {
   std::cerr << "usage: check_orbital_gradient <input.xmi> "
                "[--orbital-value-table-bin <path>] "
-               "[--ao-integral-source auto|libcint|runtime_hcore] "
                "[--standard-two-electron-mode auto|exact|ri] "
                "[--component total|reference|nonreference] "
                "[--count N] [--step h] "
@@ -340,10 +324,6 @@ Options parse_arguments(int argc, char** argv) {
     const std::string argument_value = argv[argument_index + 1];
     if (argument_name == "--orbital-value-table-bin") {
       options.orbital_value_table_bin_path = argument_value;
-      continue;
-    }
-    if (argument_name == "--ao-integral-source") {
-      options.ao_integral_source = parse_ao_integral_source(argument_value);
       continue;
     }
     if (argument_name == "--standard-two-electron-mode") {
@@ -538,7 +518,6 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     xmvb::vb::VbScfInputLoadOptions load_options;
-    load_options.ao_integral_source = options.ao_integral_source;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
@@ -581,8 +560,6 @@ int main(int argc, char** argv) {
         load_result.nuclear_repulsion_energy,
         options.component);
     std::cout << std::setprecision(12);
-    std::cout << "ao_integral_source = "
-              << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source) << '\n';
     std::cout << "orbital_value_table_override = "
               << (options.orbital_value_table_bin_path.empty()
                       ? "none"

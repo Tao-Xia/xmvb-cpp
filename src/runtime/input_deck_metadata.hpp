@@ -10,7 +10,7 @@ namespace xmvb::vb {
  * @brief Pure C++ summary of the `$CTRL` metadata needed by the standalone loader.
  *
  * This parser intentionally targets the subset of historical XMVB deck syntax
- * that the standalone C++ front-end consumes directly: basis selection,
+ * that the front-end consumes directly: basis selection,
  * guess/orbital chart types, charge/unit metadata, SCF iteration limits, and
  * a few standalone flags. Keeping these fields in a dedicated C++ object
  * avoids routing the pure loader through the old monolithic C runtime headers.

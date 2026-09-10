@@ -3,7 +3,7 @@
 // Small numerical and validation helpers shared across the SCF optimizer
 // line-search, truncated-Newton, and outer-loop code. Kept header-only and
 // inline so that split optimizer translation units can call them without
-// introducing a dedicated source file or another compatibility layer.
+// introducing a dedicated source file.
 
 #include <cmath>
 #include <limits>

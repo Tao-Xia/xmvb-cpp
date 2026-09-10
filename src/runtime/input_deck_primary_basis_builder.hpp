@@ -9,7 +9,7 @@
 namespace xmvb::vb {
 
 /**
- * @brief Primary basis resolution result for the standalone pure C++ loader.
+ * @brief Primary basis resolution result for the input loader.
  *
  * `basis_file_path` is the concrete `.gbs` file opened by the parser after
  * applying the supported basis-name normalization rules. `basis_display_name`

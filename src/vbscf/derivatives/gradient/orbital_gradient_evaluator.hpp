@@ -18,7 +18,7 @@ namespace xmvb::vb {
 struct AcceptedPointContext;
 
 /**
- * @brief Orbital-gradient evaluator on top of the C++ VBSCF path.
+ * @brief VBSCF orbital-gradient evaluator.
  *
  * This evaluator uses the analytic active-space gradient kernels and
  * backpropagates them to the sparse orbital coefficient table. The overlap,
@@ -30,8 +30,7 @@ public:
   /**
    * @brief Creates an evaluator with default helper components.
    */
-  explicit OrbitalGradientEvaluator(
-      double finite_difference_step = 1.0e-5);
+  OrbitalGradientEvaluator();
 
   /**
    * @brief Creates an evaluator with explicit helper components.
@@ -43,13 +42,12 @@ public:
       AoEffectiveOneElectronBackpropagator ao_effective_one_electron_backpropagator,
       ActiveSpaceMatrixBackpropagator active_space_matrix_backpropagator,
       ActiveSpaceTwoElectronBackpropagator active_space_two_electron_backpropagator,
-      ActiveSpaceOrbitalBackpropagator active_space_orbital_backpropagator,
-      double finite_difference_step);
+      ActiveSpaceOrbitalBackpropagator active_space_orbital_backpropagator);
 
   /**
    * @brief Evaluates the ground-state orbital gradient.
    *
-   * @param input C++ VB input bundle.
+   * @param input VBSCF input bundle.
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
    * @return OrbitalGradientResult Baseline result and orbital gradient.
    */
@@ -71,7 +69,7 @@ public:
   /**
    * @brief Evaluates a state-averaged orbital gradient.
    *
-   * @param input C++ VB input bundle.
+   * @param input VBSCF input bundle.
    * @param selected_state_indices Zero-based state indices.
    * @param state_average_weights Non-negative state-averaging weights.
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
@@ -150,8 +148,6 @@ private:
   ActiveSpaceMatrixBackpropagator active_space_matrix_backpropagator_;
   ActiveSpaceTwoElectronBackpropagator active_space_two_electron_backpropagator_;
   ActiveSpaceOrbitalBackpropagator active_space_orbital_backpropagator_;
-  double finite_difference_step_ = 1.0e-5;
-
   OrbitalGradientResult evaluate_from_active_space_gradient_result(
       const VbScfInput& input,
       ActiveSpaceGradientResult active_space_gradient_result,

@@ -281,12 +281,8 @@ void print_header(
     print_log_field("Basis file", load_result.basis_name);
   }
   print_log_field(
-      "AO integral source",
-      xmvb::vb::ao_integral_source_name(load_result.ao_integral_source));
-  print_log_field(
       "Two-electron mode",
       xmvb::vb::standard_two_electron_mode_name(load_result.standard_two_electron_mode));
-  print_log_field("Orbital guess", "standalone C++");
   print_log_field(
       "Molden output",
       load_result.request_molden_output ? "requested" : "not requested");

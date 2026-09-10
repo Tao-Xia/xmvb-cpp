@@ -281,10 +281,8 @@ int main(int argc, char** argv) {
     }
 
     xmvb::vb::VbScfInputLoadOptions load_options;
-    load_options.ao_integral_source =
-        xmvb::vb::AoIntegralSource::LibcintMaterialized;
     load_options.standard_two_electron_mode =
-        xmvb::vb::StandardTwoElectronMode::Auto;
+        xmvb::vb::StandardTwoElectronMode::Exact;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(argv[1], load_options);
     const auto& input = load_result.input;

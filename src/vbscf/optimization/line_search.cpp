@@ -106,7 +106,7 @@ bool try_armijo_backtracking_nonredundant_direction(
 }
 
 
-bool try_steepest_descent_armijo_fallback(
+bool try_steepest_descent_armijo_step(
     VbScfObjective* objective,
     const LBFGSpp::LBFGSParam<double>& param,
     const Eigen::VectorXd& start_parameters,

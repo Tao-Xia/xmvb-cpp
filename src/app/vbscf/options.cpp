@@ -76,27 +76,6 @@ void apply_raw_structure_selection_argument(
   throw std::invalid_argument("invalid raw structure selection: " + selection_name);
 }
 
-void apply_ao_integral_source_argument(
-    const std::string& source_name,
-    xmvb::vb::VbScfInputLoadOptions* options) {
-  if (options == nullptr) {
-    throw std::invalid_argument("load options must not be null");
-  }
-  if (source_name == "auto") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-    return;
-  }
-  if (source_name == "libcint") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::LibcintMaterialized;
-    return;
-  }
-  if (source_name == "runtime_hcore") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-    return;
-  }
-  throw std::invalid_argument("invalid AO integral source: " + source_name);
-}
-
 void apply_standard_two_electron_mode_argument(
     const std::string& mode_name,
     xmvb::vb::VbScfInputLoadOptions* options) {
@@ -132,7 +111,6 @@ void print_usage() {
                " [--nonredundant-truncated-newton-hvp-step-size <value>]"
                " [--nonredundant-truncated-newton-transport-history-size <count>]"
                " [--standard-two-electron-mode auto|exact|ri]"
-               " [--ao-integral-source auto|libcint|runtime_hcore]"
                " [--skip-orbital-guess true|false]"
                " [--raw-structure-selection full|covalent]"
                " [--dump-trace-dir <dataset_root>]"
@@ -150,7 +128,6 @@ std::optional<Options> parse_options(int argc, char** argv) {
 
   const std::string input_path = argv[1];
   xmvb::vb::VbScfInputLoadOptions load_options;
-  load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
   load_options.standard_two_electron_mode = xmvb::vb::StandardTwoElectronMode::Auto;
   xmvb::vb::VbScfOptimizerOptions options;
   // The CLI path only needs accepted-iterate snapshots when trace dumping is
@@ -204,8 +181,6 @@ std::optional<Options> parse_options(int argc, char** argv) {
           "--nonredundant-truncated-newton-transport-history-size") {
         options.nonredundant_truncated_newton_transport_history_size =
             std::stoi(argument_value);
-      } else if (argument_name == "--ao-integral-source") {
-        apply_ao_integral_source_argument(argument_value, &load_options);
       } else if (argument_name == "--standard-two-electron-mode") {
         apply_standard_two_electron_mode_argument(argument_value, &load_options);
       } else if (argument_name == "--skip-orbital-guess") {

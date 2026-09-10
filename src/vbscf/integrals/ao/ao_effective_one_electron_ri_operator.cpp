@@ -433,7 +433,7 @@ std::vector<double> apply_dense_ri_operator(
       n_threads,
       std::vector<double>(matrix_size, 0.0));
 
-  // The dense RI fallback has the same reduction shape as the low-rank path:
+  // The dense RI contraction has the same reduction shape as the low-rank path:
   // local AO matrices avoid write conflicts, while the capped team width keeps
   // the memory footprint proportional to useful auxiliary work.
 #pragma omp parallel num_threads(n_threads)
@@ -465,7 +465,7 @@ std::vector<double> apply_dense_ri_operator(
           n_basis_functions,
           &factor_matrix);
 
-      // Even in the dense fallback we only expose the lower triangle of `L_A`
+      // In the dense contraction we expose only the lower triangle of `L_A`
       // to BLAS symmetric kernels, which avoids treating the RI factor as a
       // generic dense matrix and matches the dense-lower cache layout.
       cblas_dsymm(

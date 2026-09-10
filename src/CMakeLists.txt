@@ -5,7 +5,7 @@ if (NOT DEFINED XMVB_BUILD_DEV_TARGETS)
     XMVB_BUILD_DEV_TARGETS
     OFF
     CACHE BOOL
-    "Build C++ comparison, diagnostic, and test targets in addition to xmvb-cpp.exe."
+    "Build comparison, diagnostic, and test targets in addition to xmvb-cpp.exe."
     FORCE)
 endif()
 

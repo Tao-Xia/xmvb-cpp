@@ -20,7 +20,7 @@ struct AcceptedPointContext;
 /**
  * @brief Analytic gradient evaluator for the active-space integral layer.
  *
- * This evaluator differentiates the C++ VBSCF energy with respect
+ * This evaluator differentiates the VBSCF energy with respect
  * to:
  * - the active-space one-electron matrix `HHO`
  * - the packed active-space two-electron integrals `GGO`

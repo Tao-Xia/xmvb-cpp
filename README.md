@@ -10,7 +10,6 @@ Valence Bond theory provides direct chemical insight into bonding, reactivity, a
 - **Hamiltonian and overlap matrix construction** for general VB structures
 - **Active-space orbital optimization** with flexible orbital constraints
 - **RI (Resolution-of-Identity)** integral approximation for two-electron terms
-- **Pfaffian VBSCF** ansatz for open-shell and multi-reference systems
 - **Hartree-Fock and DFT initial guess** (libcint + libxc)
 - **OpenMP parallelization** for compute-intensive kernels
 - **Molden output** for orbital visualization
@@ -28,7 +27,6 @@ src/
     derivatives/   Gradient and matrix-free Hessian-vector products
     optimization/  L-BFGS and trust-region Newton solvers
     workflow/      End-to-end VBSCF evaluation
-  pfaffian_vbscf/  Pfaffian-based VB methods
   runtime/         Input parsing, molecule/basis setup, integral preparation
   tools/           Benchmarking and diagnostic tools
   third_party/     Vendored dependencies (LBFGSpp)

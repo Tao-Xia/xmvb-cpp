@@ -29,7 +29,7 @@ public:
    * @brief Resolves determinant overlap quantities for a square overlap matrix.
    *
    * The input matrix must use column-major storage so that it remains layout
-   * compatible with the existing Fortran-side matrices.
+   * in the project-wide column-major matrix layout.
    *
    * @param overlap_submatrix Column-major determinant overlap submatrix.
    * @param n_electrons Dimension of the square matrix.

@@ -277,11 +277,6 @@ AoEffectiveOneElectronResult build_ao_effective_one_electron(
       ao_two_electron_integral_values.data();
   const int* ao_two_electron_integral_indices_data =
       ao_two_electron_integral_indices.data();
-  if (ao_two_electron_integral_symmetry_shifts == nullptr &&
-      !validate_integral_indices) {
-    // Trusted input can still omit symmetry-shift caches. Fall back to the
-    // branchy scaling path without changing numerical behavior.
-  }
   std::vector<std::size_t> column_offsets;
   if (ao_effective_one_electron_linear_indices == nullptr) {
     column_offsets = build_column_offsets(n_basis_functions);

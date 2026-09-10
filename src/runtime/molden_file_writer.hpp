@@ -18,7 +18,7 @@ namespace xmvb::vb {
  *
  * @param input_file_path Path to the source `.xmi` deck whose stem names the
  *        Molden output file.
- * @param input Current C++ VB input bundle after loading or optimization.
+ * @param input Current VBSCF input bundle after loading or optimization.
  * @return Absolute path to the written `.molden` file.
  */
 std::filesystem::path write_molden_file(

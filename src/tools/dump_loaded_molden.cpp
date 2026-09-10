@@ -13,8 +13,7 @@ namespace {
 void print_usage() {
   std::cerr
       << "usage: dump_loaded_molden <input.xmi> <output_stem.xmi>"
-      << " [--skip-orbital-guess true|false]"
-      << " [--ao-integral-source auto|libcint|runtime_hcore]\n";
+      << " [--skip-orbital-guess true|false]\n";
 }
 
 bool parse_bool_argument(const std::string& value) {
@@ -25,27 +24,6 @@ bool parse_bool_argument(const std::string& value) {
     return false;
   }
   throw std::invalid_argument("invalid boolean value: " + value);
-}
-
-void apply_ao_integral_source_argument(
-    const std::string& source_name,
-    xmvb::vb::VbScfInputLoadOptions* options) {
-  if (options == nullptr) {
-    throw std::invalid_argument("load options must not be null");
-  }
-  if (source_name == "auto") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-    return;
-  }
-  if (source_name == "libcint") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::LibcintMaterialized;
-    return;
-  }
-  if (source_name == "runtime_hcore") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-    return;
-  }
-  throw std::invalid_argument("invalid AO integral source: " + source_name);
 }
 
 }  // namespace
@@ -60,16 +38,11 @@ int main(int argc, char** argv) {
     const std::string input_path = argv[1];
     const fs::path output_stem_path = argv[2];
     xmvb::vb::VbScfInputLoadOptions load_options;
-    load_options.ao_integral_source =
-        xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-
     for (int argument_index = 3; argument_index < argc; argument_index += 2) {
       const std::string argument_name = argv[argument_index];
       const std::string argument_value = argv[argument_index + 1];
       if (argument_name == "--skip-orbital-guess") {
         load_options.skip_orbital_guess = parse_bool_argument(argument_value);
-      } else if (argument_name == "--ao-integral-source") {
-        apply_ao_integral_source_argument(argument_value, &load_options);
       } else {
         throw std::invalid_argument("unknown argument: " + argument_name);
       }

@@ -759,7 +759,7 @@ std::size_t count_active_raw_structures(
   if (metadata.wavefunction_type !=
       wavefunction_type_code(WavefunctionType::Structure)) {
     throw std::runtime_error(
-        "pure C++ structure-class generation currently supports only WFNTYP=STR");
+        "structure-class generation supports only WFNTYP=STR");
   }
 
   const int n_active_orbitals = metadata.declared_active_orbitals;
@@ -803,7 +803,7 @@ std::size_t count_active_raw_structures(
         "count_active_raw_structures");
   }
   if (structure_count == 0) {
-    throw std::runtime_error("pure C++ structure generator produced no raw structures");
+    throw std::runtime_error("structure generator produced no raw structures");
   }
   return structure_count;
 }

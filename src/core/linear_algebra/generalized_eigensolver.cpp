@@ -91,12 +91,7 @@ Eigen::MatrixXd solve_subspace_eigenproblem(
   const lapack_int info = LAPACKE_dsygvd(
       LAPACK_COL_MAJOR, 1, 'V', 'U', m,
       H_copy.data(), m, S_copy.data(), m, eigenvalues.data());
-  if (info != 0) {
-    // Fallback: standard eigenproblem
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(H_copy);
-    eigenvalues = solver.eigenvalues();
-    return solver.eigenvectors();
-  }
+  check_generalized_eigensolver_info(info);
   return H_copy;
 }
 

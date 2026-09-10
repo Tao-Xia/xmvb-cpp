@@ -9,15 +9,6 @@
 
 namespace xmvb::vb {
 
-enum class AoIntegralSource {
-  Auto,
-  LibcintMaterialized,
-  // Pure C++ fallback that keeps only the AO core Hamiltonian.
-  RuntimeCoreHamiltonianOnly,
-};
-
-const char* ao_integral_source_name(AoIntegralSource source);
-
 const char* standard_two_electron_mode_name(StandardTwoElectronMode mode);
 
 enum class RawStructureSource {
@@ -57,10 +48,6 @@ struct RuntimeExtractionTimings {
 };
 
 struct VbScfInputLoadOptions {
-  // `Auto` now prefers the C++ materialized AO integral provider for exact
-  // integrals and uses the pure C++ H-core-only fallback only when the deck
-  // requests the RI path.
-  AoIntegralSource ao_integral_source = AoIntegralSource::Auto;
   StandardTwoElectronMode standard_two_electron_mode = StandardTwoElectronMode::Auto;
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
   bool skip_orbital_guess = false;
@@ -78,7 +65,6 @@ struct VbScfInputLoadResult {
   RuntimeExtractionTimings runtime_timings{};
   std::string basis_name;
   double nuclear_repulsion_energy = 0.0;
-  AoIntegralSource ao_integral_source = AoIntegralSource::Auto;
   StandardTwoElectronMode standard_two_electron_mode = StandardTwoElectronMode::Auto;
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
   RawStructureSource raw_structure_source = RawStructureSource::Unknown;
@@ -94,11 +80,10 @@ struct VbScfInputLoadResult {
 };
 
 /**
- * @brief Loads the full C++ VB input bundle from the standalone pure C++ path.
+ * @brief Loads the complete VBSCF input bundle.
  *
- * The loader rebuilds basis data, orbital supports, initial guesses, and AO
- * integrals entirely in C++. The determinant expansion and subsequent VBSCF
- * numerical kernels also remain in C++.
+ * The loader builds basis data, orbital supports, initial guesses, AO
+ * integrals, and determinant expansions from the input deck.
  *
  * @param input_file_path Input deck used to initialize the runtime bundle.
  * @return VbScfInput Fully populated matrix-builder input.

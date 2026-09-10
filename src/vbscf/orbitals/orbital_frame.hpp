@@ -52,7 +52,7 @@ struct LocalizedRepresentativeSelector {
 /**
  * @brief Normalized physical orbital coefficients reconstructed from sparse input.
  *
- * The managed C++ VBSCF path primarily evolves the auxiliary-orbital
+ * The VBSCF optimizer primarily evolves the auxiliary-orbital
  * representation. This container preserves the corresponding normalized
  * physical orbitals and accepted-point gauge data so downstream orbital logic
  * and diagnostics can reuse the dense physical frame explicitly.

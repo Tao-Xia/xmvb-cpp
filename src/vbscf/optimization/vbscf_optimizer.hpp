@@ -10,7 +10,7 @@
 namespace xmvb::vb {
 
 /**
- * @brief Orbital optimizer for the C++ VBSCF path.
+ * @brief VBSCF orbital optimizer.
  *
  * The optimizer uses the C++ energy/gradient evaluators together
  * with a selectable L-BFGS backend.

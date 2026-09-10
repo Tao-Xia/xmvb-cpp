@@ -679,7 +679,7 @@ void apply_fused_ao_effective_one_electron_graph(
     // The molecule-static companion graph gives the transpose apply a
     // source-owned partition, so the multithreaded exact_ctx path can stay
     // lock-free and avoid the cache-thrashing flush traffic of the striped
-    // fallback.
+    // transpose implementation.
 #pragma omp parallel num_threads(n_threads)
     {
 #pragma omp for schedule(static)

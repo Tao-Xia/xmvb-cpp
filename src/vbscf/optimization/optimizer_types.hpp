@@ -21,7 +21,7 @@ constexpr int kOrbitalTypeOeo = 3;
 
 // One accepted or trialed secant pair in the optimizer's packed-coordinate
 // history. Used by L-BFGS secant transport, the truncated-Newton Krylov
-// preconditioner, and line-search fallbacks that lift reduced steps into the
+// preconditioner, and safeguarded line searches that lift reduced steps into the
 // full sparse-orbital parameter space.
 struct PackedSecantPair {
   Eigen::VectorXd packed_step;

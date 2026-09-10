@@ -482,7 +482,7 @@ InputDeck parse_input_deck_model(
       }
       if (!orbital_header_consumed) {
         // The support header records one declared support length per orbital.
-        // Later pure C++ orbital builders will interpret the body either as
+        // Orbital builders interpret the body either as
         // raw fragment labels or explicit AO supports according to ORBTYP.
         input_deck.orbital_support_block.declared_support_sizes =
             expand_integer_tokens(token_line.tokens, true);

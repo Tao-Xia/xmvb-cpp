@@ -43,8 +43,6 @@ struct Options {
   bool has_explicit_step = false;
   std::string probe = "full";
   bool nonredundant_adapt = false;
-  xmvb::vb::AoIntegralSource ao_integral_source =
-      xmvb::vb::AoIntegralSource::Auto;
 };
 
 constexpr int kOrbitalTypeHao = 1;
@@ -55,7 +53,6 @@ void print_usage() {
   std::cerr
       << "usage: check_exact_ctx_hvp <input.xmi> [--step h] [--probe full|fixed] "
       << "[--orbital-value-table-bin <path>] "
-      << "[--ao-integral-source auto|libcint|runtime_hcore] "
       << "[--nonredundant-adapt true|false] [--max-rel-error tolerance]\n";
 }
 
@@ -67,19 +64,6 @@ bool parse_bool_argument(const std::string& value) {
     return false;
   }
   throw std::invalid_argument("invalid boolean value: " + value);
-}
-
-xmvb::vb::AoIntegralSource parse_ao_integral_source(const std::string& value) {
-  if (value == "auto") {
-    return xmvb::vb::AoIntegralSource::Auto;
-  }
-  if (value == "libcint") {
-    return xmvb::vb::AoIntegralSource::LibcintMaterialized;
-  }
-  if (value == "runtime_hcore") {
-    return xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-  }
-  throw std::invalid_argument("invalid AO integral source: " + value);
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -108,10 +92,6 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (name == "--probe") {
       options.probe = value;
-      continue;
-    }
-    if (name == "--ao-integral-source") {
-      options.ao_integral_source = parse_ao_integral_source(value);
       continue;
     }
     if (name == "--nonredundant-adapt") {
@@ -300,7 +280,6 @@ Eigen::VectorXd apply_active_space_gradient_direction_to_orbital_response(
           packed_active_two_electron_gradient,
           input.ao_integral_input.ao_two_electron_integral_values,
           input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
           active_space_two_electron_result,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -446,7 +425,6 @@ OrbitalBackpropInputs build_orbital_backprop_inputs(
           active_space_gradient_result.packed_active_two_electron_gradient,
           input.ao_integral_input.ao_two_electron_integral_values,
           input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
           active_space_two_electron_result,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -578,7 +556,6 @@ OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
           active_space_gradient_result.packed_active_two_electron_gradient,
           input.ao_integral_input.ao_two_electron_integral_values,
           input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
           active_space_two_electron_result,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -700,7 +677,6 @@ OrbitalBackpropInputs build_orbital_backprop_inputs_from_active_gradient_directi
           packed_active_two_electron_gradient,
           input.ao_integral_input.ao_two_electron_integral_values,
           input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
           active_space_two_electron_result,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -1866,7 +1842,6 @@ int main(int argc, char** argv) {
     const Options options = parse_arguments(argc, argv);
 
     xmvb::vb::VbScfInputLoadOptions load_options;
-    load_options.ao_integral_source = options.ao_integral_source;
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto load_result =
@@ -2840,9 +2815,6 @@ int main(int argc, char** argv) {
 
       std::cout << std::setprecision(12);
       std::cout << "input = " << options.input_path << '\n';
-      std::cout << "ao_integral_source = "
-                << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)
-                << '\n';
       std::cout << "reduced_dimension = " << reduced_direction.size() << '\n';
       std::cout << "probe_mode = " << options.probe << '\n';
       std::cout << "finite_difference_step = " << finite_difference_step << '\n';

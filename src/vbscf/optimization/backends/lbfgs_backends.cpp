@@ -65,7 +65,7 @@ BackendRunResult run_full_space_lbfgs_backend(
   double previous_energy = initial_energy;
   double last_robust_step = std::min(1.0, options.initial_step_size);
   bool has_robust_step_history = false;
-  bool last_iteration_used_fallback = false;
+  bool last_iteration_used_steepest_descent = false;
 
   for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
     if (search_direction.dot(current_gradient) >= 0.0) {
@@ -83,12 +83,12 @@ BackendRunResult run_full_space_lbfgs_backend(
     const double previous_gradient_inf_norm =
         gradient_infinity_norm(previous_gradient);
     double step = std::min(1.0, options.initial_step_size);
-    if (last_iteration_used_fallback && has_robust_step_history) {
+    if (last_iteration_used_steepest_descent && has_robust_step_history) {
       step = std::max(
           parameters.min_step,
           std::min(last_robust_step, parameters.max_step));
     }
-    bool used_fallback = false;
+    bool used_steepest_descent = false;
     bool reset_inverse_hessian = false;
     std::string primary_line_search_error;
 
@@ -124,17 +124,17 @@ BackendRunResult run_full_space_lbfgs_backend(
         primary_line_search_error.empty() &&
         has_robust_step_history &&
         step < kSuspiciousPrimaryStepRatio * last_robust_step;
-    const bool should_try_fallback =
+    const bool should_try_steepest_descent =
         !primary_line_search_error.empty() ||
         (previous_gradient_inf_norm >= options.gradient_tolerance &&
          (stalled_line_search ||
           step <= kTinyStepFactor * parameters.min_step ||
           suspicious_primary_step));
-    if (should_try_fallback) {
+    if (should_try_steepest_descent) {
       const Eigen::VectorXd primary_parameters = current_parameters;
       const Eigen::VectorXd primary_gradient = current_gradient;
       const double primary_energy = energy;
-      double fallback_step =
+      double steepest_descent_step =
           has_robust_step_history
               ? last_robust_step
               : std::max(
@@ -142,33 +142,33 @@ BackendRunResult run_full_space_lbfgs_backend(
                     std::min(
                         std::min(1.0, options.initial_step_size),
                         parameters.max_step));
-      Eigen::VectorXd fallback_parameters;
-      Eigen::VectorXd fallback_gradient;
-      double fallback_energy = reference_energy;
-      if (try_steepest_descent_armijo_fallback(
+      Eigen::VectorXd steepest_descent_parameters;
+      Eigen::VectorXd steepest_descent_gradient;
+      double steepest_descent_energy = reference_energy;
+      if (try_steepest_descent_armijo_step(
               objective,
               parameters,
               previous_parameters,
               previous_gradient,
               reference_energy,
-              fallback_step,
-              &fallback_parameters,
-              &fallback_gradient,
-              &fallback_energy,
-              &fallback_step)) {
+              steepest_descent_step,
+              &steepest_descent_parameters,
+              &steepest_descent_gradient,
+              &steepest_descent_energy,
+              &steepest_descent_step)) {
         const bool should_replace_primary =
             !primary_line_search_error.empty() ||
             stalled_line_search ||
             step <= kTinyStepFactor * parameters.min_step ||
             suspicious_primary_step ||
-            fallback_energy < primary_energy;
+            steepest_descent_energy < primary_energy;
         if (should_replace_primary) {
-          current_parameters = std::move(fallback_parameters);
-          current_gradient = std::move(fallback_gradient);
-          energy = fallback_energy;
-          step = fallback_step;
+          current_parameters = std::move(steepest_descent_parameters);
+          current_gradient = std::move(steepest_descent_gradient);
+          energy = steepest_descent_energy;
+          step = steepest_descent_step;
           parameter_step = current_parameters - previous_parameters;
-          used_fallback = true;
+          used_steepest_descent = true;
           reset_inverse_hessian = true;
         } else {
           current_parameters = primary_parameters;
@@ -195,7 +195,7 @@ BackendRunResult run_full_space_lbfgs_backend(
       last_robust_step = step;
       has_robust_step_history = true;
     }
-    last_iteration_used_fallback = used_fallback;
+    last_iteration_used_steepest_descent = used_steepest_descent;
 
     const bool accepted_point_chart_reset =
         objective->canonicalize_orbital_chart_at_current_point(
@@ -232,7 +232,7 @@ BackendRunResult run_full_space_lbfgs_backend(
       inverse_hessian.add_correction(parameter_step, gradient_step);
     }
     inverse_hessian.apply_Hv(current_gradient, -1.0, search_direction);
-    if (used_fallback && search_direction.dot(current_gradient) >= 0.0) {
+    if (used_steepest_descent && search_direction.dot(current_gradient) >= 0.0) {
       search_direction = -current_gradient;
     }
   }
@@ -281,16 +281,16 @@ BackendRunResult run_nonredundant_lbfgs_backend(
       break;
     }
 
-    const Eigen::VectorXd fallback_reduced_direction =
+    const Eigen::VectorXd steepest_descent_reduced_direction =
         -current_projection.reduced_gradient;
     const OrbitalPreparationInput previous_orbital_input =
         objective->last_input().orbital_preparation_input;
-    const Eigen::VectorXd fallback_direction =
+    const Eigen::VectorXd steepest_descent_direction =
         gather_nonredundant_retract_tangent(
             previous_orbital_input,
             current_space,
             parameter_view,
-            fallback_reduced_direction);
+            steepest_descent_reduced_direction);
     Eigen::VectorXd search_direction;
     inverse_hessian.apply_Hv(
         current_projection.packed_projected_gradient,
@@ -310,8 +310,8 @@ BackendRunResult run_nonredundant_lbfgs_backend(
         directional_derivative >= 0.0 ||
         is_effectively_zero_step(search_direction, current_parameters)) {
       inverse_hessian.reset(dimension, history_size);
-      search_direction = fallback_direction;
-      reduced_search_direction = fallback_reduced_direction;
+      search_direction = steepest_descent_direction;
+      reduced_search_direction = steepest_descent_reduced_direction;
       directional_derivative = current_gradient.dot(search_direction);
     }
     if (!std::isfinite(directional_derivative) ||
@@ -376,7 +376,7 @@ BackendRunResult run_nonredundant_lbfgs_backend(
             options.gradient_tolerance);
     if (stalled_line_search &&
         reduced_gradient_inf_norm >= options.gradient_tolerance) {
-      const double fallback_initial_step =
+      const double steepest_descent_initial_step =
           std::max(
               options.minimum_step_size,
               std::min(
@@ -396,7 +396,7 @@ BackendRunResult run_nonredundant_lbfgs_backend(
                   current_space,
                   parameter_view,
                   -previous_reduced_gradient),
-              fallback_initial_step,
+              steepest_descent_initial_step,
               options.minimum_step_size,
               options.armijo_constant,
               &current_parameters,

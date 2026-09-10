@@ -46,7 +46,6 @@ public:
       const std::vector<double>& packed_active_two_electron_gradient,
       const std::vector<double>& ao_two_electron_integral_values,
       const std::vector<int>& ao_two_electron_integral_indices,
-      const OrbitalPreparationResult& orbital_preparation_result,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,
@@ -59,7 +58,6 @@ public:
   ActiveSpaceTwoElectronBackpropagationResult backpropagate(
       const std::vector<double>& ri_active_pair_factor_gradient,
       const VbScfInput& input,
-      const OrbitalPreparationResult& orbital_preparation_result,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_basis_functions,
       int n_inactive_doubly_occupied_orbitals,

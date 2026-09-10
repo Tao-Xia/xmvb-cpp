@@ -102,7 +102,7 @@ struct VbScfAcceptedIterationSnapshot {
 };
 
 /**
- * @brief Result of the C++ VBSCF orbital optimization loop.
+ * @brief Result of the VBSCF orbital optimization loop.
  */
 struct VbScfOptimizerResult {
   /**

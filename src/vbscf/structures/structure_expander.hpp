@@ -14,7 +14,7 @@ namespace xmvb::vb {
  * - `wavefunction_type != WavefunctionType::Determinant`
  *
  * The implementation is fully in C++ and produces the determinant occupations
- * and signed structure expansion terms consumed by the pure C++ Hamiltonian
+ * and signed structure expansion terms consumed by the Hamiltonian
  * builder.
  */
 class FullDeterminantStructureExpander {

@@ -10,7 +10,7 @@
 namespace xmvb::vb {
 
 /**
- * @brief Single-step evaluator for the C++ VBSCF matrix path.
+ * @brief Single-step evaluator for the VBSCF matrix path.
  *
  * This class turns the C++ matrix builders into a complete VBSCF
  * step evaluation:
@@ -35,7 +35,7 @@ public:
   /**
    * @brief Evaluates the ground-state VBSCF step.
    *
-   * @param input C++ VB input bundle.
+   * @param input VBSCF input bundle.
    * @param nuclear_repulsion_energy Nuclear repulsion energy.
    * @return VbScfResult Structure matrices plus generalized-eigen data.
    */
@@ -46,7 +46,7 @@ public:
   /**
    * @brief Evaluates an explicitly selected state-averaged VBSCF step.
    *
-   * @param input C++ VB input bundle.
+   * @param input VBSCF input bundle.
    * @param selected_state_indices Zero-based state indices.
    * @param state_average_weights Non-negative state-averaging weights.
    * @param nuclear_repulsion_energy Nuclear repulsion energy.

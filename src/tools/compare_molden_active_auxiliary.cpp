@@ -15,7 +15,7 @@
 #include <Eigen/SVD>
 
 #include "runtime/vbscf_input_loader.hpp"
-#include "runtime/libcint_compat.hpp"
+#include "runtime/libcint_c_api.hpp"
 #include "runtime/gaussian_shell_normalization.hpp"
 
 namespace {
@@ -492,8 +492,6 @@ int main(int argc, char** argv) {
 
     VbScfInputLoadOptions load_options;
     load_options.skip_orbital_guess = true;
-    load_options.ao_integral_source =
-        xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
     const auto load_result =
         load_vbscf_input_with_timings(input_path, load_options);
     const VbScfInput& input = load_result.input;

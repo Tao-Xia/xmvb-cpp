@@ -247,7 +247,7 @@ std::vector<std::vector<int>> build_fragments(
   if (!input_deck.fragment_block.present) {
     if (build_input.fragment_type != kFragmentTypeAtom) {
       throw std::runtime_error(
-          "pure C++ support builder requires $FRAG when FRGTYP is not ATOM");
+          "orbital support builder requires $FRAG when FRGTYP is not ATOM");
     }
     return atom_fragments;
   }
@@ -293,7 +293,7 @@ std::vector<std::vector<int>> build_fragments(
   }
 
   if (build_input.fragment_type != kFragmentTypeSao) {
-    throw std::runtime_error("unsupported fragment type in pure C++ support builder");
+    throw std::runtime_error("unsupported fragment type in orbital support builder");
   }
   if (input_deck.fragment_block.entries.size() != n_fragments) {
     throw std::runtime_error("SAO fragment block does not contain one line per fragment");
@@ -330,7 +330,7 @@ std::vector<std::vector<int>> build_orbital_fragment_chart(
     const std::vector<std::vector<int>>& fragments,
     int n_orbitals) {
   if (input_deck.orbital_support_block.block_type != OrbitalSupportBlockType::Orb) {
-    throw std::runtime_error("pure C++ support builder currently expects a $ORB block");
+    throw std::runtime_error("orbital support builder requires a $ORB block");
   }
   if (static_cast<int>(input_deck.orbital_support_block.declared_support_sizes.size()) <
       n_orbitals) {
@@ -373,7 +373,7 @@ std::vector<std::vector<int>> build_actorb_basis_chart(
     const InputDeckOrbitalSupportBuildInput& build_input) {
   if (input_deck.orbital_support_block.block_type !=
       OrbitalSupportBlockType::ActOrb) {
-    throw std::runtime_error("pure C++ active-orbital builder expects a $ACTORB block");
+    throw std::runtime_error("active-orbital builder requires a $ACTORB block");
   }
   if (build_input.orbital_type != kOrbitalTypeHao ||
       build_input.fragment_type != kFragmentTypeAtom) {
@@ -446,7 +446,7 @@ InputDeckOrbitalSupportChart pack_support_chart(
   chart.original_orbital_basis_counts.assign(n_orbitals, 0);
 
   // The optimizer still consumes the historical fixed-width orbital table, but
-  // the pure C++ builder keeps the intermediate representation as vectors of AO
+  // the builder keeps the intermediate representation as vectors of AO
   // indices so fragment expansion, sorting, and validation are all explicit.
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
     const auto& basis_indices =
@@ -506,7 +506,7 @@ InputDeckOrbitalSupportChart build_input_deck_orbital_support_chart(
     const InputDeckOrbitalSupportBuildInput& build_input) {
   if (!can_build_input_deck_orbital_support_chart(input_deck, build_input)) {
     throw std::runtime_error(
-        "pure C++ orbital support builder does not support this input-deck path yet");
+        "orbital support builder does not support this input-deck path");
   }
 
   if (build_input.orbital_type == kOrbitalTypeOeo) {

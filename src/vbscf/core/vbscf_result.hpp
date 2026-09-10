@@ -7,7 +7,7 @@
 namespace xmvb::vb {
 
 /**
- * @brief Result of a single C++ VBSCF matrix evaluation step.
+ * @brief Result of a single VBSCF matrix evaluation step.
  *
  * This object captures the complete state needed by downstream RDM and
  * gradient code:

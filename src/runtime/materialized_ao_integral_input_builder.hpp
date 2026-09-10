@@ -12,7 +12,7 @@ namespace xmvb::vb {
 /**
  * @brief Materialized AO integral buffers produced by some integral backend.
  *
- * The backend may be a pure C++ libcint materializer or any other producer of
+ * The backend may be a libcint materializer or any other producer of
  * the same dense/sparse AO buffer contract. This builder turns those raw
  * buffers into the enriched `AoIntegralInput` used by the exact VBSCF kernels.
  */

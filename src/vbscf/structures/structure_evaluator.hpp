@@ -12,7 +12,7 @@
 namespace xmvb::vb {
 
 /**
- * @brief End-to-end evaluator for C++ VB structure Hamiltonian/overlap matrices.
+ * @brief End-to-end evaluator for VB structure Hamiltonian/overlap matrices.
  *
  * This class stitches together the full C++ matrix path:
  * 1. Rebuild auxiliary orbitals and inactive density from sparse orbital input.

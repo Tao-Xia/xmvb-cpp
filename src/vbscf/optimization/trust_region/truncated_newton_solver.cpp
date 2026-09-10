@@ -351,7 +351,7 @@ double update_nonredundant_truncated_newton_trust_radius(
     const TruncatedNewtonStepResult& model_step,
     bool accepted) {
   const double step_norm = truncated_newton_step_effective_norm(model_step);
-  const auto geometric_fallback = [&]() {
+  const auto safe_radius_update = [&]() {
     if (accepted && step_norm > 0.0 && std::isfinite(step_norm)) {
       return std::max(minimum_step_size, step_norm);
     }
@@ -364,7 +364,7 @@ double update_nonredundant_truncated_newton_trust_radius(
       !(trial.predicted_decrease > 0.0) ||
       !std::isfinite(trial.predicted_decrease) ||
       !std::isfinite(trial.actual_decrease)) {
-    return geometric_fallback();
+    return safe_radius_update();
   }
 
   if (!accepted) {
@@ -425,7 +425,7 @@ double update_nonredundant_truncated_newton_trust_radius(
           step_norm,
           std::min(agreement_radius, curvature_radius));
   if (!(candidate_radius > 0.0) || !std::isfinite(candidate_radius)) {
-    return geometric_fallback();
+    return safe_radius_update();
   }
   return std::max(minimum_step_size, candidate_radius);
 }
@@ -451,7 +451,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd* initial_reduced_step) {
   TruncatedNewtonStepResult result;
-  const Eigen::VectorXd fallback_step =
+  const Eigen::VectorXd preconditioned_gradient_step =
       build_nonredundant_preconditioned_reduced_gradient_step(
           retraction_metric,
           current_space,
@@ -496,7 +496,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   };
   if (current_projection.reduced_gradient.size() == 0 ||
       max_cg_iterations <= 0) {
-    result.reduced_step = fallback_step;
+    result.reduced_step = preconditioned_gradient_step;
     result.reduced_hessian_times_step.resize(0);
     return finalize_result();
   }
@@ -536,7 +536,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         result.predicted_decrease > 0.0) {
       return finalize_result();
     }
-    result.reduced_step = fallback_step;
+    result.reduced_step = preconditioned_gradient_step;
     result.reduced_hessian_times_step.resize(0);
     result.predicted_decrease = 0.0;
     return finalize_result();
@@ -557,7 +557,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         result.predicted_decrease > 0.0) {
       return finalize_result();
     }
-    result.reduced_step = fallback_step;
+    result.reduced_step = preconditioned_gradient_step;
     result.reduced_hessian_times_step.resize(0);
     result.predicted_decrease = 0.0;
     return finalize_result();
@@ -606,7 +606,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
 
     const double alpha = residual_dot_search / curvature;
     if (!std::isfinite(alpha) || alpha <= 0.0) {
-      result.reduced_step = fallback_step;
+      result.reduced_step = preconditioned_gradient_step;
       result.reduced_hessian_times_step.resize(0);
       return finalize_result();
     }
@@ -692,7 +692,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       std::isfinite(result.predicted_decrease) &&
       result.predicted_decrease > 0.0;
   if (!result_step_is_usable) {
-    result.reduced_step = fallback_step;
+    result.reduced_step = preconditioned_gradient_step;
     result.reduced_hessian_times_step.resize(0);
     result.predicted_decrease = 0.0;
   }

@@ -193,20 +193,14 @@ std::vector<double> build_reference_energy_orbital_gradient(
 
 }  // namespace
 
-OrbitalGradientEvaluator::OrbitalGradientEvaluator(
-    double finite_difference_step)
+OrbitalGradientEvaluator::OrbitalGradientEvaluator()
     : active_space_gradient_evaluator_(),
       orbital_preparer_(),
       ao_effective_one_electron_builder_(),
       ao_effective_one_electron_backpropagator_(),
       active_space_matrix_backpropagator_(),
       active_space_two_electron_backpropagator_(),
-      active_space_orbital_backpropagator_(),
-      finite_difference_step_(finite_difference_step) {
-  if (finite_difference_step_ <= 0.0) {
-    throw std::invalid_argument("finite_difference_step must be positive");
-  }
-}
+      active_space_orbital_backpropagator_() {}
 
 OrbitalGradientEvaluator::OrbitalGradientEvaluator(
     ActiveSpaceGradientEvaluator active_space_gradient_evaluator,
@@ -215,20 +209,14 @@ OrbitalGradientEvaluator::OrbitalGradientEvaluator(
     AoEffectiveOneElectronBackpropagator ao_effective_one_electron_backpropagator,
     ActiveSpaceMatrixBackpropagator active_space_matrix_backpropagator,
     ActiveSpaceTwoElectronBackpropagator active_space_two_electron_backpropagator,
-    ActiveSpaceOrbitalBackpropagator active_space_orbital_backpropagator,
-    double finite_difference_step)
+    ActiveSpaceOrbitalBackpropagator active_space_orbital_backpropagator)
     : active_space_gradient_evaluator_(std::move(active_space_gradient_evaluator)),
       orbital_preparer_(std::move(orbital_preparer)),
       ao_effective_one_electron_builder_(std::move(ao_effective_one_electron_builder)),
       ao_effective_one_electron_backpropagator_(std::move(ao_effective_one_electron_backpropagator)),
       active_space_matrix_backpropagator_(std::move(active_space_matrix_backpropagator)),
       active_space_two_electron_backpropagator_(std::move(active_space_two_electron_backpropagator)),
-      active_space_orbital_backpropagator_(std::move(active_space_orbital_backpropagator)),
-      finite_difference_step_(finite_difference_step) {
-  if (finite_difference_step_ <= 0.0) {
-    throw std::invalid_argument("finite_difference_step must be positive");
-  }
-}
+      active_space_orbital_backpropagator_(std::move(active_space_orbital_backpropagator)) {}
 
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate(
     const VbScfInput& input,
@@ -382,7 +370,6 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradi
                     active_space_gradient_result.active_space_two_electron_result,
                     input.orbital_preparation_input.n_active_orbitals),
                 input,
-                orbital_result,
                 active_space_gradient_result.active_space_two_electron_result,
                 input.orbital_preparation_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,
@@ -391,7 +378,6 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradi
                 active_space_gradient_result.packed_active_two_electron_gradient,
                 input.ao_integral_input.ao_two_electron_integral_values,
                 input.ao_integral_input.ao_two_electron_integral_indices,
-                orbital_result,
                 active_space_gradient_result.active_space_two_electron_result,
                 input.orbital_preparation_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,
@@ -464,7 +450,6 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradi
           orbital_result);
   result.orbital_backpropagation_wall_time_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
-  result.finite_difference_step = finite_difference_step_;
   result.orbital_preparation_result =
       std::move(active_space_gradient_result.orbital_preparation_result);
   result.ao_effective_one_electron_result =
@@ -582,7 +567,6 @@ OrbitalGradientEvaluator::evaluate_sparse_orbital_gradient_with_fixed_active_spa
                     active_space_two_electron_result,
                     input.orbital_preparation_input.n_active_orbitals),
                 input,
-                orbital_result,
                 active_space_two_electron_result,
                 input.orbital_preparation_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,
@@ -591,7 +575,6 @@ OrbitalGradientEvaluator::evaluate_sparse_orbital_gradient_with_fixed_active_spa
                 accepted_point_context.packed_active_two_electron_gradient,
                 input.ao_integral_input.ao_two_electron_integral_values,
                 input.ao_integral_input.ao_two_electron_integral_indices,
-                orbital_result,
                 active_space_two_electron_result,
                 input.orbital_preparation_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,

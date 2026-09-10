@@ -12,7 +12,7 @@ namespace xmvb::vb {
 bool initial_orbital_guess_supported(int guess_type) noexcept;
 
 /**
- * @brief Builds the standalone C++ orbital guess for the requested GUESS mode.
+ * @brief Builds the orbital guess for the requested GUESS mode.
  *
  * GUESS=AUTO/UNIT/MO are constructed from the C++ AO integral inputs. For
  * GUESS=READ/RDCI the builder consumes the already parsed `$GUS` body lines

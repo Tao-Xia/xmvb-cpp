@@ -40,8 +40,8 @@ const char* union_graph_rank_prediction_reason_name(
       return "low_second_singular";
     case UnionGraphRankPredictionReason::LowThirdSingular:
       return "low_third_singular";
-    case UnionGraphRankPredictionReason::FallbackToMaxRank:
-      return "fallback_to_max_rank";
+    case UnionGraphRankPredictionReason::ConservativeMaxRank:
+      return "conservative_max_rank";
   }
   return "unknown";
 }
@@ -107,7 +107,7 @@ UnionGraphRankPrediction predict_union_graph_rank_cap(
   }
 
   prediction.predicted_rank_cap = capped_available_rank;
-  prediction.reason = UnionGraphRankPredictionReason::FallbackToMaxRank;
+  prediction.reason = UnionGraphRankPredictionReason::ConservativeMaxRank;
   return prediction;
 }
 

@@ -10,7 +10,7 @@ enum class UnionGraphRankPredictionReason {
   ConservativeMultiGeneralRankOne,
   LowSecondSingular,
   LowThirdSingular,
-  FallbackToMaxRank,
+  ConservativeMaxRank,
 };
 
 const char* union_graph_rank_prediction_reason_name(

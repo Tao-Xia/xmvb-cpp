@@ -22,7 +22,7 @@
 #include "runtime/input_deck_orbital_support_builder.hpp"
 #include "runtime/input_deck_primary_basis_builder.hpp"
 #include "runtime/libcint_auxiliary_basis_builder.hpp"
-#include "runtime/libcint_compat.hpp"
+#include "runtime/libcint_c_api.hpp"
 #include "runtime/libcint_direct_shell_evaluator.hpp"
 #include "runtime/libcint_materialized_integral_provider.hpp"
 #include "runtime/libcint_ri_integral_provider.hpp"
@@ -268,14 +268,14 @@ int resolve_total_electron_count(const InputDeck& input_deck) {
     }
   }
   throw std::runtime_error(
-      "failed to resolve the total electron count from the pure C++ input deck");
+      "failed to resolve the total electron count from the input deck");
 }
 
 int resolve_active_orbital_count(const InputDeckMetadata& input_deck_metadata) {
   if (input_deck_metadata.declared_active_orbitals > 0) {
     return input_deck_metadata.declared_active_orbitals;
   }
-  throw std::runtime_error("pure C++ standalone input loader requires NAO");
+  throw std::runtime_error("input loader requires NAO");
 }
 
 int resolve_active_electron_count(
@@ -288,7 +288,7 @@ int resolve_active_electron_count(
       input_deck.explicit_raw_structures.n_active_electrons > 0) {
     return input_deck.explicit_raw_structures.n_active_electrons;
   }
-  throw std::runtime_error("pure C++ standalone input loader requires NAE");
+  throw std::runtime_error("input loader requires NAE");
 }
 
 int resolve_spin_multiplicity(
@@ -301,7 +301,7 @@ int resolve_spin_multiplicity(
       input_deck.explicit_raw_structures.spin_multiplicity > 0) {
     return input_deck.explicit_raw_structures.spin_multiplicity;
   }
-  throw std::runtime_error("pure C++ standalone input loader requires NMUL");
+  throw std::runtime_error("input loader requires NMUL");
 }
 
 int infer_total_orbital_count_from_raw_structures(
@@ -476,18 +476,6 @@ StaticMoleculeTopology build_static_molecule_topology(
 
 }  // namespace
 
-const char* ao_integral_source_name(AoIntegralSource source) {
-  switch (source) {
-    case AoIntegralSource::Auto:
-      return "auto";
-    case AoIntegralSource::LibcintMaterialized:
-      return "libcint";
-    case AoIntegralSource::RuntimeCoreHamiltonianOnly:
-      return "runtime_hcore";
-  }
-  return "unknown";
-}
-
 const char* standard_two_electron_mode_name(StandardTwoElectronMode mode) {
   switch (mode) {
     case StandardTwoElectronMode::Auto:
@@ -522,21 +510,6 @@ bool should_use_standard_ri_two_electron_mode(
 }
 
 int configured_openmp_thread_count();
-
-AoIntegralSource resolve_ao_integral_source(
-    bool use_standard_ri_two_electron_mode,
-    const VbScfInputLoadOptions& options) {
-  switch (options.ao_integral_source) {
-    case AoIntegralSource::Auto:
-      return use_standard_ri_two_electron_mode
-          ? AoIntegralSource::RuntimeCoreHamiltonianOnly
-          : AoIntegralSource::LibcintMaterialized;
-    case AoIntegralSource::LibcintMaterialized:
-    case AoIntegralSource::RuntimeCoreHamiltonianOnly:
-      return options.ao_integral_source;
-  }
-  throw std::invalid_argument("invalid AO integral source");
-}
 
 std::size_t active_pair_count(int n_active_orbitals) {
   if (n_active_orbitals <= 0) {
@@ -577,10 +550,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
       should_use_standard_ri_two_electron_mode(
           input_deck_metadata.request_ri_two_electron_mode,
           options);
-  const AoIntegralSource resolved_ao_integral_source =
-      resolve_ao_integral_source(
-          use_standard_ri_two_electron_mode,
-          options);
   RuntimeExtractionTimings runtime_timings;
 
   const int resolved_n_active_orbitals =
@@ -618,7 +587,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   } else {
     throw std::runtime_error(
         "standalone raw-structure generation requires either an explicit $STR block "
-        "or a supported pure C++ STR=... structure class");
+        "or a supported STR=... structure class");
   }
   const int resolved_n_orbitals =
       infer_total_orbital_count_from_raw_structures(raw_structure_data);
@@ -642,8 +611,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
           : 2000;
   load_result.request_molden_output = input_deck_metadata.request_molden_output;
   result.standard_two_electron_mode = load_result.standard_two_electron_mode;
-  load_result.ao_integral_source = resolved_ao_integral_source;
-
   result.orbital_preparation_input.n_basis_functions = static_topology.n_basis_functions;
   result.orbital_preparation_input.n_orbitals = resolved_n_orbitals;
   result.orbital_preparation_input.n_active_orbitals = resolved_n_active_orbitals;
@@ -667,7 +634,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
       static_topology.ao_cartesian_exponents;
   if (!can_build_input_deck_orbital_support_chart(input_deck, support_build_input)) {
     throw std::runtime_error(
-        "pure C++ standalone input loader could not rebuild the orbital support chart");
+        "input loader could not build the orbital support chart");
   }
   const InputDeckOrbitalSupportChart support_chart =
       build_input_deck_orbital_support_chart(
@@ -708,18 +675,16 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
 
   const auto ao_integral_provider_start_time = std::chrono::steady_clock::now();
   MaterializedAoIntegralBuffers ao_integral_buffers;
-  if (resolved_ao_integral_source == AoIntegralSource::LibcintMaterialized) {
+  if (!use_standard_ri_two_electron_mode) {
     LibcintMaterializedIntegralProvider provider;
     ao_integral_buffers = provider.build(result.libcint_input);
-  } else if (resolved_ao_integral_source != AoIntegralSource::RuntimeCoreHamiltonianOnly) {
-    throw std::invalid_argument("invalid AO integral source");
   }
   load_result.ao_integral_provider_seconds =
       std::chrono::duration<double>(
           std::chrono::steady_clock::now() - ao_integral_provider_start_time)
           .count();
   const auto ao_integral_input_build_start_time = std::chrono::steady_clock::now();
-  if (resolved_ao_integral_source == AoIntegralSource::RuntimeCoreHamiltonianOnly) {
+  if (use_standard_ri_two_electron_mode) {
     const Eigen::MatrixXd core_hamiltonian_matrix =
         build_full_ao_core_hamiltonian_matrix(result.libcint_input);
     result.ao_integral_input = build_core_hamiltonian_only_ao_integral_input(

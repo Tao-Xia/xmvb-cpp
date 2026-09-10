@@ -9,7 +9,7 @@ namespace xmvb::vb {
 /**
  * @brief Result of resolving a determinant-level overlap matrix.
  *
- * The matrix storage follows the Fortran-compatible column-major convention:
+ * The matrix storage follows the project-wide column-major convention:
  * `matrix_data[column * dimension + row]`.
  */
 struct DeterminantOverlapResult {

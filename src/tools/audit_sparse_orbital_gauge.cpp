@@ -39,7 +39,6 @@ int main(int argc, char** argv) {
     }
 
     xmvb::vb::VbScfInputLoadOptions load_options;
-    load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto loaded =

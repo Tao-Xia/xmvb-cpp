@@ -22,13 +22,11 @@ struct Options {
   std::string input_path;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Exact;
-  xmvb::vb::AoIntegralSource ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
 };
 
 void print_usage() {
   std::cerr << "usage: check_exact_ao_h1e_builder <input.xmi>"
-               " [--standard-two-electron-mode exact|auto]"
-               " [--ao-integral-source auto|libcint|runtime_hcore]\n";
+               " [--standard-two-electron-mode exact|auto]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -52,21 +50,6 @@ Options parse_arguments(int argc, char** argv) {
       } else {
         throw std::invalid_argument(
             "invalid --standard-two-electron-mode value: " + value);
-      }
-      continue;
-    }
-    if (name == "--ao-integral-source") {
-      if (value == "auto") {
-        options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-      } else if (value == "libcint") {
-        options.ao_integral_source =
-            xmvb::vb::AoIntegralSource::LibcintMaterialized;
-      } else if (value == "runtime_hcore") {
-        options.ao_integral_source =
-            xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-      } else {
-        throw std::invalid_argument(
-            "invalid --ao-integral-source value: " + value);
       }
       continue;
     }
@@ -181,7 +164,6 @@ int main(int argc, char** argv) {
     const Options options = parse_arguments(argc, argv);
     xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
-    load_options.ao_integral_source = options.ao_integral_source;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
@@ -236,9 +218,6 @@ int main(int argc, char** argv) {
             n_basis_functions);
 
     std::cout << std::setprecision(15);
-    std::cout << "ao_integral_source = "
-              << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)
-              << '\n';
     std::cout << "standard_two_electron_mode = "
               << xmvb::vb::standard_two_electron_mode_name(
                      load_result.standard_two_electron_mode)

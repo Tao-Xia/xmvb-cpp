@@ -8,7 +8,7 @@
 namespace xmvb::vb {
 
 /**
- * @brief Options controlling the C++ VBSCF orbital optimization loop.
+ * @brief Options controlling the VBSCF orbital optimization loop.
  */
 struct VbScfOptimizerOptions {
   /**

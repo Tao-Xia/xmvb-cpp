@@ -374,8 +374,6 @@ public:
         static_dir_(sample_dir_ / "static"),
         steps_dir_(sample_dir_ / "steps"),
         source_input_path_(fs::absolute(fs::path(input_file_path)).string()),
-        ao_integral_source_name_(
-            xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)),
         raw_structure_selection_name_(
             xmvb::vb::raw_structure_selection_mode_name(load_result.raw_structure_selection)),
         source_raw_structure_count_(load_result.source_raw_structure_count),
@@ -629,16 +627,13 @@ private:
       const xmvb::vb::VbScfOptimizerResult* result) const {
     std::ostringstream metadata_stream;
     metadata_stream << "{\n"
-                    << "  \"format_version\": 5,\n"
+                    << "  \"format_version\": 6,\n"
                     << "  \"status\": \"" << (result == nullptr ? "running" : "completed")
                     << "\",\n"
                     << "  \"sample_name\": \"" << escape_json_string(sample_dir_.filename().string())
                     << "\",\n"
                     << "  \"source_input_path\": \"" << escape_json_string(source_input_path_)
                     << "\",\n"
-                    << "  \"ao_integral_source\": \""
-                    << escape_json_string(ao_integral_source_name_) << "\",\n"
-                    << "  \"orbital_guess_source\": \"cpp\",\n"
                     << "  \"raw_structure_selection\": \""
                     << escape_json_string(raw_structure_selection_name_) << "\",\n"
                     << "  \"source_raw_structure_count\": "
@@ -682,7 +677,6 @@ private:
   fs::path static_dir_;
   fs::path steps_dir_;
   std::string source_input_path_;
-  std::string ao_integral_source_name_;
   std::string raw_structure_selection_name_;
   int source_raw_structure_count_ = 0;
   std::string optimizer_backend_name_;

@@ -124,7 +124,7 @@ struct RawStructureData {
 /**
  * @brief Explicit full-determinant input for structure Hamiltonian assembly.
  *
- * This object contains all data needed by the pure C++ builder to evaluate
+ * This object contains all data needed by the structure builder to evaluate
  * structure-level Hamiltonian and overlap matrices. All orbital matrices use
  * column-major storage.
  */

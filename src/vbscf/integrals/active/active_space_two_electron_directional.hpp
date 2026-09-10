@@ -15,8 +15,6 @@ namespace xmvb::vb {
  *
  * `dense_active_coefficients` and `dense_active_direction` are dense
  * AO-by-active matrices in the repository-standard column-major Eigen layout.
- * The implementation may still build temporary compatibility buffers
- * internally, but callers stay on `Eigen::MatrixXd`.
  */
 std::vector<double>
 compute_exact_packed_active_two_electron_integral_directional_derivative(

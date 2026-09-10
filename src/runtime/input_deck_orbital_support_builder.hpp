@@ -28,7 +28,7 @@ struct InputDeckOrbitalSupportBuildInput {
 };
 
 /**
- * @brief Sparse orbital support chart reconstructed from pure C++ deck data.
+ * @brief Sparse orbital support chart reconstructed from input-deck data.
  *
  * `orbital_basis_index_table` keeps the historical padded `(n_orbitals,
  * n_basis_functions)` layout with one-based AO indices, while the count arrays

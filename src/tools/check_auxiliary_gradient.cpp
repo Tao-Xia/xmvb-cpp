@@ -515,7 +515,6 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     xmvb::vb::VbScfInputLoadOptions load_options;
-    load_options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(
             options.input_path,
@@ -553,7 +552,6 @@ int main(int argc, char** argv) {
                       active_space_gradient_result.active_space_two_electron_result,
                       n_active_orbitals),
                   input,
-                  active_space_gradient_result.orbital_preparation_result,
                   active_space_gradient_result.active_space_two_electron_result,
                   n_basis_functions,
                   n_inactive_doubly_occupied_orbitals,

@@ -26,7 +26,7 @@ struct LibcintAuxiliaryBasisBuilderOptions {
 /**
  * @brief Builds a generated Coulomb-fitting auxiliary basis from a primary basis.
  *
- * This is a pure C++ implementation of the generated `GEN-A_n` / `GEN-A_n*`
+ * This implements the generated `GEN-A_n` / `GEN-A_n*`
  * auxiliary-basis policy used by the forthcoming RI path. It intentionally
  * does not depend on hidden state outside the C++ loader.
  */

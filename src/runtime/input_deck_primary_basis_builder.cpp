@@ -428,7 +428,7 @@ LibcintInput build_libcint_input(
     const InputDeck& input_deck,
     const std::unordered_map<int, std::vector<BasisShellTemplate>>& shells_by_atomic_number) {
   if (input_deck.geometry_atoms.empty()) {
-    throw std::runtime_error("pure C++ standalone basis builder requires a non-empty $GEO block");
+    throw std::runtime_error("basis builder requires a non-empty $GEO block");
   }
 
   const int n_atoms = static_cast<int>(input_deck.geometry_atoms.size());
@@ -516,7 +516,7 @@ LibcintInput build_libcint_input(
 InputDeckPrimaryBasisBuildResult build_input_deck_primary_basis(
     const InputDeck& input_deck) {
   if (input_deck.geometry_atoms.empty()) {
-    throw std::runtime_error("pure C++ standalone input loader requires $GEO");
+    throw std::runtime_error("input loader requires $GEO");
   }
 
   const std::string basis_display_name =
