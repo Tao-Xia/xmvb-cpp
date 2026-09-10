@@ -16,7 +16,7 @@
 #include <omp.h>
 #endif
 
-#include "core/openmp_utils.hpp"
+#include "core/parallel/openmp.hpp"
 #include "vbscf/determinants/pair_storage.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"

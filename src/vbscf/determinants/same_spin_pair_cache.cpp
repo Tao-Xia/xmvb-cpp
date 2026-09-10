@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "core/openmp_utils.hpp"
+#include "core/parallel/openmp.hpp"
 #include "vbscf/determinants/pair_storage.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/determinants/cofactor_differential.hpp"

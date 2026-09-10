@@ -18,7 +18,10 @@ Valence Bond theory provides direct chemical insight into bonding, reactivity, a
 
 ```
 src/
-  core/            Shared numerical infrastructure
+  core/
+    containers/    Shared immutable-storage primitives
+    linear_algebra/ Eigensolvers, including Davidson
+    parallel/      OpenMP execution helpers
   vbscf/           Canonical VBSCF implementation
     orbitals/      Sparse/full-AO charts, gauges, and pullbacks
     integrals/     AO and active-space integral operators

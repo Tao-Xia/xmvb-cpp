@@ -5,7 +5,7 @@
 
 #include <Eigen/Core>
 
-#include "core/openmp_utils.hpp"
+#include "core/parallel/openmp.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace xmvb::vb::detail {

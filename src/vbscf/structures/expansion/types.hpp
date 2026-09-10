@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <vector>
 
-#include "core/shared_vector.hpp"
+#include "core/containers/shared_vector.hpp"
 
 namespace xmvb::vb {
 
