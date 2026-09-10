@@ -26,8 +26,8 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
-#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
-#include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
+#include "vbscf/derivatives/hessian/context/accepted_point.hpp"
+#include "vbscf/derivatives/hessian/exact/operator.hpp"
 
 namespace {
 

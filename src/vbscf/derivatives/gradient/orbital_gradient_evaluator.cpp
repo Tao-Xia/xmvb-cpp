@@ -11,7 +11,7 @@
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
-#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 
 namespace xmvb::vb {
 

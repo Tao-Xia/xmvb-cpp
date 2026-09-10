@@ -8,7 +8,7 @@
 
 #include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
-#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/optimization/optimization_checks.hpp"
 
 namespace xmvb::vb {

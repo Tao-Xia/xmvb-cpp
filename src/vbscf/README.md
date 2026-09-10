@@ -56,8 +56,15 @@ vbscf/
       union_graph/      Union-graph screening and rank prediction
   derivatives/
     gradient/            Gradient evaluation and chart pullback
-    hessian/             Matrix-free HVP orchestration and accepted contexts
-      responses/         Orbital, same-spin, and opposite-spin responses
+    hessian/
+      context/           Accepted-point state and reusable response caches
+      exact/             Exact matrix-free HVP orchestration
+      responses/
+        active_space/    Integral and outer active-space responses
+        orbital/         Orbital-preparation response
+        structure/       VB structure directional response
+        same_spin/       Same-spin determinant-pair response kernels
+        opposite_spin/   Opposite-spin response kernels
   optimization/
     krylov/              Matrix-free subspace primitives
     preconditioners/     Reduced-space preconditioners

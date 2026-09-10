@@ -25,10 +25,10 @@
 #include "vbscf/structures/expansion/types.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
-#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
-#include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace xmvb::vb {

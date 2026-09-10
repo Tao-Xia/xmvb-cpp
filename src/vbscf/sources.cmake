@@ -64,29 +64,29 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/gradient/active_space_gradient_helpers.cpp
   vbscf/derivatives/gradient/active_space_gradient_evaluator.cpp
   vbscf/derivatives/gradient/orbital_gradient_evaluator.cpp
-  vbscf/derivatives/hessian/exact_hvp_apply.cpp
-  vbscf/derivatives/hessian/exact_hvp_batch.cpp
-  vbscf/derivatives/hessian/exact_hvp_ao_one_electron.cpp
-  vbscf/derivatives/hessian/exact_hvp_operator.cpp
-  vbscf/derivatives/hessian/structure_response_cache.cpp
-  vbscf/derivatives/hessian/responses/active_space_integral_direction.cpp
-  vbscf/derivatives/hessian/responses/active_space_outer_response.cpp
-  vbscf/derivatives/hessian/responses/opposite_spin_backward.cpp
-  vbscf/derivatives/hessian/responses/opposite_spin_channels.cpp
-  vbscf/derivatives/hessian/responses/opposite_spin_pair_response.cpp
-  vbscf/derivatives/hessian/responses/opposite_spin_contractions.cpp
-  vbscf/derivatives/hessian/responses/opposite_spin_overlap_contractions.cpp
-  vbscf/derivatives/hessian/responses/orbital_preparation_response.cpp
-  vbscf/derivatives/hessian/responses/same_spin_accepted_weights.cpp
-  vbscf/derivatives/hessian/responses/same_spin_backward.cpp
-  vbscf/derivatives/hessian/responses/same_spin_backward_kernels.cpp
-  vbscf/derivatives/hessian/responses/same_spin_directional_weights.cpp
-  vbscf/derivatives/hessian/responses/same_spin_directional_pair_cache.cpp
-  vbscf/derivatives/hessian/responses/same_spin_local_weights.cpp
-  vbscf/derivatives/hessian/responses/same_spin_pair_response.cpp
-  vbscf/derivatives/hessian/responses/same_spin_tile_weights.cpp
-  vbscf/derivatives/hessian/responses/same_spin_weight_kernels.cpp
-  vbscf/derivatives/hessian/responses/structure_directional_response.cpp
+  vbscf/derivatives/hessian/exact/apply.cpp
+  vbscf/derivatives/hessian/exact/batch.cpp
+  vbscf/derivatives/hessian/exact/ao_one_electron.cpp
+  vbscf/derivatives/hessian/exact/operator.cpp
+  vbscf/derivatives/hessian/context/response_cache.cpp
+  vbscf/derivatives/hessian/responses/active_space/integral_direction.cpp
+  vbscf/derivatives/hessian/responses/active_space/outer_response.cpp
+  vbscf/derivatives/hessian/responses/opposite_spin/backward.cpp
+  vbscf/derivatives/hessian/responses/opposite_spin/channels.cpp
+  vbscf/derivatives/hessian/responses/opposite_spin/pair_response.cpp
+  vbscf/derivatives/hessian/responses/opposite_spin/contractions.cpp
+  vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions.cpp
+  vbscf/derivatives/hessian/responses/orbital/preparation.cpp
+  vbscf/derivatives/hessian/responses/same_spin/accepted_weights.cpp
+  vbscf/derivatives/hessian/responses/same_spin/backward.cpp
+  vbscf/derivatives/hessian/responses/same_spin/backward_kernels.cpp
+  vbscf/derivatives/hessian/responses/same_spin/directional_weights.cpp
+  vbscf/derivatives/hessian/responses/same_spin/directional_pair_cache.cpp
+  vbscf/derivatives/hessian/responses/same_spin/local_weights.cpp
+  vbscf/derivatives/hessian/responses/same_spin/pair_response.cpp
+  vbscf/derivatives/hessian/responses/same_spin/tile_weights.cpp
+  vbscf/derivatives/hessian/responses/same_spin/weight_kernels.cpp
+  vbscf/derivatives/hessian/responses/structure/directional.cpp
 )
 
 set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
