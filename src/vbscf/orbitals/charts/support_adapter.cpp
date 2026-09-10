@@ -1,4 +1,4 @@
-#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
+#include "vbscf/orbitals/charts/support_adapter.hpp"
 
 #include <algorithm>
 #include <numeric>

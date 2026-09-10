@@ -7,7 +7,7 @@
 #include <Eigen/Cholesky>
 #include <Eigen/SVD>
 
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/diagnostics/orbital_chart_audit.hpp"
 
 namespace {

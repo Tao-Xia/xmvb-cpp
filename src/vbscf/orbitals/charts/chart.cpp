@@ -1,4 +1,4 @@
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -13,10 +13,10 @@
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
-#include "vbscf/orbitals/charts/orbital_block_partition.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vbscf/orbitals/charts/normalized_orbital_curvature.hpp"
-#include "vbscf/orbitals/charts/projected_orbital_surrogate.hpp"
+#include "vbscf/orbitals/charts/partition.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/orbitals/charts/curvature.hpp"
+#include "vbscf/orbitals/charts/surrogate.hpp"
 
 namespace xmvb::vb {
 

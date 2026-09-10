@@ -5,8 +5,8 @@
 
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
-#include "vbscf/orbitals/orbital_pullback.hpp"
-#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/orbitals/pullback/operator.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"

@@ -11,7 +11,7 @@
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
-#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_ri_operator.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 

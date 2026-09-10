@@ -5,7 +5,7 @@
 
 #include "vbscf/integrals/ao/ao_integral_input.hpp"
 #include "vbscf/integrals/ao/libcint_input.hpp"
-#include "vbscf/orbitals/orbital_preparation_input.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::vb {
 

@@ -11,9 +11,9 @@
 #include <vector>
 
 #include "runtime/vbscf_input_loader.hpp"
-#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/support_adapter.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"

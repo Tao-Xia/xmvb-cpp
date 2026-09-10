@@ -1,4 +1,4 @@
-#include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
+#include "vbscf/orbitals/gauge/support_preserving.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,7 +10,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/LU>
 
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb {
 

@@ -4,8 +4,8 @@
 
 #include <Eigen/Cholesky>
 
-#include "vbscf/orbitals/charts/normalized_orbital_curvature.hpp"
-#include "vbscf/orbitals/charts/projected_orbital_surrogate.hpp"
+#include "vbscf/orbitals/charts/curvature.hpp"
+#include "vbscf/orbitals/charts/surrogate.hpp"
 
 namespace {
 void require(bool condition, const char* message) {

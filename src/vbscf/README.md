@@ -42,6 +42,8 @@ vbscf/
   orbitals/
     charts/             HAO and full-AO OEO coordinate maps
     gauge/              Support-preserving gauge operations
+    preparation/        Validated orbital frames and preparation contracts
+    pullback/           Coordinate-map adjoint and its result contract
   integrals/            AO and active-space integral transformations
   determinants/         Determinant overlap and Hamiltonian kernels
   structures/           VB structure expansion and state matrices
@@ -61,6 +63,13 @@ vbscf/
 ## Naming rules
 
 - Public types use domain names without implementation-language markers.
+- A branch directory contains only functional subdirectories, apart from its
+  module manifest or architecture document. Source files live in leaf
+  directories. This keeps every directory level at one abstraction level.
+- A file name does not repeat meaning already supplied by its parent path. For
+  example, `orbitals/charts/layout.hpp` is preferred over
+  `orbitals/charts/sparse_parameter_layout.hpp`; the public type may retain the
+  mathematically explicit name `SparseParameterLayout`.
 - Files describe one responsibility; generic `utils` files are not allowed in
   the canonical tree.
 - `Context` is immutable data prepared at an accepted point.

@@ -1,4 +1,4 @@
-#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
 
 #include <cmath>
 #include <limits>
@@ -10,7 +10,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/LU>
 
-#include "vbscf/orbitals/gauge/localized_representative.hpp"
+#include "vbscf/orbitals/gauge/localized.hpp"
 
 #ifdef _OPENMP
 #include <omp.h>

@@ -1,4 +1,4 @@
-#include "vbscf/orbitals/charts/orbital_chart_canonicalization.hpp"
+#include "vbscf/orbitals/charts/canonicalization.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -12,10 +12,10 @@
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vbscf/orbitals/gauge/localized_representative.hpp"
-#include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
-#include "vbscf/orbitals/orbital_preparation_result.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/orbitals/gauge/localized.hpp"
+#include "vbscf/orbitals/gauge/support_preserving.hpp"
+#include "vbscf/orbitals/preparation/result.hpp"
 
 namespace xmvb::vb {
 

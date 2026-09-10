@@ -1,4 +1,4 @@
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 
 #include <stdexcept>
 

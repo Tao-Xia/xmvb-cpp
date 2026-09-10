@@ -9,12 +9,12 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/orbitals/gauge/localized_representative.hpp"
-#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
-#include "vbscf/orbitals/charts/orbital_chart_canonicalization.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
+#include "vbscf/orbitals/gauge/localized.hpp"
+#include "vbscf/orbitals/charts/support_adapter.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/canonicalization.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/orbitals/gauge/support_preserving.hpp"
 #include "vbscf/optimization/vbscf_objective.hpp"
 #include "vbscf/optimization/backends/lbfgs_backends.hpp"
 #include "vbscf/optimization/backends/projected_gradient_backend.hpp"

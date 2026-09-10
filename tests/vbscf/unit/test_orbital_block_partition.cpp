@@ -2,7 +2,7 @@
 #include <string>
 #include <vector>
 
-#include "vbscf/orbitals/charts/orbital_block_partition.hpp"
+#include "vbscf/orbitals/charts/partition.hpp"
 
 namespace {
 

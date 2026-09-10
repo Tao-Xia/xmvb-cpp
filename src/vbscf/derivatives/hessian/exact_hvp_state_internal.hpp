@@ -12,8 +12,8 @@
 #include "vbscf/derivatives/hessian/responses/active_space_integral_direction.hpp"
 #include "vbscf/derivatives/hessian/structure_response_internal.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_response_types.hpp"
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/coefficient_blocks.hpp"
 
 namespace xmvb::vb {

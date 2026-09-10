@@ -1,7 +1,7 @@
 #include <iostream>
 #include <stdexcept>
-#include "vbscf/orbitals/orbital_preparer.hpp"
-#include "vbscf/orbitals/orbital_pullback.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/orbitals/pullback/operator.hpp"
 
 int main() {
   try {

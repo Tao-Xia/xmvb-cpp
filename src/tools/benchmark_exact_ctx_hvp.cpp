@@ -20,10 +20,10 @@
 #include "vbscf/diagnostics/reduced_hessian_reference.hpp"
 
 #include "runtime/vbscf_input_loader.hpp"
-#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/support_adapter.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/diagnostics/orbital_chart_audit.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"

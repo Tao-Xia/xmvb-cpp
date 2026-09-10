@@ -15,7 +15,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/core/vbscf_input.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"

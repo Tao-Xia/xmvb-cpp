@@ -5,7 +5,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/optimization/optimizer_types.hpp"
-#include "vbscf/orbitals/orbital_preparation_input.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::vb {
 

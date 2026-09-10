@@ -2,9 +2,9 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vbscf/orbitals/orbital_preparation_input.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::vb {
 

@@ -31,8 +31,8 @@
 #include "vbscf/structures/structure_expander.hpp"
 #include "vbscf/structures/subspace_selector.hpp"
 #include "vbscf/integrals/ao/libcint_input_validation.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/orbitals/gauge/support_preserving.hpp"
 
 #include <Eigen/Core>
 

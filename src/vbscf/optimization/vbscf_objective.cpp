@@ -6,8 +6,8 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/orbitals/charts/orbital_chart_canonicalization.hpp"
-#include "vbscf/orbitals/gauge/support_preserving_gauge.hpp"
+#include "vbscf/orbitals/charts/canonicalization.hpp"
+#include "vbscf/orbitals/gauge/support_preserving.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/optimization/optimization_checks.hpp"
 

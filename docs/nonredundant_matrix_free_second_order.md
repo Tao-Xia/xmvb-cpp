@@ -216,7 +216,7 @@ y_{\mathrm{nr}}.
   - active-space layer backprop 到 AO / orbital 参数层
 - `src/vbscf/optimization/vbscf_optimizer.cpp`
   - 现有 `MatrixFreeReducedHvpOperator`
-- `src/vbscf/orbitals/orbital_pullback.cpp`
+- `src/vbscf/orbitals/pullback/operator.cpp`
   - 当前承载 old `Grdori` / original-orbital 投影语义的正式 pullback 实现
 
 也就是说：

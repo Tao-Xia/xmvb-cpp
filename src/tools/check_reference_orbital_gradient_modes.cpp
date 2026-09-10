@@ -11,7 +11,7 @@
 
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
-#include "vbscf/orbitals/orbital_pullback.hpp"
+#include "vbscf/orbitals/pullback/operator.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"

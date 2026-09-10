@@ -4,7 +4,7 @@
 
 #include <Eigen/QR>
 
-#include "vbscf/orbitals/charts/normalized_orbital_curvature.hpp"
+#include "vbscf/orbitals/charts/curvature.hpp"
 
 namespace {
 void require(bool condition, const char* message) {

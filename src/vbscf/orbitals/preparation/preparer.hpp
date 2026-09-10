@@ -1,7 +1,7 @@
 #pragma once
 
-#include "vbscf/orbitals/orbital_preparation_input.hpp"
-#include "vbscf/orbitals/orbital_preparation_result.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
+#include "vbscf/orbitals/preparation/result.hpp"
 
 namespace xmvb::vb {
 

@@ -7,7 +7,7 @@
 #include "vbscf/integrals/ao/ao_integral_input.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagation_result.hpp"
 #include "vbscf/integrals/ao/ri_factorization.hpp"
-#include "vbscf/orbitals/orbital_preparation_result.hpp"
+#include "vbscf/orbitals/preparation/result.hpp"
 
 namespace xmvb::vb {
 

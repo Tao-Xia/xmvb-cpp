@@ -4,7 +4,7 @@
 
 #include <vector>
 
-#include "vbscf/orbitals/orbital_frame.hpp"
+#include "vbscf/orbitals/preparation/frame.hpp"
 
 namespace xmvb::vb {
 

@@ -7,7 +7,7 @@
 
 #include "runtime/vbscf_input_loader.hpp"
 #include "runtime/libcint_ri_integral_provider.hpp"
-#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
 #include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
 

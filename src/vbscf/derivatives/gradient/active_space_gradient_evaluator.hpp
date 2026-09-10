@@ -7,7 +7,7 @@
 #include "vbscf/structures/hamiltonian_overlap_builder.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
-#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_result.hpp"

@@ -5,8 +5,8 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/ao/libcint_input.hpp"
-#include "vbscf/orbitals/orbital_preparation_input.hpp"
-#include "vbscf/orbitals/charts/orbital_block_partition.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
+#include "vbscf/orbitals/charts/partition.hpp"
 
 namespace xmvb::vb {
 

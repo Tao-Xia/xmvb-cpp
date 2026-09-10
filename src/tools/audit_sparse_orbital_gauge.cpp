@@ -6,10 +6,10 @@
 #include <string>
 
 #include "runtime/vbscf_input_loader.hpp"
-#include "vbscf/orbitals/charts/support_layout_adapter.hpp"
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/support_adapter.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/diagnostics/orbital_chart_audit.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 
 namespace {
 

@@ -24,15 +24,15 @@ set(XMVB_VBSCF_STRUCTURE_SOURCES
 )
 
 set(XMVB_VBSCF_ORBITAL_SOURCES
-  vbscf/orbitals/orbital_preparer.cpp
-  vbscf/orbitals/orbital_pullback.cpp
-  vbscf/orbitals/gauge/localized_representative.cpp
-  vbscf/orbitals/charts/orbital_block_partition.cpp
-  vbscf/orbitals/charts/orbital_chart_canonicalization.cpp
-  vbscf/orbitals/charts/support_layout_adapter.cpp
-  vbscf/orbitals/charts/orbital_chart.cpp
-  vbscf/orbitals/charts/sparse_parameter_layout.cpp
-  vbscf/orbitals/gauge/support_preserving_gauge.cpp
+  vbscf/orbitals/preparation/preparer.cpp
+  vbscf/orbitals/pullback/operator.cpp
+  vbscf/orbitals/gauge/localized.cpp
+  vbscf/orbitals/charts/partition.cpp
+  vbscf/orbitals/charts/canonicalization.cpp
+  vbscf/orbitals/charts/support_adapter.cpp
+  vbscf/orbitals/charts/chart.cpp
+  vbscf/orbitals/charts/layout.cpp
+  vbscf/orbitals/gauge/support_preserving.cpp
 )
 
 set(XMVB_VBSCF_AO_INTEGRAL_SOURCES

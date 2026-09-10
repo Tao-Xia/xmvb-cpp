@@ -17,7 +17,7 @@
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/structures/reference/raw_structure_overlap.hpp"
 #include "vbscf/structures/union_graph_screening.hpp"
-#include "vbscf/orbitals/orbital_preparer.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/optimization/vbscf_optimizer.hpp"
 
 namespace {

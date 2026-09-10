@@ -5,7 +5,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/optimization/optimizer_types.hpp"
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
 
 namespace xmvb::vb {
 

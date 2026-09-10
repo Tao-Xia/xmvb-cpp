@@ -4,9 +4,9 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
-#include "vbscf/orbitals/orbital_preparation_input.hpp"
-#include "vbscf/orbitals/orbital_preparation_result.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
+#include "vbscf/orbitals/preparation/result.hpp"
 
 namespace xmvb::vb {
 

@@ -4,9 +4,9 @@
 
 #include <vector>
 
-#include "vbscf/orbitals/orbital_pullback_result.hpp"
-#include "vbscf/orbitals/orbital_preparation_input.hpp"
-#include "vbscf/orbitals/orbital_preparation_result.hpp"
+#include "vbscf/orbitals/pullback/result.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
+#include "vbscf/orbitals/preparation/result.hpp"
 
 namespace xmvb::vb {
 

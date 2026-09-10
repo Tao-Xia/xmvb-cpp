@@ -6,8 +6,8 @@
 
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 #include "vbscf/optimization/vbscf_objective.hpp"
-#include "vbscf/orbitals/charts/orbital_chart.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb {
 

@@ -11,7 +11,7 @@
 #include "vbscf/optimization/vbscf_objective.hpp"
 #include "vbscf/optimization/vbscf_optimizer_options.hpp"
 #include "vbscf/optimization/vbscf_optimizer_result.hpp"
-#include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb::optimizer_detail {
 
