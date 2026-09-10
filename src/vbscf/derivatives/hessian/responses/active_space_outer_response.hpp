@@ -9,7 +9,7 @@
 #include "vbscf/derivatives/hessian/responses/active_space_direction.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital_preparation_response.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_response.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_response_types.hpp"
 
 namespace xmvb::vb {
 

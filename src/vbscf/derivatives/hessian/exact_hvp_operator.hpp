@@ -7,7 +7,7 @@
 
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/coefficient_blocks.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_response.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_response_types.hpp"
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"

@@ -10,7 +10,7 @@
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_response.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
 
 namespace {
 

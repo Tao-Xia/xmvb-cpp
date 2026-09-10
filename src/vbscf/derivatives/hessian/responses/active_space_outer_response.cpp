@@ -10,7 +10,9 @@
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_backpropagator.hpp"
 

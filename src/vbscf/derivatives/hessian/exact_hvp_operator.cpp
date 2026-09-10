@@ -14,7 +14,8 @@
 
 #include "vbscf/structures/coefficient_blocks.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_response.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_directional.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space_outer_response.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital_preparation_response.hpp"

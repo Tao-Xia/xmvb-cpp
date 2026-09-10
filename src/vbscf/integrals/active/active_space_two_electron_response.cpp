@@ -1,4 +1,5 @@
-#include "vbscf/integrals/active/active_space_two_electron_response.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_directional.hpp"
 #include <atomic>
 #include <stdexcept>
 #include <vector>
