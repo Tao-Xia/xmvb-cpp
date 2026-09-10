@@ -1,4 +1,4 @@
-#include "runtime/input_deck_orbital_support_builder.hpp"
+#include "runtime/input/deck/orbital_support.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/input_deck_keywords.hpp"
+#include "runtime/input/deck/keywords.hpp"
 
 namespace xmvb::vb {
 namespace {

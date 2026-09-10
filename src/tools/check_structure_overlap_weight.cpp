@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 
 namespace {

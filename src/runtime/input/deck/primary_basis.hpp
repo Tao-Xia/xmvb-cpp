@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <string>
 
-#include "runtime/input_deck_model.hpp"
+#include "runtime/input/deck/model.hpp"
 #include "vbscf/integrals/ao/libcint_input.hpp"
 
 namespace xmvb::vb {

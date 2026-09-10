@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
 
 namespace {

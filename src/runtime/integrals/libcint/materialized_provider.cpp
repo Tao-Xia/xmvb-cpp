@@ -1,4 +1,4 @@
-#include "runtime/libcint_materialized_integral_provider.hpp"
+#include "runtime/integrals/libcint/materialized_provider.hpp"
 
 #include <cmath>
 #include <memory>
@@ -9,7 +9,7 @@
 #include <omp.h>
 #endif
 
-#include "runtime/libcint_direct_shell_evaluator.hpp"
+#include "runtime/integrals/libcint/direct_shell.hpp"
 
 namespace xmvb::vb {
 

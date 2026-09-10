@@ -1,4 +1,4 @@
-#include "runtime/input_deck_model.hpp"
+#include "runtime/input/deck/model.hpp"
 
 #include <algorithm>
 #include <cctype>

@@ -1,4 +1,4 @@
-#include "runtime/materialized_ao_integral_input_builder.hpp"
+#include "runtime/integrals/preparation/materialized_input.hpp"
 
 #include <cstddef>
 #include <cstdint>

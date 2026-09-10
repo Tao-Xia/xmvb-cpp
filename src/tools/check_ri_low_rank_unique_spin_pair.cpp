@@ -11,7 +11,7 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vbscf/determinants/same_spin_pair_cache.hpp"

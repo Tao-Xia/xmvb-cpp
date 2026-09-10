@@ -1,6 +1,6 @@
 #pragma once
 
-#include "runtime/materialized_ao_integral_input_builder.hpp"
+#include "runtime/integrals/preparation/materialized_input.hpp"
 #include "vbscf/integrals/ao/libcint_input.hpp"
 
 namespace xmvb::vb {

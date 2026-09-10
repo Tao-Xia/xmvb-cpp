@@ -23,7 +23,7 @@ per-orbital support layouts.
 
 The loader already records that `orbtyp=oeo` remains a full-AO chart:
 
-- [`vbscf_input_loader.cpp`](/pool1/home/xiatao/project/xmvb-cpp/src/runtime/vbscf_input_loader.cpp)
+- [`loader.cpp`](../src/runtime/input/loading/loader.cpp)
 
 That means:
 

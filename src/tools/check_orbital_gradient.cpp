@@ -10,7 +10,7 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"

@@ -13,7 +13,7 @@
 
 #include <Eigen/LU>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/structures/expansion/expander.hpp"

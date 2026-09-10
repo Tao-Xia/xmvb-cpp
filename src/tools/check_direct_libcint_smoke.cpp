@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/vbscf_input_loader.hpp"
-#include "runtime/libcint_direct_shell_evaluator.hpp"
+#include "runtime/input/loading/loader.hpp"
+#include "runtime/integrals/libcint/direct_shell.hpp"
 
 namespace {
 

@@ -1,4 +1,4 @@
-#include "runtime/libcint_ri_integral_provider.hpp"
+#include "runtime/integrals/libcint/ri_provider.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,7 +8,7 @@
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
 
-#include "runtime/libcint_direct_shell_evaluator.hpp"
+#include "runtime/integrals/libcint/direct_shell.hpp"
 
 #ifdef _OPENMP
 #include <omp.h>

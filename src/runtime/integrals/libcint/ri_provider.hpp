@@ -1,6 +1,6 @@
 #pragma once
 
-#include "runtime/libcint_auxiliary_basis_builder.hpp"
+#include "runtime/integrals/libcint/auxiliary_basis.hpp"
 #include "vbscf/integrals/ao/ri_factorization_provider.hpp"
 
 namespace xmvb::vb {

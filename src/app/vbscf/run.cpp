@@ -9,9 +9,9 @@
 
 #include "app/vbscf/report.hpp"
 #include "runtime/io/binary_file.hpp"
-#include "runtime/molden_file_writer.hpp"
-#include "runtime/trace/accepted_iteration_trace_writer.hpp"
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/output/molden/writer.hpp"
+#include "runtime/output/trace/accepted_iteration.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/optimization/driver/optimizer.hpp"
 
 namespace xmvb::app::vbscf {

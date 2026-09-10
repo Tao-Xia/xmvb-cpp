@@ -5,8 +5,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/vbscf_input_loader.hpp"
-#include "runtime/libcint_ri_integral_provider.hpp"
+#include "runtime/input/loading/loader.hpp"
+#include "runtime/integrals/libcint/ri_provider.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
 #include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"

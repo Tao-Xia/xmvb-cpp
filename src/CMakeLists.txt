@@ -32,24 +32,24 @@ find_path(EIGEN3_INCLUDE_DIR Eigen/Core
 include(vbscf/sources.cmake)
 
 set(XMVB_RUNTIME_SOURCES
-  runtime/orbital_block_guess_builder.cpp
-  runtime/closed_shell_fock_builder.cpp
-  runtime/orbital_initial_guess_builder.cpp
-  runtime/generated_raw_structure_builder.cpp
-  runtime/input_deck_model.cpp
-  runtime/input_deck_metadata.cpp
-  runtime/input_deck_primary_basis_builder.cpp
-  runtime/input_deck_orbital_support_builder.cpp
-  runtime/input_deck_raw_structures.cpp
-  runtime/molden_file_writer.cpp
-  runtime/restricted_hartree_fock.cpp
-  runtime/vbscf_input_loader.cpp
-  runtime/libcint_auxiliary_basis_builder.cpp
-  runtime/libcint_direct_shell_evaluator.cpp
-  runtime/libcint_materialized_integral_provider.cpp
-  runtime/libcint_ri_integral_provider.cpp
-  runtime/materialized_ao_integral_input_builder.cpp
-  runtime/trace/accepted_iteration_trace_writer.cpp
+  runtime/orbitals/guess/block.cpp
+  runtime/orbitals/guess/closed_shell_fock.cpp
+  runtime/orbitals/guess/initial.cpp
+  runtime/input/loading/generated_structures.cpp
+  runtime/input/deck/model.cpp
+  runtime/input/deck/metadata.cpp
+  runtime/input/deck/primary_basis.cpp
+  runtime/input/deck/orbital_support.cpp
+  runtime/input/deck/raw_structures.cpp
+  runtime/output/molden/writer.cpp
+  runtime/orbitals/guess/restricted_hf.cpp
+  runtime/input/loading/loader.cpp
+  runtime/integrals/libcint/auxiliary_basis.cpp
+  runtime/integrals/libcint/direct_shell.cpp
+  runtime/integrals/libcint/materialized_provider.cpp
+  runtime/integrals/libcint/ri_provider.cpp
+  runtime/integrals/preparation/materialized_input.cpp
+  runtime/output/trace/accepted_iteration.cpp
 )
 
 # Keep runtime ownership as strict as the canonical VBSCF manifest. A new

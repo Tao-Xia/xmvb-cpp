@@ -14,9 +14,9 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 
-#include "runtime/vbscf_input_loader.hpp"
-#include "runtime/libcint_c_api.hpp"
-#include "runtime/gaussian_shell_normalization.hpp"
+#include "runtime/input/loading/loader.hpp"
+#include "runtime/integrals/libcint/c_api.hpp"
+#include "runtime/integrals/preparation/shell_normalization.hpp"
 
 namespace {
 

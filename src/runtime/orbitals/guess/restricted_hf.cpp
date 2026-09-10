@@ -1,4 +1,4 @@
-#include "runtime/restricted_hartree_fock.hpp"
+#include "runtime/orbitals/guess/restricted_hf.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,7 +9,7 @@
 #include <Eigen/LU>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/closed_shell_fock_builder.hpp"
+#include "runtime/orbitals/guess/closed_shell_fock.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 
 namespace xmvb::vb {

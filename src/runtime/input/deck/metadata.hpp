@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "runtime/input_deck_keywords.hpp"
+#include "runtime/input/deck/keywords.hpp"
 
 namespace xmvb::vb {
 

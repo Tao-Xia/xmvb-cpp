@@ -1,4 +1,4 @@
-#include "runtime/trace/accepted_iteration_trace_writer.hpp"
+#include "runtime/output/trace/accepted_iteration.hpp"
 
 #include <cctype>
 #include <cstdint>
@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "runtime/io/binary_file.hpp"
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 

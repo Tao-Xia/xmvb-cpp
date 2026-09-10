@@ -14,7 +14,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"

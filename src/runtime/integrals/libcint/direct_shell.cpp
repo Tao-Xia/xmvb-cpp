@@ -1,4 +1,4 @@
-#include "runtime/libcint_direct_shell_evaluator.hpp"
+#include "runtime/integrals/libcint/direct_shell.hpp"
 
 #include <cmath>
 #include <stdexcept>

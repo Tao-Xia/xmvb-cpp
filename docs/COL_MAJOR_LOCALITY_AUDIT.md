@@ -207,8 +207,8 @@ Best fix direction:
 
 References:
 
-- `src/runtime/libcint_ri_integral_provider.cpp:147`
-- `src/runtime/libcint_ri_integral_provider.cpp:174`
+- `src/runtime/integrals/libcint/ri_provider.cpp:147`
+- `src/runtime/integrals/libcint/ri_provider.cpp:174`
 
 What happens:
 

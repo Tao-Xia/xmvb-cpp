@@ -6,7 +6,7 @@
 #include <optional>
 
 #include "app/vbscf/options.hpp"
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 
 namespace xmvb::app::vbscf {

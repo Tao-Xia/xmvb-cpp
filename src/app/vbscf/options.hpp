@@ -3,7 +3,7 @@
 #include <optional>
 #include <string>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/optimization/driver/optimizer.hpp"
 
 namespace xmvb::app::vbscf {

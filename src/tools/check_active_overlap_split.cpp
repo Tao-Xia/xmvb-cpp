@@ -10,7 +10,7 @@
 #include <Eigen/Core>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"

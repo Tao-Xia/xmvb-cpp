@@ -1,4 +1,4 @@
-#include "runtime/libcint_auxiliary_basis_builder.hpp"
+#include "runtime/integrals/libcint/auxiliary_basis.hpp"
 
 #include <algorithm>
 #include <cmath>

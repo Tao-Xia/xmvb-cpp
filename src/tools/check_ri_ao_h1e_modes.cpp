@@ -9,7 +9,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_ri_operator.hpp"

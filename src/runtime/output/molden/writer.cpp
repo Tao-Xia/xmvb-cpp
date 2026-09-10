@@ -1,4 +1,4 @@
-#include "runtime/molden_file_writer.hpp"
+#include "runtime/output/molden/writer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -11,8 +11,8 @@
 #include <string>
 #include <vector>
 
-#include "runtime/libcint_c_api.hpp"
-#include "runtime/gaussian_shell_normalization.hpp"
+#include "runtime/integrals/libcint/c_api.hpp"
+#include "runtime/integrals/preparation/shell_normalization.hpp"
 
 namespace xmvb::vb {
 

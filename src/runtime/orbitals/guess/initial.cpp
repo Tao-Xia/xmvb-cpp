@@ -1,4 +1,4 @@
-#include "runtime/orbital_initial_guess_builder.hpp"
+#include "runtime/orbitals/guess/initial.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -12,10 +12,10 @@
 
 #include <Eigen/Core>
 #include "lapacke.h"
-#include "runtime/orbital_block_guess_builder.hpp"
-#include "runtime/restricted_hartree_fock.hpp"
-#include "runtime/input_deck_keywords.hpp"
-#include "runtime/libcint_c_api.hpp"
+#include "runtime/orbitals/guess/block.hpp"
+#include "runtime/orbitals/guess/restricted_hf.hpp"
+#include "runtime/input/deck/keywords.hpp"
+#include "runtime/integrals/libcint/c_api.hpp"
 
 namespace xmvb::vb {
 

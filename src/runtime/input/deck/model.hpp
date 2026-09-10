@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/input_deck_metadata.hpp"
+#include "runtime/input/deck/metadata.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 
 namespace xmvb::vb {

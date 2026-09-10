@@ -9,7 +9,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/determinants/determinant_hamiltonian.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"

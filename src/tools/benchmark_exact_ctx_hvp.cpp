@@ -19,7 +19,7 @@
 #include "vbscf/optimization/krylov/orthonormal_basis.hpp"
 #include "vbscf/diagnostics/reduced_hessian_reference.hpp"
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/diagnostics/orbital_chart_audit.hpp"

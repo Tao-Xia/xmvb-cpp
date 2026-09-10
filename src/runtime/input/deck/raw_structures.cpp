@@ -1,8 +1,8 @@
-#include "runtime/input_deck_raw_structures.hpp"
+#include "runtime/input/deck/raw_structures.hpp"
 
 #include <stdexcept>
 
-#include "runtime/input_deck_model.hpp"
+#include "runtime/input/deck/model.hpp"
 
 namespace xmvb::vb {
 

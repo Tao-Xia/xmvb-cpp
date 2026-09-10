@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/structures/selection/union_graph/rank_predictor.hpp"

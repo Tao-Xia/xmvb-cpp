@@ -1,4 +1,4 @@
-#include "runtime/generated_raw_structure_builder.hpp"
+#include "runtime/input/loading/generated_structures.hpp"
 
 #include <algorithm>
 #include <cctype>

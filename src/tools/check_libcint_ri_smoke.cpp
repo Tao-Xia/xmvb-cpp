@@ -5,9 +5,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/vbscf_input_loader.hpp"
-#include "runtime/libcint_auxiliary_basis_builder.hpp"
-#include "runtime/libcint_direct_shell_evaluator.hpp"
+#include "runtime/input/loading/loader.hpp"
+#include "runtime/integrals/libcint/auxiliary_basis.hpp"
+#include "runtime/integrals/libcint/direct_shell.hpp"
 
 namespace {
 

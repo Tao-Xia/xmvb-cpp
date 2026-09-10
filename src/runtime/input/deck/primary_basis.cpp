@@ -1,4 +1,4 @@
-#include "runtime/input_deck_primary_basis_builder.hpp"
+#include "runtime/input/deck/primary_basis.hpp"
 
 #include <algorithm>
 #include <array>
@@ -18,7 +18,7 @@ extern "C" {
 #include "cint.h"
 }
 
-#include "runtime/gaussian_shell_normalization.hpp"
+#include "runtime/integrals/preparation/shell_normalization.hpp"
 
 namespace xmvb::vb {
 namespace {

@@ -1,4 +1,4 @@
-#include "runtime/vbscf_input_loader.hpp"
+#include "runtime/input/loading/loader.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -15,19 +15,19 @@
 #include <omp.h>
 #endif
 
-#include "runtime/orbital_block_guess_builder.hpp"
-#include "runtime/generated_raw_structure_builder.hpp"
-#include "runtime/input_deck_keywords.hpp"
-#include "runtime/input_deck_model.hpp"
-#include "runtime/input_deck_orbital_support_builder.hpp"
-#include "runtime/input_deck_primary_basis_builder.hpp"
-#include "runtime/libcint_auxiliary_basis_builder.hpp"
-#include "runtime/libcint_c_api.hpp"
-#include "runtime/libcint_direct_shell_evaluator.hpp"
-#include "runtime/libcint_materialized_integral_provider.hpp"
-#include "runtime/libcint_ri_integral_provider.hpp"
-#include "runtime/materialized_ao_integral_input_builder.hpp"
-#include "runtime/orbital_initial_guess_builder.hpp"
+#include "runtime/orbitals/guess/block.hpp"
+#include "runtime/input/loading/generated_structures.hpp"
+#include "runtime/input/deck/keywords.hpp"
+#include "runtime/input/deck/model.hpp"
+#include "runtime/input/deck/orbital_support.hpp"
+#include "runtime/input/deck/primary_basis.hpp"
+#include "runtime/integrals/libcint/auxiliary_basis.hpp"
+#include "runtime/integrals/libcint/c_api.hpp"
+#include "runtime/integrals/libcint/direct_shell.hpp"
+#include "runtime/integrals/libcint/materialized_provider.hpp"
+#include "runtime/integrals/libcint/ri_provider.hpp"
+#include "runtime/integrals/preparation/materialized_input.hpp"
+#include "runtime/orbitals/guess/initial.hpp"
 #include "vbscf/structures/expansion/expander.hpp"
 #include "vbscf/structures/selection/subspace/selector.hpp"
 #include "vbscf/integrals/ao/libcint_input_validation.hpp"
