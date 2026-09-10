@@ -8,7 +8,7 @@
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
-#include "vbscf/diagnostics/orbital_chart_audit.hpp"
+#include "vbscf/diagnostics/orbitals/chart_audit.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
 namespace {

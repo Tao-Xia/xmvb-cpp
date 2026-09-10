@@ -10,7 +10,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/orbitals/guess/closed_shell_fock.hpp"
-#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/core/storage/eigen.hpp"
 
 namespace xmvb::vb {
 

@@ -1,4 +1,4 @@
-#include "vbscf/workflow/vbscf_evaluator.hpp"
+#include "vbscf/workflow/evaluator.hpp"
 
 #include <stdexcept>
 #include <utility>

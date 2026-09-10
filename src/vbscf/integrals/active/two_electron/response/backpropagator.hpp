@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/integrals/active/two_electron/construction/result.hpp"
 #include "vbscf/orbitals/preparation/result.hpp"
 #include "vbscf/integrals/active/two_electron/response/backpropagation_result.hpp"

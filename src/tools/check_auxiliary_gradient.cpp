@@ -10,7 +10,7 @@
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
-#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/matrix/backpropagator.hpp"

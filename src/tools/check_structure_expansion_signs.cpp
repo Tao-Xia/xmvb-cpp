@@ -12,7 +12,7 @@
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
-#include "vbscf/core/model_flags.hpp"
+#include "vbscf/core/configuration/flags.hpp"
 
 namespace {
 

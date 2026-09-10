@@ -14,7 +14,7 @@
 #include <Eigen/LU>
 
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/structures/expansion/expander.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"

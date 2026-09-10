@@ -14,11 +14,11 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital/result.hpp"
-#include "vbscf/workflow/vbscf_evaluator.hpp"
+#include "vbscf/workflow/evaluator.hpp"
 #include "vbscf/optimization/driver/types.hpp"
 
 namespace xmvb::vb {

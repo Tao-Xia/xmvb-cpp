@@ -9,7 +9,7 @@
 #include <Eigen/Core>
 
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/structures/selection/union_graph/screening.hpp"
 

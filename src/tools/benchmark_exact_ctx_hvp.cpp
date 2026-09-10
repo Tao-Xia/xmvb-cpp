@@ -15,14 +15,14 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/QR>
 
-#include "vbscf/diagnostics/curvature_decomposition.hpp"
+#include "vbscf/diagnostics/orbitals/curvature.hpp"
 #include "vbscf/optimization/krylov/orthonormal_basis.hpp"
-#include "vbscf/diagnostics/reduced_hessian_reference.hpp"
+#include "vbscf/diagnostics/hessian/reduced_reference.hpp"
 
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
-#include "vbscf/diagnostics/orbital_chart_audit.hpp"
+#include "vbscf/diagnostics/orbitals/chart_audit.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital/result.hpp"

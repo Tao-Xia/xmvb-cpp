@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/structures/selection/union_graph/rank_predictor.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"

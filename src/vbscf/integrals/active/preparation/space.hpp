@@ -2,7 +2,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/integrals/active/one_electron/builder.hpp"
 #include "vbscf/integrals/active/one_electron/result.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"

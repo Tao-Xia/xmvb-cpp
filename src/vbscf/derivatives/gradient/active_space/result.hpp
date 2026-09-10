@@ -7,7 +7,7 @@
 #include "vbscf/integrals/active/two_electron/construction/result.hpp"
 #include "vbscf/integrals/ao/one_electron/result.hpp"
 #include "vbscf/orbitals/preparation/result.hpp"
-#include "vbscf/core/vbscf_result.hpp"
+#include "vbscf/core/contracts/result.hpp"
 
 namespace xmvb::vb {
 

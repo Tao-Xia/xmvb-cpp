@@ -1,6 +1,6 @@
 #include <iostream>
 #include <stdexcept>
-#include "vbscf/diagnostics/curvature_decomposition.hpp"
+#include "vbscf/diagnostics/orbitals/curvature.hpp"
 
 int main() {
   try {

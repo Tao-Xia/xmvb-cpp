@@ -3,9 +3,9 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/evaluation/evaluator.hpp"
-#include "vbscf/core/vbscf_result.hpp"
+#include "vbscf/core/contracts/result.hpp"
 
 namespace xmvb::vb {
 

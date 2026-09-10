@@ -38,7 +38,10 @@ transpose-Jacobian response paths.
 
 ```text
 vbscf/
-  core/                 Aggregate input/result and algorithm contracts
+  core/
+    configuration/      Algorithm configuration flags
+    contracts/          Aggregate VBSCF input/result contracts
+    storage/            Shared numerical storage conventions
   orbitals/
     charts/             HAO and full-AO OEO coordinate maps
     gauge/              Support-preserving gauge operations
@@ -93,7 +96,9 @@ vbscf/
     preconditioners/     Reduced-space preconditioners
     trust_region/        Trust-region model solvers and radius updates
   workflow/              End-to-end VBSCF evaluation and orchestration
-  diagnostics/           Numerical and coordinate audits
+  diagnostics/
+    hessian/             Reduced-Hessian reference checks
+    orbitals/            Curvature decomposition and chart audits
 ```
 
 ## Naming rules

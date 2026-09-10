@@ -8,7 +8,7 @@
 #include <Eigen/SVD>
 
 #include "vbscf/orbitals/charts/chart.hpp"
-#include "vbscf/diagnostics/orbital_chart_audit.hpp"
+#include "vbscf/diagnostics/orbitals/chart_audit.hpp"
 
 namespace {
 using namespace xmvb::vb;

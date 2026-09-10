@@ -3,7 +3,7 @@
 #include <chrono>
 #include <vector>
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/integrals/active/matrix/backpropagator.hpp"
 #include "vbscf/orbitals/pullback/operator.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"

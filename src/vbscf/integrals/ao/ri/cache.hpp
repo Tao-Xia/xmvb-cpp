@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/integrals/ao/ri/factorization.hpp"
 
 namespace xmvb::vb {

@@ -9,7 +9,7 @@
 
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
-#include "vbscf/workflow/vbscf_evaluator.hpp"
+#include "vbscf/workflow/evaluator.hpp"
 
 namespace {
 

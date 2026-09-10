@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "vbscf/structures/selection/subspace/selector.hpp"
-#include "vbscf/core/model_flags.hpp"
+#include "vbscf/core/configuration/flags.hpp"
 
 namespace xmvb::vb {
 

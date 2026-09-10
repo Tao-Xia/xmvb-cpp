@@ -14,7 +14,7 @@
 #endif
 
 #include "core/parallel/openmp.hpp"
-#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/integrals/ao/one_electron/graph_operator.hpp"
 #include "vbscf/integrals/ao/one_electron/ri_operator.hpp"
 

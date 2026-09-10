@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/selection/subspace/selector.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 

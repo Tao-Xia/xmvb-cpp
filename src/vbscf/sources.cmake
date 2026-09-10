@@ -90,7 +90,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
 )
 
 set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
-  vbscf/diagnostics/orbital_chart_audit.cpp
+  vbscf/diagnostics/orbitals/chart_audit.cpp
 )
 
 set(XMVB_VBSCF_OPTIMIZATION_SOURCES
@@ -108,7 +108,7 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
 )
 
 set(XMVB_VBSCF_WORKFLOW_SOURCES
-  vbscf/workflow/vbscf_evaluator.cpp
+  vbscf/workflow/evaluator.cpp
 )
 
 # Keep the ownership manifest complete. Adding a VBSCF translation unit without

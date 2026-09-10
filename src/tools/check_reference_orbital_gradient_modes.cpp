@@ -14,7 +14,7 @@
 #include "vbscf/orbitals/pullback/operator.hpp"
 #include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
-#include "vbscf/workflow/vbscf_evaluator.hpp"
+#include "vbscf/workflow/evaluator.hpp"
 
 namespace {
 

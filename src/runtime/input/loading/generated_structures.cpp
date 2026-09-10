@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "vbscf/core/model_flags.hpp"
+#include "vbscf/core/configuration/flags.hpp"
 
 namespace xmvb::vb {
 namespace {

@@ -1,4 +1,4 @@
-#include "vbscf/diagnostics/orbital_chart_audit.hpp"
+#include "vbscf/diagnostics/orbitals/chart_audit.hpp"
 
 #include <algorithm>
 #include <cmath>

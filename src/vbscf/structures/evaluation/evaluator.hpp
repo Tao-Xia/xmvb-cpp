@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/structures/expansion/types.hpp"

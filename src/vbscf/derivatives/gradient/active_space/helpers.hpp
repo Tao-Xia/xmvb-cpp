@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/derivatives/gradient/active_space/result.hpp"
 

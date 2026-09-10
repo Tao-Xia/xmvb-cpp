@@ -5,7 +5,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/assembly/coefficient_blocks.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 

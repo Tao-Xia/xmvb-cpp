@@ -8,7 +8,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/ao/ri/cache.hpp"
-#include "vbscf/core/eigen_storage.hpp"
+#include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"

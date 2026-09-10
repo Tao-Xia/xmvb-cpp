@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 
 namespace xmvb::vb {
 

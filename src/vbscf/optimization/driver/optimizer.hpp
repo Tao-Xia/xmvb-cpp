@@ -2,10 +2,10 @@
 
 #include <vector>
 
-#include "vbscf/core/vbscf_input.hpp"
+#include "vbscf/core/contracts/input.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/optimization/driver/options.hpp"
-#include "vbscf/workflow/vbscf_evaluator.hpp"
+#include "vbscf/workflow/evaluator.hpp"
 
 namespace xmvb::vb {
 
