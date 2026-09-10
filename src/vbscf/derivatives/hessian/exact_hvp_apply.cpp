@@ -11,10 +11,10 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_directional.hpp"
 #include "vbscf/integrals/ao/ao_effective_one_electron_graph_operator.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space_integral_direction.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space_outer_response.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital_preparation_response.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
@@ -35,14 +35,6 @@ void add_orbital_value_gradient_in_place(
   }
   for (std::size_t index = 0; index < target->size(); ++index) {
     (*target)[index] += contribution[index];
-  }
-}
-
-void resize_for_overwrite(
-    std::vector<double>* values,
-    std::size_t size) {
-  if (values->size() != size) {
-    values->resize(size);
   }
 }
 
@@ -88,102 +80,6 @@ void throw_if_nonfinite(
       std::string(label) + " contains non-finite values");
 }
 
-void build_active_space_directional_integrals(
-    const VbScfInput& input,
-    const ActiveSpaceTwoElectronResult& accepted_active_space_two_electron_result,
-    const Eigen::MatrixXd& accepted_active_auxiliary_orbitals,
-    const Eigen::MatrixXd& accepted_basis_overlap_times_active_auxiliary_orbitals,
-    const Eigen::MatrixXd& accepted_ao_effective_one_electron_times_active_auxiliary_orbitals,
-    const Eigen::MatrixXd&
-        accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals,
-    const Eigen::MatrixXd& delta_active_auxiliary_orbitals,
-    const Eigen::Ref<const Eigen::MatrixXd>& accepted_dense_active_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& delta_dense_active_coefficients,
-    const Eigen::MatrixXd& delta_ao_effective_h1e_times_active_auxiliary_orbitals,
-    std::vector<double>* delta_ao_overlap_matrix_storage,
-    std::vector<double>* delta_active_one_electron_matrix_storage,
-    ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace* exact_2e_workspace,
-    std::vector<double>* delta_packed_active_two_electron_integrals,
-    const Eigen::VectorXd* precomputed_delta_packed_active_two_electron) {
-  const int n_basis_functions =
-      input.orbital_preparation_input.n_basis_functions;
-  const int n_active_orbitals =
-      input.orbital_preparation_input.n_active_orbitals;
-  const std::size_t active_matrix_size =
-      n_active_orbitals * n_active_orbitals;
-  if (n_basis_functions <= 0 || n_active_orbitals <= 0) {
-    throw std::invalid_argument(
-        "active-space directional integrals require positive dimensions");
-  }
-  resize_for_overwrite(
-      delta_ao_overlap_matrix_storage,
-      active_matrix_size);
-  resize_for_overwrite(
-      delta_active_one_electron_matrix_storage,
-      active_matrix_size);
-  Eigen::Map<Eigen::MatrixXd> delta_ao_overlap_matrix(
-      delta_ao_overlap_matrix_storage->data(),
-      n_active_orbitals,
-      n_active_orbitals);
-  Eigen::Map<Eigen::MatrixXd> delta_active_one_electron_matrix(
-      delta_active_one_electron_matrix_storage->data(),
-      n_active_orbitals,
-      n_active_orbitals);
-
-  // The accepted-point active auxiliary block A is fixed during one Newton
-  // linear solve.  Reusing cached `S * A`, `F * A`, and `F^T * A` contractions
-  // leaves only active-sized temporaries here while writing the directional
-  // `delta SSO` and `delta HHO` directly into caller-owned column-major buffers.
-  const Eigen::MatrixXd delta_active_overlap_left =
-      delta_active_auxiliary_orbitals.transpose() *
-      accepted_basis_overlap_times_active_auxiliary_orbitals;
-  delta_ao_overlap_matrix.noalias() =
-      delta_active_overlap_left;
-  delta_ao_overlap_matrix.noalias() +=
-      delta_active_overlap_left.transpose();
-
-  const Eigen::MatrixXd delta_active_one_electron_left =
-      delta_active_auxiliary_orbitals.transpose() *
-      accepted_ao_effective_one_electron_times_active_auxiliary_orbitals;
-  delta_active_one_electron_matrix.noalias() =
-      delta_active_one_electron_left;
-  delta_active_one_electron_matrix.noalias() +=
-      accepted_active_auxiliary_orbitals.transpose() *
-      delta_ao_effective_h1e_times_active_auxiliary_orbitals;
-  delta_active_one_electron_matrix.noalias() +=
-      accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals
-          .transpose() *
-      delta_active_auxiliary_orbitals;
-  if (accepted_dense_active_coefficients.rows() != n_basis_functions ||
-      accepted_dense_active_coefficients.cols() != n_active_orbitals ||
-      delta_dense_active_coefficients.rows() != n_basis_functions ||
-      delta_dense_active_coefficients.cols() != n_active_orbitals) {
-    throw std::invalid_argument(
-        "dense active coefficient shapes are inconsistent in active-space directional integrals");
-  }
-
-  if (precomputed_delta_packed_active_two_electron != nullptr) {
-    const std::size_t packed_size =
-        packed_active_two_electron_integral_count(n_active_orbitals);
-    if (precomputed_delta_packed_active_two_electron->size() !=
-        static_cast<Eigen::Index>(packed_size)) {
-      throw std::invalid_argument(
-          "precomputed block delta GGO has inconsistent dimensions");
-    }
-    delta_packed_active_two_electron_integrals->assign(
-        precomputed_delta_packed_active_two_electron->data(),
-        precomputed_delta_packed_active_two_electron->data() + packed_size);
-  } else {
-    compute_exact_packed_active_two_electron_integral_directional_derivative(
-        accepted_dense_active_coefficients,
-        delta_dense_active_coefficients,
-        input.ao_integral_input,
-        n_active_orbitals,
-        exact_2e_workspace,
-        delta_packed_active_two_electron_integrals,
-        &accepted_active_space_two_electron_result);
-  }
-}
 
 }  // namespace
 
@@ -526,22 +422,25 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
 
     const auto active_space_integrals_start_time =
         std::chrono::steady_clock::now();
-    build_active_space_directional_integrals(
+    const ActiveSpaceIntegralDirectionContext integral_direction_context{
         *current_input_,
-        accepted_point_context_->prepared_active_space.active_space_two_electron_result,
+        accepted_point_context_->prepared_active_space
+            .active_space_two_electron_result,
         accepted_active_auxiliary_orbitals_,
         accepted_basis_overlap_times_active_auxiliary_orbitals_,
         accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_,
         accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_,
+        accepted_dense_active_coefficients_};
+    const ActiveSpaceIntegralTangent integral_tangent{
         orbital_preparation_directional_result.delta_active_auxiliary_orbitals,
-        accepted_dense_active_coefficients_,
         delta_dense_active_coefficients,
         delta_ao_effective_h1e_times_active_auxiliary_orbitals,
-        &outer_response_delta_ao_overlap_matrix_workspace_,
-        &outer_response_delta_active_one_electron_matrix_workspace_,
-        &outer_response_exact_two_electron_directional_workspace_,
-        &outer_response_delta_packed_active_two_electron_workspace_,
-        precomputed_delta_packed_active_two_electron);
+        precomputed_delta_packed_active_two_electron};
+    const ActiveSpaceIntegralDirectionView active_space_integral_direction =
+        build_active_space_integral_direction(
+            integral_direction_context,
+            integral_tangent,
+            &outer_response_integral_direction_workspace_);
     apply_timing_totals_.outer_response_active_space_integrals_wall_time_seconds +=
         elapsed_wall_time_seconds(active_space_integrals_start_time);
 
@@ -550,10 +449,6 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
     // The polynomial pair response is consumed first by the projected
     // structure action and later by the local same-spin adjoint. Build it once
     // for this HVP direction so both stages share the same cofactor actions.
-    const ActiveSpaceIntegralDirectionView active_space_integral_direction{
-        outer_response_delta_ao_overlap_matrix_workspace_,
-        outer_response_delta_active_one_electron_matrix_workspace_,
-        outer_response_delta_packed_active_two_electron_workspace_};
     const SameSpinDirectionalPairCache directional_pair_cache =
         build_same_spin_directional_pair_cache(
             accepted_point_context_->same_spin_pair_cache,
@@ -645,7 +540,7 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
       const ExactCtxPairMatrix* directional_pair_products =
           precomputed_directional_pair_products != nullptr
               ? precomputed_directional_pair_products
-              : &outer_response_exact_two_electron_directional_workspace_
+              : &outer_response_integral_direction_workspace_.two_electron
                      .directional_pair_products;
       const bool can_fuse =
           compute_outer_response && directional_pair_products->size() > 0;

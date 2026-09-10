@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vbscf/derivatives/hessian/responses/active_space_direction.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space_integral_direction.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
 #include "vbscf/derivatives/hessian/structure_response_internal.hpp"
 

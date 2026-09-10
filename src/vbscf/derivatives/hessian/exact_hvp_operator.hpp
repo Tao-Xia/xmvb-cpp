@@ -11,6 +11,7 @@
 #include "vbscf/orbitals/charts/orbital_chart.hpp"
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space_integral_direction.hpp"
 #include "vbscf/derivatives/hessian/structure_response_internal.hpp"
 #include "vbscf/structures/selected_state_coefficients.hpp"
 
@@ -174,18 +175,12 @@ private:
   ExactPackedActiveTwoElectronAdjointCache accepted_exact_two_electron_cache_;
   mutable ExactPackedActiveTwoElectronApplyWorkspace
       accepted_exact_two_electron_apply_workspace_;
-  mutable std::vector<double>
-      outer_response_delta_ao_overlap_matrix_workspace_;
-  mutable std::vector<double>
-      outer_response_delta_active_one_electron_matrix_workspace_;
+  mutable ActiveSpaceIntegralDirectionWorkspace
+      outer_response_integral_direction_workspace_;
   mutable std::vector<double>
       outer_response_symmetric_active_overlap_gradient_workspace_;
   mutable std::vector<double>
       outer_response_symmetric_active_one_electron_gradient_workspace_;
-  mutable std::vector<double>
-      outer_response_delta_packed_active_two_electron_workspace_;
-  mutable ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace
-      outer_response_exact_two_electron_directional_workspace_;
   std::unique_ptr<AcceptedOrbitalPreparationCache> accepted_orbital_preparation_cache_;
   std::vector<StructureCoefficientBlock> structure_coefficient_blocks_;
   // Frozen accepted-point selected-state response metadata.  Each HVP still
