@@ -524,6 +524,9 @@ BackendRunResult run_truncated_newton_backend(
         truncated_newton_step.cg_iterations = 0;
         truncated_newton_step.reduced_step =
             current_space.project_vector(packed_step).reduced_gradient;
+        // The rejected Newton model image belongs to a different step and
+        // cannot define the KKT residual of the safeguarded descent step.
+        truncated_newton_step.reduced_hessian_times_step.resize(0);
         truncated_newton_step.retract_tangent_norm = packed_step.norm();
         truncated_newton_step.predicted_decrease =
             std::max(options.energy_tolerance, energy - trial_energy);
