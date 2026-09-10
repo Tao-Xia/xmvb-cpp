@@ -114,6 +114,7 @@ void print_usage() {
                " [--skip-orbital-guess true|false]"
                " [--raw-structure-selection full|covalent]"
                " [--dump-trace-dir <dataset_root>]"
+               " [--tnhvp-trace <path.tsv>]"
                " [--dump-final-orbital-value-table-bin <path>]\n"
                "default optimizer backend: nonredundant_lbfgspp\n";
 }
@@ -143,6 +144,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
   options.minimum_step_size = 1.0e-20;
   options.history_size = 100;
   std::string dump_trace_dir;
+  std::string tnhvp_trace_path;
   std::string dump_final_orbital_value_table_bin;
   bool user_specified_max_iterations = false;
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
@@ -189,6 +191,8 @@ std::optional<Options> parse_options(int argc, char** argv) {
         apply_raw_structure_selection_argument(argument_value, &load_options);
       } else if (argument_name == "--dump-trace-dir") {
         dump_trace_dir = argument_value;
+      } else if (argument_name == "--tnhvp-trace") {
+        tnhvp_trace_path = argument_value;
       } else if (argument_name == "--dump-final-orbital-value-table-bin") {
         dump_final_orbital_value_table_bin = argument_value;
       } else {
@@ -212,6 +216,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
   parsed.load = std::move(load_options);
   parsed.optimizer = std::move(options);
   parsed.trace_directory = std::move(dump_trace_dir);
+  parsed.tnhvp_trace_path = std::move(tnhvp_trace_path);
   parsed.final_orbitals_path = std::move(dump_final_orbital_value_table_bin);
   parsed.max_iterations_explicit = user_specified_max_iterations;
   return parsed;

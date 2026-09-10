@@ -13,6 +13,7 @@ struct Options {
   vb::VbScfInputLoadOptions load;
   vb::VbScfOptimizerOptions optimizer;
   std::string trace_directory;
+  std::string tnhvp_trace_path;
   std::string final_orbitals_path;
   bool max_iterations_explicit = false;
 };

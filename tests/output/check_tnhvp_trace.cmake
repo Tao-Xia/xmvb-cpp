@@ -6,6 +6,7 @@ if (NOT DEFINED XMVB_EXECUTABLE OR
 endif()
 
 file(REMOVE_RECURSE "${XMVB_TRACE_ROOT}")
+set(tnhvp_trace "${XMVB_TRACE_ROOT}/F2_tnhvp.tsv")
 execute_process(
   COMMAND
     "${XMVB_EXECUTABLE}"
@@ -13,6 +14,7 @@ execute_process(
     --optimizer-backend nonredundant_truncated_newton
     --nonredundant-truncated-newton-hvp-mode exact_ctx
     --dump-trace-dir "${XMVB_TRACE_ROOT}"
+    --tnhvp-trace "${tnhvp_trace}"
   RESULT_VARIABLE xmvb_status
   OUTPUT_VARIABLE xmvb_report
   ERROR_VARIABLE xmvb_errors)
@@ -60,3 +62,16 @@ foreach(pattern IN LISTS required_tnhvp_patterns)
       "F2 TNHVP trace is missing required pattern: ${pattern}")
   endif()
 endforeach()
+
+if (NOT EXISTS "${tnhvp_trace}")
+  message(FATAL_ERROR "F2 lightweight TNHVP trace was not written")
+endif()
+file(READ "${tnhvp_trace}" tnhvp_table)
+if (NOT tnhvp_table MATCHES "^iteration" OR
+    NOT tnhvp_table MATCHES "reduced_dimension" OR
+    NOT tnhvp_table MATCHES "reused_krylov_subspace")
+  message(FATAL_ERROR "F2 lightweight TNHVP trace has an invalid header")
+endif()
+if (NOT tnhvp_table MATCHES "\n1" OR NOT tnhvp_table MATCHES "42")
+  message(FATAL_ERROR "F2 lightweight TNHVP trace is missing its first step")
+endif()

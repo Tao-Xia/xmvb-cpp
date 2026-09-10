@@ -64,6 +64,7 @@ set(XMVB_OUTPUT_SOURCES
   output/text/report.cpp
   output/text/sections.cpp
   output/trace/accepted_iteration.cpp
+  output/trace/tnhvp.cpp
 )
 
 # Keep component ownership as strict as the canonical VBSCF manifest. A new
