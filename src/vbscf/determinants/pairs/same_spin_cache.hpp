@@ -5,7 +5,7 @@
 #include <cstddef>
 #include <vector>
 
-#include "vbscf/determinants/determinant_pair_evaluator.hpp"
+#include "vbscf/determinants/pairs/evaluator.hpp"
 
 namespace xmvb::vb {
 

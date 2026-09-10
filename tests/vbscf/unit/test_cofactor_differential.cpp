@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <Eigen/LU>
 #include <Eigen/QR>
-#include "vbscf/determinants/cofactor_differential.hpp"
+#include "vbscf/determinants/algebra/cofactor_differential.hpp"
 
 namespace {
 Eigen::MatrixXd minor(const Eigen::MatrixXd& x, int row, int col) {

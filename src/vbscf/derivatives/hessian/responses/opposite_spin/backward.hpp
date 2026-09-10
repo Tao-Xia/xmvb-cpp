@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vbscf/determinants/same_spin_pair_cache.hpp"
+#include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/integrals/active/two_electron/construction/result.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"

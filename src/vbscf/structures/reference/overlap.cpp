@@ -4,8 +4,8 @@
 #include <stdexcept>
 #include <utility>
 
-#include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 
 namespace xmvb::vb {
 

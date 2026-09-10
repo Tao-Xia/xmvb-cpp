@@ -6,7 +6,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/determinants/contraction_tiles.hpp"
+#include "vbscf/determinants/pairs/tiles.hpp"
 
 namespace xmvb::vb {
 

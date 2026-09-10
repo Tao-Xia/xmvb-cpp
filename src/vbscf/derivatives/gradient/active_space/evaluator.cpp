@@ -17,11 +17,11 @@
 #endif
 
 #include "core/parallel/openmp.hpp"
-#include "vbscf/determinants/pair_storage.hpp"
-#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/determinants/pairs/storage.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
-#include "vbscf/determinants/same_spin_pair_cache.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/pairs/same_spin_cache.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"

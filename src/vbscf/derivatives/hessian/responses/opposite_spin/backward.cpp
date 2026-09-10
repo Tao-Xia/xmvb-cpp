@@ -7,7 +7,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/packed_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 

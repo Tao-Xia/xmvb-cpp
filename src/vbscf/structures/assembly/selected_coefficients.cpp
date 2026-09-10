@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "vbscf/determinants/pair_storage.hpp"
+#include "vbscf/determinants/pairs/storage.hpp"
 
 namespace xmvb::vb {
 

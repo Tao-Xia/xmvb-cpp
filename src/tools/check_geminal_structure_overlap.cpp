@@ -15,10 +15,10 @@
 
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
-#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/structures/expansion/expander.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace {

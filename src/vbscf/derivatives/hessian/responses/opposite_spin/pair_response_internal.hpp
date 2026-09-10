@@ -5,7 +5,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
-#include "vbscf/determinants/determinant_pair_evaluator.hpp"
+#include "vbscf/determinants/pairs/evaluator.hpp"
 #include "vbscf/integrals/active/two_electron/construction/result.hpp"
 
 namespace xmvb::vb::detail {

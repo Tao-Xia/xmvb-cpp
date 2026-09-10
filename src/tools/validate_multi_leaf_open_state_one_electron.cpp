@@ -15,7 +15,7 @@
 #include <Eigen/Core>
 
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/structures/selection/union_graph/screening.hpp"

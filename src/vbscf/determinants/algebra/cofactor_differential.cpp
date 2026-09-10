@@ -1,5 +1,5 @@
-#include "vbscf/determinants/cofactor_differential.hpp"
-#include "vbscf/determinants/determinant_pair_evaluator.hpp"
+#include "vbscf/determinants/algebra/cofactor_differential.hpp"
+#include "vbscf/determinants/pairs/evaluator.hpp"
 
 #include <algorithm>
 #include <stdexcept>

@@ -59,7 +59,10 @@ vbscf/
         construction/   Exact/RI builders, kernels, and indexing
         response/       Forward and transpose-Jacobian actions
         transformation/ AO-pair/active-pair coordinate operators
-  determinants/         Determinant overlap and Hamiltonian kernels
+  determinants/
+    algebra/             Overlap, Hamiltonian, and cofactor differential
+    contracts/           Shared determinant value types
+    pairs/               Pair evaluation, contractions, caches, and storage
   structures/
     assembly/           Hamiltonian/overlap matrices and contractions
     evaluation/         Complete VB structure-state evaluation

@@ -1,5 +1,5 @@
-#include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/determinants/cofactor_differential.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include <Eigen/LU>
 
 #include <algorithm>

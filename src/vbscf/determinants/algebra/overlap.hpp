@@ -4,7 +4,7 @@
 
 #include <vector>
 
-#include "vbscf/determinants/determinant_types.hpp"
+#include "vbscf/determinants/contracts/types.hpp"
 
 namespace xmvb::vb {
 

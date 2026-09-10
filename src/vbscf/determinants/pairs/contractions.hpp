@@ -4,9 +4,9 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/determinants/determinant_pair_evaluator.hpp"
-#include "vbscf/determinants/determinant_types.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
+#include "vbscf/determinants/pairs/evaluator.hpp"
+#include "vbscf/determinants/contracts/types.hpp"
 #include "vbscf/integrals/active/two_electron/construction/result.hpp"
 
 namespace xmvb::vb {

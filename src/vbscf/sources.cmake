@@ -4,12 +4,12 @@
 # source tree.
 
 set(XMVB_VBSCF_DETERMINANT_SOURCES
-  vbscf/determinants/cofactor_differential.cpp
-  vbscf/determinants/determinant_hamiltonian.cpp
-  vbscf/determinants/determinant_overlap.cpp
-  vbscf/determinants/determinant_pair_evaluator.cpp
-  vbscf/determinants/same_spin_pair_cache.cpp
-  vbscf/determinants/spin_pair_contractions.cpp
+  vbscf/determinants/algebra/cofactor_differential.cpp
+  vbscf/determinants/algebra/hamiltonian.cpp
+  vbscf/determinants/algebra/overlap.cpp
+  vbscf/determinants/pairs/evaluator.cpp
+  vbscf/determinants/pairs/same_spin_cache.cpp
+  vbscf/determinants/pairs/contractions.cpp
 )
 
 set(XMVB_VBSCF_STRUCTURE_SOURCES

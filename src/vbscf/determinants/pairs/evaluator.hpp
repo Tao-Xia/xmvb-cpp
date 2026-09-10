@@ -5,9 +5,9 @@
 #include <vector>
 #include <memory>
 
-#include "vbscf/determinants/determinant_hamiltonian.hpp"
-#include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/determinants/determinant_types.hpp"
+#include "vbscf/determinants/algebra/hamiltonian.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
+#include "vbscf/determinants/contracts/types.hpp"
 
 namespace xmvb::vb {
 

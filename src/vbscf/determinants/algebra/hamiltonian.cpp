@@ -1,4 +1,4 @@
-#include "vbscf/determinants/determinant_hamiltonian.hpp"
+#include "vbscf/determinants/algebra/hamiltonian.hpp"
 
 #include <stdexcept>
 #include <vector>
@@ -6,7 +6,7 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 

@@ -4,10 +4,10 @@
 
 #include <vector>
 
-#include "vbscf/determinants/determinant_hamiltonian.hpp"
-#include "vbscf/determinants/determinant_pair_evaluator.hpp"
-#include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/determinants/same_spin_pair_cache.hpp"
+#include "vbscf/determinants/algebra/hamiltonian.hpp"
+#include "vbscf/determinants/pairs/evaluator.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
+#include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 
 namespace xmvb::vb {

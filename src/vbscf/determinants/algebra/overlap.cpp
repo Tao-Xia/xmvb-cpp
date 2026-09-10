@@ -1,4 +1,4 @@
-#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
 
 #include <cmath>
 #include <stdexcept>

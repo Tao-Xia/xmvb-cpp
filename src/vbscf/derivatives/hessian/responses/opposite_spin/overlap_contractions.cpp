@@ -8,8 +8,8 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/determinants/cofactor_differential.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/algebra/cofactor_differential.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 

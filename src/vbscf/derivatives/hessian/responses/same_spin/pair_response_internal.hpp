@@ -5,7 +5,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
-#include "vbscf/determinants/cofactor_differential.hpp"
+#include "vbscf/determinants/algebra/cofactor_differential.hpp"
 
 namespace xmvb::vb::detail {
 

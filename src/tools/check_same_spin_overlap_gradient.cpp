@@ -10,9 +10,9 @@
 #include <Eigen/Core>
 
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/determinants/determinant_hamiltonian.hpp"
-#include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/algebra/hamiltonian.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 

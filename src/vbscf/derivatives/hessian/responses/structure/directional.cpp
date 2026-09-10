@@ -15,7 +15,7 @@
 #include <omp.h>
 #endif
 
-#include "vbscf/determinants/pair_storage.hpp"
+#include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/structures/assembly/block_kernels.hpp"

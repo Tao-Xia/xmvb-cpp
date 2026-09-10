@@ -11,9 +11,9 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/determinants/determinant_overlap.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 #include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 

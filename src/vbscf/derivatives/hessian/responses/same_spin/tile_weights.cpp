@@ -10,7 +10,7 @@
 
 #include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/weight_kernels_internal.hpp"
-#include "vbscf/determinants/spin_pair_contractions.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/structures/assembly/local_contractions.hpp"
 
 namespace xmvb::vb::detail {
