@@ -15,6 +15,15 @@ struct ActivePair {
   int second = 0;
 };
 
+inline std::size_t ao_pair_index(int first, int second) {
+  if (first >= second) {
+    const std::size_t first_index = first;
+    return first_index * (first_index + 1) / 2 + second;
+  }
+  const std::size_t second_index = second;
+  return second_index * (second_index + 1) / 2 + first;
+}
+
 void resize_for_overwrite(
     std::vector<double>* values,
     std::size_t size);

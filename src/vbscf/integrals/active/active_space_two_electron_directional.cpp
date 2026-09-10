@@ -5,7 +5,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/active/active_space_two_electron_kernels_internal.hpp"
+#include "vbscf/integrals/active/active_space_two_electron_response_internal.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 
 namespace xmvb::vb {

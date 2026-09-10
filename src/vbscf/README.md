@@ -26,6 +26,14 @@ The standalone `runtime` is a one-way client of this module. Canonical
 data enters through numerical value contracts or injected provider interfaces;
 this rule is enforced when CMake configures the source manifest.
 
+The exact active-space two-electron response is split by mathematical role:
+`active_space_pair_transforms.cpp` owns the AO-pair/active-pair coordinate
+maps and their adjoint accumulation, while `ao_pair_integral_operator.cpp`
+owns the matrix-free action of the AO two-electron integral operator.
+`active_space_two_electron_directional.cpp` and
+`active_space_two_electron_adjoint.cpp` compose those primitives into the
+forward and transpose-Jacobian response paths.
+
 ## Target layout
 
 ```text
