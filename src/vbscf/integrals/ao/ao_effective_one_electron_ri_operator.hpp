@@ -13,8 +13,8 @@ struct AoEffectiveOneElectronRiOperatorOptions {
    * @brief Tries a spectral factorization `X = U S U^T` before the RI sweep.
    *
    * When the symmetric input matrix is numerically low-rank, the exchange
-   * contribution can be evaluated from `L_A U` with `O(n_ao^2 r)` work per
-   * auxiliary instead of `O(n_ao^3)`.
+   * contribution can be evaluated from `L_A U` with `O(n_bf^2 r)` work per
+   * auxiliary instead of `O(n_bf^3)`.
    */
   bool attempt_spectral_factorization = false;
 

@@ -113,7 +113,7 @@ OrbitalChartAudit audit_orbital_chart(
       (input.n_total_electrons - input.n_active_electrons) / 2;
   const int n_active = input.n_active_orbitals;
   const int n_occupied = n_inactive + n_active;
-  const int n_ao = input.n_basis_functions;
+  const int n_bf = input.n_basis_functions;
   const int packed_dimension = parameter_view.size();
   if (n_inactive < 0 || n_occupied > input.n_orbitals) {
     throw std::invalid_argument("invalid occupied partition in gauge audit");
@@ -132,7 +132,7 @@ OrbitalChartAudit audit_orbital_chart(
   // Map every AO/occupied entry to its packed differentiable coordinate.
   // Stored but nondifferentiable coefficients and off-support AO entries are
   // constraints on an admissible infinitesimal gauge transformation.
-  std::vector<int> ao_occupied_to_packed(n_ao * n_occupied, -1);
+  std::vector<int> ao_occupied_to_packed(n_bf * n_occupied, -1);
   std::vector<char> packed_is_occupied(packed_dimension, 0);
   for (int orbital = 0; orbital < n_occupied; ++orbital) {
     const int differentiable_count =
@@ -146,12 +146,12 @@ OrbitalChartAudit audit_orbital_chart(
     for (int coefficient = 0; coefficient < differentiable_count;
          ++coefficient) {
       const int basis = input.orbital_basis_index_table[
-          orbital * n_ao + coefficient] - 1;
+          orbital * n_bf + coefficient] - 1;
       const int packed = parameter_view.packed_index(orbital, coefficient);
       if (packed < 0 || packed >= packed_dimension) {
         throw std::runtime_error("invalid packed index in gauge audit");
       }
-      ao_occupied_to_packed[orbital * n_ao + basis] = packed;
+      ao_occupied_to_packed[orbital * n_bf + basis] = packed;
       packed_is_occupied[packed] = 1;
     }
   }
@@ -161,12 +161,12 @@ OrbitalChartAudit audit_orbital_chart(
 
   const int gauge_parameter_dimension = audit.gauge_parameter_dimension;
   Eigen::MatrixXd gauge_action = Eigen::MatrixXd::Zero(
-      n_ao * n_occupied, gauge_parameter_dimension);
+      n_bf * n_occupied, gauge_parameter_dimension);
   int parameter_column = 0;
   // dC_I = C_I K; K(source, target) follows column-major enumeration.
   for (int target = 0; target < n_inactive; ++target) {
     for (int source = 0; source < n_inactive; ++source, ++parameter_column) {
-      gauge_action.block(target * n_ao, parameter_column, n_ao, 1) =
+      gauge_action.block(target * n_bf, parameter_column, n_bf, 1) =
           inactive.col(source);
     }
   }
@@ -174,14 +174,14 @@ OrbitalChartAudit audit_orbital_chart(
   for (int target = 0; target < n_active; ++target) {
     for (int source = 0; source < n_inactive; ++source, ++parameter_column) {
       gauge_action.block(
-          (n_inactive + target) * n_ao, parameter_column, n_ao, 1) =
+          (n_inactive + target) * n_bf, parameter_column, n_bf, 1) =
           inactive.col(source);
     }
   }
   // Independent active-orbital radial scalings.
   for (int target = 0; target < n_active; ++target, ++parameter_column) {
     gauge_action.block(
-        (n_inactive + target) * n_ao, parameter_column, n_ao, 1) =
+        (n_inactive + target) * n_bf, parameter_column, n_bf, 1) =
         active.col(target);
   }
   if (parameter_column != gauge_parameter_dimension) {
@@ -189,7 +189,7 @@ OrbitalChartAudit audit_orbital_chart(
   }
 
   int forbidden_count = 0;
-  for (int row = 0; row < n_ao * n_occupied; ++row) {
+  for (int row = 0; row < n_bf * n_occupied; ++row) {
     if (ao_occupied_to_packed[row] < 0) ++forbidden_count;
   }
   Eigen::MatrixXd forbidden_action =
@@ -197,7 +197,7 @@ OrbitalChartAudit audit_orbital_chart(
   Eigen::MatrixXd packed_action =
       Eigen::MatrixXd::Zero(packed_dimension, gauge_parameter_dimension);
   int forbidden_row = 0;
-  for (int row = 0; row < n_ao * n_occupied; ++row) {
+  for (int row = 0; row < n_bf * n_occupied; ++row) {
     const int packed = ao_occupied_to_packed[row];
     if (packed >= 0) {
       packed_action.row(packed) = gauge_action.row(row);
@@ -246,10 +246,10 @@ OrbitalChartAudit audit_orbital_chart(
   // Extra differentiable orbitals outside the occupied VB block are appended
   // as identity features so they cannot be mislabeled as gauge variables.
   const Eigen::Map<const Eigen::MatrixXd> overlap(
-      input.ao_overlap_matrix.data(), n_ao, n_ao);
+      input.ao_overlap_matrix.data(), n_bf, n_bf);
   Eigen::MatrixXd inactive_metric_inverse = Eigen::MatrixXd::Zero(
       n_inactive, n_inactive);
-  Eigen::MatrixXd inactive_density = Eigen::MatrixXd::Zero(n_ao, n_ao);
+  Eigen::MatrixXd inactive_density = Eigen::MatrixXd::Zero(n_bf, n_bf);
   if (n_inactive > 0) {
     const Eigen::MatrixXd inactive_metric =
         inactive.transpose() * overlap * inactive;
@@ -266,14 +266,14 @@ OrbitalChartAudit audit_orbital_chart(
         inactive * inactive_metric_inverse * inactive.transpose();
   }
   const Eigen::MatrixXd complement =
-      Eigen::MatrixXd::Identity(n_ao, n_ao) - inactive_density * overlap;
+      Eigen::MatrixXd::Identity(n_bf, n_bf) - inactive_density * overlap;
   const Eigen::MatrixXd projected_active = complement * active;
 
   const int physical_feature_count =
-      n_ao * n_ao + n_ao * n_active + audit.unmapped_parameter_count;
+      n_bf * n_bf + n_bf * n_active + audit.unmapped_parameter_count;
   Eigen::MatrixXd physical_jacobian = Eigen::MatrixXd::Zero(
       physical_feature_count, packed_dimension);
-  int extra_feature_offset = n_ao * n_ao + n_ao * n_active;
+  int extra_feature_offset = n_bf * n_bf + n_bf * n_active;
   for (int packed = 0; packed < packed_dimension; ++packed) {
     if (!packed_is_occupied[packed]) {
       physical_jacobian(extra_feature_offset++, packed) = 1.0;
@@ -281,21 +281,21 @@ OrbitalChartAudit audit_orbital_chart(
     }
 
     const int flat = parameter_view.differentiable_parameter_indices()[packed];
-    const int orbital = flat / n_ao;
-    const int coefficient = flat % n_ao;
+    const int orbital = flat / n_bf;
+    const int coefficient = flat % n_bf;
     const int basis = input.orbital_basis_index_table[
-        orbital * n_ao + coefficient] - 1;
+        orbital * n_bf + coefficient] - 1;
     Eigen::MatrixXd delta_inactive =
-        Eigen::MatrixXd::Zero(n_ao, n_inactive);
+        Eigen::MatrixXd::Zero(n_bf, n_inactive);
     Eigen::MatrixXd delta_active =
-        Eigen::MatrixXd::Zero(n_ao, n_active);
+        Eigen::MatrixXd::Zero(n_bf, n_active);
     if (orbital < n_inactive) {
       delta_inactive(basis, orbital) = 1.0;
     } else {
       delta_active(basis, orbital - n_inactive) = 1.0;
     }
 
-    Eigen::MatrixXd delta_density = Eigen::MatrixXd::Zero(n_ao, n_ao);
+    Eigen::MatrixXd delta_density = Eigen::MatrixXd::Zero(n_bf, n_bf);
     if (n_inactive > 0) {
       const Eigen::MatrixXd delta_metric =
           delta_inactive.transpose() * overlap * inactive +
@@ -308,9 +308,9 @@ OrbitalChartAudit audit_orbital_chart(
           inactive * inactive_metric_inverse * delta_inactive.transpose();
     }
     Eigen::Map<Eigen::VectorXd>(
-        physical_jacobian.col(packed).data(), n_ao * n_ao) =
+        physical_jacobian.col(packed).data(), n_bf * n_bf) =
         Eigen::Map<const Eigen::VectorXd>(
-            delta_density.data(), n_ao * n_ao);
+            delta_density.data(), n_bf * n_bf);
 
     const Eigen::MatrixXd delta_projected_active =
         complement * delta_active - delta_density * overlap * active;
@@ -327,9 +327,9 @@ OrbitalChartAudit audit_orbital_chart(
       horizontal.noalias() -=
           projected * (projected.dot(overlap * horizontal) / norm_squared);
       physical_jacobian.block(
-          n_ao * n_ao + active_orbital * n_ao,
+          n_bf * n_bf + active_orbital * n_bf,
           packed,
-          n_ao,
+          n_bf,
           1) = horizontal;
     }
   }
