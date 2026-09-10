@@ -4,8 +4,8 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_response_types.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
+#include "vbscf/integrals/active/two_electron/response/types.hpp"
 #include "vbscf/integrals/ao/contracts/input.hpp"
 
 namespace xmvb::vb {

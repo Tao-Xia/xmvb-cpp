@@ -1,4 +1,4 @@
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 #include <algorithm>
 #include <stdexcept>

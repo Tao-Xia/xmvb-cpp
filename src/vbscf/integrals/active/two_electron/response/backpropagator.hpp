@@ -3,9 +3,9 @@
 #include <vector>
 
 #include "vbscf/core/vbscf_input.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_result.hpp"
+#include "vbscf/integrals/active/two_electron/construction/result.hpp"
 #include "vbscf/orbitals/preparation/result.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_backpropagation_result.hpp"
+#include "vbscf/integrals/active/two_electron/response/backpropagation_result.hpp"
 
 namespace xmvb::vb {
 

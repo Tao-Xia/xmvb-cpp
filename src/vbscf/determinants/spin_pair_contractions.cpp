@@ -7,8 +7,8 @@
 #include <string>
 #include <vector>
 
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace xmvb::vb {
 

@@ -27,12 +27,12 @@ data enters through numerical value contracts or injected provider interfaces;
 this rule is enforced when CMake configures the source manifest.
 
 The exact active-space two-electron response is split by mathematical role:
-`active_space_pair_transforms.cpp` owns the AO-pair/active-pair coordinate
-maps and their adjoint accumulation, while `ao_pair_integral_operator.cpp`
-owns the matrix-free action of the AO two-electron integral operator.
-`active_space_two_electron_directional.cpp` and
-`active_space_two_electron_adjoint.cpp` compose those primitives into the
-forward and transpose-Jacobian response paths.
+`active/two_electron/transformation/pair_transforms.cpp` owns the
+AO-pair/active-pair coordinate maps and their adjoint accumulation, while
+`transformation/ao_pair_operator.cpp` owns the matrix-free action of the AO
+two-electron integral operator. `response/directional.cpp` and
+`response/adjoint.cpp` compose those primitives into the forward and
+transpose-Jacobian response paths.
 
 ## Target layout
 
@@ -51,7 +51,14 @@ vbscf/
       one_electron/     Effective one-electron construction and pullback
       pairs/            Packed AO-pair indexing
       ri/               RI factorization contracts and cache
-    active/             Active-space integral transformations and responses
+    active/
+      matrix/           Generic active-matrix pullback
+      one_electron/     Active one-electron construction
+      preparation/      Prepared active-space state
+      two_electron/
+        construction/   Exact/RI builders, kernels, and indexing
+        response/       Forward and transpose-Jacobian actions
+        transformation/ AO-pair/active-pair coordinate operators
   determinants/         Determinant overlap and Hamiltonian kernels
   structures/
     assembly/           Hamiltonian/overlap matrices and contractions

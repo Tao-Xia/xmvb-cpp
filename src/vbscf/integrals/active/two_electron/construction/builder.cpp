@@ -1,4 +1,4 @@
-#include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/builder.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -13,7 +13,7 @@
 #include "core/parallel/openmp.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/integrals/ao/pairs/two_electron_index.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace xmvb::vb {
 

@@ -5,10 +5,10 @@
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "vbscf/core/vbscf_input.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
-#include "vbscf/integrals/active/prepared_active_space.hpp"
-#include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
+#include "vbscf/integrals/active/preparation/space.hpp"
+#include "vbscf/integrals/active/one_electron/builder.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/builder.hpp"
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_result.hpp"
 

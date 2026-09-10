@@ -10,11 +10,11 @@
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
-#include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
+#include "vbscf/integrals/active/one_electron/builder.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/builder.hpp"
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
-#include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
 
 namespace {
 

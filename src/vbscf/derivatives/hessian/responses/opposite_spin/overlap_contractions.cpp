@@ -10,8 +10,8 @@
 
 #include "vbscf/determinants/cofactor_differential.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace xmvb::vb {
 

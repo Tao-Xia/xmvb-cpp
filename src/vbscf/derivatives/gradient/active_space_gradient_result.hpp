@@ -3,8 +3,8 @@
 #include <memory>
 #include <vector>
 
-#include "vbscf/integrals/active/active_space_one_electron_result.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_result.hpp"
+#include "vbscf/integrals/active/one_electron/result.hpp"
+#include "vbscf/integrals/active/two_electron/construction/result.hpp"
 #include "vbscf/integrals/ao/one_electron/result.hpp"
 #include "vbscf/orbitals/preparation/result.hpp"
 #include "vbscf/core/vbscf_result.hpp"

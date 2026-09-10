@@ -1,7 +1,7 @@
 #pragma once
 
 #include "vbscf/core/vbscf_input.hpp"
-#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_result.hpp"
 
 namespace xmvb::vb {

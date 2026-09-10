@@ -1,4 +1,4 @@
-#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/integrals/active/preparation/space.hpp"
 
 #include <chrono>
 #include <stdexcept>
@@ -6,7 +6,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/ao/ri/cache.hpp"
-#include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
 
 namespace xmvb::vb {
 

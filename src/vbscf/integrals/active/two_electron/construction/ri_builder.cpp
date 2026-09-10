@@ -1,11 +1,11 @@
-#include "vbscf/integrals/active/ri_active_space_two_electron_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
 
 #include <stdexcept>
 #include <vector>
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace xmvb::vb {
 

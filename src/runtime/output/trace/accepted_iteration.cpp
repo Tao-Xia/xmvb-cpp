@@ -13,7 +13,7 @@
 
 #include "runtime/io/binary_file.hpp"
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 
 namespace xmvb::runtime {

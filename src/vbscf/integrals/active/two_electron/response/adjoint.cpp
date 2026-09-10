@@ -1,11 +1,11 @@
-#include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
+#include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
 
 #include <stdexcept>
 #include <vector>
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/active/active_space_two_electron_response_internal.hpp"
+#include "vbscf/integrals/active/two_electron/response/internal.hpp"
 
 namespace xmvb::vb {
 namespace {

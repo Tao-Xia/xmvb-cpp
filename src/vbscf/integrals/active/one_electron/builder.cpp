@@ -1,4 +1,4 @@
-#include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
+#include "vbscf/integrals/active/one_electron/builder.hpp"
 
 #include <stdexcept>
 

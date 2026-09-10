@@ -1,6 +1,6 @@
 #pragma once
 
-#include "vbscf/integrals/active/active_space_two_electron_result.hpp"
+#include "vbscf/integrals/active/two_electron/construction/result.hpp"
 #include "vbscf/integrals/ao/ri/factorization.hpp"
 #include "vbscf/orbitals/preparation/result.hpp"
 

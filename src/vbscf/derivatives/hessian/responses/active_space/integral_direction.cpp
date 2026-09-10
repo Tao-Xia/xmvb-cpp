@@ -7,8 +7,8 @@
 #include <Eigen/Core>
 
 #include "vbscf/core/vbscf_input.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_directional.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/response/directional.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace xmvb::vb {
 namespace {

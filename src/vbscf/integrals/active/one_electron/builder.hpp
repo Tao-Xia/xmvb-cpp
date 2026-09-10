@@ -4,7 +4,7 @@
 
 #include <vector>
 
-#include "vbscf/integrals/active/active_space_one_electron_result.hpp"
+#include "vbscf/integrals/active/one_electron/result.hpp"
 
 namespace xmvb::vb {
 

@@ -16,8 +16,8 @@
 #endif
 
 #include "vbscf/determinants/pair_storage.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/structures/assembly/block_kernels.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/channels.hpp"

@@ -8,7 +8,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/structures/assembly/coefficient_blocks.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
+#include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/outer_response.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 

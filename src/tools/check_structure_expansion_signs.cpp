@@ -11,7 +11,7 @@
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
-#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/core/model_flags.hpp"
 
 namespace {

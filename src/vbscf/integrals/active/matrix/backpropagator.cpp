@@ -1,4 +1,4 @@
-#include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
+#include "vbscf/integrals/active/matrix/backpropagator.hpp"
 
 #include <stdexcept>
 

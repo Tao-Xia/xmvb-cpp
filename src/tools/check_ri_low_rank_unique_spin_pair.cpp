@@ -13,11 +13,11 @@
 
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace {
 

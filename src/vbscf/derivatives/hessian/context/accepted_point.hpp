@@ -3,7 +3,7 @@
 #include <vector>
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "vbscf/integrals/active/prepared_active_space.hpp"
+#include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"

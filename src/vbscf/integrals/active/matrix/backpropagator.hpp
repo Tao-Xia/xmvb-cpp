@@ -4,7 +4,7 @@
 
 #include <vector>
 
-#include "vbscf/integrals/active/active_space_matrix_backpropagation_result.hpp"
+#include "vbscf/integrals/active/matrix/backpropagation_result.hpp"
 
 namespace xmvb::vb {
 

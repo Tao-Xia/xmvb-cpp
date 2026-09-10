@@ -9,11 +9,11 @@
 #include <Eigen/Core>
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
-#include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_adjoint.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_backpropagator.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/matrix/backpropagator.hpp"
+#include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
+#include "vbscf/integrals/active/two_electron/response/backpropagator.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
 
 namespace xmvb::vb {

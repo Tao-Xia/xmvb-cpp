@@ -8,7 +8,7 @@
 #include "vbscf/determinants/cofactor_differential.hpp"
 #include "vbscf/determinants/pair_storage.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace xmvb::vb::detail {
 

@@ -11,7 +11,7 @@
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_response_types.hpp"
+#include "vbscf/integrals/active/two_electron/response/types.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/assembly/coefficient_blocks.hpp"

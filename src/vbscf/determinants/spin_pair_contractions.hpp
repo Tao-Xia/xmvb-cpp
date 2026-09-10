@@ -7,7 +7,7 @@
 #include "vbscf/determinants/determinant_overlap.hpp"
 #include "vbscf/determinants/determinant_pair_evaluator.hpp"
 #include "vbscf/determinants/determinant_types.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_result.hpp"
+#include "vbscf/integrals/active/two_electron/construction/result.hpp"
 
 namespace xmvb::vb {
 

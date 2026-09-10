@@ -19,7 +19,7 @@
 #include "vbscf/structures/expansion/expander.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/integrals/active/two_electron_indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace {
 

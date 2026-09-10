@@ -14,7 +14,7 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/structures/assembly/local_contractions.hpp"
-#include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace xmvb::vb::detail {
 
