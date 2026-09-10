@@ -61,7 +61,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON CACHE BOOL "Export compile_commands.json" F
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 17)
 
-add_compile_options(-g -ggdb3 -fdiagnostics-color=always)
+add_compile_options(-fdiagnostics-color=always)
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fpermissive>)
 add_compile_options(-ffunction-sections -pipe)
 add_link_options(-Wl,--gc-sections -Wl,--allow-shlib-undefined)

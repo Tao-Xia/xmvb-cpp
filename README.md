@@ -58,7 +58,7 @@ Use a conda environment providing cmake, ninja, eigen, openblas (with LAPACKE he
 
 ```bash
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake --build build --parallel
 ```
 
 This produces `build/src/xmvb-cpp.exe`.
