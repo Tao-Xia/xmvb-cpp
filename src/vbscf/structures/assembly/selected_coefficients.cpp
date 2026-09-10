@@ -1,4 +1,4 @@
-#include "vbscf/structures/selected_state_coefficients.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 #include <algorithm>
 #include <cmath>

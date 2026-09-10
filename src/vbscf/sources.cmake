@@ -13,14 +13,14 @@ set(XMVB_VBSCF_DETERMINANT_SOURCES
 )
 
 set(XMVB_VBSCF_STRUCTURE_SOURCES
-  vbscf/structures/hamiltonian_overlap_builder.cpp
-  vbscf/structures/reference/raw_structure_overlap.cpp
-  vbscf/structures/selected_state_coefficients.cpp
-  vbscf/structures/structure_evaluator.cpp
-  vbscf/structures/structure_expander.cpp
-  vbscf/structures/subspace_selector.cpp
-  vbscf/structures/union_graph_rank_predictor.cpp
-  vbscf/structures/union_graph_screening.cpp
+  vbscf/structures/assembly/hamiltonian_overlap.cpp
+  vbscf/structures/reference/overlap.cpp
+  vbscf/structures/assembly/selected_coefficients.cpp
+  vbscf/structures/evaluation/evaluator.cpp
+  vbscf/structures/expansion/expander.cpp
+  vbscf/structures/selection/subspace/selector.cpp
+  vbscf/structures/selection/union_graph/rank_predictor.cpp
+  vbscf/structures/selection/union_graph/screening.cpp
 )
 
 set(XMVB_VBSCF_ORBITAL_SOURCES

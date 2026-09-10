@@ -7,7 +7,7 @@
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space_integral_direction.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_result.hpp"
-#include "vbscf/structures/selected_state_coefficients.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace xmvb::vb {
 

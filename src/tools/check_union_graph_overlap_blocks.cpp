@@ -9,10 +9,10 @@
 
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
-#include "vbscf/structures/reference/raw_structure_overlap.hpp"
-#include "vbscf/structures/union_graph_rank_predictor.hpp"
+#include "vbscf/structures/reference/overlap.hpp"
+#include "vbscf/structures/selection/union_graph/rank_predictor.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/structures/union_graph_screening.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
 
 namespace {
 

@@ -1,4 +1,4 @@
-#include "vbscf/structures/subspace_selector.hpp"
+#include "vbscf/structures/selection/subspace/selector.hpp"
 
 #include <stdexcept>
 

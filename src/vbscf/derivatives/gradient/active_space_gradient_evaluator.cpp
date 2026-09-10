@@ -22,14 +22,14 @@
 #include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/structures/structure_types.hpp"
+#include "vbscf/structures/expansion/types.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
-#include "vbscf/structures/selected_state_coefficients.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace xmvb::vb {
 

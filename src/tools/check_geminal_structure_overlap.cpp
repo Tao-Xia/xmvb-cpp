@@ -16,8 +16,8 @@
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/structures/structure_expander.hpp"
-#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/structures/expansion/expander.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 

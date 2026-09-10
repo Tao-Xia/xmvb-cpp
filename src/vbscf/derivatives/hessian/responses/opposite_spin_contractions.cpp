@@ -11,7 +11,7 @@
 
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/determinants/cofactor_differential.hpp"
-#include "vbscf/structures/support_local_contractions.hpp"
+#include "vbscf/structures/assembly/local_contractions.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_two_electron_kernel.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"

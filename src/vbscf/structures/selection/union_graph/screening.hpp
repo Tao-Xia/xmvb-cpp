@@ -8,7 +8,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/structures/structure_types.hpp"
+#include "vbscf/structures/expansion/types.hpp"
 
 namespace xmvb::vb {
 

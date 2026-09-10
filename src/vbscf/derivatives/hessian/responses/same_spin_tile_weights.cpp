@@ -11,7 +11,7 @@
 #include "vbscf/derivatives/hessian/responses/same_spin_tile_policy_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_weight_kernels_internal.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
-#include "vbscf/structures/support_local_contractions.hpp"
+#include "vbscf/structures/assembly/local_contractions.hpp"
 
 namespace xmvb::vb::detail {
 

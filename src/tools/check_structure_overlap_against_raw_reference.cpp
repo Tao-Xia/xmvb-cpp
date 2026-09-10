@@ -9,8 +9,8 @@
 #include <Eigen/Core>
 
 #include "runtime/vbscf_input_loader.hpp"
-#include "vbscf/structures/reference/raw_structure_overlap.hpp"
-#include "vbscf/structures/structure_evaluator.hpp"
+#include "vbscf/structures/reference/overlap.hpp"
+#include "vbscf/structures/evaluation/evaluator.hpp"
 
 namespace {
 

@@ -16,9 +16,9 @@
 
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/structures/reference/raw_structure_overlap.hpp"
+#include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
-#include "vbscf/structures/union_graph_screening.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
 
 namespace {
 

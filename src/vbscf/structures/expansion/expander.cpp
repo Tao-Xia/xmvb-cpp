@@ -1,4 +1,4 @@
-#include "vbscf/structures/structure_expander.hpp"
+#include "vbscf/structures/expansion/expander.hpp"
 
 #include <algorithm>
 #include <stdexcept>
@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "vbscf/structures/subspace_selector.hpp"
+#include "vbscf/structures/selection/subspace/selector.hpp"
 #include "vbscf/core/model_flags.hpp"
 
 namespace xmvb::vb {

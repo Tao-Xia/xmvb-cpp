@@ -4,7 +4,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "vbscf/core/vbscf_input.hpp"
-#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"

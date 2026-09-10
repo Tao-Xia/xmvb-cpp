@@ -6,7 +6,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/determinants/determinant_overlap.hpp"
-#include "vbscf/structures/union_graph_screening.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
 
 namespace xmvb::vb {
 

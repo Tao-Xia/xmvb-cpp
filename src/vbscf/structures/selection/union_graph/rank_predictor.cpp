@@ -1,4 +1,4 @@
-#include "vbscf/structures/union_graph_rank_predictor.hpp"
+#include "vbscf/structures/selection/union_graph/rank_predictor.hpp"
 
 #include <algorithm>
 #include <stdexcept>

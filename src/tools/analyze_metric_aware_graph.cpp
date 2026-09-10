@@ -8,7 +8,7 @@
 
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
-#include "vbscf/structures/union_graph_screening.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
 
 namespace {
 

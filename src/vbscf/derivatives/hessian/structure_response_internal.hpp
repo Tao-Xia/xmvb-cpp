@@ -6,7 +6,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/core/vbscf_input.hpp"
-#include "vbscf/structures/coefficient_blocks.hpp"
+#include "vbscf/structures/assembly/coefficient_blocks.hpp"
 #include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 
 namespace xmvb::vb {

@@ -10,7 +10,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/vbscf_input_loader.hpp"
-#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/prepared_active_space.hpp"
 #include "vbscf/core/model_flags.hpp"
 

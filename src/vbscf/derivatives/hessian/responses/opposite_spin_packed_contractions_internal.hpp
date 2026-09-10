@@ -4,7 +4,7 @@
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin_pair_response_internal.hpp"
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
-#include "vbscf/structures/selected_state_coefficients.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace xmvb::vb::detail {
 

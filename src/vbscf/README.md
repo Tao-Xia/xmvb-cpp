@@ -46,8 +46,14 @@ vbscf/
     pullback/           Coordinate-map adjoint and its result contract
   integrals/            AO and active-space integral transformations
   determinants/         Determinant overlap and Hamiltonian kernels
-  structures/           VB structure expansion and state matrices
-    reference/          Raw-expansion reference implementations
+  structures/
+    assembly/           Hamiltonian/overlap matrices and contractions
+    evaluation/         Complete VB structure-state evaluation
+    expansion/          Structure expansion contracts and transformations
+    reference/          Independent mathematical reference evaluations
+    selection/
+      subspace/         Linearly independent subspace selection
+      union_graph/      Union-graph screening and rank prediction
   derivatives/
     gradient/            Gradient evaluation and chart pullback
     hessian/             Matrix-free HVP orchestration and accepted contexts
@@ -130,4 +136,4 @@ The canonical tree owns `optimization`, the single-step evaluator in
 `derivatives/hessian`, and diagnostics.
 Algorithms retained for independent mathematical validation are colocated
 with their owning domain and named explicitly, for example
-`structures/reference/raw_structure_overlap`.
+`structures/reference/overlap`.

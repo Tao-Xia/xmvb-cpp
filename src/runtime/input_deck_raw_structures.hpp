@@ -2,7 +2,7 @@
 
 #include <string>
 
-#include "vbscf/structures/structure_types.hpp"
+#include "vbscf/structures/expansion/types.hpp"
 
 namespace xmvb::vb {
 

@@ -11,7 +11,7 @@
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/ao/ri_integral_cache.hpp"
 #include "vbscf/core/eigen_storage.hpp"
-#include "vbscf/structures/hamiltonian_overlap_builder.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
 #include "vbscf/integrals/active/active_space_matrix_backpropagator.hpp"
 #include "vbscf/integrals/active/active_space_one_electron_builder.hpp"

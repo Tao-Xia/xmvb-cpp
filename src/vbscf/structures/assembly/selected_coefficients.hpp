@@ -5,7 +5,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/determinants/same_spin_pair_cache.hpp"
-#include "vbscf/structures/structure_types.hpp"
+#include "vbscf/structures/expansion/types.hpp"
 
 namespace xmvb::vb {
 

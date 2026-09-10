@@ -1,4 +1,4 @@
-#include "vbscf/structures/union_graph_screening.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
 
 #include <algorithm>
 #include <cmath>

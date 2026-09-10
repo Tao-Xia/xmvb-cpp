@@ -4,7 +4,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "vbscf/core/vbscf_input.hpp"
-#include "vbscf/structures/structure_evaluator.hpp"
+#include "vbscf/structures/evaluation/evaluator.hpp"
 #include "vbscf/core/vbscf_result.hpp"
 
 namespace xmvb::vb {

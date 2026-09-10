@@ -14,7 +14,7 @@
 #include "vbscf/integrals/active/active_space_two_electron_response_types.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
-#include "vbscf/structures/coefficient_blocks.hpp"
+#include "vbscf/structures/assembly/coefficient_blocks.hpp"
 
 namespace xmvb::vb {
 

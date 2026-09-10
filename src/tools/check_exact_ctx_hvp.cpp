@@ -28,7 +28,7 @@
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
-#include "vbscf/structures/selected_state_coefficients.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace {
 

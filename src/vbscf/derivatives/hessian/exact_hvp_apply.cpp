@@ -19,7 +19,7 @@
 #include "vbscf/derivatives/hessian/responses/orbital_preparation_response.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
 #include "vbscf/derivatives/hessian/responses/structure_directional_response.hpp"
-#include "vbscf/structures/selected_state_coefficients.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace xmvb::vb {
 

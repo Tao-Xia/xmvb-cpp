@@ -1,4 +1,4 @@
-#include "vbscf/structures/structure_evaluator.hpp"
+#include "vbscf/structures/evaluation/evaluator.hpp"
 
 namespace xmvb::vb {
 
