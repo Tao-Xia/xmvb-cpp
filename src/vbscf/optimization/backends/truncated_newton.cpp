@@ -1,4 +1,4 @@
-#include "vbscf/optimization/backends/truncated_newton_backend.hpp"
+#include "vbscf/optimization/backends/truncated_newton.hpp"
 
 #include <algorithm>
 #include <cassert>
@@ -16,17 +16,17 @@
 #include <vector>
 
 #include "vbscf/optimization/krylov/positive_ritz_secants.hpp"
-#include "vbscf/optimization/line_search.hpp"
-#include "vbscf/optimization/optimization_checks.hpp"
-#include "vbscf/optimization/optimizer_session.hpp"
-#include "vbscf/optimization/optimizer_types.hpp"
-#include "vbscf/optimization/preconditioners/transported_lbfgs_preconditioner.hpp"
-#include "vbscf/optimization/reduced_hvp_operator.hpp"
-#include "vbscf/optimization/trust_region/retraction_metric.hpp"
-#include "vbscf/optimization/trust_region/truncated_newton_solver.hpp"
-#include "vbscf/optimization/vbscf_objective.hpp"
-#include "vbscf/optimization/vbscf_optimizer_options.hpp"
-#include "vbscf/optimization/vbscf_optimizer_result.hpp"
+#include "vbscf/optimization/globalization/line_search.hpp"
+#include "vbscf/optimization/driver/checks.hpp"
+#include "vbscf/optimization/driver/session.hpp"
+#include "vbscf/optimization/driver/types.hpp"
+#include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
+#include "vbscf/optimization/objective/reduced_hvp.hpp"
+#include "vbscf/optimization/trust_region/retraction.hpp"
+#include "vbscf/optimization/trust_region/truncated_newton.hpp"
+#include "vbscf/optimization/objective/function.hpp"
+#include "vbscf/optimization/driver/options.hpp"
+#include "vbscf/optimization/driver/result.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb::optimizer_detail {

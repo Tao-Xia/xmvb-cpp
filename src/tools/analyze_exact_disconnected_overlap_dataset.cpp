@@ -18,7 +18,7 @@
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/structures/selection/union_graph/screening.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
-#include "vbscf/optimization/vbscf_optimizer.hpp"
+#include "vbscf/optimization/driver/optimizer.hpp"
 
 namespace {
 

@@ -214,7 +214,7 @@ y_{\mathrm{nr}}.
   - `accumulate_active_space_gradient(...)`
 - `src/vbscf/derivatives/gradient/orbital_gradient_evaluator.cpp`
   - active-space layer backprop 到 AO / orbital 参数层
-- `src/vbscf/optimization/vbscf_optimizer.cpp`
+- `src/vbscf/optimization/driver/optimizer.cpp`
   - 现有 `MatrixFreeReducedHvpOperator`
 - `src/vbscf/orbitals/pullback/operator.cpp`
   - 当前承载 old `Grdori` / original-orbital 投影语义的正式 pullback 实现

@@ -3,7 +3,7 @@
 #include <Eigen/Core>
 #include <LBFGS.h>
 
-#include "vbscf/optimization/vbscf_objective.hpp"
+#include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 

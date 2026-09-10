@@ -1,4 +1,4 @@
-#include "vbscf/optimization/line_search.hpp"
+#include "vbscf/optimization/globalization/line_search.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "vbscf/optimization/optimization_checks.hpp"
+#include "vbscf/optimization/driver/checks.hpp"
 
 namespace xmvb::vb {
 

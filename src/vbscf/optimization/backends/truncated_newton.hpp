@@ -2,7 +2,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/optimization/backends/backend_run_result.hpp"
+#include "vbscf/optimization/backends/result.hpp"
 
 namespace xmvb::vb {
 
@@ -13,7 +13,7 @@ struct VbScfOptimizerResult;
 
 namespace optimizer_detail {
 
-BackendRunResult run_projected_gradient_backend(
+BackendRunResult run_truncated_newton_backend(
     VbScfObjective* objective,
     const SparseParameterLayout& parameter_view,
     const VbScfOptimizerOptions& options,

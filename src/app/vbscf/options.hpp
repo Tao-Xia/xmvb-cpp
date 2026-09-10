@@ -4,7 +4,7 @@
 #include <string>
 
 #include "runtime/vbscf_input_loader.hpp"
-#include "vbscf/optimization/vbscf_optimizer.hpp"
+#include "vbscf/optimization/driver/optimizer.hpp"
 
 namespace xmvb::app::vbscf {
 

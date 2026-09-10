@@ -4,7 +4,7 @@
 
 #include <Eigen/QR>
 
-#include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
+#include "vbscf/optimization/krylov/orthonormal_basis.hpp"
 #include "vbscf/optimization/krylov/positive_conjugate_basis.hpp"
 
 namespace {

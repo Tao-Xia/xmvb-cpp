@@ -66,7 +66,11 @@ vbscf/
         same_spin/       Same-spin determinant-pair response kernels
         opposite_spin/   Opposite-spin response kernels
   optimization/
+    backends/            L-BFGS, projected-gradient, and TN step backends
+    driver/              Optimizer lifecycle, contracts, and session state
+    globalization/       Line-search globalization
     krylov/              Matrix-free subspace primitives
+    objective/           VBSCF objective and reduced HVP action
     preconditioners/     Reduced-space preconditioners
     trust_region/        Trust-region model solvers and radius updates
   workflow/              End-to-end VBSCF evaluation and orchestration

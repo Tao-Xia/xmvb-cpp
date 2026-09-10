@@ -1,4 +1,4 @@
-#include "vbscf/optimization/trust_region/retraction_metric.hpp"
+#include "vbscf/optimization/trust_region/retraction.hpp"
 
 #include <cmath>
 

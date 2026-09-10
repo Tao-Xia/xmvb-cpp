@@ -1,4 +1,4 @@
-#include "vbscf/optimization/trust_region/truncated_newton_solver.hpp"
+#include "vbscf/optimization/trust_region/truncated_newton.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -8,10 +8,10 @@
 
 #include <Eigen/Eigenvalues>
 
-#include "vbscf/optimization/krylov/orthonormal_hvp_basis.hpp"
+#include "vbscf/optimization/krylov/orthonormal_basis.hpp"
 #include "vbscf/optimization/krylov/positive_conjugate_basis.hpp"
-#include "vbscf/optimization/trust_region/spectral_trust_region.hpp"
-#include "vbscf/optimization/optimization_checks.hpp"
+#include "vbscf/optimization/trust_region/spectral.hpp"
+#include "vbscf/optimization/driver/checks.hpp"
 
 namespace xmvb::vb {
 

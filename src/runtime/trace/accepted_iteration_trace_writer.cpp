@@ -14,7 +14,7 @@
 #include "runtime/io/binary_file.hpp"
 #include "runtime/vbscf_input_loader.hpp"
 #include "vbscf/integrals/active/two_electron_indexer.hpp"
-#include "vbscf/optimization/vbscf_optimizer_result.hpp"
+#include "vbscf/optimization/driver/result.hpp"
 
 namespace xmvb::runtime {
 namespace {

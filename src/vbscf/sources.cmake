@@ -94,17 +94,17 @@ set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
 )
 
 set(XMVB_VBSCF_OPTIMIZATION_SOURCES
-  vbscf/optimization/backends/lbfgs_backends.cpp
-  vbscf/optimization/backends/projected_gradient_backend.cpp
-  vbscf/optimization/backends/truncated_newton_backend.cpp
-  vbscf/optimization/line_search.cpp
-  vbscf/optimization/optimizer_session.cpp
-  vbscf/optimization/preconditioners/transported_lbfgs_preconditioner.cpp
-  vbscf/optimization/reduced_hvp_operator.cpp
-  vbscf/optimization/trust_region/retraction_metric.cpp
-  vbscf/optimization/trust_region/truncated_newton_solver.cpp
-  vbscf/optimization/vbscf_objective.cpp
-  vbscf/optimization/vbscf_optimizer.cpp
+  vbscf/optimization/backends/lbfgs.cpp
+  vbscf/optimization/backends/projected_gradient.cpp
+  vbscf/optimization/backends/truncated_newton.cpp
+  vbscf/optimization/globalization/line_search.cpp
+  vbscf/optimization/driver/session.cpp
+  vbscf/optimization/preconditioners/transported_lbfgs.cpp
+  vbscf/optimization/objective/reduced_hvp.cpp
+  vbscf/optimization/trust_region/retraction.cpp
+  vbscf/optimization/trust_region/truncated_newton.cpp
+  vbscf/optimization/objective/function.cpp
+  vbscf/optimization/driver/optimizer.cpp
 )
 
 set(XMVB_VBSCF_WORKFLOW_SOURCES

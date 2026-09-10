@@ -2,7 +2,7 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/optimization/vbscf_optimizer_options.hpp"
+#include "vbscf/optimization/driver/options.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 
 namespace xmvb::vb {

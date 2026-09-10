@@ -1,4 +1,4 @@
-#include "vbscf/optimization/preconditioners/transported_lbfgs_preconditioner.hpp"
+#include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
 
 #include <cmath>
 #include <limits>

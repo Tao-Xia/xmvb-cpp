@@ -2,9 +2,9 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/optimization/preconditioners/transported_lbfgs_preconditioner.hpp"
-#include "vbscf/optimization/reduced_hvp_operator.hpp"
-#include "vbscf/optimization/trust_region/retraction_metric.hpp"
+#include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
+#include "vbscf/optimization/objective/reduced_hvp.hpp"
+#include "vbscf/optimization/trust_region/retraction.hpp"
 
 namespace xmvb::vb {
 

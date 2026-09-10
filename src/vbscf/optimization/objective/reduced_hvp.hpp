@@ -5,7 +5,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
-#include "vbscf/optimization/vbscf_objective.hpp"
+#include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 

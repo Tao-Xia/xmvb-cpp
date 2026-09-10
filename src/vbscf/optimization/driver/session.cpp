@@ -1,11 +1,11 @@
-#include "vbscf/optimization/optimizer_session.hpp"
+#include "vbscf/optimization/driver/session.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
-#include "vbscf/optimization/vbscf_objective.hpp"
-#include "vbscf/optimization/vbscf_optimizer_result.hpp"
+#include "vbscf/optimization/objective/function.hpp"
+#include "vbscf/optimization/driver/result.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb::optimizer_detail {

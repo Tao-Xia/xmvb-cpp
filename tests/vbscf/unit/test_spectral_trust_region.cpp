@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "vbscf/optimization/trust_region/spectral_trust_region.hpp"
+#include "vbscf/optimization/trust_region/spectral.hpp"
 
 namespace {
 void require(bool condition, const std::string& message) {

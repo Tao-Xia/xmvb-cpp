@@ -2,8 +2,8 @@
 
 #include <functional>
 
-#include "vbscf/optimization/optimizer_backend.hpp"
-#include "vbscf/optimization/vbscf_optimizer_result.hpp"
+#include "vbscf/optimization/driver/backend.hpp"
+#include "vbscf/optimization/driver/result.hpp"
 
 namespace xmvb::vb {
 

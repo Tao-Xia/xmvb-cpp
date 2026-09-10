@@ -1,4 +1,4 @@
-#include "vbscf/optimization/vbscf_optimizer.hpp"
+#include "vbscf/optimization/driver/optimizer.hpp"
 
 #include <chrono>
 #include <optional>
@@ -15,12 +15,12 @@
 #include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
-#include "vbscf/optimization/vbscf_objective.hpp"
-#include "vbscf/optimization/backends/lbfgs_backends.hpp"
-#include "vbscf/optimization/backends/projected_gradient_backend.hpp"
-#include "vbscf/optimization/backends/truncated_newton_backend.hpp"
-#include "vbscf/optimization/optimizer_session.hpp"
-#include "vbscf/optimization/optimization_checks.hpp"
+#include "vbscf/optimization/objective/function.hpp"
+#include "vbscf/optimization/backends/lbfgs.hpp"
+#include "vbscf/optimization/backends/projected_gradient.hpp"
+#include "vbscf/optimization/backends/truncated_newton.hpp"
+#include "vbscf/optimization/driver/session.hpp"
+#include "vbscf/optimization/driver/checks.hpp"
 
 namespace xmvb::vb {
 

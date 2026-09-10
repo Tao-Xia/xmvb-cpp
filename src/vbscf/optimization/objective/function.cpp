@@ -1,4 +1,4 @@
-#include "vbscf/optimization/vbscf_objective.hpp"
+#include "vbscf/optimization/objective/function.hpp"
 
 #include <stdexcept>
 #include <utility>
@@ -9,7 +9,7 @@
 #include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
-#include "vbscf/optimization/optimization_checks.hpp"
+#include "vbscf/optimization/driver/checks.hpp"
 
 namespace xmvb::vb {
 
