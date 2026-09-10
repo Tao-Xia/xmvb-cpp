@@ -15,7 +15,8 @@ __pycache__/
 
 # Large data / generated artifacts
 artifacts/
-benchmarks/
+benchmarks/*
+!benchmarks/README.md
 data/
 deepvbscf_data/
 deepvbscf_data_f2_scan/
