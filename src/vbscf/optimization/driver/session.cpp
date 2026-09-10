@@ -81,7 +81,8 @@ void record_accepted_iteration_snapshot(
     VbScfObjective* objective,
     int accepted_iteration_index,
     const VbScfOptimizerOptions& options,
-    VbScfOptimizerResult* result) {
+    VbScfOptimizerResult* result,
+    const TnhvpIterationRecord* tnhvp) {
   if (!options.retain_accepted_iteration_trace && !options.accepted_iteration_callback) {
     return;
   }
@@ -97,6 +98,9 @@ void record_accepted_iteration_snapshot(
   const auto& gradient_result = objective->last_gradient_result();
   VbScfAcceptedIterationSnapshot snapshot;
   snapshot.accepted_iteration_index = accepted_iteration_index;
+  if (tnhvp != nullptr) {
+    snapshot.tnhvp = *tnhvp;
+  }
   snapshot.has_full_payload = include_full_payload;
   for (const double value : gradient_result.sparse_orbital_energy_gradient) {
     snapshot.sparse_orbital_energy_gradient_inf_norm =

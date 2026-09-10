@@ -10,6 +10,7 @@ namespace xmvb::vb {
 class SparseParameterLayout;
 class VbScfObjective;
 struct VbScfOptimizerResult;
+struct TnhvpIterationRecord;
 
 namespace optimizer_detail {
 
@@ -34,7 +35,8 @@ void record_accepted_iteration_snapshot(
     VbScfObjective* objective,
     int accepted_iteration_index,
     const VbScfOptimizerOptions& options,
-    VbScfOptimizerResult* result);
+    VbScfOptimizerResult* result,
+    const TnhvpIterationRecord* tnhvp = nullptr);
 
 }  // namespace optimizer_detail
 

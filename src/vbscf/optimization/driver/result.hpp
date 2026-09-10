@@ -4,6 +4,7 @@
 
 #include <Eigen/Core>
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,6 +12,48 @@
 #include "vbscf/core/contracts/result.hpp"
 
 namespace xmvb::vb {
+
+/**
+ * @brief Solver diagnostics for one accepted TNHVP outer iteration.
+ *
+ * Counts include every trust-region attempt made from the same accepted
+ * source point, while model quantities describe the step that was ultimately
+ * accepted. This distinction makes rejected-radius retries visible without
+ * confusing them with additional outer iterations.
+ */
+struct TnhvpIterationRecord {
+  int accepted_iteration_index = 0;
+  int reduced_dimension = 0;
+  int krylov_iterations = 0;
+  int rejected_trial_count = 0;
+
+  std::size_t hvp_direction_count = 0;
+  std::size_t hvp_batch_count = 0;
+  std::size_t subproblem_count = 0;
+  double hvp_wall_time_seconds = 0.0;
+
+  double source_gradient_l2_norm = 0.0;
+  double accepted_gradient_l2_norm = 0.0;
+  double forcing_term = 0.0;
+  bool has_kkt_residual = false;
+  double kkt_relative_residual = 0.0;
+
+  double initial_trust_radius = 0.0;
+  double accepted_trial_radius = 0.0;
+  double next_trust_radius = 0.0;
+  double step_norm = 0.0;
+
+  double predicted_decrease = 0.0;
+  double actual_decrease = 0.0;
+  double trust_ratio = 0.0;
+  double model_spectral_radius = 0.0;
+  double trust_region_shift = 0.0;
+
+  bool reached_boundary = false;
+  bool encountered_negative_curvature = false;
+  bool used_krylov_rescue = false;
+  bool reused_krylov_subspace = false;
+};
 
 /**
  * @brief Accepted optimizer iterate with the quantities needed for DeepVBSCF tracing.
@@ -24,6 +67,9 @@ struct VbScfAcceptedIterationSnapshot {
    * @brief Accepted iteration index, with the initial point stored as 0.
    */
   int accepted_iteration_index = 0;
+
+  /** TNHVP solver data, absent at the initial point and for other backends. */
+  std::optional<TnhvpIterationRecord> tnhvp;
 
   /**
    * @brief Whether this snapshot carries the heavyweight matrix/integral payloads.
@@ -194,6 +240,9 @@ struct VbScfOptimizerResult {
 
   /** Wall time spent inside exact reduced Hessian actions. */
   double matrix_free_hvp_wall_time_seconds = 0.0;
+
+  /** Lightweight per-accepted-step diagnostics for the TNHVP backend. */
+  std::vector<TnhvpIterationRecord> tnhvp_iteration_trace;
 
   /**
    * @brief Accepted-iterate trace with orbital coefficients and exact structure matrices.

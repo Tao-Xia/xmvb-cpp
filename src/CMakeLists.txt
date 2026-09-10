@@ -236,6 +236,20 @@ if (BUILD_TESTING)
       WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
       ENVIRONMENT
         "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+  add_test(
+    NAME tnhvp_trace_f2
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
+      -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      -DXMVB_TRACE_ROOT=${CMAKE_BINARY_DIR}/tests/tnhvp_trace
+      -P ${CMAKE_SOURCE_DIR}/tests/output/check_tnhvp_trace.cmake)
+  set_tests_properties(
+    tnhvp_trace_f2
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
 endif()
 
 if (XMVB_BUILD_DEV_TARGETS)

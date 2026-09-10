@@ -467,8 +467,45 @@ public:
                     << "  \"packed_active_two_electron_integral_count\": "
                     << snapshot.packed_active_two_electron_integrals.size() << ",\n"
                     << "  \"n_differentiable_parameters\": "
-                    << differentiable_parameter_count_ << "\n"
-                    << "}\n";
+                    << differentiable_parameter_count_;
+    if (snapshot.tnhvp.has_value()) {
+      const auto& tnhvp = *snapshot.tnhvp;
+      metadata_stream
+          << ",\n  \"tnhvp\": {\n"
+          << "    \"reduced_dimension\": " << tnhvp.reduced_dimension << ",\n"
+          << "    \"krylov_iterations\": " << tnhvp.krylov_iterations << ",\n"
+          << "    \"rejected_trial_count\": " << tnhvp.rejected_trial_count << ",\n"
+          << "    \"hvp_direction_count\": " << tnhvp.hvp_direction_count << ",\n"
+          << "    \"hvp_batch_count\": " << tnhvp.hvp_batch_count << ",\n"
+          << "    \"subproblem_count\": " << tnhvp.subproblem_count << ",\n"
+          << "    \"hvp_wall_time_seconds\": " << std::setprecision(17)
+          << tnhvp.hvp_wall_time_seconds << ",\n"
+          << "    \"source_gradient_l2_norm\": " << tnhvp.source_gradient_l2_norm << ",\n"
+          << "    \"accepted_gradient_l2_norm\": " << tnhvp.accepted_gradient_l2_norm << ",\n"
+          << "    \"forcing_term\": " << tnhvp.forcing_term << ",\n"
+          << "    \"has_kkt_residual\": "
+          << (tnhvp.has_kkt_residual ? "true" : "false") << ",\n"
+          << "    \"kkt_relative_residual\": " << tnhvp.kkt_relative_residual << ",\n"
+          << "    \"initial_trust_radius\": " << tnhvp.initial_trust_radius << ",\n"
+          << "    \"accepted_trial_radius\": " << tnhvp.accepted_trial_radius << ",\n"
+          << "    \"next_trust_radius\": " << tnhvp.next_trust_radius << ",\n"
+          << "    \"step_norm\": " << tnhvp.step_norm << ",\n"
+          << "    \"predicted_decrease\": " << tnhvp.predicted_decrease << ",\n"
+          << "    \"actual_decrease\": " << tnhvp.actual_decrease << ",\n"
+          << "    \"trust_ratio\": " << tnhvp.trust_ratio << ",\n"
+          << "    \"model_spectral_radius\": " << tnhvp.model_spectral_radius << ",\n"
+          << "    \"trust_region_shift\": " << tnhvp.trust_region_shift << ",\n"
+          << "    \"reached_boundary\": "
+          << (tnhvp.reached_boundary ? "true" : "false") << ",\n"
+          << "    \"encountered_negative_curvature\": "
+          << (tnhvp.encountered_negative_curvature ? "true" : "false") << ",\n"
+          << "    \"used_krylov_rescue\": "
+          << (tnhvp.used_krylov_rescue ? "true" : "false") << ",\n"
+          << "    \"reused_krylov_subspace\": "
+          << (tnhvp.reused_krylov_subspace ? "true" : "false") << "\n"
+          << "  }";
+    }
+    metadata_stream << "\n}\n";
     write_text_file(step_dir / "metadata.json", metadata_stream.str());
     ++accepted_iteration_count_;
   }

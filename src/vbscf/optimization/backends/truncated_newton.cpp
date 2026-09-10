@@ -63,6 +63,15 @@ BackendRunResult run_truncated_newton_backend(
   int rejected_trial_step_count_for_current_point = 0;
   RejectedTruncatedNewtonStepCache rejected_step_cache;
   TruncatedNewtonKrylovSubspace cached_krylov_subspace;
+  double initial_trust_radius_for_current_point = trust_radius;
+  std::size_t initial_hvp_direction_count_for_current_point =
+      result->matrix_free_hvp_direction_count;
+  std::size_t initial_hvp_batch_count_for_current_point =
+      result->matrix_free_hvp_batch_count;
+  std::size_t initial_subproblem_count_for_current_point =
+      result->matrix_free_subproblem_count;
+  double initial_hvp_wall_time_for_current_point =
+      result->matrix_free_hvp_wall_time_seconds;
   
   while (run_result.n_iterations < options.max_iterations) {
     if (current_space.reduced_size() == 0) {
@@ -575,11 +584,9 @@ BackendRunResult run_truncated_newton_backend(
             &current_gradient,
             &packed_secant_history);
     ++run_result.n_iterations;
-    rejected_trial_step_count_for_current_point = 0;
     rejected_step_cache.clear();
     cached_krylov_subspace = TruncatedNewtonKrylovSubspace();
     sync_result_from_objective(*objective, result);
-    record_accepted_iteration_snapshot(objective, run_result.n_iterations, options, result);
     run_result.final_gradient_l2_norm = current_gradient.norm();
     const double de = energy - previous_energy;
     previous_energy = energy;
@@ -594,13 +601,97 @@ BackendRunResult run_truncated_newton_backend(
         gradient_infinity_norm(next_projection.reduced_gradient);
     final_projected_gradient_l2_norm =
         next_projection.reduced_gradient.norm();
-    trust_radius =
+    const double next_trust_radius =
         update_nonredundant_truncated_newton_trust_radius(
             trust_radius,
             options.minimum_step_size,
             trial_evaluation_cache,
             truncated_newton_step,
             true);
+    TnhvpIterationRecord iteration_record;
+    iteration_record.accepted_iteration_index = run_result.n_iterations;
+    iteration_record.reduced_dimension = static_cast<int>(reduced_size);
+    iteration_record.krylov_iterations = truncated_newton_step.cg_iterations;
+    iteration_record.rejected_trial_count =
+        rejected_trial_step_count_for_current_point;
+    iteration_record.hvp_direction_count =
+        result->matrix_free_hvp_direction_count -
+        initial_hvp_direction_count_for_current_point;
+    iteration_record.hvp_batch_count =
+        result->matrix_free_hvp_batch_count -
+        initial_hvp_batch_count_for_current_point;
+    iteration_record.subproblem_count =
+        result->matrix_free_subproblem_count -
+        initial_subproblem_count_for_current_point;
+    iteration_record.hvp_wall_time_seconds =
+        result->matrix_free_hvp_wall_time_seconds -
+        initial_hvp_wall_time_for_current_point;
+    iteration_record.source_gradient_l2_norm =
+        current_projection.reduced_gradient.stableNorm();
+    iteration_record.accepted_gradient_l2_norm =
+        next_projection.reduced_gradient.stableNorm();
+    iteration_record.forcing_term =
+        inexact_newton_forcing_term(iteration_record.source_gradient_l2_norm);
+    if (truncated_newton_step.reduced_hessian_times_step.size() ==
+            current_projection.reduced_gradient.size() &&
+        truncated_newton_step.reduced_hessian_times_step.allFinite()) {
+      const Eigen::VectorXd kkt_residual =
+          current_projection.reduced_gradient +
+          truncated_newton_step.reduced_hessian_times_step +
+          truncated_newton_step.trust_region_shift *
+              truncated_newton_step.reduced_step;
+      const double residual_norm = kkt_residual.stableNorm();
+      if (std::isfinite(residual_norm)) {
+        iteration_record.has_kkt_residual = true;
+        iteration_record.kkt_relative_residual =
+            residual_norm /
+            std::max(
+                iteration_record.source_gradient_l2_norm,
+                std::numeric_limits<double>::min());
+      }
+    }
+    iteration_record.initial_trust_radius =
+        initial_trust_radius_for_current_point;
+    iteration_record.accepted_trial_radius = trust_radius;
+    iteration_record.next_trust_radius = next_trust_radius;
+    iteration_record.step_norm = truncated_newton_step.retract_tangent_norm;
+    iteration_record.predicted_decrease =
+        trial_evaluation_cache.predicted_decrease;
+    iteration_record.actual_decrease = trial_evaluation_cache.actual_decrease;
+    if (iteration_record.predicted_decrease > 0.0 &&
+        std::isfinite(iteration_record.predicted_decrease)) {
+      iteration_record.trust_ratio =
+          iteration_record.actual_decrease /
+          iteration_record.predicted_decrease;
+    }
+    iteration_record.model_spectral_radius =
+        truncated_newton_step.model_spectral_radius;
+    iteration_record.trust_region_shift =
+        truncated_newton_step.trust_region_shift;
+    iteration_record.reached_boundary = truncated_newton_step.reached_boundary;
+    iteration_record.encountered_negative_curvature =
+        model_step.encountered_negative_curvature;
+    iteration_record.used_krylov_rescue =
+        truncated_newton_step.used_krylov_rescue;
+    iteration_record.reused_krylov_subspace = reused_krylov_subspace;
+    result->tnhvp_iteration_trace.push_back(iteration_record);
+    record_accepted_iteration_snapshot(
+        objective,
+        run_result.n_iterations,
+        options,
+        result,
+        &iteration_record);
+    trust_radius = next_trust_radius;
+    rejected_trial_step_count_for_current_point = 0;
+    initial_trust_radius_for_current_point = trust_radius;
+    initial_hvp_direction_count_for_current_point =
+        result->matrix_free_hvp_direction_count;
+    initial_hvp_batch_count_for_current_point =
+        result->matrix_free_hvp_batch_count;
+    initial_subproblem_count_for_current_point =
+        result->matrix_free_subproblem_count;
+    initial_hvp_wall_time_for_current_point =
+        result->matrix_free_hvp_wall_time_seconds;
     if (nonredundant_rank_changed) {
       packed_secant_history.clear();
     }
