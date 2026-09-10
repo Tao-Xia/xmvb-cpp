@@ -19,6 +19,12 @@ namespace xmvb::vb {
 Eigen::MatrixXd ExactHvpOperator::apply_reduced_batch(
     const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
     HvpComponents components) const {
+  return state_->apply_reduced_batch(reduced_directions, components);
+}
+
+Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
+    const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
+    HvpComponents components) const {
   ++apply_timing_totals_.batch_apply_count;
   Eigen::MatrixXd responses(
       reduced_directions.rows(),

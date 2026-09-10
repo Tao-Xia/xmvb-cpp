@@ -1,5 +1,7 @@
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 
+#include "vbscf/derivatives/hessian/exact_hvp_state_internal.hpp"
+
 #include <stdexcept>
 #include <utility>
 
@@ -21,6 +23,27 @@ bool exact_ctx_stage1_analytic_core_enabled() {
 }  // namespace
 
 ExactHvpOperator::ExactHvpOperator(
+    std::shared_ptr<const AcceptedPointContext> accepted_point_context,
+    const VbScfInput* current_input,
+    SparseParameterLayout parameter_view,
+    const OrbitalChart* nonredundant_space)
+    : state_(std::make_unique<State>(
+          std::move(accepted_point_context),
+          current_input,
+          std::move(parameter_view),
+          nonredundant_space)) {}
+
+ExactHvpOperator::~ExactHvpOperator() = default;
+
+bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
+  return state_->supports_analytic_core_model();
+}
+
+ExactHvpOperator::Diagnostics ExactHvpOperator::diagnostics() const {
+  return state_->diagnostics();
+}
+
+ExactHvpOperator::State::State(
     std::shared_ptr<const AcceptedPointContext> accepted_point_context,
     const VbScfInput* current_input,
     SparseParameterLayout parameter_view,
@@ -151,9 +174,7 @@ ExactHvpOperator::ExactHvpOperator(
   }
 }
 
-ExactHvpOperator::~ExactHvpOperator() = default;
-
-bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
+bool ExactHvpOperator::State::supports_analytic_core_model() const noexcept {
   if (accepted_point_context_ == nullptr ||
       current_input_ == nullptr ||
       nonredundant_space_ == nullptr) {
@@ -177,7 +198,7 @@ bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
 }
 
 ExactHvpOperator::Diagnostics
-ExactHvpOperator::diagnostics() const {
+ExactHvpOperator::State::diagnostics() const {
   Diagnostics info;
   if (accepted_point_context_ == nullptr || nonredundant_space_ == nullptr) {
     return info;

@@ -78,6 +78,12 @@ void throw_if_nonfinite(
 Eigen::VectorXd ExactHvpOperator::apply_reduced(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components) const {
+  return state_->apply_reduced(reduced_direction, components);
+}
+
+Eigen::VectorXd ExactHvpOperator::State::apply_reduced(
+    const Eigen::VectorXd& reduced_direction,
+    HvpComponents components) const {
   return apply_reduced_impl(
       reduced_direction,
       components,
@@ -88,7 +94,7 @@ Eigen::VectorXd ExactHvpOperator::apply_reduced(
       nullptr);
 }
 
-Eigen::VectorXd ExactHvpOperator::apply_reduced_impl(
+Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const Eigen::VectorXd& reduced_direction,
     HvpComponents components,
     const Eigen::VectorXd* precomputed_delta_ao_effective_h1e,

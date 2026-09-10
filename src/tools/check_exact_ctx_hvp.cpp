@@ -24,9 +24,11 @@
 #include "vbscf/orbitals/charts/sparse_parameter_layout.hpp"
 #include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/hessian/accepted_point_context.hpp"
 #include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin_backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_backward.hpp"
+#include "vbscf/structures/selected_state_coefficients.hpp"
 
 namespace {
 
@@ -2663,17 +2665,17 @@ int main(int argc, char** argv) {
             gradient_result.second_order_context->normalized_state_weights,
             gradient_result.second_order_context->same_spin_pair_cache);
     const auto analytic_directional_pair_weights =
-        build_directional_determinant_pair_weight_tables_from_coefficients(
+        xmvb::vb::build_directional_determinant_pair_weight_tables_from_coefficients(
             gradient_result.second_order_context->selected_state_matrices,
             directional_selected_states,
             gradient_result.second_order_context->selected_state_energies,
             directional_selected_state_energies);
     const auto plus_exact_pair_weights =
-        build_exact_determinant_pair_weight_tables_from_eigenvalues(
+        xmvb::vb::build_exact_determinant_pair_weight_tables_from_eigenvalues(
             plus_full_gradient_result.second_order_context->selected_state_matrices,
             plus_full_gradient_result.second_order_context->eigen_result.eigenvalues);
     const auto minus_exact_pair_weights =
-        build_exact_determinant_pair_weight_tables_from_eigenvalues(
+        xmvb::vb::build_exact_determinant_pair_weight_tables_from_eigenvalues(
             minus_full_gradient_result.second_order_context->selected_state_matrices,
             minus_full_gradient_result.second_order_context->eigen_result.eigenvalues);
     std::vector<double> fd_directional_pair_h(

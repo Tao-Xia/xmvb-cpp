@@ -4,12 +4,12 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/derivatives/hessian/exact_hvp_operator.hpp"
+#include "vbscf/derivatives/hessian/exact_hvp_state_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital_preparation_response.hpp"
 
 namespace xmvb::vb {
 
-struct ExactHvpOperator::PrecomputedDirection {
+struct ExactHvpOperator::State::PrecomputedDirection {
   Eigen::VectorXd packed_direction;
   DenseOrbitalTangentContext dense_orbital_tangent_context;
   OrbitalPreparationDirectionalResult orbital_preparation_directional_result;
