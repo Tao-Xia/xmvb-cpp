@@ -9,9 +9,9 @@ namespace {
 int get_differentiable_coefficient_count(
     const OrbitalPreparationInput& orbital_preparation_input,
     int orbital_index) {
-  // Legacy `getvars` parameterizes HAO orbitals with `ma0` variables, not with
-  // the fully expanded support length stored in `ma/nv`. Preserving that count
-  // here keeps the C++ optimizer on the same orbital manifold as legacy VBSCF.
+  // HAO orbitals use the original differentiable coefficient count, not the
+  // fully expanded stored support. This preserves the intended orbital
+  // manifold after support expansion.
   const bool have_original_counts =
       orbital_preparation_input.original_orbital_basis_counts.size() ==
       orbital_preparation_input.n_orbitals;
@@ -148,7 +148,7 @@ SparseParameterLayout::SparseParameterLayout(
 
   differentiable_parameter_indices_.reserve(
       total_slot_count_);
-  // The legacy runtime stores each orbital in a fixed-width row of length
+  // The runtime stores each orbital in a fixed-width row of length
   // `n_basis_functions`, but only the leading explicit coefficients are
   // differentiable. Build a stable dense view once so all optimizers use the
   // same packing order.
@@ -253,7 +253,7 @@ void SparseParameterLayout::unpack(
   }
 
   // Only overwrite the explicit sparse coefficients. Padding slots remain
-  // untouched so the reconstructed legacy layout stays structurally identical
+  // untouched so the reconstructed input layout stays structurally identical
   // to the original input.
   for (Eigen::Index packed_offset = 0;
        packed_offset < packed_parameters.size();

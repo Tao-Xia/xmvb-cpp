@@ -8,13 +8,12 @@
 namespace xmvb::vb {
 
 /**
- * @brief Copies one legacy row-by-row dense buffer into `Eigen::MatrixXd`.
+ * @brief Copies one row-major dense buffer into `Eigen::MatrixXd`.
  *
- * Some migrated kernels still materialize compatibility buffers where one AO
- * row is stored contiguously. This helper isolates that boundary so the rest
- * of the code can keep using the repository-standard column-major Eigen type.
+ * Some kernels materialize buffers where one AO row is stored contiguously.
+ * This helper isolates that storage boundary from column-major Eigen matrices.
  */
-inline Eigen::MatrixXd copy_legacy_row_buffer_to_matrix(
+inline Eigen::MatrixXd copy_row_major_buffer_to_matrix(
     const std::vector<double>& values,
     int n_rows,
     int n_cols) {
@@ -22,7 +21,7 @@ inline Eigen::MatrixXd copy_legacy_row_buffer_to_matrix(
     throw std::invalid_argument("matrix dimensions must be non-negative");
   }
   if (values.size() != n_rows * n_cols) {
-    throw std::invalid_argument("legacy row buffer size does not match matrix dimensions");
+    throw std::invalid_argument("row-major buffer size does not match matrix dimensions");
   }
   Eigen::MatrixXd matrix(n_rows, n_cols);
   for (int row = 0; row < n_rows; ++row) {
@@ -36,13 +35,12 @@ inline Eigen::MatrixXd copy_legacy_row_buffer_to_matrix(
 }
 
 /**
- * @brief Flattens one Eigen matrix into a legacy row-by-row compatibility buffer.
+ * @brief Flattens one Eigen matrix into a row-major buffer.
  *
- * New interfaces should prefer `Eigen::MatrixXd` directly. Use this only when
- * a still-migrating internal kernel explicitly expects one contiguous row at a
- * time.
+ * Interfaces should prefer `Eigen::MatrixXd` directly. Use this only when an
+ * internal kernel explicitly expects one contiguous row at a time.
  */
-inline std::vector<double> copy_matrix_to_legacy_row_buffer(
+inline std::vector<double> copy_matrix_to_row_major_buffer(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix) {
   const std::size_t row_count = matrix.rows();
   const std::size_t col_count = matrix.cols();

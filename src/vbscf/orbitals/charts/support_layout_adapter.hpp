@@ -9,7 +9,7 @@ namespace xmvb::vb {
 /**
  * @brief Returns whether the sparse orbital layout contains partially overlapping blocks.
  *
- * Partial-overlap support patterns are harmless for the legacy/runtime guess
+ * Partial-overlap support patterns are harmless for the initial guess
  * reader, but they are a bad fit for any optimizer path that wants an exact
  * sparse support per overlap-connected orbital component.
  */
@@ -22,7 +22,7 @@ bool orbital_input_requires_partial_overlap_support_expansion(
  * This transformation does not change the represented orbitals. It only
  * rewrites the sparse slot layout so every orbital inside one
  * overlap-connected component shares the same explicit AO support. Downstream
- * code can then rebuild exact-support blocks without seeing stale legacy
+ * code can then rebuild exact-support blocks without seeing stale
  * partial-overlap metadata.
  */
 OrbitalPreparationInput build_partial_overlap_support_expanded_input(
@@ -42,11 +42,11 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
     const std::vector<char>& expand_orbital_mask);
 
 /**
- * @brief Returns the nonredundant optimizer input without changing the legacy sparse chart.
+ * @brief Returns the nonredundant optimizer input without changing the original sparse chart.
  *
  * The reference VBSCF implementation keeps exact-support orbital blocks and
  * treats partial support overlap only as metadata. For `guess=mo`, preserving
- * that original block partition is necessary to match the legacy variational
+ * that original block partition is necessary to preserve the variational
  * manifold and converged energy, so this helper currently forwards the input
  * unchanged.
  */

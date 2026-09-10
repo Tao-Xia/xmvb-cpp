@@ -26,7 +26,6 @@ set(XMVB_VBSCF_STRUCTURE_SOURCES
 set(XMVB_VBSCF_ORBITAL_SOURCES
   vbscf/orbitals/orbital_preparer.cpp
   vbscf/orbitals/orbital_pullback.cpp
-  vbscf/orbitals/gauge/legacy_jacobi_diagonalizer.cpp
   vbscf/orbitals/gauge/localized_representative.cpp
   vbscf/orbitals/charts/orbital_block_partition.cpp
   vbscf/orbitals/charts/orbital_chart_canonicalization.cpp

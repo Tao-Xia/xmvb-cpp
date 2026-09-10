@@ -3,10 +3,10 @@
 namespace xmvb::vb {
 
 /**
- * @brief Utility for the packed index convention used by legacy two-electron tensors.
+ * @brief Utility for the packed index convention used by two-electron tensors.
  *
- * The legacy code stores antisymmetrized two-electron quantities through two
- * nested packed symmetric index maps:
+ * Antisymmetrized two-electron quantities use two nested packed symmetric
+ * index maps:
  * 1. Convert an orbital pair `(p, q)` to a packed one-based index.
  * 2. Convert two packed pair indices to a final packed one-based index.
  *
@@ -34,11 +34,10 @@ public:
   static int packed_pair_of_pairs_index(int packed_pair_index_a, int packed_pair_index_b);
 
   /**
-   * @brief Returns the final zero-based legacy two-electron storage index.
+   * @brief Returns the final zero-based two-electron storage index.
    *
-   * The legacy `Hamhd0` code first packs the orbital pair `(left, right)` into
-   * a single index with `LAB`, then packs two such pair indices again. This
-   * method mirrors that exact convention:
+   * The method first packs each orbital pair into a single index, then packs
+   * the two pair indices again:
    * - first packed pair: `(orbital_index_p, orbital_index_q)`
    * - second packed pair: `(orbital_index_r, orbital_index_s)`
    *

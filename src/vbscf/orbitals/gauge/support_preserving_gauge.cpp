@@ -306,13 +306,13 @@ SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
     return {};
   }
   // A support-aware re-gauging is only an exact chart change when the current
-  // sparse layout already differs from the recorded legacy support chart, e.g.
+  // sparse layout already differs from the recorded recorded support chart, e.g.
   // after a temporary support expansion used only for guess construction. If
   // the current chart already equals the reference sparse layout, the dense
   // right rotation computed below would be truncated back onto the same sparse
   // rows and the stored `T^{-T}` gradient transform would no longer match the
   // actual coefficient update. In that case the safe behavior is to leave the
-  // legacy chart untouched.
+  // original chart untouched.
   if (inactive_support_layout_matches_reference(
           reference_layout,
           *orbital_preparation_input,

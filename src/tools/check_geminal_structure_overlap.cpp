@@ -42,7 +42,6 @@ struct Options {
   double tolerance = 1.0e-6;
   bool restrict_covalent = false;
   std::string candidate = "all";
-  std::string pair_phase_mode = "legacy";
 };
 
 struct DeterminantTerm {
@@ -81,7 +80,6 @@ void print_usage() {
   std::cerr << "usage: check_geminal_structure_overlap <input.xmi> "
                "[--max-structures N] [--report-count N] [--tolerance tol] "
                "[--restrict-covalent 0|1] "
-               "[--pair-phase-mode legacy|antisymmetric] "
                "[--candidate all|exact_terms|pair_det|pair_perm|pfaffian_plus|pfaffian_minus]\n";
 }
 
@@ -137,16 +135,6 @@ std::vector<CandidateKind> parse_candidate_selection(const std::string& candidat
   throw std::invalid_argument("unknown candidate: " + candidate_text);
 }
 
-int parse_pair_swapped_term_phase(const std::string& pair_phase_mode) {
-  if (pair_phase_mode == "legacy") {
-    return 1;
-  }
-  if (pair_phase_mode == "antisymmetric") {
-    return -1;
-  }
-  throw std::invalid_argument("unknown --pair-phase-mode: " + pair_phase_mode);
-}
-
 Options parse_arguments(int argc, char** argv) {
   if (argc < 2 || ((argc - 2) % 2 != 0)) {
     print_usage();
@@ -178,10 +166,6 @@ Options parse_arguments(int argc, char** argv) {
       options.candidate = argument_value;
       continue;
     }
-    if (argument_name == "--pair-phase-mode") {
-      options.pair_phase_mode = argument_value;
-      continue;
-    }
     throw std::invalid_argument("unknown argument: " + argument_name);
   }
 
@@ -195,7 +179,6 @@ Options parse_arguments(int argc, char** argv) {
     throw std::invalid_argument("--tolerance must be positive");
   }
   parse_candidate_selection(options.candidate);
-  parse_pair_swapped_term_phase(options.pair_phase_mode);
   return options;
 }
 
@@ -847,7 +830,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     const auto selected_candidates = parse_candidate_selection(options.candidate);
-    const int swapped_term_phase = parse_pair_swapped_term_phase(options.pair_phase_mode);
+    constexpr int swapped_term_phase = -1;
     const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
     const auto active_overlap_matrix =
@@ -1050,7 +1033,6 @@ int main(int argc, char** argv) {
     std::cout << "available_disjoint_covalent_structures = "
               << total_disjoint_covalent_structures << '\n';
     std::cout << "candidate_selection = " << options.candidate << '\n';
-    std::cout << "pair_phase_mode = " << options.pair_phase_mode << '\n';
     std::cout << "tolerance = " << options.tolerance << '\n';
     std::cout << "baseline_exact_terms_ok = " << (exact_terms_ok ? 1 : 0) << '\n';
 

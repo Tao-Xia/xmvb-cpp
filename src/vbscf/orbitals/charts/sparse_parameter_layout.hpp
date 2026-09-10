@@ -11,7 +11,7 @@ namespace xmvb::vb {
 /**
  * @brief Packed view of the differentiable sparse-orbital coefficient table.
  *
- * The runtime stores orbital coefficients in the full legacy
+ * The runtime stores orbital coefficients in the full fixed-width
  * `orbital_value_table` layout grouped by orbital and padded to
  * `n_basis_functions` entries per orbital. Optimizers only need the explicit
  * differentiable coefficients, so this class centralizes the packing and

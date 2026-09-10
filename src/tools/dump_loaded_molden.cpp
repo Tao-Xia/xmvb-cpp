@@ -14,7 +14,7 @@ void print_usage() {
   std::cerr
       << "usage: dump_loaded_molden <input.xmi> <output_stem.xmi>"
       << " [--skip-orbital-guess true|false]"
-      << " [--ao-integral-source auto|legacy|libcint|runtime_hcore]\n";
+      << " [--ao-integral-source auto|libcint|runtime_hcore]\n";
 }
 
 bool parse_bool_argument(const std::string& value) {

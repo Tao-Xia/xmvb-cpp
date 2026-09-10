@@ -10,7 +10,6 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/LU>
 
-#include "vbscf/orbitals/gauge/legacy_jacobi_diagonalizer.hpp"
 #include "vbscf/orbitals/gauge/localized_representative.hpp"
 
 #ifdef _OPENMP
@@ -233,11 +232,9 @@ Eigen::MatrixXd build_s_orthonormal_virtual_auxiliary_orbitals(
         "occupied auxiliary dimensions do not match occupied-overlap inverse");
   }
 
-  // Match legacy `OrbPrep6`: form the occupied-space projector in the AO
-  // metric, diagonalize the projected metric `(I - P_occ S)^T S (I - P_occ S)`,
-  // and keep the positive-eigenvalue directions as the `S`-orthonormal virtual
-  // auxiliary block. This fixes the virtual gauge to the same projector-based
-  // construction used by XMVB instead of an arbitrary QR complement.
+  // Form the occupied-space projector in the AO metric, diagonalize the
+  // projected metric `(I - P_occ S)^T S (I - P_occ S)`, and retain its
+  // positive-eigenvalue directions as the S-orthonormal virtual complement.
   const Eigen::MatrixXd occupied_metric_action =
       occupied_overlap_inverse *
       occupied_auxiliary_orbitals.transpose() *
@@ -251,17 +248,19 @@ Eigen::MatrixXd build_s_orthonormal_virtual_auxiliary_orbitals(
       complementary_projector;
   require_finite_matrix(virtual_overlap, "virtual_overlap_projector_metric");
 
-  const LegacyJacobiDiagonalizationResult eigenpairs =
-      diagonalize_self_adjoint_legacy_jacobi(virtual_overlap);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(virtual_overlap);
+  if (eigensolver.info() != Eigen::Success) {
+    throw std::runtime_error("virtual-space metric diagonalization failed");
+  }
 
   constexpr double kVirtualEigenvalueTolerance = 1.0e-10;
   Eigen::MatrixXd virtual_orbitals =
       Eigen::MatrixXd::Zero(n_basis_functions, n_virtual_orbitals);
   int virtual_column = 0;
   for (int eigen_index = 0;
-       eigen_index < eigenpairs.eigenvalues.size();
+       eigen_index < eigensolver.eigenvalues().size();
        ++eigen_index) {
-    const double eigenvalue = eigenpairs.eigenvalues[eigen_index];
+    const double eigenvalue = eigensolver.eigenvalues()[eigen_index];
     if (!(eigenvalue > kVirtualEigenvalueTolerance)) {
       continue;
     }
@@ -271,7 +270,7 @@ Eigen::MatrixXd build_s_orthonormal_virtual_auxiliary_orbitals(
 
     Eigen::VectorXd virtual_orbital =
         complementary_projector *
-        eigenpairs.eigenvectors.col(eigen_index);
+        eigensolver.eigenvectors().col(eigen_index);
     const double virtual_norm =
         virtual_orbital.transpose() *
         basis_overlap_matrix *

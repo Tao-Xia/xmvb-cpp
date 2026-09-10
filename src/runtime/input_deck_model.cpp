@@ -317,7 +317,7 @@ RawStructureData parse_explicit_raw_structures(
     }
     std::vector<int> current_structure = expand_integer_tokens(tokens, true);
     // `$STR` already lists one complete VB structure per logical line after
-    // the legacy token expansion rules are applied. Infer the total-electron
+    // the input token expansion rules are applied. Infer the total-electron
     // count from the first expanded structure so explicit `$STR` decks no
     // longer need to borrow that dimension from the C runtime.
     if (raw_structure_data.n_total_electrons == 0) {
@@ -416,7 +416,7 @@ InputDeck parse_input_deck_model(
     }
 
     if (current_block == InputDeckBlock::Control) {
-      // `$CTRL` is tokenized as a flat stream because legacy decks freely mix
+      // `$CTRL` is tokenized as a flat stream because input decks freely mix
       // flags like `VBSCF` with assignments such as `NAE=5` on the same line.
       const std::vector<std::string> tokens =
           split_ascii_whitespace(trim_ascii_whitespace(strip_inline_comment(raw_line)));
@@ -456,7 +456,7 @@ InputDeck parse_input_deck_model(
       }
       if (!fragment_header_consumed) {
         // The first `$FRAG` body line declares how many atoms/SAO clauses
-        // belong to each fragment after the same legacy integer-expansion
+        // belong to each fragment after the same input-deck integer-expansion
         // syntax used elsewhere in VB input decks.
         input_deck.fragment_block.declared_fragment_sizes =
             expand_integer_tokens(token_line.tokens, true);
@@ -474,7 +474,7 @@ InputDeck parse_input_deck_model(
       }
       if (input_deck.orbital_support_block.block_type ==
           OrbitalSupportBlockType::ActOrb) {
-        // Legacy `$ACTORB` does not carry a support-count header. Each body
+        // `$ACTORB` does not carry a support-count header. Each body
         // line is one active-orbital support declaration, and the inactive
         // orbitals keep the historical default layout.
         input_deck.orbital_support_block.entries.push_back(std::move(token_line));

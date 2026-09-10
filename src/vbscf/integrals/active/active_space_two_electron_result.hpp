@@ -18,7 +18,7 @@ struct ActiveSpaceTwoElectronResult {
   /**
    * @brief Active-space two-electron representation carried by this result.
    *
-   * `PackedExact` stores the legacy materialized `GGO` tensor. The production
+   * `PackedExact` stores the materialized `GGO` tensor. The production
    * RI path now carries `ResolutionOfIdentity` directly so downstream
    * determinant kernels can consume `L_{A,P}` without reconstructing packed
    * active ERIs first.

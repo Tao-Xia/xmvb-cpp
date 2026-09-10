@@ -30,7 +30,7 @@ struct Options {
 
 struct PerStructureCache {
   std::vector<xmvb::vb::OrbitalPair> active_pairs;
-  std::vector<xmvb::vb::LegacyStructureDeterminantTerm> determinant_terms_global;
+  std::vector<xmvb::vb::RawStructureDeterminantTerm> determinant_terms_global;
 };
 
 struct MatrixDifferenceSummary {
@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
       cache.active_pairs =
           xmvb::vb::extract_active_pairs(raw_structure_data, structure_index);
       cache.determinant_terms_global =
-          xmvb::vb::enumerate_legacy_determinant_terms(cache.active_pairs);
+          xmvb::vb::enumerate_raw_determinant_terms(cache.active_pairs);
     }
 
     xmvb::vb::UnionGraphRankPredictorOptions predictor_options;
@@ -257,8 +257,8 @@ int main(int argc, char** argv) {
     const int n_structures = raw_structure_data.n_structures;
     const std::size_t matrix_size =
         n_structures * n_structures;
-    std::vector<double> legacy_exact_overlap_matrix(matrix_size, 0.0);
-    std::vector<double> legacy_predicted_overlap_matrix(matrix_size, 0.0);
+    std::vector<double> raw_reference_exact_overlap_matrix(matrix_size, 0.0);
+    std::vector<double> raw_reference_predicted_overlap_matrix(matrix_size, 0.0);
     std::map<int, int> predicted_rank_histogram;
     std::map<std::string, int> prediction_reason_histogram;
     double common_preprocess_seconds = 0.0;
@@ -284,11 +284,11 @@ int main(int argc, char** argv) {
         const auto right_pairs_local =
             xmvb::vb::remap_pairs_to_support(right_cache.active_pairs, support_index);
         const auto left_terms_local =
-            xmvb::vb::remap_legacy_determinant_terms(
+            xmvb::vb::remap_raw_determinant_terms(
                 left_cache.determinant_terms_global,
                 support_index);
         const auto right_terms_local =
-            xmvb::vb::remap_legacy_determinant_terms(
+            xmvb::vb::remap_raw_determinant_terms(
                 right_cache.determinant_terms_global,
                 support_index);
         const auto support_overlap = xmvb::vb::build_support_overlap_matrix(
@@ -322,7 +322,7 @@ int main(int argc, char** argv) {
             std::chrono::steady_clock::now() - pair_started_at).count();
 
         const auto exact_overlap_started_at = std::chrono::steady_clock::now();
-        const double exact_overlap = xmvb::vb::legacy_structure_overlap(
+        const double exact_overlap = xmvb::vb::raw_structure_overlap(
             left_terms_local,
             right_terms_local,
             support_overlap,
@@ -337,7 +337,7 @@ int main(int argc, char** argv) {
             rank_prediction.predicted_rank_cap);
         const auto predicted_support_overlap =
             block_diagonal_overlap + truncated_offblock;
-        const double predicted_overlap = xmvb::vb::legacy_structure_overlap(
+        const double predicted_overlap = xmvb::vb::raw_structure_overlap(
             left_terms_local,
             right_terms_local,
             predicted_support_overlap,
@@ -346,13 +346,13 @@ int main(int argc, char** argv) {
             std::chrono::steady_clock::now() - predicted_overlap_started_at).count();
 
         set_symmetric_matrix_entry(
-            &legacy_exact_overlap_matrix,
+            &raw_reference_exact_overlap_matrix,
             n_structures,
             right_structure,
             left_structure,
             exact_overlap);
         set_symmetric_matrix_entry(
-            &legacy_predicted_overlap_matrix,
+            &raw_reference_predicted_overlap_matrix,
             n_structures,
             right_structure,
             left_structure,
@@ -373,21 +373,21 @@ int main(int argc, char** argv) {
       }
     }
 
-    const auto legacy_exact_vs_cpp = summarize_matrix_difference(
+    const auto raw_reference_exact_vs_production = summarize_matrix_difference(
         exact_structure_matrices.overlap_matrix,
-        legacy_exact_overlap_matrix);
-    const auto legacy_predicted_vs_exact = summarize_matrix_difference(
-        legacy_exact_overlap_matrix,
-        legacy_predicted_overlap_matrix);
+        raw_reference_exact_overlap_matrix);
+    const auto raw_reference_predicted_vs_exact = summarize_matrix_difference(
+        raw_reference_exact_overlap_matrix,
+        raw_reference_predicted_overlap_matrix);
     const auto mixed_exact_overlap_solver_summary = solve_ground_state(
         exact_structure_matrices.hamiltonian_matrix,
-        legacy_exact_overlap_matrix,
+        raw_reference_exact_overlap_matrix,
         n_structures,
         prepared_active_space.one_electron_reference_energy,
         load_result.nuclear_repulsion_energy);
     const auto mixed_predicted_overlap_solver_summary = solve_ground_state(
         exact_structure_matrices.hamiltonian_matrix,
-        legacy_predicted_overlap_matrix,
+        raw_reference_predicted_overlap_matrix,
         n_structures,
         prepared_active_space.one_electron_reference_energy,
         load_result.nuclear_repulsion_energy);
@@ -400,9 +400,9 @@ int main(int argc, char** argv) {
         prep_timings.ao_effective_one_electron_wall_time_seconds +
         prep_timings.active_one_electron_wall_time_seconds +
         prep_timings.active_two_electron_wall_time_seconds;
-    const double legacy_exact_overlap_total_estimated_seconds =
+    const double raw_reference_exact_overlap_total_estimated_seconds =
         common_preprocess_seconds + exact_overlap_kernel_seconds;
-    const double legacy_predicted_overlap_total_estimated_seconds =
+    const double raw_reference_predicted_overlap_total_estimated_seconds =
         common_preprocess_seconds + predicted_overlap_kernel_seconds;
 
     std::cout << std::setprecision(16);
@@ -437,32 +437,32 @@ int main(int argc, char** argv) {
                   exact_build_seconds +
                   exact_solver_summary.wall_time_seconds)
               << '\n';
-    std::cout << "legacy_overlap_common_preprocess_wall_time_seconds = "
+    std::cout << "raw_reference_overlap_common_preprocess_wall_time_seconds = "
               << common_preprocess_seconds << '\n';
-    std::cout << "legacy_overlap_exact_kernel_wall_time_seconds = "
+    std::cout << "raw_reference_overlap_exact_kernel_wall_time_seconds = "
               << exact_overlap_kernel_seconds << '\n';
-    std::cout << "legacy_overlap_predicted_kernel_wall_time_seconds = "
+    std::cout << "raw_reference_overlap_predicted_kernel_wall_time_seconds = "
               << predicted_overlap_kernel_seconds << '\n';
-    std::cout << "legacy_overlap_exact_total_estimated_wall_time_seconds = "
-              << legacy_exact_overlap_total_estimated_seconds << '\n';
-    std::cout << "legacy_overlap_predicted_total_estimated_wall_time_seconds = "
-              << legacy_predicted_overlap_total_estimated_seconds << '\n';
+    std::cout << "raw_reference_overlap_exact_total_estimated_wall_time_seconds = "
+              << raw_reference_exact_overlap_total_estimated_seconds << '\n';
+    std::cout << "raw_reference_overlap_predicted_total_estimated_wall_time_seconds = "
+              << raw_reference_predicted_overlap_total_estimated_seconds << '\n';
     std::cout << "predicted_rank_histogram = "
               << format_histogram(predicted_rank_histogram) << '\n';
     std::cout << "prediction_reason_histogram = "
               << format_histogram(prediction_reason_histogram) << '\n';
-    std::cout << "legacy_exact_vs_overlap_max_abs = "
-              << legacy_exact_vs_cpp.max_abs << '\n';
-    std::cout << "legacy_exact_vs_overlap_fro_error = "
-              << legacy_exact_vs_cpp.frobenius_error << '\n';
-    std::cout << "legacy_exact_vs_overlap_relative_fro_error = "
-              << legacy_exact_vs_cpp.relative_frobenius_error << '\n';
-    std::cout << "legacy_predicted_vs_exact_overlap_max_abs = "
-              << legacy_predicted_vs_exact.max_abs << '\n';
-    std::cout << "legacy_predicted_vs_exact_overlap_fro_error = "
-              << legacy_predicted_vs_exact.frobenius_error << '\n';
-    std::cout << "legacy_predicted_vs_exact_overlap_relative_fro_error = "
-              << legacy_predicted_vs_exact.relative_frobenius_error << '\n';
+    std::cout << "raw_reference_exact_vs_overlap_max_abs = "
+              << raw_reference_exact_vs_production.max_abs << '\n';
+    std::cout << "raw_reference_exact_vs_overlap_fro_error = "
+              << raw_reference_exact_vs_production.frobenius_error << '\n';
+    std::cout << "raw_reference_exact_vs_overlap_relative_fro_error = "
+              << raw_reference_exact_vs_production.relative_frobenius_error << '\n';
+    std::cout << "raw_reference_predicted_vs_exact_overlap_max_abs = "
+              << raw_reference_predicted_vs_exact.max_abs << '\n';
+    std::cout << "raw_reference_predicted_vs_exact_overlap_fro_error = "
+              << raw_reference_predicted_vs_exact.frobenius_error << '\n';
+    std::cout << "raw_reference_predicted_vs_exact_overlap_relative_fro_error = "
+              << raw_reference_predicted_vs_exact.relative_frobenius_error << '\n';
     std::cout << "exact_ground_state_total_energy = "
               << exact_solver_summary.total_ground_state_energy << '\n';
     if (mixed_exact_overlap_solver_summary.converged) {

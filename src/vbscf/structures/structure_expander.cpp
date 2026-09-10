@@ -60,8 +60,8 @@ int canonicalize_spin_string(std::vector<int>& occupied_orbitals) {
 /**
  * @brief Enumerates paired-electron determinants for a single structure.
  *
- * This is the C++ translation of the legacy `str2det` logic used on the
- * paired active orbitals of a VB structure.
+ * The expansion acts on the paired active orbitals of a VB structure and
+ * produces spin-resolved determinants.
  */
 std::vector<std::vector<int>> expand_paired_active_orbitals(
     const std::vector<int>& paired_active_orbitals,

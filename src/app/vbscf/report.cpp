@@ -362,7 +362,7 @@ combine_callbacks(
 
 std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
 iteration_logger() {
-  // Mirror the legacy CLI monitor: keep the initial accepted snapshot only as
+  // Keep the initial accepted snapshot only as
   // the energy reference for `DE`, then print one fixed-width row per accepted
   // optimization step.
   struct LoggerState {

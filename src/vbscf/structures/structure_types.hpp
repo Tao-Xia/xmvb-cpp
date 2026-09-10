@@ -10,8 +10,8 @@ namespace xmvb::vb {
 /**
  * @brief One determinant-to-structure expansion term.
  *
- * In the legacy VBSCF code each determinant can contribute to one or more
- * structures with a sign factor. This structure makes that mapping explicit.
+ * Each determinant can contribute to one or more structures with a signed
+ * coefficient. This structure makes that mapping explicit.
  */
 struct StructureExpansionTerm {
   /**
@@ -22,7 +22,7 @@ struct StructureExpansionTerm {
   /**
    * @brief Signed coefficient contributed by the determinant to the structure.
    *
-   * The current legacy mapping uses `+1` or `-1`, but this representation
+   * The current expansion uses `+1` or `-1`, but this representation
    * intentionally allows any real coefficient.
    */
   double coefficient = 0.0;
@@ -51,7 +51,7 @@ struct StructureAccumulationResult {
   std::vector<double> hamiltonian_matrix;
 
   /**
-   * @brief Determinant overlap cache used by the legacy implementation.
+   * @brief Determinant overlap cache used during structure assembly.
    *
    * For diagonal determinant pairs this stores the overlap determinant at the
    * determinant index.
@@ -67,8 +67,8 @@ struct HamiltonianOverlapMatrices {
 /**
  * @brief Raw VB structure definitions read directly from the input deck.
  *
- * This object stores the unspecialized structure representation before the
- * legacy `rdm_vbscf` code expands it into unique determinants.
+ * This object stores the unspecialized structure representation before it is
+ * expanded into unique determinants.
  */
 struct RawStructureData {
   /**
@@ -92,20 +92,20 @@ struct RawStructureData {
   int spin_multiplicity = 1;
 
   /**
-   * @brief Legacy wavefunction type flag.
+   * @brief Input wavefunction type flag.
    */
   int wavefunction_type = 0;
 
   /**
-   * @brief Legacy VB function type flag.
+   * @brief Input VB function type flag.
    */
   int vb_function_type = 0;
 
   /**
-   * @brief Flat structure orbital storage in legacy one-based ordering.
+   * @brief Flat structure orbital storage in one-based input ordering.
    *
    * The data is packed structure-by-structure. Each structure contributes
-   * `n_total_electrons` orbital labels using the legacy one-based convention.
+   * `n_total_electrons` one-based orbital labels.
    */
   std::vector<int> raw_structure_orbitals;
 
@@ -126,8 +126,7 @@ struct RawStructureData {
  *
  * This object contains all data needed by the pure C++ builder to evaluate
  * structure-level Hamiltonian and overlap matrices. All orbital matrices use
- * column-major storage so they can be compared directly with the legacy
- * Fortran implementation.
+ * column-major storage.
  */
 struct FullDeterminantStructureData {
   /**
@@ -166,7 +165,7 @@ struct FullDeterminantStructureData {
   SharedVector<double> h1e_act;
 
   /**
-   * @brief Packed two-electron integral storage using the legacy VB index map.
+   * @brief Packed two-electron integral storage using the packed pair index map.
    */
   SharedVector<double> eri_act;
 };

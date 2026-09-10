@@ -1,8 +1,8 @@
 # VBSCF module architecture
 
-This directory is the canonical home of the C++ VBSCF implementation. New code
-must use this tree directly; obsolete implementation and compatibility trees
-are removed instead of being maintained in parallel.
+This directory is the canonical home of the VBSCF implementation. New code
+must use this tree directly; obsolete and duplicate implementations are
+deleted instead of being maintained in parallel.
 
 ## Responsibility flow
 
@@ -101,22 +101,24 @@ Operation names also carry fixed semantics: `directional` is a forward
 Jacobian action, `adjoint` is a transpose-Jacobian action, `hvp` is a Hessian
 action, and `pullback` is reserved for a coordinate-map adjoint.
 
-The namespace remains `xmvb::vb` to preserve the existing public API while the
-physical module boundaries are now expressed by directories and build-source
-ownership.
+The namespace is `xmvb::vb`; physical module boundaries are expressed by
+directories and build-source ownership.
 
-## Compatibility policy
+## Source policy
 
-1. New code includes only `vbscf/...` headers.
-2. Compatibility headers contain aliases only, never implementation.
-3. A compatibility header must have a tracked consumer; unused aliases are
-   removed instead of being kept as speculative API surface.
+1. Each algorithm has one maintained implementation; compatibility aliases and
+   inactive alternatives are deleted.
+2. Reference implementations are retained only when they provide an
+   independent mathematical correctness check used by the test suite.
+3. Source names describe their mathematical or software responsibility, never
+   an implementation language or a superseded program.
+4. Unused source files, targets, options, and experimental branches are removed
+   rather than preserved for possible future use.
 
 The canonical tree owns `optimization`, the single-step evaluator in
 `workflow`, the complete orbital/chart/gauge layer, AO and active-space
 `integrals`, `determinants`, `structures`, `derivatives/gradient`,
 `derivatives/hessian`, and diagnostics.
-Algorithms retained for exact comparison are colocated with their owning
-domain and named explicitly, for example
-`structures/reference/raw_structure_overlap` and
-`orbitals/gauge/legacy_jacobi_diagonalizer`.
+Algorithms retained for independent mathematical validation are colocated
+with their owning domain and named explicitly, for example
+`structures/reference/raw_structure_overlap`.

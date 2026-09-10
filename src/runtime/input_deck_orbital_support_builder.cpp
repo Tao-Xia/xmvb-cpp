@@ -396,7 +396,7 @@ std::vector<std::vector<int>> build_actorb_basis_chart(
   std::vector<std::vector<int>> orbital_basis_indices(
       build_input.n_orbitals);
 
-  // Legacy readorb.c initializes all inactive orbitals to the default HAO
+  // Inactive orbitals default to the HAO support
   // support before reading the explicit active-orbital lines from `$ACTORB`.
   // For `FRGTYP=ATOM`, the default support is the full list of atomic
   // fragments, which expands to the full AO span of the molecule.

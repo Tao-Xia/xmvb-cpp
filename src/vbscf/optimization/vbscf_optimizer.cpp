@@ -84,9 +84,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   VbScfOptimizerResult result;
   const auto optimization_start_time = std::chrono::steady_clock::now();
 
-  // For `guess=mo`, numerical parity with the legacy VBSCF implementation is
-  // more important than any temporary convergence-speed heuristic. Keep the
-  // nonredundant optimizer on the original legacy sparse chart and exact-
+  // For `guess=mo`, keep the nonredundant optimizer on the original sparse
+  // chart and exact-
   // support block partition so the reduced coordinates, projected gradients,
   // and exact-context orbital derivatives all live on the same variational
   // manifold as the reference `.xmo` calculation.
@@ -235,7 +234,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
           .normalized_orbital_matrix;
   if (final_normalized_orbital_matrix.size() != 0) {
     // The evaluator always works with the normalized physical orbital frame,
-    // mirroring legacy `normalize(...)`. Store that same frame in the final
+    // Store the normalized accepted frame in the final
     // sparse slots before exporting so Molden / restart artifacts see the
     // actual accepted physical orbitals rather than a pre-normalization raw
     // parameter vector.

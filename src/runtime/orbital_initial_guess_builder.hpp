@@ -17,7 +17,7 @@ bool initial_orbital_guess_supported(int guess_type) noexcept;
  * GUESS=AUTO/UNIT/MO are constructed from the C++ AO integral inputs. For
  * GUESS=READ/RDCI the builder consumes the already parsed `$GUS` body lines
  * from `InputDeck` and remaps those coefficients onto the current VB sparse-
- * orbital layout without calling the legacy C runtime `vbguess` path.
+ * orbital layout directly from the parsed input and AO integrals.
  */
 void build_initial_orbital_guess(
     const std::string& input_file_path,

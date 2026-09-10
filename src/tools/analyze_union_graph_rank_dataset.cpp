@@ -69,7 +69,7 @@ struct SignatureSummary {
 
 struct PerStructureCache {
   std::vector<xmvb::vb::OrbitalPair> active_pairs;
-  std::vector<xmvb::vb::LegacyStructureDeterminantTerm> determinant_terms_global;
+  std::vector<xmvb::vb::RawStructureDeterminantTerm> determinant_terms_global;
 };
 
 void print_usage() {
@@ -334,7 +334,7 @@ int main(int argc, char** argv) {
       cache.active_pairs =
           xmvb::vb::extract_active_pairs(raw_structure_data, structure_index);
       cache.determinant_terms_global =
-          xmvb::vb::enumerate_legacy_determinant_terms(cache.active_pairs);
+          xmvb::vb::enumerate_raw_determinant_terms(cache.active_pairs);
     }
 
     const auto pair_list = build_pair_list(
@@ -377,11 +377,11 @@ int main(int argc, char** argv) {
       const auto right_pairs_local =
           xmvb::vb::remap_pairs_to_support(right_cache.active_pairs, support_index);
       const auto left_terms_local =
-          xmvb::vb::remap_legacy_determinant_terms(
+          xmvb::vb::remap_raw_determinant_terms(
               left_cache.determinant_terms_global,
               support_index);
       const auto right_terms_local =
-          xmvb::vb::remap_legacy_determinant_terms(
+          xmvb::vb::remap_raw_determinant_terms(
               right_cache.determinant_terms_global,
               support_index);
 
@@ -413,7 +413,7 @@ int main(int argc, char** argv) {
           screening_summary,
           predictor_options);
 
-      const double exact_overlap = xmvb::vb::legacy_structure_overlap(
+      const double exact_overlap = xmvb::vb::raw_structure_overlap(
           left_terms_local,
           right_terms_local,
           support_overlap,
@@ -434,7 +434,7 @@ int main(int argc, char** argv) {
             rank_cap);
         const auto approximate_support_overlap =
             block_diagonal_overlap + truncated_offblock;
-        const double approximate_overlap = xmvb::vb::legacy_structure_overlap(
+        const double approximate_overlap = xmvb::vb::raw_structure_overlap(
             left_terms_local,
             right_terms_local,
             approximate_support_overlap,

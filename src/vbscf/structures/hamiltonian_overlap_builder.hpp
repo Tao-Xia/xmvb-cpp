@@ -24,8 +24,7 @@ struct FullDeterminantStructureBuildResult {
 /**
  * @brief Builds full structure Hamiltonian and overlap matrices from full determinants.
  *
- * This builder works at the full-determinant level rather than the legacy
- * half-determinant enumeration used by `Hov1`. When many full determinants
+ * This builder works directly at the full-determinant level. When many full determinants
  * share the same alpha or beta occupied string, the builder can first cache the
  * reusable unique alpha-alpha and beta-beta determinant kernels, then combine
  * those cached same-spin results with the remaining opposite-spin Coulomb term.
@@ -33,8 +32,8 @@ struct FullDeterminantStructureBuildResult {
  * In the production `build()` path, the builder always uses the tiled/block
  * unique-spin contraction. The same-spin cache still provides reusable
  * determinant-pair payloads and reuse tables for later backward passes, but
- * the forward structure assembly no longer routes through the legacy dense or
- * support-sparse matrix-form implementations.
+ * the forward structure assembly uses only the tiled/block unique-spin
+ * contraction.
  *
  * The resulting full-determinant matrix element is then accumulated into the
  * structure-level matrices through the determinant-to-structure expansion map.
@@ -65,7 +64,7 @@ public:
    * @param ovlp_act Column-major active-space orbital overlap matrix.
    * @param h1e_act Column-major one-electron matrix.
    * @param n_orbitals Total number of active orbitals.
-   * @param eri_act Packed two-electron storage using legacy indexing.
+   * @param eri_act Packed two-electron storage using packed indexing.
    * @param n_structures Number of VB structures.
    * @return StructureAccumulationResult Structure Hamiltonian and overlap matrices.
    */

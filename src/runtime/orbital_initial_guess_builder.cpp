@@ -196,7 +196,7 @@ ReadGuessSection parse_read_guess_section(
   std::size_t next_token_offset = 0;
   int orbital_index = 0;
 
-  // Legacy vb_readguess accumulates multi-line (coef, basis) pairs for each
+  // Accumulate multi-line (coefficient, basis) pairs for each
   // orbital, scatters them into a dense AO coefficient row with cvitra, and
   // only afterwards projects onto the current VB sparse orbital layout. Mirror
   // that two-stage mapping here so GUESS=READ/RDCI no longer depends on the C
@@ -266,12 +266,12 @@ void expand_read_guess_layout_if_needed(
         "orbital_preparation_input must not be null while expanding read guess layout");
   }
 
-  // Legacy `vb_readguess` treats `$GUS` as a dense AO coefficient source and
+  // `$GUS` is a dense AO coefficient source and
   // then gathers those coefficients back onto the already prepared optimizer
   // chart carried by `vb_str->nv/ma`. The `$GUS` header counts therefore do
   // not define the variational manifold. Expanding the runtime support here
   // incorrectly turns localized HAO/BDO decks into full-AO optimizations and
-  // shifts the converged energy away from the legacy `.xmo` reference.
+  // changes the represented input orbitals.
 }
 
 void build_read_or_rdci_guess(
@@ -301,7 +301,7 @@ void build_read_or_rdci_guess(
         stored_sparse_orbital_coefficient_count(
             *orbital_preparation_input,
             orbital_index);
-    // Match legacy `vb_readguess`: `$GUS` is first expanded to a dense AO
+    // `$GUS` is first expanded to a dense AO
     // vector and then gathered back onto the target runtime support chart.
     // The `$GUS` header does not redefine the variational manifold.
     const std::vector<double> support_coefficients =
@@ -329,7 +329,7 @@ void normalize_sparse_guess(
   const auto& overlap_matrix =
       orbital_preparation_input.ao_overlap_matrix;
   for (int orbital_index = 0; orbital_index < n_orbitals; ++orbital_index) {
-    // Guess normalization uses the stored sparse support, not the legacy
+    // Guess normalization uses the stored sparse support, not the
     // differentiable parameter count. Expanded MO/HAO supports still need every
     // stored coefficient normalized before entering orbital preparation.
     const int basis_count =
@@ -770,7 +770,7 @@ void build_initial_orbital_guess(
       // Prefer the RHF-like guess when exact AO ERIs are available. In RI or
       // hcore-only load modes the C++ path no longer has a materialized AO 2e
       // tensor, so fall back to the one-electron block guess instead of
-      // requiring the legacy HF/vbguess runtime.
+      // requiring an external guess runtime.
       if (supports_rhf_auto_guess(*orbital_preparation_input) &&
           has_materialized_ao_two_electron_integrals(ao_integral_input)) {
         build_rhf_block_guess(
@@ -790,7 +790,7 @@ void build_initial_orbital_guess(
       build_unit_guess(*orbital_preparation_input, &orbital_value_table);
       break;
     case kGuessTypeMo:
-      // Legacy `vb_moguess` uses HF canonical orbitals for `GUESS=MO`, not the
+      // `GUESS=MO` uses HF canonical orbitals, not the
       // one-electron hcore eigensystem. Match that behavior whenever the C++
       // path can form an RHF reference; otherwise keep the old hcore fallback.
       if (supports_rhf_auto_guess(*orbital_preparation_input) &&

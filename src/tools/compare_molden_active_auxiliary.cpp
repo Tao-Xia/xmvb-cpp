@@ -16,7 +16,7 @@
 
 #include "runtime/vbscf_input_loader.hpp"
 #include "runtime/libcint_compat.hpp"
-#include "runtime/legacy_shell_utils.hpp"
+#include "runtime/gaussian_shell_normalization.hpp"
 
 namespace {
 

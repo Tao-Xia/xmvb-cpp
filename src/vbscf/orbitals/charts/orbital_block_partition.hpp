@@ -9,7 +9,7 @@ namespace xmvb::vb {
 /**
  * @brief Partitions orbitals by identical explicit AO support.
  *
- * Legacy block metadata is authoritative when present. Otherwise blocks are
+ * stored block metadata is authoritative when present. Otherwise blocks are
  * inferred from the explicit sparse support table. The returned orbital
  * indices are zero based.
  */

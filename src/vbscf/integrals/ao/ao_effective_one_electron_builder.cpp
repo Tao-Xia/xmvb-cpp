@@ -45,7 +45,7 @@ int choose_ao_effective_one_electron_graph_threads(
   }
 
   // Medium AO spaces are bandwidth-bound. A small row-parallel graph sweep is
-  // usually faster than the legacy integral scatter with dozens of threads and
+  // usually faster than the integral scatter with dozens of threads and
   // avoids allocating one dense AO matrix per OpenMP worker.
   const int workload_limited_threads =
       std::max(1, n_basis_functions / 32);

@@ -47,9 +47,9 @@ struct Options {
       xmvb::vb::AoIntegralSource::Auto;
 };
 
-constexpr int kLegacyOrbitalTypeHao = 1;
-constexpr int kLegacyOrbitalTypeBdo = 2;
-constexpr int kLegacyOrbitalTypeOeo = 3;
+constexpr int kOrbitalTypeHao = 1;
+constexpr int kOrbitalTypeBdo = 2;
+constexpr int kOrbitalTypeOeo = 3;
 
 void print_usage() {
   std::cerr
@@ -165,12 +165,12 @@ double choose_default_finite_difference_step(
   // default `1e-3` therefore produced false positive HVP mismatches for
   // MnF2-class checks even though the analytic operator is first-order
   // consistent. Use a tighter default only for the sparse-orbital charts and
-  // keep the legacy OEO default unchanged.
-  if (input.orbital_type == kLegacyOrbitalTypeHao ||
-      input.orbital_type == kLegacyOrbitalTypeBdo) {
+  // keep the OEO default unchanged.
+  if (input.orbital_type == kOrbitalTypeHao ||
+      input.orbital_type == kOrbitalTypeBdo) {
     return 1.0e-5;
   }
-  if (input.orbital_type == kLegacyOrbitalTypeOeo) {
+  if (input.orbital_type == kOrbitalTypeOeo) {
     return 1.0e-3;
   }
   return 1.0e-4;

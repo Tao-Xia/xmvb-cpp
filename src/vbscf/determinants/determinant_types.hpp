@@ -24,14 +24,14 @@ struct DeterminantOverlapResult {
   /**
    * @brief Algebraic determinant of the overlap submatrix.
    *
-   * This matches the `Det` quantity used by the legacy Fortran implementation.
+   * This scalar is the determinant used by all overlap contractions.
    */
   double overlap_determinant = 0.0;
 
   /**
    * @brief Number of singular values below the linear-dependence threshold.
    *
-   * This matches the `Nlt` quantity in the legacy implementation.
+   * This determines which regular or rank-deficient contraction path is used.
    */
   int nullity = 0;
 

@@ -11,8 +11,8 @@ namespace xmvb::vb {
 /**
  * @brief Resolves determinant overlap quantities from a determinant overlap submatrix.
  *
- * This class is the first standalone C++ replacement for the legacy
- * `MatLDR` + `Cofactor1` path in `gradient_rdm.F90`.
+ * The resolver computes determinant, nullity, inverse, and cofactor data used
+ * by determinant-pair contractions.
  */
 class DeterminantOverlapResolver {
 public:

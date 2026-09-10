@@ -81,7 +81,7 @@ void print_usage() {
       << "usage: benchmark_exact_ctx_hvp <input.xmi>"
       << " [--repeats count]"
       << " [--warmup count]"
-      << " [--ao-integral-source auto|legacy|libcint|runtime_hcore]"
+      << " [--ao-integral-source auto|libcint|runtime_hcore]"
       << " [--nonredundant-adapt true|false]"
       << " [--gauge-audit true|false]\n";
   std::cerr << " [--curvature-audit-directions count|0=disabled]\n";

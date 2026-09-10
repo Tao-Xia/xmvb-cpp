@@ -438,7 +438,7 @@ int main(int argc, char** argv) {
       // explicit term count that the determinant-based overlap/Hamiltonian path
       // would enumerate before any pairwise combination across two structures.
       cache.determinant_term_count = static_cast<int>(
-          xmvb::vb::enumerate_legacy_determinant_terms(cache.active_pairs).size());
+          xmvb::vb::enumerate_raw_determinant_terms(cache.active_pairs).size());
       ++determinant_term_count_histogram[cache.determinant_term_count];
     }
 

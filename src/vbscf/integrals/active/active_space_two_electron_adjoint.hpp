@@ -54,8 +54,8 @@ Eigen::MatrixXd apply_exact_packed_active_two_electron_adjoint_hessian_vector(
  *
  * This is the allocation-aware accepted-point hot path used by exact_ctx HVPs.
  * The exact-2e workspaces now keep their AO-by-active and AO-pair-by-active-pair
- * intermediates in Eigen matrices. Any unavoidable legacy row-buffer flattening
- * is isolated inside the AO-kernel compatibility boundary.
+ * intermediates in Eigen matrices. Any unavoidable row-major flattening is
+ * isolated inside the AO-kernel storage boundary.
  */
 void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
     const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,

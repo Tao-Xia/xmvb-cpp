@@ -18,7 +18,7 @@ extern "C" {
 #include "cint.h"
 }
 
-#include "runtime/legacy_shell_utils.hpp"
+#include "runtime/gaussian_shell_normalization.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -152,13 +152,13 @@ int angular_momentum_from_label(const std::string& raw_label) {
   throw std::runtime_error("unsupported angular-momentum label in basis file: " + raw_label);
 }
 
-bool is_legacy_pople_basis_name(const std::string& basis_name) {
+bool is_compact_pople_basis_name(const std::string& basis_name) {
   return basis_name.find("sto-") != std::string::npos ||
       basis_name.find("3-21") != std::string::npos ||
       basis_name.find("6-31") != std::string::npos;
 }
 
-std::string normalize_legacy_pople_basis_name(std::string basis_name) {
+std::string normalize_pople_basis_name(std::string basis_name) {
   const std::size_t g_position = basis_name.find('g');
   if (g_position == std::string::npos) {
     throw std::runtime_error("invalid Pople basis name: " + basis_name);
@@ -232,8 +232,8 @@ std::string normalize_basis_leaf_name(const std::string& raw_basis_name) {
     throw std::runtime_error("input deck is missing BASIS=");
   }
   std::string normalized = to_ascii_lower(raw_basis_name);
-  if (is_legacy_pople_basis_name(normalized)) {
-    normalized = normalize_legacy_pople_basis_name(normalized);
+  if (is_compact_pople_basis_name(normalized)) {
+    normalized = normalize_pople_basis_name(normalized);
   }
   if (normalized.size() < 4 ||
       normalized.substr(normalized.size() - 4) != ".gbs") {
@@ -385,16 +385,16 @@ std::unordered_map<int, std::vector<BasisShellTemplate>> parse_basis_templates(
           first_shell.exponents.push_back(exponent);
           first_shell.coefficients.push_back(
               parse_fortran_double(primitive_tokens[1]) *
-              legacy_shell_normalization(0, exponent));
+              shell_normalization(0, exponent));
           second_shell.exponents.push_back(exponent);
           second_shell.coefficients.push_back(
               parse_fortran_double(primitive_tokens[2]) *
-              legacy_shell_normalization(1, exponent));
+              shell_normalization(1, exponent));
         } else {
           first_shell.exponents.push_back(exponent);
           first_shell.coefficients.push_back(
               parse_fortran_double(primitive_tokens[1]) *
-              legacy_shell_normalization(first_shell.angular_momentum, exponent));
+              shell_normalization(first_shell.angular_momentum, exponent));
         }
       }
 

@@ -10,22 +10,22 @@
 
 namespace xmvb::vb {
 
-struct LegacyStructureDeterminantTerm {
+struct RawStructureDeterminantTerm {
   std::vector<int> alpha_occ;
   std::vector<int> beta_occ;
   double coefficient = 0.0;
 };
 
-std::vector<LegacyStructureDeterminantTerm> enumerate_legacy_determinant_terms(
+std::vector<RawStructureDeterminantTerm> enumerate_raw_determinant_terms(
     const std::vector<OrbitalPair>& pairs);
 
-std::vector<LegacyStructureDeterminantTerm> remap_legacy_determinant_terms(
-    const std::vector<LegacyStructureDeterminantTerm>& terms,
+std::vector<RawStructureDeterminantTerm> remap_raw_determinant_terms(
+    const std::vector<RawStructureDeterminantTerm>& terms,
     const std::map<int, int>& orbital_index_remap);
 
-double legacy_structure_overlap(
-    const std::vector<LegacyStructureDeterminantTerm>& left_terms,
-    const std::vector<LegacyStructureDeterminantTerm>& right_terms,
+double raw_structure_overlap(
+    const std::vector<RawStructureDeterminantTerm>& left_terms,
+    const std::vector<RawStructureDeterminantTerm>& right_terms,
     const Eigen::MatrixXd& overlap_matrix,
     const DeterminantOverlapResolver& overlap_resolver);
 

@@ -69,7 +69,7 @@ struct ActiveOverlapSelectionResult {
 
 struct PerStructureCache {
   std::vector<xmvb::vb::OrbitalPair> active_pairs;
-  std::vector<xmvb::vb::LegacyStructureDeterminantTerm> determinant_terms;
+  std::vector<xmvb::vb::RawStructureDeterminantTerm> determinant_terms;
 };
 
 struct PairExample {
@@ -470,7 +470,7 @@ int main(int argc, char** argv) {
       cache.active_pairs =
           xmvb::vb::extract_active_pairs(raw_structure_data, structure_index);
       cache.determinant_terms =
-          xmvb::vb::enumerate_legacy_determinant_terms(cache.active_pairs);
+          xmvb::vb::enumerate_raw_determinant_terms(cache.active_pairs);
     }
 
     const Eigen::MatrixXd full_active_overlap =
@@ -553,7 +553,7 @@ int main(int argc, char** argv) {
 
       // This is the exact reference for the current raw-structure pair:
       // determinant-term expansion over the full pair support.
-      const double exact_overlap = xmvb::vb::legacy_structure_overlap(
+      const double exact_overlap = xmvb::vb::raw_structure_overlap(
           left_cache.determinant_terms,
           right_cache.determinant_terms,
           full_active_overlap,
@@ -584,13 +584,13 @@ int main(int argc, char** argv) {
           continue;
         }
         const auto left_component_terms =
-            xmvb::vb::enumerate_legacy_determinant_terms(left_component_pairs);
+            xmvb::vb::enumerate_raw_determinant_terms(left_component_pairs);
         const auto right_component_terms =
-            xmvb::vb::enumerate_legacy_determinant_terms(right_component_pairs);
+            xmvb::vb::enumerate_raw_determinant_terms(right_component_pairs);
         factored_pair_determinant_count +=
             static_cast<std::uint64_t>(left_component_terms.size()) *
             static_cast<std::uint64_t>(right_component_terms.size());
-        factored_overlap *= xmvb::vb::legacy_structure_overlap(
+        factored_overlap *= xmvb::vb::raw_structure_overlap(
             left_component_terms,
             right_component_terms,
             full_active_overlap,

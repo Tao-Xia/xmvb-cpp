@@ -42,7 +42,7 @@ struct OrbitalPreparationInput {
   int spin_multiplicity = 1;
 
   /**
-   * @brief Legacy orbital-type selector `orbtyp`.
+   * @brief input orbital-type selector `orbtyp`.
    *
    * The value follows the C runtime constants in `vb/vb.h` (`HAO_TYP`,
    * `BDO_TYP`, `OEO_TYP`, ...). The C++ loader uses this to distinguish the
@@ -89,8 +89,8 @@ struct OrbitalPreparationInput {
   /**
    * @brief Original parameter-space coefficient counts for each orbital.
    *
-   * This corresponds to legacy `ma0`, which is the count used to enumerate
-   * variational parameters and to accumulate the final orbital gradient.
+   * This count enumerates variational parameters and controls accumulation of
+   * the final orbital gradient when stored supports have been expanded.
    */
   std::vector<int> original_orbital_basis_counts;
 
@@ -100,45 +100,45 @@ struct OrbitalPreparationInput {
   Eigen::MatrixXd ao_overlap_matrix;
 
   /**
-   * @brief Legacy HF overlap matrix used by GUESS=AUTO block diagonalization.
+   * @brief HF overlap matrix used by GUESS=AUTO block diagonalization.
    *
    * This is distinct from `ao_overlap_matrix` (`vb->ssf`) and is
-   * the correct metric for reproducing legacy HF-driven AUTO guesses. When
-   * this matrix is empty, the C++ guess path reuses
+   * the metric associated with HF-driven AUTO guesses. When this matrix is
+   * empty, the guess path reuses
    * `ao_overlap_matrix` instead of storing a duplicate copy.
    */
   Eigen::MatrixXd hf_overlap_matrix;
 
   /**
-   * @brief Legacy-detected number of orbital blocks.
+   * @brief Number of orbital blocks supplied by the input deck.
    *
-   * When present, this should be preferred over C++ block inference so that
-   * block-wise guesses match the legacy runtime layout.
+   * When present, this should be preferred over inferred blocks so that
+   * block-wise guesses match the runtime layout.
    */
   std::size_t n_blocks = 0;
 
   /**
-   * @brief Legacy block storage leading dimension.
+   * @brief Block storage leading dimension.
    *
-   * Legacy stores `blocks` as a dense `(n_blocks, block_storage_dimension)`
+   * `blocks` is a dense `(n_blocks, block_storage_dimension)`
    * integer table.
    */
   std::size_t block_storage_dimension = 0;
 
   /**
-   * @brief Whether legacy detected partially overlapping blocks.
+   * @brief Whether the stored blocks partially overlap.
    */
   int block_partial_overlap = 0;
 
   /**
-   * @brief Legacy block membership table.
+   * @brief Block membership table.
    *
-   * Entries are orbital indices in the legacy `blocks` array layout.
+   * Entries are orbital indices in the padded `blocks` array layout.
    */
   std::vector<int> block_members;
 
   /**
-   * @brief Number of orbitals in each legacy block.
+   * @brief Number of orbitals in each block.
    */
   std::vector<int> block_orbital_counts;
 
@@ -148,10 +148,10 @@ struct OrbitalPreparationInput {
   std::vector<int> block_basis_counts;
 
   /**
-   * @brief Legacy AO scaling factors `snorm`.
+   * @brief AO scaling factors `snorm` supplied by input preparation.
    *
-   * Legacy block guesses are back-scaled with `snorm`, not with a separately
-   * inferred AO normalization. Keeping the exact vector is important for parity.
+   * Block guesses are back-scaled with `snorm`, not with a separately inferred
+   * AO normalization.
    */
   std::vector<double> ao_normalization;
 };
@@ -159,7 +159,7 @@ struct OrbitalPreparationInput {
 /**
  * @brief Returns the stored sparse support length for an orbital.
  *
- * The legacy input sometimes stores `orbital_basis_counts == 0/1` for cases
+ * The input may store `orbital_basis_counts == 0/1` for cases
  * where the padded one-based basis-index row is the authoritative support
  * description. This helper preserves that storage convention and returns the
  * number of occupied slots in the padded row.
@@ -189,8 +189,8 @@ inline int stored_sparse_orbital_coefficient_count(
  * @brief Returns the number of variational sparse orbital parameters.
  *
  * This differs from the stored support length for expanded-support HAO/MO
- * cases: `original_orbital_basis_counts` mirrors the legacy `ma0` parameter
- * count and should be used when enumerating differentiable orbital variables.
+ * cases: `original_orbital_basis_counts` preserves the parameter count and
+ * should be used when enumerating differentiable orbital variables.
  */
 inline int differentiable_sparse_orbital_parameter_count(
     const OrbitalPreparationInput& input,

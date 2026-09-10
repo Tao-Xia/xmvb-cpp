@@ -15,7 +15,7 @@ struct LibcintAuxiliaryBasisBuilderOptions {
   /**
    * @brief Whether to build the starred `GEN-A_n*` variant.
    *
-   * The production RI path defaults to the starred variant because the legacy
+   * The production RI path defaults to the starred variant because the input
    * Coulomb/exchange energy evaluation uses the richer `GEN-A_n*` auxiliary
    * basis for its final energy build. `false` keeps only the `s + spd` blocks,
    * while `true` also appends the `spdf` block on non-hydrogen/helium atoms.

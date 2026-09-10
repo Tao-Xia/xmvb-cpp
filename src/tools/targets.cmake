@@ -170,13 +170,13 @@ target_link_libraries(check_structure_expansion_signs
     xmvb_runtime)
 xmvb_link_standalone_runtime(check_structure_expansion_signs)
 
-add_executable(check_structure_overlap_against_raw_legacy
-  tools/check_structure_overlap_against_raw_legacy.cpp)
-target_link_libraries(check_structure_overlap_against_raw_legacy
+add_executable(check_structure_overlap_against_raw_reference
+  tools/check_structure_overlap_against_raw_reference.cpp)
+target_link_libraries(check_structure_overlap_against_raw_reference
   PRIVATE
     xmvb_vbscf
     xmvb_runtime)
-xmvb_link_standalone_runtime(check_structure_overlap_against_raw_legacy)
+xmvb_link_standalone_runtime(check_structure_overlap_against_raw_reference)
 
 add_executable(inspect_input_deck_model
   tools/inspect_input_deck_model.cpp)
@@ -305,14 +305,6 @@ target_link_libraries(check_libcint_ri_smoke
     xmvb_runtime)
 xmvb_link_standalone_runtime(check_libcint_ri_smoke)
 
-add_executable(compare_libcint_materialized_provider
-  tools/compare_libcint_materialized_provider.cpp)
-target_link_libraries(compare_libcint_materialized_provider
-  PRIVATE
-    xmvb_vbscf
-    xmvb_runtime)
-xmvb_link_standalone_runtime(compare_libcint_materialized_provider)
-
 add_executable(compare_ri_active_space_builder
   tools/compare_ri_active_space_builder.cpp)
 target_link_libraries(compare_ri_active_space_builder
@@ -374,7 +366,6 @@ add_dependencies(validate_multi_leaf_open_state_one_electron xmvb_runtime_assets
 add_dependencies(benchmark_union_graph_single_step xmvb_runtime_assets)
 add_dependencies(check_direct_libcint_smoke xmvb_runtime_assets)
 add_dependencies(check_libcint_ri_smoke xmvb_runtime_assets)
-add_dependencies(compare_libcint_materialized_provider xmvb_runtime_assets)
 add_dependencies(compare_ri_active_space_builder xmvb_runtime_assets)
 add_dependencies(check_ri_low_rank_unique_spin_pair xmvb_runtime_assets)
 add_dependencies(check_active_overlap_split xmvb_runtime_assets)

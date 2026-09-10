@@ -11,8 +11,8 @@ namespace xmvb::vb {
 /**
  * @brief Projects the AO effective one-electron matrix into the active space.
  *
- * This class implements the `HHO = T_a^T F11 T_a` part of the legacy VBSCF
- * preparation in pure C++. All matrices use column-major storage.
+ * This class evaluates the active-space transformation
+ * `HHO = T_a^T F11 T_a`. All matrices use column-major storage.
  */
 class ActiveSpaceOneElectronBuilder {
 public:

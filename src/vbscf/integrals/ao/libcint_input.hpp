@@ -8,9 +8,9 @@ namespace xmvb::vb {
  * @brief Raw libcint arrays required to regenerate AO integrals directly in C++.
  *
  * These arrays mirror the molecule-static `atm`, `bas`, `basidx`, and `env`
- * buffers currently prepared inside the legacy runtime. Keeping them inside
+ * buffers currently prepared inside the runtime. Keeping them inside
  * `VbScfInput` allows the C++ side to gradually take ownership of AO integral
- * generation without depending on legacy integral materialization forever.
+ * generation without depending on materialized integral buffers.
  */
 struct LibcintInput {
   /**
@@ -39,7 +39,7 @@ struct LibcintInput {
   std::vector<int> bas;
 
   /**
-   * @brief AO start/count table per shell used by the legacy runtime.
+   * @brief AO start/count table per shell used by the runtime.
    */
   std::vector<int> basidx;
 

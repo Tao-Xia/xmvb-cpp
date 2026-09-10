@@ -187,7 +187,7 @@ void transform_sparse_oeo_active_representative_gradient(
     const LocalizedRepresentativeSelector& target_selector,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* sparse_orbital_gradient) {
-  if (orbital_preparation_input.orbital_type != kLegacyOrbitalTypeOeo) {
+  if (orbital_preparation_input.orbital_type != kOrbitalTypeOeo) {
     throw std::invalid_argument(
         "active representative transport is only defined on the current OEO chart");
   }
@@ -301,7 +301,7 @@ void transform_sparse_oeo_active_representative_step(
     const LocalizedRepresentativeSelector& target_selector,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* sparse_orbital_step) {
-  if (orbital_preparation_input.orbital_type != kLegacyOrbitalTypeOeo) {
+  if (orbital_preparation_input.orbital_type != kOrbitalTypeOeo) {
     throw std::invalid_argument(
         "active representative step transport is only defined on the current OEO chart");
   }
@@ -865,7 +865,7 @@ Eigen::MatrixXd build_metric_preserving_oeo_repaired_normalized_orbital_matrix(
   const auto& physical_orbital_frame =
       orbital_result.physical_orbital_frame;
   if (reference_normalized_orbital_matrix.size() == 0 ||
-      orbital_preparation_input.orbital_type != kLegacyOrbitalTypeOeo) {
+      orbital_preparation_input.orbital_type != kOrbitalTypeOeo) {
     return physical_orbital_frame.normalized_orbital_matrix;
   }
 

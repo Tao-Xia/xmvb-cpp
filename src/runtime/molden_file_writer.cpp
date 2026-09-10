@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "runtime/libcint_compat.hpp"
-#include "runtime/legacy_shell_utils.hpp"
+#include "runtime/gaussian_shell_normalization.hpp"
 
 namespace xmvb::vb {
 
@@ -274,7 +274,7 @@ void write_gto_section(
                // by the historical XMVB/cartesian normalization factor.
                // Molden viewers expect the corresponding de-normalized values.
                << normalized_coefficient /
-                      legacy_shell_normalization(angular_momentum, exponent)
+                      shell_normalization(angular_momentum, exponent)
                << '\n';
       }
     }

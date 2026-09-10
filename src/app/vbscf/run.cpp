@@ -33,7 +33,7 @@ int run(Options command_line) {
   const auto load_result = xmvb::vb::load_vbscf_input_with_timings(input_path, load_options);
   const auto& input = load_result.input;
   if (!user_specified_max_iterations) {
-    // Keep the standalone SCF loop aligned with the legacy deck semantics:
+    // Keep the standalone SCF loop aligned with the input deck semantics:
     // `.xmi` `itmax` controls the maximum iteration count, and omitted `itmax`
     // falls back to the project default of 2000.
     options.max_iterations = load_result.requested_scf_max_iterations;

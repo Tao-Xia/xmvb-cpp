@@ -28,7 +28,7 @@ struct VbScfOptimizerOptions {
   /**
    * @brief Convergence threshold on the gradient infinity norm.
    *
-   * The legacy Fortran backend and the plain full-space `lbfgspp` backend use
+   * The plain full-space `lbfgspp` backend uses
    * the full gradient Euclidean norm, matching the original `gxn`
    * convergence check. Nonredundant backends apply the same threshold to the
    * projected / reduced gradient infinity norm.
@@ -38,7 +38,7 @@ struct VbScfOptimizerOptions {
   /**
    * @brief Convergence threshold on the absolute energy change.
    *
-   * This mirrors the legacy `vb_str->epg` stopping criterion.
+   * This is the stopping criterion for the reported projected gradient.
    */
   double energy_tolerance = 1.0e-5;
 

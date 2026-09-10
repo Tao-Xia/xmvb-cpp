@@ -528,7 +528,7 @@ backpropagate_ri_active_pair_factors(
       ao_ri_result.metric_whitened_ao_pair_factors.transpose() *
       active_pair_factor_gradient_matrix;
   const std::vector<double> pair_gradients =
-      copy_matrix_to_legacy_row_buffer(ao_pair_transform_gradient);
+      copy_matrix_to_row_major_buffer(ao_pair_transform_gradient);
 
   const auto active_pairs =
       build_active_pair_list(n_active_orbitals);
@@ -584,7 +584,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
     dense_active_coefficients = &fallback_dense_active_coefficients;
   } else {
     cached_dense_active_coefficients =
-        copy_matrix_to_legacy_row_buffer(
+        copy_matrix_to_row_major_buffer(
             active_space_two_electron_result.dense_active_coefficients);
     dense_active_coefficients = &cached_dense_active_coefficients;
   }
@@ -681,7 +681,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
     dense_active_coefficients = &fallback_dense_active_coefficients;
   } else {
     cached_dense_active_coefficients =
-        copy_matrix_to_legacy_row_buffer(
+        copy_matrix_to_row_major_buffer(
             active_space_two_electron_result.dense_active_coefficients);
     dense_active_coefficients = &cached_dense_active_coefficients;
   }
@@ -689,7 +689,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
   std::vector<double> cached_dense_ao_pair_products_storage;
   if (active_space_two_electron_result.dense_ao_pair_products.size() != 0) {
     cached_dense_ao_pair_products_storage =
-        copy_matrix_to_legacy_row_buffer(
+        copy_matrix_to_row_major_buffer(
             active_space_two_electron_result.dense_ao_pair_products);
     cached_dense_ao_pair_products = &cached_dense_ao_pair_products_storage;
   }

@@ -516,7 +516,7 @@ bool should_use_standard_ri_two_electron_mode(
 
   // In auto mode, follow the input deck semantics rather than switching on a
   // size heuristic. `INT=LIBCINT` requests exact AO integrals, while `INT=RI`
-  // requests the standard RI path. The legacy parser already handles
+  // requests the standard RI path. The input parser already handles
   // case-insensitive keywords before populating this runtime flag.
   return input_requests_ri_two_electron_mode;
 }

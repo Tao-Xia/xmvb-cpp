@@ -15,7 +15,7 @@ namespace xmvb::vb {
  * @brief Builds AO effective one-electron matrices from the inactive density.
  *
  * This class is the pure C++ replacement for the `Cal_G11` and `Cal_F11`
- * stages in the legacy VBSCF implementation for the standard non-RI path.
+ * stages for the standard non-RI path.
  */
 class AoEffectiveOneElectronBuilder {
 public:

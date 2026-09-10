@@ -10,7 +10,7 @@ namespace xmvb::vb {
  * @brief Builds a closed-shell AO Fock matrix `F = H + 2J - K`.
  *
  * The input density is the spinless occupied-orbital projector used by the
- * legacy RHF code path, i.e. `D = C_occ C_occ^T` without an extra factor of 2.
+ * spin-free convention, i.e. `D = C_occ C_occ^T` without an extra factor of 2.
  */
 class ClosedShellFockBuilder {
 public:

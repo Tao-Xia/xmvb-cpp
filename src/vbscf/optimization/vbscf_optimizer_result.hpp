@@ -151,7 +151,7 @@ struct VbScfOptimizerResult {
   double final_projected_gradient_inf_norm = 0.0;
 
   /**
-   * @brief Final gradient Euclidean norm reported by the legacy L-BFGS driver.
+   * @brief Final gradient Euclidean norm reported by the optimizer.
    */
   double final_gradient_l2_norm = 0.0;
 

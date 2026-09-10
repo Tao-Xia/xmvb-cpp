@@ -140,7 +140,7 @@ std::vector<int> build_component_union_support(
   union_support.reserve(n_basis_functions);
   std::vector<char> seen_support(n_basis_functions, 0);
   // Preserve first appearance order across the component so the adapted sparse
-  // rows stay close to the original legacy slot ordering whenever possible.
+  // rows stay close to the original slot ordering whenever possible.
   for (const int orbital_index : component_orbitals) {
     for (const int basis_function_index :
          orbital_supports[orbital_index]) {
@@ -218,7 +218,7 @@ void expand_component_sparse_supports(
         orbital_supports[orbital_index];
     // After support expansion, every downstream consumer must see a parameter
     // count that matches the adapted sparse slots, even if it still keys off
-    // the legacy `original_orbital_basis_counts` metadata.
+    // the `original_orbital_basis_counts` metadata.
     updated_original_basis_counts[orbital_index] =
         static_cast<int>(union_support.size());
     if (orbital_supports_match(
@@ -463,7 +463,7 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
   // the optimizer or guess builder interprets the sparse rows as an exact block
   // structure. This is an exact change of sparse layout: the represented
   // orbitals are unchanged, but future MO guesses can now populate the full
-  // component support instead of being truncated back to the legacy per-orbital
+  // component support instead of being truncated back to the input per-orbital
   // support rows.
   for (const auto& component_orbitals : overlap_components) {
     std::vector<int> selected_component_orbitals;
@@ -506,7 +506,7 @@ VbScfInput build_nonredundant_optimizer_input(
   // The nonredundant optimizer must start from the same physical sparse-orbital
   // chart that the VB objective, restart artifacts, and Molden export use.
   // Pre-orthonormalizing the full-support OEO inactive block changes the
-  // accepted-point gauge in a way that is not an exact legacy chart transform
+  // accepted-point gauge in a way that is not an exact original chart transform
   // and measurably distorts TiCl active orbitals relative to XMVB.
   return input;
 }

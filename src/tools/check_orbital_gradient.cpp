@@ -315,7 +315,7 @@ std::vector<double> read_f64_binary_file(const std::string& path) {
 void print_usage() {
   std::cerr << "usage: check_orbital_gradient <input.xmi> "
                "[--orbital-value-table-bin <path>] "
-               "[--ao-integral-source auto|legacy|libcint|runtime_hcore] "
+               "[--ao-integral-source auto|libcint|runtime_hcore] "
                "[--standard-two-electron-mode auto|exact|ri] "
                "[--component total|reference|nonreference] "
                "[--count N] [--step h] "

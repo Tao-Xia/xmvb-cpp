@@ -6,7 +6,7 @@
 namespace xmvb::vb {
 namespace {
 
-bool has_legacy_block_metadata(
+bool has_block_metadata(
     const OrbitalPreparationInput& input) {
   return input.n_blocks > 0 && input.block_storage_dimension > 0 &&
       input.block_members.size() ==
@@ -14,7 +14,7 @@ bool has_legacy_block_metadata(
       input.block_orbital_counts.size() == input.n_blocks;
 }
 
-std::vector<std::vector<int>> build_legacy_orbital_blocks(
+std::vector<std::vector<int>> build_metadata_orbital_blocks(
     const OrbitalPreparationInput& input) {
   std::vector<std::vector<int>> blocks;
   blocks.reserve(input.n_blocks);
@@ -31,7 +31,7 @@ std::vector<std::vector<int>> build_legacy_orbital_blocks(
           block_index * input.block_storage_dimension + offset];
       if (orbital < 0 || orbital >= input.n_orbitals) {
         throw std::runtime_error(
-            "legacy block metadata contains an out-of-range orbital index");
+            "stored block metadata contains an out-of-range orbital index");
       }
       block.push_back(orbital);
     }
@@ -44,8 +44,8 @@ std::vector<std::vector<int>> build_legacy_orbital_blocks(
 
 std::vector<std::vector<int>> detect_orbital_blocks(
     const OrbitalPreparationInput& input) {
-  if (has_legacy_block_metadata(input)) {
-    return build_legacy_orbital_blocks(input);
+  if (has_block_metadata(input)) {
+    return build_metadata_orbital_blocks(input);
   }
 
   const int n_orbitals = input.n_orbitals;

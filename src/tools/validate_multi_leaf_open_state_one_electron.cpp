@@ -24,7 +24,7 @@ namespace {
 
 using Matrix = Eigen::MatrixXd;
 using OrbitalPair = xmvb::vb::OrbitalPair;
-using LegacyTerm = xmvb::vb::LegacyStructureDeterminantTerm;
+using RawTerm = xmvb::vb::RawStructureDeterminantTerm;
 using CanonicalDeterminantKey = std::pair<std::vector<int>, std::vector<int>>;
 using FullDeterminantPairKey =
     std::tuple<std::vector<int>, std::vector<int>, std::vector<int>, std::vector<int>>;
@@ -266,8 +266,8 @@ struct SyntheticCase {
   int root_node = 0;
   int support_size = 0;
   std::vector<ComponentData> ordered_components;
-  std::vector<LegacyTerm> exact_left_terms;
-  std::vector<LegacyTerm> exact_right_terms;
+  std::vector<RawTerm> exact_left_terms;
+  std::vector<RawTerm> exact_right_terms;
   std::vector<double> overlap_storage;
   std::vector<double> one_electron_storage;
 };
@@ -1153,14 +1153,14 @@ double contract_one_electron_merge(
 
 std::vector<OrientationTerm> enumerate_orientation_terms(
     const std::vector<OrbitalPair>& pairs) {
-  const auto legacy_terms = xmvb::vb::enumerate_legacy_determinant_terms(pairs);
+  const auto raw_terms = xmvb::vb::enumerate_raw_determinant_terms(pairs);
   std::vector<OrientationTerm> terms;
-  terms.reserve(legacy_terms.size());
-  for (const auto& legacy_term : legacy_terms) {
+  terms.reserve(raw_terms.size());
+  for (const auto& raw_term : raw_terms) {
     OrientationTerm term;
-    term.alpha_occ = legacy_term.alpha_occ;
-    term.beta_occ = legacy_term.beta_occ;
-    term.coefficient = legacy_term.coefficient;
+    term.alpha_occ = raw_term.alpha_occ;
+    term.beta_occ = raw_term.beta_occ;
+    term.coefficient = raw_term.coefficient;
     terms.push_back(std::move(term));
   }
   return terms;
@@ -1262,8 +1262,8 @@ bool is_connected_star_graph(
 }
 
 void record_reference_determinant_pair(
-    const LegacyTerm& left_term,
-    const LegacyTerm& right_term,
+    const RawTerm& left_term,
+    const RawTerm& right_term,
     WorkCollector* work_collector) {
   if (work_collector == nullptr) {
     return;
@@ -1276,8 +1276,8 @@ void record_reference_determinant_pair(
 }
 
 StructureExactValue compute_exact_structure_value(
-    const std::vector<LegacyTerm>& left_terms,
-    const std::vector<LegacyTerm>& right_terms,
+    const std::vector<RawTerm>& left_terms,
+    const std::vector<RawTerm>& right_terms,
     const std::vector<double>& overlap_storage,
     const std::vector<double>& one_electron_storage,
     int n_orbitals,
@@ -1481,8 +1481,8 @@ ValidationResult validate_multi_leaf_pair(
     const std::vector<double>& overlap_storage,
     const std::vector<double>& one_electron_storage,
     int n_orbitals,
-    const std::vector<LegacyTerm>& exact_left_terms,
-    const std::vector<LegacyTerm>& exact_right_terms,
+    const std::vector<RawTerm>& exact_left_terms,
+    const std::vector<RawTerm>& exact_right_terms,
     const xmvb::vb::DeterminantOverlapResolver& overlap_resolver,
     WorkCollector* work_collector,
     StateCollector* state_collector) {
@@ -1776,8 +1776,8 @@ SyntheticCase build_three_component_base_case(const std::string& name) {
   full_pairs.insert(full_pairs.end(), root_pairs.begin(), root_pairs.end());
   full_pairs.insert(full_pairs.end(), leaf1_pairs.begin(), leaf1_pairs.end());
   full_pairs.insert(full_pairs.end(), leaf2_pairs.begin(), leaf2_pairs.end());
-  synthetic.exact_left_terms = xmvb::vb::enumerate_legacy_determinant_terms(full_pairs);
-  synthetic.exact_right_terms = xmvb::vb::enumerate_legacy_determinant_terms(full_pairs);
+  synthetic.exact_left_terms = xmvb::vb::enumerate_raw_determinant_terms(full_pairs);
+  synthetic.exact_right_terms = xmvb::vb::enumerate_raw_determinant_terms(full_pairs);
 
   Matrix overlap(6, 6);
   overlap <<
@@ -2055,9 +2055,9 @@ int main(int argc, char** argv) {
       debug_n_orbitals = static_cast<int>(ordered_support_orbitals.size());
       debug_components = ordered_components;
       const auto exact_left_terms =
-          xmvb::vb::enumerate_legacy_determinant_terms(ordered_left_pairs);
+          xmvb::vb::enumerate_raw_determinant_terms(ordered_left_pairs);
       const auto exact_right_terms =
-          xmvb::vb::enumerate_legacy_determinant_terms(ordered_right_pairs);
+          xmvb::vb::enumerate_raw_determinant_terms(ordered_right_pairs);
       case_label = options.input_path;
       result = validate_multi_leaf_pair(
           root_node,

@@ -12,7 +12,7 @@ namespace xmvb::vb {
 /**
  * @brief Non-owning view of one active-space two-electron representation.
  *
- * Determinant kernels need read-only access to either the legacy packed
+ * Determinant kernels need read-only access to either the packed
  * `GGO` tensor or the RI factor matrix `L_{A,P}`. This view lets those
  * callers share one implementation path without copying the forward buffers.
  */
@@ -25,7 +25,7 @@ struct ActiveSpaceTwoElectronView {
 };
 
 /**
- * @brief Wraps legacy packed `GGO` storage in a non-owning view.
+ * @brief Wraps packed `GGO` storage in a non-owning view.
  */
 ActiveSpaceTwoElectronView make_active_space_two_electron_view(
     const std::vector<double>& packed_active_two_electron_integrals);
@@ -42,7 +42,7 @@ ActiveSpaceTwoElectronView make_active_space_two_electron_view(
 int packed_active_pair_count(int n_active_orbitals);
 
 /**
- * @brief Returns the legacy packed `GGO` storage size for `n_active_orbitals`.
+ * @brief Returns the packed `GGO` storage size for `n_active_orbitals`.
  */
 std::size_t packed_active_two_electron_integral_count(int n_active_orbitals);
 
@@ -52,7 +52,7 @@ std::size_t packed_active_two_electron_integral_count(int n_active_orbitals);
 int infer_active_orbital_count_from_packed_pair_count(int n_packed_active_pairs);
 
 /**
- * @brief Inverts the legacy packed `GGO` storage size back to `n_active_orbitals`.
+ * @brief Inverts the packed `GGO` storage size back to `n_active_orbitals`.
  */
 int infer_active_orbital_count_from_packed_integral_count(std::size_t packed_integral_count);
 
@@ -60,8 +60,7 @@ int infer_active_orbital_count_from_packed_integral_count(std::size_t packed_int
  * @brief Evaluates the active-space pair kernel entry `G_{P,Q}`.
  *
  * The packed pair indices `P` and `Q` use the same
- * `TwoElectronIndexer::packed_pair_index(...)` convention as the legacy VB
- * packed storage.
+ * `TwoElectronIndexer::packed_pair_index(...)` storage convention.
  */
 double lookup_active_space_two_electron_kernel_value(
     const ActiveSpaceTwoElectronView& two_electron_view,
@@ -74,7 +73,7 @@ double lookup_active_space_two_electron_kernel_value(
  *
  * `packed_pair_indices[k]` and `packed_pair_values[k]` define a sparse vector
  * `c_P`. The returned dense vector stores `(G c)_P` over all packed active
- * pairs. Packed-exact callers reuse the legacy `GGO` storage directly, while
+ * pairs. Packed-exact callers reuse the `GGO` storage directly, while
  * RI callers evaluate the same contraction as `L^T (L c)`.
  */
 std::vector<double> apply_active_space_two_electron_kernel_to_sparse_projection(
@@ -103,7 +102,7 @@ Eigen::VectorXd apply_active_space_two_electron_kernel_to_sparse_projection_subs
  *
  * Production forward paths should prefer the direct pair-kernel helpers above.
  * This routine is intended for diagnostics and outputs that still expect the
- * legacy packed tensor layout.
+ * packed tensor layout.
  */
 std::vector<double> reconstruct_packed_active_two_electron_integrals(
     const ActiveSpaceTwoElectronView& two_electron_view,

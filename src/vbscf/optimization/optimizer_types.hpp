@@ -12,12 +12,12 @@
 
 namespace xmvb::vb {
 
-// Legacy orbital-chart enum codes carried by OrbitalPreparationInput::orbital_type.
+// input orbital-chart enum codes carried by OrbitalPreparationInput::orbital_type.
 // Kept as constexpr int because the chart field is a plain int on the input
 // struct; new code should treat these as the canonical chart discriminators.
-constexpr int kLegacyOrbitalTypeHao = 1;
-constexpr int kLegacyOrbitalTypeBdo = 2;
-constexpr int kLegacyOrbitalTypeOeo = 3;
+constexpr int kOrbitalTypeHao = 1;
+constexpr int kOrbitalTypeBdo = 2;
+constexpr int kOrbitalTypeOeo = 3;
 
 // One accepted or trialed secant pair in the optimizer's packed-coordinate
 // history. Used by L-BFGS secant transport, the truncated-Newton Krylov

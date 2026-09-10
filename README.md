@@ -2,7 +2,7 @@
 
 A high-performance **Valence Bond Self-Consistent Field (VBSCF)** engine written in modern C++17.
 
-Valence Bond theory provides direct chemical insight into bonding, reactivity, and electron correlation that molecular orbital methods cannot reveal. xmvb-cpp is an open-source C++ implementation of the [XMVB](https://github.com/xmvb/xmvb) valence bond program, designed for computational chemistry researchers who need VB-level analysis of molecular electronic structure.
+Valence Bond theory provides direct chemical insight into bonding, reactivity, and electron correlation that molecular orbital methods cannot reveal. xmvb-cpp is an independent open-source VBSCF engine designed for computational chemistry researchers who need VB-level analysis of molecular electronic structure.
 
 ## Features
 
@@ -20,7 +20,7 @@ Valence Bond theory provides direct chemical insight into bonding, reactivity, a
 ```
 src/
   core/            Shared numerical infrastructure
-  vbscf/           Canonical C++ VBSCF implementation
+  vbscf/           Canonical VBSCF implementation
     orbitals/      Sparse/full-AO charts, gauges, and pullbacks
     integrals/     AO and active-space integral operators
     determinants/  Determinant-pair algebra and caches

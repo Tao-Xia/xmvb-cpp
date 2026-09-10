@@ -79,7 +79,7 @@ struct PhysicalOrbitalFrame {
    * `Q_i = C_i (C_i^T S C_i)^{-1/2}`. The frame is explicitly
    * `S`-orthonormal and is the natural state variable for the orthonormal
    * inactive chart, while the original physical inactive block is kept above
-   * for legacy compatibility and diagnostics.
+   * for input reconstruction and diagnostics.
    *
    * Dimensions: `n_basis_functions x n_inactive_doubly_occupied_orbitals`.
    */

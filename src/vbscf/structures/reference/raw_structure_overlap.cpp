@@ -43,7 +43,7 @@ double determinant_overlap(
 
 }  // namespace
 
-std::vector<LegacyStructureDeterminantTerm> enumerate_legacy_determinant_terms(
+std::vector<RawStructureDeterminantTerm> enumerate_raw_determinant_terms(
     const std::vector<OrbitalPair>& pairs) {
   const int n_pairs = static_cast<int>(pairs.size());
   std::vector<std::vector<int>> determinants;
@@ -86,13 +86,13 @@ std::vector<LegacyStructureDeterminantTerm> enumerate_legacy_determinant_terms(
         static_cast<double>(alpha_sign * beta_sign);
   }
 
-  std::vector<LegacyStructureDeterminantTerm> result;
+  std::vector<RawStructureDeterminantTerm> result;
   result.reserve(accumulated_terms.size());
   for (const auto& [key, coefficient] : accumulated_terms) {
     if (std::abs(coefficient) <= 1.0e-12) {
       continue;
     }
-    LegacyStructureDeterminantTerm term;
+    RawStructureDeterminantTerm term;
     term.alpha_occ = key.first;
     term.beta_occ = key.second;
     term.coefficient = coefficient;
@@ -101,27 +101,27 @@ std::vector<LegacyStructureDeterminantTerm> enumerate_legacy_determinant_terms(
   return result;
 }
 
-std::vector<LegacyStructureDeterminantTerm> remap_legacy_determinant_terms(
-    const std::vector<LegacyStructureDeterminantTerm>& terms,
+std::vector<RawStructureDeterminantTerm> remap_raw_determinant_terms(
+    const std::vector<RawStructureDeterminantTerm>& terms,
     const std::map<int, int>& orbital_index_remap) {
-  std::vector<LegacyStructureDeterminantTerm> remapped_terms;
+  std::vector<RawStructureDeterminantTerm> remapped_terms;
   remapped_terms.reserve(terms.size());
   for (const auto& term : terms) {
-    LegacyStructureDeterminantTerm remapped_term;
+    RawStructureDeterminantTerm remapped_term;
     remapped_term.coefficient = term.coefficient;
     remapped_term.alpha_occ.reserve(term.alpha_occ.size());
     remapped_term.beta_occ.reserve(term.beta_occ.size());
     for (const int orbital_index : term.alpha_occ) {
       const auto iterator = orbital_index_remap.find(orbital_index);
       if (iterator == orbital_index_remap.end()) {
-        throw std::runtime_error("missing alpha orbital remap for legacy structure term");
+        throw std::runtime_error("missing alpha orbital remap for raw structure term");
       }
       remapped_term.alpha_occ.push_back(iterator->second);
     }
     for (const int orbital_index : term.beta_occ) {
       const auto iterator = orbital_index_remap.find(orbital_index);
       if (iterator == orbital_index_remap.end()) {
-        throw std::runtime_error("missing beta orbital remap for legacy structure term");
+        throw std::runtime_error("missing beta orbital remap for raw structure term");
       }
       remapped_term.beta_occ.push_back(iterator->second);
     }
@@ -130,9 +130,9 @@ std::vector<LegacyStructureDeterminantTerm> remap_legacy_determinant_terms(
   return remapped_terms;
 }
 
-double legacy_structure_overlap(
-    const std::vector<LegacyStructureDeterminantTerm>& left_terms,
-    const std::vector<LegacyStructureDeterminantTerm>& right_terms,
+double raw_structure_overlap(
+    const std::vector<RawStructureDeterminantTerm>& left_terms,
+    const std::vector<RawStructureDeterminantTerm>& right_terms,
     const Eigen::MatrixXd& overlap_matrix,
     const DeterminantOverlapResolver& overlap_resolver) {
   double overlap_value = 0.0;

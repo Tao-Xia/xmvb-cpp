@@ -45,6 +45,6 @@ int main() {
   require_equal(
       xmvb::vb::detect_orbital_blocks(input),
       {{2, 0}, {1, 3}},
-      "legacy-metadata");
+      "stored-metadata");
   return 0;
 }

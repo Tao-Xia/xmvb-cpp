@@ -53,7 +53,7 @@ struct VbScfInput {
    *
    * When present, the standard RI path should prefer this basis over any
    * generated fallback so `INT=RI` follows the same auxiliary-basis semantics
-   * as the legacy runtime.
+   * as the runtime.
    */
   LibcintInput auxiliary_libcint_input;
 

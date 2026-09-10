@@ -44,7 +44,7 @@ struct SameSpinPairCacheContext {
   bool beta_reuses_alpha_pair_cache = false;
   bool close_shell_diagonal_reuses_same_spin_pair_cache = false;
 
-  // Optional scalar opposite-spin cache for legacy pair-by-pair callers.
+  // Optional scalar opposite-spin cache for pair-by-pair callers.
   // The matrix-form forward/backward paths consume the per-spin projected
   // payloads inside `alpha_pair_cache` / `beta_pair_cache` directly and do not
   // require this `N_alpha^2 N_beta^2` table to be materialized.

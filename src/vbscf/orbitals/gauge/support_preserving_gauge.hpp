@@ -21,9 +21,9 @@ bool orbital_input_has_support_preserving_gauge_reference(
  *
  * This transformation only rotates the inactive occupied manifold internally.
  * It is applied only when the current sparse chart already differs from the
- * recorded legacy support layout; in that case the represented occupied
+ * recorded recorded support layout; in that case the represented occupied
  * subspace is preserved exactly while the inactive gauge is steered toward the
- * original sparse supports. When the current chart already equals the legacy
+ * original sparse supports. When the current chart already equals the recorded
  * sparse layout, the function returns a no-op instead of performing an
  * inexact sparse truncation.
  *

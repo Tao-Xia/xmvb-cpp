@@ -19,8 +19,8 @@ enum class OrbitalSupportBlockType {
  * @brief One raw, non-empty line from an input-deck block.
  *
  * `tokens` are split from the comment-stripped line, while `raw_line` keeps the
- * original text without the trailing newline so later parsers can still inspect
- * legacy formatting when needed.
+ * original text without the trailing newline so later parsers can inspect
+ * block-specific formatting when needed.
  */
 struct InputDeckTokenLine {
   std::string raw_line;
@@ -57,7 +57,7 @@ struct InputDeckFragmentBlock {
  * @brief Raw orbital-support block content before fragment-to-AO expansion.
  *
  * `$ORB` and `$ACTORB` share the same container because both preserve the raw
- * token lines from the deck, but their legacy formats differ:
+ * token lines from the deck, but their formats differ:
  * `$ORB` starts with a support-count header while `$ACTORB` lists only one
  * active-orbital support line per row. The downstream support builder must
  * therefore branch on `block_type` instead of assuming a single format.
@@ -71,7 +71,7 @@ struct InputDeckOrbitalSupportBlock {
 /**
  * @brief Raw `$GUS` lines used by `GUESS=READ/RDCI`.
  *
- * The standalone guess builder still consumes legacy line-oriented syntax, so
+ * The guess builder consumes line-oriented syntax, so
  * the deck model preserves the body verbatim instead of forcing an early dense
  * coefficient representation.
  */
@@ -81,10 +81,9 @@ struct InputDeckGuessBlock {
 };
 
 /**
- * @brief Pure C++ semantic summary of one `.xmi` input deck.
+ * @brief Semantic summary of one `.xmi` input deck.
  *
- * This object is the future replacement for the legacy `readinp.c` surface in
- * the standalone path. It centralizes deck parsing so downstream loaders no
+ * This object centralizes deck parsing so downstream loaders no
  * longer need to rescan the same file for `$CTRL`, `$STR`, `$GEO`, `$FRAG`,
  * `$ORB/$ACTORB`, and `$GUS`.
  */

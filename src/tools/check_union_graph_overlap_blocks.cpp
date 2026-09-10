@@ -172,8 +172,8 @@ int main(int argc, char** argv) {
     const auto right_pairs_local =
         xmvb::vb::remap_pairs_to_support(right_pairs, support_index);
 
-    const auto left_terms = xmvb::vb::enumerate_legacy_determinant_terms(left_pairs_local);
-    const auto right_terms = xmvb::vb::enumerate_legacy_determinant_terms(right_pairs_local);
+    const auto left_terms = xmvb::vb::enumerate_raw_determinant_terms(left_pairs_local);
+    const auto right_terms = xmvb::vb::enumerate_raw_determinant_terms(right_pairs_local);
     const auto support_overlap = xmvb::vb::build_support_overlap_matrix(
         support_orbitals,
         active_overlap_storage,
@@ -201,12 +201,12 @@ int main(int argc, char** argv) {
         screening_summary);
 
     xmvb::vb::DeterminantOverlapResolver overlap_resolver;
-    const double exact_overlap = xmvb::vb::legacy_structure_overlap(
+    const double exact_overlap = xmvb::vb::raw_structure_overlap(
         left_terms,
         right_terms,
         support_overlap,
         overlap_resolver);
-    const double block_diagonal_overlap_value = xmvb::vb::legacy_structure_overlap(
+    const double block_diagonal_overlap_value = xmvb::vb::raw_structure_overlap(
         left_terms,
         right_terms,
         block_diagonal_overlap,
@@ -228,7 +228,7 @@ int main(int argc, char** argv) {
           components,
           rank_cap);
       const auto approximate_support_overlap = block_diagonal_overlap + truncated_offblock;
-      const double approximate_overlap = xmvb::vb::legacy_structure_overlap(
+      const double approximate_overlap = xmvb::vb::raw_structure_overlap(
           left_terms,
           right_terms,
           approximate_support_overlap,

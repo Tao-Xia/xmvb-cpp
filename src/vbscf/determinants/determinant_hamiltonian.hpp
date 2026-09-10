@@ -13,9 +13,8 @@ namespace xmvb::vb {
 /**
  * @brief Computes determinant-level Hamiltonian matrix elements from explicit inputs.
  *
- * This class is a new C++ implementation of the core numerical work performed
- * by the legacy `Hamhd0` routine for a single determinant pair. It assumes that
- * the caller has already assembled the determinant overlap submatrix.
+ * The caller supplies an assembled determinant overlap submatrix; this class
+ * evaluates the corresponding one- and two-electron matrix elements.
  */
 class DeterminantHamiltonianResolver {
 public:
@@ -46,8 +45,7 @@ public:
    *   the full orbital basis.
    * @param n_orbitals Total number of orbitals represented in
    *   `h1e_act`.
-   * @param eri_act Packed two-electron integral storage
-   *   using the legacy `Ggo` indexing convention.
+   * @param eri_act Packed two-electron integral storage.
    * @return DeterminantHamiltonianResult Determinant overlap and Hamiltonian.
    */
   DeterminantHamiltonianResult resolve(
@@ -87,7 +85,7 @@ public:
    * @param n_orbitals Total number of orbitals represented in
    *   `h1e_act`.
    * @param eri_act Packed two-electron integral storage
-   *   using the legacy `Ggo` indexing convention.
+   *   using the packed two-electron indexing convention.
    * @return DeterminantHamiltonianResult Determinant overlap and Hamiltonian.
    */
   DeterminantHamiltonianResult resolve(

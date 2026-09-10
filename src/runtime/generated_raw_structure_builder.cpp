@@ -235,7 +235,7 @@ std::vector<int> parse_structure_classes(
     throw std::runtime_error("structure class generation requires non-negative reduced beta count");
   }
 
-  // The legacy `genstr.c:get_strclass()` parses `STR=...` against the reduced
+  // Parse `STR=...` against the reduced
   // covalent problem after removing mandatory active doubly occupied pairs.
   // The explicit class labels are therefore shifted back by `ndb` only after
   // parsing and validation. Using the total active beta count here is wrong
@@ -786,7 +786,7 @@ std::size_t count_active_raw_structures(
   const auto ionic_classes = parse_structure_classes(metadata);
 
   // The active raw-structure buffer is one unavoidable O(N_structures *
-  // n_total_electrons) allocation. Count the legacy classes analytically first
+  // n_total_electrons) allocation. Count the structure classes analytically first
   // so the generator can write directly into that final flat buffer without
   // materializing intermediate `vector<vector<int>>` copies.
   std::size_t structure_count = 0;

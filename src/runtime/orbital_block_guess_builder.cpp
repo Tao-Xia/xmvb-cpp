@@ -13,7 +13,7 @@ namespace xmvb::vb {
 
 namespace {
 
-bool has_legacy_block_metadata(
+bool has_block_metadata(
     const OrbitalPreparationInput& orbital_preparation_input) {
   return orbital_preparation_input.n_blocks > 0 &&
          orbital_preparation_input.block_storage_dimension > 0 &&
@@ -183,7 +183,7 @@ void build_block_matrix_guess(
       continue;
     }
     const int representative_orbital = block.front();
-    const int block_basis_count = has_legacy_block_metadata(orbital_preparation_input)
+    const int block_basis_count = has_block_metadata(orbital_preparation_input)
                                       ? get_block_basis_count(
                                             orbital_preparation_input,
                                             static_cast<int>(block_index),

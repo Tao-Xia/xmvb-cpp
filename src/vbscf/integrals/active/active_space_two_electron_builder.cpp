@@ -927,12 +927,12 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals(
   result.packed_active_two_electron_integrals =
       std::move(packed_active_two_electron_integrals);
   result.dense_active_coefficients =
-      copy_legacy_row_buffer_to_matrix(
+      copy_row_major_buffer_to_matrix(
           dense_active_coefficients,
           n_basis_functions,
           n_active_orbitals);
   result.dense_ao_pair_products =
-      copy_legacy_row_buffer_to_matrix(
+      copy_row_major_buffer_to_matrix(
           pair_products,
           static_cast<int>(n_ao_pairs),
           static_cast<int>(n_active_pairs));
@@ -979,12 +979,12 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_graph(
   result.packed_active_two_electron_integrals =
       std::move(packed_active_two_electron_integrals);
   result.dense_active_coefficients =
-      copy_legacy_row_buffer_to_matrix(
+      copy_row_major_buffer_to_matrix(
           dense_active_coefficients,
           n_basis_functions,
           n_active_orbitals);
   result.dense_ao_pair_products =
-      copy_legacy_row_buffer_to_matrix(
+      copy_row_major_buffer_to_matrix(
           pair_products,
           static_cast<int>(n_ao_pairs),
           static_cast<int>(n_active_pairs));
