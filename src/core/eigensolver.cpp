@@ -1,4 +1,4 @@
-#include "core/linear_algebra/generalized_eigensolver.hpp"
+#include "core/eigensolver.hpp"
 
 #include <algorithm>
 #include <cmath>

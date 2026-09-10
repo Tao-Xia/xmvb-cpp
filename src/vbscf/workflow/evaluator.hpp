@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "core/linear_algebra/generalized_eigensolver.hpp"
+#include "core/eigensolver.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/evaluation/evaluator.hpp"
 #include "vbscf/core/contracts/result.hpp"

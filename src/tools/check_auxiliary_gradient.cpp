@@ -7,7 +7,7 @@
 #include <utility>
 #include <vector>
 
-#include "core/linear_algebra/generalized_eigensolver.hpp"
+#include "core/eigensolver.hpp"
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/core/storage/eigen.hpp"

@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <utility>
 
-#include "core/parallel/openmp.hpp"
+#include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"

@@ -164,7 +164,7 @@ unset(_xmvb_vbscf_dependency_file)
 unset(_xmvb_vbscf_dependency_files)
 
 set(XMVB_VBSCF_SOURCES
-  core/linear_algebra/generalized_eigensolver.cpp
+  core/eigensolver.cpp
   ${XMVB_VBSCF_DETERMINANT_SOURCES}
   ${XMVB_VBSCF_STRUCTURE_SOURCES}
   ${XMVB_VBSCF_ORBITAL_SOURCES}

@@ -74,7 +74,7 @@ class TiledStructureMatrixOperator : public StructureMatrixOperator {
   加上对角线贡献
 ```
 
-### 4. 本征求解器 (`generalized_eigensolver.hpp`)
+### 4. 本征求解器 (`core/eigensolver.hpp`)
 
 现有内容保留：
 ```cpp
@@ -95,7 +95,7 @@ class GeneralizedEigensolver {
 |------|---------|
 | `vb/matrices/structure_matrix_operator.hpp` | 抽象接口 + Dense + Tiled 声明 |
 | `vb/matrices/structure_matrix_operator.cpp` | Dense + Tiled 实现 |
-| `core/linear_algebra/generalized_eigensolver.cpp` | `solve_davidson(operator, n_roots)` |
+| `core/eigensolver.cpp` | `solve_davidson(operator, n_roots)` |
 
 ## 关键设计决策
 

@@ -14,7 +14,7 @@
 #include <omp.h>
 #endif
 
-#include "core/parallel/openmp.hpp"
+#include "core/openmp.hpp"
 
 namespace xmvb::vb {
 

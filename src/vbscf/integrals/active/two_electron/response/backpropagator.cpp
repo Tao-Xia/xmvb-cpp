@@ -10,7 +10,7 @@
 #include <omp.h>
 #endif
 
-#include "core/parallel/openmp.hpp"
+#include "core/openmp.hpp"
 #include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"

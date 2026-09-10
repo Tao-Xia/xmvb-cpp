@@ -150,7 +150,7 @@ xmvb_link_standalone_runtime(audit_sparse_orbital_gauge)
 
 include(${CMAKE_SOURCE_DIR}/tests/vbscf/targets.cmake)
 
-add_executable(test_davidson core/linear_algebra/test_davidson.cpp)
+add_executable(test_davidson ../tests/vbscf/unit/test_davidson.cpp)
 target_link_libraries(test_davidson PRIVATE xmvb_vbscf xmvb_runtime)
 xmvb_link_standalone_runtime(test_davidson)
 

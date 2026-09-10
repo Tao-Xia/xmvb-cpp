@@ -8,7 +8,7 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
-#include "core/linear_algebra/generalized_eigensolver.hpp"
+#include "core/eigensolver.hpp"
 #include "runtime/orbitals/guess/closed_shell_fock.hpp"
 #include "vbscf/core/storage/eigen.hpp"
 
