@@ -2,6 +2,7 @@
 #include "vbscf/derivatives/hessian/responses/same_spin_backward_kernels_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_tile_weights_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_tile_policy_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_matrix_weights_internal.hpp"
 
 #include <algorithm>
@@ -21,7 +22,6 @@ namespace xmvb::vb {
 namespace detail {
 
 constexpr double kContributionTolerance = 1.0e-15;
-constexpr int kSameSpinBackwardPairTileSize = 64;
 
 std::size_t square_storage_size(int dimension) {
   return (dimension) * (dimension);
@@ -61,10 +61,6 @@ SameSpinMatrixBackwardContribution finalize_backward_contribution(
       active_one_electron_gradient.data(),
       active_one_electron_gradient.data() + active_one_electron_gradient.size());
   return result;
-}
-
-int same_spin_backward_pair_tile_size() {
-  return kSameSpinBackwardPairTileSize;
 }
 
 bool same_spin_local_tile_has_any_weight(
@@ -267,7 +263,7 @@ void accumulate_spin_matrix_backward(
 
   const int pair_tile_size = std::min(
       n_unique_determinants,
-      same_spin_backward_pair_tile_size());
+      kSameSpinTileExtent);
   for (int left_begin = 0; left_begin < n_unique_determinants; left_begin += pair_tile_size) {
     const int left_end =
         std::min(n_unique_determinants, left_begin + pair_tile_size);
@@ -493,7 +489,7 @@ void accumulate_spin_local_matrix_backward(
 
   const int pair_tile_size = std::min(
       n_unique_determinants,
-      same_spin_backward_pair_tile_size());
+      kSameSpinTileExtent);
   for (int left_begin = 0; left_begin < n_unique_determinants; left_begin += pair_tile_size) {
     const int left_end =
         std::min(n_unique_determinants, left_begin + pair_tile_size);
@@ -642,7 +638,7 @@ build_support_sparse_same_spin_backward_contribution_by_tiles(
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  const int tile_size = same_spin_backward_pair_tile_size();
+  const int tile_size = kSameSpinTileExtent;
   SameSpinAcceptedTileWeights tile_weights;
 
   const int alpha_tile_size =
@@ -768,7 +764,7 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  const int tile_size = same_spin_backward_pair_tile_size();
+  const int tile_size = kSameSpinTileExtent;
   SameSpinAcceptedTileWeights tile_weights;
 
   const int alpha_tile_size =
@@ -914,7 +910,7 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
       ? directional_pair_cache.alpha
       : directional_pair_cache.beta;
 
-  const int tile_size = same_spin_backward_pair_tile_size();
+  const int tile_size = kSameSpinTileExtent;
   SameSpinLocalTileWeights tile_weights;
   const int alpha_tile_size =
       std::min(selected_states.n_unique_alpha, tile_size);

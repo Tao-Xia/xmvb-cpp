@@ -1,5 +1,6 @@
 #include "vbscf/derivatives/hessian/responses/same_spin_matrix_weights_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_tile_weights_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin_tile_policy_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin_weight_kernels_internal.hpp"
 
 #include <algorithm>
@@ -20,15 +21,10 @@ namespace xmvb::vb::detail {
 namespace {
 
 constexpr double kContributionTolerance = 1.0e-15;
-constexpr int kSameSpinBackwardPairTileSize = 64;
 
 std::size_t square_storage_size(int dimension) {
   return static_cast<std::size_t>(dimension) *
       static_cast<std::size_t>(dimension);
-}
-
-int same_spin_backward_pair_tile_size() {
-  return kSameSpinBackwardPairTileSize;
 }
 
 }  // namespace
@@ -669,7 +665,7 @@ void accumulate_alpha_accepted_tile_weights(
     SameSpinAcceptedTileWeights* weights) {
   weights->reset(left_end - left_begin, right_end - right_begin);
 
-  const int partner_tile_size = same_spin_backward_pair_tile_size();
+  const int partner_tile_size = kSameSpinTileExtent;
   for (std::size_t state_offset = 0;
        state_offset < selected_states.states.size();
        ++state_offset) {
@@ -779,7 +775,7 @@ void accumulate_beta_accepted_tile_weights(
     SameSpinAcceptedTileWeights* weights) {
   weights->reset(left_end - left_begin, right_end - right_begin);
 
-  const int partner_tile_size = same_spin_backward_pair_tile_size();
+  const int partner_tile_size = kSameSpinTileExtent;
   for (std::size_t state_offset = 0;
        state_offset < selected_states.states.size();
        ++state_offset) {
@@ -890,7 +886,7 @@ void accumulate_alpha_local_tile_weights(
     SameSpinLocalTileWeights* weights) {
   weights->reset(left_end - left_begin, right_end - right_begin);
 
-  const int partner_tile_size = same_spin_backward_pair_tile_size();
+  const int partner_tile_size = kSameSpinTileExtent;
   for (std::size_t state_offset = 0;
        state_offset < selected_states.states.size();
        ++state_offset) {
@@ -1083,7 +1079,7 @@ void accumulate_beta_local_tile_weights(
     SameSpinLocalTileWeights* weights) {
   weights->reset(left_end - left_begin, right_end - right_begin);
 
-  const int partner_tile_size = same_spin_backward_pair_tile_size();
+  const int partner_tile_size = kSameSpinTileExtent;
   for (std::size_t state_offset = 0;
        state_offset < selected_states.states.size();
        ++state_offset) {
@@ -1272,7 +1268,7 @@ void accumulate_alpha_directional_tile_weights(
     SameSpinAcceptedTileWeights* weights) {
   weights->reset(left_end - left_begin, right_end - right_begin);
 
-  const int partner_tile_size = same_spin_backward_pair_tile_size();
+  const int partner_tile_size = kSameSpinTileExtent;
   for (std::size_t state_offset = 0;
        state_offset < selected_states.states.size();
        ++state_offset) {
@@ -1483,7 +1479,7 @@ void accumulate_beta_directional_tile_weights(
     SameSpinAcceptedTileWeights* weights) {
   weights->reset(left_end - left_begin, right_end - right_begin);
 
-  const int partner_tile_size = same_spin_backward_pair_tile_size();
+  const int partner_tile_size = kSameSpinTileExtent;
   for (std::size_t state_offset = 0;
        state_offset < selected_states.states.size();
        ++state_offset) {
