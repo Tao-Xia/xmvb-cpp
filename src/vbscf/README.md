@@ -1,9 +1,8 @@
 # VBSCF module architecture
 
-This directory is the canonical home of the C++ VBSCF implementation. The only
-VBSCF-related files intentionally left under `src/vb` are the tracked DeepVBH
-prototype and its forwarding headers. They form a
-compatibility island and must not be used by new production code.
+This directory is the canonical home of the C++ VBSCF implementation. New code
+must use this tree directly; obsolete implementation and compatibility trees
+are removed instead of being maintained in parallel.
 
 ## Responsibility flow
 
@@ -20,12 +19,7 @@ input contracts
 ```
 
 `core` owns aggregate input/result contracts, so it may reference value types
-from lower numerical domains. `approx` is an optional side path and
-`diagnostics` contains audits only. DeepVBH remains outside this tree under
-`src/vb` and is not part of the matrix-free VBSCF optimizer. Its sources build
-as the one-way dependent
-`xmvb_cpp_deepvbh` compatibility library; `xmvb_vbscf` and
-`xmvb_cpp_runtime` never link against it.
+from lower numerical domains. `diagnostics` contains audits only.
 
 The standalone `runtime` is a one-way client of this module. Canonical
 `vbscf/...` sources must not include `runtime/...` headers. Backend-generated
@@ -53,9 +47,7 @@ vbscf/
     preconditioners/     Reduced-space preconditioners
     trust_region/        Trust-region model solvers and radius updates
   workflow/              End-to-end VBSCF evaluation and orchestration
-  adaptive/              Adaptive structure-space algorithms
   diagnostics/           Numerical and coordinate audits
-  approx/                Optional approximate models
 ```
 
 ## Naming rules
@@ -111,13 +103,11 @@ ownership.
 2. Compatibility headers contain aliases only, never implementation.
 3. A compatibility header must have a tracked consumer; unused aliases are
    removed instead of being kept as speculative API surface.
-4. DeepVBH compatibility is isolated under `src/vb/scf` until that prototype
-   is migrated or retired separately.
 
 The canonical tree owns `optimization`, the single-step evaluator in
 `workflow`, the complete orbital/chart/gauge layer, AO and active-space
 `integrals`, `determinants`, `structures`, `derivatives/gradient`,
-`derivatives/hessian`, diagnostics, and adaptive structure-space algorithms.
+`derivatives/hessian`, and diagnostics.
 Algorithms retained for exact comparison are colocated with their owning
 domain and named explicitly, for example
 `structures/reference/raw_structure_overlap` and

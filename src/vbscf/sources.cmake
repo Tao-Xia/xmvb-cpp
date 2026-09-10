@@ -1,16 +1,7 @@
 # VBSCF source ownership manifest.
 #
 # Keep ownership lists grouped by domain so the target composition mirrors the
-# source tree. DeepVBH remains a separate compatibility target below.
-
-set(XMVB_VBSCF_APPROXIMATION_SOURCES
-  vbscf/approx/approx_vbscf_cluster_quotient.cpp
-  vbscf/approx/approx_vbscf_evaluator.cpp
-  vbscf/approx/approx_vbscf_metric.cpp
-  vbscf/approx/approx_vbscf_pair_cluster.cpp
-  vbscf/approx/approx_vbscf_resonance.cpp
-  vbscf/approx/approx_vbscf_resonance_functional.cpp
-)
+# source tree.
 
 set(XMVB_VBSCF_DETERMINANT_SOURCES
   vbscf/determinants/cofactor_differential.cpp
@@ -123,7 +114,6 @@ set(XMVB_VBSCF_WORKFLOW_SOURCES
 # Keep the ownership manifest complete. Adding a VBSCF translation unit without
 # assigning it to one of the domain lists above is a configuration error.
 set(_xmvb_declared_vbscf_sources
-  ${XMVB_VBSCF_APPROXIMATION_SOURCES}
   ${XMVB_VBSCF_DETERMINANT_SOURCES}
   ${XMVB_VBSCF_STRUCTURE_SOURCES}
   ${XMVB_VBSCF_ORBITAL_SOURCES}
@@ -173,17 +163,8 @@ unset(_xmvb_runtime_includes)
 unset(_xmvb_vbscf_dependency_file)
 unset(_xmvb_vbscf_dependency_files)
 
-# DeepVBH is a separate compatibility target. It may depend on VBSCF and the
-# standalone runtime, but neither production layer may depend on it.
-set(XMVB_DEEPVBH_SOURCES
-  vb/model/deepvbh_jax_inference_runner.cpp
-  vb/scf/deepvbh_onnx_direct_final_optimizer.cpp
-  vb/scf/deepvbh_onnx_hybrid_optimizer.cpp
-)
-
 set(XMVB_VBSCF_SOURCES
   core/linear_algebra/generalized_eigensolver.cpp
-  ${XMVB_VBSCF_APPROXIMATION_SOURCES}
   ${XMVB_VBSCF_DETERMINANT_SOURCES}
   ${XMVB_VBSCF_STRUCTURE_SOURCES}
   ${XMVB_VBSCF_ORBITAL_SOURCES}

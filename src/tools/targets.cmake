@@ -92,54 +92,6 @@ target_link_libraries(compare_exact_ri_energy_decomposition
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(compare_exact_ri_energy_decomposition)
 
-add_executable(dump_approx_vbscf_features
-  tools/dump_approx_vbscf_features.cpp)
-target_link_libraries(dump_approx_vbscf_features
-  PRIVATE
-    xmvb_vbscf
-    xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(dump_approx_vbscf_features)
-
-add_executable(validate_approx_vbscf_batch
-  tools/validate_approx_vbscf_batch.cpp)
-target_link_libraries(validate_approx_vbscf_batch
-  PRIVATE
-    xmvb_vbscf
-    xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(validate_approx_vbscf_batch)
-
-add_executable(run_approx_vbscf_pair_scf
-  tools/run_approx_vbscf_pair_scf.cpp)
-target_link_libraries(run_approx_vbscf_pair_scf
-  PRIVATE
-    xmvb_vbscf
-    xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(run_approx_vbscf_pair_scf)
-
-add_executable(benchmark_approx_vbscf_scaling
-  tools/benchmark_approx_vbscf_scaling.cpp)
-target_link_libraries(benchmark_approx_vbscf_scaling
-  PRIVATE
-    xmvb_vbscf
-    xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(benchmark_approx_vbscf_scaling)
-
-add_executable(compare_approx_structure_importance
-  tools/compare_approx_structure_importance.cpp)
-target_link_libraries(compare_approx_structure_importance
-  PRIVATE
-    xmvb_vbscf
-    xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(compare_approx_structure_importance)
-
-add_executable(analyze_approx_vbscf_resonance
-  tools/analyze_approx_vbscf_resonance.cpp)
-target_link_libraries(analyze_approx_vbscf_resonance
-  PRIVATE
-    xmvb_vbscf
-    xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(analyze_approx_vbscf_resonance)
-
 add_executable(check_cpp_active_space_gradient
   tools/check_cpp_active_space_gradient.cpp)
 target_link_libraries(check_cpp_active_space_gradient
@@ -391,14 +343,6 @@ target_link_libraries(check_active_overlap_split
     xmvb_cpp_runtime)
 xmvb_link_standalone_runtime(check_active_overlap_split)
 
-add_executable(compare_deepvbh_jax_inference
-  tools/compare_deepvbh_jax_inference.cpp)
-target_link_libraries(compare_deepvbh_jax_inference
-  PRIVATE
-    xmvb_cpp_deepvbh
-    xmvb_vbscf
-    xmvb_cpp_runtime)
-xmvb_link_standalone_runtime(compare_deepvbh_jax_inference)
 add_dependencies(check_cpp_orbital_gradient xmvb_cpp_runtime_assets)
 add_dependencies(benchmark_cpp_orbital_eval xmvb_cpp_runtime_assets)
 add_dependencies(check_cpp_auxiliary_gradient xmvb_cpp_runtime_assets)
@@ -410,12 +354,6 @@ add_dependencies(benchmark_ri_ao_h1e_operator xmvb_cpp_runtime_assets)
 add_dependencies(inspect_ao_h1e_backprop_symmetry xmvb_cpp_runtime_assets)
 add_dependencies(check_cpp_reference_orbital_gradient_modes xmvb_cpp_runtime_assets)
 add_dependencies(compare_exact_ri_energy_decomposition xmvb_cpp_runtime_assets)
-add_dependencies(dump_approx_vbscf_features xmvb_cpp_runtime_assets)
-add_dependencies(validate_approx_vbscf_batch xmvb_cpp_runtime_assets)
-add_dependencies(run_approx_vbscf_pair_scf xmvb_cpp_runtime_assets)
-add_dependencies(benchmark_approx_vbscf_scaling xmvb_cpp_runtime_assets)
-add_dependencies(compare_approx_structure_importance xmvb_cpp_runtime_assets)
-add_dependencies(analyze_approx_vbscf_resonance xmvb_cpp_runtime_assets)
 add_dependencies(check_cpp_active_space_gradient xmvb_cpp_runtime_assets)
 add_dependencies(check_exact_active_space_builders xmvb_cpp_runtime_assets)
 add_dependencies(check_exact_two_electron_hvp xmvb_cpp_runtime_assets)
@@ -440,7 +378,6 @@ add_dependencies(compare_libcint_materialized_provider xmvb_cpp_runtime_assets)
 add_dependencies(compare_ri_active_space_builder xmvb_cpp_runtime_assets)
 add_dependencies(check_ri_low_rank_unique_spin_pair xmvb_cpp_runtime_assets)
 add_dependencies(check_active_overlap_split xmvb_cpp_runtime_assets)
-add_dependencies(compare_deepvbh_jax_inference xmvb_cpp_runtime_assets)
 get_property(_xmvb_targets_after_dev_tools DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 set(_xmvb_dev_tool_targets)
 foreach(target_name IN LISTS _xmvb_targets_after_dev_tools)

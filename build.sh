@@ -261,7 +261,6 @@ value=""
 slater_profile_enabled=""
 slater_gentoo_prefix=""
 slater_dependency_prefix=""
-slater_onnx_root=""
 
 apply_slater_build_profile() {
   case "${build_profile}" in
@@ -286,12 +285,10 @@ apply_slater_build_profile() {
 
   slater_gentoo_prefix="/export/home/lxyan/gentoo"
   slater_dependency_prefix="/export/home/xiatao/miniconda3/envs/xmvb-dev"
-  slater_onnx_root="${repo_root}/third_party/onnxruntime-linux-x64-1.20.1"
 
   if [[ ! -x "${slater_gentoo_prefix}/usr/bin/gcc" ||
         ! -x "${slater_gentoo_prefix}/usr/bin/g++" ||
-        ! -d "${slater_dependency_prefix}" ||
-        ! -d "${slater_onnx_root}" ]]; then
+        ! -d "${slater_dependency_prefix}" ]]; then
     return 0
   fi
 
@@ -306,8 +303,6 @@ apply_slater_build_profile() {
   append_default_cmake_arg LIBXC_ROOT_DIR "${slater_dependency_prefix}"
   append_default_cmake_arg CINT_ROOT_DIR "${slater_dependency_prefix}"
   append_default_cmake_arg EIGEN3_ROOT_DIR "${slater_dependency_prefix}"
-  append_default_cmake_arg ONNXRUNTIME_ROOT_DIR "${slater_onnx_root}"
-  append_default_cmake_arg XMVB_CPP_ENABLE_ONNX_RUNTIME ON
 
   slater_profile_enabled="1"
 }
@@ -319,7 +314,6 @@ if [[ -n "${slater_profile_enabled}" ]]; then
   echo "  repo_root=${repo_root}"
   echo "  gentoo_prefix=${slater_gentoo_prefix}"
   echo "  dependency_prefix=${slater_dependency_prefix}"
-  echo "  onnxruntime_root=${slater_onnx_root}"
 fi
 
 if [[ -z "${selected_cc}" || -z "${selected_cxx}" ]]; then
