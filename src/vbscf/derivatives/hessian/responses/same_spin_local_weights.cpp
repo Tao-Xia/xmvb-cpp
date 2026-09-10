@@ -36,7 +36,7 @@ SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matric
 
   SameSpinLocalResponseWeightMatrices weight_matrices;
   const SingleChannelSameSpinWeightMatrices delta_hamiltonian_weights =
-      build_same_spin_weight_matrices_from_partner_kernels(
+      build_dense_same_spin_weight_matrices_from_partner_kernels(
           selected_states,
           alpha_directional_scalars.delta_overlap_determinant_matrix,
           beta_directional_scalars.delta_overlap_determinant_matrix,
@@ -48,7 +48,7 @@ SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matric
       std::move(delta_hamiltonian_weights.beta_weight_matrix);
 
   const SingleChannelSameSpinWeightMatrices delta_overlap_weights =
-      build_same_spin_weight_matrices_from_partner_kernels(
+      build_dense_same_spin_weight_matrices_from_partner_kernels(
           selected_states,
           alpha_directional_scalars.delta_overlap_determinant_matrix,
           beta_directional_scalars.delta_overlap_determinant_matrix,
@@ -60,7 +60,7 @@ SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matric
       std::move(delta_overlap_weights.beta_weight_matrix);
 
   const SingleChannelSameSpinWeightMatrices delta_partner_weights =
-      build_same_spin_weight_matrices_from_partner_kernels(
+      build_dense_same_spin_weight_matrices_from_partner_kernels(
           selected_states,
           alpha_directional_scalars.delta_regular_total_hamiltonian_matrix +
               alpha_directional_scalars.delta_singular_total_hamiltonian_matrix,

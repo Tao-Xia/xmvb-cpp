@@ -89,7 +89,7 @@ SameSpinPairScalarMatrices build_pair_scalar_matrices(
     int n_unique_determinants);
 
 SingleChannelSameSpinWeightMatrices
-build_same_spin_weight_matrices_from_partner_kernels(
+build_dense_same_spin_weight_matrices_from_partner_kernels(
     const SelectedStateDeterminantMatrices& selected_states,
     const Eigen::MatrixXd& alpha_partner_kernel_matrix,
     const Eigen::MatrixXd& beta_partner_kernel_matrix,
