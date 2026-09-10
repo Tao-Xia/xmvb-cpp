@@ -1,27 +1,23 @@
-#include "cli/report.hpp"
+#include "output/text/report.hpp"
+#include "output/text/sections.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <chrono>
 #include <ctime>
 #include <cstdlib>
-#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
-#include <unistd.h>
 
 #ifdef _OPENMP
 #include <omp.h>
 #endif
 
-namespace xmvb::cli {
-
-namespace fs = std::filesystem;
+namespace xmvb::output {
 
 bool core_backend_reports_projected_gradient(
     xmvb::vb::VbScfOptimizerBackend backend) {
@@ -49,25 +45,7 @@ const char* gradient_tolerance_metric_name(
   return "unknown";
 }
 
-constexpr int kLogRuleWidth = 88;
 constexpr int kLogLabelWidth = 34;
-
-const char* env_value_or_unset(const char* variable_name) {
-  const char* value = std::getenv(variable_name);
-  return (value == nullptr || value[0] == '\0') ? "<unset>" : value;
-}
-
-// Centralize terminal formatting so the standalone driver prints a stable
-// run log instead of a long unstructured key/value dump.
-void print_log_rule(char fill = '=') {
-  std::cout << std::string(kLogRuleWidth, fill) << '\n';
-}
-
-void print_log_section_title(const std::string& title) {
-  print_log_rule('=');
-  std::cout << title << '\n';
-  print_log_rule('=');
-}
 
 void print_log_subsection_title(const std::string& title) {
   std::cout << '\n' << title << '\n'
@@ -124,17 +102,6 @@ std::string format_seconds(
   return stream.str();
 }
 
-std::string format_core_hours(
-    double wall_time_seconds,
-    int n_threads) {
-  const int effective_threads = std::max(1, n_threads);
-  const double core_hours =
-      wall_time_seconds * static_cast<double>(effective_threads) / 3600.0;
-  std::ostringstream stream;
-  stream << std::fixed << std::setprecision(6) << core_hours << " core-h";
-  return stream.str();
-}
-
 std::string format_timestamp(
     const std::chrono::system_clock::time_point& time_point) {
   const std::time_t raw_time = std::chrono::system_clock::to_time_t(time_point);
@@ -148,31 +115,6 @@ std::string format_timestamp(
           &local_time) == 0) {
     return "<unavailable>";
   }
-  return buffer.data();
-}
-
-std::string simplify_basis_name(const std::string& basis_name) {
-  if (basis_name.empty()) {
-    return "<unknown>";
-  }
-  fs::path basis_path(basis_name);
-  std::string leaf_name = basis_path.filename().string();
-  if (leaf_name.empty()) {
-    leaf_name = basis_name;
-  }
-  if (leaf_name.size() > 4 &&
-      leaf_name.compare(leaf_name.size() - 4, 4, ".gbs") == 0) {
-    leaf_name.erase(leaf_name.size() - 4);
-  }
-  return leaf_name;
-}
-
-std::string get_host_name() {
-  std::array<char, 256> buffer{};
-  if (gethostname(buffer.data(), buffer.size()) != 0) {
-    return "<unknown>";
-  }
-  buffer.back() = '\0';
   return buffer.data();
 }
 
@@ -196,10 +138,6 @@ int allocated_cpu_thread_count() {
     }
   }
   return openmp_max_thread_count();
-}
-
-std::string convergence_status_name(bool converged) {
-  return converged ? "converged" : "not converged";
 }
 
 std::string exact_ctx_physical_chart_name(
@@ -249,94 +187,21 @@ void print_exact_ctx_policy_summary(
 }
 
 void print_header(
-    const Options& command,
+    const std::string& input_path,
+    const xmvb::vb::VbScfOptimizerOptions& options,
     const xmvb::vb::VbScfInputLoadResult& load_result,
     const std::chrono::system_clock::time_point& start_time) {
-  const std::string& input_path = command.input_path;
-  const auto& options = command.optimizer;
-  const fs::path absolute_input_path = fs::absolute(fs::path(input_path));
-  const auto& orbital_input = load_result.input.orbital_preparation_input;
-  const std::string basis_set_name = simplify_basis_name(load_result.basis_name);
-  const int expanded_determinant_count =
-      static_cast<int>(load_result.input.structure_data.alpha_det.size());
-
-  print_log_section_title("XMVB-CPP VBSCF Run");
-
-  print_log_subsection_title("Run Setup");
-  print_log_field("Input file", absolute_input_path.string());
-  print_log_field("Start time", format_timestamp(start_time));
-  print_log_field("SCF algorithm", "VBSCF");
-  print_log_field(
-      "Optimizer backend",
-      xmvb::vb::vbscf_optimizer_backend_name(options.backend));
-  if (options.backend ==
-      xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    print_log_field(
-        "HVP mode",
-        xmvb::vb::nonredundant_truncated_newton_hvp_mode_name(
-            options.nonredundant_truncated_newton_hvp_mode));
-  }
-  print_log_field("Basis set", basis_set_name);
-  if (!load_result.basis_name.empty() && load_result.basis_name != basis_set_name) {
-    print_log_field("Basis file", load_result.basis_name);
-  }
-  print_log_field(
-      "Two-electron mode",
-      xmvb::vb::standard_two_electron_mode_name(load_result.standard_two_electron_mode));
-  print_log_field(
-      "Molden output",
-      load_result.request_molden_output ? "requested" : "not requested");
-
-  print_log_subsection_title("System Summary");
-  print_log_field("Atoms", std::to_string(load_result.static_molecule_metadata.n_atoms));
-  print_log_field("Shells", std::to_string(load_result.static_molecule_metadata.n_shells));
-  print_log_field("Basis functions", std::to_string(orbital_input.n_basis_functions));
-  print_log_field("Orbitals", std::to_string(orbital_input.n_orbitals));
-  print_log_field("Active orbitals", std::to_string(orbital_input.n_active_orbitals));
-  print_log_field(
-      "Electrons (total/active)",
-      std::to_string(orbital_input.n_total_electrons) + " / " +
-          std::to_string(orbital_input.n_active_electrons));
-  print_log_field(
-      "Spin multiplicity",
-      std::to_string(load_result.raw_structure_data.spin_multiplicity));
-  print_log_field(
-      "Raw structures (source/selected)",
-      std::to_string(load_result.source_raw_structure_count) + " / " +
-          std::to_string(load_result.raw_structure_data.n_structures));
-  print_log_field(
-      "Expanded determinants",
-      expanded_determinant_count > 0 ? std::to_string(expanded_determinant_count) : "deferred");
-
-  print_log_subsection_title("Execution Resources");
-  print_log_field("Host", get_host_name());
-  print_log_field("Allocated CPU threads", std::to_string(allocated_cpu_thread_count()));
-  print_log_field("OpenMP max threads", std::to_string(openmp_max_thread_count()));
-  print_log_field("SLURM_CPUS_PER_TASK", env_value_or_unset("SLURM_CPUS_PER_TASK"));
-  print_log_field("OMP_NUM_THREADS", env_value_or_unset("OMP_NUM_THREADS"));
-  print_log_field("OPENBLAS_NUM_THREADS", env_value_or_unset("OPENBLAS_NUM_THREADS"));
-  print_log_field("MKL_NUM_THREADS", env_value_or_unset("MKL_NUM_THREADS"));
-
-  print_log_subsection_title("Convergence Targets");
-  print_log_field(
-      "Gradient metric",
-      gradient_tolerance_metric_name(options.backend));
-  print_log_field(
-      "Convergence threshold",
-      format_convergence_threshold_summary(
-          options.energy_tolerance,
-          options.gradient_tolerance));
-  print_log_field("Max iterations", std::to_string(options.max_iterations));
-  if (options.backend ==
-      xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
-    print_log_field(
-        "Max CG iterations",
-        options.nonredundant_truncated_newton_max_cg_iterations > 0
-            ? std::to_string(options.nonredundant_truncated_newton_max_cg_iterations)
-            : "32 (dimension bounded)");
-  }
-
-  print_exact_ctx_policy_summary(options, load_result.input);
+  print_program_preamble(
+      std::cout,
+      input_path,
+      start_time,
+      allocated_cpu_thread_count());
+  print_input_sections(
+      std::cout,
+      input_path,
+      load_result,
+      xmvb::vb::vbscf_optimizer_backend_name(options.backend),
+      options.max_iterations);
 }
 
 std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
@@ -358,61 +223,28 @@ combine_callbacks(
 
 std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
 iteration_logger() {
-  // Keep the initial accepted snapshot only as
-  // the energy reference for `DE`, then print one fixed-width row per accepted
-  // optimization step.
   struct LoggerState {
     bool has_reference_energy = false;
     double previous_total_energy = 0.0;
-    std::chrono::steady_clock::time_point previous_iteration_time =
-        std::chrono::steady_clock::now();
   };
 
   auto state = std::make_shared<LoggerState>();
-  std::cout << '\n';
-  print_log_subsection_title("SCF Iteration History");
-  std::cout << "  "
-            << std::setw(6) << "Iter"
-            << std::setw(23) << "Total Energy"
-            << std::setw(18) << "Delta E"
-            << std::setw(18) << "Grad_inf"
-            << std::setw(18) << "Grad_l2"
-            << std::setw(14) << "Accepted(s)"
-            << '\n';
-  print_log_rule('-');
+  std::cout << "\n                ITER           ENERGY               DE"
+               "              GNORM\n";
   std::cout.flush();
 
   return [state](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
-    const auto iteration_time = std::chrono::steady_clock::now();
-    const double elapsed_seconds =
-        std::chrono::duration<double>(iteration_time - state->previous_iteration_time)
-            .count();
-    state->previous_iteration_time = iteration_time;
-
-    if (snapshot.accepted_iteration_index == 0) {
-      state->previous_total_energy = snapshot.total_energy;
-      state->has_reference_energy = true;
-      return;
-    }
-
-    if (!state->has_reference_energy) {
-      state->previous_total_energy = snapshot.total_energy;
-      state->has_reference_energy = true;
-    }
-    const double delta_energy = snapshot.total_energy - state->previous_total_energy;
+    const double delta_energy = state->has_reference_energy
+        ? snapshot.total_energy - state->previous_total_energy
+        : snapshot.total_energy;
     std::ostringstream stream;
-    stream << "  "
-           << std::setw(4) << snapshot.accepted_iteration_index
-           << std::setw(23) << std::fixed << std::setprecision(12)
+    stream << std::setw(19) << snapshot.accepted_iteration_index
+           << std::setw(22) << std::fixed << std::setprecision(10)
            << snapshot.total_energy
-           << std::setw(18) << std::scientific << std::setprecision(8)
+           << std::setw(18) << std::fixed << std::setprecision(10)
            << delta_energy
-           << std::setw(18) << std::scientific << std::setprecision(8)
-           << snapshot.sparse_orbital_energy_gradient_inf_norm
-           << std::setw(18) << std::scientific << std::setprecision(8)
+           << std::setw(18) << std::fixed << std::setprecision(10)
            << snapshot.sparse_orbital_energy_gradient_l2_norm
-           << std::setw(14) << std::fixed << std::setprecision(6)
-           << elapsed_seconds
            << '\n';
     std::cout << stream.str();
     std::cout.flush();
@@ -423,7 +255,7 @@ iteration_logger() {
 
 
 void print_summary(
-    const Options& command,
+    const vb::VbScfOptimizerOptions& options,
     const vb::VbScfInputLoadResult& load_result,
     const vb::VbScfOptimizerResult& result,
     const std::optional<std::filesystem::path>& trace_sample_directory,
@@ -431,7 +263,6 @@ void print_summary(
     const std::chrono::system_clock::time_point& command_start_time,
     const std::chrono::steady_clock::time_point& command_start_steady_time) {
   const auto& input = load_result.input;
-  const auto& options = command.optimizer;
   const bool command_converged = result.converged;
   const double initial_electronic_energy =
       result.initial_total_energy - load_result.nuclear_repulsion_energy;
@@ -453,41 +284,34 @@ void print_summary(
   const double optimizer_wall_time_seconds = result.total_wall_time_seconds;
   const int effective_thread_count = allocated_cpu_thread_count();
 
-  print_log_subsection_title("SCF Summary");
-  print_log_field("Status", convergence_status_name(command_converged));
+  std::cout << "\n"
+            << (command_converged ? "                        VBSCF converged in "
+                                  : "                    VBSCF did not converge in ")
+            << std::setw(5) << result.n_iterations << " iterations\n\n"
+            << "                  Total Energy:   "
+            << std::fixed << std::setprecision(10) << result.final_total_energy
+            << '\n';
+  print_final_state_sections(std::cout, load_result, result);
+
+  std::cout << "\n\n                 ===============================================\n"
+            << "                       XMVB-CPP RUN DIAGNOSTICS\n"
+            << "                 ===============================================\n";
   print_log_field("Termination reason", result.termination_reason);
-  print_log_field("Iterations", std::to_string(result.n_iterations));
   print_log_field("Start time", format_timestamp(command_start_time));
   print_log_field("Finish time", format_timestamp(command_finish_time));
-  print_log_field(
-      "Input preparation wall time",
-      format_seconds(load_result.total_seconds));
-  print_log_field(
-      "SCF iteration wall time",
-      format_seconds(optimizer_wall_time_seconds));
-  print_log_field(
-      "End-to-end wall time",
-      format_seconds(total_job_wall_time_seconds));
-  print_log_field(
-      "Estimated OpenMP core-hours",
-      format_core_hours(total_job_wall_time_seconds, effective_thread_count));
-  print_log_field(
-      "Raw-structure selection",
-      xmvb::vb::raw_structure_selection_mode_name(load_result.raw_structure_selection));
+  print_log_field("CPU threads", std::to_string(effective_thread_count));
   if (trace_sample_directory.has_value()) {
     print_log_field("Trace sample directory", trace_sample_directory->string());
   }
   if (molden_output_path.has_value()) {
     print_log_field("Molden output", molden_output_path->string());
   }
+  print_log_field("Gradient metric", gradient_tolerance_metric_name(options.backend));
   print_log_field(
-      "Selected raw structures",
-      std::to_string(load_result.raw_structure_data.n_structures));
-  print_log_field(
-      "Expanded determinants",
-      std::to_string(input.structure_data.alpha_det.size()));
-
-  print_log_subsection_title("Energy and Gradient");
+      "Convergence threshold",
+      format_convergence_threshold_summary(
+          options.energy_tolerance,
+          options.gradient_tolerance));
   print_log_field(
       "Nuclear repulsion energy",
       format_fixed_double(load_result.nuclear_repulsion_energy, 12));
@@ -551,6 +375,7 @@ void print_summary(
         "Matrix-free HVP wall time",
         format_seconds(result.matrix_free_hvp_wall_time_seconds));
   }
+  print_exact_ctx_policy_summary(options, input);
   print_log_subsection_title("Timing Breakdown (Wall Time)");
   print_log_field(
       "AO integral provider wall time",
@@ -576,8 +401,10 @@ void print_summary(
   print_log_field(
       "End-to-end wall time",
       format_seconds(total_job_wall_time_seconds));
-  print_log_rule('=');
+  std::cout << "\n        Cpu time for the job: "
+            << std::fixed << std::setprecision(3)
+            << total_job_wall_time_seconds << " seconds.\n";
 
 }
 
-}  // namespace xmvb::cli
+}  // namespace xmvb::output

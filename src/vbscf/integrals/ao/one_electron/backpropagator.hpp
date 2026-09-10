@@ -75,7 +75,7 @@ public:
   /**
    * @brief Backpropagates through validated AO integral input caches.
    *
-   * This overload is intended for the main runtime path after loader-side AO
+   * This overload is intended for the main evaluation path after loader-side AO
    * index validation has already succeeded.
    */
   AoEffectiveOneElectronBackpropagationResult backpropagate(

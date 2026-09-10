@@ -44,10 +44,9 @@ struct OrbitalPreparationInput {
   /**
    * @brief input orbital-type selector `orbtyp`.
    *
-   * The value follows the C runtime constants in `vb/vb.h` (`HAO_TYP`,
-   * `BDO_TYP`, `OEO_TYP`, ...). The C++ loader uses this to distinguish the
-   * physical orbital manifold from the support layout carried by a particular
-   * guess file.
+   * The value identifies the HAO, BDO, or OEO representation. The loader uses
+   * it to distinguish the physical orbital manifold from the support layout
+   * carried by a particular guess file.
    */
   int orbital_type = 0;
 
@@ -113,7 +112,7 @@ struct OrbitalPreparationInput {
    * @brief Number of orbital blocks supplied by the input deck.
    *
    * When present, this should be preferred over inferred blocks so that
-   * block-wise guesses match the runtime layout.
+   * block-wise guesses match the stored sparse layout.
    */
   std::size_t n_blocks = 0;
 

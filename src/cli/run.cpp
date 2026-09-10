@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-#include "cli/report.hpp"
+#include "output/text/report.hpp"
 #include "output/trace/binary.hpp"
 #include "output/molden/writer.hpp"
 #include "output/trace/accepted_iteration.hpp"
@@ -39,16 +39,17 @@ int run(Options command_line) {
     options.max_iterations = load_result.requested_scf_max_iterations;
   }
 
-  print_header(
-      command_line,
+  xmvb::output::print_header(
+      input_path,
+      options,
       load_result,
       command_start_time);
 
   std::shared_ptr<xmvb::output::AcceptedIterationTraceWriter> trace_writer;
   if (options.verbose) {
-    options.accepted_iteration_callback = combine_callbacks(
+    options.accepted_iteration_callback = xmvb::output::combine_callbacks(
         std::move(options.accepted_iteration_callback),
-        iteration_logger());
+        xmvb::output::iteration_logger());
   }
   if (!dump_trace_dir.empty()) {
     trace_writer = std::make_shared<xmvb::output::AcceptedIterationTraceWriter>(
@@ -59,7 +60,7 @@ int run(Options command_line) {
     options.retain_accepted_iteration_trace = false;
     options.accepted_iteration_callback_requires_reference_gradient = true;
     options.accepted_iteration_callback_requires_full_snapshot = true;
-    options.accepted_iteration_callback = combine_callbacks(
+    options.accepted_iteration_callback = xmvb::output::combine_callbacks(
         std::move(options.accepted_iteration_callback),
         [trace_writer](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
           trace_writer->write_accepted_iteration(snapshot);
@@ -91,8 +92,8 @@ int run(Options command_line) {
   if (trace_writer != nullptr) {
     trace_sample_directory = trace_writer->sample_directory();
   }
-  print_summary(
-      command_line,
+  xmvb::output::print_summary(
+      options,
       load_result,
       result,
       trace_sample_directory,

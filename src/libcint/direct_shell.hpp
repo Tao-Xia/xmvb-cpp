@@ -16,6 +16,18 @@ struct LibcintShellBlock {
   std::vector<double> values;
 };
 
+struct LibcintVectorShellBlock {
+  int left_shell = 0;
+  int right_shell = 0;
+  int left_ao_offset = 0;
+  int right_ao_offset = 0;
+  int left_ao_count = 0;
+  int right_ao_count = 0;
+
+  /** Component-major Cartesian-vector integral values `(x, y, z)`. */
+  std::vector<double> values;
+};
+
 struct LibcintShellQuartet {
   int shell_i = 0;
   int shell_j = 0;
@@ -78,6 +90,14 @@ public:
       int right_shell) const;
 
   LibcintShellBlock evaluate_core_hamiltonian_shell_pair(
+      int left_shell,
+      int right_shell) const;
+
+  LibcintShellBlock evaluate_kinetic_shell_pair(
+      int left_shell,
+      int right_shell) const;
+
+  LibcintVectorShellBlock evaluate_position_shell_pair(
       int left_shell,
       int right_shell) const;
 

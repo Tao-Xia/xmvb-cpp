@@ -49,7 +49,7 @@ struct VbScfInput {
   LibcintInput libcint_input;
 
   /**
-   * @brief Optional explicit RI auxiliary basis parsed from the input/runtime.
+   * @brief Optional explicit RI auxiliary basis parsed from the input deck.
    *
    * When present, the RI path uses this basis. Otherwise the RI provider
    * generates the auxiliary basis defined by its numerical contract.
@@ -74,7 +74,7 @@ struct VbScfInput {
   PfTwoElectronMode pf_two_electron_mode = PfTwoElectronMode::Auto;
 
   /**
-   * @brief Runtime-injected backend for lazily building AO-side RI factors.
+   * @brief Provider for lazily building AO-side RI factors.
    */
   std::shared_ptr<const RiAoFactorizationProvider> ri_factorization_provider;
 

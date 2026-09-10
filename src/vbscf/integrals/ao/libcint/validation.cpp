@@ -75,7 +75,7 @@ std::vector<double> build_cartesian_ao_normalization(const LibcintInput& input) 
       0.0);
 
   // The raw libcint Cartesian shells are not unit normalized shell-by-shell in
-  // the standalone runtime snapshot.  Recomputing the overlap diagonal here
+  // the stored Libcint input. Recomputing the overlap diagonal here
   // gives the exact per-AO scale factor needed to match the normalized AO
   // overlap matrix used by the VB orbital linear algebra.
   for (int shell_index = 0; shell_index < input.n_shells; ++shell_index) {

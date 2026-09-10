@@ -9,7 +9,7 @@ namespace xmvb::vb {
 /**
  * @brief Validates the raw libcint atom/basis/environment tables.
  *
- * The standalone runtime snapshots `atm`, `bas`, `basidx`, and `env` directly
+ * The input layer stores `atm`, `bas`, `basidx`, and `env` directly
  * from the mixed C/C++ initialization layer. Downstream C++ kernels rely on
  * these buffers having the exact libcint slot counts and at least one atom and
  * one shell.
@@ -19,7 +19,7 @@ void validate_libcint_input_shape(const LibcintInput& input);
 /**
  * @brief Returns the global AO start offset of one shell.
  *
- * `basidx` stores `(ao_offset, ao_count)` pairs in the historical runtime
+ * `basidx` stores `(ao_offset, ao_count)` pairs in the Libcint shell
  * layout, so this helper centralizes the indexing convention instead of
  * open-coding `2 * shell_index` throughout the codebase.
  */

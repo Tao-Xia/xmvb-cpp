@@ -208,6 +208,14 @@ struct VbScfOptimizerResult {
   VbScfResult scf_result;
 
   /**
+   * @brief Final spin-summed AO one-particle density matrix.
+   *
+   * This contravariant AO density satisfies `trace(P * S) = N_e` and is kept
+   * for natural-orbital and population analyses in the output layer.
+   */
+  Eigen::MatrixXd one_particle_density_matrix;
+
+  /**
    * @brief Optimized matrix-builder input, including orbital parameters.
    */
   VbScfInput optimized_input;

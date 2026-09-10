@@ -32,6 +32,14 @@ FINT cint1e_nuc_cart(
     FINT* bas,
     FINT nbas,
     double* env);
+FINT cint1e_r_cart(
+    double* buf,
+    FINT* shls,
+    FINT* atm,
+    FINT natm,
+    FINT* bas,
+    FINT nbas,
+    double* env);
 FINT cint2c2e_cart(
     double* buf,
     FINT* shls,
@@ -75,6 +83,7 @@ namespace {
 enum class OneElectronIntegralKind {
   Overlap,
   CoreHamiltonian,
+  Kinetic,
 };
 
 void validate_shared_atom_tables(
@@ -279,6 +288,25 @@ LibcintShellBlock LibcintDirectShellEvaluator::evaluate_one_electron_shell_pair(
       }
       break;
     }
+    case OneElectronIntegralKind::Kinetic:
+      status = cint1e_kin_cart(
+          buffer.data(),
+          shell_pair,
+          const_cast<int*>(input_.atm.data()),
+          input_.n_atoms,
+          const_cast<int*>(input_.bas.data()),
+          input_.n_shells,
+          const_cast<double*>(input_.env.data()));
+      if (status != 0) {
+        for (std::size_t index = 0; index < buffer.size(); ++index) {
+          const int row = static_cast<int>(index % left_ao_count);
+          const int column = static_cast<int>(index / left_ao_count);
+          buffer[index] *=
+              ao_normalization_[left_ao_offset + row] *
+              ao_normalization_[right_ao_offset + column];
+        }
+      }
+      break;
   }
 
   if (status == 0) {
@@ -312,6 +340,59 @@ LibcintShellBlock LibcintDirectShellEvaluator::evaluate_core_hamiltonian_shell_p
       left_shell,
       right_shell,
       static_cast<int>(OneElectronIntegralKind::CoreHamiltonian));
+}
+
+LibcintShellBlock LibcintDirectShellEvaluator::evaluate_kinetic_shell_pair(
+    int left_shell,
+    int right_shell) const {
+  return evaluate_one_electron_shell_pair(
+      left_shell,
+      right_shell,
+      static_cast<int>(OneElectronIntegralKind::Kinetic));
+}
+
+LibcintVectorShellBlock LibcintDirectShellEvaluator::evaluate_position_shell_pair(
+    int left_shell,
+    int right_shell) const {
+  validate_shell_index(left_shell);
+  validate_shell_index(right_shell);
+
+  const int left_ao_offset = shell_ao_offset(input_, left_shell);
+  const int right_ao_offset = shell_ao_offset(input_, right_shell);
+  const int left_ao_count = shell_ao_count(input_, left_shell);
+  const int right_ao_count = shell_ao_count(input_, right_shell);
+  const std::size_t component_size = left_ao_count * right_ao_count;
+  std::vector<double> buffer(3 * component_size, 0.0);
+  FINT shell_pair[2] = {left_shell, right_shell};
+  const FINT status = cint1e_r_cart(
+      buffer.data(),
+      shell_pair,
+      const_cast<int*>(input_.atm.data()),
+      input_.n_atoms,
+      const_cast<int*>(input_.bas.data()),
+      input_.n_shells,
+      const_cast<double*>(input_.env.data()));
+  if (status != 0) {
+    for (int component = 0; component < 3; ++component) {
+      for (std::size_t index = 0; index < component_size; ++index) {
+        const int row = static_cast<int>(index % left_ao_count);
+        const int column = static_cast<int>(index / left_ao_count);
+        buffer[component * component_size + index] *=
+            ao_normalization_[left_ao_offset + row] *
+            ao_normalization_[right_ao_offset + column];
+      }
+    }
+  }
+
+  LibcintVectorShellBlock result;
+  result.left_shell = left_shell;
+  result.right_shell = right_shell;
+  result.left_ao_offset = left_ao_offset;
+  result.right_ao_offset = right_ao_offset;
+  result.left_ao_count = left_ao_count;
+  result.right_ao_count = right_ao_count;
+  result.values = std::move(buffer);
+  return result;
 }
 
 LibcintShellQuartet LibcintDirectShellEvaluator::evaluate_two_electron_shell_quartet(

@@ -61,6 +61,8 @@ set(XMVB_INPUT_SOURCES
 
 set(XMVB_OUTPUT_SOURCES
   output/molden/writer.cpp
+  output/text/report.cpp
+  output/text/sections.cpp
   output/trace/accepted_iteration.cpp
 )
 
@@ -186,7 +188,6 @@ endfunction()
 add_executable(xmvb
   cli/main.cpp
   cli/options.cpp
-  cli/report.cpp
   cli/run.cpp)
 set_target_properties(xmvb PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
 target_link_libraries(xmvb
@@ -220,6 +221,22 @@ add_custom_target(
   xmvb_assets
   DEPENDS ${XMVB_ASSET_STAMP})
 add_dependencies(xmvb xmvb_assets)
+
+if (BUILD_TESTING)
+  add_test(
+    NAME text_report_f2
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
+      -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      -P ${CMAKE_SOURCE_DIR}/tests/output/check_f2_report.cmake)
+  set_tests_properties(
+    text_report_f2
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+endif()
 
 if (XMVB_BUILD_DEV_TARGETS)
   include(tools/targets.cmake)

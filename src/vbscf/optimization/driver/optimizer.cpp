@@ -15,6 +15,7 @@
 #include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
+#include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/backends/lbfgs.hpp"
 #include "vbscf/optimization/backends/projected_gradient.hpp"
@@ -23,6 +24,49 @@
 #include "vbscf/optimization/driver/checks.hpp"
 
 namespace xmvb::vb {
+
+namespace {
+
+Eigen::MatrixXd build_one_particle_density_matrix(
+    const OrbitalGradientResult& gradient_result,
+    const OrbitalPreparationInput& orbital_input) {
+  const auto& orbital_result = gradient_result.orbital_preparation_result;
+  const auto& second_order_context = gradient_result.second_order_context;
+  if (second_order_context == nullptr) {
+    throw std::invalid_argument(
+        "final one-particle density requires an accepted-point context");
+  }
+
+  const int n_bf = static_cast<int>(orbital_input.n_basis_functions);
+  const int n_active = static_cast<int>(orbital_input.n_active_orbitals);
+  const int n_inactive =
+      static_cast<int>(
+          (orbital_input.n_total_electrons - orbital_input.n_active_electrons) /
+          2);
+  if (orbital_result.auxiliary_orbital_matrix.rows() != n_bf ||
+      orbital_result.auxiliary_orbital_matrix.cols() != n_bf ||
+      orbital_result.inactive_density_matrix.rows() != n_bf ||
+      orbital_result.inactive_density_matrix.cols() != n_bf ||
+      second_order_context->active_one_electron_gradient.size() !=
+          static_cast<std::size_t>(n_active * n_active)) {
+    throw std::invalid_argument(
+        "final one-particle density inputs have inconsistent dimensions");
+  }
+
+  const Eigen::Map<const Eigen::MatrixXd> active_density_adjoint(
+      second_order_context->active_one_electron_gradient.data(),
+      n_active,
+      n_active);
+  const auto active_orbitals =
+      orbital_result.auxiliary_orbital_matrix.middleCols(n_inactive, n_active);
+  Eigen::MatrixXd density = 2.0 * orbital_result.inactive_density_matrix;
+  density.noalias() +=
+      active_orbitals * active_density_adjoint.transpose() *
+      active_orbitals.transpose();
+  return 0.5 * (density + density.transpose());
+}
+
+}  // namespace
 
 using optimizer_detail::build_orbital_chart;
 using optimizer_detail::record_accepted_iteration_snapshot;
@@ -227,6 +271,9 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
         final_projection.reduced_gradient.norm();
   }
   result.optimized_input = objective.last_input();
+  result.one_particle_density_matrix = build_one_particle_density_matrix(
+      objective.last_gradient_result(),
+      result.optimized_input.orbital_preparation_input);
   Eigen::MatrixXd final_normalized_orbital_matrix =
       objective.last_gradient_result()
           .orbital_preparation_result

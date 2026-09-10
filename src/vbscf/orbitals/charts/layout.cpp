@@ -148,7 +148,7 @@ SparseParameterLayout::SparseParameterLayout(
 
   differentiable_parameter_indices_.reserve(
       total_slot_count_);
-  // The runtime stores each orbital in a fixed-width row of length
+  // Each orbital occupies a fixed-width row of length
   // `n_basis_functions`, but only the leading explicit coefficients are
   // differentiable. Build a stable dense view once so all optimizers use the
   // same packing order.

@@ -92,7 +92,7 @@ public:
   /**
    * @brief Evaluates `G11` and `F11` from validated AO integral input caches.
    *
-   * This overload is intended for the normal C++ runtime path, where the AO
+   * This overload is intended for the normal evaluation path, where the AO
    * integral index table has already been validated during input loading.
    */
   AoEffectiveOneElectronResult build(
