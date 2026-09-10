@@ -9,7 +9,7 @@
 
 #include "core/linear_algebra/generalized_eigensolver.hpp"
 #include "runtime/input/loading/loader.hpp"
-#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 
 namespace {
 

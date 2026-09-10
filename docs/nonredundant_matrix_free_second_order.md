@@ -209,10 +209,10 @@ y_{\mathrm{nr}}.
 
 从当前代码结构看，最自然的切口是：
 
-- `src/vbscf/derivatives/gradient/active_space_gradient_evaluator.cpp`
+- `src/vbscf/derivatives/gradient/active_space/evaluator.cpp`
   - `build_active_space_gradient_forward_context(...)`
   - `accumulate_active_space_gradient(...)`
-- `src/vbscf/derivatives/gradient/orbital_gradient_evaluator.cpp`
+- `src/vbscf/derivatives/gradient/orbital/evaluator.cpp`
   - active-space layer backprop 到 AO / orbital 参数层
 - `src/vbscf/optimization/driver/optimizer.cpp`
   - 现有 `MatrixFreeReducedHvpOperator`

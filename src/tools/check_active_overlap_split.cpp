@@ -15,7 +15,7 @@
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/determinants/spin_pair_contractions.hpp"
 #include "vbscf/structures/expansion/types.hpp"
-#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 
 namespace {
 

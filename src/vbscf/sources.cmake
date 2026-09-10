@@ -61,9 +61,9 @@ set(XMVB_VBSCF_ACTIVE_INTEGRAL_SOURCES
 )
 
 set(XMVB_VBSCF_DERIVATIVE_SOURCES
-  vbscf/derivatives/gradient/active_space_gradient_helpers.cpp
-  vbscf/derivatives/gradient/active_space_gradient_evaluator.cpp
-  vbscf/derivatives/gradient/orbital_gradient_evaluator.cpp
+  vbscf/derivatives/gradient/active_space/helpers.cpp
+  vbscf/derivatives/gradient/active_space/evaluator.cpp
+  vbscf/derivatives/gradient/orbital/evaluator.cpp
   vbscf/derivatives/hessian/exact/apply.cpp
   vbscf/derivatives/hessian/exact/batch.cpp
   vbscf/derivatives/hessian/exact/ao_one_electron.cpp

@@ -1,4 +1,4 @@
-#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -26,7 +26,7 @@
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
-#include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
+#include "vbscf/derivatives/gradient/active_space/helpers.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"

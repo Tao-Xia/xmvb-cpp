@@ -14,8 +14,8 @@
 #include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
-#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vbscf/derivatives/gradient/orbital_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/workflow/vbscf_evaluator.hpp"
 
 namespace {

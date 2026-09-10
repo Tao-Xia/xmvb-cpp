@@ -10,7 +10,7 @@
 #include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/builder.hpp"
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
-#include "vbscf/derivatives/gradient/active_space_gradient_result.hpp"
+#include "vbscf/derivatives/gradient/active_space/result.hpp"
 
 
 namespace xmvb::vb {

@@ -69,7 +69,9 @@ vbscf/
       subspace/         Linearly independent subspace selection
       union_graph/      Union-graph screening and rank prediction
   derivatives/
-    gradient/            Gradient evaluation and chart pullback
+    gradient/
+      active_space/      Active integral and structure-state gradient
+      orbital/           Orbital gradient and chart pullback
     hessian/
       context/           Accepted-point state and reusable response caches
       exact/             Exact matrix-free HVP orchestration

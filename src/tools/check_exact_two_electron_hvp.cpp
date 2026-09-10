@@ -8,7 +8,7 @@
 
 #include "runtime/input/loading/loader.hpp"
 #include "vbscf/core/eigen_storage.hpp"
-#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 #include "vbscf/integrals/active/two_electron/response/backpropagator.hpp"
 #include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
 

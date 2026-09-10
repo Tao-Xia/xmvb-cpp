@@ -21,7 +21,7 @@
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
 #include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
 #include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
-#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 
 namespace {
 

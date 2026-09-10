@@ -10,8 +10,8 @@
 #include "vbscf/integrals/active/two_electron/response/backpropagator.hpp"
 #include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
-#include "vbscf/derivatives/gradient/active_space_gradient_evaluator.hpp"
-#include "vbscf/derivatives/gradient/orbital_gradient_result.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital/result.hpp"
 
 namespace xmvb::vb {
 

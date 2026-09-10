@@ -1,4 +1,4 @@
-#include "vbscf/derivatives/gradient/active_space_gradient_helpers.hpp"
+#include "vbscf/derivatives/gradient/active_space/helpers.hpp"
 
 #include <stdexcept>
 
