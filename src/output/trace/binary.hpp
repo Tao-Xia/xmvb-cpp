@@ -5,7 +5,7 @@
 #include <fstream>
 #include <stdexcept>
 
-namespace xmvb::runtime {
+namespace xmvb::output {
 
 template <typename T>
 void write_binary_buffer(
@@ -36,4 +36,4 @@ void write_binary_container(
   write_binary_buffer<ValueType>(path, values.data(), values.size());
 }
 
-}  // namespace xmvb::runtime
+}  // namespace xmvb::output

@@ -9,7 +9,7 @@
 #include "input/loading/loader.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 
-namespace xmvb::app::vbscf {
+namespace xmvb::cli {
 
 void print_header(
     const Options& command,
@@ -33,4 +33,4 @@ void print_summary(
     const std::chrono::system_clock::time_point& command_start_time,
     const std::chrono::steady_clock::time_point& command_start_steady_time);
 
-}  // namespace xmvb::app::vbscf
+}  // namespace xmvb::cli

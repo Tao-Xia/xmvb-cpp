@@ -2,9 +2,8 @@
 
 #include "cli/options.hpp"
 
-namespace xmvb::app::vbscf {
+namespace xmvb::cli {
 
 int run(Options options);
 
-}  // namespace xmvb::app::vbscf
-
+}  // namespace xmvb::cli

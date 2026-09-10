@@ -19,7 +19,7 @@
 #include <omp.h>
 #endif
 
-namespace xmvb::app::vbscf {
+namespace xmvb::cli {
 
 namespace fs = std::filesystem;
 
@@ -580,4 +580,4 @@ void print_summary(
 
 }
 
-}  // namespace xmvb::app::vbscf
+}  // namespace xmvb::cli

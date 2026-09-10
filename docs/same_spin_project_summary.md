@@ -548,8 +548,6 @@ $$
 命令：
 
 ```bash
-source scripts/xmvb_runtime_env.sh
-prepare_xmvb_runtime_env build/src/xmvb-cpp.exe "$(pwd)"
 OMP_NUM_THREADS=1 XMVB_LOG_OBJECTIVE_PROGRESS=1 \
   build/src/xmvb-cpp.exe test/10698_RI.xmi \
   --optimizer-backend lbfgspp \
@@ -588,8 +586,6 @@ same-spin 相关的关键结论是：
 命令：
 
 ```bash
-source scripts/xmvb_runtime_env.sh
-prepare_xmvb_runtime_env build/src/xmvb-cpp.exe "$(pwd)"
 OMP_NUM_THREADS=1 XMVB_LOG_OBJECTIVE_PROGRESS=1 \
   build/src/xmvb-cpp.exe test/10698_RI.xmi \
   --optimizer-backend lbfgspp \

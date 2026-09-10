@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace xmvb::app::vbscf {
+namespace xmvb::cli {
 namespace {
 
 void apply_optimizer_backend_argument(
@@ -217,4 +217,4 @@ std::optional<Options> parse_options(int argc, char** argv) {
   return parsed;
 }
 
-}  // namespace xmvb::app::vbscf
+}  // namespace xmvb::cli

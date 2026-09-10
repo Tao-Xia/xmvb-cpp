@@ -6,7 +6,7 @@
 #include "input/loading/loader.hpp"
 #include "vbscf/optimization/driver/optimizer.hpp"
 
-namespace xmvb::app::vbscf {
+namespace xmvb::cli {
 
 struct Options {
   std::string input_path;
@@ -19,4 +19,4 @@ struct Options {
 
 std::optional<Options> parse_options(int argc, char** argv);
 
-}  // namespace xmvb::app::vbscf
+}  // namespace xmvb::cli

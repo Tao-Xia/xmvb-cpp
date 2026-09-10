@@ -200,7 +200,7 @@ ReadGuessSection parse_read_guess_section(
   // orbital, scatters them into a dense AO coefficient row with cvitra, and
   // only afterwards projects onto the current VB sparse orbital layout. Mirror
   // that two-stage mapping here so GUESS=READ/RDCI no longer depends on the C
-  // runtime reader.
+  // input reader.
   for (std::size_t line_index = first_coefficient_line;
        line_index < guess_section_lines.size() && orbital_index < n_orbitals;
        ++line_index) {
@@ -269,7 +269,7 @@ void expand_read_guess_layout_if_needed(
   // `$GUS` is a dense AO coefficient source and
   // then gathers those coefficients back onto the already prepared optimizer
   // chart carried by `vb_str->nv/ma`. The `$GUS` header counts therefore do
-  // not define the variational manifold. Expanding the runtime support here
+  // not define the variational manifold. Expanding the target support here
   // incorrectly turns localized HAO/BDO decks into full-AO optimizations and
   // changes the represented input orbitals.
 }
@@ -302,7 +302,7 @@ void build_read_or_rdci_guess(
             *orbital_preparation_input,
             orbital_index);
     // `$GUS` is first expanded to a dense AO
-    // vector and then gathered back onto the target runtime support chart.
+    // vector and then gathered back onto the target support chart.
     // The `$GUS` header does not redefine the variational manifold.
     const std::vector<double> support_coefficients =
         build_support_gathered_dense_guess(

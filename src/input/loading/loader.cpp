@@ -69,7 +69,7 @@ Eigen::MatrixXd build_full_ao_overlap_matrix(
       Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
 
   // Assemble the full AO overlap metric shell-by-shell in the repository's
-  // column-major dense layout, then flatten only when filling packed runtime
+  // column-major dense layout, then flatten only when filling packed integral
   // fields that still store column-major buffers.
   for (int right_shell = 0; right_shell < libcint_input.n_shells; ++right_shell) {
     for (int left_shell = 0; left_shell <= right_shell; ++left_shell) {
@@ -505,7 +505,7 @@ bool should_use_standard_ri_two_electron_mode(
   // In auto mode, follow the input deck semantics rather than switching on a
   // size heuristic. `INT=LIBCINT` requests exact AO integrals, while `INT=RI`
   // requests the standard RI path. The input parser already handles
-  // case-insensitive keywords before populating this runtime flag.
+  // case-insensitive keywords before populating this input flag.
   return input_requests_ri_two_electron_mode;
 }
 
@@ -550,8 +550,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
       should_use_standard_ri_two_electron_mode(
           input_deck_metadata.request_ri_two_electron_mode,
           options);
-  RuntimeExtractionTimings runtime_timings;
-
   const int resolved_n_active_orbitals =
       resolve_active_orbital_count(input_deck_metadata);
   const int resolved_n_active_electrons =
@@ -783,7 +781,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   load_result.input = std::move(result);
   load_result.raw_structure_data = std::move(selected_raw_structure_data);
   load_result.static_molecule_metadata = std::move(static_molecule_metadata);
-  load_result.runtime_timings = runtime_timings;
   load_result.basis_name = primary_basis_build_result.basis_file_path.string();
   load_result.raw_structure_selection = options.raw_structure_selection;
   load_result.source_raw_structure_count = source_raw_structure_count;

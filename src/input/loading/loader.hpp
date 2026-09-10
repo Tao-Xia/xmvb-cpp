@@ -34,19 +34,6 @@ struct VbScfStaticMoleculeMetadata {
   std::vector<int> ao_cartesian_exponents;
 };
 
-struct RuntimeExtractionTimings {
-  double read_input_seconds = 0.0;
-  double vb_input_seconds = 0.0;
-  double libcint_buffer_setup_seconds = 0.0;
-  double hf_setup_seconds = 0.0;
-  double vbprep_seconds = 0.0;
-  double vbguess_seconds = 0.0;
-  double one_electron_integrals_seconds = 0.0;
-  double two_electron_integrals_seconds = 0.0;
-  double output_copy_seconds = 0.0;
-  double total_seconds = 0.0;
-};
-
 struct VbScfInputLoadOptions {
   StandardTwoElectronMode standard_two_electron_mode = StandardTwoElectronMode::Auto;
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
@@ -62,7 +49,6 @@ struct VbScfInputLoadResult {
   VbScfInput input;
   RawStructureData raw_structure_data;
   VbScfStaticMoleculeMetadata static_molecule_metadata;
-  RuntimeExtractionTimings runtime_timings{};
   std::string basis_name;
   double nuclear_repulsion_energy = 0.0;
   StandardTwoElectronMode standard_two_electron_mode = StandardTwoElectronMode::Auto;
@@ -85,7 +71,7 @@ struct VbScfInputLoadResult {
  * The loader builds basis data, orbital supports, initial guesses, AO
  * integrals, and determinant expansions from the input deck.
  *
- * @param input_file_path Input deck used to initialize the runtime bundle.
+ * @param input_file_path Input deck used to initialize the VBSCF input bundle.
  * @return VbScfInput Fully populated matrix-builder input.
  */
 VbScfInput load_vbscf_input(

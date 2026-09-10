@@ -10,7 +10,7 @@ struct VbScfInputLoadResult;
 struct VbScfOptimizerResult;
 }  // namespace xmvb::vb
 
-namespace xmvb::runtime {
+namespace xmvb::output {
 
 class AcceptedIterationTraceWriter {
 public:
@@ -35,4 +35,4 @@ private:
   std::unique_ptr<Impl> impl_;
 };
 
-}  // namespace xmvb::runtime
+}  // namespace xmvb::output

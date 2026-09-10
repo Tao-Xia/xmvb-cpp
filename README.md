@@ -39,6 +39,9 @@ testdata/vbscf/    Versioned VBSCF regression decks
 tests/vbscf/       Unit and numerical-regression tests
 ```
 
+The component dependency rules and numerical naming conventions are recorded
+in [Code Organization and Naming](docs/code_organization.md).
+
 ## Dependencies
 
 | Library | Purpose |

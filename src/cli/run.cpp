@@ -14,7 +14,7 @@
 #include "input/loading/loader.hpp"
 #include "vbscf/optimization/driver/optimizer.hpp"
 
-namespace xmvb::app::vbscf {
+namespace xmvb::cli {
 
 namespace fs = std::filesystem;
 
@@ -39,19 +39,19 @@ int run(Options command_line) {
     options.max_iterations = load_result.requested_scf_max_iterations;
   }
 
-  xmvb::app::vbscf::print_header(
+  print_header(
       command_line,
       load_result,
       command_start_time);
 
-  std::shared_ptr<xmvb::runtime::AcceptedIterationTraceWriter> trace_writer;
+  std::shared_ptr<xmvb::output::AcceptedIterationTraceWriter> trace_writer;
   if (options.verbose) {
-    options.accepted_iteration_callback = xmvb::app::vbscf::combine_callbacks(
+    options.accepted_iteration_callback = combine_callbacks(
         std::move(options.accepted_iteration_callback),
-        xmvb::app::vbscf::iteration_logger());
+        iteration_logger());
   }
   if (!dump_trace_dir.empty()) {
-    trace_writer = std::make_shared<xmvb::runtime::AcceptedIterationTraceWriter>(
+    trace_writer = std::make_shared<xmvb::output::AcceptedIterationTraceWriter>(
         dump_trace_dir,
         input_path,
         load_result,
@@ -59,7 +59,7 @@ int run(Options command_line) {
     options.retain_accepted_iteration_trace = false;
     options.accepted_iteration_callback_requires_reference_gradient = true;
     options.accepted_iteration_callback_requires_full_snapshot = true;
-    options.accepted_iteration_callback = xmvb::app::vbscf::combine_callbacks(
+    options.accepted_iteration_callback = combine_callbacks(
         std::move(options.accepted_iteration_callback),
         [trace_writer](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
           trace_writer->write_accepted_iteration(snapshot);
@@ -76,7 +76,7 @@ int run(Options command_line) {
     // The final orbital table is the minimal state needed for reduced-chart
     // finite-difference diagnostics.  Keep this separate from trace dumping so
     // production convergence tests do not pay for per-iteration matrix dumps.
-    xmvb::runtime::write_binary_container(
+    xmvb::output::write_binary_container(
         fs::path(dump_final_orbital_value_table_bin),
         result.optimized_input.orbital_preparation_input.orbital_value_table);
   }
@@ -91,7 +91,7 @@ int run(Options command_line) {
   if (trace_writer != nullptr) {
     trace_sample_directory = trace_writer->sample_directory();
   }
-  xmvb::app::vbscf::print_summary(
+  print_summary(
       command_line,
       load_result,
       result,
@@ -103,4 +103,4 @@ int run(Options command_line) {
   return command_converged ? 0 : 2;
 }
 
-}  // namespace xmvb::app::vbscf
+}  // namespace xmvb::cli

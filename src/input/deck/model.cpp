@@ -319,7 +319,7 @@ RawStructureData parse_explicit_raw_structures(
     // `$STR` already lists one complete VB structure per logical line after
     // the input token expansion rules are applied. Infer the total-electron
     // count from the first expanded structure so explicit `$STR` decks no
-    // longer need to borrow that dimension from the C runtime.
+    // longer need to borrow that dimension from external parser state.
     if (raw_structure_data.n_total_electrons == 0) {
       raw_structure_data.n_total_electrons =
           static_cast<int>(current_structure.size());

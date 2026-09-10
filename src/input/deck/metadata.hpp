@@ -13,7 +13,7 @@ namespace xmvb::vb {
  * that the front-end consumes directly: basis selection,
  * guess/orbital chart types, charge/unit metadata, SCF iteration limits, and
  * a few standalone flags. Keeping these fields in a dedicated C++ object
- * avoids routing the pure loader through the old monolithic C runtime headers.
+ * keeps the pure loader independent of external parser state.
  */
 struct InputDeckMetadata {
   std::string basis_name;

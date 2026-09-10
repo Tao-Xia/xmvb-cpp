@@ -16,7 +16,7 @@
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 
-namespace xmvb::runtime {
+namespace xmvb::output {
 namespace {
 
 namespace fs = std::filesystem;
@@ -722,4 +722,4 @@ AcceptedIterationTraceWriter::sample_directory() const {
   return impl_->sample_directory();
 }
 
-}  // namespace xmvb::runtime
+}  // namespace xmvb::output
