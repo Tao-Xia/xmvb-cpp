@@ -5,9 +5,9 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/input/loading/loader.hpp"
-#include "runtime/integrals/libcint/auxiliary_basis.hpp"
-#include "runtime/integrals/libcint/direct_shell.hpp"
+#include "input/loading/loader.hpp"
+#include "libcint/auxiliary_basis.hpp"
+#include "libcint/direct_shell.hpp"
 
 namespace {
 

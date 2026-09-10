@@ -338,7 +338,7 @@ F2 只能作为 smoke test，不能作为算法普遍性证据。
 - `src/vb/orbital/sparse_orbital_parameter_view.cpp`
 - `src/vb/scf/exact_ctx_minimal_tn.cpp`
 - `src/vb/scf/exact_orbital_second_order_operator.cpp`
-- `src/app/vbscf/run.cpp`
+- `src/cli/run.cpp`
 
 如果新增 diagnostic target，还需要修改：
 

@@ -7,7 +7,7 @@
 #include <Eigen/Core>
 
 #include "core/eigensolver.hpp"
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/one_electron/builder.hpp"

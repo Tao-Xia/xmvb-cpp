@@ -32,24 +32,24 @@ find_path(EIGEN3_INCLUDE_DIR Eigen/Core
 include(vbscf/sources.cmake)
 
 set(XMVB_RUNTIME_SOURCES
-  runtime/orbitals/guess/block.cpp
-  runtime/orbitals/guess/closed_shell_fock.cpp
-  runtime/orbitals/guess/initial.cpp
-  runtime/input/loading/generated_structures.cpp
-  runtime/input/deck/model.cpp
-  runtime/input/deck/metadata.cpp
-  runtime/input/deck/primary_basis.cpp
-  runtime/input/deck/orbital_support.cpp
-  runtime/input/deck/raw_structures.cpp
-  runtime/output/molden/writer.cpp
-  runtime/orbitals/guess/restricted_hf.cpp
-  runtime/input/loading/loader.cpp
-  runtime/integrals/libcint/auxiliary_basis.cpp
-  runtime/integrals/libcint/direct_shell.cpp
-  runtime/integrals/libcint/materialized_provider.cpp
-  runtime/integrals/libcint/ri_provider.cpp
-  runtime/integrals/preparation/materialized_input.cpp
-  runtime/output/trace/accepted_iteration.cpp
+  guess/block.cpp
+  guess/closed_shell_fock.cpp
+  guess/initial.cpp
+  input/loading/generated_structures.cpp
+  input/deck/model.cpp
+  input/deck/metadata.cpp
+  input/deck/primary_basis.cpp
+  input/deck/orbital_support.cpp
+  input/deck/raw_structures.cpp
+  output/molden/writer.cpp
+  guess/restricted_hf.cpp
+  input/loading/loader.cpp
+  libcint/auxiliary_basis.cpp
+  libcint/direct_shell.cpp
+  libcint/materialized_provider.cpp
+  libcint/ri_provider.cpp
+  libcint/materialized_input.cpp
+  output/trace/accepted_iteration.cpp
 )
 
 # Keep runtime ownership as strict as the canonical VBSCF manifest. A new
@@ -58,7 +58,10 @@ file(
   GLOB_RECURSE _xmvb_discovered_runtime_sources
   CONFIGURE_DEPENDS
   RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-  "${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.cpp")
+  "${CMAKE_CURRENT_SOURCE_DIR}/guess/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/input/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/libcint/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/output/*.cpp")
 set(_xmvb_declared_runtime_sources ${XMVB_RUNTIME_SOURCES})
 list(SORT _xmvb_declared_runtime_sources)
 list(SORT _xmvb_discovered_runtime_sources)
@@ -147,10 +150,10 @@ function(xmvb_mark_targets_exclude_from_all)
 endfunction()
 
 add_executable(xmvb
-  app/vbscf/main.cpp
-  app/vbscf/options.cpp
-  app/vbscf/report.cpp
-  app/vbscf/run.cpp)
+  cli/main.cpp
+  cli/options.cpp
+  cli/report.cpp
+  cli/run.cpp)
 set_target_properties(xmvb PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
 target_link_libraries(xmvb
   PRIVATE

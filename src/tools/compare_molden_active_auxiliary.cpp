@@ -14,9 +14,9 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 
-#include "runtime/input/loading/loader.hpp"
-#include "runtime/integrals/libcint/c_api.hpp"
-#include "runtime/integrals/preparation/shell_normalization.hpp"
+#include "input/loading/loader.hpp"
+#include "libcint/c_api.hpp"
+#include "libcint/shell_normalization.hpp"
 
 namespace {
 

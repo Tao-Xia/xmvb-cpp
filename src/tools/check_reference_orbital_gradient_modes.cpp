@@ -9,7 +9,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/orbitals/pullback/operator.hpp"
 #include "vbscf/integrals/ao/one_electron/backpropagator.hpp"

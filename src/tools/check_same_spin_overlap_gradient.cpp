@@ -9,7 +9,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/determinants/algebra/hamiltonian.hpp"
 #include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"

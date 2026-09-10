@@ -8,7 +8,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/integrals/ao/one_electron/ri_operator.hpp"
 

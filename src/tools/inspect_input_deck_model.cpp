@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/input/deck/model.hpp"
+#include "input/deck/model.hpp"
 
 namespace {
 

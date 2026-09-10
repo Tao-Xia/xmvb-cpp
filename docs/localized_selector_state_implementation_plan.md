@@ -23,7 +23,7 @@ per-orbital support layouts.
 
 The loader already records that `orbtyp=oeo` remains a full-AO chart:
 
-- [`loader.cpp`](../src/runtime/input/loading/loader.cpp)
+- [`loader.cpp`](../src/input/loading/loader.cpp)
 
 That means:
 

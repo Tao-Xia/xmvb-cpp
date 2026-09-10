@@ -8,7 +8,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/integrals/active/matrix/backpropagator.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"

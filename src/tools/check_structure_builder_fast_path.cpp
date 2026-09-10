@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"

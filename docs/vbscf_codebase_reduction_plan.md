@@ -77,7 +77,7 @@ navigation cost for reviewers.
   `Eigen::MatrixXd` / `Eigen::VectorXd`, and
   `ClosedShellFockBuilder` now returns `Eigen::MatrixXd`.
 - Done: removed the duplicated `get_orbital_basis_count(...)` path from
-  runtime/orbital code and switched the remaining production callers to
+  initial-guess code and switched the remaining production callers to
   `stored_sparse_orbital_coefficient_count(...)` so sparse-support length has
   one implementation and one meaning.
 - Done: simplified the loader/guess front-end data flow:

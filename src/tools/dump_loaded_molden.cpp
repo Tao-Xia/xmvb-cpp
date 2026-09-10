@@ -3,8 +3,8 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/input/loading/loader.hpp"
-#include "runtime/output/molden/writer.hpp"
+#include "input/loading/loader.hpp"
+#include "output/molden/writer.hpp"
 
 namespace fs = std::filesystem;
 

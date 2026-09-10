@@ -21,10 +21,11 @@ input contracts
 `core` owns aggregate input/result contracts, so it may reference value types
 from lower numerical domains. `diagnostics` contains audits only.
 
-The standalone `runtime` is a one-way client of this module. Canonical
-`vbscf/...` sources must not include `runtime/...` headers. Backend-generated
-data enters through numerical value contracts or injected provider interfaces;
-this rule is enforced when CMake configures the source manifest.
+Input, libcint, initial-guess, output, and CLI components are one-way clients
+of this module. Canonical `vbscf/...` sources must not include their headers.
+Backend-generated data enters through numerical value contracts or injected
+provider interfaces; this rule is enforced when CMake configures the source
+manifest.
 
 The exact active-space two-electron response is split by mathematical role:
 `active/two_electron/transformation/pair_transforms.cpp` owns the

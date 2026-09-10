@@ -59,7 +59,7 @@ Primary implementation files on this chain:
 - `src/vb/scf/orbital_gradient_evaluator.cpp`
 - `src/vb/scf/exact_orbital_second_order_operator.cpp`
 - `src/vb/orbital/ri_active_space_two_electron_builder.cpp`
-- `src/runtime/integrals/libcint/ri_provider.cpp`
+- `src/libcint/ri_provider.cpp`
 - `src/vb/orbital/ao_effective_one_electron_ri_operator.cpp`
 
 ### Determinant / structure backward kernels

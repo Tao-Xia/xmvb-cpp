@@ -8,7 +8,7 @@
 
 #include <Eigen/Core>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/structures/evaluation/evaluator.hpp"
 

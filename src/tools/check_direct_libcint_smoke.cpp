@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/input/loading/loader.hpp"
-#include "runtime/integrals/libcint/direct_shell.hpp"
+#include "input/loading/loader.hpp"
+#include "libcint/direct_shell.hpp"
 
 namespace {
 

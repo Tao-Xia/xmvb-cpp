@@ -8,7 +8,7 @@
 #include <vector>
 
 #include "core/eigensolver.hpp"
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"

@@ -10,7 +10,7 @@
 #include <Eigen/Core>
 
 #include "core/eigensolver.hpp"
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/derivatives/gradient/active_space/evaluator.hpp"

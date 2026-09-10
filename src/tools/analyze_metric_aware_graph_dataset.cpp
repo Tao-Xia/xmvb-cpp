@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/structures/selection/union_graph/screening.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"

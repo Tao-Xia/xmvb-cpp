@@ -11,7 +11,7 @@
 #include <vector>
 
 #include "core/eigensolver.hpp"
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/structures/reference/overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"

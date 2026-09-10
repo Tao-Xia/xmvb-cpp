@@ -27,12 +27,11 @@ src/
     derivatives/   Gradient and matrix-free Hessian-vector products
     optimization/  L-BFGS and trust-region Newton solvers
     workflow/      End-to-end VBSCF evaluation
-  runtime/
-    input/         Deck contracts and VBSCF input loading
-    integrals/     libcint providers and integral preparation
-    orbitals/      Initial orbital and restricted-HF guesses
-    output/        Molden and accepted-iteration output
-    io/            Generic binary I/O primitives
+  input/           XMI deck contracts and VBSCF input loading
+  libcint/         libcint providers and AO integral preparation
+  guess/           Initial orbitals and restricted-HF construction
+  output/          Molden and accepted-iteration output
+  cli/             Command-line entry point and reporting
   tools/           Benchmarking and diagnostic tools
   third_party/     Vendored dependencies (LBFGSpp)
 basis/             Standard basis set library (Pople, Dunning, etc.)

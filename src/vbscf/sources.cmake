@@ -140,9 +140,9 @@ endif()
 unset(_xmvb_declared_vbscf_sources)
 unset(_xmvb_discovered_vbscf_sources)
 
-# The standalone runtime prepares input decks and backend services on top of
-# the numerical VBSCF library.  Keep that dependency one-way: canonical VBSCF
-# sources may consume injected contracts, but must never include runtime headers.
+# External input, backend, guess, output, and CLI components sit above the
+# numerical VBSCF library. Keep that dependency one-way: canonical VBSCF
+# sources may consume injected contracts, but must never include their headers.
 file(
   GLOB_RECURSE _xmvb_vbscf_dependency_files
   CONFIGURE_DEPENDS
@@ -151,15 +151,15 @@ file(
 foreach(_xmvb_vbscf_dependency_file IN LISTS _xmvb_vbscf_dependency_files)
   file(
     STRINGS "${_xmvb_vbscf_dependency_file}"
-    _xmvb_runtime_includes
-    REGEX "^[ \t]*#[ \t]*include[ \t]*\"runtime/")
-  if (_xmvb_runtime_includes)
+    _xmvb_external_component_includes
+    REGEX "^[ \t]*#[ \t]*include[ \t]*\"(cli|guess|input|libcint|output)/")
+  if (_xmvb_external_component_includes)
     message(FATAL_ERROR
-      "Canonical VBSCF source includes a runtime header: "
-      "${_xmvb_vbscf_dependency_file}\n${_xmvb_runtime_includes}")
+      "Canonical VBSCF source includes an external component header: "
+      "${_xmvb_vbscf_dependency_file}\n${_xmvb_external_component_includes}")
   endif()
 endforeach()
-unset(_xmvb_runtime_includes)
+unset(_xmvb_external_component_includes)
 unset(_xmvb_vbscf_dependency_file)
 unset(_xmvb_vbscf_dependency_files)
 

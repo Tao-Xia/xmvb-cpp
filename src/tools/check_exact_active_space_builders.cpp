@@ -13,7 +13,7 @@
 #include <omp.h>
 #endif
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/one_electron/builder.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"

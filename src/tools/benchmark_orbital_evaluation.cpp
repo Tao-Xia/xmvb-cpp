@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 
 namespace {

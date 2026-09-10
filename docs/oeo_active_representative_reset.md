@@ -48,7 +48,7 @@ The relevant current code paths are:
 1. `src/vb/scf/vb_scf_optimizer.cpp`
 2. `src/vb/orbital/support_aware_mo_gauge_fix.cpp`
 3. `src/vb/orbital/active_space_orbital_preparer.cpp`
-4. `src/runtime/input/loading/loader.cpp`
+4. `src/input/loading/loader.cpp`
 5. `src/tools/compare_molden_active_auxiliary.cpp`
 
 The current behavior is:

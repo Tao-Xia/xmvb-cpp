@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "runtime/input/loading/loader.hpp"
+#include "input/loading/loader.hpp"
 #include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 #include "vbscf/integrals/active/two_electron/response/backpropagator.hpp"
