@@ -71,6 +71,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/gradient/active_space_gradient_helpers.cpp
   vbscf/derivatives/gradient/active_space_gradient_evaluator.cpp
   vbscf/derivatives/gradient/orbital_gradient_evaluator.cpp
+  vbscf/derivatives/hessian/exact_hvp_apply.cpp
   vbscf/derivatives/hessian/exact_hvp_ao_one_electron.cpp
   vbscf/derivatives/hessian/exact_hvp_operator.cpp
   vbscf/derivatives/hessian/structure_response_cache.cpp
