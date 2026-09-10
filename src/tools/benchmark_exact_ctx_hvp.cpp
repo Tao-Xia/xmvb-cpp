@@ -81,7 +81,7 @@ void print_usage() {
       << "usage: benchmark_exact_ctx_hvp <input.xmi>"
       << " [--repeats count]"
       << " [--warmup count]"
-      << " [--ao-integral-source auto|legacy|libcint_cpp|runtime_hcore]"
+      << " [--ao-integral-source auto|legacy|libcint|runtime_hcore]"
       << " [--nonredundant-adapt true|false]"
       << " [--gauge-audit true|false]\n";
   std::cerr << " [--curvature-audit-directions count|0=disabled]\n";
@@ -116,8 +116,8 @@ xmvb::vb::AoIntegralSource parse_ao_integral_source(
   if (value == "auto") {
     return xmvb::vb::AoIntegralSource::Auto;
   }
-  if (value == "libcint_cpp") {
-    return xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
+  if (value == "libcint") {
+    return xmvb::vb::AoIntegralSource::LibcintMaterialized;
   }
   if (value == "runtime_hcore") {
     return xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;

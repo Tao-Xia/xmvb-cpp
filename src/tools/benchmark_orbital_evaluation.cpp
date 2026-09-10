@@ -20,7 +20,7 @@ struct Options {
 };
 
 void print_usage() {
-  std::cerr << "usage: benchmark_cpp_orbital_eval <input.xmi> "
+  std::cerr << "usage: benchmark_orbital_evaluation <input.xmi> "
                "[--standard-two-electron-mode auto|exact|ri] "
                "[--repeat N] [--warmup N]\n";
 }

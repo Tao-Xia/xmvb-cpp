@@ -575,7 +575,7 @@ MnF2 上这两块都很大:
 
 ---
 
-## 7.3 `src/vb/scf/cpp_vb_scf_optimizer.cpp`
+## 7.3 `src/vb/scf/vb_scf_optimizer.cpp`
 
 ### 需要删除或弱化的 mixed-chart 逻辑
 

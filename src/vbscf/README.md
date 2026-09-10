@@ -60,7 +60,7 @@ vbscf/
 
 ## Naming rules
 
-- Public C++ types omit the redundant `Cpp` prefix.
+- Public types use domain names without implementation-language markers.
 - Files describe one responsibility; generic `utils` files are not allowed in
   the canonical tree.
 - `Context` is immutable data prepared at an accepted point.

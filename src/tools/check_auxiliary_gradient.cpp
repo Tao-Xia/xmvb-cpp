@@ -80,7 +80,7 @@ double compute_matrix_inner_product(
 }
 
 void print_usage() {
-  std::cerr << "usage: check_cpp_auxiliary_gradient <input.xmi> "
+  std::cerr << "usage: check_auxiliary_gradient <input.xmi> "
                "[--count N] [--step h]\n";
 }
 

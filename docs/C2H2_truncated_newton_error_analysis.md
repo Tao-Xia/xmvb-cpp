@@ -377,5 +377,5 @@ if (pair_evaluation.overlap_result.nullity != 0) {
 | 错误抛出 | `exact_orbital_second_order_operator.cpp` | 3518-3522 |
 | HVP 计算 | `exact_orbital_second_order_operator.cpp` | 3795-3944 |
 | nullity 定义 | `determinant_types.hpp` | 行号待查 |
-| 优化器选择 | `cpp_vb_scf_optimizer.cpp` | 待查 |
+| 优化器选择 | `vb_scf_optimizer.cpp` | 待查 |
 | 提交脚本 | `test_molecule/vbscf-cpp-tnhvp.sh` | 全文 |

@@ -430,8 +430,8 @@ $$
 
 修复前代码里必须区分两件事：
 
-1. `NonredundantOrbitalSpace` 主路径，由 `XMVB_CPP_NONREDUNDANT_SPARSE_LINEAR_RETRACTION` 选择 mixed 或 direct-linear finite chart。它仍调用统一的 `solve_exact_ctx_truncated_newton_step()`、`retract_step()`、`expand_retract_input_tangent()`、`project_reduced_gradient()`、metric/preconditioner 和 accepted-point 后重建逻辑。
-2. `XMVB_CPP_SPARSE_LINEAR_HVP=1` 打开的全局 packed coefficient-space 旁路。它绕开 `solve_exact_ctx_truncated_newton_step()`，在 `run_exact_ctx_minimal_truncated_newton()` 内另写了一套 L-BFGS 预条件 CG、trust radius、trial build 和 HVP pullback。
+1. `NonredundantOrbitalSpace` 主路径，由 `XMVB_NONREDUNDANT_SPARSE_LINEAR_RETRACTION` 选择 mixed 或 direct-linear finite chart。它仍调用统一的 `solve_exact_ctx_truncated_newton_step()`、`retract_step()`、`expand_retract_input_tangent()`、`project_reduced_gradient()`、metric/preconditioner 和 accepted-point 后重建逻辑。
+2. `XMVB_SPARSE_LINEAR_HVP=1` 打开的全局 packed coefficient-space 旁路。它绕开 `solve_exact_ctx_truncated_newton_step()`，在 `run_exact_ctx_minimal_truncated_newton()` 内另写了一套 L-BFGS 预条件 CG、trust radius、trial build 和 HVP pullback。
 
 第一条才是应当继续发展的 TNHVP 主路径。它在 override 打开后已经让 OEO/full-support block 不再自动走 dense mixed projector，因此从代码方向上承认了“linear-add 不只适用于 HAO”。第二条只是一个 packed 旁路，不能作为 linear-add 数学正确性的主要证据。本次修复已删除第二条旁路，当前生产 TNHVP 只保留 NROS reduced HVP 主路径。
 
@@ -503,13 +503,13 @@ $$
 
 `ExactOrbitalSecondOrderOperator::apply_reduced_impl()` 在构造 outer-response 方向积分前会尝试 `try_build_pure_delta_la_directional_integrals(...)`。这个 fast path 通过 `nonredundant_space.expand_block_rotation_directions(reduced_direction)` 判断方向是否为 pure $\Delta L_a$。
 
-在正常 NROS 主路径中，`reduced_direction` 的确是 NROS reduced vector，这个判断有意义。但在 `XMVB_CPP_SPARSE_LINEAR_HVP=1` 旁路中，同一个参数是 packed raw coefficient 方向。此时 fast path 用 NROS 规则解释 packed vector；如果误判成功，就会把 outer-response directional integrals 建在另一个方向上，而 direct-core orbital-preparation tangent 仍来自 $J_{norm}s$。即使大多数方向会 fallback，这个分支也说明 packed 旁路和 operator 内部优化假设不兼容。
+在正常 NROS 主路径中，`reduced_direction` 的确是 NROS reduced vector，这个判断有意义。但在 `XMVB_SPARSE_LINEAR_HVP=1` 旁路中，同一个参数是 packed raw coefficient 方向。此时 fast path 用 NROS 规则解释 packed vector；如果误判成功，就会把 outer-response directional integrals 建在另一个方向上，而 direct-core orbital-preparation tangent 仍来自 $J_{norm}s$。即使大多数方向会 fallback，这个分支也说明 packed 旁路和 operator 内部优化假设不兼容。
 
 ### 10.6 full-AO/OEO 的现状：NROS 可走，packed helper 不可靠
 
-`apply_packed_linear_tangent()` 和 adjoint 当前直接跳过 `uses_dense_full_support_projector` block。OEO/full-AO 在默认 `NonredundantSparseLinearRetractionMode::Disabled` 下会被标记为 dense full-support projector。因此，单独打开 `XMVB_CPP_SPARSE_LINEAR_HVP` 并不会自动给 OEO 提供 full-AO linear-add HVP。
+`apply_packed_linear_tangent()` 和 adjoint 当前直接跳过 `uses_dense_full_support_projector` block。OEO/full-AO 在默认 `NonredundantSparseLinearRetractionMode::Disabled` 下会被标记为 dense full-support projector。因此，单独打开 `XMVB_SPARSE_LINEAR_HVP` 并不会自动给 OEO 提供 full-AO linear-add HVP。
 
-另一方面，当前 NROS 构造在 `XMVB_CPP_NONREDUNDANT_SPARSE_LINEAR_RETRACTION` override 非 disabled 时，会让 OEO/full-support block 也进入 physical occupied-column direct-linear chart。这正好支持一个结论：linear-add 原理不应被实现成 sparse-only helper。HAO 和 OEO 的区别应只是每列支撑 $E_p$ 不同；OEO 是 $E_p=I$ 的特例。
+另一方面，当前 NROS 构造在 `XMVB_NONREDUNDANT_SPARSE_LINEAR_RETRACTION` override 非 disabled 时，会让 OEO/full-support block 也进入 physical occupied-column direct-linear chart。这正好支持一个结论：linear-add 原理不应被实现成 sparse-only helper。HAO 和 OEO 的区别应只是每列支撑 $E_p$ 不同；OEO 是 $E_p=I$ 的特例。
 
 ### 10.7 dead helper 和注释残留增加了误导性
 

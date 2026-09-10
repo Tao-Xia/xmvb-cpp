@@ -115,7 +115,7 @@ This is the relevant benchmark for the unique-spin-string algorithm.
 The following data were obtained from
 
 ```bash
-build/src/benchmark_cpp_orbital_eval
+build/src/benchmark_orbital_eval
 ```
 
 with

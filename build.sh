@@ -6,7 +6,7 @@ build_type="${CMAKE_BUILD_TYPE:-Release}"
 jobs="${XMVB_BUILD_JOBS:-4}"
 extra_args=("${@:2}")
 repo_root="$(pwd -P)"
-build_profile="${XMVB_CPP_BUILD_PROFILE:-auto}"
+build_profile="${XMVB_BUILD_PROFILE:-auto}"
 
 parse_cache_value() {
   local cache_file="$1"
@@ -360,7 +360,7 @@ cmake_args=(
   -G Ninja
   -DCMAKE_BUILD_TYPE="${build_type}" \
   -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-  -DXMVB_CPP_BUILD_DEV_TARGETS=OFF \
+  -DXMVB_BUILD_DEV_TARGETS=OFF \
 )
 
 if [[ -n "${selected_cc}" && -n "${selected_cxx}" ]]; then

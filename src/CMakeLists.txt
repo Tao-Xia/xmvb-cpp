@@ -1,8 +1,8 @@
 file(TO_CMAKE_PATH "$ENV{CONDA_PREFIX}" XMVB_CONDA_PREFIX)
 
-if (NOT DEFINED XMVB_CPP_BUILD_DEV_TARGETS)
+if (NOT DEFINED XMVB_BUILD_DEV_TARGETS)
   set(
-    XMVB_CPP_BUILD_DEV_TARGETS
+    XMVB_BUILD_DEV_TARGETS
     OFF
     CACHE BOOL
     "Build C++ comparison, diagnostic, and test targets in addition to xmvb-cpp.exe."
@@ -10,7 +10,7 @@ if (NOT DEFINED XMVB_CPP_BUILD_DEV_TARGETS)
 endif()
 
 option(
-  XMVB_CPP_ENABLE_EIGEN_BLAS_BACKEND
+  XMVB_ENABLE_EIGEN_BLAS_BACKEND
   "Route Eigen dense linear algebra through the configured BLAS/LAPACKE backends when supported."
   ON)
 
@@ -72,8 +72,8 @@ endif()
 unset(_xmvb_declared_runtime_sources)
 unset(_xmvb_discovered_runtime_sources)
 
-add_library(xmvb_cpp_openmp INTERFACE)
-target_link_libraries(xmvb_cpp_openmp
+add_library(xmvb_openmp INTERFACE)
+target_link_libraries(xmvb_openmp
   INTERFACE
     OpenMP::OpenMP_C
     OpenMP::OpenMP_CXX)
@@ -88,14 +88,14 @@ target_include_directories(xmvb_vbscf
     ${LAPACK_INCLUDE}
     ${LAPACKE_INCLUDE}
     ${CINT_INCLUDE})
-if (XMVB_CPP_ENABLE_EIGEN_BLAS_BACKEND)
+if (XMVB_ENABLE_EIGEN_BLAS_BACKEND)
   target_compile_definitions(
     xmvb_vbscf
     PUBLIC
       EIGEN_USE_BLAS=1
       EIGEN_USE_LAPACKE=1)
 endif()
-target_link_libraries(xmvb_vbscf PUBLIC ${LAPACKE_LIB} xmvb_cpp_openmp)
+target_link_libraries(xmvb_vbscf PUBLIC ${LAPACKE_LIB} xmvb_openmp)
 if (LAPACK_TYPE STREQUAL "OpenBLAS")
   target_link_libraries(xmvb_vbscf PUBLIC ${LAPACK_LIB})
 elseif (LAPACK_TYPE STREQUAL "refBLAS")
@@ -104,8 +104,8 @@ else()
   target_link_libraries(xmvb_vbscf PUBLIC ${LAPACK_LIBRARIES} ${BLAS_LIBRARIES})
 endif()
 
-add_library(xmvb_cpp_runtime STATIC ${XMVB_RUNTIME_SOURCES})
-target_include_directories(xmvb_cpp_runtime
+add_library(xmvb_runtime STATIC ${XMVB_RUNTIME_SOURCES})
+target_include_directories(xmvb_runtime
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_BINARY_DIR}/src/vbutil
@@ -116,13 +116,13 @@ target_include_directories(xmvb_cpp_runtime
     ${LAPACK_INCLUDE}
     ${LAPACKE_INCLUDE}
     ${CINT_INCLUDE})
-target_link_libraries(xmvb_cpp_runtime PUBLIC xmvb_vbscf xmvb_cpp_openmp)
+target_link_libraries(xmvb_runtime PUBLIC xmvb_vbscf xmvb_openmp)
 
 function(xmvb_link_standalone_runtime target_name)
   target_link_libraries(${target_name}
     PRIVATE
       ${CINT_LIB}
-      xmvb_cpp_openmp
+      xmvb_openmp
       xmvb_vbscf
       m)
   if (LAPACK_TYPE STREQUAL "OpenBLAS")
@@ -155,24 +155,24 @@ set_target_properties(xmvb PROPERTIES OUTPUT_NAME xmvb-cpp.exe)
 target_link_libraries(xmvb
   PRIVATE
     xmvb_vbscf
-    xmvb_cpp_runtime)
+    xmvb_runtime)
 xmvb_link_standalone_runtime(xmvb)
 
 file(
-  GLOB_RECURSE XMVB_CPP_RUNTIME_BASIS_INPUTS
+  GLOB_RECURSE XMVB_RUNTIME_BASIS_INPUTS
   "${CMAKE_SOURCE_DIR}/basis/*")
-set(XMVB_CPP_RUNTIME_ASSET_STAMP
-  "${CMAKE_BINARY_DIR}/CMakeFiles/xmvb_cpp_runtime_assets.stamp")
+set(XMVB_RUNTIME_ASSET_STAMP
+  "${CMAKE_BINARY_DIR}/CMakeFiles/xmvb_runtime_assets.stamp")
 add_custom_command(
-  OUTPUT ${XMVB_CPP_RUNTIME_ASSET_STAMP}
+  OUTPUT ${XMVB_RUNTIME_ASSET_STAMP}
   COMMAND ${CMAKE_COMMAND}
           -DXMVB_SOURCE_DIR=${CMAKE_SOURCE_DIR}
           -DXMVB_BINARY_DIR=${CMAKE_BINARY_DIR}
           -P ${CMAKE_SOURCE_DIR}/cmake/stage_runtime_assets.cmake
-  COMMAND ${CMAKE_COMMAND} -E touch ${XMVB_CPP_RUNTIME_ASSET_STAMP}
+  COMMAND ${CMAKE_COMMAND} -E touch ${XMVB_RUNTIME_ASSET_STAMP}
   DEPENDS
     ${CMAKE_SOURCE_DIR}/cmake/stage_runtime_assets.cmake
-    ${XMVB_CPP_RUNTIME_BASIS_INPUTS}
+    ${XMVB_RUNTIME_BASIS_INPUTS}
   # `basis/` is copied into the build tree, so basis-file edits should restage
   # runtime assets. `data/` is linked instead of copied and contains volatile
   # training corpora, logs, and scratch outputs. Do not expand that directory
@@ -180,10 +180,10 @@ add_custom_command(
   # regenerate and invalidate the whole Ninja deps database.
   COMMENT "Staging standalone xmvb-cpp runtime assets into the build tree")
 add_custom_target(
-  xmvb_cpp_runtime_assets
-  DEPENDS ${XMVB_CPP_RUNTIME_ASSET_STAMP})
-add_dependencies(xmvb xmvb_cpp_runtime_assets)
+  xmvb_runtime_assets
+  DEPENDS ${XMVB_RUNTIME_ASSET_STAMP})
+add_dependencies(xmvb xmvb_runtime_assets)
 
-if (XMVB_CPP_BUILD_DEV_TARGETS)
+if (XMVB_BUILD_DEV_TARGETS)
   include(tools/targets.cmake)
 endif()

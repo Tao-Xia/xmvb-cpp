@@ -50,7 +50,7 @@
 5. 此外，当前受环境变量
 
 ```bash
-XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1
+XMVB_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1
 ```
 
 控制的新解析路径，在我本次复测时仍会导致 `F2` 端到端优化器运行出现段错误。因此它还不能算 production-ready。
@@ -132,13 +132,13 @@ w_{\mathrm{packed}} \xrightarrow{Q^{\mathrm T}} w_{\mathrm{nr}}
 
 对应主流程位于：
 
-- `src/vb/scf/cpp_vb_scf_optimizer.cpp`
+- `src/vb/scf/vb_scf_optimizer.cpp`
 
 ### 3.3 Exact accepted-point HVP landing zone
 
 当前 exact 路径不再只依赖“完整梯度有限差分”，而是已经有 accepted-point second-order context：
 
-- `src/vb/scf/cpp_active_space_second_order_context.hpp`
+- `src/vb/scf/active_space_second_order_context.hpp`
 - `src/vb/scf/exact_orbital_second_order_operator.hpp`
 - `src/vb/scf/exact_orbital_second_order_operator.cpp`
 
@@ -162,7 +162,7 @@ w_{\mathrm{packed}} \xrightarrow{Q^{\mathrm T}} w_{\mathrm{nr}}
 运行：
 
 ```bash
-env OMP_NUM_THREADS=1 XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1 \
+env OMP_NUM_THREADS=1 XMVB_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1 \
   build/src/check_exact_ctx_hvp testdata/vbscf/F2.xmi --step 1e-3
 ```
 
@@ -209,7 +209,7 @@ env OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe testdata/vbscf/F2.xmi \
 运行：
 
 ```bash
-env OMP_NUM_THREADS=1 XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1 \
+env OMP_NUM_THREADS=1 XMVB_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1 \
   build/src/xmvb-cpp.exe testdata/vbscf/F2.xmi \
   --optimizer-backend nonredundant_truncated_newton \
   --nonredundant-truncated-newton-hvp-mode exact_ctx
@@ -363,7 +363,7 @@ k_{\mathrm{hvp}} \approx 3.
 
 仍需先修复：
 
-- `XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1` 打开时，`F2` 端到端优化器段错误。
+- `XMVB_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1` 打开时，`F2` 端到端优化器段错误。
 
 只要这个问题还在，analytic-core 就不能作为默认生产路径。
 

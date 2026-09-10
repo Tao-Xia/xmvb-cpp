@@ -53,8 +53,8 @@ $$
 
 修复前代码有两条不同的 linear-add 相关路径，不能混为一个算法：
 
-1. `NonredundantOrbitalSpace` 主路径。它由 `XMVB_CPP_NONREDUNDANT_SPARSE_LINEAR_RETRACTION` 临时选择 mixed 或 direct-linear finite chart，仍复用 `solve_exact_ctx_truncated_newton_step()`、`retract_step()`、`expand_retract_input_tangent()`、`project_reduced_gradient()`、metric/preconditioner 和 accepted-point 后重建逻辑。当前 override 非 disabled 时，OEO/full-support block 也不会自动退回 dense mixed projector，这一点符合“linear-add 不只适用于 HAO”。
-2. `XMVB_CPP_SPARSE_LINEAR_HVP` 全局旁路。它在 `exact_ctx_minimal_tn.cpp` 中另写 packed coefficient-space L-BFGS 预条件 CG、trust radius、trial build 和 predicted decrease；在 `ExactOrbitalSecondOrderOperator::apply_reduced_impl()` 中另写 `apply_packed_linear_tangent()` / adjoint HVP pullback。这个旁路不是 NROS 主路径。
+1. `NonredundantOrbitalSpace` 主路径。它由 `XMVB_NONREDUNDANT_SPARSE_LINEAR_RETRACTION` 临时选择 mixed 或 direct-linear finite chart，仍复用 `solve_exact_ctx_truncated_newton_step()`、`retract_step()`、`expand_retract_input_tangent()`、`project_reduced_gradient()`、metric/preconditioner 和 accepted-point 后重建逻辑。当前 override 非 disabled 时，OEO/full-support block 也不会自动退回 dense mixed projector，这一点符合“linear-add 不只适用于 HAO”。
+2. `XMVB_SPARSE_LINEAR_HVP` 全局旁路。它在 `exact_ctx_minimal_tn.cpp` 中另写 packed coefficient-space L-BFGS 预条件 CG、trust radius、trial build 和 predicted decrease；在 `ExactOrbitalSecondOrderOperator::apply_reduced_impl()` 中另写 `apply_packed_linear_tangent()` / adjoint HVP pullback。这个旁路不是 NROS 主路径。
 
 本次修复已删除第 2 条全局旁路，生产 TNHVP 只保留 NROS reduced HVP 主路径。该旁路被删除的原因是：
 
@@ -118,13 +118,13 @@ $$
 - `NonredundantSparseLinearRetractionMode`
 - `choose_nonredundant_sparse_linear_retraction_mode()`
 - `nonredundant_sparse_linear_retraction_mode_name()`
-- 环境变量 `XMVB_CPP_NONREDUNDANT_SPARSE_LINEAR_RETRACTION`
+- 环境变量 `XMVB_NONREDUNDANT_SPARSE_LINEAR_RETRACTION`
 - 日志字段 `Sparse retraction`
 
 实施步骤：
 
 1. 新增或重命名为 `NonredundantLinearAddTangentMode` 或 `NonredundantAuxiliaryLinearAddMode`，避免暗示只能在 stored physical coefficients 上计算。
-2. 保留旧环境变量作为兼容 alias，但新增主环境变量，例如 `XMVB_CPP_NONREDUNDANT_LINEAR_ADD_TANGENT`。
+2. 保留旧环境变量作为兼容 alias，但新增主环境变量，例如 `XMVB_NONREDUNDANT_LINEAR_ADD_TANGENT`。
 3. 日志字段改为 `Orbital tangent chart` 或 `Linear-add tangent`，取值使用 `mixed_tangent`、`linear_add`、`linear_add_one_sided` 等不会误导的名字。
 4. 文档和注释中停止把该算法称为 `sparse-linear`。只有谈 packed sparse storage 或 HAO support 时才使用 sparse。
 5. 将 `uses_dense_full_support_projector` 从“chart 类型”语义中拆出来。它只能表示 packed slot 覆盖了 block 所有 AO 行时可用的 gather/scatter 优化，不能决定是否使用 mixed 或 linear-add chart。
@@ -175,7 +175,7 @@ $$
 - `apply_packed_linear_tangent(const NonredundantOrbitalSpace&, const Eigen::VectorXd&)`
 - `apply_packed_linear_tangent_adjoint(const NonredundantOrbitalSpace&, const Eigen::VectorXd&)`
 
-前两个 full-table helper 没有生产调用点，使用 full table size，并在热路径中打印 `stderr` 诊断，不适合保留为主实现。后两个 packed helper 被 `XMVB_CPP_SPARSE_LINEAR_HVP` 旁路使用，但它们跳过 dense full-support block，且依赖 `NonredundantOrbitalSpace` 中的 accepted-point cache。本次修复已从源码中删除这些 helper 和相关公开声明。
+前两个 full-table helper 没有生产调用点，使用 full table size，并在热路径中打印 `stderr` 诊断，不适合保留为主实现。后两个 packed helper 被 `XMVB_SPARSE_LINEAR_HVP` 旁路使用，但它们跳过 dense full-support block，且依赖 `NonredundantOrbitalSpace` 中的 accepted-point cache。本次修复已从源码中删除这些 helper 和相关公开声明。
 
 后续如确实需要重新引入 ambient packed 诊断 helper，必须满足：
 
@@ -190,7 +190,7 @@ $$
 
 验收条件：
 
-- 全代码搜索中 `XMVB_CPP_SPARSE_LINEAR_HVP` 不再影响生产 optimizer。
+- 全代码搜索中 `XMVB_SPARSE_LINEAR_HVP` 不再影响生产 optimizer。
 - HVP 和 trial build 不再手写 scatter/gather 循环。
 - 任意 `parameter_view.unpack()` 输入都是 packed size。
 - 接受一步后所有 accepted-point tangent cache 都来自新 `objective.last_input()` 和新 gradient result。
@@ -324,7 +324,7 @@ F2 只能作为 smoke test，不能作为算法普遍性证据。
 1. 先做纯重命名和日志清理，不改变默认行为。
 2. 引入 chart enum，把 `uses_dense_full_support_projector` 从 chart 语义中拆出来。
 3. 将 linear-add candidate/tangent/project/retract 函数改为 HAO/OEO 共享实现。
-4. 删除或停用 `XMVB_CPP_SPARSE_LINEAR_HVP` 全局旁路，保证只有 NROS 主路径。
+4. 删除或停用 `XMVB_SPARSE_LINEAR_HVP` 全局旁路，保证只有 NROS 主路径。
 5. 接入 auxiliary-aware linear-add NROS HVP 模式，但先通过 env opt-in 运行。
 6. 加 chart consistency diagnostic，并在 F2/241 上先验证尺寸和 adjoint。
 7. 跑 240/241/FeCl2/MnF2 的 sbatch benchmark。
@@ -345,7 +345,7 @@ F2 只能作为 smoke test，不能作为算法普遍性证据。
 - `src/CMakeLists.txt`
 - `src/tests/unit/` 或现有 diagnostic source 所在目录
 
-实现时遵守 `docs/HPC_CPP_STYLE.md`：新增矩阵/向量语义使用 `Eigen::MatrixXd` / `Eigen::VectorXd`，不要引入新的 `std::vector<double>` 假 dense matrix，也不要新增热路径 `std::fprintf` 诊断。
+实现时遵守 `docs/HPC_STYLE.md`：新增矩阵/向量语义使用 `Eigen::MatrixXd` / `Eigen::VectorXd`，不要引入新的 `std::vector<double>` 假 dense matrix，也不要新增热路径 `std::fprintf` 诊断。
 
 ## 8. SLURM 验收方案
 
@@ -413,7 +413,7 @@ bash scripts/summarize_vb_optimizer_benchmark.sh <benchmark_dir>
 1. 240、241、FeCl2、MnF2 都没有 `packed parameter size does not match parameter view`。
 2. chart consistency diagnostic 在四个体系上通过。
 3. reduced HVP symmetry 和 finite-difference HVP 检查在可解释误差范围内。
-4. linear-add HVP 模式下不需要 `XMVB_CPP_SPARSE_LINEAR_HVP`。
+4. linear-add HVP 模式下不需要 `XMVB_SPARSE_LINEAR_HVP`。
 
 ## 10. 风险和处理
 

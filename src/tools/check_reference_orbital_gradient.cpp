@@ -61,7 +61,7 @@ std::vector<int> collect_differentiable_parameter_indices(
 }
 
 void print_usage() {
-  std::cerr << "usage: check_cpp_reference_orbital_gradient <input.xmi> "
+  std::cerr << "usage: check_reference_orbital_gradient <input.xmi> "
                "[--count N] [--step h]\n";
 }
 

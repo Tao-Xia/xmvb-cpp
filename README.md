@@ -61,7 +61,7 @@ This produces `build/src/xmvb-cpp.exe`.
 To enable optional diagnostic and test targets:
 
 ```bash
-cmake -B build -G Ninja -DXMVB_CPP_BUILD_DEV_TARGETS=ON
+cmake -B build -G Ninja -DXMVB_BUILD_DEV_TARGETS=ON
 cmake --build build
 ```
 

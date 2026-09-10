@@ -480,8 +480,8 @@ const char* ao_integral_source_name(AoIntegralSource source) {
   switch (source) {
     case AoIntegralSource::Auto:
       return "auto";
-    case AoIntegralSource::LibcintMaterializedCpp:
-      return "libcint_cpp";
+    case AoIntegralSource::LibcintMaterialized:
+      return "libcint";
     case AoIntegralSource::RuntimeCoreHamiltonianOnly:
       return "runtime_hcore";
   }
@@ -530,8 +530,8 @@ AoIntegralSource resolve_ao_integral_source(
     case AoIntegralSource::Auto:
       return use_standard_ri_two_electron_mode
           ? AoIntegralSource::RuntimeCoreHamiltonianOnly
-          : AoIntegralSource::LibcintMaterializedCpp;
-    case AoIntegralSource::LibcintMaterializedCpp:
+          : AoIntegralSource::LibcintMaterialized;
+    case AoIntegralSource::LibcintMaterialized:
     case AoIntegralSource::RuntimeCoreHamiltonianOnly:
       return options.ao_integral_source;
   }
@@ -610,7 +610,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   } else if (can_build_generated_raw_structures_from_structure_class(
                  input_deck_metadata,
                  resolved_n_total_electrons)) {
-    load_result.raw_structure_source = RawStructureSource::GeneratedFromStructureClassCpp;
+    load_result.raw_structure_source = RawStructureSource::GeneratedFromStructureClass;
     raw_structure_data =
         build_generated_raw_structures_from_structure_class(
             input_deck_metadata,
@@ -708,7 +708,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
 
   const auto ao_integral_provider_start_time = std::chrono::steady_clock::now();
   MaterializedAoIntegralBuffers ao_integral_buffers;
-  if (resolved_ao_integral_source == AoIntegralSource::LibcintMaterializedCpp) {
+  if (resolved_ao_integral_source == AoIntegralSource::LibcintMaterialized) {
     LibcintMaterializedIntegralProvider provider;
     ao_integral_buffers = provider.build(result.libcint_input);
   } else if (resolved_ao_integral_source != AoIntegralSource::RuntimeCoreHamiltonianOnly) {

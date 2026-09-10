@@ -28,7 +28,7 @@ struct Options {
 void print_usage() {
   std::cerr << "usage: check_exact_ao_h1e_builder <input.xmi>"
                " [--standard-two-electron-mode exact|auto]"
-               " [--ao-integral-source auto|libcint_cpp|runtime_hcore]\n";
+               " [--ao-integral-source auto|libcint|runtime_hcore]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -58,9 +58,9 @@ Options parse_arguments(int argc, char** argv) {
     if (name == "--ao-integral-source") {
       if (value == "auto") {
         options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-      } else if (value == "libcint_cpp") {
+      } else if (value == "libcint") {
         options.ao_integral_source =
-            xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
+            xmvb::vb::AoIntegralSource::LibcintMaterialized;
       } else if (value == "runtime_hcore") {
         options.ao_integral_source =
             xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;

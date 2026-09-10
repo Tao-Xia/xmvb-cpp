@@ -365,7 +365,7 @@ the physical inactive component toward the reference localized direction.
 This is the orthogonal-frame analogue of the current
 `build_metric_preserving_inactive_repaired_active_physical_orbitals(...)`
 logic in
-[cpp_vb_scf_optimizer.cpp](/pool1/home/xiatao/project/xmvb-cpp/src/vb/scf/cpp_vb_scf_optimizer.cpp).
+[vb_scf_optimizer.cpp](/pool1/home/xiatao/project/xmvb-cpp/src/vb/scf/vb_scf_optimizer.cpp).
 
 ## 7. Exact Differential Relations For Pure Representative Changes
 
@@ -713,7 +713,7 @@ machinery already matches the theory in Section 7.
 ### 12.3 Current active representative reset corresponds to changing $K_a$
 
 The current OEO active repair path in
-`cpp_vb_scf_optimizer.cpp`
+`vb_scf_optimizer.cpp`
 does not rotate the active auxiliary block itself. Instead, it keeps the
 current auxiliary orbitals fixed and reconstructs new physical active orbitals
 by adding an inactive component chosen from a localized reference.

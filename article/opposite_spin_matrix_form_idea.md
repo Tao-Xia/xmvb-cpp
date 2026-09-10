@@ -34,7 +34,7 @@ The short answer is:
 The current implementation still performs an explicit full determinant-pair
 sweep in the active-space backward path:
 
-- `src/vb/scf/cpp_active_space_gradient_evaluator.cpp`
+- `src/vb/scf/active_space_gradient_evaluator.cpp`
 - `accumulate_active_space_gradient_unordered_pair(...)`
 - outer loop over unordered determinant pairs
 

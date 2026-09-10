@@ -45,7 +45,7 @@ input = test_molecule/C6H6_full.xmi
 
 这里：
 
-- `exact_ctx fallback` 指环境变量 `XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE` 未开启时的生产路径；
+- `exact_ctx fallback` 指环境变量 `XMVB_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE` 未开启时的生产路径；
 - `exact_ctx analytic core` 指开启该环境变量后的新路径，但当前只保留数值校验用途。
 
 ### 2.2 Direct Interpretation
@@ -95,7 +95,7 @@ input = test_molecule/C6H6_full.xmi
 - 在 `F2` 上，开启
 
 ```bash
-XMVB_CPP_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1
+XMVB_ENABLE_EXACT_CTX_STAGE1_ANALYTIC_CORE=1
 ```
 
 后，端到端优化器复测时仍然返回 `139`，即段错误；

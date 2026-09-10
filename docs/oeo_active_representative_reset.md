@@ -45,7 +45,7 @@ is close to the legacy result.
 
 The relevant current code paths are:
 
-1. `src/vb/scf/cpp_vb_scf_optimizer.cpp`
+1. `src/vb/scf/vb_scf_optimizer.cpp`
 2. `src/vb/orbital/support_aware_mo_gauge_fix.cpp`
 3. `src/vb/orbital/active_space_orbital_preparer.cpp`
 4. `src/runtime/vbscf_input_loader.cpp`

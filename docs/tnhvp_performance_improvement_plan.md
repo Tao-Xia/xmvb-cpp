@@ -26,7 +26,7 @@ Command:
 ```bash
 env OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   build/src/benchmark_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi \
-  --repeats 2 --warmup 1 --ao-integral-source libcint_cpp
+  --repeats 2 --warmup 1 --ao-integral-source libcint
 ```
 
 Measured on 2026-04-23:
@@ -98,7 +98,7 @@ matrix costs.
 
 ### Implemented So Far
 
-1. Added `XMVB_CPP_EXACT_CTX_DIRECTIONAL_STRUCTURE_THREAD_DIVISOR` so this
+1. Added `XMVB_EXACT_CTX_DIRECTIONAL_STRUCTURE_THREAD_DIVISOR` so this
    stage can be tuned independently in cluster benchmarks.
 2. Changed the default directional-structure thread divisor from `96` to `48`.
 3. Materialized the directional opposite-spin dense projected pair values
@@ -507,11 +507,11 @@ Minimum checks after each nontrivial implementation:
 cmake --build build --target xmvb check_exact_ctx_hvp benchmark_exact_ctx_hvp -j8
 
 env OMP_NUM_THREADS=1 build/src/check_exact_ctx_hvp \
-  testdata/vbscf/F2.xmi --nonredundant-adapt true --ao-integral-source libcint_cpp
+  testdata/vbscf/F2.xmi --nonredundant-adapt true --ao-integral-source libcint
 
 env OMP_NUM_THREADS=32 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   build/src/benchmark_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi \
-  --repeats 2 --warmup 1 --ao-integral-source libcint_cpp
+  --repeats 2 --warmup 1 --ao-integral-source libcint
 ```
 
 For optimizer-level changes, also run at least one TNHVP end-to-end job through
@@ -528,9 +528,9 @@ For optimizer-level changes, also run at least one TNHVP end-to-end job through
 | Date | Change | Status | Benchmark / Validation |
 | --- | --- | --- | --- |
 | 2026-04-23 | Created this plan from current static inspection and `241_VBSCF` HVP benchmark. | baseline documented | `full_cached=0.728s`, `core_only=0.160s`, `outer_only=0.485s` on 32 threads |
-| 2026-04-23 | Tuned directional-structure thread heuristic and exposed `XMVB_CPP_EXACT_CTX_DIRECTIONAL_STRUCTURE_THREAD_DIVISOR`. | implemented | `sbatch` benchmark on `241_VBSCF`: structure stage `0.2088s -> 0.0783s` (`96 -> 48`), full HVP `0.3846s -> 0.2684s` on the tested nodes. `10698_VBSCF`: structure stage `0.2073s -> 0.0843s`, full HVP roughly flat within node noise. |
-| 2026-04-23 | Reused accepted-point selected-state generalized-eigen response metadata through the outer-response cache. | implemented | `sbatch` `check_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi --ao-integral-source libcint_cpp`: `full_max_abs_diff=4.76e-09`, `fixed_max_abs_diff=3.83e-09`, `outer_max_abs_diff=2.83e-09`. |
-| 2026-04-24 | Replaced singular same-spin second-order deleted-minor values in forward/backward/HVP with one shared SVD/null-space cofactor formula. Directional deleted-minor derivatives still use the generic path. | implemented, numerically validated | Local rebuild passed for `xmvb`, `check_exact_ctx_hvp`, and `benchmark_exact_ctx_hvp`. `F2` smoke stays at final energy `-198.751155825177`. On `6526Y`, `check_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi --ao-integral-source libcint_cpp` (`1942375`) gives `full_max_abs_diff=3.57e-09`, `outer_max_abs_diff=2.23e-09`. `benchmark_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi` (`1942374`) gives `full_cached=0.3413s`, `core_only=0.1161s`; this does not beat the recent `bench-241-current.1942293.out` baseline (`full_cached=0.2389s`, `core_only=0.1161s`), so `241_VBSCF` is still not limited by the singular second-order value path alone. |
+| 2026-04-23 | Tuned directional-structure thread heuristic and exposed `XMVB_EXACT_CTX_DIRECTIONAL_STRUCTURE_THREAD_DIVISOR`. | implemented | `sbatch` benchmark on `241_VBSCF`: structure stage `0.2088s -> 0.0783s` (`96 -> 48`), full HVP `0.3846s -> 0.2684s` on the tested nodes. `10698_VBSCF`: structure stage `0.2073s -> 0.0843s`, full HVP roughly flat within node noise. |
+| 2026-04-23 | Reused accepted-point selected-state generalized-eigen response metadata through the outer-response cache. | implemented | `sbatch` `check_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi --ao-integral-source libcint`: `full_max_abs_diff=4.76e-09`, `fixed_max_abs_diff=3.83e-09`, `outer_max_abs_diff=2.83e-09`. |
+| 2026-04-24 | Replaced singular same-spin second-order deleted-minor values in forward/backward/HVP with one shared SVD/null-space cofactor formula. Directional deleted-minor derivatives still use the generic path. | implemented, numerically validated | Local rebuild passed for `xmvb`, `check_exact_ctx_hvp`, and `benchmark_exact_ctx_hvp`. `F2` smoke stays at final energy `-198.751155825177`. On `6526Y`, `check_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi --ao-integral-source libcint` (`1942375`) gives `full_max_abs_diff=3.57e-09`, `outer_max_abs_diff=2.23e-09`. `benchmark_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi` (`1942374`) gives `full_cached=0.3413s`, `core_only=0.1161s`; this does not beat the recent `bench-241-current.1942293.out` baseline (`full_cached=0.2389s`, `core_only=0.1161s`), so `241_VBSCF` is still not limited by the singular second-order value path alone. |
 | 2026-04-24 | Specialized singular same-spin degree-2 directional deleted-minor kernels to avoid generic deleted-index vectors, `std::find`, and generic minor scattering in the hot HVP/backward loops. | implemented, numerically validated | Local rebuild passed again for `xmvb`, `check_exact_ctx_hvp`, and `benchmark_exact_ctx_hvp`; `F2` smoke still ends at `-198.751155825177`. On `6526Y`, `benchmark_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi` (`1942377`) improves the immediately previous singular-path trial from `full_cached=0.3413s` to `0.2614s`; active-2e drops `0.0766s -> 0.0560s`, and outer-response orbital-pullback drops `0.0507s -> 0.0242s`. Against the stronger historical `bench-241-current.1942293.out` baseline, `241` is still mixed (`full_cached 0.2614s` vs `0.2389s`), so the singular directional path is not the only remaining bottleneck. `MnF2` validation on `6526Y` also stays consistent: `check_exact_ctx_hvp testdata/vbscf/MnF2.xmi` (`1942379`) gives `full_max_abs_diff=1.47e-4`, `max_rel_diff=6.16e-8`, and `benchmark_exact_ctx_hvp testdata/vbscf/MnF2.xmi` (`1942378`) reports `full_cached=0.2359s`, `core_only=0.0845s`. |
 | 2026-04-24 | Tightened `calc_same_spin_hamiltonian_impl` to use direct packed-`GGO` dispatch and hoist `1 / det(S)` out of the regular same-spin inner loop. A trial occupied-pair packed-index cache was benchmarked and discarded because it regressed `241_VBSCF`. | implemented, mixed perf impact | Final retained version is numerically consistent on `241_VBSCF`: `check_exact_ctx_hvp` (`1942388`) gives `full_max_abs_diff=5.55e-09`, `outer_max_abs_diff=3.27e-09`. On `6526Y`, `benchmark_exact_ctx_hvp testdata/vbscf/241_VBSCF.xmi` (`1942387`) lands at `full_cached=0.2615s`, essentially flat against the immediately previous `1942377` run (`0.2614s`), with `core_only active_2e = 0.0498s` versus `0.05195s` there. The discarded occupied-pair cache trial (`1942385`) regressed badly to `full_cached=0.3311s`. |
 ## P7. Trial Step Evaluation Copies
@@ -544,8 +544,8 @@ trial path:
 - once for each trust-region trial step;
 - once again in the nonredundant Armijo fallback path.
 
-That object includes the current `CppVbInput`, the last full
-`CppOrbitalGradientResult`, and the accepted-point second-order context.
+That object includes the current `VbScfInput`, the last full
+`OrbitalGradientResult`, and the accepted-point second-order context.
 Copying it on every rejected or accepted trial is much more expensive than a
 small control object copy and is unrelated to the Hessian formula itself.
 

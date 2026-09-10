@@ -886,7 +886,7 @@ TN 目前主要使用 reduced Euclidean norm 和 packed/retraction tangent norm 
 
 涉及文件：
 
-1. `src/vb/scf/cpp_vb_scf_optimizer.cpp`
+1. `src/vb/scf/vb_scf_optimizer.cpp`
 2. `src/vb/orbital/nonredundant_orbital_space.hpp`
 3. `src/vb/orbital/nonredundant_orbital_space.cpp`
 
@@ -972,7 +972,7 @@ J^{\mathsf T}H_xJp.
 
 涉及文件：
 
-1. `src/vb/scf/cpp_vb_scf_optimizer.cpp`
+1. `src/vb/scf/vb_scf_optimizer.cpp`
 2. `src/vb/scf/exact_orbital_second_order_operator.cpp`
 3. `src/vb/scf/exact_orbital_second_order_operator.hpp`
 4. `src/vb/orbital/nonredundant_orbital_space.cpp`
@@ -1038,9 +1038,9 @@ J^{\mathsf T}H_xJp.
    \]
    subject to local norm tangent、inactive metric tangent、inactive-active gauge tangent。
 2. 新增显式 \(J_{\mathrm{sparse}}\)、\(J_{\mathrm{sparse}}^{\mathsf T}\)、\(J_{\mathrm{sparse}}^{\mathsf T}J_{\mathrm{sparse}}\) 诊断。
-3. 新增 `XMVB_CPP_LOG_NONREDUNDANT_TANGENT=1` 轻量诊断。
-4. 新增 `XMVB_CPP_LOG_NONREDUNDANT_TANGENT_METRIC=1` 显式 metric 诊断。
-5. 新增 `XMVB_CPP_NONREDUNDANT_USE_CONSTRAINED_SPARSE_TANGENT=1`，打开后 sparse mixed block 的 expansion、projection、metric factorization 使用同一个 cached \(J_{\mathrm{sparse}}\)。
+3. 新增 `XMVB_LOG_NONREDUNDANT_TANGENT=1` 轻量诊断。
+4. 新增 `XMVB_LOG_NONREDUNDANT_TANGENT_METRIC=1` 显式 metric 诊断。
+5. 新增 `XMVB_NONREDUNDANT_USE_CONSTRAINED_SPARSE_TANGENT=1`，打开后 sparse mixed block 的 expansion、projection、metric factorization 使用同一个 cached \(J_{\mathrm{sparse}}\)。
 6. 在该开关下，`expand_retract_input_tangent()` 和 `retract_step()` 已改为一阶一致：finite retraction 使用 \(x+J_{\mathrm{sparse}}p\) 再做局部归一化，因此 retraction derivative 与 \(J_{\mathrm{sparse}}\) 一致。
 
 MnF2 单核短 benchmark：
@@ -1049,7 +1049,7 @@ MnF2 单核短 benchmark：
    `SCF iteration wall time = 16.931646 s`，
    `Final total energy = -1348.828137573960`，
    `Final projected |g|_inf = 3.16262090e+00`。
-2. 打开 `XMVB_CPP_NONREDUNDANT_USE_CONSTRAINED_SPARSE_TANGENT=1`，无诊断，`--max-iterations 2`：
+2. 打开 `XMVB_NONREDUNDANT_USE_CONSTRAINED_SPARSE_TANGENT=1`，无诊断，`--max-iterations 2`：
    `SCF iteration wall time = 12.596179 s`，
    `Final total energy = -1348.827306440504`，
    `Final projected |g|_inf = 1.73063450e+00`。
@@ -1640,7 +1640,7 @@ z=L^{\mathsf T}\zeta.
 第一阶段 env-gated：
 
 ```text
-XMVB_CPP_NONREDUNDANT_USE_FULL_NONORTHOGONAL_TANGENT=1
+XMVB_NONREDUNDANT_USE_FULL_NONORTHOGONAL_TANGENT=1
 ```
 
 打开后：
@@ -1712,7 +1712,7 @@ exact_ctx direct-action HVP 中所有 pushforward/pullback 必须使用同一个
 涉及文件：
 
 1. `src/vb/scf/exact_orbital_second_order_operator.cpp`
-2. `src/vb/scf/cpp_vb_scf_optimizer.cpp`
+2. `src/vb/scf/vb_scf_optimizer.cpp`
 3. `src/vb/orbital/nonredundant_orbital_space.cpp`
 
 验收条件是 HVP secant consistency：
@@ -1757,7 +1757,7 @@ H_\zeta p\approx
 9. 提交 9：HVP secant consistency 和 exact_ctx 路径清理。
 10. 提交 10：多体系完整 benchmark 后，决定是否替换默认路径。
 
-完成提交 10 前，`XMVB_CPP_NONREDUNDANT_USE_FULL_NONORTHOGONAL_TANGENT` 只能作为实验开关，不能作为默认路径。
+完成提交 10 前，`XMVB_NONREDUNDANT_USE_FULL_NONORTHOGONAL_TANGENT` 只能作为实验开关，不能作为默认路径。
 
 ## 18. full nonorthogonal sparse tangent 当前落地记录
 
@@ -1766,8 +1766,8 @@ H_\zeta p\approx
 新增开关：
 
 ```text
-XMVB_CPP_NONREDUNDANT_USE_FULL_NONORTHOGONAL_TANGENT=1
-XMVB_CPP_LOG_NONREDUNDANT_FULL_TANGENT=1
+XMVB_NONREDUNDANT_USE_FULL_NONORTHOGONAL_TANGENT=1
+XMVB_LOG_NONREDUNDANT_FULL_TANGENT=1
 ```
 
 已接入内容：

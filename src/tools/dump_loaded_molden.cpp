@@ -14,7 +14,7 @@ void print_usage() {
   std::cerr
       << "usage: dump_loaded_molden <input.xmi> <output_stem.xmi>"
       << " [--skip-orbital-guess true|false]"
-      << " [--ao-integral-source auto|legacy|libcint_cpp|runtime_hcore]\n";
+      << " [--ao-integral-source auto|legacy|libcint|runtime_hcore]\n";
 }
 
 bool parse_bool_argument(const std::string& value) {
@@ -37,8 +37,8 @@ void apply_ao_integral_source_argument(
     options->ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
     return;
   }
-  if (source_name == "libcint_cpp") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
+  if (source_name == "libcint") {
+    options->ao_integral_source = xmvb::vb::AoIntegralSource::LibcintMaterialized;
     return;
   }
   if (source_name == "runtime_hcore") {

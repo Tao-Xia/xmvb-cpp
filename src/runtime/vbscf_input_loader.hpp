@@ -11,7 +11,7 @@ namespace xmvb::vb {
 
 enum class AoIntegralSource {
   Auto,
-  LibcintMaterializedCpp,
+  LibcintMaterialized,
   // Pure C++ fallback that keeps only the AO core Hamiltonian.
   RuntimeCoreHamiltonianOnly,
 };
@@ -23,7 +23,7 @@ const char* standard_two_electron_mode_name(StandardTwoElectronMode mode);
 enum class RawStructureSource {
   Unknown,
   ExplicitInputBlock,
-  GeneratedFromStructureClassCpp,
+  GeneratedFromStructureClass,
 };
 
 struct VbScfStaticMoleculeMetadata {

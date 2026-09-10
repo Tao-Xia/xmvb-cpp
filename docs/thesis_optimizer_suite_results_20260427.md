@@ -15,8 +15,8 @@
 
 需要区分三条路线：
 
-1. `cpp_tnhvp`：`xmvb-cpp` 的 `nonredundant_truncated_newton`
-2. `cpp_lbfgs`：`xmvb-cpp` 的 `lbfgspp`
+1. `tnhvp`：`xmvb-cpp` 的 `nonredundant_truncated_newton`
+2. `lbfgs`：`xmvb-cpp` 的 `lbfgspp`
 3. `legacy_xmvb`：通过 [xmvb.sh](/pool1/home/xiatao/project/xmvb-cpp/xmvb.sh) 调用的 legacy XMVB 端到端基线
 
 `legacy_xmvb` 不是“强制 legacy LBFGS”或“强制 legacy TNHVP”，而是按 deck 自身关键字运行，因此更适合作为历史生产基线。
@@ -25,23 +25,23 @@
 
 | 体系 | 类型/角色 | backend | 收敛 | 迭代数 | wall time / s | final energy / Eh | final gradient inf-norm |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: |
-| `F2` | correctness / sanity check | `cpp_tnhvp` | yes | 8 | 0.361937 | -198.751155798123 | 2.07495225e-04 |
-| `F2` | correctness / sanity check | `cpp_lbfgs` | yes | 28 | 0.634885 | -198.751155827862 | 1.31653316e-04 |
+| `F2` | correctness / sanity check | `tnhvp` | yes | 8 | 0.361937 | -198.751155798123 | 2.07495225e-04 |
+| `F2` | correctness / sanity check | `lbfgs` | yes | 28 | 0.634885 | -198.751155827862 | 1.31653316e-04 |
 | `F2` | correctness / sanity check | `legacy_xmvb` | yes | 28 | 2.232 | -198.75115582 |  |
-| `benzene` (`241_VBSCF`) | closed-shell sparse HAO 主 benchmark | `cpp_tnhvp` | yes | 9 | 7.589154 | -230.720590176024 | 1.51528928e-04 |
-| `benzene` (`241_VBSCF`) | closed-shell sparse HAO 主 benchmark | `cpp_lbfgs` | yes | 74 | 14.464779 | -230.720589594596 | 2.56206771e-04 |
+| `benzene` (`241_VBSCF`) | closed-shell sparse HAO 主 benchmark | `tnhvp` | yes | 9 | 7.589154 | -230.720590176024 | 1.51528928e-04 |
+| `benzene` (`241_VBSCF`) | closed-shell sparse HAO 主 benchmark | `lbfgs` | yes | 74 | 14.464779 | -230.720589594596 | 2.56206771e-04 |
 | `benzene` (`241_VBSCF`) | closed-shell sparse HAO 主 benchmark | `legacy_xmvb` | yes | 76 | 22.502 | -230.72058966 |  |
-| `MnF2` | difficult open-shell sparse HAO | `cpp_tnhvp` | yes | 132 | 186.600209 | -1348.893351183859 | 1.32436349e-03 |
-| `MnF2` | difficult open-shell sparse HAO | `cpp_lbfgs` | yes | 992 | 119.214302 | -1348.893350530760 | 1.61715722e-04 |
+| `MnF2` | difficult open-shell sparse HAO | `tnhvp` | yes | 132 | 186.600209 | -1348.893351183859 | 1.32436349e-03 |
+| `MnF2` | difficult open-shell sparse HAO | `lbfgs` | yes | 992 | 119.214302 | -1348.893350530760 | 1.61715722e-04 |
 | `MnF2` | difficult open-shell sparse HAO | `legacy_xmvb` | yes | 1067 | 344.557 | -1348.89335001 |  |
-| `FeCl2` | production open-shell OEO | `cpp_tnhvp` | yes | 3 | 4.485240 | -2181.617636108513 | 3.31620464e-04 |
-| `FeCl2` | production open-shell OEO | `cpp_lbfgs` | yes | 1040 | 184.142219 | -2181.617642772074 | 1.11246578e-04 |
+| `FeCl2` | production open-shell OEO | `tnhvp` | yes | 3 | 4.485240 | -2181.617636108513 | 3.31620464e-04 |
+| `FeCl2` | production open-shell OEO | `lbfgs` | yes | 1040 | 184.142219 | -2181.617642772074 | 1.11246578e-04 |
 | `FeCl2` | production open-shell OEO | `legacy_xmvb` | yes | 1044 | 684.252 | -2181.61764257 |  |
-| `10698` (`10698_VBSCF`) | larger closed-shell HAO benchmark deck | `cpp_tnhvp` | yes | 11 | 83.311023 | -422.611823781255 | 4.00343331e-04 |
-| `10698` (`10698_VBSCF`) | larger closed-shell HAO benchmark deck | `cpp_lbfgs` | yes | 122 | 96.598535 | -422.611823580310 | 4.25825917e-04 |
+| `10698` (`10698_VBSCF`) | larger closed-shell HAO benchmark deck | `tnhvp` | yes | 11 | 83.311023 | -422.611823781255 | 4.00343331e-04 |
+| `10698` (`10698_VBSCF`) | larger closed-shell HAO benchmark deck | `lbfgs` | yes | 122 | 96.598535 | -422.611823580310 | 4.25825917e-04 |
 | `10698` (`10698_VBSCF`) | larger closed-shell HAO benchmark deck | `legacy_xmvb` | yes | 115 | 169.270 | -422.61182365 |  |
-| `240` (`240_tnhvp`) | supplementary internal benchmark deck | `cpp_tnhvp` | yes | 20 | 112.572492 | -343.446301677009 | 6.38437172e-04 |
-| `240` (`240_tnhvp`) | supplementary internal benchmark deck | `cpp_lbfgs` | yes | 126 | 272.465908 | -343.446301442804 | 1.30801403e-04 |
+| `240` (`240_tnhvp`) | supplementary internal benchmark deck | `tnhvp` | yes | 20 | 112.572492 | -343.446301677009 | 6.38437172e-04 |
+| `240` (`240_tnhvp`) | supplementary internal benchmark deck | `lbfgs` | yes | 126 | 272.465908 | -343.446301442804 | 1.30801403e-04 |
 | `240` (`240_tnhvp`) | supplementary internal benchmark deck | `legacy_xmvb` | yes | 115 | 1330.044 | -343.44630103 |  |
 
 ## 2. 派生比较
@@ -63,9 +63,9 @@
 
 这批数据不能支持“TNHVP 在所有体系上都优于 LBFGS”。
 
-- `benzene`、`FeCl2`、`10698`、`240` 上，TNHVP 的 wall-time 优于 `cpp_lbfgs`
+- `benzene`、`FeCl2`、`10698`、`240` 上，TNHVP 的 wall-time 优于 `lbfgs`
 - `F2` 上 TNHVP 也更快，但体系太小，只能当 correctness / sanity check
-- `MnF2` 上，TNHVP 的迭代数显著更少，但总 wall-time 反而比 `cpp_lbfgs` 更慢
+- `MnF2` 上，TNHVP 的迭代数显著更少，但总 wall-time 反而比 `lbfgs` 更慢
 
 因此，正文更稳妥的表述应是：
 
@@ -89,10 +89,10 @@ TNHVP 在 6 个体系上都显著减少了迭代数：
 `FeCl2` 是这批结果里最有说服力的体系：
 
 - TNHVP：`3` 步，`4.485240 s`
-- `cpp_lbfgs`：`1040` 步，`184.142219 s`
+- `lbfgs`：`1040` 步，`184.142219 s`
 - `legacy_xmvb`：`1044` 步，`684.252 s`
 
-这个体系上 TNHVP 相对 `cpp_lbfgs` 的 wall-time 加速约为 `41.06x`，相对 `legacy_xmvb` 约为 `152.56x`。
+这个体系上 TNHVP 相对 `lbfgs` 的 wall-time 加速约为 `41.06x`，相对 `legacy_xmvb` 约为 `152.56x`。
 
 ### 3.4 `MnF2` 是必须保留的反例/边界例
 
@@ -106,12 +106,12 @@ TNHVP 在 6 个体系上都显著减少了迭代数：
 
 ### 3.5 最终能量差异很小，但趋势上 LBFGS/legacy 往往略低
 
-所有体系三路都收敛，最终能量彼此接近。相对 `cpp_lbfgs`，TNHVP 的最终能量差异量级大致在 `1e-7` 到 `1e-6 Eh`，`FeCl2` 上约为 `6.7e-6 Eh`。
+所有体系三路都收敛，最终能量彼此接近。相对 `lbfgs`，TNHVP 的最终能量差异量级大致在 `1e-7` 到 `1e-6 Eh`，`FeCl2` 上约为 `6.7e-6 Eh`。
 
 这意味着：
 
 - 对论文主结论，三条路线都能到达非常接近的最终能量；
-- 但若要强调“最低能量”，则 `cpp_lbfgs` 和 `legacy_xmvb` 往往略占优；
+- 但若要强调“最低能量”，则 `lbfgs` 和 `legacy_xmvb` 往往略占优；
 - 若要强调“更快达到合理收敛”，则 `benzene`、`FeCl2`、`10698`、`240` 更适合用来突出 TNHVP。
 
 ## 4. 论文表述建议
@@ -140,4 +140,4 @@ TNHVP 在 6 个体系上都显著减少了迭代数：
 - 总汇总表：[benchmarks/thesis_optimizer_suite_20260427_124732/suite_summary.tsv](/pool1/home/xiatao/project/xmvb-cpp/benchmarks/thesis_optimizer_suite_20260427_124732/suite_summary.tsv)
 - 本文档：[docs/thesis_optimizer_suite_results_20260427.md](/pool1/home/xiatao/project/xmvb-cpp/docs/thesis_optimizer_suite_results_20260427.md)
 
-如果后面要往论文正文里贴表，建议直接从 `suite_summary.tsv` 抽 `cpp_tnhvp` 与 `cpp_lbfgs` 两行，`legacy_xmvb` 放附表或补充材料。
+如果后面要往论文正文里贴表，建议直接从 `suite_summary.tsv` 抽 `tnhvp` 与 `lbfgs` 两行，`legacy_xmvb` 放附表或补充材料。

@@ -13,13 +13,13 @@
 
 每个体系默认提交三路计算：
 
-1. `cpp_tnhvp`
-2. `cpp_lbfgs`
+1. `tnhvp`
+2. `lbfgs`
 3. `legacy_xmvb`
 
 其中前两路是 `xmvb-cpp` 的 `TNHVP` / `LBFGS` 对比。第三路通过 [xmvb.sh](/pool1/home/xiatao/project/xmvb-cpp/xmvb.sh) 跑 legacy XMVB，可作为生产脚本基线。
 
-需要注意：`legacy_xmvb` 不是“强制 legacy LBFGS”或“强制 legacy TNHVP”。它按输入 deck 自身关键字运行，因此更适合作为端到端历史基线，而不是与 `cpp_tnhvp`、`cpp_lbfgs` 做逐选项一一对应。
+需要注意：`legacy_xmvb` 不是“强制 legacy LBFGS”或“强制 legacy TNHVP”。它按输入 deck 自身关键字运行，因此更适合作为端到端历史基线，而不是与 `tnhvp`、`lbfgs` 做逐选项一一对应。
 
 ## 提交脚本
 
@@ -74,8 +74,8 @@ benchmarks/thesis_optimizer_suite_<timestamp>/MnF2/
 
 - `jobs.tsv`：三路任务的 Slurm job id 与日志位置
 - `submit.log`：提交记录
-- `cpp_tnhvp/`
-- `cpp_lbfgs/`
+- `tnhvp/`
+- `lbfgs/`
 - `legacy_xmvb/`
 
 顶层目录还会生成：
@@ -97,10 +97,10 @@ bash scripts/summarize_thesis_optimizer_suite.sh benchmarks/thesis_optimizer_sui
 benchmarks/thesis_optimizer_suite_<timestamp>/suite_summary.tsv
 ```
 
-这个总表会把 6 个体系的 `cpp_tnhvp`、`cpp_lbfgs`、`legacy_xmvb` 汇总到同一个 TSV 中，便于直接回填论文表格。
+这个总表会把 6 个体系的 `tnhvp`、`lbfgs`、`legacy_xmvb` 汇总到同一个 TSV 中，便于直接回填论文表格。
 
 ## 论文使用建议
 
-- 正文主对比表：优先使用 `cpp_tnhvp` vs `cpp_lbfgs`
+- 正文主对比表：优先使用 `tnhvp` vs `lbfgs`
 - `legacy_xmvb`：作为历史生产基线或附表
 - `240`：建议只放补充材料，不放正文主表

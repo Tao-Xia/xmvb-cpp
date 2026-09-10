@@ -104,7 +104,7 @@ std::vector<int> collect_unique_active_labels(
   return labels;
 }
 
-std::vector<DeterminantTermMap> build_cpp_terms_by_structure(
+std::vector<DeterminantTermMap> build_terms_by_structure(
     const xmvb::vb::FullDeterminantStructureData& expanded_data,
     int n_inactive_doubly_occupied_orbitals) {
   std::vector<DeterminantTermMap> terms_by_structure(
@@ -294,9 +294,9 @@ int main(int argc, char** argv) {
     std::cerr.flush();
     xmvb::vb::FullDeterminantStructureExpander expander;
     const auto expanded_data = expander.expand(raw_structure_data);
-    std::cerr << "stage=cpp_maps\n";
+    std::cerr << "stage=maps\n";
     std::cerr.flush();
-    const auto cpp_terms_by_structure = build_cpp_terms_by_structure(
+    const auto terms_by_structure = build_terms_by_structure(
         expanded_data,
         n_inactive_doubly_occupied_orbitals);
     std::cerr << "stage=legacy_maps\n";
@@ -311,17 +311,17 @@ int main(int argc, char** argv) {
     for (int structure_index = 0;
          structure_index < raw_structure_data.n_structures;
          ++structure_index) {
-      const auto& cpp_terms =
-          cpp_terms_by_structure[structure_index];
+      const auto& terms =
+          terms_by_structure[structure_index];
       const auto& legacy_terms =
           legacy_terms_by_structure[structure_index];
       bool structure_mismatch = false;
 
-      for (const auto& [key, cpp_coefficient] : cpp_terms) {
+      for (const auto& [key, coefficient] : terms) {
         const auto legacy_iterator = legacy_terms.find(key);
         const double legacy_coefficient =
             legacy_iterator == legacy_terms.end() ? 0.0 : legacy_iterator->second;
-        if (std::abs(cpp_coefficient - legacy_coefficient) > 1.0e-12) {
+        if (std::abs(coefficient - legacy_coefficient) > 1.0e-12) {
           if (!structure_mismatch) {
             ++mismatched_structure_count;
             structure_mismatch = true;
@@ -329,14 +329,14 @@ int main(int argc, char** argv) {
           ++mismatched_term_count;
           if (mismatched_term_count <= 12) {
             std::cout << "structure_mismatch structure=" << structure_index << '\n';
-            print_term("cpp", key, cpp_coefficient);
+            print_term("cpp", key, coefficient);
             print_term("legacy", key, legacy_coefficient);
           }
         }
       }
 
       for (const auto& [key, legacy_coefficient] : legacy_terms) {
-        if (cpp_terms.find(key) != cpp_terms.end()) {
+        if (terms.find(key) != terms.end()) {
           continue;
         }
         if (!structure_mismatch) {

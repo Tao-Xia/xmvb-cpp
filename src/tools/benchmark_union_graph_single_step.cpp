@@ -219,8 +219,8 @@ int main(int argc, char** argv) {
     const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
 
     xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
-    const auto exact_cpp_build_started_at = std::chrono::steady_clock::now();
-    const auto exact_cpp_structure_matrices = structure_builder.build(
+    const auto exact_build_started_at = std::chrono::steady_clock::now();
+    const auto exact_structure_matrices = structure_builder.build(
         input.structure_data.alpha_det,
         input.structure_data.beta_det,
         input.structure_data.determinant_to_structure_terms,
@@ -229,12 +229,12 @@ int main(int argc, char** argv) {
         n_active_orbitals,
         prepared_active_space.active_space_two_electron_result,
         input.structure_data.n_structures);
-    const double exact_cpp_build_seconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - exact_cpp_build_started_at).count();
+    const double exact_build_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - exact_build_started_at).count();
 
-    const auto exact_cpp_solver_summary = solve_ground_state(
-        exact_cpp_structure_matrices.hamiltonian_matrix,
-        exact_cpp_structure_matrices.overlap_matrix,
+    const auto exact_solver_summary = solve_ground_state(
+        exact_structure_matrices.hamiltonian_matrix,
+        exact_structure_matrices.overlap_matrix,
         input.structure_data.n_structures,
         prepared_active_space.one_electron_reference_energy,
         load_result.nuclear_repulsion_energy);
@@ -374,19 +374,19 @@ int main(int argc, char** argv) {
     }
 
     const auto legacy_exact_vs_cpp = summarize_matrix_difference(
-        exact_cpp_structure_matrices.overlap_matrix,
+        exact_structure_matrices.overlap_matrix,
         legacy_exact_overlap_matrix);
     const auto legacy_predicted_vs_exact = summarize_matrix_difference(
         legacy_exact_overlap_matrix,
         legacy_predicted_overlap_matrix);
     const auto mixed_exact_overlap_solver_summary = solve_ground_state(
-        exact_cpp_structure_matrices.hamiltonian_matrix,
+        exact_structure_matrices.hamiltonian_matrix,
         legacy_exact_overlap_matrix,
         n_structures,
         prepared_active_space.one_electron_reference_energy,
         load_result.nuclear_repulsion_energy);
     const auto mixed_predicted_overlap_solver_summary = solve_ground_state(
-        exact_cpp_structure_matrices.hamiltonian_matrix,
+        exact_structure_matrices.hamiltonian_matrix,
         legacy_predicted_overlap_matrix,
         n_structures,
         prepared_active_space.one_electron_reference_energy,
@@ -428,14 +428,14 @@ int main(int argc, char** argv) {
               << prep_timings.active_one_electron_wall_time_seconds << '\n';
     std::cout << "prepare_active_space_active_2e_wall_time_seconds = "
               << prep_timings.active_two_electron_wall_time_seconds << '\n';
-    std::cout << "cpp_exact_structure_build_wall_time_seconds = "
-              << exact_cpp_build_seconds << '\n';
-    std::cout << "cpp_exact_eigensolve_wall_time_seconds = "
-              << exact_cpp_solver_summary.wall_time_seconds << '\n';
-    std::cout << "cpp_exact_single_step_wall_time_seconds = "
+    std::cout << "exact_structure_build_wall_time_seconds = "
+              << exact_build_seconds << '\n';
+    std::cout << "exact_eigensolve_wall_time_seconds = "
+              << exact_solver_summary.wall_time_seconds << '\n';
+    std::cout << "exact_single_step_wall_time_seconds = "
               << (prepared_active_space_total_seconds +
-                  exact_cpp_build_seconds +
-                  exact_cpp_solver_summary.wall_time_seconds)
+                  exact_build_seconds +
+                  exact_solver_summary.wall_time_seconds)
               << '\n';
     std::cout << "legacy_overlap_common_preprocess_wall_time_seconds = "
               << common_preprocess_seconds << '\n';
@@ -451,11 +451,11 @@ int main(int argc, char** argv) {
               << format_histogram(predicted_rank_histogram) << '\n';
     std::cout << "prediction_reason_histogram = "
               << format_histogram(prediction_reason_histogram) << '\n';
-    std::cout << "legacy_exact_vs_cpp_overlap_max_abs = "
+    std::cout << "legacy_exact_vs_overlap_max_abs = "
               << legacy_exact_vs_cpp.max_abs << '\n';
-    std::cout << "legacy_exact_vs_cpp_overlap_fro_error = "
+    std::cout << "legacy_exact_vs_overlap_fro_error = "
               << legacy_exact_vs_cpp.frobenius_error << '\n';
-    std::cout << "legacy_exact_vs_cpp_overlap_relative_fro_error = "
+    std::cout << "legacy_exact_vs_overlap_relative_fro_error = "
               << legacy_exact_vs_cpp.relative_frobenius_error << '\n';
     std::cout << "legacy_predicted_vs_exact_overlap_max_abs = "
               << legacy_predicted_vs_exact.max_abs << '\n';
@@ -463,15 +463,15 @@ int main(int argc, char** argv) {
               << legacy_predicted_vs_exact.frobenius_error << '\n';
     std::cout << "legacy_predicted_vs_exact_overlap_relative_fro_error = "
               << legacy_predicted_vs_exact.relative_frobenius_error << '\n';
-    std::cout << "cpp_exact_ground_state_total_energy = "
-              << exact_cpp_solver_summary.total_ground_state_energy << '\n';
+    std::cout << "exact_ground_state_total_energy = "
+              << exact_solver_summary.total_ground_state_energy << '\n';
     if (mixed_exact_overlap_solver_summary.converged) {
       std::cout << "mixed_exact_overlap_ground_state_total_energy = "
                 << mixed_exact_overlap_solver_summary.total_ground_state_energy
                 << '\n';
       std::cout << "mixed_exact_overlap_ground_state_delta = "
                 << (mixed_exact_overlap_solver_summary.total_ground_state_energy -
-                    exact_cpp_solver_summary.total_ground_state_energy)
+                    exact_solver_summary.total_ground_state_energy)
                 << '\n';
     } else {
       std::cout << "mixed_exact_overlap_ground_state_error = "
@@ -483,7 +483,7 @@ int main(int argc, char** argv) {
                 << '\n';
       std::cout << "mixed_predicted_overlap_ground_state_delta = "
                 << (mixed_predicted_overlap_solver_summary.total_ground_state_energy -
-                    exact_cpp_solver_summary.total_ground_state_energy)
+                    exact_solver_summary.total_ground_state_energy)
                 << '\n';
     } else {
       std::cout << "mixed_predicted_overlap_ground_state_error = "

@@ -2409,7 +2409,7 @@ after the new chart is available.
 
 ### Modules that likely need only adaptation, not redesign
 
-#### 1. `src/vb/scf/cpp_vb_scf_optimizer.cpp`
+#### 1. `src/vb/scf/vb_scf_optimizer.cpp`
 
 The optimizer-level trust region, Krylov solver, and reduced-space interfaces
 should mostly stay intact because:

@@ -23,7 +23,7 @@ measured blocker for the production path.
 
 ## Main Maintenance Problems
 
-1. `cpp_vb_scf_optimizer.cpp` mixes optimizer orchestration, line search,
+1. `vb_scf_optimizer.cpp` mixes optimizer orchestration, line search,
    truncated-Newton policy, Krylov solve, exact-ctx HVP wiring, diagnostics,
    environment parsing, and accepted-iteration tracing.
 2. `exact_orbital_second_order_operator.cpp` is a large subsystem hidden behind
@@ -126,12 +126,12 @@ navigation cost for reviewers.
 - Done: migrated `ActiveSpaceOneElectronResult::h1e_act` to
   `Eigen::MatrixXd` across the production determinant / structure chain:
   `FullDeterminantPairEvaluator`, `SameSpinPairCache`, `FullDeterminantStructureHamiltonianOverlapBuilder`,
-  `CppActiveSpaceGradientEvaluator`, `SameSpinMatrixBackward`, and the exact
+  `ActiveSpaceGradientEvaluator`, `SameSpinMatrixBackward`, and the exact
   orbital second-order operator now pass `HHO` as an Eigen matrix instead of a
   fake dense `std::vector<double>`.
 - Done: removed the extra flattened `HHO` compatibility copy from the normal
-  optimizer result / accepted-trace path. `CppOrbitalGradientResult` and
-  `CppVbScfAcceptedIterationSnapshot` now keep `active_one_electron_integrals`
+  optimizer result / accepted-trace path. `OrbitalGradientResult` and
+  `VbScfAcceptedIterationSnapshot` now keep `active_one_electron_integrals`
   as `Eigen::MatrixXd`, and only the final binary-export path flattens through
   `.data()` when it actually writes files.
 - Dropped: cross-module self-adjoint helper extraction. It reduces line count
@@ -142,7 +142,7 @@ navigation cost for reviewers.
 
 ## Phase 2: Optimizer Split
 
-Keep `CppVbScfOptimizer` as the orchestration layer only. Move the following
+Keep `VbScfOptimizer` as the orchestration layer only. Move the following
 responsibilities into separate files:
 
 - `vb/scf/line_search.*`: Armijo search and steepest-descent fallback.
@@ -209,6 +209,6 @@ After each cleanup patch:
 
 1. Finish retired-library deletion and keep CMake clean.
 2. Consolidate duplicated helper functions.
-3. Split `cpp_vb_scf_optimizer.cpp` without behavior changes.
+3. Split `vb_scf_optimizer.cpp` without behavior changes.
 4. Split exact-ctx HVP internals without behavior changes.
 5. Split nonredundant orbital-space implementation without behavior changes.

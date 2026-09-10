@@ -548,9 +548,9 @@ $$
 命令：
 
 ```bash
-source scripts/xmvb_cpp_runtime_env.sh
-prepare_xmvb_cpp_runtime_env build/src/xmvb-cpp.exe "$(pwd)"
-OMP_NUM_THREADS=1 XMVB_CPP_LOG_OBJECTIVE_PROGRESS=1 \
+source scripts/xmvb_runtime_env.sh
+prepare_xmvb_runtime_env build/src/xmvb-cpp.exe "$(pwd)"
+OMP_NUM_THREADS=1 XMVB_LOG_OBJECTIVE_PROGRESS=1 \
   build/src/xmvb-cpp.exe test/10698_RI.xmi \
   --optimizer-backend lbfgspp \
   --max-iterations 1 \
@@ -588,9 +588,9 @@ same-spin 相关的关键结论是：
 命令：
 
 ```bash
-source scripts/xmvb_cpp_runtime_env.sh
-prepare_xmvb_cpp_runtime_env build/src/xmvb-cpp.exe "$(pwd)"
-OMP_NUM_THREADS=1 XMVB_CPP_LOG_OBJECTIVE_PROGRESS=1 \
+source scripts/xmvb_runtime_env.sh
+prepare_xmvb_runtime_env build/src/xmvb-cpp.exe "$(pwd)"
+OMP_NUM_THREADS=1 XMVB_LOG_OBJECTIVE_PROGRESS=1 \
   build/src/xmvb-cpp.exe test/10698_RI.xmi \
   --optimizer-backend lbfgspp \
   --max-iterations 1 \
@@ -634,12 +634,12 @@ int=libcint
 
 ```bash
 OMP_NUM_THREADS=1 \
-  build/src/benchmark_cpp_orbital_eval testdata/vbscf/C6H6.xmi \
+  build/src/benchmark_orbital_eval testdata/vbscf/C6H6.xmi \
   --standard-two-electron-mode exact \
   --repeat 1 --warmup 0
 ```
 
-这里要注意：`benchmark_cpp_orbital_eval` 调用的是 `CppOrbitalGradientEvaluator::evaluate()`，
+这里要注意：`benchmark_orbital_eval` 调用的是 `OrbitalGradientEvaluator::evaluate()`，
 因此 `mean_total_dt` 不是优化器 accepted-step 的严格 wall time 口径；但其中各个 stage 的相对占比仍然具有参考价值。
 
 测得：
@@ -677,7 +677,7 @@ OMP_NUM_THREADS=1 \
 
 ```bash
 OMP_NUM_THREADS=1 \
-  build/src/check_cpp_active_space_gradient testdata/vbscf/F2.xmi \
+  build/src/check_active_space_gradient testdata/vbscf/F2.xmi \
   --standard-two-electron-mode exact \
   --component two_electron \
   --count 4 --step 1e-6
@@ -695,7 +695,7 @@ $$
 
 ```bash
 OMP_NUM_THREADS=1 \
-  build/src/check_cpp_orbital_gradient testdata/vbscf/F2.xmi \
+  build/src/check_orbital_gradient testdata/vbscf/F2.xmi \
   --standard-two-electron-mode exact \
   --count 2 --step 1e-6
 ```

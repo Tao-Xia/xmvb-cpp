@@ -1245,7 +1245,7 @@ build_same_spin_matrix_backward_contribution(...)
 `SameSpinPairScalarMatrices`。由于 241 这类中小 unique-spin 空间上该路径会
 增加 tile/gather 常数开销，当前默认只在估算的 accepted same-spin dense
 weight storage 超过 256 MiB 时自动启用；也可以用
-`XMVB_CPP_SAME_SPIN_ACCEPTED_TILE_BACKWARD=on|off` 强制打开或关闭。
+`XMVB_SAME_SPIN_ACCEPTED_TILE_BACKWARD=on|off` 强制打开或关闭。
 
 当前仍保留 dense path 作为常规运行路径；directional/local HVP 还没有切换到
 tile 版本。
@@ -1292,9 +1292,9 @@ W_alpha_Q in R^{N_alpha x N_alpha}
 ```
 
 的 dense image。历史实现中曾保留 dense batch fallback，并用
-`XMVB_CPP_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on|off` 强制控制。2026-04-25
+`XMVB_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on|off` 强制控制。2026-04-25
 清理后 production 已统一为 tile path；unique tile 大小仍由
-`XMVB_CPP_OPPOSITE_SPIN_BACKWARD_UNIQUE_TILE_SIZE` 控制。
+`XMVB_OPPOSITE_SPIN_BACKWARD_UNIQUE_TILE_SIZE` 控制。
 
 验证：
 
@@ -1343,20 +1343,20 @@ overlap HVP 诊断覆盖。
 历史阶段的控制变量：
 
 ```text
-XMVB_CPP_OPPOSITE_SPIN_OVERLAP_TILE=on|off
-XMVB_CPP_OPPOSITE_SPIN_OVERLAP_TILE_MIN_DENSE_BYTES
-XMVB_CPP_OPPOSITE_SPIN_BACKWARD_UNIQUE_TILE_SIZE
+XMVB_OPPOSITE_SPIN_OVERLAP_TILE=on|off
+XMVB_OPPOSITE_SPIN_OVERLAP_TILE_MIN_DENSE_BYTES
+XMVB_OPPOSITE_SPIN_BACKWARD_UNIQUE_TILE_SIZE
 ```
 
 2026-04-25 清理后前两个开关已退出 production；overlap adjoint 统一走
-tile path，只保留 `XMVB_CPP_OPPOSITE_SPIN_BACKWARD_UNIQUE_TILE_SIZE` 作为
+tile path，只保留 `XMVB_OPPOSITE_SPIN_BACKWARD_UNIQUE_TILE_SIZE` 作为
 tile size 调优参数。
 
 验证：
 
 ```text
 cmake --build build --target xmvb check_exact_ctx_hvp -j8
-F2 check_exact_ctx_hvp with XMVB_CPP_OPPOSITE_SPIN_OVERLAP_TILE=on:
+F2 check_exact_ctx_hvp with XMVB_OPPOSITE_SPIN_OVERLAP_TILE=on:
   opposite_spin_fixed_sso_max_abs_diff = 0
   local_opposite_spin_sso_max_abs_diff = 2.8e-17
   matrix_form_sum_sso_max_abs_diff = 3.3e-16
@@ -1418,14 +1418,14 @@ W^\alpha_Q[I,J]
 
 实现上复用 accepted tile helper，只是同时构造 accepted 和 directional 两套
 beta channel，再和 accepted / directional alpha sparse channel 做两项收缩。
-历史阶段这个路径由 `XMVB_CPP_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on|off`
+历史阶段这个路径由 `XMVB_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on|off`
 控制。2026-04-25 清理后 production 已固定使用 tile path，不再保留
 packed-gradient dense fallback。
 
 验证：
 
 ```text
-F2 check_exact_ctx_hvp with XMVB_CPP_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on:
+F2 check_exact_ctx_hvp with XMVB_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on:
   local_opposite_spin_ggo_max_abs_diff = 5.6e-12
   matrix_form_sum_ggo_max_abs_diff = 4.2e-16
 F2 check_exact_ctx_hvp with packed-gradient tile + overlap tile both on:
@@ -1483,7 +1483,7 @@ no local-response global W / dW matrices in tile path:
 控制变量：
 
 ```text
-XMVB_CPP_SAME_SPIN_LOCAL_TILE_BACKWARD=on|off
+XMVB_SAME_SPIN_LOCAL_TILE_BACKWARD=on|off
 ```
 
 默认继承 accepted same-spin tile 的阈值策略，避免 241 这类小 unique-space
@@ -1493,7 +1493,7 @@ XMVB_CPP_SAME_SPIN_LOCAL_TILE_BACKWARD=on|off
 
 ```text
 cmake --build build --target xmvb check_exact_ctx_hvp -j8
-F2 check_exact_ctx_hvp with XMVB_CPP_SAME_SPIN_LOCAL_TILE_BACKWARD=on:
+F2 check_exact_ctx_hvp with XMVB_SAME_SPIN_LOCAL_TILE_BACKWARD=on:
   matrix_vs_pairwise_local_same_spin_sso_max_abs_diff = 1.7e-16
   matrix_vs_pairwise_local_same_spin_hho_max_abs_diff = 1.4e-17
   matrix_vs_pairwise_local_same_spin_ggo_max_abs_diff = 0
@@ -1565,7 +1565,7 @@ alpha-alpha / beta-beta。
 
 ```text
 control env:
-  XMVB_CPP_SAME_SPIN_DIRECTIONAL_TILE_BACKWARD=on|off
+  XMVB_SAME_SPIN_DIRECTIONAL_TILE_BACKWARD=on|off
 
 new tile builder:
   accumulate_alpha_directional_tile_weights(...)
@@ -1584,11 +1584,11 @@ union support matrix。
 
 ```text
 cmake --build build --target xmvb check_exact_ctx_hvp -j8
-F2 with XMVB_CPP_SAME_SPIN_DIRECTIONAL_TILE_BACKWARD=on:
+F2 with XMVB_SAME_SPIN_DIRECTIONAL_TILE_BACKWARD=on:
   matrix_form_sum_sso_max_abs_diff = 3.3e-16
   matrix_form_sum_hho_max_abs_diff = 2.4e-16
   matrix_form_sum_ggo_max_abs_diff = 4.2e-16
-F2 with XMVB_CPP_SELECTED_STATE_SUPPORT_SPARSE=on and directional tile on:
+F2 with XMVB_SELECTED_STATE_SUPPORT_SPARSE=on and directional tile on:
   matrix_form_sum_sso_max_abs_diff = 2.8e-16
   matrix_form_sum_hho_max_abs_diff = 2.4e-16
   matrix_form_sum_ggo_max_abs_diff = 4.2e-16
@@ -1639,7 +1639,7 @@ workspace。
 历史阶段控制变量沿用 accepted/local packed-gradient tile：
 
 ```text
-XMVB_CPP_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on|off
+XMVB_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on|off
 ```
 
 2026-04-25 清理后该开关已退出 production；directional selected-state
@@ -1649,7 +1649,7 @@ packed-gradient 也统一走 tile path。
 
 ```text
 cmake --build build --target xmvb check_exact_ctx_hvp -j8
-F2 with XMVB_CPP_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on:
+F2 with XMVB_OPPOSITE_SPIN_PACKED_GRADIENT_TILE=on:
   analytic_state_opposite_spin_sso_max_abs_diff = 0
   matrix_form_sum_sso_max_abs_diff = 3.3e-16
   matrix_form_sum_hho_max_abs_diff = 2.4e-16
@@ -1788,9 +1788,9 @@ per-packed-pair std::vector<Eigen::MatrixXd> tile bundle
 ```
 
 旧实验开关
-`XMVB_CPP_OPPOSITE_SPIN_PACKED_GRADIENT_TILE`、
-`XMVB_CPP_OPPOSITE_SPIN_OVERLAP_TILE` 和
-`XMVB_CPP_OPPOSITE_SPIN_OVERLAP_TILE_MIN_DENSE_BYTES` 已不再是 production
+`XMVB_OPPOSITE_SPIN_PACKED_GRADIENT_TILE`、
+`XMVB_OPPOSITE_SPIN_OVERLAP_TILE` 和
+`XMVB_OPPOSITE_SPIN_OVERLAP_TILE_MIN_DENSE_BYTES` 已不再是 production
 控制项；后续只保留 tile/block size 参数用于调优。
 
 验证：

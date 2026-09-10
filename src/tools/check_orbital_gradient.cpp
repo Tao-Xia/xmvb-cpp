@@ -207,8 +207,8 @@ xmvb::vb::AoIntegralSource parse_ao_integral_source(const std::string& value) {
   if (value == "auto") {
     return xmvb::vb::AoIntegralSource::Auto;
   }
-  if (value == "libcint_cpp") {
-    return xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
+  if (value == "libcint") {
+    return xmvb::vb::AoIntegralSource::LibcintMaterialized;
   }
   if (value == "runtime_hcore") {
     return xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
@@ -313,9 +313,9 @@ std::vector<double> read_f64_binary_file(const std::string& path) {
 }
 
 void print_usage() {
-  std::cerr << "usage: check_cpp_orbital_gradient <input.xmi> "
+  std::cerr << "usage: check_orbital_gradient <input.xmi> "
                "[--orbital-value-table-bin <path>] "
-               "[--ao-integral-source auto|legacy|libcint_cpp|runtime_hcore] "
+               "[--ao-integral-source auto|legacy|libcint|runtime_hcore] "
                "[--standard-two-electron-mode auto|exact|ri] "
                "[--component total|reference|nonreference] "
                "[--count N] [--step h] "

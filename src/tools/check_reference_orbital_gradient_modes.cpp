@@ -67,7 +67,7 @@ std::vector<int> collect_differentiable_parameter_indices(
 Options parse_arguments(int argc, char** argv) {
   if (argc < 2 || ((argc - 2) % 2 != 0)) {
     throw std::invalid_argument(
-        "usage: check_cpp_reference_orbital_gradient_modes <input.xmi> "
+        "usage: check_reference_orbital_gradient_modes <input.xmi> "
         "[--count N] [--step h]");
   }
   Options options;

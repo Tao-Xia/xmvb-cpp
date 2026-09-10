@@ -12,7 +12,7 @@ orbital-gradient path:
 3. the current C++ implementation
    `active_space_orbital_preparer.cpp`,
    `active_space_orbital_backpropagator.cpp`,
-   `cpp_orbital_gradient_evaluator.cpp`.
+   `orbital_gradient_evaluator.cpp`.
 
 The immediate goal is not to fix code here. The goal is to settle the formulas
 first, so the later debug target is unambiguous.

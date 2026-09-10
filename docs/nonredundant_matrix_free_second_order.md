@@ -319,7 +319,7 @@ Y^{(a)}_{\mathrm{oo}} = H^{(a)}_{\mathrm{oo}} \Delta_{\mathrm{oo}}.
 
 这些实现更适合放在 `src/vb/scf/`，并由 `exact_orbital_second_order_operator` 统一调度。
 
-同时也意味着，当前 `CppOrbitalGradientEvaluator` 这一层不能直接充当最终版二阶核心。它当前暴露的是一阶 reverse 接口：
+同时也意味着，当前 `OrbitalGradientEvaluator` 这一层不能直接充当最终版二阶核心。它当前暴露的是一阶 reverse 接口：
 
 \[
 \text{input} \mapsto E,\ g

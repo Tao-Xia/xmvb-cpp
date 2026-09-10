@@ -135,14 +135,14 @@ env OMP_NUM_THREADS=1 XMVB_SAME_SPIN_PAIR_CACHE_MB=0 \
 ### Production 单步 objective/gradient benchmark
 
 ```bash
-env OMP_NUM_THREADS=1 XMVB_CPP_LOG_OBJECTIVE_PROGRESS=1 \
+env OMP_NUM_THREADS=1 XMVB_LOG_OBJECTIVE_PROGRESS=1 \
   build/src/xmvb-cpp.exe \
   data/training_xmi/6e6o_full/10698_VBSCF.xmi \
   --optimizer-backend lbfgspp \
   --max-iterations 1 \
   --standard-two-electron-mode ri
 
-env OMP_NUM_THREADS=1 XMVB_CPP_LOG_OBJECTIVE_PROGRESS=1 \
+env OMP_NUM_THREADS=1 XMVB_LOG_OBJECTIVE_PROGRESS=1 \
   XMVB_SAME_SPIN_PAIR_CACHE_MB=0 \
   build/src/xmvb-cpp.exe \
   data/training_xmi/6e6o_full/10698_VBSCF.xmi \
@@ -158,18 +158,18 @@ env OMP_NUM_THREADS=1 XMVB_CPP_LOG_OBJECTIVE_PROGRESS=1 \
 | 指标 | 关算法 (`MB=0`) | 开算法 | 加速比 |
 | --- | ---: | ---: | ---: |
 | `prepare_active_space_wall_time_seconds` | `3.865149 s` | `3.941489 s` | `0.98x` |
-| `cpp_exact_structure_build_wall_time_seconds` | `0.236393 s` | `0.009621 s` | `24.57x` |
-| `cpp_exact_eigensolve_wall_time_seconds` | `0.010679 s` | `0.010722 s` | `1.00x` |
-| `cpp_exact_single_step_wall_time_seconds` | `4.112221 s` | `3.961832 s` | `1.04x` |
+| `exact_structure_build_wall_time_seconds` | `0.236393 s` | `0.009621 s` | `24.57x` |
+| `exact_eigensolve_wall_time_seconds` | `0.010679 s` | `0.010722 s` | `1.00x` |
+| `exact_single_step_wall_time_seconds` | `4.112221 s` | `3.961832 s` | `1.04x` |
 
 ### `ri` 路径
 
 | 指标 | 关算法 (`MB=0`) | 开算法 | 加速比 |
 | --- | ---: | ---: | ---: |
 | `prepare_active_space_wall_time_seconds` | `0.555282 s` | `0.571320 s` | `0.97x` |
-| `cpp_exact_structure_build_wall_time_seconds` | `9.869368 s` | `0.063188 s` | `156.19x` |
-| `cpp_exact_eigensolve_wall_time_seconds` | `0.010443 s` | `0.010891 s` | `0.96x` |
-| `cpp_exact_single_step_wall_time_seconds` | `10.435093 s` | `0.645399 s` | `16.17x` |
+| `exact_structure_build_wall_time_seconds` | `9.869368 s` | `0.063188 s` | `156.19x` |
+| `exact_eigensolve_wall_time_seconds` | `0.010443 s` | `0.010891 s` | `0.96x` |
+| `exact_single_step_wall_time_seconds` | `10.435093 s` | `0.645399 s` | `16.17x` |
 
 ### 对 kernel benchmark 的解释
 

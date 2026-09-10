@@ -33,7 +33,7 @@ struct Options {
 };
 
 void print_usage() {
-  std::cerr << "usage: check_cpp_active_space_gradient <input.xmi> "
+  std::cerr << "usage: check_active_space_gradient <input.xmi> "
                "[--standard-two-electron-mode auto|exact|ri] "
                "[--component overlap|one_electron|two_electron] "
                "[--count N] [--step h]\n";

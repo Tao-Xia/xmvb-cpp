@@ -44,7 +44,7 @@ Current status:
   same-spin backward/HVP path now consume `HHO` through
   `Eigen::Ref<const Eigen::MatrixXd>` instead of flattening it back to
   `std::vector<double>`.
-- `CppOrbitalGradientResult::active_one_electron_integrals` and accepted
+- `OrbitalGradientResult::active_one_electron_integrals` and accepted
   optimizer snapshots now also keep `HHO` as `Eigen::MatrixXd`, so the normal
   optimizer / trace / adaptive-structure code no longer carries a second
   flattened `HHO` copy in memory.
@@ -56,7 +56,7 @@ Primary implementation files on this chain:
 - `src/vb/orbital/active_space_two_electron_builder.cpp`
 - `src/vb/orbital/active_space_two_electron_backpropagator.cpp`
 - `src/vb/orbital/active_space_two_electron_utils.cpp`
-- `src/vb/scf/cpp_orbital_gradient_evaluator.cpp`
+- `src/vb/scf/orbital_gradient_evaluator.cpp`
 - `src/vb/scf/exact_orbital_second_order_operator.cpp`
 - `src/vb/orbital/ri_active_space_two_electron_builder.cpp`
 - `src/runtime/libcint_ri_integral_provider.cpp`
@@ -70,8 +70,8 @@ coefficient tables and accepted-snapshot compatibility buffers:
 
 - `src/vb/scf/opposite_spin_matrix_backward.cpp`
 - `src/vb/scf/same_spin_matrix_backward.cpp`
-- `src/vb/scf/cpp_orbital_gradient_result.hpp`
-- `src/vb/scf/cpp_vb_scf_optimizer_result.hpp`
+- `src/vb/scf/orbital_gradient_result.hpp`
+- `src/vb/scf/vb_scf_optimizer_result.hpp`
 
 ## Legacy C Runtime And BLAS
 

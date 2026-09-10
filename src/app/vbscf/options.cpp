@@ -86,8 +86,8 @@ void apply_ao_integral_source_argument(
     options->ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
     return;
   }
-  if (source_name == "libcint_cpp") {
-    options->ao_integral_source = xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
+  if (source_name == "libcint") {
+    options->ao_integral_source = xmvb::vb::AoIntegralSource::LibcintMaterialized;
     return;
   }
   if (source_name == "runtime_hcore") {
@@ -132,7 +132,7 @@ void print_usage() {
                " [--nonredundant-truncated-newton-hvp-step-size <value>]"
                " [--nonredundant-truncated-newton-transport-history-size <count>]"
                " [--standard-two-electron-mode auto|exact|ri]"
-               " [--ao-integral-source auto|libcint_cpp|runtime_hcore]"
+               " [--ao-integral-source auto|libcint|runtime_hcore]"
                " [--skip-orbital-guess true|false]"
                " [--raw-structure-selection full|covalent]"
                " [--dump-trace-dir <dataset_root>]"

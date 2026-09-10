@@ -55,7 +55,7 @@ void print_usage() {
   std::cerr
       << "usage: check_exact_ctx_hvp <input.xmi> [--step h] [--probe full|fixed] "
       << "[--orbital-value-table-bin <path>] "
-      << "[--ao-integral-source auto|libcint_cpp|runtime_hcore] "
+      << "[--ao-integral-source auto|libcint|runtime_hcore] "
       << "[--nonredundant-adapt true|false] [--max-rel-error tolerance]\n";
 }
 
@@ -73,8 +73,8 @@ xmvb::vb::AoIntegralSource parse_ao_integral_source(const std::string& value) {
   if (value == "auto") {
     return xmvb::vb::AoIntegralSource::Auto;
   }
-  if (value == "libcint_cpp") {
-    return xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
+  if (value == "libcint") {
+    return xmvb::vb::AoIntegralSource::LibcintMaterialized;
   }
   if (value == "runtime_hcore") {
     return xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
