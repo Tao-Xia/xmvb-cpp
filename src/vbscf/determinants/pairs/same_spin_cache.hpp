@@ -17,15 +17,22 @@ struct SpinDeterminantReuseTable {
   std::vector<int> determinant_to_unique_id;
 };
 
+enum class PairProjectionCache {
+  Both,
+  SmallerSpin,
+  None,
+};
+
 /**
- * @brief Controls which opposite-spin payloads are materialized in the cache.
+ * @brief Controls dense opposite-spin projected vectors in the pair cache.
  *
- * The sparse packed-pair coefficients are always stored. Callers can disable
- * `projected_pair_values` when a streamed matrix-form path only needs sparse
- * projections and can rebuild selected packed-pair rows on demand.
+ * Sparse packed-pair coefficients are always stored. `SmallerSpin` retains
+ * dense projected vectors only for the smaller ordered spin-pair table; by
+ * symmetry, one projected side is sufficient for scalar opposite-spin
+ * contractions.
  */
 struct SameSpinPairCacheBuildOptions {
-  bool materialize_projected_pair_values = true;
+  PairProjectionCache pair_projection_cache = PairProjectionCache::Both;
 };
 
 /**

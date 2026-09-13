@@ -498,6 +498,36 @@ void populate_same_spin_phi_cache_entries(
   }
 }
 
+struct PairProjectionPolicy {
+  bool alpha = false;
+  bool beta = false;
+
+  bool any() const noexcept {
+    return alpha || beta;
+  }
+};
+
+PairProjectionPolicy resolve_pair_projection_policy(
+    PairProjectionCache requested_cache,
+    const SameSpinPairCacheContext& cache_context) {
+  switch (requested_cache) {
+    case PairProjectionCache::Both:
+      return {true, true};
+    case PairProjectionCache::None:
+      return {false, false};
+    case PairProjectionCache::SmallerSpin:
+      if (cache_context.beta_reuses_alpha_pair_cache) {
+        return {true, false};
+      }
+      if (cache_context.alpha_reuse_table.unique_determinants.size() <=
+          cache_context.beta_reuse_table.unique_determinants.size()) {
+        return {true, false};
+      }
+      return {false, true};
+  }
+  throw std::logic_error("unrecognized pair projection cache policy");
+}
+
 }  // namespace
 
 SpinDeterminantReuseTable build_spin_determinant_reuse_table(
@@ -664,9 +694,13 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
   // packed-pair rows on demand.
   cache_context.use_same_spin_pair_cache = (n_determinants > 0);
 
+  const PairProjectionPolicy projection_policy =
+      resolve_pair_projection_policy(
+          build_options.pair_projection_cache,
+          cache_context);
   std::vector<double> dense_pair_kernel;
   const std::vector<double>* dense_pair_kernel_ptr = nullptr;
-  if (build_options.materialize_projected_pair_values) {
+  if (projection_policy.any()) {
     dense_pair_kernel = build_dense_active_pair_kernel(eri_act, n_orbitals);
     dense_pair_kernel_ptr = &dense_pair_kernel;
   }
@@ -678,7 +712,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
       n_orbitals,
       eri_act,
       dense_pair_kernel_ptr,
-      build_options.materialize_projected_pair_values);
+      projection_policy.alpha);
   if (!cache_context.beta_reuses_alpha_pair_cache) {
     cache_context.beta_pair_cache = build_same_spin_pair_cache(
         cache_context.beta_reuse_table.unique_determinants,
@@ -688,7 +722,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
         n_orbitals,
         eri_act,
         dense_pair_kernel_ptr,
-        build_options.materialize_projected_pair_values);
+        projection_policy.beta);
   } else {
     cache_context.beta_pair_cache.clear();
   }
@@ -776,6 +810,10 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
   // images when a streamed matrix-form path can rebuild only the touched
   // packed-pair rows on demand.
   cache_context.use_same_spin_pair_cache = (n_determinants > 0);
+  const PairProjectionPolicy projection_policy =
+      resolve_pair_projection_policy(
+          build_options.pair_projection_cache,
+          cache_context);
 
   const std::size_t expected_packed_size =
       packed_active_two_electron_integral_count(n_orbitals);
@@ -790,7 +828,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
         active_space_two_electron_result.packed_active_two_electron_integrals;
     std::vector<double> dense_pair_kernel;
     const std::vector<double>* dense_pair_kernel_ptr = nullptr;
-    if (build_options.materialize_projected_pair_values) {
+    if (projection_policy.any()) {
       dense_pair_kernel = build_dense_active_pair_kernel(eri_act, n_orbitals);
       dense_pair_kernel_ptr = &dense_pair_kernel;
     }
@@ -803,7 +841,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
         n_orbitals,
         eri_act,
         dense_pair_kernel_ptr,
-        build_options.materialize_projected_pair_values);
+        projection_policy.alpha);
 
     if (!cache_context.beta_reuses_alpha_pair_cache) {
       cache_context.beta_pair_cache = build_same_spin_pair_cache(
@@ -814,7 +852,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
           n_orbitals,
           eri_act,
           dense_pair_kernel_ptr,
-          build_options.materialize_projected_pair_values);
+          projection_policy.beta);
     } else {
       cache_context.beta_pair_cache.clear();
     }
@@ -825,7 +863,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     std::vector<double> reconstructed_eri;
     std::vector<double> dense_pair_kernel;
     const std::vector<double>* dense_pair_kernel_ptr = nullptr;
-    if (build_options.materialize_projected_pair_values) {
+    if (projection_policy.any()) {
       reconstructed_eri =
           reconstruct_packed_active_two_electron_integrals(
               make_active_space_two_electron_view(active_space_two_electron_result),
@@ -842,7 +880,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
         n_orbitals,
         active_space_two_electron_result,
         dense_pair_kernel_ptr,
-        build_options.materialize_projected_pair_values);
+        projection_policy.alpha);
 
     if (!cache_context.beta_reuses_alpha_pair_cache) {
       cache_context.beta_pair_cache = build_same_spin_pair_cache(
@@ -853,7 +891,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
           n_orbitals,
           active_space_two_electron_result,
           dense_pair_kernel_ptr,
-          build_options.materialize_projected_pair_values);
+          projection_policy.beta);
     } else {
       cache_context.beta_pair_cache.clear();
     }
