@@ -150,9 +150,6 @@ target_link_libraries(audit_sparse_orbital_gauge
 
 include(${CMAKE_SOURCE_DIR}/tests/vbscf/targets.cmake)
 
-add_executable(test_davidson ../tests/vbscf/unit/test_davidson.cpp)
-target_link_libraries(test_davidson PRIVATE xmvb_vbscf)
-
 add_executable(check_exact_ao_h1e_builder
   tools/check_exact_ao_h1e_builder.cpp)
 target_link_libraries(check_exact_ao_h1e_builder

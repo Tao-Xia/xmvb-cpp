@@ -20,7 +20,6 @@ struct SpinDeterminantReuseTable {
 enum class PairProjectionCache {
   Both,
   SmallerSpin,
-  None,
 };
 
 /**

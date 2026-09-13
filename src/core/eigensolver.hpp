@@ -96,8 +96,10 @@ public:
    *
    * The basis, its Hamiltonian image, and its overlap image are updated
    * together, so metric orthogonalization never triggers redundant operator
-   * calls. Failure to meet the requested residual tolerance is reported as an
-   * exception rather than returning unconverged Ritz pairs.
+   * calls. The projected Hamiltonian is extended incrementally, and only the
+   * requested lowest Ritz pairs are solved unless a restart needs the full
+   * subspace spectrum. Failure to meet the requested residual tolerance is
+   * reported as an exception rather than returning unconverged Ritz pairs.
    */
   DavidsonResult solve_davidson(
       const GeneralizedEigenAction& action,

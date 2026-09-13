@@ -249,9 +249,15 @@ int main(int argc, char** argv) {
         fast_result.overlap_matrix,
         n_structures);
     const auto dense_eigensolve_end = std::chrono::high_resolution_clock::now();
+    double davidson_action_seconds = 0.0;
     const xmvb::core::GeneralizedEigenAction davidson_action =
         [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+          const auto action_call_start =
+              std::chrono::high_resolution_clock::now();
           auto images = compact_structure_action.apply(vectors);
+          davidson_action_seconds += std::chrono::duration<double>(
+              std::chrono::high_resolution_clock::now() - action_call_start)
+                                         .count();
           return xmvb::core::GeneralizedEigenActionResult{
               std::move(images.hamiltonian),
               std::move(images.overlap)};
@@ -268,27 +274,6 @@ int main(int argc, char** argv) {
         compact_diagonal.overlap,
         davidson_options);
     const auto davidson_end = std::chrono::high_resolution_clock::now();
-    const auto sparse_pair_cache =
-        xmvb::vb::build_same_spin_pair_cache_context(
-            load_result.input.structure_data.alpha_det,
-            load_result.input.structure_data.beta_det,
-            pair_evaluator,
-            prepared_active_space.orbital_result.active_orbital_overlap_matrix,
-            prepared_active_space.active_space_one_electron_result.h1e_act,
-            load_result.input.orbital_preparation_input.n_active_orbitals,
-            prepared_active_space.active_space_two_electron_result,
-            xmvb::vb::SameSpinPairCacheBuildOptions{
-                xmvb::vb::PairProjectionCache::None});
-    const xmvb::vb::StructureAction sparse_structure_action(
-        load_result.input.structure_data.determinant_to_structure_terms,
-        n_structures,
-        sparse_pair_cache,
-        prepared_active_space.active_space_two_electron_result,
-        load_result.input.orbital_preparation_input.n_active_orbitals);
-    const auto sparse_action_start = std::chrono::high_resolution_clock::now();
-    const auto sparse_action_result =
-        sparse_structure_action.apply(trial_vectors);
-    const auto sparse_action_end = std::chrono::high_resolution_clock::now();
     const auto exact_same_spin_pair_cache = xmvb::vb::build_same_spin_pair_cache_context(
         load_result.input.structure_data.alpha_det,
         load_result.input.structure_data.beta_det,
@@ -344,9 +329,13 @@ int main(int argc, char** argv) {
     std::cout << "compact_projected_pair_cache_bytes = "
               << projected_pair_value_count(compact_pair_cache) * sizeof(double)
               << '\n';
-    std::cout << "sparse_projected_pair_cache_bytes = "
-              << projected_pair_value_count(sparse_pair_cache) * sizeof(double)
-              << '\n';
+    const auto action_storage = compact_structure_action.storage();
+    std::cout << "factorized_action_bytes = "
+              << action_storage.factor_bytes << '\n';
+    std::cout << "factorized_dense_channels = "
+              << action_storage.dense_channels << '\n';
+    std::cout << "factorized_sparse_channels = "
+              << action_storage.sparse_channels << '\n';
     std::cout << "fast_result_seconds = "
               << std::chrono::duration<double>(fast_end - fast_start).count() << '\n';
     std::cout << "matrix_free_action_seconds = "
@@ -396,6 +385,8 @@ int main(int argc, char** argv) {
               << std::chrono::duration<double>(davidson_end - davidson_start)
                      .count()
               << '\n';
+    std::cout << "davidson_action_seconds = "
+              << davidson_action_seconds << '\n';
     std::cout << "davidson_iterations = " << davidson.iterations << '\n';
     std::cout << "davidson_block_actions = " << davidson.block_actions << '\n';
     std::cout << "davidson_peak_subspace_dimension = "
@@ -407,22 +398,6 @@ int main(int argc, char** argv) {
               << '\n';
     std::cout << "davidson_ground_state_relative_residual = "
               << davidson.relative_residual_norms.front() << '\n';
-    std::cout << "sparse_matrix_free_action_seconds = "
-              << std::chrono::duration<double>(
-                     sparse_action_end - sparse_action_start)
-                     .count()
-              << '\n';
-    std::cout << "sparse_matrix_free_hamiltonian_action_max_abs_diff = "
-              << (sparse_action_result.hamiltonian -
-                  reference_hamiltonian_action)
-                     .cwiseAbs()
-                     .maxCoeff()
-              << '\n';
-    std::cout << "sparse_matrix_free_overlap_action_max_abs_diff = "
-              << (sparse_action_result.overlap - reference_overlap_action)
-                     .cwiseAbs()
-                     .maxCoeff()
-              << '\n';
     std::cout << "fast_exact_result_seconds = "
               << std::chrono::duration<double>(fast_exact_end - fast_exact_start).count()
               << '\n';

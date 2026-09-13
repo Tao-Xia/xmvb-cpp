@@ -513,8 +513,6 @@ PairProjectionPolicy resolve_pair_projection_policy(
   switch (requested_cache) {
     case PairProjectionCache::Both:
       return {true, true};
-    case PairProjectionCache::None:
-      return {false, false};
     case PairProjectionCache::SmallerSpin:
       if (cache_context.beta_reuses_alpha_pair_cache) {
         return {true, false};

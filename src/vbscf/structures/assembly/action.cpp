@@ -66,6 +66,111 @@ struct DeterminantPairScalars {
   double overlap = 0.0;
 };
 
+Eigen::MatrixXd build_pair_matrix(
+    const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
+    int n_unique,
+    bool hamiltonian) {
+  Eigen::MatrixXd matrix(n_unique, n_unique);
+  for (int left = 0; left < n_unique; ++left) {
+    for (int right = 0; right < n_unique; ++right) {
+      const auto& pair = pair_cache[
+          ordered_spin_pair_storage_index(left, right, n_unique)];
+      matrix(left, right) = hamiltonian
+          ? pair.total_hamiltonian
+          : pair.overlap_result.overlap_determinant;
+    }
+  }
+  return matrix;
+}
+
+bool has_projected_pair_values(
+    const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
+    int n_packed_pairs) {
+  for (const auto& pair : pair_cache) {
+    const auto& projection =
+        pair.opposite_spin_pair_cache.first_order_cofactor_projection;
+    if (!projection.packed_pair_indices.empty()) {
+      return static_cast<int>(projection.projected_pair_values.size()) ==
+          n_packed_pairs;
+    }
+  }
+  return false;
+}
+
+bool has_sparse_pair_values(
+    const std::vector<SpinDeterminantPairEvaluation>& pair_cache) {
+  return std::any_of(
+      pair_cache.begin(),
+      pair_cache.end(),
+      [](const SpinDeterminantPairEvaluation& pair) {
+        return !pair.opposite_spin_pair_cache
+                    .first_order_cofactor_projection
+                    .packed_pair_indices.empty();
+      });
+}
+
+std::vector<Eigen::MatrixXd> build_projected_pair_matrices(
+    const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
+    int n_unique,
+    int n_packed_pairs) {
+  std::vector<Eigen::MatrixXd> matrices;
+  matrices.reserve(n_packed_pairs);
+  for (int packed_pair = 0;
+       packed_pair < n_packed_pairs;
+       ++packed_pair) {
+    matrices.push_back(Eigen::MatrixXd::Zero(n_unique, n_unique));
+  }
+
+  for (int left = 0; left < n_unique; ++left) {
+    for (int right = 0; right < n_unique; ++right) {
+      const auto& projection = pair_cache[
+          ordered_spin_pair_storage_index(left, right, n_unique)]
+                                   .opposite_spin_pair_cache
+                                   .first_order_cofactor_projection;
+      if (projection.packed_pair_indices.empty()) {
+        continue;
+      }
+      if (static_cast<int>(projection.projected_pair_values.size()) !=
+          n_packed_pairs) {
+        throw std::invalid_argument(
+            "factorized structure action requires one projected spin cache");
+      }
+      for (int packed_pair = 0;
+           packed_pair < n_packed_pairs;
+           ++packed_pair) {
+        matrices[packed_pair](left, right) =
+            projection.projected_pair_values[packed_pair];
+      }
+    }
+  }
+  return matrices;
+}
+
+std::vector<std::vector<Eigen::Triplet<double>>> build_sparse_pair_entries(
+    const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
+    int n_unique,
+    int n_packed_pairs) {
+  std::vector<std::vector<Eigen::Triplet<double>>> triplets(n_packed_pairs);
+  for (int left = 0; left < n_unique; ++left) {
+    for (int right = 0; right < n_unique; ++right) {
+      const auto& projection = pair_cache[
+          ordered_spin_pair_storage_index(left, right, n_unique)]
+                                   .opposite_spin_pair_cache
+                                   .first_order_cofactor_projection;
+      for (std::size_t entry = 0;
+           entry < projection.packed_pair_indices.size();
+           ++entry) {
+        triplets[projection.packed_pair_indices[entry]].emplace_back(
+            left,
+            right,
+            projection.packed_pair_values[entry]);
+      }
+    }
+  }
+
+  return triplets;
+}
+
 DeterminantPairScalars evaluate_pair(
     const SameSpinPairCacheContext& cache,
     int left_determinant,
@@ -128,6 +233,10 @@ StructureAction::StructureAction(
       n_determinants_(
           static_cast<int>(determinant_to_structure_terms.size())),
       n_structures_(n_structures),
+      n_unique_alpha_(static_cast<int>(
+          same_spin_pair_cache.alpha_reuse_table.unique_determinants.size())),
+      n_unique_beta_(static_cast<int>(
+          same_spin_pair_cache.beta_reuse_table.unique_determinants.size())),
       n_packed_pairs_(packed_active_pair_count(n_active_orbitals)),
       n_active_orbitals_(n_active_orbitals) {
   if (n_determinants_ <= 0 || n_structures_ <= 0) {
@@ -137,6 +246,10 @@ StructureAction::StructureAction(
   if (!same_spin_pair_cache.enabled()) {
     throw std::invalid_argument(
         "matrix-free structure action requires a same-spin pair cache");
+  }
+  if (n_unique_alpha_ <= 0 || n_unique_beta_ <= 0) {
+    throw std::invalid_argument(
+        "matrix-free structure action requires nonempty spin spaces");
   }
   if (static_cast<int>(
           same_spin_pair_cache.alpha_reuse_table
@@ -194,6 +307,110 @@ StructureAction::StructureAction(
             same_spin_pair_cache.beta_reuse_table.unique_determinants.size()));
   }
 
+  const auto& alpha_pair_cache =
+      same_spin_pair_cache.alpha_pair_cache_ref();
+  const auto& beta_pair_cache =
+      same_spin_pair_cache.beta_pair_cache_ref();
+  alpha_overlap_ = build_pair_matrix(
+      alpha_pair_cache, n_unique_alpha_, false);
+  alpha_hamiltonian_ = build_pair_matrix(
+      alpha_pair_cache, n_unique_alpha_, true);
+  beta_overlap_ = build_pair_matrix(
+      beta_pair_cache, n_unique_beta_, false);
+  beta_hamiltonian_ = build_pair_matrix(
+      beta_pair_cache, n_unique_beta_, true);
+
+  const bool alpha_projected =
+      has_projected_pair_values(alpha_pair_cache, n_packed_pairs_);
+  const bool beta_projected =
+      has_projected_pair_values(beta_pair_cache, n_packed_pairs_);
+  const bool has_opposite_spin_channels =
+      has_sparse_pair_values(alpha_pair_cache) &&
+      has_sparse_pair_values(beta_pair_cache);
+  if (has_opposite_spin_channels && !alpha_projected && !beta_projected) {
+    throw std::invalid_argument(
+        "factorized structure action requires one projected spin cache");
+  }
+  if (has_opposite_spin_channels) {
+    alpha_projection_is_dense_ = alpha_projected &&
+        (!beta_projected || n_unique_alpha_ <= n_unique_beta_);
+    const auto& projected_cache = alpha_projection_is_dense_
+        ? alpha_pair_cache
+        : beta_pair_cache;
+    const auto& sparse_cache = alpha_projection_is_dense_
+        ? beta_pair_cache
+        : alpha_pair_cache;
+    const int n_projected = alpha_projection_is_dense_
+        ? n_unique_alpha_
+        : n_unique_beta_;
+    const int n_sparse = alpha_projection_is_dense_
+        ? n_unique_beta_
+        : n_unique_alpha_;
+    auto projected_matrices = build_projected_pair_matrices(
+        projected_cache,
+        n_projected,
+        n_packed_pairs_);
+    auto sparse_entries = build_sparse_pair_entries(
+        sparse_cache,
+        n_sparse,
+        n_packed_pairs_);
+    std::size_t dense_factor_values =
+        alpha_overlap_.size() + alpha_hamiltonian_.size() +
+        beta_overlap_.size() + beta_hamiltonian_.size();
+    for (int packed_pair = 0;
+         packed_pair < n_packed_pairs_;
+         ++packed_pair) {
+      if (!projected_matrices[packed_pair].isZero(0.0) &&
+          !sparse_entries[packed_pair].empty()) {
+        dense_factor_values +=
+            projected_matrices[packed_pair].size() +
+            static_cast<std::size_t>(n_sparse) * n_sparse;
+      }
+    }
+    const bool dense_factors_fit_memory_bound =
+        dense_factor_values <=
+        static_cast<std::size_t>(n_structures_) * n_structures_;
+    opposite_spin_channels_.reserve(n_packed_pairs_);
+    for (int packed_pair = 0;
+         packed_pair < n_packed_pairs_;
+         ++packed_pair) {
+      if (projected_matrices[packed_pair].isZero(0.0) ||
+          sparse_entries[packed_pair].empty()) {
+        continue;
+      }
+      Eigen::MatrixXd dense;
+      const std::size_t dense_bytes =
+          static_cast<std::size_t>(n_sparse) * n_sparse * sizeof(double);
+      const std::size_t sparse_bytes =
+          sparse_entries[packed_pair].size() *
+          sizeof(Eigen::Triplet<double>);
+      if (dense_factors_fit_memory_bound || dense_bytes <= sparse_bytes) {
+        dense = Eigen::MatrixXd::Zero(n_sparse, n_sparse);
+        for (const auto& entry : sparse_entries[packed_pair]) {
+          dense(entry.row(), entry.col()) = entry.value();
+        }
+        sparse_entries[packed_pair].clear();
+        sparse_entries[packed_pair].shrink_to_fit();
+      }
+      opposite_spin_channels_.push_back(OppositeSpinChannel{
+          std::move(projected_matrices[packed_pair]),
+          std::move(dense),
+          std::move(sparse_entries[packed_pair])});
+    }
+  }
+
+  determinant_to_spin_product_.resize(n_determinants_);
+  for (int determinant = 0;
+       determinant < n_determinants_;
+       ++determinant) {
+    const int alpha = same_spin_pair_cache.alpha_reuse_table
+                          .determinant_to_unique_id[determinant];
+    const int beta = same_spin_pair_cache.beta_reuse_table
+                         .determinant_to_unique_id[determinant];
+    determinant_to_spin_product_[determinant] =
+        alpha * n_unique_beta_ + beta;
+  }
+
   structure_to_determinant_terms_.resize(n_structures_);
   for (int determinant = 0;
        determinant < n_determinants_;
@@ -234,11 +451,70 @@ StructureActionResult StructureAction::apply(
       Eigen::MatrixXd::Zero(n_determinants_, block_width);
   Eigen::MatrixXd determinant_overlap =
       Eigen::MatrixXd::Zero(n_determinants_, block_width);
-  const int n_threads = std::max(
-      1,
-      std::min(
-          xmvb::effective_openmp_thread_count(),
-          n_determinants_));
+  for (int vector = 0; vector < block_width; ++vector) {
+    Eigen::MatrixXd spin_vector =
+        Eigen::MatrixXd::Zero(n_unique_alpha_, n_unique_beta_);
+    for (int determinant = 0;
+         determinant < n_determinants_;
+         ++determinant) {
+      const int spin_product =
+          determinant_to_spin_product_[determinant];
+      spin_vector(
+          spin_product / n_unique_beta_,
+          spin_product % n_unique_beta_) =
+          determinant_vectors(determinant, vector);
+    }
+
+    Eigen::MatrixXd left_product(n_unique_alpha_, n_unique_beta_);
+    Eigen::MatrixXd spin_hamiltonian(n_unique_alpha_, n_unique_beta_);
+    Eigen::MatrixXd spin_overlap(n_unique_alpha_, n_unique_beta_);
+    left_product.noalias() = alpha_hamiltonian_ * spin_vector;
+    spin_hamiltonian.noalias() = left_product * beta_overlap_.transpose();
+    left_product.noalias() = alpha_overlap_ * spin_vector;
+    spin_hamiltonian.noalias() +=
+        left_product * beta_hamiltonian_.transpose();
+    spin_overlap.noalias() = left_product * beta_overlap_.transpose();
+    for (const auto& channel : opposite_spin_channels_) {
+      if (alpha_projection_is_dense_) {
+        left_product.noalias() = channel.projected * spin_vector;
+        if (channel.dense.size() != 0) {
+          spin_hamiltonian.noalias() +=
+              left_product * channel.dense.transpose();
+          continue;
+        }
+        for (const auto& entry : channel.sparse) {
+          spin_hamiltonian.col(entry.row()).noalias() +=
+              entry.value() * left_product.col(entry.col());
+        }
+      } else {
+        if (channel.dense.size() != 0) {
+          left_product.noalias() = channel.dense * spin_vector;
+          spin_hamiltonian.noalias() +=
+              left_product * channel.projected.transpose();
+          continue;
+        }
+        left_product.setZero();
+        for (const auto& entry : channel.sparse) {
+          left_product.row(entry.row()).noalias() +=
+              entry.value() * spin_vector.row(entry.col());
+        }
+        spin_hamiltonian.noalias() +=
+            left_product * channel.projected.transpose();
+      }
+    }
+
+    for (int determinant = 0;
+         determinant < n_determinants_;
+         ++determinant) {
+      const int spin_product =
+          determinant_to_spin_product_[determinant];
+      const int alpha = spin_product / n_unique_beta_;
+      const int beta = spin_product % n_unique_beta_;
+      determinant_hamiltonian(determinant, vector) =
+          spin_hamiltonian(alpha, beta);
+      determinant_overlap(determinant, vector) = spin_overlap(alpha, beta);
+    }
+  }
 
   StructureActionResult result;
   result.hamiltonian =
@@ -246,44 +522,15 @@ StructureActionResult StructureAction::apply(
   result.overlap =
       Eigen::MatrixXd::Zero(n_structures_, block_width);
 
-#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
-  {
-#pragma omp for schedule(static)
-    for (int left_determinant = 0;
-         left_determinant < n_determinants_;
-         ++left_determinant) {
-      for (int right_determinant = 0;
-           right_determinant < n_determinants_;
-           ++right_determinant) {
-        const DeterminantPairScalars pair = evaluate_pair(
-            *same_spin_pair_cache_,
-            left_determinant,
-            right_determinant,
-            two_electron_view_,
-            n_active_orbitals_,
-            n_packed_pairs_);
-        for (int vector = 0; vector < block_width; ++vector) {
-          const double coefficient =
-              determinant_vectors(right_determinant, vector);
-          determinant_hamiltonian(left_determinant, vector) +=
-              pair.hamiltonian * coefficient;
-          determinant_overlap(left_determinant, vector) +=
-              pair.overlap * coefficient;
-        }
-      }
-    }
-
-#pragma omp for schedule(static)
-    for (int structure = 0; structure < n_structures_; ++structure) {
-      for (const auto& term :
-           structure_to_determinant_terms_[structure]) {
-        result.hamiltonian.row(structure).noalias() +=
-            term.coefficient *
-            determinant_hamiltonian.row(term.determinant);
-        result.overlap.row(structure).noalias() +=
-            term.coefficient *
-            determinant_overlap.row(term.determinant);
-      }
+  for (int structure = 0; structure < n_structures_; ++structure) {
+    for (const auto& term :
+         structure_to_determinant_terms_[structure]) {
+      result.hamiltonian.row(structure).noalias() +=
+          term.coefficient *
+          determinant_hamiltonian.row(term.determinant);
+      result.overlap.row(structure).noalias() +=
+          term.coefficient *
+          determinant_overlap.row(term.determinant);
     }
   }
   return result;
@@ -331,6 +578,28 @@ int StructureAction::n_determinants() const noexcept {
 
 int StructureAction::n_structures() const noexcept {
   return n_structures_;
+}
+
+StructureActionStorage StructureAction::storage() const noexcept {
+  StructureActionStorage result;
+  result.factor_bytes =
+      static_cast<std::size_t>(
+          alpha_overlap_.size() + alpha_hamiltonian_.size() +
+          beta_overlap_.size() + beta_hamiltonian_.size()) *
+      sizeof(double);
+  for (const auto& channel : opposite_spin_channels_) {
+    result.factor_bytes +=
+        static_cast<std::size_t>(
+            channel.projected.size() + channel.dense.size()) *
+            sizeof(double) +
+        channel.sparse.size() * sizeof(Eigen::Triplet<double>);
+    if (channel.dense.size() != 0) {
+      ++result.dense_channels;
+    } else {
+      ++result.sparse_channels;
+    }
+  }
+  return result;
 }
 
 }  // namespace xmvb::vb

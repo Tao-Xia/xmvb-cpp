@@ -9,8 +9,6 @@
 #include <string>
 
 #include <Eigen/Core>
-#include <Eigen/Eigenvalues>
-
 #include "lapacke.h"
 
 namespace xmvb::core {
@@ -43,6 +41,47 @@ void check_generalized_eigensolver_info(lapack_int info) {
         "LAPACKE_dsygvd failed: overlap_matrix is not positive definite"
         " (info=" + std::to_string(info) + ")");
   }
+}
+
+struct ProjectedEigenpairs {
+  Eigen::VectorXd eigenvalues;
+  Eigen::MatrixXd eigenvectors;
+};
+
+ProjectedEigenpairs solve_lowest_projected_eigenpairs(
+    const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian,
+    int n_roots) {
+  const int dimension = static_cast<int>(hamiltonian.rows());
+  Eigen::MatrixXd matrix = hamiltonian;
+  ProjectedEigenpairs result{
+      Eigen::VectorXd(n_roots),
+      Eigen::MatrixXd(dimension, n_roots)};
+  std::vector<lapack_int> support(2 * n_roots);
+  lapack_int n_converged = 0;
+  const lapack_int info = LAPACKE_dsyevr(
+      LAPACK_COL_MAJOR,
+      'V',
+      'I',
+      'U',
+      dimension,
+      matrix.data(),
+      dimension,
+      0.0,
+      0.0,
+      1,
+      n_roots,
+      0.0,
+      &n_converged,
+      result.eigenvalues.data(),
+      result.eigenvectors.data(),
+      dimension,
+      support.data());
+  if (info != 0 || n_converged != n_roots) {
+    throw std::runtime_error(
+        "Davidson projected eigensolve failed (info=" +
+        std::to_string(info) + ")");
+  }
+  return result;
 }
 
 Eigen::VectorXd precondition_residual(
@@ -204,6 +243,41 @@ Eigen::MatrixXd build_initial_vectors(
   return vectors;
 }
 
+void update_projected_hamiltonian(
+    const Eigen::Ref<const Eigen::MatrixXd>& basis,
+    const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian_basis,
+    int first_new_column,
+    int active_dimension,
+    Eigen::MatrixXd* projected_hamiltonian) {
+  const int n_new_columns = active_dimension - first_new_column;
+  if (n_new_columns <= 0) {
+    return;
+  }
+  const Eigen::MatrixXd new_columns =
+      basis.leftCols(active_dimension).transpose() *
+      hamiltonian_basis.middleCols(first_new_column, n_new_columns);
+  projected_hamiltonian->block(
+      0,
+      first_new_column,
+      active_dimension,
+      n_new_columns) = new_columns;
+  if (first_new_column > 0) {
+    projected_hamiltonian->block(
+        first_new_column,
+        0,
+        n_new_columns,
+        first_new_column) =
+        new_columns.topRows(first_new_column).transpose();
+  }
+  auto diagonal_block = projected_hamiltonian->block(
+      first_new_column,
+      first_new_column,
+      n_new_columns,
+      n_new_columns);
+  diagonal_block =
+      (0.5 * (diagonal_block + diagonal_block.transpose())).eval();
+}
+
 }  // namespace
 
 GeneralizedEigenResult GeneralizedEigensolver::solve(
@@ -286,6 +360,14 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
     throw std::runtime_error(
         "Davidson initial vectors are linearly dependent in the overlap metric");
   }
+  Eigen::MatrixXd projected_hamiltonian =
+      Eigen::MatrixXd::Zero(max_subspace, max_subspace);
+  update_projected_hamiltonian(
+      basis,
+      hamiltonian_basis,
+      0,
+      active_dimension,
+      &projected_hamiltonian);
 
   for (int iteration = 1;
        iteration <= options.max_iterations;
@@ -298,20 +380,20 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
         hamiltonian_basis.leftCols(active_dimension);
     const auto active_overlap_basis =
         overlap_basis.leftCols(active_dimension);
-    Eigen::MatrixXd projected_hamiltonian =
-        active_basis.transpose() * active_hamiltonian_basis;
-    projected_hamiltonian =
-        0.5 * (projected_hamiltonian + projected_hamiltonian.transpose());
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> projected_solver(
-        projected_hamiltonian);
-    if (projected_solver.info() != Eigen::Success) {
-      throw std::runtime_error("Davidson projected eigensolve failed");
-    }
-
-    const Eigen::VectorXd projected_eigenvalues =
-        projected_solver.eigenvalues();
-    const Eigen::MatrixXd projected_eigenvectors =
-        projected_solver.eigenvectors();
+    const Eigen::MatrixXd active_projected_hamiltonian =
+        projected_hamiltonian.topLeftCorner(
+            active_dimension,
+            active_dimension);
+    const int n_projected_roots =
+        active_dimension + options.n_roots > max_subspace
+            ? active_dimension
+            : options.n_roots;
+    const ProjectedEigenpairs projected =
+        solve_lowest_projected_eigenpairs(
+            active_projected_hamiltonian,
+            n_projected_roots);
+    const Eigen::VectorXd& projected_eigenvalues = projected.eigenvalues;
+    const Eigen::MatrixXd& projected_eigenvectors = projected.eigenvectors;
     const Eigen::MatrixXd root_coefficients =
         projected_eigenvectors.leftCols(options.n_roots);
     const Eigen::MatrixXd root_vectors = active_basis * root_coefficients;
@@ -382,6 +464,8 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
       hamiltonian_basis.leftCols(n_keep) =
           restarted_hamiltonian_basis;
       overlap_basis.leftCols(n_keep) = restarted_overlap_basis;
+      projected_hamiltonian.topLeftCorner(n_keep, n_keep) =
+          projected_eigenvalues.head(n_keep).asDiagonal();
       active_dimension = n_keep;
     }
 
@@ -394,6 +478,12 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
         &hamiltonian_basis,
         &overlap_basis,
         active_dimension);
+    update_projected_hamiltonian(
+        basis,
+        hamiltonian_basis,
+        previous_dimension,
+        active_dimension,
+        &projected_hamiltonian);
     if (active_dimension == previous_dimension) {
       throw std::runtime_error(
           "Davidson correction space became linearly dependent before convergence");
