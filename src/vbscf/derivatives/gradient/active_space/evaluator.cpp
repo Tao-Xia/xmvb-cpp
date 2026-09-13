@@ -565,29 +565,39 @@ finalize_active_space_second_order_context(
       context->same_spin_pair_cache,
       context->prepared_active_space.active_space_two_electron_result,
       input.orbital_preparation_input.n_active_orbitals);
-  context->structure_matrices = std::move(forward_context->structure_matrices);
   context->active_orbital_overlap_gradient =
       gradient_result.active_orbital_overlap_gradient;
   context->active_one_electron_gradient =
       gradient_result.active_one_electron_gradient;
   context->packed_active_two_electron_gradient =
       gradient_result.packed_active_two_electron_gradient;
-  context->eigen_result = std::move(forward_context->eigen_result);
   context->selected_state_indices = selected_state_indices;
   context->normalized_state_weights = normalized_weights;
   context->n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
+  context->n_structures = input.structure_data.n_structures;
   context->use_full_matrix_form_adjoint =
       context->same_spin_pair_cache.enabled();
   context->use_matrix_form_opposite_spin =
       context->same_spin_pair_cache.enabled();
   context->selected_state_energies = gather_selected_state_energies(
-      context->eigen_result.eigenvalues,
+      forward_context->eigen_result.eigenvalues,
       selected_state_indices);
+  const Eigen::Map<const Eigen::MatrixXd> accepted_eigenvectors(
+      forward_context->eigen_result.eigenvector_matrix.data(),
+      context->n_structures,
+      context->n_structures);
+  context->selected_state_eigenvectors.resize(
+      context->n_structures,
+      static_cast<int>(selected_state_indices.size()));
+  for (std::size_t state = 0; state < selected_state_indices.size(); ++state) {
+    context->selected_state_eigenvectors.col(state) =
+        accepted_eigenvectors.col(selected_state_indices[state]);
+  }
   if (context->use_matrix_form_opposite_spin) {
     context->selected_state_matrices =
-        build_selected_state_determinant_matrices_from_normalized_weights(
+        build_selected_state_determinant_matrices_from_selected_columns(
             input.structure_data,
-            context->eigen_result.eigenvector_matrix,
+            context->selected_state_eigenvectors,
             selected_state_indices,
             normalized_weights,
             context->same_spin_pair_cache);

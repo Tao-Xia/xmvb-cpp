@@ -42,7 +42,7 @@ void throw_if_nonfinite_vector(
 AcceptedSelectedStateGeneralizedEigenResponseOperator
 build_accepted_selected_state_generalized_eigen_response_operator(
     const AcceptedPointContext& accepted_point_context) {
-  const int n_structures = accepted_point_context.structure_matrices.n_structures;
+  const int n_structures = accepted_point_context.n_structures;
   const int n_selected_states =
       static_cast<int>(accepted_point_context.selected_state_indices.size());
   if (n_structures <= 0 || n_selected_states <= 0) {
@@ -55,12 +55,14 @@ build_accepted_selected_state_generalized_eigen_response_operator(
     throw std::invalid_argument(
         "accepted-point matrix-free structure action is unavailable");
   }
-  if (accepted_point_context.eigen_result.eigenvalues.size() !=
-          static_cast<std::size_t>(n_structures) ||
-      accepted_point_context.eigen_result.eigenvector_matrix.size() !=
-          static_cast<std::size_t>(n_structures) * n_structures) {
+  if (accepted_point_context.selected_state_energies.size() !=
+          selected_state_count ||
+      accepted_point_context.selected_state_eigenvectors.rows() !=
+          n_structures ||
+      accepted_point_context.selected_state_eigenvectors.cols() !=
+          n_selected_states) {
     throw std::invalid_argument(
-        "accepted-point generalized eigensystem dimensions are inconsistent");
+        "accepted-point selected eigensystem dimensions are inconsistent");
   }
   if (accepted_point_context.normalized_state_weights.size() !=
       selected_state_count) {
@@ -71,25 +73,15 @@ build_accepted_selected_state_generalized_eigen_response_operator(
   AcceptedSelectedStateGeneralizedEigenResponseOperator response_operator;
   response_operator.structure_action =
       &accepted_point_context.structure_action.value();
-  const Eigen::Map<const Eigen::MatrixXd> accepted_eigenvectors(
-      accepted_point_context.eigen_result.eigenvector_matrix.data(),
-      n_structures,
-      n_structures);
-  response_operator.selected_eigenvalues.resize(n_selected_states);
-  response_operator.selected_eigenvectors.resize(
-      n_structures, n_selected_states);
-  for (std::size_t selected_state_offset = 0;
-       selected_state_offset < accepted_point_context.selected_state_indices.size();
-       ++selected_state_offset) {
-    const int state_index =
-        accepted_point_context.selected_state_indices[selected_state_offset];
+  response_operator.selected_eigenvalues = Eigen::Map<const Eigen::VectorXd>(
+      accepted_point_context.selected_state_energies.data(),
+      n_selected_states);
+  response_operator.selected_eigenvectors =
+      accepted_point_context.selected_state_eigenvectors;
+  for (const int state_index : accepted_point_context.selected_state_indices) {
     if (state_index < 0 || state_index >= n_structures) {
       throw std::out_of_range("selected state index is out of range");
     }
-    response_operator.selected_eigenvalues[selected_state_offset] =
-        accepted_point_context.eigen_result.eigenvalues[state_index];
-    response_operator.selected_eigenvectors.col(selected_state_offset) =
-        accepted_eigenvectors.col(state_index);
   }
 
   return response_operator;

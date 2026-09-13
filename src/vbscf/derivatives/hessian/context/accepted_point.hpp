@@ -3,7 +3,6 @@
 #include <optional>
 #include <vector>
 
-#include "core/eigensolver.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/expansion/types.hpp"
@@ -17,7 +16,7 @@ namespace xmvb::vb {
  *
  * This object persists the heavy forward intermediates generated at one relaxed
  * VBSCF evaluation so later orbital second-order operators can reuse them
- * without rebuilding the same-spin cache, structure matrices, or selected-state
+ * without rebuilding the same-spin cache, structure action, or selected-state
  * determinant coefficient bundles.
  */
 struct AcceptedPointContext {
@@ -34,16 +33,10 @@ struct AcceptedPointContext {
   /**
    * @brief Self-contained matrix-free accepted structure problem.
    *
-   * The action supplies selected-root response solves without accessing or
-   * reconstructing the dense reference matrices retained during this
-   * migration stage.
+   * The action supplies selected-root response solves without storing or
+   * reconstructing dense structure matrices.
    */
   std::optional<StructureAction> structure_action;
-
-  /**
-   * @brief Accepted-point structure Hamiltonian/overlap matrices.
-   */
-  StructureAccumulationResult structure_matrices;
 
   /**
    * @brief Accepted-point active-space adjoint with respect to `SSO`.
@@ -65,11 +58,6 @@ struct AcceptedPointContext {
   std::vector<double> packed_active_two_electron_gradient;
 
   /**
-   * @brief Accepted-point generalized eigensystem on the structure basis.
-   */
-  xmvb::core::GeneralizedEigenResult eigen_result;
-
-  /**
    * @brief Selected states carried by this context.
    */
   std::vector<int> selected_state_indices;
@@ -80,9 +68,14 @@ struct AcceptedPointContext {
   std::vector<double> normalized_state_weights;
 
   /**
-   * @brief Energies of the selected states extracted from `eigen_result`.
+   * @brief Accepted energies aligned with `selected_state_indices`.
    */
   std::vector<double> selected_state_energies;
+
+  /**
+   * @brief Selected accepted eigenvectors, one state per column.
+   */
+  Eigen::MatrixXd selected_state_eigenvectors;
 
   /**
    * @brief State-dependent determinant coefficient matrices on unique-spin space.
@@ -93,6 +86,9 @@ struct AcceptedPointContext {
    * @brief Number of active orbitals used to index `HHO`, `SSO`, and packed `GGO`.
    */
   int n_active_orbitals = 0;
+
+  /** @brief Dimension of the structure space acted on by `structure_action`. */
+  int n_structures = 0;
 
   /**
    * @brief Whether the accepted point supports matrix-form same-spin adjoints.
