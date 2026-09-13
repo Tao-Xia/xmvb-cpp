@@ -13,6 +13,7 @@
 #include "core/openmp.hpp"
 #include "vbscf/core/storage/eigen.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/two_electron/transformation/ao_pair_operator.hpp"
 
 namespace xmvb::vb {
 
@@ -154,102 +155,29 @@ std::vector<double> build_ao_pair_to_active_pair_coefficients(
   return ao_pair_to_active_pair_coefficients;
 }
 
-std::vector<double> apply_ao_pair_graph_matrix(
-    const std::vector<double>& ao_two_electron_integral_values,
-    const AoPairGraph& graph,
-    const std::vector<double>& pair_coefficients,
-    std::size_t n_ao_pairs,
-    std::size_t n_active_pairs) {
-  if (graph.row_offsets.size() != n_ao_pairs + 1) {
-    throw std::invalid_argument("AO pair graph row offset size mismatch");
-  }
-  if (graph.columns.size() != graph.eri_indices.size()) {
-    throw std::invalid_argument("AO pair graph column/integral size mismatch");
-  }
-  if (graph.row_offsets.back() != static_cast<int>(graph.columns.size())) {
-    throw std::invalid_argument("AO pair graph row offsets do not cover all entries");
-  }
-
-  std::vector<double> pair_products(n_ao_pairs * n_active_pairs, 0.0);
-  int n_threads = std::min(
-      xmvb::effective_openmp_thread_count(),
-      static_cast<int>(n_ao_pairs));
-  const auto row_boundaries =
-      graph.balanced_row_boundaries(n_threads);
-
-#pragma omp parallel num_threads(n_threads)
-  {
-    int thread = 0;
-#ifdef _OPENMP
-    thread = omp_get_thread_num();
-#endif
-    for (std::size_t row = row_boundaries[thread];
-         row < row_boundaries[thread + 1];
-         ++row) {
-      double* target_row =
-          pair_products.data() + row * n_active_pairs;
-      const int begin = graph.row_offsets[row];
-      const int end = graph.row_offsets[row + 1];
-      for (int edge = begin; edge < end; ++edge) {
-        const int column = graph.columns[edge];
-        const int eri = graph.eri_indices[edge];
-        const double value = ao_two_electron_integral_values[eri];
-        const double* source_row =
-            pair_coefficients.data() +
-            static_cast<std::size_t>(column) * n_active_pairs;
-#pragma omp simd
-        for (std::size_t active_pair = 0;
-             active_pair < n_active_pairs;
-             ++active_pair) {
-          target_row[active_pair] +=
-              value * source_row[active_pair];
-        }
-      }
-    }
-  }
-
-  return pair_products;
-}
-
 std::vector<double> contract_pair_coefficients_to_packed_active_integrals(
-    const std::vector<double>& ao_pair_to_active_pair_coefficients,
-    const std::vector<double>& pair_products,
-    std::size_t n_ao_pairs,
-    std::size_t n_active_pairs) {
-  Eigen::MatrixXd active_pair_matrix =
-      Eigen::MatrixXd::Zero(
-          static_cast<Eigen::Index>(n_active_pairs),
-          static_cast<Eigen::Index>(n_active_pairs));
-  for (std::size_t ao_pair_index = 0;
-       ao_pair_index < n_ao_pairs;
-       ++ao_pair_index) {
-    const Eigen::Map<const Eigen::VectorXd> pair_coefficient_row(
-        ao_pair_to_active_pair_coefficients.data() +
-            ao_pair_index * n_active_pairs,
-        static_cast<Eigen::Index>(n_active_pairs));
-    const Eigen::Map<const Eigen::VectorXd> pair_product_row(
-        pair_products.data() + ao_pair_index * n_active_pairs,
-        static_cast<Eigen::Index>(n_active_pairs));
-    active_pair_matrix.noalias() +=
-        pair_coefficient_row * pair_product_row.transpose();
+    const Eigen::Ref<const ExactCtxPairMatrix>& pair_coefficients,
+    const Eigen::Ref<const ExactCtxPairMatrix>& pair_products) {
+  if (pair_coefficients.rows() != pair_products.rows() ||
+      pair_coefficients.cols() != pair_products.cols()) {
+    throw std::invalid_argument(
+        "AO-pair coefficient and product shapes differ");
   }
+  const Eigen::Index n_active_pairs = pair_coefficients.cols();
+  const Eigen::MatrixXd active_pair_matrix =
+      pair_coefficients.transpose() * pair_products;
   std::vector<double> packed_active_two_electron_integrals(
-      n_active_pairs * (n_active_pairs + 1) / 2,
+      static_cast<std::size_t>(
+          n_active_pairs * (n_active_pairs + 1) / 2),
       0.0);
-  for (std::size_t left_active_pair_index = 0;
-       left_active_pair_index < n_active_pairs;
-       ++left_active_pair_index) {
-    for (std::size_t right_active_pair_index = 0;
-         right_active_pair_index <= left_active_pair_index;
-         ++right_active_pair_index) {
+  for (int left = 0; left < n_active_pairs; ++left) {
+    for (int right = 0; right <= left; ++right) {
       const int packed_index =
           TwoElectronIndexer::packed_pair_of_pairs_index(
-              static_cast<int>(left_active_pair_index),
-              static_cast<int>(right_active_pair_index));
+              left,
+              right);
       packed_active_two_electron_integrals[packed_index] =
-          active_pair_matrix(
-              static_cast<Eigen::Index>(left_active_pair_index),
-              static_cast<Eigen::Index>(right_active_pair_index));
+          active_pair_matrix(left, right);
     }
   }
   return packed_active_two_electron_integrals;
@@ -426,8 +354,7 @@ SparseAoPairCoefficients build_sparse_ao_pair_coefficients(
 }
 
 ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_graph(
-    const std::vector<double>& ao_two_electron_integral_values,
-    const AoPairGraph& graph,
+    const AoIntegralInput& ao_integral_input,
     std::vector<double> dense_active_coefficients,
     int n_basis_functions,
     int n_active_orbitals) {
@@ -436,26 +363,27 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_graph(
   const std::size_t n_active_pairs = active_pairs.size();
   const std::size_t n_ao_pairs =
       n_basis_functions * (n_basis_functions + 1) / 2;
-  const auto ao_pair_to_active_pair_coefficients =
+  const auto pair_coefficient_storage =
       build_ao_pair_to_active_pair_coefficients(
           dense_active_coefficients,
           n_basis_functions,
           n_active_orbitals,
           active_pairs);
-
-  auto pair_products =
-      apply_ao_pair_graph_matrix(
-          ao_two_electron_integral_values,
-          graph,
-          ao_pair_to_active_pair_coefficients,
-          n_ao_pairs,
-          n_active_pairs);
+  const Eigen::Map<const ExactCtxPairMatrix> pair_coefficients(
+      pair_coefficient_storage.data(),
+      static_cast<Eigen::Index>(n_ao_pairs),
+      static_cast<Eigen::Index>(n_active_pairs));
+  ExactCtxPairMatrix pair_products;
+  detail::apply_exact_ao_pair_kernel(
+      ao_integral_input,
+      pair_coefficients,
+      n_basis_functions,
+      n_active_pairs,
+      &pair_products);
   auto packed_active_two_electron_integrals =
       contract_pair_coefficients_to_packed_active_integrals(
-          ao_pair_to_active_pair_coefficients,
-          pair_products,
-          n_ao_pairs,
-          n_active_pairs);
+          pair_coefficients,
+          pair_products);
 
   ActiveSpaceTwoElectronResult result;
   result.packed_active_two_electron_integrals =
@@ -465,11 +393,7 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_graph(
           dense_active_coefficients,
           n_basis_functions,
           n_active_orbitals);
-  result.dense_ao_pair_products =
-      copy_row_major_buffer_to_matrix(
-          pair_products,
-          static_cast<int>(n_ao_pairs),
-          static_cast<int>(n_active_pairs));
+  result.dense_ao_pair_products = pair_products;
   return result;
 }
 
@@ -620,15 +544,13 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
   const std::size_t n_active_pairs =
       packed_active_pair_count(n_active_orbitals);
   if (n_active_pairs <= 64) {
-    const AoPairGraph& graph = ao_integral_input.pair_graph;
     const auto dense_active_coefficients =
         build_dense_active_coefficients(
             orbital_preparation_result,
             n_bf,
             n_active_orbitals);
     return build_packed_active_two_electron_integrals_graph(
-        ao_integral_input.ao_two_electron_integral_values,
-        graph,
+        ao_integral_input,
         std::move(dense_active_coefficients),
         n_bf,
         n_active_orbitals);

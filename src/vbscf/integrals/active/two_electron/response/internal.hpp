@@ -6,7 +6,6 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/active/two_electron/response/types.hpp"
-#include "vbscf/integrals/ao/contracts/input.hpp"
 
 namespace xmvb::vb::detail {
 
@@ -68,13 +67,6 @@ void multiply_pair_coefficients_by_gradient_matrix(
 ExactCtxPairMatrix multiply_pair_coefficients_by_gradient_matrix(
     const ExactCtxPairMatrix& ao_pair_to_active_pair_coefficients,
     const ExactCtxPairMatrix& active_pair_gradient_matrix);
-
-void apply_exact_ao_pair_kernel(
-    const AoIntegralInput& ao_integral_input,
-    const ExactCtxPairMatrix& transformed_pair_coefficients,
-    int n_bf,
-    std::size_t n_active_pairs,
-    ExactCtxPairMatrix* pair_gradients);
 
 void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
     const ExactCtxPairMatrix& pair_gradients,

@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/active/two_electron/response/internal.hpp"
+#include "vbscf/integrals/active/two_electron/transformation/ao_pair_operator.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace xmvb::vb {
