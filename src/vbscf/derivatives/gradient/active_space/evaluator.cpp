@@ -1,10 +1,8 @@
 #include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cstddef>
-#include <exception>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -12,19 +10,9 @@
 
 #include <Eigen/Core>
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
-#include "core/openmp.hpp"
-#include "vbscf/determinants/pairs/storage.hpp"
-#include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
-#include "vbscf/determinants/pairs/contractions.hpp"
-#include "vbscf/structures/expansion/types.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
-#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/gradient/active_space/helpers.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
@@ -35,17 +23,6 @@ namespace xmvb::vb {
 
 namespace {
 
-
-struct StructurePairAdjoints {
-  double hamiltonian_weight = 0.0;
-  double overlap_weight = 0.0;
-};
-
-struct StructurePairWeightTables {
-  std::vector<double> hamiltonian_upper_weights;
-  std::vector<double> overlap_upper_weights;
-};
-
 struct ActiveSpaceGradientForwardContext {
   TimedPreparedActiveSpaceContext timed_active_space_context;
   SameSpinPairCacheContext same_spin_pair_cache;
@@ -54,221 +31,6 @@ struct ActiveSpaceGradientForwardContext {
   double structure_matrix_wall_time_seconds = 0.0;
   double eigensolver_wall_time_seconds = 0.0;
 };
-
-struct ThreadLocalActiveSpaceGradientBuffers {
-  std::vector<double> active_orbital_overlap_gradient;
-  std::vector<double> active_one_electron_gradient;
-  std::vector<double> packed_active_two_electron_gradient;
-};
-
-bool has_nonzero_structure_pair_adjoints(
-    const StructurePairAdjoints& adjoints) {
-  return adjoints.hamiltonian_weight != 0.0 ||
-      adjoints.overlap_weight != 0.0;
-}
-
-SameSpinPhiResult compute_same_spin_phi_from_active_space_result(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const DeterminantOverlapResult& overlap_result,
-    Eigen::MatrixXd* inverse_overlap_gradient) {
-  if (active_space_two_electron_result.representation ==
-          ActiveSpaceTwoElectronRepresentation::PackedExact &&
-      !active_space_two_electron_result.packed_active_two_electron_integrals.empty()) {
-    return compute_same_spin_original_phi(
-        occ_L,
-        occ_R,
-        h1e_act,
-        n_active_orbitals,
-        active_space_two_electron_result.packed_active_two_electron_integrals,
-        overlap_result,
-        inverse_overlap_gradient);
-  }
-
-  return compute_same_spin_original_phi(
-      occ_L,
-      occ_R,
-      h1e_act,
-      n_active_orbitals,
-      active_space_two_electron_result,
-      overlap_result,
-      inverse_overlap_gradient);
-}
-
-SameSpinPhiResult evaluate_same_spin_phi_with_optional_cache(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const SpinDeterminantPairEvaluation& pair_evaluation,
-    Eigen::MatrixXd* inverse_overlap_gradient) {
-  if (pair_evaluation.has_same_spin_phi_cache) {
-    if (inverse_overlap_gradient != nullptr) {
-      *inverse_overlap_gradient = pair_evaluation.same_spin_inverse_overlap_gradient;
-    }
-    return {
-        pair_evaluation.same_spin_one_electron_phi,
-        pair_evaluation.same_spin_total_phi,
-    };
-  }
-
-  return compute_same_spin_phi_from_active_space_result(
-      occ_L,
-      occ_R,
-      h1e_act,
-      n_active_orbitals,
-      active_space_two_electron_result,
-      pair_evaluation.overlap_result,
-      inverse_overlap_gradient);
-}
-void accumulate_one_electron_gradient_contribution(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::MatrixXd& cofactor_1st,
-    double weight,
-    Eigen::Ref<Eigen::MatrixXd> active_one_electron_gradient) {
-  for (int left_column = 0; left_column < static_cast<int>(occ_L.size()); ++left_column) {
-    const int orbital_index_left = occ_L[left_column];
-    for (int right_row = 0; right_row < static_cast<int>(occ_R.size()); ++right_row) {
-      const int orbital_index_right = occ_R[right_row];
-      active_one_electron_gradient(orbital_index_right, orbital_index_left) +=
-          weight * cofactor_1st(right_row, left_column);
-    }
-  }
-}
-
-void accumulate_same_spin_two_electron_gradient_contribution(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::MatrixXd& cofactor_1st,
-    double overlap_determinant,
-    double weight,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  if (weight == 0.0) {
-    return;
-  }
-
-  const int n_electrons = static_cast<int>(occ_L.size());
-  const double cofactor_scale = weight / overlap_determinant;
-  for (int left_first = 0; left_first < n_electrons - 1; ++left_first) {
-    const int orbital_index_left_first = occ_L[left_first];
-    for (int right_first = 0; right_first < n_electrons - 1; ++right_first) {
-      const int orbital_index_right_first = occ_R[right_first];
-      const double cofactor_11 = cofactor_1st(right_first, left_first);
-      for (int left_second = left_first + 1; left_second < n_electrons; ++left_second) {
-        const int orbital_index_left_second = occ_L[left_second];
-        const double cofactor_12 = cofactor_1st(right_first, left_second);
-        for (int right_second = right_first + 1; right_second < n_electrons; ++right_second) {
-          const int orbital_index_right_second = occ_R[right_second];
-          const double cofactor_22 = cofactor_1st(right_second, left_second);
-          const double cofactor_21 = cofactor_1st(right_second, left_first);
-          const double second_order_cofactor =
-              cofactor_scale * (cofactor_11 * cofactor_22 - cofactor_12 * cofactor_21);
-
-          const int direct_index = TwoElectronIndexer::two_electron_storage_index(
-              orbital_index_right_first,
-              orbital_index_left_first,
-              orbital_index_right_second,
-              orbital_index_left_second);
-          const int exchange_index = TwoElectronIndexer::two_electron_storage_index(
-              orbital_index_right_first,
-              orbital_index_left_second,
-              orbital_index_right_second,
-              orbital_index_left_first);
-          (*packed_active_two_electron_gradient)[direct_index] +=
-              second_order_cofactor;
-          (*packed_active_two_electron_gradient)[exchange_index] -=
-              second_order_cofactor;
-        }
-      }
-    }
-  }
-}
-
-void accumulate_opposite_spin_two_electron_gradient_contribution(
-    const std::vector<int>& alpha_occ_L,
-    const std::vector<int>& alpha_occ_R,
-    const Eigen::MatrixXd& alpha_cofactor_1st,
-    const OppositeSpinPairCache* alpha_pair_cache,
-    const std::vector<int>& beta_occ_L,
-    const std::vector<int>& beta_occ_R,
-    const Eigen::MatrixXd& beta_cofactor_1st,
-    const OppositeSpinPairCache* beta_pair_cache,
-    double weight,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  if (weight == 0.0) {
-    return;
-  }
-
-  if (alpha_pair_cache != nullptr && beta_pair_cache != nullptr &&
-      has_opposite_spin_first_order_projection(*alpha_pair_cache) &&
-      has_opposite_spin_first_order_projection(*beta_pair_cache) &&
-      alpha_pair_cache->n_packed_active_pairs ==
-          beta_pair_cache->n_packed_active_pairs) {
-    const auto& alpha_projection = alpha_pair_cache->first_order_cofactor_projection;
-    const auto& beta_projection = beta_pair_cache->first_order_cofactor_projection;
-    for (std::size_t alpha_entry = 0;
-         alpha_entry < alpha_projection.packed_pair_indices.size();
-         ++alpha_entry) {
-      const int alpha_packed_pair_index =
-          alpha_projection.packed_pair_indices[alpha_entry];
-      const double weighted_alpha_value =
-          weight * alpha_projection.packed_pair_values[alpha_entry];
-      for (std::size_t beta_entry = 0;
-           beta_entry < beta_projection.packed_pair_indices.size();
-           ++beta_entry) {
-        const int beta_packed_pair_index =
-            beta_projection.packed_pair_indices[beta_entry];
-        const int packed_pair_of_pairs_index =
-            TwoElectronIndexer::packed_pair_of_pairs_index(
-                beta_packed_pair_index,
-                alpha_packed_pair_index);
-        (*packed_active_two_electron_gradient)[
-            packed_pair_of_pairs_index] +=
-            weighted_alpha_value * beta_projection.packed_pair_values[beta_entry];
-      }
-    }
-    return;
-  }
-
-  for (int alpha_left_column = 0;
-       alpha_left_column < static_cast<int>(alpha_occ_L.size());
-       ++alpha_left_column) {
-    const int alpha_orbital_left =
-        alpha_occ_L[alpha_left_column];
-    for (int alpha_right_row = 0;
-         alpha_right_row < static_cast<int>(alpha_occ_R.size());
-         ++alpha_right_row) {
-      const int alpha_orbital_right =
-          alpha_occ_R[alpha_right_row];
-      const double weighted_alpha_cofactor =
-          weight * alpha_cofactor_1st(alpha_right_row, alpha_left_column);
-      for (int beta_left_column = 0;
-           beta_left_column < static_cast<int>(beta_occ_L.size());
-           ++beta_left_column) {
-        const int beta_orbital_left =
-            beta_occ_L[beta_left_column];
-        for (int beta_right_row = 0;
-             beta_right_row < static_cast<int>(beta_occ_R.size());
-             ++beta_right_row) {
-          const int beta_orbital_right =
-              beta_occ_R[beta_right_row];
-          const int two_electron_index = TwoElectronIndexer::two_electron_storage_index(
-              beta_orbital_right,
-              beta_orbital_left,
-              alpha_orbital_right,
-              alpha_orbital_left);
-          (*packed_active_two_electron_gradient)[two_electron_index] +=
-              weighted_alpha_cofactor * beta_cofactor_1st(beta_right_row, beta_left_column);
-        }
-      }
-    }
-  }
-}
 
 std::vector<double> normalize_state_average_weights_local(
     const std::vector<double>& state_average_weights) {
@@ -317,95 +79,6 @@ double compute_average_structure_overlap(
                                    structure_index];
   }
   return diagonal_sum / static_cast<double>(n_structures);
-}
-
-std::size_t structure_upper_storage_index(
-    int structure_row,
-    int structure_column) {
-  if (structure_row < 0 || structure_column < 0 ||
-      structure_row > structure_column) {
-    throw std::invalid_argument("structure upper-triangular index is out of range");
-  }
-  return structure_column * (structure_column + 1) / 2 +
-      structure_row;
-}
-
-// Precompute the selected-state structure adjoint weights once after the
-// generalized eigensolve so each determinant-pair reverse pass can reuse the
-// same upper-triangular structure weights instead of rescanning the selected
-// eigenvectors for every structure-term product.
-StructurePairWeightTables build_structure_pair_weight_tables(
-    const std::vector<double>& eigenvector_matrix,
-    const std::vector<double>& eigenvalues,
-    int n_structures,
-    const std::vector<int>& selected_state_indices,
-    const std::vector<double>& state_average_weights) {
-  const std::size_t n_upper_entries =
-      n_structures * (n_structures + 1) / 2;
-  StructurePairWeightTables weights;
-  weights.hamiltonian_upper_weights.assign(n_upper_entries, 0.0);
-  weights.overlap_upper_weights.assign(n_upper_entries, 0.0);
-
-  for (std::size_t selected_state_offset = 0;
-       selected_state_offset < selected_state_indices.size();
-       ++selected_state_offset) {
-    const int state_index = selected_state_indices[selected_state_offset];
-    const double state_weight = state_average_weights[selected_state_offset];
-    const double state_energy = eigenvalues[state_index];
-    const double* eigenvector_column =
-        eigenvector_matrix.data() +
-        state_index * n_structures;
-    for (int structure_column = 0;
-         structure_column < n_structures;
-         ++structure_column) {
-      const double coefficient_column = eigenvector_column[structure_column];
-      const std::size_t column_offset =
-          structure_column * (structure_column + 1) / 2;
-      for (int structure_row = 0;
-           structure_row <= structure_column;
-           ++structure_row) {
-        const double symmetry =
-            structure_row == structure_column ? 1.0 : 2.0;
-        const double weighted_product =
-            symmetry * state_weight * eigenvector_column[structure_row] * coefficient_column;
-        const std::size_t storage_index =
-            column_offset + structure_row;
-        weights.hamiltonian_upper_weights[storage_index] += weighted_product;
-        weights.overlap_upper_weights[storage_index] -=
-            state_energy * weighted_product;
-      }
-    }
-  }
-
-  return weights;
-}
-
-StructurePairAdjoints determinant_pair_structure_adjoints(
-    const std::vector<StructureExpansionTerm>& determinant_to_structures_left,
-    const std::vector<StructureExpansionTerm>& determinant_to_structures_right,
-    const StructurePairWeightTables& structure_pair_weights) {
-  StructurePairAdjoints adjoints;
-
-  for (const auto& left_term : determinant_to_structures_left) {
-    for (const auto& right_term : determinant_to_structures_right) {
-      if (left_term.structure_index > right_term.structure_index) {
-        continue;
-      }
-      const double coefficient_product =
-          left_term.coefficient * right_term.coefficient;
-      const std::size_t storage_index = structure_upper_storage_index(
-          left_term.structure_index,
-          right_term.structure_index);
-      adjoints.hamiltonian_weight +=
-          coefficient_product *
-          structure_pair_weights.hamiltonian_upper_weights[storage_index];
-      adjoints.overlap_weight +=
-          coefficient_product *
-          structure_pair_weights.overlap_upper_weights[storage_index];
-    }
-  }
-
-  return adjoints;
 }
 
 
@@ -709,576 +382,58 @@ void accumulate_additive_vector(
   }
 }
 
-DeterminantPairEvaluation evaluate_active_space_determinant_pair(
-    const SameSpinPairCacheContext* same_spin_pair_cache,
-    const DeterminantPairEvaluator& pair_evaluator,
-    const VbScfInput& input,
-    const std::vector<double>& active_orbital_overlap_matrix,
-    const ActiveSpaceOneElectronResult& active_space_one_electron_result,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    int determinant_index_left,
-    int determinant_index_right,
-    int n_active_orbitals) {
-  // Large determinant expansions still avoid an O(n_det^2) full-pair cache,
-  // but the gradient path can reuse the same ordered alpha/beta same-spin
-  // kernels as the forward build when the determinant space has strong
-  // Cartesian-product structure.
-  return evaluate_full_determinant_pair_with_optional_same_spin_cache(
-      same_spin_pair_cache,
-      pair_evaluator,
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
-      determinant_index_left,
-      determinant_index_right,
-      active_orbital_overlap_matrix,
-      active_space_one_electron_result.h1e_act,
-      n_active_orbitals,
-      active_space_two_electron_result);
-}
-
-void accumulate_active_space_gradient_pair_with_adjoints(
-    const StructurePairAdjoints& pair_adjoints,
-    const VbScfInput& input,
-    const ActiveSpaceOneElectronResult& active_space_one_electron_result,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const DeterminantPairEvaluation& determinant_pair_evaluation,
-    int determinant_index_left,
-    int determinant_index_right,
-    int n_active_orbitals,
-    bool skip_opposite_spin,
-    Eigen::Ref<Eigen::MatrixXd> active_one_electron_gradient,
-    std::vector<double>* active_orbital_overlap_gradient,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  if (pair_adjoints.hamiltonian_weight == 0.0 &&
-      pair_adjoints.overlap_weight == 0.0) {
-    return;
-  }
-
-  const auto& alpha_occ_L =
-      input.structure_data.alpha_det[
-          determinant_index_left];
-  const auto& alpha_occ_R =
-      input.structure_data.alpha_det[
-          determinant_index_right];
-  const auto& beta_occ_L =
-      input.structure_data.beta_det[
-          determinant_index_left];
-  const auto& beta_occ_R =
-      input.structure_data.beta_det[
-          determinant_index_right];
-  const auto& alpha_result = determinant_pair_evaluation.alpha.overlap_result;
-  const auto& beta_result = determinant_pair_evaluation.beta.overlap_result;
-  const Eigen::MatrixXd alpha_cofactor_1st =
-      calc_cofactor_1st(alpha_result);
-  const Eigen::MatrixXd beta_cofactor_1st =
-      calc_cofactor_1st(beta_result);
-
-  const double alpha_weight =
-      pair_adjoints.hamiltonian_weight * beta_result.overlap_determinant;
-  const double beta_weight =
-      pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant;
-
-  const int n_alpha_electrons = static_cast<int>(alpha_occ_L.size());
-  const int n_beta_electrons = static_cast<int>(beta_occ_L.size());
-  accumulate_one_electron_gradient_contribution(
-      alpha_occ_L,
-      alpha_occ_R,
-      alpha_cofactor_1st,
-      alpha_weight,
-      active_one_electron_gradient);
-  accumulate_one_electron_gradient_contribution(
-      beta_occ_L,
-      beta_occ_R,
-      beta_cofactor_1st,
-      beta_weight,
-      active_one_electron_gradient);
-
-  if (alpha_result.nullity != 0 || beta_result.nullity != 0) {
-    throw std::runtime_error(
-        "analytic active-space overlap gradient requires nullity == 0");
-  }
-  Eigen::MatrixXd alpha_same_spin_inverse_overlap_gradient =
-      Eigen::MatrixXd::Zero(n_alpha_electrons, n_alpha_electrons);
-  Eigen::MatrixXd beta_same_spin_inverse_overlap_gradient =
-      Eigen::MatrixXd::Zero(n_beta_electrons, n_beta_electrons);
-  Eigen::MatrixXd alpha_opposite_spin_inverse_overlap_gradient =
-      Eigen::MatrixXd::Zero(n_alpha_electrons, n_alpha_electrons);
-  Eigen::MatrixXd beta_opposite_spin_inverse_overlap_gradient =
-      Eigen::MatrixXd::Zero(n_beta_electrons, n_beta_electrons);
-
-  double opposite_spin_phi = 0.0;
-  const SameSpinPhiResult alpha_phi_result = evaluate_same_spin_phi_with_optional_cache(
-      alpha_occ_L,
-      alpha_occ_R,
-      active_space_one_electron_result.h1e_act,
-      n_active_orbitals,
-      active_space_two_electron_result,
-      determinant_pair_evaluation.alpha,
-      &alpha_same_spin_inverse_overlap_gradient);
-  const SameSpinPhiResult beta_phi_result = evaluate_same_spin_phi_with_optional_cache(
-      beta_occ_L,
-      beta_occ_R,
-      active_space_one_electron_result.h1e_act,
-      n_active_orbitals,
-      active_space_two_electron_result,
-      determinant_pair_evaluation.beta,
-      &beta_same_spin_inverse_overlap_gradient);
-  if (!skip_opposite_spin && n_alpha_electrons > 0 && n_beta_electrons > 0) {
-    opposite_spin_phi = compute_opposite_spin_original_phi(
-        alpha_occ_L,
-        alpha_occ_R,
-        alpha_result,
-        &determinant_pair_evaluation.alpha.opposite_spin_pair_cache,
-        beta_occ_L,
-        beta_occ_R,
-        beta_result,
-        &determinant_pair_evaluation.beta.opposite_spin_pair_cache,
-        active_space_two_electron_result,
-        &alpha_opposite_spin_inverse_overlap_gradient,
-        &beta_opposite_spin_inverse_overlap_gradient);
-  }
-  const Eigen::MatrixXd alpha_inverse_overlap_gradient =
-      alpha_same_spin_inverse_overlap_gradient +
-      alpha_opposite_spin_inverse_overlap_gradient;
-  const Eigen::MatrixXd beta_inverse_overlap_gradient =
-      beta_same_spin_inverse_overlap_gradient +
-      beta_opposite_spin_inverse_overlap_gradient;
-  const double alpha_phi = alpha_phi_result.total_phi;
-  const double beta_phi = beta_phi_result.total_phi;
-  const double phi_sum = alpha_phi + beta_phi + opposite_spin_phi;
-  const double alpha_determinant_weight =
-      pair_adjoints.overlap_weight * beta_result.overlap_determinant +
-      pair_adjoints.hamiltonian_weight * beta_result.overlap_determinant *
-          phi_sum;
-  const double beta_determinant_weight =
-      pair_adjoints.overlap_weight * alpha_result.overlap_determinant +
-      pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant *
-          phi_sum;
-  accumulate_spin_overlap_gradient(
-      alpha_occ_L,
-      alpha_occ_R,
-      alpha_result,
-      alpha_determinant_weight,
-      pair_adjoints.hamiltonian_weight * beta_result.overlap_determinant *
-          alpha_inverse_overlap_gradient,
-      n_active_orbitals,
-      active_orbital_overlap_gradient);
-  accumulate_spin_overlap_gradient(
-      beta_occ_L,
-      beta_occ_R,
-      beta_result,
-      beta_determinant_weight,
-      pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant *
-          beta_inverse_overlap_gradient,
-      n_active_orbitals,
-      active_orbital_overlap_gradient);
-
-  if (alpha_result.nullity == 0) {
-    accumulate_same_spin_two_electron_gradient_contribution(
-        alpha_occ_L,
-        alpha_occ_R,
-        alpha_cofactor_1st,
-        alpha_result.overlap_determinant,
-        alpha_weight,
-        packed_active_two_electron_gradient);
-  }
-
-  if (beta_result.nullity == 0) {
-    accumulate_same_spin_two_electron_gradient_contribution(
-        beta_occ_L,
-        beta_occ_R,
-        beta_cofactor_1st,
-        beta_result.overlap_determinant,
-        beta_weight,
-        packed_active_two_electron_gradient);
-  }
-
-  if (!skip_opposite_spin &&
-      alpha_result.nullity < 2 && beta_result.nullity < 2 &&
-      n_alpha_electrons > 0 && n_beta_electrons > 0) {
-    accumulate_opposite_spin_two_electron_gradient_contribution(
-        alpha_occ_L,
-        alpha_occ_R,
-        alpha_cofactor_1st,
-        &determinant_pair_evaluation.alpha.opposite_spin_pair_cache,
-        beta_occ_L,
-        beta_occ_R,
-        beta_cofactor_1st,
-        &determinant_pair_evaluation.beta.opposite_spin_pair_cache,
-        pair_adjoints.hamiltonian_weight,
-        packed_active_two_electron_gradient);
-  }
-}
-
-void accumulate_active_space_gradient_pair(
-    const VbScfInput& input,
-    const StructurePairWeightTables& structure_pair_weights,
-    const ActiveSpaceOneElectronResult& active_space_one_electron_result,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const DeterminantPairEvaluation& determinant_pair_evaluation,
-    int determinant_index_left,
-    int determinant_index_right,
-    int n_active_orbitals,
-    bool skip_opposite_spin,
-    Eigen::Ref<Eigen::MatrixXd> active_one_electron_gradient,
-    std::vector<double>* active_orbital_overlap_gradient,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  const auto pair_adjoints = determinant_pair_structure_adjoints(
-      input.structure_data.determinant_to_structure_terms[
-          determinant_index_left],
-      input.structure_data.determinant_to_structure_terms[
-          determinant_index_right],
-      structure_pair_weights);
-  accumulate_active_space_gradient_pair_with_adjoints(
-      pair_adjoints,
-      input,
-      active_space_one_electron_result,
-      active_space_two_electron_result,
-      determinant_pair_evaluation,
-      determinant_index_left,
-      determinant_index_right,
-      n_active_orbitals,
-      skip_opposite_spin,
-      active_one_electron_gradient,
-      active_orbital_overlap_gradient,
-      packed_active_two_electron_gradient);
-}
-
-void accumulate_active_space_gradient_unordered_pair(
-    const VbScfInput& input,
-    const StructurePairWeightTables& structure_pair_weights,
-    const std::vector<double>& active_orbital_overlap_matrix,
-    const SameSpinPairCacheContext* same_spin_pair_cache,
-    const DeterminantPairEvaluator& pair_evaluator,
-    const ActiveSpaceOneElectronResult& active_space_one_electron_result,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    int determinant_index_left,
-    int determinant_index_right,
-    int n_active_orbitals,
-    bool skip_opposite_spin,
-    Eigen::Ref<Eigen::MatrixXd> active_one_electron_gradient,
-    std::vector<double>* active_orbital_overlap_gradient,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  if (determinant_index_left < determinant_index_right) {
-    throw std::invalid_argument(
-        "unordered determinant pair expects determinant_index_left >= determinant_index_right");
-  }
-  if (determinant_index_left == determinant_index_right) {
-    const auto determinant_pair_evaluation =
-        evaluate_active_space_determinant_pair(
-            same_spin_pair_cache,
-            pair_evaluator,
-            input,
-            active_orbital_overlap_matrix,
-            active_space_one_electron_result,
-            active_space_two_electron_result,
-            determinant_index_left,
-            determinant_index_right,
-            n_active_orbitals);
-    accumulate_active_space_gradient_pair(
-        input,
-        structure_pair_weights,
-        active_space_one_electron_result,
-        active_space_two_electron_result,
-        determinant_pair_evaluation,
-        determinant_index_left,
-        determinant_index_right,
-        n_active_orbitals,
-        skip_opposite_spin,
-        active_one_electron_gradient,
-        active_orbital_overlap_gradient,
-        packed_active_two_electron_gradient);
-    return;
-  }
-
-  const auto direct_pair_adjoints = determinant_pair_structure_adjoints(
-      input.structure_data.determinant_to_structure_terms[
-          determinant_index_left],
-      input.structure_data.determinant_to_structure_terms[
-          determinant_index_right],
-      structure_pair_weights);
-  const auto swapped_pair_adjoints = determinant_pair_structure_adjoints(
-      input.structure_data.determinant_to_structure_terms[
-          determinant_index_right],
-      input.structure_data.determinant_to_structure_terms[
-          determinant_index_left],
-      structure_pair_weights);
-  const StructurePairAdjoints combined_pair_adjoints = {
-      direct_pair_adjoints.hamiltonian_weight +
-          swapped_pair_adjoints.hamiltonian_weight,
-      direct_pair_adjoints.overlap_weight +
-          swapped_pair_adjoints.overlap_weight,
-  };
-  if (!has_nonzero_structure_pair_adjoints(combined_pair_adjoints)) {
-    return;
-  }
-
-  const auto determinant_pair_evaluation =
-      evaluate_active_space_determinant_pair(
-          same_spin_pair_cache,
-          pair_evaluator,
-          input,
-          active_orbital_overlap_matrix,
-          active_space_one_electron_result,
-          active_space_two_electron_result,
-          determinant_index_left,
-          determinant_index_right,
-          n_active_orbitals);
-  // The forward structure builder evaluates only the canonical unordered
-  // determinant pair `(left >= right)` and folds both structure-term
-  // orientations into that single pair value. The backward therefore must
-  // combine direct and swapped structure adjoints onto the same canonical pair
-  // instead of sending the swapped term through the transposed determinant pair.
-  accumulate_active_space_gradient_pair_with_adjoints(
-      combined_pair_adjoints,
-      input,
-      active_space_one_electron_result,
-      active_space_two_electron_result,
-      determinant_pair_evaluation,
-      determinant_index_left,
-      determinant_index_right,
-      n_active_orbitals,
-      skip_opposite_spin,
-      active_one_electron_gradient,
-      active_orbital_overlap_gradient,
-      packed_active_two_electron_gradient);
-}
 
 void accumulate_active_space_gradient(
     const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_weights,
-    const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
     const ActiveSpaceGradientForwardContext& forward_context,
     ActiveSpaceGradientResult* result) {
-  const auto& prepared_active_space =
-      forward_context.timed_active_space_context.prepared_active_space;
-  const auto& active_orbital_overlap_matrix =
-      prepared_active_space.orbital_result.active_orbital_overlap_matrix;
-  const auto& active_space_one_electron_result =
-      prepared_active_space.active_space_one_electron_result;
-  const auto& active_space_two_electron_result =
-      prepared_active_space.active_space_two_electron_result;
-  const StructurePairWeightTables structure_pair_weights =
-      build_structure_pair_weight_tables(
-          forward_context.eigen_result.eigenvector_matrix,
-          forward_context.eigen_result.eigenvalues,
-          input.structure_data.n_structures,
-          selected_state_indices,
-          normalized_weights);
-  const int n_determinants =
-      static_cast<int>(input.structure_data.alpha_det.size());
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
-
   const auto stage_start_time = std::chrono::steady_clock::now();
-  int n_threads = 1;
-  n_threads = xmvb::effective_openmp_thread_count();
-  const std::size_t n_determinant_pairs =
-      unordered_determinant_pair_count(n_determinants);
-  if (n_threads > n_determinants) {
-    n_threads = n_determinants;
-  }
-  if (n_threads < 1) {
-    n_threads = 1;
-  }
-
   const auto& same_spin_pair_cache = forward_context.same_spin_pair_cache;
-  const bool use_full_matrix_form_adjoint = same_spin_pair_cache.enabled();
-  const bool use_matrix_form_opposite_spin = same_spin_pair_cache.enabled();
-  SelectedStateDeterminantMatrices selected_state_matrices;
-  OppositeSpinMatrixBackwardContribution opposite_spin_contribution;
-  SameSpinMatrixBackwardContribution same_spin_contribution;
-  if (use_matrix_form_opposite_spin) {
-    selected_state_matrices = build_selected_state_determinant_matrices_from_normalized_weights(
-        input.structure_data,
-        forward_context.eigen_result.eigenvector_matrix,
-        selected_state_indices,
-        normalized_weights,
-        same_spin_pair_cache);
+  if (!same_spin_pair_cache.enabled()) {
+    throw std::runtime_error(
+        "active-space gradient requires the matrix-form same-spin cache");
   }
 
-  if (use_full_matrix_form_adjoint) {
-    const std::vector<double> selected_state_energies =
-        gather_selected_state_energies(
-            forward_context.eigen_result.eigenvalues,
-            selected_state_indices);
-    same_spin_contribution = build_same_spin_matrix_backward_contribution(
-        same_spin_pair_cache,
-        selected_state_matrices,
-        selected_state_energies,
-        n_active_orbitals);
-    opposite_spin_contribution = build_opposite_spin_matrix_backward_contribution(
-        same_spin_pair_cache,
-        selected_state_matrices,
-        n_active_orbitals);
-    accumulate_additive_vector(
-        same_spin_contribution.active_orbital_overlap_gradient,
-        &result->active_orbital_overlap_gradient);
-    accumulate_additive_vector(
-        same_spin_contribution.active_one_electron_gradient,
-        &result->active_one_electron_gradient);
-    accumulate_additive_vector(
-        same_spin_contribution.packed_active_two_electron_gradient,
-        &result->packed_active_two_electron_gradient);
-    accumulate_additive_vector(
-        opposite_spin_contribution.active_orbital_overlap_gradient,
-        &result->active_orbital_overlap_gradient);
-    accumulate_additive_vector(
-        opposite_spin_contribution.packed_active_two_electron_gradient,
-        &result->packed_active_two_electron_gradient);
-    result->adjoint_wall_time_seconds =
-        std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time)
-            .count();
-    return;
-  }
-
-  if (n_threads == 1) {
-    const DeterminantPairEvaluator pair_evaluator =
-        structure_builder.make_pair_evaluator();
-    Eigen::Map<Eigen::MatrixXd> active_one_electron_gradient(
-        result->active_one_electron_gradient.data(),
-        n_active_orbitals,
-        n_active_orbitals);
-    for (int determinant_index_left = 0;
-         determinant_index_left < n_determinants;
-         ++determinant_index_left) {
-      for (int determinant_index_right = 0;
-           determinant_index_right <= determinant_index_left;
-           ++determinant_index_right) {
-        accumulate_active_space_gradient_unordered_pair(
-            input,
-            structure_pair_weights,
-            active_orbital_overlap_matrix,
-            &same_spin_pair_cache,
-            pair_evaluator,
-            active_space_one_electron_result,
-            active_space_two_electron_result,
-            determinant_index_left,
-            determinant_index_right,
-            n_active_orbitals,
-            use_matrix_form_opposite_spin,
-            active_one_electron_gradient,
-            &result->active_orbital_overlap_gradient,
-            &result->packed_active_two_electron_gradient);
-      }
-    }
-  } else {
-    std::vector<ThreadLocalActiveSpaceGradientBuffers> partial_gradients;
-    partial_gradients.reserve(n_threads);
-    for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
-      ThreadLocalActiveSpaceGradientBuffers buffers;
-      buffers.active_orbital_overlap_gradient.assign(
-          result->active_orbital_overlap_gradient.size(),
-          0.0);
-      buffers.active_one_electron_gradient.assign(
-          result->active_one_electron_gradient.size(),
-          0.0);
-      buffers.packed_active_two_electron_gradient.assign(
-          result->packed_active_two_electron_gradient.size(),
-          0.0);
-      partial_gradients.push_back(std::move(buffers));
-    }
-
-    std::atomic<bool> failed(false);
-    std::exception_ptr first_exception;
-    const std::size_t pair_chunk_size =
-        unordered_determinant_pair_parallel_chunk_size(
-            n_determinant_pairs,
-            n_threads);
-    const std::size_t pair_chunk_stride =
-        pair_chunk_size * static_cast<std::size_t>(n_threads);
-
-#pragma omp parallel num_threads(n_threads)
-    {
-      const DeterminantPairEvaluator pair_evaluator =
-          structure_builder.make_pair_evaluator();
-      int thread_index = 0;
-#ifdef _OPENMP
-      thread_index = omp_get_thread_num();
-#endif
-      auto& local_gradients =
-          partial_gradients[thread_index];
-      Eigen::Map<Eigen::MatrixXd> local_active_one_electron_gradient(
-          local_gradients.active_one_electron_gradient.data(),
-          n_active_orbitals,
+  const SelectedStateDeterminantMatrices selected_state_matrices =
+      build_selected_state_determinant_matrices_from_normalized_weights(
+          input.structure_data,
+          forward_context.eigen_result.eigenvector_matrix,
+          selected_state_indices,
+          normalized_weights,
+          same_spin_pair_cache);
+  const std::vector<double> selected_state_energies =
+      gather_selected_state_energies(
+          forward_context.eigen_result.eigenvalues,
+          selected_state_indices);
+  const SameSpinMatrixBackwardContribution same_spin_contribution =
+      build_same_spin_matrix_backward_contribution(
+          same_spin_pair_cache,
+          selected_state_matrices,
+          selected_state_energies,
           n_active_orbitals);
-      // Each pair contributes to thread-local gradient buffers.  Cyclic chunk
-      // ownership balances sparse/zero-adjoint determinant rows without
-      // introducing non-deterministic dynamic scheduling into the reduction.
-      for (std::size_t pair_begin =
-               static_cast<std::size_t>(thread_index) * pair_chunk_size;
-           pair_begin < n_determinant_pairs;
-           pair_begin += pair_chunk_stride) {
-        const std::size_t pair_end =
-            std::min(n_determinant_pairs, pair_begin + pair_chunk_size);
-        auto determinant_pair =
-            determinant_pair_from_storage_index(pair_begin);
-        for (std::size_t pair_storage_index = pair_begin;
-             pair_storage_index < pair_end;
-             ++pair_storage_index) {
-          if (failed.load(std::memory_order_relaxed)) {
-            break;
-          }
-
-          try {
-            accumulate_active_space_gradient_unordered_pair(
-                input,
-                structure_pair_weights,
-                active_orbital_overlap_matrix,
-                &same_spin_pair_cache,
-                pair_evaluator,
-                active_space_one_electron_result,
-                active_space_two_electron_result,
-                determinant_pair.left,
-                determinant_pair.right,
-                n_active_orbitals,
-                use_matrix_form_opposite_spin,
-                local_active_one_electron_gradient,
-                &local_gradients.active_orbital_overlap_gradient,
-                &local_gradients.packed_active_two_electron_gradient);
-          } catch (...) {
-#pragma omp critical
-            {
-              if (!failed.load(std::memory_order_relaxed)) {
-                first_exception = std::current_exception();
-                failed.store(true, std::memory_order_relaxed);
-              }
-            }
-          }
-          advance_unordered_determinant_pair(&determinant_pair);
-        }
-      }
-    }
-
-    if (first_exception) {
-      std::rethrow_exception(first_exception);
-    }
-
-    for (const auto& local_gradients : partial_gradients) {
-      accumulate_additive_vector(
-          local_gradients.active_orbital_overlap_gradient,
-          &result->active_orbital_overlap_gradient);
-      accumulate_additive_vector(
-          local_gradients.active_one_electron_gradient,
-          &result->active_one_electron_gradient);
-      accumulate_additive_vector(
-          local_gradients.packed_active_two_electron_gradient,
-          &result->packed_active_two_electron_gradient);
-    }
-  }
-
-  if (use_matrix_form_opposite_spin) {
-    opposite_spin_contribution = build_opposite_spin_matrix_backward_contribution(
-        same_spin_pair_cache,
-        selected_state_matrices,
-        n_active_orbitals);
-    accumulate_additive_vector(
-        opposite_spin_contribution.active_orbital_overlap_gradient,
-        &result->active_orbital_overlap_gradient);
-    accumulate_additive_vector(
-        opposite_spin_contribution.packed_active_two_electron_gradient,
-        &result->packed_active_two_electron_gradient);
-  }
+  const OppositeSpinMatrixBackwardContribution opposite_spin_contribution =
+      build_opposite_spin_matrix_backward_contribution(
+          same_spin_pair_cache,
+          selected_state_matrices,
+          n_active_orbitals);
+  accumulate_additive_vector(
+      same_spin_contribution.active_orbital_overlap_gradient,
+      &result->active_orbital_overlap_gradient);
+  accumulate_additive_vector(
+      same_spin_contribution.active_one_electron_gradient,
+      &result->active_one_electron_gradient);
+  accumulate_additive_vector(
+      same_spin_contribution.packed_active_two_electron_gradient,
+      &result->packed_active_two_electron_gradient);
+  accumulate_additive_vector(
+      opposite_spin_contribution.active_orbital_overlap_gradient,
+      &result->active_orbital_overlap_gradient);
+  accumulate_additive_vector(
+      opposite_spin_contribution.packed_active_two_electron_gradient,
+      &result->packed_active_two_electron_gradient);
 
   result->adjoint_wall_time_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time)
@@ -1350,7 +505,6 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       input,
       selected_state_indices,
       normalized_weights,
-      structure_builder_,
       forward_context,
       &result);
   result.second_order_context = finalize_active_space_second_order_context(
@@ -1399,7 +553,6 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       input,
       selected_state_indices,
       normalized_weights,
-      structure_builder_,
       forward_context,
       &result);
   result.second_order_context = finalize_active_space_second_order_context(
