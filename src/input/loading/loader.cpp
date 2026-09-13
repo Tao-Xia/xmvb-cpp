@@ -11,10 +11,6 @@
 #include <string>
 #include <vector>
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
 #include "guess/block.hpp"
 #include "input/loading/generated_structures.hpp"
 #include "input/deck/keywords.hpp"
@@ -509,24 +505,6 @@ bool should_use_standard_ri_two_electron_mode(
   return input_requests_ri_two_electron_mode;
 }
 
-int configured_openmp_thread_count();
-
-std::size_t active_pair_count(int n_active_orbitals) {
-  if (n_active_orbitals <= 0) {
-    return 0;
-  }
-  return n_active_orbitals *
-      (n_active_orbitals + 1) / 2;
-}
-
-int configured_openmp_thread_count() {
-  int n_threads = 1;
-#ifdef _OPENMP
-  n_threads = omp_get_max_threads();
-#endif
-  return n_threads;
-}
-
 }  // namespace
 
 VbScfInputLoadResult load_vbscf_input_with_timings(
@@ -690,11 +668,6 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         core_hamiltonian_matrix);
   } else {
     MaterializedAoIntegralInputBuildOptions ao_input_build_options;
-    ao_input_build_options.build_pair_graph =
-        active_pair_count(result.orbital_preparation_input.n_active_orbitals) <= 64 &&
-        configured_openmp_thread_count() > 1;
-    ao_input_build_options.build_pair_indices =
-        !ao_input_build_options.build_pair_graph;
     ao_input_build_options.build_ao_effective_one_electron_graph =
         options.build_ao_effective_one_electron_graph;
     result.ao_integral_input = build_materialized_ao_integral_input(

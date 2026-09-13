@@ -24,8 +24,6 @@ struct MaterializedAoIntegralBuffers {
 };
 
 struct MaterializedAoIntegralInputBuildOptions {
-  bool build_pair_indices = true;
-  bool build_pair_graph = false;
   bool build_ao_effective_one_electron_graph = true;
   std::size_t max_ao_effective_one_electron_graph_bytes =
       256ull * 1024ull * 1024ull;

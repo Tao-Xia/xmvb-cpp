@@ -843,8 +843,7 @@ AoEffectiveOneElectronBackpropagator::backpropagate(
         "AO effective one-electron linear-index cache size is inconsistent");
   }
   const bool validate_integral_indices =
-      ao_integral_input.ao_two_electron_pair_indices.empty() &&
-      ao_integral_input.ao_two_electron_pair_graph_row_offsets.empty();
+      ao_integral_input.pair_graph.empty();
   return backpropagate_ao_effective_one_electron(
       ao_effective_one_electron_gradient,
       ao_integral_input.ao_two_electron_integral_values,

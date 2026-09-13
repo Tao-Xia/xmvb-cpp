@@ -8,6 +8,19 @@
 namespace xmvb::vb {
 
 /**
+ * @brief Symmetric AO-pair operator in compressed-row form.
+ *
+ * Each edge references one value in `AoIntegralInput::ao_two_electron_integral_values`.
+ */
+struct AoPairGraph {
+  std::vector<int> row_offsets;
+  std::vector<int> columns;
+  std::vector<int> eri_indices;
+
+  bool empty() const noexcept { return row_offsets.empty(); }
+};
+
+/**
  * @brief Raw AO integral data required by the VBSCF matrix builders.
  */
 struct AoIntegralInput {
@@ -47,38 +60,8 @@ struct AoIntegralInput {
    */
   std::vector<std::uint8_t> ao_two_electron_integral_symmetry_shifts;
 
-  /**
-   * @brief Precomputed packed AO pair indices `(ij_pair, kl_pair)` with 2 entries per integral.
-   *
-   * This cache is molecule-static and can be reused across all SCF iterations
-   * to avoid repeatedly converting AO four-index tuples into packed pair
-   * indices inside hot ERI contraction loops.
-   */
-  std::vector<int> ao_two_electron_pair_indices;
-
-  /**
-   * @brief Row offsets for a molecule-static symmetric AO-pair interaction graph.
-   *
-   * Each row corresponds to one packed AO pair. The graph expands every AO
-   * two-electron integral into one or two directed row entries so dense
-   * active-space contractions can run as a row-wise sparse-matrix multiply
-   * without thread-local full-size accumulation buffers.
-   */
-  std::vector<int> ao_two_electron_pair_graph_row_offsets;
-
-  /**
-   * @brief Column packed-AO-pair indices for the symmetric AO-pair graph.
-   */
-  std::vector<int> ao_two_electron_pair_graph_column_indices;
-
-  /**
-   * @brief Source AO-integral indices for each symmetric AO-pair graph entry.
-   *
-   * Values remain stored in `ao_two_electron_integral_values`; this array
-   * points each graph edge back to its source integral so the static graph
-   * cache does not duplicate the AO integral value buffer.
-   */
-  std::vector<int> ao_two_electron_pair_graph_integral_indices;
+  /** @brief Symmetric operator used for AO-pair contractions. */
+  AoPairGraph pair_graph;
 
   /**
    * @brief Optional 10-entry-per-integral cache of AO matrix linear indices for `G11` kernels.

@@ -134,6 +134,28 @@ double compute_one_electron_reference_energy(
   return one_electron_reference_energy;
 }
 
+xmvb::vb::OrbitalPreparationResult build_active_orbitals(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficients) {
+  xmvb::vb::OrbitalPreparationResult result;
+  result.active_sparse_row_offsets.resize(coefficients.rows() + 1, 0);
+  for (Eigen::Index row = 0; row < coefficients.rows(); ++row) {
+    result.active_sparse_row_offsets[row] =
+        static_cast<int>(result.active_sparse_values.size());
+    for (Eigen::Index column = 0; column < coefficients.cols(); ++column) {
+      const double value = coefficients(row, column);
+      if (value == 0.0) {
+        continue;
+      }
+      result.active_sparse_orbital_indices.push_back(
+          static_cast<int>(column));
+      result.active_sparse_values.push_back(value);
+    }
+  }
+  result.active_sparse_row_offsets.back() =
+      static_cast<int>(result.active_sparse_values.size());
+  return result;
+}
+
 double evaluate_total_energy_from_auxiliary(
     const xmvb::vb::VbScfInput& input,
     const std::vector<double>& auxiliary_orbital_matrix,
@@ -170,40 +192,14 @@ double evaluate_total_energy_from_auxiliary(
           n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
           n_active_orbitals);
+  const auto active_orbitals = build_active_orbitals(active_auxiliary_orbitals);
   xmvb::vb::ActiveSpaceTwoElectronResult active_space_two_electron_result;
   if (use_standard_ri_active_space_path(input)) {
-    xmvb::vb::OrbitalPreparationResult active_only_orbital_result;
-    active_only_orbital_result.active_sparse_row_offsets.resize(
-        n_basis_functions + 1,
-        0);
-    int sparse_count = 0;
-    for (int basis_function_index = 0;
-         basis_function_index < n_basis_functions;
-         ++basis_function_index) {
-      active_only_orbital_result.active_sparse_row_offsets[
-          basis_function_index] = sparse_count;
-      for (int active_orbital_index = 0;
-           active_orbital_index < n_active_orbitals;
-           ++active_orbital_index) {
-        const double coefficient =
-            active_auxiliary_orbitals(basis_function_index, active_orbital_index);
-        if (coefficient == 0.0) {
-          continue;
-        }
-        active_only_orbital_result.active_sparse_orbital_indices.push_back(
-            active_orbital_index);
-        active_only_orbital_result.active_sparse_values.push_back(coefficient);
-        ++sparse_count;
-      }
-    }
-    active_only_orbital_result.active_sparse_row_offsets[
-        n_basis_functions] = sparse_count;
-
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_active_space_two_electron_builder;
     active_space_two_electron_result =
         ri_active_space_two_electron_builder.build(
             xmvb::vb::ensure_vbscf_input_ri_cache(input),
-            active_only_orbital_result,
+            active_orbitals,
             n_basis_functions,
             n_active_orbitals,
             {.reconstruct_packed_integrals = true});
@@ -211,11 +207,8 @@ double evaluate_total_energy_from_auxiliary(
     xmvb::vb::ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;
     active_space_two_electron_result =
         active_space_two_electron_builder.build(
-            input.ao_integral_input.ao_two_electron_integral_values,
-            input.ao_integral_input.ao_two_electron_integral_indices,
-            auxiliary_orbital_matrix,
-            n_basis_functions,
-            n_inactive_doubly_occupied_orbitals,
+            input.ao_integral_input,
+            active_orbitals,
             n_active_orbitals);
   }
 
@@ -279,40 +272,14 @@ ActiveSpaceMatrices build_active_space_matrices(
           n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
           n_active_orbitals);
+  const auto active_orbitals = build_active_orbitals(active_auxiliary_orbitals);
   xmvb::vb::ActiveSpaceTwoElectronResult active_space_two_electron_result;
   if (use_standard_ri_active_space_path(input)) {
-    xmvb::vb::OrbitalPreparationResult active_only_orbital_result;
-    active_only_orbital_result.active_sparse_row_offsets.resize(
-        n_basis_functions + 1,
-        0);
-    int sparse_count = 0;
-    for (int basis_function_index = 0;
-         basis_function_index < n_basis_functions;
-         ++basis_function_index) {
-      active_only_orbital_result.active_sparse_row_offsets[
-          basis_function_index] = sparse_count;
-      for (int active_orbital_index = 0;
-           active_orbital_index < n_active_orbitals;
-           ++active_orbital_index) {
-        const double coefficient =
-            active_auxiliary_orbitals(basis_function_index, active_orbital_index);
-        if (coefficient == 0.0) {
-          continue;
-        }
-        active_only_orbital_result.active_sparse_orbital_indices.push_back(
-            active_orbital_index);
-        active_only_orbital_result.active_sparse_values.push_back(coefficient);
-        ++sparse_count;
-      }
-    }
-    active_only_orbital_result.active_sparse_row_offsets[
-        n_basis_functions] = sparse_count;
-
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_active_space_two_electron_builder;
     active_space_two_electron_result =
         ri_active_space_two_electron_builder.build(
             xmvb::vb::ensure_vbscf_input_ri_cache(input),
-            active_only_orbital_result,
+            active_orbitals,
             n_basis_functions,
             n_active_orbitals,
             {.reconstruct_packed_integrals = true});
@@ -320,11 +287,8 @@ ActiveSpaceMatrices build_active_space_matrices(
     xmvb::vb::ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;
     active_space_two_electron_result =
         active_space_two_electron_builder.build(
-            input.ao_integral_input.ao_two_electron_integral_values,
-            input.ao_integral_input.ao_two_electron_integral_indices,
-            auxiliary_orbital_matrix,
-            n_basis_functions,
-            n_inactive_doubly_occupied_orbitals,
+            input.ao_integral_input,
+            active_orbitals,
             n_active_orbitals);
   }
 

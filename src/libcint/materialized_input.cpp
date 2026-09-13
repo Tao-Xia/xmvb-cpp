@@ -164,28 +164,9 @@ AoIntegralInput build_materialized_ao_integral_input(
           graph.transpose_signed_weights;
     }
   }
-  std::vector<int> ao_two_electron_pair_indices;
-  if (options.build_pair_indices || options.build_pair_graph) {
-    ao_two_electron_pair_indices =
-        build_ao_two_electron_pair_indices(
-            ao_integral_input.ao_two_electron_integral_indices,
-            buffers.n_basis_functions);
-  }
-  if (options.build_pair_graph) {
-    const auto pair_graph = build_ao_two_electron_pair_graph(
-        ao_two_electron_pair_indices,
-        buffers.n_basis_functions);
-    ao_integral_input.ao_two_electron_pair_graph_row_offsets =
-        pair_graph.row_offsets;
-    ao_integral_input.ao_two_electron_pair_graph_column_indices =
-        pair_graph.column_pair_indices;
-    ao_integral_input.ao_two_electron_pair_graph_integral_indices =
-        pair_graph.integral_indices;
-  }
-  if (options.build_pair_indices) {
-    ao_integral_input.ao_two_electron_pair_indices =
-        std::move(ao_two_electron_pair_indices);
-  }
+  ao_integral_input.pair_graph = build_ao_pair_graph(
+      ao_integral_input.ao_two_electron_integral_indices,
+      buffers.n_basis_functions);
   return ao_integral_input;
 }
 

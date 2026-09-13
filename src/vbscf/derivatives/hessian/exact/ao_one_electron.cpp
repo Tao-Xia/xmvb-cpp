@@ -368,8 +368,7 @@ void apply_fused_exact_ao_one_electron_response(
 
   std::atomic<int> invalid_integral_index(-1);
   const bool validate_integral_indices =
-      ao_integral_input.ao_two_electron_pair_indices.empty() &&
-      ao_integral_input.ao_two_electron_pair_graph_row_offsets.empty();
+      ao_integral_input.pair_graph.empty();
   std::vector<std::size_t> column_offsets;
   if (ao_integral_input.ao_effective_one_electron_linear_indices.empty()) {
     column_offsets = build_ao_matrix_column_offsets(n_basis_functions);

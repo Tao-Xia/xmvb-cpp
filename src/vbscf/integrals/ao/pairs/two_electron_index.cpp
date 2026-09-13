@@ -4,6 +4,7 @@
 #include <atomic>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -24,78 +25,34 @@ std::size_t ao_pair_index(int first, int second) {
   return second_index * (second_index + 1) / 2 + first;
 }
 
-}  // namespace
-
-std::vector<int> build_ao_two_electron_pair_indices(
-    const std::vector<int>& ao_two_electron_integral_indices,
-    int n_basis_functions) {
-  if (n_basis_functions <= 0) {
-    throw std::invalid_argument("n_basis_functions must be positive");
-  }
-  if (ao_two_electron_integral_indices.size() % 4 != 0) {
-    throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
-  }
-
-  const std::size_t n_basis = n_basis_functions;
-  const std::size_t n_ao_pairs = n_basis * (n_basis + 1) / 2;
-  if (n_ao_pairs > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-    throw std::overflow_error("AO pair index exceeds 32-bit storage");
-  }
-
-  const std::size_t n_integrals = ao_two_electron_integral_indices.size() / 4;
-  std::vector<int> ao_two_electron_pair_indices(n_integrals * 2, 0);
-  std::atomic<int> invalid_integral_index(-1);
-
-#pragma omp parallel for schedule(static)
-  for (std::ptrdiff_t integral_offset = 0;
-       integral_offset < static_cast<std::ptrdiff_t>(n_integrals);
-       ++integral_offset) {
-    const std::size_t integral_index = integral_offset;
-    const int i = ao_two_electron_integral_indices[integral_index * 4];
-    const int j = ao_two_electron_integral_indices[integral_index * 4 + 1];
-    const int k = ao_two_electron_integral_indices[integral_index * 4 + 2];
-    const int l = ao_two_electron_integral_indices[integral_index * 4 + 3];
-    if (i < 0 || i >= n_basis_functions ||
-        j < 0 || j >= n_basis_functions ||
-        k < 0 || k >= n_basis_functions ||
-        l < 0 || l >= n_basis_functions) {
-      int expected = -1;
-      invalid_integral_index.compare_exchange_strong(
-          expected,
-          static_cast<int>(integral_index));
-      continue;
-    }
-
-    ao_two_electron_pair_indices[integral_index * 2] =
-        static_cast<int>(ao_pair_index(i, j));
-    ao_two_electron_pair_indices[integral_index * 2 + 1] =
-        static_cast<int>(ao_pair_index(k, l));
-  }
-
-  if (invalid_integral_index.load() >= 0) {
-    throw std::invalid_argument("AO two-electron index out of range");
-  }
-
-  return ao_two_electron_pair_indices;
+std::pair<int, int> eri_pair_indices(
+    const std::vector<int>& eri_indices,
+    std::size_t eri) {
+  const int* index = eri_indices.data() + 4 * eri;
+  return {
+      static_cast<int>(ao_pair_index(index[0], index[1])),
+      static_cast<int>(ao_pair_index(index[2], index[3]))};
 }
 
-AoTwoElectronPairGraph build_ao_two_electron_pair_graph(
-    const std::vector<int>& ao_two_electron_pair_indices,
-    int n_basis_functions) {
-  if (n_basis_functions <= 0) {
-    throw std::invalid_argument("n_basis_functions must be positive");
+}  // namespace
+
+AoPairGraph build_ao_pair_graph(
+    const std::vector<int>& eri_indices,
+    int n_bf) {
+  if (n_bf <= 0) {
+    throw std::invalid_argument("n_bf must be positive");
   }
-  if (ao_two_electron_pair_indices.size() % 2 != 0) {
-    throw std::invalid_argument("AO two-electron pair indices must contain 2 entries per integral");
+  if (eri_indices.size() % 4 != 0) {
+    throw std::invalid_argument("each AO ERI must have four indices");
   }
 
-  const std::size_t n_basis = n_basis_functions;
+  const std::size_t n_basis = n_bf;
   const std::size_t n_ao_pairs = n_basis * (n_basis + 1) / 2;
   if (n_ao_pairs > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
     throw std::overflow_error("AO pair index exceeds 32-bit storage");
   }
 
-  const std::size_t n_integrals = ao_two_electron_pair_indices.size() / 2;
+  const std::size_t n_integrals = eri_indices.size() / 4;
   int n_threads = 1;
   n_threads = xmvb::effective_openmp_thread_count();
   if (n_integrals == 0) {
@@ -118,9 +75,8 @@ AoTwoElectronPairGraph build_ao_two_electron_pair_graph(
       std::vector<int>(n_ao_pairs, 0));
   std::atomic<int> invalid_integral_index(-1);
 
-  // `thread_row_counts` is sized by the effective team width. The explicit
-  // `num_threads` keeps nested exact_ctx calls from indexing past the capped
-  // buffers when OpenMP would otherwise use the process-wide maximum team.
+  // Match the OpenMP team to the allocated thread-local histograms, including
+  // when graph construction is invoked from an existing parallel region.
 #pragma omp parallel num_threads(n_threads)
   {
     int thread_index = 0;
@@ -134,16 +90,19 @@ AoTwoElectronPairGraph build_ao_two_electron_pair_graph(
          integral_offset < static_cast<std::ptrdiff_t>(n_integrals);
          ++integral_offset) {
       const std::size_t integral_index = integral_offset;
-      const int left_pair_index = ao_two_electron_pair_indices[integral_index * 2];
-      const int right_pair_index = ao_two_electron_pair_indices[integral_index * 2 + 1];
-      if (left_pair_index < 0 || left_pair_index >= static_cast<int>(n_ao_pairs) ||
-          right_pair_index < 0 || right_pair_index >= static_cast<int>(n_ao_pairs)) {
+      const int* index = eri_indices.data() + 4 * integral_index;
+      if (index[0] < 0 || index[0] >= n_bf ||
+          index[1] < 0 || index[1] >= n_bf ||
+          index[2] < 0 || index[2] >= n_bf ||
+          index[3] < 0 || index[3] >= n_bf) {
         int expected = -1;
         invalid_integral_index.compare_exchange_strong(
             expected,
             static_cast<int>(integral_index));
         continue;
       }
+      const auto [left_pair_index, right_pair_index] =
+          eri_pair_indices(eri_indices, integral_index);
       ++local_row_counts[left_pair_index];
       if (right_pair_index != left_pair_index) {
         ++local_row_counts[right_pair_index];
@@ -152,7 +111,7 @@ AoTwoElectronPairGraph build_ao_two_electron_pair_graph(
   }
 
   if (invalid_integral_index.load() >= 0) {
-    throw std::invalid_argument("AO two-electron pair index out of range");
+    throw std::invalid_argument("AO ERI index out of range");
   }
 
   std::vector<int> row_counts(n_ao_pairs, 0);
@@ -164,13 +123,13 @@ AoTwoElectronPairGraph build_ao_two_electron_pair_graph(
     row_counts[row_index] = total_count;
   }
 
-  AoTwoElectronPairGraph graph;
+  AoPairGraph graph;
   graph.row_offsets.resize(n_ao_pairs + 1, 0);
   for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
     graph.row_offsets[row_index + 1] = graph.row_offsets[row_index] + row_counts[row_index];
   }
-  graph.column_pair_indices.resize(graph.row_offsets.back());
-  graph.integral_indices.resize(graph.row_offsets.back());
+  graph.columns.resize(graph.row_offsets.back());
+  graph.eri_indices.resize(graph.row_offsets.back());
 
   std::vector<std::vector<int>> thread_next_offsets(
       thread_count,
@@ -196,18 +155,18 @@ AoTwoElectronPairGraph build_ao_two_electron_pair_graph(
          integral_offset < static_cast<std::ptrdiff_t>(n_integrals);
          ++integral_offset) {
       const std::size_t integral_index = integral_offset;
-      const int left_pair_index = ao_two_electron_pair_indices[integral_index * 2];
-      const int right_pair_index = ao_two_electron_pair_indices[integral_index * 2 + 1];
+      const auto [left_pair_index, right_pair_index] =
+          eri_pair_indices(eri_indices, integral_index);
 
       const int left_offset = local_next_offsets[left_pair_index]++;
-      graph.column_pair_indices[left_offset] = right_pair_index;
-      graph.integral_indices[left_offset] =
+      graph.columns[left_offset] = right_pair_index;
+      graph.eri_indices[left_offset] =
           static_cast<int>(integral_index);
 
       if (right_pair_index != left_pair_index) {
         const int right_offset = local_next_offsets[right_pair_index]++;
-        graph.column_pair_indices[right_offset] = left_pair_index;
-        graph.integral_indices[right_offset] =
+        graph.columns[right_offset] = left_pair_index;
+        graph.eri_indices[right_offset] =
             static_cast<int>(integral_index);
       }
     }
