@@ -58,7 +58,9 @@ struct StructureActionStorage {
  * plus one factored alpha/beta product per active-orbital pair channel. This
  * replaces the quadratic full-determinant pair traversal with dense spin-space
  * contractions. The sparse `B` expansion is applied before and after these
- * contractions, and dense structure-space matrices are never allocated.
+ * contractions, and dense structure-space matrices are never allocated. The
+ * constructed action owns every expansion, factor, and diagonal needed by
+ * `apply()`; its lifetime is independent of the construction inputs.
  */
 class StructureAction {
 public:
@@ -80,9 +82,9 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
 
   /**
-   * @brief Evaluates the exact structure-space H/S diagonals without full matrices.
+   * @brief Returns the cached exact H/S diagonals without full matrices.
    */
-  StructureDiagonal diagonal() const;
+  const StructureDiagonal& diagonal() const noexcept;
 
   int n_determinants() const noexcept;
   int n_structures() const noexcept;
@@ -91,6 +93,11 @@ public:
   StructureActionStorage storage() const noexcept;
 
 private:
+  struct StructureTerm {
+    int structure = 0;
+    double coefficient = 0.0;
+  };
+
   struct DeterminantTerm {
     int determinant = 0;
     double coefficient = 0.0;
@@ -125,11 +132,9 @@ private:
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
       Eigen::MatrixXd* spin_hamiltonian) const;
 
-  const SameSpinPairCacheContext* same_spin_pair_cache_ = nullptr;
-  ActiveSpaceTwoElectronView two_electron_view_;
-  const std::vector<std::vector<StructureExpansionTerm>>*
-      determinant_to_structure_terms_ = nullptr;
+  std::vector<std::vector<StructureTerm>> determinant_to_structure_terms_;
   std::vector<std::vector<DeterminantTerm>> structure_to_determinant_terms_;
+  StructureDiagonal diagonal_;
   Eigen::MatrixXd alpha_overlap_;
   Eigen::MatrixXd alpha_hamiltonian_;
   Eigen::MatrixXd beta_overlap_;
@@ -143,8 +148,6 @@ private:
   int n_structures_ = 0;
   int n_unique_alpha_ = 0;
   int n_unique_beta_ = 0;
-  int n_packed_pairs_ = 0;
-  int n_active_orbitals_ = 0;
   std::size_t channel_nonzeros_ = 0;
   std::size_t channel_dense_values_ = 0;
 };

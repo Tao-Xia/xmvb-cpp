@@ -256,20 +256,13 @@ StructureAction::StructureAction(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_active_orbitals)
-    : same_spin_pair_cache_(&same_spin_pair_cache),
-      two_electron_view_(
-          make_active_space_two_electron_view(
-              active_space_two_electron_result)),
-      determinant_to_structure_terms_(&determinant_to_structure_terms),
-      n_determinants_(
+    : n_determinants_(
           static_cast<int>(determinant_to_structure_terms.size())),
       n_structures_(n_structures),
       n_unique_alpha_(static_cast<int>(
           same_spin_pair_cache.alpha_reuse_table.unique_determinants.size())),
       n_unique_beta_(static_cast<int>(
-          same_spin_pair_cache.beta_reuse_table.unique_determinants.size())),
-      n_packed_pairs_(packed_active_pair_count(n_active_orbitals)),
-      n_active_orbitals_(n_active_orbitals) {
+          same_spin_pair_cache.beta_reuse_table.unique_determinants.size())) {
   if (n_determinants_ <= 0 || n_structures_ <= 0) {
     throw std::invalid_argument(
         "matrix-free structure action requires positive dimensions");
@@ -292,7 +285,8 @@ StructureAction::StructureAction(
         "same-spin pair cache does not match determinant expansion");
   }
 
-  const auto validate_pair_cache = [this](
+  const int n_packed_pairs = packed_active_pair_count(n_active_orbitals);
+  const auto validate_pair_cache = [n_packed_pairs](
       const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
       int n_unique) {
     if (pair_cache.size() !=
@@ -302,7 +296,7 @@ StructureAction::StructureAction(
     }
     for (const auto& pair : pair_cache) {
       const auto& opposite_spin = pair.opposite_spin_pair_cache;
-      if (opposite_spin.n_packed_active_pairs != n_packed_pairs_) {
+      if (opposite_spin.n_packed_active_pairs != n_packed_pairs) {
         throw std::invalid_argument(
             "same-spin pair caches use inconsistent packed-pair dimensions");
       }
@@ -315,12 +309,12 @@ StructureAction::StructureAction(
       }
       if (!projection.projected_pair_values.empty() &&
           static_cast<int>(projection.projected_pair_values.size()) !=
-              n_packed_pairs_) {
+              n_packed_pairs) {
         throw std::invalid_argument(
             "projected packed-pair vector has incompatible dimensions");
       }
       for (const int packed_pair : projection.packed_pair_indices) {
-        if (packed_pair < 0 || packed_pair >= n_packed_pairs_) {
+        if (packed_pair < 0 || packed_pair >= n_packed_pairs) {
           throw std::out_of_range(
               "packed-pair projection index is out of range");
         }
@@ -352,9 +346,9 @@ StructureAction::StructureAction(
       beta_pair_cache, n_unique_beta_, true);
 
   const bool alpha_projected =
-      has_projected_pair_values(alpha_pair_cache, n_packed_pairs_);
+      has_projected_pair_values(alpha_pair_cache, n_packed_pairs);
   const bool beta_projected =
-      has_projected_pair_values(beta_pair_cache, n_packed_pairs_);
+      has_projected_pair_values(beta_pair_cache, n_packed_pairs);
   const bool has_opposite_spin_channels =
       has_sparse_pair_values(alpha_pair_cache) &&
       has_sparse_pair_values(beta_pair_cache);
@@ -380,16 +374,16 @@ StructureAction::StructureAction(
     auto projected_matrices = build_projected_pair_matrices(
         projected_cache,
         n_projected,
-        n_packed_pairs_);
+        n_packed_pairs);
     auto sparse_entries = build_sparse_pair_entries(
         sparse_cache,
         n_sparse,
-        n_packed_pairs_);
+        n_packed_pairs);
     std::size_t dense_factor_values =
         alpha_overlap_.size() + alpha_hamiltonian_.size() +
         beta_overlap_.size() + beta_hamiltonian_.size();
     for (int packed_pair = 0;
-         packed_pair < n_packed_pairs_;
+         packed_pair < n_packed_pairs;
          ++packed_pair) {
       if (!projected_matrices[packed_pair].isZero(0.0) &&
           !sparse_entries[packed_pair].empty()) {
@@ -406,7 +400,7 @@ StructureAction::StructureAction(
     std::size_t row_support_width = 0;
     std::size_t column_support_width = 0;
     for (int packed_pair = 0;
-         packed_pair < n_packed_pairs_;
+         packed_pair < n_packed_pairs;
          ++packed_pair) {
       if (projected_matrices[packed_pair].isZero(0.0) ||
           sparse_entries[packed_pair].empty()) {
@@ -560,19 +554,55 @@ StructureAction::StructureAction(
         alpha * n_unique_beta_ + beta;
   }
 
+  determinant_to_structure_terms_.resize(n_determinants_);
   structure_to_determinant_terms_.resize(n_structures_);
   for (int determinant = 0;
        determinant < n_determinants_;
        ++determinant) {
+    determinant_to_structure_terms_[determinant].reserve(
+        determinant_to_structure_terms[determinant].size());
     for (const auto& term : determinant_to_structure_terms[determinant]) {
       if (term.structure_index < 0 ||
           term.structure_index >= n_structures_) {
         throw std::out_of_range(
             "determinant expansion structure index is out of range");
       }
+      determinant_to_structure_terms_[determinant].push_back(
+          StructureTerm{term.structure_index, term.coefficient});
       structure_to_determinant_terms_[term.structure_index].push_back(
           DeterminantTerm{determinant, term.coefficient});
     }
+  }
+
+  diagonal_.hamiltonian = Eigen::VectorXd::Zero(n_structures_);
+  diagonal_.overlap = Eigen::VectorXd::Zero(n_structures_);
+  const ActiveSpaceTwoElectronView two_electron_view =
+      make_active_space_two_electron_view(active_space_two_electron_result);
+  const int n_threads = std::max(
+      1,
+      std::min(xmvb::effective_openmp_thread_count(), n_structures_));
+
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+  for (int structure = 0; structure < n_structures_; ++structure) {
+    const auto& terms = structure_to_determinant_terms_[structure];
+    double hamiltonian = 0.0;
+    double overlap = 0.0;
+    for (const auto& left : terms) {
+      for (const auto& right : terms) {
+        const DeterminantPairScalars pair = evaluate_pair(
+            same_spin_pair_cache,
+            left.determinant,
+            right.determinant,
+            two_electron_view,
+            n_active_orbitals,
+            n_packed_pairs);
+        const double coefficient = left.coefficient * right.coefficient;
+        hamiltonian += coefficient * pair.hamiltonian;
+        overlap += coefficient * pair.overlap;
+      }
+    }
+    diagonal_.hamiltonian[structure] = hamiltonian;
+    diagonal_.overlap[structure] = overlap;
   }
 }
 
@@ -659,10 +689,9 @@ StructureActionResult StructureAction::apply(
   for (int determinant = 0;
        determinant < n_determinants_;
        ++determinant) {
-    for (const auto& term :
-         (*determinant_to_structure_terms_)[determinant]) {
+    for (const auto& term : determinant_to_structure_terms_[determinant]) {
       determinant_vectors.row(determinant).noalias() +=
-          term.coefficient * vectors.row(term.structure_index);
+          term.coefficient * vectors.row(term.structure);
     }
   }
 
@@ -763,40 +792,8 @@ StructureActionResult StructureAction::apply(
   return result;
 }
 
-StructureDiagonal StructureAction::diagonal() const {
-  StructureDiagonal result;
-  result.hamiltonian = Eigen::VectorXd::Zero(n_structures_);
-  result.overlap = Eigen::VectorXd::Zero(n_structures_);
-  const int n_threads = std::max(
-      1,
-      std::min(
-          xmvb::effective_openmp_thread_count(),
-          n_structures_));
-
-#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
-  for (int structure = 0; structure < n_structures_; ++structure) {
-    const auto& terms = structure_to_determinant_terms_[structure];
-    double hamiltonian = 0.0;
-    double overlap = 0.0;
-    for (const auto& left : terms) {
-      for (const auto& right : terms) {
-        const DeterminantPairScalars pair = evaluate_pair(
-            *same_spin_pair_cache_,
-            left.determinant,
-            right.determinant,
-            two_electron_view_,
-            n_active_orbitals_,
-            n_packed_pairs_);
-        const double expansion_coefficient =
-            left.coefficient * right.coefficient;
-        hamiltonian += expansion_coefficient * pair.hamiltonian;
-        overlap += expansion_coefficient * pair.overlap;
-      }
-    }
-    result.hamiltonian[structure] = hamiltonian;
-    result.overlap[structure] = overlap;
-  }
-  return result;
+const StructureDiagonal& StructureAction::diagonal() const noexcept {
+  return diagonal_;
 }
 
 int StructureAction::n_determinants() const noexcept {

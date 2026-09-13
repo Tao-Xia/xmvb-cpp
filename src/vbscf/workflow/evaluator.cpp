@@ -215,7 +215,7 @@ double VbScfEvaluator::evaluate_energy_only(
       pair_cache,
       prepared_active_space.active_space_two_electron_result,
       input.orbital_preparation_input.n_active_orbitals);
-  const StructureDiagonal diagonal = structure_action.diagonal();
+  const StructureDiagonal& diagonal = structure_action.diagonal();
   const xmvb::core::GeneralizedEigenAction action =
       [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
         auto images = structure_action.apply(vectors);
