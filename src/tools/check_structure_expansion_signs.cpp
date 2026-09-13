@@ -461,7 +461,7 @@ int main(int argc, char** argv) {
           load_result.input.orbital_preparation_input.n_active_orbitals,
           prepared_active_space.active_space_two_electron_result,
           structure_data.n_structures);
-      const auto eigen_result = generalized_eigensolver.solve(
+      const auto eigen_result = generalized_eigensolver.solve_dense(
           structure_matrices.hamiltonian_matrix,
           structure_matrices.overlap_matrix,
           structure_data.n_structures);

@@ -128,7 +128,7 @@ VbScfResult VbScfEvaluator::evaluate(
       result.structure_matrices.overlap_matrix,
       result.n_structures);
 
-  const auto eigen_result = generalized_eigensolver_.solve(
+  const auto eigen_result = generalized_eigensolver_.solve_dense(
       result.structure_matrices.hamiltonian_matrix,
       result.structure_matrices.overlap_matrix,
       result.n_structures);
@@ -186,7 +186,7 @@ double VbScfEvaluator::evaluate_energy_only(
         input,
         prepared_active_space);
     const std::vector<double> eigenvalues =
-        generalized_eigensolver_.solve_eigenvalues_only(
+        generalized_eigensolver_.solve_dense_eigenvalues(
             structure_matrices.hamiltonian_matrix,
             structure_matrices.overlap_matrix,
             n_structures);

@@ -38,6 +38,10 @@ struct StructureActionStorage {
   int dense_channels = 0;
   /** Opposite-spin channels whose raw side is stored as exact nonzeros. */
   int sparse_channels = 0;
+  /** Exact nonzeros before a sparse channel is optionally densified. */
+  std::size_t channel_nonzeros = 0;
+  /** Dense values required to store the same active channel matrices. */
+  std::size_t channel_dense_values = 0;
 };
 
 /**
@@ -114,6 +118,8 @@ private:
   int n_unique_beta_ = 0;
   int n_packed_pairs_ = 0;
   int n_active_orbitals_ = 0;
+  std::size_t channel_nonzeros_ = 0;
+  std::size_t channel_dense_values_ = 0;
 };
 
 }  // namespace xmvb::vb

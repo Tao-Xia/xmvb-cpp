@@ -244,7 +244,7 @@ int main(int argc, char** argv) {
     const auto compact_diagonal = compact_structure_action.diagonal();
     xmvb::core::GeneralizedEigensolver eigensolver;
     const auto dense_eigensolve_start = std::chrono::high_resolution_clock::now();
-    const auto dense_eigenpairs = eigensolver.solve(
+    const auto dense_eigenpairs = eigensolver.solve_dense(
         fast_result.hamiltonian_matrix,
         fast_result.overlap_matrix,
         n_structures);
@@ -336,6 +336,10 @@ int main(int argc, char** argv) {
               << action_storage.dense_channels << '\n';
     std::cout << "factorized_sparse_channels = "
               << action_storage.sparse_channels << '\n';
+    std::cout << "factorized_channel_nonzeros = "
+              << action_storage.channel_nonzeros << '\n';
+    std::cout << "factorized_channel_dense_values = "
+              << action_storage.channel_dense_values << '\n';
     std::cout << "fast_result_seconds = "
               << std::chrono::duration<double>(fast_end - fast_start).count() << '\n';
     std::cout << "matrix_free_action_seconds = "

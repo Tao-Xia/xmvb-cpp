@@ -244,7 +244,7 @@ RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
   core::GeneralizedEigensolver eigensolver;
   ClosedShellFockBuilder fock_builder;
 
-  auto core_eigen_result = eigensolver.solve(
+  auto core_eigen_result = eigensolver.solve_dense(
       flatten_matrix_column_major(symmetric_core_hamiltonian),
       flatten_matrix_column_major(symmetric_overlap_matrix),
       n_basis_functions);
@@ -295,7 +295,7 @@ RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
         symmetric_fock_matrix = std::move(cdiis_fock_matrix);
       }
     }
-    auto fock_eigen_result = eigensolver.solve(
+    auto fock_eigen_result = eigensolver.solve_dense(
         flatten_matrix_column_major(symmetric_fock_matrix),
         flatten_matrix_column_major(symmetric_overlap_matrix),
         n_basis_functions);
@@ -337,7 +337,7 @@ RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
 
   result.fock_matrix =
       fock_builder.build(result.density_projector, ao_integral_input);
-  auto final_eigen_result = eigensolver.solve(
+  auto final_eigen_result = eigensolver.solve_dense(
       flatten_matrix_column_major(result.fock_matrix),
       flatten_matrix_column_major(symmetric_overlap_matrix),
       n_basis_functions);

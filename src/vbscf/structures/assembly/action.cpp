@@ -378,6 +378,9 @@ StructureAction::StructureAction(
           sparse_entries[packed_pair].empty()) {
         continue;
       }
+      channel_nonzeros_ += sparse_entries[packed_pair].size();
+      channel_dense_values_ +=
+          static_cast<std::size_t>(n_sparse) * n_sparse;
       Eigen::MatrixXd dense;
       const std::size_t dense_bytes =
           static_cast<std::size_t>(n_sparse) * n_sparse * sizeof(double);
@@ -582,6 +585,8 @@ int StructureAction::n_structures() const noexcept {
 
 StructureActionStorage StructureAction::storage() const noexcept {
   StructureActionStorage result;
+  result.channel_nonzeros = channel_nonzeros_;
+  result.channel_dense_values = channel_dense_values_;
   result.factor_bytes =
       static_cast<std::size_t>(
           alpha_overlap_.size() + alpha_hamiltonian_.size() +

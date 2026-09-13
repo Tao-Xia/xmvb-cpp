@@ -226,7 +226,7 @@ double evaluate_total_energy_from_auxiliary(
       input.structure_data.n_structures);
 
   xmvb::core::GeneralizedEigensolver generalized_eigensolver;
-  const auto eigen_result = generalized_eigensolver.solve(
+  const auto eigen_result = generalized_eigensolver.solve_dense(
       structure_matrices.hamiltonian_matrix,
       structure_matrices.overlap_matrix,
       input.structure_data.n_structures);

@@ -477,7 +477,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
 
   stage_start_time = std::chrono::steady_clock::now();
-  context.eigen_result = generalized_eigensolver.solve(
+  context.eigen_result = generalized_eigensolver.solve_dense(
       context.structure_matrices.hamiltonian_matrix,
       context.structure_matrices.overlap_matrix,
       input.structure_data.n_structures);
@@ -532,7 +532,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
 
   stage_start_time = std::chrono::steady_clock::now();
-  context.eigen_result = generalized_eigensolver.solve(
+  context.eigen_result = generalized_eigensolver.solve_dense(
       context.structure_matrices.hamiltonian_matrix,
       context.structure_matrices.overlap_matrix,
       input.structure_data.n_structures);

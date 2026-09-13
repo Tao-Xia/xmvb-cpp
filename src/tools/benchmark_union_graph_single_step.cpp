@@ -163,7 +163,7 @@ SolverSummary solve_ground_state(
   const auto started_at = std::chrono::steady_clock::now();
   try {
     xmvb::core::GeneralizedEigensolver generalized_eigensolver;
-    const auto result = generalized_eigensolver.solve(
+    const auto result = generalized_eigensolver.solve_dense(
         hamiltonian_matrix,
         overlap_matrix,
         dimension);

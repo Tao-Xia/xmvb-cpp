@@ -291,7 +291,7 @@ void update_projected_hamiltonian(
 
 }  // namespace
 
-GeneralizedEigenResult GeneralizedEigensolver::solve(
+GeneralizedEigenResult GeneralizedEigensolver::solve_dense(
     const std::vector<double>& hamiltonian_matrix,
     const std::vector<double>& overlap_matrix,
     int dimension) const {
@@ -311,7 +311,7 @@ GeneralizedEigenResult GeneralizedEigensolver::solve(
   return result;
 }
 
-std::vector<double> GeneralizedEigensolver::solve_eigenvalues_only(
+std::vector<double> GeneralizedEigensolver::solve_dense_eigenvalues(
     const std::vector<double>& hamiltonian_matrix,
     const std::vector<double>& overlap_matrix,
     int dimension) const {

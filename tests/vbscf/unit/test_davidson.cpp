@@ -113,7 +113,7 @@ bool run_case(
       1.0e-10};
 
   const xmvb::core::GeneralizedEigensolver solver;
-  const auto reference = solver.solve(
+  const auto reference = solver.solve_dense(
       flatten(problem.hamiltonian),
       flatten(problem.overlap),
       dimension);

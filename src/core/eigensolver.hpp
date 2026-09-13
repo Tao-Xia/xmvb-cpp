@@ -75,7 +75,7 @@ public:
    * @param dimension Matrix dimension.
    * @return GeneralizedEigenResult Eigenvalues and eigenvectors.
    */
-  GeneralizedEigenResult solve(
+  GeneralizedEigenResult solve_dense(
       const std::vector<double>& hamiltonian_matrix,
       const std::vector<double>& overlap_matrix,
       int dimension) const;
@@ -86,7 +86,7 @@ public:
    * This skips the full eigenvector matrix and is intended for energy-only
    * trial-point screening where only selected-state energies are needed.
    */
-  std::vector<double> solve_eigenvalues_only(
+  std::vector<double> solve_dense_eigenvalues(
       const std::vector<double>& hamiltonian_matrix,
       const std::vector<double>& overlap_matrix,
       int dimension) const;
