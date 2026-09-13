@@ -12,6 +12,7 @@
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
 #include "vbscf/integrals/active/two_electron/response/types.hpp"
+#include "vbscf/integrals/ao/one_electron/direct_operator.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/assembly/coefficient_blocks.hpp"
@@ -87,6 +88,7 @@ private:
   Eigen::MatrixXd accepted_hho_gradient_symmetric_;
   Eigen::MatrixXd accepted_active_auxiliary_orbitals_times_hho_gradient_symmetric_;
   mutable Eigen::MatrixXd ao_h1e_symmetrized_gradient_workspace_;
+  mutable AoH1eFusedWorkspace ao_h1e_fused_workspace_;
   Eigen::MatrixXd accepted_total_active_auxiliary_gradient_;
   std::vector<double> accepted_total_inactive_density_gradient_;
   Eigen::MatrixXd zero_core_hamiltonian_;

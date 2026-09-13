@@ -26,6 +26,7 @@ void apply_fused_exact_ao_one_electron_response(
     const Eigen::MatrixXd& gradient,
     const AoIntegralInput& ao,
     const OrbitalPreparationInput& orbital_input,
+    AoH1eFusedWorkspace* workspace,
     Eigen::MatrixXd* symmetric_gradient,
     std::vector<double>* delta_h1e,
     std::vector<double>* density_gradient) {
@@ -44,6 +45,7 @@ void apply_fused_exact_ao_one_electron_response(
       symmetric_gradient->data(),
       ao,
       choose_exact_ao_h1e_thread_count(orbital_input),
+      workspace,
       delta_h1e,
       density_gradient);
 

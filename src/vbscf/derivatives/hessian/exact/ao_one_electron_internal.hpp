@@ -7,6 +7,7 @@
 namespace xmvb::vb {
 
 struct AoIntegralInput;
+struct AoH1eFusedWorkspace;
 struct OrbitalPreparationInput;
 
 namespace detail {
@@ -23,6 +24,7 @@ void apply_fused_exact_ao_one_electron_response(
     const Eigen::MatrixXd& ao_effective_one_electron_gradient,
     const AoIntegralInput& ao_integral_input,
     const OrbitalPreparationInput& orbital_preparation_input,
+    AoH1eFusedWorkspace* workspace,
     Eigen::MatrixXd* symmetrized_pullback_source,
     std::vector<double>* delta_ao_effective_h1e_storage,
     std::vector<double>* inactive_density_gradient_storage);

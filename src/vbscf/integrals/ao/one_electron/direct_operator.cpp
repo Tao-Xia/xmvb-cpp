@@ -194,27 +194,30 @@ void apply_ao_h1e_fused(
     const double* adjoint,
     const AoIntegralInput& ao,
     int n_threads,
+    AoH1eFusedWorkspace* workspace,
     std::vector<double>* forward,
     std::vector<double>* transpose) {
   if (source == nullptr || adjoint == nullptr ||
-      forward == nullptr || transpose == nullptr) {
+      workspace == nullptr || forward == nullptr || transpose == nullptr) {
     throw std::invalid_argument("AO-H1E fused buffers must not be null");
   }
   const std::size_t size = matrix_size(ao);
   const std::size_t n_integrals = ao.ao_two_electron_integral_values.size();
   n_threads = active_threads(n_threads, n_integrals);
-  std::vector<std::vector<double>> partial_forward(
-      n_threads, std::vector<double>(size, 0.0));
-  std::vector<std::vector<double>> partial_transpose(
-      n_threads, std::vector<double>(size, 0.0));
+  workspace->forward.resize(n_threads);
+  workspace->transpose.resize(n_threads);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    workspace->forward[thread].assign(size, 0.0);
+    workspace->transpose[thread].assign(size, 0.0);
+  }
 #pragma omp parallel num_threads(n_threads)
   {
     int thread = 0;
 #ifdef _OPENMP
     thread = omp_get_thread_num();
 #endif
-    auto& local_forward = partial_forward[thread];
-    auto& local_transpose = partial_transpose[thread];
+    auto& local_forward = workspace->forward[thread];
+    auto& local_transpose = workspace->transpose[thread];
 #pragma omp for schedule(static)
     for (std::ptrdiff_t offset = 0;
          offset < static_cast<std::ptrdiff_t>(n_integrals);
@@ -224,8 +227,16 @@ void apply_ao_h1e_fused(
       accumulate_transpose(terms, adjoint, local_transpose.data());
     }
   }
-  reduce(std::move(partial_forward), forward);
-  reduce(std::move(partial_transpose), transpose);
+  forward->assign(size, 0.0);
+  transpose->assign(size, 0.0);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    const auto& local_forward = workspace->forward[thread];
+    const auto& local_transpose = workspace->transpose[thread];
+    for (std::size_t index = 0; index < size; ++index) {
+      (*forward)[index] += local_forward[index];
+      (*transpose)[index] += local_transpose[index];
+    }
+  }
 }
 
 void apply_ao_h1e_fused_batch(

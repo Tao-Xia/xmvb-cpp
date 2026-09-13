@@ -8,6 +8,12 @@
 
 namespace xmvb::vb {
 
+/** @brief Thread-local buffers reused by repeated fused AO-H1E actions. */
+struct AoH1eFusedWorkspace {
+  std::vector<std::vector<double>> forward;
+  std::vector<std::vector<double>> transpose;
+};
+
 /** @brief Applies the exact AO-H1E operator directly from unique AO ERIs. */
 std::vector<double> apply_ao_h1e(
     const double* source,
@@ -31,6 +37,7 @@ void apply_ao_h1e_fused(
     const double* adjoint,
     const AoIntegralInput& ao,
     int n_threads,
+    AoH1eFusedWorkspace* workspace,
     std::vector<double>* forward,
     std::vector<double>* transpose);
 
