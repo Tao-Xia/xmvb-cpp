@@ -4,43 +4,10 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/response/types.hpp"
 #include "vbscf/integrals/ao/contracts/input.hpp"
 
 namespace xmvb::vb {
-
-/**
- * @brief Computes the exact packed `GGO` directional derivative from AO-driven data.
- *
- * `dense_active_coefficients` and `dense_active_direction` are dense
- * AO-by-active matrices in the repository-standard column-major Eigen layout.
- */
-std::vector<double>
-compute_exact_packed_active_two_electron_integral_directional_derivative(
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
-    const AoIntegralInput& ao_integral_input,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult* accepted_active_space_two_electron_result =
-        nullptr);
-
-/**
- * @brief Computes exact packed `\delta GGO` into reusable caller-owned buffers.
- *
- * `workspace` keeps the transient AO-pair / active-pair tables alive across
- * repeated directional derivatives, while `delta_packed_active_two_electron_integrals`
- * receives the final packed lower-triangular `\delta GGO` tensor.
- */
-void compute_exact_packed_active_two_electron_integral_directional_derivative(
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
-    const AoIntegralInput& ao_integral_input,
-    int n_active_orbitals,
-    ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace* workspace,
-    std::vector<double>* delta_packed_active_two_electron_integrals,
-    const ActiveSpaceTwoElectronResult* accepted_active_space_two_electron_result =
-        nullptr);
 
 /**
  * @brief Computes exact packed `\delta GGO` from one accepted-point exact 2e cache.

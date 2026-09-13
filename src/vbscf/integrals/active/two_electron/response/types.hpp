@@ -55,12 +55,9 @@ struct ExactPackedActiveTwoElectronApplyWorkspace {
  * avoids several large allocations on every `H v` application.
  */
 struct ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace {
-  ExactCtxDenseMatrix dense_active_direction;
-  ExactCtxPairMatrix pair_coefficients;
-  ExactCtxPairMatrix base_pair_products;
   ExactCtxPairMatrix directional_pair_coefficients;
   ExactCtxPairMatrix directional_pair_products;
-  ExactCtxDenseMatrix delta_active_pair_matrix;
+  ExactCtxDenseMatrix active_pair_contraction;
 };
 
 }  // namespace xmvb::vb

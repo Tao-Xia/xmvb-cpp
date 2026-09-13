@@ -7,6 +7,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/core/contracts/input.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/response/directional.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 

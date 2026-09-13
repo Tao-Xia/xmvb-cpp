@@ -45,14 +45,6 @@ void build_ao_pair_to_active_pair_coefficients(
     const std::vector<ActivePair>& active_pairs,
     ExactCtxPairMatrix* ao_pair_to_active_pair_coefficients);
 
-void build_mixed_ao_pair_to_active_pair_coefficients(
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
-    int n_bf,
-    int n_ao,
-    const std::vector<ActivePair>& active_pairs,
-    ExactCtxPairMatrix* mixed_ao_pair_to_active_pair_coefficients);
-
 void build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
