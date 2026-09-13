@@ -305,6 +305,18 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const auto directional_selected_state_response =
         accepted_outer_response_context_.selected_state_eigen_response_operator.apply(
             directional_structure_images);
+    apply_timing_totals_.structure_response_block_actions +=
+        directional_selected_state_response.block_actions;
+    if (!directional_selected_state_response.linear_iterations.empty()) {
+      apply_timing_totals_.max_structure_response_iterations = std::max(
+          apply_timing_totals_.max_structure_response_iterations,
+          *std::max_element(
+              directional_selected_state_response.linear_iterations.begin(),
+              directional_selected_state_response.linear_iterations.end()));
+    }
+    apply_timing_totals_.max_structure_response_relative_residual = std::max(
+        apply_timing_totals_.max_structure_response_relative_residual,
+        directional_selected_state_response.max_relative_residual);
     apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
         detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
 

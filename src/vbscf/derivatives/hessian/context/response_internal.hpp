@@ -1,6 +1,5 @@
 #pragma once
 
-#include <stdexcept>
 #include <vector>
 
 #include <Eigen/Core>
@@ -26,47 +25,15 @@ struct SelectedStateDirectionalStructureImages {
 struct SelectedStateGeneralizedEigenDirectionalResponse {
   Eigen::MatrixXd delta_selected_eigenvector_matrix;
   std::vector<double> delta_selected_eigenvalues;
-};
-
-/**
- * @brief Accepted-point metadata for one selected generalized-eigen column.
- *
- * The accepted-point eigensystem fixes the energy gaps and gauge policy used
- * by the first-order generalized-eigen formulas. Only the directional
- * structure-basis images change between HVP applications.
- */
-struct AcceptedSelectedStateEigenResponseColumnCache {
-  int selected_state_index = -1;
-  double selected_state_energy = 0.0;
-  Eigen::VectorXd energy_gaps;
-  Eigen::VectorXd gap_tolerances;
-  Eigen::ArrayXi uses_equal_weight_gauge;
+  std::vector<int> linear_iterations;
+  int block_actions = 0;
+  double max_relative_residual = 0.0;
 };
 
 struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
-  const std::vector<double>* accepted_eigenvector_matrix_storage = nullptr;
-  int n_structures = 0;
-  Eigen::VectorXd accepted_eigenvalues;
+  const StructureAction* structure_action = nullptr;
+  Eigen::VectorXd selected_eigenvalues;
   Eigen::MatrixXd selected_eigenvectors;
-  std::vector<AcceptedSelectedStateEigenResponseColumnCache> selected_columns;
-
-  Eigen::Map<const Eigen::MatrixXd> accepted_eigenvector_matrix_view() const {
-    if (accepted_eigenvector_matrix_storage == nullptr || n_structures <= 0) {
-      throw std::runtime_error(
-          "accepted selected-state eigen-response operator is missing its eigensystem storage");
-    }
-    const std::size_t expected_size =
-        static_cast<std::size_t>(n_structures) *
-        static_cast<std::size_t>(n_structures);
-    if (accepted_eigenvector_matrix_storage->size() != expected_size) {
-      throw std::runtime_error(
-          "accepted selected-state eigensystem storage dimensions are inconsistent");
-    }
-    return Eigen::Map<const Eigen::MatrixXd>(
-        accepted_eigenvector_matrix_storage->data(),
-        n_structures,
-        n_structures);
-  }
 
   SelectedStateGeneralizedEigenDirectionalResponse apply(
       const SelectedStateDirectionalStructureImages& directional_images) const;

@@ -559,6 +559,12 @@ finalize_active_space_second_order_context(
   context->prepared_active_space =
       std::move(forward_context->timed_active_space_context.prepared_active_space);
   context->same_spin_pair_cache = std::move(forward_context->same_spin_pair_cache);
+  context->structure_action.emplace(
+      input.structure_data.determinant_to_structure_terms,
+      input.structure_data.n_structures,
+      context->same_spin_pair_cache,
+      context->prepared_active_space.active_space_two_electron_result,
+      input.orbital_preparation_input.n_active_orbitals);
   context->structure_matrices = std::move(forward_context->structure_matrices);
   context->active_orbital_overlap_gradient =
       gradient_result.active_orbital_overlap_gradient;

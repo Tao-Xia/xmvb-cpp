@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "core/eigensolver.hpp"
@@ -7,6 +8,7 @@
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
+#include "vbscf/structures/assembly/action.hpp"
 
 namespace xmvb::vb {
 
@@ -28,6 +30,15 @@ struct AcceptedPointContext {
    * @brief Unique-spin reuse tables and cached ordered same-spin determinant pairs.
    */
   SameSpinPairCacheContext same_spin_pair_cache;
+
+  /**
+   * @brief Self-contained matrix-free accepted structure problem.
+   *
+   * The action supplies selected-root response solves without accessing or
+   * reconstructing the dense reference matrices retained during this
+   * migration stage.
+   */
+  std::optional<StructureAction> structure_action;
 
   /**
    * @brief Accepted-point structure Hamiltonian/overlap matrices.

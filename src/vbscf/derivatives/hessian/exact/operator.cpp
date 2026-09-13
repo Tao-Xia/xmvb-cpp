@@ -219,6 +219,12 @@ ExactHvpOperator::State::diagnostics() const {
   info.n_blocks = nonredundant_space_->n_blocks();
   info.apply_count = apply_timing_totals_.apply_count;
   info.batch_apply_count = apply_timing_totals_.batch_apply_count;
+  info.structure_response_block_actions =
+      apply_timing_totals_.structure_response_block_actions;
+  info.max_structure_response_iterations =
+      apply_timing_totals_.max_structure_response_iterations;
+  info.max_structure_response_relative_residual =
+      apply_timing_totals_.max_structure_response_relative_residual;
   info.total_apply_wall_time_seconds =
       apply_timing_totals_.total_apply_wall_time_seconds;
   info.core_setup_wall_time_seconds =

@@ -648,6 +648,12 @@ void print_measurement(const BenchmarkMeasurement& measurement) {
   const auto& diagnostics = measurement.diagnostics;
   std::cout << label << "_apply_count = "
             << diagnostics.apply_count << '\n';
+  std::cout << label << "_structure_response_block_actions = "
+            << diagnostics.structure_response_block_actions << '\n';
+  std::cout << label << "_max_structure_response_iterations = "
+            << diagnostics.max_structure_response_iterations << '\n';
+  std::cout << label << "_max_structure_response_relative_residual = "
+            << diagnostics.max_structure_response_relative_residual << '\n';
   std::cout << label << "_response_inf_norm = "
             << measurement.response_inf_norm << '\n';
   std::cout << label << "_external_avg_wall_time_seconds = "

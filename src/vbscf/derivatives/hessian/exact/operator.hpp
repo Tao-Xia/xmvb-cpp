@@ -55,6 +55,9 @@ public:
     int n_blocks = 0;
     std::size_t apply_count = 0;
     std::size_t batch_apply_count = 0;
+    std::size_t structure_response_block_actions = 0;
+    int max_structure_response_iterations = 0;
+    double max_structure_response_relative_residual = 0.0;
     double total_apply_wall_time_seconds = 0.0;
     double core_setup_wall_time_seconds = 0.0;
     double ao_effective_one_electron_build_wall_time_seconds = 0.0;
