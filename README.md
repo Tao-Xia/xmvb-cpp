@@ -41,7 +41,6 @@ basis/             Standard basis set library (Pople, Dunning, etc.)
 | [OpenBLAS](https://www.openblas.net/) | BLAS/LAPACK routines |
 | [libcint](https://github.com/sunqm/libcint) | Gaussian integral evaluation |
 | [libxc](https://www.tddft.org/programs/libxc/) | Exchange-correlation functionals |
-| [ONNX Runtime](https://onnxruntime.ai/) (optional) | DeepVBH ML inference |
 | [LBFGSpp](https://github.com/yixuan/LBFGSpp) (vendored) | L-BFGS optimization |
 
 ## Build
