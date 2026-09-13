@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "input/loading/loader.hpp"
+#include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
@@ -168,6 +169,53 @@ int main(int argc, char** argv) {
         load_result.input.structure_data.n_structures,
         same_spin_pair_cache);
     const auto fast_end = std::chrono::high_resolution_clock::now();
+    const int n_structures =
+        load_result.input.structure_data.n_structures;
+    Eigen::MatrixXd trial_vectors(n_structures, 3);
+    for (int column = 0; column < trial_vectors.cols(); ++column) {
+      for (int row = 0; row < trial_vectors.rows(); ++row) {
+        trial_vectors(row, column) =
+            std::sin(0.013 * static_cast<double>((row + 1) * (column + 2)));
+      }
+    }
+    const xmvb::vb::StructureAction structure_action(
+        load_result.input.structure_data.determinant_to_structure_terms,
+        n_structures,
+        same_spin_pair_cache,
+        prepared_active_space.active_space_two_electron_result,
+        load_result.input.orbital_preparation_input.n_active_orbitals);
+    const auto action_start = std::chrono::high_resolution_clock::now();
+    const auto action_result = structure_action.apply(trial_vectors);
+    const auto action_diagonal = structure_action.diagonal();
+    const auto action_end = std::chrono::high_resolution_clock::now();
+    const Eigen::Map<const Eigen::MatrixXd> dense_hamiltonian(
+        fast_result.hamiltonian_matrix.data(), n_structures, n_structures);
+    const Eigen::Map<const Eigen::MatrixXd> dense_overlap(
+        fast_result.overlap_matrix.data(), n_structures, n_structures);
+    const Eigen::MatrixXd reference_hamiltonian_action =
+        dense_hamiltonian * trial_vectors;
+    const Eigen::MatrixXd reference_overlap_action =
+        dense_overlap * trial_vectors;
+    const auto sparse_pair_cache =
+        xmvb::vb::build_same_spin_pair_cache_context(
+            load_result.input.structure_data.alpha_det,
+            load_result.input.structure_data.beta_det,
+            pair_evaluator,
+            prepared_active_space.orbital_result.active_orbital_overlap_matrix,
+            prepared_active_space.active_space_one_electron_result.h1e_act,
+            load_result.input.orbital_preparation_input.n_active_orbitals,
+            prepared_active_space.active_space_two_electron_result,
+            xmvb::vb::SameSpinPairCacheBuildOptions{false});
+    const xmvb::vb::StructureAction sparse_structure_action(
+        load_result.input.structure_data.determinant_to_structure_terms,
+        n_structures,
+        sparse_pair_cache,
+        prepared_active_space.active_space_two_electron_result,
+        load_result.input.orbital_preparation_input.n_active_orbitals);
+    const auto sparse_action_start = std::chrono::high_resolution_clock::now();
+    const auto sparse_action_result =
+        sparse_structure_action.apply(trial_vectors);
+    const auto sparse_action_end = std::chrono::high_resolution_clock::now();
     const auto exact_same_spin_pair_cache = xmvb::vb::build_same_spin_pair_cache_context(
         load_result.input.structure_data.alpha_det,
         load_result.input.structure_data.beta_det,
@@ -218,6 +266,44 @@ int main(int argc, char** argv) {
               << (exact_same_spin_pair_cache.enabled() ? "true" : "false") << '\n';
     std::cout << "fast_result_seconds = "
               << std::chrono::duration<double>(fast_end - fast_start).count() << '\n';
+    std::cout << "matrix_free_action_seconds = "
+              << std::chrono::duration<double>(action_end - action_start).count() << '\n';
+    std::cout << "matrix_free_hamiltonian_action_max_abs_diff = "
+              << (action_result.hamiltonian - reference_hamiltonian_action)
+                     .cwiseAbs()
+                     .maxCoeff()
+              << '\n';
+    std::cout << "matrix_free_overlap_action_max_abs_diff = "
+              << (action_result.overlap - reference_overlap_action)
+                     .cwiseAbs()
+                     .maxCoeff()
+              << '\n';
+    std::cout << "matrix_free_hamiltonian_diagonal_max_abs_diff = "
+              << (action_diagonal.hamiltonian - dense_hamiltonian.diagonal())
+                     .cwiseAbs()
+                     .maxCoeff()
+              << '\n';
+    std::cout << "matrix_free_overlap_diagonal_max_abs_diff = "
+              << (action_diagonal.overlap - dense_overlap.diagonal())
+                     .cwiseAbs()
+                     .maxCoeff()
+              << '\n';
+    std::cout << "sparse_matrix_free_action_seconds = "
+              << std::chrono::duration<double>(
+                     sparse_action_end - sparse_action_start)
+                     .count()
+              << '\n';
+    std::cout << "sparse_matrix_free_hamiltonian_action_max_abs_diff = "
+              << (sparse_action_result.hamiltonian -
+                  reference_hamiltonian_action)
+                     .cwiseAbs()
+                     .maxCoeff()
+              << '\n';
+    std::cout << "sparse_matrix_free_overlap_action_max_abs_diff = "
+              << (sparse_action_result.overlap - reference_overlap_action)
+                     .cwiseAbs()
+                     .maxCoeff()
+              << '\n';
     std::cout << "fast_exact_result_seconds = "
               << std::chrono::duration<double>(fast_exact_end - fast_exact_start).count()
               << '\n';
