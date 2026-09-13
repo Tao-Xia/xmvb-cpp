@@ -162,6 +162,58 @@ bool run_case(
   return passed;
 }
 
+bool run_recycled_case() {
+  constexpr int dimension = 160;
+  constexpr int n_roots = 4;
+  const DenseProblem problem = make_nonorthogonal_problem(dimension);
+  const xmvb::core::GeneralizedEigenAction action =
+      [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+        xmvb::core::GeneralizedEigenActionResult images;
+        images.hamiltonian.noalias() = problem.hamiltonian * vectors;
+        images.overlap.noalias() = problem.overlap * vectors;
+        return images;
+      };
+  const xmvb::core::DavidsonOptions options{
+      n_roots,
+      4 * dimension,
+      128,
+      1.0e-10};
+  const xmvb::core::GeneralizedEigensolver solver;
+  const auto cold = solver.solve_davidson(
+      action,
+      problem.hamiltonian.diagonal(),
+      problem.overlap.diagonal(),
+      options);
+  const Eigen::Map<const Eigen::MatrixXd> recycled_vectors(
+      cold.eigenpairs.eigenvector_matrix.data(),
+      dimension,
+      n_roots);
+  const auto recycled = solver.solve_davidson(
+      action,
+      problem.hamiltonian.diagonal(),
+      problem.overlap.diagonal(),
+      recycled_vectors,
+      options);
+  const double max_residual = *std::max_element(
+      recycled.relative_residual_norms.begin(),
+      recycled.relative_residual_norms.end());
+  const bool passed =
+      recycled.iterations == 1 &&
+      recycled.block_actions == 1 &&
+      max_residual <= options.residual_tolerance &&
+      max_eigenvalue_error(
+          cold.eigenpairs.eigenvalues,
+          recycled.eigenpairs.eigenvalues,
+          n_roots) <= 1.0e-12;
+  std::cout << "recycled nonorthogonal n=" << dimension
+            << " roots=" << n_roots
+            << " iterations=" << recycled.iterations
+            << " actions=" << recycled.block_actions
+            << " residual=" << max_residual
+            << (passed ? " PASS\n" : " FAIL\n");
+  return passed;
+}
+
 }  // namespace
 
 int main() {
@@ -182,6 +234,7 @@ int main() {
                4,
                2.0e-5) &&
       passed;
+  passed = run_recycled_case() && passed;
   std::cout << (passed ? "ALL PASSED\n" : "SOME FAILED\n");
   return passed ? 0 : 1;
 }

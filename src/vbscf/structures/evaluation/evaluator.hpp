@@ -1,6 +1,7 @@
 #pragma once
 
 #include "vbscf/core/contracts/input.hpp"
+#include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/structures/expansion/types.hpp"
@@ -50,6 +51,12 @@ public:
   StructureAccumulationResult evaluate(
       const VbScfInput& input,
       const PreparedActiveSpaceContext& prepared_active_space) const;
+
+  /** @brief Builds the reusable unique-spin pair cache for a structure action. */
+  SameSpinPairCacheContext build_pair_cache(
+      const VbScfInput& input,
+      const PreparedActiveSpaceContext& prepared_active_space,
+      SameSpinPairCacheBuildOptions options) const;
 
 private:
   ActiveSpaceOrbitalPreparer orbital_preparer_;

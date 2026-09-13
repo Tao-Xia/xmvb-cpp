@@ -121,6 +121,17 @@ void validate_davidson_options(
   }
 }
 
+void validate_davidson_diagonals(
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal) {
+  if (overlap_diagonal.size() != hamiltonian_diagonal.size() ||
+      !hamiltonian_diagonal.allFinite() ||
+      !overlap_diagonal.allFinite() ||
+      (overlap_diagonal.array() <= 0.0).any()) {
+    throw std::invalid_argument("invalid generalized eigenproblem diagonals");
+  }
+}
+
 void validate_action_result(
     const GeneralizedEigenActionResult& result,
     int dimension,
@@ -324,13 +335,42 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     const DavidsonOptions& options) const {
   const int dimension = static_cast<int>(hamiltonian_diagonal.size());
-  if (overlap_diagonal.size() != dimension ||
-      !hamiltonian_diagonal.allFinite() ||
-      !overlap_diagonal.allFinite() ||
-      (overlap_diagonal.array() <= 0.0).any()) {
-    throw std::invalid_argument("invalid generalized eigenproblem diagonals");
-  }
+  validate_davidson_diagonals(
+      hamiltonian_diagonal,
+      overlap_diagonal);
   validate_davidson_options(dimension, options);
+  const int n_initial = std::min(
+      options.max_subspace_dimension,
+      2 * options.n_roots);
+  const Eigen::MatrixXd initial_vectors = build_initial_vectors(
+      hamiltonian_diagonal,
+      overlap_diagonal,
+      n_initial);
+  return solve_davidson(
+      action,
+      hamiltonian_diagonal,
+      overlap_diagonal,
+      initial_vectors,
+      options);
+}
+
+DavidsonResult GeneralizedEigensolver::solve_davidson(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_vectors,
+    const DavidsonOptions& options) const {
+  const int dimension = static_cast<int>(hamiltonian_diagonal.size());
+  validate_davidson_diagonals(
+      hamiltonian_diagonal,
+      overlap_diagonal);
+  validate_davidson_options(dimension, options);
+  if (initial_vectors.rows() != dimension ||
+      initial_vectors.cols() < options.n_roots ||
+      initial_vectors.cols() > options.max_subspace_dimension ||
+      !initial_vectors.allFinite()) {
+    throw std::invalid_argument("invalid Davidson initial vector block");
+  }
 
   const int max_subspace = options.max_subspace_dimension;
   Eigen::MatrixXd basis(dimension, max_subspace);
@@ -338,18 +378,13 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
   Eigen::MatrixXd overlap_basis(dimension, max_subspace);
   DavidsonResult result;
 
-  const int n_initial = std::min(max_subspace, 2 * options.n_roots);
-  Eigen::MatrixXd initial_vectors = build_initial_vectors(
-      hamiltonian_diagonal,
-      overlap_diagonal,
-      n_initial);
   auto initial_images = apply_checked(
       action,
       initial_vectors,
       dimension,
       &result.block_actions);
   int active_dimension = append_s_orthonormal_block(
-      std::move(initial_vectors),
+      initial_vectors,
       std::move(initial_images.hamiltonian),
       std::move(initial_images.overlap),
       &basis,

@@ -106,6 +106,19 @@ public:
       const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
       const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
       const DavidsonOptions& options) const;
+
+  /**
+   * @brief Solves from caller-supplied vectors, such as previous-step roots.
+   *
+   * The initial block must contain at least `n_roots` linearly independent
+   * vectors and no more than `max_subspace_dimension` columns.
+   */
+  DavidsonResult solve_davidson(
+      const GeneralizedEigenAction& action,
+      const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+      const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+      const Eigen::Ref<const Eigen::MatrixXd>& initial_vectors,
+      const DavidsonOptions& options) const;
 };
 
 }  // namespace xmvb::core

@@ -256,6 +256,10 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   result.one_particle_density_matrix = build_one_particle_density_matrix(
       objective.gradient_result(),
       objective.input().orbital_preparation_input);
+  result.energy_only_evaluation_count =
+      objective.energy_only_call_count();
+  result.energy_only_wall_time_seconds =
+      objective.energy_only_wall_time_seconds();
   Eigen::MatrixXd final_normalized_orbital_matrix =
       objective.gradient_result()
           .orbital_preparation_result

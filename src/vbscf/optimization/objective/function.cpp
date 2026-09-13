@@ -124,6 +124,19 @@ double VbScfObjective::evaluate_energy_only(
   if (scf_ == nullptr) {
     throw std::runtime_error("energy-only objective evaluation requires a live SCF evaluator");
   }
+  const int n_structures = input_.structure_data.n_structures;
+  const auto& eigenvectors = gradient_result_.scf_result.eigenvector_matrix;
+  const std::size_t expected_size =
+      static_cast<std::size_t>(n_structures) *
+      static_cast<std::size_t>(n_structures);
+  if (n_structures <= 0 || eigenvectors.size() != expected_size) {
+    throw std::runtime_error(
+        "energy-only objective evaluation requires accepted structure eigenvectors");
+  }
+  const Eigen::Map<const Eigen::MatrixXd> accepted_eigenvectors(
+      eigenvectors.data(),
+      n_structures,
+      n_structures);
   OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
   layout_.unpack(parameter_vector, &trial_orbitals);
   ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
@@ -132,6 +145,7 @@ double VbScfObjective::evaluate_energy_only(
       input_,
       state_indices_,
       state_weights_,
+      accepted_eigenvectors,
       nuclear_repulsion_);
   const double elapsed_seconds =
       std::chrono::duration<double>(

@@ -373,6 +373,12 @@ void print_summary(
     print_log_field(
         "Matrix-free HVP wall time",
         format_seconds(result.matrix_free_hvp_wall_time_seconds));
+    print_log_field(
+        "Trial structure-energy solves",
+        std::to_string(result.energy_only_evaluation_count));
+    print_log_field(
+        "Trial structure-energy wall time",
+        format_seconds(result.energy_only_wall_time_seconds));
   }
   print_tnhvp_summary(options, input);
   print_log_subsection_title("Timing Breakdown (Wall Time)");

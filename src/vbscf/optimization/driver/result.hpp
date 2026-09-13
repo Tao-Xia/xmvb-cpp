@@ -241,6 +241,12 @@ struct VbScfOptimizerResult {
   /** Wall time spent inside exact reduced Hessian actions. */
   double matrix_free_hvp_wall_time_seconds = 0.0;
 
+  /** Number of matrix-free structure-energy trial screens. */
+  std::size_t energy_only_evaluation_count = 0;
+
+  /** Wall time spent in structure-energy trial screens. */
+  double energy_only_wall_time_seconds = 0.0;
+
   /** Lightweight per-accepted-step diagnostics for the TNHVP backend. */
   std::vector<TnhvpIterationRecord> tnhvp_iteration_trace;
 

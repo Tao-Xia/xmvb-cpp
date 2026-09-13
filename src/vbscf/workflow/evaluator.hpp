@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "core/eigensolver.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/evaluation/evaluator.hpp"
@@ -63,12 +65,14 @@ public:
    *
    * This skips eigenvector materialization and should be used for trial-point
    * screening paths that do not need gradients, selected-state coefficients,
-   * or the accepted-point second-order context.
+   * or the accepted-point second-order context. `initial_eigenvectors`
+   * supplies recycled structure roots from the accepted orbital point.
    */
   double evaluate_energy_only(
       const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
+      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
       double nuclear_repulsion_energy) const;
 
 private:
