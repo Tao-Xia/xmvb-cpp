@@ -50,9 +50,10 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
         "dense active direction shape mismatch in cached delta GGO");
   }
 
-  if (accepted_cache.accepted_dense_active_coefficients.rows() !=
+  if (accepted_cache.accepted_active_coefficients == nullptr ||
+      accepted_cache.accepted_active_coefficients->rows() !=
           n_bf ||
-      accepted_cache.accepted_dense_active_coefficients.cols() !=
+      accepted_cache.accepted_active_coefficients->cols() !=
           n_ao) {
     throw std::invalid_argument(
         "cached dense active coefficient size mismatch in delta GGO");
@@ -85,7 +86,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
           tile_rows,
           static_cast<Eigen::Index>(n_bf_pairs) - row_begin);
       build_mixed_pair_rows(
-          accepted_cache.accepted_dense_active_coefficients,
+          *accepted_cache.accepted_active_coefficients,
           dense_active_direction,
           accepted_cache,
           row_begin,
@@ -93,7 +94,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
           &workspace->directional_pair_coefficients);
       apply_generated_pair_rows(
           ao_integral_input,
-          accepted_cache.accepted_dense_active_coefficients,
+          *accepted_cache.accepted_active_coefficients,
           &workspace->dense_active_direction,
           accepted_cache,
           row_begin,
@@ -120,7 +121,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
       accumulate_pair_gradient_rows(
           workspace->pair_gradients_tile,
           row_begin,
-          accepted_cache.accepted_dense_active_coefficients,
+          *accepted_cache.accepted_active_coefficients,
           accepted_cache,
           &workspace->dense_fixed_adjoint_direction);
     }
@@ -136,7 +137,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
     }
 
     build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
-        accepted_cache.accepted_dense_active_coefficients,
+        *accepted_cache.accepted_active_coefficients,
         dense_active_direction,
         accepted_cache,
         &workspace->directional_pair_coefficients);
@@ -213,6 +214,9 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
   }
   if (n_bf <= 0 || n_ao <= 0 ||
       n_active_pairs <= 0 ||
+      accepted_cache.accepted_active_coefficients == nullptr ||
+      accepted_cache.accepted_active_coefficients->rows() != n_bf ||
+      accepted_cache.accepted_active_coefficients->cols() != n_ao ||
       accepted_cache.active_pair_second_indices.size() !=
           static_cast<std::size_t>(n_active_pairs) ||
       (accepted_cache.accepted_pair_products != nullptr &&
@@ -273,7 +277,7 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
     }
     ExactCtxPairMatrix directional_coefficients;
     build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
-        accepted_cache.accepted_dense_active_coefficients,
+        *accepted_cache.accepted_active_coefficients,
         dense_active_directions[direction],
         accepted_cache,
         &directional_coefficients);

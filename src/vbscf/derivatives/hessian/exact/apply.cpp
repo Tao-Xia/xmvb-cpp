@@ -271,7 +271,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         accepted_basis_overlap_times_active_auxiliary_orbitals_,
         accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_,
         accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_,
-        accepted_dense_active_coefficients_};
+        *accepted_exact_two_electron_cache_.accepted_active_coefficients};
     const ActiveSpaceIntegralTangent integral_tangent{
         orbital_preparation_directional_result.delta_active_auxiliary_orbitals,
         delta_dense_active_coefficients,

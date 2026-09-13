@@ -125,14 +125,12 @@ ExactHvpOperator::State::State(
         accepted_hho_gradient + accepted_hho_gradient.transpose();
     accepted_active_auxiliary_orbitals_times_hho_gradient_symmetric_ =
         accepted_active_auxiliary_orbitals_ * accepted_hho_gradient_symmetric_;
-    accepted_dense_active_coefficients_ =
-        accepted_two_electron_result.dense_active_coefficients;
     zero_core_hamiltonian_ =
         Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
     accepted_exact_two_electron_cache_ =
         build_exact_packed_active_two_electron_adjoint_cache(
             accepted_point_context_->packed_active_two_electron_gradient,
-            accepted_dense_active_coefficients_,
+            accepted_two_electron_result.dense_active_coefficients,
             current_input_->ao_integral_input,
             n_active_orbitals,
             accepted_two_electron_result);

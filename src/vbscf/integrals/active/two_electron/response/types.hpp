@@ -19,8 +19,8 @@ using ExactCtxPairMatrix =
  * packed 2e adjoint to different active-orbital tangents. Only accepted-point
  * state is retained here; pair coefficients and pair gradients are derived
  * and must not become persistent `N_pair x A_pair` buffers. The accepted pair
- * products are borrowed from the accepted active-space result, whose lifetime
- * must enclose every use of this cache.
+ * products and active coefficients are borrowed from the accepted active-space
+ * result, whose lifetime must enclose every use of this cache.
  */
 struct ExactPackedActiveTwoElectronAdjointCache {
   int n_basis_functions = 0;
@@ -31,8 +31,8 @@ struct ExactPackedActiveTwoElectronAdjointCache {
   std::vector<int> active_pair_second_indices;
   const AoIntegralInput* ao_integral_input = nullptr;
   const ExactCtxPairMatrix* accepted_pair_products = nullptr;
+  const ExactCtxDenseMatrix* accepted_active_coefficients = nullptr;
   ExactCtxPairMatrix active_pair_gradient_matrix;
-  ExactCtxDenseMatrix accepted_dense_active_coefficients;
 };
 
 /**

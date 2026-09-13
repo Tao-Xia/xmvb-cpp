@@ -13,10 +13,10 @@ namespace xmvb::vb {
 /**
  * @brief Backpropagates a changing packed active-2e adjoint at a fixed point.
  *
- * The accepted cache already stores `K B(C)`.  Therefore an outer-response
- * adjoint can be pulled back as `(K B(C)) G` without traversing the AO-pair
- * integral graph again.  This is the transpose of the cached forward map and
- * remains fully matrix-free with respect to the orbital Hessian.
+ * When `K B(C)` is resident, an outer-response adjoint is pulled back without
+ * traversing the AO-pair graph again. Otherwise the same exact contraction is
+ * evaluated in bounded row tiles. Both paths remain matrix-free with respect
+ * to the orbital Hessian.
  */
 Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
     const std::vector<double>& packed_active_two_electron_gradient,
@@ -26,14 +26,13 @@ Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
  * @brief Precomputes accepted-point exact 2e HVP invariants.
  *
  * `accepted_dense_active_coefficients` is the accepted AO-by-active dense
- * active-orbital coefficient matrix. The returned cache borrows the forward
- * pair products from `accepted_active_space_two_electron_result`; that result
- * must outlive the cache.
+ * active-orbital coefficient matrix. The returned cache borrows it and any
+ * resident forward pair products; both owners must outlive the cache.
  */
 ExactPackedActiveTwoElectronAdjointCache
 build_exact_packed_active_two_electron_adjoint_cache(
     const std::vector<double>& packed_active_two_electron_gradient,
-    const Eigen::Ref<const Eigen::MatrixXd>& accepted_dense_active_coefficients,
+    const Eigen::MatrixXd& accepted_dense_active_coefficients,
     const AoIntegralInput& ao_integral_input,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& accepted_active_space_two_electron_result);
@@ -42,7 +41,7 @@ build_exact_packed_active_two_electron_adjoint_cache(
  * @brief Applies the exact fixed-adjoint 2e Hessian using one accepted-point cache.
  *
  * `dense_active_direction` uses the same AO-by-active dense matrix convention
- * as `ExactPackedActiveTwoElectronAdjointCache::accepted_dense_active_coefficients`.
+ * as `ExactPackedActiveTwoElectronAdjointCache::accepted_active_coefficients`.
  */
 Eigen::MatrixXd apply_exact_packed_active_two_electron_adjoint_hessian_vector(
     const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
@@ -77,7 +76,7 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
  */
 Eigen::MatrixXd apply_exact_packed_active_two_electron_adjoint_hessian_vector(
     const std::vector<double>& packed_active_two_electron_gradient,
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
+    const Eigen::MatrixXd& dense_active_coefficients,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
     const AoIntegralInput& ao_integral_input,
     int n_active_orbitals,

@@ -84,7 +84,6 @@ private:
   Eigen::MatrixXd accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_;
   Eigen::MatrixXd
       accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_;
-  Eigen::MatrixXd accepted_dense_active_coefficients_;
   Eigen::MatrixXd accepted_sso_gradient_symmetric_;
   Eigen::MatrixXd accepted_hho_gradient_symmetric_;
   Eigen::MatrixXd accepted_active_auxiliary_orbitals_times_hho_gradient_symmetric_;
