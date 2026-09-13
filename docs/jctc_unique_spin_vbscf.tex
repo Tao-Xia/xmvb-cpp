@@ -1,0 +1,693 @@
+% Compile with achemso, for example:
+%   pdflatex jctc_unique_spin_vbscf
+%   pdflatex jctc_unique_spin_vbscf
+%
+% This draft uses the historical-but-stable ACS `achemso` workflow for local
+% drafting. Update journal metadata / author block as needed before submission.
+
+\documentclass[journal=jctcce,manuscript=article]{achemso}
+
+\usepackage[version=3]{mhchem}
+\usepackage{amsmath,amssymb,amsfonts,mathtools,bm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{url}
+\usepackage{xcolor}
+\usepackage{siunitx}
+
+\DeclareMathOperator{\Tr}{Tr}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\rank}{rank}
+\DeclareMathOperator{\adj}{adj}
+\newcommand{\Frob}[2]{\left\langle #1, #2 \right\rangle_{\mathrm F}}
+\newcommand{\na}{N_{\alpha}}
+\newcommand{\nb}{N_{\beta}}
+\newcommand{\ndet}{N_{\mathrm{det}}}
+\newcommand{\nstr}{N_{\mathrm{str}}}
+\newcommand{\nstate}{N_{\mathrm{state}}}
+\newcommand{\npair}{N_{\mathrm{pair}}}
+\newcommand{\Cmat}{\mathbf{C}}
+\newcommand{\Sa}{\mathbf{S}^{\alpha}}
+\newcommand{\Sb}{\mathbf{S}^{\beta}}
+\newcommand{\Ha}{\mathbf{H}^{\alpha}}
+\newcommand{\Hb}{\mathbf{H}^{\beta}}
+\newcommand{\Honea}{\mathbf{H}^{1e,\alpha}}
+\newcommand{\Honeb}{\mathbf{H}^{1e,\beta}}
+\newcommand{\Ua}[1]{\mathbf{U}^{\alpha}_{#1}}
+\newcommand{\Ub}[1]{\widetilde{\mathbf{U}}^{\beta}_{#1}}
+\newcommand{\wstate}{w_n}
+\newcommand{\En}{E_n}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+
+\author{Tao Xia}
+\author{Wei Wu}
+\author{Chen Zhou}
+\email{TODO-corresponding-author@xmu.edu.cn}
+\affiliation{Department of Chemistry, Xiamen University, Xiamen 361005, Fujian, China}
+
+\title{An Exact Unique-Spin-String Reformulation of Determinant Algebra in Valence-Bond Self-Consistent Field Theory}
+
+\begin{abstract}
+Valence-bond self-consistent field (VBSCF) theory provides a chemically
+transparent description of electronic structure, but the practical evaluation
+of overlap, Hamiltonian, and analytic derivative terms is often limited by
+repeated summations over full determinant pairs. In typical VBSCF expansions,
+however, the determinant list has strong internal redundancy: many full
+determinants share the same $\alpha$-spin string, the same $\beta$-spin
+string, or both. In the conventional formulation this redundancy is not used at
+the outer algebraic level, and the working equations therefore retain an
+$O(\ndet^2)$ determinant-pair traversal. Here we present an exact
+unique-spin-string reformulation of VBSCF determinant algebra in which the
+fundamental objects are the sets of unique $\alpha$ and unique $\beta$ spin
+strings rather than the full determinant pairs themselves. Each VB structure is
+represented by a coefficient matrix on the unique-spin product space, and the
+structure-space overlap, one-electron Hamiltonian, same-spin Hamiltonian, and
+exact opposite-spin Coulomb term are assembled by matrix contractions on the
+compressed spaces. The same reorganization extends to analytic gradients: the
+selected-state adjoint is compressed directly to unique-spin matrices and exact
+packed-pair channels, which removes the full determinant-pair reverse sweep
+from the analytic derivative evaluation. The resulting exact formulation replaces
+the determinant-pair bottleneck by contractions governed by $\na$, $\nb$, and
+the packed active-pair dimension, while remaining numerically identical to the
+reference determinant-pair implementation. This work establishes an exact
+matrix-form route to substantially more efficient nonorthogonal VBSCF
+determinant algebra.
+\end{abstract}
+
+\keywords{valence-bond self-consistent field, nonorthogonal wave functions, determinant algebra, analytic gradients, exact integrals}
+
+\begin{document}
+
+\section{Introduction}
+Valence-bond self-consistent field (VBSCF) theory remains one of the most
+chemically interpretable \textit{ab initio} descriptions of electronic
+structure because the wave function is expanded in terms of localized,
+nonorthogonal valence-bond structures. In practical applications the structure
+coefficients and localized orbitals are optimized variationally, after which
+the wave function can be interpreted directly in terms of resonance,
+spin-coupling patterns, and bond rearrangements.
+
+The computational difficulty is equally familiar. Once the orbitals belonging
+to different structures are nonorthogonal, the structure-space overlap and
+Hamiltonian matrices are usually assembled through expansions over full Slater
+determinants. If the $I$th VB structure is written as
+\begin{equation}
+|\Phi_I\rangle = \sum_d t_{I,d} |D_d\rangle,
+\label{eq:structure-expansion}
+\end{equation}
+then the corresponding structure-space matrix element is
+\begin{equation}
+M_{IJ} = \sum_{d,e} t_{I,d} M_{de} t_{J,e},
+\label{eq:structure-from-determinants}
+\end{equation}
+where $M_{de}$ denotes the determinant-pair overlap or Hamiltonian kernel. In a
+straightforward implementation, Eq.~\eqref{eq:structure-from-determinants}
+implies an outer traversal over all full determinant pairs, and the same
+determinant-pair structure reappears in analytic derivative expressions. For
+large VB expansions this determinant-pair organization becomes the dominant
+algebraic bottleneck.
+
+The crucial observation underlying the present work is that the full
+determinant list is highly redundant at the spin-resolved level. A full
+determinant can be written as
+\begin{equation}
+D_p = \left( \alpha_{i(p)}, \beta_{j(p)} \right),
+\label{eq:full-det-factorization}
+\end{equation}
+where $\alpha_{i(p)}$ and $\beta_{j(p)}$ are the occupied $\alpha$- and
+$\beta$-spin strings. Many different full determinants share identical
+$\alpha$-spin strings, identical $\beta$-spin strings, or both. Conventional
+VBSCF determinant algebra nevertheless keeps the full determinant pair as the
+outer object and therefore revisits identical same-spin subproblems many times.
+
+In this article we show that the outer algebra itself can be reformulated
+exactly on the spaces of \emph{unique} $\alpha$-spin strings and \emph{unique}
+$\beta$-spin strings. Each structure is represented by a coefficient matrix on
+the unique-spin product space, and the overlap, one-electron Hamiltonian,
+same-spin Hamiltonian, and exact opposite-spin Coulomb coupling are assembled
+directly by matrix contractions on that compressed representation. The same
+idea extends to the analytic gradient, where the selected-state adjoint can be
+compressed to unique-spin matrices and exact packed-pair channels before the
+final backpropagation to orbital and integral derivatives.
+
+The present contribution is therefore an exact algorithmic reformulation rather
+than a local cache optimization. The unique-spin-string representation, the
+removal of the full determinant-pair outer traversal from the forward
+evaluation, and the corresponding matrix-form adjoint equations are all part
+of the method introduced here. In the following sections we derive the exact
+theory, analyze the resulting scaling, and summarize the numerical behavior of
+the implementation with exact active-space two-electron integrals.
+
+\section{Theory}
+
+\subsection{Full determinant formulation}
+We begin from the conventional determinant-level formulation. Let the full
+determinant expansion contain $\ndet$ determinants and let
+\begin{equation}
+D_p = \left( \alpha_{i(p)}, \beta_{j(p)} \right)
+\end{equation}
+denote the decomposition of determinant $p$ into its spin-resolved occupied
+strings. The exact determinant-pair overlap factorizes as
+\begin{equation}
+S_{pq} =
+S^{\alpha}_{i(p)i(q)} S^{\beta}_{j(p)j(q)},
+\label{eq:det-overlap-factor}
+\end{equation}
+where $S^{\alpha}$ and $S^{\beta}$ are ordered same-spin determinant overlap
+matrices. The one-electron and same-spin Hamiltonian contributions have the
+analogous separable form
+\begin{equation}
+H^{1e}_{pq} =
+H^{1e,\alpha}_{i(p)i(q)} S^{\beta}_{j(p)j(q)}
++
+S^{\alpha}_{i(p)i(q)} H^{1e,\beta}_{j(p)j(q)},
+\label{eq:det-h1-factor}
+\end{equation}
+and
+\begin{equation}
+H^{\mathrm{same}}_{pq} =
+H^{\alpha}_{i(p)i(q)} S^{\beta}_{j(p)j(q)}
++
+S^{\alpha}_{i(p)i(q)} H^{\beta}_{j(p)j(q)}.
+\label{eq:det-same-factor}
+\end{equation}
+
+The opposite-spin Coulomb coupling is the nontrivial term. In the standard
+determinant-pair formulation it can be written exactly in packed active-pair
+notation as
+\begin{equation}
+H^{\alpha\beta}_{pq}
+=
+\sum_{P=1}^{\npair}
+\sum_{Q=1}^{\npair}
+U^{\alpha}_{Q}\!\bigl(i(p),i(q)\bigr)
+\, G_{QP} \,
+U^{\beta}_{P}\!\bigl(j(p),j(q)\bigr),
+\label{eq:opposite-spin-standard}
+\end{equation}
+where $\npair = n_{\mathrm{act}}(n_{\mathrm{act}}+1)/2$ is the number of packed
+active orbital pairs, $G_{QP}$ is the exact active-space two-electron kernel in
+that packed representation, and $U^{\alpha}_{Q}$ and $U^{\beta}_{P}$ are the
+ordered same-spin first-order cofactor projections associated with the
+determinant pairs $(\alpha_{i(p)},\alpha_{i(q)})$ and
+$(\beta_{j(p)},\beta_{j(q)})$. Equation \eqref{eq:opposite-spin-standard} is
+still exact, but when inserted into Eq.~\eqref{eq:structure-from-determinants}
+it leaves the full determinant pair as the outer algebraic object.
+
+\subsection{Unique-spin spaces and structure coefficient matrices}
+Let $\na$ and $\nb$ denote the numbers of unique $\alpha$-spin and unique
+$\beta$-spin occupied strings present in the full determinant expansion. We
+define unique-spin index maps
+\begin{equation}
+p \mapsto a(p) \in \{1,\dots,\na\},
+\qquad
+p \mapsto b(p) \in \{1,\dots,\nb\},
+\label{eq:unique-spin-maps}
+\end{equation}
+that associate each full determinant with the corresponding unique-spin IDs.
+
+For each VB structure $I$, we then define a coefficient matrix
+\begin{equation}
+\Cmat_I \in \mathbb{R}^{\na \times \nb},
+\end{equation}
+with elements
+\begin{equation}
+\left( \Cmat_I \right)_{ab}
+=
+\sum_{d:\, a(d)=a,\; b(d)=b} t_{I,d}.
+\label{eq:structure-coefficient-matrix}
+\end{equation}
+Equation \eqref{eq:structure-coefficient-matrix} is simply a regrouping of the
+same determinant expansion coefficients that appear in
+Eq.~\eqref{eq:structure-expansion}. The only new ingredient is that all full
+determinants sharing the same unique-spin pair $(a,b)$ are summed into the same
+matrix element of $\Cmat_I$.
+
+This definition immediately replaces the determinant-indexed structure
+expansion by a matrix-indexed structure expansion. The crucial point is that
+all determinant kernels now depend only on the ordered unique-spin pair IDs,
+not on the original full determinant indices. As a result, the structure-space
+matrices can be assembled directly from $\{ \Cmat_I \}$ and the ordered
+unique-spin channels.
+
+\subsection{Matrix-form structure assembly}
+The overlap follows immediately from Eq.~\eqref{eq:det-overlap-factor}. After
+regrouping the determinant coefficients according to
+Eq.~\eqref{eq:structure-coefficient-matrix}, one obtains
+\begin{equation}
+S_{IJ}
+=
+\Frob{\Cmat_I}{\Sa \Cmat_J \Sb^{T}}.
+\label{eq:structure-overlap-matrix-form}
+\end{equation}
+The one-electron contribution is
+\begin{equation}
+H^{1e}_{IJ}
+=
+\Frob{\Cmat_I}{\Honea \Cmat_J \Sb^{T}}
++
+\Frob{\Cmat_I}{\Sa \Cmat_J \Honeb^{T}},
+\label{eq:structure-h1-matrix-form}
+\end{equation}
+and the same-spin Hamiltonian contribution is
+\begin{equation}
+H^{\mathrm{same}}_{IJ}
+=
+\Frob{\Cmat_I}{\Ha \Cmat_J \Sb^{T}}
++
+\Frob{\Cmat_I}{\Sa \Cmat_J \Hb^{T}}.
+\label{eq:structure-same-matrix-form}
+\end{equation}
+
+To treat the exact opposite-spin term, the same-spin first-order cofactor
+payloads are regrouped by packed active-pair channel. For each packed pair
+$P$, we define the ordered unique-spin matrices
+\begin{equation}
+\Ua{P} \in \mathbb{R}^{\na \times \na},
+\qquad
+\mathbf{U}^{\beta}_{P} \in \mathbb{R}^{\nb \times \nb},
+\label{eq:packed-pair-channels}
+\end{equation}
+with matrix elements
+\begin{equation}
+\left[\Ua{P}\right]_{aa'} = U^\alpha_P(a,a'),
+\qquad
+\left[\mathbf{U}^{\beta}_{P}\right]_{bb'} = U^\beta_P(b,b').
+\label{eq:packed-pair-channel-elements}
+\end{equation}
+The exact two-electron kernel is then applied at the packed-pair level,
+\begin{equation}
+\Ub{P} =
+\sum_{Q=1}^{\npair}
+G_{PQ}\, \mathbf{U}^{\beta}_{Q},
+\label{eq:beta-projected-channel}
+\end{equation}
+so that the opposite-spin structure contribution becomes
+\begin{equation}
+H^{\alpha\beta}_{IJ}
+=
+\sum_{P=1}^{\npair}
+\Frob{\Cmat_I}{\Ua{P}\, \Cmat_J\, \Ub{P}^{T}}.
+\label{eq:structure-opposite-spin-matrix-form}
+\end{equation}
+Equations \eqref{eq:packed-pair-channels}--\eqref{eq:structure-opposite-spin-matrix-form}
+show that the exact opposite-spin term is reorganized into a sum over packed
+channels acting on coefficient matrices over the unique-spin spaces, rather
+than into a sum over full determinant pairs.
+
+The total structure Hamiltonian matrix is therefore
+\begin{equation}
+H_{IJ}
+=
+H^{\mathrm{same}}_{IJ}
++
+H^{\alpha\beta}_{IJ}.
+\label{eq:structure-total-h}
+\end{equation}
+Equations \eqref{eq:structure-overlap-matrix-form}--\eqref{eq:structure-total-h}
+show that the exact structure-space algebra can be performed directly on the
+compressed unique-spin representation. No outer traversal over all full
+determinant pairs is required in the exact forward build.
+
+\subsection{Selected-state matrix-form adjoint}
+The same compression applies to analytic gradients. Let the state-averaged
+target be
+\begin{equation}
+E_{\mathrm{SA}} = \sum_{n=1}^{\nstate} \wstate \En,
+\label{eq:state-average-energy}
+\end{equation}
+where $\wstate$ are normalized state weights and $\En$ are the generalized
+eigenvalues. For each state, the determinant coefficients are gathered into a
+state-dependent matrix
+\begin{equation}
+\Cmat^{(n)} \in \mathbb{R}^{\na \times \nb},
+\end{equation}
+defined analogously to Eq.~\eqref{eq:structure-coefficient-matrix} but using
+the determinant coefficients of the selected state rather than the
+structure-expansion coefficients.
+
+Because the generalized eigenvalue derivative carries coefficients $\wstate$
+for Hamiltonian terms and $-\wstate \En$ for overlap terms, the same-spin and
+one-electron adjoints compress to unique-spin weight matrices
+\begin{equation}
+\mathbf{W}^{(H)}_{\alpha}
+=
+\sum_n \wstate \,
+\Cmat^{(n)} \Sb [\Cmat^{(n)}]^{T},
+\label{eq:alpha-H-weight}
+\end{equation}
+\begin{equation}
+\mathbf{W}^{(S)}_{\alpha}
+=
+\sum_n (-\wstate \En)\,
+\Cmat^{(n)} \Sb [\Cmat^{(n)}]^{T},
+\label{eq:alpha-S-weight}
+\end{equation}
+with the $\beta$-spin counterparts
+\begin{equation}
+\mathbf{W}^{(H)}_{\beta}
+=
+\sum_n \wstate \,
+[\Cmat^{(n)}]^{T} \Sa \Cmat^{(n)},
+\label{eq:beta-H-weight}
+\end{equation}
+\begin{equation}
+\mathbf{W}^{(S)}_{\beta}
+=
+\sum_n (-\wstate \En)\,
+[\Cmat^{(n)}]^{T} \Sa \Cmat^{(n)}.
+\label{eq:beta-S-weight}
+\end{equation}
+and analogous partner-transfer matrices are obtained by replacing $\Sa$ or
+$\Sb$ by the appropriate same-spin Hamiltonian blocks. The reverse
+accumulation to orbital-overlap, one-electron, and same-spin two-electron
+derivatives is therefore carried out over ordered unique-spin pairs rather than
+over full determinant pairs.
+
+The opposite-spin adjoint is similarly matrix-form. If
+$\mathbf{U}^{\alpha}_{P}$ and $\mathbf{U}^{\beta}_{Q}$ denote the packed-pair
+channel families regrouped from the same-spin caches, then the adjoint with
+respect to the packed active-space two-electron kernel can be written as
+\begin{equation}
+\frac{\partial E}{\partial G_{QP}}
+=
+\sum_n \wstate\,
+\Frob{
+\mathbf{U}^{\alpha}_{P}
+}{
+\Cmat^{(n)} \mathbf{U}^{\beta}_{Q} [\Cmat^{(n)}]^{T}
+}.
+\label{eq:opposite-spin-adjoint}
+\end{equation}
+The overlap adjoint on each spin sector follows from the same channel family
+after replacing first-order cofactor projections by inverse-overlap projected
+channels. Thus, the reverse sweep is reorganized on the same unique-spin
+objects that appear in the exact structure build.
+
+\subsection{Complexity and memory analysis}
+The original determinant-pair assembly retains an outer complexity skeleton
+of
+\begin{equation}
+O(\ndet^2),
+\label{eq:old-scaling}
+\end{equation}
+because the unreduced workflow is organized around full determinant pairs. In
+contrast, the present reformulation separates the exact workflow into three
+parts:
+\begin{enumerate}
+  \item construction of ordered unique same-spin channels,
+  \item matrix-form structure assembly or selected-state compression on the
+        $\na \times \nb$ coefficient matrices, and
+  \item final backpropagation over ordered unique-spin pairs.
+\end{enumerate}
+
+The ordered same-spin cache scales as
+\begin{equation}
+O(\na^2 + \nb^2),
+\label{eq:cache-scaling}
+\end{equation}
+whereas the structure-space matrix assembly is controlled by matrix products of
+the form $\mathbf{A}\Cmat_I\mathbf{B}^{T}$:
+\begin{equation}
+O\!\left(
+\nstr \left( \na^2 \nb + \na \nb^2 \right)
+\right),
+\label{eq:forward-scaling}
+\end{equation}
+plus the packed-pair channel sum for the opposite-spin contribution,
+\begin{equation}
+O\!\left(
+\nstr \npair \left( \na^2 \nb + \na \nb^2 \right)
+\right).
+\label{eq:forward-op-scaling}
+\end{equation}
+For the selected-state adjoint, the same matrix products appear with $\nstate$
+in place of $\nstr$:
+\begin{equation}
+O\!\left(
+\nstate \npair \left( \na^2 \nb + \na \nb^2 \right)
+\right),
+\label{eq:backward-op-scaling}
+\end{equation}
+followed by scatter operations over ordered unique-spin pairs. Thus, the
+forward and backward equations are no longer controlled by an explicit
+$O(\ndet^2)$ outer traversal.
+
+The memory consequences are also important. A naive scalar opposite-spin tensor
+defined directly on the full unique-spin pair grid would have size
+\begin{equation}
+O(\na^2 \nb^2),
+\label{eq:old-op-cache}
+\end{equation}
+which is unnecessary once the forward and backward equations consume the
+per-spin projected packed-pair channels directly. In the present
+implementation, the matrix-form algorithm stores the ordered same-spin
+pair caches and the projected packed-pair channel families, while the old
+scalar opposite-spin cache is optional and retained only for legacy pairwise
+diagnostics.
+
+\section{Implementation}
+The method was implemented in the \textsc{xmvb-cpp} VBSCF code as a new exact
+formulation for both the forward structure-space matrix construction and the
+analytic active-space adjoint. The implementation is organized around a
+unique-spin-string context that stores
+\begin{enumerate}
+  \item the unique-spin index maps from full determinants to unique $\alpha$-
+        and
+        $\beta$-spin strings,
+  \item ordered unique same-spin pair evaluations, and
+  \item exact packed-pair projections needed by the opposite-spin channels.
+\end{enumerate}
+
+The structure-space forward build proceeds as follows.
+\begin{enumerate}
+  \item The determinant expansion is compressed into one coefficient matrix
+        $\Cmat_I$ per structure.
+  \item The ordered same-spin caches are reorganized into dense overlap and
+        Hamiltonian matrices on the unique-spin spaces.
+  \item The opposite-spin first-order cofactor payload is regrouped by packed
+        active-pair channel.
+  \item The structure-space overlap and Hamiltonian matrices are assembled by
+        matrix products and Frobenius inner products, following
+        Eqs.~\eqref{eq:structure-overlap-matrix-form}--\eqref{eq:structure-total-h}.
+\end{enumerate}
+
+The analytic gradient follows an analogous sequence.
+\begin{enumerate}
+  \item The selected-state determinant coefficients are compressed into
+        state-specific matrices $\Cmat^{(n)}$.
+  \item The same-spin / one-electron and opposite-spin adjoints are evaluated
+        by matrix-form contractions on the unique-spin spaces.
+  \item The resulting weight matrices are backpropagated through the ordered
+        same-spin caches to obtain the overlap, one-electron, and active-space
+        two-electron gradients.
+\end{enumerate}
+
+This design preserves exactness while moving the determinant algebra to the
+relevant compressed spaces. The legacy pairwise build is still retained for
+diagnostic interfaces that explicitly request storage of each full
+determinant-pair evaluation. Thus, the new formulation augments rather than
+removes the reference path.
+
+\section{Computational Details}
+All calculations were carried out with the \textsc{xmvb-cpp} implementation of
+the present exact unique-spin VBSCF algorithm. Exact active-space two-electron
+integrals were generated from the \textsc{libcint} integral engine. The
+generalized eigenvalue problem for the structure-space overlap and Hamiltonian
+matrices was solved at each SCF step in the usual way. Approximate low-rank
+variants are left for future work.
+
+\todo{Insert exact hardware information, compiler version, BLAS/Eigen setup,
+and thread-count policy.}
+
+\todo{Insert basis sets, active spaces, and structure-selection details for the
+final benchmark set.}
+
+\section{Results and Discussion}
+
+\subsection{Algebraic verification}
+The first test of the reformulation is strict agreement with the reference full
+determinant-pair implementation. For a representative exact-integral benchmark,
+the matrix-form structure build reproduces the reference overlap, one-electron,
+and total Hamiltonian matrices to machine precision. In one representative
+benchmark, the determinant space contains $\ndet = 400$ full determinants but
+only $\na = 20$ unique
+$\alpha$-spin strings and $\nb = 20$ unique $\beta$-spin strings. In that
+case, the ordered same-spin cache requires only
+\begin{equation}
+\na^2 + \nb^2 = 20^2 + 20^2 = 800
+\end{equation}
+ordered same-spin evaluations, compared with
+\begin{equation}
+2 \times \frac{\ndet(\ndet+1)}{2} = 160{,}400
+\end{equation}
+same-spin determinant kernels in the unreduced full determinant-pair picture.
+
+\todo{Insert a concise table comparing matrix-form and reference structure
+matrices. Current internal checks show machine-precision agreement.}
+
+\subsection{Analytic gradient verification}
+The matrix-form adjoint was validated by finite-difference comparisons for both
+the active-space two-electron and orbital gradients. In the current exact-mode
+tests on \ce{F2}, the same-spin and opposite-spin matrix-form adjoints recover
+the numerical derivatives with errors on the order of
+\num{1e-8}--\num{1e-9}, confirming that the compressed reverse-mode algebra is
+exact in the regime studied here.
+
+\todo{Replace this paragraph by a final table of finite-difference checks for
+all benchmark systems in the exact-integral regime.}
+
+\subsection{Benchmark behavior}
+The most important performance result is that the same-spin determinant algebra
+is no longer the leading cost of a VBSCF step. In representative exact
+calculations, same-spin cache construction, structure-space matrix build, and
+the matrix-form adjoint become small relative to the remaining AO- and
+active-space integral kernels. For the $\ndet=400$, $\na=\nb=20$ example
+above, the exact structure build is already subdominant to the
+construction of active-space two-electron intermediates and to AO-level
+backpropagation.
+
+\begin{table}[t]
+  \caption{Suggested benchmark summary table for the final manuscript.
+  Replace the placeholder entries by the final measured values for the exact
+  implementation.}
+  \label{tab:benchmark-summary}
+  \begin{tabular}{lccccc}
+    \toprule
+    System & $\ndet$ & $\na$ & $\nb$ & Stage & Time (s) \\
+    \midrule
+    \todo{Case A} & \todo{...} & \todo{...} & \todo{...} & Structure build & \todo{...} \\
+    \todo{Case A} & \todo{...} & \todo{...} & \todo{...} & Adjoint & \todo{...} \\
+    \todo{Case B} & \todo{...} & \todo{...} & \todo{...} & Structure build & \todo{...} \\
+    \todo{Case B} & \todo{...} & \todo{...} & \todo{...} & Adjoint & \todo{...} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\rule{0pt}{2.0in}\rule{0.9\linewidth}{0pt}}
+  \caption{Suggested schematic figure. A useful final figure would show the
+  mapping from full determinants $D_d$ to the unique-spin index maps $a(d)$ and
+  $b(d)$,
+  the resulting structure coefficient matrices $\Cmat_I$, and the matrix-form
+  contractions used for the overlap, same-spin, and opposite-spin channels.}
+  \label{fig:scheme}
+\end{figure}
+
+\begin{figure}[t]
+  \centering
+  \fbox{\rule{0pt}{2.0in}\rule{0.9\linewidth}{0pt}}
+  \caption{Suggested scaling plot. Compare the wall time of the reference
+  determinant-pair build and the present matrix-form build as a function of
+  $\ndet$ and/or the compression ratios
+  $\ndet/\na$ and $\ndet/\nb$.}
+  \label{fig:scaling}
+\end{figure}
+
+\subsection{Relation to broader nonorthogonal methods}
+The present reformulation is complementary to the broader development of
+nonorthogonal electronic structure theory. Generalized nonorthogonal matrix
+element formalisms seek compact ways to couple arbitrary nonorthogonal
+determinants and excitations. Our emphasis here is different: rather than
+generalizing the determinant-pair kernel itself, we exploit the special product
+structure of the VBSCF determinant expansion to reorganize the many repeated determinant-pair
+contractions into matrix algebra on the unique-spin spaces. The resulting
+algorithm is therefore exact for the VBSCF determinant algebra considered here,
+yet conceptually compatible with future extensions that combine unique-spin
+compression with more general nonorthogonal matrix-element technology.
+
+\section{Discussion}
+From a methodological perspective, the most important feature of the present
+approach is that it is not a local implementation tweak layered on top of the
+original determinant-pair algorithm. The unique-spin-string compression, the
+matrix-form structure assembly, and the matrix-form backward equations are new
+components introduced together here, so that the \emph{outer algebraic object}
+is no longer the full determinant pair. This change of algebraic organization
+is the essential source of the removal of the $O(\ndet^2)$
+determinant-pair bottleneck.
+
+The implementation also clarifies where further work is most valuable. Once the
+same-spin and opposite-spin determinant algebra is compressed to the unique-spin
+spaces, the dominant cost in many exact calculations shifts to the construction
+of active-space two-electron intermediates and to AO-level backpropagation.
+Future efforts can therefore focus on these remaining kernels without
+revisiting the determinant-algebra bottleneck.
+
+Two natural extensions deserve special mention. First, sparse or block-sparse
+representations of the structure coefficient matrices $\Cmat_I$ may offer
+further speedups when the determinant expansion occupies only a small subset of
+the unique-spin product grid. Second, the present exact framework provides a
+natural starting point for future low-rank treatments of the opposite-spin
+kernel, including factorized or Cholesky-compressed channel representations. These
+approximations are not part of the present work; here the emphasis is the exact
+unique-spin reformulation itself. Third, the same matrix-form machinery should
+also be useful for selected-determinant, adaptive-structure, and related
+NOCI-style extensions in which the determinant algebra remains nonorthogonal
+but exhibits strong internal shared-spin structure.
+
+\section{Conclusions}
+We have presented an exact unique-spin reformulation of determinant algebra in
+VBSCF. The key step is to replace the full determinant-pair outer loop by a
+matrix representation on the spaces of unique $\alpha$- and $\beta$-spin
+strings. Each structure and selected state is represented by a coefficient
+matrix on the unique-spin product space, and the structure-space overlap,
+one-electron Hamiltonian, same-spin Hamiltonian, exact opposite-spin Coulomb
+term, and their analytic adjoints are assembled by matrix contractions on that
+compressed representation.
+
+This reformulation removes the determinant-pair bottleneck from the forward and
+backward evaluations while remaining exact with respect to the reference
+active-space integral formulation. Numerical tests confirm machine-precision
+agreement with the reference determinant-pair build and finite-difference
+agreement for the analytic gradients. In practical applications, the
+same-spin/opposite-spin determinant algebra ceases to be the leading cost of a
+VBSCF step, exposing the remaining AO- and active-space integral kernels as the
+next targets for optimization.
+
+More broadly, the present work demonstrates that nonorthogonal VBSCF
+determinant algebra admits an exact matrix-form organization that is much
+closer to the true shared-spin structure of the method than the traditional full
+determinant-pair formulation. We expect this viewpoint to be useful not only
+for high-performance VBSCF implementations but also for future developments in
+nonorthogonal multireference and NOCI-style electronic structure methods. In
+future work, it should also provide a clean exact foundation for low-rank
+compression strategies in the opposite-spin sector.
+
+\section*{Supporting Information}
+\begin{itemize}
+  \item Additional derivations for the opposite-spin packed-pair channels.
+  \item Detailed finite-difference validation tables.
+  \item Additional timing decompositions and scaling plots.
+  \item Input files and benchmark settings for the reported test cases.
+\end{itemize}
+
+\section*{Author Information}
+\subsection*{Corresponding Author}
+\begin{itemize}
+  \item \todo{Name, e-mail, ORCID.}
+\end{itemize}
+
+\subsection*{Author Contributions}
+\todo{Write the final author-contribution statement.}
+
+\subsection*{Notes}
+The authors declare no competing financial interest.
+
+\section*{Acknowledgement}
+\todo{Insert funding, computing resources, and project acknowledgements.}
+
+\begin{tocentry}
+\centering
+\fbox{\rule{0pt}{1.6in}\rule{0.9\linewidth}{0pt}}
+
+\vspace{0.5em}
+\small
+Unique-spin coefficient matrices reorganize the exact VBSCF determinant algebra
+from full determinant pairs to matrix contractions on the spaces of unique
+$\alpha$ and $\beta$ spin strings.
+\end{tocentry}
+
+\end{document}

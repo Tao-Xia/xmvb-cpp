@@ -8,10 +8,10 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/orbital/active_space_one_electron_builder.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/ao_effective_one_electron_builder.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/integrals/active/one_electron/builder.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/integrals/ao/one_electron/builder.hpp"
 
 namespace {
 
@@ -22,16 +22,11 @@ struct Options {
   std::string input_path;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Exact;
-  xmvb::vb::AoIntegralSource ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-  xmvb::vb::OrbitalGuessSource orbital_guess_source =
-      xmvb::vb::OrbitalGuessSource::Cpp;
 };
 
 void print_usage() {
   std::cerr << "usage: check_exact_ao_h1e_builder <input.xmi>"
-               " [--standard-two-electron-mode exact|auto]"
-               " [--ao-integral-source auto|libcint_cpp|runtime_hcore]"
-               " [--orbital-guess-source cpp]\n";
+               " [--standard-two-electron-mode exact|auto]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -58,67 +53,32 @@ Options parse_arguments(int argc, char** argv) {
       }
       continue;
     }
-    if (name == "--ao-integral-source") {
-      if (value == "auto") {
-        options.ao_integral_source = xmvb::vb::AoIntegralSource::Auto;
-      } else if (value == "libcint_cpp") {
-        options.ao_integral_source =
-            xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
-      } else if (value == "runtime_hcore") {
-        options.ao_integral_source =
-            xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-      } else {
-        throw std::invalid_argument(
-            "invalid --ao-integral-source value: " + value);
-      }
-      continue;
-    }
-    if (name == "--orbital-guess-source") {
-      if (value == "cpp") {
-        options.orbital_guess_source = xmvb::vb::OrbitalGuessSource::Cpp;
-      } else {
-        throw std::invalid_argument(
-            "invalid --orbital-guess-source value: " + value);
-      }
-      continue;
-    }
     throw std::invalid_argument("unknown argument: " + name);
   }
   return options;
 }
 
 double max_abs_difference(
-    const std::vector<double>& left,
-    const std::vector<double>& right) {
-  if (left.size() != right.size()) {
-    throw std::invalid_argument("vector size mismatch");
+    const Eigen::Ref<const Matrix>& left,
+    const Eigen::Ref<const Matrix>& right) {
+  if (left.rows() != right.rows() || left.cols() != right.cols()) {
+    throw std::invalid_argument("matrix shape mismatch");
   }
-  double max_abs_diff = 0.0;
-  for (std::size_t index = 0; index < left.size(); ++index) {
-    max_abs_diff = std::max(max_abs_diff, std::abs(left[index] - right[index]));
-  }
-  return max_abs_diff;
+  return (left - right).cwiseAbs().maxCoeff();
 }
 
 double compute_one_electron_reference_energy(
     const Eigen::Ref<const Matrix>& inactive_density,
-    const std::vector<double>& ao_effective_h1e,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Matrix>& ao_effective_h1e,
+    const Eigen::Ref<const Matrix>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
   if (inactive_density.rows() != n_basis_functions ||
       inactive_density.cols() != n_basis_functions) {
     throw std::invalid_argument("inactive density matrix shape mismatch");
   }
-  const Eigen::Map<const Matrix> effective_h1e(
-      ao_effective_h1e.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const Eigen::Map<const Matrix> core_hamiltonian(
-      ao_core_hamiltonian_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
   return (inactive_density.array() *
-          (effective_h1e.array() + core_hamiltonian.array())).sum();
+          (ao_effective_h1e.array() +
+           ao_core_hamiltonian_matrix.array())).sum();
 }
 
 xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron(
@@ -190,14 +150,10 @@ xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron
   }
 
   xmvb::vb::AoEffectiveOneElectronResult result;
-  result.ao_coulomb_exchange_matrix.assign(
-      g11.data(),
-      g11.data() + g11.size());
+  result.ao_coulomb_exchange_matrix = g11;
   Matrix ao_effective_h1e = core_hamiltonian;
   ao_effective_h1e.noalias() += g11;
-  result.ao_effective_h1e.assign(
-      ao_effective_h1e.data(),
-      ao_effective_h1e.data() + ao_effective_h1e.size());
+  result.ao_effective_h1e = std::move(ao_effective_h1e);
   return result;
 }
 
@@ -206,12 +162,10 @@ xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
-    load_options.ao_integral_source = options.ao_integral_source;
-    load_options.orbital_guess_source = options.orbital_guess_source;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;
@@ -264,12 +218,6 @@ int main(int argc, char** argv) {
             n_basis_functions);
 
     std::cout << std::setprecision(15);
-    std::cout << "ao_integral_source = "
-              << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)
-              << '\n';
-    std::cout << "orbital_guess_source = "
-              << xmvb::vb::orbital_guess_source_name(load_result.orbital_guess_source)
-              << '\n';
     std::cout << "standard_two_electron_mode = "
               << xmvb::vb::standard_two_electron_mode_name(
                      load_result.standard_two_electron_mode)

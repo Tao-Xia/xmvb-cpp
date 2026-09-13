@@ -15,10 +15,11 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/legacy_structure_overlap.hpp"
-#include "vb/matrices/union_graph_rank_predictor.hpp"
-#include "vb/matrices/union_graph_screening.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/core/storage/eigen.hpp"
+#include "vbscf/structures/reference/overlap.hpp"
+#include "vbscf/structures/selection/union_graph/rank_predictor.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
 
 namespace {
 
@@ -68,7 +69,7 @@ struct SignatureSummary {
 
 struct PerStructureCache {
   std::vector<xmvb::vb::OrbitalPair> active_pairs;
-  std::vector<xmvb::vb::LegacyStructureDeterminantTerm> determinant_terms_global;
+  std::vector<xmvb::vb::RawStructureDeterminantTerm> determinant_terms_global;
 };
 
 void print_usage() {
@@ -311,10 +312,11 @@ int main(int argc, char** argv) {
       predictor_options.max_predicted_rank = options.max_rank_cap;
     }
     const auto started_at = std::chrono::steady_clock::now();
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
-    const auto& active_overlap_storage =
-        load_result.input.orbital_preparation_input.ao_overlap_matrix;
+    const auto active_overlap_storage =
+        xmvb::vb::flatten_matrix_column_major(
+            load_result.input.orbital_preparation_input.ao_overlap_matrix);
     const int n_active_orbitals =
         load_result.input.orbital_preparation_input.n_active_orbitals;
 
@@ -332,7 +334,7 @@ int main(int argc, char** argv) {
       cache.active_pairs =
           xmvb::vb::extract_active_pairs(raw_structure_data, structure_index);
       cache.determinant_terms_global =
-          xmvb::vb::enumerate_legacy_determinant_terms(cache.active_pairs);
+          xmvb::vb::enumerate_raw_determinant_terms(cache.active_pairs);
     }
 
     const auto pair_list = build_pair_list(
@@ -375,11 +377,11 @@ int main(int argc, char** argv) {
       const auto right_pairs_local =
           xmvb::vb::remap_pairs_to_support(right_cache.active_pairs, support_index);
       const auto left_terms_local =
-          xmvb::vb::remap_legacy_determinant_terms(
+          xmvb::vb::remap_raw_determinant_terms(
               left_cache.determinant_terms_global,
               support_index);
       const auto right_terms_local =
-          xmvb::vb::remap_legacy_determinant_terms(
+          xmvb::vb::remap_raw_determinant_terms(
               right_cache.determinant_terms_global,
               support_index);
 
@@ -411,7 +413,7 @@ int main(int argc, char** argv) {
           screening_summary,
           predictor_options);
 
-      const double exact_overlap = xmvb::vb::legacy_structure_overlap(
+      const double exact_overlap = xmvb::vb::raw_structure_overlap(
           left_terms_local,
           right_terms_local,
           support_overlap,
@@ -432,7 +434,7 @@ int main(int argc, char** argv) {
             rank_cap);
         const auto approximate_support_overlap =
             block_diagonal_overlap + truncated_offblock;
-        const double approximate_overlap = xmvb::vb::legacy_structure_overlap(
+        const double approximate_overlap = xmvb::vb::raw_structure_overlap(
             left_terms_local,
             right_terms_local,
             approximate_support_overlap,

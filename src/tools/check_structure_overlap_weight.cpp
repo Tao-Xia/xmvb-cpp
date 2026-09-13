@@ -7,23 +7,20 @@
 #include <utility>
 #include <vector>
 
-#include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "core/eigensolver.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 
 namespace {
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
   int count = 8;
   double step = 1.0e-6;
 };
 
 void print_usage() {
   std::cerr << "usage: check_structure_overlap_weight <input.xmi> "
-               "[--algorithm original] "
                "[--count N] [--step h]\n";
 }
 
@@ -38,14 +35,6 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
-    if (argument_name == "--algorithm") {
-      if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
-      } else {
-        throw std::invalid_argument("invalid algorithm: " + argument_value);
-      }
-      continue;
-    }
     if (argument_name == "--count") {
       options.count = std::stoi(argument_value);
       continue;
@@ -88,7 +77,7 @@ double evaluate_ground_state_energy(
     const std::vector<double>& overlap_matrix,
     int n_structures) {
   xmvb::core::GeneralizedEigensolver eigensolver;
-  return eigensolver.solve(hamiltonian_matrix, overlap_matrix, n_structures).eigenvalues.front();
+  return eigensolver.solve_dense(hamiltonian_matrix, overlap_matrix, n_structures).eigenvalues.front();
 }
 
 }  // namespace
@@ -96,8 +85,8 @@ double evaluate_ground_state_energy(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
-    xmvb::vb::CppActiveSpaceGradientEvaluator evaluator(options.algorithm);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
+    xmvb::vb::ActiveSpaceGradientEvaluator evaluator;
     const auto result = evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const int n_structures = result.scf_result.n_structures;
 
@@ -126,7 +115,6 @@ int main(int argc, char** argv) {
     const int n_to_report =
         std::min(options.count, static_cast<int>(ranked_entries.size()));
     std::cout << std::setprecision(12);
-    std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
     std::cout << "initial_electronic_energy = " << result.scf_result.electronic_energy << '\n';
     std::cout << "finite_difference_step = " << options.step << '\n';
     std::cout << "reported_entries = " << n_to_report << '\n';

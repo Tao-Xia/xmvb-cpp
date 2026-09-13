@@ -6,16 +6,15 @@
 
 #include <Eigen/Core>
 
-#include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/cpp_vb_input_ri_cache.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/orbital/active_space_one_electron_builder.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/active_space_two_electron_builder.hpp"
-#include "vb/orbital/ao_effective_one_electron_builder.hpp"
-#include "vb/orbital/ri_active_space_two_electron_builder.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "core/eigensolver.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
+#include "vbscf/integrals/active/one_electron/builder.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/builder.hpp"
+#include "vbscf/integrals/ao/one_electron/builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
 
 namespace {
 
@@ -35,12 +34,11 @@ struct EnergyBreakdown {
 };
 
 double evaluate_active_eigenvalue(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
-    const std::vector<double>& active_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_h1e,
     const std::vector<double>& packed_active_eri) {
-  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
-      xmvb::vb::VBSCFAlgorithm::Original);
+  xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
   const auto structure_matrices = structure_builder.build(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
@@ -52,7 +50,7 @@ double evaluate_active_eigenvalue(
       input.structure_data.n_structures);
 
   xmvb::core::GeneralizedEigensolver generalized_eigensolver;
-  const auto eigen_result = generalized_eigensolver.solve(
+  const auto eigen_result = generalized_eigensolver.solve_dense(
       structure_matrices.hamiltonian_matrix,
       structure_matrices.overlap_matrix,
       input.structure_data.n_structures);
@@ -67,10 +65,14 @@ double compute_inf_norm(const std::vector<double>& values) {
   return inf_norm;
 }
 
+double compute_inf_norm(const Eigen::Ref<const Eigen::MatrixXd>& values) {
+  return values.cwiseAbs().maxCoeff();
+}
+
 double compute_one_electron_reference_energy(
-    const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& ao_effective_h1e,
-    const std::vector<double>& ao_core_hamiltonian_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_core_hamiltonian_matrix,
     int n_basis_functions) {
   double one_electron_reference_energy = 0.0;
   for (int column = 0; column < n_basis_functions; ++column) {
@@ -78,16 +80,17 @@ double compute_one_electron_reference_energy(
       const std::size_t index =
           column * n_basis_functions + row;
       one_electron_reference_energy +=
-          inactive_density_matrix[index] *
-          (ao_effective_h1e[index] + ao_core_hamiltonian_matrix[index]);
+          inactive_density_matrix.data()[index] *
+          (ao_effective_h1e.data()[index] +
+           ao_core_hamiltonian_matrix.data()[index]);
     }
   }
   return one_electron_reference_energy;
 }
 
 void accumulate_g11_statistics(
-    const std::vector<double>& inactive_density_matrix,
-    const std::vector<double>& g11_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& g11_matrix,
     int n_basis_functions,
     EnergyBreakdown* breakdown) {
   if (breakdown == nullptr) {
@@ -98,22 +101,26 @@ void accumulate_g11_statistics(
       const std::size_t index =
           column * n_basis_functions + row;
       const double contribution =
-          inactive_density_matrix[index] * g11_matrix[index];
+          inactive_density_matrix.data()[index] * g11_matrix.data()[index];
       if (row == column) {
         breakdown->g11_diag_energy += contribution;
         breakdown->g11_diag_inf_norm =
-            std::max(breakdown->g11_diag_inf_norm, std::abs(g11_matrix[index]));
+            std::max(
+                breakdown->g11_diag_inf_norm,
+                std::abs(g11_matrix.data()[index]));
       } else {
         breakdown->g11_offdiag_energy += contribution;
         breakdown->g11_offdiag_inf_norm =
-            std::max(breakdown->g11_offdiag_inf_norm, std::abs(g11_matrix[index]));
+            std::max(
+                breakdown->g11_offdiag_inf_norm,
+                std::abs(g11_matrix.data()[index]));
       }
     }
   }
 }
 
 EnergyBreakdown build_exact_breakdown(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
     double nuclear_repulsion_energy) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
@@ -169,7 +176,7 @@ EnergyBreakdown build_exact_breakdown(
 }
 
 EnergyBreakdown build_ri_breakdown(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
     double nuclear_repulsion_energy) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
@@ -178,7 +185,7 @@ EnergyBreakdown build_ri_breakdown(
       (input.orbital_preparation_input.n_total_electrons -
        input.orbital_preparation_input.n_active_electrons) / 2;
 
-  const auto& ri_cache = xmvb::vb::ensure_cpp_vb_input_ri_cache(input);
+  const auto& ri_cache = xmvb::vb::ensure_vbscf_input_ri_cache(input);
 
   xmvb::vb::AoEffectiveOneElectronBuilder ao_builder;
   xmvb::vb::AoEffectiveOneElectronResult ao_result;
@@ -273,15 +280,11 @@ int main(int argc, char** argv) {
           "usage: compare_exact_ri_energy_decomposition <input.xmi>");
     }
 
-    xmvb::vb::CppVbInputLoadOptions load_options;
-    load_options.ao_integral_source =
-        xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
-    load_options.orbital_guess_source =
-        xmvb::vb::OrbitalGuessSource::Cpp;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode =
-        xmvb::vb::StandardTwoElectronMode::Auto;
+        xmvb::vb::StandardTwoElectronMode::Exact;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(argv[1], load_options);
+        xmvb::vb::load_vbscf_input_with_timings(argv[1], load_options);
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;
@@ -310,7 +313,7 @@ int main(int argc, char** argv) {
     const auto ri_ao_result = ao_builder.build(
         orbital_result.inactive_density_matrix,
         input.ao_integral_input.ao_core_hamiltonian_matrix,
-        xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+        xmvb::vb::ensure_vbscf_input_ri_cache(input),
         n_basis_functions);
     xmvb::vb::ActiveSpaceOneElectronBuilder active_h1e_builder;
     const auto exact_active_h1e = active_h1e_builder.build(
@@ -332,7 +335,7 @@ int main(int argc, char** argv) {
         n_active_orbitals);
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_eri_builder;
     const auto ri_eri = ri_eri_builder.build(
-        xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+        xmvb::vb::ensure_vbscf_input_ri_cache(input),
         orbital_result,
         n_basis_functions,
         n_active_orbitals,

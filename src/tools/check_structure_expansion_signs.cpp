@@ -8,11 +8,11 @@
 #include <utility>
 #include <vector>
 
-#include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/vb_model_flags.hpp"
+#include "core/eigensolver.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
+#include "vbscf/integrals/active/preparation/space.hpp"
+#include "vbscf/core/configuration/flags.hpp"
 
 namespace {
 
@@ -406,10 +406,10 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
 
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;
     xmvb::vb::AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;
@@ -425,8 +425,7 @@ int main(int argc, char** argv) {
             .prepared_active_space;
 
     xmvb::core::GeneralizedEigensolver generalized_eigensolver;
-    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(
-        xmvb::vb::VBSCFAlgorithm::Original);
+    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
 
     std::cout << std::setprecision(12);
     std::cout << "input_path = " << options.input_path << '\n';
@@ -462,7 +461,7 @@ int main(int argc, char** argv) {
           load_result.input.orbital_preparation_input.n_active_orbitals,
           prepared_active_space.active_space_two_electron_result,
           structure_data.n_structures);
-      const auto eigen_result = generalized_eigensolver.solve(
+      const auto eigen_result = generalized_eigensolver.solve_dense(
           structure_matrices.hamiltonian_matrix,
           structure_matrices.overlap_matrix,
           structure_data.n_structures);

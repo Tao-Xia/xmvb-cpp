@@ -15,10 +15,11 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/legacy_structure_overlap.hpp"
-#include "vb/matrices/union_graph_screening.hpp"
-#include "vb/scf/cpp_vb_scf_optimizer.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/structures/reference/overlap.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/optimization/driver/optimizer.hpp"
 
 namespace {
 
@@ -358,26 +359,27 @@ void write_csv(
 
 ActiveOverlapSelectionResult select_active_overlap_matrix(
     const Options& options,
-    const xmvb::vb::CppVbInputLoadResult& load_result) {
+    const xmvb::vb::VbScfInputLoadResult& load_result) {
   ActiveOverlapSelectionResult result;
   if (options.active_overlap_source == ActiveOverlapSource::Input) {
-    result.active_overlap_matrix =
-        load_result.input.orbital_preparation_input.ao_overlap_matrix;
+    result.active_overlap_matrix = xmvb::vb::ActiveSpaceOrbitalPreparer{}
+        .prepare(load_result.input.orbital_preparation_input)
+        .active_orbital_overlap_matrix;
     return result;
   }
 
   // The structure-pair analysis needs the final active-space metric SSO in the
   // optimized orbital basis. `active_overlap_matrix` stores that M x M spatial
   // overlap in column-major order, where M is the number of active orbitals.
-  xmvb::vb::CppVbScfOptimizerOptions optimizer_options;
-  optimizer_options.backend = xmvb::vb::CppVbScfOptimizerBackend::Lbfgspp;
+  xmvb::vb::VbScfOptimizerOptions optimizer_options;
+  optimizer_options.backend = xmvb::vb::VbScfOptimizerBackend::Lbfgspp;
   optimizer_options.max_iterations = options.optimizer_max_iterations;
   optimizer_options.gradient_tolerance = options.optimizer_gradient_tolerance;
   optimizer_options.energy_tolerance = options.optimizer_energy_tolerance;
   optimizer_options.verbose = false;
   optimizer_options.retain_accepted_iteration_trace = true;
 
-  xmvb::vb::CppVbScfOptimizer optimizer(optimizer_options);
+  xmvb::vb::VbScfOptimizer optimizer(optimizer_options);
   const auto optimization_result = optimizer.optimize(
       load_result.input,
       load_result.nuclear_repulsion_energy);
@@ -410,7 +412,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     const auto started_at = std::chrono::steady_clock::now();
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
     const auto overlap_selection = select_active_overlap_matrix(options, load_result);
     const auto& active_overlap_storage = overlap_selection.active_overlap_matrix;
@@ -436,7 +438,7 @@ int main(int argc, char** argv) {
       // explicit term count that the determinant-based overlap/Hamiltonian path
       // would enumerate before any pairwise combination across two structures.
       cache.determinant_term_count = static_cast<int>(
-          xmvb::vb::enumerate_legacy_determinant_terms(cache.active_pairs).size());
+          xmvb::vb::enumerate_raw_determinant_terms(cache.active_pairs).size());
       ++determinant_term_count_histogram[cache.determinant_term_count];
     }
 

@@ -11,13 +11,13 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/prepared_active_space_context.hpp"
-#include "vb/matrices/same_spin_pair_cache.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
-#include "vb/orbital/active_space_two_electron_utils.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
+#include "vbscf/integrals/active/preparation/space.hpp"
+#include "vbscf/determinants/pairs/same_spin_cache.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace {
 
@@ -2409,11 +2409,11 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
 
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_start = std::chrono::high_resolution_clock::now();
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;
     xmvb::vb::AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;

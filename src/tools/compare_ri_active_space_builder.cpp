@@ -5,11 +5,11 @@
 #include <stdexcept>
 #include <string>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "runtime/libcint_ri_integral_provider.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/active_space_two_electron_builder.hpp"
-#include "vb/orbital/ri_active_space_two_electron_builder.hpp"
+#include "input/loading/loader.hpp"
+#include "libcint/ri_provider.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
 
 namespace {
 
@@ -67,7 +67,7 @@ Options parse_arguments(int argc, char** argv) {
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;

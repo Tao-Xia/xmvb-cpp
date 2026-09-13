@@ -13,20 +13,21 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/orbital/active_space_matrix_backpropagator.hpp"
-#include "vb/orbital/active_space_orbital_backpropagator.hpp"
-#include "vb/orbital/active_space_two_electron_backpropagator.hpp"
-#include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
-#include "vb/orbital/nonredundant_optimizer_input_adapter.hpp"
-#include "vb/orbital/nonredundant_orbital_space.hpp"
-#include "vb/orbital/sparse_orbital_parameter_view.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
-#include "vb/scf/cpp_orbital_gradient_evaluator.hpp"
-#include "vb/scf/exact_orbital_second_order_operator.hpp"
-#include "vb/scf/opposite_spin_matrix_backward.hpp"
-#include "vb/scf/same_spin_matrix_backward.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/integrals/active/matrix/backpropagator.hpp"
+#include "vbscf/orbitals/pullback/operator.hpp"
+#include "vbscf/integrals/active/two_electron/response/backpropagator.hpp"
+#include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
+#include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
+#include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
+#include "vbscf/derivatives/hessian/context/accepted_point.hpp"
+#include "vbscf/derivatives/hessian/exact/operator.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace {
 
@@ -37,46 +38,20 @@ struct Options {
   std::string input_path;
   std::string orbital_value_table_bin_path;
   double step = 1.0e-3;
+  double max_relative_error = std::numeric_limits<double>::infinity();
   bool has_explicit_step = false;
   std::string probe = "full";
-  bool nonredundant_adapt = false;
-  xmvb::vb::AoIntegralSource ao_integral_source =
-      xmvb::vb::AoIntegralSource::Auto;
 };
 
-constexpr int kLegacyOrbitalTypeHao = 1;
-constexpr int kLegacyOrbitalTypeBdo = 2;
-constexpr int kLegacyOrbitalTypeOeo = 3;
+constexpr int kOrbitalTypeHao = 1;
+constexpr int kOrbitalTypeBdo = 2;
+constexpr int kOrbitalTypeOeo = 3;
 
 void print_usage() {
   std::cerr
       << "usage: check_exact_ctx_hvp <input.xmi> [--step h] [--probe full|fixed] "
       << "[--orbital-value-table-bin <path>] "
-      << "[--ao-integral-source auto|libcint_cpp|runtime_hcore] "
-      << "[--nonredundant-adapt true|false]\n";
-}
-
-bool parse_bool_argument(const std::string& value) {
-  if (value == "true" || value == "1") {
-    return true;
-  }
-  if (value == "false" || value == "0") {
-    return false;
-  }
-  throw std::invalid_argument("invalid boolean value: " + value);
-}
-
-xmvb::vb::AoIntegralSource parse_ao_integral_source(const std::string& value) {
-  if (value == "auto") {
-    return xmvb::vb::AoIntegralSource::Auto;
-  }
-  if (value == "libcint_cpp") {
-    return xmvb::vb::AoIntegralSource::LibcintMaterializedCpp;
-  }
-  if (value == "runtime_hcore") {
-    return xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
-  }
-  throw std::invalid_argument("invalid AO integral source: " + value);
+      << "[--max-rel-error tolerance]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -95,6 +70,10 @@ Options parse_arguments(int argc, char** argv) {
       options.has_explicit_step = true;
       continue;
     }
+    if (name == "--max-rel-error") {
+      options.max_relative_error = std::stod(value);
+      continue;
+    }
     if (name == "--orbital-value-table-bin") {
       options.orbital_value_table_bin_path = value;
       continue;
@@ -103,18 +82,13 @@ Options parse_arguments(int argc, char** argv) {
       options.probe = value;
       continue;
     }
-    if (name == "--ao-integral-source") {
-      options.ao_integral_source = parse_ao_integral_source(value);
-      continue;
-    }
-    if (name == "--nonredundant-adapt") {
-      options.nonredundant_adapt = parse_bool_argument(value);
-      continue;
-    }
     throw std::invalid_argument("unknown argument: " + name);
   }
   if (!(options.step > 0.0)) {
     throw std::invalid_argument("--step must be positive");
+  }
+  if (!(options.max_relative_error >= 0.0)) {
+    throw std::invalid_argument("--max-rel-error must be nonnegative");
   }
   if (options.probe != "full" && options.probe != "fixed") {
     throw std::invalid_argument("--probe must be either 'full' or 'fixed'");
@@ -155,12 +129,12 @@ double choose_default_finite_difference_step(
   // default `1e-3` therefore produced false positive HVP mismatches for
   // MnF2-class checks even though the analytic operator is first-order
   // consistent. Use a tighter default only for the sparse-orbital charts and
-  // keep the legacy OEO default unchanged.
-  if (input.orbital_type == kLegacyOrbitalTypeHao ||
-      input.orbital_type == kLegacyOrbitalTypeBdo) {
+  // keep the OEO default unchanged.
+  if (input.orbital_type == kOrbitalTypeHao ||
+      input.orbital_type == kOrbitalTypeBdo) {
     return 1.0e-5;
   }
-  if (input.orbital_type == kLegacyOrbitalTypeOeo) {
+  if (input.orbital_type == kOrbitalTypeOeo) {
     return 1.0e-3;
   }
   return 1.0e-4;
@@ -228,10 +202,10 @@ Eigen::MatrixXd extract_active_auxiliary_gradient_block(
 }
 
 Eigen::VectorXd apply_active_space_gradient_direction_to_orbital_response(
-    const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
-    const xmvb::vb::NonredundantOrbitalSpace& nonredundant_space,
+    const xmvb::vb::VbScfInput& input,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
+    const xmvb::vb::OrbitalChart& nonredundant_space,
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
     const std::vector<double>& packed_active_two_electron_gradient,
@@ -290,7 +264,6 @@ Eigen::VectorXd apply_active_space_gradient_direction_to_orbital_response(
           packed_active_two_electron_gradient,
           input.ao_integral_input.ao_two_electron_integral_values,
           input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
           active_space_two_electron_result,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -401,8 +374,8 @@ struct OrbitalBackpropInputs {
 };
 
 OrbitalBackpropInputs build_orbital_backprop_inputs(
-    const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceGradientResult& active_space_gradient_result) {
+    const xmvb::vb::VbScfInput& input,
+    const xmvb::vb::ActiveSpaceGradientResult& active_space_gradient_result) {
   if (input.standard_two_electron_mode ==
       xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity) {
     throw std::invalid_argument(
@@ -436,7 +409,6 @@ OrbitalBackpropInputs build_orbital_backprop_inputs(
           active_space_gradient_result.packed_active_two_electron_gradient,
           input.ao_integral_input.ao_two_electron_integral_values,
           input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
           active_space_two_electron_result,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -532,8 +504,8 @@ OrbitalBackpropInputs build_orbital_backprop_inputs(
 }
 
 OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
-    const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceGradientResult& active_space_gradient_result) {
+    const xmvb::vb::VbScfInput& input,
+    const xmvb::vb::ActiveSpaceGradientResult& active_space_gradient_result) {
   if (input.standard_two_electron_mode ==
       xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity) {
     throw std::invalid_argument(
@@ -568,7 +540,6 @@ OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
           active_space_gradient_result.packed_active_two_electron_gradient,
           input.ao_integral_input.ao_two_electron_integral_values,
           input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
           active_space_two_electron_result,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -618,8 +589,8 @@ OrbitalBackpropInputs build_active_gradient_orbital_backprop_inputs(
 }
 
 OrbitalBackpropInputs build_orbital_backprop_inputs_from_active_gradient_direction(
-    const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const xmvb::vb::VbScfInput& input,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
     const std::vector<double>& packed_active_two_electron_gradient,
@@ -690,7 +661,6 @@ OrbitalBackpropInputs build_orbital_backprop_inputs_from_active_gradient_directi
           packed_active_two_electron_gradient,
           input.ao_integral_input.ao_two_electron_integral_values,
           input.ao_integral_input.ao_two_electron_integral_indices,
-          orbital_result,
           active_space_two_electron_result,
           input.orbital_preparation_input.n_basis_functions,
           n_inactive_doubly_occupied_orbitals,
@@ -899,8 +869,8 @@ Matrix backpropagate_exact_2e_pair_gradients_for_debug(
 }
 
 Eigen::VectorXd project_full_orbital_gradient_to_reduced(
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
-    const xmvb::vb::NonredundantOrbitalSpace& nonredundant_space,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
+    const xmvb::vb::OrbitalChart& nonredundant_space,
     const std::vector<double>& sparse_orbital_energy_gradient) {
   const Eigen::VectorXd packed_gradient =
       parameter_view.gather_from_full(sparse_orbital_energy_gradient);
@@ -989,7 +959,7 @@ int count_support_slot_changes(
 }
 
 double inactive_overlap_inverse_identity_max_abs_diff(
-    const xmvb::vb::CppVbInput& input,
+    const xmvb::vb::VbScfInput& input,
     const xmvb::vb::OrbitalPreparationResult& orbital_result) {
   const int n_inactive_doubly_occupied_orbitals =
       (input.orbital_preparation_input.n_total_electrons -
@@ -1257,7 +1227,7 @@ struct FixedUpstreamTangentDebugContext {
 
 FixedUpstreamTangentDebugContext build_fixed_upstream_tangent_debug_context(
     const xmvb::vb::OrbitalPreparationInput& input,
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& packed_direction) {
   if (packed_direction.size() != parameter_view.size()) {
     throw std::invalid_argument(
@@ -1331,7 +1301,7 @@ FixedUpstreamTangentDebugContext build_fixed_upstream_tangent_debug_context(
 
 Eigen::MatrixXd build_fixed_upstream_delta_original_orbital_gradient(
     const xmvb::vb::OrbitalPreparationInput& input,
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
     const Eigen::VectorXd& packed_direction,
     const std::vector<double>& total_auxiliary_gradient,
     const std::vector<double>& total_inactive_density_gradient) {
@@ -1541,7 +1511,7 @@ struct GeneralizedEigenDirectionalResponse {
 };
 
 GeneralizedEigenDirectionalResponse build_generalized_eigen_directional_response(
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const Matrix& delta_hamiltonian,
     const Matrix& delta_overlap) {
   const int n_structures = accepted_point_context.structure_matrices.n_structures;
@@ -1675,7 +1645,7 @@ StructurePairWeightTables build_structure_pair_weight_tables(
 }
 
 StructurePairWeightTables build_directional_structure_pair_weight_tables(
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
     const GeneralizedEigenDirectionalResponse& directional_eigensystem) {
   const int n_structures = accepted_point_context.structure_matrices.n_structures;
   const Matrix eigenvector_matrix =
@@ -1777,10 +1747,10 @@ std::vector<double> symmetric_average_storage(
 }
 
 Eigen::VectorXd backpropagate_active_gradient_direction_to_orbital_response(
-    const xmvb::vb::CppVbInput& input,
-    const xmvb::vb::CppActiveSpaceSecondOrderContext& accepted_point_context,
-    const xmvb::vb::SparseOrbitalParameterView& parameter_view,
-    const xmvb::vb::NonredundantOrbitalSpace& nonredundant_space,
+    const xmvb::vb::VbScfInput& input,
+    const xmvb::vb::AcceptedPointContext& accepted_point_context,
+    const xmvb::vb::SparseParameterLayout& parameter_view,
+    const xmvb::vb::OrbitalChart& nonredundant_space,
     const std::vector<double>& active_orbital_overlap_gradient,
     const std::vector<double>& active_one_electron_gradient,
     const std::vector<double>& packed_active_two_electron_gradient) {
@@ -1855,25 +1825,17 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
 
-    xmvb::vb::CppVbInputLoadOptions load_options;
-    load_options.ao_integral_source = options.ao_integral_source;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
-    xmvb::vb::CppVbInput input =
-        options.nonredundant_adapt
-            ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)
-            : load_result.input;
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
+    xmvb::vb::VbScfInput input = load_result.input;
     if (!options.orbital_value_table_bin_path.empty()) {
       input.orbital_preparation_input.orbital_value_table =
           read_f64_binary_file(options.orbital_value_table_bin_path);
       const std::size_t expected_size =
-          options.nonredundant_adapt
-              ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)
-                    .orbital_preparation_input.orbital_value_table.size()
-              : load_result.input.orbital_preparation_input
-                    .orbital_value_table.size();
+          load_result.input.orbital_preparation_input.orbital_value_table.size();
       if (input.orbital_preparation_input.orbital_value_table.size() !=
           expected_size) {
         throw std::runtime_error(
@@ -1881,10 +1843,8 @@ int main(int argc, char** argv) {
       }
     }
 
-    xmvb::vb::CppOrbitalGradientEvaluator evaluator(
-        xmvb::vb::VBSCFAlgorithm::Original);
-    xmvb::vb::CppActiveSpaceGradientEvaluator active_space_evaluator(
-        xmvb::vb::VBSCFAlgorithm::Original);
+    xmvb::vb::OrbitalGradientEvaluator evaluator;
+    xmvb::vb::ActiveSpaceGradientEvaluator active_space_evaluator;
     const auto gradient_result =
         evaluator.evaluate_without_reference_energy_gradient(
             input,
@@ -1895,7 +1855,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error("accepted-point second-order context is unavailable");
     }
 
-    xmvb::vb::SparseOrbitalParameterView parameter_view(
+    xmvb::vb::SparseParameterLayout parameter_view(
         input.orbital_preparation_input);
     const Eigen::VectorXd packed_gradient =
         parameter_view.gather_from_full(
@@ -1914,7 +1874,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "nonredundant-space diagnostic requires the cached physical orbital frame");
     }
-    xmvb::vb::NonredundantOrbitalSpace nonredundant_space(
+    xmvb::vb::OrbitalChart nonredundant_space(
         input.orbital_preparation_input,
         parameter_view,
         gradient_result.orbital_preparation_result
@@ -1942,7 +1902,7 @@ int main(int argc, char** argv) {
       reduced_direction /= reduced_direction.norm();
     }
 
-    xmvb::vb::ExactOrbitalSecondOrderOperator exact_operator(
+    xmvb::vb::ExactHvpOperator exact_operator(
         gradient_result.second_order_context,
         &input,
         parameter_view,
@@ -1950,12 +1910,12 @@ int main(int argc, char** argv) {
     if (!exact_operator.supports_analytic_core_model()) {
       throw std::runtime_error("exact_ctx analytic core model is unavailable");
     }
-    setenv("XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE", "1", 1);
     const Eigen::VectorXd analytic_fixed_response =
-        exact_operator.apply_reduced(reduced_direction);
+        exact_operator.apply_reduced(
+            reduced_direction,
+            {.outer_response = false});
     const Eigen::VectorXd analytic_fixed_response_cached =
         exact_operator.apply_reduced(reduced_direction, {.outer_response = false});
-    unsetenv("XMVB_CPP_DISABLE_EXACT_CTX_OUTER_RESPONSE");
     const Eigen::VectorXd analytic_direct_core_response_cached =
         exact_operator.apply_reduced(reduced_direction, {.direct_core_response = true, .fixed_upstream_pullback = false, .outer_response = false});
     const Eigen::VectorXd analytic_fixed_upstream_only_response_cached =
@@ -1972,13 +1932,39 @@ int main(int argc, char** argv) {
         exact_operator.apply_reduced(reduced_direction);
     const Eigen::VectorXd analytic_full_response_cached =
         exact_operator.apply_reduced(reduced_direction);
+    Eigen::VectorXd independent_reduced_direction =
+        Eigen::VectorXd::Zero(reduced_direction.size());
+    independent_reduced_direction[0] = 1.0;
+    independent_reduced_direction.noalias() -=
+        reduced_direction.dot(independent_reduced_direction) *
+        reduced_direction;
+    if (!(independent_reduced_direction.norm() >
+          std::sqrt(std::numeric_limits<double>::epsilon()))) {
+      independent_reduced_direction.setZero();
+      independent_reduced_direction[
+          std::min<Eigen::Index>(1, reduced_direction.size() - 1)] = 1.0;
+    }
+    independent_reduced_direction.normalize();
+    Eigen::MatrixXd reduced_direction_block(reduced_direction.size(), 2);
+    reduced_direction_block.col(0) = reduced_direction;
+    reduced_direction_block.col(1) = independent_reduced_direction;
+    const Eigen::MatrixXd analytic_full_response_block =
+        exact_operator.apply_reduced_batch(reduced_direction_block);
+    Eigen::MatrixXd analytic_full_response_block_reference(
+        reduced_direction.size(),
+        2);
+    analytic_full_response_block_reference.col(0) = analytic_full_response_cached;
+    analytic_full_response_block_reference.col(1) =
+        exact_operator.apply_reduced(independent_reduced_direction);
+    const double batch_max_abs_diff =
+        max_abs_value(
+            Eigen::MatrixXd(
+                analytic_full_response_block -
+                analytic_full_response_block_reference));
     const Eigen::VectorXd analytic_outer_only_response =
         exact_operator.apply_reduced(reduced_direction, {.direct_core_response = false, .fixed_upstream_pullback = false, .outer_response = true});
     const Eigen::VectorXd analytic_outer_only_response_cached =
         exact_operator.apply_reduced(reduced_direction, {.direct_core_response = false, .fixed_upstream_pullback = false, .outer_response = true});
-    // [deleted] compute_directional_structure_diagnostics, compute_direct_core_diagnostics,
-    // and compute_fixed_upstream_diagnostics have been removed from the API.
-    // All downstream code that depended on them is wrapped in #if 0 below.
     const auto accepted_full_active_gradient_backprop_inputs =
         build_orbital_backprop_inputs_from_active_gradient_direction(
             input,
@@ -1989,15 +1975,6 @@ int main(int argc, char** argv) {
                 ->active_one_electron_gradient,
             gradient_result.second_order_context
                 ->packed_active_two_electron_gradient);
-#if 0  // depends on deleted compute_directional_structure_diagnostics
-    const auto analytic_outer_orbital_backprop_inputs =
-        build_orbital_backprop_inputs_from_active_gradient_direction(
-            input,
-            *gradient_result.second_order_context,
-            analytic_directional_structure.active_orbital_overlap_gradient,
-            analytic_directional_structure.active_one_electron_gradient,
-            analytic_directional_structure.packed_active_two_electron_gradient);
-#endif
 
     const Eigen::VectorXd packed_direction =
         nonredundant_space.expand_step(reduced_direction);
@@ -2019,8 +1996,8 @@ int main(int argc, char** argv) {
             packed_direction);
     const double epsilon =
         finite_difference_step / std::max(1.0, packed_direction.norm());
-    xmvb::vb::CppVbInput plus_input = input;
-    xmvb::vb::CppVbInput minus_input = input;
+    xmvb::vb::VbScfInput plus_input = input;
+    xmvb::vb::VbScfInput minus_input = input;
     plus_input.orbital_preparation_input =
         nonredundant_space.retract_step(
             input.orbital_preparation_input,
@@ -2438,11 +2415,6 @@ int main(int argc, char** argv) {
              accepted_exact_2e_cache.accepted_base_pair_gradients,
              minus_dense_active_coefficients)) /
         (2.0 * epsilon);
-#if 0  // depends on deleted DirectCoreDiagnostics
-    const Matrix analytic_direct_core_two_electron_final_active_auxiliary_gradient =
-        analytic_direct_core_diagnostics.delta_two_electron_active_auxiliary_gradient -
-        analytic_direct_core_two_electron_fixed_active_auxiliary_gradient;
-#endif
     const Matrix fd_direct_core_two_electron_final_active_auxiliary_gradient =
         fd_fixed_two_electron_active_auxiliary_gradient -
         fd_direct_core_two_electron_fixed_active_auxiliary_gradient;
@@ -2515,82 +2487,6 @@ int main(int argc, char** argv) {
     const Eigen::VectorXd fd_fixed_response_from_split =
         fd_direct_upstream_response + fd_fixed_upstream_only_response;
 
-#if 0  // depends on deleted DirectCoreDiagnostics and DirectionalStructureDiagnostics
-    const double direct_core_matrix_active_auxiliary_max_abs_diff =
-        (analytic_direct_core_diagnostics.delta_matrix_active_auxiliary_gradient -
-         fd_fixed_matrix_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double direct_core_two_electron_active_auxiliary_max_abs_diff =
-        (analytic_direct_core_diagnostics.delta_two_electron_active_auxiliary_gradient -
-         fd_fixed_two_electron_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double direct_core_two_electron_fixed_active_auxiliary_max_abs_diff =
-        (analytic_direct_core_two_electron_fixed_active_auxiliary_gradient -
-         fd_direct_core_two_electron_fixed_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double direct_core_two_electron_final_active_auxiliary_max_abs_diff =
-        (analytic_direct_core_two_electron_final_active_auxiliary_gradient -
-         fd_direct_core_two_electron_final_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double exact_2e_mixed_pair_coefficients_max_abs_diff =
-        (exact_2e_hvp_workspace.mixed_pair_coefficients -
-         fd_delta_exact_2e_pair_coefficients)
-            .cwiseAbs()
-            .maxCoeff();
-    const double exact_2e_transformed_pair_coefficients_max_abs_diff =
-        (exact_2e_hvp_workspace.transformed_pair_coefficients -
-         fd_delta_exact_2e_transformed_pair_coefficients)
-            .cwiseAbs()
-            .maxCoeff();
-    const double exact_2e_pair_gradients_max_abs_diff =
-        (exact_2e_hvp_workspace.pair_gradients -
-         fd_delta_exact_2e_pair_gradients)
-            .cwiseAbs()
-            .maxCoeff();
-    const double direct_core_total_active_auxiliary_max_abs_diff =
-        (analytic_direct_core_diagnostics.delta_total_active_auxiliary_gradient -
-         fd_total_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double direct_core_delta_ao_effective_one_electron_max_abs_diff =
-        max_abs_difference(
-            std::vector<double>(
-                analytic_direct_core_diagnostics
-                    .delta_ao_effective_one_electron_matrix.data(),
-                analytic_direct_core_diagnostics
-                        .delta_ao_effective_one_electron_matrix.data() +
-                analytic_direct_core_diagnostics
-                        .delta_ao_effective_one_electron_matrix.size()),
-            fd_fixed_ao_effective_one_electron_matrix);
-    const double direct_core_ao_backprop_inactive_density_max_abs_diff =
-        max_abs_difference(
-            std::vector<double>(
-                analytic_direct_core_diagnostics
-                    .delta_ao_backpropagated_inactive_density_gradient.data(),
-                analytic_direct_core_diagnostics
-                        .delta_ao_backpropagated_inactive_density_gradient.data() +
-                analytic_direct_core_diagnostics
-                        .delta_ao_backpropagated_inactive_density_gradient.size()),
-            fd_fixed_ao_backprop_inactive_density_gradient);
-    const double direct_core_total_inactive_density_max_abs_diff =
-        max_abs_difference(
-            std::vector<double>(
-                analytic_direct_core_diagnostics
-                    .delta_total_inactive_density_gradient.data(),
-                analytic_direct_core_diagnostics
-                        .delta_total_inactive_density_gradient.data() +
-                analytic_direct_core_diagnostics
-                        .delta_total_inactive_density_gradient.size()),
-            fd_fixed_total_inactive_density_gradient);
-    const double direct_core_response_vs_diagnostic_max_abs_diff =
-        max_abs_difference(
-            analytic_direct_core_response,
-            analytic_direct_core_diagnostics.reduced_response);
-#endif
     const auto plus_fixed_upstream_forward_debug_context =
         build_fixed_upstream_forward_debug_context(
             plus_input.orbital_preparation_input,
@@ -2606,18 +2502,6 @@ int main(int argc, char** argv) {
             minus_input.orbital_preparation_input,
             accepted_fixed_orbital_backprop_inputs.total_auxiliary_gradient,
             accepted_fixed_orbital_backprop_inputs.total_inactive_density_gradient);
-#if 0  // depends on deleted FixedUpstreamDiagnostics
-    const double accepted_fixed_stage0_original_orbital_gradient_max_abs_diff =
-        (analytic_fixed_upstream_diagnostics.original_orbital_gradient -
-         accepted_fixed_upstream_forward_debug_context.original_orbital_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double accepted_fixed_stage0_actual_original_orbital_gradient_max_abs_diff =
-        (analytic_fixed_upstream_diagnostics.original_orbital_gradient -
-         accepted_fixed_upstream_actual_diagnostics.original_orbital_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-#endif
     const Eigen::MatrixXd fd_delta_original_orbital_gradient =
         (plus_fixed_upstream_forward_debug_context.original_orbital_gradient -
          minus_fixed_upstream_forward_debug_context.original_orbital_gradient) /
@@ -2643,205 +2527,6 @@ int main(int argc, char** argv) {
             plus_fixed_upstream_forward_debug_context.orbital_value_gradient,
             minus_fixed_upstream_forward_debug_context.orbital_value_gradient,
             epsilon);
-#if 0  // depends on deleted FixedUpstreamDiagnostics
-    std::size_t fixed_stage_b_max_flat_index = 0;
-    double fixed_stage_b_max_abs_diff_indexed = 0.0;
-    for (std::size_t index = 0;
-         index < analytic_fixed_upstream_diagnostics.orbital_value_gradient.size();
-         ++index) {
-      const double abs_diff = std::abs(
-          analytic_fixed_upstream_diagnostics.orbital_value_gradient[index] -
-          fd_fixed_upstream_only_orbital_value_gradient[index]);
-      if (abs_diff > fixed_stage_b_max_abs_diff_indexed) {
-        fixed_stage_b_max_abs_diff_indexed = abs_diff;
-        fixed_stage_b_max_flat_index = index;
-      }
-    }
-#endif
-#if 0  // depends on fixed_stage_b_max_flat_index from deleted FixedUpstreamDiagnostics
-    const int fixed_stage_b_max_orbital =
-        static_cast<int>(
-            fixed_stage_b_max_flat_index /
-            static_cast<std::size_t>(input.orbital_preparation_input.n_basis_functions));
-    const int fixed_stage_b_max_coefficient =
-        static_cast<int>(
-            fixed_stage_b_max_flat_index %
-            static_cast<std::size_t>(input.orbital_preparation_input.n_basis_functions));
-    const int fixed_stage_b_coefficient_count =
-        get_sparse_coefficient_count(
-            input.orbital_preparation_input,
-            fixed_stage_b_max_orbital);
-    double fixed_stage_b_raw_direction_projection = 0.0;
-    double fixed_stage_b_retract_direction_projection = 0.0;
-    double fixed_stage_b_delta_inverse_term_raw = 0.0;
-    double fixed_stage_b_delta_inverse_term_retract = 0.0;
-    double fixed_stage_b_main_term = 0.0;
-    double fixed_stage_b_analytic_delta_scalar_term = 0.0;
-    double fixed_stage_b_fd_delta_scalar_term = 0.0;
-    double fixed_stage_b_analytic_delta_overlap_times_normalized = 0.0;
-    double fixed_stage_b_fd_delta_overlap_times_normalized = 0.0;
-    double fixed_stage_b_analytic_delta_dense_gradient = 0.0;
-    double fixed_stage_b_fd_delta_dense_gradient = 0.0;
-    if (fixed_stage_b_max_coefficient < fixed_stage_b_coefficient_count) {
-      const Eigen::Map<const Matrix> basis_overlap_matrix(
-          input.orbital_preparation_input.ao_overlap_matrix.data(),
-          input.orbital_preparation_input.n_basis_functions,
-          input.orbital_preparation_input.n_basis_functions);
-      Eigen::VectorXd normalized_vector =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd delta_normalized_vector =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd raw_coefficients =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd dense_gradient =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd delta_dense_gradient =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd raw_input_direction =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd retract_input_direction =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd plus_normalized_vector =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd minus_normalized_vector =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd plus_dense_gradient =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::VectorXd minus_dense_gradient =
-          Eigen::VectorXd::Zero(fixed_stage_b_coefficient_count);
-      Eigen::MatrixXd overlap_submatrix =
-          Eigen::MatrixXd::Zero(
-              fixed_stage_b_coefficient_count,
-              fixed_stage_b_coefficient_count);
-      for (int row = 0; row < fixed_stage_b_coefficient_count; ++row) {
-        const int row_basis_function_index =
-            input.orbital_preparation_input.orbital_basis_index_table
-                [fixed_stage_b_max_orbital *
-                     input.orbital_preparation_input.n_basis_functions +
-                 row] -
-            1;
-        normalized_vector(row) =
-            accepted_fixed_upstream_forward_debug_context.normalized_orbitals(
-                row_basis_function_index,
-                fixed_stage_b_max_orbital);
-        raw_coefficients(row) =
-            input.orbital_preparation_input.orbital_value_table
-                [fixed_stage_b_max_orbital *
-                     input.orbital_preparation_input.n_basis_functions +
-                 row];
-        plus_normalized_vector(row) =
-            plus_fixed_upstream_forward_debug_context.normalized_orbitals(
-                row_basis_function_index,
-                fixed_stage_b_max_orbital);
-        minus_normalized_vector(row) =
-            minus_fixed_upstream_forward_debug_context.normalized_orbitals(
-                row_basis_function_index,
-                fixed_stage_b_max_orbital);
-        delta_normalized_vector(row) =
-            fixed_upstream_tangent_debug_context.delta_normalized_orbitals(
-                row_basis_function_index,
-                fixed_stage_b_max_orbital);
-        dense_gradient(row) =
-            accepted_fixed_upstream_forward_debug_context.original_orbital_gradient(
-                row_basis_function_index,
-                fixed_stage_b_max_orbital);
-        plus_dense_gradient(row) =
-            plus_fixed_upstream_forward_debug_context.original_orbital_gradient(
-                row_basis_function_index,
-                fixed_stage_b_max_orbital);
-        minus_dense_gradient(row) =
-            minus_fixed_upstream_forward_debug_context.original_orbital_gradient(
-                row_basis_function_index,
-                fixed_stage_b_max_orbital);
-        delta_dense_gradient(row) =
-            analytic_delta_original_orbital_gradient(
-                row_basis_function_index,
-                fixed_stage_b_max_orbital);
-        raw_input_direction(row) =
-            full_packed_direction
-                [fixed_stage_b_max_orbital *
-                     input.orbital_preparation_input.n_basis_functions +
-                 row];
-        retract_input_direction(row) =
-            fd_input_orbital_value_direction
-                [fixed_stage_b_max_orbital *
-                     input.orbital_preparation_input.n_basis_functions +
-                 row];
-        for (int column = 0;
-             column < fixed_stage_b_coefficient_count;
-             ++column) {
-          const int column_basis_function_index =
-              input.orbital_preparation_input.orbital_basis_index_table
-                  [fixed_stage_b_max_orbital *
-                       input.orbital_preparation_input.n_basis_functions +
-                   column] -
-              1;
-          overlap_submatrix(row, column) =
-              basis_overlap_matrix(
-                  row_basis_function_index,
-                  column_basis_function_index);
-        }
-      }
-      const double squared_norm =
-          raw_coefficients.dot(overlap_submatrix * raw_coefficients);
-      const double inverse_norm =
-          1.0 / std::sqrt(squared_norm);
-      const Eigen::VectorXd overlap_times_normalized =
-          overlap_submatrix * normalized_vector;
-      const Eigen::VectorXd delta_overlap_times_normalized =
-          overlap_submatrix * delta_normalized_vector;
-      const double scalar_term =
-          dense_gradient.dot(normalized_vector);
-      const double delta_scalar_term =
-          delta_dense_gradient.dot(normalized_vector) +
-          dense_gradient.dot(delta_normalized_vector);
-      const double fd_delta_scalar_term =
-          (plus_dense_gradient.dot(plus_normalized_vector) -
-           minus_dense_gradient.dot(minus_normalized_vector)) /
-          (2.0 * epsilon);
-      const Eigen::VectorXd fd_delta_overlap_times_normalized =
-          (overlap_submatrix * plus_normalized_vector -
-           overlap_submatrix * minus_normalized_vector) /
-          (2.0 * epsilon);
-      const Eigen::VectorXd fd_delta_dense_gradient =
-          (plus_dense_gradient - minus_dense_gradient) /
-          (2.0 * epsilon);
-      fixed_stage_b_raw_direction_projection =
-          inverse_norm *
-          raw_input_direction.dot(overlap_times_normalized);
-      fixed_stage_b_retract_direction_projection =
-          inverse_norm *
-          retract_input_direction.dot(overlap_times_normalized);
-      fixed_stage_b_delta_inverse_term_raw =
-          -inverse_norm * fixed_stage_b_raw_direction_projection *
-          (dense_gradient -
-           scalar_term * overlap_times_normalized)
-              (fixed_stage_b_max_coefficient);
-      fixed_stage_b_delta_inverse_term_retract =
-          -inverse_norm * fixed_stage_b_retract_direction_projection *
-          (dense_gradient -
-           scalar_term * overlap_times_normalized)
-              (fixed_stage_b_max_coefficient);
-      fixed_stage_b_main_term =
-          inverse_norm *
-          (delta_dense_gradient -
-           delta_scalar_term * overlap_times_normalized -
-           scalar_term * delta_overlap_times_normalized)
-              (fixed_stage_b_max_coefficient);
-      fixed_stage_b_analytic_delta_scalar_term =
-          delta_scalar_term;
-      fixed_stage_b_fd_delta_scalar_term =
-          fd_delta_scalar_term;
-      fixed_stage_b_analytic_delta_overlap_times_normalized =
-          delta_overlap_times_normalized(fixed_stage_b_max_coefficient);
-      fixed_stage_b_fd_delta_overlap_times_normalized =
-          fd_delta_overlap_times_normalized(fixed_stage_b_max_coefficient);
-      fixed_stage_b_analytic_delta_dense_gradient =
-          delta_dense_gradient(fixed_stage_b_max_coefficient);
-      fixed_stage_b_fd_delta_dense_gradient =
-          fd_delta_dense_gradient(fixed_stage_b_max_coefficient);
-    }
-#endif
 
     const int n_structures =
         gradient_result.second_order_context->structure_matrices.n_structures;
@@ -2932,17 +2617,17 @@ int main(int argc, char** argv) {
             gradient_result.second_order_context->normalized_state_weights,
             gradient_result.second_order_context->same_spin_pair_cache);
     const auto analytic_directional_pair_weights =
-        build_directional_determinant_pair_weight_tables_from_coefficients(
+        xmvb::vb::build_directional_determinant_pair_weight_tables_from_coefficients(
             gradient_result.second_order_context->selected_state_matrices,
             directional_selected_states,
             gradient_result.second_order_context->selected_state_energies,
             directional_selected_state_energies);
     const auto plus_exact_pair_weights =
-        build_exact_determinant_pair_weight_tables_from_eigenvalues(
+        xmvb::vb::build_exact_determinant_pair_weight_tables_from_eigenvalues(
             plus_full_gradient_result.second_order_context->selected_state_matrices,
             plus_full_gradient_result.second_order_context->eigen_result.eigenvalues);
     const auto minus_exact_pair_weights =
-        build_exact_determinant_pair_weight_tables_from_eigenvalues(
+        xmvb::vb::build_exact_determinant_pair_weight_tables_from_eigenvalues(
             minus_full_gradient_result.second_order_context->selected_state_matrices,
             minus_full_gradient_result.second_order_context->eigen_result.eigenvalues);
     std::vector<double> fd_directional_pair_h(
@@ -3107,9 +2792,6 @@ int main(int argc, char** argv) {
 
       std::cout << std::setprecision(12);
       std::cout << "input = " << options.input_path << '\n';
-      std::cout << "ao_integral_source = "
-                << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source)
-                << '\n';
       std::cout << "reduced_dimension = " << reduced_direction.size() << '\n';
       std::cout << "probe_mode = " << options.probe << '\n';
       std::cout << "finite_difference_step = " << finite_difference_step << '\n';
@@ -3121,1479 +2803,30 @@ int main(int argc, char** argv) {
       std::cout << "fixed_max_rel_diff = " << fixed_max_rel_diff_v << '\n';
       std::cout << "full_max_abs_diff = " << full_max_abs_diff_v << '\n';
       std::cout << "full_max_rel_diff = " << full_max_rel_diff_v << '\n';
+      std::cout << "batch_max_abs_diff = " << batch_max_abs_diff << '\n';
       std::cout << "accepted_sparse_orbital_norm_max_abs_diff = "
                 << accepted_sparse_orbital_norm_max_abs_diff << '\n';
       std::cout << "retract_input_direction_max_abs_diff = "
                 << retract_input_direction_max_abs_diff << '\n';
       std::cout << "analytic_retract_input_direction_max_abs_diff = "
                 << analytic_retract_input_direction_max_abs_diff << '\n';
+      if (max_rel_diff > options.max_relative_error) {
+        throw std::runtime_error(
+            "HVP relative error exceeds --max-rel-error: " +
+            std::to_string(max_rel_diff) + " > " +
+            std::to_string(options.max_relative_error));
+      }
+      const double batch_tolerance =
+          64.0 * std::numeric_limits<double>::epsilon() *
+          std::max(1.0, max_abs_value(analytic_full_response_block_reference));
+      if (batch_max_abs_diff > batch_tolerance) {
+        throw std::runtime_error(
+            "block HVP does not match scalar HVP applications");
+      }
     }
     // --- End minimal FD verification output ---
 
-#if 0  // depends on deleted DirectionalStructureDiagnostics (and transitively on all downstream variables)
-    const Matrix analytic_delta_hamiltonian =
-        unpack_symmetric_structure_matrix(
-            analytic_directional_structure.hamiltonian_matrix,
-            n_structures);
-    const Matrix analytic_delta_overlap =
-        unpack_symmetric_structure_matrix(
-            analytic_directional_structure.overlap_matrix,
-            n_structures);
-    const auto analytic_directional_eigensystem =
-        build_generalized_eigen_directional_response(
-            *gradient_result.second_order_context,
-            analytic_delta_hamiltonian,
-            analytic_delta_overlap);
-    const std::vector<double> analytic_directional_selected_state_energies =
-        xmvb::vb::gather_selected_state_energies(
-            analytic_directional_eigensystem.delta_eigenvalues,
-            gradient_result.second_order_context->selected_state_indices);
-    const Matrix analytic_directional_selected_state_columns =
-        gather_directional_selected_state_columns(
-            analytic_directional_eigensystem,
-            gradient_result.second_order_context->selected_state_indices);
-    const auto analytic_directional_selected_states =
-        xmvb::vb::build_selected_state_determinant_matrices_from_selected_columns(
-            input.structure_data,
-            analytic_directional_selected_state_columns,
-            gradient_result.second_order_context->selected_state_indices,
-            gradient_result.second_order_context->normalized_state_weights,
-            gradient_result.second_order_context->same_spin_pair_cache);
-    const auto analytic_directional_pair_weights_from_analytic_structure =
-        build_directional_determinant_pair_weight_tables_from_coefficients(
-            gradient_result.second_order_context->selected_state_matrices,
-            analytic_directional_selected_states,
-            gradient_result.second_order_context->selected_state_energies,
-            analytic_directional_selected_state_energies);
-    xmvb::vb::SameSpinMatrixBackwardContribution
-        analytic_same_spin_direction_from_analytic_structure;
-    xmvb::vb::OppositeSpinMatrixBackwardContribution
-        analytic_opposite_spin_direction_from_analytic_structure;
-    if (have_directional_same_spin) {
-      analytic_same_spin_direction_from_analytic_structure =
-          xmvb::vb::build_directional_same_spin_matrix_backward_contribution(
-              gradient_result.second_order_context->same_spin_pair_cache,
-              gradient_result.second_order_context->selected_state_matrices,
-              analytic_directional_selected_states,
-              gradient_result.second_order_context->selected_state_energies,
-              analytic_directional_selected_state_energies,
-              gradient_result.second_order_context->n_active_orbitals);
-    }
-    if (have_directional_opposite_spin) {
-      analytic_opposite_spin_direction_from_analytic_structure =
-          xmvb::vb::build_directional_opposite_spin_matrix_backward_contribution(
-              gradient_result.second_order_context->same_spin_pair_cache,
-              gradient_result.second_order_context->selected_state_matrices,
-              analytic_directional_selected_states,
-              gradient_result.second_order_context->n_active_orbitals);
-    }
-    const double structure_h_max_abs_diff =
-        max_abs_difference(
-            std::vector<double>(
-                analytic_delta_hamiltonian.data(),
-                analytic_delta_hamiltonian.data() + analytic_delta_hamiltonian.size()),
-            std::vector<double>(
-                fd_delta_hamiltonian.data(),
-                fd_delta_hamiltonian.data() + fd_delta_hamiltonian.size()));
-    const double structure_s_max_abs_diff =
-        max_abs_difference(
-            std::vector<double>(
-                analytic_delta_overlap.data(),
-                analytic_delta_overlap.data() + analytic_delta_overlap.size()),
-            std::vector<double>(
-                fd_delta_overlap.data(),
-                fd_delta_overlap.data() + fd_delta_overlap.size()));
-    const double analytic_eigensystem_pair_h_max_abs_diff =
-        max_abs_difference(
-            analytic_directional_pair_weights_from_analytic_structure
-                .unordered_combined_hamiltonian_weights,
-            fd_directional_pair_h);
-    const double analytic_eigensystem_pair_s_max_abs_diff =
-        max_abs_difference(
-            analytic_directional_pair_weights_from_analytic_structure
-                .unordered_combined_overlap_weights,
-            fd_directional_pair_s);
-    const auto& plus_prepared_active_space =
-        plus_full_gradient_result.second_order_context->prepared_active_space;
-    const auto& minus_prepared_active_space =
-        minus_full_gradient_result.second_order_context->prepared_active_space;
-    const Matrix plus_active_overlap =
-        Eigen::Map<const Matrix>(
-            plus_prepared_active_space.orbital_result.active_orbital_overlap_matrix.data(),
-            gradient_result.second_order_context->n_active_orbitals,
-            gradient_result.second_order_context->n_active_orbitals);
-    const Matrix minus_active_overlap =
-        Eigen::Map<const Matrix>(
-            minus_prepared_active_space.orbital_result.active_orbital_overlap_matrix.data(),
-            gradient_result.second_order_context->n_active_orbitals,
-            gradient_result.second_order_context->n_active_orbitals);
-    const Matrix plus_active_one_electron =
-        Eigen::Map<const Matrix>(
-            plus_prepared_active_space.active_space_one_electron_result.h1e_act.data(),
-            gradient_result.second_order_context->n_active_orbitals,
-            gradient_result.second_order_context->n_active_orbitals);
-    const Matrix minus_active_one_electron =
-        Eigen::Map<const Matrix>(
-            minus_prepared_active_space.active_space_one_electron_result.h1e_act.data(),
-            gradient_result.second_order_context->n_active_orbitals,
-            gradient_result.second_order_context->n_active_orbitals);
-    const Matrix fd_delta_active_overlap =
-        (plus_active_overlap - minus_active_overlap) / (2.0 * epsilon);
-    const Matrix fd_delta_active_one_electron =
-        (plus_active_one_electron - minus_active_one_electron) / (2.0 * epsilon);
-    std::vector<double> fd_delta_active_two_electron(
-        plus_prepared_active_space.active_space_two_electron_result
-            .packed_active_two_electron_integrals.size(),
-        0.0);
-    for (std::size_t index = 0;
-         index < fd_delta_active_two_electron.size();
-         ++index) {
-      fd_delta_active_two_electron[index] =
-          (plus_prepared_active_space.active_space_two_electron_result
-               .packed_active_two_electron_integrals[index] -
-           minus_prepared_active_space.active_space_two_electron_result
-               .packed_active_two_electron_integrals[index]) /
-          (2.0 * epsilon);
-    }
-    const double active_sso_max_abs_diff =
-        max_abs_difference(
-            analytic_directional_structure.active_orbital_overlap_matrix,
-            std::vector<double>(
-                fd_delta_active_overlap.data(),
-                fd_delta_active_overlap.data() + fd_delta_active_overlap.size()));
-    const double active_hho_max_abs_diff =
-        max_abs_difference(
-            analytic_directional_structure.active_one_electron_matrix,
-            std::vector<double>(
-                fd_delta_active_one_electron.data(),
-                fd_delta_active_one_electron.data() +
-                    fd_delta_active_one_electron.size()));
-    const double active_ggo_max_abs_diff =
-        max_abs_difference(
-            analytic_directional_structure.packed_active_two_electron_integrals,
-            fd_delta_active_two_electron);
-    const auto accepted_exact_pair_weights =
-        build_exact_determinant_pair_weight_tables_from_eigenvalues(
-            gradient_result.second_order_context->selected_state_matrices,
-            gradient_result.second_order_context->eigen_result.eigenvalues);
-    const auto analytic_local_same_spin_direction =
-        xmvb::vb::build_local_same_spin_matrix_backward_contribution(
-            gradient_result.second_order_context->same_spin_pair_cache,
-            gradient_result.second_order_context->selected_state_matrices,
-            gradient_result.second_order_context->selected_state_energies,
-            gradient_result.second_order_context->n_active_orbitals,
-            gradient_result.second_order_context->prepared_active_space
-                .active_space_one_electron_result.h1e_act,
-            gradient_result.second_order_context->prepared_active_space
-                .active_space_two_electron_result,
-            analytic_directional_structure.active_orbital_overlap_matrix,
-            analytic_directional_structure.active_one_electron_matrix,
-            analytic_directional_structure.packed_active_two_electron_integrals);
-    const auto pairwise_local_same_spin_direction =
-        xmvb::vb::build_pairwise_local_same_spin_matrix_backward_reference(
-            input,
-            *gradient_result.second_order_context,
-            accepted_exact_pair_weights,
-            analytic_directional_structure.active_orbital_overlap_matrix,
-            analytic_directional_structure.active_one_electron_matrix,
-            analytic_directional_structure.packed_active_two_electron_integrals);
-    const auto analytic_local_same_spin_direction_repeat =
-        xmvb::vb::build_local_same_spin_matrix_backward_contribution(
-            gradient_result.second_order_context->same_spin_pair_cache,
-            gradient_result.second_order_context->selected_state_matrices,
-            gradient_result.second_order_context->selected_state_energies,
-            gradient_result.second_order_context->n_active_orbitals,
-            gradient_result.second_order_context->prepared_active_space
-                .active_space_one_electron_result.h1e_act,
-            gradient_result.second_order_context->prepared_active_space
-                .active_space_two_electron_result,
-            analytic_directional_structure.active_orbital_overlap_matrix,
-            analytic_directional_structure.active_one_electron_matrix,
-            analytic_directional_structure.packed_active_two_electron_integrals);
-    const auto analytic_local_opposite_spin_direction =
-        xmvb::vb::build_local_opposite_spin_matrix_backward_contribution(
-            gradient_result.second_order_context->same_spin_pair_cache,
-            gradient_result.second_order_context->selected_state_matrices,
-            gradient_result.second_order_context->n_active_orbitals,
-            gradient_result.second_order_context->prepared_active_space
-                .active_space_two_electron_result,
-            analytic_directional_structure.active_orbital_overlap_matrix,
-            analytic_directional_structure.packed_active_two_electron_integrals);
-    const auto plus_local_opposite_spin_fixed_states =
-        xmvb::vb::build_opposite_spin_matrix_backward_contribution(
-            plus_full_gradient_result.second_order_context->same_spin_pair_cache,
-            gradient_result.second_order_context->selected_state_matrices,
-            gradient_result.second_order_context->n_active_orbitals);
-    const auto minus_local_opposite_spin_fixed_states =
-        xmvb::vb::build_opposite_spin_matrix_backward_contribution(
-            minus_full_gradient_result.second_order_context->same_spin_pair_cache,
-            gradient_result.second_order_context->selected_state_matrices,
-            gradient_result.second_order_context->n_active_orbitals);
-    std::vector<double> fd_local_opposite_spin_sso(
-        plus_local_opposite_spin_fixed_states.active_orbital_overlap_gradient.size(),
-        0.0);
-    std::vector<double> fd_local_opposite_spin_ggo(
-        plus_local_opposite_spin_fixed_states.packed_active_two_electron_gradient.size(),
-        0.0);
-    for (std::size_t index = 0;
-         index < fd_local_opposite_spin_sso.size();
-         ++index) {
-      fd_local_opposite_spin_sso[index] =
-          (plus_local_opposite_spin_fixed_states
-               .active_orbital_overlap_gradient[index] -
-           minus_local_opposite_spin_fixed_states
-               .active_orbital_overlap_gradient[index]) /
-          (2.0 * epsilon);
-    }
-    for (std::size_t index = 0;
-         index < fd_local_opposite_spin_ggo.size();
-         ++index) {
-      fd_local_opposite_spin_ggo[index] =
-          (plus_local_opposite_spin_fixed_states
-               .packed_active_two_electron_gradient[index] -
-           minus_local_opposite_spin_fixed_states
-               .packed_active_two_electron_gradient[index]) /
-          (2.0 * epsilon);
-    }
-    const double local_opposite_spin_sso_max_abs_diff =
-        max_abs_difference(
-            analytic_local_opposite_spin_direction.active_orbital_overlap_gradient,
-            fd_local_opposite_spin_sso);
-    const double local_opposite_spin_ggo_max_abs_diff =
-        max_abs_difference(
-            analytic_local_opposite_spin_direction.packed_active_two_electron_gradient,
-            fd_local_opposite_spin_ggo);
-    const double local_same_spin_repeat_sso_max_abs_diff =
-        max_abs_difference(
-            analytic_local_same_spin_direction.active_orbital_overlap_gradient,
-            analytic_local_same_spin_direction_repeat.active_orbital_overlap_gradient);
-    double analytic_state_same_spin_sso_max_abs_diff = k_nan;
-    if (have_directional_same_spin) {
-      analytic_state_same_spin_sso_max_abs_diff =
-          max_abs_difference(
-              analytic_same_spin_direction_from_analytic_structure
-                  .active_orbital_overlap_gradient,
-              analytic_same_spin_direction.active_orbital_overlap_gradient);
-    }
-    double analytic_state_opposite_spin_sso_max_abs_diff = k_nan;
-    if (have_directional_opposite_spin) {
-      analytic_state_opposite_spin_sso_max_abs_diff =
-          max_abs_difference(
-              analytic_opposite_spin_direction_from_analytic_structure
-                  .active_orbital_overlap_gradient,
-              analytic_opposite_spin_direction.active_orbital_overlap_gradient);
-    }
-    const bool have_full_matrix_form_sum =
-        have_directional_same_spin && have_directional_opposite_spin;
-    std::vector<double> matrix_form_sum_sso;
-    std::vector<double> matrix_form_sum_hho;
-    std::vector<double> matrix_form_sum_ggo;
-    double matrix_form_sum_sso_max_abs_diff = k_nan;
-    std::size_t matrix_form_sum_sso_max_index = 0;
-    double matrix_form_sum_sso_max_abs_diff_at_index = k_nan;
-    double matrix_form_sum_hho_max_abs_diff = k_nan;
-    double matrix_form_sum_ggo_max_abs_diff = k_nan;
-    if (have_full_matrix_form_sum) {
-      matrix_form_sum_sso =
-          analytic_local_same_spin_direction.active_orbital_overlap_gradient;
-      matrix_form_sum_hho =
-          analytic_local_same_spin_direction.active_one_electron_gradient;
-      matrix_form_sum_ggo =
-          analytic_local_same_spin_direction.packed_active_two_electron_gradient;
-      for (std::size_t index = 0; index < matrix_form_sum_sso.size(); ++index) {
-        matrix_form_sum_sso[index] +=
-            analytic_local_opposite_spin_direction.active_orbital_overlap_gradient[index] +
-            analytic_same_spin_direction_from_analytic_structure
-                .active_orbital_overlap_gradient[index] +
-            analytic_opposite_spin_direction_from_analytic_structure
-                .active_orbital_overlap_gradient[index];
-      }
-      for (std::size_t index = 0; index < matrix_form_sum_hho.size(); ++index) {
-        matrix_form_sum_hho[index] +=
-            analytic_same_spin_direction_from_analytic_structure
-                .active_one_electron_gradient[index];
-      }
-      for (std::size_t index = 0; index < matrix_form_sum_ggo.size(); ++index) {
-        matrix_form_sum_ggo[index] +=
-            analytic_local_opposite_spin_direction.packed_active_two_electron_gradient[index] +
-            analytic_same_spin_direction_from_analytic_structure
-                .packed_active_two_electron_gradient[index] +
-            analytic_opposite_spin_direction_from_analytic_structure
-                .packed_active_two_electron_gradient[index];
-      }
-      matrix_form_sum_sso_max_abs_diff =
-          max_abs_difference(
-              matrix_form_sum_sso,
-              analytic_directional_structure.active_orbital_overlap_gradient);
-      matrix_form_sum_sso_max_abs_diff_at_index = 0.0;
-      for (std::size_t index = 0; index < matrix_form_sum_sso.size(); ++index) {
-        const double abs_diff = std::abs(
-            matrix_form_sum_sso[index] -
-            analytic_directional_structure.active_orbital_overlap_gradient[index]);
-        if (abs_diff > matrix_form_sum_sso_max_abs_diff_at_index) {
-          matrix_form_sum_sso_max_abs_diff_at_index = abs_diff;
-          matrix_form_sum_sso_max_index = index;
-        }
-      }
-      matrix_form_sum_hho_max_abs_diff =
-          max_abs_difference(
-              matrix_form_sum_hho,
-              analytic_directional_structure.active_one_electron_gradient);
-      matrix_form_sum_ggo_max_abs_diff =
-          max_abs_difference(
-              matrix_form_sum_ggo,
-              analytic_directional_structure.packed_active_two_electron_gradient);
-    }
-    std::vector<double> fd_delta_active_overlap_gradient(
-        plus_full_gradient_result.second_order_context->active_orbital_overlap_gradient.size(),
-        0.0);
-    std::vector<double> fd_delta_active_one_electron_gradient(
-        plus_full_gradient_result.second_order_context->active_one_electron_gradient.size(),
-        0.0);
-    std::vector<double> fd_delta_active_two_electron_gradient(
-        plus_full_gradient_result.second_order_context->packed_active_two_electron_gradient.size(),
-        0.0);
-    std::vector<double> fd_delta_fixed_active_overlap_gradient(
-        plus_fixed_active_gradient_result.active_orbital_overlap_gradient.size(),
-        0.0);
-    std::vector<double> fd_delta_fixed_active_one_electron_gradient(
-        plus_fixed_active_gradient_result.active_one_electron_gradient.size(),
-        0.0);
-    std::vector<double> fd_delta_fixed_active_two_electron_gradient(
-        plus_fixed_active_gradient_result.packed_active_two_electron_gradient.size(),
-        0.0);
-    for (std::size_t index = 0;
-         index < fd_delta_active_overlap_gradient.size();
-         ++index) {
-      fd_delta_active_overlap_gradient[index] =
-          (plus_full_gradient_result.second_order_context
-               ->active_orbital_overlap_gradient[index] -
-           minus_full_gradient_result.second_order_context
-               ->active_orbital_overlap_gradient[index]) /
-          (2.0 * epsilon);
-    }
-    for (std::size_t index = 0;
-         index < fd_delta_active_one_electron_gradient.size();
-         ++index) {
-      fd_delta_active_one_electron_gradient[index] =
-          (plus_full_gradient_result.second_order_context
-               ->active_one_electron_gradient[index] -
-           minus_full_gradient_result.second_order_context
-               ->active_one_electron_gradient[index]) /
-          (2.0 * epsilon);
-    }
-    for (std::size_t index = 0;
-         index < fd_delta_active_two_electron_gradient.size();
-         ++index) {
-      fd_delta_active_two_electron_gradient[index] =
-          (plus_full_gradient_result.second_order_context
-               ->packed_active_two_electron_gradient[index] -
-           minus_full_gradient_result.second_order_context
-               ->packed_active_two_electron_gradient[index]) /
-          (2.0 * epsilon);
-    }
-    for (std::size_t index = 0;
-         index < fd_delta_fixed_active_overlap_gradient.size();
-         ++index) {
-      fd_delta_fixed_active_overlap_gradient[index] =
-          (plus_fixed_active_gradient_result
-               .active_orbital_overlap_gradient[index] -
-           minus_fixed_active_gradient_result
-               .active_orbital_overlap_gradient[index]) /
-          (2.0 * epsilon);
-    }
-    for (std::size_t index = 0;
-         index < fd_delta_fixed_active_one_electron_gradient.size();
-         ++index) {
-      fd_delta_fixed_active_one_electron_gradient[index] =
-          (plus_fixed_active_gradient_result
-               .active_one_electron_gradient[index] -
-           minus_fixed_active_gradient_result
-               .active_one_electron_gradient[index]) /
-          (2.0 * epsilon);
-    }
-    for (std::size_t index = 0;
-         index < fd_delta_fixed_active_two_electron_gradient.size();
-         ++index) {
-      fd_delta_fixed_active_two_electron_gradient[index] =
-          (plus_fixed_active_gradient_result
-               .packed_active_two_electron_gradient[index] -
-           minus_fixed_active_gradient_result
-               .packed_active_two_electron_gradient[index]) /
-          (2.0 * epsilon);
-    }
-    const double matrix_vs_pairwise_local_same_spin_sso_max_abs_diff =
-        max_abs_difference(
-            analytic_local_same_spin_direction.active_orbital_overlap_gradient,
-            pairwise_local_same_spin_direction.active_orbital_overlap_gradient);
-    const double matrix_vs_pairwise_local_same_spin_hho_max_abs_diff =
-        max_abs_difference(
-            analytic_local_same_spin_direction.active_one_electron_gradient,
-            pairwise_local_same_spin_direction.active_one_electron_gradient);
-    const double matrix_vs_pairwise_local_same_spin_ggo_max_abs_diff =
-        max_abs_difference(
-            analytic_local_same_spin_direction.packed_active_two_electron_gradient,
-            pairwise_local_same_spin_direction.packed_active_two_electron_gradient);
-    std::vector<double> fd_outer_active_overlap_gradient(
-        fd_delta_active_overlap_gradient.size(),
-        0.0);
-    std::vector<double> fd_outer_active_one_electron_gradient(
-        fd_delta_active_one_electron_gradient.size(),
-        0.0);
-    std::vector<double> fd_outer_active_two_electron_gradient(
-        fd_delta_active_two_electron_gradient.size(),
-        0.0);
-    for (std::size_t index = 0;
-         index < fd_outer_active_overlap_gradient.size();
-         ++index) {
-      fd_outer_active_overlap_gradient[index] =
-          fd_delta_active_overlap_gradient[index] -
-          fd_delta_fixed_active_overlap_gradient[index];
-    }
-    for (std::size_t index = 0;
-         index < fd_outer_active_one_electron_gradient.size();
-         ++index) {
-      fd_outer_active_one_electron_gradient[index] =
-          fd_delta_active_one_electron_gradient[index] -
-          fd_delta_fixed_active_one_electron_gradient[index];
-    }
-    for (std::size_t index = 0;
-         index < fd_outer_active_two_electron_gradient.size();
-         ++index) {
-      fd_outer_active_two_electron_gradient[index] =
-          fd_delta_active_two_electron_gradient[index] -
-          fd_delta_fixed_active_two_electron_gradient[index];
-    }
-    std::vector<double> plus_outer_active_overlap_gradient(
-        plus_full_gradient_result.second_order_context
-            ->active_orbital_overlap_gradient.size(),
-        0.0);
-    std::vector<double> plus_outer_active_one_electron_gradient(
-        plus_full_gradient_result.second_order_context
-            ->active_one_electron_gradient.size(),
-        0.0);
-    std::vector<double> plus_outer_active_two_electron_gradient(
-        plus_full_gradient_result.second_order_context
-            ->packed_active_two_electron_gradient.size(),
-        0.0);
-    std::vector<double> minus_outer_active_overlap_gradient(
-        minus_full_gradient_result.second_order_context
-            ->active_orbital_overlap_gradient.size(),
-        0.0);
-    std::vector<double> minus_outer_active_one_electron_gradient(
-        minus_full_gradient_result.second_order_context
-            ->active_one_electron_gradient.size(),
-        0.0);
-    std::vector<double> minus_outer_active_two_electron_gradient(
-        minus_full_gradient_result.second_order_context
-            ->packed_active_two_electron_gradient.size(),
-        0.0);
-    for (std::size_t index = 0;
-         index < plus_outer_active_overlap_gradient.size();
-         ++index) {
-      plus_outer_active_overlap_gradient[index] =
-          plus_full_gradient_result.second_order_context
-              ->active_orbital_overlap_gradient[index] -
-          plus_fixed_active_gradient_result.active_orbital_overlap_gradient[index];
-      minus_outer_active_overlap_gradient[index] =
-          minus_full_gradient_result.second_order_context
-              ->active_orbital_overlap_gradient[index] -
-          minus_fixed_active_gradient_result.active_orbital_overlap_gradient[index];
-    }
-    for (std::size_t index = 0;
-         index < plus_outer_active_one_electron_gradient.size();
-         ++index) {
-      plus_outer_active_one_electron_gradient[index] =
-          plus_full_gradient_result.second_order_context
-              ->active_one_electron_gradient[index] -
-          plus_fixed_active_gradient_result.active_one_electron_gradient[index];
-      minus_outer_active_one_electron_gradient[index] =
-          minus_full_gradient_result.second_order_context
-              ->active_one_electron_gradient[index] -
-          minus_fixed_active_gradient_result.active_one_electron_gradient[index];
-    }
-    for (std::size_t index = 0;
-         index < plus_outer_active_two_electron_gradient.size();
-         ++index) {
-      plus_outer_active_two_electron_gradient[index] =
-          plus_full_gradient_result.second_order_context
-              ->packed_active_two_electron_gradient[index] -
-          plus_fixed_active_gradient_result.packed_active_two_electron_gradient[index];
-      minus_outer_active_two_electron_gradient[index] =
-          minus_full_gradient_result.second_order_context
-              ->packed_active_two_electron_gradient[index] -
-          minus_fixed_active_gradient_result.packed_active_two_electron_gradient[index];
-    }
-    const double grad_sso_max_abs_diff =
-        max_abs_difference(
-            analytic_directional_structure.active_orbital_overlap_gradient,
-            fd_outer_active_overlap_gradient);
-    const double grad_sso_symmetric_max_abs_diff =
-        max_abs_difference(
-            symmetric_average_storage(
-                analytic_directional_structure.active_orbital_overlap_gradient),
-            symmetric_average_storage(
-                fd_outer_active_overlap_gradient));
-    const double grad_hho_max_abs_diff =
-        max_abs_difference(
-            analytic_directional_structure.active_one_electron_gradient,
-            fd_outer_active_one_electron_gradient);
-    const double grad_hho_symmetric_max_abs_diff =
-        max_abs_difference(
-            symmetric_average_storage(
-                analytic_directional_structure.active_one_electron_gradient),
-            symmetric_average_storage(
-                fd_outer_active_one_electron_gradient));
-    const double grad_ggo_max_abs_diff =
-        max_abs_difference(
-            analytic_directional_structure.packed_active_two_electron_gradient,
-            fd_outer_active_two_electron_gradient);
-    const Eigen::VectorXd fd_outer_response_from_fd_active_gradient =
-        backpropagate_active_gradient_direction_to_orbital_response(
-            input,
-            *gradient_result.second_order_context,
-            parameter_view,
-            nonredundant_space,
-            fd_outer_active_overlap_gradient,
-            fd_outer_active_one_electron_gradient,
-            fd_outer_active_two_electron_gradient);
-    const Eigen::VectorXd fd_fixed_response_from_fixed_active_gradient =
-        backpropagate_active_gradient_direction_to_orbital_response(
-            input,
-            *gradient_result.second_order_context,
-            parameter_view,
-            nonredundant_space,
-            fd_delta_fixed_active_overlap_gradient,
-            fd_delta_fixed_active_one_electron_gradient,
-            fd_delta_fixed_active_two_electron_gradient);
-    const Eigen::VectorXd fd_full_response_from_full_active_gradient =
-        backpropagate_active_gradient_direction_to_orbital_response(
-            input,
-            *gradient_result.second_order_context,
-            parameter_view,
-            nonredundant_space,
-            fd_delta_active_overlap_gradient,
-            fd_delta_active_one_electron_gradient,
-            fd_delta_active_two_electron_gradient);
-    const double fd_outer_pullback_max_abs_diff =
-        max_abs_difference(
-            fd_outer_response_from_fd_active_gradient,
-            fd_outer_response);
-    const double fd_fixed_pullback_max_abs_diff =
-        max_abs_difference(
-            fd_fixed_response_from_fixed_active_gradient,
-            fixed_fd_response);
-    const double fd_full_pullback_max_abs_diff =
-        max_abs_difference(
-            fd_full_response_from_full_active_gradient,
-            full_fd_response);
-    std::vector<double> plus_outer_total_auxiliary_gradient(
-        plus_full_orbital_backprop_inputs.total_auxiliary_gradient.size(),
-        0.0);
-    std::vector<double> minus_outer_total_auxiliary_gradient(
-        minus_full_orbital_backprop_inputs.total_auxiliary_gradient.size(),
-        0.0);
-    std::vector<double> plus_outer_total_inactive_density_gradient(
-        plus_full_orbital_backprop_inputs.total_inactive_density_gradient.size(),
-        0.0);
-    std::vector<double> minus_outer_total_inactive_density_gradient(
-        minus_full_orbital_backprop_inputs.total_inactive_density_gradient.size(),
-        0.0);
-    for (std::size_t index = 0;
-         index < plus_outer_total_auxiliary_gradient.size();
-         ++index) {
-      plus_outer_total_auxiliary_gradient[index] =
-          plus_full_orbital_backprop_inputs.total_auxiliary_gradient[index] -
-          plus_fixed_active_gradient_backprop_inputs.total_auxiliary_gradient[index];
-      minus_outer_total_auxiliary_gradient[index] =
-          minus_full_orbital_backprop_inputs.total_auxiliary_gradient[index] -
-          minus_fixed_active_gradient_backprop_inputs.total_auxiliary_gradient[index];
-    }
-    for (std::size_t index = 0;
-         index < plus_outer_total_inactive_density_gradient.size();
-         ++index) {
-      plus_outer_total_inactive_density_gradient[index] =
-          plus_full_orbital_backprop_inputs.total_inactive_density_gradient[index] -
-          plus_fixed_active_gradient_backprop_inputs.total_inactive_density_gradient[index];
-      minus_outer_total_inactive_density_gradient[index] =
-          minus_full_orbital_backprop_inputs.total_inactive_density_gradient[index] -
-          minus_fixed_active_gradient_backprop_inputs.total_inactive_density_gradient[index];
-    }
-    const auto accepted_outer_forward_debug_context =
-        build_fixed_upstream_forward_debug_context(
-            input.orbital_preparation_input,
-            analytic_outer_orbital_backprop_inputs.total_auxiliary_gradient,
-            analytic_outer_orbital_backprop_inputs.total_inactive_density_gradient);
-    const auto plus_outer_forward_debug_context =
-        build_fixed_upstream_forward_debug_context(
-            plus_input.orbital_preparation_input,
-            plus_outer_total_auxiliary_gradient,
-            plus_outer_total_inactive_density_gradient);
-    const auto minus_outer_forward_debug_context =
-        build_fixed_upstream_forward_debug_context(
-            minus_input.orbital_preparation_input,
-            minus_outer_total_auxiliary_gradient,
-            minus_outer_total_inactive_density_gradient);
-    const Eigen::MatrixXd fd_outer_original_orbital_gradient =
-        (plus_outer_forward_debug_context.original_orbital_gradient -
-         minus_outer_forward_debug_context.original_orbital_gradient) /
-        (2.0 * epsilon);
-    const std::vector<double> fd_outer_orbital_value_gradient =
-        finite_difference_storage(
-            plus_outer_forward_debug_context.orbital_value_gradient,
-            minus_outer_forward_debug_context.orbital_value_gradient,
-            epsilon);
-    std::vector<double> plus_outer_orbital_value_gradient(
-        plus_full_gradient_result.sparse_orbital_energy_gradient.size(),
-        0.0);
-    std::vector<double> minus_outer_orbital_value_gradient(
-        minus_full_gradient_result.sparse_orbital_energy_gradient.size(),
-        0.0);
-    for (std::size_t index = 0;
-         index < plus_outer_orbital_value_gradient.size();
-         ++index) {
-      plus_outer_orbital_value_gradient[index] =
-          plus_full_gradient_result.sparse_orbital_energy_gradient[index] -
-          plus_fixed_gradient_result.sparse_orbital_energy_gradient[index];
-      minus_outer_orbital_value_gradient[index] =
-          minus_full_gradient_result.sparse_orbital_energy_gradient[index] -
-          minus_fixed_gradient_result.sparse_orbital_energy_gradient[index];
-    }
-    const Eigen::VectorXd plus_outer_response_from_active_gradient =
-        backpropagate_active_gradient_direction_to_orbital_response(
-            plus_input,
-            *plus_full_gradient_result.second_order_context,
-            parameter_view,
-            nonredundant_space,
-            plus_outer_active_overlap_gradient,
-            plus_outer_active_one_electron_gradient,
-            plus_outer_active_two_electron_gradient);
-    const Eigen::VectorXd minus_outer_response_from_active_gradient =
-        backpropagate_active_gradient_direction_to_orbital_response(
-            minus_input,
-            *minus_full_gradient_result.second_order_context,
-            parameter_view,
-            nonredundant_space,
-            minus_outer_active_overlap_gradient,
-            minus_outer_active_one_electron_gradient,
-            minus_outer_active_two_electron_gradient);
-    const Eigen::VectorXd plus_outer_response_from_orbital_gradient =
-        project_full_orbital_gradient_to_reduced(
-            parameter_view,
-            nonredundant_space,
-            plus_outer_orbital_value_gradient);
-    const Eigen::VectorXd minus_outer_response_from_orbital_gradient =
-        project_full_orbital_gradient_to_reduced(
-            parameter_view,
-            nonredundant_space,
-            minus_outer_orbital_value_gradient);
-    const double plus_outer_pointwise_pullback_max_abs_diff =
-        max_abs_difference(
-            plus_outer_response_from_active_gradient,
-            plus_outer_response_from_orbital_gradient);
-    const double minus_outer_pointwise_pullback_max_abs_diff =
-        max_abs_difference(
-            minus_outer_response_from_active_gradient,
-            minus_outer_response_from_orbital_gradient);
-    const double outer_stage_a_original_orbital_gradient_max_abs_diff =
-        (accepted_outer_forward_debug_context.original_orbital_gradient -
-         fd_outer_original_orbital_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double outer_stage_b_raw_orbital_gradient_max_abs_diff =
-        max_abs_difference(
-            accepted_outer_forward_debug_context.orbital_value_gradient,
-            fd_outer_orbital_value_gradient);
-    const double outer_stage_a_original_orbital_gradient_rel_max_diff =
-        relative_max_abs_difference(
-            accepted_outer_forward_debug_context.original_orbital_gradient,
-            fd_outer_original_orbital_gradient);
-    const double outer_stage_b_raw_orbital_gradient_rel_max_diff =
-        relative_max_abs_difference(
-            accepted_outer_forward_debug_context.orbital_value_gradient,
-            fd_outer_orbital_value_gradient);
-    const double fd_direct_upstream_split_max_abs_diff =
-        max_abs_difference(
-            fd_direct_upstream_response,
-            fixed_fd_response - fd_fixed_upstream_only_response);
-    const double fd_direct_upstream_split_rel_max_diff =
-        fd_direct_upstream_split_max_abs_diff /
-        std::max(1.0, max_abs_value(fd_direct_upstream_response));
-    const double fd_fixed_upstream_only_split_max_abs_diff =
-        max_abs_difference(
-            fd_fixed_upstream_only_response,
-            fixed_fd_response - fd_direct_upstream_response);
-    const double fd_fixed_upstream_only_split_rel_max_diff =
-        fd_fixed_upstream_only_split_max_abs_diff /
-        std::max(1.0, max_abs_value(fd_fixed_upstream_only_response));
-    const double fd_fixed_split_reconstruction_max_abs_diff =
-        max_abs_difference(
-            fd_fixed_response_from_split,
-            fixed_fd_response);
-    const double fd_fixed_split_reconstruction_rel_max_diff =
-        fd_fixed_split_reconstruction_max_abs_diff /
-        std::max(1.0, max_abs_value(fixed_fd_response));
-    const double analytic_direct_upstream_max_abs_diff =
-        max_abs_difference(
-            analytic_direct_core_response,
-            fd_direct_upstream_response);
-    const double analytic_direct_upstream_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_direct_core_response,
-            fd_direct_upstream_response);
-    const double analytic_fixed_upstream_only_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_upstream_only_response,
-            fd_fixed_upstream_only_response);
-    const double analytic_fixed_upstream_only_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_fixed_upstream_only_response,
-            fd_fixed_upstream_only_response);
-    const double analytic_direct_upstream_cached_max_abs_diff =
-        max_abs_difference(
-            analytic_direct_core_response_cached,
-            fd_direct_upstream_response);
-    const double analytic_direct_upstream_cached_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_direct_core_response_cached,
-            fd_direct_upstream_response);
-    const double analytic_fixed_upstream_only_cached_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_upstream_only_response_cached,
-            fd_fixed_upstream_only_response);
-    const double analytic_fixed_upstream_only_cached_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_fixed_upstream_only_response_cached,
-            fd_fixed_upstream_only_response);
-    const double analytic_direct_upstream_uncached_max_abs_diff =
-        max_abs_difference(
-            analytic_direct_core_response_uncached,
-            fd_direct_upstream_response);
-    const double analytic_direct_upstream_uncached_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_direct_core_response_uncached,
-            fd_direct_upstream_response);
-    const double analytic_fixed_upstream_only_uncached_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_upstream_only_response_uncached,
-            fd_fixed_upstream_only_response);
-    const double analytic_fixed_upstream_only_uncached_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_fixed_upstream_only_response_uncached,
-            fd_fixed_upstream_only_response);
-    const double analytic_direct_cached_vs_uncached_max_abs_diff =
-        max_abs_difference(
-            analytic_direct_core_response_cached,
-            analytic_direct_core_response_uncached);
-    const double analytic_fixed_cached_vs_uncached_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_upstream_only_response_cached,
-            analytic_fixed_upstream_only_response_uncached);
-    const double analytic_fixed_stage_a_max_abs_diff =
-        (analytic_delta_original_orbital_gradient -
-         fd_delta_original_orbital_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double analytic_fixed_stage_a_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_delta_original_orbital_gradient,
-            fd_delta_original_orbital_gradient);
-    const double analytic_fixed_stage_a_actual_backprop_max_abs_diff =
-        (analytic_delta_original_orbital_gradient -
-         fd_actual_delta_original_orbital_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double analytic_fixed_stage_a_actual_backprop_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_delta_original_orbital_gradient,
-            fd_actual_delta_original_orbital_gradient);
-    const double analytic_fixed_stage_b_raw_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_upstream_diagnostics.orbital_value_gradient,
-            fd_fixed_upstream_only_orbital_value_gradient);
-    const double analytic_fixed_stage_b_raw_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_fixed_upstream_diagnostics.orbital_value_gradient,
-            fd_fixed_upstream_only_orbital_value_gradient);
-    const double analytic_fixed_stage_b_debug_raw_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_upstream_diagnostics.orbital_value_gradient,
-            fd_debug_fixed_upstream_orbital_value_gradient);
-    const double analytic_fixed_stage_b_debug_raw_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_fixed_upstream_diagnostics.orbital_value_gradient,
-            fd_debug_fixed_upstream_orbital_value_gradient);
-    const double analytic_fixed_stage_c_packed_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_upstream_diagnostics.packed_response,
-            fd_fixed_upstream_only_packed_response);
-    const double analytic_fixed_stage_c_packed_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_fixed_upstream_diagnostics.packed_response,
-            fd_fixed_upstream_only_packed_response);
-    const double analytic_fixed_diag_vs_apply_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_upstream_diagnostics.reduced_response,
-            analytic_fixed_upstream_only_response);
-    const double analytic_fixed_split_reconstruction_max_abs_diff =
-        max_abs_difference(
-            analytic_direct_core_response + analytic_fixed_upstream_only_response,
-            analytic_fixed_response);
-    const double analytic_fixed_minus_fd_direct_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_response - fd_direct_upstream_response,
-            fd_fixed_upstream_only_response);
-    const double analytic_fixed_minus_fd_fixed_upstream_only_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_response - fd_fixed_upstream_only_response,
-            fd_direct_upstream_response);
-    const int n_active_orbitals =
-        gradient_result.second_order_context->n_active_orbitals;
-    const std::vector<double> analytic_sym_active_overlap_gradient =
-        symmetrize_square_storage_average(
-            analytic_directional_structure.active_orbital_overlap_gradient,
-            n_active_orbitals);
-    const std::vector<double> analytic_sym_active_one_electron_gradient =
-        symmetrize_square_storage_average(
-            analytic_directional_structure.active_one_electron_gradient,
-            n_active_orbitals);
-    const std::vector<double> fd_sym_active_overlap_gradient =
-        symmetrize_square_storage_average(
-            fd_delta_active_overlap_gradient,
-            n_active_orbitals);
-    const std::vector<double> fd_sym_active_one_electron_gradient =
-        symmetrize_square_storage_average(
-            fd_delta_active_one_electron_gradient,
-            n_active_orbitals);
-    const double sym_grad_sso_max_abs_diff =
-        max_abs_difference(
-            analytic_sym_active_overlap_gradient,
-            fd_sym_active_overlap_gradient);
-    const double sym_grad_hho_max_abs_diff =
-        max_abs_difference(
-            analytic_sym_active_one_electron_gradient,
-            fd_sym_active_one_electron_gradient);
-    const double accepted_outer_zero_order_active_auxiliary_max_abs_diff =
-        (accepted_full_active_gradient_backprop_inputs.total_active_auxiliary_gradient -
-         accepted_fixed_active_gradient_backprop_inputs.total_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double accepted_outer_zero_order_ao_effective_gradient_max_abs_diff =
-        max_abs_difference(
-            accepted_full_active_gradient_backprop_inputs
-                .ao_effective_one_electron_gradient,
-            accepted_fixed_active_gradient_backprop_inputs
-                .ao_effective_one_electron_gradient);
-    const double accepted_outer_zero_order_total_inactive_density_max_abs_diff =
-        max_abs_difference(
-            accepted_full_active_gradient_backprop_inputs
-                .total_inactive_density_gradient,
-            accepted_fixed_active_gradient_backprop_inputs
-                .total_inactive_density_gradient);
-    const double outer_matrix_active_auxiliary_max_abs_diff =
-        (analytic_outer_orbital_backprop_inputs.matrix_active_auxiliary_gradient -
-         fd_outer_matrix_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double outer_two_electron_active_auxiliary_max_abs_diff =
-        (analytic_outer_orbital_backprop_inputs.two_electron_active_auxiliary_gradient -
-         fd_outer_two_electron_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double outer_total_active_auxiliary_max_abs_diff =
-        (analytic_outer_orbital_backprop_inputs.total_active_auxiliary_gradient -
-         fd_outer_total_active_auxiliary_gradient)
-            .cwiseAbs()
-            .maxCoeff();
-    const double outer_ao_effective_one_electron_gradient_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_orbital_backprop_inputs.ao_effective_one_electron_gradient,
-            fd_outer_ao_effective_one_electron_gradient);
-    const double outer_ao_backprop_inactive_density_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_orbital_backprop_inputs.ao_backprop_inactive_density_gradient,
-            std::vector<double>(
-                fd_outer_ao_backprop_inactive_density_gradient.data(),
-                fd_outer_ao_backprop_inactive_density_gradient.data() +
-                    fd_outer_ao_backprop_inactive_density_gradient.size()));
-    const double outer_total_inactive_density_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_orbital_backprop_inputs.total_inactive_density_gradient,
-            std::vector<double>(
-                fd_outer_total_inactive_density_gradient.data(),
-                fd_outer_total_inactive_density_gradient.data() +
-                    fd_outer_total_inactive_density_gradient.size()));
-    const Eigen::VectorXd analytic_outer_response_from_sym_active_gradient =
-        backpropagate_active_gradient_direction_to_orbital_response(
-            input,
-            *gradient_result.second_order_context,
-            parameter_view,
-            nonredundant_space,
-            analytic_sym_active_overlap_gradient,
-            analytic_sym_active_one_electron_gradient,
-            analytic_directional_structure.packed_active_two_electron_gradient);
-    const Eigen::VectorXd fd_outer_response_from_sym_fd_active_gradient =
-        backpropagate_active_gradient_direction_to_orbital_response(
-            input,
-            *gradient_result.second_order_context,
-            parameter_view,
-            nonredundant_space,
-            fd_sym_active_overlap_gradient,
-            fd_sym_active_one_electron_gradient,
-            fd_delta_active_two_electron_gradient);
-    const double analytic_outer_sym_pullback_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_response_from_sym_active_gradient,
-            fd_outer_response);
-    const double analytic_outer_sym_pullback_rel_max_diff =
-        relative_max_abs_difference(
-            analytic_outer_response_from_sym_active_gradient,
-            fd_outer_response);
-    const double fd_outer_sym_pullback_max_abs_diff =
-        max_abs_difference(
-            fd_outer_response_from_sym_fd_active_gradient,
-            fd_outer_response);
-    const double fd_outer_sym_pullback_rel_max_diff =
-        relative_max_abs_difference(
-            fd_outer_response_from_sym_fd_active_gradient,
-            fd_outer_response);
-    const double analytic_outer_only_vs_split_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_only_response,
-            analytic_outer_response);
-    const double analytic_outer_only_cached_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_only_response_cached,
-            fd_outer_response);
-    const double analytic_outer_cached_vs_uncached_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_only_response_cached,
-            analytic_outer_only_response);
-    const double analytic_outer_only_vs_diag_pullback_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_only_response,
-            analytic_outer_response_from_sym_active_gradient);
-    const double analytic_outer_split_vs_diag_pullback_max_abs_diff =
-        max_abs_difference(
-            analytic_outer_response,
-            analytic_outer_response_from_sym_active_gradient);
-    const double fd_direct_upstream_inf_norm =
-        max_abs_value(fd_direct_upstream_response);
-    const double fd_fixed_upstream_only_inf_norm =
-        max_abs_value(fd_fixed_upstream_only_response);
-    const double fd_fixed_stage_a_inf_norm =
-        max_abs_value(fd_delta_original_orbital_gradient);
-    const double fd_fixed_stage_a_actual_backprop_inf_norm =
-        max_abs_value(fd_actual_delta_original_orbital_gradient);
-    const double fd_fixed_stage_b_raw_inf_norm =
-        max_abs_value(fd_fixed_upstream_only_orbital_value_gradient);
-    const double fd_fixed_stage_b_debug_raw_inf_norm =
-        max_abs_value(fd_debug_fixed_upstream_orbital_value_gradient);
-    const double fd_fixed_stage_c_packed_inf_norm =
-        max_abs_value(fd_fixed_upstream_only_packed_response);
-    const double fd_outer_inf_norm =
-        max_abs_value(fd_outer_response);
-    const double fd_outer_stage_a_inf_norm =
-        max_abs_value(fd_outer_original_orbital_gradient);
-    const double fd_outer_stage_b_raw_inf_norm =
-        max_abs_value(fd_outer_orbital_value_gradient);
 
-    const Eigen::VectorXd& analytic_response =
-        options.probe == "fixed" ? analytic_fixed_response : analytic_full_response;
-    const Eigen::VectorXd& finite_difference_response =
-        options.probe == "fixed" ? fixed_fd_response : full_fd_response;
-    const double max_abs_diff =
-        max_abs_difference(
-            analytic_response,
-            finite_difference_response);
-    const double max_abs_fd =
-        max_abs_value(finite_difference_response);
-    const double fixed_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_response,
-            fixed_fd_response);
-    const double fixed_max_rel_diff =
-        relative_max_abs_difference(
-            analytic_fixed_response,
-            fixed_fd_response);
-    const double fixed_cached_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_response_cached,
-            fixed_fd_response);
-    const double fixed_cached_max_rel_diff =
-        relative_max_abs_difference(
-            analytic_fixed_response_cached,
-            fixed_fd_response);
-    const double full_max_abs_diff =
-        max_abs_difference(
-            analytic_full_response,
-            full_fd_response);
-    const double full_max_rel_diff =
-        relative_max_abs_difference(
-            analytic_full_response,
-            full_fd_response);
-    const double full_cached_max_abs_diff =
-        max_abs_difference(
-            analytic_full_response_cached,
-            full_fd_response);
-    const double full_cached_max_rel_diff =
-        relative_max_abs_difference(
-            analytic_full_response_cached,
-            full_fd_response);
-    const double analytic_full_cached_vs_uncached_max_abs_diff =
-        max_abs_difference(
-            analytic_full_response_cached,
-            analytic_full_response);
-    const double analytic_fixed_cached_vs_uncached_full_max_abs_diff =
-        max_abs_difference(
-            analytic_fixed_response_cached,
-            analytic_fixed_response);
-    const auto [direct_upstream_max_index, direct_upstream_max_abs_diff] =
-        max_abs_difference_indexed(
-            analytic_direct_core_response,
-            fd_direct_upstream_response);
-    const auto [fixed_upstream_only_max_index, fixed_upstream_only_max_abs_diff] =
-        max_abs_difference_indexed(
-            analytic_fixed_upstream_only_response,
-            fd_fixed_upstream_only_response);
-    Eigen::Index fixed_stage_a_max_row = 0;
-    Eigen::Index fixed_stage_a_max_column = 0;
-    const double analytic_fixed_stage_a_max_abs_diff_indexed =
-        (analytic_delta_original_orbital_gradient -
-         fd_delta_original_orbital_gradient)
-            .cwiseAbs()
-            .maxCoeff(
-                &fixed_stage_a_max_row,
-                &fixed_stage_a_max_column);
-    const auto [outer_max_index, outer_max_abs_diff] =
-        max_abs_difference_indexed(
-            analytic_outer_response,
-            fd_outer_response);
-    const double outer_max_rel_diff =
-        relative_max_abs_difference(
-            analytic_outer_response,
-            fd_outer_response);
-
-    std::cout << std::setprecision(12);
-    std::cout << "input = " << options.input_path << '\n';
-    std::cout << "ao_integral_source = "
-              << xmvb::vb::ao_integral_source_name(load_result.ao_integral_source) << '\n';
-    std::cout << "reduced_dimension = " << reduced_direction.size() << '\n';
-    std::cout << "probe_mode = " << options.probe << '\n';
-    std::cout << "nonredundant_adapt = "
-              << (options.nonredundant_adapt ? "true" : "false") << '\n';
-    std::cout << "finite_difference_step = " << finite_difference_step << '\n';
-    std::cout << "finite_difference_step_mode = "
-              << (options.has_explicit_step ? "explicit" : "auto") << '\n';
-    std::cout << "plus_support_changed_orbital_count = "
-              << plus_support_changed_orbital_count << '\n';
-    std::cout << "minus_support_changed_orbital_count = "
-              << minus_support_changed_orbital_count << '\n';
-    std::cout << "plus_support_changed_slot_count = "
-              << plus_support_changed_slot_count << '\n';
-    std::cout << "minus_support_changed_slot_count = "
-              << minus_support_changed_slot_count << '\n';
-    std::cout << "accepted_inactive_overlap_inverse_identity_max_abs_diff = "
-              << accepted_inactive_overlap_inverse_identity_max_abs_diff << '\n';
-    std::cout << "plus_inactive_overlap_inverse_identity_max_abs_diff = "
-              << plus_inactive_overlap_inverse_identity_max_abs_diff << '\n';
-    std::cout << "minus_inactive_overlap_inverse_identity_max_abs_diff = "
-              << minus_inactive_overlap_inverse_identity_max_abs_diff << '\n';
-    std::cout << "use_full_matrix_form_adjoint = "
-              << (gradient_result.second_order_context->use_full_matrix_form_adjoint ? 1 : 0)
-              << '\n';
-    std::cout << "use_matrix_form_opposite_spin = "
-              << (gradient_result.second_order_context->use_matrix_form_opposite_spin ? 1 : 0)
-              << '\n';
-    std::cout << "analytic_inf_norm = " << max_abs_value(analytic_response) << '\n';
-    std::cout << "fd_inf_norm = " << max_abs_fd << '\n';
-    std::cout << "max_abs_diff = " << max_abs_diff << '\n';
-    std::cout << "max_rel_diff = "
-              << max_abs_diff / std::max(1.0, max_abs_fd) << '\n';
-    std::cout << "analytic_fixed_inf_norm = "
-              << max_abs_value(analytic_fixed_response) << '\n';
-    std::cout << "fixed_fd_inf_norm = "
-              << max_abs_value(fixed_fd_response) << '\n';
-    std::cout << "fixed_max_abs_diff = " << fixed_max_abs_diff << '\n';
-    std::cout << "fixed_max_rel_diff = " << fixed_max_rel_diff << '\n';
-    std::cout << "fixed_cached_max_abs_diff = "
-              << fixed_cached_max_abs_diff << '\n';
-    std::cout << "fixed_cached_max_rel_diff = "
-              << fixed_cached_max_rel_diff << '\n';
-    std::cout << "analytic_full_inf_norm = "
-              << max_abs_value(analytic_full_response) << '\n';
-    std::cout << "full_fd_inf_norm = "
-              << max_abs_value(full_fd_response) << '\n';
-    std::cout << "full_max_abs_diff = " << full_max_abs_diff << '\n';
-    std::cout << "full_max_rel_diff = " << full_max_rel_diff << '\n';
-    std::cout << "full_cached_max_abs_diff = "
-              << full_cached_max_abs_diff << '\n';
-    std::cout << "full_cached_max_rel_diff = "
-              << full_cached_max_rel_diff << '\n';
-    std::cout << "analytic_outer_inf_norm = "
-              << max_abs_value(analytic_outer_response) << '\n';
-    std::cout << "analytic_outer_only_inf_norm = "
-              << max_abs_value(analytic_outer_only_response) << '\n';
-    std::cout << "fd_outer_inf_norm = "
-              << fd_outer_inf_norm << '\n';
-    std::cout << "outer_max_abs_diff = " << outer_max_abs_diff << '\n';
-    std::cout << "outer_max_rel_diff = " << outer_max_rel_diff << '\n';
-    std::cout << "analytic_outer_only_vs_split_max_abs_diff = "
-              << analytic_outer_only_vs_split_max_abs_diff << '\n';
-    std::cout << "analytic_outer_only_cached_max_abs_diff = "
-              << analytic_outer_only_cached_max_abs_diff << '\n';
-    std::cout << "analytic_outer_cached_vs_uncached_max_abs_diff = "
-              << analytic_outer_cached_vs_uncached_max_abs_diff << '\n';
-    std::cout << "analytic_full_cached_vs_uncached_max_abs_diff = "
-              << analytic_full_cached_vs_uncached_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_cached_vs_uncached_full_max_abs_diff = "
-              << analytic_fixed_cached_vs_uncached_full_max_abs_diff << '\n';
-    std::cout << "analytic_outer_only_vs_diag_pullback_max_abs_diff = "
-              << analytic_outer_only_vs_diag_pullback_max_abs_diff << '\n';
-    std::cout << "analytic_outer_split_vs_diag_pullback_max_abs_diff = "
-              << analytic_outer_split_vs_diag_pullback_max_abs_diff << '\n';
-    std::cout << "outer_max_index = " << outer_max_index << '\n';
-    std::cout << "analytic_outer_at_max = "
-              << analytic_outer_response[outer_max_index] << '\n';
-    std::cout << "fd_outer_at_max = "
-              << fd_outer_response[outer_max_index] << '\n';
-    std::cout << "weight_h_max_abs_diff_from_fd_structure = "
-              << h_weight_max_abs_diff << '\n';
-    std::cout << "weight_s_max_abs_diff_from_fd_structure = "
-              << s_weight_max_abs_diff << '\n';
-    std::cout << "pair_h_max_abs_diff = "
-              << pair_h_max_abs_diff << '\n';
-    std::cout << "pair_s_max_abs_diff = "
-              << pair_s_max_abs_diff << '\n';
-    std::cout << "same_spin_fixed_hho_max_abs_diff = "
-              << same_spin_fixed_hho_max_abs_diff << '\n';
-    std::cout << "same_spin_fixed_sso_max_abs_diff = "
-              << same_spin_fixed_sso_max_abs_diff << '\n';
-    std::cout << "opposite_spin_fixed_sso_max_abs_diff = "
-              << opposite_spin_fixed_sso_max_abs_diff << '\n';
-    std::cout << "opposite_spin_fixed_ggo_max_abs_diff = "
-              << opposite_spin_fixed_ggo_max_abs_diff << '\n';
-    std::cout << "structure_h_max_abs_diff = "
-              << structure_h_max_abs_diff << '\n';
-    std::cout << "structure_s_max_abs_diff = "
-              << structure_s_max_abs_diff << '\n';
-    std::cout << "analytic_eigensystem_pair_h_max_abs_diff = "
-              << analytic_eigensystem_pair_h_max_abs_diff << '\n';
-    std::cout << "analytic_eigensystem_pair_s_max_abs_diff = "
-              << analytic_eigensystem_pair_s_max_abs_diff << '\n';
-    std::cout << "active_sso_max_abs_diff = "
-              << active_sso_max_abs_diff << '\n';
-    std::cout << "active_hho_max_abs_diff = "
-              << active_hho_max_abs_diff << '\n';
-    std::cout << "active_ggo_max_abs_diff = "
-              << active_ggo_max_abs_diff << '\n';
-    std::cout << "local_opposite_spin_sso_max_abs_diff = "
-              << local_opposite_spin_sso_max_abs_diff << '\n';
-    std::cout << "local_opposite_spin_ggo_max_abs_diff = "
-              << local_opposite_spin_ggo_max_abs_diff << '\n';
-    std::cout << "local_same_spin_repeat_sso_max_abs_diff = "
-              << local_same_spin_repeat_sso_max_abs_diff << '\n';
-    std::cout << "matrix_vs_pairwise_local_same_spin_sso_max_abs_diff = "
-              << matrix_vs_pairwise_local_same_spin_sso_max_abs_diff << '\n';
-    std::cout << "matrix_vs_pairwise_local_same_spin_hho_max_abs_diff = "
-              << matrix_vs_pairwise_local_same_spin_hho_max_abs_diff << '\n';
-    std::cout << "matrix_vs_pairwise_local_same_spin_ggo_max_abs_diff = "
-              << matrix_vs_pairwise_local_same_spin_ggo_max_abs_diff << '\n';
-    std::cout << "analytic_state_same_spin_sso_max_abs_diff = "
-              << analytic_state_same_spin_sso_max_abs_diff << '\n';
-    std::cout << "analytic_state_opposite_spin_sso_max_abs_diff = "
-              << analytic_state_opposite_spin_sso_max_abs_diff << '\n';
-    std::cout << "matrix_form_sum_sso_max_abs_diff = "
-              << matrix_form_sum_sso_max_abs_diff << '\n';
-    if (have_full_matrix_form_sum) {
-      std::cout << "matrix_form_sum_sso_max_index = "
-                << matrix_form_sum_sso_max_index << '\n';
-      std::cout << "matrix_form_sum_sso_max_abs_diff_indexed = "
-                << matrix_form_sum_sso_max_abs_diff_at_index << '\n';
-      std::cout << "matrix_form_sum_sso_at_max = "
-                << matrix_form_sum_sso[matrix_form_sum_sso_max_index] << '\n';
-      std::cout << "analytic_grad_sso_at_max = "
-                << analytic_directional_structure
-                       .active_orbital_overlap_gradient[matrix_form_sum_sso_max_index]
-                << '\n';
-      std::cout << "local_same_spin_sso_at_max = "
-                << analytic_local_same_spin_direction
-                       .active_orbital_overlap_gradient[matrix_form_sum_sso_max_index]
-                << '\n';
-      std::cout << "local_opposite_spin_sso_at_max = "
-                << analytic_local_opposite_spin_direction
-                       .active_orbital_overlap_gradient[matrix_form_sum_sso_max_index]
-                << '\n';
-      std::cout << "directional_same_spin_sso_at_max = "
-                << analytic_same_spin_direction_from_analytic_structure
-                       .active_orbital_overlap_gradient[matrix_form_sum_sso_max_index]
-                << '\n';
-      std::cout << "directional_opposite_spin_sso_at_max = "
-                << analytic_opposite_spin_direction_from_analytic_structure
-                       .active_orbital_overlap_gradient[matrix_form_sum_sso_max_index]
-                << '\n';
-    }
-    std::cout << "matrix_form_sum_hho_max_abs_diff = "
-              << matrix_form_sum_hho_max_abs_diff << '\n';
-    std::cout << "matrix_form_sum_ggo_max_abs_diff = "
-              << matrix_form_sum_ggo_max_abs_diff << '\n';
-    std::cout << "grad_sso_max_abs_diff = "
-              << grad_sso_max_abs_diff << '\n';
-    std::cout << "grad_sso_symmetric_max_abs_diff = "
-              << grad_sso_symmetric_max_abs_diff << '\n';
-    std::cout << "grad_hho_max_abs_diff = "
-              << grad_hho_max_abs_diff << '\n';
-    std::cout << "grad_hho_symmetric_max_abs_diff = "
-              << grad_hho_symmetric_max_abs_diff << '\n';
-    std::cout << "grad_ggo_max_abs_diff = "
-              << grad_ggo_max_abs_diff << '\n';
-    std::cout << "sym_grad_sso_max_abs_diff = "
-              << sym_grad_sso_max_abs_diff << '\n';
-    std::cout << "sym_grad_hho_max_abs_diff = "
-              << sym_grad_hho_max_abs_diff << '\n';
-    std::cout << "accepted_sparse_orbital_norm_max_abs_diff = "
-              << accepted_sparse_orbital_norm_max_abs_diff << '\n';
-    std::cout << "retract_input_direction_max_abs_diff = "
-              << retract_input_direction_max_abs_diff << '\n';
-    std::cout << "analytic_retract_input_direction_max_abs_diff = "
-              << analytic_retract_input_direction_max_abs_diff << '\n';
-    std::cout << "accepted_outer_zero_order_active_auxiliary_max_abs_diff = "
-              << accepted_outer_zero_order_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "accepted_outer_zero_order_ao_effective_gradient_max_abs_diff = "
-              << accepted_outer_zero_order_ao_effective_gradient_max_abs_diff << '\n';
-    std::cout << "accepted_outer_zero_order_total_inactive_density_max_abs_diff = "
-              << accepted_outer_zero_order_total_inactive_density_max_abs_diff << '\n';
-    std::cout << "outer_matrix_active_auxiliary_max_abs_diff = "
-              << outer_matrix_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "outer_two_electron_active_auxiliary_max_abs_diff = "
-              << outer_two_electron_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "outer_total_active_auxiliary_max_abs_diff = "
-              << outer_total_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "outer_ao_effective_one_electron_gradient_max_abs_diff = "
-              << outer_ao_effective_one_electron_gradient_max_abs_diff << '\n';
-    std::cout << "outer_ao_backprop_inactive_density_max_abs_diff = "
-              << outer_ao_backprop_inactive_density_max_abs_diff << '\n';
-    std::cout << "outer_total_inactive_density_max_abs_diff = "
-              << outer_total_inactive_density_max_abs_diff << '\n';
-    std::cout << "plus_outer_pointwise_pullback_max_abs_diff = "
-              << plus_outer_pointwise_pullback_max_abs_diff << '\n';
-    std::cout << "minus_outer_pointwise_pullback_max_abs_diff = "
-              << minus_outer_pointwise_pullback_max_abs_diff << '\n';
-    std::cout << "outer_stage_a_original_orbital_gradient_max_abs_diff = "
-              << outer_stage_a_original_orbital_gradient_max_abs_diff << '\n';
-    std::cout << "fd_outer_stage_a_original_orbital_gradient_inf_norm = "
-              << fd_outer_stage_a_inf_norm << '\n';
-    std::cout << "outer_stage_a_original_orbital_gradient_rel_max_diff = "
-              << outer_stage_a_original_orbital_gradient_rel_max_diff << '\n';
-    std::cout << "outer_stage_b_raw_orbital_gradient_max_abs_diff = "
-              << outer_stage_b_raw_orbital_gradient_max_abs_diff << '\n';
-    std::cout << "fd_outer_stage_b_raw_orbital_gradient_inf_norm = "
-              << fd_outer_stage_b_raw_inf_norm << '\n';
-    std::cout << "outer_stage_b_raw_orbital_gradient_rel_max_diff = "
-              << outer_stage_b_raw_orbital_gradient_rel_max_diff << '\n';
-    std::cout << "fd_outer_pullback_max_abs_diff = "
-              << fd_outer_pullback_max_abs_diff << '\n';
-    std::cout << "fd_fixed_pullback_max_abs_diff = "
-              << fd_fixed_pullback_max_abs_diff << '\n';
-    std::cout << "fd_full_pullback_max_abs_diff = "
-              << fd_full_pullback_max_abs_diff << '\n';
-    std::cout << "fd_direct_upstream_inf_norm = "
-              << fd_direct_upstream_inf_norm << '\n';
-    std::cout << "fd_fixed_upstream_only_inf_norm = "
-              << fd_fixed_upstream_only_inf_norm << '\n';
-    std::cout << "fd_direct_upstream_split_max_abs_diff = "
-              << fd_direct_upstream_split_max_abs_diff << '\n';
-    std::cout << "fd_direct_upstream_split_rel_max_diff = "
-              << fd_direct_upstream_split_rel_max_diff << '\n';
-    std::cout << "fd_fixed_upstream_only_split_max_abs_diff = "
-              << fd_fixed_upstream_only_split_max_abs_diff << '\n';
-    std::cout << "fd_fixed_upstream_only_split_rel_max_diff = "
-              << fd_fixed_upstream_only_split_rel_max_diff << '\n';
-    std::cout << "fd_fixed_split_reconstruction_max_abs_diff = "
-              << fd_fixed_split_reconstruction_max_abs_diff << '\n';
-    std::cout << "fd_fixed_split_reconstruction_rel_max_diff = "
-              << fd_fixed_split_reconstruction_rel_max_diff << '\n';
-    std::cout << "analytic_direct_upstream_max_abs_diff = "
-              << analytic_direct_upstream_max_abs_diff << '\n';
-    std::cout << "analytic_direct_upstream_rel_max_diff = "
-              << analytic_direct_upstream_rel_max_diff << '\n';
-    std::cout << "direct_upstream_max_index = "
-              << direct_upstream_max_index << '\n';
-    std::cout << "analytic_direct_upstream_at_max = "
-              << analytic_direct_core_response[direct_upstream_max_index] << '\n';
-    std::cout << "fd_direct_upstream_at_max = "
-              << fd_direct_upstream_response[direct_upstream_max_index] << '\n';
-    std::cout << "direct_core_matrix_active_auxiliary_max_abs_diff = "
-              << direct_core_matrix_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "direct_core_two_electron_active_auxiliary_max_abs_diff = "
-              << direct_core_two_electron_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "direct_core_two_electron_fixed_active_auxiliary_max_abs_diff = "
-              << direct_core_two_electron_fixed_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "direct_core_two_electron_final_active_auxiliary_max_abs_diff = "
-              << direct_core_two_electron_final_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "exact_2e_mixed_pair_coefficients_max_abs_diff = "
-              << exact_2e_mixed_pair_coefficients_max_abs_diff << '\n';
-    std::cout << "exact_2e_transformed_pair_coefficients_max_abs_diff = "
-              << exact_2e_transformed_pair_coefficients_max_abs_diff << '\n';
-    std::cout << "exact_2e_pair_gradients_max_abs_diff = "
-              << exact_2e_pair_gradients_max_abs_diff << '\n';
-    std::cout << "direct_core_total_active_auxiliary_max_abs_diff = "
-              << direct_core_total_active_auxiliary_max_abs_diff << '\n';
-    std::cout << "direct_core_delta_ao_effective_one_electron_max_abs_diff = "
-              << direct_core_delta_ao_effective_one_electron_max_abs_diff << '\n';
-    std::cout << "direct_core_ao_backprop_inactive_density_max_abs_diff = "
-              << direct_core_ao_backprop_inactive_density_max_abs_diff << '\n';
-    std::cout << "direct_core_total_inactive_density_max_abs_diff = "
-              << direct_core_total_inactive_density_max_abs_diff << '\n';
-    std::cout << "direct_core_response_vs_diagnostic_max_abs_diff = "
-              << direct_core_response_vs_diagnostic_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_upstream_only_max_abs_diff = "
-              << analytic_fixed_upstream_only_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_upstream_only_rel_max_diff = "
-              << analytic_fixed_upstream_only_rel_max_diff << '\n';
-    std::cout << "fixed_upstream_only_max_index = "
-              << fixed_upstream_only_max_index << '\n';
-    std::cout << "analytic_fixed_upstream_only_at_max = "
-              << analytic_fixed_upstream_only_response[fixed_upstream_only_max_index] << '\n';
-    std::cout << "fd_fixed_upstream_only_at_max = "
-              << fd_fixed_upstream_only_response[fixed_upstream_only_max_index] << '\n';
-    std::cout << "analytic_direct_upstream_cached_max_abs_diff = "
-              << analytic_direct_upstream_cached_max_abs_diff << '\n';
-    std::cout << "analytic_direct_upstream_cached_rel_max_diff = "
-              << analytic_direct_upstream_cached_rel_max_diff << '\n';
-    std::cout << "analytic_fixed_upstream_only_cached_max_abs_diff = "
-              << analytic_fixed_upstream_only_cached_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_upstream_only_cached_rel_max_diff = "
-              << analytic_fixed_upstream_only_cached_rel_max_diff << '\n';
-    std::cout << "analytic_direct_upstream_uncached_max_abs_diff = "
-              << analytic_direct_upstream_uncached_max_abs_diff << '\n';
-    std::cout << "analytic_direct_upstream_uncached_rel_max_diff = "
-              << analytic_direct_upstream_uncached_rel_max_diff << '\n';
-    std::cout << "analytic_fixed_upstream_only_uncached_max_abs_diff = "
-              << analytic_fixed_upstream_only_uncached_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_upstream_only_uncached_rel_max_diff = "
-              << analytic_fixed_upstream_only_uncached_rel_max_diff << '\n';
-    std::cout << "analytic_direct_cached_vs_uncached_max_abs_diff = "
-              << analytic_direct_cached_vs_uncached_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_cached_vs_uncached_max_abs_diff = "
-              << analytic_fixed_cached_vs_uncached_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_stage_a_max_abs_diff = "
-              << analytic_fixed_stage_a_max_abs_diff << '\n';
-    std::cout << "fd_fixed_stage_a_inf_norm = "
-              << fd_fixed_stage_a_inf_norm << '\n';
-    std::cout << "analytic_fixed_stage_a_rel_max_diff = "
-              << analytic_fixed_stage_a_rel_max_diff << '\n';
-    std::cout << "accepted_fixed_stage0_original_orbital_gradient_max_abs_diff = "
-              << accepted_fixed_stage0_original_orbital_gradient_max_abs_diff << '\n';
-    std::cout << "accepted_fixed_stage0_actual_original_orbital_gradient_max_abs_diff = "
-              << accepted_fixed_stage0_actual_original_orbital_gradient_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_stage_a_actual_backprop_max_abs_diff = "
-              << analytic_fixed_stage_a_actual_backprop_max_abs_diff << '\n';
-    std::cout << "fd_fixed_stage_a_actual_backprop_inf_norm = "
-              << fd_fixed_stage_a_actual_backprop_inf_norm << '\n';
-    std::cout << "analytic_fixed_stage_a_actual_backprop_rel_max_diff = "
-              << analytic_fixed_stage_a_actual_backprop_rel_max_diff << '\n';
-    std::cout << "analytic_delta_normalized_orbitals_max_abs_diff = "
-              << analytic_delta_normalized_orbitals_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_stage_b_raw_max_abs_diff = "
-              << analytic_fixed_stage_b_raw_max_abs_diff << '\n';
-    std::cout << "fd_fixed_stage_b_raw_inf_norm = "
-              << fd_fixed_stage_b_raw_inf_norm << '\n';
-    std::cout << "analytic_fixed_stage_b_raw_rel_max_diff = "
-              << analytic_fixed_stage_b_raw_rel_max_diff << '\n';
-    std::cout << "fixed_stage_b_max_flat_index = "
-              << fixed_stage_b_max_flat_index << '\n';
-    std::cout << "fixed_stage_b_max_abs_diff_indexed = "
-              << fixed_stage_b_max_abs_diff_indexed << '\n';
-    std::cout << "fixed_stage_b_raw_direction_projection = "
-              << fixed_stage_b_raw_direction_projection << '\n';
-    std::cout << "fixed_stage_b_retract_direction_projection = "
-              << fixed_stage_b_retract_direction_projection << '\n';
-    std::cout << "fixed_stage_b_delta_inverse_term_raw = "
-              << fixed_stage_b_delta_inverse_term_raw << '\n';
-    std::cout << "fixed_stage_b_delta_inverse_term_retract = "
-              << fixed_stage_b_delta_inverse_term_retract << '\n';
-    std::cout << "fixed_stage_b_main_term = "
-              << fixed_stage_b_main_term << '\n';
-    std::cout << "fixed_stage_b_analytic_delta_scalar_term = "
-              << fixed_stage_b_analytic_delta_scalar_term << '\n';
-    std::cout << "fixed_stage_b_fd_delta_scalar_term = "
-              << fixed_stage_b_fd_delta_scalar_term << '\n';
-    std::cout << "fixed_stage_b_analytic_delta_overlap_times_normalized = "
-              << fixed_stage_b_analytic_delta_overlap_times_normalized << '\n';
-    std::cout << "fixed_stage_b_fd_delta_overlap_times_normalized = "
-              << fixed_stage_b_fd_delta_overlap_times_normalized << '\n';
-    std::cout << "fixed_stage_b_analytic_delta_dense_gradient = "
-              << fixed_stage_b_analytic_delta_dense_gradient << '\n';
-    std::cout << "fixed_stage_b_fd_delta_dense_gradient = "
-              << fixed_stage_b_fd_delta_dense_gradient << '\n';
-    std::cout << "analytic_fixed_stage_b_debug_raw_max_abs_diff = "
-              << analytic_fixed_stage_b_debug_raw_max_abs_diff << '\n';
-    std::cout << "fd_fixed_stage_b_debug_raw_inf_norm = "
-              << fd_fixed_stage_b_debug_raw_inf_norm << '\n';
-    std::cout << "analytic_fixed_stage_b_debug_raw_rel_max_diff = "
-              << analytic_fixed_stage_b_debug_raw_rel_max_diff << '\n';
-    std::cout << "analytic_fixed_stage_c_packed_max_abs_diff = "
-              << analytic_fixed_stage_c_packed_max_abs_diff << '\n';
-    std::cout << "fd_fixed_stage_c_packed_inf_norm = "
-              << fd_fixed_stage_c_packed_inf_norm << '\n';
-    std::cout << "analytic_fixed_stage_c_packed_rel_max_diff = "
-              << analytic_fixed_stage_c_packed_rel_max_diff << '\n';
-    std::cout << "analytic_fixed_diag_vs_apply_max_abs_diff = "
-              << analytic_fixed_diag_vs_apply_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_stage_a_max_abs_diff_indexed = "
-              << analytic_fixed_stage_a_max_abs_diff_indexed << '\n';
-    std::cout << "fixed_stage_a_max_row = "
-              << fixed_stage_a_max_row << '\n';
-    std::cout << "fixed_stage_a_max_column = "
-              << fixed_stage_a_max_column << '\n';
-    std::cout << "analytic_fixed_stage_a_at_max = "
-              << analytic_delta_original_orbital_gradient(
-                     fixed_stage_a_max_row,
-                     fixed_stage_a_max_column)
-              << '\n';
-    std::cout << "fd_fixed_stage_a_at_max = "
-              << fd_delta_original_orbital_gradient(
-                     fixed_stage_a_max_row,
-                     fixed_stage_a_max_column)
-              << '\n';
-    std::cout << "analytic_fixed_split_reconstruction_max_abs_diff = "
-              << analytic_fixed_split_reconstruction_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_minus_fd_direct_max_abs_diff = "
-              << analytic_fixed_minus_fd_direct_max_abs_diff << '\n';
-    std::cout << "analytic_fixed_minus_fd_fixed_upstream_only_max_abs_diff = "
-              << analytic_fixed_minus_fd_fixed_upstream_only_max_abs_diff << '\n';
-    std::cout << "analytic_outer_sym_pullback_max_abs_diff = "
-              << analytic_outer_sym_pullback_max_abs_diff << '\n';
-    std::cout << "analytic_outer_sym_pullback_rel_max_diff = "
-              << analytic_outer_sym_pullback_rel_max_diff << '\n';
-    std::cout << "fd_outer_sym_pullback_max_abs_diff = "
-              << fd_outer_sym_pullback_max_abs_diff << '\n';
-    std::cout << "fd_outer_sym_pullback_rel_max_diff = "
-              << fd_outer_sym_pullback_rel_max_diff << '\n';
-    if (n_active_orbitals <= 4) {
-      std::cout << "analytic_hho_gradient_matrix =\n"
-                << format_square_matrix(
-                       analytic_directional_structure.active_one_electron_gradient,
-                       n_active_orbitals)
-                << '\n';
-      std::cout << "fd_hho_gradient_matrix =\n"
-                << format_square_matrix(
-                       fd_delta_active_one_electron_gradient,
-                       n_active_orbitals)
-                << '\n';
-      std::cout << "analytic_sso_gradient_matrix =\n"
-                << format_square_matrix(
-                       analytic_directional_structure.active_orbital_overlap_gradient,
-                       n_active_orbitals)
-                << '\n';
-      std::cout << "fd_sso_gradient_matrix =\n"
-                << format_square_matrix(
-                       fd_delta_active_overlap_gradient,
-                       n_active_orbitals)
-                << '\n';
-    }
-#endif  // end of large DirectionalStructureDiagnostics-dependent block
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

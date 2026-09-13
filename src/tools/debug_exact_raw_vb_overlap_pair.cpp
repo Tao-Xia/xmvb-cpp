@@ -6,9 +6,12 @@
 #include <string>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/legacy_structure_overlap.hpp"
-#include "vb/matrices/union_graph_screening.hpp"
+#include <Eigen/Core>
+
+#include "input/loading/loader.hpp"
+#include "vbscf/core/storage/eigen.hpp"
+#include "vbscf/structures/reference/overlap.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
 
 namespace {
 
@@ -76,7 +79,7 @@ std::string format_indices(const std::vector<int>& indices, bool one_based) {
   return stream.str();
 }
 
-std::string format_term(const xmvb::vb::LegacyStructureDeterminantTerm& term) {
+std::string format_term(const xmvb::vb::RawStructureDeterminantTerm& term) {
   std::ostringstream stream;
   stream << "coef=" << term.coefficient
          << " alpha=" << format_indices(term.alpha_occ, true)
@@ -107,10 +110,11 @@ std::vector<Pair> build_original_pairs_for_metric_component(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
-    const auto& active_overlap_storage =
-        load_result.input.orbital_preparation_input.ao_overlap_matrix;
+    const auto active_overlap_storage =
+        xmvb::vb::flatten_matrix_column_major(
+            load_result.input.orbital_preparation_input.ao_overlap_matrix);
     const int n_active_orbitals =
         load_result.input.orbital_preparation_input.n_active_orbitals;
 
@@ -124,9 +128,9 @@ int main(int argc, char** argv) {
     const auto right_pairs =
         xmvb::vb::extract_active_pairs(raw_structure_data, options.right_structure);
     const auto left_terms =
-        xmvb::vb::enumerate_legacy_determinant_terms(left_pairs);
+        xmvb::vb::enumerate_raw_determinant_terms(left_pairs);
     const auto right_terms =
-        xmvb::vb::enumerate_legacy_determinant_terms(right_pairs);
+        xmvb::vb::enumerate_raw_determinant_terms(right_pairs);
 
     const auto support_orbitals =
         xmvb::vb::build_support_orbitals(left_pairs, right_pairs);
@@ -155,7 +159,7 @@ int main(int argc, char** argv) {
         metric_graph,
         union_components);
 
-    xmvb::vb::Matrix full_active_overlap(n_active_orbitals, n_active_orbitals);
+    Eigen::MatrixXd full_active_overlap(n_active_orbitals, n_active_orbitals);
     for (int column = 0; column < n_active_orbitals; ++column) {
       for (int row = 0; row < n_active_orbitals; ++row) {
         full_active_overlap(row, column) =
@@ -175,21 +179,21 @@ int main(int argc, char** argv) {
     // full active metric. `exact_support_overlap` is the same computation on
     // the reduced support metric, so any difference would indicate a bug in the
     // support remapping rather than in the factorization logic.
-    const double exact_full_overlap = xmvb::vb::legacy_structure_overlap(
+    const double exact_full_overlap = xmvb::vb::raw_structure_overlap(
         left_terms,
         right_terms,
         full_active_overlap,
         overlap_resolver);
     const auto left_terms_local =
-        xmvb::vb::enumerate_legacy_determinant_terms(left_pairs_local);
+        xmvb::vb::enumerate_raw_determinant_terms(left_pairs_local);
     const auto right_terms_local =
-        xmvb::vb::enumerate_legacy_determinant_terms(right_pairs_local);
-    const double exact_support_overlap = xmvb::vb::legacy_structure_overlap(
+        xmvb::vb::enumerate_raw_determinant_terms(right_pairs_local);
+    const double exact_support_overlap = xmvb::vb::raw_structure_overlap(
         left_terms_local,
         right_terms_local,
         support_overlap,
         overlap_resolver);
-    const double exact_block_diagonal_overlap = xmvb::vb::legacy_structure_overlap(
+    const double exact_block_diagonal_overlap = xmvb::vb::raw_structure_overlap(
         left_terms_local,
         right_terms_local,
         block_diagonal_support_overlap,
@@ -281,10 +285,10 @@ int main(int argc, char** argv) {
           support_orbitals,
           false);
       const auto left_component_terms =
-          xmvb::vb::enumerate_legacy_determinant_terms(left_component_pairs);
+          xmvb::vb::enumerate_raw_determinant_terms(left_component_pairs);
       const auto right_component_terms =
-          xmvb::vb::enumerate_legacy_determinant_terms(right_component_pairs);
-      const double local_overlap = xmvb::vb::legacy_structure_overlap(
+          xmvb::vb::enumerate_raw_determinant_terms(right_component_pairs);
+      const double local_overlap = xmvb::vb::raw_structure_overlap(
           left_component_terms,
           right_component_terms,
           full_active_overlap,

@@ -12,10 +12,13 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/legacy_structure_overlap.hpp"
-#include "vb/matrices/union_graph_screening.hpp"
-#include "vb/scf/cpp_vb_scf_optimizer.hpp"
+#include <Eigen/Core>
+
+#include "input/loading/loader.hpp"
+#include "vbscf/structures/reference/overlap.hpp"
+#include "vbscf/structures/selection/union_graph/screening.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/optimization/driver/optimizer.hpp"
 
 namespace {
 
@@ -66,7 +69,7 @@ struct ActiveOverlapSelectionResult {
 
 struct PerStructureCache {
   std::vector<xmvb::vb::OrbitalPair> active_pairs;
-  std::vector<xmvb::vb::LegacyStructureDeterminantTerm> determinant_terms;
+  std::vector<xmvb::vb::RawStructureDeterminantTerm> determinant_terms;
 };
 
 struct PairExample {
@@ -347,11 +350,12 @@ void print_connected_component_details(
 
 ActiveOverlapSelectionResult select_active_overlap_matrix(
     const Options& options,
-    const xmvb::vb::CppVbInputLoadResult& load_result) {
+    const xmvb::vb::VbScfInputLoadResult& load_result) {
   ActiveOverlapSelectionResult result;
   if (options.active_overlap_source == ActiveOverlapSource::Input) {
-    result.active_overlap_matrix =
-        load_result.input.orbital_preparation_input.ao_overlap_matrix;
+    result.active_overlap_matrix = xmvb::vb::ActiveSpaceOrbitalPreparer{}
+        .prepare(load_result.input.orbital_preparation_input)
+        .active_orbital_overlap_matrix;
     return result;
   }
 
@@ -359,15 +363,15 @@ ActiveOverlapSelectionResult select_active_overlap_matrix(
   // optimizer, because the purpose of this tool is to measure whether the exact
   // graph-disconnected special case survives on the same orbitals used in a real
   // SCF trajectory.
-  xmvb::vb::CppVbScfOptimizerOptions optimizer_options;
-  optimizer_options.backend = xmvb::vb::CppVbScfOptimizerBackend::Lbfgspp;
+  xmvb::vb::VbScfOptimizerOptions optimizer_options;
+  optimizer_options.backend = xmvb::vb::VbScfOptimizerBackend::Lbfgspp;
   optimizer_options.max_iterations = options.optimizer_max_iterations;
   optimizer_options.gradient_tolerance = options.optimizer_gradient_tolerance;
   optimizer_options.energy_tolerance = options.optimizer_energy_tolerance;
   optimizer_options.verbose = false;
   optimizer_options.retain_accepted_iteration_trace = true;
 
-  xmvb::vb::CppVbScfOptimizer optimizer(optimizer_options);
+  xmvb::vb::VbScfOptimizer optimizer(optimizer_options);
   const auto optimization_result = optimizer.optimize(
       load_result.input,
       load_result.nuclear_repulsion_energy);
@@ -394,10 +398,10 @@ ActiveOverlapSelectionResult select_active_overlap_matrix(
   return result;
 }
 
-xmvb::vb::Matrix build_full_active_overlap_matrix(
+Eigen::MatrixXd build_full_active_overlap_matrix(
     const std::vector<double>& active_overlap_storage,
     int n_active_orbitals) {
-  xmvb::vb::Matrix active_overlap(n_active_orbitals, n_active_orbitals);
+  Eigen::MatrixXd active_overlap(n_active_orbitals, n_active_orbitals);
   for (int column = 0; column < n_active_orbitals; ++column) {
     for (int row = 0; row < n_active_orbitals; ++row) {
       active_overlap(row, column) =
@@ -433,7 +437,7 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     const auto started_at = std::chrono::steady_clock::now();
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& raw_structure_data = load_result.raw_structure_data;
     const auto overlap_selection = select_active_overlap_matrix(options, load_result);
     const auto& active_overlap_storage = overlap_selection.active_overlap_matrix;
@@ -466,10 +470,10 @@ int main(int argc, char** argv) {
       cache.active_pairs =
           xmvb::vb::extract_active_pairs(raw_structure_data, structure_index);
       cache.determinant_terms =
-          xmvb::vb::enumerate_legacy_determinant_terms(cache.active_pairs);
+          xmvb::vb::enumerate_raw_determinant_terms(cache.active_pairs);
     }
 
-    const xmvb::vb::Matrix full_active_overlap =
+    const Eigen::MatrixXd full_active_overlap =
         build_full_active_overlap_matrix(active_overlap_storage, n_active_orbitals);
     xmvb::vb::DeterminantOverlapResolver overlap_resolver;
 
@@ -549,7 +553,7 @@ int main(int argc, char** argv) {
 
       // This is the exact reference for the current raw-structure pair:
       // determinant-term expansion over the full pair support.
-      const double exact_overlap = xmvb::vb::legacy_structure_overlap(
+      const double exact_overlap = xmvb::vb::raw_structure_overlap(
           left_cache.determinant_terms,
           right_cache.determinant_terms,
           full_active_overlap,
@@ -580,13 +584,13 @@ int main(int argc, char** argv) {
           continue;
         }
         const auto left_component_terms =
-            xmvb::vb::enumerate_legacy_determinant_terms(left_component_pairs);
+            xmvb::vb::enumerate_raw_determinant_terms(left_component_pairs);
         const auto right_component_terms =
-            xmvb::vb::enumerate_legacy_determinant_terms(right_component_pairs);
+            xmvb::vb::enumerate_raw_determinant_terms(right_component_pairs);
         factored_pair_determinant_count +=
             static_cast<std::uint64_t>(left_component_terms.size()) *
             static_cast<std::uint64_t>(right_component_terms.size());
-        factored_overlap *= xmvb::vb::legacy_structure_overlap(
+        factored_overlap *= xmvb::vb::raw_structure_overlap(
             left_component_terms,
             right_component_terms,
             full_active_overlap,

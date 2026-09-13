@@ -13,12 +13,12 @@
 #include <omp.h>
 #endif
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/two_electron_indexer.hpp"
-#include "vb/orbital/active_space_one_electron_builder.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/active_space_two_electron_builder.hpp"
-#include "vb/orbital/ao_effective_one_electron_builder.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/one_electron/builder.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/builder.hpp"
+#include "vbscf/integrals/ao/one_electron/builder.hpp"
 
 namespace {
 
@@ -91,8 +91,17 @@ double max_abs_difference(
   return max_abs_diff;
 }
 
+double max_abs_difference(
+    const Eigen::Ref<const Eigen::MatrixXd>& left,
+    const Eigen::Ref<const Eigen::MatrixXd>& right) {
+  if (left.rows() != right.rows() || left.cols() != right.cols()) {
+    throw std::invalid_argument("matrix shape mismatch");
+  }
+  return (left - right).cwiseAbs().maxCoeff();
+}
+
 std::vector<double> build_dense_active_coefficients(
-    const std::vector<double>& auxiliary_orbital_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) {
@@ -101,11 +110,7 @@ std::vector<double> build_dense_active_coefficients(
     throw std::invalid_argument("auxiliary orbital matrix size mismatch");
   }
 
-  const Eigen::Map<const Matrix> auxiliary_matrix(
-      auxiliary_orbital_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const auto active_auxiliary_orbitals = auxiliary_matrix.middleCols(
+  const auto active_auxiliary_orbitals = auxiliary_orbital_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
 
@@ -167,7 +172,7 @@ UniquePermutationSet enumerate_unique_symmetry_permutations(
 }
 
 xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron(
-    const std::vector<double>& inactive_density_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_density_matrix,
     const xmvb::vb::AoIntegralInput& ao_integral_input) {
   const int n_basis_functions = ao_integral_input.n_basis_functions;
   if (n_basis_functions <= 0) {
@@ -184,14 +189,8 @@ xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron
     throw std::invalid_argument("AO two-electron index/value size mismatch");
   }
 
-  const Eigen::Map<const Matrix> inactive_density(
-      inactive_density_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const Eigen::Map<const Matrix> core_hamiltonian(
-      ao_integral_input.ao_core_hamiltonian_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
+  const auto& inactive_density = inactive_density_matrix;
+  const auto& core_hamiltonian = ao_integral_input.ao_core_hamiltonian_matrix;
   Matrix g11 = Matrix::Zero(n_basis_functions, n_basis_functions);
 
   for (std::size_t integral_index = 0;
@@ -238,20 +237,16 @@ xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron
   }
 
   xmvb::vb::AoEffectiveOneElectronResult result;
-  result.ao_coulomb_exchange_matrix.assign(
-      g11.data(),
-      g11.data() + g11.size());
+  result.ao_coulomb_exchange_matrix = g11;
   Matrix ao_effective_h1e = core_hamiltonian;
   ao_effective_h1e.noalias() += g11;
-  result.ao_effective_h1e.assign(
-      ao_effective_h1e.data(),
-      ao_effective_h1e.data() + ao_effective_h1e.size());
+  result.ao_effective_h1e = std::move(ao_effective_h1e);
   return result;
 }
 
 xmvb::vb::ActiveSpaceTwoElectronResult build_reference_active_space_two_electron(
     const xmvb::vb::AoIntegralInput& ao_integral_input,
-    const std::vector<double>& auxiliary_orbital_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) {
   const int n_basis_functions = ao_integral_input.n_basis_functions;
@@ -408,27 +403,19 @@ xmvb::vb::ActiveSpaceTwoElectronResult build_reference_active_space_two_electron
   return result;
 }
 
-std::vector<double> build_reference_active_space_one_electron(
-    const std::vector<double>& ao_effective_h1e,
-    const std::vector<double>& auxiliary_orbital_matrix,
+Eigen::MatrixXd build_reference_active_space_one_electron(
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_h1e,
+    const Eigen::Ref<const Eigen::MatrixXd>& auxiliary_orbital_matrix,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) {
-  const Eigen::Map<const Matrix> ao_f11_matrix(
-      ao_effective_h1e.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const Eigen::Map<const Matrix> auxiliary_matrix(
-      auxiliary_orbital_matrix.data(),
-      n_basis_functions,
-      n_basis_functions);
-  const auto active_auxiliary_orbitals = auxiliary_matrix.middleCols(
+  const auto active_auxiliary_orbitals = auxiliary_orbital_matrix.middleCols(
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
   const Matrix h1e_act =
-      active_auxiliary_orbitals.transpose() * ao_f11_matrix *
+      active_auxiliary_orbitals.transpose() * ao_effective_h1e *
       active_auxiliary_orbitals;
-  return std::vector<double>(h1e_act.data(), h1e_act.data() + h1e_act.size());
+  return h1e_act;
 }
 
 }  // namespace
@@ -436,10 +423,10 @@ std::vector<double> build_reference_active_space_one_electron(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    xmvb::vb::CppVbInputLoadOptions load_options;
+    xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
-        xmvb::vb::load_cpp_vb_input_with_timings(options.input_path, load_options);
+        xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     const auto& input = load_result.input;
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;

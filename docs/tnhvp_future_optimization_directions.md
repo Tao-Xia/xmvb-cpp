@@ -1,0 +1,244 @@
+# TNHVP 后续优化方向
+
+当前可执行的性能任务、基准和进度看板见
+[docs/tnhvp_performance_improvement_plan.md](/pool1/home/xiatao/project/xmvb-cpp/docs/tnhvp_performance_improvement_plan.md)。
+
+本文档总结当前 `exact_ctx` / TNHVP 路径上仍然最有希望继续降低 wall-time 的方向，并按“潜在收益”和“实现风险”进行区分。这里讨论的是下一步算法与实现工作的取舍，不是当前代码已经完成的内容。
+
+关于 `outer-response` 为什么应当优先被整理成“接受点固定线性响应算子”，见
+[docs/outer_response_linear_response_predecomposition.md](/pool1/home/xiatao/project/xmvb-cpp/docs/outer_response_linear_response_predecomposition.md)。
+
+## 1. 当前瓶颈的基本判断
+
+在现有实现中，完整解析 HVP 的成本可以粗略写成
+
+$$
+T_{\mathrm{HVP}}^{\mathrm{full}}
+=
+T_{\mathrm{core}} + T_{\mathrm{outer}},
+$$
+
+其中：
+
+- \(T_{\mathrm{core}}\) 主要包括活性空间局部方向积分、活性二电子方向作用以及轨道回传几何项；
+- \(T_{\mathrm{outer}}\) 主要包括方向活性空间积分、方向结构矩阵构造、广义本征响应、方向伴随量生成以及最终轨道回传。
+
+从当前路径看，真正大的优化空间主要有两类：
+
+1. 减少 outer-response 在每次 matvec 中的重复线性代数与重复回传；
+2. 从变量图表本身出发，简化固定上游回传链与活性辅助轨道导数链。
+
+相比之下，单纯的小型常数优化虽然仍然有价值，但通常不足以带来“本质效果”。
+
+补充进展：`2026-04-23` 已经完成一轮 `outer_response_structure_matrices`
+热点优化。对 `241_VBSCF` 和 `10698_VBSCF`，结构矩阵阶段都从大约
+`0.08 s` 降到了 `0.04-0.05 s`。因此，`P1` 不再是唯一主导项；在更大
+case 上，新的主要 outer-response 开销已经更偏向
+`outer_response_active_space_integrals`，其次是
+`outer_response_orbital_pullback`。
+
+## 2. 优先级最高的方向
+
+### 2.1 outer-response 的线性响应算子预分解
+
+**结论：这是当前最值得优先探索的方向。**
+
+当前 outer-response 的高代价并不只来自方向积分本身，更来自后续整条
+
+$$
+\text{directional integrals}
+\rightarrow
+\text{structure matrices}
+\rightarrow
+\text{generalized eigen response}
+\rightarrow
+\text{active-space gradient}
+\rightarrow
+\text{orbital pullback}
+$$
+
+链路在每次 HVP 调用中都要完整重做。
+
+如果在接受点上把选定态响应写成一个显式的线性算子
+
+$$
+\delta \lambda = \mathcal{R}^{-1} b(\delta \eta),
+$$
+
+其中 \(\delta \eta\) 表示方向活性空间积分，\(\mathcal{R}\) 表示接受点处固定的响应算子，那么就有机会把以下对象提前在接受点分解或缓存：
+
+- 选定态子空间上的度量与哈密顿矩阵分解；
+- 约束后的广义本征响应投影器；
+- 从 \(\delta \eta\) 到方向伴随量的线性映射骨架。
+
+若这条线走通，则 outer-response 的单次成本将从“重新做一套小型但完整的方向响应流程”下降为“方向右端项 + 一个已分解线性算子的应用”。这比单纯优化某一个局部 kernel 的常数因子更有机会带来明显 wall-time 收益。
+
+**预期收益**
+
+- 对完整 HVP 的单次成本有实质影响；
+- 对活性空间不太小、但 outer-response 仍有数值收益的体系尤其重要；
+- 有望减少“是否开启 outer-response”对总时间的敏感性。
+
+**主要风险**
+
+- 需要重新整理选定态响应的线性化公式；
+- 需要严格验证数值一致性，尤其是方向伴随量与轨道回传的对应关系；
+- 小心处理简并或近简并情况下的稳定性。
+
+## 3. 第二优先级方向
+
+### 3.1 outer-response 轨道回传直接落到 packed / reduced chart
+
+当前 outer-response 末端仍然先构造完整的 `orbital_value_gradient`，然后再经过
+
+$$
+\text{full orbital gradient}
+\rightarrow
+\text{packed gradient}
+\rightarrow
+\text{reduced gradient}
+$$
+
+这条路径回到非冗余空间。
+
+更进一步的优化方向，是把轨道回传尽量直接落到 packed chart，甚至直接落到 reduced chart。数学上这相当于把
+
+$$
+Q_k^{\mathrm T} \mathcal{B}_{x_k}
+$$
+
+组合成一个更贴近非冗余变量的回传算子，而不是先生成完整 AO 轨道系数梯度，再做一次 gather / projection。
+
+**预期收益**
+
+- 减少一次完整 `orbital_value_table` 级别的写入与后续 gather；
+- 降低内存流量和中间缓冲开销；
+- 对 HVP 高频调用场景较友好。
+
+**主要风险**
+
+- 需要调整现有 orbital backpropagator 接口；
+- 需要把当前“先在完整稀疏轨道图表上回传、再投影”的数据流改写成“直接在受限图表上累积”；
+- 实现工作量中等，但理论风险相对较低。
+
+### 3.2 outer-response pullback 的 workspace 化与格式压缩
+
+目前 outer-response 末端仍存在若干临时矩阵构造、对称化以及 `std::vector<double>` 打包过程。若把这部分改成稳定的 workspace / `Eigen::MatrixXd` 主导的数据通路，并尽量减少格式转换，则可以继续压缩常数因子。
+
+这类优化本身不改变算法结构，但实现难度小于真正的图表重构，适合作为第二阶段工作。结合当前最新 benchmark，这一项的重要性已经高于继续深挖结构矩阵常数因子。
+
+**预期收益**
+
+- 常数因子改善；
+- 减少内存分配和重复拷贝；
+- 有利于后续继续下沉到 packed / reduced chart。
+
+**主要风险**
+
+- 收益相对温和；
+- 需要小心保持列主序约定与现有缓存接口一致。
+
+## 4. 第三优先级方向
+
+### 4.1 非活性块的正交图表重构
+
+**结论：这是最“本质”的方向，但不是最低风险的方向。**
+
+当前接受点规范中，非活性与活性辅助轨道满足严格 \(S\)-正交，但非活性块内部并不满足
+
+$$
+C_i^{\mathrm T} S C_i = I.
+$$
+
+因此，当前公式必须显式保留
+
+$$
+M = C_i^{\mathrm T} S C_i,
+\qquad
+M^{-1},
+\qquad
+dM^{-1},
+\qquad
+dP_i.
+$$
+
+如果把工作变量真正改写为块正交 frame \(Q_i\)，满足
+
+$$
+Q_i^{\mathrm T} S Q_i = I,
+$$
+
+则投影矩阵可以化为
+
+$$
+P_i = Q_i Q_i^{\mathrm T},
+$$
+
+从而固定上游回传链与活性辅助轨道导数链都有机会大幅简化。理论上，这是最有希望带来“公式更短、代码更少、常数更低”的方向。
+
+**预期收益**
+
+- 减少与 \(M^{-1}\) 及其导数相关的整条链；
+- 同时简化核心项和固定上游回传项；
+- 属于真正的变量图表级优化，而不是局部 kernel 微调。
+
+**主要风险**
+
+- 需要同步改写接受点轨道准备、非冗余变量定义、有限步更新以及 HVP 回传；
+- 必须重新验证开壳层与 accepted-point chart 一致性；
+- 实现成本高，且容易牵动大量现有逻辑。
+
+因此，这个方向更像“下一代公式体系”，而不是短期内最稳妥的性能修补。
+
+## 5. 第四优先级方向
+
+### 5.1 核心项中活性二电子方向作用的继续压缩
+
+活性二电子方向作用仍然是核心模型中的常驻热点。即使 outer-response 完全关闭，这部分成本也依然存在。因此，任何能够在不牺牲数值正确性的前提下压缩该 kernel 的工作，都具有稳定收益。
+
+可考虑的路线包括：
+
+- 更强的接受点缓存；
+- 更细粒度的 workspace 复用；
+- 尽量减少同一方向下重复的 AO-to-active 收缩；
+- 若公式允许，进一步把部分对称性前移到方向构造阶段。
+
+**预期收益**
+
+- 对所有核心 HVP 调用都有效；
+- 风险低于图表重构。
+
+**主要风险**
+
+- 这类优化通常偏常数因子；
+- 若想获得显著效果，往往需要和更高层的数据流重构结合。
+
+## 6. 已经可以继续做的低风险改进
+
+以下工作可以较快推进，且理论风险较低：
+
+1. 把 outer-response pullback 中的临时打包和对称化进一步 workspace 化。
+2. 让更多中间梯度直接累积到 packed chart，减少 full-gradient 中转。
+3. 继续审查 `exact_ctx` 路径中的重复投影、重复 gather、重复 `Eigen` 临时对象。
+
+这些工作单个收益有限，但叠加后通常能够带来稳定的单次 HVP 改善。
+
+## 7. 推荐的推进顺序
+
+如果目标是“尽快看到更本质的 wall-time 改善”，推荐顺序如下：
+
+1. 先做 outer-response 线性响应算子预分解。
+2. 再做 outer-response 轨道回传直接落到 packed / reduced chart。
+3. 然后再评估是否值得启动非活性块正交图表重构。
+
+如果目标是“低风险连续优化”，推荐顺序如下：
+
+1. 继续清理 outer-response pullback 的数据通路和 workspace。
+2. 压缩核心项中的活性二电子常数因子。
+3. 在此基础上再决定是否进入更大规模的图表重构。
+
+## 8. 总结判断
+
+从当前代码状态出发，最有希望带来明显 wall-time 改善的并不是再做一轮零散常数优化，而是把 outer-response 从“每次 HVP 重做一整套方向响应流程”改成“接受点预分解后的线性响应算子应用”。这是现阶段最值得优先投入的方向。
+
+若进一步追求更本质的公式压缩，则真正的下一步是非活性块的正交图表重构。但这条线应当被视为更高风险、也更长期的工作，而不是当前主线优化的直接延续。

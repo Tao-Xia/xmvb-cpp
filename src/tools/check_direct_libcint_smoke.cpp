@@ -9,8 +9,8 @@
 #include <utility>
 #include <vector>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "runtime/libcint_direct_shell_evaluator.hpp"
+#include "input/loading/loader.hpp"
+#include "libcint/direct_shell.hpp"
 
 namespace {
 
@@ -120,7 +120,7 @@ std::unordered_map<std::uint64_t, double> build_two_electron_lookup(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
     xmvb::vb::LibcintDirectShellEvaluator evaluator(input.libcint_input);
 
@@ -139,7 +139,7 @@ int main(int argc, char** argv) {
             core_h_block.left_ao_offset + row;
         const double direct_value = core_h_block.values[local_index];
         const double stored_value =
-            input.ao_integral_input.ao_core_hamiltonian_matrix[global_index];
+            input.ao_integral_input.ao_core_hamiltonian_matrix.data()[global_index];
         max_core_h_abs_diff =
             std::max(max_core_h_abs_diff, std::abs(direct_value - stored_value));
         max_core_h_abs_value =

@@ -8,9 +8,9 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/cpp_vb_input_ri_cache.hpp"
-#include "vb/orbital/ao_effective_one_electron_ri_operator.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
+#include "vbscf/integrals/ao/one_electron/ri_operator.hpp"
 
 namespace {
 
@@ -108,10 +108,10 @@ double max_abs_difference(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
     const int n_basis_functions = input.ao_integral_input.n_basis_functions;
-    const auto& ri_cache = xmvb::vb::ensure_cpp_vb_input_ri_cache(input);
+    const auto& ri_cache = xmvb::vb::ensure_vbscf_input_ri_cache(input);
 
     std::mt19937 generator(options.seed);
     double max_dense_low_rank_diff_general = 0.0;

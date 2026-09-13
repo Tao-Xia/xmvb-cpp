@@ -14,15 +14,15 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "runtime/libcint_compat.hpp"
-#include "runtime/legacy_shell_utils.hpp"
+#include "input/loading/loader.hpp"
+#include "libcint/c_api.hpp"
+#include "libcint/shell_normalization.hpp"
 
 namespace {
 
-using xmvb::vb::CppVbInput;
-using xmvb::vb::CppVbInputLoadOptions;
-using xmvb::vb::load_cpp_vb_input_with_timings;
+using xmvb::vb::VbScfInput;
+using xmvb::vb::VbScfInputLoadOptions;
+using xmvb::vb::load_vbscf_input_with_timings;
 
 struct MoldenOrbitals {
   Eigen::MatrixXd coefficients_in_molden_order;
@@ -181,7 +181,7 @@ std::vector<int> build_molden_to_internal_ao_permutation(
 }
 
 Eigen::MatrixXd build_molden_order_overlap_matrix(
-    const CppVbInput& input) {
+    const VbScfInput& input) {
   const int n_basis_functions =
       input.orbital_preparation_input.n_basis_functions;
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap_internal(
@@ -490,13 +490,11 @@ int main(int argc, char** argv) {
     const std::string current_molden_path = argv[2];
     const std::string reference_molden_path = argv[3];
 
-    CppVbInputLoadOptions load_options;
+    VbScfInputLoadOptions load_options;
     load_options.skip_orbital_guess = true;
-    load_options.ao_integral_source =
-        xmvb::vb::AoIntegralSource::RuntimeCoreHamiltonianOnly;
     const auto load_result =
-        load_cpp_vb_input_with_timings(input_path, load_options);
-    const CppVbInput& input = load_result.input;
+        load_vbscf_input_with_timings(input_path, load_options);
+    const VbScfInput& input = load_result.input;
 
     const int n_basis_functions =
         input.orbital_preparation_input.n_basis_functions;

@@ -8,10 +8,10 @@
 
 #include <Eigen/Core>
 
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/cpp_vb_input_ri_cache.hpp"
-#include "vb/orbital/active_space_orbital_preparer.hpp"
-#include "vb/orbital/ao_effective_one_electron_backpropagator.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
+#include "vbscf/orbitals/preparation/preparer.hpp"
+#include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
 
 namespace {
 
@@ -44,7 +44,7 @@ double max_abs_matrix_entry(const Matrix& matrix) {
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
     const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
 
@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
         input.ao_integral_input.ao_two_electron_integral_values.empty()
             ? backpropagator.backpropagate(
                   orbital_result.inactive_density_matrix,
-                  xmvb::vb::ensure_cpp_vb_input_ri_cache(input),
+                  xmvb::vb::ensure_vbscf_input_ri_cache(input),
                   n_basis_functions)
             : backpropagator.backpropagate(
                   orbital_result.inactive_density_matrix,

@@ -9,14 +9,13 @@
 
 #include <Eigen/Core>
 
-#include "core/linear_algebra/generalized_eigensolver.hpp"
-#include "runtime/cpp_vb_input_loader.hpp"
-#include "vb/matrices/determinant_overlap_resolver.hpp"
-#include "vb/matrices/full_structure_builder.hpp"
-#include "vb/matrices/spin_pair_utils.hpp"
-#include "vb/matrices/structure_types.hpp"
-#include "vb/scf/cpp_active_space_gradient_evaluator.hpp"
-#include "vb/vbscf_algorithm.hpp"
+#include "core/eigensolver.hpp"
+#include "input/loading/loader.hpp"
+#include "vbscf/determinants/algebra/overlap.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
+#include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/structures/expansion/types.hpp"
+#include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 
 namespace {
 
@@ -25,7 +24,6 @@ using Matrix =
 
 struct Options {
   std::string input_path;
-  xmvb::vb::VBSCFAlgorithm algorithm = xmvb::vb::VBSCFAlgorithm::Original;
   int count = 4;
   double step = 1.0e-6;
 };
@@ -37,7 +35,6 @@ struct StructurePairAdjoints {
 
 void print_usage() {
   std::cerr << "usage: check_active_overlap_split <input.xmi> "
-               "[--algorithm original] "
                "[--count N] [--step h]\n";
 }
 
@@ -52,14 +49,6 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
     const std::string argument_value = argv[argument_index + 1];
-    if (argument_name == "--algorithm") {
-      if (argument_value == "original") {
-        options.algorithm = xmvb::vb::VBSCFAlgorithm::Original;
-      } else {
-        throw std::invalid_argument("invalid algorithm: " + argument_value);
-      }
-      continue;
-    }
     if (argument_name == "--count") {
       options.count = std::stoi(argument_value);
       continue;
@@ -141,7 +130,7 @@ double evaluate_ground_state_energy(
     const std::vector<double>& overlap_matrix,
     int n_structures) {
   xmvb::core::GeneralizedEigensolver eigensolver;
-  return eigensolver.solve(hamiltonian_matrix, overlap_matrix, n_structures).eigenvalues.front();
+  return eigensolver.solve_dense(hamiltonian_matrix, overlap_matrix, n_structures).eigenvalues.front();
 }
 
 }  // namespace
@@ -149,8 +138,8 @@ double evaluate_ground_state_energy(
 int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
-    const auto load_result = xmvb::vb::load_cpp_vb_input_with_timings(options.input_path);
-    xmvb::vb::CppActiveSpaceGradientEvaluator evaluator(options.algorithm);
+    const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
+    xmvb::vb::ActiveSpaceGradientEvaluator evaluator;
     const auto baseline =
         evaluator.evaluate(load_result.input, load_result.nuclear_repulsion_energy);
     const int n_active_orbitals = load_result.input.orbital_preparation_input.n_active_orbitals;
@@ -198,10 +187,10 @@ int main(int argc, char** argv) {
           throw std::runtime_error("analytic overlap split diagnostic requires nullity == 0");
         }
 
-        xmvb::vb::Matrix alpha_same_spin_inverse_overlap_gradient;
-        xmvb::vb::Matrix beta_same_spin_inverse_overlap_gradient;
-        xmvb::vb::Matrix alpha_opposite_spin_inverse_overlap_gradient;
-        xmvb::vb::Matrix beta_opposite_spin_inverse_overlap_gradient;
+        Matrix alpha_same_spin_inverse_overlap_gradient;
+        Matrix beta_same_spin_inverse_overlap_gradient;
+        Matrix alpha_opposite_spin_inverse_overlap_gradient;
+        Matrix beta_opposite_spin_inverse_overlap_gradient;
         xmvb::vb::SameSpinPhiResult alpha_phi_result =
             xmvb::vb::compute_same_spin_original_phi(
                 load_result.input.structure_data.alpha_det[determinant_index_left],
@@ -231,10 +220,10 @@ int main(int argc, char** argv) {
                 baseline.active_space_two_electron_result.packed_active_two_electron_integrals,
                 &alpha_opposite_spin_inverse_overlap_gradient,
                 &beta_opposite_spin_inverse_overlap_gradient);
-        const xmvb::vb::Matrix alpha_inverse_overlap_gradient =
+        const Matrix alpha_inverse_overlap_gradient =
             alpha_same_spin_inverse_overlap_gradient +
             alpha_opposite_spin_inverse_overlap_gradient;
-        const xmvb::vb::Matrix beta_inverse_overlap_gradient =
+        const Matrix beta_inverse_overlap_gradient =
             beta_same_spin_inverse_overlap_gradient +
             beta_opposite_spin_inverse_overlap_gradient;
 
@@ -244,9 +233,9 @@ int main(int argc, char** argv) {
         const double beta_ham_det_weight =
             pair_adjoints.hamiltonian_weight * alpha_result.overlap_determinant *
             (alpha_phi_result.total_phi + beta_phi_result.total_phi + opposite_spin_phi);
-        const xmvb::vb::Matrix zero_alpha_inverse =
+        const Matrix zero_alpha_inverse =
             Matrix::Zero(alpha_inverse_overlap_gradient.rows(), alpha_inverse_overlap_gradient.cols());
-        const xmvb::vb::Matrix zero_beta_inverse =
+        const Matrix zero_beta_inverse =
             Matrix::Zero(beta_inverse_overlap_gradient.rows(), beta_inverse_overlap_gradient.cols());
 
         xmvb::vb::accumulate_spin_overlap_gradient(
@@ -306,10 +295,9 @@ int main(int argc, char** argv) {
           return left.second < right.second;
         });
 
-    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder(options.algorithm);
+    xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder structure_builder;
     const int n_to_report = std::min(options.count, static_cast<int>(ranked_entries.size()));
     std::cout << std::setprecision(12);
-    std::cout << "algorithm = " << xmvb::vb::vb_scf_algorithm_name(options.algorithm) << '\n';
     std::cout << "finite_difference_step = " << options.step << '\n';
     std::cout << "reported_entries = " << n_to_report << '\n';
 
