@@ -81,12 +81,9 @@ endif()
 
 foreach(matrix_name IN ITEMS overlap_matrix_f64.bin hamiltonian_matrix_f64.bin)
   set(matrix_path "${XMVB_TRACE_ROOT}/F2/steps/step_000001/${matrix_name}")
-  if (NOT EXISTS "${matrix_path}")
-    message(FATAL_ERROR "F2 TNHVP trace is missing ${matrix_name}")
-  endif()
-  file(SIZE "${matrix_path}" matrix_size)
-  if (matrix_size LESS_EQUAL 64)
-    message(FATAL_ERROR "F2 TNHVP trace contains an empty ${matrix_name}")
+  if (EXISTS "${matrix_path}")
+    message(FATAL_ERROR
+      "F2 Davidson trace unexpectedly materialized ${matrix_name}")
   endif()
 endforeach()
 

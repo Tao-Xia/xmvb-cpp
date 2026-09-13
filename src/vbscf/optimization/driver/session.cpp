@@ -95,9 +95,6 @@ void record_accepted_iteration_snapshot(
   if (include_reference_energy_gradient) {
     objective->ensure_reference_gradient();
   }
-  if (include_full_payload) {
-    objective->ensure_dense_scf_result();
-  }
   const auto& gradient_result = objective->gradient_result();
   VbScfAcceptedIterationSnapshot snapshot;
   snapshot.accepted_iteration_index = accepted_iteration_index;

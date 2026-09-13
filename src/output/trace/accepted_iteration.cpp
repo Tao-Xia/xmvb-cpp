@@ -432,12 +432,16 @@ public:
     write_binary_container(
         step_dir / "exchange_diagonal_matrix_f64.bin",
         exchange_diagonal_matrix);
-    write_binary_container(
-        step_dir / "overlap_matrix_f64.bin",
-        snapshot.structure_matrices.overlap_matrix);
-    write_binary_container(
-        step_dir / "hamiltonian_matrix_f64.bin",
-        snapshot.structure_matrices.hamiltonian_matrix);
+    if (!snapshot.structure_matrices.overlap_matrix.empty()) {
+      write_binary_container(
+          step_dir / "overlap_matrix_f64.bin",
+          snapshot.structure_matrices.overlap_matrix);
+    }
+    if (!snapshot.structure_matrices.hamiltonian_matrix.empty()) {
+      write_binary_container(
+          step_dir / "hamiltonian_matrix_f64.bin",
+          snapshot.structure_matrices.hamiltonian_matrix);
+    }
     write_binary_container(
         step_dir / "sparse_orbital_energy_gradient_f64.bin",
         snapshot.sparse_orbital_energy_gradient);

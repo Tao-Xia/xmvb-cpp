@@ -73,29 +73,6 @@ void VbScfObjective::ensure_reference_gradient() {
       &gradient_result_);
 }
 
-void VbScfObjective::ensure_dense_scf_result() {
-  if (scf_ == nullptr) {
-    throw std::runtime_error(
-        "dense accepted-point diagnostics require a live SCF evaluator");
-  }
-  const int n_structures = input_.structure_data.n_structures;
-  const auto& matrices = gradient_result_.scf_result.structure_matrices;
-  const bool already_dense =
-      matrices.hamiltonian_matrix.size() ==
-          static_cast<std::size_t>(n_structures) * n_structures &&
-      matrices.overlap_matrix.size() ==
-          static_cast<std::size_t>(n_structures) * n_structures &&
-      gradient_result_.scf_result.eigenvector_matrix.size() ==
-          static_cast<std::size_t>(n_structures) * n_structures;
-  if (!already_dense) {
-    gradient_result_.scf_result = scf_->evaluate(
-        input_,
-        state_indices_,
-        state_weights_,
-        nuclear_repulsion_);
-  }
-}
-
 VbScfObjective::TrialEvaluation
 VbScfObjective::evaluate_trial(
     const Eigen::VectorXd& parameter_vector) const {

@@ -82,9 +82,6 @@ class VbScfObjective {
   /** @brief Populates the reference-energy gradient at the accepted point. */
   void ensure_reference_gradient();
 
-  /** @brief Materializes the accepted full structure spectrum for diagnostics. */
-  void ensure_dense_scf_result();
-
   const std::vector<double>& energy_history() const { return energy_history_; }
   const std::vector<double>& gradient_inf_norm_history() const {
     return gradient_inf_norm_history_;
