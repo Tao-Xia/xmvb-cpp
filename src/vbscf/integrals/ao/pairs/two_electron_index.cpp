@@ -36,6 +36,37 @@ std::pair<int, int> eri_pair_indices(
 
 }  // namespace
 
+std::vector<std::size_t> AoPairGraph::balanced_row_boundaries(
+    int n_partitions) const {
+  if (n_partitions <= 0 || row_offsets.empty() ||
+      row_offsets.front() != 0 || row_offsets.back() < 0 ||
+      static_cast<std::size_t>(row_offsets.back()) != columns.size() ||
+      columns.size() != eri_indices.size()) {
+    throw std::invalid_argument(
+        "cannot partition an invalid AO-pair graph");
+  }
+  const std::size_t n_rows = row_offsets.size() - 1;
+  n_partitions = std::min(
+      n_partitions,
+      static_cast<int>(n_rows));
+  std::vector<std::size_t> boundaries(n_partitions + 1, 0);
+  boundaries.back() = n_rows;
+  for (int partition = 1;
+       partition < n_partitions;
+       ++partition) {
+    const std::size_t edge_target =
+        columns.size() * static_cast<std::size_t>(partition) /
+        static_cast<std::size_t>(n_partitions);
+    boundaries[partition] = static_cast<std::size_t>(
+        std::lower_bound(
+            row_offsets.begin(),
+            row_offsets.end(),
+            static_cast<int>(edge_target)) -
+        row_offsets.begin());
+  }
+  return boundaries;
+}
+
 AoPairGraph build_ao_pair_graph(
     const std::vector<int>& eri_indices,
     int n_bf) {

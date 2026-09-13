@@ -156,47 +156,54 @@ std::vector<double> build_ao_pair_to_active_pair_coefficients(
 
 std::vector<double> apply_ao_pair_graph_matrix(
     const std::vector<double>& ao_two_electron_integral_values,
-    const std::vector<int>& row_offsets,
-    const std::vector<int>& column_pair_indices,
-    const std::vector<int>& integral_indices,
+    const AoPairGraph& graph,
     const std::vector<double>& pair_coefficients,
     std::size_t n_ao_pairs,
     std::size_t n_active_pairs) {
-  if (row_offsets.size() != n_ao_pairs + 1) {
+  if (graph.row_offsets.size() != n_ao_pairs + 1) {
     throw std::invalid_argument("AO pair graph row offset size mismatch");
   }
-  if (column_pair_indices.size() != integral_indices.size()) {
+  if (graph.columns.size() != graph.eri_indices.size()) {
     throw std::invalid_argument("AO pair graph column/integral size mismatch");
   }
-  if (row_offsets.back() != static_cast<int>(column_pair_indices.size())) {
+  if (graph.row_offsets.back() != static_cast<int>(graph.columns.size())) {
     throw std::invalid_argument("AO pair graph row offsets do not cover all entries");
   }
 
   std::vector<double> pair_products(n_ao_pairs * n_active_pairs, 0.0);
+  int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      static_cast<int>(n_ao_pairs));
+  const auto row_boundaries =
+      graph.balanced_row_boundaries(n_threads);
 
-#pragma omp parallel for schedule(guided, 64) \
-    num_threads(xmvb::effective_openmp_thread_count())
-  for (std::ptrdiff_t row_offset = 0;
-       row_offset < static_cast<std::ptrdiff_t>(n_ao_pairs);
-       ++row_offset) {
-    const std::size_t row_index = row_offset;
-    double* target_row =
-        pair_products.data() + row_index * n_active_pairs;
-    const int begin = row_offsets[row_index];
-    const int end = row_offsets[row_index + 1];
-    for (int entry_offset = begin; entry_offset < end; ++entry_offset) {
-      const int column_pair_index = column_pair_indices[entry_offset];
-      const int integral_index = integral_indices[entry_offset];
-      const double ao_integral_value = ao_two_electron_integral_values[integral_index];
-      const double* source_row =
-          pair_coefficients.data() +
-          static_cast<std::size_t>(column_pair_index) * n_active_pairs;
+#pragma omp parallel num_threads(n_threads)
+  {
+    int thread = 0;
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+    for (std::size_t row = row_boundaries[thread];
+         row < row_boundaries[thread + 1];
+         ++row) {
+      double* target_row =
+          pair_products.data() + row * n_active_pairs;
+      const int begin = graph.row_offsets[row];
+      const int end = graph.row_offsets[row + 1];
+      for (int edge = begin; edge < end; ++edge) {
+        const int column = graph.columns[edge];
+        const int eri = graph.eri_indices[edge];
+        const double value = ao_two_electron_integral_values[eri];
+        const double* source_row =
+            pair_coefficients.data() +
+            static_cast<std::size_t>(column) * n_active_pairs;
 #pragma omp simd
-      for (std::size_t active_pair_index = 0;
-           active_pair_index < n_active_pairs;
-           ++active_pair_index) {
-        target_row[active_pair_index] +=
-            ao_integral_value * source_row[active_pair_index];
+        for (std::size_t active_pair = 0;
+             active_pair < n_active_pairs;
+             ++active_pair) {
+          target_row[active_pair] +=
+              value * source_row[active_pair];
+        }
       }
     }
   }
@@ -420,9 +427,7 @@ SparseAoPairCoefficients build_sparse_ao_pair_coefficients(
 
 ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_graph(
     const std::vector<double>& ao_two_electron_integral_values,
-    const std::vector<int>& row_offsets,
-    const std::vector<int>& column_pair_indices,
-    const std::vector<int>& integral_indices,
+    const AoPairGraph& graph,
     std::vector<double> dense_active_coefficients,
     int n_basis_functions,
     int n_active_orbitals) {
@@ -441,9 +446,7 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_graph(
   auto pair_products =
       apply_ao_pair_graph_matrix(
           ao_two_electron_integral_values,
-          row_offsets,
-          column_pair_indices,
-          integral_indices,
+          graph,
           ao_pair_to_active_pair_coefficients,
           n_ao_pairs,
           n_active_pairs);
@@ -625,9 +628,7 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
             n_active_orbitals);
     return build_packed_active_two_electron_integrals_graph(
         ao_integral_input.ao_two_electron_integral_values,
-        graph.row_offsets,
-        graph.columns,
-        graph.eri_indices,
+        graph,
         std::move(dense_active_coefficients),
         n_bf,
         n_active_orbitals);

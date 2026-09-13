@@ -1,8 +1,9 @@
 #pragma once
 
-#include <Eigen/Core>
-
+#include <cstddef>
 #include <vector>
+
+#include <Eigen/Core>
 
 namespace xmvb::vb {
 
@@ -17,6 +18,10 @@ struct AoPairGraph {
   std::vector<int> eri_indices;
 
   bool empty() const noexcept { return row_offsets.empty(); }
+
+  /** @brief Partitions whole rows into contiguous, edge-balanced ranges. */
+  std::vector<std::size_t> balanced_row_boundaries(
+      int n_partitions) const;
 };
 
 /**

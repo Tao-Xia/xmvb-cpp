@@ -3,6 +3,10 @@
 #include <cstddef>
 #include <stdexcept>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include "core/openmp.hpp"
 
 namespace xmvb::vb::detail {
@@ -42,22 +46,32 @@ void apply_exact_ao_pair_kernel(
   const double* source = coefficients.data();
   double* target = result->data();
 
-#pragma omp parallel for schedule(guided, 64) num_threads(n_threads)
-  for (std::ptrdiff_t row = 0;
-       row < static_cast<std::ptrdiff_t>(n_bf_pairs);
-       ++row) {
-    double* target_row = target + row * n_active_pairs;
-    for (int edge = graph.row_offsets[row];
-         edge < graph.row_offsets[row + 1];
-         ++edge) {
-      const int column = graph.columns[edge];
-      const int eri = graph.eri_indices[edge];
-      const double value = ao.ao_two_electron_integral_values[eri];
-      const double* source_row =
-          source + static_cast<std::size_t>(column) * n_active_pairs;
+  n_threads = std::min(n_threads, static_cast<int>(n_bf_pairs));
+  const auto row_boundaries =
+      graph.balanced_row_boundaries(n_threads);
+
+#pragma omp parallel num_threads(n_threads)
+  {
+    int thread = 0;
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+    for (std::size_t row = row_boundaries[thread];
+         row < row_boundaries[thread + 1];
+         ++row) {
+      double* target_row = target + row * n_active_pairs;
+      for (int edge = graph.row_offsets[row];
+           edge < graph.row_offsets[row + 1];
+           ++edge) {
+        const int column = graph.columns[edge];
+        const int eri = graph.eri_indices[edge];
+        const double value = ao.ao_two_electron_integral_values[eri];
+        const double* source_row =
+            source + static_cast<std::size_t>(column) * n_active_pairs;
 #pragma omp simd
-      for (std::size_t pair = 0; pair < n_active_pairs; ++pair) {
-        target_row[pair] += value * source_row[pair];
+        for (std::size_t pair = 0; pair < n_active_pairs; ++pair) {
+          target_row[pair] += value * source_row[pair];
+        }
       }
     }
   }
