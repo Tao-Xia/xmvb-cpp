@@ -74,6 +74,20 @@ Only the lower triangle of $G$ is stored by the public active-space integral
 interface.  All pair-space equations below use the corresponding symmetric
 matrix representation.
 
+### 2.1 Sparsity boundary
+
+Strict sparsity belongs to the nonredundant HAO parameter coordinates $U_p$.
+It does not imply that the accepted AO-by-active matrix $C$ is sparse. In
+particular, removal of the inactive component gives
+
+$$
+C=(I-\Gamma_{\mathrm{inact}}S)\Phi_{\mathrm{act}},
+$$
+
+which is generally dense even when the input orbitals and $U_p$ supports are
+sparse. Therefore the exact pair kernel must use the actual coefficients in
+$C$ and cannot assume a sparse $B(C)$. Full-AO OEO and HAO share this rule.
+
 ## 3. Exact directional derivative
 
 At an accepted point, write
@@ -151,15 +165,15 @@ These equations also define the finite-difference and explicit-Hessian
 reference tests.  Streaming is correct only if it preserves every term in the
 boxed expression.
 
-## 5. Why the current storage is not scalable
+## 5. Why the original storage was not scalable
 
-The current accepted cache stores three dense pair matrices:
+The original accepted cache stored three dense pair matrices:
 
 $$
 B,\;Q,\;QW\in\mathbb{R}^{N\times A}.
 $$
 
-The directional and HVP workspaces can additionally store
+The original directional and HVP workspaces could additionally store
 
 $$
 M,\;\dot Q,\;MW,\;\dot QW
@@ -192,7 +206,7 @@ derived quantities.
 
 ## 6. Canonical streamed operator
 
-The implementation will expose one exact pair-space operator with bounded
+The implementation exposes one exact pair-space operator with bounded
 tiles.  A tile is a view of a contiguous interval of AO-pair rows or
 active-pair columns, not a second approximate algorithm.
 
@@ -253,13 +267,14 @@ an arbitrary $\dot W$.
 
 The implementation therefore uses an explicit memory--work policy:
 
-- a bounded accepted-pair block cache may retain tiles that fit its declared
-  capacity;
-- missing tiles are recomputed exactly;
-- the cache policy depends only on dimensions and an explicit workspace
-  capacity, never on molecule names, orbital type, iteration number, or
-  environment variables;
-- changing the capacity may change time and memory, but not numerical results.
+- the complete accepted $Q$ is retained only when the combined dense $B,Q$
+  construction workspace is no larger than the AO-pair graph plus the packed
+  active tensor;
+- otherwise $Q_I$ is recomputed exactly in bounded row tiles when consumed;
+- the decision depends only on dimensions and representation storage, never on
+  molecule names, orbital type, iteration number, or environment variables;
+- changing the memory regime may change time and memory, but not numerical
+  results.
 
 This policy is part of the exact algorithm rather than a fallback path.
 
@@ -345,11 +360,12 @@ $\dot G$ and the fixed-adjoint HVP before release.  Batch HVPs iterate over
 directions inside the same capacity bound instead of concatenating
 $N\times A$ matrices.
 
-### Stage D: bounded accepted-point block cache
+### Stage D: adaptive accepted-state storage
 
-Store only the accepted $Q$ tiles admitted by the capacity policy.  Recompute
-other tiles for the post-structure-response $\dot W$ pullback.  Record tile
-hits, exact recomputations, peak pair elements, and AO-graph traversals.
+Retain the accepted $Q$ only when admitted by the intrinsic storage rule.
+Otherwise recompute its bounded row tiles for the post-structure-response
+$\dot W$ pullback. Record the selected regime, resident pair elements, and
+tile rows.
 
 ### Stage E: delete obsolete paths
 
@@ -424,13 +440,15 @@ Status on 2026-09-13:
    cache.
 2. The accepted $Q$ matrix is borrowed directly from the forward active-space
    result and is no longer copied into the HVP operator.
-3. When $Q$ is not retained, $Q_I$ and $\dot Q_I$ are generated from the AO
+3. The accepted active coefficient matrix $C$ is also borrowed; the operator
+   and its exact-2e cache no longer own two additional copies.
+4. When $Q$ is not retained, $Q_I$ and $\dot Q_I$ are generated from the AO
    pair graph in bounded AO-row tiles.
-4. The same streamed pass forms $\dot G$ and the fixed-adjoint HVP.  The outer
+5. The same streamed pass forms $\dot G$ and the fixed-adjoint HVP.  The outer
    $\dot W$ pullback requires one subsequent exact $Q$ pass.
-5. Scalar and block TNHVP applications use the same bounded path; block
+6. Scalar and block TNHVP applications use the same bounded path; block
    directions are not concatenated into full $N\times A$ buffers.
-6. The old fixed cutoff $A\le 64$ has been deleted.  The forward builder keeps
+7. The old fixed cutoff $A\le 64$ has been deleted.  The forward builder keeps
    dense pair products only when the combined $B,Q$ construction workspace is
    no larger than the storage already required by the AO-pair graph and packed
    active tensor.
