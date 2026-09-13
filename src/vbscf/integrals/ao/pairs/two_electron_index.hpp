@@ -9,15 +9,17 @@ namespace xmvb::vb {
  *
  * Each AO integral `(left_pair, right_pair, value)` contributes one row entry
  * `left_pair -> right_pair` and, when `left_pair != right_pair`, one mirrored
- * row entry `right_pair -> left_pair`. The graph reuses the original integral
- * value buffer through `eri_indices` instead of duplicating values.
+ * row entry `right_pair -> left_pair`. Values are stored in CSR edge order to
+ * avoid an indirect lookup in every matrix-free HVP.
  *
  * @param eri_indices Flattened AO ERI indices, four entries per integral.
+ * @param eri_values AO ERI values in the same integral order.
  * @param n_bf Number of AO basis functions.
  * @return Deterministic symmetric AO-pair graph.
  */
 AoPairGraph build_ao_pair_graph(
     const std::vector<int>& eri_indices,
+    const std::vector<double>& eri_values,
     int n_bf);
 
 }  // namespace xmvb::vb

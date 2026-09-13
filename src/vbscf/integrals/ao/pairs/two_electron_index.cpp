@@ -41,7 +41,7 @@ std::vector<std::size_t> AoPairGraph::balanced_row_boundaries(
   if (n_partitions <= 0 || row_offsets.empty() ||
       row_offsets.front() != 0 || row_offsets.back() < 0 ||
       static_cast<std::size_t>(row_offsets.back()) != columns.size() ||
-      columns.size() != eri_indices.size()) {
+      columns.size() != values.size()) {
     throw std::invalid_argument(
         "cannot partition an invalid AO-pair graph");
   }
@@ -69,6 +69,7 @@ std::vector<std::size_t> AoPairGraph::balanced_row_boundaries(
 
 AoPairGraph build_ao_pair_graph(
     const std::vector<int>& eri_indices,
+    const std::vector<double>& eri_values,
     int n_bf) {
   if (n_bf <= 0) {
     throw std::invalid_argument("n_bf must be positive");
@@ -84,6 +85,9 @@ AoPairGraph build_ao_pair_graph(
   }
 
   const std::size_t n_integrals = eri_indices.size() / 4;
+  if (eri_values.size() != n_integrals) {
+    throw std::invalid_argument("AO ERI index/value counts do not match");
+  }
   int n_threads = 1;
   n_threads = xmvb::effective_openmp_thread_count();
   if (n_integrals == 0) {
@@ -160,7 +164,7 @@ AoPairGraph build_ao_pair_graph(
     graph.row_offsets[row_index + 1] = graph.row_offsets[row_index] + row_counts[row_index];
   }
   graph.columns.resize(graph.row_offsets.back());
-  graph.eri_indices.resize(graph.row_offsets.back());
+  graph.values.resize(graph.row_offsets.back());
 
   std::vector<std::vector<int>> thread_next_offsets(
       thread_count,
@@ -191,14 +195,12 @@ AoPairGraph build_ao_pair_graph(
 
       const int left_offset = local_next_offsets[left_pair_index]++;
       graph.columns[left_offset] = right_pair_index;
-      graph.eri_indices[left_offset] =
-          static_cast<int>(integral_index);
+      graph.values[left_offset] = eri_values[integral_index];
 
       if (right_pair_index != left_pair_index) {
         const int right_offset = local_next_offsets[right_pair_index]++;
         graph.columns[right_offset] = left_pair_index;
-        graph.eri_indices[right_offset] =
-            static_cast<int>(integral_index);
+        graph.values[right_offset] = eri_values[integral_index];
       }
     }
   }

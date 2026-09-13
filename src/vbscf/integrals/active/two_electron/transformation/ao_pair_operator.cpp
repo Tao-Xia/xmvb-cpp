@@ -29,8 +29,8 @@ void apply_exact_ao_pair_kernel(
 
   const AoPairGraph& graph = ao.pair_graph;
   if (graph.row_offsets.size() != n_bf_pairs + 1 ||
-      graph.columns.size() != graph.eri_indices.size() ||
-      graph.eri_indices.size() !=
+      graph.columns.size() != graph.values.size() ||
+      graph.values.size() !=
           static_cast<std::size_t>(graph.row_offsets.back())) {
     throw std::invalid_argument("invalid AO-pair graph");
   }
@@ -67,14 +67,10 @@ void apply_exact_ao_pair_kernel(
         const int column_1 = graph.columns[edge + 1];
         const int column_2 = graph.columns[edge + 2];
         const int column_3 = graph.columns[edge + 3];
-        const double value_0 = ao.ao_two_electron_integral_values[
-            graph.eri_indices[edge]];
-        const double value_1 = ao.ao_two_electron_integral_values[
-            graph.eri_indices[edge + 1]];
-        const double value_2 = ao.ao_two_electron_integral_values[
-            graph.eri_indices[edge + 2]];
-        const double value_3 = ao.ao_two_electron_integral_values[
-            graph.eri_indices[edge + 3]];
+        const double value_0 = graph.values[edge];
+        const double value_1 = graph.values[edge + 1];
+        const double value_2 = graph.values[edge + 2];
+        const double value_3 = graph.values[edge + 3];
         const double* source_0 =
             source + static_cast<std::size_t>(column_0) * n_active_pairs;
         const double* source_1 =
@@ -95,8 +91,7 @@ void apply_exact_ao_pair_kernel(
       }
       for (; edge < end; ++edge) {
         const int column = graph.columns[edge];
-        const int eri = graph.eri_indices[edge];
-        const double value = ao.ao_two_electron_integral_values[eri];
+        const double value = graph.values[edge];
         const double* source_row =
             source + static_cast<std::size_t>(column) * n_active_pairs;
 #pragma omp simd

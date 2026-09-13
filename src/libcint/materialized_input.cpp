@@ -52,6 +52,7 @@ AoIntegralInput build_materialized_ao_integral_input(
       std::move(buffers.ao_two_electron_integral_indices);
   ao_integral_input.pair_graph = build_ao_pair_graph(
       ao_integral_input.ao_two_electron_integral_indices,
+      ao_integral_input.ao_two_electron_integral_values,
       buffers.n_basis_functions);
   return ao_integral_input;
 }

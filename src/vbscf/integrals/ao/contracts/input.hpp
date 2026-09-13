@@ -10,12 +10,13 @@ namespace xmvb::vb {
 /**
  * @brief Symmetric AO-pair operator in compressed-row form.
  *
- * Each edge references one value in `AoIntegralInput::ao_two_electron_integral_values`.
+ * Column and value arrays share the same edge ordering so repeated AO-pair
+ * actions stream both operands without indirect integral-value lookups.
  */
 struct AoPairGraph {
   std::vector<int> row_offsets;
   std::vector<int> columns;
-  std::vector<int> eri_indices;
+  std::vector<double> values;
 
   bool empty() const noexcept { return row_offsets.empty(); }
 
