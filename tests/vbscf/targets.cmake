@@ -5,6 +5,7 @@
 # production build file from accumulating test-specific wiring.
 
 set(_xmvb_vbscf_unit_targets
+  test_active_two_electron_sparse
   test_cofactor_differential
   test_curvature_decomposition
   test_davidson
@@ -28,6 +29,7 @@ foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
 endforeach()
 
 if (BUILD_TESTING)
+  add_test(NAME active_two_electron_sparse COMMAND test_active_two_electron_sparse)
   add_test(NAME orbital_block_partition COMMAND test_orbital_block_partition)
   add_test(NAME curvature_decomposition COMMAND test_curvature_decomposition)
   add_test(NAME oeo_normalization_pullback COMMAND test_oeo_normalization_pullback)

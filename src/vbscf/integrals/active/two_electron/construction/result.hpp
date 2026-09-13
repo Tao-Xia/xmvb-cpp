@@ -52,16 +52,15 @@ struct ActiveSpaceTwoElectronResult {
   Eigen::MatrixXd ri_active_pair_factors;
 
   /**
-   * @brief Optional dense active-orbital coefficient table on AO rows.
+   * @brief Dense active-orbital coefficient table on AO rows.
    *
    * Rows are AO basis functions and columns are active orbitals. This cached
    * dense matrix is reused on the forward/backward exact 2e path so callers do
    * not have to rebuild it from sparse orbital-preparation data.
    *
-   * This matrix is cached on the dense forward path and
-   * reused by reverse-mode backpropagation to avoid rebuilding the active
-   * orbital coefficient table from sparse orbital-preparation data.
-   * Persistent outputs should ignore this transient cache.
+   * Every forward representation caches this matrix because reverse-mode
+   * backpropagation requires it. Persistent outputs should ignore this
+   * transient cache.
    */
   Eigen::MatrixXd dense_active_coefficients;
 

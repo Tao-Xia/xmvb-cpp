@@ -214,11 +214,8 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
       n_bf,
       n_ao);
   workspace->dense_active_gradient_direction.setZero();
-  // Keep the fixed-backprop term on the generic packed-pair contraction until
-  // the cached full-matrix shortcut is validated against finite differences on
-  // the sparse mixed-chart exact_ctx path. The direct-core 241 diagnostic
-  // currently shows the exact-2e mismatch lives in this stage rather than in
-  // the AO-H1E or orbital-pullback chains.
+  // The generic packed-pair contraction is required here: a full-matrix
+  // shortcut does not preserve the sparse mixed-chart differential.
   accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
       accepted_cache.accepted_base_pair_gradients,
       workspace->dense_active_direction,

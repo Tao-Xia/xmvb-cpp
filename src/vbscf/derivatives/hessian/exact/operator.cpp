@@ -14,14 +14,6 @@
 
 namespace xmvb::vb {
 
-namespace {
-
-bool exact_ctx_stage1_analytic_core_enabled() {
-  return true;
-}
-
-}  // namespace
-
 ExactHvpOperator::ExactHvpOperator(
     std::shared_ptr<const AcceptedPointContext> accepted_point_context,
     const VbScfInput* current_input,
@@ -75,71 +67,75 @@ ExactHvpOperator::State::State(
         n_basis_functions * n_basis_functions;
     const std::size_t active_matrix_size =
         n_active_orbitals * n_active_orbitals;
+    const auto& accepted_two_electron_result =
+        accepted_point_context_->prepared_active_space
+            .active_space_two_electron_result;
     if (accepted_point_context_->prepared_active_space.orbital_result
-                .auxiliary_orbital_matrix.size() == ao_matrix_size &&
-        accepted_point_context_->active_orbital_overlap_gradient.size() ==
-            active_matrix_size &&
-        accepted_point_context_->active_one_electron_gradient.size() ==
-            active_matrix_size) {
-      const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
-          current_input_->orbital_preparation_input.ao_overlap_matrix.data(),
-          n_basis_functions,
-          n_basis_functions);
-      const Eigen::Map<const Eigen::MatrixXd> accepted_auxiliary_matrix(
-          accepted_point_context_->prepared_active_space.orbital_result
-              .auxiliary_orbital_matrix.data(),
-          n_basis_functions,
-          n_basis_functions);
-      const Eigen::Map<const Eigen::MatrixXd> accepted_ao_effective_h1e(
-          accepted_point_context_->prepared_active_space.ao_effective_one_electron_result
-              .ao_effective_h1e.data(),
-          n_basis_functions,
-          n_basis_functions);
-      accepted_active_auxiliary_orbitals_ =
-          accepted_auxiliary_matrix.middleCols(
-              n_inactive_doubly_occupied_orbitals,
-              n_active_orbitals);
-      accepted_basis_overlap_times_active_auxiliary_orbitals_ =
-          basis_overlap * accepted_active_auxiliary_orbitals_;
-      accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_ =
-          accepted_ao_effective_h1e * accepted_active_auxiliary_orbitals_;
-      accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_ =
-          accepted_ao_effective_h1e.transpose() *
-          accepted_active_auxiliary_orbitals_;
-      const Eigen::Map<const Eigen::MatrixXd> accepted_sso_gradient(
-          accepted_point_context_->active_orbital_overlap_gradient.data(),
-          n_active_orbitals,
-          n_active_orbitals);
-      accepted_sso_gradient_symmetric_ =
-          accepted_sso_gradient + accepted_sso_gradient.transpose();
-      const Eigen::Map<const Eigen::MatrixXd> accepted_hho_gradient(
-          accepted_point_context_->active_one_electron_gradient.data(),
-          n_active_orbitals,
-          n_active_orbitals);
-      accepted_hho_gradient_symmetric_ =
-          accepted_hho_gradient + accepted_hho_gradient.transpose();
-      accepted_active_auxiliary_orbitals_times_hho_gradient_symmetric_ =
-          accepted_active_auxiliary_orbitals_ *
-          accepted_hho_gradient_symmetric_;
-      const auto& accepted_active_space_two_electron_result =
-          accepted_point_context_->prepared_active_space.active_space_two_electron_result;
-      if (accepted_active_space_two_electron_result.dense_active_coefficients.size() != 0) {
-        accepted_dense_active_coefficients_ =
-            accepted_active_space_two_electron_result.dense_active_coefficients;
-      } else {
-        accepted_dense_active_coefficients_ = accepted_active_auxiliary_orbitals_;
-      }
-      zero_core_hamiltonian_ =
-          Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
-      accepted_exact_two_electron_cache_ =
-          build_exact_packed_active_two_electron_adjoint_cache(
-              accepted_point_context_->packed_active_two_electron_gradient,
-              accepted_dense_active_coefficients_,
-              current_input_->ao_integral_input,
-              n_active_orbitals,
-              &accepted_point_context_->prepared_active_space
-                   .active_space_two_electron_result);
+                .auxiliary_orbital_matrix.size() != ao_matrix_size ||
+        accepted_point_context_->prepared_active_space
+                .ao_effective_one_electron_result.ao_effective_h1e.size() !=
+            ao_matrix_size ||
+        accepted_point_context_->active_orbital_overlap_gradient.size() !=
+            active_matrix_size ||
+        accepted_point_context_->active_one_electron_gradient.size() !=
+            active_matrix_size ||
+        accepted_two_electron_result.dense_active_coefficients.rows() !=
+            n_basis_functions ||
+        accepted_two_electron_result.dense_active_coefficients.cols() !=
+            n_active_orbitals) {
+      throw std::invalid_argument(
+          "accepted-point exact HVP cache dimensions are inconsistent");
     }
+    const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
+        current_input_->orbital_preparation_input.ao_overlap_matrix.data(),
+        n_basis_functions,
+        n_basis_functions);
+    const Eigen::Map<const Eigen::MatrixXd> accepted_auxiliary_matrix(
+        accepted_point_context_->prepared_active_space.orbital_result
+            .auxiliary_orbital_matrix.data(),
+        n_basis_functions,
+        n_basis_functions);
+    const Eigen::Map<const Eigen::MatrixXd> accepted_ao_effective_h1e(
+        accepted_point_context_->prepared_active_space
+            .ao_effective_one_electron_result.ao_effective_h1e.data(),
+        n_basis_functions,
+        n_basis_functions);
+    accepted_active_auxiliary_orbitals_ =
+        accepted_auxiliary_matrix.middleCols(
+            n_inactive_doubly_occupied_orbitals,
+            n_active_orbitals);
+    accepted_basis_overlap_times_active_auxiliary_orbitals_ =
+        basis_overlap * accepted_active_auxiliary_orbitals_;
+    accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_ =
+        accepted_ao_effective_h1e * accepted_active_auxiliary_orbitals_;
+    accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_ =
+        accepted_ao_effective_h1e.transpose() *
+        accepted_active_auxiliary_orbitals_;
+    const Eigen::Map<const Eigen::MatrixXd> accepted_sso_gradient(
+        accepted_point_context_->active_orbital_overlap_gradient.data(),
+        n_active_orbitals,
+        n_active_orbitals);
+    accepted_sso_gradient_symmetric_ =
+        accepted_sso_gradient + accepted_sso_gradient.transpose();
+    const Eigen::Map<const Eigen::MatrixXd> accepted_hho_gradient(
+        accepted_point_context_->active_one_electron_gradient.data(),
+        n_active_orbitals,
+        n_active_orbitals);
+    accepted_hho_gradient_symmetric_ =
+        accepted_hho_gradient + accepted_hho_gradient.transpose();
+    accepted_active_auxiliary_orbitals_times_hho_gradient_symmetric_ =
+        accepted_active_auxiliary_orbitals_ * accepted_hho_gradient_symmetric_;
+    accepted_dense_active_coefficients_ =
+        accepted_two_electron_result.dense_active_coefficients;
+    zero_core_hamiltonian_ =
+        Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
+    accepted_exact_two_electron_cache_ =
+        build_exact_packed_active_two_electron_adjoint_cache(
+            accepted_point_context_->packed_active_two_electron_gradient,
+            accepted_dense_active_coefficients_,
+            current_input_->ao_integral_input,
+            n_active_orbitals,
+            &accepted_two_electron_result);
 
     const auto accepted_orbital_backprop_inputs =
         build_accepted_orbital_backprop_inputs(
@@ -180,9 +176,6 @@ bool ExactHvpOperator::State::supports_analytic_core_model() const noexcept {
       nonredundant_space_ == nullptr) {
     return false;
   }
-  if (!exact_ctx_stage1_analytic_core_enabled()) {
-    return false;
-  }
   if (current_input_->standard_two_electron_mode ==
       StandardTwoElectronMode::ResolutionOfIdentity) {
     return false;
@@ -205,8 +198,6 @@ ExactHvpOperator::State::diagnostics() const {
   }
   info.supports_analytic_core_model = supports_analytic_core_model();
   info.outer_response_enabled = true;
-  info.outer_response_local_only_approximation = false;
-  info.outer_response_energy_only_approximation = false;
   info.used_reduced_curvature_diagonal =
       nonredundant_space_->has_reduced_curvature_diagonal();
   info.has_same_spin_matrix_form =

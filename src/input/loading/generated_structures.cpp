@@ -238,8 +238,8 @@ std::vector<int> parse_structure_classes(
   // Parse `STR=...` against the reduced
   // covalent problem after removing mandatory active doubly occupied pairs.
   // The explicit class labels are therefore shifted back by `ndb` only after
-  // parsing and validation. Using the total active beta count here is wrong
-  // and can create impossible ion classes such as MnF2's former `ionclass=3`.
+  // parsing and validation. Using the total active beta count here would
+  // create ion classes outside the reduced covalent problem.
   const std::string structure_class =
       to_ascii_upper(metadata.structure_class_keyword);
   std::vector<int> ionic_classes;

@@ -324,12 +324,9 @@ std::vector<double> apply_low_rank_ri_operator(
       // symmetric RI factor to the retained spectral columns and form the
       // exchange term as signed rank updates instead of dense `L_A X L_A`.
       //
-      // A molecule-static dense-factor cache was prototyped here, but for the
-      // production `C6H6_full` case it regressed wall time because streaming
-      // one large `[aux][ao][ao]` buffer from memory was slower than unpacking
-      // each packed row into a thread-local matrix and immediately reusing it.
-      // Keeping the small local buffer preserves cache locality while still
-      // letting BLAS handle the expensive symmetric multiplies.
+      // Unpack each packed factor into a thread-local matrix and reuse it
+      // immediately. This keeps the working set local while BLAS handles the
+      // symmetric multiplies.
       cblas_dsymm(
           CblasColMajor,
           CblasLeft,

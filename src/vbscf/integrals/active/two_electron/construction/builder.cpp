@@ -401,6 +401,7 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
     const std::vector<double>& ao_two_electron_integral_values,
     const std::vector<int>& ao_two_electron_integral_indices,
     const SparseAoPairCoefficients& sparse_pair_coefficients,
+    Eigen::MatrixXd dense_active_coefficients,
     int n_basis_functions,
     int n_active_orbitals) {
   const int last_active_pair_index =
@@ -523,6 +524,8 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
   ActiveSpaceTwoElectronResult result;
   result.packed_active_two_electron_integrals =
       std::move(packed_active_two_electron_integrals);
+  result.dense_active_coefficients =
+      std::move(dense_active_coefficients);
   return result;
 }
 
@@ -563,10 +566,19 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
           orbital_preparation_result.active_sparse_values,
           n_bf,
           n_active_orbitals);
+  auto dense_active_coefficients =
+      copy_row_major_buffer_to_matrix(
+          build_dense_active_coefficients(
+              orbital_preparation_result,
+              n_bf,
+              n_active_orbitals),
+          n_bf,
+          n_active_orbitals);
   return build_packed_active_two_electron_integrals_sparse(
       ao_integral_input.ao_two_electron_integral_values,
       ao_integral_input.ao_two_electron_integral_indices,
       sparse_pair_coefficients,
+      std::move(dense_active_coefficients),
       n_bf,
       n_active_orbitals);
 }

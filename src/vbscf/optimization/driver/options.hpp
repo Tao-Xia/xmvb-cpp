@@ -44,7 +44,7 @@ struct VbScfOptimizerOptions {
    *
    * This is the stopping criterion for the reported projected gradient.
    */
-  double energy_tolerance = 1.0e-5;
+  double energy_tolerance = 1.0e-7;
 
   /**
    * @brief Maximum trial step size allowed by the line search.
@@ -77,10 +77,8 @@ struct VbScfOptimizerOptions {
   /**
    * @brief Number of transported secant pairs used to enrich the TN preconditioner.
    *
-   * This is a maximum history length. The solver may disable the transported
-   * preconditioner automatically for cheap objectives where the extra algebra
-   * is unlikely to repay itself. A value of `0` always falls back to the
-   * reduced diagonal alone.
+   * A value of `0` disables transported secants and uses only the reduced
+   * curvature diagonal.
    */
   int nonredundant_truncated_newton_transport_history_size = 8;
 
@@ -106,10 +104,9 @@ struct VbScfOptimizerOptions {
   /**
    * @brief Whether accepted-iteration callbacks require the full snapshot payload.
    *
-   * Library callbacks keep the historical full-payload behavior by default, but
-   * lightweight consumers such as the terminal logger can disable this to avoid
-   * copying structure matrices, orbital tables, and active-space buffers on
-   * every accepted step.
+   * Enable this only for callbacks that consume structure matrices, orbital
+   * tables, or active-space buffers. The default avoids copying those objects
+   * on every accepted step.
    */
   bool accepted_iteration_callback_requires_full_snapshot = false;
 
