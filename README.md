@@ -73,11 +73,13 @@ cmake --build build
 ## Usage
 
 ```bash
-OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi> --optimizer-backend lbfgspp
+OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi>
 ```
 
 Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
 regression decks and `testdata/vbscf/F2.xmi` for the compact HAO smoke case.
+Within `$CTRL`, `ISCF=5` selects nonredundant L-BFGS and `ISCF=7` selects
+TNHVP. An explicit `--optimizer-backend` command-line option overrides `ISCF`.
 
 ## License
 

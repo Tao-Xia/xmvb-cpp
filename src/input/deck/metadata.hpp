@@ -6,6 +6,13 @@
 
 namespace xmvb::vb {
 
+/** @brief Orbital optimizer selected by the `.xmi` `ISCF` keyword. */
+enum class InputScfOptimizer {
+  Unspecified,
+  Lbfgs,
+  Tnhvp,
+};
+
 /**
  * @brief Pure C++ summary of the `$CTRL` metadata needed by the standalone loader.
  *
@@ -28,6 +35,7 @@ struct InputDeckMetadata {
   int declared_spin_multiplicity = 1;
   int total_charge = 0;
   int requested_scf_max_iterations = 0;
+  InputScfOptimizer scf_optimizer = InputScfOptimizer::Unspecified;
   bool geometry_coordinates_in_bohr = false;
   bool request_ri_two_electron_mode = false;
   bool request_molden_output = false;

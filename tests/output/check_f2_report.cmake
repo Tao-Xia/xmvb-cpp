@@ -16,6 +16,7 @@ endif()
 set(required_report_patterns
   "Developed by: Tao Xia"
   "Software development assistance: OpenAI Codex"
+  "VBSCF algorithm: nonredundant_truncated_newton"
   "OVERLAP OF VB STRUCTURES"
   "1[ ]+1\\.000000[ ]+0\\.368[0-9]+[ ]+0\\.368[0-9]+"
   "HAMILTONIAN OF VB STRUCTURES"

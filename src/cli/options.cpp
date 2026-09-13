@@ -97,7 +97,7 @@ void print_usage() {
                " [--dump-trace-dir <dataset_root>]"
                " [--tnhvp-trace <path.tsv>]"
                " [--dump-final-orbital-value-table-bin <path>]\n"
-               "default optimizer backend: nonredundant_lbfgspp\n";
+               "input optimizer: ISCF=5 selects nonredundant L-BFGS; ISCF=7 selects TNHVP\n";
 }
 
 }  // namespace
@@ -127,6 +127,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
   std::string dump_trace_dir;
   std::string tnhvp_trace_path;
   std::string dump_final_orbital_value_table_bin;
+  bool user_specified_optimizer_backend = false;
   bool user_specified_max_iterations = false;
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
@@ -134,6 +135,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
     try {
       if (argument_name == "--optimizer-backend") {
         apply_optimizer_backend_argument(argument_value, &options);
+        user_specified_optimizer_backend = true;
       } else if (argument_name == "--max-iterations") {
         user_specified_max_iterations = true;
         options.max_iterations = std::stoi(argument_value);
@@ -182,6 +184,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
   parsed.trace_directory = std::move(dump_trace_dir);
   parsed.tnhvp_trace_path = std::move(tnhvp_trace_path);
   parsed.final_orbitals_path = std::move(dump_final_orbital_value_table_bin);
+  parsed.optimizer_backend_explicit = user_specified_optimizer_backend;
   parsed.max_iterations_explicit = user_specified_max_iterations;
   return parsed;
 }

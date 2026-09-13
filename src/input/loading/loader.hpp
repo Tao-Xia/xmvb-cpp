@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 
+#include "input/deck/metadata.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/selection/subspace/selector.hpp"
 #include "vbscf/structures/expansion/types.hpp"
@@ -50,6 +51,7 @@ struct VbScfInputLoadResult {
   StandardTwoElectronMode standard_two_electron_mode = StandardTwoElectronMode::Auto;
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
   RawStructureSource raw_structure_source = RawStructureSource::Unknown;
+  InputScfOptimizer scf_optimizer = InputScfOptimizer::Unspecified;
   int requested_scf_max_iterations = 2000;
   bool request_molden_output = false;
   int source_raw_structure_count = 0;

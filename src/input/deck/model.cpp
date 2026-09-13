@@ -181,6 +181,20 @@ void apply_ctrl_assignment(
     metadata->requested_scf_max_iterations = std::stoi(raw_value);
     return;
   }
+  if (key == "ISCF") {
+    const int iscf = std::stoi(raw_value);
+    if (iscf == 5) {
+      metadata->scf_optimizer = InputScfOptimizer::Lbfgs;
+      return;
+    }
+    if (iscf == 7) {
+      metadata->scf_optimizer = InputScfOptimizer::Tnhvp;
+      return;
+    }
+    throw std::invalid_argument(
+        "unsupported ISCF value " + raw_value +
+        "; use ISCF=5 for L-BFGS or ISCF=7 for TNHVP");
+  }
   if (key == "BASIS") {
     metadata->basis_name = to_ascii_lower(raw_value);
     return;

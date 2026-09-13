@@ -11,7 +11,6 @@ execute_process(
   COMMAND
     "${XMVB_EXECUTABLE}"
     "${XMVB_INPUT}"
-    --optimizer-backend nonredundant_truncated_newton
     --dump-trace-dir "${XMVB_TRACE_ROOT}"
     --tnhvp-trace "${tnhvp_trace}"
   RESULT_VARIABLE xmvb_status
@@ -21,6 +20,32 @@ execute_process(
 if (NOT xmvb_status EQUAL 0)
   message(FATAL_ERROR
     "F2 TNHVP trace run failed with status ${xmvb_status}:\n${xmvb_errors}")
+endif()
+
+if (NOT xmvb_report MATCHES
+    "VBSCF algorithm: nonredundant_truncated_newton")
+  message(FATAL_ERROR "ISCF=7 did not select TNHVP")
+endif()
+
+file(READ "${XMVB_INPUT}" iscf5_input_text)
+string(REPLACE "ISCF=7" "ISCF=5" iscf5_input_text "${iscf5_input_text}")
+set(iscf5_input "${XMVB_TRACE_ROOT}/F2_iscf5.xmi")
+file(WRITE "${iscf5_input}" "${iscf5_input_text}")
+execute_process(
+  COMMAND
+    "${XMVB_EXECUTABLE}"
+    "${iscf5_input}"
+    --gradient-tolerance 1e20
+    --verbose false
+  RESULT_VARIABLE iscf5_status
+  OUTPUT_VARIABLE iscf5_report
+  ERROR_VARIABLE iscf5_errors)
+if (NOT iscf5_status EQUAL 0)
+  message(FATAL_ERROR
+    "ISCF=5 selection run failed with status ${iscf5_status}:\n${iscf5_errors}")
+endif()
+if (NOT iscf5_report MATCHES "VBSCF algorithm: nonredundant_lbfgspp")
+  message(FATAL_ERROR "ISCF=5 did not select nonredundant L-BFGS")
 endif()
 
 set(initial_metadata "${XMVB_TRACE_ROOT}/F2/steps/step_000000/metadata.json")
