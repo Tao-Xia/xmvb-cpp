@@ -37,7 +37,7 @@ FullFiniteDifferenceReducedHvpOperator::
         const OrbitalPreparationInput& current_orbital_input,
         const SparseParameterLayout& parameter_view,
         double hvp_step_size)
-    : probe_objective_(objective.make_probe_copy()),
+    : probe_objective_(objective.make_probe()),
       current_space_(current_space),
       current_reduced_gradient_(current_projection.reduced_gradient),
       current_orbital_input_(current_orbital_input),
@@ -76,7 +76,7 @@ Eigen::VectorXd FullFiniteDifferenceReducedHvpOperator::apply(
   const Eigen::VectorXd trial_parameters =
       parameter_view_.pack(trial_orbital_input);
   const VbScfObjective::TrialEvaluation trial_evaluation =
-      probe_objective_.evaluate_trial_without_committing(trial_parameters);
+      probe_objective_.evaluate_trial(trial_parameters);
   return
       (current_space_.project_reduced_gradient(trial_evaluation.gradient) -
        current_reduced_gradient_) /
@@ -87,10 +87,10 @@ ExactContextReducedHvpOperator::ExactContextReducedHvpOperator(
     const VbScfObjective& objective,
     const OrbitalChart& current_space)
     : exact_operator_(
-          objective.last_second_order_context(),
-          &objective.last_input(),
+          objective.second_order_context(),
+          &objective.input(),
           SparseParameterLayout(
-              objective.last_input().orbital_preparation_input),
+              objective.input().orbital_preparation_input),
           &current_space) {}
 
 Eigen::VectorXd ExactContextReducedHvpOperator::apply(

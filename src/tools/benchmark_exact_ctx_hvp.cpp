@@ -20,7 +20,6 @@
 #include "vbscf/diagnostics/hessian/reduced_reference.hpp"
 
 #include "input/loading/loader.hpp"
-#include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/diagnostics/orbitals/chart_audit.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
@@ -35,7 +34,6 @@ struct Options {
   std::string input_path;
   int repeats = 1;
   int warmup = 0;
-  bool nonredundant_adapt = false;
   bool gauge_audit = false;
   int curvature_audit_directions = 0;
   int dense_reference_block_width = 0;
@@ -79,7 +77,6 @@ void print_usage() {
       << "usage: benchmark_exact_ctx_hvp <input.xmi>"
       << " [--repeats count]"
       << " [--warmup count]"
-      << " [--nonredundant-adapt true|false]"
       << " [--gauge-audit true|false]\n";
   std::cerr << " [--curvature-audit-directions count|0=disabled]\n";
   std::cerr << " [--dense-reference-block-width count|0=disabled]\n";
@@ -125,10 +122,6 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (name == "--warmup") {
       options.warmup = parse_positive_or_zero_int(value, "--warmup");
-      continue;
-    }
-    if (name == "--nonredundant-adapt") {
-      options.nonredundant_adapt = parse_bool_argument(value);
       continue;
     }
     if (name == "--gauge-audit") {
@@ -228,9 +221,7 @@ AcceptedPointBenchmarkContext build_benchmark_context(
       xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
 
   AcceptedPointBenchmarkContext context{
-      options.nonredundant_adapt
-          ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)
-          : load_result.input,
+      load_result.input,
       nullptr,
       nullptr,
       xmvb::vb::SparseParameterLayout(load_result.input.orbital_preparation_input),
@@ -852,8 +843,6 @@ int main(int argc, char** argv) {
     }
     std::cout << "repeats = " << options.repeats << '\n';
     std::cout << "warmup = " << options.warmup << '\n';
-    std::cout << "nonredundant_adapt = "
-              << bool_name(options.nonredundant_adapt) << '\n';
     std::cout << "supports_analytic_core_model = "
               << bool_name(first_diagnostics.supports_analytic_core_model) << '\n';
     std::cout << "outer_response_runtime_enabled = "

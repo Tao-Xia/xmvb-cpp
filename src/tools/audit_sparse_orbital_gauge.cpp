@@ -6,46 +6,23 @@
 #include <string>
 
 #include "input/loading/loader.hpp"
-#include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/diagnostics/orbitals/chart_audit.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
-namespace {
-
-bool parse_bool(const std::string& value) {
-  if (value == "true" || value == "1") return true;
-  if (value == "false" || value == "0") return false;
-  throw std::invalid_argument("invalid Boolean value: " + value);
-}
-
-}  // namespace
-
 int main(int argc, char** argv) {
-  if (argc != 2 && argc != 4) {
-    std::cerr
-        << "usage: audit_orbital_chart <input.xmi> "
-        << "[--nonredundant-adapt true|false]\n";
+  if (argc != 2) {
+    std::cerr << "usage: audit_orbital_chart <input.xmi>\n";
     return EXIT_FAILURE;
   }
 
   try {
-    bool nonredundant_adapt = true;
-    if (argc == 4) {
-      if (std::string(argv[2]) != "--nonredundant-adapt") {
-        throw std::invalid_argument("unknown option: " + std::string(argv[2]));
-      }
-      nonredundant_adapt = parse_bool(argv[3]);
-    }
-
     xmvb::vb::VbScfInputLoadOptions load_options;
     load_options.standard_two_electron_mode =
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto loaded =
         xmvb::vb::load_vbscf_input_with_timings(argv[1], load_options);
-    const xmvb::vb::VbScfInput input = nonredundant_adapt
-        ? xmvb::vb::build_nonredundant_optimizer_input(loaded.input)
-        : loaded.input;
+    const xmvb::vb::VbScfInput input = loaded.input;
     const xmvb::vb::SparseParameterLayout parameter_view(
         input.orbital_preparation_input);
     const auto& orbital = input.orbital_preparation_input;
@@ -73,8 +50,6 @@ int main(int argc, char** argv) {
 
     std::cout << std::setprecision(12);
     std::cout << "input = " << argv[1] << '\n';
-    std::cout << "nonredundant_adapt = "
-              << (nonredundant_adapt ? "true" : "false") << '\n';
     std::cout << "packed_dimension = " << audit.packed_dimension << '\n';
     std::cout << "gauge_parameter_dimension = "
               << audit.gauge_parameter_dimension << '\n';

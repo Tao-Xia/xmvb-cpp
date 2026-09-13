@@ -26,9 +26,9 @@ OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
     const SparseParameterLayout& parameter_view) {
   const auto& orbital_preparation_input =
-      objective.last_input().orbital_preparation_input;
+      objective.input().orbital_preparation_input;
   const auto& orbital_preparation_result =
-      objective.last_gradient_result().orbital_preparation_result;
+      objective.gradient_result().orbital_preparation_result;
   const auto& normalized_orbital_matrix =
       orbital_preparation_result.physical_orbital_frame.normalized_orbital_matrix;
   if (normalized_orbital_matrix.size() == 0) {
@@ -46,7 +46,7 @@ OrbitalChart build_orbital_chart(
       parameter_view,
       orbital_preparation_result.auxiliary_orbital_matrix.leftCols(n_occupied_orbitals),
       normalized_orbital_matrix,
-      &objective.last_gradient_result().ao_effective_one_electron_result.ao_effective_h1e);
+      &objective.gradient_result().ao_effective_one_electron_result.ao_effective_h1e);
 }
 
 int choose_truncated_newton_max_cg_iterations(
@@ -74,7 +74,7 @@ void sync_result_from_objective(
   result->total_energy_history = objective.energy_history();
   result->gradient_inf_norm_history = objective.gradient_inf_norm_history();
   result->iteration_time_history_seconds = objective.iteration_time_history_seconds();
-  result->scf_result = objective.last_gradient_result().scf_result;
+  result->scf_result = objective.gradient_result().scf_result;
 }
 
 void record_accepted_iteration_snapshot(
@@ -93,9 +93,9 @@ void record_accepted_iteration_snapshot(
       options.retain_accepted_iteration_trace ||
       options.accepted_iteration_callback_requires_full_snapshot;
   if (include_reference_energy_gradient) {
-    objective->ensure_last_reference_energy_gradient();
+    objective->ensure_reference_gradient();
   }
-  const auto& gradient_result = objective->last_gradient_result();
+  const auto& gradient_result = objective->gradient_result();
   VbScfAcceptedIterationSnapshot snapshot;
   snapshot.accepted_iteration_index = accepted_iteration_index;
   if (tnhvp != nullptr) {
@@ -111,8 +111,8 @@ void record_accepted_iteration_snapshot(
       std::sqrt(snapshot.sparse_orbital_energy_gradient_l2_norm);
   if (include_full_payload) {
     snapshot.orbital_value_table.assign(
-        objective->last_input().orbital_preparation_input.orbital_value_table.begin(),
-        objective->last_input().orbital_preparation_input.orbital_value_table.end());
+        objective->input().orbital_preparation_input.orbital_value_table.begin(),
+        objective->input().orbital_preparation_input.orbital_value_table.end());
     snapshot.structure_matrices = gradient_result.scf_result.structure_matrices;
     snapshot.active_orbital_overlap_matrix =
         gradient_result.active_orbital_overlap_matrix;

@@ -108,7 +108,7 @@ BackendRunResult run_truncated_newton_backend(
             *objective,
             current_space,
             current_projection,
-            objective->last_input().orbital_preparation_input,
+            objective->input().orbital_preparation_input,
             parameter_view,
             options.nonredundant_truncated_newton_hvp_step_size);
         break;
@@ -137,7 +137,7 @@ BackendRunResult run_truncated_newton_backend(
             options,
             current_projection.reduced_gradient.size());
     const OrbitalPreparationInput current_orbital_input =
-        objective->last_input().orbital_preparation_input;
+        objective->input().orbital_preparation_input;
     const NonredundantRetractionMetric retraction_metric(
         current_orbital_input,
         current_space,
@@ -249,7 +249,7 @@ BackendRunResult run_truncated_newton_backend(
             }
           }
           VbScfObjective::TrialEvaluation candidate_trial_evaluation =
-              objective->evaluate_trial_without_committing(
+              objective->evaluate_trial(
                   candidate_trial_parameters);
           const double candidate_trial_energy =
               candidate_trial_evaluation.energy;
@@ -340,7 +340,7 @@ BackendRunResult run_truncated_newton_backend(
           // trust radius avoids burning many full objective evaluations
           // just to rediscover the same radius contraction.
           VbScfObjective descent_objective =
-              objective->make_probe_copy();
+              objective->make_probe();
           Eigen::VectorXd descent_parameters(current_parameters.size());
           Eigen::VectorXd descent_gradient(current_gradient.size());
           double descent_energy = energy;
@@ -557,7 +557,7 @@ BackendRunResult run_truncated_newton_backend(
       continue;
     }
     if (accepted_trial_evaluation.valid) {
-      objective->commit_trial_evaluation(
+      objective->commit(
           std::move(accepted_trial_evaluation));
     }
     current_parameters = trial_parameters;
@@ -582,7 +582,7 @@ BackendRunResult run_truncated_newton_backend(
       }
     }
     const bool accepted_point_chart_reset =
-        objective->canonicalize_orbital_chart_at_current_point(
+        objective->canonicalize_chart(
             &current_parameters,
             &current_gradient,
             &packed_secant_history);

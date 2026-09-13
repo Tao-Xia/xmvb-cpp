@@ -501,14 +501,4 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
   return adapted_input;
 }
 
-VbScfInput build_nonredundant_optimizer_input(
-    const VbScfInput& input) {
-  // The nonredundant optimizer must start from the same physical sparse-orbital
-  // chart that the VB objective, restart artifacts, and Molden export use.
-  // Pre-orthonormalizing the full-support OEO inactive block changes the
-  // accepted-point gauge in a way that is not an exact original chart transform
-  // and measurably distorts TiCl active orbitals relative to XMVB.
-  return input;
-}
-
 }  // namespace xmvb::vb

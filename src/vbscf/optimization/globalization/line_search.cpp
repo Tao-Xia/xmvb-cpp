@@ -88,7 +88,7 @@ bool try_armijo_backtracking_nonredundant_direction(
     }
 
     auto trial_evaluation =
-        objective->evaluate_trial_without_committing(trial_parameters);
+        objective->evaluate_trial(trial_parameters);
     const double trial_energy = trial_evaluation.energy;
     const double armijo_upper_bound =
         current_energy + armijo_constant * step * directional_derivative;
@@ -96,7 +96,7 @@ bool try_armijo_backtracking_nonredundant_direction(
       *accepted_parameters = trial_parameters;
       *accepted_gradient = trial_evaluation.gradient;
       *accepted_energy = trial_energy;
-      objective->commit_trial_evaluation(std::move(trial_evaluation));
+      objective->commit(std::move(trial_evaluation));
       return true;
     }
     step *= 0.5;

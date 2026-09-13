@@ -54,7 +54,7 @@ BackendRunResult run_projected_gradient_backend(
             current_projection.reduced_gradient);
     const Eigen::VectorXd search_direction =
         gather_nonredundant_retract_tangent(
-            objective->last_input().orbital_preparation_input,
+            objective->input().orbital_preparation_input,
             current_space,
             parameter_view,
             reduced_search_direction);
@@ -70,7 +70,7 @@ BackendRunResult run_projected_gradient_backend(
     }
 
     const OrbitalPreparationInput current_orbital_input =
-        objective->last_input().orbital_preparation_input;
+        objective->input().orbital_preparation_input;
     Eigen::VectorXd accepted_parameters(current_parameters.size());
     Eigen::VectorXd accepted_gradient(current_gradient.size());
     double accepted_energy = energy;
@@ -100,7 +100,7 @@ BackendRunResult run_projected_gradient_backend(
     current_parameters = std::move(accepted_parameters);
     current_gradient = std::move(accepted_gradient);
     energy = accepted_energy;
-    objective->canonicalize_orbital_chart_at_current_point(
+    objective->canonicalize_chart(
         &current_parameters,
         &current_gradient);
     ++run_result.n_iterations;

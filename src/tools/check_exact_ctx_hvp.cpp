@@ -19,7 +19,6 @@
 #include "vbscf/integrals/active/two_electron/response/backpropagator.hpp"
 #include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
 #include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
-#include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
@@ -42,7 +41,6 @@ struct Options {
   double max_relative_error = std::numeric_limits<double>::infinity();
   bool has_explicit_step = false;
   std::string probe = "full";
-  bool nonredundant_adapt = false;
 };
 
 constexpr int kOrbitalTypeHao = 1;
@@ -53,17 +51,7 @@ void print_usage() {
   std::cerr
       << "usage: check_exact_ctx_hvp <input.xmi> [--step h] [--probe full|fixed] "
       << "[--orbital-value-table-bin <path>] "
-      << "[--nonredundant-adapt true|false] [--max-rel-error tolerance]\n";
-}
-
-bool parse_bool_argument(const std::string& value) {
-  if (value == "true" || value == "1") {
-    return true;
-  }
-  if (value == "false" || value == "0") {
-    return false;
-  }
-  throw std::invalid_argument("invalid boolean value: " + value);
+      << "[--max-rel-error tolerance]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -92,10 +80,6 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (name == "--probe") {
       options.probe = value;
-      continue;
-    }
-    if (name == "--nonredundant-adapt") {
-      options.nonredundant_adapt = parse_bool_argument(value);
       continue;
     }
     throw std::invalid_argument("unknown argument: " + name);
@@ -1846,19 +1830,12 @@ int main(int argc, char** argv) {
         xmvb::vb::StandardTwoElectronMode::Exact;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
-    xmvb::vb::VbScfInput input =
-        options.nonredundant_adapt
-            ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)
-            : load_result.input;
+    xmvb::vb::VbScfInput input = load_result.input;
     if (!options.orbital_value_table_bin_path.empty()) {
       input.orbital_preparation_input.orbital_value_table =
           read_f64_binary_file(options.orbital_value_table_bin_path);
       const std::size_t expected_size =
-          options.nonredundant_adapt
-              ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)
-                    .orbital_preparation_input.orbital_value_table.size()
-              : load_result.input.orbital_preparation_input
-                    .orbital_value_table.size();
+          load_result.input.orbital_preparation_input.orbital_value_table.size();
       if (input.orbital_preparation_input.orbital_value_table.size() !=
           expected_size) {
         throw std::runtime_error(

@@ -1,7 +1,6 @@
 #include "vbscf/optimization/driver/optimizer.hpp"
 
 #include <chrono>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -10,7 +9,6 @@
 #include <Eigen/Core>
 
 #include "vbscf/orbitals/gauge/localized.hpp"
-#include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
@@ -128,25 +126,14 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   VbScfOptimizerResult result;
   const auto optimization_start_time = std::chrono::steady_clock::now();
 
-  // For `guess=mo`, keep the nonredundant optimizer on the original sparse
-  // chart and exact-
-  // support block partition so the reduced coordinates, projected gradients,
-  // and exact-context orbital derivatives all live on the same variational
-  // manifold as the reference `.xmo` calculation.
-  std::optional<VbScfInput> adapted_optimizer_input;
-  const VbScfInput* optimizer_input = &input;
-  if (uses_nonredundant_space(options_.backend)) {
-    adapted_optimizer_input = build_nonredundant_optimizer_input(input);
-    optimizer_input = &adapted_optimizer_input.value();
-  }
   const SparseParameterLayout parameter_view(
-      optimizer_input->orbital_preparation_input);
+      input.orbital_preparation_input);
   Eigen::VectorXd parameter_vector =
-      parameter_view.pack(optimizer_input->orbital_preparation_input);
+      parameter_view.pack(input.orbital_preparation_input);
   Eigen::MatrixXd initial_normalized_orbital_matrix;
 
   VbScfObjective objective(
-      *optimizer_input,
+      VbScfInput(input),
       parameter_view,
       selected_state_indices,
       state_average_weights,
@@ -162,7 +149,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     Eigen::VectorXd gradient(parameter_vector.size());
     double energy = objective(parameter_vector, gradient);
     initial_normalized_orbital_matrix =
-        objective.last_gradient_result()
+        objective.gradient_result()
             .orbital_preparation_result
             .physical_orbital_frame
             .normalized_orbital_matrix;
@@ -170,7 +157,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     record_accepted_iteration_snapshot(&objective, 0, options_, &result);
     result.initial_total_energy = energy;
     result.initial_one_electron_reference_energy =
-        objective.last_gradient_result().scf_result.one_electron_reference_energy;
+        objective.gradient_result().scf_result.one_electron_reference_energy;
     double previous_energy = energy;
     final_gradient_l2_norm = gradient.norm();
     switch (options_.backend) {
@@ -262,7 +249,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
         build_orbital_chart(objective, parameter_view);
     const Eigen::VectorXd final_packed_gradient =
         parameter_view.gather_from_full(
-            objective.last_gradient_result().sparse_orbital_energy_gradient);
+            objective.gradient_result().sparse_orbital_energy_gradient);
     const auto final_projection =
         final_space.project_gradient(final_packed_gradient);
     result.final_projected_gradient_inf_norm =
@@ -270,15 +257,15 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     result.final_projected_gradient_l2_norm =
         final_projection.reduced_gradient.norm();
   }
-  result.optimized_input = objective.last_input();
   result.one_particle_density_matrix = build_one_particle_density_matrix(
-      objective.last_gradient_result(),
-      result.optimized_input.orbital_preparation_input);
+      objective.gradient_result(),
+      objective.input().orbital_preparation_input);
   Eigen::MatrixXd final_normalized_orbital_matrix =
-      objective.last_gradient_result()
+      objective.gradient_result()
           .orbital_preparation_result
           .physical_orbital_frame
           .normalized_orbital_matrix;
+  result.optimized_input = std::move(objective).take_input();
   if (final_normalized_orbital_matrix.size() != 0) {
     // The evaluator always works with the normalized physical orbital frame,
     // Store the normalized accepted frame in the final
@@ -292,7 +279,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     final_normalized_orbital_matrix =
         build_metric_preserving_oeo_repaired_normalized_orbital_matrix(
             result.optimized_input.orbital_preparation_input,
-            objective.last_gradient_result().orbital_preparation_result,
+            objective.gradient_result().orbital_preparation_result,
             initial_normalized_orbital_matrix);
     overwrite_sparse_orbitals_from_dense_physical_frame(
         final_normalized_orbital_matrix,

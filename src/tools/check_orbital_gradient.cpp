@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "input/loading/loader.hpp"
-#include "vbscf/orbitals/charts/support_adapter.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
@@ -44,7 +43,6 @@ struct Options {
   EnergyComponent component = EnergyComponent::Total;
   int count = 8;
   double step = 1.0e-6;
-  bool nonredundant_adapt = false;
   bool parameter_roundtrip = false;
   SelectionMode selection_mode = SelectionMode::Top;
   GradientSpace gradient_space = GradientSpace::Sparse;
@@ -305,7 +303,6 @@ void print_usage() {
                "[--count N] [--step h] "
                "[--orbital-range begin:end] "
                "[--gradient-space sparse|reduced] "
-               "[--nonredundant-adapt true|false] "
                "[--print-analytic-branch-decomposition true|false] "
                "[--parameter-roundtrip true|false] "
                "[--selection top|added]\n";
@@ -362,10 +359,6 @@ Options parse_arguments(int argc, char** argv) {
       options.gradient_space = parse_gradient_space(argument_value);
       continue;
     }
-    if (argument_name == "--nonredundant-adapt") {
-      options.nonredundant_adapt = parse_bool_argument(argument_value);
-      continue;
-    }
     if (argument_name == "--print-analytic-branch-decomposition") {
       options.print_analytic_branch_decomposition = parse_bool_argument(argument_value);
       continue;
@@ -386,10 +379,6 @@ Options parse_arguments(int argc, char** argv) {
   }
   if (options.step <= 0.0) {
     throw std::invalid_argument("--step must be positive");
-  }
-  if (options.selection_mode == SelectionMode::AddedSupport &&
-      !options.nonredundant_adapt) {
-    throw std::invalid_argument("--selection added requires --nonredundant-adapt true");
   }
   if (options.selection_mode == SelectionMode::AddedSupport &&
       options.gradient_space != GradientSpace::Sparse) {
@@ -521,10 +510,7 @@ int main(int argc, char** argv) {
     load_options.standard_two_electron_mode = options.standard_two_electron_mode;
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
-    const xmvb::vb::VbScfInput diagnostic_input_template =
-        options.nonredundant_adapt
-            ? xmvb::vb::build_nonredundant_optimizer_input(load_result.input)
-            : load_result.input;
+    const xmvb::vb::VbScfInput diagnostic_input_template = load_result.input;
     xmvb::vb::VbScfInput diagnostic_input = diagnostic_input_template;
     if (!options.orbital_value_table_bin_path.empty()) {
       diagnostic_input.orbital_preparation_input.orbital_value_table =
@@ -572,8 +558,6 @@ int main(int argc, char** argv) {
     std::cout << "gradient_space = "
               << (options.gradient_space == GradientSpace::Reduced ? "reduced" : "sparse")
               << '\n';
-    std::cout << "nonredundant_adapt = "
-              << (options.nonredundant_adapt ? "true" : "false") << '\n';
     std::cout << "parameter_roundtrip = "
               << (options.parameter_roundtrip ? "true" : "false") << '\n';
     std::cout << "selection_mode = "

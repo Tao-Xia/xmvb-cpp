@@ -2,7 +2,7 @@
 
 #include <vector>
 
-#include "vbscf/core/contracts/input.hpp"
+#include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::vb {
 
@@ -40,17 +40,5 @@ OrbitalPreparationInput build_partial_overlap_support_expanded_input(
 OrbitalPreparationInput build_partial_overlap_support_expanded_input(
     const OrbitalPreparationInput& orbital_preparation_input,
     const std::vector<char>& expand_orbital_mask);
-
-/**
- * @brief Returns the nonredundant optimizer input without changing the original sparse chart.
- *
- * The reference VBSCF implementation keeps exact-support orbital blocks and
- * treats partial support overlap only as metadata. For `guess=mo`, preserving
- * that original block partition is necessary to preserve the variational
- * manifold and converged energy, so this helper currently forwards the input
- * unchanged.
- */
-VbScfInput build_nonredundant_optimizer_input(
-    const VbScfInput& input);
 
 }  // namespace xmvb::vb

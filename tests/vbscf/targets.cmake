@@ -35,7 +35,7 @@ if (BUILD_TESTING)
 
   add_test(NAME curvature_audit_f2 COMMAND benchmark_exact_ctx_hvp
     ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
-    --nonredundant-adapt true --curvature-audit-directions 6)
+    --curvature-audit-directions 6)
   set_tests_properties(curvature_audit_f2 PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
     PASS_REGULAR_EXPRESSION "audit_total_hvp_calls =")
@@ -94,7 +94,6 @@ if (BUILD_TESTING)
       ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_OEO.xmi
       --step 1e-4
       --probe full
-      --nonredundant-adapt true
       --max-rel-error 1e-7)
   set_tests_properties(exact_ctx_hvp_f2_oeo_finite_difference PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}

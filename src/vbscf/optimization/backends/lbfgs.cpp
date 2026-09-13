@@ -198,7 +198,7 @@ BackendRunResult run_full_space_lbfgs_backend(
     last_iteration_used_steepest_descent = used_steepest_descent;
 
     const bool accepted_point_chart_reset =
-        objective->canonicalize_orbital_chart_at_current_point(
+        objective->canonicalize_chart(
             &current_parameters,
             &current_gradient);
     if (accepted_point_chart_reset) {
@@ -284,7 +284,7 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     const Eigen::VectorXd steepest_descent_reduced_direction =
         -current_projection.reduced_gradient;
     const OrbitalPreparationInput previous_orbital_input =
-        objective->last_input().orbital_preparation_input;
+        objective->input().orbital_preparation_input;
     const Eigen::VectorXd steepest_descent_direction =
         gather_nonredundant_retract_tangent(
             previous_orbital_input,
@@ -420,7 +420,7 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     }
 
     const bool accepted_point_chart_reset =
-        objective->canonicalize_orbital_chart_at_current_point(
+        objective->canonicalize_chart(
             &current_parameters,
             &current_gradient);
     if (accepted_point_chart_reset) {

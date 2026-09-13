@@ -1,15 +1,8 @@
 #pragma once
 
-// VbScfObjective wraps the SCF + orbital-gradient evaluators into the
-// L-BFGS / truncated-Newton objective surface used by vbscf_optimizer.
-// The class owns the accepted orbital point, the last committed gradient
-// result, and the energy / gradient-norm histories; trial evaluations are
-// staged into a scratch buffer so rejected trust-region steps do not pay for
-// full gradient, adjoint, and second-order-context construction.
-
 #include <chrono>
 #include <memory>
-#include <optional>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -25,10 +18,9 @@ namespace xmvb::vb {
 
 struct AcceptedPointContext;
 
-// One accepted or trialed orbital point evaluated without committing state.
-// Carries everything the optimizer needs to decide whether to accept the
-// step: gradient in packed coordinates, SCF total energy, infinity-norm of
-// the gradient, wall time, and the inputs that produced it.
+/**
+ * @brief Result of evaluating an orbital point without accepting it.
+ */
 struct VbScfObjectiveTrialEvaluation {
   OrbitalPreparationInput orbital_preparation_input;
   OrbitalGradientResult gradient_result;
@@ -39,32 +31,54 @@ struct VbScfObjectiveTrialEvaluation {
   bool valid = false;
 };
 
+/**
+ * @brief Stateful VBSCF objective on a sparse orbital chart.
+ *
+ * The object owns one complete input. Trial evaluations replace only its
+ * orbital state and restore the accepted state before returning. Large,
+ * molecule-static integral data are therefore never duplicated for a trial.
+ */
 class VbScfObjective {
  public:
   using TrialEvaluation = VbScfObjectiveTrialEvaluation;
 
   VbScfObjective(
-      const VbScfInput& input,
-      SparseParameterLayout parameter_view,
+      VbScfInput input,
+      SparseParameterLayout layout,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy,
       const OrbitalGradientEvaluator* orbital_gradient_evaluator,
       const VbScfEvaluator* scf_evaluator);
 
+  VbScfObjective(const VbScfObjective&) = delete;
+  VbScfObjective& operator=(const VbScfObjective&) = delete;
+  VbScfObjective(VbScfObjective&&) = default;
+  VbScfObjective& operator=(VbScfObjective&&) = default;
+
+  /** @brief Evaluates and accepts an orbital parameter vector. */
   double operator()(const Eigen::VectorXd& parameter_vector,
                     Eigen::VectorXd& gradient);
 
-  const VbScfInput& last_input() const { return working_input_; }
-  const OrbitalGradientResult& last_gradient_result() const {
-    return last_gradient_result_;
-  }
-  const std::shared_ptr<AcceptedPointContext>&
-  last_second_order_context() const {
-    return last_gradient_result_.second_order_context;
+  /** @brief Returns the current accepted VBSCF input. */
+  const VbScfInput& input() const { return input_; }
+
+  /** @brief Transfers the accepted input out after optimization. */
+  VbScfInput take_input() && { return std::move(input_); }
+
+  /** @brief Returns the gradient data at the accepted point. */
+  const OrbitalGradientResult& gradient_result() const {
+    return gradient_result_;
   }
 
-  void ensure_last_reference_energy_gradient();
+  /** @brief Returns the exact-HVP context at the accepted point. */
+  const std::shared_ptr<AcceptedPointContext>&
+  second_order_context() const {
+    return gradient_result_.second_order_context;
+  }
+
+  /** @brief Populates the reference-energy gradient at the accepted point. */
+  void ensure_reference_gradient();
 
   const std::vector<double>& energy_history() const { return energy_history_; }
   const std::vector<double>& gradient_inf_norm_history() const {
@@ -91,31 +105,35 @@ class VbScfObjective {
     return gradient_inf_norm_history_.back();
   }
 
-  TrialEvaluation evaluate_trial_without_committing(
+  /** @brief Evaluates a trial point without changing the accepted point. */
+  TrialEvaluation evaluate_trial(
       const Eigen::VectorXd& parameter_vector) const;
 
-  void commit_trial_evaluation(TrialEvaluation evaluation);
+  /** @brief Makes a previously evaluated trial the accepted point. */
+  void commit(TrialEvaluation evaluation);
 
+  /** @brief Evaluates only the relaxed energy at a trial point. */
   double evaluate_energy_only(const Eigen::VectorXd& parameter_vector) const;
 
-  bool canonicalize_orbital_chart_at_current_point(
+  /** @brief Canonicalizes the accepted sparse chart and transports its state. */
+  bool canonicalize_chart(
       Eigen::VectorXd* parameter_vector,
       Eigen::VectorXd* gradient,
       std::vector<PackedSecantPair>* packed_secant_history = nullptr);
 
-  VbScfObjective make_probe_copy() const;
+  /** @brief Creates an independent objective for diagnostic probes. */
+  VbScfObjective make_probe() const;
 
  private:
-  VbScfInput working_input_;
-  mutable VbScfInput probe_input_buffer_;
-  SparseParameterLayout parameter_view_;
-  std::vector<int> selected_state_indices_;
-  std::vector<double> state_average_weights_;
-  double nuclear_repulsion_energy_ = 0.0;
-  const OrbitalGradientEvaluator* orbital_gradient_evaluator_ = nullptr;
-  const VbScfEvaluator* scf_evaluator_ = nullptr;
+  mutable VbScfInput input_;
+  SparseParameterLayout layout_;
+  std::vector<int> state_indices_;
+  std::vector<double> state_weights_;
+  double nuclear_repulsion_ = 0.0;
+  const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
+  const VbScfEvaluator* scf_ = nullptr;
 
-  OrbitalGradientResult last_gradient_result_;
+  OrbitalGradientResult gradient_result_;
   std::vector<double> energy_history_;
   std::vector<double> gradient_inf_norm_history_;
   std::vector<double> iteration_time_history_seconds_;
