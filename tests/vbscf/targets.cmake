@@ -8,6 +8,7 @@ set(_xmvb_vbscf_unit_targets
   test_cofactor_differential
   test_curvature_decomposition
   test_davidson
+  test_eigen_response
   test_normalized_orbital_curvature
   test_oeo_normalization_pullback
   test_orthonormal_hvp_basis
@@ -32,6 +33,7 @@ if (BUILD_TESTING)
   add_test(NAME oeo_normalization_pullback COMMAND test_oeo_normalization_pullback)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
   add_test(NAME davidson COMMAND test_davidson)
+  add_test(NAME eigen_response COMMAND test_eigen_response)
   set_tests_properties(davidson PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   set_tests_properties(oeo_normalization_pullback PROPERTIES
