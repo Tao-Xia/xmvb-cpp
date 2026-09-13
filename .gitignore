@@ -105,3 +105,5 @@ pdflatex3.fls
 uv.lock
 pyproject.toml
 scripts/
+article/
+docs/
