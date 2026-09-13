@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 
 #ifdef _OPENMP
@@ -29,7 +30,7 @@ bool core_backend_reports_projected_gradient(
     case xmvb::vb::VbScfOptimizerBackend::Lbfgspp:
       return false;
   }
-  return false;
+  throw std::invalid_argument("invalid VBSCF optimizer backend");
 }
 
 const char* gradient_tolerance_metric_name(
@@ -42,7 +43,7 @@ const char* gradient_tolerance_metric_name(
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return "projected_gradient_inf_norm";
   }
-  return "unknown";
+  throw std::invalid_argument("invalid VBSCF optimizer backend");
 }
 
 constexpr int kLogLabelWidth = 34;
@@ -140,7 +141,7 @@ int allocated_cpu_thread_count() {
   return openmp_max_thread_count();
 }
 
-std::string exact_ctx_physical_chart_name(
+std::string physical_chart_name(
     const xmvb::vb::OrbitalPreparationInput& orbital_input) {
   for (const int basis_count : orbital_input.orbital_basis_counts) {
     if (basis_count > 0 && basis_count < orbital_input.n_basis_functions) {
@@ -150,18 +151,16 @@ std::string exact_ctx_physical_chart_name(
   return "full_ao_U_p";
 }
 
-void print_exact_ctx_policy_summary(
+void print_tnhvp_summary(
     const xmvb::vb::VbScfOptimizerOptions& options,
     const xmvb::vb::VbScfInput& input) {
   if (options.backend !=
-          xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton ||
-      options.nonredundant_truncated_newton_hvp_mode !=
-          xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction) {
+      xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     return;
   }
 
   const auto& orbital_input = input.orbital_preparation_input;
-  print_log_subsection_title("Exact-CTX Matrix-Free Newton");
+  print_log_subsection_title("TNHVP Matrix-Free Newton");
   print_log_field(
       "Hessian model",
       "full_exact_hessian");
@@ -183,7 +182,7 @@ void print_exact_ctx_policy_summary(
           options.nonredundant_truncated_newton_transport_history_size));
   print_log_field(
       "Physical chart",
-      exact_ctx_physical_chart_name(orbital_input));
+      physical_chart_name(orbital_input));
 }
 
 void print_header(
@@ -262,7 +261,7 @@ void print_summary(
     const std::optional<std::filesystem::path>& molden_output_path,
     const std::chrono::system_clock::time_point& command_start_time,
     const std::chrono::steady_clock::time_point& command_start_steady_time) {
-  const auto& input = load_result.input;
+  const auto& input = result.optimized_input;
   const bool command_converged = result.converged;
   const double initial_electronic_energy =
       result.initial_total_energy - load_result.nuclear_repulsion_energy;
@@ -375,7 +374,7 @@ void print_summary(
         "Matrix-free HVP wall time",
         format_seconds(result.matrix_free_hvp_wall_time_seconds));
   }
-  print_exact_ctx_policy_summary(options, input);
+  print_tnhvp_summary(options, input);
   print_log_subsection_title("Timing Breakdown (Wall Time)");
   print_log_field(
       "AO integral provider wall time",

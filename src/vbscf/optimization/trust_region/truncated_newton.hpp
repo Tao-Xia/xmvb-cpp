@@ -90,7 +90,7 @@ double update_nonredundant_truncated_newton_trust_radius(
 double estimate_nonredundant_reduced_model_decrease(
     const OrbitalChart::ProjectionResult& projection,
     const Eigen::VectorXd& reduced_step,
-    ReducedHvpOperator* hvp_operator);
+    ReducedHvp* hvp);
 
 TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const NonredundantRetractionMetric& retraction_metric,
@@ -98,7 +98,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     int max_cg_iterations,
-    ReducedHvpOperator* hvp_operator,
+    ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd* initial_reduced_step = nullptr);
 

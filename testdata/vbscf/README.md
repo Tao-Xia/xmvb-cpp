@@ -19,7 +19,7 @@ files and other program outputs are generated artifacts and do not belong in
 this directory.
 
 For reproducible optimizer comparisons, use the
-`nonredundant_truncated_newton` backend with the `exact_ctx` HVP mode and pin
+`nonredundant_truncated_newton` backend with its analytic HVP and pin
 the BLAS/OpenMP thread counts explicitly. Historical numerical and performance
 results are recorded under `article/` and `docs/`; this directory is the
 canonical location for the corresponding inputs.

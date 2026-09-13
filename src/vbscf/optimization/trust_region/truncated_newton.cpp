@@ -433,9 +433,9 @@ double update_nonredundant_truncated_newton_trust_radius(
 double estimate_nonredundant_reduced_model_decrease(
     const OrbitalChart::ProjectionResult& projection,
     const Eigen::VectorXd& reduced_step,
-    ReducedHvpOperator* hvp_operator) {
+    ReducedHvp* hvp) {
   const Eigen::VectorXd reduced_hessian_step =
-      hvp_operator->apply(reduced_step);
+      hvp->apply(reduced_step);
   return
       -projection.reduced_gradient.dot(reduced_step) -
       0.5 * reduced_step.dot(reduced_hessian_step);
@@ -447,7 +447,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     int max_cg_iterations,
-    ReducedHvpOperator* hvp_operator,
+    ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd* initial_reduced_step) {
   TruncatedNewtonStepResult result;
@@ -477,7 +477,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     // independently through cancellation-prone projection recurrences.
     const bool admitted = append_orthonormal_hvp_direction(
         direction,
-        [&](const Eigen::VectorXd& q) { return hvp_operator->apply(q); },
+        [&](const Eigen::VectorXd& q) { return hvp->apply(q); },
         &krylov_basis_vectors, &krylov_hessian_basis_vectors, image);
     if (admitted) {
       krylov_tangent_basis_vectors.push_back(

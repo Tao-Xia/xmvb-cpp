@@ -11,38 +11,19 @@
 
 namespace xmvb::vb {
 
-class ReducedHvpOperator {
+/** @brief Matrix-free Hessian action in nonredundant orbital coordinates. */
+class ReducedHvp {
 public:
-  virtual ~ReducedHvpOperator() = default;
+  virtual ~ReducedHvp() = default;
   virtual Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) = 0;
   virtual Eigen::MatrixXd apply_batch(
       const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions);
 };
 
-class FullFiniteDifferenceReducedHvpOperator final : public ReducedHvpOperator {
+/** @brief Analytic reduced Hessian action at the accepted VBSCF point. */
+class ExactReducedHvp final : public ReducedHvp {
 public:
-  FullFiniteDifferenceReducedHvpOperator(
-      const VbScfObjective& objective,
-      const OrbitalChart& current_space,
-      const OrbitalChart::ProjectionResult& current_projection,
-      const OrbitalPreparationInput& current_orbital_input,
-      const SparseParameterLayout& parameter_view,
-      double hvp_step_size);
-
-  Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) override;
-
-private:
-  VbScfObjective probe_objective_;
-  const OrbitalChart& current_space_;
-  Eigen::VectorXd current_reduced_gradient_;
-  OrbitalPreparationInput current_orbital_input_;
-  SparseParameterLayout parameter_view_;
-  double hvp_step_size_ = 0.0;
-};
-
-class ExactContextReducedHvpOperator final : public ReducedHvpOperator {
-public:
-  ExactContextReducedHvpOperator(
+  ExactReducedHvp(
       const VbScfObjective& objective,
       const OrbitalChart& current_space);
 
@@ -56,7 +37,6 @@ private:
   ExactHvpOperator exact_operator_;
 };
 
-std::string build_exact_ctx_unavailable_message(
-    const ExactContextReducedHvpOperator& hvp_operator);
+std::string build_hvp_error(const ExactReducedHvp& hvp);
 
 }  // namespace xmvb::vb

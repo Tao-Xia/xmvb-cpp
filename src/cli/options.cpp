@@ -35,23 +35,6 @@ void apply_optimizer_backend_argument(
   throw std::invalid_argument("invalid optimizer backend: " + backend_name);
 }
 
-void apply_nonredundant_truncated_newton_hvp_mode_argument(
-    const std::string& mode_name,
-    xmvb::vb::VbScfOptimizerOptions* options) {
-  if (mode_name == "full_fd") {
-    options->nonredundant_truncated_newton_hvp_mode =
-        xmvb::vb::NonredundantTruncatedNewtonHvpMode::FullFiniteDifference;
-    return;
-  }
-  if (mode_name == "exact_ctx" || mode_name == "exact_context") {
-    options->nonredundant_truncated_newton_hvp_mode =
-        xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction;
-    return;
-  }
-  throw std::invalid_argument(
-      "invalid nonredundant truncated-Newton HVP mode: " + mode_name);
-}
-
 bool parse_bool_argument(const std::string& value) {
   if (value == "true" || value == "1" || value == "yes") {
     return true;
@@ -107,8 +90,6 @@ void print_usage() {
                " [--energy-tolerance <value>]"
                "\n"
                " [--nonredundant-truncated-newton-max-cg-iterations <count|0=32>]"
-               " [--nonredundant-truncated-newton-hvp-mode full_fd|exact_ctx]"
-               " [--nonredundant-truncated-newton-hvp-step-size <value>]"
                " [--nonredundant-truncated-newton-transport-history-size <count>]"
                " [--standard-two-electron-mode auto|exact|ri]"
                " [--skip-orbital-guess true|false]"
@@ -169,17 +150,6 @@ std::optional<Options> parse_options(int argc, char** argv) {
             std::stoi(argument_value);
       } else if (
           argument_name ==
-          "--nonredundant-truncated-newton-hvp-step-size") {
-        options.nonredundant_truncated_newton_hvp_step_size =
-            std::stod(argument_value);
-      } else if (
-          argument_name ==
-          "--nonredundant-truncated-newton-hvp-mode") {
-        apply_nonredundant_truncated_newton_hvp_mode_argument(
-            argument_value,
-            &options);
-      } else if (
-          argument_name ==
           "--nonredundant-truncated-newton-transport-history-size") {
         options.nonredundant_truncated_newton_transport_history_size =
             std::stoi(argument_value);
@@ -207,9 +177,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
   }
   load_options.build_ao_effective_one_electron_graph =
       options.backend ==
-          xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton &&
-      options.nonredundant_truncated_newton_hvp_mode ==
-          xmvb::vb::NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction;
+          xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton;
 
   Options parsed;
   parsed.input_path = input_path;

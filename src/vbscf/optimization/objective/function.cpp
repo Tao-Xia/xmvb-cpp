@@ -200,16 +200,4 @@ bool VbScfObjective::canonicalize_chart(
   return true;
 }
 
-VbScfObjective VbScfObjective::make_probe() const {
-  VbScfObjective copy(
-      input_,
-      layout_,
-      state_indices_,
-      state_weights_,
-      nuclear_repulsion_,
-      gradient_evaluator_,
-      scf_);
-  return copy;
-}
-
 }  // namespace xmvb::vb

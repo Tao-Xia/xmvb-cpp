@@ -86,13 +86,13 @@ VbScfOptimizer::VbScfOptimizer(
       options_(options) {}
 
 VbScfOptimizerResult VbScfOptimizer::optimize(
-    const VbScfInput& input,
+    VbScfInput input,
     double nuclear_repulsion_energy) const {
-  return optimize(input, {0}, {1.0}, nuclear_repulsion_energy);
+  return optimize(std::move(input), {0}, {1.0}, nuclear_repulsion_energy);
 }
 
 VbScfOptimizerResult VbScfOptimizer::optimize(
-    const VbScfInput& input,
+    VbScfInput input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
@@ -115,10 +115,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     throw std::invalid_argument(
         "nonredundant_truncated_newton_max_cg_iterations must be nonnegative");
   }
-  if (options_.nonredundant_truncated_newton_hvp_step_size <= 0.0) {
-    throw std::invalid_argument(
-        "nonredundant_truncated_newton_hvp_step_size must be positive");
-  }
   if (options_.nonredundant_truncated_newton_transport_history_size < 0) {
     throw std::invalid_argument(
         "nonredundant_truncated_newton_transport_history_size must be nonnegative");
@@ -133,7 +129,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   Eigen::MatrixXd initial_normalized_orbital_matrix;
 
   VbScfObjective objective(
-      VbScfInput(input),
+      std::move(input),
       parameter_view,
       selected_state_indices,
       state_average_weights,

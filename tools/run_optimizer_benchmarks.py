@@ -226,8 +226,6 @@ def main() -> int:
                 ]
                 if short_backend == "tnhvp":
                     command += [
-                        "--nonredundant-truncated-newton-hvp-mode",
-                        "exact_ctx",
                         "--tnhvp-trace",
                         str(tnhvp_path),
                     ]

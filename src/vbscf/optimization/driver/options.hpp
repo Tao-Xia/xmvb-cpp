@@ -71,30 +71,6 @@ struct VbScfOptimizerOptions {
   int nonredundant_truncated_newton_max_cg_iterations = 0;
 
   /**
-   * @brief Relative finite-difference step used by the reduced-space HVP probes.
-   *
-   * This is used only by the diagnostic `full_fd` HVP. The analytic
-   * `exact_ctx` operator has no finite-difference step parameter.
-   */
-  double nonredundant_truncated_newton_hvp_step_size = 1.0e-3;
-
-  /**
-   * @brief HVP model used by the nonredundant truncated-Newton backend.
-   *
-   * `exact_ctx` is the intended production HVP. It uses the accepted-point
-   * second-order context as a landing zone for a fully analytic direct-action
-   * orbital HVP, differentiating both the accepted-point local orbital /
-   * integral chain and the relaxed structure/eigen response without forming the
-   * dense orbital Hessian explicitly.
-   *
-   * `full_fd` finite-differences the fully relaxed orbital gradient. This is a
-   * high-cost reference implementation kept for validation and regression
-   * checks against `exact_ctx`.
-   */
-  NonredundantTruncatedNewtonHvpMode nonredundant_truncated_newton_hvp_mode =
-      NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction;
-
-  /**
    * @brief Number of transported secant pairs used to enrich the TN preconditioner.
    *
    * This is a maximum history length. The solver may disable the transported

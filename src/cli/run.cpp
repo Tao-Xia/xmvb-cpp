@@ -32,8 +32,8 @@ int run(Options command_line) {
 
   const auto command_start_time = std::chrono::system_clock::now();
   const auto command_start_steady_time = std::chrono::steady_clock::now();
-  const auto load_result = xmvb::vb::load_vbscf_input_with_timings(input_path, load_options);
-  const auto& input = load_result.input;
+  auto load_result =
+      xmvb::vb::load_vbscf_input_with_timings(input_path, load_options);
   if (!user_specified_max_iterations) {
     // Keep the standalone SCF loop aligned with the input deck semantics:
     // `.xmi` `itmax` controls the maximum iteration count, and omitted `itmax`
@@ -71,7 +71,9 @@ int run(Options command_line) {
 
   xmvb::vb::VbScfOptimizer optimizer(options);
   const xmvb::vb::VbScfOptimizerResult result =
-      optimizer.optimize(input, load_result.nuclear_repulsion_energy);
+      optimizer.optimize(
+          std::move(load_result.input),
+          load_result.nuclear_repulsion_energy);
   if (!tnhvp_trace_path.empty()) {
     xmvb::output::write_tnhvp_trace(tnhvp_trace_path, result);
   }

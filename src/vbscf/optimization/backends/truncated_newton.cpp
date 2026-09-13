@@ -9,7 +9,6 @@
 #include <cstring>
 #include <iomanip>
 #include <limits>
-#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -101,29 +100,9 @@ BackendRunResult run_truncated_newton_backend(
       break;
     }
   
-    std::unique_ptr<ReducedHvpOperator> hvp_operator;
-    switch (options.nonredundant_truncated_newton_hvp_mode) {
-      case NonredundantTruncatedNewtonHvpMode::FullFiniteDifference:
-        hvp_operator = std::make_unique<FullFiniteDifferenceReducedHvpOperator>(
-            *objective,
-            current_space,
-            current_projection,
-            objective->input().orbital_preparation_input,
-            parameter_view,
-            options.nonredundant_truncated_newton_hvp_step_size);
-        break;
-      case NonredundantTruncatedNewtonHvpMode::ExactContextDirectAction: {
-        auto exact_ctx_hvp_operator =
-            std::make_unique<ExactContextReducedHvpOperator>(
-                *objective,
-                current_space);
-        if (!exact_ctx_hvp_operator->supports_analytic_core_model()) {
-          throw std::runtime_error(
-              build_exact_ctx_unavailable_message(*exact_ctx_hvp_operator));
-        }
-        hvp_operator = std::move(exact_ctx_hvp_operator);
-        break;
-      }
+    ExactReducedHvp hvp(*objective, current_space);
+    if (!hvp.supports_analytic_core_model()) {
+      throw std::runtime_error(build_hvp_error(hvp));
     }
     const int transport_history_size =
         choose_truncated_newton_transport_history_size(options);
@@ -277,7 +256,6 @@ BackendRunResult run_truncated_newton_backend(
         };
     auto try_safeguarded_nonredundant_descent_step =
         [&](Eigen::VectorXd* accepted_packed_step,
-            VbScfObjective* accepted_trial_objective,
             Eigen::VectorXd* accepted_trial_parameters,
             Eigen::VectorXd* accepted_trial_gradient,
             double* accepted_trial_energy) -> bool {
@@ -339,13 +317,11 @@ BackendRunResult run_truncated_newton_backend(
           // from a reduced step that already fits inside the current
           // trust radius avoids burning many full objective evaluations
           // just to rediscover the same radius contraction.
-          VbScfObjective descent_objective =
-              objective->make_probe();
           Eigen::VectorXd descent_parameters(current_parameters.size());
           Eigen::VectorXd descent_gradient(current_gradient.size());
           double descent_energy = energy;
           if (!try_armijo_backtracking_nonredundant_direction(
-                  &descent_objective,
+                  objective,
                   current_orbital_input,
                   current_space,
                   parameter_view,
@@ -365,8 +341,6 @@ BackendRunResult run_truncated_newton_backend(
   
           *accepted_packed_step =
               descent_parameters - current_parameters;
-          *accepted_trial_objective =
-              std::move(descent_objective);
           *accepted_trial_parameters = std::move(descent_parameters);
           *accepted_trial_gradient = std::move(descent_gradient);
           *accepted_trial_energy = descent_energy;
@@ -399,7 +373,7 @@ BackendRunResult run_truncated_newton_backend(
               current_projection,
               trust_radius,
               max_cg_iterations,
-              hvp_operator.get(),
+              &hvp,
               &transported_preconditioner,
               initial_reduced_step_for_current_solve);
     }
@@ -454,7 +428,7 @@ BackendRunResult run_truncated_newton_backend(
           estimate_nonredundant_reduced_model_decrease(
               current_projection,
               reduced_step,
-              hvp_operator.get());
+              &hvp);
       truncated_newton_step.reduced_step = reduced_step;
       truncated_newton_step.reduced_hessian_times_step.resize(0);
       truncated_newton_step.retract_tangent_norm =
@@ -468,17 +442,12 @@ BackendRunResult run_truncated_newton_backend(
           (1.0 - 1.0e-8) * trust_radius;
       truncated_newton_step.predicted_decrease = predicted_decrease;
     }
-    if (const auto* exact_hvp_operator =
-            dynamic_cast<const ExactContextReducedHvpOperator*>(
-                hvp_operator.get())) {
-      const auto hvp_diagnostics = exact_hvp_operator->diagnostics();
-      result->matrix_free_hvp_direction_count +=
-          hvp_diagnostics.apply_count;
-      result->matrix_free_hvp_batch_count +=
-          hvp_diagnostics.batch_apply_count;
-      result->matrix_free_hvp_wall_time_seconds +=
-          hvp_diagnostics.total_apply_wall_time_seconds;
-    }
+    const auto hvp_diagnostics = hvp.diagnostics();
+    result->matrix_free_hvp_direction_count += hvp_diagnostics.apply_count;
+    result->matrix_free_hvp_batch_count +=
+        hvp_diagnostics.batch_apply_count;
+    result->matrix_free_hvp_wall_time_seconds +=
+        hvp_diagnostics.total_apply_wall_time_seconds;
     TruncatedNewtonStepResult trial_step_for_current_trial =
         truncated_newton_step;
   
@@ -508,7 +477,6 @@ BackendRunResult run_truncated_newton_backend(
         model_step.encountered_negative_curvature) {
       if (try_safeguarded_nonredundant_descent_step(
               &packed_step,
-              objective,
               &trial_parameters,
               &trial_gradient,
               &trial_energy)) {

@@ -12,7 +12,6 @@ execute_process(
     "${XMVB_EXECUTABLE}"
     "${XMVB_INPUT}"
     --optimizer-backend nonredundant_truncated_newton
-    --nonredundant-truncated-newton-hvp-mode exact_ctx
     --dump-trace-dir "${XMVB_TRACE_ROOT}"
     --tnhvp-trace "${tnhvp_trace}"
   RESULT_VARIABLE xmvb_status

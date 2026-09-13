@@ -33,16 +33,20 @@ public:
 
   /**
    * @brief Optimizes the ground-state orbital parameters.
+   *
+   * The optimizer consumes `input` and transfers it into the result.
    */
   VbScfOptimizerResult optimize(
-      const VbScfInput& input,
+      VbScfInput input,
       double nuclear_repulsion_energy = 0.0) const;
 
   /**
    * @brief Optimizes a selected-state or state-averaged objective.
+   *
+   * The optimizer consumes `input` and transfers it into the result.
    */
   VbScfOptimizerResult optimize(
-      const VbScfInput& input,
+      VbScfInput input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;

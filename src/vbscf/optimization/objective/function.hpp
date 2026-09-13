@@ -121,9 +121,6 @@ class VbScfObjective {
       Eigen::VectorXd* gradient,
       std::vector<PackedSecantPair>* packed_secant_history = nullptr);
 
-  /** @brief Creates an independent objective for diagnostic probes. */
-  VbScfObjective make_probe() const;
-
  private:
   mutable VbScfInput input_;
   SparseParameterLayout layout_;
