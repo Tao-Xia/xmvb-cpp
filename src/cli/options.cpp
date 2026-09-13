@@ -175,10 +175,6 @@ std::optional<Options> parse_options(int argc, char** argv) {
       return std::nullopt;
     }
   }
-  load_options.build_ao_effective_one_electron_graph =
-      options.backend ==
-          xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton;
-
   Options parsed;
   parsed.input_path = input_path;
   parsed.load = std::move(load_options);

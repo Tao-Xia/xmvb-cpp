@@ -89,9 +89,6 @@ private:
   Eigen::MatrixXd zero_core_hamiltonian_;
   mutable std::vector<double> ao_h1e_delta_h1e_workspace_;
   mutable std::vector<double> ao_h1e_inactive_density_gradient_workspace_;
-  mutable std::vector<Eigen::MatrixXd> ao_h1e_partial_delta_h1e_workspaces_;
-  mutable std::vector<Eigen::MatrixXd>
-      ao_h1e_partial_inactive_density_gradient_workspaces_;
   ExactPackedActiveTwoElectronAdjointCache accepted_exact_two_electron_cache_;
   mutable ExactPackedActiveTwoElectronApplyWorkspace
       accepted_exact_two_electron_apply_workspace_;

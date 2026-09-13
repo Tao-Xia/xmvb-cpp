@@ -12,7 +12,7 @@
 
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 #include "vbscf/integrals/active/two_electron/response/directional.hpp"
-#include "vbscf/integrals/ao/one_electron/graph_operator.hpp"
+#include "vbscf/integrals/ao/one_electron/direct_operator.hpp"
 
 namespace xmvb::vb {
 
@@ -29,9 +29,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
   Eigen::MatrixXd responses(
       reduced_directions.rows(),
       reduced_directions.cols());
-  if (reduced_directions.cols() <= 1 ||
-      !ao_effective_one_electron_graph_available(
-          current_input_->ao_integral_input)) {
+  if (reduced_directions.cols() <= 1) {
     for (Eigen::Index column = 0;
          column < reduced_directions.cols();
          ++column) {
@@ -101,7 +99,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
   const auto batch_h1e_start_time = std::chrono::steady_clock::now();
   Eigen::MatrixXd delta_h1e_columns;
   Eigen::MatrixXd inactive_density_gradient_columns;
-  apply_fused_ao_effective_one_electron_graph_batch(
+  apply_ao_h1e_fused_batch(
       inactive_density_columns,
       symmetrized_pullback_columns,
       current_input_->ao_integral_input,

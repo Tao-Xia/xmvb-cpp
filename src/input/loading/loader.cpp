@@ -667,12 +667,8 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         static_topology.n_basis_functions,
         core_hamiltonian_matrix);
   } else {
-    MaterializedAoIntegralInputBuildOptions ao_input_build_options;
-    ao_input_build_options.build_ao_effective_one_electron_graph =
-        options.build_ao_effective_one_electron_graph;
     result.ao_integral_input = build_materialized_ao_integral_input(
-        std::move(ao_integral_buffers),
-        ao_input_build_options);
+        std::move(ao_integral_buffers));
   }
   load_result.ao_integral_input_build_seconds =
       std::chrono::duration<double>(

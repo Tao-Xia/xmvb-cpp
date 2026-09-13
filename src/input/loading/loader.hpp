@@ -39,10 +39,6 @@ struct VbScfInputLoadOptions {
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
   bool skip_orbital_guess = false;
   bool expand_selected_raw_structures = true;
-  // The AO-H1E graph is only needed by exact_ctx-style second-order paths.
-  // Keep it configurable at load time so plain VBSCF / L-BFGS runs do not pay
-  // the upfront graph build cost.
-  bool build_ao_effective_one_electron_graph = true;
 };
 
 struct VbScfInputLoadResult {

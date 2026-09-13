@@ -20,27 +20,6 @@ namespace xmvb::vb {
 class AoEffectiveOneElectronBackpropagator {
 public:
   /**
-   * @brief Backpropagates the AO effective one-electron adjoint.
-   *
-   * @param ao_effective_one_electron_gradient Column-major gradient with respect to `F11`.
-   * @param ao_two_electron_integral_values Sparse AO two-electron integral values.
-   * @param ao_two_electron_integral_indices Flattened AO two-electron index table.
-   * @param n_basis_functions Number of AO basis functions.
-   * @return AoEffectiveOneElectronBackpropagationResult Reverse-mode derivative.
-   */
-  AoEffectiveOneElectronBackpropagationResult backpropagate(
-      const std::vector<double>& ao_effective_one_electron_gradient,
-      const std::vector<double>& ao_two_electron_integral_values,
-      const std::vector<int>& ao_two_electron_integral_indices,
-      int n_basis_functions) const;
-
-  AoEffectiveOneElectronBackpropagationResult backpropagate(
-      const Eigen::Ref<const Eigen::MatrixXd>& ao_effective_one_electron_gradient,
-      const std::vector<double>& ao_two_electron_integral_values,
-      const std::vector<int>& ao_two_electron_integral_indices,
-      int n_basis_functions) const;
-
-  /**
    * @brief Backpropagates through the AO-side RI inactive-density contraction.
    */
   AoEffectiveOneElectronBackpropagationResult backpropagate(
@@ -73,10 +52,7 @@ public:
       int n_active_orbitals) const;
 
   /**
-   * @brief Backpropagates through validated AO integral input caches.
-   *
-   * This overload is intended for the main evaluation path after loader-side AO
-   * index validation has already succeeded.
+   * @brief Backpropagates through the canonical exact AO operator.
    */
   AoEffectiveOneElectronBackpropagationResult backpropagate(
       const std::vector<double>& ao_effective_one_electron_gradient,

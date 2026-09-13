@@ -231,9 +231,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         current_input_->orbital_preparation_input,
         &ao_h1e_symmetrized_gradient_workspace_,
         &ao_h1e_delta_h1e_workspace_,
-        &ao_h1e_inactive_density_gradient_workspace_,
-        &ao_h1e_partial_delta_h1e_workspaces_,
-        &ao_h1e_partial_inactive_density_gradient_workspaces_);
+        &ao_h1e_inactive_density_gradient_workspace_);
     delta_ao_effective_h1e_data = ao_h1e_delta_h1e_workspace_.data();
     inactive_density_gradient_data =
         ao_h1e_inactive_density_gradient_workspace_.data();

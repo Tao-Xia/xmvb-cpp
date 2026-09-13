@@ -25,9 +25,7 @@ void apply_fused_exact_ao_one_electron_response(
     const OrbitalPreparationInput& orbital_preparation_input,
     Eigen::MatrixXd* symmetrized_pullback_source,
     std::vector<double>* delta_ao_effective_h1e_storage,
-    std::vector<double>* inactive_density_gradient_storage,
-    std::vector<Eigen::MatrixXd>* partial_delta_h1e_workspaces,
-    std::vector<Eigen::MatrixXd>* partial_density_gradient_workspaces);
+    std::vector<double>* inactive_density_gradient_storage);
 
 }  // namespace detail
 }  // namespace xmvb::vb

@@ -2,7 +2,6 @@
 
 #include <Eigen/Core>
 
-#include <cstddef>
 #include <vector>
 
 #include "vbscf/integrals/ao/contracts/input.hpp"
@@ -23,18 +22,11 @@ struct MaterializedAoIntegralBuffers {
   std::vector<int> ao_two_electron_integral_indices;
 };
 
-struct MaterializedAoIntegralInputBuildOptions {
-  bool build_ao_effective_one_electron_graph = true;
-  std::size_t max_ao_effective_one_electron_graph_bytes =
-      256ull * 1024ull * 1024ull;
-};
-
 AoIntegralInput build_core_hamiltonian_only_ao_integral_input(
     int n_basis_functions,
     Eigen::MatrixXd ao_core_hamiltonian_matrix);
 
 AoIntegralInput build_materialized_ao_integral_input(
-    MaterializedAoIntegralBuffers buffers,
-    const MaterializedAoIntegralInputBuildOptions& options = {});
+    MaterializedAoIntegralBuffers buffers);
 
 }  // namespace xmvb::vb
