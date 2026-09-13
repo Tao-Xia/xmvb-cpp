@@ -14,9 +14,9 @@ using ExactCtxPairMatrix =
  * @brief Accepted-point cache for exact fixed-adjoint active-space 2e HVP work.
  *
  * The exact matrix-free second-order path repeatedly applies the same accepted
- * packed 2e adjoint to different active-orbital tangents. The buffers stored
- * here depend only on the accepted point and can therefore be built once in
- * the operator constructor instead of being rebuilt for every `H v`.
+ * packed 2e adjoint to different active-orbital tangents. Only accepted-point
+ * state is retained here; pair coefficients and pair gradients are derived
+ * and must not become persistent `N_pair x A_pair` buffers.
  */
 struct ExactPackedActiveTwoElectronAdjointCache {
   int n_basis_functions = 0;
@@ -25,11 +25,9 @@ struct ExactPackedActiveTwoElectronAdjointCache {
   std::vector<int> ao_pair_second_indices;
   std::vector<int> active_pair_first_indices;
   std::vector<int> active_pair_second_indices;
-  ExactCtxPairMatrix accepted_pair_coefficients;
   ExactCtxPairMatrix accepted_base_pair_products;
   ExactCtxPairMatrix active_pair_gradient_matrix;
   ExactCtxDenseMatrix accepted_dense_active_coefficients;
-  ExactCtxPairMatrix accepted_base_pair_gradients;
 };
 
 /**

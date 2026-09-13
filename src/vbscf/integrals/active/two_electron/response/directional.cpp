@@ -60,11 +60,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
   }
   const std::size_t n_bf_pairs =
       n_bf * (n_bf + 1) / 2;
-  if (accepted_cache.accepted_pair_coefficients.rows() !=
-          static_cast<Eigen::Index>(n_bf_pairs) ||
-      accepted_cache.accepted_pair_coefficients.cols() !=
-          static_cast<Eigen::Index>(n_active_pairs) ||
-      accepted_cache.accepted_base_pair_products.rows() !=
+  if (accepted_cache.accepted_base_pair_products.rows() !=
           static_cast<Eigen::Index>(n_bf_pairs) ||
       accepted_cache.accepted_base_pair_products.cols() !=
           static_cast<Eigen::Index>(n_active_pairs)) {
@@ -147,8 +143,6 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
       n_active_pairs <= 0 ||
       accepted_cache.active_pair_second_indices.size() !=
           static_cast<std::size_t>(n_active_pairs) ||
-      accepted_cache.accepted_pair_coefficients.rows() != n_bf_pairs ||
-      accepted_cache.accepted_pair_coefficients.cols() != n_active_pairs ||
       accepted_cache.accepted_base_pair_products.rows() != n_bf_pairs ||
       accepted_cache.accepted_base_pair_products.cols() != n_active_pairs) {
     throw std::invalid_argument(

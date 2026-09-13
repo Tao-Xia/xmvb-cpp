@@ -66,4 +66,19 @@ void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_fr
     const ExactPackedActiveTwoElectronAdjointCache& cache,
     Eigen::MatrixXd* dense_active_gradients);
 
+/**
+ * @brief Multiplies pair products by an active-pair adjoint and immediately
+ * backpropagates bounded AO-pair row tiles.
+ *
+ * This is algebraically equivalent to materializing
+ * `pair_products * active_pair_gradient`, then applying the pair-map adjoint.
+ * The streamed form avoids a second persistent AO-pair-by-active-pair matrix.
+ */
+void accumulate_pair_product_adjoint(
+    const ExactCtxPairMatrix& pair_products,
+    const ExactCtxPairMatrix& active_pair_gradient,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
+    const ExactPackedActiveTwoElectronAdjointCache& cache,
+    Eigen::MatrixXd* dense_active_gradients);
+
 }  // namespace xmvb::vb::detail

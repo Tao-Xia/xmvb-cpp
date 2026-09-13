@@ -727,15 +727,6 @@ std::vector<double> finite_difference_storage(
   return difference;
 }
 
-std::size_t ao_pair_index_for_debug(int first, int second) {
-  if (first >= second) {
-    return static_cast<std::size_t>(first) * (first + 1) / 2 +
-        static_cast<std::size_t>(second);
-  }
-  return static_cast<std::size_t>(second) * (second + 1) / 2 +
-      static_cast<std::size_t>(first);
-}
-
 Matrix build_dense_active_coefficients_from_orbital_result(
     const xmvb::vb::OrbitalPreparationResult& orbital_result,
     int n_basis_functions,
@@ -758,114 +749,6 @@ Matrix build_dense_active_coefficients_from_orbital_result(
     }
   }
   return dense_active_coefficients;
-}
-
-Matrix backpropagate_exact_2e_fixed_pair_gradients_for_debug(
-    const xmvb::vb::ExactPackedActiveTwoElectronAdjointCache& cache,
-    const Eigen::Ref<const Matrix>& dense_active_direction) {
-  Matrix dense_active_gradient_direction =
-      Matrix::Zero(cache.n_basis_functions, cache.n_active_orbitals);
-  const std::size_t n_active_pairs = cache.active_pair_first_indices.size();
-  for (int basis_function_index = 0;
-       basis_function_index < cache.n_basis_functions;
-       ++basis_function_index) {
-    for (int other_basis_function = 0;
-         other_basis_function < cache.n_basis_functions;
-         ++other_basis_function) {
-      const Eigen::Index pair_row =
-          static_cast<Eigen::Index>(
-              ao_pair_index_for_debug(
-                  basis_function_index,
-                  other_basis_function));
-      for (std::size_t active_pair_index = 0;
-           active_pair_index < n_active_pairs;
-           ++active_pair_index) {
-        const double pair_gradient =
-            cache.accepted_base_pair_gradients(
-                pair_row,
-                static_cast<Eigen::Index>(active_pair_index));
-        if (pair_gradient == 0.0) {
-          continue;
-        }
-        const int first_active =
-            cache.active_pair_first_indices[active_pair_index];
-        const int second_active =
-            cache.active_pair_second_indices[active_pair_index];
-        dense_active_gradient_direction(
-            basis_function_index,
-            first_active) +=
-            pair_gradient *
-            dense_active_direction(other_basis_function, second_active);
-        dense_active_gradient_direction(
-            basis_function_index,
-            second_active) +=
-            pair_gradient *
-            dense_active_direction(other_basis_function, first_active);
-      }
-    }
-  }
-  return dense_active_gradient_direction;
-}
-
-Matrix backpropagate_exact_2e_pair_gradients_for_debug(
-    const xmvb::vb::ExactPackedActiveTwoElectronAdjointCache& cache,
-    const Eigen::Ref<const Matrix>& pair_gradients,
-    const Eigen::Ref<const Matrix>& dense_active_coefficients) {
-  if (pair_gradients.rows() !=
-          cache.accepted_base_pair_gradients.rows() ||
-      pair_gradients.cols() !=
-          cache.accepted_base_pair_gradients.cols()) {
-    throw std::invalid_argument(
-        "exact-2e debug pair-gradient shape mismatch");
-  }
-  if (dense_active_coefficients.rows() != cache.n_basis_functions ||
-      dense_active_coefficients.cols() != cache.n_active_orbitals) {
-    throw std::invalid_argument(
-        "exact-2e debug dense-active shape mismatch");
-  }
-
-  Matrix dense_active_gradients =
-      Matrix::Zero(cache.n_basis_functions, cache.n_active_orbitals);
-  const std::size_t n_active_pairs = cache.active_pair_first_indices.size();
-  for (int basis_function_index = 0;
-       basis_function_index < cache.n_basis_functions;
-       ++basis_function_index) {
-    for (int other_basis_function = 0;
-         other_basis_function < cache.n_basis_functions;
-         ++other_basis_function) {
-      const Eigen::Index pair_row =
-          static_cast<Eigen::Index>(
-              ao_pair_index_for_debug(
-                  basis_function_index,
-                  other_basis_function));
-      for (std::size_t active_pair_index = 0;
-           active_pair_index < n_active_pairs;
-           ++active_pair_index) {
-        const double pair_gradient =
-            pair_gradients(
-                pair_row,
-                static_cast<Eigen::Index>(active_pair_index));
-        if (pair_gradient == 0.0) {
-          continue;
-        }
-        const int first_active =
-            cache.active_pair_first_indices[active_pair_index];
-        const int second_active =
-            cache.active_pair_second_indices[active_pair_index];
-        dense_active_gradients(
-            basis_function_index,
-            first_active) +=
-            pair_gradient *
-            dense_active_coefficients(other_basis_function, second_active);
-        dense_active_gradients(
-            basis_function_index,
-            second_active) +=
-            pair_gradient *
-            dense_active_coefficients(other_basis_function, first_active);
-      }
-    }
-  }
-  return dense_active_gradients;
 }
 
 Eigen::VectorXd project_full_orbital_gradient_to_reduced(
@@ -2371,53 +2254,6 @@ int main(int argc, char** argv) {
         (plus_dense_active_coefficients -
          minus_dense_active_coefficients) /
         (2.0 * epsilon);
-    xmvb::vb::ExactPackedActiveTwoElectronApplyWorkspace exact_2e_hvp_workspace;
-    xmvb::vb::apply_exact_packed_active_two_electron_adjoint_hessian_vector(
-        accepted_exact_2e_cache,
-        fd_dense_active_direction,
-        input.ao_integral_input,
-        &exact_2e_hvp_workspace,
-        nullptr);
-    const auto plus_exact_2e_cache =
-        xmvb::vb::build_exact_packed_active_two_electron_adjoint_cache(
-            gradient_result.second_order_context->packed_active_two_electron_gradient,
-            plus_dense_active_coefficients,
-            input.ao_integral_input,
-            input.orbital_preparation_input.n_active_orbitals);
-    const auto minus_exact_2e_cache =
-        xmvb::vb::build_exact_packed_active_two_electron_adjoint_cache(
-            gradient_result.second_order_context->packed_active_two_electron_gradient,
-            minus_dense_active_coefficients,
-            input.ao_integral_input,
-            input.orbital_preparation_input.n_active_orbitals);
-    const Matrix fd_delta_exact_2e_pair_coefficients =
-        (plus_exact_2e_cache.accepted_pair_coefficients -
-         minus_exact_2e_cache.accepted_pair_coefficients) /
-        (2.0 * epsilon);
-    const Matrix fd_delta_exact_2e_transformed_pair_coefficients =
-        fd_delta_exact_2e_pair_coefficients *
-        accepted_exact_2e_cache.active_pair_gradient_matrix;
-    const Matrix fd_delta_exact_2e_pair_gradients =
-        (plus_exact_2e_cache.accepted_base_pair_gradients -
-         minus_exact_2e_cache.accepted_base_pair_gradients) /
-        (2.0 * epsilon);
-    const Matrix analytic_direct_core_two_electron_fixed_active_auxiliary_gradient =
-        backpropagate_exact_2e_fixed_pair_gradients_for_debug(
-            accepted_exact_2e_cache,
-            fd_dense_active_direction);
-    const Matrix fd_direct_core_two_electron_fixed_active_auxiliary_gradient =
-        (backpropagate_exact_2e_pair_gradients_for_debug(
-             accepted_exact_2e_cache,
-             accepted_exact_2e_cache.accepted_base_pair_gradients,
-             plus_dense_active_coefficients) -
-         backpropagate_exact_2e_pair_gradients_for_debug(
-             accepted_exact_2e_cache,
-             accepted_exact_2e_cache.accepted_base_pair_gradients,
-             minus_dense_active_coefficients)) /
-        (2.0 * epsilon);
-    const Matrix fd_direct_core_two_electron_final_active_auxiliary_gradient =
-        fd_fixed_two_electron_active_auxiliary_gradient -
-        fd_direct_core_two_electron_fixed_active_auxiliary_gradient;
     const Eigen::Map<const Matrix> fd_fixed_total_inactive_density_gradient_matrix(
         fd_fixed_total_inactive_density_gradient.data(),
         input.orbital_preparation_input.n_basis_functions,

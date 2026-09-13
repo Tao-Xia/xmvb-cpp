@@ -1,5 +1,7 @@
 #include "vbscf/integrals/active/two_electron/response/internal.hpp"
 
+#include <algorithm>
+#include <cstddef>
 #include <stdexcept>
 #include <vector>
 
@@ -7,6 +9,10 @@
 
 #include "core/openmp.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace xmvb::vb::detail {
 
@@ -355,6 +361,115 @@ void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_fr
             dense_active_coefficients(other_basis_function, first_active);
       }
     }
+  }
+}
+
+void accumulate_pair_product_adjoint(
+    const ExactCtxPairMatrix& pair_products,
+    const ExactCtxPairMatrix& active_pair_gradient,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
+    const ExactPackedActiveTwoElectronAdjointCache& cache,
+    Eigen::MatrixXd* dense_active_gradients) {
+  if (dense_active_gradients == nullptr) {
+    throw std::invalid_argument("dense active gradient output must not be null");
+  }
+  const int n_bf = cache.n_basis_functions;
+  const int n_ao = cache.n_active_orbitals;
+  const Eigen::Index n_active_pairs =
+      static_cast<Eigen::Index>(cache.active_pair_first_indices.size());
+  const Eigen::Index n_bf_pairs =
+      static_cast<Eigen::Index>(n_bf) * (n_bf + 1) / 2;
+  if (n_bf <= 0 || n_ao <= 0 ||
+      cache.active_pair_second_indices.size() !=
+          static_cast<std::size_t>(n_active_pairs) ||
+      cache.ao_pair_first_indices.size() !=
+          static_cast<std::size_t>(n_bf_pairs) ||
+      cache.ao_pair_second_indices.size() !=
+          static_cast<std::size_t>(n_bf_pairs) ||
+      pair_products.rows() != n_bf_pairs ||
+      pair_products.cols() != n_active_pairs ||
+      active_pair_gradient.rows() != n_active_pairs ||
+      active_pair_gradient.cols() != n_active_pairs ||
+      dense_active_coefficients.rows() != n_bf ||
+      dense_active_coefficients.cols() != n_ao) {
+    throw std::invalid_argument("pair-product adjoint dimensions are inconsistent");
+  }
+  if (dense_active_gradients->rows() != n_bf ||
+      dense_active_gradients->cols() != n_ao) {
+    dense_active_gradients->setZero(n_bf, n_ao);
+  }
+
+  int n_threads = 1;
+#ifdef _OPENMP
+  n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      std::max(1, n_bf));
+#endif
+  std::vector<Eigen::MatrixXd> thread_gradients;
+  thread_gradients.reserve(n_threads);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    thread_gradients.emplace_back(Eigen::MatrixXd::Zero(n_bf, n_ao));
+  }
+
+  // One basis-size row tile keeps the temporary at O(n_bf * A_pair), while
+  // still presenting a matrix multiplication large enough for Eigen kernels.
+  const Eigen::Index tile_rows = n_bf;
+  const Eigen::Index n_tiles =
+      (n_bf_pairs + tile_rows - 1) / tile_rows;
+#pragma omp parallel num_threads(n_threads)
+  {
+    int thread = 0;
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+    Eigen::MatrixXd& local_gradient = thread_gradients[thread];
+    ExactCtxPairMatrix pair_gradient_tile;
+#pragma omp for schedule(static)
+    for (Eigen::Index tile = 0; tile < n_tiles; ++tile) {
+      const Eigen::Index row_begin = tile * tile_rows;
+      const Eigen::Index row_count =
+          std::min(tile_rows, n_bf_pairs - row_begin);
+      pair_gradient_tile.resize(row_count, n_active_pairs);
+      pair_gradient_tile.noalias() =
+          pair_products.middleRows(row_begin, row_count) * active_pair_gradient;
+
+      for (Eigen::Index local_row = 0; local_row < row_count; ++local_row) {
+        const Eigen::Index pair_row = row_begin + local_row;
+        const int first_bf = cache.ao_pair_first_indices[pair_row];
+        const int second_bf = cache.ao_pair_second_indices[pair_row];
+        for (Eigen::Index active_pair = 0;
+             active_pair < n_active_pairs;
+             ++active_pair) {
+          const double pair_gradient =
+              pair_gradient_tile(local_row, active_pair);
+          if (pair_gradient == 0.0) {
+            continue;
+          }
+          const int first_active =
+              cache.active_pair_first_indices[active_pair];
+          const int second_active =
+              cache.active_pair_second_indices[active_pair];
+          local_gradient(first_bf, first_active) +=
+              pair_gradient *
+              dense_active_coefficients(second_bf, second_active);
+          local_gradient(first_bf, second_active) +=
+              pair_gradient *
+              dense_active_coefficients(second_bf, first_active);
+          if (first_bf != second_bf) {
+            local_gradient(second_bf, first_active) +=
+                pair_gradient *
+                dense_active_coefficients(first_bf, second_active);
+            local_gradient(second_bf, second_active) +=
+                pair_gradient *
+                dense_active_coefficients(first_bf, first_active);
+          }
+        }
+      }
+    }
+  }
+
+  for (const Eigen::MatrixXd& thread_gradient : thread_gradients) {
+    *dense_active_gradients += thread_gradient;
   }
 }
 
