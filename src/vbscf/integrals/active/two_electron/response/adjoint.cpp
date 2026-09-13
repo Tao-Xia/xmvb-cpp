@@ -1,5 +1,6 @@
 #include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -12,7 +13,9 @@ namespace xmvb::vb {
 namespace {
 
 using detail::accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache;
+using detail::accumulate_pair_gradient_rows;
 using detail::accumulate_pair_product_adjoint;
+using detail::apply_generated_pair_rows;
 using detail::apply_exact_ao_pair_kernel;
 using detail::build_active_pair_gradient_matrix;
 using detail::build_active_pair_list;
@@ -37,11 +40,6 @@ Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
   if (n_bf <= 0 || n_ao <= 0 ||
       accepted_cache.active_pair_second_indices.size() != n_active_pairs ||
       packed_active_two_electron_gradient.size() != expected_packed_size ||
-      accepted_cache.accepted_pair_products == nullptr ||
-      accepted_cache.accepted_pair_products->rows() !=
-          static_cast<Eigen::Index>(n_bf_pairs) ||
-      accepted_cache.accepted_pair_products->cols() !=
-          static_cast<Eigen::Index>(n_active_pairs) ||
       accepted_cache.accepted_dense_active_coefficients.rows() !=
           n_bf ||
       accepted_cache.accepted_dense_active_coefficients.cols() !=
@@ -58,12 +56,52 @@ Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
   Eigen::MatrixXd dense_active_gradient = Eigen::MatrixXd::Zero(
       n_bf,
       n_ao);
-  accumulate_pair_product_adjoint(
-      *accepted_cache.accepted_pair_products,
-      active_pair_gradient_matrix,
-      accepted_cache.accepted_dense_active_coefficients,
-      accepted_cache,
-      &dense_active_gradient);
+  if (accepted_cache.accepted_pair_products != nullptr) {
+    if (accepted_cache.accepted_pair_products->rows() !=
+            static_cast<Eigen::Index>(n_bf_pairs) ||
+        accepted_cache.accepted_pair_products->cols() !=
+            static_cast<Eigen::Index>(n_active_pairs)) {
+      throw std::invalid_argument("accepted pair-product dimensions are inconsistent");
+    }
+    accumulate_pair_product_adjoint(
+        *accepted_cache.accepted_pair_products,
+        active_pair_gradient_matrix,
+        accepted_cache.accepted_dense_active_coefficients,
+        accepted_cache,
+        &dense_active_gradient);
+    return dense_active_gradient;
+  }
+  if (accepted_cache.ao_integral_input == nullptr) {
+    throw std::invalid_argument("streamed exact 2e cache is missing its AO operator");
+  }
+
+  ExactCtxPairMatrix pair_products_tile;
+  ExactCtxPairMatrix pair_gradients_tile;
+  const Eigen::Index tile_rows = n_bf;
+  for (Eigen::Index row_begin = 0;
+       row_begin < static_cast<Eigen::Index>(n_bf_pairs);
+       row_begin += tile_rows) {
+    const Eigen::Index row_count = std::min(
+        tile_rows,
+        static_cast<Eigen::Index>(n_bf_pairs) - row_begin);
+    apply_generated_pair_rows(
+        *accepted_cache.ao_integral_input,
+        accepted_cache.accepted_dense_active_coefficients,
+        nullptr,
+        accepted_cache,
+        row_begin,
+        row_count,
+        &pair_products_tile,
+        nullptr);
+    pair_gradients_tile.noalias() =
+        pair_products_tile * active_pair_gradient_matrix;
+    accumulate_pair_gradient_rows(
+        pair_gradients_tile,
+        row_begin,
+        accepted_cache.accepted_dense_active_coefficients,
+        accepted_cache,
+        &dense_active_gradient);
+  }
   return dense_active_gradient;
 }
 
@@ -100,6 +138,7 @@ build_exact_packed_active_two_electron_adjoint_cache(
   ExactPackedActiveTwoElectronAdjointCache cache;
   cache.n_basis_functions = n_bf;
   cache.n_active_orbitals = n_ao;
+  cache.ao_integral_input = &ao_integral_input;
   cache.accepted_dense_active_coefficients = accepted_dense_active_coefficients;
   build_ao_pair_component_tables(
       n_bf,
@@ -115,14 +154,16 @@ build_exact_packed_active_two_electron_adjoint_cache(
       build_active_pair_gradient_matrix(
           packed_active_two_electron_gradient,
           active_pairs);
-  if (accepted_active_space_two_electron_result.dense_ao_pair_products.rows() !=
-          static_cast<Eigen::Index>(n_bf_pairs) ||
-      accepted_active_space_two_electron_result.dense_ao_pair_products.cols() !=
-          static_cast<Eigen::Index>(n_active_pairs)) {
-    throw std::invalid_argument("accepted dense AO pair product cache size mismatch");
+  if (accepted_active_space_two_electron_result.dense_ao_pair_products.size() != 0) {
+    if (accepted_active_space_two_electron_result.dense_ao_pair_products.rows() !=
+            static_cast<Eigen::Index>(n_bf_pairs) ||
+        accepted_active_space_two_electron_result.dense_ao_pair_products.cols() !=
+            static_cast<Eigen::Index>(n_active_pairs)) {
+      throw std::invalid_argument("accepted dense AO pair product cache size mismatch");
+    }
+    cache.accepted_pair_products =
+        &accepted_active_space_two_electron_result.dense_ao_pair_products;
   }
-  cache.accepted_pair_products =
-      &accepted_active_space_two_electron_result.dense_ao_pair_products;
 
   return cache;
 }
@@ -184,6 +225,51 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
       n_bf,
       n_ao);
   workspace->dense_active_gradient_direction.setZero();
+  if (accepted_cache.accepted_pair_products == nullptr) {
+    const Eigen::Index n_bf_pairs =
+        static_cast<Eigen::Index>(n_bf) * (n_bf + 1) / 2;
+    const Eigen::Index tile_rows = n_bf;
+    for (Eigen::Index row_begin = 0;
+         row_begin < n_bf_pairs;
+         row_begin += tile_rows) {
+      const Eigen::Index row_count =
+          std::min(tile_rows, n_bf_pairs - row_begin);
+      apply_generated_pair_rows(
+          ao_integral_input,
+          accepted_cache.accepted_dense_active_coefficients,
+          &workspace->dense_active_direction,
+          accepted_cache,
+          row_begin,
+          row_count,
+          &workspace->pair_products_tile,
+          &workspace->directional_pair_products_tile);
+
+      workspace->pair_gradients_tile.noalias() =
+          workspace->pair_products_tile *
+          accepted_cache.active_pair_gradient_matrix;
+      accumulate_pair_gradient_rows(
+          workspace->pair_gradients_tile,
+          row_begin,
+          workspace->dense_active_direction,
+          accepted_cache,
+          &workspace->dense_active_gradient_direction);
+
+      workspace->pair_gradients_tile.noalias() =
+          workspace->directional_pair_products_tile *
+          accepted_cache.active_pair_gradient_matrix;
+      accumulate_pair_gradient_rows(
+          workspace->pair_gradients_tile,
+          row_begin,
+          accepted_cache.accepted_dense_active_coefficients,
+          accepted_cache,
+          &workspace->dense_active_gradient_direction);
+    }
+    if (dense_active_gradient_direction != nullptr) {
+      *dense_active_gradient_direction =
+          workspace->dense_active_gradient_direction;
+    }
+    return;
+  }
   // The generic packed-pair contraction is required here: a full-matrix
   // shortcut does not preserve the sparse mixed-chart differential.
   accumulate_pair_product_adjoint(
@@ -238,6 +324,10 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector_fused(
   workspace->dense_active_gradient_direction.resize(
       n_bf, n_ao);
   workspace->dense_active_gradient_direction.setZero();
+  if (accepted_cache.accepted_pair_products == nullptr) {
+    throw std::invalid_argument(
+        "fused exact 2e HVP requires resident directional pair products");
+  }
 
   // Fixed backprop term. The Q*W pair gradient is consumed in bounded row
   // tiles instead of being retained in the accepted-point cache.

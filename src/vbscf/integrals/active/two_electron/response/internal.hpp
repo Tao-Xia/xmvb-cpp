@@ -45,6 +45,15 @@ void build_ao_pair_to_active_pair_coefficients(
     const std::vector<ActivePair>& active_pairs,
     ExactCtxPairMatrix* ao_pair_to_active_pair_coefficients);
 
+/** @brief Builds the pair-map directional derivative for an AO-pair row range. */
+void build_mixed_pair_rows(
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+    const ExactPackedActiveTwoElectronAdjointCache& cache,
+    Eigen::Index row_begin,
+    Eigen::Index row_count,
+    ExactCtxPairMatrix* mixed_pair_coefficients);
+
 void build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
@@ -62,6 +71,14 @@ ExactCtxPairMatrix multiply_pair_coefficients_by_gradient_matrix(
 
 void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_from_cache(
     const ExactCtxPairMatrix& pair_gradients,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
+    const ExactPackedActiveTwoElectronAdjointCache& cache,
+    Eigen::MatrixXd* dense_active_gradients);
+
+/** @brief Backpropagates pair gradients from a contiguous AO-pair row tile. */
+void accumulate_pair_gradient_rows(
+    const ExactCtxPairMatrix& pair_gradients,
+    Eigen::Index row_begin,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     const ExactPackedActiveTwoElectronAdjointCache& cache,
     Eigen::MatrixXd* dense_active_gradients);

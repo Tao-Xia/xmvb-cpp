@@ -106,6 +106,32 @@ if (BUILD_TESTING)
   set_tests_properties(exact_ctx_hvp_f2_oeo_finite_difference PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+
+  add_test(
+    NAME exact_ctx_hvp_f2_streamed_finite_difference
+    COMMAND
+      check_exact_ctx_hvp
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      --step 1e-4
+      --probe full
+      --stream-pair-products 1
+      --max-rel-error 1e-7)
+  set_tests_properties(exact_ctx_hvp_f2_streamed_finite_difference PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+
+  add_test(
+    NAME exact_ctx_hvp_f2_oeo_streamed_finite_difference
+    COMMAND
+      check_exact_ctx_hvp
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_OEO.xmi
+      --step 1e-4
+      --probe full
+      --stream-pair-products 1
+      --max-rel-error 1e-7)
+  set_tests_properties(exact_ctx_hvp_f2_oeo_streamed_finite_difference PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
 endif()
 
 unset(_xmvb_vbscf_unit_targets)

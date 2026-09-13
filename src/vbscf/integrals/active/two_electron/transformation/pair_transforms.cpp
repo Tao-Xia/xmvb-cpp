@@ -154,6 +154,75 @@ void build_ao_pair_to_active_pair_coefficients(
   }
 }
 
+namespace {
+
+void validate_pair_row_range(
+    const ExactPackedActiveTwoElectronAdjointCache& cache,
+    Eigen::Index row_begin,
+    Eigen::Index row_count) {
+  const Eigen::Index n_bf_pairs =
+      static_cast<Eigen::Index>(cache.n_basis_functions) *
+      (cache.n_basis_functions + 1) / 2;
+  if (cache.n_basis_functions <= 0 || cache.n_active_orbitals <= 0 ||
+      row_begin < 0 || row_count < 0 ||
+      row_begin + row_count > n_bf_pairs ||
+      cache.ao_pair_first_indices.size() !=
+          static_cast<std::size_t>(n_bf_pairs) ||
+      cache.ao_pair_second_indices.size() !=
+          static_cast<std::size_t>(n_bf_pairs) ||
+      cache.active_pair_first_indices.size() !=
+          cache.active_pair_second_indices.size()) {
+    throw std::invalid_argument("invalid AO-pair row range");
+  }
+}
+
+}  // namespace
+
+void build_mixed_pair_rows(
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
+    const ExactPackedActiveTwoElectronAdjointCache& cache,
+    Eigen::Index row_begin,
+    Eigen::Index row_count,
+    ExactCtxPairMatrix* mixed_pair_coefficients) {
+  validate_pair_row_range(cache, row_begin, row_count);
+  if (mixed_pair_coefficients == nullptr ||
+      dense_active_coefficients.rows() != cache.n_basis_functions ||
+      dense_active_coefficients.cols() != cache.n_active_orbitals ||
+      dense_active_direction.rows() != cache.n_basis_functions ||
+      dense_active_direction.cols() != cache.n_active_orbitals) {
+    throw std::invalid_argument("mixed pair-row dimensions are inconsistent");
+  }
+  const Eigen::Index n_active_pairs =
+      static_cast<Eigen::Index>(cache.active_pair_first_indices.size());
+  mixed_pair_coefficients->resize(row_count, n_active_pairs);
+#pragma omp parallel for schedule(static)
+  for (Eigen::Index local_row = 0; local_row < row_count; ++local_row) {
+    const Eigen::Index pair_row = row_begin + local_row;
+    const int first_bf = cache.ao_pair_first_indices[pair_row];
+    const int second_bf = cache.ao_pair_second_indices[pair_row];
+    for (Eigen::Index active_pair = 0;
+         active_pair < n_active_pairs;
+         ++active_pair) {
+      const int first_active = cache.active_pair_first_indices[active_pair];
+      const int second_active = cache.active_pair_second_indices[active_pair];
+      double value =
+          dense_active_direction(first_bf, first_active) *
+              dense_active_coefficients(second_bf, second_active) +
+          dense_active_coefficients(first_bf, first_active) *
+              dense_active_direction(second_bf, second_active);
+      if (first_bf != second_bf) {
+        value +=
+            dense_active_direction(second_bf, first_active) *
+                dense_active_coefficients(first_bf, second_active) +
+            dense_active_coefficients(second_bf, first_active) *
+                dense_active_direction(first_bf, second_active);
+      }
+      (*mixed_pair_coefficients)(local_row, active_pair) = value;
+    }
+  }
+}
+
 void build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
@@ -359,6 +428,56 @@ void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_fr
         (*dense_active_gradients)(basis_function_index, second_active) +=
             pair_gradient *
             dense_active_coefficients(other_basis_function, first_active);
+      }
+    }
+  }
+}
+
+void accumulate_pair_gradient_rows(
+    const ExactCtxPairMatrix& pair_gradients,
+    Eigen::Index row_begin,
+    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
+    const ExactPackedActiveTwoElectronAdjointCache& cache,
+    Eigen::MatrixXd* dense_active_gradients) {
+  const Eigen::Index row_count = pair_gradients.rows();
+  validate_pair_row_range(cache, row_begin, row_count);
+  const Eigen::Index n_active_pairs =
+      static_cast<Eigen::Index>(cache.active_pair_first_indices.size());
+  if (dense_active_gradients == nullptr ||
+      pair_gradients.cols() != n_active_pairs ||
+      dense_active_coefficients.rows() != cache.n_basis_functions ||
+      dense_active_coefficients.cols() != cache.n_active_orbitals) {
+    throw std::invalid_argument("pair-gradient row dimensions are inconsistent");
+  }
+  if (dense_active_gradients->rows() != cache.n_basis_functions ||
+      dense_active_gradients->cols() != cache.n_active_orbitals) {
+    dense_active_gradients->setZero(
+        cache.n_basis_functions,
+        cache.n_active_orbitals);
+  }
+
+  for (Eigen::Index local_row = 0; local_row < row_count; ++local_row) {
+    const Eigen::Index pair_row = row_begin + local_row;
+    const int first_bf = cache.ao_pair_first_indices[pair_row];
+    const int second_bf = cache.ao_pair_second_indices[pair_row];
+    for (Eigen::Index active_pair = 0;
+         active_pair < n_active_pairs;
+         ++active_pair) {
+      const double pair_gradient = pair_gradients(local_row, active_pair);
+      if (pair_gradient == 0.0) {
+        continue;
+      }
+      const int first_active = cache.active_pair_first_indices[active_pair];
+      const int second_active = cache.active_pair_second_indices[active_pair];
+      (*dense_active_gradients)(first_bf, first_active) +=
+          pair_gradient * dense_active_coefficients(second_bf, second_active);
+      (*dense_active_gradients)(first_bf, second_active) +=
+          pair_gradient * dense_active_coefficients(second_bf, first_active);
+      if (first_bf != second_bf) {
+        (*dense_active_gradients)(second_bf, first_active) +=
+            pair_gradient * dense_active_coefficients(first_bf, second_active);
+        (*dense_active_gradients)(second_bf, second_active) +=
+            pair_gradient * dense_active_coefficients(first_bf, first_active);
       }
     }
   }

@@ -6,6 +6,8 @@
 
 namespace xmvb::vb {
 
+struct AoIntegralInput;
+
 using ExactCtxDenseMatrix = Eigen::MatrixXd;
 using ExactCtxPairMatrix =
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
@@ -27,6 +29,7 @@ struct ExactPackedActiveTwoElectronAdjointCache {
   std::vector<int> ao_pair_second_indices;
   std::vector<int> active_pair_first_indices;
   std::vector<int> active_pair_second_indices;
+  const AoIntegralInput* ao_integral_input = nullptr;
   const ExactCtxPairMatrix* accepted_pair_products = nullptr;
   ExactCtxPairMatrix active_pair_gradient_matrix;
   ExactCtxDenseMatrix accepted_dense_active_coefficients;
@@ -45,6 +48,9 @@ struct ExactPackedActiveTwoElectronApplyWorkspace {
   ExactCtxPairMatrix mixed_pair_coefficients;
   ExactCtxPairMatrix transformed_pair_coefficients;
   ExactCtxPairMatrix pair_gradients;
+  ExactCtxPairMatrix pair_products_tile;
+  ExactCtxPairMatrix directional_pair_products_tile;
+  ExactCtxPairMatrix pair_gradients_tile;
 };
 
 /**
@@ -58,6 +64,7 @@ struct ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace {
   ExactCtxPairMatrix directional_pair_coefficients;
   ExactCtxPairMatrix directional_pair_products;
   ExactCtxDenseMatrix active_pair_contraction;
+  ExactCtxPairMatrix accepted_pair_products_tile;
 };
 
 }  // namespace xmvb::vb

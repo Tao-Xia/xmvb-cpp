@@ -145,6 +145,25 @@ int main(int argc, char** argv) {
             input.ao_integral_input,
             n_active_orbitals,
             gradient_result.active_space_two_electron_result);
+    auto streamed_active_space_result =
+        gradient_result.active_space_two_electron_result;
+    streamed_active_space_result.dense_ao_pair_products.resize(0, 0);
+    const auto streamed_dense_active_gradient_direction =
+        xmvb::vb::apply_exact_packed_active_two_electron_adjoint_hessian_vector(
+            gradient_result.packed_active_two_electron_gradient,
+            streamed_active_space_result.dense_active_coefficients,
+            dense_active_direction,
+            input.ao_integral_input,
+            n_active_orbitals,
+            streamed_active_space_result);
+    const double streamed_max_abs_diff =
+        max_abs_difference(
+            analytic_dense_active_gradient_direction,
+            streamed_dense_active_gradient_direction);
+    if (streamed_max_abs_diff > 1.0e-11) {
+      throw std::runtime_error(
+          "streamed and resident exact 2e HVPs do not agree");
+    }
 
     std::vector<double> plus_auxiliary_matrix =
         xmvb::vb::flatten_matrix_column_major(
@@ -214,6 +233,7 @@ int main(int argc, char** argv) {
     std::cout << "max_abs_diff = " << max_abs_diff << '\n';
     std::cout << "max_rel_diff = "
               << max_abs_diff / std::max(1.0, max_abs_fd) << '\n';
+    std::cout << "streamed_max_abs_diff = " << streamed_max_abs_diff << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

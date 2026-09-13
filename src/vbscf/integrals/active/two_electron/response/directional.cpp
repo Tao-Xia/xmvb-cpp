@@ -1,5 +1,6 @@
 #include "vbscf/integrals/active/two_electron/response/directional.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -13,6 +14,8 @@ namespace xmvb::vb {
 namespace {
 
 using detail::apply_exact_ao_pair_kernel;
+using detail::apply_generated_pair_rows;
+using detail::build_mixed_pair_rows;
 using detail::build_mixed_ao_pair_to_active_pair_coefficients_from_cache;
 using detail::resize_for_overwrite;
 
@@ -60,33 +63,66 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
   }
   const std::size_t n_bf_pairs =
       n_bf * (n_bf + 1) / 2;
-  if (accepted_cache.accepted_pair_products == nullptr ||
-      accepted_cache.accepted_pair_products->rows() !=
-          static_cast<Eigen::Index>(n_bf_pairs) ||
-      accepted_cache.accepted_pair_products->cols() !=
-          static_cast<Eigen::Index>(n_active_pairs)) {
-    throw std::invalid_argument(
-        "cached accepted pair buffers size mismatch in delta GGO");
+  if (accepted_cache.accepted_pair_products == nullptr) {
+    workspace->active_pair_contraction.setZero(
+        static_cast<Eigen::Index>(n_active_pairs),
+        static_cast<Eigen::Index>(n_active_pairs));
+    const Eigen::Index tile_rows = n_bf;
+    for (Eigen::Index row_begin = 0;
+         row_begin < static_cast<Eigen::Index>(n_bf_pairs);
+         row_begin += tile_rows) {
+      const Eigen::Index row_count = std::min(
+          tile_rows,
+          static_cast<Eigen::Index>(n_bf_pairs) - row_begin);
+      build_mixed_pair_rows(
+          accepted_cache.accepted_dense_active_coefficients,
+          dense_active_direction,
+          accepted_cache,
+          row_begin,
+          row_count,
+          &workspace->directional_pair_coefficients);
+      apply_generated_pair_rows(
+          ao_integral_input,
+          accepted_cache.accepted_dense_active_coefficients,
+          nullptr,
+          accepted_cache,
+          row_begin,
+          row_count,
+          &workspace->accepted_pair_products_tile,
+          nullptr);
+      workspace->active_pair_contraction.noalias() +=
+          workspace->directional_pair_coefficients.transpose() *
+          workspace->accepted_pair_products_tile;
+    }
+    workspace->directional_pair_products.resize(0, 0);
+  } else {
+    if (accepted_cache.accepted_pair_products->rows() !=
+            static_cast<Eigen::Index>(n_bf_pairs) ||
+        accepted_cache.accepted_pair_products->cols() !=
+            static_cast<Eigen::Index>(n_active_pairs)) {
+      throw std::invalid_argument(
+          "cached accepted pair buffers size mismatch in delta GGO");
+    }
+
+    build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
+        accepted_cache.accepted_dense_active_coefficients,
+        dense_active_direction,
+        accepted_cache,
+        &workspace->directional_pair_coefficients);
+    apply_exact_ao_pair_kernel(
+        ao_integral_input,
+        workspace->directional_pair_coefficients,
+        n_bf,
+        n_active_pairs,
+        &workspace->directional_pair_products);
+
+    workspace->active_pair_contraction.resize(
+        static_cast<Eigen::Index>(n_active_pairs),
+        static_cast<Eigen::Index>(n_active_pairs));
+    workspace->active_pair_contraction.noalias() =
+        workspace->directional_pair_coefficients.transpose() *
+        *accepted_cache.accepted_pair_products;
   }
-
-  build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
-      accepted_cache.accepted_dense_active_coefficients,
-      dense_active_direction,
-      accepted_cache,
-      &workspace->directional_pair_coefficients);
-  apply_exact_ao_pair_kernel(
-      ao_integral_input,
-      workspace->directional_pair_coefficients,
-      n_bf,
-      n_active_pairs,
-      &workspace->directional_pair_products);
-
-  workspace->active_pair_contraction.resize(
-      static_cast<Eigen::Index>(n_active_pairs),
-      static_cast<Eigen::Index>(n_active_pairs));
-  workspace->active_pair_contraction.noalias() =
-      workspace->directional_pair_coefficients.transpose() *
-      *accepted_cache.accepted_pair_products;
 
   const std::size_t packed_size =
       n_active_pairs * (n_active_pairs + 1) / 2;
@@ -144,11 +180,36 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
       n_active_pairs <= 0 ||
       accepted_cache.active_pair_second_indices.size() !=
           static_cast<std::size_t>(n_active_pairs) ||
-      accepted_cache.accepted_pair_products == nullptr ||
-      accepted_cache.accepted_pair_products->rows() != n_bf_pairs ||
-      accepted_cache.accepted_pair_products->cols() != n_active_pairs) {
+      (accepted_cache.accepted_pair_products != nullptr &&
+       (accepted_cache.accepted_pair_products->rows() != n_bf_pairs ||
+        accepted_cache.accepted_pair_products->cols() != n_active_pairs))) {
     throw std::invalid_argument(
         "cached exact delta GGO batch has inconsistent accepted dimensions");
+  }
+
+  if (accepted_cache.accepted_pair_products == nullptr) {
+    if (directional_pair_products != nullptr) {
+      directional_pair_products->assign(
+          static_cast<std::size_t>(n_directions),
+          ExactCtxPairMatrix{});
+    }
+    ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace workspace;
+    std::vector<double> packed_direction;
+    for (Eigen::Index direction = 0;
+         direction < n_directions;
+         ++direction) {
+      compute_exact_packed_active_two_electron_integral_directional_derivative(
+          accepted_cache,
+          dense_active_directions[direction],
+          ao_integral_input,
+          &workspace,
+          &packed_direction);
+      packed_directions.col(direction) =
+          Eigen::Map<const Eigen::VectorXd>(
+              packed_direction.data(),
+              static_cast<Eigen::Index>(packed_direction.size()));
+    }
+    return packed_directions;
   }
 
   ExactCtxPairMatrix combined_directional_coefficients(
