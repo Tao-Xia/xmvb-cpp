@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "core/eigensolver.hpp"
 #include "input/loading/loader.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
@@ -240,6 +241,33 @@ int main(int argc, char** argv) {
     const auto compact_action_result =
         compact_structure_action.apply(trial_vectors);
     const auto compact_action_end = std::chrono::high_resolution_clock::now();
+    const auto compact_diagonal = compact_structure_action.diagonal();
+    xmvb::core::GeneralizedEigensolver eigensolver;
+    const auto dense_eigensolve_start = std::chrono::high_resolution_clock::now();
+    const auto dense_eigenpairs = eigensolver.solve(
+        fast_result.hamiltonian_matrix,
+        fast_result.overlap_matrix,
+        n_structures);
+    const auto dense_eigensolve_end = std::chrono::high_resolution_clock::now();
+    const xmvb::core::GeneralizedEigenAction davidson_action =
+        [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+          auto images = compact_structure_action.apply(vectors);
+          return xmvb::core::GeneralizedEigenActionResult{
+              std::move(images.hamiltonian),
+              std::move(images.overlap)};
+        };
+    const xmvb::core::DavidsonOptions davidson_options{
+        1,
+        2 * n_structures,
+        std::min(n_structures, 128),
+        1.0e-10};
+    const auto davidson_start = std::chrono::high_resolution_clock::now();
+    const auto davidson = eigensolver.solve_davidson(
+        davidson_action,
+        compact_diagonal.hamiltonian,
+        compact_diagonal.overlap,
+        davidson_options);
+    const auto davidson_end = std::chrono::high_resolution_clock::now();
     const auto sparse_pair_cache =
         xmvb::vb::build_same_spin_pair_cache_context(
             load_result.input.structure_data.alpha_det,
@@ -303,6 +331,7 @@ int main(int argc, char** argv) {
               << (same_spin_pair_cache.enabled() ? "true" : "false") << '\n';
     std::cout << "n_determinants = "
               << load_result.input.structure_data.alpha_det.size() << '\n';
+    std::cout << "n_structures = " << n_structures << '\n';
     std::cout << "n_unique_alpha = "
               << same_spin_pair_cache.alpha_reuse_table.unique_determinants.size() << '\n';
     std::cout << "n_unique_beta = "
@@ -358,6 +387,26 @@ int main(int argc, char** argv) {
                      .cwiseAbs()
                      .maxCoeff()
               << '\n';
+    std::cout << "dense_eigensolve_seconds = "
+              << std::chrono::duration<double>(
+                     dense_eigensolve_end - dense_eigensolve_start)
+                     .count()
+              << '\n';
+    std::cout << "davidson_seconds = "
+              << std::chrono::duration<double>(davidson_end - davidson_start)
+                     .count()
+              << '\n';
+    std::cout << "davidson_iterations = " << davidson.iterations << '\n';
+    std::cout << "davidson_block_actions = " << davidson.block_actions << '\n';
+    std::cout << "davidson_peak_subspace_dimension = "
+              << davidson.peak_subspace_dimension << '\n';
+    std::cout << "davidson_ground_state_energy_abs_diff = "
+              << std::abs(
+                     davidson.eigenpairs.eigenvalues.front() -
+                     dense_eigenpairs.eigenvalues.front())
+              << '\n';
+    std::cout << "davidson_ground_state_relative_residual = "
+              << davidson.relative_residual_norms.front() << '\n';
     std::cout << "sparse_matrix_free_action_seconds = "
               << std::chrono::duration<double>(
                      sparse_action_end - sparse_action_start)
