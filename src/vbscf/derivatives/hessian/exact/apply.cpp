@@ -347,9 +347,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             *accepted_point_context_,
             directional_active_space_gradient,
             *orbital_preparation_cache,
-            accepted_exact_two_electron_cache_.n_basis_functions > 0
-                ? &accepted_exact_two_electron_cache_
-                : nullptr,
+            &accepted_exact_two_electron_cache_,
             &outer_response_symmetric_active_overlap_gradient_workspace_,
             &outer_response_symmetric_active_one_electron_gradient_workspace_);
     add_orbital_value_gradient_in_place(
@@ -381,59 +379,36 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         delta_active_times_hho_symmetric;
     const auto active_two_electron_start_time =
         std::chrono::steady_clock::now();
-    Eigen::MatrixXd dense_active_two_electron_gradient_direction_storage;
-    const Eigen::MatrixXd* dense_active_two_electron_gradient_direction =
-        nullptr;
-    if (accepted_exact_two_electron_cache_.n_basis_functions > 0) {
-      // Fused path: reuse forward K*mixed from outer response to skip
-      // one apply_exact_ao_pair_kernel call (~500M FLOPs) per HVP.
-      const ExactCtxPairMatrix* directional_pair_products =
-          precomputed_directional_pair_products != nullptr
-              ? precomputed_directional_pair_products
-              : &outer_response_integral_direction_workspace_.two_electron
-                     .directional_pair_products;
-      const bool can_fuse =
-          compute_outer_response && directional_pair_products->size() > 0;
-      if (can_fuse) {
-        apply_exact_packed_active_two_electron_adjoint_hessian_vector_fused(
-            accepted_exact_two_electron_cache_,
-            delta_dense_active_coefficients,
-            current_input_->ao_integral_input,
-            *directional_pair_products,
-            &accepted_exact_two_electron_apply_workspace_,
-            &accepted_exact_two_electron_apply_workspace_
-                 .dense_active_gradient_direction);
-      } else {
-        apply_exact_packed_active_two_electron_adjoint_hessian_vector(
-            accepted_exact_two_electron_cache_,
-            delta_dense_active_coefficients,
-            current_input_->ao_integral_input,
-            &accepted_exact_two_electron_apply_workspace_,
-            &accepted_exact_two_electron_apply_workspace_
-                 .dense_active_gradient_direction);
-      }
-      dense_active_two_electron_gradient_direction =
+    // Reuse forward K*mixed from the outer response whenever it is available,
+    // avoiding one full AO-pair kernel traversal in a complete HVP.
+    const ExactCtxPairMatrix* directional_pair_products =
+        precomputed_directional_pair_products != nullptr
+            ? precomputed_directional_pair_products
+            : &outer_response_integral_direction_workspace_.two_electron
+                   .directional_pair_products;
+    if (compute_outer_response && directional_pair_products->size() > 0) {
+      apply_exact_packed_active_two_electron_adjoint_hessian_vector_fused(
+          accepted_exact_two_electron_cache_,
+          delta_dense_active_coefficients,
+          current_input_->ao_integral_input,
+          *directional_pair_products,
+          &accepted_exact_two_electron_apply_workspace_,
           &accepted_exact_two_electron_apply_workspace_
-               .dense_active_gradient_direction;
+               .dense_active_gradient_direction);
     } else {
-      dense_active_two_electron_gradient_direction_storage =
-          apply_exact_packed_active_two_electron_adjoint_hessian_vector(
-              accepted_point_context_->packed_active_two_electron_gradient,
-              accepted_dense_active_coefficients_,
-              delta_dense_active_coefficients,
-              current_input_->ao_integral_input,
-              n_active_orbitals,
-              &accepted_point_context_->prepared_active_space
-                   .active_space_two_electron_result);
-      dense_active_two_electron_gradient_direction =
-          &dense_active_two_electron_gradient_direction_storage;
+      apply_exact_packed_active_two_electron_adjoint_hessian_vector(
+          accepted_exact_two_electron_cache_,
+          delta_dense_active_coefficients,
+          current_input_->ao_integral_input,
+          &accepted_exact_two_electron_apply_workspace_,
+          &accepted_exact_two_electron_apply_workspace_
+               .dense_active_gradient_direction);
     }
     apply_timing_totals_.active_two_electron_wall_time_seconds +=
         detail::exact_hvp_elapsed_seconds(active_two_electron_start_time);
-    if (dense_active_two_electron_gradient_direction != nullptr) {
-      delta_auxiliary_active_gradient.noalias() +=
-          *dense_active_two_electron_gradient_direction;
-    }
+    delta_auxiliary_active_gradient.noalias() +=
+        accepted_exact_two_electron_apply_workspace_
+            .dense_active_gradient_direction;
 
     Eigen::MatrixXd total_inactive_density_direction =
         delta_ao_effective_h1e;
