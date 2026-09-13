@@ -773,6 +773,25 @@ int main(int argc, char** argv) {
             context, options.warmup, options.repeats, options.block_width);
 
     const auto& first_diagnostics = measurements.front().diagnostics;
+    const auto& ao = context.input.ao_integral_input;
+    const auto& pair_graph = ao.pair_graph;
+    const auto& active_two_electron =
+        context.second_order_context->prepared_active_space
+            .active_space_two_electron_result;
+    const std::size_t raw_eri_storage_bytes =
+        ao.ao_two_electron_integral_values.capacity() * sizeof(double) +
+        ao.ao_two_electron_integral_indices.capacity() * sizeof(int);
+    const std::size_t pair_graph_storage_bytes =
+        pair_graph.row_offsets.capacity() * sizeof(int) +
+        pair_graph.columns.capacity() * sizeof(int) +
+        pair_graph.values.capacity() * sizeof(double);
+    const std::size_t packed_active_storage_bytes =
+        active_two_electron.packed_active_two_electron_integrals.capacity() *
+        sizeof(double);
+    const std::size_t active_coefficient_storage_bytes =
+        static_cast<std::size_t>(
+            active_two_electron.dense_active_coefficients.size()) *
+        sizeof(double);
     std::cout << std::setprecision(12);
     std::cout << "input = " << options.input_path << '\n';
     std::cout << "orbital_value_table_override = " << options.orbital_value_table_bin_path << '\n';
@@ -863,6 +882,17 @@ int main(int argc, char** argv) {
               << bool_name(first_diagnostics.streams_exact_pair_products) << '\n';
     std::cout << "resident_exact_pair_elements = "
               << first_diagnostics.resident_exact_pair_elements << '\n';
+    std::cout << "raw_ao_eri_storage_bytes = "
+              << raw_eri_storage_bytes << '\n';
+    std::cout << "ao_pair_graph_storage_bytes = "
+              << pair_graph_storage_bytes << '\n';
+    std::cout << "packed_active_2e_storage_bytes = "
+              << packed_active_storage_bytes << '\n';
+    std::cout << "accepted_active_coefficient_storage_bytes = "
+              << active_coefficient_storage_bytes << '\n';
+    std::cout << "resident_exact_pair_storage_bytes = "
+              << first_diagnostics.resident_exact_pair_elements * sizeof(double)
+              << '\n';
     std::cout << "exact_pair_tile_rows = "
               << first_diagnostics.exact_pair_tile_rows << '\n';
 
