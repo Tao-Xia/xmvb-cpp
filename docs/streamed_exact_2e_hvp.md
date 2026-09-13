@@ -1,0 +1,417 @@
+# Streamed Exact Two-Electron Hessian-Vector Products
+
+## 1. Scope
+
+This document specifies the memory-bounded exact two-electron response used by
+the TNHVP orbital optimizer.  The objective is to preserve the exact AO
+integrals and the exact Hessian-vector product while removing accepted-point
+and per-direction matrices whose storage grows as
+
+$$
+O(N_{\mathrm{AO\mbox{-}pair}}N_{\mathrm{active\mbox{-}pair}}).
+$$
+
+No density fitting, Cholesky decomposition, integral screening, or truncated
+response is introduced.  Sparse HAO and full-AO OEO orbitals must use the same
+mathematical operator.
+
+## 2. Pair-space notation
+
+Let
+
+$$
+N = \frac{n_{\mathrm{bf}}(n_{\mathrm{bf}}+1)}{2},
+\qquad
+A = \frac{n_{\mathrm{act}}(n_{\mathrm{act}}+1)}{2},
+$$
+
+be the numbers of packed AO pairs and packed active-orbital pairs.  The
+accepted active-orbital coefficient matrix and an orbital direction are
+
+$$
+C,D \in \mathbb{R}^{n_{\mathrm{bf}}\times n_{\mathrm{act}}}.
+$$
+
+For the packed AO pair $r=(\mu,\nu)$ and active pair $i=(p,q)$, define the
+pair-product map
+
+$$
+B(C)_{r i}
+=
+C_{\mu p}C_{\nu q}
++
+(1-\delta_{\mu\nu})C_{\nu p}C_{\mu q},
+$$
+
+and its directional derivative
+
+$$
+M(C;D)_{r i}
+=
+D_{\mu p}C_{\nu q}
++C_{\mu p}D_{\nu q}
++(1-\delta_{\mu\nu})
+\left(
+D_{\nu p}C_{\mu q}
++C_{\nu p}D_{\mu q}
+\right).
+$$
+
+The exact AO electron-repulsion integrals define a symmetric linear operator
+
+$$
+K\in\mathbb{R}^{N\times N},
+\qquad K^{\mathsf T}=K.
+$$
+
+The active-space two-electron integrals are
+
+$$
+G(C)=B(C)^{\mathsf T}K B(C).
+$$
+
+Only the lower triangle of $G$ is stored by the public active-space integral
+interface.  All pair-space equations below use the corresponding symmetric
+matrix representation.
+
+## 3. Exact directional derivative
+
+At an accepted point, write
+
+$$
+B=B(C),
+\qquad
+M=M(C;D),
+\qquad
+Q=KB,
+\qquad
+\dot Q=KM.
+$$
+
+The exact integral direction is
+
+$$
+\dot G
+=
+M^{\mathsf T}KB+B^{\mathsf T}KM
+=
+M^{\mathsf T}Q+Q^{\mathsf T}M.
+$$
+
+The second equality follows from $K^{\mathsf T}=K$.  This identity is an
+implementation invariant: a streamed implementation may change the order of
+contractions, but it must return the same packed $\dot G$.
+
+## 4. Exact adjoint Hessian action
+
+Let
+
+$$
+W\in\mathbb{R}^{A\times A}
+$$
+
+denote the accepted adjoint of the packed active-space two-electron integrals.
+Let $J_C$ be the Jacobian of $B(C)$ and $J_C^{*}$ its Euclidean adjoint.  The
+two-electron orbital gradient is
+
+$$
+g_C^{(2e)}=J_C^{*}(QW).
+$$
+
+For a fixed accepted adjoint $W$, its exact directional derivative is
+
+$$
+\dot g_{C,\mathrm{fixed}}^{(2e)}
+=
+J_D^{*}(QW)
++J_C^{*}(\dot QW).
+$$
+
+The active-space structure response produces an additional adjoint direction
+$\dot W$.  Its orbital pullback is
+
+$$
+\dot g_{C,\mathrm{outer}}^{(2e)}
+=
+J_C^{*}(Q\dot W).
+$$
+
+Therefore the complete exact two-electron contribution is
+
+$$
+\boxed{
+\dot g_C^{(2e)}
+=
+J_D^{*}(QW)
++J_C^{*}(\dot QW+Q\dot W)
+}.
+$$
+
+These equations also define the finite-difference and explicit-Hessian
+reference tests.  Streaming is correct only if it preserves every term in the
+boxed expression.
+
+## 5. Why the current storage is not scalable
+
+The current accepted cache stores three dense pair matrices:
+
+$$
+B,\;Q,\;QW\in\mathbb{R}^{N\times A}.
+$$
+
+The directional and HVP workspaces can additionally store
+
+$$
+M,\;\dot Q,\;MW,\;\dot QW
+\in\mathbb{R}^{N\times A}.
+$$
+
+One such matrix requires
+
+$$
+8NA\ \text{bytes}.
+$$
+
+Because
+
+$$
+N=O(n_{\mathrm{bf}}^2),
+\qquad
+A=O(n_{\mathrm{act}}^2),
+$$
+
+each resident matrix scales as
+
+$$
+O(n_{\mathrm{bf}}^2n_{\mathrm{act}}^2).
+$$
+
+This is avoidable storage.  The persistent mathematical state consists of
+$C$, $W$, pair indices, and the AO-pair operator $K$; $B$, $Q$, and $QW$ are
+derived quantities.
+
+## 6. Canonical streamed operator
+
+The implementation will expose one exact pair-space operator with bounded
+tiles.  A tile is a view of a contiguous interval of AO-pair rows or
+active-pair columns, not a second approximate algorithm.
+
+For an AO-row tile $I$, the operator can generate
+
+$$
+B_I,
+\qquad
+M_I,
+\qquad
+Q_I=(KB)_I,
+\qquad
+\dot Q_I=(KM)_I,
+$$
+
+and immediately consume those rows in one of three sinks:
+
+1. accumulate $M_I^{\mathsf T}Q_I$ into the mandatory $A\times A$ integral
+   direction;
+2. apply $J_D^{*}$ or $J_C^{*}$ to a pair-gradient tile;
+3. accumulate a diagnostic norm or checksum.
+
+For an active-pair column tile $J$, associativity gives
+
+$$
+(KB)W = K(BW),
+\qquad
+(KM)W = K(MW).
+$$
+
+This permits adjoint contractions to be formed and consumed without a full
+$N\times A$ result.  The tile interfaces must preserve the contraction order
+required by the directional integral and must never create a hidden full-size
+temporary through an Eigen expression.
+
+The canonical implementation may let a tile span the complete small problem.
+That is still the same code path.  It is not a dense compatibility fallback.
+
+## 7. Dependency imposed by the structure response
+
+The structure-response adjoint $\dot W$ is not known until $\dot G$ has been
+formed and the selected-state response equation has been solved:
+
+$$
+D
+\longrightarrow
+\dot G
+\longrightarrow
+\dot W
+\longrightarrow
+J_C^{*}(Q\dot W).
+$$
+
+Consequently, removing the resident $Q$ matrix has an unavoidable exactness
+tradeoff: $Q$ must either be recomputed after $\dot W$ becomes available or be
+retained somewhere.  No contraction reordering can remove this dependency for
+an arbitrary $\dot W$.
+
+The implementation therefore uses an explicit memory--work policy:
+
+- a bounded accepted-pair block cache may retain tiles that fit its declared
+  capacity;
+- missing tiles are recomputed exactly;
+- the cache policy depends only on dimensions and an explicit workspace
+  capacity, never on molecule names, orbital type, iteration number, or
+  environment variables;
+- changing the capacity may change time and memory, but not numerical results.
+
+This policy is part of the exact algorithm rather than a fallback path.
+
+## 8. Memory invariant
+
+Let $T_r$ and $T_a$ be the AO-row and active-pair tile extents.  Apart from the
+AO integral graph and mandatory accepted state, the pair-space working memory
+must satisfy
+
+$$
+M_{\mathrm{pair\ workspace}}
+=
+O(T_rA+NT_a+A^2),
+$$
+
+with
+
+$$
+T_r<N,
+\qquad
+T_a<A
+$$
+
+whenever a full $N\times A$ matrix exceeds the workspace capacity.  No vector
+of directions may multiply this bound by the Krylov block size.  Block HVP
+directions are streamed through the same bounded workspace.
+
+For diagnostics, the implementation will report the peak number of resident
+pair elements.  Tests must be able to assert
+
+$$
+N_{\mathrm{resident\ pair\ elements}}
+< cNA
+$$
+
+for a forced multi-tile calculation, with $c<1$ chosen by the test capacity
+rather than embedded in the scientific algorithm.
+
+## 9. Parallel execution
+
+Parallelism follows ownership, so accumulation does not require atomics in the
+inner contraction:
+
+- AO-row tiles own disjoint output rows during $KX$;
+- thread-local $A\times A$ matrices accumulate the directional integral and
+  are reduced once per tile or parallel region;
+- dense orbital-gradient rows are partitioned by AO index during $J_C^{*}$;
+- a tile is reused for all consumers before it is released.
+
+The tile extent must be large enough for vectorization and Eigen microkernels,
+but it is constrained by the workspace capacity.  Scheduling is based on AO
+graph edge counts rather than row counts because exact-integral rows have
+unequal work.
+
+## 10. Implementation stages
+
+### Stage A: remove proven redundant accepted buffers
+
+1. Remove persistent $B$; it is used only to build other accepted data.
+2. Remove persistent $QW$; form and consume it through the canonical tile
+   operator.
+3. Eliminate duplicate ownership of $Q$ between the accepted integral result
+   and the exact-HVP cache.
+4. Add storage diagnostics and numerical regression tests.
+
+This stage reduces memory without changing the number of AO-pair operator
+applications.
+
+### Stage B: introduce bounded tile primitives
+
+1. Add range-based builders for $B_I$ and $M_I$.
+2. Add range-based AO-pair operator application.
+3. Add range-based $J_C^{*}$ accumulation.
+4. Replace whole-matrix Eigen expressions with tile-local contractions.
+
+The whole-matrix routines are deleted after all consumers migrate; they are
+not retained as compatibility implementations.
+
+### Stage C: stream the directional integral and fixed adjoint
+
+Fuse the tile lifetime so that $M_I$, $Q_I$, and $\dot Q_I$ are consumed by
+$\dot G$ and the fixed-adjoint HVP before release.  Batch HVPs iterate over
+directions inside the same capacity bound instead of concatenating
+$N\times A$ matrices.
+
+### Stage D: bounded accepted-point block cache
+
+Store only the accepted $Q$ tiles admitted by the capacity policy.  Recompute
+other tiles for the post-structure-response $\dot W$ pullback.  Record tile
+hits, exact recomputations, peak pair elements, and AO-graph traversals.
+
+### Stage E: delete obsolete paths
+
+After the streamed operator passes all validation gates, delete the old full
+pair-matrix response implementation and diagnostic code that depends on its
+internal buffers.
+
+## 11. Validation gates
+
+Every stage must satisfy all of the following:
+
+1. **Pair-map derivative**
+
+$$
+\frac{B(C+\varepsilon D)-B(C-\varepsilon D)}{2\varepsilon}
+\approx M(C;D).
+$$
+
+2. **Integral directional derivative**
+
+$$
+\frac{G(C+\varepsilon D)-G(C-\varepsilon D)}{2\varepsilon}
+\approx \dot G.
+$$
+
+3. **Adjoint consistency**
+
+$$
+\langle J_C D,Y\rangle
+=
+\langle D,J_C^{*}Y\rangle.
+$$
+
+4. **HVP finite difference**
+
+$$
+H(C)D
+\approx
+\frac{g(C+\varepsilon D)-g(C-\varepsilon D)}{2\varepsilon}.
+$$
+
+5. **Explicit reduced-Hessian comparison** for small systems.
+
+6. **Tile invariance:** one-tile and forced multi-tile results agree to the
+   expected floating-point tolerance.
+
+7. **Orbital coverage:** both strictly sparse HAO and full-AO OEO inputs pass.
+
+8. **Optimization trajectory:** accepted energies and convergence criteria
+   remain consistent for F2, 241, MnF2, and FeCl2.
+
+9. **Memory scaling:** forced streamed tests demonstrate bounded resident
+   pair storage as $N$ and $A$ grow.
+
+10. **Performance:** report wall time, AO-graph traversals, peak RSS, and peak
+    resident pair elements.  A memory reduction is not presented as a speedup
+    unless the measured wall time also improves.
+
+## 12. Acceptance criterion
+
+The milestone is complete only when the production exact TNHVP path no longer
+requires a resident $N\times A$ accepted-point matrix or a resident
+$N\times A$ per-direction matrix for large problems, while all numerical gates
+remain satisfied.  Small-problem full tiles and large-problem partial tiles
+must be two capacities of the same exact implementation.
