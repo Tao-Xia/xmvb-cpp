@@ -97,6 +97,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const OrbitalChart& current_space,
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
+    double gradient_tolerance,
     int max_cg_iterations,
     ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,

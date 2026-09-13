@@ -372,6 +372,7 @@ BackendRunResult run_truncated_newton_backend(
               current_space,
               current_projection,
               trust_radius,
+              options.gradient_tolerance,
               max_cg_iterations,
               &hvp,
               &transported_preconditioner,
@@ -392,8 +393,11 @@ BackendRunResult run_truncated_newton_backend(
         const Eigen::VectorXd kkt_residual = current_projection.reduced_gradient +
             truncated_newton_step.reduced_hessian_times_step +
             truncated_newton_step.trust_region_shift * truncated_newton_step.reduced_step;
-        if (kkt_residual.stableNorm() <=
-            inexact_newton_forcing_term(gradient_norm) * gradient_norm) {
+        const double residual_target =
+            inexact_newton_forcing_term(gradient_norm) * gradient_norm;
+        if (kkt_residual.stableNorm() <= residual_target ||
+            gradient_infinity_norm(kkt_residual) <=
+                options.gradient_tolerance) {
           ++result->matrix_free_residual_converged_count;
         }
       }

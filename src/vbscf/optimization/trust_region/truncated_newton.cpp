@@ -446,6 +446,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const OrbitalChart& current_space,
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
+    double gradient_tolerance,
     int max_cg_iterations,
     ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
@@ -542,7 +543,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     return finalize_result();
   }
 
-  const double initial_residual_norm = residual.stableNorm();
   const double outer_gradient_norm =
       current_projection.reduced_gradient.stableNorm();
   // The inexact-Newton forcing term is an outer-iteration condition:
@@ -550,7 +550,14 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   // initial residual but must not redefine the requested Newton accuracy.
   const double residual_target =
       inexact_newton_forcing_term(outer_gradient_norm) * outer_gradient_norm;
-  if (initial_residual_norm <= residual_target) {
+  const auto residual_converged = [&](const Eigen::VectorXd& value) {
+    return value.stableNorm() <= residual_target ||
+        value.cwiseAbs().maxCoeff() <= gradient_tolerance;
+  };
+  // The relative two-norm condition preserves inexact-Newton convergence.
+  // The absolute infinity-norm condition prevents the inner solve from
+  // exceeding the accuracy requested by the outer stopping criterion.
+  if (residual_converged(residual)) {
     if (result.reduced_step.squaredNorm() > 0.0 &&
         current_projection.reduced_gradient.dot(result.reduced_step) < 0.0 &&
         std::isfinite(result.predicted_decrease) &&
@@ -640,7 +647,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     residual = rhs - result.reduced_hessian_times_step;
     conjugate_basis.append(search_direction, hessian_times_direction);
     result.cg_iterations = cg_iteration + 1;
-    if (residual.stableNorm() <= residual_target) {
+    if (residual_converged(residual)) {
       break;
     }
 
