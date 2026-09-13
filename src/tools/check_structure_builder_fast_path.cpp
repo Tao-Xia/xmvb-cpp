@@ -339,6 +339,10 @@ int main(int argc, char** argv) {
     const auto action_storage = compact_structure_action.storage();
     std::cout << "factorized_action_bytes = "
               << action_storage.factor_bytes << '\n';
+    std::cout << "factorized_expansion_bytes = "
+              << action_storage.expansion_bytes << '\n';
+    std::cout << "factorized_diagonal_bytes = "
+              << action_storage.diagonal_bytes << '\n';
     std::cout << "factorized_dense_channels = "
               << action_storage.dense_channels << '\n';
     std::cout << "factorized_sparse_channels = "

@@ -34,6 +34,10 @@ struct StructureDiagonal {
 struct StructureActionStorage {
   /** Payload retained by the spin-factorized action. */
   std::size_t factor_bytes = 0;
+  /** Bidirectional determinant/structure expansion in contiguous CSR form. */
+  std::size_t expansion_bytes = 0;
+  /** Exact Hamiltonian and overlap diagonals retained by Davidson. */
+  std::size_t diagonal_bytes = 0;
   /** Opposite-spin channels whose raw side is stored densely. */
   int dense_channels = 0;
   /** Opposite-spin channels whose raw side is stored as exact nonzeros. */
@@ -132,8 +136,10 @@ private:
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
       Eigen::MatrixXd* spin_hamiltonian) const;
 
-  std::vector<std::vector<StructureTerm>> determinant_to_structure_terms_;
-  std::vector<std::vector<DeterminantTerm>> structure_to_determinant_terms_;
+  std::vector<std::size_t> determinant_term_offsets_;
+  std::vector<StructureTerm> determinant_terms_;
+  std::vector<std::size_t> structure_term_offsets_;
+  std::vector<DeterminantTerm> structure_terms_;
   StructureDiagonal diagonal_;
   Eigen::MatrixXd alpha_overlap_;
   Eigen::MatrixXd alpha_hamiltonian_;

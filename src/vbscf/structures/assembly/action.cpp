@@ -554,23 +554,40 @@ StructureAction::StructureAction(
         alpha * n_unique_beta_ + beta;
   }
 
-  determinant_to_structure_terms_.resize(n_determinants_);
-  structure_to_determinant_terms_.resize(n_structures_);
+  determinant_term_offsets_.resize(n_determinants_ + 1, 0);
+  structure_term_offsets_.resize(n_structures_ + 1, 0);
+  std::size_t n_expansion_terms = 0;
   for (int determinant = 0;
        determinant < n_determinants_;
        ++determinant) {
-    determinant_to_structure_terms_[determinant].reserve(
-        determinant_to_structure_terms[determinant].size());
+    determinant_term_offsets_[determinant] = n_expansion_terms;
     for (const auto& term : determinant_to_structure_terms[determinant]) {
       if (term.structure_index < 0 ||
           term.structure_index >= n_structures_) {
         throw std::out_of_range(
             "determinant expansion structure index is out of range");
       }
-      determinant_to_structure_terms_[determinant].push_back(
+      ++structure_term_offsets_[term.structure_index + 1];
+      ++n_expansion_terms;
+    }
+  }
+  determinant_term_offsets_[n_determinants_] = n_expansion_terms;
+  for (int structure = 0; structure < n_structures_; ++structure) {
+    structure_term_offsets_[structure + 1] +=
+        structure_term_offsets_[structure];
+  }
+
+  determinant_terms_.reserve(n_expansion_terms);
+  structure_terms_.resize(n_expansion_terms);
+  std::vector<std::size_t> structure_cursors = structure_term_offsets_;
+  for (int determinant = 0;
+       determinant < n_determinants_;
+       ++determinant) {
+    for (const auto& term : determinant_to_structure_terms[determinant]) {
+      determinant_terms_.push_back(
           StructureTerm{term.structure_index, term.coefficient});
-      structure_to_determinant_terms_[term.structure_index].push_back(
-          DeterminantTerm{determinant, term.coefficient});
+      structure_terms_[structure_cursors[term.structure_index]++] =
+          DeterminantTerm{determinant, term.coefficient};
     }
   }
 
@@ -584,11 +601,16 @@ StructureAction::StructureAction(
 
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int structure = 0; structure < n_structures_; ++structure) {
-    const auto& terms = structure_to_determinant_terms_[structure];
     double hamiltonian = 0.0;
     double overlap = 0.0;
-    for (const auto& left : terms) {
-      for (const auto& right : terms) {
+    const std::size_t first = structure_term_offsets_[structure];
+    const std::size_t last = structure_term_offsets_[structure + 1];
+    for (std::size_t left_index = first; left_index < last; ++left_index) {
+      const auto& left = structure_terms_[left_index];
+      for (std::size_t right_index = first;
+           right_index < last;
+           ++right_index) {
+        const auto& right = structure_terms_[right_index];
         const DeterminantPairScalars pair = evaluate_pair(
             same_spin_pair_cache,
             left.determinant,
@@ -689,7 +711,10 @@ StructureActionResult StructureAction::apply(
   for (int determinant = 0;
        determinant < n_determinants_;
        ++determinant) {
-    for (const auto& term : determinant_to_structure_terms_[determinant]) {
+    for (std::size_t term_index = determinant_term_offsets_[determinant];
+         term_index < determinant_term_offsets_[determinant + 1];
+         ++term_index) {
+      const auto& term = determinant_terms_[term_index];
       determinant_vectors.row(determinant).noalias() +=
           term.coefficient * vectors.row(term.structure);
     }
@@ -779,8 +804,10 @@ StructureActionResult StructureAction::apply(
       Eigen::MatrixXd::Zero(n_structures_, block_width);
 
   for (int structure = 0; structure < n_structures_; ++structure) {
-    for (const auto& term :
-         structure_to_determinant_terms_[structure]) {
+    for (std::size_t term_index = structure_term_offsets_[structure];
+         term_index < structure_term_offsets_[structure + 1];
+         ++term_index) {
+      const auto& term = structure_terms_[term_index];
       result.hamiltonian.row(structure).noalias() +=
           term.coefficient *
           determinant_hamiltonian.row(term.determinant);
@@ -808,6 +835,15 @@ StructureActionStorage StructureAction::storage() const noexcept {
   StructureActionStorage result;
   result.channel_nonzeros = channel_nonzeros_;
   result.channel_dense_values = channel_dense_values_;
+  result.expansion_bytes =
+      (determinant_term_offsets_.size() + structure_term_offsets_.size()) *
+          sizeof(std::size_t) +
+      determinant_terms_.size() * sizeof(StructureTerm) +
+      structure_terms_.size() * sizeof(DeterminantTerm);
+  result.diagonal_bytes =
+      static_cast<std::size_t>(
+          diagonal_.hamiltonian.size() + diagonal_.overlap.size()) *
+      sizeof(double);
   result.factor_bytes =
       static_cast<std::size_t>(
           alpha_overlap_.size() + alpha_hamiltonian_.size() +
