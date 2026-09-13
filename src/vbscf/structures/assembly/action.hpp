@@ -32,12 +32,14 @@ struct StructureDiagonal {
 };
 
 struct StructureActionStorage {
-  /** Numerical payload retained by the spin-factorized action. */
+  /** Payload retained by the spin-factorized action. */
   std::size_t factor_bytes = 0;
   /** Opposite-spin channels whose raw side is stored densely. */
   int dense_channels = 0;
   /** Opposite-spin channels whose raw side is stored as exact nonzeros. */
   int sparse_channels = 0;
+  /** Opposite-spin channels fused into one support-factor family. */
+  int factored_channels = 0;
   /** Exact nonzeros before a sparse channel is optionally densified. */
   std::size_t channel_nonzeros = 0;
   /** Dense values required to store the same active channel matrices. */
@@ -100,6 +102,29 @@ private:
     std::vector<Eigen::Triplet<double>> sparse;
   };
 
+  struct SupportedChannelFamily {
+    /**
+     * @brief Exact channels batched through their nonzero row or column support.
+     *
+     * For row support `R`, `B = E_R B_R`; the action scatters
+     * `A X B_R^T` directly onto `R`. Column support is the transpose analogue.
+     * Concatenating the compact factors turns many small products into one
+     * matrix multiplication without approximating `B`.
+     */
+    std::vector<Eigen::MatrixXd> projected;
+    std::vector<int> offsets;
+    std::vector<int> support;
+    Eigen::MatrixXd raw;
+
+    bool enabled() const noexcept { return !projected.empty(); }
+  };
+
+  void apply_supported_channels(
+      const SupportedChannelFamily& family,
+      bool supports_rows,
+      const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
+      Eigen::MatrixXd* spin_hamiltonian) const;
+
   const SameSpinPairCacheContext* same_spin_pair_cache_ = nullptr;
   ActiveSpaceTwoElectronView two_electron_view_;
   const std::vector<std::vector<StructureExpansionTerm>>*
@@ -110,6 +135,8 @@ private:
   Eigen::MatrixXd beta_overlap_;
   Eigen::MatrixXd beta_hamiltonian_;
   std::vector<OppositeSpinChannel> opposite_spin_channels_;
+  SupportedChannelFamily row_supported_channels_;
+  SupportedChannelFamily column_supported_channels_;
   std::vector<int> determinant_to_spin_product_;
   bool alpha_projection_is_dense_ = false;
   int n_determinants_ = 0;

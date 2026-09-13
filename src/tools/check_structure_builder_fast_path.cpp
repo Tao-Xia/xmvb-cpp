@@ -231,15 +231,22 @@ int main(int argc, char** argv) {
             prepared_active_space.active_space_two_electron_result,
             xmvb::vb::SameSpinPairCacheBuildOptions{
                 xmvb::vb::PairProjectionCache::SmallerSpin});
+    const auto compact_action_setup_start =
+        std::chrono::high_resolution_clock::now();
     const xmvb::vb::StructureAction compact_structure_action(
         load_result.input.structure_data.determinant_to_structure_terms,
         n_structures,
         compact_pair_cache,
         prepared_active_space.active_space_two_electron_result,
         load_result.input.orbital_preparation_input.n_active_orbitals);
+    const auto compact_action_setup_end =
+        std::chrono::high_resolution_clock::now();
+    constexpr int kActionBenchmarkRepeats = 256;
     const auto compact_action_start = std::chrono::high_resolution_clock::now();
-    const auto compact_action_result =
-        compact_structure_action.apply(trial_vectors);
+    xmvb::vb::StructureActionResult compact_action_result;
+    for (int repeat = 0; repeat < kActionBenchmarkRepeats; ++repeat) {
+      compact_action_result = compact_structure_action.apply(trial_vectors);
+    }
     const auto compact_action_end = std::chrono::high_resolution_clock::now();
     const auto compact_diagonal = compact_structure_action.diagonal();
     xmvb::core::GeneralizedEigensolver eigensolver;
@@ -336,6 +343,8 @@ int main(int argc, char** argv) {
               << action_storage.dense_channels << '\n';
     std::cout << "factorized_sparse_channels = "
               << action_storage.sparse_channels << '\n';
+    std::cout << "factorized_factored_channels = "
+              << action_storage.factored_channels << '\n';
     std::cout << "factorized_channel_nonzeros = "
               << action_storage.channel_nonzeros << '\n';
     std::cout << "factorized_channel_dense_values = "
@@ -364,10 +373,15 @@ int main(int argc, char** argv) {
                      .cwiseAbs()
                      .maxCoeff()
               << '\n';
+    std::cout << "compact_matrix_free_setup_seconds = "
+              << std::chrono::duration<double>(compact_action_setup_end -
+                                               compact_action_setup_start)
+                     .count()
+              << '\n';
     std::cout << "compact_matrix_free_action_seconds = "
               << std::chrono::duration<double>(
-                     compact_action_end - compact_action_start)
-                     .count()
+                     compact_action_end - compact_action_start).count() /
+                     kActionBenchmarkRepeats
               << '\n';
     std::cout << "compact_matrix_free_hamiltonian_action_max_abs_diff = "
               << (compact_action_result.hamiltonian -
