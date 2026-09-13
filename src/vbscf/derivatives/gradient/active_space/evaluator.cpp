@@ -31,6 +31,8 @@ struct ActiveSpaceGradientForwardContext {
   std::optional<StructureAction> structure_action;
   StructureAccumulationResult structure_matrices;
   xmvb::core::GeneralizedEigenResult eigen_result;
+  Eigen::VectorXd structure_overlap_diagonal;
+  Eigen::MatrixXd overlap_eigenvectors;
   Eigen::MatrixXd selected_state_eigenvectors;
   std::vector<double> selected_state_energies;
   double average_structure_overlap = 0.0;
@@ -168,6 +170,12 @@ void solve_structure_problem(
     context->average_structure_overlap = compute_average_structure_overlap(
         context->structure_matrices.overlap_matrix,
         n_structures);
+    context->structure_overlap_diagonal.resize(n_structures);
+    for (int structure = 0; structure < n_structures; ++structure) {
+      context->structure_overlap_diagonal[structure] =
+          context->structure_matrices.overlap_matrix[
+              static_cast<std::size_t>(structure) * n_structures + structure];
+    }
     stage_start_time = std::chrono::steady_clock::now();
     context->eigen_result = generalized_eigensolver.solve_dense(
         context->structure_matrices.hamiltonian_matrix,
@@ -187,6 +195,8 @@ void solve_structure_problem(
     const StructureAction& structure_action = *context->structure_action;
     context->average_structure_overlap =
         structure_action.diagonal().overlap.mean();
+    context->structure_overlap_diagonal =
+        structure_action.diagonal().overlap;
     const xmvb::core::GeneralizedEigenAction action =
         [&structure_action](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
           StructureActionResult images = structure_action.apply(vectors);
@@ -214,6 +224,8 @@ void solve_structure_problem(
               structure_action.diagonal().overlap,
               options);
     context->eigen_result = std::move(davidson.eigenpairs);
+    context->overlap_eigenvectors =
+        std::move(davidson.overlap_eigenvectors);
   }
   context->eigensolver_wall_time_seconds =
       std::chrono::duration<double>(
@@ -406,6 +418,17 @@ void populate_scf_result(
       forward_context.average_structure_overlap;
   scf_result->electronic_state_energies = eigen_result.eigenvalues;
   scf_result->eigenvector_matrix = eigen_result.eigenvector_matrix;
+  scf_result->structure_overlap_diagonal.assign(
+      forward_context.structure_overlap_diagonal.data(),
+      forward_context.structure_overlap_diagonal.data() +
+          forward_context.structure_overlap_diagonal.size());
+  scf_result->overlap_eigenvector_matrix.clear();
+  if (forward_context.overlap_eigenvectors.size() != 0) {
+    scf_result->overlap_eigenvector_matrix.assign(
+        forward_context.overlap_eigenvectors.data(),
+        forward_context.overlap_eigenvectors.data() +
+            forward_context.overlap_eigenvectors.size());
+  }
   scf_result->one_electron_reference_energy =
       prepared_active_space.one_electron_reference_energy;
   scf_result->electronic_energy = selected_state_average_energy(

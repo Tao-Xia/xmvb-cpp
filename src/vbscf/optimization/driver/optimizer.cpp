@@ -289,18 +289,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   enforce_strict_sparse_orbital_support(
       &result.optimized_input.orbital_preparation_input);
 
-  // Optimization retains only the selected low roots when Davidson is used.
-  // Materialize the full structure matrices and spectrum exactly once for the
-  // final analysis/reporting contract.
-  result.scf_result = scf_evaluator_.evaluate(
-      result.optimized_input,
-      selected_state_indices,
-      state_average_weights,
-      nuclear_repulsion_energy);
-  result.final_total_energy = result.scf_result.total_energy;
-  result.final_one_electron_reference_energy =
-      result.scf_result.one_electron_reference_energy;
-
   if (result.termination_reason.empty()) {
     if (result.n_iterations >= options_.max_iterations) {
       result.termination_reason = "max_iterations";

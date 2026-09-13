@@ -62,6 +62,8 @@ DavidsonOptions make_davidson_options(int dimension, int n_roots);
  */
 struct DavidsonResult {
   GeneralizedEigenResult eigenpairs;
+  /** @brief Matrix `S C` for the converged roots, retained without forming S. */
+  Eigen::MatrixXd overlap_eigenvectors;
   std::vector<double> relative_residual_norms;
   int iterations = 0;
   int block_actions = 0;

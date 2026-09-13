@@ -222,26 +222,36 @@ std::string ao_label(
   return label;
 }
 
-Eigen::VectorXd selected_structure_coefficients(const vb::VbScfResult& result) {
+Eigen::VectorXd selected_structure_coefficients(
+    const vb::VbScfResult& result,
+    double* phase = nullptr) {
   const int n_str = result.n_structures;
-  if (n_str <= 0 || result.eigenvector_matrix.size() != n_str * n_str) {
+  if (n_str <= 0 ||
+      result.eigenvector_matrix.size() % static_cast<std::size_t>(n_str) != 0) {
     return {};
   }
+  const int n_roots =
+      static_cast<int>(result.eigenvector_matrix.size() / n_str);
   const int state = result.selected_state_indices.empty()
       ? 0
       : result.selected_state_indices.front();
-  if (state < 0 || state >= n_str) {
+  if (state < 0 || state >= n_roots) {
     return {};
   }
   Eigen::VectorXd coefficients = Eigen::Map<const Eigen::VectorXd>(
       result.eigenvector_matrix.data() + state * n_str, n_str);
+  double canonical_phase = 1.0;
   for (int index = 0; index < n_str; ++index) {
     if (std::abs(coefficients[index]) > 1.0e-14) {
       if (coefficients[index] > 0.0) {
-        coefficients = -coefficients;
+        canonical_phase = -1.0;
       }
       break;
     }
+  }
+  coefficients *= canonical_phase;
+  if (phase != nullptr) {
+    *phase = canonical_phase;
   }
   return coefficients;
 }
@@ -258,6 +268,8 @@ Eigen::MatrixXd structure_matrix(
 struct NormalizedStructureState {
   Eigen::MatrixXd overlap;
   Eigen::MatrixXd electronic_hamiltonian;
+  Eigen::VectorXd raw_coefficients;
+  Eigen::VectorXd raw_overlap_product;
   Eigen::VectorXd coefficients;
 };
 
@@ -268,17 +280,24 @@ NormalizedStructureState normalize_structure_state(
       structure_matrix(result.structure_matrices.overlap_matrix, n_str);
   const Eigen::MatrixXd raw_hamiltonian =
       structure_matrix(result.structure_matrices.hamiltonian_matrix, n_str);
+  double coefficient_phase = 1.0;
   const Eigen::VectorXd raw_coefficients =
-      selected_structure_coefficients(result);
-  if (raw_overlap.rows() != n_str || raw_hamiltonian.rows() != n_str ||
-      raw_coefficients.size() != n_str) {
+      selected_structure_coefficients(result, &coefficient_phase);
+  const bool has_full_matrices =
+      raw_overlap.rows() == n_str && raw_hamiltonian.rows() == n_str;
+  if (raw_coefficients.size() != n_str ||
+      (!has_full_matrices &&
+       result.structure_overlap_diagonal.size() !=
+           static_cast<std::size_t>(n_str))) {
     throw std::invalid_argument(
         "final structure state has inconsistent matrix or coefficient dimensions");
   }
 
   Eigen::VectorXd structure_norms(n_str);
   for (int structure = 0; structure < n_str; ++structure) {
-    const double squared_norm = raw_overlap(structure, structure);
+    const double squared_norm = has_full_matrices
+        ? raw_overlap(structure, structure)
+        : result.structure_overlap_diagonal[structure];
     if (!std::isfinite(squared_norm) || squared_norm <= 0.0) {
       throw std::domain_error(
           "a final VB structure has a non-positive or non-finite norm");
@@ -287,18 +306,38 @@ NormalizedStructureState normalize_structure_state(
   }
 
   NormalizedStructureState normalized;
-  normalized.overlap.resize(n_str, n_str);
-  normalized.electronic_hamiltonian.resize(n_str, n_str);
-  for (int column = 0; column < n_str; ++column) {
-    for (int row = 0; row < n_str; ++row) {
-      const double norm_product =
-          structure_norms[row] * structure_norms[column];
-      normalized.overlap(row, column) = raw_overlap(row, column) / norm_product;
-      normalized.electronic_hamiltonian(row, column) =
-          raw_hamiltonian(row, column) / norm_product +
-          result.one_electron_reference_energy *
-              normalized.overlap(row, column);
+  normalized.raw_coefficients = raw_coefficients;
+  if (has_full_matrices) {
+    normalized.raw_overlap_product = raw_overlap * raw_coefficients;
+    normalized.overlap.resize(n_str, n_str);
+    normalized.electronic_hamiltonian.resize(n_str, n_str);
+    for (int column = 0; column < n_str; ++column) {
+      for (int row = 0; row < n_str; ++row) {
+        const double norm_product =
+            structure_norms[row] * structure_norms[column];
+        normalized.overlap(row, column) =
+            raw_overlap(row, column) / norm_product;
+        normalized.electronic_hamiltonian(row, column) =
+            raw_hamiltonian(row, column) / norm_product +
+            result.one_electron_reference_energy *
+                normalized.overlap(row, column);
+      }
     }
+  } else {
+    const int state = result.selected_state_indices.empty()
+        ? 0
+        : result.selected_state_indices.front();
+    const std::size_t required_size =
+        static_cast<std::size_t>(n_str) * (state + 1);
+    if (result.overlap_eigenvector_matrix.size() < required_size) {
+      throw std::invalid_argument(
+          "matrix-free structure weights require the selected S*C product");
+    }
+    normalized.raw_overlap_product = Eigen::Map<const Eigen::VectorXd>(
+        result.overlap_eigenvector_matrix.data() +
+            static_cast<std::size_t>(state) * n_str,
+        n_str);
+    normalized.raw_overlap_product *= coefficient_phase;
   }
 
   // For |Phi_i'> = |Phi_i>/sqrt(S_ii), preserving
@@ -491,6 +530,27 @@ void print_structure_weights(
   print_weight_table(output, "Lowdin Weights", lowdin, structures);
   print_weight_table(output, "Inverse Weights", inverse, structures);
   print_weight_table(output, "Renormalized Weights", renormalized, structures);
+}
+
+void print_matrix_free_structure_weights(
+    std::ostream& output,
+    const NormalizedStructureState& state,
+    const vb::RawStructureData& structures) {
+  const double norm =
+      state.raw_coefficients.dot(state.raw_overlap_product);
+  if (!(norm > 0.0)) {
+    throw std::domain_error("structure coefficients have a non-positive norm");
+  }
+  const Eigen::VectorXd cc =
+      state.raw_coefficients.array() * state.raw_overlap_product.array() / norm;
+  Eigen::VectorXd renormalized = state.coefficients.array().square();
+  renormalized /= renormalized.sum();
+
+  output << "\n\n             ******  WEIGHTS OF STRUCTURES ******\n";
+  print_weight_table(output, "Coulson-Chirgwin Weights", cc, structures);
+  print_weight_table(output, "Renormalized Weights", renormalized, structures);
+  output << "\n Lowdin and inverse weights are omitted in matrix-free Davidson mode"
+            " because they require global functions of the full overlap matrix.\n";
 }
 
 void print_orbital_table(
@@ -1060,9 +1120,15 @@ void print_final_state_sections(
   const auto& scf = result.scf_result;
   const NormalizedStructureState normalized = normalize_structure_state(scf);
 
-  print_structure_matrix(output, "OVERLAP", normalized.overlap);
-  print_structure_matrix(
-      output, "HAMILTONIAN", normalized.electronic_hamiltonian);
+  const bool has_full_structure_matrices = normalized.overlap.size() != 0;
+  if (has_full_structure_matrices) {
+    print_structure_matrix(output, "OVERLAP", normalized.overlap);
+    print_structure_matrix(
+        output, "HAMILTONIAN", normalized.electronic_hamiltonian);
+  } else {
+    output << "\n\n Full structure Hamiltonian and overlap matrices are omitted"
+              " in matrix-free Davidson mode.\n";
+  }
   if (normalized.coefficients.size() != 0) {
     output << "\n\n              ******  COEFFICIENTS OF STRUCTURES ******\n\n";
     for (int structure = 0; structure < normalized.coefficients.size(); ++structure) {
@@ -1080,11 +1146,16 @@ void print_final_state_sections(
         normalized.coefficients,
         result.optimized_input.structure_data,
         n_inactive);
-    print_structure_weights(
-        output,
-        normalized.coefficients,
-        normalized.overlap,
-        load_result.raw_structure_data);
+    if (has_full_structure_matrices) {
+      print_structure_weights(
+          output,
+          normalized.coefficients,
+          normalized.overlap,
+          load_result.raw_structure_data);
+    } else {
+      print_matrix_free_structure_weights(
+          output, normalized, load_result.raw_structure_data);
+    }
   }
   print_orbitals(
       output,

@@ -49,8 +49,8 @@ struct VbScfResult {
   /**
    * @brief Available consecutive lowest generalized eigenvalues.
    *
-   * Optimization results may retain only the requested low roots. Final
-   * reporting materializes the complete spectrum.
+   * Davidson results retain only the requested low roots. Dense reference
+   * results contain the complete spectrum.
    */
   std::vector<double> electronic_state_energies;
 
@@ -75,10 +75,26 @@ struct VbScfResult {
   std::vector<double> eigenvector_matrix;
 
   /**
+   * @brief Exact diagonal of the structure overlap matrix.
+   *
+   * Davidson uses this linear-storage metric data to report coefficients in
+   * individually normalized structure coordinates without forming full S.
+   */
+  std::vector<double> structure_overlap_diagonal;
+
+  /**
+   * @brief Column-major products `S C` aligned with available Davidson roots.
+   *
+   * These products are sufficient for exact Coulson--Chirgwin weights. Dense
+   * results may leave this empty because the explicit overlap matrix exists.
+   */
+  std::vector<double> overlap_eigenvector_matrix;
+
+  /**
    * @brief Optional explicit structure Hamiltonian and overlap matrices.
    *
-   * These remain empty during matrix-free Davidson optimization and are
-   * materialized once for final reporting or throughout dense reference runs.
+   * These remain empty throughout matrix-free Davidson optimization and
+   * reporting. Dense reference runs materialize them explicitly.
    */
   StructureAccumulationResult structure_matrices;
 };

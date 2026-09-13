@@ -84,6 +84,12 @@ while `EIGENSOLVER=DENSE` selects the explicit dense reference solver. An
 explicit `--optimizer-backend` or `--eigensolver` command-line option overrides
 the corresponding input keyword.
 
+Davidson runs retain only the requested roots, the structure-overlap diagonal,
+and the matrix-free products needed for exact Coulson--Chirgwin weights. Their
+reports omit the full structure Hamiltonian/overlap matrices and the Lowdin and
+inverse weights that require global overlap-matrix functions. Dense reference
+runs retain the complete matrices, spectrum, and all four weight definitions.
+
 ## License
 
 [MIT](LICENSE)

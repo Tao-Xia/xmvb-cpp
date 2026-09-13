@@ -18,14 +18,11 @@ set(required_report_patterns
   "Software development assistance: OpenAI Codex"
   "VBSCF algorithm: nonredundant_truncated_newton"
   "Structure eigensolver[ ]+:[ ]+davidson"
-  "OVERLAP OF VB STRUCTURES"
-  "1[ ]+1\\.000000[ ]+0\\.368[0-9]+[ ]+0\\.368[0-9]+"
-  "HAMILTONIAN OF VB STRUCTURES"
+  "Full structure Hamiltonian and overlap matrices are omitted"
   "COEFFICIENTS OF DETERMINANTS WITHOUT NORMALIZED"
   "Coulson-Chirgwin Weights"
-  "Lowdin Weights"
-  "Inverse Weights"
   "Renormalized Weights"
+  "Lowdin and inverse weights are omitted"
   "ORBITALS IN PRIMITIVE BASIS FUNCTIONS"
   "[ ]PX[ ]"
   "COMPUTED NATURAL ORBITALS"
@@ -45,5 +42,35 @@ foreach(pattern IN LISTS required_report_patterns)
   if (NOT xmvb_report MATCHES "${pattern}")
     message(FATAL_ERROR
       "F2 report is missing required pattern: ${pattern}")
+  endif()
+endforeach()
+
+foreach(forbidden_pattern IN ITEMS
+    "OVERLAP OF VB STRUCTURES"
+    "HAMILTONIAN OF VB STRUCTURES"
+    "Lowdin Weights"
+    "Inverse Weights")
+  if (xmvb_report MATCHES "${forbidden_pattern}")
+    message(FATAL_ERROR
+      "F2 Davidson report unexpectedly contains: ${forbidden_pattern}")
+  endif()
+endforeach()
+
+execute_process(
+  COMMAND "${XMVB_EXECUTABLE}" "${XMVB_INPUT}" --eigensolver dense
+  RESULT_VARIABLE dense_status
+  OUTPUT_VARIABLE dense_report
+  ERROR_VARIABLE dense_errors)
+if (NOT dense_status EQUAL 0)
+  message(FATAL_ERROR
+    "F2 dense report run failed with status ${dense_status}:\n${dense_errors}")
+endif()
+foreach(dense_pattern IN ITEMS
+    "OVERLAP OF VB STRUCTURES"
+    "HAMILTONIAN OF VB STRUCTURES"
+    "Lowdin Weights"
+    "Inverse Weights")
+  if (NOT dense_report MATCHES "${dense_pattern}")
+    message(FATAL_ERROR "F2 dense report is missing: ${dense_pattern}")
   endif()
 endforeach()

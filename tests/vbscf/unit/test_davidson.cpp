@@ -139,6 +139,12 @@ bool run_case(
       result.eigenpairs.eigenvector_matrix,
       problem.overlap,
       n_roots);
+  const Eigen::Map<const Eigen::MatrixXd> computed_roots(
+      result.eigenpairs.eigenvector_matrix.data(), dimension, n_roots);
+  const double overlap_image_error =
+      (result.overlap_eigenvectors - problem.overlap * computed_roots)
+          .cwiseAbs()
+          .maxCoeff();
   const double max_residual = *std::max_element(
       result.relative_residual_norms.begin(),
       result.relative_residual_norms.end());
@@ -146,6 +152,7 @@ bool run_case(
       eigenvalue_error <= 1.0e-8 &&
       eigenvector_error <= eigenvector_tolerance &&
       orthonormality_error <= 1.0e-10 &&
+      overlap_image_error <= 1.0e-12 &&
       max_residual <= options.residual_tolerance;
 
   std::cout << label
@@ -157,6 +164,7 @@ bool run_case(
             << " eigenvalue_error=" << eigenvalue_error
             << " eigenvector_error=" << eigenvector_error
             << " s_orthonormality_error=" << orthonormality_error
+            << " overlap_image_error=" << overlap_image_error
             << " residual=" << max_residual
             << (passed ? " PASS\n" : " FAIL\n");
   return passed;

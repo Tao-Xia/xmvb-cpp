@@ -491,6 +491,7 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
       result.eigenpairs.eigenvector_matrix.assign(
           root_vectors.data(),
           root_vectors.data() + root_vectors.size());
+      result.overlap_eigenvectors = overlap_root_vectors;
       return result;
     }
 
