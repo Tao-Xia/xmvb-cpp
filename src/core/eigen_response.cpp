@@ -201,6 +201,7 @@ EigenResponseResult solve_generalized_eigen_response(
     for (Eigen::Index state = 0; state < n_selected; ++state) {
       if (converged[static_cast<std::size_t>(state)]) {
         w_new.col(state).setZero();
+        w.col(state).setZero();
         continue;
       }
       const double beta = beta_new[state];
@@ -277,7 +278,57 @@ EigenResponseResult solve_generalized_eigen_response(
       }
     }
     if (all_converged) {
-      break;
+      const Eigen::MatrixXd checked_images = apply_bordered_operators(
+          action,
+          selected_eigenvalues,
+          overlap_selected,
+          solution,
+          &result.block_actions);
+      bool all_true_residuals_converged = true;
+      for (Eigen::Index state = 0; state < n_selected; ++state) {
+        if (rhs_norms[state] == 0.0) {
+          continue;
+        }
+        const Eigen::VectorXd true_residual =
+            rhs.col(state) - checked_images.col(state);
+        if (true_residual.norm() <=
+            options.relative_residual_tolerance * rhs_norms[state]) {
+          continue;
+        }
+
+        // Restart only a column whose recursively estimated MINRES residual
+        // was optimistic. This reliable update preserves the current solution
+        // while preventing loss of Lanczos orthogonality from silently
+        // accepting an inaccurate response.
+        all_true_residuals_converged = false;
+        converged[static_cast<std::size_t>(state)] = false;
+        v_old.col(state).setZero();
+        v.col(state).setZero();
+        v_new.col(state) = true_residual;
+        w_new.col(state) =
+            inverse_preconditioner.col(state).array() *
+            true_residual.array();
+        p_older.col(state).setZero();
+        p_old.col(state).setZero();
+        p.col(state).setZero();
+        const double beta_squared =
+            true_residual.dot(w_new.col(state));
+        if (!(beta_squared > 0.0) || !std::isfinite(beta_squared)) {
+          throw std::runtime_error(
+              "generalized-eigen response reliable restart failed");
+        }
+        beta_new[state] = std::sqrt(beta_squared);
+        beta_first[state] = beta_new[state];
+        residual_norms[state] = true_residual.norm();
+        cosine[state] = 1.0;
+        old_cosine[state] = 1.0;
+        sine[state] = 0.0;
+        old_sine[state] = 0.0;
+        eta[state] = 1.0;
+      }
+      if (all_true_residuals_converged) {
+        break;
+      }
     }
   }
 

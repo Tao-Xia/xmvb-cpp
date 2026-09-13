@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "core/eigen_response.hpp"
 #include "core/eigensolver.hpp"
 #include "input/loading/loader.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -281,6 +282,56 @@ int main(int argc, char** argv) {
         compact_diagonal.overlap,
         davidson_options);
     const auto davidson_end = std::chrono::high_resolution_clock::now();
+
+    const Eigen::Map<const Eigen::MatrixXd> dense_eigenvectors(
+        dense_eigenpairs.eigenvector_matrix.data(),
+        n_structures,
+        n_structures);
+    Eigen::VectorXd selected_energy(1);
+    selected_energy[0] = dense_eigenpairs.eigenvalues[0];
+    const Eigen::MatrixXd selected_vector = dense_eigenvectors.leftCols(1);
+    Eigen::MatrixXd delta_hamiltonian_selected(n_structures, 1);
+    Eigen::MatrixXd delta_overlap_selected(n_structures, 1);
+    for (int structure = 0; structure < n_structures; ++structure) {
+      delta_hamiltonian_selected(structure, 0) =
+          std::sin(0.017 * static_cast<double>(structure + 1));
+      delta_overlap_selected(structure, 0) =
+          0.01 * std::cos(0.023 * static_cast<double>(structure + 1));
+    }
+    const auto response_start = std::chrono::high_resolution_clock::now();
+    const auto matrix_free_response =
+        xmvb::core::solve_generalized_eigen_response(
+            davidson_action,
+            compact_diagonal.hamiltonian,
+            compact_diagonal.overlap,
+            selected_energy,
+            selected_vector,
+            delta_hamiltonian_selected,
+            delta_overlap_selected,
+            xmvb::core::EigenResponseOptions{
+                n_structures + 1,
+                std::pow(
+                    std::numeric_limits<double>::epsilon(),
+                    2.0 / 3.0)});
+    const auto response_end = std::chrono::high_resolution_clock::now();
+    const Eigen::VectorXd transformed_hamiltonian =
+        dense_eigenvectors.transpose() * delta_hamiltonian_selected;
+    const Eigen::VectorXd transformed_overlap =
+        dense_eigenvectors.transpose() * delta_overlap_selected;
+    Eigen::VectorXd spectral_rotation = Eigen::VectorXd::Zero(n_structures);
+    spectral_rotation[0] = -0.5 * transformed_overlap[0];
+    for (int state = 1; state < n_structures; ++state) {
+      spectral_rotation[state] =
+          (transformed_hamiltonian[state] -
+           selected_energy[0] * transformed_overlap[state]) /
+          (selected_energy[0] - dense_eigenpairs.eigenvalues[state]);
+    }
+    const Eigen::VectorXd spectral_response =
+        dense_eigenvectors * spectral_rotation;
+    const double response_vector_error =
+        (matrix_free_response.eigenvector_response.col(0) - spectral_response)
+            .cwiseAbs()
+            .maxCoeff();
     const auto exact_same_spin_pair_cache = xmvb::vb::build_same_spin_pair_cache_context(
         load_result.input.structure_data.alpha_det,
         load_result.input.structure_data.beta_det,
@@ -420,6 +471,16 @@ int main(int argc, char** argv) {
               << '\n';
     std::cout << "davidson_ground_state_relative_residual = "
               << davidson.relative_residual_norms.front() << '\n';
+    std::cout << "matrix_free_eigen_response_seconds = "
+              << std::chrono::duration<double>(response_end - response_start)
+                     .count()
+              << '\n';
+    std::cout << "matrix_free_eigen_response_actions = "
+              << matrix_free_response.block_actions << '\n';
+    std::cout << "matrix_free_eigen_response_residual = "
+              << matrix_free_response.relative_residual_norms[0] << '\n';
+    std::cout << "matrix_free_eigen_response_max_abs_diff = "
+              << response_vector_error << '\n';
     std::cout << "fast_exact_result_seconds = "
               << std::chrono::duration<double>(fast_exact_end - fast_exact_start).count()
               << '\n';
