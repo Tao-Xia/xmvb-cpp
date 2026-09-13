@@ -8,6 +8,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/core/contracts/input.hpp"
+#include "vbscf/core/contracts/eigensolver.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital/result.hpp"
@@ -48,6 +49,7 @@ class VbScfObjective {
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy,
+      StructureEigensolver structure_eigensolver,
       const OrbitalGradientEvaluator* orbital_gradient_evaluator,
       const VbScfEvaluator* scf_evaluator);
 
@@ -79,6 +81,9 @@ class VbScfObjective {
 
   /** @brief Populates the reference-energy gradient at the accepted point. */
   void ensure_reference_gradient();
+
+  /** @brief Materializes the accepted full structure spectrum for diagnostics. */
+  void ensure_dense_scf_result();
 
   const std::vector<double>& energy_history() const { return energy_history_; }
   const std::vector<double>& gradient_inf_norm_history() const {
@@ -127,6 +132,8 @@ class VbScfObjective {
   std::vector<int> state_indices_;
   std::vector<double> state_weights_;
   double nuclear_repulsion_ = 0.0;
+  StructureEigensolver structure_eigensolver_ =
+      StructureEigensolver::Davidson;
   const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
   const VbScfEvaluator* scf_ = nullptr;
 

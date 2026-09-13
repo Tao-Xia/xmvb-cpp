@@ -214,10 +214,29 @@ bool run_recycled_case() {
   return passed;
 }
 
+bool run_default_option_cases() {
+  const auto small = xmvb::core::make_davidson_options(3, 2);
+  const auto large = xmvb::core::make_davidson_options(10000, 4);
+  const bool passed =
+      small.n_roots == 2 &&
+      small.max_subspace_dimension == 3 &&
+      small.max_iterations >= 3 &&
+      small.residual_tolerance > 0.0 &&
+      large.n_roots == 4 &&
+      large.max_subspace_dimension < 10000 &&
+      large.max_subspace_dimension >= 2 * large.n_roots;
+  std::cout << "default Davidson budgets"
+            << " small_subspace=" << small.max_subspace_dimension
+            << " large_subspace=" << large.max_subspace_dimension
+            << (passed ? " PASS\n" : " FAIL\n");
+  return passed;
+}
+
 }  // namespace
 
 int main() {
   bool passed = true;
+  passed = run_default_option_cases() && passed;
   for (const int dimension : {80, 120, 200, 400, 600}) {
     for (const int n_roots : {1, 3, 5, 8}) {
       passed = run_case(

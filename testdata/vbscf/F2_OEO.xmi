@@ -2,6 +2,7 @@ F2 full-AO OEO derivative regression (distinct from the HAO benchmark)
 $CTRL
 VBSCF
 STR=FULL NAO=2 NAE=2 ISCF=7
+EIGENSOLVER=DAVIDSON
 ORBTYP=OEO FRGTYP=SAO
 INT=LIBCINT BASIS=CC-PVDZ
 $END

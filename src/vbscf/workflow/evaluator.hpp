@@ -5,6 +5,7 @@
 #include <Eigen/Core>
 
 #include "core/eigensolver.hpp"
+#include "vbscf/core/contracts/eigensolver.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/evaluation/evaluator.hpp"
 #include "vbscf/core/contracts/result.hpp"
@@ -72,6 +73,7 @@ public:
       const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
+      StructureEigensolver structure_eigensolver,
       const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
       double nuclear_repulsion_energy) const;
 

@@ -4,6 +4,7 @@
 
 #include "vbscf/optimization/driver/backend.hpp"
 #include "vbscf/optimization/driver/result.hpp"
+#include "vbscf/core/contracts/eigensolver.hpp"
 
 namespace xmvb::vb {
 
@@ -16,6 +17,9 @@ struct VbScfOptimizerOptions {
    */
   VbScfOptimizerBackend backend =
       VbScfOptimizerBackend::NonredundantLbfgspp;
+
+  /** @brief Structure-space eigensolver used by objective evaluations. */
+  StructureEigensolver structure_eigensolver = StructureEigensolver::Davidson;
 
   /**
    * @brief Maximum number of accepted optimization iterations.
@@ -88,7 +92,7 @@ struct VbScfOptimizerOptions {
   /**
    * @brief Whether to retain accepted-iterate trace snapshots in memory.
    */
-  bool retain_accepted_iteration_trace = true;
+  bool retain_accepted_iteration_trace = false;
 
   /**
    * @brief Whether accepted-iteration callbacks require the `E11` orbital gradient.
@@ -107,7 +111,7 @@ struct VbScfOptimizerOptions {
    * copying structure matrices, orbital tables, and active-space buffers on
    * every accepted step.
    */
-  bool accepted_iteration_callback_requires_full_snapshot = true;
+  bool accepted_iteration_callback_requires_full_snapshot = false;
 
   /**
    * @brief Optional callback invoked for the initial point and each accepted outer step.

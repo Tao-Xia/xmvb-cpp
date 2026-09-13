@@ -78,6 +78,11 @@ struct AcceptedPointContext {
   Eigen::MatrixXd selected_state_eigenvectors;
 
   /**
+   * @brief Consecutive lowest roots retained for Davidson recycling.
+   */
+  Eigen::MatrixXd root_eigenvectors;
+
+  /**
    * @brief State-dependent determinant coefficient matrices on unique-spin space.
    */
   SelectedStateDeterminantMatrices selected_state_matrices;

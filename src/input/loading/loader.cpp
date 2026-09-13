@@ -586,6 +586,8 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
           ? input_deck_metadata.requested_scf_max_iterations
           : 2000;
   load_result.scf_optimizer = input_deck_metadata.scf_optimizer;
+  load_result.structure_eigensolver =
+      input_deck_metadata.structure_eigensolver;
   load_result.request_molden_output = input_deck_metadata.request_molden_output;
   result.standard_two_electron_mode = load_result.standard_two_electron_mode;
   result.orbital_preparation_input.n_basis_functions = static_topology.n_basis_functions;

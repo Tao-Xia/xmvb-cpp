@@ -3,7 +3,10 @@
 #include <chrono>
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "vbscf/core/contracts/input.hpp"
+#include "vbscf/core/contracts/eigensolver.hpp"
 #include "vbscf/integrals/active/matrix/backpropagator.hpp"
 #include "vbscf/orbitals/pullback/operator.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
@@ -99,6 +102,15 @@ public:
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;
+
+  /** @brief Evaluates selected structure roots with the requested eigensolver. */
+  OrbitalGradientResult evaluate_without_reference_energy_gradient(
+      const VbScfInput& input,
+      const std::vector<int>& selected_state_indices,
+      const std::vector<double>& state_average_weights,
+      double nuclear_repulsion_energy,
+      StructureEigensolver structure_eigensolver,
+      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
 
   /**
    * @brief Evaluates the orbital gradient pullback from a precomputed active-space result.

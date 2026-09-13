@@ -195,6 +195,19 @@ void apply_ctrl_assignment(
         "unsupported ISCF value " + raw_value +
         "; use ISCF=5 for L-BFGS or ISCF=7 for TNHVP");
   }
+  if (key == "EIGENSOLVER") {
+    if (value_upper == "DAVIDSON") {
+      metadata->structure_eigensolver = StructureEigensolver::Davidson;
+      return;
+    }
+    if (value_upper == "DENSE") {
+      metadata->structure_eigensolver = StructureEigensolver::Dense;
+      return;
+    }
+    throw std::invalid_argument(
+        "unsupported EIGENSOLVER value " + raw_value +
+        "; use EIGENSOLVER=DAVIDSON or EIGENSOLVER=DENSE");
+  }
   if (key == "BASIS") {
     metadata->basis_name = to_ascii_lower(raw_value);
     return;

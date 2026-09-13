@@ -10,6 +10,7 @@ nao=8
 nae=9
 iprint=3
 iscf=7
+eigensolver=davidson
 itmax=2000
 nmul=6
 orbtyp=hao

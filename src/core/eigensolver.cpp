@@ -111,7 +111,8 @@ void validate_davidson_options(
     throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
   }
   if (options.max_iterations <= 0 ||
-      options.max_subspace_dimension < 2 * options.n_roots ||
+      options.max_subspace_dimension <
+          std::min(dimension, 2 * options.n_roots) ||
       options.max_subspace_dimension > dimension) {
     throw std::invalid_argument("invalid Davidson iteration or subspace budget");
   }
@@ -290,6 +291,24 @@ void update_projected_hamiltonian(
 }
 
 }  // namespace
+
+DavidsonOptions make_davidson_options(int dimension, int n_roots) {
+  if (dimension <= 0 || n_roots <= 0 || n_roots > dimension) {
+    throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
+  }
+  const int root_block = std::min(dimension, 2 * n_roots);
+  const int dimension_increment =
+      static_cast<int>(std::ceil(
+          std::sqrt(static_cast<double>(dimension)) *
+          std::log1p(static_cast<double>(dimension))));
+  return DavidsonOptions{
+      n_roots,
+      2 * dimension,
+      std::min(
+          dimension,
+          std::max(root_block, n_roots + dimension_increment)),
+      std::pow(std::numeric_limits<double>::epsilon(), 2.0 / 3.0)};
+}
 
 GeneralizedEigenResult GeneralizedEigensolver::solve_dense(
     const std::vector<double>& hamiltonian_matrix,

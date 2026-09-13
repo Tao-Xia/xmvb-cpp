@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -18,6 +19,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
+#include "vbscf/structures/assembly/action.hpp"
 
 namespace xmvb::vb {
 
@@ -26,8 +28,12 @@ namespace {
 struct ActiveSpaceGradientForwardContext {
   TimedPreparedActiveSpaceContext timed_active_space_context;
   SameSpinPairCacheContext same_spin_pair_cache;
+  std::optional<StructureAction> structure_action;
   StructureAccumulationResult structure_matrices;
   xmvb::core::GeneralizedEigenResult eigen_result;
+  Eigen::MatrixXd selected_state_eigenvectors;
+  std::vector<double> selected_state_energies;
+  double average_structure_overlap = 0.0;
   double structure_matrix_wall_time_seconds = 0.0;
   double eigensolver_wall_time_seconds = 0.0;
 };
@@ -96,8 +102,131 @@ double selected_state_average_energy(
   return energy;
 }
 
+int required_root_count(const std::vector<int>& selected_state_indices) {
+  return *std::max_element(
+             selected_state_indices.begin(),
+             selected_state_indices.end()) +
+      1;
+}
+
+void select_structure_states(
+    int n_structures,
+    const std::vector<int>& selected_state_indices,
+    ActiveSpaceGradientForwardContext* context) {
+  const int n_roots = static_cast<int>(context->eigen_result.eigenvalues.size());
+  if (n_roots < required_root_count(selected_state_indices) ||
+      context->eigen_result.eigenvector_matrix.size() !=
+          static_cast<std::size_t>(n_structures) * n_roots) {
+    throw std::runtime_error(
+        "structure eigensolver returned inconsistent selected-root dimensions");
+  }
+  const Eigen::Map<const Eigen::MatrixXd> roots(
+      context->eigen_result.eigenvector_matrix.data(),
+      n_structures,
+      n_roots);
+  context->selected_state_eigenvectors.resize(
+      n_structures,
+      static_cast<int>(selected_state_indices.size()));
+  context->selected_state_energies.resize(selected_state_indices.size());
+  for (std::size_t state = 0; state < selected_state_indices.size(); ++state) {
+    const int root = selected_state_indices[state];
+    context->selected_state_eigenvectors.col(static_cast<int>(state)) =
+        roots.col(root);
+    context->selected_state_energies[state] =
+        context->eigen_result.eigenvalues[static_cast<std::size_t>(root)];
+  }
+}
+
+void solve_structure_problem(
+    const VbScfInput& input,
+    const std::vector<int>& selected_state_indices,
+    StructureEigensolver structure_eigensolver,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+    const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
+    const xmvb::core::GeneralizedEigensolver& generalized_eigensolver,
+    ActiveSpaceGradientForwardContext* context) {
+  const auto& prepared = context->timed_active_space_context.prepared_active_space;
+  const int n_structures = input.structure_data.n_structures;
+  const int n_roots = required_root_count(selected_state_indices);
+  auto stage_start_time = std::chrono::steady_clock::now();
+
+  if (structure_eigensolver == StructureEigensolver::Dense) {
+    context->structure_matrices = structure_builder.build(
+        input.structure_data.alpha_det,
+        input.structure_data.beta_det,
+        input.structure_data.determinant_to_structure_terms,
+        prepared.orbital_result.active_orbital_overlap_matrix,
+        prepared.active_space_one_electron_result.h1e_act,
+        input.orbital_preparation_input.n_active_orbitals,
+        prepared.active_space_two_electron_result,
+        n_structures,
+        context->same_spin_pair_cache);
+    context->structure_matrix_wall_time_seconds =
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - stage_start_time)
+            .count();
+    context->average_structure_overlap = compute_average_structure_overlap(
+        context->structure_matrices.overlap_matrix,
+        n_structures);
+    stage_start_time = std::chrono::steady_clock::now();
+    context->eigen_result = generalized_eigensolver.solve_dense(
+        context->structure_matrices.hamiltonian_matrix,
+        context->structure_matrices.overlap_matrix,
+        n_structures);
+  } else {
+    context->structure_action.emplace(
+        input.structure_data.determinant_to_structure_terms,
+        n_structures,
+        context->same_spin_pair_cache,
+        prepared.active_space_two_electron_result,
+        input.orbital_preparation_input.n_active_orbitals);
+    context->structure_matrix_wall_time_seconds =
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - stage_start_time)
+            .count();
+    const StructureAction& structure_action = *context->structure_action;
+    context->average_structure_overlap =
+        structure_action.diagonal().overlap.mean();
+    const xmvb::core::GeneralizedEigenAction action =
+        [&structure_action](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+          StructureActionResult images = structure_action.apply(vectors);
+          return xmvb::core::GeneralizedEigenActionResult{
+              std::move(images.hamiltonian),
+              std::move(images.overlap)};
+        };
+    const xmvb::core::DavidsonOptions options =
+        xmvb::core::make_davidson_options(n_structures, n_roots);
+    stage_start_time = std::chrono::steady_clock::now();
+    const bool can_recycle =
+        initial_eigenvectors.rows() == n_structures &&
+        initial_eigenvectors.cols() >= n_roots &&
+        initial_eigenvectors.allFinite();
+    xmvb::core::DavidsonResult davidson = can_recycle
+        ? generalized_eigensolver.solve_davidson(
+              action,
+              structure_action.diagonal().hamiltonian,
+              structure_action.diagonal().overlap,
+              initial_eigenvectors.leftCols(n_roots),
+              options)
+        : generalized_eigensolver.solve_davidson(
+              action,
+              structure_action.diagonal().hamiltonian,
+              structure_action.diagonal().overlap,
+              options);
+    context->eigen_result = std::move(davidson.eigenpairs);
+  }
+  context->eigensolver_wall_time_seconds =
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - stage_start_time)
+          .count();
+  select_structure_states(n_structures, selected_state_indices, context);
+}
+
 ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
     const VbScfInput& input,
+    const std::vector<int>& selected_state_indices,
+    StructureEigensolver structure_eigensolver,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     const ActiveSpaceOrbitalPreparer& orbital_preparer,
     const AoEffectiveOneElectronBuilder& ao_effective_one_electron_builder,
     const ActiveSpaceOneElectronBuilder& active_space_one_electron_builder,
@@ -135,33 +264,23 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
         input.orbital_preparation_input.n_active_orbitals,
         prepared_active_space.active_space_two_electron_result);
   }
-  auto stage_start_time = std::chrono::steady_clock::now();
-  context.structure_matrices = structure_builder.build(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
-      input.structure_data.determinant_to_structure_terms,
-      prepared_active_space.orbital_result.active_orbital_overlap_matrix,
-      prepared_active_space.active_space_one_electron_result.h1e_act,
-      input.orbital_preparation_input.n_active_orbitals,
-      prepared_active_space.active_space_two_electron_result,
-      input.structure_data.n_structures,
-      context.same_spin_pair_cache);
-  context.structure_matrix_wall_time_seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
-
-  stage_start_time = std::chrono::steady_clock::now();
-  context.eigen_result = generalized_eigensolver.solve_dense(
-      context.structure_matrices.hamiltonian_matrix,
-      context.structure_matrices.overlap_matrix,
-      input.structure_data.n_structures);
-  context.eigensolver_wall_time_seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
+  solve_structure_problem(
+      input,
+      selected_state_indices,
+      structure_eigensolver,
+      initial_eigenvectors,
+      structure_builder,
+      generalized_eigensolver,
+      &context);
   return context;
 }
 
 ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
     const VbScfInput& input,
     TimedPreparedActiveSpaceContext timed_active_space_context,
+    const std::vector<int>& selected_state_indices,
+    StructureEigensolver structure_eigensolver,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
     const xmvb::core::GeneralizedEigensolver& generalized_eigensolver) {
   ActiveSpaceGradientForwardContext context;
@@ -190,27 +309,14 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
         prepared_active_space.active_space_two_electron_result);
   }
 
-  auto stage_start_time = std::chrono::steady_clock::now();
-  context.structure_matrices = structure_builder.build(
-      input.structure_data.alpha_det,
-      input.structure_data.beta_det,
-      input.structure_data.determinant_to_structure_terms,
-      prepared_active_space.orbital_result.active_orbital_overlap_matrix,
-      prepared_active_space.active_space_one_electron_result.h1e_act,
-      input.orbital_preparation_input.n_active_orbitals,
-      prepared_active_space.active_space_two_electron_result,
-      input.structure_data.n_structures,
-      context.same_spin_pair_cache);
-  context.structure_matrix_wall_time_seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
-
-  stage_start_time = std::chrono::steady_clock::now();
-  context.eigen_result = generalized_eigensolver.solve_dense(
-      context.structure_matrices.hamiltonian_matrix,
-      context.structure_matrices.overlap_matrix,
-      input.structure_data.n_structures);
-  context.eigensolver_wall_time_seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - stage_start_time).count();
+  solve_structure_problem(
+      input,
+      selected_state_indices,
+      structure_eigensolver,
+      initial_eigenvectors,
+      structure_builder,
+      generalized_eigensolver,
+      &context);
   return context;
 }
 
@@ -232,12 +338,16 @@ finalize_active_space_second_order_context(
   context->prepared_active_space =
       std::move(forward_context->timed_active_space_context.prepared_active_space);
   context->same_spin_pair_cache = std::move(forward_context->same_spin_pair_cache);
-  context->structure_action.emplace(
-      input.structure_data.determinant_to_structure_terms,
-      input.structure_data.n_structures,
-      context->same_spin_pair_cache,
-      context->prepared_active_space.active_space_two_electron_result,
-      input.orbital_preparation_input.n_active_orbitals);
+  if (forward_context->structure_action.has_value()) {
+    context->structure_action = std::move(forward_context->structure_action);
+  } else {
+    context->structure_action.emplace(
+        input.structure_data.determinant_to_structure_terms,
+        input.structure_data.n_structures,
+        context->same_spin_pair_cache,
+        context->prepared_active_space.active_space_two_electron_result,
+        input.orbital_preparation_input.n_active_orbitals);
+  }
   context->active_orbital_overlap_gradient =
       gradient_result.active_orbital_overlap_gradient;
   context->active_one_electron_gradient =
@@ -252,20 +362,17 @@ finalize_active_space_second_order_context(
       context->same_spin_pair_cache.enabled();
   context->use_matrix_form_opposite_spin =
       context->same_spin_pair_cache.enabled();
-  context->selected_state_energies = gather_selected_state_energies(
-      forward_context->eigen_result.eigenvalues,
-      selected_state_indices);
-  const Eigen::Map<const Eigen::MatrixXd> accepted_eigenvectors(
+  context->selected_state_energies =
+      std::move(forward_context->selected_state_energies);
+  context->selected_state_eigenvectors =
+      std::move(forward_context->selected_state_eigenvectors);
+  const int n_roots =
+      static_cast<int>(forward_context->eigen_result.eigenvalues.size());
+  const Eigen::Map<const Eigen::MatrixXd> accepted_roots(
       forward_context->eigen_result.eigenvector_matrix.data(),
       context->n_structures,
-      context->n_structures);
-  context->selected_state_eigenvectors.resize(
-      context->n_structures,
-      static_cast<int>(selected_state_indices.size()));
-  for (std::size_t state = 0; state < selected_state_indices.size(); ++state) {
-    context->selected_state_eigenvectors.col(state) =
-        accepted_eigenvectors.col(selected_state_indices[state]);
-  }
+      n_roots);
+  context->root_eigenvectors = accepted_roots;
   if (context->use_matrix_form_opposite_spin) {
     context->selected_state_matrices =
         build_selected_state_determinant_matrices_from_selected_columns(
@@ -295,9 +402,8 @@ void populate_scf_result(
   scf_result->selected_state_indices = selected_state_indices;
   scf_result->state_average_weights = normalized_weights;
   scf_result->structure_matrices = structure_matrices;
-  scf_result->average_structure_overlap = compute_average_structure_overlap(
-      structure_matrices.overlap_matrix,
-      input.structure_data.n_structures);
+  scf_result->average_structure_overlap =
+      forward_context.average_structure_overlap;
   scf_result->electronic_state_energies = eigen_result.eigenvalues;
   scf_result->eigenvector_matrix = eigen_result.eigenvector_matrix;
   scf_result->one_electron_reference_energy =
@@ -398,16 +504,14 @@ void accumulate_active_space_gradient(
   }
 
   const SelectedStateDeterminantMatrices selected_state_matrices =
-      build_selected_state_determinant_matrices_from_normalized_weights(
+      build_selected_state_determinant_matrices_from_selected_columns(
           input.structure_data,
-          forward_context.eigen_result.eigenvector_matrix,
+          forward_context.selected_state_eigenvectors,
           selected_state_indices,
           normalized_weights,
           same_spin_pair_cache);
-  const std::vector<double> selected_state_energies =
-      gather_selected_state_energies(
-          forward_context.eigen_result.eigenvalues,
-          selected_state_indices);
+  const std::vector<double>& selected_state_energies =
+      forward_context.selected_state_energies;
   const SameSpinMatrixBackwardContribution same_spin_contribution =
       build_same_spin_matrix_backward_contribution(
           same_spin_pair_cache,
@@ -475,6 +579,23 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy) const {
+  const Eigen::MatrixXd no_initial_eigenvectors;
+  return evaluate(
+      input,
+      selected_state_indices,
+      state_average_weights,
+      nuclear_repulsion_energy,
+      StructureEigensolver::Dense,
+      no_initial_eigenvectors);
+}
+
+ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
+    const VbScfInput& input,
+    const std::vector<int>& selected_state_indices,
+    const std::vector<double>& state_average_weights,
+    double nuclear_repulsion_energy,
+    StructureEigensolver structure_eigensolver,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
   const auto total_start_time = std::chrono::steady_clock::now();
   if (input.structure_data.n_structures <= 0) {
     throw std::invalid_argument("input.structure_data.n_structures must be positive");
@@ -487,6 +608,9 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       normalize_state_average_weights_local(state_average_weights);
   auto forward_context = build_active_space_gradient_forward_context(
       input,
+      selected_state_indices,
+      structure_eigensolver,
+      initial_eigenvectors,
       orbital_preparer_,
       ao_effective_one_electron_builder_,
       active_space_one_electron_builder_,
@@ -536,9 +660,13 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
   const std::vector<double> normalized_weights =
       normalize_state_average_weights_local(state_average_weights);
 
+  const Eigen::MatrixXd no_initial_eigenvectors;
   auto forward_context = build_active_space_gradient_forward_context(
       input,
       std::move(timed_prepared_active_space_context),
+      selected_state_indices,
+      StructureEigensolver::Dense,
+      no_initial_eigenvectors,
       structure_builder_,
       generalized_eigensolver_);
   ActiveSpaceGradientResult result;

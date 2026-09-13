@@ -48,6 +48,9 @@ int run(Options command_line) {
         break;
     }
   }
+  if (!command_line.structure_eigensolver_explicit) {
+    options.structure_eigensolver = load_result.structure_eigensolver;
+  }
   if (!user_specified_max_iterations) {
     // Keep the standalone SCF loop aligned with the input deck semantics:
     // `.xmi` `itmax` controls the maximum iteration count, and omitted `itmax`

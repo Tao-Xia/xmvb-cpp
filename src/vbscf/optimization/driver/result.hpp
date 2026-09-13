@@ -251,9 +251,11 @@ struct VbScfOptimizerResult {
   std::vector<TnhvpIterationRecord> tnhvp_iteration_trace;
 
   /**
-   * @brief Accepted-iterate trace with orbital coefficients and exact structure matrices.
+   * @brief Explicitly requested accepted-iterate trace.
    *
    * Entry 0 stores the initial point before any accepted optimization step.
+   * Retention is disabled by default because full snapshots materialize dense
+   * structure matrices and scale quadratically with the structure count.
    */
   std::vector<VbScfAcceptedIterationSnapshot> accepted_iteration_trace;
 

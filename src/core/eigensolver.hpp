@@ -49,6 +49,15 @@ struct DavidsonOptions {
 };
 
 /**
+ * @brief Builds dimension-scaled Davidson budgets for consecutive low roots.
+ *
+ * The subspace grows as `sqrt(n) log(1+n)` and therefore remains subquadratic
+ * in storage for a fixed number of requested roots while allowing robust
+ * restarted convergence on clustered structure spectra.
+ */
+DavidsonOptions make_davidson_options(int dimension, int n_roots);
+
+/**
  * @brief Converged Davidson eigenpairs and solver diagnostics.
  */
 struct DavidsonResult {

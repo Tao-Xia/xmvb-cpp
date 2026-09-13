@@ -16,6 +16,7 @@ struct Options {
   std::string tnhvp_trace_path;
   std::string final_orbitals_path;
   bool optimizer_backend_explicit = false;
+  bool structure_eigensolver_explicit = false;
   bool max_iterations_explicit = false;
 };
 

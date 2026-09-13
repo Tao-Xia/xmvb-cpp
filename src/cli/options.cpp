@@ -35,6 +35,25 @@ void apply_optimizer_backend_argument(
   throw std::invalid_argument("invalid optimizer backend: " + backend_name);
 }
 
+void apply_structure_eigensolver_argument(
+    const std::string& solver_name,
+    xmvb::vb::VbScfOptimizerOptions* options) {
+  if (options == nullptr) {
+    throw std::invalid_argument("optimizer options must not be null");
+  }
+  if (solver_name == "davidson") {
+    options->structure_eigensolver =
+        xmvb::vb::StructureEigensolver::Davidson;
+    return;
+  }
+  if (solver_name == "dense") {
+    options->structure_eigensolver =
+        xmvb::vb::StructureEigensolver::Dense;
+    return;
+  }
+  throw std::invalid_argument("invalid structure eigensolver: " + solver_name);
+}
+
 bool parse_bool_argument(const std::string& value) {
   if (value == "true" || value == "1" || value == "yes") {
     return true;
@@ -85,6 +104,7 @@ void print_usage() {
   std::cerr << "usage: xmvb-cpp.exe <input.xmi> "
                "[--optimizer-backend lbfgspp|nonredundant_projected_gradient|nonredundant_lbfgspp|nonredundant_truncated_newton]"
                " [--max-iterations <count>]"
+               " [--eigensolver davidson|dense]"
                " [--verbose true|false]"
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
@@ -97,7 +117,8 @@ void print_usage() {
                " [--dump-trace-dir <dataset_root>]"
                " [--tnhvp-trace <path.tsv>]"
                " [--dump-final-orbital-value-table-bin <path>]\n"
-               "input optimizer: ISCF=5 selects nonredundant L-BFGS; ISCF=7 selects TNHVP\n";
+               "input optimizer: ISCF=5 selects nonredundant L-BFGS; ISCF=7 selects TNHVP\n"
+               "input eigensolver: EIGENSOLVER=DAVIDSON|DENSE (default DAVIDSON)\n";
 }
 
 }  // namespace
@@ -128,6 +149,7 @@ std::optional<Options> parse_options(int argc, char** argv) {
   std::string tnhvp_trace_path;
   std::string dump_final_orbital_value_table_bin;
   bool user_specified_optimizer_backend = false;
+  bool user_specified_structure_eigensolver = false;
   bool user_specified_max_iterations = false;
   for (int argument_index = 2; argument_index < argc; argument_index += 2) {
     const std::string argument_name = argv[argument_index];
@@ -136,6 +158,9 @@ std::optional<Options> parse_options(int argc, char** argv) {
       if (argument_name == "--optimizer-backend") {
         apply_optimizer_backend_argument(argument_value, &options);
         user_specified_optimizer_backend = true;
+      } else if (argument_name == "--eigensolver") {
+        apply_structure_eigensolver_argument(argument_value, &options);
+        user_specified_structure_eigensolver = true;
       } else if (argument_name == "--max-iterations") {
         user_specified_max_iterations = true;
         options.max_iterations = std::stoi(argument_value);
@@ -185,6 +210,8 @@ std::optional<Options> parse_options(int argc, char** argv) {
   parsed.tnhvp_trace_path = std::move(tnhvp_trace_path);
   parsed.final_orbitals_path = std::move(dump_final_orbital_value_table_bin);
   parsed.optimizer_backend_explicit = user_specified_optimizer_backend;
+  parsed.structure_eigensolver_explicit =
+      user_specified_structure_eigensolver;
   parsed.max_iterations_explicit = user_specified_max_iterations;
   return parsed;
 }

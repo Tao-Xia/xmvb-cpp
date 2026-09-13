@@ -251,6 +251,32 @@ if (BUILD_TESTING)
       WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
       ENVIRONMENT
         "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+  add_test(
+    NAME eigensolver_equivalence_f2
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
+      -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      -P ${CMAKE_SOURCE_DIR}/tests/output/check_eigensolver_equivalence.cmake)
+  set_tests_properties(
+    eigensolver_equivalence_f2
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+  add_test(
+    NAME eigensolver_equivalence_f2_oeo
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
+      -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_OEO.xmi
+      -P ${CMAKE_SOURCE_DIR}/tests/output/check_eigensolver_equivalence.cmake)
+  set_tests_properties(
+    eigensolver_equivalence_f2_oeo
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
 endif()
 
 if (XMVB_BUILD_DEV_TARGETS)

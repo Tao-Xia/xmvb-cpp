@@ -48,11 +48,47 @@ if (NOT iscf5_report MATCHES "VBSCF algorithm: nonredundant_lbfgspp")
   message(FATAL_ERROR "ISCF=5 did not select nonredundant L-BFGS")
 endif()
 
+string(
+  REPLACE
+  "EIGENSOLVER=DAVIDSON"
+  "EIGENSOLVER=DENSE"
+  dense_input_text
+  "${iscf5_input_text}")
+set(dense_input "${XMVB_TRACE_ROOT}/F2_dense.xmi")
+file(WRITE "${dense_input}" "${dense_input_text}")
+execute_process(
+  COMMAND
+    "${XMVB_EXECUTABLE}"
+    "${dense_input}"
+    --gradient-tolerance 1e20
+    --verbose false
+  RESULT_VARIABLE dense_status
+  OUTPUT_VARIABLE dense_report
+  ERROR_VARIABLE dense_errors)
+if (NOT dense_status EQUAL 0)
+  message(FATAL_ERROR
+    "dense eigensolver selection run failed with status ${dense_status}:\n${dense_errors}")
+endif()
+if (NOT dense_report MATCHES "Structure eigensolver[ ]+:[ ]+dense")
+  message(FATAL_ERROR "EIGENSOLVER=DENSE did not select the dense reference")
+endif()
+
 set(initial_metadata "${XMVB_TRACE_ROOT}/F2/steps/step_000000/metadata.json")
 set(first_step_metadata "${XMVB_TRACE_ROOT}/F2/steps/step_000001/metadata.json")
 if (NOT EXISTS "${initial_metadata}" OR NOT EXISTS "${first_step_metadata}")
   message(FATAL_ERROR "F2 TNHVP trace is missing initial or accepted-step metadata")
 endif()
+
+foreach(matrix_name IN ITEMS overlap_matrix_f64.bin hamiltonian_matrix_f64.bin)
+  set(matrix_path "${XMVB_TRACE_ROOT}/F2/steps/step_000001/${matrix_name}")
+  if (NOT EXISTS "${matrix_path}")
+    message(FATAL_ERROR "F2 TNHVP trace is missing ${matrix_name}")
+  endif()
+  file(SIZE "${matrix_path}" matrix_size)
+  if (matrix_size LESS_EQUAL 64)
+    message(FATAL_ERROR "F2 TNHVP trace contains an empty ${matrix_name}")
+  endif()
+endforeach()
 
 file(READ "${initial_metadata}" initial_json)
 file(READ "${first_step_metadata}" first_step_json)

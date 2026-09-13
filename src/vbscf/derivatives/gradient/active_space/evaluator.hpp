@@ -2,7 +2,10 @@
 
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "core/eigensolver.hpp"
+#include "vbscf/core/contracts/eigensolver.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
@@ -62,6 +65,20 @@ public:
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy) const;
+
+  /**
+   * @brief Evaluates selected roots with the requested structure eigensolver.
+   *
+   * `initial_eigenvectors` contains consecutive lowest roots from the current
+   * accepted point and is used only to recycle a Davidson subspace.
+   */
+  ActiveSpaceGradientResult evaluate(
+      const VbScfInput& input,
+      const std::vector<int>& selected_state_indices,
+      const std::vector<double>& state_average_weights,
+      double nuclear_repulsion_energy,
+      StructureEigensolver structure_eigensolver,
+      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
 
   /**
    * @brief Evaluates a state-averaged gradient reusing a prebuilt active-space context.

@@ -52,6 +52,7 @@ struct VbScfInputLoadResult {
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
   RawStructureSource raw_structure_source = RawStructureSource::Unknown;
   InputScfOptimizer scf_optimizer = InputScfOptimizer::Unspecified;
+  StructureEigensolver structure_eigensolver = StructureEigensolver::Davidson;
   int requested_scf_max_iterations = 2000;
   bool request_molden_output = false;
   int source_raw_structure_count = 0;

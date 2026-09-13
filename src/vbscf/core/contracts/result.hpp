@@ -11,8 +11,8 @@ namespace xmvb::vb {
  *
  * This object captures the complete state needed by downstream RDM and
  * gradient code:
- * - full structure Hamiltonian and overlap matrices
- * - generalized eigenvalues and eigenvectors
+ * - optional full structure Hamiltonian and overlap matrices
+ * - consecutive lowest generalized eigenpairs required by the caller
  * - selected-state averaging metadata
  */
 struct VbScfResult {
@@ -47,9 +47,10 @@ struct VbScfResult {
   double average_structure_overlap = 0.0;
 
   /**
-   * @brief All generalized eigenvalues in ascending order.
+   * @brief Available consecutive lowest generalized eigenvalues.
    *
-   * These are electronic energies before adding nuclear repulsion.
+   * Optimization results may retain only the requested low roots. Final
+   * reporting materializes the complete spectrum.
    */
   std::vector<double> electronic_state_energies;
 
@@ -69,12 +70,15 @@ struct VbScfResult {
   std::vector<double> state_average_weights;
 
   /**
-   * @brief Column-major generalized eigenvector matrix.
+   * @brief Column-major generalized eigenvectors aligned with available roots.
    */
   std::vector<double> eigenvector_matrix;
 
   /**
-   * @brief Structure Hamiltonian and overlap matrices.
+   * @brief Optional explicit structure Hamiltonian and overlap matrices.
+   *
+   * These remain empty during matrix-free Davidson optimization and are
+   * materialized once for final reporting or throughout dense reference runs.
    */
   StructureAccumulationResult structure_matrices;
 };

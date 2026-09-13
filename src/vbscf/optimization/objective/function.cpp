@@ -44,13 +44,15 @@ VbScfObjective::VbScfObjective(
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy,
-      const OrbitalGradientEvaluator* orbital_gradient_evaluator,
-      const VbScfEvaluator* scf_evaluator)
+    StructureEigensolver structure_eigensolver,
+    const OrbitalGradientEvaluator* orbital_gradient_evaluator,
+    const VbScfEvaluator* scf_evaluator)
     : input_(std::move(input)),
       layout_(std::move(layout)),
       state_indices_(selected_state_indices),
       state_weights_(state_average_weights),
       nuclear_repulsion_(nuclear_repulsion_energy),
+      structure_eigensolver_(structure_eigensolver),
       gradient_evaluator_(orbital_gradient_evaluator),
       scf_(scf_evaluator) {}
 
@@ -71,6 +73,29 @@ void VbScfObjective::ensure_reference_gradient() {
       &gradient_result_);
 }
 
+void VbScfObjective::ensure_dense_scf_result() {
+  if (scf_ == nullptr) {
+    throw std::runtime_error(
+        "dense accepted-point diagnostics require a live SCF evaluator");
+  }
+  const int n_structures = input_.structure_data.n_structures;
+  const auto& matrices = gradient_result_.scf_result.structure_matrices;
+  const bool already_dense =
+      matrices.hamiltonian_matrix.size() ==
+          static_cast<std::size_t>(n_structures) * n_structures &&
+      matrices.overlap_matrix.size() ==
+          static_cast<std::size_t>(n_structures) * n_structures &&
+      gradient_result_.scf_result.eigenvector_matrix.size() ==
+          static_cast<std::size_t>(n_structures) * n_structures;
+  if (!already_dense) {
+    gradient_result_.scf_result = scf_->evaluate(
+        input_,
+        state_indices_,
+        state_weights_,
+        nuclear_repulsion_);
+  }
+}
+
 VbScfObjective::TrialEvaluation
 VbScfObjective::evaluate_trial(
     const Eigen::VectorXd& parameter_vector) const {
@@ -82,12 +107,19 @@ VbScfObjective::evaluate_trial(
   TrialEvaluation evaluation;
   evaluation.orbital_preparation_input =
       input_.orbital_preparation_input;
+  Eigen::MatrixXd initial_eigenvectors;
+  if (gradient_result_.second_order_context != nullptr) {
+    initial_eigenvectors =
+        gradient_result_.second_order_context->root_eigenvectors;
+  }
   evaluation.gradient_result =
       gradient_evaluator_->evaluate_without_reference_energy_gradient(
           input_,
           state_indices_,
           state_weights_,
-          nuclear_repulsion_);
+          nuclear_repulsion_,
+          structure_eigensolver_,
+          initial_eigenvectors);
   if (evaluation.gradient_result.second_order_context == nullptr) {
     throw std::runtime_error(
         "relaxed orbital gradient did not populate the accepted-point second-order context");
@@ -124,19 +156,12 @@ double VbScfObjective::evaluate_energy_only(
   if (scf_ == nullptr) {
     throw std::runtime_error("energy-only objective evaluation requires a live SCF evaluator");
   }
-  const int n_structures = input_.structure_data.n_structures;
-  const auto& eigenvectors = gradient_result_.scf_result.eigenvector_matrix;
-  const std::size_t expected_size =
-      static_cast<std::size_t>(n_structures) *
-      static_cast<std::size_t>(n_structures);
-  if (n_structures <= 0 || eigenvectors.size() != expected_size) {
+  if (gradient_result_.second_order_context == nullptr) {
     throw std::runtime_error(
         "energy-only objective evaluation requires accepted structure eigenvectors");
   }
-  const Eigen::Map<const Eigen::MatrixXd> accepted_eigenvectors(
-      eigenvectors.data(),
-      n_structures,
-      n_structures);
+  const Eigen::MatrixXd& accepted_eigenvectors =
+      gradient_result_.second_order_context->root_eigenvectors;
   OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
   layout_.unpack(parameter_vector, &trial_orbitals);
   ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
@@ -145,6 +170,7 @@ double VbScfObjective::evaluate_energy_only(
       input_,
       state_indices_,
       state_weights_,
+      structure_eigensolver_,
       accepted_eigenvectors,
       nuclear_repulsion_);
   const double elapsed_seconds =

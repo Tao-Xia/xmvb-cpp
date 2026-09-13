@@ -299,6 +299,9 @@ void print_summary(
   print_log_field("Start time", format_timestamp(command_start_time));
   print_log_field("Finish time", format_timestamp(command_finish_time));
   print_log_field("CPU threads", std::to_string(effective_thread_count));
+  print_log_field(
+      "Structure eigensolver",
+      xmvb::vb::structure_eigensolver_name(options.structure_eigensolver));
   if (trace_sample_directory.has_value()) {
     print_log_field("Trace sample directory", trace_sample_directory->string());
   }

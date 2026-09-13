@@ -1,8 +1,6 @@
 #include "vbscf/workflow/evaluator.hpp"
 
 #include <algorithm>
-#include <cmath>
-#include <limits>
 #include <stdexcept>
 #include <utility>
 
@@ -161,6 +159,7 @@ double VbScfEvaluator::evaluate_energy_only(
     const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& state_average_weights,
+    StructureEigensolver structure_eigensolver,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     double nuclear_repulsion_energy) const {
   if (input.structure_data.n_structures <= 0) {
@@ -181,7 +180,7 @@ double VbScfEvaluator::evaluate_energy_only(
       1;
 
   const auto prepared_active_space = matrix_evaluator_.prepare_active_space(input);
-  if (2 * n_roots > n_structures) {
+  if (structure_eigensolver == StructureEigensolver::Dense) {
     const auto structure_matrices = matrix_evaluator_.evaluate(
         input,
         prepared_active_space);
@@ -223,14 +222,8 @@ double VbScfEvaluator::evaluate_energy_only(
             std::move(images.hamiltonian),
             std::move(images.overlap)};
       };
-  const int max_subspace = std::min(
-      n_structures,
-      std::max(2 * n_roots, n_structures / 3));
-  const xmvb::core::DavidsonOptions options{
-      n_roots,
-      2 * n_structures,
-      max_subspace,
-      std::sqrt(std::numeric_limits<double>::epsilon())};
+  const xmvb::core::DavidsonOptions options =
+      xmvb::core::make_davidson_options(n_structures, n_roots);
   const auto eigen_result = generalized_eigensolver_.solve_davidson(
       action,
       diagonal.hamiltonian,

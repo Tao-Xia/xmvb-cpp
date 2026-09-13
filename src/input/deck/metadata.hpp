@@ -3,6 +3,7 @@
 #include <string>
 
 #include "input/deck/keywords.hpp"
+#include "vbscf/core/contracts/eigensolver.hpp"
 
 namespace xmvb::vb {
 
@@ -36,6 +37,7 @@ struct InputDeckMetadata {
   int total_charge = 0;
   int requested_scf_max_iterations = 0;
   InputScfOptimizer scf_optimizer = InputScfOptimizer::Unspecified;
+  StructureEigensolver structure_eigensolver = StructureEigensolver::Davidson;
   bool geometry_coordinates_in_bohr = false;
   bool request_ri_two_electron_mode = false;
   bool request_molden_output = false;
