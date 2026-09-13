@@ -8,7 +8,6 @@
 
 namespace xmvb::vb {
 
-struct ActiveSpaceTwoElectronResult;
 struct VbScfInput;
 
 /**
@@ -29,7 +28,7 @@ struct ActiveSpaceIntegralDirectionView {
  */
 struct ActiveSpaceIntegralDirectionContext {
   const VbScfInput& input;
-  const ActiveSpaceTwoElectronResult& accepted_two_electron_integrals;
+  const ExactPackedActiveTwoElectronAdjointCache& exact_two_electron_cache;
   const Eigen::MatrixXd& active_auxiliary_orbitals;
   const Eigen::MatrixXd& overlap_times_active_auxiliary_orbitals;
   const Eigen::MatrixXd& effective_h1e_times_active_auxiliary_orbitals;

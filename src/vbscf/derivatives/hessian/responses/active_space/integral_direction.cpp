@@ -88,13 +88,11 @@ ActiveSpaceIntegralDirectionView build_active_space_integral_direction(
         tangent.precomputed_packed_two_electron->data() + packed_size);
   } else {
     compute_exact_packed_active_two_electron_integral_directional_derivative(
-        context.dense_active_coefficients,
+        context.exact_two_electron_cache,
         tangent.dense_active_coefficients,
         context.input.ao_integral_input,
-        n_active_orbitals,
         &workspace->two_electron,
-        &workspace->packed_two_electron,
-        &context.accepted_two_electron_integrals);
+        &workspace->packed_two_electron);
   }
 
   return {

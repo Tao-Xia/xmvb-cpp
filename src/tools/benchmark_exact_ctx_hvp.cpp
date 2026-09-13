@@ -765,11 +765,6 @@ int main(int argc, char** argv) {
     std::cout << std::setprecision(12);
     std::cout << "input = " << options.input_path << '\n';
     std::cout << "orbital_value_table_override = " << options.orbital_value_table_bin_path << '\n';
-    const auto& energies = context.second_order_context->eigen_result.eigenvalues;
-    double nearest_gap = std::numeric_limits<double>::infinity();
-    for (std::size_t j = 1; j < energies.size(); ++j)
-      nearest_gap = std::min(nearest_gap, std::abs(energies[j]-energies[0]));
-    std::cout << "selected_state_nearest_gap = " << nearest_gap << '\n';
     std::cout << "reduced_dimension = "
               << context.reduced_direction.size() << '\n';
     const auto space_diagnostics =

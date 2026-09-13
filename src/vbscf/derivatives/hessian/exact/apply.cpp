@@ -263,8 +263,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         std::chrono::steady_clock::now();
     const ActiveSpaceIntegralDirectionContext integral_direction_context{
         *current_input_,
-        accepted_point_context_->prepared_active_space
-            .active_space_two_electron_result,
+        accepted_exact_two_electron_cache_,
         accepted_active_auxiliary_orbitals_,
         accepted_basis_overlap_times_active_auxiliary_orbitals_,
         accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_,
