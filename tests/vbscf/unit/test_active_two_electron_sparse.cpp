@@ -49,5 +49,8 @@ int main() {
           std::abs(result.packed_active_two_electron_integrals.front() - 2.0) <
               1.0e-14,
       "sparse active-ERI contraction returned the wrong integral");
+  require(
+      result.dense_ao_pair_products.size() == 0,
+      "memory-bounded active-ERI path retained dense AO-pair products");
   return 0;
 }

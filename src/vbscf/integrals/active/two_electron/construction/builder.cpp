@@ -40,6 +40,32 @@ std::size_t packed_active_pair_count(int n_active_orbitals) {
   return n_active * (n_active + 1) / 2;
 }
 
+/**
+ * @brief Decides whether dense pair coefficients and products fit the base
+ * exact-integral problem storage.
+ *
+ * The decision is dimension- and representation-based. It contains no
+ * molecule-specific active-pair threshold: the two dense pair matrices used
+ * during construction may not exceed the storage already required by the AO
+ * pair graph and the packed active tensor.
+ */
+bool retain_dense_pair_products(
+    const AoPairGraph& graph,
+    std::size_t n_ao_pairs,
+    std::size_t n_active_pairs) {
+  const long double pair_workspace_bytes =
+      2.0L * static_cast<long double>(n_ao_pairs) *
+      static_cast<long double>(n_active_pairs) * sizeof(double);
+  const long double graph_bytes =
+      static_cast<long double>(graph.row_offsets.size()) * sizeof(int) +
+      static_cast<long double>(graph.columns.size()) * sizeof(int) +
+      static_cast<long double>(graph.values.size()) * sizeof(double);
+  const long double packed_active_bytes =
+      static_cast<long double>(n_active_pairs) *
+      static_cast<long double>(n_active_pairs + 1) * 0.5L * sizeof(double);
+  return pair_workspace_bytes <= graph_bytes + packed_active_bytes;
+}
+
 std::size_t ao_pair_index(int first, int second) {
   if (first >= second) {
     const std::size_t first_index = static_cast<std::size_t>(first);
@@ -546,7 +572,12 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
 
   const std::size_t n_active_pairs =
       packed_active_pair_count(n_active_orbitals);
-  if (n_active_pairs <= 64) {
+  const std::size_t n_ao_pairs =
+      static_cast<std::size_t>(n_bf) * (n_bf + 1) / 2;
+  if (retain_dense_pair_products(
+          ao_integral_input.pair_graph,
+          n_ao_pairs,
+          n_active_pairs)) {
     const auto dense_active_coefficients =
         build_dense_active_coefficients(
             orbital_preparation_result,
