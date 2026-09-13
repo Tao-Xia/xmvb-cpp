@@ -76,6 +76,8 @@ build_accepted_selected_state_generalized_eigen_response_operator(
   response_operator.selected_columns.reserve(selected_state_count);
   const auto accepted_eigenvector_matrix =
       response_operator.accepted_eigenvector_matrix_view();
+  response_operator.selected_eigenvectors.resize(
+      n_structures, n_selected_states);
 
   Eigen::VectorXd selected_state_weights = Eigen::VectorXd::Zero(n_structures);
   for (std::size_t selected_state_offset = 0;
@@ -101,6 +103,8 @@ build_accepted_selected_state_generalized_eigen_response_operator(
     const double column_energy =
         response_operator.accepted_eigenvalues[column_state];
     const double column_weight = selected_state_weights[column_state];
+    response_operator.selected_eigenvectors.col(selected_state_offset) =
+        accepted_eigenvector_matrix.col(column_state);
 
     AcceptedSelectedStateEigenResponseColumnCache column_cache;
     column_cache.selected_state_index = column_state;
@@ -158,29 +162,32 @@ AcceptedOuterResponseContext build_accepted_outer_response_context(
 
 SelectedStateGeneralizedEigenDirectionalResponse
 AcceptedSelectedStateGeneralizedEigenResponseOperator::apply(
-    const SelectedStateProjectedDirectionalMatrices&
-        projected_directional_structure_matrices) const {
+    const SelectedStateDirectionalStructureImages& directional_images) const {
   const auto accepted_eigenvector_matrix = accepted_eigenvector_matrix_view();
   const int n_structures = accepted_eigenvector_matrix.rows();
   const int n_selected_states = static_cast<int>(selected_columns.size());
   if (accepted_eigenvector_matrix.cols() != n_structures ||
-      accepted_eigenvalues.size() != n_structures) {
+      accepted_eigenvalues.size() != n_structures ||
+      selected_eigenvectors.rows() != n_structures ||
+      selected_eigenvectors.cols() != n_selected_states) {
     throw std::invalid_argument(
         "accepted selected-state eigen-response operator is inconsistent");
   }
-  if (projected_directional_structure_matrices
-              .transformed_delta_hamiltonian_selected.rows() != n_structures ||
-      projected_directional_structure_matrices
-              .transformed_delta_hamiltonian_selected.cols() !=
+  if (directional_images.delta_hamiltonian_selected.rows() != n_structures ||
+      directional_images.delta_hamiltonian_selected.cols() !=
           n_selected_states ||
-      projected_directional_structure_matrices
-              .transformed_delta_overlap_selected.rows() != n_structures ||
-      projected_directional_structure_matrices
-              .transformed_delta_overlap_selected.cols() !=
-          n_selected_states) {
+      directional_images.delta_overlap_selected.rows() != n_structures ||
+      directional_images.delta_overlap_selected.cols() != n_selected_states) {
     throw std::invalid_argument(
-        "projected directional structure dimensions do not match the accepted-point selected-state response operator");
+        "directional structure images do not match the selected-state response operator");
   }
+
+  const Eigen::MatrixXd transformed_delta_hamiltonian_selected =
+      accepted_eigenvector_matrix.transpose() *
+      directional_images.delta_hamiltonian_selected;
+  const Eigen::MatrixXd transformed_delta_overlap_selected =
+      accepted_eigenvector_matrix.transpose() *
+      directional_images.delta_overlap_selected;
 
   SelectedStateGeneralizedEigenDirectionalResponse result;
   result.delta_selected_eigenvector_matrix =
@@ -199,11 +206,9 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply(
     const auto& column_cache =
         selected_columns[static_cast<std::size_t>(selected_state_offset)];
     const auto transformed_delta_hamiltonian_column =
-        projected_directional_structure_matrices
-            .transformed_delta_hamiltonian_selected.col(selected_state_offset);
+        transformed_delta_hamiltonian_selected.col(selected_state_offset);
     const auto transformed_delta_overlap_column =
-        projected_directional_structure_matrices
-            .transformed_delta_overlap_selected.col(selected_state_offset);
+        transformed_delta_overlap_selected.col(selected_state_offset);
 
     Eigen::VectorXd eigenvector_rotation_column =
         Eigen::VectorXd::Zero(n_structures);

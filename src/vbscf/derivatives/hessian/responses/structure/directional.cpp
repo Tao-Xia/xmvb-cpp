@@ -1176,8 +1176,8 @@ void gather_directional_spin_block(
 
 }  // namespace
 
-SelectedStateProjectedDirectionalMatrices
-build_projected_structure_direction(
+SelectedStateDirectionalStructureImages
+build_selected_structure_direction(
     const AcceptedOuterResponseContext& accepted,
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairCache& directional_pair_cache) {
@@ -1211,31 +1211,12 @@ build_projected_structure_direction(
     throw std::invalid_argument(
         "projected directional structure response requires same-spin cache");
   }
-  const std::size_t expected_eigenvector_size =
-      n_structures * n_structures;
-  if (accepted_point_context.eigen_result.eigenvector_matrix.size() !=
-      expected_eigenvector_size) {
+  const auto& selected_eigenvectors =
+      accepted.selected_state_eigen_response_operator.selected_eigenvectors;
+  if (selected_eigenvectors.rows() != n_structures ||
+      selected_eigenvectors.cols() != n_selected_states) {
     throw std::invalid_argument(
-        "accepted-point generalized eigensystem dimensions are inconsistent");
-  }
-
-  const Eigen::Map<const Eigen::MatrixXd> eigenvector_matrix(
-      accepted_point_context.eigen_result.eigenvector_matrix.data(),
-      n_structures,
-      n_structures);
-  const auto& selected_state_indices =
-      accepted_point_context.selected_state_indices;
-  const bool single_selected_state = n_selected_states == 1;
-  const int selected_state_index =
-      single_selected_state ? selected_state_indices.front() : -1;
-  for (int selected_state_offset = 0;
-       selected_state_offset < n_selected_states;
-       ++selected_state_offset) {
-    const int state_index =
-        selected_state_indices[selected_state_offset];
-    if (state_index < 0 || state_index >= n_structures) {
-      throw std::out_of_range("selected state index is out of range");
-    }
+        "accepted selected eigenvectors have inconsistent dimensions");
   }
 
   if (static_cast<int>(coefficient_blocks.size()) != n_structures) {
@@ -1254,10 +1235,10 @@ build_projected_structure_direction(
       make_active_space_two_electron_view(
           accepted_prepared_active_space.active_space_two_electron_result);
 
-  SelectedStateProjectedDirectionalMatrices result;
-  result.transformed_delta_hamiltonian_selected =
+  SelectedStateDirectionalStructureImages result;
+  result.delta_hamiltonian_selected =
       Eigen::MatrixXd::Zero(n_structures, n_selected_states);
-  result.transformed_delta_overlap_selected =
+  result.delta_overlap_selected =
       Eigen::MatrixXd::Zero(n_structures, n_selected_states);
   std::exception_ptr parallel_exception;
   std::atomic<bool> parallel_failed(false);
@@ -1281,19 +1262,16 @@ build_projected_structure_direction(
       n_active_orbitals,
       delta_packed_active_two_electron_integrals,
       beta_directional_pair_data);
-  std::vector<Eigen::MatrixXd> thread_transformed_delta_hamiltonian_selected(
+  std::vector<Eigen::MatrixXd> thread_delta_hamiltonian_selected(
       std::max(1, n_parallel_threads),
       Eigen::MatrixXd::Zero(n_structures, n_selected_states));
-  std::vector<Eigen::MatrixXd> thread_transformed_delta_overlap_selected(
+  std::vector<Eigen::MatrixXd> thread_delta_overlap_selected(
       std::max(1, n_parallel_threads),
       Eigen::MatrixXd::Zero(n_structures, n_selected_states));
 
-// The projected outer-response builder fuses the old
-//   structure-pair scalar accumulation + U^T (delta M) U_sel
-// pipeline into one block contraction. The tile sweeps over determinant
-// supports stay unchanged, but the H/S outputs now live directly in the
-// minimal `(all_states, selected_states)` transformed basis required by the
-// selected-state directional response.
+// Accumulate delta-H C_sel and delta-S C_sel directly from the symmetric
+// structure-pair traversal. This avoids the complete left eigensystem and
+// keeps the directional payload proportional to the number of selected roots.
 #pragma omp parallel if(n_parallel_threads > 1 && n_structures > 2) num_threads(n_parallel_threads)
   {
     int thread_index = 0;
@@ -1326,16 +1304,12 @@ build_projected_structure_direction(
         Eigen::VectorXd::Zero(n_structures);
     Eigen::VectorXd directional_hamiltonian_column =
         Eigen::VectorXd::Zero(n_structures);
-    Eigen::VectorXd transformed_left_hamiltonian =
-        Eigen::VectorXd::Zero(n_structures);
-    Eigen::VectorXd transformed_left_overlap =
-        Eigen::VectorXd::Zero(n_structures);
-    Eigen::MatrixXd& local_transformed_delta_hamiltonian_selected =
-        thread_transformed_delta_hamiltonian_selected[thread_index];
-    Eigen::MatrixXd& local_transformed_delta_overlap_selected =
-        thread_transformed_delta_overlap_selected[thread_index];
+    Eigen::MatrixXd& local_delta_hamiltonian_selected =
+        thread_delta_hamiltonian_selected[thread_index];
+    Eigen::MatrixXd& local_delta_overlap_selected =
+        thread_delta_overlap_selected[thread_index];
 
-// The projected outer-response reduction used to add each thread-local matrix
+// The outer-response reduction used to add each thread-local matrix
 // through one OpenMP critical section. That made the exact_ctx HVP depend on
 // thread arrival order and reproduced the user's 5-step / 16-step / 32-step
 // trajectory drift on the same 32-thread input. Keep the per-thread work local
@@ -1479,91 +1453,29 @@ build_projected_structure_direction(
               directional_hamiltonian;
         }
 
-        const auto directional_hamiltonian_column_head =
-            directional_hamiltonian_column.head(right_structure + 1);
-        const auto directional_overlap_column_head =
-            directional_overlap_column.head(right_structure + 1);
-        transformed_left_hamiltonian.noalias() =
-            eigenvector_matrix.topRows(right_structure + 1).transpose() *
-            directional_hamiltonian_column_head;
-        transformed_left_overlap.noalias() =
-            eigenvector_matrix.topRows(right_structure + 1).transpose() *
-            directional_overlap_column_head;
-        const auto eigenvector_row = eigenvector_matrix.row(right_structure);
-        if (single_selected_state) {
-          const double selected_right_value =
-              eigenvector_row[selected_state_index];
-          local_transformed_delta_hamiltonian_selected.col(0).noalias() +=
-              selected_right_value * transformed_left_hamiltonian;
-          local_transformed_delta_overlap_selected.col(0).noalias() +=
-              selected_right_value * transformed_left_overlap;
-        } else {
-          for (int selected_state_offset = 0;
-               selected_state_offset < n_selected_states;
-               ++selected_state_offset) {
-            const int state_index =
-                selected_state_indices[selected_state_offset];
-            const double selected_right_value =
-                eigenvector_row[state_index];
-            local_transformed_delta_hamiltonian_selected
-                .col(selected_state_offset)
-                .noalias() +=
-                selected_right_value * transformed_left_hamiltonian;
-            local_transformed_delta_overlap_selected
-                .col(selected_state_offset)
-                .noalias() +=
-                selected_right_value * transformed_left_overlap;
-          }
-        }
-
+        const auto selected_right =
+            selected_eigenvectors.row(right_structure);
+        local_delta_hamiltonian_selected
+            .topRows(right_structure + 1)
+            .noalias() +=
+            directional_hamiltonian_column.head(right_structure + 1) *
+            selected_right;
+        local_delta_overlap_selected
+            .topRows(right_structure + 1)
+            .noalias() +=
+            directional_overlap_column.head(right_structure + 1) *
+            selected_right;
         if (right_structure > 0) {
-          const double directional_hamiltonian_diagonal =
-              directional_hamiltonian_column[right_structure];
-          const double directional_overlap_diagonal =
-              directional_overlap_column[right_structure];
-          const auto eigenvector_right_column =
-              eigenvector_matrix.row(right_structure).transpose();
-          if (single_selected_state) {
-            const double transformed_selected_hamiltonian_head =
-                transformed_left_hamiltonian[selected_state_index] -
-                directional_hamiltonian_diagonal *
-                    eigenvector_row[selected_state_index];
-            const double transformed_selected_overlap_head =
-                transformed_left_overlap[selected_state_index] -
-                directional_overlap_diagonal *
-                    eigenvector_row[selected_state_index];
-            local_transformed_delta_hamiltonian_selected.col(0).noalias() +=
-                transformed_selected_hamiltonian_head *
-                eigenvector_right_column;
-            local_transformed_delta_overlap_selected.col(0).noalias() +=
-                transformed_selected_overlap_head *
-                eigenvector_right_column;
-          } else {
-            for (int selected_state_offset = 0;
-                 selected_state_offset < n_selected_states;
-                 ++selected_state_offset) {
-              const int state_index =
-                  selected_state_indices[selected_state_offset];
-              const double transformed_selected_hamiltonian_head =
-                  transformed_left_hamiltonian[state_index] -
-                  directional_hamiltonian_diagonal *
-                      eigenvector_row[state_index];
-              const double transformed_selected_overlap_head =
-                  transformed_left_overlap[state_index] -
-                  directional_overlap_diagonal *
-                      eigenvector_row[state_index];
-              local_transformed_delta_hamiltonian_selected
-                  .col(selected_state_offset)
-                  .noalias() +=
-                  transformed_selected_hamiltonian_head *
-                  eigenvector_right_column;
-              local_transformed_delta_overlap_selected
-                  .col(selected_state_offset)
-                  .noalias() +=
-                  transformed_selected_overlap_head *
-                  eigenvector_right_column;
-            }
-          }
+          local_delta_hamiltonian_selected
+              .row(right_structure)
+              .noalias() +=
+              directional_hamiltonian_column.head(right_structure).transpose() *
+              selected_eigenvectors.topRows(right_structure);
+          local_delta_overlap_selected
+              .row(right_structure)
+              .noalias() +=
+              directional_overlap_column.head(right_structure).transpose() *
+              selected_eigenvectors.topRows(right_structure);
         }
       } catch (...) {
         parallel_failed.store(true, std::memory_order_relaxed);
@@ -1579,12 +1491,12 @@ build_projected_structure_direction(
 
   for (int reduction_thread = 0;
        reduction_thread < static_cast<int>(
-           thread_transformed_delta_hamiltonian_selected.size());
+           thread_delta_hamiltonian_selected.size());
        ++reduction_thread) {
-    result.transformed_delta_hamiltonian_selected +=
-        thread_transformed_delta_hamiltonian_selected[reduction_thread];
-    result.transformed_delta_overlap_selected +=
-        thread_transformed_delta_overlap_selected[reduction_thread];
+    result.delta_hamiltonian_selected +=
+        thread_delta_hamiltonian_selected[reduction_thread];
+    result.delta_overlap_selected +=
+        thread_delta_overlap_selected[reduction_thread];
   }
 
   if (parallel_exception) {
@@ -1603,11 +1515,11 @@ build_projected_structure_direction(
   }
 
   throw_if_nonfinite(
-      result.transformed_delta_hamiltonian_selected,
-      "exact outer-response projected directional Hamiltonian");
+      result.delta_hamiltonian_selected,
+      "exact outer-response directional Hamiltonian images");
   throw_if_nonfinite(
-      result.transformed_delta_overlap_selected,
-      "exact outer-response projected directional overlap");
+      result.delta_overlap_selected,
+      "exact outer-response directional overlap images");
   return result;
 }
 

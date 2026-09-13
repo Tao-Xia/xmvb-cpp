@@ -12,16 +12,15 @@
 namespace xmvb::vb {
 
 /**
- * @brief Directional selected-column structure matrices in the accepted basis.
+ * @brief Directional structure-matrix images of the selected states.
  *
- * These are the accepted-eigenvector transformed directional Hamiltonian and
- * overlap columns restricted to the selected states used by the outer
- * response. They are the only directional inputs required by the frozen
- * accepted-point generalized-eigen response operator.
+ * The two matrices are `delta H C_sel` and `delta S C_sel` in the structure
+ * basis. They depend only on selected accepted states, not on the complete
+ * accepted eigensystem.
  */
-struct SelectedStateProjectedDirectionalMatrices {
-  Eigen::MatrixXd transformed_delta_hamiltonian_selected;
-  Eigen::MatrixXd transformed_delta_overlap_selected;
+struct SelectedStateDirectionalStructureImages {
+  Eigen::MatrixXd delta_hamiltonian_selected;
+  Eigen::MatrixXd delta_overlap_selected;
 };
 
 struct SelectedStateGeneralizedEigenDirectionalResponse {
@@ -34,7 +33,7 @@ struct SelectedStateGeneralizedEigenDirectionalResponse {
  *
  * The accepted-point eigensystem fixes the energy gaps and gauge policy used
  * by the first-order generalized-eigen formulas. Only the directional
- * projected structure columns change between HVP applications.
+ * structure-basis images change between HVP applications.
  */
 struct AcceptedSelectedStateEigenResponseColumnCache {
   int selected_state_index = -1;
@@ -48,6 +47,7 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   const std::vector<double>* accepted_eigenvector_matrix_storage = nullptr;
   int n_structures = 0;
   Eigen::VectorXd accepted_eigenvalues;
+  Eigen::MatrixXd selected_eigenvectors;
   std::vector<AcceptedSelectedStateEigenResponseColumnCache> selected_columns;
 
   Eigen::Map<const Eigen::MatrixXd> accepted_eigenvector_matrix_view() const {
@@ -69,8 +69,7 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   }
 
   SelectedStateGeneralizedEigenDirectionalResponse apply(
-      const SelectedStateProjectedDirectionalMatrices&
-          projected_directional_structure_matrices) const;
+      const SelectedStateDirectionalStructureImages& directional_images) const;
 };
 
 /**

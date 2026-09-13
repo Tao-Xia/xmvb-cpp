@@ -293,8 +293,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             accepted_point_context_->same_spin_pair_cache,
             current_input_->orbital_preparation_input.n_active_orbitals,
             active_space_integral_direction);
-    const auto projected_directional_structure_matrices =
-        build_projected_structure_direction(
+    const auto directional_structure_images =
+        build_selected_structure_direction(
             accepted_outer_response_context_,
             active_space_integral_direction,
             directional_pair_cache);
@@ -304,7 +304,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const auto eigensystem_start_time = std::chrono::steady_clock::now();
     const auto directional_selected_state_response =
         accepted_outer_response_context_.selected_state_eigen_response_operator.apply(
-            projected_directional_structure_matrices);
+            directional_structure_images);
     apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
         detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
 

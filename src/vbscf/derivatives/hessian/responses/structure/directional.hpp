@@ -8,8 +8,8 @@
 
 namespace xmvb::vb {
 
-SelectedStateProjectedDirectionalMatrices
-build_projected_structure_direction(
+SelectedStateDirectionalStructureImages
+build_selected_structure_direction(
     const AcceptedOuterResponseContext& accepted,
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairCache& directional_pair_cache);
