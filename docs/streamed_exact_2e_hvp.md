@@ -415,3 +415,53 @@ requires a resident $N\times A$ accepted-point matrix or a resident
 $N\times A$ per-direction matrix for large problems, while all numerical gates
 remain satisfied.  Small-problem full tiles and large-problem partial tiles
 must be two capacities of the same exact implementation.
+
+## 13. Implementation status and initial measurements
+
+Status on 2026-09-13:
+
+1. Persistent $B$ and $QW$ matrices have been removed from the exact-HVP
+   cache.
+2. The accepted $Q$ matrix is borrowed directly from the forward active-space
+   result and is no longer copied into the HVP operator.
+3. When $Q$ is not retained, $Q_I$ and $\dot Q_I$ are generated from the AO
+   pair graph in bounded AO-row tiles.
+4. The same streamed pass forms $\dot G$ and the fixed-adjoint HVP.  The outer
+   $\dot W$ pullback requires one subsequent exact $Q$ pass.
+5. Scalar and block TNHVP applications use the same bounded path; block
+   directions are not concatenated into full $N\times A$ buffers.
+6. The old fixed cutoff $A\le 64$ has been deleted.  The forward builder keeps
+   dense pair products only when the combined $B,Q$ construction workspace is
+   no larger than the storage already required by the AO-pair graph and packed
+   active tensor.
+
+Forced multi-tile finite-difference tests give relative errors
+
+$$
+1.13\times 10^{-9}\quad\text{(F2 HAO)},
+\qquad
+5.58\times 10^{-9}\quad\text{(F2 full-AO OEO)}.
+$$
+
+The fixed-adjoint streamed and resident implementations agree to
+
+$$
+6.7\times10^{-16}\quad\text{(HAO)},
+\qquad
+1.3\times10^{-15}\quad\text{(OEO)}.
+$$
+
+The following single-sample timings used four OpenMP threads and one BLAS
+thread.  They are engineering measurements, not publication benchmarks.
+
+| system | resident $Q$ elements | resident full HVP / s | forced-stream full HVP / s | block/scalar relative error |
+| --- | ---: | ---: | ---: | ---: |
+| 241 | 152460 | 0.205 | 2.04 | $2.5\times10^{-16}$ |
+| MnF2 | 279000 | 0.145 | 1.85 | $1.2\times10^{-14}$ |
+| FeCl2 | 335376 | 0.258 | 1.51 | $2.6\times10^{-17}$ |
+
+These accepted matrices occupy only approximately 1.22, 2.23, and 2.68 MB,
+respectively.  Retaining them is therefore the correct memory--work decision
+for the present test cases.  The forced-stream results quantify the cost paid
+only after a future problem crosses the storage invariant; they must not be
+reported as a speedup.
