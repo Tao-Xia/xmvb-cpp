@@ -135,7 +135,7 @@ ExactHvpOperator::State::State(
             accepted_dense_active_coefficients_,
             current_input_->ao_integral_input,
             n_active_orbitals,
-            &accepted_two_electron_result);
+            accepted_two_electron_result);
 
     const auto accepted_orbital_backprop_inputs =
         build_accepted_orbital_backprop_inputs(

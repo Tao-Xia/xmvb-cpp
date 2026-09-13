@@ -72,7 +72,8 @@ struct ActiveSpaceTwoElectronResult {
    * reused by reverse-mode backpropagation to skip a second sparse AO
    * two-electron sweep. Persistent outputs should ignore this transient cache.
    */
-  Eigen::MatrixXd dense_ao_pair_products;
+  Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
+      dense_ao_pair_products;
 };
 
 }  // namespace xmvb::vb

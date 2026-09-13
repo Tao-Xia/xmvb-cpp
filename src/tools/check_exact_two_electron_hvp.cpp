@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
             dense_active_direction,
             input.ao_integral_input,
             n_active_orbitals,
-            &gradient_result.active_space_two_electron_result);
+            gradient_result.active_space_two_electron_result);
 
     std::vector<double> plus_auxiliary_matrix =
         xmvb::vb::flatten_matrix_column_major(

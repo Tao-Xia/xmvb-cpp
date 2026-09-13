@@ -60,9 +60,10 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
   }
   const std::size_t n_bf_pairs =
       n_bf * (n_bf + 1) / 2;
-  if (accepted_cache.accepted_base_pair_products.rows() !=
+  if (accepted_cache.accepted_pair_products == nullptr ||
+      accepted_cache.accepted_pair_products->rows() !=
           static_cast<Eigen::Index>(n_bf_pairs) ||
-      accepted_cache.accepted_base_pair_products.cols() !=
+      accepted_cache.accepted_pair_products->cols() !=
           static_cast<Eigen::Index>(n_active_pairs)) {
     throw std::invalid_argument(
         "cached accepted pair buffers size mismatch in delta GGO");
@@ -85,7 +86,7 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
       static_cast<Eigen::Index>(n_active_pairs));
   workspace->active_pair_contraction.noalias() =
       workspace->directional_pair_coefficients.transpose() *
-      accepted_cache.accepted_base_pair_products;
+      *accepted_cache.accepted_pair_products;
 
   const std::size_t packed_size =
       n_active_pairs * (n_active_pairs + 1) / 2;
@@ -143,8 +144,9 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
       n_active_pairs <= 0 ||
       accepted_cache.active_pair_second_indices.size() !=
           static_cast<std::size_t>(n_active_pairs) ||
-      accepted_cache.accepted_base_pair_products.rows() != n_bf_pairs ||
-      accepted_cache.accepted_base_pair_products.cols() != n_active_pairs) {
+      accepted_cache.accepted_pair_products == nullptr ||
+      accepted_cache.accepted_pair_products->rows() != n_bf_pairs ||
+      accepted_cache.accepted_pair_products->cols() != n_active_pairs) {
     throw std::invalid_argument(
         "cached exact delta GGO batch has inconsistent accepted dimensions");
   }
@@ -198,7 +200,7 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
     }
     const Eigen::MatrixXd directional_active_pair_contraction =
         directional_coefficients.transpose() *
-        accepted_cache.accepted_base_pair_products;
+        *accepted_cache.accepted_pair_products;
     // Apply the same symmetric-kernel identity independently to every block
     // direction; the directional products remain available for direct-core HVP.
     const Eigen::MatrixXd delta_active_pair_matrix =

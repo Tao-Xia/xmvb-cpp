@@ -2118,8 +2118,8 @@ int main(int argc, char** argv) {
             accepted_dense_active_coefficients,
             input.ao_integral_input,
             input.orbital_preparation_input.n_active_orbitals,
-            &gradient_result.second_order_context->prepared_active_space
-                 .active_space_two_electron_result);
+            gradient_result.second_order_context->prepared_active_space
+                .active_space_two_electron_result);
     const std::vector<double> fd_fixed_total_auxiliary_gradient =
         finite_difference_storage(
             plus_fixed_orbital_backprop_inputs.total_auxiliary_gradient,

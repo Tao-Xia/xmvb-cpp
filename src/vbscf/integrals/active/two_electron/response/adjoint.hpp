@@ -26,8 +26,9 @@ Eigen::MatrixXd backpropagate_exact_packed_active_two_electron_gradient(
  * @brief Precomputes accepted-point exact 2e HVP invariants.
  *
  * `accepted_dense_active_coefficients` is the accepted AO-by-active dense
- * active-orbital coefficient matrix. The returned cache owns the accepted
- * point buffers needed by the exact fixed-adjoint 2e directional kernel.
+ * active-orbital coefficient matrix. The returned cache borrows the forward
+ * pair products from `accepted_active_space_two_electron_result`; that result
+ * must outlive the cache.
  */
 ExactPackedActiveTwoElectronAdjointCache
 build_exact_packed_active_two_electron_adjoint_cache(
@@ -35,8 +36,7 @@ build_exact_packed_active_two_electron_adjoint_cache(
     const Eigen::Ref<const Eigen::MatrixXd>& accepted_dense_active_coefficients,
     const AoIntegralInput& ao_integral_input,
     int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult* accepted_active_space_two_electron_result =
-        nullptr);
+    const ActiveSpaceTwoElectronResult& accepted_active_space_two_electron_result);
 
 /**
  * @brief Applies the exact fixed-adjoint 2e Hessian using one accepted-point cache.
@@ -72,9 +72,8 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
  * stores the directional derivative of the dense-active backpropagated
  * gradient on AO rows and active-orbital columns.
  *
- * When `accepted_active_space_two_electron_result` is provided, its cached
- * dense forward products are reused to avoid rebuilding the accepted-point
- * `G B(C)` table on every HVP application.
+ * The accepted result supplies the forward pair products and must remain alive
+ * for the duration of this call.
  */
 Eigen::MatrixXd apply_exact_packed_active_two_electron_adjoint_hessian_vector(
     const std::vector<double>& packed_active_two_electron_gradient,
@@ -82,8 +81,7 @@ Eigen::MatrixXd apply_exact_packed_active_two_electron_adjoint_hessian_vector(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction,
     const AoIntegralInput& ao_integral_input,
     int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult* accepted_active_space_two_electron_result =
-        nullptr);
+    const ActiveSpaceTwoElectronResult& accepted_active_space_two_electron_result);
 
 /**
  * @brief Reuses pre-computed forward K*mixed to skip the 2e kernel.
