@@ -49,6 +49,7 @@ private:
       const Eigen::VectorXd* precomputed_inactive_density_gradient,
       const Eigen::VectorXd* precomputed_delta_packed_active_two_electron,
       const ExactCtxPairMatrix* precomputed_directional_pair_products,
+      const Eigen::MatrixXd* precomputed_two_electron_fixed_adjoint,
       const PrecomputedDirection* precomputed_direction) const;
 
   struct ApplyTimingTotals {

@@ -36,6 +36,7 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
     const ExactPackedActiveTwoElectronAdjointCache& accepted_cache,
     const std::vector<Eigen::MatrixXd>& dense_active_directions,
     const AoIntegralInput& ao_integral_input,
-    std::vector<ExactCtxPairMatrix>* directional_pair_products = nullptr);
+    std::vector<ExactCtxPairMatrix>* directional_pair_products = nullptr,
+    std::vector<Eigen::MatrixXd>* fixed_adjoint_directions = nullptr);
 
 }  // namespace xmvb::vb

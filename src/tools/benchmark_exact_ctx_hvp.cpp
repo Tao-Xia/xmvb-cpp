@@ -38,6 +38,7 @@ struct Options {
   int curvature_audit_directions = 0;
   int dense_reference_block_width = 0;
   int block_width = 2;
+  bool stream_pair_products = false;
   std::string orbital_value_table_bin_path;
 };
 
@@ -81,6 +82,7 @@ void print_usage() {
   std::cerr << " [--curvature-audit-directions count|0=disabled]\n";
   std::cerr << " [--dense-reference-block-width count|0=disabled]\n";
   std::cerr << " [--block-width count]\n";
+  std::cerr << " [--stream-pair-products true|false]\n";
   std::cerr << " [--orbital-value-table-bin path]\n";
 }
 
@@ -142,6 +144,10 @@ Options parse_arguments(int argc, char** argv) {
       if (options.block_width <= 0) {
         throw std::invalid_argument("--block-width must be positive");
       }
+      continue;
+    }
+    if (name == "--stream-pair-products") {
+      options.stream_pair_products = parse_bool_argument(value);
       continue;
     }
     if (name == "--orbital-value-table-bin") {
@@ -250,6 +256,11 @@ AcceptedPointBenchmarkContext build_benchmark_context(
           {0},
           {1.0},
           load_result.nuclear_repulsion_energy));
+  if (options.stream_pair_products &&
+      context.gradient_result->second_order_context != nullptr) {
+    context.gradient_result->second_order_context->prepared_active_space
+        .active_space_two_electron_result.dense_ao_pair_products.resize(0, 0);
+  }
   context.second_order_context = context.gradient_result->second_order_context;
   if (context.second_order_context == nullptr) {
     throw std::runtime_error("accepted-point second-order context is unavailable");
@@ -848,6 +859,12 @@ int main(int argc, char** argv) {
               << bool_name(first_diagnostics.supports_analytic_core_model) << '\n';
     std::cout << "outer_response_runtime_enabled = "
               << bool_name(first_diagnostics.outer_response_enabled) << '\n';
+    std::cout << "exact_pair_products_streamed = "
+              << bool_name(first_diagnostics.streams_exact_pair_products) << '\n';
+    std::cout << "resident_exact_pair_elements = "
+              << first_diagnostics.resident_exact_pair_elements << '\n';
+    std::cout << "exact_pair_tile_rows = "
+              << first_diagnostics.exact_pair_tile_rows << '\n';
 
     for (const BenchmarkMeasurement& measurement : measurements) {
       print_measurement(measurement);

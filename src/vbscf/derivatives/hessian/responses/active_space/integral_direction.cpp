@@ -87,6 +87,7 @@ ActiveSpaceIntegralDirectionView build_active_space_integral_direction(
     workspace->packed_two_electron.assign(
         tangent.precomputed_packed_two_electron->data(),
         tangent.precomputed_packed_two_electron->data() + packed_size);
+    workspace->two_electron.dense_fixed_adjoint_direction.resize(0, 0);
   } else {
     compute_exact_packed_active_two_electron_integral_directional_derivative(
         context.exact_two_electron_cache,

@@ -127,6 +127,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
 
   Eigen::MatrixXd delta_packed_active_two_electron_columns;
   std::vector<ExactCtxPairMatrix> directional_pair_products;
+  std::vector<Eigen::MatrixXd> two_electron_fixed_adjoint_directions;
   if (components.outer_response) {
     const auto batch_active_two_electron_start_time =
         std::chrono::steady_clock::now();
@@ -135,7 +136,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
             accepted_exact_two_electron_cache_,
             dense_active_directions,
             current_input_->ao_integral_input,
-            &directional_pair_products);
+            &directional_pair_products,
+            &two_electron_fixed_adjoint_directions);
     const double batch_active_two_electron_seconds =
         detail::exact_hvp_elapsed_seconds(batch_active_two_electron_start_time);
     apply_timing_totals_
@@ -165,6 +167,10 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
             : nullptr,
         components.outer_response
             ? &directional_pair_products[column]
+            : nullptr,
+        components.outer_response &&
+                two_electron_fixed_adjoint_directions[column].size() != 0
+            ? &two_electron_fixed_adjoint_directions[column]
             : nullptr,
         &precomputed_directions[column]);
   }

@@ -91,6 +91,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced(
       nullptr,
       nullptr,
       nullptr,
+      nullptr,
       nullptr);
 }
 
@@ -101,6 +102,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const Eigen::VectorXd* precomputed_inactive_density_gradient,
     const Eigen::VectorXd* precomputed_delta_packed_active_two_electron,
     const ExactCtxPairMatrix* precomputed_directional_pair_products,
+    const Eigen::MatrixXd* precomputed_two_electron_fixed_adjoint,
     const PrecomputedDirection* precomputed_direction) const {
   const auto apply_start_time = std::chrono::steady_clock::now();
   auto record_apply_wall_time = [&]() {
@@ -387,7 +389,22 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             ? precomputed_directional_pair_products
             : &outer_response_integral_direction_workspace_.two_electron
                    .directional_pair_products;
-    if (compute_outer_response && directional_pair_products->size() > 0) {
+    const Eigen::MatrixXd& streamed_fixed_adjoint =
+        outer_response_integral_direction_workspace_.two_electron
+            .dense_fixed_adjoint_direction;
+    if (precomputed_two_electron_fixed_adjoint != nullptr &&
+        precomputed_two_electron_fixed_adjoint->rows() == n_basis_functions &&
+        precomputed_two_electron_fixed_adjoint->cols() == n_active_orbitals) {
+      accepted_exact_two_electron_apply_workspace_
+          .dense_active_gradient_direction =
+              *precomputed_two_electron_fixed_adjoint;
+    } else if (compute_outer_response &&
+        accepted_exact_two_electron_cache_.accepted_pair_products == nullptr &&
+        streamed_fixed_adjoint.rows() == n_basis_functions &&
+        streamed_fixed_adjoint.cols() == n_active_orbitals) {
+      accepted_exact_two_electron_apply_workspace_
+          .dense_active_gradient_direction = streamed_fixed_adjoint;
+    } else if (compute_outer_response && directional_pair_products->size() > 0) {
       apply_exact_packed_active_two_electron_adjoint_hessian_vector_fused(
           accepted_exact_two_electron_cache_,
           delta_dense_active_coefficients,

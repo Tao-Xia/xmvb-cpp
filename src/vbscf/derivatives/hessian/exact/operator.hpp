@@ -48,9 +48,12 @@ public:
     bool used_reduced_curvature_diagonal = false;
     bool has_same_spin_matrix_form = false;
     bool has_opposite_spin_matrix_form = false;
+    bool streams_exact_pair_products = false;
     int n_selected_states = 0;
     int n_active_orbitals = 0;
     int n_blocks = 0;
+    std::size_t resident_exact_pair_elements = 0;
+    std::size_t exact_pair_tile_rows = 0;
     std::size_t apply_count = 0;
     std::size_t batch_apply_count = 0;
     std::size_t structure_response_block_actions = 0;

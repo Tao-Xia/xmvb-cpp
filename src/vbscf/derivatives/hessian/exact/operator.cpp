@@ -204,10 +204,18 @@ ExactHvpOperator::State::diagnostics() const {
       accepted_point_context_->use_full_matrix_form_adjoint;
   info.has_opposite_spin_matrix_form =
       accepted_point_context_->use_matrix_form_opposite_spin;
+  info.streams_exact_pair_products =
+      accepted_exact_two_electron_cache_.accepted_pair_products == nullptr;
   info.n_selected_states =
       static_cast<int>(accepted_point_context_->selected_state_indices.size());
   info.n_active_orbitals = accepted_point_context_->n_active_orbitals;
   info.n_blocks = nonredundant_space_->n_blocks();
+  if (accepted_exact_two_electron_cache_.accepted_pair_products != nullptr) {
+    info.resident_exact_pair_elements = static_cast<std::size_t>(
+        accepted_exact_two_electron_cache_.accepted_pair_products->size());
+  }
+  info.exact_pair_tile_rows = static_cast<std::size_t>(
+      accepted_exact_two_electron_cache_.n_basis_functions);
   info.apply_count = apply_timing_totals_.apply_count;
   info.batch_apply_count = apply_timing_totals_.batch_apply_count;
   info.structure_response_block_actions =
