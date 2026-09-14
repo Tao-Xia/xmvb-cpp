@@ -50,6 +50,7 @@ class VbScfObjective {
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy,
       StructureEigensolver structure_eigensolver,
+      StructureSolveAccuracy structure_solve_accuracy,
       const OrbitalGradientEvaluator* orbital_gradient_evaluator,
       const VbScfEvaluator* scf_evaluator);
 
@@ -131,6 +132,7 @@ class VbScfObjective {
   double nuclear_repulsion_ = 0.0;
   StructureEigensolver structure_eigensolver_ =
       StructureEigensolver::Davidson;
+  StructureSolveAccuracy structure_solve_accuracy_;
   const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
   const VbScfEvaluator* scf_ = nullptr;
 

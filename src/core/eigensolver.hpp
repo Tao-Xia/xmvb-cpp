@@ -45,6 +45,9 @@ struct DavidsonOptions {
   int n_roots;
   int max_iterations;
   int max_subspace_dimension;
+  /** Absolute Ritz-energy accuracy requested by the outer calculation. */
+  double energy_tolerance;
+  /** Maximum normalized eigen-equation backward error. */
   double residual_tolerance;
 };
 
@@ -52,10 +55,14 @@ struct DavidsonOptions {
  * @brief Builds dimension-scaled Davidson budgets for consecutive low roots.
  *
  * The subspace grows as `sqrt(n) log(1+n)` and therefore remains subquadratic
- * in storage for a fixed number of requested roots while allowing robust
- * restarted convergence on clustered structure spectra.
+ * in storage for a fixed number of requested roots. Accuracy is mandatory:
+ * this core routine does not invent a machine-precision stopping target.
  */
-DavidsonOptions make_davidson_options(int dimension, int n_roots);
+DavidsonOptions make_davidson_options(
+    int dimension,
+    int n_roots,
+    double energy_tolerance,
+    double relative_residual_tolerance);
 
 /**
  * @brief Converged Davidson eigenpairs and solver diagnostics.

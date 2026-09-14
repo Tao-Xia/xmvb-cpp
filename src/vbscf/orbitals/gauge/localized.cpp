@@ -1,7 +1,9 @@
 #include "vbscf/orbitals/gauge/localized.hpp"
 
 #include <cmath>
+#include <sstream>
 #include <stdexcept>
+#include <Eigen/Cholesky>
 #include <Eigen/LU>
 
 namespace xmvb::vb {
@@ -38,20 +40,33 @@ LocalizedRepresentativeSelector build_localized_representative_selector(
     return selector;
   }
 
-  // In the accepted-point orthonormal frame the localized physical occupied
-  // representative satisfies `C_i = Q_i U_i` and `C_a = T_a + Q_i K_a`.  The
-  // AO-metric projections below recover those small matrices directly from the
-  // cached dense orbital blocks without re-entering the older mixed-gauge
-  // derivation.
+  // The localized physical representative satisfies C_i = Q_i U_i and
+  // C_a - T_a = Q_i K_a. Recover these coordinates through the finite-
+  // precision metric Gram matrix instead of assuming Q_i^T S Q_i is exactly
+  // the identity. The latter assumption loses several digits for strongly
+  // nonorthogonal localized inactive orbitals even though their span is valid.
   const Eigen::MatrixXd basis_overlap_times_inactive =
       basis_overlap_matrix * inactive_physical_orbitals;
-  const Eigen::MatrixXd basis_overlap_times_active =
-      basis_overlap_matrix * active_physical_orbitals;
+  const Eigen::MatrixXd inactive_metric =
+      inactive_orthonormal_orbitals.transpose() * basis_overlap_matrix *
+      inactive_orthonormal_orbitals;
+  Eigen::LDLT<Eigen::MatrixXd> inactive_metric_ldlt(inactive_metric);
+  if (inactive_metric_ldlt.info() != Eigen::Success ||
+      (inactive_metric_ldlt.vectorD().array() <= 0.0).any()) {
+    throw std::runtime_error(
+        "localized representative selector inactive metric is not positive definite");
+  }
 
-  selector.inactive_right_transform =
-      inactive_orthonormal_orbitals.transpose() * basis_overlap_times_inactive;
-  selector.active_inactive_coefficients =
-      inactive_orthonormal_orbitals.transpose() * basis_overlap_times_active;
+  selector.inactive_right_transform = inactive_metric_ldlt.solve(
+      inactive_orthonormal_orbitals.transpose() *
+      basis_overlap_times_inactive);
+  selector.active_inactive_coefficients = inactive_metric_ldlt.solve(
+      inactive_orthonormal_orbitals.transpose() * basis_overlap_matrix *
+      (active_physical_orbitals - active_auxiliary_orbitals));
+  if (inactive_metric_ldlt.info() != Eigen::Success) {
+    throw std::runtime_error(
+        "localized representative selector coordinate solve failed");
+  }
 
   Eigen::FullPivLU<Eigen::MatrixXd> transform_lu(selector.inactive_right_transform);
   if (!transform_lu.isInvertible()) {
@@ -74,9 +89,19 @@ LocalizedRepresentativeSelector build_localized_representative_selector(
       max_abs_entry(reconstructed_active - active_physical_orbitals);
   if (inactive_error > kSelectorReconstructionTolerance ||
       active_error > kSelectorReconstructionTolerance) {
+    std::ostringstream message;
+    message << "localized representative selector reconstruction is inconsistent "
+               "with the accepted-point orbital blocks: inactive max error="
+            << inactive_error << ", active max error=" << active_error
+            << ", inactive transform reciprocal condition="
+            << transform_lu.rcond()
+            << ", inactive orthonormality max error="
+            << max_abs_entry(
+                   inactive_orthonormal_orbitals.transpose() *
+                       basis_overlap_matrix * inactive_orthonormal_orbitals -
+                   Eigen::MatrixXd::Identity(n_inactive, n_inactive));
     throw std::runtime_error(
-        "localized representative selector reconstruction is inconsistent with the "
-        "accepted-point orbital blocks");
+        message.str());
   }
 
   return selector;

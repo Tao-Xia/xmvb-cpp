@@ -120,6 +120,10 @@ void validate_davidson_options(
       options.residual_tolerance <= 0.0) {
     throw std::invalid_argument("Davidson residual tolerance must be positive");
   }
+  if (!std::isfinite(options.energy_tolerance) ||
+      options.energy_tolerance <= 0.0) {
+    throw std::invalid_argument("Davidson energy tolerance must be positive");
+  }
 }
 
 void validate_davidson_diagonals(
@@ -292,9 +296,19 @@ void update_projected_hamiltonian(
 
 }  // namespace
 
-DavidsonOptions make_davidson_options(int dimension, int n_roots) {
+DavidsonOptions make_davidson_options(
+    int dimension,
+    int n_roots,
+    double energy_tolerance,
+    double relative_residual_tolerance) {
   if (dimension <= 0 || n_roots <= 0 || n_roots > dimension) {
     throw std::invalid_argument("invalid Davidson eigenproblem dimensions");
+  }
+  if (!std::isfinite(energy_tolerance) || energy_tolerance <= 0.0 ||
+      !std::isfinite(relative_residual_tolerance) ||
+      relative_residual_tolerance <= 0.0) {
+    throw std::invalid_argument(
+        "Davidson accuracy tolerances must be positive");
   }
   const int root_block = std::min(dimension, 2 * n_roots);
   const int dimension_increment =
@@ -307,7 +321,8 @@ DavidsonOptions make_davidson_options(int dimension, int n_roots) {
       std::min(
           dimension,
           std::max(root_block, n_roots + dimension_increment)),
-      std::pow(std::numeric_limits<double>::epsilon(), 2.0 / 3.0)};
+      energy_tolerance,
+      relative_residual_tolerance};
 }
 
 GeneralizedEigenResult GeneralizedEigensolver::solve_dense(
@@ -472,7 +487,11 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
                   overlap_root_vectors.col(root).norm());
       const double relative_residual = residual.norm() / residual_scale;
       result.relative_residual_norms[root] = relative_residual;
-      if (relative_residual <= options.residual_tolerance) {
+      const double energy_scaled_tolerance =
+          options.energy_tolerance / std::max(1.0, std::abs(eigenvalue));
+      const double required_residual =
+          std::min(options.residual_tolerance, energy_scaled_tolerance);
+      if (relative_residual <= required_residual) {
         continue;
       }
       converged = false;
@@ -495,6 +514,21 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
       return result;
     }
 
+    // Once the S-orthonormal basis spans the complete input space, the Ritz
+    // problem is the original finite-precision problem. No independent
+    // correction direction exists, so a smaller residual cannot be obtained
+    // by restarting the same complete space.
+    if (active_dimension == dimension) {
+      result.eigenpairs.eigenvalues.assign(
+          projected_eigenvalues.data(),
+          projected_eigenvalues.data() + options.n_roots);
+      result.eigenpairs.eigenvector_matrix.assign(
+          root_vectors.data(),
+          root_vectors.data() + root_vectors.size());
+      result.overlap_eigenvectors = overlap_root_vectors;
+      return result;
+    }
+
     corrections.conservativeResize(Eigen::NoChange, n_corrections);
     auto correction_images = apply_checked(
         action,
@@ -504,9 +538,15 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
 
     if (active_dimension + n_corrections > max_subspace) {
       const int available_after_restart = max_subspace - n_corrections;
-      const int n_keep = std::min(
-          active_dimension,
-          std::max(options.n_roots, available_after_restart));
+      // A truncated single-root solve releases half of the saturated Ritz
+      // space, preserving useful spectral information without replacing only
+      // one direction at a time. Block solves retain the largest compatible
+      // space because simultaneous corrections need neighboring Ritz vectors.
+      const int n_keep = max_subspace < dimension && options.n_roots == 1
+          ? std::max(options.n_roots, max_subspace / 2)
+          : std::min(
+                active_dimension,
+                std::max(options.n_roots, available_after_restart));
       const Eigen::MatrixXd keep_coefficients =
           projected_eigenvectors.leftCols(n_keep);
       const Eigen::MatrixXd restarted_basis =

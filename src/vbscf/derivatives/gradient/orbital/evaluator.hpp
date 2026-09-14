@@ -110,6 +110,7 @@ public:
       const std::vector<double>& state_average_weights,
       double nuclear_repulsion_energy,
       StructureEigensolver structure_eigensolver,
+      StructureSolveAccuracy structure_solve_accuracy,
       const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
 
   /**

@@ -110,7 +110,8 @@ bool run_case(
       n_roots,
       4 * dimension,
       std::min(dimension, std::max(128, 24 * n_roots)),
-      1.0e-10};
+      1.0,
+      2.0e-8};
 
   const xmvb::core::GeneralizedEigensolver solver;
   const auto reference = solver.solve_dense(
@@ -185,7 +186,8 @@ bool run_recycled_case() {
       n_roots,
       4 * dimension,
       128,
-      1.0e-10};
+      1.0,
+      2.0e-8};
   const xmvb::core::GeneralizedEigensolver solver;
   const auto cold = solver.solve_davidson(
       action,
@@ -223,13 +225,16 @@ bool run_recycled_case() {
 }
 
 bool run_default_option_cases() {
-  const auto small = xmvb::core::make_davidson_options(3, 2);
-  const auto large = xmvb::core::make_davidson_options(10000, 4);
+  const auto small =
+      xmvb::core::make_davidson_options(3, 2, 1.0e-7, 1.0e-3);
+  const auto large =
+      xmvb::core::make_davidson_options(10000, 4, 1.0e-7, 1.0e-3);
   const bool passed =
       small.n_roots == 2 &&
       small.max_subspace_dimension == 3 &&
       small.max_iterations >= 3 &&
-      small.residual_tolerance > 0.0 &&
+      small.energy_tolerance == 1.0e-7 &&
+      small.residual_tolerance == 1.0e-3 &&
       large.n_roots == 4 &&
       large.max_subspace_dimension < 10000 &&
       large.max_subspace_dimension >= 2 * large.n_roots;

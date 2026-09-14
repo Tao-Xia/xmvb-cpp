@@ -45,6 +45,7 @@ VbScfObjective::VbScfObjective(
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy,
     StructureEigensolver structure_eigensolver,
+    StructureSolveAccuracy structure_solve_accuracy,
     const OrbitalGradientEvaluator* orbital_gradient_evaluator,
     const VbScfEvaluator* scf_evaluator)
     : input_(std::move(input)),
@@ -53,6 +54,7 @@ VbScfObjective::VbScfObjective(
       state_weights_(state_average_weights),
       nuclear_repulsion_(nuclear_repulsion_energy),
       structure_eigensolver_(structure_eigensolver),
+      structure_solve_accuracy_(structure_solve_accuracy),
       gradient_evaluator_(orbital_gradient_evaluator),
       scf_(scf_evaluator) {}
 
@@ -96,6 +98,7 @@ VbScfObjective::evaluate_trial(
           state_weights_,
           nuclear_repulsion_,
           structure_eigensolver_,
+          structure_solve_accuracy_,
           initial_eigenvectors);
   if (evaluation.gradient_result.second_order_context == nullptr) {
     throw std::runtime_error(
@@ -148,6 +151,7 @@ double VbScfObjective::evaluate_energy_only(
       state_indices_,
       state_weights_,
       structure_eigensolver_,
+      structure_solve_accuracy_,
       accepted_eigenvectors,
       nuclear_repulsion_);
   const double elapsed_seconds =

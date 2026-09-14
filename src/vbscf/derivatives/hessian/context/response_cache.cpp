@@ -1,7 +1,6 @@
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
 
 #include <cmath>
-#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -78,6 +77,13 @@ build_accepted_selected_state_generalized_eigen_response_operator(
       n_selected_states);
   response_operator.selected_eigenvectors =
       accepted_point_context.selected_state_eigenvectors;
+  accepted_point_context.structure_solve_accuracy.validate();
+  // The directional response controls the accuracy of the orbital Hessian
+  // action, not the accepted Ritz energy. Its inexact linear solve therefore
+  // follows the outer gradient contract; applying the energy threshold here
+  // needlessly oversolves every Krylov direction.
+  response_operator.relative_residual_tolerance =
+      accepted_point_context.structure_solve_accuracy.gradient_tolerance;
   for (const int state_index : accepted_point_context.selected_state_indices) {
     if (state_index < 0 || state_index >= n_structures) {
       throw std::out_of_range("selected state index is out of range");
@@ -152,9 +158,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply(
           directional_images.delta_overlap_selected,
           xmvb::core::EigenResponseOptions{
               n_structures + 1,
-              std::pow(
-                  std::numeric_limits<double>::epsilon(),
-                  2.0 / 3.0)});
+              relative_residual_tolerance});
 
   SelectedStateGeneralizedEigenDirectionalResponse result;
   result.delta_selected_eigenvector_matrix = response.eigenvector_response;

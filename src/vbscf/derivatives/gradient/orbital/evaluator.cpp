@@ -291,6 +291,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_without_reference_energ
       state_average_weights,
       nuclear_repulsion_energy,
       StructureEigensolver::Dense,
+      StructureSolveAccuracy{},
       no_initial_eigenvectors);
 }
 
@@ -300,6 +301,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_without_reference_energ
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy,
     StructureEigensolver structure_eigensolver,
+    StructureSolveAccuracy structure_solve_accuracy,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
   const auto total_start_time = std::chrono::steady_clock::now();
   if (input.orbital_preparation_input.orbital_value_table.empty()) {
@@ -312,6 +314,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_without_reference_energ
       state_average_weights,
       nuclear_repulsion_energy,
       structure_eigensolver,
+      structure_solve_accuracy,
       initial_eigenvectors);
   return evaluate_from_active_space_gradient_result(
       input,

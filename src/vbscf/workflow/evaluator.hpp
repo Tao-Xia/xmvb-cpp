@@ -74,6 +74,7 @@ public:
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
       StructureEigensolver structure_eigensolver,
+      StructureSolveAccuracy structure_solve_accuracy,
       const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
       double nuclear_repulsion_energy) const;
 

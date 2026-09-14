@@ -144,6 +144,7 @@ void solve_structure_problem(
     const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     StructureEigensolver structure_eigensolver,
+    StructureSolveAccuracy structure_solve_accuracy,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
     const xmvb::core::GeneralizedEigensolver& generalized_eigensolver,
@@ -205,8 +206,13 @@ void solve_structure_problem(
               std::move(images.hamiltonian),
               std::move(images.overlap)};
         };
+    structure_solve_accuracy.validate();
     const xmvb::core::DavidsonOptions options =
-        xmvb::core::make_davidson_options(n_structures, n_roots);
+        xmvb::core::make_davidson_options(
+            n_structures,
+            n_roots,
+            structure_solve_accuracy.energy_tolerance,
+            structure_solve_accuracy.gradient_tolerance);
     stage_start_time = std::chrono::steady_clock::now();
     const bool can_recycle =
         initial_eigenvectors.rows() == n_structures &&
@@ -246,6 +252,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
     const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     StructureEigensolver structure_eigensolver,
+    StructureSolveAccuracy structure_solve_accuracy,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     const ActiveSpaceOrbitalPreparer& orbital_preparer,
     const AoEffectiveOneElectronBuilder& ao_effective_one_electron_builder,
@@ -288,6 +295,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       input,
       selected_state_indices,
       structure_eigensolver,
+      structure_solve_accuracy,
       initial_eigenvectors,
       structure_builder,
       generalized_eigensolver,
@@ -300,6 +308,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
     TimedPreparedActiveSpaceContext timed_active_space_context,
     const std::vector<int>& selected_state_indices,
     StructureEigensolver structure_eigensolver,
+    StructureSolveAccuracy structure_solve_accuracy,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
     const FullDeterminantStructureHamiltonianOverlapBuilder& structure_builder,
     const xmvb::core::GeneralizedEigensolver& generalized_eigensolver) {
@@ -333,6 +342,7 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       input,
       selected_state_indices,
       structure_eigensolver,
+      structure_solve_accuracy,
       initial_eigenvectors,
       structure_builder,
       generalized_eigensolver,
@@ -345,6 +355,7 @@ finalize_active_space_second_order_context(
     const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_weights,
+    StructureSolveAccuracy structure_solve_accuracy,
     const ActiveSpaceGradientResult& gradient_result,
     ActiveSpaceGradientForwardContext* forward_context) {
   if (forward_context == nullptr) {
@@ -352,6 +363,7 @@ finalize_active_space_second_order_context(
   }
 
   auto context = std::make_shared<AcceptedPointContext>();
+  context->structure_solve_accuracy = structure_solve_accuracy;
   // Move the heavy accepted-point payload out of the transient forward context
   // once the relaxed gradient has finished using it. This keeps the future
   // second-order cache alive without duplicating the large unique-spin tables.
@@ -619,6 +631,7 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       state_average_weights,
       nuclear_repulsion_energy,
       StructureEigensolver::Dense,
+      StructureSolveAccuracy{},
       no_initial_eigenvectors);
 }
 
@@ -628,6 +641,7 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
     const std::vector<double>& state_average_weights,
     double nuclear_repulsion_energy,
     StructureEigensolver structure_eigensolver,
+    StructureSolveAccuracy structure_solve_accuracy,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
   const auto total_start_time = std::chrono::steady_clock::now();
   if (input.structure_data.n_structures <= 0) {
@@ -643,6 +657,7 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       input,
       selected_state_indices,
       structure_eigensolver,
+      structure_solve_accuracy,
       initial_eigenvectors,
       orbital_preparer_,
       ao_effective_one_electron_builder_,
@@ -668,6 +683,7 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       input,
       selected_state_indices,
       normalized_weights,
+      structure_solve_accuracy,
       result,
       &forward_context);
   result.total_wall_time_seconds =
@@ -699,6 +715,7 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       std::move(timed_prepared_active_space_context),
       selected_state_indices,
       StructureEigensolver::Dense,
+      StructureSolveAccuracy{},
       no_initial_eigenvectors,
       structure_builder_,
       generalized_eigensolver_);
@@ -720,6 +737,7 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       input,
       selected_state_indices,
       normalized_weights,
+      StructureSolveAccuracy{},
       result,
       &forward_context);
   result.total_wall_time_seconds =

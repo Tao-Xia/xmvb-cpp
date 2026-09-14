@@ -34,6 +34,7 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   const StructureAction* structure_action = nullptr;
   Eigen::VectorXd selected_eigenvalues;
   Eigen::MatrixXd selected_eigenvectors;
+  double relative_residual_tolerance = 0.0;
 
   SelectedStateGeneralizedEigenDirectionalResponse apply(
       const SelectedStateDirectionalStructureImages& directional_images) const;

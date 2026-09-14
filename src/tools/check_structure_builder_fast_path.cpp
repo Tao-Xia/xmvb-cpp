@@ -274,7 +274,8 @@ int main(int argc, char** argv) {
         1,
         2 * n_structures,
         std::min(n_structures, 128),
-        1.0e-10};
+        1.0,
+        1.0e-8};
     const auto davidson_start = std::chrono::high_resolution_clock::now();
     const auto davidson = eigensolver.solve_davidson(
         davidson_action,
@@ -310,9 +311,7 @@ int main(int argc, char** argv) {
             delta_overlap_selected,
             xmvb::core::EigenResponseOptions{
                 n_structures + 1,
-                std::pow(
-                    std::numeric_limits<double>::epsilon(),
-                    2.0 / 3.0)});
+                1.0e-8});
     const auto response_end = std::chrono::high_resolution_clock::now();
     const Eigen::VectorXd transformed_hamiltonian =
         dense_eigenvectors.transpose() * delta_hamiltonian_selected;

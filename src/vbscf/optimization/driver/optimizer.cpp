@@ -135,6 +135,9 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
       state_average_weights,
       nuclear_repulsion_energy,
       options_.structure_eigensolver,
+      StructureSolveAccuracy{
+          options_.energy_tolerance,
+          options_.gradient_tolerance},
       &orbital_gradient_evaluator_,
       &scf_evaluator_);
   const int n = static_cast<int>(parameter_vector.size());

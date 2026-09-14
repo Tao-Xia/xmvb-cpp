@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "vbscf/integrals/active/preparation/space.hpp"
+#include "vbscf/core/contracts/eigensolver.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
@@ -20,6 +21,9 @@ namespace xmvb::vb {
  * determinant coefficient bundles.
  */
 struct AcceptedPointContext {
+  /** @brief Outer accuracy contract inherited by structure response solves. */
+  StructureSolveAccuracy structure_solve_accuracy;
+
   /**
    * @brief Prepared active-space tensors and one-electron reference data.
    */
