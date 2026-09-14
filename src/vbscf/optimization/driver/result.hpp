@@ -52,6 +52,7 @@ struct TnhvpIterationRecord {
   bool reached_boundary = false;
   bool encountered_negative_curvature = false;
   bool reused_subspace = false;
+  bool chart_changed = false;
 };
 
 /**

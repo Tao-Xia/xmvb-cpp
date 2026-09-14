@@ -1515,16 +1515,38 @@ quadratic model recovers its inverse after all independent pairs have been
 applied. This identity is tested on a small synthetic model; production uses
 the limited-memory two-loop action, not an assembled inverse matrix.
 
-Sampled directions and HVP covectors are retained as approximate
-preconditioning data only when consecutive accepted points remain in the same
-sparse coefficient chart. If support-preserving canonicalization changes the
-representative, the history is cleared. Equation 27j alone cannot transport a
-strict-sparse tangent or covector, because its differential contains the
-support-constrained response of $\mathbf T$; silently truncating
-$\delta\mathbf C_{\mathrm I}\mathbf T$ is incorrect. Deriving that connection
-would allow safe recycling across a reset, but the present implementation does
-not substitute a heuristic map. Every new-point quadratic model uses fresh
-exact HVPs regardless of whether approximate history is retained.
+The current implementation stores accepted secants and sampled positive Ritz
+pairs in the common packed strict-sparse coefficient embedding. Let
+$\mathcal P_k^{\mathrm v}$ and $\mathcal P_k^{\ast}$ denote, respectively, the
+current-chart vector and covector projections defined by the local quotient
+basis and its raw-tangent Gram matrix. A packed historical pair
+$(\overline{\mathbf s}_i,\overline{\mathbf y}_i)$ is reused at point $k$ as
+
+$$
+\mathbf s_i^{(k)}
+=\mathcal P_k^{\mathrm v}\overline{\mathbf s}_i,
+\qquad
+\mathbf y_i^{(k)}
+=\mathcal P_k^{\ast}\overline{\mathbf y}_i.
+\tag{66h}
+$$
+
+For an accepted step, the packed pair is the actual displacement between the
+two canonical representatives and their packed gradient difference. For a
+Ritz pair, the old-chart reduced direction and its **full** HVP image are first
+expanded into the same packed embedding. Equation 66h is an extrinsic
+projection transport used only to construct a positive approximate inverse
+preconditioner. It is not used as a current-point HVP, and every new-point
+quadratic model continues to use fresh exact Hessian actions. Pairs whose
+current-chart projected curvature is not positive are rejected. If the
+quotient rank signature changes, the history is cleared.
+
+This construction avoids the incorrect dense occupied-orbital transform
+followed by off-support truncation: no coefficient outside the declared sparse
+support is ever introduced. It is a first-order vector transport in the
+embedded representation, not an exact parallel transport for the quotient
+connection. Its role is therefore restricted to preconditioning; convergence
+and acceptance never depend on a transported secant being exact.
 
 The existing history capacity is unchanged. At most one fewer than that
 capacity is filled with positive Ritz pairs, reserving space for the actual
@@ -1547,7 +1569,7 @@ $$
 \qquad
 \mathbf R_p=\mathbf I-\mathbf B_p\mathbf G_p^{-1}
                          \mathbf B_p^{\mathrm T}\mathbf S_{\mathrm{AO}}.
-\tag{66h}
+\tag{66i}
 $$
 
 For an empty excluded span, $\mathbf R_p=\mathbf I$. The nonempty span must
@@ -1562,7 +1584,7 @@ $$
 \qquad
 \mathbf S_p=(\mathbf R_p\mathbf L_p)^{\mathrm T}
               \mathbf S_{\mathrm{AO}}(\mathbf R_p\mathbf L_p).
-\tag{66i}
+\tag{66j}
 $$
 
 The projected representatives may be dense in AO space; this does not enlarge
@@ -1590,7 +1612,7 @@ $$
 &=\frac{\mathbf c^{\mathrm T}\mathbf F_p\mathbf c}
        {\mathbf c^{\mathrm T}\mathbf S_p\mathbf c}.
 \end{aligned}
-\tag{66j}
+\tag{66k}
 $$
 
 The first identity follows by an invertible column operation replacing
@@ -1598,7 +1620,7 @@ $\mathbf x$ with $\mathbf R_p\mathbf x$, whose overlap with $\mathbf B_p$
 is zero. The resulting Gram matrix is block diagonal; its inverse gives the
 rank-one difference directly. Thus eq 66b gives the exact frozen-target
 curvature of this projector-trace surrogate. For active targets it describes
-the normalized inactive-projected ray. Equation 66j is an unweighted identity;
+the normalized inactive-projected ray. Equation 66k is an unweighted identity;
 the production inactive block includes the physical double-occupancy factor
 derived below. Active blocks remain unit-weight ray models, not exact
 active-space occupation or many-electron response models.
@@ -1636,7 +1658,7 @@ E_{11}&=\operatorname{Tr}\!\left[
 \mathrm d E_{11}&=2\operatorname{Tr}
  \left[\mathbf F_{11}\,\mathrm d\mathbf P_{\mathrm I}\right].
 \end{aligned}
-\tag{66k}
+\tag{66l}
 $$
 
 The last equality follows by differentiating both occurrences of the density
@@ -1651,10 +1673,10 @@ $$
  +2\operatorname{Tr}
   \left[\dot{\mathbf P}_{\mathrm I}
              \mathcal G(\dot{\mathbf P}_{\mathrm I})\right].
-\tag{66l}
+\tag{66m}
 $$
 
-For an inactive target with the other inactive orbitals fixed, eq 66j implies
+For an inactive target with the other inactive orbitals fixed, eq 66k implies
 that the first term is exactly twice the directional curvature of the local
 Rayleigh surrogate with the accepted $\mathbf F_{11}$ frozen. Consequently,
 the local matrices entering positive spectral regularization are
@@ -1666,20 +1688,20 @@ w_p=\begin{cases}
 2,&p\in\mathrm I,\\
 1,&p\in\mathrm A.
 \end{cases}
-\tag{66m}
+\tag{66n}
 $$
 
 Here the inactive value is fixed by double occupancy, not fitted to any
 molecule, residual, or iteration count. The active value preserves the
 existing unit-ray approximation; it is not a statement that all active
-orbitals have physical occupation one. The field-response term in eq 66l,
+orbitals have physical occupation one. The field-response term in eq 66m,
 active-density couplings, cross-target curvature, and relaxed structure
 response still belong to the exact HVP, not this local approximation. Thus
-eq 66m improves the reference-energy weighting without claiming an exact
+eq 66n improves the reference-energy weighting without claiming an exact
 VBSCF block Hessian.
 
 Independent tests differentiate a projector-density quadratic energy with a
-self-adjoint linear interaction map and recover both terms of eq 66l.
+self-adjoint linear interaction map and recover both terms of eq 66m.
 A separate production-space test checks the stationary one-electron gap
 curvature and its inverse for inactive and active targets; removing the
 inactive factor makes that test fail. No HVP formula, quotient basis, stopping
@@ -1761,6 +1783,46 @@ primarily the transition from indefinite globalized motion to the local
 Newton region, not an incorrect gradient or a uniformly insufficient fixed
 subspace limit.
 
+The same trajectory also exposed an implementation-level loss of curvature
+history. Support-preserving canonicalization changed the representative at
+every one of the first ten accepted points, and the previous implementation
+therefore cleared the nominal eight-pair history at every step. Applying the
+packed-space projection transport of eq 66h lowers the tenth-step energy from
+$-341.8212742060$ to $-342.4821293288$ hartree and the corresponding projected
+gradient two-norm from 1.91086 to 1.35965, without increasing the first-ten-step
+HVP count. Over 30 accepted steps, the HVP direction count decreases from 540
+to 418, the number of boundary steps from 24 to 20, and the number of steps
+that encounter negative curvature from 18 to 15. The 32-thread wall time falls
+from 453.45 to 364.67 s. The transported run satisfies both stopping criteria
+at step 30 with
+
+$$
+E=-343.446302094450\ E_{\mathrm h},
+\qquad
+\lVert\mathbf g_{\mathrm{proj}}\rVert_{\infty}
+=4.98\times10^{-4},
+\qquad
+|\Delta E|=9.54\times10^{-8}\ E_{\mathrm h}.
+$$
+
+These data do not imply that the full trajectory is quadratically convergent.
+At the tenth point of the earlier no-transport trajectory, explicit assembly
+of the 558-dimensional reduced Hessian gives eigenvalue bounds
+$-0.48566$ and $90.3696\ E_{\mathrm h}$. At the distinct tenth point of the
+transported trajectory, a deterministic matrix-free spectral probe first
+detects negative curvature at dimension 24 and reaches a lowest Ritz value of
+$-0.41990\ E_{\mathrm h}$ at dimension 32. The ordinary four-dimensional
+gradient-residual subspace at that point does not contain this weakly coupled
+mode. However, augmenting the local model with the 32-direction spectral
+subspace at the existing radius predicts a decrease of $0.97590\ E_{\mathrm h}$
+but produces an actual increase of $0.43479\ E_{\mathrm h}$. Its trust ratio is
+$-0.4455$, so a correct trust-region method must reject that hard-case trial.
+Thus negative curvature hidden from the gradient Krylov space is real, but
+following it at the current large radius is not a shortcut to the local basin.
+The approximately 30 accepted steps measure a nonconvex globalization phase
+followed by local Newton convergence; they cannot be interpreted as 30 local
+Newton steps.
+
 At the common production tolerances of $10^{-3}$ for the projected-gradient
 infinity norm and $10^{-7}$ hartree for the accepted energy change, the
 corrected implementation gives the following complete 32-thread runs. Times
@@ -1769,11 +1831,11 @@ regression data rather than machine-independent benchmarks.
 
 | Input | Reduced dimension | Iterations | HVP directions | Final energy / hartree | Final projected gradient infinity norm | Wall time / s | Peak RSS / MiB |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| F$_2$ sparse | 42 | 6 | 16 | -198.751155830455 | $1.60\times10^{-5}$ | 0.14 | 34.5 |
+| F$_2$ sparse | 42 | 6 | 16 | -198.751155830455 | $1.60\times10^{-5}$ | 0.08 | 33.4 |
 | F$_2$ full AO | 218 | 15 | 50 | -198.689799086735 | $1.78\times10^{-4}$ | 0.35 | 36.0 |
-| 241 | 432 | 10 | 38 | -230.720590362167 | $7.49\times10^{-5}$ | 4.24 | 1396.9 |
-| MnF$_2$ | 957 | 22 | 206 | -1348.893352227972 | $8.48\times10^{-4}$ | 10.81 | 675.1 |
-| FeCl$_2$ full AO | 3655 | 6 | 32 | -2181.617636472959 | $8.43\times10^{-4}$ | 6.18 | 568.3 |
+| 241 | 432 | 12 | 36 | -230.720590351661 | $6.21\times10^{-5}$ | 3.25 | 1385.3 |
+| MnF$_2$ | 957 | 13 | 232 | -1348.893351108269 | $8.83\times10^{-4}$ | 10.63 | 660.0 |
+| FeCl$_2$ full AO | 3655 | 6 | 32 | -2181.617636473040 | $8.40\times10^{-4}$ | 5.41 | 558.9 |
 | C$_6$H$_6$ sparse | 1320 | 6 | 22 | -230.634508518379 | $5.36\times10^{-5}$ | 2.90 | 909.3 |
 | C$_6$H$_6$ full | 1320 | 5 | 20 | -230.777284187920 | $2.02\times10^{-4}$ | 2.93 | 908.4 |
 | 10698 | 722 | 14 | 56 | -422.611824582135 | $8.03\times10^{-5}$ | 24.10 | 7441.7 |

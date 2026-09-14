@@ -44,7 +44,7 @@ Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
 
 void append_nonredundant_truncated_newton_secant_pair(
     Eigen::VectorXd packed_step,
-    Eigen::VectorXd packed_projected_gradient_change,
+    Eigen::VectorXd packed_gradient_change,
     int max_history_size,
     std::vector<PackedSecantPair>* packed_secant_history);
 

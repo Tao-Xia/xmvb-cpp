@@ -19,13 +19,12 @@ constexpr int kOrbitalTypeHao = 1;
 constexpr int kOrbitalTypeBdo = 2;
 constexpr int kOrbitalTypeOeo = 3;
 
-// One accepted or trialed secant pair in the optimizer's packed-coordinate
-// history. Used by L-BFGS secant transport, the truncated-Newton Krylov
-// preconditioner, and safeguarded line searches that lift reduced steps into the
-// full sparse-orbital parameter space.
+// One curvature pair in the common packed sparse-coefficient embedding.
+// Current-chart tangent and covector projections provide the quotient-space
+// vector transport when the pair is reused by the TNHVP preconditioner.
 struct PackedSecantPair {
   Eigen::VectorXd packed_step;
-  Eigen::VectorXd packed_projected_gradient_change;
+  Eigen::VectorXd packed_gradient_change;
 };
 
 }  // namespace xmvb::vb

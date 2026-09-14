@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
@@ -20,6 +21,7 @@ namespace {
 
 struct Options {
   std::string input_path;
+  std::string orbital_value_table_bin_path;
   double step = 1.0e-4;
   double max_relative_error = std::numeric_limits<double>::infinity();
   double response_tolerance = 1.0e-3;
@@ -29,6 +31,7 @@ struct Options {
 void print_usage() {
   std::cerr
       << "usage: check_exact_ctx_hvp <input.xmi>"
+      << " [--orbital-value-table-bin path]"
       << " [--step h]"
       << " [--max-rel-error tolerance]"
       << " [--response-tolerance tolerance]"
@@ -45,7 +48,9 @@ Options parse_arguments(int argc, char** argv) {
   for (int argument = 2; argument < argc; argument += 2) {
     const std::string name = argv[argument];
     const std::string value = argv[argument + 1];
-    if (name == "--step") {
+    if (name == "--orbital-value-table-bin") {
+      options.orbital_value_table_bin_path = value;
+    } else if (name == "--step") {
       options.step = std::stod(value);
     } else if (name == "--max-rel-error") {
       options.max_relative_error = std::stod(value);
@@ -75,6 +80,30 @@ double infinity_norm(const Eigen::Ref<const Eigen::VectorXd>& values) {
   return values.size() == 0 ? 0.0 : values.cwiseAbs().maxCoeff();
 }
 
+/** @brief Loads an exact accepted-point orbital table for derivative checks. */
+void overwrite_orbital_values_from_binary(
+    const std::string& path,
+    xmvb::vb::OrbitalPreparationInput* orbitals) {
+  if (path.empty()) return;
+  std::ifstream input(path, std::ios::binary | std::ios::ate);
+  const auto expected_bytes = static_cast<std::streamoff>(
+      orbitals->orbital_value_table.size() * sizeof(double));
+  if (!input || input.tellg() != expected_bytes) {
+    throw std::runtime_error(
+        "orbital-value-table file size does not match input chart");
+  }
+  input.seekg(0, std::ios::beg);
+  input.read(
+      reinterpret_cast<char*>(orbitals->orbital_value_table.data()),
+      expected_bytes);
+  if (!input ||
+      !Eigen::Map<const Eigen::VectorXd>(
+           orbitals->orbital_value_table.data(),
+           orbitals->orbital_value_table.size()).allFinite()) {
+    throw std::runtime_error("invalid orbital-value-table file");
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -86,6 +115,9 @@ int main(int argc, char** argv) {
     const auto loaded =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     xmvb::vb::VbScfInput input = loaded.input;
+    overwrite_orbital_values_from_binary(
+        options.orbital_value_table_bin_path,
+        &input.orbital_preparation_input);
 
     xmvb::vb::OrbitalGradientEvaluator evaluator;
     const Eigen::MatrixXd no_initial_eigenvectors;
@@ -221,6 +253,11 @@ int main(int argc, char** argv) {
         std::max(1.0, infinity_norm(finite_difference_outer));
     std::cout << std::setprecision(12)
               << "input = " << options.input_path << '\n'
+              << "orbital_value_table_override = "
+              << (options.orbital_value_table_bin_path.empty()
+                      ? "none"
+                      : options.orbital_value_table_bin_path)
+              << '\n'
               << "stream_pair_products = "
               << (options.stream_pair_products ? "true" : "false") << '\n'
               << "reduced_dimension = " << direction.size() << '\n'

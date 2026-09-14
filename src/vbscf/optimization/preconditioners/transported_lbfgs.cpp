@@ -100,7 +100,7 @@ build_nonredundant_truncated_newton_preconditioner(
     preconditioner.try_add_pair(
         current_space.project_vector(packed_pair.packed_step).reduced_gradient,
         current_space
-            .project_gradient(packed_pair.packed_projected_gradient_change)
+            .project_gradient(packed_pair.packed_gradient_change)
             .reduced_gradient);
   }
   return preconditioner;
@@ -128,16 +128,16 @@ Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
 
 void append_nonredundant_truncated_newton_secant_pair(
     Eigen::VectorXd packed_step,
-    Eigen::VectorXd packed_projected_gradient_change,
+    Eigen::VectorXd packed_gradient_change,
     int max_history_size,
     std::vector<PackedSecantPair>* packed_secant_history) {
   if (max_history_size <= 0) {
     return;
   }
   const double step_norm = packed_step.norm();
-  const double gradient_change_norm = packed_projected_gradient_change.norm();
+  const double gradient_change_norm = packed_gradient_change.norm();
   const double secant_curvature =
-      packed_step.dot(packed_projected_gradient_change);
+      packed_step.dot(packed_gradient_change);
   const double minimum_secant_alignment =
       std::sqrt(std::numeric_limits<double>::epsilon());
   if (!(step_norm > 0.0) ||
@@ -152,7 +152,7 @@ void append_nonredundant_truncated_newton_secant_pair(
 
   packed_secant_history->push_back(PackedSecantPair{
       std::move(packed_step),
-      std::move(packed_projected_gradient_change)});
+      std::move(packed_gradient_change)});
   if (packed_secant_history->size() >
       static_cast<std::size_t>(max_history_size)) {
     packed_secant_history->erase(packed_secant_history->begin());

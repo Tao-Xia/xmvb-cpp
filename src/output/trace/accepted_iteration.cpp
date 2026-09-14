@@ -504,7 +504,9 @@ public:
           << "    \"encountered_negative_curvature\": "
           << (tnhvp.encountered_negative_curvature ? "true" : "false") << ",\n"
           << "    \"reused_subspace\": "
-          << (tnhvp.reused_subspace ? "true" : "false") << "\n"
+          << (tnhvp.reused_subspace ? "true" : "false") << ",\n"
+          << "    \"chart_changed\": "
+          << (tnhvp.chart_changed ? "true" : "false") << "\n"
           << "  }";
     }
     metadata_stream << "\n}\n";

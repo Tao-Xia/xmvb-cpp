@@ -17,6 +17,7 @@
 
 #include "vbscf/diagnostics/orbitals/curvature.hpp"
 #include "vbscf/optimization/krylov/orthonormal_basis.hpp"
+#include "vbscf/optimization/trust_region/spectral.hpp"
 #include "vbscf/diagnostics/hessian/reduced_reference.hpp"
 
 #include "input/loading/loader.hpp"
@@ -36,6 +37,8 @@ struct Options {
   int warmup = 0;
   bool gauge_audit = false;
   int curvature_audit_directions = 0;
+  int spectral_audit_dimension = 0;
+  double spectral_audit_trust_radius = 0.0;
   int dense_reference_block_width = 0;
   int block_width = 2;
   bool stream_pair_products = false;
@@ -56,6 +59,7 @@ struct AcceptedPointBenchmarkContext {
   xmvb::vb::SparseParameterLayout parameter_view;
   std::unique_ptr<xmvb::vb::OrbitalChart> nonredundant_space;
   Eigen::VectorXd reduced_direction;
+  Eigen::VectorXd reduced_gradient;
   double nuclear_repulsion_energy = 0.0;
 };
 
@@ -80,6 +84,8 @@ void print_usage() {
       << " [--warmup count]"
       << " [--gauge-audit true|false]\n";
   std::cerr << " [--curvature-audit-directions count|0=disabled]\n";
+  std::cerr << " [--spectral-audit-dimension count|0=disabled]\n";
+  std::cerr << " [--spectral-audit-trust-radius value|0=disabled]\n";
   std::cerr << " [--dense-reference-block-width count|0=disabled]\n";
   std::cerr << " [--block-width count]\n";
   std::cerr << " [--stream-pair-products true|false]\n";
@@ -132,6 +138,20 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (name == "--curvature-audit-directions") {
       options.curvature_audit_directions = parse_positive_or_zero_int(value, name.c_str());
+      continue;
+    }
+    if (name == "--spectral-audit-dimension") {
+      options.spectral_audit_dimension =
+          parse_positive_or_zero_int(value, name.c_str());
+      continue;
+    }
+    if (name == "--spectral-audit-trust-radius") {
+      options.spectral_audit_trust_radius = std::stod(value);
+      if (options.spectral_audit_trust_radius < 0.0 ||
+          !std::isfinite(options.spectral_audit_trust_radius)) {
+        throw std::invalid_argument(
+            "--spectral-audit-trust-radius must be finite and nonnegative");
+      }
       continue;
     }
     if (name == "--dense-reference-block-width") {
@@ -299,8 +319,9 @@ AcceptedPointBenchmarkContext build_benchmark_context(
           &context.gradient_result->ao_effective_one_electron_result
                .ao_effective_h1e,
           true);
-  context.reduced_direction =
+  context.reduced_gradient =
       context.nonredundant_space->project_reduced_gradient(packed_gradient);
+  context.reduced_direction = context.reduced_gradient;
   if (context.reduced_direction.size() == 0) {
     throw std::runtime_error("nonredundant space is empty");
   }
@@ -312,6 +333,139 @@ AcceptedPointBenchmarkContext build_benchmark_context(
     context.reduced_direction /= context.reduced_direction.norm();
   }
   return context;
+}
+
+/**
+ * @brief Samples the lowest current-point curvature without assembling H.
+ *
+ * The first direction is the projected gradient. A deterministic independent
+ * probe then starts a fully reorthogonalized lowest-Ritz residual iteration.
+ * An optional radius evaluates the resulting projected trust-region trial.
+ */
+void run_spectral_audit(
+    const AcceptedPointBenchmarkContext& context,
+    int maximum_dimension,
+    double trust_radius) {
+  if (maximum_dimension <= 0) return;
+  using namespace xmvb::vb;
+  const auto& space = *context.nonredundant_space;
+  ExactHvpOperator exact_operator(
+      context.second_order_context,
+      &context.input,
+      context.parameter_view,
+      &space);
+  const Eigen::Index dimension = context.reduced_direction.size();
+  Eigen::VectorXd independent_probe(dimension);
+  for (Eigen::Index row = 0; row < dimension; ++row) {
+    const double index = static_cast<double>(row + 1);
+    independent_probe[row] =
+        std::sin(std::sqrt(2.0) * index) +
+        std::cos(std::sqrt(3.0) * index);
+  }
+  independent_probe.noalias() -=
+      context.reduced_direction.dot(independent_probe) *
+      context.reduced_direction;
+  Eigen::VectorXd candidate = context.reduced_direction;
+
+  std::vector<Eigen::VectorXd> basis;
+  std::vector<Eigen::VectorXd> hessian_basis;
+  basis.reserve(std::min<Eigen::Index>(maximum_dimension, dimension));
+  hessian_basis.reserve(std::min<Eigen::Index>(maximum_dimension, dimension));
+  std::cout << std::setprecision(12);
+  for (int iteration = 0;
+       iteration < std::min<Eigen::Index>(maximum_dimension, dimension);
+       ++iteration) {
+    Eigen::VectorXd candidate_image;
+    if (!append_orthonormal_hvp_direction(
+            candidate,
+            [&](const Eigen::VectorXd& direction) {
+              return exact_operator.apply_reduced(direction);
+            },
+            &basis,
+            &hessian_basis,
+            &candidate_image)) {
+      break;
+    }
+    Eigen::MatrixXd q(dimension, basis.size());
+    Eigen::MatrixXd hq(dimension, basis.size());
+    for (std::size_t column = 0; column < basis.size(); ++column) {
+      q.col(static_cast<Eigen::Index>(column)) = basis[column];
+      hq.col(static_cast<Eigen::Index>(column)) = hessian_basis[column];
+    }
+    const Eigen::MatrixXd projected_hessian =
+        0.5 * (q.transpose() * hq + hq.transpose() * q);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(
+        projected_hessian);
+    if (eigensolver.info() != Eigen::Success) {
+      throw std::runtime_error("spectral audit eigensolver failed");
+    }
+    const double lowest_ritz_value = eigensolver.eigenvalues()[0];
+    const Eigen::VectorXd lowest_ritz_direction =
+        q * eigensolver.eigenvectors().col(0);
+    candidate = iteration == 0
+        ? independent_probe
+        : hq * eigensolver.eigenvectors().col(0) -
+              lowest_ritz_value * lowest_ritz_direction;
+    std::cout << "spectral_audit_dimension_" << basis.size()
+              << "_minimum_ritz = " << lowest_ritz_value << '\n';
+    std::cout << "spectral_audit_dimension_" << basis.size()
+              << "_ritz_residual = " << candidate.norm() << '\n';
+  }
+  std::cout << "spectral_audit_hvp_directions = "
+            << exact_operator.diagnostics().apply_count << '\n';
+  if (!(trust_radius > 0.0) || basis.empty()) return;
+
+  Eigen::MatrixXd q(dimension, basis.size());
+  Eigen::MatrixXd hq(dimension, basis.size());
+  for (std::size_t column = 0; column < basis.size(); ++column) {
+    q.col(static_cast<Eigen::Index>(column)) = basis[column];
+    hq.col(static_cast<Eigen::Index>(column)) = hessian_basis[column];
+  }
+  const Eigen::MatrixXd projected_hessian =
+      0.5 * (q.transpose() * hq + hq.transpose() * q);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(
+      projected_hessian);
+  if (eigensolver.info() != Eigen::Success) {
+    throw std::runtime_error("spectral trust-region audit eigensolver failed");
+  }
+  const Eigen::VectorXd projected_gradient =
+      q.transpose() * context.reduced_gradient;
+  const Eigen::VectorXd gradient_in_eigenbasis =
+      eigensolver.eigenvectors().transpose() * projected_gradient;
+  const auto spectral_step = solve_spectral_trust_region(
+      eigensolver.eigenvalues(),
+      gradient_in_eigenbasis,
+      trust_radius);
+  const Eigen::VectorXd subspace_coordinates =
+      eigensolver.eigenvectors() * spectral_step.step;
+  const Eigen::VectorXd reduced_step = q * subspace_coordinates;
+  const Eigen::VectorXd hessian_step = hq * subspace_coordinates;
+  const double predicted_decrease =
+      -context.reduced_gradient.dot(reduced_step) -
+      0.5 * reduced_step.dot(hessian_step);
+  VbScfInput trial = context.input;
+  trial.orbital_preparation_input = space.retract_step(
+      context.input.orbital_preparation_input,
+      reduced_step);
+  OrbitalGradientEvaluator evaluator;
+  const auto trial_result =
+      evaluator.evaluate_without_reference_energy_gradient(
+          trial,
+          {0},
+          {1.0},
+          context.nuclear_repulsion_energy);
+  const double actual_decrease =
+      context.gradient_result->scf_result.total_energy -
+      trial_result.scf_result.total_energy;
+  std::cout << "spectral_audit_trust_radius = " << trust_radius << '\n';
+  std::cout << "spectral_audit_step_norm = " << reduced_step.norm() << '\n';
+  std::cout << "spectral_audit_shift = " << spectral_step.shift << '\n';
+  std::cout << "spectral_audit_predicted_decrease = "
+            << predicted_decrease << '\n';
+  std::cout << "spectral_audit_actual_decrease = "
+            << actual_decrease << '\n';
+  std::cout << "spectral_audit_trust_ratio = "
+            << actual_decrease / predicted_decrease << '\n';
 }
 
 // A fixed-point linear diagnostic, not an optimizer trajectory: no trust
@@ -634,12 +788,20 @@ void run_dense_reduced_hessian_reference(
   const double action_scale = std::max(1.0, direct_action.norm());
   const double action_relative_error =
       (assembled_action - direct_action).norm() / action_scale;
-  const double audit_tolerance =
-      std::sqrt(std::numeric_limits<double>::epsilon());
+  const auto diagnostics = exact_operator.diagnostics();
+  const double audit_tolerance = std::max(
+      std::sqrt(std::numeric_limits<double>::epsilon()),
+      diagnostics.max_structure_response_relative_residual);
   std::cout << "dense_reference_relative_skew = "
             << reference.relative_skew_norm << '\n';
   std::cout << "dense_reference_action_relative_error = "
             << action_relative_error << '\n';
+  std::cout << "dense_reference_audit_tolerance = "
+            << audit_tolerance << '\n';
+  std::cout << "dense_reference_minimum_eigenvalue = "
+            << eigensolver.eigenvalues().minCoeff() << '\n';
+  std::cout << "dense_reference_maximum_eigenvalue = "
+            << eigensolver.eigenvalues().maxCoeff() << '\n';
   if (reference.relative_skew_norm > audit_tolerance ||
       action_relative_error > audit_tolerance) {
     throw std::runtime_error(
@@ -654,10 +816,6 @@ void run_dense_reduced_hessian_reference(
   std::cout << "dense_reference_wall_time_seconds = "
             << std::chrono::duration<double>(stop_time - start_time).count()
             << '\n';
-  std::cout << "dense_reference_minimum_eigenvalue = "
-            << eigensolver.eigenvalues().minCoeff() << '\n';
-  std::cout << "dense_reference_maximum_eigenvalue = "
-            << eigensolver.eigenvalues().maxCoeff() << '\n';
 }
 
 void print_measurement(const BenchmarkMeasurement& measurement) {
@@ -952,6 +1110,10 @@ int main(int argc, char** argv) {
     }
     run_dense_reduced_hessian_reference(
         context, options.dense_reference_block_width);
+    run_spectral_audit(
+        context,
+        options.spectral_audit_dimension,
+        options.spectral_audit_trust_radius);
     if (options.curvature_audit_directions > 0)
       run_curvature_audit(context, options.curvature_audit_directions);
     return 0;

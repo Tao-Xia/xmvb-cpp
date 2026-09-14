@@ -32,7 +32,7 @@ void write_tnhvp_trace(
       << "\tinitial_trust_radius\taccepted_trial_radius\tnext_trust_radius"
       << "\tstep_norm\tpredicted_decrease\tactual_decrease\ttrust_ratio"
       << "\tmodel_spectral_radius\ttrust_region_shift\treached_boundary"
-      << "\tnegative_curvature\treused_subspace\n";
+      << "\tnegative_curvature\treused_subspace\tchart_changed\n";
   stream << std::setprecision(17);
   for (const auto& step : result.tnhvp_iteration_trace) {
     stream
@@ -60,7 +60,8 @@ void write_tnhvp_trace(
         << step.trust_region_shift << '\t'
         << (step.reached_boundary ? 1 : 0) << '\t'
         << (step.encountered_negative_curvature ? 1 : 0) << '\t'
-        << (step.reused_subspace ? 1 : 0) << '\n';
+        << (step.reused_subspace ? 1 : 0) << '\t'
+        << (step.chart_changed ? 1 : 0) << '\n';
   }
   if (!stream) {
     throw std::runtime_error(

@@ -406,6 +406,10 @@ BackendRunResult run_truncated_newton_backend(
     }
     const bool accepted_point_chart_changed =
         accepted_trial_evaluation.chart_changed;
+    const Eigen::VectorXd accepted_parameter_displacement =
+        trial_parameters - current_parameters;
+    const Eigen::VectorXd accepted_gradient_change =
+        trial_gradient - current_gradient;
     if (accepted_trial_evaluation.valid) {
       objective->commit(
           std::move(accepted_trial_evaluation));
@@ -413,13 +417,13 @@ BackendRunResult run_truncated_newton_backend(
     current_parameters = trial_parameters;
     current_gradient = std::move(trial_gradient);
     energy = trial_energy;
-    // A support-constrained gauge reset is not a linear action on the sparse
-    // tangent bundle. Its trial is evaluated directly in the new chart, but
-    // old-chart secants cannot be transported by a dense right transform.
-    // Retain curvature history only when both points use the same sparse
-    // coefficient chart.
-    if (!accepted_point_chart_changed &&
-        transport_history_size > 1 &&
+    // Store curvature in the common packed sparse-coefficient embedding.
+    // Each later chart projects these vectors and covectors into its own
+    // horizontal quotient space. This first-order extrinsic projection
+    // transport is used only by the positive preconditioner; current-point
+    // Hessian actions remain exact. It avoids the invalid dense right-
+    // transform/truncation formerly used for strict unequal supports.
+    if (transport_history_size > 1 &&
         truncated_newton_subspace_is_usable(
             cached_subspace, current_space.reduced_size())) {
       const auto pairs = positive_ritz_secants(
@@ -433,9 +437,6 @@ BackendRunResult run_truncated_newton_backend(
             current_space.expand_gradient(pair.image),
             transport_history_size, &packed_secant_history);
       }
-    }
-    if (accepted_point_chart_changed) {
-      packed_secant_history.clear();
     }
     ++run_result.n_iterations;
     rejected_step_cache.clear();
@@ -527,6 +528,7 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.encountered_negative_curvature =
         model_step.encountered_negative_curvature;
     iteration_record.reused_subspace = reused_subspace;
+    iteration_record.chart_changed = accepted_point_chart_changed;
     result->tnhvp_iteration_trace.push_back(iteration_record);
     record_accepted_iteration_snapshot(
         objective,
@@ -549,13 +551,11 @@ BackendRunResult run_truncated_newton_backend(
     if (nonredundant_rank_changed) {
       packed_secant_history.clear();
     }
-    if (!accepted_point_chart_changed &&
-        !nonredundant_rank_changed &&
+    if (!nonredundant_rank_changed &&
         transport_history_size > 0) {
       append_nonredundant_truncated_newton_secant_pair(
-          packed_step,
-          next_projection.packed_projected_gradient -
-              current_projection.packed_projected_gradient,
+          accepted_parameter_displacement,
+          accepted_gradient_change,
           transport_history_size,
           &packed_secant_history);
     }
