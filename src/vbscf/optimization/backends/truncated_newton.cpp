@@ -61,7 +61,7 @@ BackendRunResult run_truncated_newton_backend(
       std::max(options.minimum_step_size, options.initial_step_size);
   int rejected_trial_step_count_for_current_point = 0;
   RejectedTruncatedNewtonStepCache rejected_step_cache;
-  TruncatedNewtonKrylovSubspace cached_krylov_subspace;
+  TruncatedNewtonSubspace cached_subspace;
   double initial_trust_radius_for_current_point = trust_radius;
   std::size_t initial_hvp_direction_count_for_current_point =
       result->matrix_free_hvp_direction_count;
@@ -111,16 +111,13 @@ BackendRunResult run_truncated_newton_backend(
             current_space,
             packed_secant_history,
             transport_history_size);
-    const int max_cg_iterations =
-        choose_truncated_newton_max_cg_iterations(
+    const int max_subspace_dimension =
+        choose_tnhvp_max_subspace_dimension(
             options,
             current_projection.reduced_gradient.size());
     const OrbitalPreparationInput current_orbital_input =
         objective->input().orbital_preparation_input;
-    const NonredundantRetractionMetric retraction_metric(
-        current_orbital_input,
-        current_space,
-        parameter_view);
+    const NonredundantRetractionMetric retraction_metric;
     const auto admit_energy_only_trial_screen = [&]() {
       const auto& objective_time_history =
           objective->iteration_time_history_seconds();
@@ -223,7 +220,10 @@ BackendRunResult run_truncated_newton_backend(
             }
             if (!std::isfinite(candidate_trial_energy) ||
                 !std::isfinite(candidate_trust_ratio) ||
-                actual_decrease <= 0.0) {
+                !truncated_newton_trial_is_acceptable(
+                    TruncatedNewtonTrialEvaluation{
+                        actual_decrease,
+                        effective_predicted_decrease})) {
               return false;
             }
           }
@@ -241,7 +241,10 @@ BackendRunResult run_truncated_newton_backend(
           }
           if (!std::isfinite(candidate_trial_energy) ||
               !std::isfinite(candidate_trust_ratio) ||
-              actual_decrease <= 0.0) {
+              !truncated_newton_trial_is_acceptable(
+                  TruncatedNewtonTrialEvaluation{
+                      actual_decrease,
+                      effective_predicted_decrease})) {
             return false;
           }
   
@@ -254,98 +257,6 @@ BackendRunResult run_truncated_newton_backend(
           *accepted_trial_energy = candidate_trial_energy;
           return true;
         };
-    auto try_safeguarded_nonredundant_descent_step =
-        [&](Eigen::VectorXd* accepted_packed_step,
-            Eigen::VectorXd* accepted_trial_parameters,
-            Eigen::VectorXd* accepted_trial_gradient,
-            double* accepted_trial_energy) -> bool {
-          Eigen::VectorXd descent_reduced_direction =
-              -apply_nonredundant_truncated_newton_preconditioner(
-                  current_space,
-                  &transported_preconditioner,
-                  current_projection.reduced_gradient);
-          Eigen::VectorXd search_direction =
-              gather_nonredundant_retract_tangent(
-                  current_orbital_input,
-                  current_space,
-                  parameter_view,
-                  descent_reduced_direction);
-          double directional_derivative =
-              current_gradient.dot(search_direction);
-          if (!std::isfinite(directional_derivative) ||
-              directional_derivative >= 0.0 ||
-              is_effectively_zero_step(
-                  search_direction,
-                  current_parameters)) {
-            descent_reduced_direction =
-                -current_projection.reduced_gradient;
-            search_direction =
-                gather_nonredundant_retract_tangent(
-                    current_orbital_input,
-                    current_space,
-                    parameter_view,
-                    descent_reduced_direction);
-            directional_derivative =
-                current_gradient.dot(search_direction);
-          }
-          if (!std::isfinite(directional_derivative) ||
-              directional_derivative >= 0.0 ||
-              is_effectively_zero_step(
-                  search_direction,
-                  current_parameters)) {
-            return false;
-          }
-  
-          const double reduced_search_direction_norm =
-              search_direction.norm();
-          const double trust_radius_limited_initial_step =
-              std::isfinite(reduced_search_direction_norm) &&
-                      reduced_search_direction_norm > 0.0
-                  ? trust_radius / reduced_search_direction_norm
-                  : options.minimum_step_size;
-          const double initial_descent_step =
-              std::max(
-                  options.minimum_step_size,
-                  std::min(
-                      std::min(
-                          std::min(1.0, options.initial_step_size),
-                          1.0 / std::max(1.0, reduced_gradient_inf_norm)),
-                      trust_radius_limited_initial_step));
-          // The safeguarded descent step is considered only after the current
-          // accepted-point Newton model already failed to produce an
-          // acceptable trust-region step. Starting the Armijo backtrack
-          // from a reduced step that already fits inside the current
-          // trust radius avoids burning many full objective evaluations
-          // just to rediscover the same radius contraction.
-          Eigen::VectorXd descent_parameters(current_parameters.size());
-          Eigen::VectorXd descent_gradient(current_gradient.size());
-          double descent_energy = energy;
-          if (!try_armijo_backtracking_nonredundant_direction(
-                  objective,
-                  current_orbital_input,
-                  current_space,
-                  parameter_view,
-                  current_parameters,
-                  energy,
-                  current_gradient,
-                  descent_reduced_direction,
-                  search_direction,
-                  initial_descent_step,
-                  options.minimum_step_size,
-                  options.armijo_constant,
-                  &descent_parameters,
-                  &descent_gradient,
-                  &descent_energy)) {
-            return false;
-          }
-  
-          *accepted_packed_step =
-              descent_parameters - current_parameters;
-          *accepted_trial_parameters = std::move(descent_parameters);
-          *accepted_trial_gradient = std::move(descent_gradient);
-          *accepted_trial_energy = descent_energy;
-          return true;
-        };
     const Eigen::Index reduced_size =
         current_projection.reduced_gradient.size();
     TruncatedNewtonTrialEvaluation trial_evaluation_cache;
@@ -356,16 +267,16 @@ BackendRunResult run_truncated_newton_backend(
     }
   
     auto truncated_newton_step =
-        solve_trust_region_in_krylov_subspace(
+        solve_trust_region_in_subspace(
             current_projection,
             trust_radius,
-            cached_krylov_subspace);
-    const bool reused_krylov_subspace =
+            cached_subspace);
+    const bool reused_subspace =
         truncated_newton_step_is_usable(
             truncated_newton_step,
             current_projection.reduced_gradient);
-    if (!reused_krylov_subspace) {
-      cached_krylov_subspace = TruncatedNewtonKrylovSubspace();
+    if (!reused_subspace) {
+      cached_subspace = TruncatedNewtonSubspace();
       truncated_newton_step =
           solve_nonredundant_truncated_newton_step(
               retraction_metric,
@@ -373,21 +284,22 @@ BackendRunResult run_truncated_newton_backend(
               current_projection,
               trust_radius,
               options.gradient_tolerance,
-              max_cg_iterations,
+              max_subspace_dimension,
               &hvp,
               &transported_preconditioner,
               initial_reduced_step_for_current_solve);
     }
     clamp_nonredundant_step_result_to_retract_tangent_radius(
-        current_orbital_input,
-        current_space,
-        parameter_view,
         current_projection,
         trust_radius,
         &truncated_newton_step);
-    if (!reused_krylov_subspace) {
+    if (!reused_subspace) {
       ++result->matrix_free_subproblem_count;
-      if (truncated_newton_step.reduced_hessian_times_step.size() ==
+      if (!truncated_newton_step.reached_boundary) {
+        ++result->matrix_free_interior_subproblem_count;
+      }
+      if (!truncated_newton_step.reached_boundary &&
+          truncated_newton_step.reduced_hessian_times_step.size() ==
           current_projection.reduced_gradient.size()) {
         const double gradient_norm = current_projection.reduced_gradient.stableNorm();
         const Eigen::VectorXd kkt_residual = current_projection.reduced_gradient +
@@ -402,11 +314,10 @@ BackendRunResult run_truncated_newton_backend(
         }
       }
     }
-    if (truncated_newton_krylov_subspace_is_usable(
-            truncated_newton_step.krylov_subspace,
+    if (truncated_newton_subspace_is_usable(
+            truncated_newton_step.subspace,
             current_projection.reduced_gradient.size())) {
-      cached_krylov_subspace =
-          truncated_newton_step.krylov_subspace;
+      cached_subspace = truncated_newton_step.subspace;
     }
     const TruncatedNewtonStepResult model_step =
         truncated_newton_step;
@@ -436,11 +347,7 @@ BackendRunResult run_truncated_newton_backend(
       truncated_newton_step.reduced_step = reduced_step;
       truncated_newton_step.reduced_hessian_times_step.resize(0);
       truncated_newton_step.retract_tangent_norm =
-          compute_nonredundant_retract_tangent_norm(
-              current_orbital_input,
-              current_space,
-              parameter_view,
-              reduced_step);
+          nonredundant_step_norm(reduced_step);
       truncated_newton_step.reached_boundary =
           truncated_newton_step.retract_tangent_norm >=
           (1.0 - 1.0e-8) * trust_radius;
@@ -474,36 +381,6 @@ BackendRunResult run_truncated_newton_backend(
             &trial_parameters,
             &trial_gradient,
             &trial_energy);
-    if (!accepted_trial &&
-        rejected_trial_step_count_for_current_point == 0 &&
-        reduced_gradient_inf_norm >=
-            8.0 * options.gradient_tolerance &&
-        model_step.encountered_negative_curvature) {
-      if (try_safeguarded_nonredundant_descent_step(
-              &packed_step,
-              &trial_parameters,
-              &trial_gradient,
-              &trial_energy)) {
-        accepted_trial = true;
-        const double safeguarded_actual_decrease = energy - trial_energy;
-        trial_evaluation_cache.actual_decrease =
-            safeguarded_actual_decrease;
-        trial_evaluation_cache.predicted_decrease =
-            safeguarded_actual_decrease;
-        truncated_newton_step.used_krylov_rescue = true;
-        truncated_newton_step.reached_boundary = false;
-        truncated_newton_step.encountered_negative_curvature = false;
-        truncated_newton_step.cg_iterations = 0;
-        truncated_newton_step.reduced_step =
-            current_space.project_vector(packed_step).reduced_gradient;
-        // The rejected Newton model image belongs to a different step and
-        // cannot define the KKT residual of the safeguarded descent step.
-        truncated_newton_step.reduced_hessian_times_step.resize(0);
-        truncated_newton_step.retract_tangent_norm = packed_step.norm();
-        truncated_newton_step.predicted_decrease =
-            std::max(options.energy_tolerance, energy - trial_energy);
-      }
-    }
     if (!accepted_trial) {
       ++rejected_trial_step_count_for_current_point;
       trust_radius =
@@ -520,9 +397,6 @@ BackendRunResult run_truncated_newton_backend(
         break;
       }
       rejected_step_cache.update(
-          current_orbital_input,
-          current_space,
-          parameter_view,
           model_step,
           reduced_size,
           trust_radius);
@@ -539,17 +413,17 @@ BackendRunResult run_truncated_newton_backend(
     // before canonicalization transports packed steps and covectors.
     // It is never reused as an exact Hessian action at the next point.
     if (transport_history_size > 1 &&
-        truncated_newton_krylov_subspace_is_usable(
-            cached_krylov_subspace, current_space.reduced_size())) {
+        truncated_newton_subspace_is_usable(
+            cached_subspace, current_space.reduced_size())) {
       const auto pairs = positive_ritz_secants(
-          cached_krylov_subspace.orthonormal_basis,
-          cached_krylov_subspace.hessian_basis,
-          cached_krylov_subspace.reduced_hessian,
+          cached_subspace.orthonormal_basis,
+          cached_subspace.hessian_basis,
+          cached_subspace.reduced_hessian,
           transport_history_size - 1);
       for (const auto& pair : pairs) {
         append_nonredundant_truncated_newton_secant_pair(
             current_space.expand_step(pair.direction),
-            current_space.expand_step(pair.image),
+            current_space.expand_gradient(pair.image),
             transport_history_size, &packed_secant_history);
       }
     }
@@ -560,7 +434,7 @@ BackendRunResult run_truncated_newton_backend(
             &packed_secant_history);
     ++run_result.n_iterations;
     rejected_step_cache.clear();
-    cached_krylov_subspace = TruncatedNewtonKrylovSubspace();
+    cached_subspace = TruncatedNewtonSubspace();
     sync_result_from_objective(*objective, result);
     run_result.final_gradient_l2_norm = current_gradient.norm();
     const double de = energy - previous_energy;
@@ -586,7 +460,8 @@ BackendRunResult run_truncated_newton_backend(
     TnhvpIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations;
     iteration_record.reduced_dimension = static_cast<int>(reduced_size);
-    iteration_record.krylov_iterations = truncated_newton_step.cg_iterations;
+    iteration_record.subspace_dimension =
+        truncated_newton_step.subspace_dimension;
     iteration_record.rejected_trial_count =
         rejected_trial_step_count_for_current_point;
     iteration_record.hvp_direction_count =
@@ -646,9 +521,7 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.reached_boundary = truncated_newton_step.reached_boundary;
     iteration_record.encountered_negative_curvature =
         model_step.encountered_negative_curvature;
-    iteration_record.used_krylov_rescue =
-        truncated_newton_step.used_krylov_rescue;
-    iteration_record.reused_krylov_subspace = reused_krylov_subspace;
+    iteration_record.reused_subspace = reused_subspace;
     result->tnhvp_iteration_trace.push_back(iteration_record);
     record_accepted_iteration_snapshot(
         objective,

@@ -100,7 +100,7 @@ build_nonredundant_truncated_newton_preconditioner(
     preconditioner.try_add_pair(
         current_space.project_vector(packed_pair.packed_step).reduced_gradient,
         current_space
-            .project_vector(packed_pair.packed_projected_gradient_change)
+            .project_gradient(packed_pair.packed_projected_gradient_change)
             .reduced_gradient);
   }
   return preconditioner;

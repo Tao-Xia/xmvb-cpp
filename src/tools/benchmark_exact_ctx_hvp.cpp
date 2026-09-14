@@ -449,7 +449,13 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
     Eigen::VectorXd packed = space.expand_step(v);
     for (int j = 0; j < packed.size(); ++j)
       if (slots[j] / input.n_basis_functions != p) packed[j] = 0.0;
-    return space.project_reduced_gradient(packed);
+    const Eigen::VectorXd resolved =
+        space.project_vector(packed).reduced_gradient;
+    if ((space.expand_step(resolved) - packed).norm() >
+        1.0e-10 * std::max(1.0, packed.norm())) {
+      throw std::runtime_error("orbital projectors do not resolve the audit vector");
+    }
+    return resolved;
   };
   const std::vector<std::pair<std::string, Eigen::VectorXd>> probes = {
       {"gradient", g}, {"newton_step", sampled.step},
@@ -630,6 +636,10 @@ void run_dense_reduced_hessian_reference(
       (assembled_action - direct_action).norm() / action_scale;
   const double audit_tolerance =
       std::sqrt(std::numeric_limits<double>::epsilon());
+  std::cout << "dense_reference_relative_skew = "
+            << reference.relative_skew_norm << '\n';
+  std::cout << "dense_reference_action_relative_error = "
+            << action_relative_error << '\n';
   if (reference.relative_skew_norm > audit_tolerance ||
       action_relative_error > audit_tolerance) {
     throw std::runtime_error(
@@ -644,10 +654,6 @@ void run_dense_reduced_hessian_reference(
   std::cout << "dense_reference_wall_time_seconds = "
             << std::chrono::duration<double>(stop_time - start_time).count()
             << '\n';
-  std::cout << "dense_reference_relative_skew = "
-            << reference.relative_skew_norm << '\n';
-  std::cout << "dense_reference_action_relative_error = "
-            << action_relative_error << '\n';
   std::cout << "dense_reference_minimum_eigenvalue = "
             << eigensolver.eigenvalues().minCoeff() << '\n';
   std::cout << "dense_reference_maximum_eigenvalue = "

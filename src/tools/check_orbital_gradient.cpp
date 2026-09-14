@@ -703,19 +703,17 @@ int main(int argc, char** argv) {
 
       for (int report_index = 0; report_index < n_to_report; ++report_index) {
         const int parameter_index = ranked_parameters[report_index].second;
-        xmvb::vb::VbScfInput plus_input = diagnostic_input;
-        xmvb::vb::VbScfInput minus_input = diagnostic_input;
-        plus_input.orbital_preparation_input.orbital_value_table[parameter_index] +=
-            options.step;
-        minus_input.orbital_preparation_input.orbital_value_table[parameter_index] -=
-            options.step;
-
+        xmvb::vb::VbScfInput displaced_input = diagnostic_input;
+        displaced_input.orbital_preparation_input
+            .orbital_value_table[parameter_index] += options.step;
         const double plus_energy = evaluate_energy_component(
-            plus_input,
+            displaced_input,
             load_result.nuclear_repulsion_energy,
             options.component);
+        displaced_input.orbital_preparation_input
+            .orbital_value_table[parameter_index] -= 2.0 * options.step;
         const double minus_energy = evaluate_energy_component(
-            minus_input,
+            displaced_input,
             load_result.nuclear_repulsion_energy,
             options.component);
         const double finite_difference = (plus_energy - minus_energy) / (2.0 * options.step);
@@ -805,29 +803,27 @@ int main(int argc, char** argv) {
         // the direction by some packed-space norm.
         const double effective_step = options.step;
 
-        xmvb::vb::VbScfInput plus_input = diagnostic_input;
-        xmvb::vb::VbScfInput minus_input = diagnostic_input;
+        xmvb::vb::VbScfInput displaced_input = diagnostic_input;
         // Reduced nonredundant coordinates represent accepted-point orbital
         // replacement directions. Mirror the optimizer manifold by applying the
         // same finite orbital increment lift here instead of perturbing the
         // packed sparse coefficients directly.
-        plus_input.orbital_preparation_input =
+        displaced_input.orbital_preparation_input =
             nonredundant_space.retract_step(
                 diagnostic_input.orbital_preparation_input,
                 reduced_direction,
                 effective_step);
-        minus_input.orbital_preparation_input =
+        const double plus_energy = evaluate_energy_component(
+            displaced_input,
+            load_result.nuclear_repulsion_energy,
+            options.component);
+        displaced_input.orbital_preparation_input =
             nonredundant_space.retract_step(
                 diagnostic_input.orbital_preparation_input,
                 reduced_direction,
                 -effective_step);
-
-        const double plus_energy = evaluate_energy_component(
-            plus_input,
-            load_result.nuclear_repulsion_energy,
-            options.component);
         const double minus_energy = evaluate_energy_component(
-            minus_input,
+            displaced_input,
             load_result.nuclear_repulsion_energy,
             options.component);
         const double finite_difference = (plus_energy - minus_energy) / (2.0 * effective_step);

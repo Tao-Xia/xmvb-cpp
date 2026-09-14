@@ -477,7 +477,7 @@ public:
       metadata_stream
           << ",\n  \"tnhvp\": {\n"
           << "    \"reduced_dimension\": " << tnhvp.reduced_dimension << ",\n"
-          << "    \"krylov_iterations\": " << tnhvp.krylov_iterations << ",\n"
+          << "    \"subspace_dimension\": " << tnhvp.subspace_dimension << ",\n"
           << "    \"rejected_trial_count\": " << tnhvp.rejected_trial_count << ",\n"
           << "    \"hvp_direction_count\": " << tnhvp.hvp_direction_count << ",\n"
           << "    \"hvp_batch_count\": " << tnhvp.hvp_batch_count << ",\n"
@@ -503,10 +503,8 @@ public:
           << (tnhvp.reached_boundary ? "true" : "false") << ",\n"
           << "    \"encountered_negative_curvature\": "
           << (tnhvp.encountered_negative_curvature ? "true" : "false") << ",\n"
-          << "    \"used_krylov_rescue\": "
-          << (tnhvp.used_krylov_rescue ? "true" : "false") << ",\n"
-          << "    \"reused_krylov_subspace\": "
-          << (tnhvp.reused_krylov_subspace ? "true" : "false") << "\n"
+          << "    \"reused_subspace\": "
+          << (tnhvp.reused_subspace ? "true" : "false") << "\n"
           << "  }";
     }
     metadata_stream << "\n}\n";

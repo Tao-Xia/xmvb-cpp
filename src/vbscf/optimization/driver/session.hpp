@@ -20,7 +20,7 @@ OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
     const SparseParameterLayout& parameter_view);
 
-int choose_truncated_newton_max_cg_iterations(
+int choose_tnhvp_max_subspace_dimension(
     const VbScfOptimizerOptions& options,
     int reduced_size);
 

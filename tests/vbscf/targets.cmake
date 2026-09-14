@@ -14,7 +14,6 @@ set(_xmvb_vbscf_unit_targets
   test_normalized_orbital_curvature
   test_oeo_normalization_pullback
   test_orthonormal_hvp_basis
-  test_positive_conjugate_basis
   test_positive_ritz_secants
   test_projected_orbital_surrogate
   test_reduced_hessian_reference
@@ -64,9 +63,6 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME positive_ritz_secants COMMAND test_positive_ritz_secants)
   set_tests_properties(positive_ritz_secants PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME positive_conjugate_basis COMMAND test_positive_conjugate_basis)
-  set_tests_properties(positive_conjugate_basis PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME normalized_orbital_curvature COMMAND test_normalized_orbital_curvature)
   set_tests_properties(normalized_orbital_curvature PROPERTIES

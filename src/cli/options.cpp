@@ -109,7 +109,7 @@ void print_usage() {
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
                "\n"
-               " [--nonredundant-truncated-newton-max-cg-iterations <count|0=32>]"
+               " [--tnhvp-max-subspace-dimension <count|0=32>]"
                " [--nonredundant-truncated-newton-transport-history-size <count>]"
                " [--standard-two-electron-mode auto|exact|ri]"
                " [--skip-orbital-guess true|false]"
@@ -142,8 +142,10 @@ std::optional<Options> parse_options(int argc, char** argv) {
   options.max_iterations = 2000;
   options.gradient_tolerance = 1.0e-3;
   options.energy_tolerance = 1.0e-7;
-  options.initial_step_size = 1.0e20;
-  options.minimum_step_size = 1.0e-20;
+  // A finite initial radius lets the trust-region model globalize negative
+  // curvature instead of first proposing an effectively unbounded step.
+  options.initial_step_size = 1.0;
+  options.minimum_step_size = 1.0e-7;
   options.history_size = 100;
   std::string dump_trace_dir;
   std::string tnhvp_trace_path;
@@ -170,10 +172,8 @@ std::optional<Options> parse_options(int argc, char** argv) {
         options.gradient_tolerance = std::stod(argument_value);
       } else if (argument_name == "--energy-tolerance") {
         options.energy_tolerance = std::stod(argument_value);
-      } else if (
-          argument_name ==
-          "--nonredundant-truncated-newton-max-cg-iterations") {
-        options.nonredundant_truncated_newton_max_cg_iterations =
+      } else if (argument_name == "--tnhvp-max-subspace-dimension") {
+        options.tnhvp_max_subspace_dimension =
             std::stoi(argument_value);
       } else if (
           argument_name ==

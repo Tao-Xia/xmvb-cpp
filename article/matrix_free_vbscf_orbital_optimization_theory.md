@@ -444,11 +444,103 @@ A complete inactive source combination may cancel outside a target support even
 when none of its individual source columns lies within that support. Equation
 27a retains such combinations; a column-containment heuristic would miss them.
 
+The Euclidean complement is an algebraic construction, not the final
+optimization coordinate system. Let $\mathbf c_p$ contain every stored
+coefficient of orbital $p$, including fixed coefficients, let $\mathbf S_p$
+be the AO-overlap submatrix on that stored support, and define
+
+$$
+n_p=(\mathbf c_p^{\mathrm T}\mathbf S_p\mathbf c_p)^{1/2},
+\qquad
+\bar{\mathbf c}_p=\frac{\mathbf c_p}{n_p}.
+\tag{27c}
+$$
+
+The Jacobian of metric normalization is
+
+$$
+\mathbf J_p
+=
+\frac{1}{n_p}
+\left[
+\mathbf I-
+\bar{\mathbf c}_p
+(\mathbf S_p\bar{\mathbf c}_p)^{\mathrm T}
+\right].
+\tag{27d}
+$$
+
+Let $\mathbf V_p$ embed the differentiable Euclidean quotient basis from eq
+27a into the complete stored support, placing zero rows on fixed
+coefficients. The positive-definite quotient metric and the whitened basis are
+
+$$
+\mathbf M_p
+=
+\mathbf V_p^{\mathrm T}
+\mathbf J_p^{\mathrm T}\mathbf S_p\mathbf J_p
+\mathbf V_p,
+\qquad
+\widetilde{\mathbf U}_p
+=
+\mathbf V_p\mathbf M_p^{-1/2}.
+\tag{27e}
+$$
+
+Consequently,
+
+$$
+\widetilde{\mathbf U}_p^{\mathrm T}
+\mathbf J_p^{\mathrm T}\mathbf S_p\mathbf J_p
+\widetilde{\mathbf U}_p
+=\mathbf I.
+\tag{27f}
+$$
+
+Fixed coefficients enter $n_p$, $\mathbf J_p$, and $\mathbf S_p$ even though
+their rows in $\mathbf V_p$ vanish. Omitting them changes the physical metric
+and is incorrect.
+
 The production implementation uses eq 27a and stores only local dense blocks,
 requiring $O(\sum_p m_p n_{\mathrm{red},p})$ basis storage instead of
 $O(m n_{\mathrm{red}})$. Its gradient pullback and step expansion remain exact
-adjoints. It uses the raw Euclidean coefficient metric for now; physical metric
-whitening is a separate change and is not implied by removal of gauge directions.
+adjoints. It applies the local normalized-orbital whitening in eqs 27c--27f;
+therefore the trust-region norm is invariant to independent rescaling of raw
+orbital representatives.
+
+After whitening, vector coordinates and gradient coordinates are different
+linear maps. For a packed tangent $\mathbf v$ in the range of
+$\widetilde{\mathbf U}$ and a packed gradient covector $\mathbf g$,
+
+$$
+\mathbf d
+=
+(\widetilde{\mathbf U}^{\mathrm T}\widetilde{\mathbf U})^{-1}
+\widetilde{\mathbf U}^{\mathrm T}\mathbf v,
+\qquad
+\mathbf g_{\mathrm{red}}
+=
+\widetilde{\mathbf U}^{\mathrm T}\mathbf g.
+\tag{27g}
+$$
+
+A reduced covector is lifted back to the Euclidean gauge-orthogonal packed
+representative by
+
+$$
+\mathbf g_{\mathrm{pack}}
+=
+\widetilde{\mathbf U}
+(\widetilde{\mathbf U}^{\mathrm T}\widetilde{\mathbf U})^{-1}
+\mathbf g_{\mathrm{red}},
+\qquad
+\widetilde{\mathbf U}^{\mathrm T}\mathbf g_{\mathrm{pack}}
+=\mathbf g_{\mathrm{red}}.
+\tag{27h}
+$$
+
+Using the transpose pullback to recover vector coordinates is valid only for
+an unwhitened Euclidean-orthonormal basis and is incorrect after eq 27e.
 
 ## 5. A natural quotient metric
 
@@ -528,7 +620,7 @@ $$
 \tag{32}
 $$
 
-The metric removes dependence on independent orbital scalings, but full invariance under active additions from a moving inactive span requires care: differentiating $\mathbf c_p\mapsto\mathbf c_p+\mathbf C_{\mathrm I}\boldsymbol\ell_p$ also changes the active tangent by $\delta\mathbf C_{\mathrm I}\boldsymbol\ell_p$. To obtain a representative-independent bundle metric, one may first use the canonical representative $\mathbf c_p=\mathbf b_p$ and differentiate that section, or introduce the corresponding connection. Equation 31 is therefore a proposed local metric, not a claim that the current code implements an invariant Riemannian Newton method.
+The metric removes dependence on independent orbital scalings, but full invariance under active additions from a moving inactive span requires care: differentiating $\mathbf c_p\mapsto\mathbf c_p+\mathbf C_{\mathrm I}\boldsymbol\ell_p$ also changes the active tangent by $\delta\mathbf C_{\mathrm I}\boldsymbol\ell_p$. The production code now implements the per-orbital normalized metric of eqs 27c--27f. Equation 31 is the stronger coupled quotient metric: it additionally accounts for motion of the inactive projector and projected active rays. Full representative invariance under moving inactive additions still requires that coupled metric or an equivalent connection, so the present local whitening must not be described as a complete invariant Riemannian Newton method.
 
 ## 6. Directional derivatives of the orbital-preparation map
 
@@ -849,6 +941,30 @@ $$
 
 Equation 56 exposes the genuine conditioning problem near degeneracies. A projected or block response solve does not remove the physical inverse-gap sensitivity of an isolated state. At an exact crossing an individual ordered eigenvalue may cease to be differentiable. A smoothly isolated cluster with equal weights can instead be treated by a subspace response or Sylvester equation; internal cluster rotations then cancel from the averaged objective. Unequal weights or state-specific tracking require an explicit differentiability assumption.
 
+The linear response accuracy cannot be identified with the outer orbital-gradient
+threshold. The response is a first-order quantity entering a second-order
+energy model, and loose response residuals can corrupt a Rayleigh curvature
+when large fixed-adjoint and relaxation terms cancel. Let
+$\epsilon_E$ be the requested absolute Ritz-energy accuracy,
+$\epsilon_g$ the outer gradient threshold, and
+$E_{\mathrm{scale}}=\max(1,\max_i|E_i|)$ for the selected roots. The
+production response solve uses the scale-derived relative residual target
+
+$$
+\tau_{\mathrm{resp}}
+=
+\min\left[
+\epsilon_g,
+\sqrt{\frac{\epsilon_E}{E_{\mathrm{scale}}}}
+\right].
+\tag{56a}
+$$
+
+Thus the response accuracy follows the accepted Ritz backward-error scale
+without introducing a molecule-specific tolerance or forcing every HVP to
+machine precision. The true bordered-equation residual is checked explicitly;
+a recursive Krylov residual estimate alone is not accepted.
+
 ## 9. Reduced pullback gradient and Hessian
 
 At a fixed accepted point, let $\mathbf U$ be the quotient basis from Section 4 and define the local raw sparse chart
@@ -978,7 +1094,7 @@ $$
 
 and solve the reduced trust-region problem in $\operatorname{span}(\mathbf Q)$. Residual directions, preconditioned residuals, and transported Ritz vectors may be added in blocks. Recycling changes only how the Newton equation is solved; it does not alter the Hessian operator defined by eqs 50--63.
 
-In the current Euclidean quotient chart, basis construction must preserve the
+In the current physically whitened quotient chart, basis construction must preserve the
 identity $\mathbf Y=\mathbf H_k\mathbf Q$ numerically, not only in exact
 arithmetic. For a candidate direction $\mathbf p$, first orthogonalize and
 normalize the direction itself:
@@ -1011,7 +1127,7 @@ also destroy their mutual consistency. The implementation now regenerates each
 packed tangent from its admitted reduced vector. A small-gradient molecular
 regression that exposed both failures is documented in the validation record.
 
-For the current Euclidean quotient chart, the small trust-region problem must
+For the current physically whitened quotient chart, the small trust-region problem must
 be solved as a constrained quadratic problem, including singular and indefinite
 models. With $\mathbf h=\mathbf Q^{\mathrm T}\mathbf g_k$ and
 $\mathbf T=\mathbf Q^{\mathrm T}\mathbf H_k\mathbf Q$, its global optimality
@@ -1061,21 +1177,33 @@ $$
 \tag{65e}
 $$
 
-One candidate algorithm expands the subspace when this test fails, using
-$-\mathbf M_k^{-1}\mathbf r$, orthogonalized against the current basis before
-one fresh HVP is evaluated. The projected trust-region problem is then solved
-again. A preconditioner accelerates this expansion; it does not replace the
-Hessian in the quadratic model. An experimental implementation used the bounded
-square-root forcing rule with the gradient 2-norm, making the inner rule
-invariant under orthogonal changes of basis, but not arbitrary AO or energy
-rescaling. It passed small-model tests but increased MnF2 HVP work and was not
-adopted. Production retains CG-based subspace generation. The subsequent
-consistency correction uses the Euclidean 2-norm in both the forcing rule and
-the CG residual test, and restores conjugacy using cached HVP information.
-It separately reports how many fresh subproblem solutions meet the full 2-norm
-KKT residual target with the same forcing fraction.
-Neither the inherited forcing floor nor a finite HVP safety limit establishes
-asymptotically quadratic convergence.
+The production method expands the subspace with the residual block
+
+$$
+\mathbf P_k
+=
+\left[
+-\mathbf M_k^{-1}\mathbf r,
+-\mathbf r
+\right],
+\tag{65f}
+$$
+
+after two-pass orthogonalization against the current basis. All admitted
+columns are evaluated by one block-HVP call, and eq 65c is solved again in the
+enlarged space. The raw residual preserves an unpreconditioned correction when
+the local positive preconditioner distorts a strongly indefinite mode; the
+preconditioned residual accelerates the regular case. The preconditioner never
+replaces the Hessian in the quadratic model.
+
+Negative curvature is retained in $\mathbf T$ rather than terminating at the
+first search direction. Once the projected solution reaches the trust-region
+boundary, however, it is already a valid globally convergent inexact step and
+subspace expansion stops. Further HVPs are spent on the Newton residual only
+for an interior solution, where eq 65e controls the local superlinear regime.
+This separates globalization from asymptotic Newton accuracy without a
+molecule-specific HVP budget. A finite subspace safety limit remains a resource
+guard and is never interpreted as satisfying eq 65e.
 
 Hitting the HVP safety limit alone must not be interpreted as meeting the
 inner residual target. A small residual does not exclude negative curvature
@@ -1098,6 +1226,30 @@ $$
 $$
 
 Both the trust radius and the required inner accuracy should be adapted from $\rho_k$, the Newton residual, and the observed spectral information. Fixed system-dependent HVP or CG budgets are not part of the mathematical algorithm.
+
+In particular, a positive actual decrease alone does not establish that the
+quadratic model resolved the step. Write the predicted and actual decreases as
+$p_k>0$ and $a_k$, and define the measured model error
+
+$$
+e_k=\lvert a_k-p_k\rvert.
+$$
+
+The production acceptance test requires
+
+$$
+a_k>0,
+\qquad
+e_k\leq a_k.
+$$
+
+Thus an overpredicting model is accepted only when the observed decrease is at
+least as large as its model error; equivalently, $\rho_k\geq 1/2$ in that
+case. An underpredicting model with $p_k>0$ satisfies the second inequality.
+Rejected trials contract the radius and resolve the projected problem in the
+already evaluated accepted-point Krylov space. Negative curvature is handled
+by the trust-region boundary conditions in eq 65c; it is not replaced by an
+unrelated first-order line-search step.
 
 ### 10.1 Coordinate-consistent local preconditioning model
 
@@ -1169,13 +1321,13 @@ invariance under arbitrary inactive-orbital mixing.
 
 ### 10.2 Stable inner conjugate directions
 
-In the Euclidean quotient chart, the inner norm must not depend on an arbitrary
-orthogonal change of quotient basis. The production forcing function retains
-its inherited bounds but now takes $\lVert\mathbf g_k\rVert_2$, and the CG
-residual is checked in the same 2-norm. This corrects orthogonal-basis dependence
-of the inner norm; it does not make the rule invariant under arbitrary
-nonorthogonal transformations or energy-unit rescaling. The unchanged outer
-stopping criterion still uses a projected infinity norm.
+In the physically whitened quotient chart, the reduced Euclidean norm is the
+local normalized-orbital AO norm of eq 27f. The production forcing function
+takes $\lVert\mathbf g_k\rVert_2$, and the CG residual is checked in the same
+norm. This removes independent raw-orbital scale dependence. It does not yet
+implement the fully coupled metric of eq 31 or make the rule invariant under
+energy-unit rescaling. The outer stopping criterion uses the corresponding
+reduced gradient infinity norm.
 
 The three-term preconditioned-CG recurrence can lose conjugacy in finite
 precision even when its Euclidean HVP cache remains consistent. Let
@@ -1436,9 +1588,14 @@ However, this agreement does not validate the physical quotient coordinates. The
 1. **Gauge sources must use the global inactive span.** Treating the restriction of another inactive orbital to the support of orbital $p$ as a local gauge vector is generally invalid. A support-restricted orbital is not, in general, a member of the original inactive span.
 2. **Inactive additions to active orbitals are redundant.** Directions of the form $\delta\mathbf c_{\mathrm A,p}=\mathbf C_{\mathrm I}\boldsymbol\ell_p$ are annihilated by the projector in eq 14, up to an irrelevant active-orbital scaling induced by normalization. Retaining these directions introduces exact or near-zero modes.
 3. **The existing rank diagnostics are not independent validation.** They test rank and intersection properties using the same per-orbital gauge model employed to construct the basis. They can therefore pass even if the assumed gauge space is physically incorrect.
-4. **Euclidean local orthogonalization is coordinate dependent.** Orthogonalizing against the correct admissible gauge defines a valid algebraic complement, but does not by itself provide a representative-independent physical norm for the trust-region method.
+4. **Euclidean local orthogonalization is coordinate dependent.** Orthogonalizing against the correct admissible gauge defines a valid algebraic complement, but does not by itself provide a scale-invariant physical norm for the trust-region method. Equations 27c--27g now supply that local normalized-orbital metric while preserving the exact quotient span.
 
-The corrected production construction uses the exact factorization in eqs 27a and 27b. The previous occupied/virtual generator and its empirical rank cutoffs have been removed. The independent full global construction remains a diagnostic oracle. Changing the quotient basis also changes the finite local Newton model and preconditioner, so removal of redundant variables alone does not guarantee fewer iterations or lower wall time.
+The corrected production construction uses the exact factorization in eqs 27a
+and 27b followed by the physical whitening in eqs 27c--27f. The previous
+occupied/virtual generator, its empirical rank cutoffs, and the raw-coordinate
+trust norm have been removed. The independent full global construction remains
+a diagnostic oracle. Vector recovery and covector pullback are tested
+separately according to eq 27g.
 
 ### 11.1 Initial global-gauge audit
 
@@ -1462,39 +1619,62 @@ directions. Seven synthetic tests additionally exercise unequal supports,
 off-support cancellation, frozen stored coefficients, full support, inactive
 basis changes, absent inactive or active spaces, and a zero-dimensional quotient.
 Directional finite differences of the relaxed HVP pass on all four molecular
-inputs. Complete runs converge, but the coordinate-only correction exposed an
-HVP-subspace consistency bug and a severe MnF2 performance regression. Correcting
-the subspace accumulation reduces MnF2 from 119 to 44 iterations. The subsequent
-spectral-endpoint correction (eqs 65c and 65d) reduces this to 37 iterations and
-865 HVP directions, still above the 18-iteration, 413-HVP pre-fix reference;
-this is not yet a successful overall performance change. A residual-expanded
-candidate increased HVP work on the larger tests and was not retained. The
-production implementation now reports the final-step residual diagnostic of
-eq 65e. Subsequent coordinate-consistent preconditioning, Euclidean inner norms,
-conjugacy restoration, and positive Ritz-secant recycling (eqs 66a--66g) give
-21 MnF2 iterations and 437 HVP directions at the same default stopping settings.
-These changes do not improve every input at those settings: 241 uses one more
-iteration and one more HVP, while FeCl2 uses more HVPs but reaches a lower energy
-and gradient norm. The subsequent inactive-projection correction (eqs 66h--66j)
-improves those intermediate results: F2, 241, MnF2, and FeCl2 use respectively
-5 / 14, 10 / 39, 19 / 255, and 7 / 224 iterations / HVP directions, with smaller
-final projected gradient norms on all four inputs. The double-occupancy
-weighting (eq 66m) then gives 5 / 11, 10 / 39, 14 / 165, and 6 / 192,
-respectively. These are default-tolerance endpoints, not identical final
-gradient norms; in particular the FeCl2 endpoint is higher in energy by
-approximately $4.1\times10^{-8}$ Eh while its gradient norm is smaller.
-No per-system budgets were added. The FeCl2 full residual target remains unmet within the inner budget,
-so these results do not establish asymptotically quadratic convergence.
-Reproduction commands, numerical residuals, convergence data, and limitations are recorded in
-[Sparse quotient correction: validation record](sparse_quotient_fix_validation.md).
+inputs. A larger 1764-structure diagnostic provides a more discriminating
+separation of first- and second-order errors. At its initial point, central
+energy differences along the six largest reduced-gradient coordinates agree
+with the analytic pullback to relative errors between $1.0\times10^{-5}$ and
+$4.6\times10^{-5}$. Thus the slow optimization observed for this input is not
+explained by an incorrect first derivative or by the quotient pullback.
 
-A subsequent [direction-resolved consistency audit](matrix_free_curvature_decomposition_diagnostics.md)
-finds a FeCl2 endpoint linearity discrepancy of approximately 1.2% in the
-evaluated complete HVP, localized to its outer-response contribution. The
-earlier finite-difference agreements hold for the directions and points
-tested, not for every combination used by an inner subspace model. This
-unresolved discrepancy must be addressed before treating the implementation
-as a validated exact Hessian action in convergence arguments.
+The same diagnostic exposed an accuracy-contract error in the structure
+response used by the exact HVP. With a response relative residual of
+$10^{-3}$, the analytic directional curvature is
+$-1.184020\times10^6$, whereas the central difference of relaxed gradients is
+$-1.381769\times10^6$. The componentwise maximum relative discrepancy is only
+$7.95\times10^{-3}$, but cancellation between a
+$+5.77\times10^6$ core contribution and a $-7.15\times10^6$ outer-response
+contribution amplifies this error in the physically relevant Rayleigh
+curvature. Equation 56a selects a residual of $7.65\times10^{-5}$ at this
+point; the resulting analytic curvature, $-1.382382\times10^6$, differs from
+the relaxed-gradient difference by $4.4\times10^{-4}$ relatively. This is an
+HVP response-accuracy defect, not a gradient defect.
+
+The former truncated-CG implementation also stopped at the first negative
+curvature direction. On the large diagnostic it therefore used one HVP per
+outer iteration and reduced the energy only to $-314.153714$ after ten
+iterations. The residual-driven block subspace of eq 65f instead retains
+negative Ritz directions and solves the projected indefinite trust-region
+problem. Its first two accepted iterations use four HVP directions in two
+batched actions and lower the energy from $-298.240367$ to $-326.046807$.
+This establishes the importance of the indefinite subspace model, but it does
+not yet establish acceptable large-structure wall time: a subsequent interior
+solve can expand toward the 32-direction safety limit, and a 32-core run was
+stopped after 1582 s with a 2.49 GiB peak RSS before completing. The remaining
+large-system problem is therefore inner-response/subspace efficiency rather
+than the analytic orbital gradient.
+
+At the common production tolerances of $10^{-3}$ for the projected-gradient
+infinity norm and $10^{-7}$ hartree for the accepted energy change, the
+corrected implementation gives the following complete 32-thread runs. Times
+are end-to-end wall times on the same workstation and are intended as
+regression data rather than machine-independent benchmarks.
+
+| Input | Reduced dimension | Iterations | HVP directions | Final energy / hartree | Final projected gradient infinity norm | Wall time / s | Peak RSS / MiB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| F$_2$ sparse | 42 | 6 | 16 | -198.751155830455 | $1.60\times10^{-5}$ | 0.14 | 34.5 |
+| F$_2$ full AO | 218 | 15 | 50 | -198.689799086735 | $1.78\times10^{-4}$ | 0.35 | 36.0 |
+| 241 | 432 | 10 | 38 | -230.720590362167 | $7.49\times10^{-5}$ | 4.24 | 1396.9 |
+| MnF$_2$ | 957 | 22 | 206 | -1348.893352227972 | $8.48\times10^{-4}$ | 10.81 | 675.1 |
+| FeCl$_2$ full AO | 3655 | 6 | 32 | -2181.617636472959 | $8.43\times10^{-4}$ | 6.18 | 568.3 |
+| C$_6$H$_6$ sparse | 1320 | 6 | 22 | -230.634508518379 | $5.36\times10^{-5}$ | 2.90 | 909.3 |
+| C$_6$H$_6$ full | 1320 | 5 | 20 | -230.777284187920 | $2.02\times10^{-4}$ | 2.93 | 908.4 |
+| 10698 | 722 | 14 | 56 | -422.611824582135 | $8.03\times10^{-5}$ | 24.10 | 7441.7 |
+
+No molecule-dependent budgets or thresholds are used. Reproduction commands,
+earlier coordinate audits, and additional limitations are recorded in
+[Sparse quotient correction: validation record](sparse_quotient_fix_validation.md)
+and
+[Matrix-free curvature decomposition diagnostics](matrix_free_curvature_decomposition_diagnostics.md).
 
 ## 12. Verification requirements
 

@@ -78,12 +78,23 @@ build_accepted_selected_state_generalized_eigen_response_operator(
   response_operator.selected_eigenvectors =
       accepted_point_context.selected_state_eigenvectors;
   accepted_point_context.structure_solve_accuracy.validate();
-  // The directional response controls the accuracy of the orbital Hessian
-  // action, not the accepted Ritz energy. Its inexact linear solve therefore
-  // follows the outer gradient contract; applying the energy threshold here
-  // needlessly oversolves every Krylov direction.
+  // A first-order eigensystem response feeds a second-order orbital model.
+  // Reusing the outer gradient threshold directly can leave the Rayleigh
+  // curvature inaccurate when large core and response terms cancel. Balance
+  // the response error against the accepted Ritz-energy backward error: its
+  // square root is the natural first-order accuracy associated with a
+  // second-order energy target. The outer gradient contract remains an upper
+  // bound, so no independent empirical response threshold is introduced.
+  const double selected_energy_scale = std::max(
+      1.0,
+      response_operator.selected_eigenvalues.cwiseAbs().maxCoeff());
+  const double relative_energy_accuracy =
+      accepted_point_context.structure_solve_accuracy.energy_tolerance /
+      selected_energy_scale;
   response_operator.relative_residual_tolerance =
-      accepted_point_context.structure_solve_accuracy.gradient_tolerance;
+      std::min(
+          accepted_point_context.structure_solve_accuracy.gradient_tolerance,
+          std::sqrt(relative_energy_accuracy));
   for (const int state_index : accepted_point_context.selected_state_indices) {
     if (state_index < 0 || state_index >= n_structures) {
       throw std::out_of_range("selected state index is out of range");

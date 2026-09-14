@@ -8,7 +8,7 @@
 
 namespace xmvb::vb {
 
-struct TruncatedNewtonKrylovSubspace {
+struct TruncatedNewtonSubspace {
   Eigen::MatrixXd orthonormal_basis;
   Eigen::MatrixXd tangent_basis;
   Eigen::MatrixXd hessian_basis;
@@ -19,12 +19,11 @@ struct TruncatedNewtonKrylovSubspace {
 struct TruncatedNewtonStepResult {
   Eigen::VectorXd reduced_step;
   Eigen::VectorXd reduced_hessian_times_step;
-  TruncatedNewtonKrylovSubspace krylov_subspace;
+  TruncatedNewtonSubspace subspace;
   double retract_tangent_norm = 0.0;
   bool reached_boundary = false;
   bool encountered_negative_curvature = false;
-  bool used_krylov_rescue = false;
-  int cg_iterations = 0;
+  int subspace_dimension = 0;
   double projected_model_gradient_norm = 0.0;
   double model_spectral_radius = 0.0;
   double trust_region_shift = 0.0;
@@ -42,9 +41,6 @@ struct RejectedTruncatedNewtonStepCache {
   bool has_cached_step(Eigen::Index expected_size) const;
   void clear();
   void update(
-      const OrbitalPreparationInput& orbital_preparation_input,
-      const OrbitalChart& current_space,
-      const SparseParameterLayout& parameter_view,
       const TruncatedNewtonStepResult& model_step,
       Eigen::Index expected_size,
       double trust_radius);
@@ -52,26 +48,33 @@ struct RejectedTruncatedNewtonStepCache {
 
 double inexact_newton_forcing_term(double gradient_norm);
 
+/**
+ * @brief Accepts a trial only when its measured decrease resolves model error.
+ *
+ * A merely positive energy change is insufficient evidence for trusting a
+ * quadratic step. This criterion requires the actual decrease to exceed the
+ * absolute disagreement between actual and predicted decrease.
+ */
+bool truncated_newton_trial_is_acceptable(
+    const TruncatedNewtonTrialEvaluation& trial);
+
 void clamp_nonredundant_step_result_to_retract_tangent_radius(
-    const OrbitalPreparationInput& orbital_preparation_input,
-    const OrbitalChart& current_space,
-    const SparseParameterLayout& parameter_view,
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     TruncatedNewtonStepResult* step);
 
-bool truncated_newton_krylov_subspace_is_usable(
-    const TruncatedNewtonKrylovSubspace& krylov_subspace,
+bool truncated_newton_subspace_is_usable(
+    const TruncatedNewtonSubspace& subspace,
     Eigen::Index reduced_size);
 
 bool truncated_newton_step_is_usable(
     const TruncatedNewtonStepResult& step,
     const Eigen::VectorXd& reduced_gradient);
 
-TruncatedNewtonStepResult solve_trust_region_in_krylov_subspace(
+TruncatedNewtonStepResult solve_trust_region_in_subspace(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
-    const TruncatedNewtonKrylovSubspace& krylov_subspace);
+    const TruncatedNewtonSubspace& subspace);
 
 Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
     const NonredundantRetractionMetric& retraction_metric,
@@ -98,7 +101,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     double gradient_tolerance,
-    int max_cg_iterations,
+    int max_subspace_dimension,
     ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd* initial_reduced_step = nullptr);

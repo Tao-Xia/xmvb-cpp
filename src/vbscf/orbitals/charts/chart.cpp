@@ -288,6 +288,66 @@ Eigen::MatrixXd build_exact_local_sparse_quotient_basis(
   return quotient_basis;
 }
 
+Eigen::MatrixXd whiten_normalized_orbital_quotient_basis(
+    const Eigen::Ref<const Eigen::MatrixXd>& quotient_basis,
+    const Eigen::Ref<const Eigen::VectorXd>& raw_coefficients,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap) {
+  if (quotient_basis.rows() != raw_coefficients.size() ||
+      overlap.rows() != raw_coefficients.size() ||
+      overlap.cols() != raw_coefficients.size()) {
+    throw std::invalid_argument(
+        "normalized-orbital quotient metric dimensions are inconsistent");
+  }
+  if (quotient_basis.cols() == 0) return quotient_basis;
+
+  const Eigen::VectorXd overlap_times_raw = overlap * raw_coefficients;
+  const double squared_norm = raw_coefficients.dot(overlap_times_raw);
+  if (!(squared_norm > 0.0) || !std::isfinite(squared_norm)) {
+    throw std::runtime_error(
+        "normalized-orbital quotient metric has nonpositive orbital norm");
+  }
+  const double norm = std::sqrt(squared_norm);
+  const Eigen::VectorXd normalized = raw_coefficients / norm;
+  const Eigen::VectorXd overlap_times_normalized = overlap * normalized;
+  const Eigen::MatrixXd normalization_jacobian =
+      (Eigen::MatrixXd::Identity(raw_coefficients.size(), raw_coefficients.size()) -
+       normalized * overlap_times_normalized.transpose()) /
+      norm;
+  const Eigen::MatrixXd physical_tangents =
+      normalization_jacobian * quotient_basis;
+  const Eigen::MatrixXd metric =
+      0.5 *
+      (physical_tangents.transpose() * overlap * physical_tangents +
+       physical_tangents.transpose() * overlap.transpose() * physical_tangents)
+          .eval();
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(metric);
+  if (eigensolver.info() != Eigen::Success ||
+      !eigensolver.eigenvalues().allFinite() ||
+      !eigensolver.eigenvectors().allFinite()) {
+    throw std::runtime_error(
+        "failed to factor normalized-orbital quotient metric");
+  }
+  const double spectral_scale = eigensolver.eigenvalues().maxCoeff();
+  const double positivity_floor =
+      64.0 * std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max(metric.rows(), metric.cols())) *
+      spectral_scale;
+  if (!(spectral_scale > 0.0) ||
+      eigensolver.eigenvalues().minCoeff() <= positivity_floor) {
+    throw std::runtime_error(
+        "normalized-orbital quotient metric is rank deficient");
+  }
+  const Eigen::MatrixXd inverse_square_root =
+      eigensolver.eigenvectors() *
+      eigensolver.eigenvalues().cwiseSqrt().cwiseInverse().asDiagonal() *
+      eigensolver.eigenvectors().transpose();
+  Eigen::MatrixXd whitened = quotient_basis * inverse_square_root;
+  require_finite_matrix(
+      whitened,
+      "normalized-orbital whitened quotient basis");
+  return whitened;
+}
+
 // FNV-1a-style hash mixing block/orbital/reduced-size into a running signature.
 // Used to detect tangent-space rank changes across SCF iterations so the
 // optimizer can invalidate cached Hessians or restart CG when the reduced
@@ -455,7 +515,48 @@ OrbitalChart::OrbitalChart(
         continue;
       }
 
-      proj.tangent_basis = std::move(U_p);
+      const int stored_count =
+          stored_sparse_orbital_coefficient_count(input, m.orbital_index);
+      Eigen::VectorXd stored_coefficients(stored_count);
+      Eigen::MatrixXd stored_overlap(stored_count, stored_count);
+      Eigen::MatrixXd stored_quotient_basis = Eigen::MatrixXd::Zero(
+          stored_count,
+          U_p.cols());
+      stored_quotient_basis.topRows(local_size) = U_p;
+      for (int row = 0; row < stored_count; ++row) {
+        stored_coefficients[row] = input.orbital_value_table[
+            m.orbital_index * input.n_basis_functions + row];
+        const int ao_row = input.orbital_basis_index_table[
+            m.orbital_index * input.n_basis_functions + row] - 1;
+        for (int column = 0; column < stored_count; ++column) {
+          const int ao_column = input.orbital_basis_index_table[
+              m.orbital_index * input.n_basis_functions + column] - 1;
+          stored_overlap(row, column) = ao_overlap(ao_row, ao_column);
+        }
+      }
+      const Eigen::MatrixXd whitened_stored_basis =
+          whiten_normalized_orbital_quotient_basis(
+              stored_quotient_basis,
+              stored_coefficients,
+              stored_overlap);
+      proj.tangent_basis = whitened_stored_basis.topRows(local_size);
+      const Eigen::MatrixXd raw_tangent_gram =
+          proj.tangent_basis.transpose() * proj.tangent_basis;
+      Eigen::LDLT<Eigen::MatrixXd> raw_gram_ldlt(raw_tangent_gram);
+      if (raw_gram_ldlt.info() != Eigen::Success ||
+          !raw_gram_ldlt.isPositive()) {
+        throw std::runtime_error(
+            "failed to factor raw quotient-coordinate Gram matrix");
+      }
+      proj.inverse_raw_tangent_gram = raw_gram_ldlt.solve(
+          Eigen::MatrixXd::Identity(
+              proj.tangent_basis.cols(),
+              proj.tangent_basis.cols()));
+      if (raw_gram_ldlt.info() != Eigen::Success ||
+          !proj.inverse_raw_tangent_gram.allFinite()) {
+        throw std::runtime_error(
+            "failed to invert raw quotient-coordinate Gram matrix");
+      }
       if (collect_structural_diagnostics) {
         proj.gauge_intersection_dimension =
             proj.local_gauge_rank +
@@ -465,7 +566,8 @@ OrbitalChart::OrbitalChart(
         if (local_coefficient_norm > std::numeric_limits<double>::epsilon()) {
           const Eigen::VectorXd scaling_residual =
               x_p - proj.tangent_basis *
-                        (proj.tangent_basis.transpose() * x_p);
+                        (proj.inverse_raw_tangent_gram *
+                         (proj.tangent_basis.transpose() * x_p));
           proj.relative_scaling_residual =
               scaling_residual.norm() / local_coefficient_norm;
         }
@@ -579,7 +681,6 @@ OrbitalChart::project_impl(
     const Eigen::VectorXd& packed_vector,
     bool recover_tangent_coordinates,
     bool build_packed_projection) const {
-  (void)recover_tangent_coordinates;
   require_finite_vector_size(
       packed_vector,
       static_cast<Eigen::Index>(packed_parameter_size_),
@@ -606,13 +707,22 @@ OrbitalChart::project_impl(
                projector.packed_indices[i] < packed_parameter_size_);
         g_p[i] = packed_vector[projector.packed_indices[i]];
       }
-      const Eigen::VectorXd z_p = projector.tangent_basis.transpose() * g_p;
+      const Eigen::VectorXd pulled_back =
+          projector.tangent_basis.transpose() * g_p;
+      const Eigen::VectorXd z_p = recover_tangent_coordinates
+          ? projector.inverse_raw_tangent_gram * pulled_back
+          : pulled_back;
       assert(z_p.allFinite());
       result.reduced_gradient.segment(
           projector.local_reduced_offset,
           projector.local_reduced_size) = z_p;
       if (build_packed_projection) {
-        const Eigen::VectorXd dx_p = projector.tangent_basis * z_p;
+        const Eigen::VectorXd projection_coordinates =
+            recover_tangent_coordinates
+                ? z_p
+                : projector.inverse_raw_tangent_gram * z_p;
+        const Eigen::VectorXd dx_p =
+            projector.tangent_basis * projection_coordinates;
         assert(dx_p.allFinite());
         for (Eigen::Index i = 0; i < dx_p.size(); ++i)
           result.packed_projected_gradient[projector.packed_indices[i]] += dx_p[i];
@@ -759,6 +869,32 @@ Eigen::VectorXd OrbitalChart::expand_step(
     }
   }
   require_finite_vector(packed, "orbital-chart packed expansion");
+  return packed;
+}
+
+Eigen::VectorXd OrbitalChart::expand_gradient(
+    const Eigen::VectorXd& reduced_gradient) const {
+  require_finite_vector_size(
+      reduced_gradient,
+      static_cast<Eigen::Index>(reduced_size_),
+      "orbital-chart reduced-gradient expansion input");
+  Eigen::VectorXd packed =
+      Eigen::VectorXd::Zero(static_cast<Eigen::Index>(packed_parameter_size_));
+  for (const auto& block_basis : block_bases_) {
+    for (const auto& projector : block_basis.orbitals) {
+      if (projector.local_reduced_size <= 0) continue;
+      const Eigen::VectorXd local =
+          projector.tangent_basis *
+          (projector.inverse_raw_tangent_gram *
+           reduced_gradient.segment(
+               projector.local_reduced_offset,
+               projector.local_reduced_size));
+      for (Eigen::Index row = 0; row < local.size(); ++row) {
+        packed[projector.packed_indices[row]] += local[row];
+      }
+    }
+  }
+  require_finite_vector(packed, "orbital-chart packed-gradient expansion");
   return packed;
 }
 

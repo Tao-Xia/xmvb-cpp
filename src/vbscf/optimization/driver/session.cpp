@@ -50,13 +50,13 @@ OrbitalChart build_orbital_chart(
       &objective.gradient_result().ao_effective_one_electron_result.ao_effective_h1e);
 }
 
-int choose_truncated_newton_max_cg_iterations(
+int choose_tnhvp_max_subspace_dimension(
     const VbScfOptimizerOptions& options,
     int reduced_size) {
-  if (options.nonredundant_truncated_newton_max_cg_iterations > 0) {
+  if (options.tnhvp_max_subspace_dimension > 0) {
     return std::min(
         std::max(1, reduced_size),
-        options.nonredundant_truncated_newton_max_cg_iterations);
+        options.tnhvp_max_subspace_dimension);
   }
   constexpr int kDefaultKrylovSafetyLimit = 32;
   return std::min(std::max(1, reduced_size), kDefaultKrylovSafetyLimit);

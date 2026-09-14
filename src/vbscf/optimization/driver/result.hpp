@@ -24,7 +24,7 @@ namespace xmvb::vb {
 struct TnhvpIterationRecord {
   int accepted_iteration_index = 0;
   int reduced_dimension = 0;
-  int krylov_iterations = 0;
+  int subspace_dimension = 0;
   int rejected_trial_count = 0;
 
   std::size_t hvp_direction_count = 0;
@@ -51,8 +51,7 @@ struct TnhvpIterationRecord {
 
   bool reached_boundary = false;
   bool encountered_negative_curvature = false;
-  bool used_krylov_rescue = false;
-  bool reused_krylov_subspace = false;
+  bool reused_subspace = false;
 };
 
 /**
@@ -243,8 +242,9 @@ struct VbScfOptimizerResult {
 
   /** Fresh HVP-subspace solves; same-point cached-radius retries are excluded. */
   std::size_t matrix_free_subproblem_count = 0;
-  /** Fresh solves passing a post-hoc full 2-norm KKT check with the current
-   * forcing fraction and the same Euclidean norm as the CG iteration. */
+  /** Fresh subspace solves whose trust-region solution is interior. */
+  std::size_t matrix_free_interior_subproblem_count = 0;
+  /** Interior solves passing a post-hoc full 2-norm Newton residual check. */
   std::size_t matrix_free_residual_converged_count = 0;
 
   /** Wall time spent inside exact reduced Hessian actions. */

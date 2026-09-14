@@ -4,6 +4,7 @@
 #include <string>
 
 #include "vbscf/optimization/trust_region/spectral.hpp"
+#include "vbscf/optimization/trust_region/truncated_newton.hpp"
 
 namespace {
 void require(bool condition, const std::string& message) {
@@ -36,6 +37,18 @@ void check(const std::string& name, const Eigen::VectorXd& d,
 int main() {
   try {
     using V = Eigen::Vector2d;
+    require(
+        xmvb::vb::truncated_newton_trial_is_acceptable({0.8, 1.0}),
+        "well-resolved model decrease was rejected");
+    require(
+        xmvb::vb::truncated_newton_trial_is_acceptable({1.5, 1.0}),
+        "underpredicted model decrease was rejected");
+    require(
+        !xmvb::vb::truncated_newton_trial_is_acceptable({0.4, 1.0}),
+        "model-error-dominated decrease was accepted");
+    require(
+        !xmvb::vb::truncated_newton_trial_is_acceptable({-0.1, 1.0}),
+        "energy-increasing trial was accepted");
     check("positive definite interior", V(2, 4), V(1, 2), 2, false);
     check("positive definite boundary", V(2, 4), V(1, 2), 0.1, true);
     check("zero-multiplier boundary", V(2, 4), V(2, 0), 1, true);

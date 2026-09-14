@@ -97,6 +97,10 @@ public:
   Eigen::VectorXd expand_step(
       const Eigen::VectorXd& reduced_step) const;
 
+  /** @brief Lifts a reduced gradient covector into packed coordinates. */
+  Eigen::VectorXd expand_gradient(
+      const Eigen::VectorXd& reduced_gradient) const;
+
   // `expand_retract_input_tangent` returns a full sparse-orbital tangent table,
   // while `retract_step` adds that tangent on the immutable sparse support.
   // Normalization belongs to the downstream orbital preparation map.
@@ -115,8 +119,14 @@ private:
     std::vector<int> packed_indices;
     std::vector<int> block_rows;
     // Euclidean complement of the support-admissible global gauge for this
-    // target orbital. U_p^T U_p = I; this is not physical-metric whitening.
+    // target orbital, subsequently whitened in the normalized-orbital AO
+    // metric. Its columns therefore parameterize scale-invariant physical
+    // tangent lengths rather than raw coefficient lengths.
     Eigen::MatrixXd tangent_basis;
+    // Left-inverse metric needed to recover reduced vector coordinates from
+    // packed raw-coefficient tangents. Gradients use the transpose pullback
+    // and must not use this inverse.
+    Eigen::MatrixXd inverse_raw_tangent_gram;
     // Positive diagonal/block approximations of the complete normalized,
     // inactive-projected one-electron curvature in the additive quotient chart.
     Eigen::VectorXd curvature_diagonal;

@@ -25,20 +25,20 @@ void write_tnhvp_trace(
         "failed to open TNHVP trace: " + output_path.string());
   }
   stream
-      << "iteration\treduced_dimension\tkrylov_iterations\trejected_trials"
+      << "iteration\treduced_dimension\tsubspace_dimension\trejected_trials"
       << "\thvp_directions\thvp_batches\tsubproblems\thvp_seconds"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
       << "\thas_kkt_residual\tkkt_relative_residual"
       << "\tinitial_trust_radius\taccepted_trial_radius\tnext_trust_radius"
       << "\tstep_norm\tpredicted_decrease\tactual_decrease\ttrust_ratio"
       << "\tmodel_spectral_radius\ttrust_region_shift\treached_boundary"
-      << "\tnegative_curvature\tused_krylov_rescue\treused_krylov_subspace\n";
+      << "\tnegative_curvature\treused_subspace\n";
   stream << std::setprecision(17);
   for (const auto& step : result.tnhvp_iteration_trace) {
     stream
         << step.accepted_iteration_index << '\t'
         << step.reduced_dimension << '\t'
-        << step.krylov_iterations << '\t'
+        << step.subspace_dimension << '\t'
         << step.rejected_trial_count << '\t'
         << step.hvp_direction_count << '\t'
         << step.hvp_batch_count << '\t'
@@ -60,8 +60,7 @@ void write_tnhvp_trace(
         << step.trust_region_shift << '\t'
         << (step.reached_boundary ? 1 : 0) << '\t'
         << (step.encountered_negative_curvature ? 1 : 0) << '\t'
-        << (step.used_krylov_rescue ? 1 : 0) << '\t'
-        << (step.reused_krylov_subspace ? 1 : 0) << '\n';
+        << (step.reused_subspace ? 1 : 0) << '\n';
   }
   if (!stream) {
     throw std::runtime_error(

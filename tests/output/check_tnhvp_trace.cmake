@@ -96,6 +96,7 @@ endif()
 set(required_tnhvp_patterns
   "\"tnhvp\""
   "\"reduced_dimension\": 42"
+  "\"subspace_dimension\": [1-9][0-9]*"
   "\"hvp_direction_count\": [1-9][0-9]*"
   "\"source_gradient_l2_norm\""
   "\"accepted_gradient_l2_norm\""
@@ -110,8 +111,7 @@ set(required_tnhvp_patterns
   "\"model_spectral_radius\""
   "\"trust_region_shift\""
   "\"encountered_negative_curvature\""
-  "\"used_krylov_rescue\""
-  "\"reused_krylov_subspace\"")
+  "\"reused_subspace\"")
 
 foreach(pattern IN LISTS required_tnhvp_patterns)
   if (NOT first_step_json MATCHES "${pattern}")
@@ -126,7 +126,7 @@ endif()
 file(READ "${tnhvp_trace}" tnhvp_table)
 if (NOT tnhvp_table MATCHES "^iteration" OR
     NOT tnhvp_table MATCHES "reduced_dimension" OR
-    NOT tnhvp_table MATCHES "reused_krylov_subspace")
+    NOT tnhvp_table MATCHES "reused_subspace")
   message(FATAL_ERROR "F2 lightweight TNHVP trace has an invalid header")
 endif()
 if (NOT tnhvp_table MATCHES "\n1" OR NOT tnhvp_table MATCHES "42")

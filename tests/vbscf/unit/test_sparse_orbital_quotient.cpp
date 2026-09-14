@@ -100,9 +100,48 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
   require(audit.current_retained_gauge_dimension == 0 &&
               audit.current_missing_physical_dimension == 0,
           name + ": incorrect physical image");
-  require((u.transpose() * u - Eigen::MatrixXd::Identity(u.cols(), u.cols()))
-                  .norm() < 1e-11,
-          name + ": nonorthonormal coordinates");
+  for (int column = 0; column < u.cols(); ++column) {
+    const Eigen::VectorXd recovered =
+        space.project_vector(u.col(column)).reduced_gradient;
+    require(
+        (recovered - Eigen::VectorXd::Unit(u.cols(), column)).norm() < 1e-10,
+        name + ": reduced vector coordinates are not invertible");
+  }
+  Eigen::MatrixXd physical_gram = Eigen::MatrixXd::Zero(u.cols(), u.cols());
+  for (int orbital = 0; orbital < input.n_orbitals; ++orbital) {
+    const int count = stored_sparse_orbital_coefficient_count(input, orbital);
+    Eigen::VectorXd raw(count);
+    Eigen::MatrixXd local_overlap(count, count);
+    Eigen::MatrixXd local_directions = Eigen::MatrixXd::Zero(count, u.cols());
+    for (int row = 0; row < count; ++row) {
+      raw[row] = input.orbital_value_table[
+          orbital * input.n_basis_functions + row];
+      const int packed = view.packed_index(orbital, row);
+      if (packed >= 0) local_directions.row(row) = u.row(packed);
+      const int ao_row = input.orbital_basis_index_table[
+          orbital * input.n_basis_functions + row] - 1;
+      for (int column = 0; column < count; ++column) {
+        const int ao_column = input.orbital_basis_index_table[
+            orbital * input.n_basis_functions + column] - 1;
+        local_overlap(row, column) =
+            input.ao_overlap_matrix(ao_row, ao_column);
+      }
+    }
+    const double norm = std::sqrt(raw.dot(local_overlap * raw));
+    const Eigen::VectorXd normalized = raw / norm;
+    const Eigen::MatrixXd normalization_jacobian =
+        (Eigen::MatrixXd::Identity(count, count) -
+         normalized * (local_overlap * normalized).transpose()) /
+        norm;
+    const Eigen::MatrixXd physical_directions =
+        normalization_jacobian * local_directions;
+    physical_gram.noalias() +=
+        physical_directions.transpose() * local_overlap * physical_directions;
+  }
+  require(
+      (physical_gram - Eigen::MatrixXd::Identity(u.cols(), u.cols())).norm() <
+          1e-9 * std::max(1, static_cast<int>(u.cols())),
+      name + ": normalized-orbital physical metric is not whitened");
   require((audit.packed_gauge_basis.transpose() * u).norm() < 1e-11,
           name + ": nonzero gauge overlap");
 
@@ -128,6 +167,14 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
     require(std::abs(g.dot(space.expand_step(d)) -
                      space.project_reduced_gradient(g).dot(d)) < 1e-12,
             name + ": adjoint projection");
+    const Eigen::VectorXd reduced_covector =
+        Eigen::VectorXd::LinSpaced(u.cols(), -0.4, 0.6);
+    require(
+        (space.project_reduced_gradient(
+             space.expand_gradient(reduced_covector)) -
+         reduced_covector)
+                .norm() < 1e-10,
+        name + ": reduced covector lift is not a right inverse");
     const auto trial = space.retract_step(input, d, 0.01);
     require((view.pack(trial) - x - 0.01 * u * d).norm() < 1e-12,
             name + ": additive retraction");

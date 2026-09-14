@@ -72,7 +72,7 @@ struct VbScfOptimizerOptions {
    * Each inner iteration requests one matrix-free reduced Hessian-vector product.
    * A value of `0` uses the dimension-bounded safety limit of 32 iterations.
    */
-  int nonredundant_truncated_newton_max_cg_iterations = 0;
+  int tnhvp_max_subspace_dimension = 0;
 
   /**
    * @brief Number of transported secant pairs used to enrich the TN preconditioner.

@@ -185,10 +185,10 @@ void print_tnhvp_summary(
       "Trust-radius update",
       "Ritz spectrum + observed model remainder");
   print_log_field(
-      "Krylov safety limit",
-      options.nonredundant_truncated_newton_max_cg_iterations > 0
+      "Subspace safety limit",
+      options.tnhvp_max_subspace_dimension > 0
           ? std::to_string(
-                options.nonredundant_truncated_newton_max_cg_iterations)
+                options.tnhvp_max_subspace_dimension)
           : "32");
   print_log_field(
       "Transport history",
@@ -408,10 +408,10 @@ void print_summary(
     print_log_field(
         "Block-HVP calls",
         std::to_string(result.matrix_free_hvp_batch_count));
-    print_log_field(
-        "Inner solves meeting KKT target",
-        std::to_string(result.matrix_free_residual_converged_count) + " / " +
-            std::to_string(result.matrix_free_subproblem_count));
+  print_log_field(
+      "Interior Newton solves at target",
+      std::to_string(result.matrix_free_residual_converged_count) + " / " +
+            std::to_string(result.matrix_free_interior_subproblem_count));
     print_log_field(
         "Matrix-free HVP wall time",
         format_seconds(result.matrix_free_hvp_wall_time_seconds));
