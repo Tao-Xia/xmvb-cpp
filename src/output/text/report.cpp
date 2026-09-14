@@ -37,11 +37,25 @@ const char* gradient_tolerance_metric_name(
     xmvb::vb::VbScfOptimizerBackend backend) {
   switch (backend) {
     case xmvb::vb::VbScfOptimizerBackend::Lbfgspp:
-      return "full_gradient_l2_norm";
+      return "full |g|_2";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
-      return "projected_gradient_inf_norm";
+      return "projected |g|_inf";
+  }
+  throw std::invalid_argument("invalid VBSCF optimizer backend");
+}
+
+const char* optimizer_report_name(xmvb::vb::VbScfOptimizerBackend backend) {
+  switch (backend) {
+    case xmvb::vb::VbScfOptimizerBackend::Lbfgspp:
+      return "L-BFGS";
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
+      return "nonredundant projected gradient";
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp:
+      return "nonredundant L-BFGS";
+    case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
+      return "TNHVP (matrix-free truncated Newton)";
   }
   throw std::invalid_argument("invalid VBSCF optimizer backend");
 }
@@ -199,7 +213,7 @@ void print_header(
       std::cout,
       input_path,
       load_result,
-      xmvb::vb::vbscf_optimizer_backend_name(options.backend),
+      optimizer_report_name(options.backend),
       options.max_iterations);
 }
 
@@ -221,29 +235,38 @@ combine_callbacks(
 }
 
 std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>
-iteration_logger() {
+iteration_logger(xmvb::vb::VbScfOptimizerBackend backend) {
   struct LoggerState {
     bool has_reference_energy = false;
     double previous_total_energy = 0.0;
   };
 
   auto state = std::make_shared<LoggerState>();
-  std::cout << "\n                ITER           ENERGY               DE"
-               "              GNORM\n";
+  const bool projected_gradient = core_backend_reports_projected_gradient(backend);
+  std::cout << "\n                ITER           ENERGY          DELTA_E"
+            << (projected_gradient ? "      |G_PROJ|_INF\n" : "             |G|_2\n");
   std::cout.flush();
 
-  return [state](const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
+  return [state, projected_gradient](
+             const xmvb::vb::VbScfAcceptedIterationSnapshot& snapshot) {
     const double delta_energy = state->has_reference_energy
         ? snapshot.total_energy - state->previous_total_energy
-        : snapshot.total_energy;
+        : 0.0;
+    if (projected_gradient && !snapshot.has_projected_gradient) {
+      throw std::runtime_error(
+          "iteration report requires a projected-gradient norm");
+    }
+    const double gradient_norm = projected_gradient
+        ? snapshot.projected_gradient_inf_norm
+        : snapshot.sparse_orbital_energy_gradient_l2_norm;
     std::ostringstream stream;
     stream << std::setw(19) << snapshot.accepted_iteration_index
            << std::setw(22) << std::fixed << std::setprecision(10)
            << snapshot.total_energy
            << std::setw(18) << std::fixed << std::setprecision(10)
            << delta_energy
-           << std::setw(18) << std::fixed << std::setprecision(10)
-           << snapshot.sparse_orbital_energy_gradient_l2_norm
+           << std::setw(18) << std::scientific << std::setprecision(8)
+           << gradient_norm
            << '\n';
     std::cout << stream.str();
     std::cout.flush();
@@ -302,6 +325,17 @@ void print_summary(
   print_log_field(
       "Structure eigensolver",
       xmvb::vb::structure_eigensolver_name(options.structure_eigensolver));
+  if (result.scf_result.davidson_diagnostics.has_value()) {
+    const auto& davidson = *result.scf_result.davidson_diagnostics;
+    print_log_field("Final Davidson iterations", std::to_string(davidson.iterations));
+    print_log_field("Final Davidson H/S block actions", std::to_string(davidson.block_actions));
+    print_log_field(
+        "Final Davidson peak subspace",
+        std::to_string(davidson.peak_subspace_dimension));
+    print_log_field(
+        "Final Davidson max rel. residual",
+        format_scientific_double(davidson.maximum_relative_residual, 8));
+  }
   if (trace_sample_directory.has_value()) {
     print_log_field("Trace sample directory", trace_sample_directory->string());
   }
@@ -363,6 +397,11 @@ void print_summary(
   }
   if (options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
+    if (!result.tnhvp_iteration_trace.empty()) {
+      print_log_field(
+          "Final nonredundant dimension",
+          std::to_string(result.tnhvp_iteration_trace.back().reduced_dimension));
+    }
     print_log_field(
         "Matrix-free HVP directions",
         std::to_string(result.matrix_free_hvp_direction_count));
@@ -409,7 +448,7 @@ void print_summary(
   print_log_field(
       "End-to-end wall time",
       format_seconds(total_job_wall_time_seconds));
-  std::cout << "\n        Cpu time for the job: "
+  std::cout << "\n        Wall time for the job: "
             << std::fixed << std::setprecision(3)
             << total_job_wall_time_seconds << " seconds.\n";
 

@@ -24,7 +24,7 @@ combine_callbacks(
     std::function<void(const vb::VbScfAcceptedIterationSnapshot&)> second);
 
 std::function<void(const vb::VbScfAcceptedIterationSnapshot&)>
-iteration_logger();
+iteration_logger(vb::VbScfOptimizerBackend backend);
 
 void print_summary(
     const vb::VbScfOptimizerOptions& options,

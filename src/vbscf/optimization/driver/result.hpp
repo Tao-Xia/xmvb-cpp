@@ -126,6 +126,15 @@ struct VbScfAcceptedIterationSnapshot {
    */
   double sparse_orbital_energy_gradient_l2_norm = 0.0;
 
+  /** Whether nonredundant projected-gradient norms are available. */
+  bool has_projected_gradient = false;
+
+  /** Infinity norm of the gradient in the nonredundant orbital chart. */
+  double projected_gradient_inf_norm = 0.0;
+
+  /** Euclidean norm of the gradient in the nonredundant orbital chart. */
+  double projected_gradient_l2_norm = 0.0;
+
   /**
    * @brief Exact `E11` gradient with respect to `orbital_value_table`.
    */

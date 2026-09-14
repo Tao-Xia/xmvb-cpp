@@ -436,7 +436,9 @@ BackendRunResult run_nonredundant_lbfgs_backend(
         objective,
         run_result.n_iterations,
         options,
-        result);
+        result,
+        nullptr,
+        &next_projection.reduced_gradient);
     run_result.final_gradient_l2_norm = current_gradient.norm();
     const double energy_change = energy - previous_energy;
     previous_energy = energy;

@@ -36,7 +36,8 @@ void record_accepted_iteration_snapshot(
     int accepted_iteration_index,
     const VbScfOptimizerOptions& options,
     VbScfOptimizerResult* result,
-    const TnhvpIterationRecord* tnhvp = nullptr);
+    const TnhvpIterationRecord* tnhvp = nullptr,
+    const Eigen::VectorXd* reduced_gradient = nullptr);
 
 }  // namespace optimizer_detail
 

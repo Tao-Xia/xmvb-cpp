@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(xmvb_standalone LANGUAGES C CXX Fortran)
+project(xmvb_standalone VERSION 0.1.0 LANGUAGES C CXX Fortran)
 
 include(CTest)
 

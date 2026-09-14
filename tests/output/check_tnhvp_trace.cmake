@@ -23,7 +23,7 @@ if (NOT xmvb_status EQUAL 0)
 endif()
 
 if (NOT xmvb_report MATCHES
-    "VBSCF algorithm: nonredundant_truncated_newton")
+    "VBSCF algorithm: TNHVP [(]matrix-free truncated Newton[)]")
   message(FATAL_ERROR "ISCF=7 did not select TNHVP")
 endif()
 
@@ -44,7 +44,7 @@ if (NOT iscf5_status EQUAL 0)
   message(FATAL_ERROR
     "ISCF=5 selection run failed with status ${iscf5_status}:\n${iscf5_errors}")
 endif()
-if (NOT iscf5_report MATCHES "VBSCF algorithm: nonredundant_lbfgspp")
+if (NOT iscf5_report MATCHES "VBSCF algorithm: nonredundant L-BFGS")
   message(FATAL_ERROR "ISCF=5 did not select nonredundant L-BFGS")
 endif()
 

@@ -105,16 +105,18 @@ BackendRunResult run_projected_gradient_backend(
         &current_gradient);
     ++run_result.n_iterations;
     sync_result_from_objective(*objective, result);
+    OrbitalChart next_space = build_orbital_chart(*objective, parameter_view);
+    auto next_projection = next_space.project_gradient(current_gradient);
     record_accepted_iteration_snapshot(
         objective,
         run_result.n_iterations,
         options,
-        result);
+        result,
+        nullptr,
+        &next_projection.reduced_gradient);
     run_result.final_gradient_l2_norm = current_gradient.norm();
     const double energy_change = energy - previous_energy;
     previous_energy = energy;
-    OrbitalChart next_space = build_orbital_chart(*objective, parameter_view);
-    auto next_projection = next_space.project_gradient(current_gradient);
     if (std::abs(energy_change) < options.energy_tolerance &&
         gradient_infinity_norm(next_projection.reduced_gradient) <
             options.gradient_tolerance) {

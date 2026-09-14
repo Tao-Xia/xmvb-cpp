@@ -655,7 +655,8 @@ BackendRunResult run_truncated_newton_backend(
         run_result.n_iterations,
         options,
         result,
-        &iteration_record);
+        &iteration_record,
+        &next_projection.reduced_gradient);
     trust_radius = next_trust_radius;
     rejected_trial_step_count_for_current_point = 0;
     initial_trust_radius_for_current_point = trust_radius;

@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "vbscf/optimization/objective/function.hpp"
+#include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -82,7 +83,8 @@ void record_accepted_iteration_snapshot(
     int accepted_iteration_index,
     const VbScfOptimizerOptions& options,
     VbScfOptimizerResult* result,
-    const TnhvpIterationRecord* tnhvp) {
+    const TnhvpIterationRecord* tnhvp,
+    const Eigen::VectorXd* reduced_gradient) {
   if (!options.retain_accepted_iteration_trace && !options.accepted_iteration_callback) {
     return;
   }
@@ -109,6 +111,23 @@ void record_accepted_iteration_snapshot(
   }
   snapshot.sparse_orbital_energy_gradient_l2_norm =
       std::sqrt(snapshot.sparse_orbital_energy_gradient_l2_norm);
+  if (uses_nonredundant_space(options.backend)) {
+    Eigen::VectorXd computed_reduced_gradient;
+    if (reduced_gradient == nullptr) {
+      const SparseParameterLayout parameter_view(
+          objective->input().orbital_preparation_input);
+      const OrbitalChart chart = build_orbital_chart(*objective, parameter_view);
+      const Eigen::VectorXd packed_gradient = parameter_view.gather_from_full(
+          gradient_result.sparse_orbital_energy_gradient);
+      computed_reduced_gradient =
+          chart.project_gradient(packed_gradient).reduced_gradient;
+      reduced_gradient = &computed_reduced_gradient;
+    }
+    snapshot.has_projected_gradient = true;
+    snapshot.projected_gradient_inf_norm =
+        gradient_infinity_norm(*reduced_gradient);
+    snapshot.projected_gradient_l2_norm = reduced_gradient->norm();
+  }
   if (include_full_payload) {
     snapshot.orbital_value_table.assign(
         objective->input().orbital_preparation_input.orbital_value_table.begin(),

@@ -167,6 +167,9 @@ target_link_libraries(
     xmvb_vbscf)
 
 xmvb_add_component(xmvb_output ${XMVB_OUTPUT_SOURCES})
+target_compile_definitions(
+  xmvb_output
+  PRIVATE XMVB_VERSION="${PROJECT_VERSION}")
 target_link_libraries(
   xmvb_output
   PUBLIC

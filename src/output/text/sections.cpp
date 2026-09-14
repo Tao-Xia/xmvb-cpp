@@ -92,6 +92,16 @@ std::string orbital_range(const std::vector<int>& orbitals) {
   return text.str();
 }
 
+std::string centered_field(const std::string& value, int width) {
+  if (static_cast<int>(value.size()) >= width) {
+    return value;
+  }
+  const int left_padding = (width - static_cast<int>(value.size())) / 2;
+  const int right_padding = width - static_cast<int>(value.size()) - left_padding;
+  return std::string(left_padding, ' ') + value +
+      std::string(right_padding, ' ');
+}
+
 std::string structure_description(
     const vb::RawStructureData& structures,
     int structure_index) {
@@ -383,7 +393,7 @@ void print_determinant_coefficients(
         "final determinant topology has inconsistent dimensions");
   }
 
-  output << "\n\n          ******  COEFFICIENTS OF DETERMINANTS WITHOUT NORMALIZED ******\n\n"
+  output << "\n\n          ******  UNNORMALIZED DETERMINANT COEFFICIENTS  ******\n\n"
          << "                                     INA   A\n"
          << "                                     INA   B\n";
   std::vector<int> display_order(n_determinants);
@@ -571,17 +581,21 @@ void print_orbital_table(
 
   output << "\n\n      ******  " << title << "  ******\n";
   constexpr int kColumnsPerBlock = 5;
+  constexpr int kRowLabelWidth = 21;
+  constexpr int kOrbitalColumnWidth = 11;
   for (int first = 0; first < n_orb; first += kColumnsPerBlock) {
     const int last = std::min(first + kColumnsPerBlock, n_orb);
-    output << "\n\n                         ";
+    output << "\n\n" << std::string(kRowLabelWidth, ' ');
     for (int orbital = first; orbital < last; ++orbital) {
-      output << std::setw(11) << orbital + 1;
+      output << centered_field(
+          std::to_string(orbital + 1), kOrbitalColumnWidth);
     }
     output << '\n';
     if (occupations != nullptr) {
-      output << "                         ";
+      output << std::string(kRowLabelWidth, ' ');
       for (int orbital = first; orbital < last; ++orbital) {
-        output << std::fixed << std::setprecision(6) << std::setw(11)
+        output << std::fixed << std::setprecision(6)
+               << std::setw(kOrbitalColumnWidth)
                << (*occupations)[orbital];
       }
       output << '\n';
@@ -595,7 +609,8 @@ void print_orbital_table(
              << std::left << std::setw(5) << ao_label(metadata, basis)
              << std::right;
       for (int orbital = first; orbital < last; ++orbital) {
-        output << std::fixed << std::setprecision(6) << std::setw(11)
+        output << std::fixed << std::setprecision(6)
+               << std::setw(kOrbitalColumnWidth)
                << coefficients(basis, orbital);
       }
       output << '\n';
@@ -959,7 +974,7 @@ void print_program_preamble(
          << "    *************************************************************\n"
          << "                                                               \n"
          << "                    XMVB-CPP                                   \n"
-         << "                    Version: development                       \n"
+         << "                    Version: " << XMVB_VERSION << '\n'
          << "                                                               \n"
          << "    Developed by: Tao Xia                                     \n"
          << "    Software development assistance: OpenAI Codex             \n\n\n"
@@ -1066,12 +1081,13 @@ void print_input_sections(
            << '\n';
   }
 
-  int n_variables = 0;
+  int n_sparse_coefficients = 0;
   for (std::size_t orbital = 0; orbital < orbitals.n_orbitals; ++orbital) {
-    n_variables += vb::differentiable_sparse_orbital_parameter_count(
+    n_sparse_coefficients += vb::differentiable_sparse_orbital_parameter_count(
         orbitals, orbital);
   }
-  output << "\n\n Number of variables for VBSCF/BOVB : " << n_variables
+  output << "\n\n Differentiable sparse-orbital coefficients : "
+         << n_sparse_coefficients
          << "\n\n VBSCF algorithm: " << optimizer_name
          << ".\n\n Maximum number of Iterations: " << max_iterations << "\n\n"
          << " Integral evaluation: "

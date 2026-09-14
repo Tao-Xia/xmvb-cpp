@@ -68,7 +68,7 @@ int run(Options command_line) {
   if (options.verbose) {
     options.accepted_iteration_callback = xmvb::output::combine_callbacks(
         std::move(options.accepted_iteration_callback),
-        xmvb::output::iteration_logger());
+        xmvb::output::iteration_logger(options.backend));
   }
   if (!dump_trace_dir.empty()) {
     trace_writer = std::make_shared<xmvb::output::AcceptedIterationTraceWriter>(

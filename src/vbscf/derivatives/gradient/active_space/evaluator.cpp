@@ -33,6 +33,7 @@ struct ActiveSpaceGradientForwardContext {
   xmvb::core::GeneralizedEigenResult eigen_result;
   Eigen::VectorXd structure_overlap_diagonal;
   Eigen::MatrixXd overlap_eigenvectors;
+  std::optional<DavidsonDiagnostics> davidson_diagnostics;
   Eigen::MatrixXd selected_state_eigenvectors;
   std::vector<double> selected_state_energies;
   double average_structure_overlap = 0.0;
@@ -223,6 +224,13 @@ void solve_structure_problem(
               structure_action.diagonal().hamiltonian,
               structure_action.diagonal().overlap,
               options);
+    context->davidson_diagnostics = DavidsonDiagnostics{
+        davidson.iterations,
+        davidson.block_actions,
+        davidson.peak_subspace_dimension,
+        *std::max_element(
+            davidson.relative_residual_norms.begin(),
+            davidson.relative_residual_norms.end())};
     context->eigen_result = std::move(davidson.eigenpairs);
     context->overlap_eigenvectors =
         std::move(davidson.overlap_eigenvectors);
@@ -416,6 +424,8 @@ void populate_scf_result(
   scf_result->structure_matrices = structure_matrices;
   scf_result->average_structure_overlap =
       forward_context.average_structure_overlap;
+  scf_result->davidson_diagnostics =
+      forward_context.davidson_diagnostics;
   scf_result->electronic_state_energies = eigen_result.eigenvalues;
   scf_result->eigenvector_matrix = eigen_result.eigenvector_matrix;
   scf_result->structure_overlap_diagonal.assign(

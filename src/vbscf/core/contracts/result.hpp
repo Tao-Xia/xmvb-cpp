@@ -1,10 +1,28 @@
 #pragma once
 
+#include <optional>
 #include <vector>
 
 #include "vbscf/structures/expansion/types.hpp"
 
 namespace xmvb::vb {
+
+/**
+ * @brief Diagnostics from one converged matrix-free Davidson solve.
+ */
+struct DavidsonDiagnostics {
+  /** Number of projected Davidson iterations. */
+  int iterations = 0;
+
+  /** Number of joint block evaluations of the Hamiltonian and overlap. */
+  int block_actions = 0;
+
+  /** Largest retained Davidson subspace dimension. */
+  int peak_subspace_dimension = 0;
+
+  /** Largest converged relative residual among the requested roots. */
+  double maximum_relative_residual = 0.0;
+};
 
 /**
  * @brief Result of a single VBSCF matrix evaluation step.
@@ -45,6 +63,9 @@ struct VbScfResult {
    * @brief Mean of the diagonal structure overlap elements.
    */
   double average_structure_overlap = 0.0;
+
+  /** Final-solve diagnostics, present only for the Davidson eigensolver. */
+  std::optional<DavidsonDiagnostics> davidson_diagnostics;
 
   /**
    * @brief Available consecutive lowest generalized eigenvalues.
