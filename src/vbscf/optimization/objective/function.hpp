@@ -13,7 +13,6 @@
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital/result.hpp"
 #include "vbscf/workflow/evaluator.hpp"
-#include "vbscf/optimization/driver/types.hpp"
 
 namespace xmvb::vb {
 
@@ -29,6 +28,7 @@ struct VbScfObjectiveTrialEvaluation {
   double energy = 0.0;
   double gradient_inf_norm = 0.0;
   double wall_time_seconds = 0.0;
+  bool chart_changed = false;
   bool valid = false;
 };
 
@@ -110,19 +110,14 @@ class VbScfObjective {
 
   /** @brief Evaluates a trial point without changing the accepted point. */
   TrialEvaluation evaluate_trial(
-      const Eigen::VectorXd& parameter_vector) const;
+      const Eigen::VectorXd& parameter_vector,
+      bool canonicalize_sparse_gauge = false) const;
 
   /** @brief Makes a previously evaluated trial the accepted point. */
   void commit(TrialEvaluation evaluation);
 
   /** @brief Evaluates only the relaxed energy at a trial point. */
   double evaluate_energy_only(const Eigen::VectorXd& parameter_vector) const;
-
-  /** @brief Canonicalizes the accepted sparse chart and transports its state. */
-  bool canonicalize_chart(
-      Eigen::VectorXd* parameter_vector,
-      Eigen::VectorXd* gradient,
-      std::vector<PackedSecantPair>* packed_secant_history = nullptr);
 
  private:
   mutable VbScfInput input_;

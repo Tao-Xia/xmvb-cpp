@@ -686,16 +686,10 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         result.ao_integral_input,
         input_deck.guess_block.present ? &input_deck.guess_block.raw_lines : nullptr,
         &result.orbital_preparation_input);
-    if (input_deck_metadata.guess_type == kGuessTypeMo) {
-      // Keep `GUESS=MO` on the original sparse support chart from the deck.
-      // Expanding inactive supports here changes the variational manifold and
-      // shifts the converged energy away from the historical `.xmo`
-      // reference. The support-aware gauge fix below is therefore only
-      // allowed to act when some other upstream path has already changed that
-      // recorded chart.
-      apply_support_preserving_inactive_gauge(
-          &result.orbital_preparation_input);
-    }
+    // Select a well-conditioned inactive representative inside the exact
+    // support-preserving gauge before the first objective evaluation.
+    apply_support_preserving_inactive_gauge(
+        &result.orbital_preparation_input);
     load_result.orbital_guess_seconds =
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - orbital_guess_start_time)

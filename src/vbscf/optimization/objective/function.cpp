@@ -6,7 +6,6 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
@@ -77,10 +76,16 @@ void VbScfObjective::ensure_reference_gradient() {
 
 VbScfObjective::TrialEvaluation
 VbScfObjective::evaluate_trial(
-    const Eigen::VectorXd& parameter_vector) const {
+    const Eigen::VectorXd& parameter_vector,
+    bool canonicalize_sparse_gauge) const {
   const auto iteration_start_time = std::chrono::steady_clock::now();
   OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
   layout_.unpack(parameter_vector, &trial_orbitals);
+  bool chart_changed = false;
+  if (canonicalize_sparse_gauge) {
+    chart_changed =
+        apply_support_preserving_inactive_gauge(&trial_orbitals);
+  }
   ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
 
   TrialEvaluation evaluation;
@@ -110,6 +115,7 @@ VbScfObjective::evaluate_trial(
   evaluation.energy = evaluation.gradient_result.scf_result.total_energy;
   evaluation.gradient_inf_norm =
       gradient_infinity_norm(evaluation.gradient);
+  evaluation.chart_changed = chart_changed;
   evaluation.wall_time_seconds =
       std::chrono::duration<double>(
           std::chrono::steady_clock::now() - iteration_start_time)
@@ -144,6 +150,7 @@ double VbScfObjective::evaluate_energy_only(
       gradient_result_.second_order_context->root_eigenvectors;
   OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
   layout_.unpack(parameter_vector, &trial_orbitals);
+  apply_support_preserving_inactive_gauge(&trial_orbitals);
   ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
   const auto evaluation_start_time = std::chrono::steady_clock::now();
   const double energy = scf_->evaluate_energy_only(
@@ -162,63 +169,6 @@ double VbScfObjective::evaluate_energy_only(
   energy_only_wall_time_seconds_ += elapsed_seconds;
   last_energy_only_wall_time_seconds_ = elapsed_seconds;
   return energy;
-}
-
-bool VbScfObjective::canonicalize_chart(
-    Eigen::VectorXd* parameter_vector,
-    Eigen::VectorXd* gradient,
-    std::vector<PackedSecantPair>* packed_secant_history) {
-  bool chart_changed = false;
-  const auto transform =
-      apply_support_preserving_inactive_gauge(
-          &input_.orbital_preparation_input);
-  if (transform.chart_changed) {
-    transform_sparse_inactive_orbital_gradient(
-        transform,
-        input_.orbital_preparation_input,
-        &gradient_result_.sparse_orbital_energy_gradient);
-
-    if (!gradient_result_.sparse_orbital_reference_energy_gradient.empty()) {
-      transform_sparse_inactive_orbital_gradient(
-          transform,
-          input_.orbital_preparation_input,
-          &gradient_result_.sparse_orbital_reference_energy_gradient);
-    }
-    transport_packed_secant_history_with_support_aware_inactive_gauge(
-        transform,
-        input_.orbital_preparation_input,
-        layout_,
-        packed_secant_history);
-    refresh_cached_localized_representative_selector(
-        input_.orbital_preparation_input,
-        &gradient_result_.orbital_preparation_result);
-    if (gradient_result_.second_order_context != nullptr) {
-      refresh_cached_localized_representative_selector(
-          input_.orbital_preparation_input,
-          &gradient_result_
-               .second_order_context
-               ->prepared_active_space
-               .orbital_result);
-    }
-    chart_changed = true;
-  }
-
-  if (!chart_changed) {
-    return false;
-  }
-  if (parameter_vector != nullptr) {
-    *parameter_vector =
-        layout_.pack(input_.orbital_preparation_input);
-  }
-  if (gradient != nullptr) {
-    *gradient = layout_.gather_from_full(
-        gradient_result_.sparse_orbital_energy_gradient);
-    if (!gradient_inf_norm_history_.empty()) {
-      gradient_inf_norm_history_.back() =
-          gradient_infinity_norm(*gradient);
-    }
-  }
-  return true;
 }
 
 }  // namespace xmvb::vb

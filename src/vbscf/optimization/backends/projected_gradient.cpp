@@ -100,9 +100,6 @@ BackendRunResult run_projected_gradient_backend(
     current_parameters = std::move(accepted_parameters);
     current_gradient = std::move(accepted_gradient);
     energy = accepted_energy;
-    objective->canonicalize_chart(
-        &current_parameters,
-        &current_gradient);
     ++run_result.n_iterations;
     sync_result_from_objective(*objective, result);
     OrbitalChart next_space = build_orbital_chart(*objective, parameter_view);

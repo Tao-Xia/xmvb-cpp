@@ -365,35 +365,23 @@ double update_nonredundant_truncated_newton_trust_radius(
     return std::max(minimum_step_size, trust_radius);
   }
 
-  // The Ritz spectrum supplies a Cauchy-like length scale for the local
-  // quadratic model.  On a boundary step, extrapolate only as far as both the
-  // observed model agreement and that curvature length support.
-  const double effective_curvature =
-      model_step.model_spectral_radius + model_step.trust_region_shift;
-  const double curvature_floor =
-      std::numeric_limits<double>::epsilon() *
-      model_step.model_spectral_radius;
-  double spectral_radius = step_norm;
-  if (model_step.projected_model_gradient_norm > 0.0 &&
-      std::isfinite(model_step.projected_model_gradient_norm) &&
-      effective_curvature > 0.0 &&
-      std::isfinite(effective_curvature)) {
-    spectral_radius =
-        model_step.projected_model_gradient_norm /
-        std::max(curvature_floor, effective_curvature);
-  }
-  const double trust_ratio = trial.actual_decrease / trial.predicted_decrease;
-  const double overprediction_fraction = std::max(0.0, 1.0 - trust_ratio);
-  const double agreement_denominator =
-      std::max(
-          std::sqrt(std::numeric_limits<double>::epsilon()),
-          overprediction_fraction);
-  const double agreement_radius = step_norm / agreement_denominator;
-  const double curvature_radius = step_norm + spectral_radius;
+  // Estimate the admissible next radius from the observed quadratic-model
+  // remainder. For a twice differentiable objective with locally Lipschitz
+  // Hessian, the Taylor remainder is cubic in the step length. Keeping its
+  // extrapolated absolute error below the decrease just observed gives
+  // Delta_next = ||s|| (actual/error)^(1/3). Unlike a bound based on the
+  // largest Ritz value, this does not let an unrelated stiff mode freeze a
+  // well-resolved boundary direction.
+  const double model_error =
+      std::abs(trial.actual_decrease - trial.predicted_decrease);
+  const double roundoff =
+      16.0 * std::numeric_limits<double>::epsilon() *
+      std::max(trial.actual_decrease, trial.predicted_decrease);
+  const double resolved_error = std::max(model_error, roundoff);
+  const double radius_scale =
+      std::cbrt(trial.actual_decrease / resolved_error);
   const double candidate_radius =
-      std::max(
-          step_norm,
-          std::min(agreement_radius, curvature_radius));
+      step_norm * std::max(1.0, radius_scale);
   if (!(candidate_radius > 0.0) || !std::isfinite(candidate_radius)) {
     return safe_radius_update();
   }
@@ -531,14 +519,10 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         result.trust_region_shift * result.reduced_step;
     if (residual_converged(kkt_residual)) return result;
 
-    // A boundary solution is already a valid globally convergent inexact
-    // trust-region step. Far from a local minimum, spending more HVPs to force
-    // an interior Newton residual merely resolves stiff/negative modes that
-    // the active radius deliberately excludes. Continue refining only after
-    // the radius becomes inactive; that is where the Newton forcing condition
-    // controls the local superlinear regime.
-    if (result.reached_boundary) return result;
-
+    // A boundary solution of the current projected model is not a full-space
+    // trust-region convergence certificate. Continue expanding until the
+    // shifted KKT residual meets the forcing condition or the subspace work
+    // limit is reached.
     correction_rhs = -kkt_residual;
     first_expansion = false;
   }

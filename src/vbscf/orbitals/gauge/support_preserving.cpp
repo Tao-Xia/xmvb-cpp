@@ -2,13 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
-#include <Eigen/LU>
+#include <Eigen/SVD>
 
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -50,76 +51,6 @@ Eigen::MatrixXd build_dense_sparse_orbital_columns(
   return dense_orbitals;
 }
 
-Eigen::MatrixXd build_dense_sparse_orbital_columns_from_full_vector(
-    const OrbitalPreparationInput& orbital_preparation_input,
-    const std::vector<double>& full_vector,
-    int orbital_count) {
-  if (full_vector.size() != orbital_preparation_input.orbital_value_table.size()) {
-    throw std::invalid_argument(
-        "full sparse vector size does not match orbital_value_table");
-  }
-  const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-  Eigen::MatrixXd dense_orbitals =
-      Eigen::MatrixXd::Zero(n_basis_functions, std::max(0, orbital_count));
-  for (int orbital_index = 0; orbital_index < orbital_count; ++orbital_index) {
-    const int coefficient_count =
-        stored_sparse_orbital_coefficient_count(
-            orbital_preparation_input,
-            orbital_index);
-    for (int coefficient_index = 0;
-         coefficient_index < coefficient_count;
-         ++coefficient_index) {
-      const int basis_function_index =
-          orbital_preparation_input.orbital_basis_index_table
-              [orbital_index * n_basis_functions +
-               coefficient_index] -
-          1;
-      if (basis_function_index < 0 ||
-          basis_function_index >= n_basis_functions) {
-        throw std::runtime_error(
-            "invalid sparse orbital basis index while building dense MO gauge gradient columns");
-      }
-      dense_orbitals(basis_function_index, orbital_index) =
-          full_vector[orbital_index * n_basis_functions +
-                      coefficient_index];
-    }
-  }
-  return dense_orbitals;
-}
-
-void scatter_dense_sparse_orbital_columns(
-    const Eigen::MatrixXd& dense_orbitals,
-    const OrbitalPreparationInput& orbital_preparation_input,
-    int orbital_count,
-    std::vector<double>* full_vector) {
-  if (full_vector == nullptr) {
-    throw std::invalid_argument("full_vector must not be null");
-  }
-  if (full_vector->size() != orbital_preparation_input.orbital_value_table.size()) {
-    throw std::invalid_argument(
-        "full sparse vector size does not match orbital_value_table");
-  }
-  const int n_basis_functions = orbital_preparation_input.n_basis_functions;
-  for (int orbital_index = 0; orbital_index < orbital_count; ++orbital_index) {
-    const int coefficient_count =
-        stored_sparse_orbital_coefficient_count(
-            orbital_preparation_input,
-            orbital_index);
-    for (int coefficient_index = 0;
-         coefficient_index < coefficient_count;
-         ++coefficient_index) {
-      const int basis_function_index =
-          orbital_preparation_input.orbital_basis_index_table
-              [orbital_index * n_basis_functions +
-               coefficient_index] -
-          1;
-      (*full_vector)[orbital_index * n_basis_functions +
-                     coefficient_index] =
-          dense_orbitals(basis_function_index, orbital_index);
-    }
-  }
-}
-
 std::vector<int> collect_support_indices_from_layout(
     const OrbitalPreparationInput& orbital_preparation_input,
     int orbital_index) {
@@ -149,126 +80,227 @@ std::vector<int> collect_support_indices_from_layout(
 }
 
 bool support_sets_match(
-    const std::vector<int>& left_support,
-    const std::vector<int>& right_support) {
-  if (left_support.size() != right_support.size()) {
-    return false;
-  }
-  std::vector<int> left_sorted = left_support;
-  std::vector<int> right_sorted = right_support;
-  std::sort(left_sorted.begin(), left_sorted.end());
-  std::sort(right_sorted.begin(), right_sorted.end());
-  return left_sorted == right_sorted;
+    const std::vector<int>& left,
+    const std::vector<int>& right) {
+  if (left.size() != right.size()) return false;
+  std::vector<int> sorted_left = left;
+  std::vector<int> sorted_right = right;
+  std::sort(sorted_left.begin(), sorted_left.end());
+  std::sort(sorted_right.begin(), sorted_right.end());
+  return sorted_left == sorted_right;
 }
 
-bool inactive_support_layout_matches_reference(
+bool inactive_supports_match(
     const OrbitalPreparationInput& reference_layout,
     const OrbitalPreparationInput& current_layout,
-    int n_inactive_orbitals) {
-  for (int orbital_index = 0;
-       orbital_index < n_inactive_orbitals;
-       ++orbital_index) {
+    int n_inactive) {
+  for (int orbital = 0; orbital < n_inactive; ++orbital) {
     if (!support_sets_match(
-            collect_support_indices_from_layout(reference_layout, orbital_index),
-            collect_support_indices_from_layout(current_layout, orbital_index))) {
+            collect_support_indices_from_layout(reference_layout, orbital),
+            collect_support_indices_from_layout(current_layout, orbital))) {
       return false;
     }
   }
   return true;
 }
 
-Eigen::MatrixXd build_inverse_square_root_metric(
-    const Eigen::MatrixXd& metric,
-    const char* label) {
-  if (metric.rows() != metric.cols()) {
-    throw std::invalid_argument(
-        std::string(label) + " must be square for inverse square root");
-  }
-  if (metric.rows() == 0) {
-    return Eigen::MatrixXd(0, 0);
-  }
-
+bool inactive_metric_loses_half_precision(
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap) {
+  const Eigen::MatrixXd metric =
+      inactive_orbitals.transpose() * ao_overlap * inactive_orbitals;
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(metric);
-  if (solver.info() != Eigen::Success) {
-    throw std::runtime_error(std::string("failed to diagonalize ") + label);
+  if (solver.info() != Eigen::Success ||
+      !solver.eigenvalues().allFinite() ||
+      !(solver.eigenvalues().minCoeff() > 0.0)) {
+    throw std::runtime_error(
+        "inactive occupied overlap is not positive definite");
   }
-
-  Eigen::MatrixXd inverse_square_root =
-      Eigen::MatrixXd::Zero(metric.rows(), metric.cols());
-  constexpr double kMinimumEigenvalue = 1.0e-10;
-  for (int eigen_index = 0; eigen_index < solver.eigenvalues().size(); ++eigen_index) {
-    const double eigenvalue = solver.eigenvalues()[eigen_index];
-    if (!(eigenvalue > kMinimumEigenvalue) || !std::isfinite(eigenvalue)) {
-      throw std::runtime_error(
-          std::string(label) +
-          " is singular while building support-aware MO gauge");
-    }
-    inverse_square_root(eigen_index, eigen_index) =
-        1.0 / std::sqrt(eigenvalue);
-  }
-  return solver.eigenvectors() *
-      inverse_square_root *
-      solver.eigenvectors().transpose();
+  const double relative_roundoff_bound =
+      std::numeric_limits<double>::epsilon() *
+      static_cast<double>(metric.rows()) *
+      solver.eigenvalues().maxCoeff() /
+      solver.eigenvalues().minCoeff();
+  return relative_roundoff_bound >
+      std::sqrt(std::numeric_limits<double>::epsilon());
 }
 
-Eigen::MatrixXd build_support_overlap_submatrix(
-    const Eigen::MatrixXd& basis_overlap,
-    const std::vector<int>& support_indices) {
-  Eigen::MatrixXd support_overlap(
-      static_cast<Eigen::Index>(support_indices.size()),
-      static_cast<Eigen::Index>(support_indices.size()));
-  for (Eigen::Index row = 0;
-       row < static_cast<Eigen::Index>(support_indices.size());
-       ++row) {
-    const int basis_row = support_indices[row];
-    for (Eigen::Index column = 0;
-         column < static_cast<Eigen::Index>(support_indices.size());
-         ++column) {
-      support_overlap(row, column) =
-          basis_overlap(
-              basis_row,
-              support_indices[column]);
+Eigen::MatrixXd build_admissible_gauge_basis(
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_orbitals,
+    const std::vector<int>& target_support) {
+  const int n_bf = static_cast<int>(inactive_orbitals.rows());
+  const int n_inactive = static_cast<int>(inactive_orbitals.cols());
+  std::vector<unsigned char> allowed(n_bf, 0);
+  for (const int basis : target_support) {
+    if (basis < 0 || basis >= n_bf || allowed[basis] != 0) {
+      throw std::runtime_error(
+          "invalid target support while balancing the inactive gauge");
+    }
+    allowed[basis] = 1;
+  }
+
+  const int forbidden_count =
+      n_bf - static_cast<int>(target_support.size());
+  if (forbidden_count == 0) {
+    return Eigen::MatrixXd::Identity(n_inactive, n_inactive);
+  }
+  Eigen::MatrixXd constraints(forbidden_count, n_inactive);
+  int row = 0;
+  for (int basis = 0; basis < n_bf; ++basis) {
+    if (allowed[basis] == 0) {
+      constraints.row(row++) = inactive_orbitals.row(basis);
     }
   }
-  return support_overlap;
+
+  Eigen::JacobiSVD<Eigen::MatrixXd> svd(
+      constraints, Eigen::ComputeFullV);
+  if (svd.info() != Eigen::Success) {
+    throw std::runtime_error(
+        "failed to factor support constraints for inactive gauge balancing");
+  }
+  const double sigma_max = svd.singularValues().size() == 0
+      ? 0.0
+      : svd.singularValues()[0];
+  const double rank_tolerance =
+      std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max(constraints.rows(), constraints.cols())) *
+      sigma_max;
+  int rank = 0;
+  while (rank < svd.singularValues().size() &&
+         svd.singularValues()[rank] > rank_tolerance) {
+    ++rank;
+  }
+  Eigen::MatrixXd basis =
+      svd.matrixV().rightCols(n_inactive - rank);
+  if (basis.cols() == 0) {
+    throw std::runtime_error(
+        "inactive orbital has no support-preserving gauge representative");
+  }
+  return basis;
+}
+
+Eigen::MatrixXd build_balanced_inactive_right_transform(
+    const Eigen::Ref<const Eigen::MatrixXd>& inactive_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap,
+    const OrbitalPreparationInput& target_layout) {
+  const int n_inactive = static_cast<int>(inactive_orbitals.cols());
+  const Eigen::MatrixXd metric =
+      inactive_orbitals.transpose() * ao_overlap * inactive_orbitals;
+  Eigen::LDLT<Eigen::MatrixXd> metric_factor(metric);
+  if (metric_factor.info() != Eigen::Success ||
+      !metric_factor.isPositive()) {
+    throw std::runtime_error(
+        "inactive occupied overlap is not positive definite");
+  }
+
+  std::vector<Eigen::MatrixXd> admissible_bases;
+  admissible_bases.reserve(n_inactive);
+  for (int orbital = 0; orbital < n_inactive; ++orbital) {
+    admissible_bases.push_back(build_admissible_gauge_basis(
+        inactive_orbitals,
+        collect_support_indices_from_layout(target_layout, orbital)));
+  }
+
+  Eigen::MatrixXd transform =
+      Eigen::MatrixXd::Identity(n_inactive, n_inactive);
+  for (int orbital = 0; orbital < n_inactive; ++orbital) {
+    const double norm_squared = metric(orbital, orbital);
+    if (!(norm_squared > 0.0) || !std::isfinite(norm_squared)) {
+      throw std::runtime_error(
+          "inactive gauge contains a zero-norm orbital");
+    }
+    transform.col(orbital) /= std::sqrt(norm_squared);
+  }
+
+  const int maximum_sweeps = std::max(1, 4 * n_inactive);
+  const double convergence_tolerance =
+      8.0 * std::sqrt(std::numeric_limits<double>::epsilon()) *
+      std::sqrt(static_cast<double>(n_inactive));
+  for (int sweep = 0; sweep < maximum_sweeps; ++sweep) {
+    double maximum_change = 0.0;
+    for (int target = 0; target < n_inactive; ++target) {
+      Eigen::MatrixXd other_transform(n_inactive, n_inactive - 1);
+      if (target > 0) {
+        other_transform.leftCols(target) = transform.leftCols(target);
+      }
+      if (target + 1 < n_inactive) {
+        other_transform.rightCols(n_inactive - target - 1) =
+            transform.rightCols(n_inactive - target - 1);
+      }
+
+      Eigen::MatrixXd residual_metric = metric;
+      if (other_transform.cols() > 0) {
+        const Eigen::MatrixXd cross = metric * other_transform;
+        const Eigen::MatrixXd other_metric =
+            other_transform.transpose() * cross;
+        Eigen::LDLT<Eigen::MatrixXd> other_factor(other_metric);
+        if (other_factor.info() != Eigen::Success ||
+            !other_factor.isPositive()) {
+          throw std::runtime_error(
+              "inactive gauge transform lost rank while balancing supports");
+        }
+        residual_metric.noalias() -=
+            cross * other_factor.solve(cross.transpose());
+      }
+      residual_metric =
+          0.5 * (residual_metric + residual_metric.transpose()).eval();
+
+      const Eigen::MatrixXd& admissible = admissible_bases[target];
+      const Eigen::MatrixXd restricted_metric =
+          admissible.transpose() * metric * admissible;
+      const Eigen::MatrixXd restricted_residual =
+          admissible.transpose() * residual_metric * admissible;
+      Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> solver(
+          restricted_residual,
+          restricted_metric);
+      if (solver.info() != Eigen::Success ||
+          !solver.eigenvalues().allFinite() ||
+          !solver.eigenvectors().allFinite()) {
+        throw std::runtime_error(
+            "failed to solve the support-preserving inactive gauge update");
+      }
+
+      Eigen::VectorXd updated =
+          admissible * solver.eigenvectors().rightCols(1);
+      const double updated_norm_squared = updated.dot(metric * updated);
+      if (!(updated_norm_squared > 0.0) ||
+          !std::isfinite(updated_norm_squared)) {
+        throw std::runtime_error(
+            "support-preserving inactive gauge update has zero norm");
+      }
+      updated /= std::sqrt(updated_norm_squared);
+      const Eigen::VectorXd previous = transform.col(target);
+      if (updated.dot(metric * previous) < 0.0) {
+        updated = -updated;
+      }
+      maximum_change = std::max(
+          maximum_change,
+          std::sqrt((updated - previous).dot(metric * (updated - previous))));
+      transform.col(target) = updated;
+    }
+    if (maximum_change <= convergence_tolerance) {
+      break;
+    }
+  }
+  return transform;
 }
 
 bool dense_matrix_is_effectively_identity(const Eigen::MatrixXd& matrix) {
   if (matrix.rows() != matrix.cols()) {
     return false;
   }
-  constexpr double kIdentityTolerance = 1.0e-10;
+  const double identity_tolerance =
+      64.0 * std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max(matrix.rows(), matrix.cols()));
   for (Eigen::Index column = 0; column < matrix.cols(); ++column) {
     for (Eigen::Index row = 0; row < matrix.rows(); ++row) {
       const double target = row == column ? 1.0 : 0.0;
-      if (std::abs(matrix(row, column) - target) > kIdentityTolerance) {
+      if (std::abs(matrix(row, column) - target) > identity_tolerance) {
         return false;
       }
     }
   }
   return true;
-}
-
-SupportPreservingGaugeTransform finalize_transform(
-    const Eigen::MatrixXd& right_transform) {
-  SupportPreservingGaugeTransform result;
-  result.n_inactive_orbitals = static_cast<int>(right_transform.cols());
-  result.chart_changed = !dense_matrix_is_effectively_identity(right_transform);
-  result.right_transform.assign(
-      right_transform.data(),
-      right_transform.data() + right_transform.size());
-
-  const Eigen::FullPivLU<Eigen::MatrixXd> transform_lu(right_transform);
-  if (!transform_lu.isInvertible()) {
-    throw std::runtime_error(
-        "support-aware inactive MO gauge transform is singular");
-  }
-  const Eigen::MatrixXd inverse_transpose =
-      transform_lu.inverse().transpose();
-  result.inverse_transpose_right_transform.assign(
-      inverse_transpose.data(),
-      inverse_transpose.data() + inverse_transpose.size());
-  return result;
 }
 
 }  // namespace
@@ -282,7 +314,7 @@ bool orbital_input_has_support_preserving_gauge_reference(
               orbital_preparation_input.n_basis_functions;
 }
 
-SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
+bool apply_support_preserving_inactive_gauge(
     const OrbitalPreparationInput& reference_layout,
     OrbitalPreparationInput* orbital_preparation_input) {
   if (orbital_preparation_input == nullptr) {
@@ -294,7 +326,7 @@ SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
       (orbital_preparation_input->n_total_electrons -
        orbital_preparation_input->n_active_electrons) / 2;
   if (n_inactive_orbitals <= 0) {
-    return {};
+    return false;
   }
   if (reference_layout.n_basis_functions !=
           orbital_preparation_input->n_basis_functions ||
@@ -303,121 +335,63 @@ SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
         "reference layout is incompatible with the MO gauge-fix target");
   }
   if (n_inactive_orbitals == 1) {
-    return {};
+    return false;
   }
-  // A support-aware re-gauging is only an exact chart change when the current
-  // sparse layout already differs from the recorded recorded support chart, e.g.
-  // after a temporary support expansion used only for guess construction. If
-  // the current chart already equals the reference sparse layout, the dense
-  // right rotation computed below would be truncated back onto the same sparse
-  // rows and the stored `T^{-T}` gradient transform would no longer match the
-  // actual coefficient update. In that case the safe behavior is to leave the
-  // original chart untouched.
-  if (inactive_support_layout_matches_reference(
-          reference_layout,
-          *orbital_preparation_input,
-          n_inactive_orbitals)) {
-    return {};
-  }
-
   const int n_basis_functions = orbital_preparation_input->n_basis_functions;
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
       orbital_preparation_input->ao_overlap_matrix.data(),
       n_basis_functions,
       n_basis_functions);
 
-  // The inactive occupied span is physically meaningful, but the individual
-  // orbitals inside that span are gauge degrees of freedom. Convert the
-  // current sparse inactive rows into dense AO columns, S-orthonormalize that
-  // span, then greedily pick one vector at a time that maximizes weight on the
-  // original sparse support of the corresponding inactive orbital.
+  // The inactive occupied span is physical, whereas its individual columns
+  // are gauge representatives. For each target support, construct the exact
+  // null space of all forbidden AO rows. Cyclic determinant maximization then
+  // chooses, within that admissible space, the normalized column with the
+  // largest component outside the span of all other representatives. Each
+  // update preserves strict support and increases the normalized Gram
+  // determinant, directly removing avoidable near-linear dependence without
+  // changing the occupied subspace.
   const Eigen::MatrixXd current_inactive_orbitals =
       build_dense_sparse_orbital_columns(
           *orbital_preparation_input,
           n_inactive_orbitals);
-  const Eigen::MatrixXd inactive_metric =
-      current_inactive_orbitals.transpose() *
-      basis_overlap *
-      current_inactive_orbitals;
-  Eigen::MatrixXd remaining_basis =
-      current_inactive_orbitals *
-      build_inverse_square_root_metric(
-          inactive_metric,
-          "inactive occupied overlap");
-  Eigen::MatrixXd remaining_transform =
-      build_inverse_square_root_metric(
-          inactive_metric,
-          "inactive occupied overlap");
-  Eigen::MatrixXd localized_inactive_orbitals =
-      Eigen::MatrixXd::Zero(n_basis_functions, n_inactive_orbitals);
-  Eigen::MatrixXd inactive_right_transform =
-      Eigen::MatrixXd::Zero(n_inactive_orbitals, n_inactive_orbitals);
+  if (!orbital_preparation_input->maintain_inactive_gauge &&
+      inactive_supports_match(
+          reference_layout,
+          *orbital_preparation_input,
+          n_inactive_orbitals) &&
+      !inactive_metric_loses_half_precision(
+          current_inactive_orbitals,
+          basis_overlap)) {
+    return false;
+  }
+  const Eigen::MatrixXd inactive_right_transform =
+      build_balanced_inactive_right_transform(
+          current_inactive_orbitals,
+          basis_overlap,
+          reference_layout);
+  const Eigen::MatrixXd localized_inactive_orbitals =
+      current_inactive_orbitals * inactive_right_transform;
 
-  for (int target_orbital = 0;
-       target_orbital < n_inactive_orbitals;
-       ++target_orbital) {
-    const std::vector<int> target_support =
-        collect_support_indices_from_layout(
-            reference_layout,
-            target_orbital);
-    if (target_support.empty()) {
-      throw std::runtime_error(
-          "encountered an empty inactive support while fixing the MO gauge");
+  for (int orbital = 0; orbital < n_inactive_orbitals; ++orbital) {
+    std::vector<unsigned char> allowed(n_basis_functions, 0);
+    for (const int basis :
+         collect_support_indices_from_layout(reference_layout, orbital)) {
+      allowed[basis] = 1;
     }
-
-    const int remaining_dimension =
-        static_cast<int>(remaining_basis.cols());
-    if (remaining_dimension <= 0) {
-      throw std::runtime_error(
-          "inactive occupied subspace exhausted during MO gauge fix");
+    const double backward_error =
+        128.0 * std::numeric_limits<double>::epsilon() *
+        static_cast<double>(n_basis_functions * n_inactive_orbitals) *
+        current_inactive_orbitals.norm() *
+        inactive_right_transform.col(orbital).norm();
+    for (int basis = 0; basis < n_basis_functions; ++basis) {
+      if (allowed[basis] == 0 &&
+          std::abs(localized_inactive_orbitals(basis, orbital)) >
+              backward_error) {
+        throw std::runtime_error(
+            "inactive gauge balancing violated strict orbital support");
+      }
     }
-    if (remaining_dimension == 1) {
-      localized_inactive_orbitals.col(target_orbital) =
-          remaining_basis.col(0);
-      // At the final deflation step the remaining one-dimensional subspace is
-      // already the exact last gauge vector. Its coefficient in the original
-      // inactive span is the surviving column of `remaining_transform`, so the
-      // right transform must keep that last column as well. Dropping it makes
-      // the accumulated `C_new = C_old T` chart transform singular.
-      inactive_right_transform.col(target_orbital) =
-          remaining_transform.col(0);
-      remaining_basis = Eigen::MatrixXd(n_basis_functions, 0);
-      remaining_transform = Eigen::MatrixXd(n_inactive_orbitals, 0);
-      continue;
-    }
-
-    Eigen::MatrixXd support_restricted_basis(
-        static_cast<Eigen::Index>(target_support.size()),
-        remaining_basis.cols());
-    for (Eigen::Index row = 0;
-         row < static_cast<Eigen::Index>(target_support.size());
-         ++row) {
-      support_restricted_basis.row(row) =
-          remaining_basis.row(target_support[row]);
-    }
-    const Eigen::MatrixXd support_weight =
-        support_restricted_basis.transpose() *
-        build_support_overlap_submatrix(basis_overlap, target_support) *
-        support_restricted_basis;
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> support_solver(
-        support_weight);
-    if (support_solver.info() != Eigen::Success) {
-      throw std::runtime_error(
-          "failed to diagonalize the support-weight matrix for MO gauge fix");
-    }
-
-    localized_inactive_orbitals.col(target_orbital) =
-        remaining_basis *
-        support_solver.eigenvectors().col(remaining_dimension - 1);
-    inactive_right_transform.col(target_orbital) =
-        remaining_transform *
-        support_solver.eigenvectors().col(remaining_dimension - 1);
-    remaining_basis =
-        remaining_basis *
-        support_solver.eigenvectors().leftCols(remaining_dimension - 1);
-    remaining_transform =
-        remaining_transform *
-        support_solver.eigenvectors().leftCols(remaining_dimension - 1);
   }
 
   std::vector<double> updated_orbital_values =
@@ -448,15 +422,23 @@ SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
   orbital_preparation_input->orbital_value_table =
       std::move(updated_orbital_values);
   enforce_strict_sparse_orbital_support(orbital_preparation_input);
-  return finalize_transform(inactive_right_transform);
+  const bool chart_changed =
+      !dense_matrix_is_effectively_identity(inactive_right_transform);
+  orbital_preparation_input->maintain_inactive_gauge = true;
+  return chart_changed;
 }
 
-SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
+bool apply_support_preserving_inactive_gauge(
     OrbitalPreparationInput* orbital_preparation_input) {
-  if (orbital_preparation_input == nullptr ||
-      !orbital_input_has_support_preserving_gauge_reference(
+  if (orbital_preparation_input == nullptr) {
+    return false;
+  }
+
+  if (!orbital_input_has_support_preserving_gauge_reference(
           *orbital_preparation_input)) {
-    return {};
+    return apply_support_preserving_inactive_gauge(
+        *orbital_preparation_input,
+        orbital_preparation_input);
   }
 
   OrbitalPreparationInput reference_layout;
@@ -479,35 +461,6 @@ SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
   return apply_support_preserving_inactive_gauge(
       reference_layout,
       orbital_preparation_input);
-}
-
-void transform_sparse_inactive_orbital_gradient(
-    const SupportPreservingGaugeTransform& transform,
-    const OrbitalPreparationInput& orbital_preparation_input,
-    std::vector<double>* sparse_orbital_gradient) {
-  if (sparse_orbital_gradient == nullptr) {
-    throw std::invalid_argument("sparse_orbital_gradient must not be null");
-  }
-  if (!transform.chart_changed || transform.n_inactive_orbitals <= 1) {
-    return;
-  }
-  const int n_inactive_orbitals = transform.n_inactive_orbitals;
-  const Eigen::Map<const Eigen::MatrixXd> inverse_transpose_transform(
-      transform.inverse_transpose_right_transform.data(),
-      n_inactive_orbitals,
-      n_inactive_orbitals);
-  const Eigen::MatrixXd inactive_gradient =
-      build_dense_sparse_orbital_columns_from_full_vector(
-          orbital_preparation_input,
-          *sparse_orbital_gradient,
-          n_inactive_orbitals);
-  const Eigen::MatrixXd transformed_gradient =
-      inactive_gradient * inverse_transpose_transform;
-  scatter_dense_sparse_orbital_columns(
-      transformed_gradient,
-      orbital_preparation_input,
-      n_inactive_orbitals,
-      sparse_orbital_gradient);
 }
 
 }  // namespace xmvb::vb

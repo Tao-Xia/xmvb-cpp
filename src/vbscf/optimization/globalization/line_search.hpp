@@ -31,7 +31,8 @@ bool try_armijo_backtracking_nonredundant_direction(
     double armijo_constant,
     Eigen::VectorXd* accepted_parameters,
     Eigen::VectorXd* accepted_gradient,
-    double* accepted_energy);
+    double* accepted_energy,
+    bool* accepted_chart_changed = nullptr);
 
 bool try_steepest_descent_armijo_step(
     VbScfObjective* objective,

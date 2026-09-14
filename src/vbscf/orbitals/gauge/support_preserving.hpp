@@ -1,62 +1,44 @@
 #pragma once
 
-#include <vector>
-
 #include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::vb {
-
-struct SupportPreservingGaugeTransform {
-  int n_inactive_orbitals = 0;
-  bool chart_changed = false;
-  std::vector<double> right_transform;
-  std::vector<double> inverse_transpose_right_transform;
-};
 
 bool orbital_input_has_support_preserving_gauge_reference(
     const OrbitalPreparationInput& orbital_preparation_input);
 
 /**
- * @brief Re-gauges inactive occupied GUESS=MO orbitals toward a sparse reference layout.
+ * @brief Balances inactive occupied orbitals within a sparse reference layout.
  *
- * This transformation only rotates the inactive occupied manifold internally.
- * It is applied only when the current sparse chart already differs from the
- * recorded recorded support layout; in that case the represented occupied
- * subspace is preserved exactly while the inactive gauge is steered toward the
- * original sparse supports. When the current chart already equals the recorded
- * sparse layout, the function returns a no-op instead of performing an
- * inexact sparse truncation.
+ * The transformation rotates only within the inactive occupied manifold. Each
+ * transformed column is constrained to its target sparse support, so the
+ * represented subspace and strict support are preserved to backward error.
+ * Within those exact constraints, cyclic determinant maximization selects a
+ * normalized representative that removes avoidable near-linear dependence.
+ * Balancing starts only when the occupied metric has lost more than half of
+ * floating-point precision or the current and target supports differ. Once
+ * selected, the same gauge section is maintained at later accepted points.
  *
  * @param reference_layout Sparse orbital layout whose inactive supports define
  *        the preferred gauge.
  * @param orbital_preparation_input In-place target whose inactive occupied
  *        orbitals will be rotated inside their current span.
+ * @return Whether the stored orbital representative changed.
  */
-SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
+bool apply_support_preserving_inactive_gauge(
     const OrbitalPreparationInput& reference_layout,
     OrbitalPreparationInput* orbital_preparation_input);
 
 /**
- * @brief Re-gauges inactive occupied orbitals using embedded MO-gauge support metadata.
+ * @brief Balances inactive orbitals using their preferred sparse support.
  *
- * This overload is intended for accepted-point canonicalization inside the
- * optimizer. It is a no-op unless the input carries the pre-expansion sparse
- * support metadata recorded for `GUESS=MO`.
+ * Embedded pre-expansion support metadata is used when present; otherwise the
+ * current strict support is the target. This overload is used both for the
+ * initial point and for accepted-point canonicalization.
+ *
+ * @return Whether the stored orbital representative changed.
  */
-SupportPreservingGaugeTransform apply_support_preserving_inactive_gauge(
+bool apply_support_preserving_inactive_gauge(
     OrbitalPreparationInput* orbital_preparation_input);
-
-/**
- * @brief Applies the inactive gauge transform to a sparse full-gradient vector.
- *
- * The accepted-point chart reset rotates the inactive occupied orbitals by
- * `C <- C T`. The corresponding sparse orbital gradient transforms as
- * `G <- G T^{-T}` inside the inactive occupied block, while all other orbital
- * components remain unchanged.
- */
-void transform_sparse_inactive_orbital_gradient(
-    const SupportPreservingGaugeTransform& transform,
-    const OrbitalPreparationInput& orbital_preparation_input,
-    std::vector<double>* sparse_orbital_gradient);
 
 }  // namespace xmvb::vb

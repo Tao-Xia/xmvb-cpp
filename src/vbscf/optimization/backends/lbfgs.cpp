@@ -197,14 +197,6 @@ BackendRunResult run_full_space_lbfgs_backend(
     }
     last_iteration_used_steepest_descent = used_steepest_descent;
 
-    const bool accepted_point_chart_reset =
-        objective->canonicalize_chart(
-            &current_parameters,
-            &current_gradient);
-    if (accepted_point_chart_reset) {
-      reset_inverse_hessian = true;
-    }
-
     ++run_result.n_iterations;
     sync_result_from_objective(*objective, result);
     record_accepted_iteration_snapshot(
@@ -333,6 +325,7 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     Eigen::VectorXd accepted_parameters(current_parameters.size());
     Eigen::VectorXd accepted_gradient(current_gradient.size());
     double accepted_energy = energy;
+    bool accepted_point_chart_reset = false;
     if (!try_armijo_backtracking_nonredundant_direction(
             objective,
             previous_orbital_input,
@@ -348,7 +341,8 @@ BackendRunResult run_nonredundant_lbfgs_backend(
             options.armijo_constant,
             &accepted_parameters,
             &accepted_gradient,
-            &accepted_energy)) {
+            &accepted_energy,
+            &accepted_point_chart_reset)) {
       result->termination_reason = "nonredundant_lbfgspp_line_search_failed";
       run_result.final_gradient_l2_norm =
           current_projection.reduced_gradient.norm();
@@ -401,7 +395,8 @@ BackendRunResult run_nonredundant_lbfgs_backend(
               options.armijo_constant,
               &current_parameters,
               &current_gradient,
-              &energy)) {
+              &energy,
+              &accepted_point_chart_reset)) {
         energy = (*objective)(previous_parameters, current_gradient);
         current_parameters = previous_parameters;
         sync_result_from_objective(*objective, result);
@@ -417,17 +412,6 @@ BackendRunResult run_nonredundant_lbfgs_backend(
       parameter_step = current_parameters - previous_parameters;
       inverse_hessian.reset(dimension, history_size);
       recovered_from_stall = true;
-    }
-
-    const bool accepted_point_chart_reset =
-        objective->canonicalize_chart(
-            &current_parameters,
-            &current_gradient);
-    if (accepted_point_chart_reset) {
-      next_space = build_orbital_chart(*objective, parameter_view);
-      next_projection = next_space.project_gradient(current_gradient);
-      next_reduced_gradient_inf_norm =
-          gradient_infinity_norm(next_projection.reduced_gradient);
     }
 
     ++run_result.n_iterations;

@@ -542,6 +542,86 @@ $$
 Using the transpose pullback to recover vector coordinates is valid only for
 an unwhitened Euclidean-orthonormal basis and is incorrect after eq 27e.
 
+### 4.2 Support-preserving inactive representative
+
+Removing the vertical tangent space does not by itself guarantee a numerically
+usable representative of the inactive occupied subspace. Let
+
+$$
+\mathbf M_{\mathrm I}=\mathbf C_{\mathrm I}^{\mathrm T}
+\mathbf S\mathbf C_{\mathrm I},
+$$
+
+and let $\mathbf Z_{\bar{\mathcal S}_p}^{\mathrm T}$ select AO rows outside
+the prescribed support of inactive orbital $p$. A right-transform column
+$\mathbf t_p$ preserves that support exactly when
+
+$$
+\mathbf Z_{\bar{\mathcal S}_p}^{\mathrm T}
+\mathbf C_{\mathrm I}\mathbf t_p=\mathbf 0.
+$$
+
+Let $\mathbf A_p$ span this null space. For fixed columns
+$\mathbf T_{-p}$ of the current right transform, define
+
+$$
+\mathbf R_{-p}
+=
+\mathbf M_{\mathrm I}
+-
+\mathbf M_{\mathrm I}\mathbf T_{-p}
+(\mathbf T_{-p}^{\mathrm T}\mathbf M_{\mathrm I}\mathbf T_{-p})^{-1}
+\mathbf T_{-p}^{\mathrm T}\mathbf M_{\mathrm I}.
+$$
+
+The support-preserving coordinate update is the generalized Rayleigh problem
+
+$$
+\max_{\mathbf z\ne\mathbf 0}
+\frac{
+\mathbf z^{\mathrm T}\mathbf A_p^{\mathrm T}
+\mathbf R_{-p}\mathbf A_p\mathbf z
+}{
+\mathbf z^{\mathrm T}\mathbf A_p^{\mathrm T}
+\mathbf M_{\mathrm I}\mathbf A_p\mathbf z
+},
+\qquad
+\mathbf t_p=\mathbf A_p\mathbf z.
+\tag{27i}
+$$
+
+With the other columns fixed, eq 27i maximizes the squared metric distance of
+the new representative from their span. Equivalently, it maximizes the
+normalized Gram determinant by a coordinate step. Cyclic updates therefore
+remove avoidable near-linear dependence without filling forbidden AO rows or
+changing $\operatorname{range}(\mathbf C_{\mathrm I})$. The resulting
+$\mathbf T$ must be nonsingular and satisfies, at the selected point,
+
+$$
+\mathbf C_{\mathrm I}'=\mathbf C_{\mathrm I}\mathbf T.
+\tag{27j}
+$$
+
+For unequal strict supports, eq 27j is not a linear coordinate transformation
+on a neighborhood: a supported tangent $\delta\mathbf C_{\mathrm I}$ need not
+make $\delta\mathbf C_{\mathrm I}\mathbf T$ satisfy the target supports.
+Consequently, multiplying a support-restricted gradient by
+$\mathbf T^{-\mathrm T}$ and discarding forbidden rows is not a valid covector
+transport. The production path canonicalizes each trial representative
+**before** evaluating its energy, gradient, and accepted-point HVP cache. This
+direct evaluation avoids an unavailable off-support gradient and preserves the
+actual computational graph. Null-space ranks are determined from matrix scale
+and machine precision, not from chemical-system thresholds.
+
+Production balancing is activated when the prescribed supports must be
+reconstructed or when the standard roundoff estimate
+$\epsilon n_{\mathrm I}\kappa(\mathbf M_{\mathrm I})$ exceeds
+$\sqrt{\epsilon}$. Once activated, eq 27i defines a section of the gauge bundle
+that is maintained after every accepted orbital step. Applying it only at the
+initial point is insufficient: subsequent additive retractions can drift back
+into the ill-conditioned vertical coordinates even when the occupied Gram
+matrix has not yet become numerically singular.
+
 ## 5. A natural quotient metric
 
 Euclidean distances between raw sparse coefficients are not invariant to AO scaling or to the choice of orbital representatives. A physically meaningful trust-region norm should instead measure changes in the inactive subspace and projected active rays.
@@ -1197,13 +1277,14 @@ preconditioned residual accelerates the regular case. The preconditioner never
 replaces the Hessian in the quadratic model.
 
 Negative curvature is retained in $\mathbf T$ rather than terminating at the
-first search direction. Once the projected solution reaches the trust-region
-boundary, however, it is already a valid globally convergent inexact step and
-subspace expansion stops. Further HVPs are spent on the Newton residual only
-for an interior solution, where eq 65e controls the local superlinear regime.
-This separates globalization from asymptotic Newton accuracy without a
-molecule-specific HVP budget. A finite subspace safety limit remains a resource
-guard and is never interpreted as satisfying eq 65e.
+first search direction. Reaching the boundary certifies only the minimum of
+the current projected problem in eq 65c; it does not certify stationarity of
+the full trust-region problem. Consequently, boundary and interior solutions
+both continue subspace expansion until the shifted full-space KKT residual in
+eq 65e meets the forcing condition or the finite resource guard is reached.
+The guard is never interpreted as satisfying eq 65e. This distinction is
+essential in an indefinite model: an early two-dimensional boundary solution
+can omit a strongly descending direction outside the sampled space.
 
 Hitting the HVP safety limit alone must not be interpreted as meeting the
 inner residual target. A small residual does not exclude negative curvature
@@ -1250,6 +1331,28 @@ Rejected trials contract the radius and resolve the projected problem in the
 already evaluated accepted-point Krylov space. Negative curvature is handled
 by the trust-region boundary conditions in eq 65c; it is not replaced by an
 unrelated first-order line-search step.
+
+For an accepted boundary step of length $\lVert\mathbf s_k\rVert$, the observed
+quadratic-model remainder $e_k$ also supplies a scale for radius growth. Under
+a locally Lipschitz Hessian, the leading Taylor remainder is cubic. Requiring
+the extrapolated error to remain no larger than the observed decrease gives
+
+$$
+\Delta_{k+1}
+=
+\lVert\mathbf s_k\rVert
+\max\left[
+1,
+\left(\frac{a_k}{\max(e_k,e_{\mathrm{round}})}\right)^{1/3}
+\right],
+\qquad
+e_{\mathrm{round}}
+=16\epsilon\max(a_k,p_k).
+$$
+
+This update uses the measured nonquadratic error in the direction actually
+taken. A cap derived from the largest Ritz magnitude can instead freeze the
+radius because of a stiff mode unrelated to the accepted boundary direction.
 
 ### 10.1 Coordinate-consistent local preconditioning model
 
@@ -1412,13 +1515,16 @@ quadratic model recovers its inverse after all independent pairs have been
 applied. This identity is tested on a small synthetic model; production uses
 the limited-memory two-loop action, not an assembled inverse matrix.
 
-The implementation expands the sampled directions and covectors into packed
-space before accepted-point gauge canonicalization, transports them with the
-existing step and gradient maps, then projects them into the next quotient.
-Their curvature is rechecked before admission. At a different point they are
-**approximate preconditioning data**, not exact current HVPs; projection and
-nonlinear motion need not preserve their secant equations. Every new-point
-quadratic model still uses fresh exact HVPs. Rank changes clear the history.
+Sampled directions and HVP covectors are retained as approximate
+preconditioning data only when consecutive accepted points remain in the same
+sparse coefficient chart. If support-preserving canonicalization changes the
+representative, the history is cleared. Equation 27j alone cannot transport a
+strict-sparse tangent or covector, because its differential contains the
+support-constrained response of $\mathbf T$; silently truncating
+$\delta\mathbf C_{\mathrm I}\mathbf T$ is incorrect. Deriving that connection
+would allow safe recycling across a reset, but the present implementation does
+not substitute a heuristic map. Every new-point quadratic model uses fresh
+exact HVPs regardless of whether approximate history is retained.
 
 The existing history capacity is unchanged. At most one fewer than that
 capacity is filled with positive Ritz pairs, reserving space for the actual
@@ -1620,38 +1726,40 @@ off-support cancellation, frozen stored coefficients, full support, inactive
 basis changes, absent inactive or active spaces, and a zero-dimensional quotient.
 Directional finite differences of the relaxed HVP pass on all four molecular
 inputs. A larger 1764-structure diagnostic provides a more discriminating
-separation of first- and second-order errors. At its initial point, central
-energy differences along the six largest reduced-gradient coordinates agree
-with the analytic pullback to relative errors between $1.0\times10^{-5}$ and
-$4.6\times10^{-5}$. Thus the slow optimization observed for this input is not
-explained by an incorrect first derivative or by the quotient pullback.
+test of the stabilized coordinate construction. Its packed dimension is 630.
+The support-constrained gauge has rank 72, giving a 558-dimensional quotient;
+an independent physical-map Jacobian has rank 558 and nullity 72. The current
+reduced basis retains no gauge direction and misses no physical direction. The
+relative gauge-annihilation residual is $3.76\times10^{-16}$, and the maximum
+principal-angle sine between the algebraic gauge space and the physical
+Jacobian null space is $4.71\times10^{-8}$.
 
-The same diagnostic exposed an accuracy-contract error in the structure
-response used by the exact HVP. With a response relative residual of
-$10^{-3}$, the analytic directional curvature is
-$-1.184020\times10^6$, whereas the central difference of relaxed gradients is
-$-1.381769\times10^6$. The componentwise maximum relative discrepancy is only
-$7.95\times10^{-3}$, but cancellation between a
-$+5.77\times10^6$ core contribution and a $-7.15\times10^6$ outer-response
-contribution amplifies this error in the physically relevant Rayleigh
-curvature. Equation 56a selects a residual of $7.65\times10^{-5}$ at this
-point; the resulting analytic curvature, $-1.382382\times10^6$, differs from
-the relaxed-gradient difference by $4.4\times10^{-4}$ relatively. This is an
-HVP response-accuracy defect, not a gradient defect.
+At the same initial point, central energy differences along the six largest
+reduced-gradient coordinates agree with the analytic pullback to relative
+errors between $2.45\times10^{-8}$ and $1.88\times10^{-7}$; the largest
+absolute error is $3.95\times10^{-7}$. For a generic full-space probe, the
+relaxed HVP agrees with a central difference of relaxed gradients to a maximum
+relative error of $2.11\times10^{-4}$ when the structure-response relative
+residual is $9.91\times10^{-6}$. The analytic and finite-difference directional
+curvatures are 1.726458 and 1.726393, respectively. The core HVP component has
+a relative error of $3.06\times10^{-8}$, localizing the remaining discrepancy
+to the iteratively solved structure response rather than to the quotient
+coordinates or orbital-gradient pullback.
 
-The former truncated-CG implementation also stopped at the first negative
-curvature direction. On the large diagnostic it therefore used one HVP per
-outer iteration and reduced the energy only to $-314.153714$ after ten
-iterations. The residual-driven block subspace of eq 65f instead retains
-negative Ritz directions and solves the projected indefinite trust-region
-problem. Its first two accepted iterations use four HVP directions in two
-batched actions and lower the energy from $-298.240367$ to $-326.046807$.
-This establishes the importance of the indefinite subspace model, but it does
-not yet establish acceptable large-structure wall time: a subsequent interior
-solve can expand toward the 32-direction safety limit, and a 32-core run was
-stopped after 1582 s with a 2.49 GiB peak RSS before completing. The remaining
-large-system problem is therefore inner-response/subspace efficiency rather
-than the analytic orbital gradient.
+The residual-driven block subspace of eq 65f retains negative Ritz directions
+and solves the projected indefinite trust-region problem. For the
+1764-structure diagnostic, a 30-step, 32-thread run lowers the energy from
+$-298.2403673953$ to $-343.4463014459$ hartree and the projected-gradient
+infinity norm to $6.28\times10^{-4}$. The final actual-to-predicted decrease
+ratio is 0.99997, demonstrating an accurate local quadratic model. The energy
+change, $5.15\times10^{-6}$ hartree, does not yet satisfy the
+$10^{-7}$-hartree termination threshold, so this run is not recorded as
+converged. Twenty-four of the 30 accepted steps lie on the trust-region
+boundary and 18 encounter negative curvature; only four steps reach the
+32-direction subspace limit. Thus the remaining iteration-count problem is
+primarily the transition from indefinite globalized motion to the local
+Newton region, not an incorrect gradient or a uniformly insufficient fixed
+subspace limit.
 
 At the common production tolerances of $10^{-3}$ for the projected-gradient
 infinity norm and $10^{-7}$ hartree for the accepted energy change, the

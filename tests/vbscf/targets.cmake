@@ -18,6 +18,7 @@ set(_xmvb_vbscf_unit_targets
   test_projected_orbital_surrogate
   test_reduced_hessian_reference
   test_sparse_orbital_quotient
+  test_support_preserving_gauge
   test_spectral_trust_region
   test_orbital_block_partition)
 
@@ -78,6 +79,9 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME sparse_orbital_quotient COMMAND test_sparse_orbital_quotient)
   set_tests_properties(sparse_orbital_quotient PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME support_preserving_gauge COMMAND test_support_preserving_gauge)
+  set_tests_properties(support_preserving_gauge PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
 
   add_test(

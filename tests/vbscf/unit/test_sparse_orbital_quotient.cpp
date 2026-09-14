@@ -220,6 +220,29 @@ void check_occupation_curvature() {
   }
   std::cout << "Inactive occupation and active unit-model production blocks: passed\n";
 }
+
+void check_ill_conditioned_representative(
+    const OrbitalPreparationInput& input,
+    int expected_dimension) {
+  const SparseParameterLayout view(input);
+  const Eigen::MatrixXd orbitals = dense(input);
+  const OrbitalChart space(input, view, orbitals, orbitals, nullptr, true);
+  require(space.reduced_size() == expected_dimension,
+          "ill-conditioned representative changed the quotient dimension");
+  const auto diagnostics = space.structural_diagnostics();
+  require(diagnostics.total_gauge_rank ==
+              view.size() - expected_dimension,
+          "ill-conditioned representative changed the stable gauge rank");
+  for (int column = 0; column < space.reduced_size(); ++column) {
+    const Eigen::VectorXd unit =
+        Eigen::VectorXd::Unit(space.reduced_size(), column);
+    require((space.project_vector(space.expand_step(unit)).reduced_gradient -
+             unit).norm() < 1.0e-9,
+            "ill-conditioned quotient coordinates are not invertible");
+  }
+  std::cout << "ill-conditioned inactive representative: passed ("
+            << view.size() << " -> " << space.reduced_size() << ")\n";
+}
 }  // namespace
 
 int main() {
@@ -247,6 +270,15 @@ int main() {
     check("inactive gauge rotation", make_input(rotated,
           {{0,1,2,3,4,5}, {0,1,2,3,4,5},
            {0,1,2,3,4,5}, {0,1,2,3,4,5}}, 2), 14);
+    Eigen::MatrixXd ill_conditioned = c;
+    Eigen::Matrix2d ill_conditioned_gauge;
+    ill_conditioned_gauge << 1.0, 1.0, 0.0, 1.0e-4;
+    ill_conditioned.leftCols(2) =
+        (c.leftCols(2) * ill_conditioned_gauge).eval();
+    check_ill_conditioned_representative(make_input(
+        ill_conditioned,
+        {{0,1,2,3,4,5}, {0,1,2,3,4,5},
+         {0,1,2,3,4,5}, {0,1,2,3,4,5}}, 2), 14);
     const Eigen::MatrixXd active = c.rightCols(2);
     check("no inactive orbitals", make_input(active, {{0,1,4}, {2,3,5}}, 0), 4);
     check("inactive only", make_input(c.leftCols(2), {{0,2,3}, {1,2,3}}, 2), 4);

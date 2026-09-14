@@ -56,7 +56,11 @@ bool try_armijo_backtracking_nonredundant_direction(
     double armijo_constant,
     Eigen::VectorXd* accepted_parameters,
     Eigen::VectorXd* accepted_gradient,
-    double* accepted_energy) {
+    double* accepted_energy,
+    bool* accepted_chart_changed) {
+  if (accepted_chart_changed != nullptr) {
+    *accepted_chart_changed = false;
+  }
   const double directional_derivative =
       current_gradient.dot(packed_tangent_search_direction);
   if (!std::isfinite(directional_derivative) ||
@@ -88,14 +92,18 @@ bool try_armijo_backtracking_nonredundant_direction(
     }
 
     auto trial_evaluation =
-        objective->evaluate_trial(trial_parameters);
+        objective->evaluate_trial(trial_parameters, true);
     const double trial_energy = trial_evaluation.energy;
     const double armijo_upper_bound =
         current_energy + armijo_constant * step * directional_derivative;
     if (std::isfinite(trial_energy) && trial_energy <= armijo_upper_bound) {
-      *accepted_parameters = trial_parameters;
+      *accepted_parameters = parameter_view.pack(
+          trial_evaluation.orbital_preparation_input);
       *accepted_gradient = trial_evaluation.gradient;
       *accepted_energy = trial_energy;
+      if (accepted_chart_changed != nullptr) {
+        *accepted_chart_changed = trial_evaluation.chart_changed;
+      }
       objective->commit(std::move(trial_evaluation));
       return true;
     }

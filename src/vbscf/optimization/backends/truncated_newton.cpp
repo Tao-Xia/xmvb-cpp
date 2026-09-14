@@ -229,7 +229,8 @@ BackendRunResult run_truncated_newton_backend(
           }
           VbScfObjective::TrialEvaluation candidate_trial_evaluation =
               objective->evaluate_trial(
-                  candidate_trial_parameters);
+                  candidate_trial_parameters,
+                  true);
           const double candidate_trial_energy =
               candidate_trial_evaluation.energy;
           const double actual_decrease =
@@ -249,9 +250,10 @@ BackendRunResult run_truncated_newton_backend(
           }
   
           *accepted_packed_step = candidate_packed_step;
+          *accepted_trial_parameters = parameter_view.pack(
+              candidate_trial_evaluation.orbital_preparation_input);
           *accepted_trial_evaluation =
               std::move(candidate_trial_evaluation);
-          *accepted_trial_parameters = candidate_trial_parameters;
           *accepted_trial_gradient =
               std::move(accepted_trial_evaluation->gradient);
           *accepted_trial_energy = candidate_trial_energy;
@@ -402,6 +404,8 @@ BackendRunResult run_truncated_newton_backend(
           trust_radius);
       continue;
     }
+    const bool accepted_point_chart_changed =
+        accepted_trial_evaluation.chart_changed;
     if (accepted_trial_evaluation.valid) {
       objective->commit(
           std::move(accepted_trial_evaluation));
@@ -409,10 +413,13 @@ BackendRunResult run_truncated_newton_backend(
     current_parameters = trial_parameters;
     current_gradient = std::move(trial_gradient);
     energy = trial_energy;
-    // Cache evaluated curvature as approximate preconditioning data,
-    // before canonicalization transports packed steps and covectors.
-    // It is never reused as an exact Hessian action at the next point.
-    if (transport_history_size > 1 &&
+    // A support-constrained gauge reset is not a linear action on the sparse
+    // tangent bundle. Its trial is evaluated directly in the new chart, but
+    // old-chart secants cannot be transported by a dense right transform.
+    // Retain curvature history only when both points use the same sparse
+    // coefficient chart.
+    if (!accepted_point_chart_changed &&
+        transport_history_size > 1 &&
         truncated_newton_subspace_is_usable(
             cached_subspace, current_space.reduced_size())) {
       const auto pairs = positive_ritz_secants(
@@ -427,11 +434,9 @@ BackendRunResult run_truncated_newton_backend(
             transport_history_size, &packed_secant_history);
       }
     }
-    const bool accepted_point_chart_reset =
-        objective->canonicalize_chart(
-            &current_parameters,
-            &current_gradient,
-            &packed_secant_history);
+    if (accepted_point_chart_changed) {
+      packed_secant_history.clear();
+    }
     ++run_result.n_iterations;
     rejected_step_cache.clear();
     cached_subspace = TruncatedNewtonSubspace();
@@ -544,13 +549,13 @@ BackendRunResult run_truncated_newton_backend(
     if (nonredundant_rank_changed) {
       packed_secant_history.clear();
     }
-    if (!accepted_point_chart_reset && !nonredundant_rank_changed) {
-      const Eigen::VectorXd packed_projected_gradient_change =
-          next_projection.packed_projected_gradient -
-          current_projection.packed_projected_gradient;
+    if (!accepted_point_chart_changed &&
+        !nonredundant_rank_changed &&
+        transport_history_size > 0) {
       append_nonredundant_truncated_newton_secant_pair(
           packed_step,
-          packed_projected_gradient_change,
+          next_projection.packed_projected_gradient -
+              current_projection.packed_projected_gradient,
           transport_history_size,
           &packed_secant_history);
     }

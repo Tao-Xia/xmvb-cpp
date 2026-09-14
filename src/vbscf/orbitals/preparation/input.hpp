@@ -86,6 +86,17 @@ struct OrbitalPreparationInput {
   std::vector<int> mo_gauge_reference_orbital_basis_index_table;
 
   /**
+   * @brief Keep accepted inactive orbitals on the selected sparse gauge section.
+   *
+   * The initial representative enables this state only when its occupied
+   * metric is numerically singular or its support must be reconstructed.
+   * Subsequent accepted points then use the same support-preserving section;
+   * otherwise the optimization trajectory could drift back into the gauge
+   * pathology that required the initial chart repair.
+   */
+  bool maintain_inactive_gauge = false;
+
+  /**
    * @brief Original parameter-space coefficient counts for each orbital.
    *
    * This count enumerates variational parameters and controls accumulation of
