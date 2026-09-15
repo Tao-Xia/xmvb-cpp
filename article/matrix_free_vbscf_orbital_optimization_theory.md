@@ -1276,6 +1276,25 @@ the local positive preconditioner distorts a strongly indefinite mode; the
 preconditioned residual accelerates the regular case. The preconditioner never
 replaces the Hessian in the quadratic model.
 
+The outer projected-gradient threshold must not be reused as an absolute
+componentwise inner-residual threshold.  In particular, the condition
+
+$$
+\lVert\mathbf r_k\rVert_\infty\leq\tau_g
+$$
+
+does not imply eq 65e and does not provide a vanishing forcing sequence.  Once
+the residual components happen to fall below the fixed outer tolerance
+$\tau_g$, such a shortcut can leave $\lVert\mathbf r_k\rVert_2$ comparable to
+$\lVert\mathbf g_k\rVert_2$ and reduce the local iteration to linear
+convergence.  The production KKT test therefore uses eq 65e in one consistent
+norm.  Inner expansion may also stop when the current outer gradient already
+satisfies $\lVert\mathbf g_k\rVert_\infty\leq\tau_g$ and the resolved projected
+model decrease is no larger than the requested energy accuracy $\tau_E$.
+This second test limits work that cannot affect the outer accuracy decision; it
+does not declare convergence.  The finite trial energy and gradient are still
+evaluated, accepted, and tested against both outer tolerances.
+
 Negative curvature is retained in $\mathbf T$ rather than terminating at the
 first search direction. Reaching the boundary certifies only the minimum of
 the current projected problem in eq 65c; it does not certify stationarity of
@@ -1825,20 +1844,32 @@ Newton steps.
 
 At the common production tolerances of $10^{-3}$ for the projected-gradient
 infinity norm and $10^{-7}$ hartree for the accepted energy change, the
-corrected implementation gives the following complete 32-thread runs. Times
+current implementation gives the following complete 32-thread runs. Times
 are end-to-end wall times on the same workstation and are intended as
 regression data rather than machine-independent benchmarks.
 
 | Input | Reduced dimension | Iterations | HVP directions | Final energy / hartree | Final projected gradient infinity norm | Wall time / s | Peak RSS / MiB |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| F$_2$ sparse | 42 | 6 | 16 | -198.751155830455 | $1.60\times10^{-5}$ | 0.08 | 33.4 |
-| F$_2$ full AO | 218 | 15 | 50 | -198.689799086735 | $1.78\times10^{-4}$ | 0.35 | 36.0 |
-| 241 | 432 | 12 | 36 | -230.720590351661 | $6.21\times10^{-5}$ | 3.25 | 1385.3 |
-| MnF$_2$ | 957 | 13 | 232 | -1348.893351108269 | $8.83\times10^{-4}$ | 10.63 | 660.0 |
-| FeCl$_2$ full AO | 3655 | 6 | 32 | -2181.617636473040 | $8.40\times10^{-4}$ | 5.41 | 558.9 |
-| C$_6$H$_6$ sparse | 1320 | 6 | 22 | -230.634508518379 | $5.36\times10^{-5}$ | 2.90 | 909.3 |
-| C$_6$H$_6$ full | 1320 | 5 | 20 | -230.777284187920 | $2.02\times10^{-4}$ | 2.93 | 908.4 |
-| 10698 | 722 | 14 | 56 | -422.611824582135 | $8.03\times10^{-5}$ | 24.10 | 7441.7 |
+| F$_2$ sparse | 42 | 6 | 18 | -198.751155830527 | $1.03\times10^{-6}$ | 0.08 | 34.8 |
+| benzene (`241`) | 432 | 8 | 46 | -230.720590392560 | $1.00\times10^{-5}$ | 3.36 | 1360.4 |
+| MnF$_2$ | 957 | 13 | 234 | -1348.893351212391 | $9.11\times10^{-4}$ | 10.54 | 678.7 |
+| FeCl$_2$ full AO | 3655 | 3 | 66 | -2181.617643403439 | $6.65\times10^{-4}$ | 7.00 | 569.4 |
+| `240` | 558 | 28 | 438 | -343.446302349539 | $1.17\times10^{-4}$ | 368.62 | 2569.3 |
+
+The preceding revision used an absolute infinity-norm shortcut in the inner
+KKT test.  It required 12 accepted steps for benzene and 30 for `240`, with
+final projected gradient infinity norms of $6.21\times10^{-5}$ and
+$4.98\times10^{-4}$, respectively.  The norm-consistent rule removes the
+linear local tails: benzene requires 8 accepted steps, while `240` requires 28
+and reaches a lower energy and smaller gradient.  The `240` HVP count increases
+from 418 to 438 and its wall time remains essentially unchanged, showing that
+its first 26 steps are a nonconvex globalization problem rather than an inner
+accuracy problem.  FeCl$_2$ similarly trades 34 additional HVP directions for
+three fewer accepted steps and a lower stationary energy; improving the
+full-AO preconditioner is therefore a separate performance task.
+
+Earlier full-AO F$_2$, alternate C$_6$H$_6$, and `10698` timings were produced
+by older solver revisions and are not mixed into this current-code table.
 
 No molecule-dependent budgets or thresholds are used. Reproduction commands,
 earlier coordinate audits, and additional limitations are recorded in

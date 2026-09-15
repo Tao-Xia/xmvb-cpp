@@ -38,6 +38,20 @@ int main() {
   try {
     using V = Eigen::Vector2d;
     require(
+        xmvb::vb::inexact_newton_residual_is_converged(1.0e-2, 9.0e-4),
+        "valid inexact-Newton residual was rejected");
+    require(
+        !xmvb::vb::inexact_newton_residual_is_converged(1.0e-2, 1.1e-3),
+        "relative inexact-Newton residual target was bypassed");
+    require(
+        xmvb::vb::truncated_newton_model_is_below_outer_accuracy(
+            9.0e-4, 9.0e-8, 1.0e-3, 1.0e-7),
+        "outer-accuracy model stopping rule rejected resolved work");
+    require(
+        !xmvb::vb::truncated_newton_model_is_below_outer_accuracy(
+            9.0e-4, 1.1e-7, 1.0e-3, 1.0e-7),
+        "energy-unresolved model work was stopped");
+    require(
         xmvb::vb::truncated_newton_trial_is_acceptable({0.8, 1.0}),
         "well-resolved model decrease was rejected");
     require(

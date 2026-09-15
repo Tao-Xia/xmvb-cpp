@@ -48,6 +48,23 @@ struct RejectedTruncatedNewtonStepCache {
 
 double inexact_newton_forcing_term(double gradient_norm);
 
+/** @brief Tests the norm-consistent inexact-Newton KKT condition. */
+bool inexact_newton_residual_is_converged(
+    double gradient_l2_norm,
+    double residual_l2_norm);
+
+/**
+ * @brief Tests whether further inner work is below both outer accuracies.
+ *
+ * This is an inner-work stopping rule, not an outer convergence declaration;
+ * the accepted trial must still satisfy the measured dual stopping test.
+ */
+bool truncated_newton_model_is_below_outer_accuracy(
+    double gradient_inf_norm,
+    double predicted_decrease,
+    double gradient_tolerance,
+    double energy_tolerance);
+
 /**
  * @brief Accepts a trial only when its measured decrease resolves model error.
  *
@@ -100,6 +117,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const OrbitalChart& current_space,
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
+    double energy_tolerance,
     double gradient_tolerance,
     int max_subspace_dimension,
     ReducedHvp* hvp,

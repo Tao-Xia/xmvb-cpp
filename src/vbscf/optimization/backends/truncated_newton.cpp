@@ -143,7 +143,6 @@ BackendRunResult run_truncated_newton_backend(
             double candidate_predicted_decrease,
             bool screen_with_energy_only,
             TruncatedNewtonTrialEvaluation* trial_evaluation,
-            Eigen::VectorXd* accepted_packed_step,
             VbScfObjective::TrialEvaluation* accepted_trial_evaluation,
             Eigen::VectorXd* accepted_trial_parameters,
             Eigen::VectorXd* accepted_trial_gradient,
@@ -174,30 +173,8 @@ BackendRunResult run_truncated_newton_backend(
             return false;
           }
   
-          double effective_predicted_decrease =
+          const double effective_predicted_decrease =
               candidate_predicted_decrease;
-          if (candidate_reduced_step.size() ==
-                  current_projection.reduced_gradient.size()) {
-            const double reduced_linear_decrease =
-                -current_projection.reduced_gradient.dot(
-                    candidate_reduced_step);
-            const double packed_retraction_linear_decrease =
-                -current_gradient.dot(candidate_packed_step);
-            if (std::isfinite(reduced_linear_decrease) &&
-                std::isfinite(packed_retraction_linear_decrease)) {
-              const double curvature_decrease =
-                  candidate_predicted_decrease -
-                  reduced_linear_decrease;
-              const double retraction_predicted_decrease =
-                  packed_retraction_linear_decrease +
-                  curvature_decrease;
-              if (std::isfinite(retraction_predicted_decrease) &&
-                  retraction_predicted_decrease > 0.0) {
-                effective_predicted_decrease =
-                    retraction_predicted_decrease;
-              }
-            }
-          }
           if (!std::isfinite(effective_predicted_decrease) ||
               effective_predicted_decrease <= 0.0) {
             return false;
@@ -249,7 +226,6 @@ BackendRunResult run_truncated_newton_backend(
             return false;
           }
   
-          *accepted_packed_step = candidate_packed_step;
           *accepted_trial_parameters = parameter_view.pack(
               candidate_trial_evaluation.orbital_preparation_input);
           *accepted_trial_evaluation =
@@ -285,6 +261,7 @@ BackendRunResult run_truncated_newton_backend(
               current_space,
               current_projection,
               trust_radius,
+              options.energy_tolerance,
               options.gradient_tolerance,
               max_subspace_dimension,
               &hvp,
@@ -307,11 +284,9 @@ BackendRunResult run_truncated_newton_backend(
         const Eigen::VectorXd kkt_residual = current_projection.reduced_gradient +
             truncated_newton_step.reduced_hessian_times_step +
             truncated_newton_step.trust_region_shift * truncated_newton_step.reduced_step;
-        const double residual_target =
-            inexact_newton_forcing_term(gradient_norm) * gradient_norm;
-        if (kkt_residual.stableNorm() <= residual_target ||
-            gradient_infinity_norm(kkt_residual) <=
-                options.gradient_tolerance) {
+        if (inexact_newton_residual_is_converged(
+                gradient_norm,
+                kkt_residual.stableNorm())) {
           ++result->matrix_free_residual_converged_count;
         }
       }
@@ -321,8 +296,6 @@ BackendRunResult run_truncated_newton_backend(
             current_projection.reduced_gradient.size())) {
       cached_subspace = truncated_newton_step.subspace;
     }
-    const TruncatedNewtonStepResult model_step =
-        truncated_newton_step;
     Eigen::VectorXd reduced_step = truncated_newton_step.reduced_step;
     if (reduced_step.size() != current_projection.reduced_gradient.size()) {
       result->termination_reason =
@@ -355,6 +328,7 @@ BackendRunResult run_truncated_newton_backend(
           (1.0 - 1.0e-8) * trust_radius;
       truncated_newton_step.predicted_decrease = predicted_decrease;
     }
+    const TruncatedNewtonStepResult model_step = truncated_newton_step;
     const auto hvp_diagnostics = hvp.diagnostics();
     result->matrix_free_hvp_direction_count += hvp_diagnostics.apply_count;
     result->matrix_free_hvp_batch_count +=
@@ -364,7 +338,6 @@ BackendRunResult run_truncated_newton_backend(
     TruncatedNewtonStepResult trial_step_for_current_trial =
         truncated_newton_step;
   
-    Eigen::VectorXd packed_step(current_parameters.size());
     VbScfObjective::TrialEvaluation accepted_trial_evaluation;
     Eigen::VectorXd trial_parameters(current_parameters.size());
     Eigen::VectorXd trial_gradient(current_gradient.size());
@@ -378,7 +351,6 @@ BackendRunResult run_truncated_newton_backend(
             predicted_decrease,
             screen_rejected_trials_with_energy_only,
             &trial_evaluation_cache,
-            &packed_step,
             &accepted_trial_evaluation,
             &trial_parameters,
             &trial_gradient,
@@ -410,10 +382,7 @@ BackendRunResult run_truncated_newton_backend(
         trial_parameters - current_parameters;
     const Eigen::VectorXd accepted_gradient_change =
         trial_gradient - current_gradient;
-    if (accepted_trial_evaluation.valid) {
-      objective->commit(
-          std::move(accepted_trial_evaluation));
-    }
+    objective->commit(std::move(accepted_trial_evaluation));
     current_parameters = trial_parameters;
     current_gradient = std::move(trial_gradient);
     energy = trial_energy;

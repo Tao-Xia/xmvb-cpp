@@ -26,6 +26,33 @@ double inexact_newton_forcing_term(double gradient_norm) {
       kMaximumForcingTerm);
 }
 
+bool inexact_newton_residual_is_converged(
+    double gradient_l2_norm,
+    double residual_l2_norm) {
+  if (!std::isfinite(gradient_l2_norm) || gradient_l2_norm < 0.0 ||
+      !std::isfinite(residual_l2_norm) || residual_l2_norm < 0.0) {
+    return false;
+  }
+  return residual_l2_norm <=
+      inexact_newton_forcing_term(gradient_l2_norm) * gradient_l2_norm;
+}
+
+bool truncated_newton_model_is_below_outer_accuracy(
+    double gradient_inf_norm,
+    double predicted_decrease,
+    double gradient_tolerance,
+    double energy_tolerance) {
+  return std::isfinite(gradient_inf_norm) &&
+      std::isfinite(predicted_decrease) &&
+      std::isfinite(gradient_tolerance) &&
+      std::isfinite(energy_tolerance) &&
+      gradient_tolerance > 0.0 &&
+      energy_tolerance > 0.0 &&
+      gradient_inf_norm <= gradient_tolerance &&
+      predicted_decrease >= 0.0 &&
+      predicted_decrease <= energy_tolerance;
+}
+
 bool truncated_newton_trial_is_acceptable(
     const TruncatedNewtonTrialEvaluation& trial) {
   if (!(trial.predicted_decrease > 0.0) ||
@@ -404,6 +431,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const OrbitalChart& current_space,
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
+    double energy_tolerance,
     double gradient_tolerance,
     int max_subspace_dimension,
     ReducedHvp* hvp,
@@ -430,15 +458,16 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   // The inexact-Newton forcing term is an outer-iteration condition:
   // ||H s + g|| <= eta_k ||g||. A cached same-point trial changes the
   // initial residual but must not redefine the requested Newton accuracy.
-  const double residual_target =
-      inexact_newton_forcing_term(outer_gradient_norm) * outer_gradient_norm;
   const auto residual_converged = [&](const Eigen::VectorXd& value) {
-    return value.stableNorm() <= residual_target ||
-        value.cwiseAbs().maxCoeff() <= gradient_tolerance;
+    return inexact_newton_residual_is_converged(
+        outer_gradient_norm,
+        value.stableNorm());
   };
-  // The relative two-norm condition preserves inexact-Newton convergence.
-  // The absolute infinity-norm condition prevents the inner solve from
-  // exceeding the accuracy requested by the outer stopping criterion.
+  // The relative two-norm condition is the inexact-Newton contract.  An
+  // absolute outer gradient threshold is not a valid substitute: once each
+  // residual component falls below that threshold it can still be comparable
+  // to the whole outer gradient, destroying the vanishing-forcing condition
+  // and reducing the local method to a linearly convergent iteration.
 
   std::vector<Eigen::VectorXd> basis;
   std::vector<Eigen::VectorXd> tangent_basis;
@@ -518,6 +547,19 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         result.reduced_hessian_times_step +
         result.trust_region_shift * result.reduced_step;
     if (residual_converged(kkt_residual)) return result;
+
+    // Once the outer gradient condition already holds, resolving a model
+    // decrease below the requested energy accuracy cannot change the outer
+    // convergence decision.  The accepted trial is still evaluated exactly,
+    // so an underestimated restricted-model decrease merely causes another
+    // outer iteration; it cannot produce a false convergence declaration.
+    if (truncated_newton_model_is_below_outer_accuracy(
+            gradient_infinity_norm(current_projection.reduced_gradient),
+            result.predicted_decrease,
+            gradient_tolerance,
+            energy_tolerance)) {
+      return result;
+    }
 
     // A boundary solution of the current projected model is not a full-space
     // trust-region convergence certificate. Continue expanding until the
