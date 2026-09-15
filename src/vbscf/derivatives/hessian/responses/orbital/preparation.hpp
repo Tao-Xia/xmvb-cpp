@@ -70,6 +70,23 @@ OrbitalPreparationDirectionalResult build_orbital_preparation_directional_result
     int n_active_orbitals,
     const AcceptedOrbitalPreparationCache& cache);
 
+/**
+ * @brief Differentiates the orbital-preparation pullback at fixed upstream adjoints.
+ *
+ * This is the gradient-weighted second derivative of orbital normalization,
+ * the inactive projector, and the projected active-orbital map. It supplies
+ * the second term in the Hessian chain rule; upstream integral and structure
+ * responses are accumulated separately.
+ *
+ * @param input Accepted raw sparse-orbital representative.
+ * @param orbital_tangent_context Normalized orbitals and their directional derivative.
+ * @param total_active_auxiliary_gradient Accepted active-orbital adjoint.
+ * @param basis_overlap_times_delta_active_orbitals Directional active overlap product.
+ * @param total_inactive_density_gradient Accepted inactive-density adjoint.
+ * @param input_retract_tangent Full raw sparse-coefficient tangent.
+ * @param cache Accepted orbital-preparation cache.
+ * @return Directional derivative of the raw sparse-coefficient gradient.
+ */
 std::vector<double> apply_fixed_upstream_orbital_pullback_direction(
     const OrbitalPreparationInput& input,
     const DenseOrbitalTangentContext& orbital_tangent_context,

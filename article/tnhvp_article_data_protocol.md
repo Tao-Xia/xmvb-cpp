@@ -28,16 +28,23 @@ $$
 \mathbf U_k\mathbf v,
 $$
 
-where the accepted-point basis satisfies
+where the accepted-point basis is whitened in the pullback metric of the
+per-orbital normalization maps,
 
 $$
-\mathbf U_k^{\mathrm T}\mathbf U_k=\mathbf I
+\mathbf U_k^{\mathrm T}\mathbf M_k\mathbf U_k=\mathbf I,
+\qquad
+\mathbf M_k
+=
+\bigoplus_p
+\mathbf J_{N,p}^{\mathrm T}\mathbf S_p\mathbf J_{N,p}.
 $$
 
-in the additive sparse-coefficient chart. The columns of the quotient basis remove
-all support-admissible inactive-orbital and scaling gauge directions. Strict
-sparsity is preserved by the retraction; OEO is represented by full AO support,
-not by a separate optimizer.
+Here, the normalization Jacobians act on the stored sparse coefficient slots;
+the raw Euclidean identity is not the trust-region metric. The columns of the
+quotient basis remove all support-admissible inactive-orbital and scaling gauge
+directions. Strict sparsity is preserved by the retraction; OEO is represented
+by full AO support, not by a separate optimizer.
 
 The Hessian is never assembled in production. Each action differentiates the
 complete accepted-point computation graph, including orbital normalization,

@@ -524,9 +524,11 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         parameter_view_.gather_from_full(combined_core_orbital_value_gradient);
     response += nonredundant_space_->project_reduced_gradient(packed_response);
 
-    // Geometric pullback (retraction-induced Hessian) is not needed for the
-    // production U_p tangent path.  Per-orbital physical retraction is linear:
-    // OLD code (retired): gradient scatter/gather + apply_geometric_pullback call.
+    // The accepted-point lift x(d) = x_0 + U_p d is linear in the raw sparse
+    // coefficients, so it contributes no separate chart-curvature term.
+    // Orbital normalization and inactive projection are nonlinear downstream
+    // maps; their second-order pullback is included in the fixed-upstream term
+    // accumulated above.
   }
 
   record_apply_wall_time();
