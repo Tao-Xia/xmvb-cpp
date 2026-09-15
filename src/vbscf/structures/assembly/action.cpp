@@ -109,22 +109,74 @@ bool has_sparse_pair_values(
       });
 }
 
-std::vector<Eigen::MatrixXd> build_projected_pair_matrices(
-    const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
-    int n_unique,
-    int n_packed_pairs) {
-  std::vector<Eigen::MatrixXd> matrices;
-  matrices.reserve(n_packed_pairs);
-  for (int packed_pair = 0;
-       packed_pair < n_packed_pairs;
-       ++packed_pair) {
-    matrices.push_back(Eigen::MatrixXd::Zero(n_unique, n_unique));
-  }
+struct ChannelSupport {
+  std::vector<int> indices;
+  bool rows = true;
+};
 
-  for (int left = 0; left < n_unique; ++left) {
-    for (int right = 0; right < n_unique; ++right) {
-      const auto& projection = pair_cache[
-          ordered_spin_pair_storage_index(left, right, n_unique)]
+ChannelSupport channel_support(
+    const std::vector<bool>& occupied_rows,
+    const std::vector<bool>& occupied_columns) {
+  const int n_rows = static_cast<int>(std::count(
+      occupied_rows.begin(), occupied_rows.end(), true));
+  const int n_columns = static_cast<int>(std::count(
+      occupied_columns.begin(), occupied_columns.end(), true));
+  ChannelSupport support;
+  support.rows = n_rows <= n_columns;
+  const auto& occupied = support.rows ? occupied_rows : occupied_columns;
+  support.indices.reserve(std::min(n_rows, n_columns));
+  for (int index = 0; index < static_cast<int>(occupied.size()); ++index) {
+    if (occupied[index]) {
+      support.indices.push_back(index);
+    }
+  }
+  return support;
+}
+
+enum class ChannelStorage {
+  Inactive,
+  RowFamily,
+  ColumnFamily,
+  Dense,
+  Sparse,
+};
+
+struct ChannelPlan {
+  ChannelSupport support;
+  std::size_t nonzeros = 0;
+  int destination = -1;
+  int family_offset = -1;
+  bool retained = false;
+  ChannelStorage storage = ChannelStorage::Inactive;
+
+  bool active() const noexcept {
+    return retained;
+  }
+};
+
+struct ChannelLayout {
+  std::vector<ChannelPlan> plans;
+  std::vector<int> active_pairs;
+  std::size_t nonzeros = 0;
+  std::size_t dense_values = 0;
+  std::size_t row_width = 0;
+  std::size_t column_width = 0;
+  int row_family_count = 0;
+  int column_family_count = 0;
+  int retained_channel_count = 0;
+};
+
+std::vector<ChannelPlan> scan_channel_plans(
+    const std::vector<SpinDeterminantPairEvaluation>& projected_cache,
+    const std::vector<SpinDeterminantPairEvaluation>& raw_cache,
+    int n_projected,
+    int n_raw,
+    int n_packed_pairs) {
+  std::vector<bool> projected_nonzero(n_packed_pairs, false);
+  for (int left = 0; left < n_projected; ++left) {
+    for (int right = 0; right < n_projected; ++right) {
+      const auto& projection = projected_cache[
+          ordered_spin_pair_storage_index(left, right, n_projected)]
                                    .opposite_spin_pair_cache
                                    .first_order_cofactor_projection;
       if (projection.packed_pair_indices.empty()) {
@@ -138,68 +190,143 @@ std::vector<Eigen::MatrixXd> build_projected_pair_matrices(
       for (int packed_pair = 0;
            packed_pair < n_packed_pairs;
            ++packed_pair) {
-        matrices[packed_pair](left, right) =
-            projection.projected_pair_values[packed_pair];
+        projected_nonzero[packed_pair] =
+            projected_nonzero[packed_pair] ||
+            projection.projected_pair_values[packed_pair] != 0.0;
       }
     }
   }
-  return matrices;
-}
 
-std::vector<std::vector<Eigen::Triplet<double>>> build_sparse_pair_entries(
-    const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
-    int n_unique,
-    int n_packed_pairs) {
-  std::vector<std::vector<Eigen::Triplet<double>>> triplets(n_packed_pairs);
-  for (int left = 0; left < n_unique; ++left) {
-    for (int right = 0; right < n_unique; ++right) {
-      const auto& projection = pair_cache[
-          ordered_spin_pair_storage_index(left, right, n_unique)]
+  std::vector<std::size_t> nonzeros(n_packed_pairs, 0);
+  std::vector<std::vector<bool>> occupied_rows(
+      n_packed_pairs, std::vector<bool>(n_raw, false));
+  std::vector<std::vector<bool>> occupied_columns(
+      n_packed_pairs, std::vector<bool>(n_raw, false));
+  for (int left = 0; left < n_raw; ++left) {
+    for (int right = 0; right < n_raw; ++right) {
+      const auto& projection = raw_cache[
+          ordered_spin_pair_storage_index(left, right, n_raw)]
                                    .opposite_spin_pair_cache
                                    .first_order_cofactor_projection;
-      for (std::size_t entry = 0;
-           entry < projection.packed_pair_indices.size();
-           ++entry) {
-        triplets[projection.packed_pair_indices[entry]].emplace_back(
-            left,
-            right,
-            projection.packed_pair_values[entry]);
+      for (const int packed_pair : projection.packed_pair_indices) {
+        ++nonzeros[packed_pair];
+        occupied_rows[packed_pair][left] = true;
+        occupied_columns[packed_pair][right] = true;
       }
     }
   }
 
-  return triplets;
+  std::vector<ChannelPlan> plans(n_packed_pairs);
+  for (int packed_pair = 0;
+       packed_pair < n_packed_pairs;
+       ++packed_pair) {
+    if (!projected_nonzero[packed_pair] || nonzeros[packed_pair] == 0) {
+      continue;
+    }
+    plans[packed_pair].nonzeros = nonzeros[packed_pair];
+    plans[packed_pair].support = channel_support(
+        occupied_rows[packed_pair], occupied_columns[packed_pair]);
+    plans[packed_pair].retained = true;
+  }
+  return plans;
 }
 
-struct ChannelSupport {
-  std::vector<int> indices;
-  bool rows = true;
-};
-
-ChannelSupport channel_support(
-    const std::vector<Eigen::Triplet<double>>& entries,
-    int dimension) {
-  std::vector<bool> occupied_rows(dimension, false);
-  std::vector<bool> occupied_columns(dimension, false);
-  for (const auto& entry : entries) {
-    occupied_rows[entry.row()] = true;
-    occupied_columns[entry.col()] = true;
-  }
-
-  const int n_rows = static_cast<int>(std::count(
-      occupied_rows.begin(), occupied_rows.end(), true));
-  const int n_columns = static_cast<int>(std::count(
-      occupied_columns.begin(), occupied_columns.end(), true));
-  ChannelSupport support;
-  support.rows = n_rows <= n_columns;
-  const auto& occupied = support.rows ? occupied_rows : occupied_columns;
-  support.indices.reserve(std::min(n_rows, n_columns));
-  for (int index = 0; index < dimension; ++index) {
-    if (occupied[index]) {
-      support.indices.push_back(index);
+ChannelLayout select_channel_layout(
+    std::vector<ChannelPlan> plans,
+    int n_projected,
+    int n_raw,
+    int n_structures,
+    std::size_t base_factor_values) {
+  ChannelLayout layout;
+  layout.plans = std::move(plans);
+  layout.active_pairs.reserve(layout.plans.size());
+  std::size_t dense_factor_values = base_factor_values;
+  for (int packed_pair = 0;
+       packed_pair < static_cast<int>(layout.plans.size());
+       ++packed_pair) {
+    const ChannelPlan& plan = layout.plans[packed_pair];
+    if (!plan.active()) {
+      continue;
     }
+    layout.active_pairs.push_back(packed_pair);
+    layout.nonzeros += plan.nonzeros;
+    layout.dense_values += static_cast<std::size_t>(n_raw) * n_raw;
+    dense_factor_values +=
+        static_cast<std::size_t>(n_projected) * n_projected +
+        static_cast<std::size_t>(n_raw) * n_raw;
   }
-  return support;
+
+  const std::size_t full_structure_values =
+      static_cast<std::size_t>(n_structures) * n_structures;
+  const bool dense_factors_fit =
+      dense_factor_values <= full_structure_values;
+  std::size_t retained_bytes = base_factor_values * sizeof(double);
+  int candidate_row_channels = 0;
+  int candidate_column_channels = 0;
+  for (const int packed_pair : layout.active_pairs) {
+    const ChannelPlan& plan = layout.plans[packed_pair];
+    retained_bytes +=
+        static_cast<std::size_t>(n_projected) * n_projected * sizeof(double);
+    if (plan.support.indices.size() < static_cast<std::size_t>(n_raw)) {
+      retained_bytes +=
+          static_cast<std::size_t>(n_raw) * plan.support.indices.size() *
+              sizeof(double) +
+          plan.support.indices.size() * sizeof(int);
+      if (plan.support.rows) {
+        ++candidate_row_channels;
+      } else {
+        ++candidate_column_channels;
+      }
+      continue;
+    }
+    const std::size_t dense_bytes =
+        static_cast<std::size_t>(n_raw) * n_raw * sizeof(double);
+    const std::size_t sparse_bytes =
+        plan.nonzeros * sizeof(Eigen::Triplet<double>);
+    retained_bytes += dense_factors_fit
+        ? dense_bytes
+        : std::min(dense_bytes, sparse_bytes);
+  }
+  if (candidate_row_channels > 0) {
+    retained_bytes +=
+        static_cast<std::size_t>(candidate_row_channels + 1) * sizeof(int);
+  }
+  if (candidate_column_channels > 0) {
+    retained_bytes +=
+        static_cast<std::size_t>(candidate_column_channels + 1) * sizeof(int);
+  }
+  const bool support_families_fit =
+      retained_bytes <= full_structure_values * sizeof(double);
+
+  for (const int packed_pair : layout.active_pairs) {
+    ChannelPlan& plan = layout.plans[packed_pair];
+    const bool supported = support_families_fit &&
+        plan.support.indices.size() < static_cast<std::size_t>(n_raw);
+    if (supported && plan.support.rows) {
+      plan.storage = ChannelStorage::RowFamily;
+      plan.destination = layout.row_family_count++;
+      plan.family_offset = static_cast<int>(layout.row_width);
+      layout.row_width += plan.support.indices.size();
+      continue;
+    }
+    if (supported) {
+      plan.storage = ChannelStorage::ColumnFamily;
+      plan.destination = layout.column_family_count++;
+      plan.family_offset = static_cast<int>(layout.column_width);
+      layout.column_width += plan.support.indices.size();
+      continue;
+    }
+
+    const std::size_t dense_bytes =
+        static_cast<std::size_t>(n_raw) * n_raw * sizeof(double);
+    const std::size_t sparse_bytes =
+        plan.nonzeros * sizeof(Eigen::Triplet<double>);
+    plan.storage = dense_factors_fit || dense_bytes <= sparse_bytes
+        ? ChannelStorage::Dense
+        : ChannelStorage::Sparse;
+    plan.destination = layout.retained_channel_count++;
+  }
+  return layout;
 }
 
 DeterminantPairScalars evaluate_pair(
@@ -345,202 +472,8 @@ StructureAction::StructureAction(
   beta_hamiltonian_ = build_pair_matrix(
       beta_pair_cache, n_unique_beta_, true);
 
-  const bool alpha_projected =
-      has_projected_pair_values(alpha_pair_cache, n_packed_pairs);
-  const bool beta_projected =
-      has_projected_pair_values(beta_pair_cache, n_packed_pairs);
-  const bool has_opposite_spin_channels =
-      has_sparse_pair_values(alpha_pair_cache) &&
-      has_sparse_pair_values(beta_pair_cache);
-  if (has_opposite_spin_channels && !alpha_projected && !beta_projected) {
-    throw std::invalid_argument(
-        "factorized structure action requires one projected spin cache");
-  }
-  if (has_opposite_spin_channels) {
-    alpha_projection_is_dense_ = alpha_projected &&
-        (!beta_projected || n_unique_alpha_ <= n_unique_beta_);
-    const auto& projected_cache = alpha_projection_is_dense_
-        ? alpha_pair_cache
-        : beta_pair_cache;
-    const auto& sparse_cache = alpha_projection_is_dense_
-        ? beta_pair_cache
-        : alpha_pair_cache;
-    const int n_projected = alpha_projection_is_dense_
-        ? n_unique_alpha_
-        : n_unique_beta_;
-    const int n_sparse = alpha_projection_is_dense_
-        ? n_unique_beta_
-        : n_unique_alpha_;
-    auto projected_matrices = build_projected_pair_matrices(
-        projected_cache,
-        n_projected,
-        n_packed_pairs);
-    auto sparse_entries = build_sparse_pair_entries(
-        sparse_cache,
-        n_sparse,
-        n_packed_pairs);
-    std::size_t dense_factor_values =
-        alpha_overlap_.size() + alpha_hamiltonian_.size() +
-        beta_overlap_.size() + beta_hamiltonian_.size();
-    for (int packed_pair = 0;
-         packed_pair < n_packed_pairs;
-         ++packed_pair) {
-      if (!projected_matrices[packed_pair].isZero(0.0) &&
-          !sparse_entries[packed_pair].empty()) {
-        dense_factor_values +=
-            projected_matrices[packed_pair].size() +
-            static_cast<std::size_t>(n_sparse) * n_sparse;
-      }
-    }
-    const bool dense_factors_fit_memory_bound =
-        dense_factor_values <=
-        static_cast<std::size_t>(n_structures_) * n_structures_;
-    std::vector<int> active_packed_pairs;
-    std::vector<ChannelSupport> supports;
-    std::size_t row_support_width = 0;
-    std::size_t column_support_width = 0;
-    for (int packed_pair = 0;
-         packed_pair < n_packed_pairs;
-         ++packed_pair) {
-      if (projected_matrices[packed_pair].isZero(0.0) ||
-          sparse_entries[packed_pair].empty()) {
-        continue;
-      }
-      channel_nonzeros_ += sparse_entries[packed_pair].size();
-      channel_dense_values_ +=
-          static_cast<std::size_t>(n_sparse) * n_sparse;
-      active_packed_pairs.push_back(packed_pair);
-      supports.push_back(
-          channel_support(sparse_entries[packed_pair], n_sparse));
-      if (supports.back().indices.size() <
-          static_cast<std::size_t>(n_sparse)) {
-        auto& family_width = supports.back().rows
-            ? row_support_width
-            : column_support_width;
-        family_width += supports.back().indices.size();
-      }
-    }
-
-    std::size_t supported_action_bytes =
-        static_cast<std::size_t>(
-            alpha_overlap_.size() + alpha_hamiltonian_.size() +
-            beta_overlap_.size() + beta_hamiltonian_.size()) *
-        sizeof(double);
-    int row_supported_count = 0;
-    int column_supported_count = 0;
-    for (std::size_t channel = 0;
-         channel < active_packed_pairs.size();
-         ++channel) {
-      const int packed_pair = active_packed_pairs[channel];
-      const auto& support = supports[channel];
-      supported_action_bytes +=
-          static_cast<std::size_t>(projected_matrices[packed_pair].size()) *
-          sizeof(double);
-      if (support.indices.size() < static_cast<std::size_t>(n_sparse)) {
-        supported_action_bytes +=
-            static_cast<std::size_t>(n_sparse) * support.indices.size() *
-                sizeof(double) +
-            support.indices.size() * sizeof(int);
-        if (support.rows) {
-          ++row_supported_count;
-        } else {
-          ++column_supported_count;
-        }
-        continue;
-      }
-      const std::size_t dense_bytes =
-          static_cast<std::size_t>(n_sparse) * n_sparse * sizeof(double);
-      const std::size_t sparse_bytes =
-          sparse_entries[packed_pair].size() *
-          sizeof(Eigen::Triplet<double>);
-      supported_action_bytes += dense_factors_fit_memory_bound
-          ? dense_bytes
-          : std::min(dense_bytes, sparse_bytes);
-    }
-    if (row_supported_count > 0) {
-      supported_action_bytes +=
-          static_cast<std::size_t>(row_supported_count + 1) * sizeof(int);
-    }
-    if (column_supported_count > 0) {
-      supported_action_bytes +=
-          static_cast<std::size_t>(column_supported_count + 1) * sizeof(int);
-    }
-    const bool supported_action_fits_memory_bound =
-        supported_action_bytes <=
-        static_cast<std::size_t>(n_structures_) * n_structures_ *
-            sizeof(double);
-
-    const auto initialize_family = [n_sparse](
-        StructureAction::SupportedChannelFamily* family,
-        std::size_t width) {
-      if (width == 0) {
-        return;
-      }
-      family->offsets.push_back(0);
-      family->support.reserve(width);
-      family->raw = Eigen::MatrixXd::Zero(n_sparse, width);
-    };
-    if (supported_action_fits_memory_bound) {
-      initialize_family(&row_supported_channels_, row_support_width);
-      initialize_family(&column_supported_channels_, column_support_width);
-    }
-
-    opposite_spin_channels_.reserve(active_packed_pairs.size());
-    for (std::size_t channel = 0;
-         channel < active_packed_pairs.size();
-         ++channel) {
-      const int packed_pair = active_packed_pairs[channel];
-      const auto& support = supports[channel];
-      const bool use_support_family = supported_action_fits_memory_bound &&
-          support.indices.size() < static_cast<std::size_t>(n_sparse);
-      if (use_support_family) {
-        auto& family = support.rows
-            ? row_supported_channels_
-            : column_supported_channels_;
-        const int first = family.offsets.back();
-        std::vector<int> compressed_index(n_sparse, -1);
-        for (std::size_t index = 0; index < support.indices.size(); ++index) {
-          compressed_index[support.indices[index]] =
-              static_cast<int>(index);
-        }
-        for (const auto& entry : sparse_entries[packed_pair]) {
-          const int support_index = support.rows
-              ? compressed_index[entry.row()]
-              : compressed_index[entry.col()];
-          const int raw_index = support.rows ? entry.col() : entry.row();
-          family.raw(raw_index, first + support_index) = entry.value();
-        }
-        family.projected.push_back(
-            std::move(projected_matrices[packed_pair]));
-        family.support.insert(
-            family.support.end(),
-            support.indices.begin(),
-            support.indices.end());
-        family.offsets.push_back(
-            first + static_cast<int>(support.indices.size()));
-        continue;
-      }
-
-      Eigen::MatrixXd dense;
-      const std::size_t dense_bytes =
-          static_cast<std::size_t>(n_sparse) * n_sparse * sizeof(double);
-      const std::size_t sparse_bytes =
-          sparse_entries[packed_pair].size() *
-          sizeof(Eigen::Triplet<double>);
-      if (dense_factors_fit_memory_bound || dense_bytes <= sparse_bytes) {
-        dense = Eigen::MatrixXd::Zero(n_sparse, n_sparse);
-        for (const auto& entry : sparse_entries[packed_pair]) {
-          dense(entry.row(), entry.col()) = entry.value();
-        }
-        sparse_entries[packed_pair].clear();
-        sparse_entries[packed_pair].shrink_to_fit();
-      }
-      opposite_spin_channels_.push_back(OppositeSpinChannel{
-          std::move(projected_matrices[packed_pair]),
-          std::move(dense),
-          std::move(sparse_entries[packed_pair])});
-    }
-  }
+  build_opposite_spin_channels(
+      alpha_pair_cache, beta_pair_cache, n_packed_pairs);
 
   determinant_to_spin_product_.resize(n_determinants_);
   for (int determinant = 0;
@@ -625,6 +558,185 @@ StructureAction::StructureAction(
     }
     diagonal_.hamiltonian[structure] = hamiltonian;
     diagonal_.overlap[structure] = overlap;
+  }
+}
+
+void StructureAction::build_opposite_spin_channels(
+    const std::vector<SpinDeterminantPairEvaluation>& alpha_pair_cache,
+    const std::vector<SpinDeterminantPairEvaluation>& beta_pair_cache,
+    int n_packed_pairs) {
+  const bool alpha_projected =
+      has_projected_pair_values(alpha_pair_cache, n_packed_pairs);
+  const bool beta_projected =
+      has_projected_pair_values(beta_pair_cache, n_packed_pairs);
+  const bool has_channels =
+      has_sparse_pair_values(alpha_pair_cache) &&
+      has_sparse_pair_values(beta_pair_cache);
+  if (!has_channels) {
+    return;
+  }
+  if (!alpha_projected && !beta_projected) {
+    throw std::invalid_argument(
+        "factorized structure action requires one projected spin cache");
+  }
+
+  alpha_projection_is_dense_ = alpha_projected &&
+      (!beta_projected || n_unique_alpha_ <= n_unique_beta_);
+  const auto& projected_cache = alpha_projection_is_dense_
+      ? alpha_pair_cache
+      : beta_pair_cache;
+  const auto& raw_cache = alpha_projection_is_dense_
+      ? beta_pair_cache
+      : alpha_pair_cache;
+  const int n_projected = alpha_projection_is_dense_
+      ? n_unique_alpha_
+      : n_unique_beta_;
+  const int n_raw = alpha_projection_is_dense_
+      ? n_unique_beta_
+      : n_unique_alpha_;
+  const std::size_t base_factor_values =
+      alpha_overlap_.size() + alpha_hamiltonian_.size() +
+      beta_overlap_.size() + beta_hamiltonian_.size();
+  ChannelLayout layout = select_channel_layout(
+      scan_channel_plans(
+          projected_cache,
+          raw_cache,
+          n_projected,
+          n_raw,
+          n_packed_pairs),
+      n_projected,
+      n_raw,
+      n_structures_,
+      base_factor_values);
+  channel_nonzeros_ = layout.nonzeros;
+  channel_dense_values_ = layout.dense_values;
+  auto& plans = layout.plans;
+  const auto& active_pairs = layout.active_pairs;
+
+  const auto initialize_family = [n_raw](
+      SupportedChannelFamily* family,
+      int count,
+      std::size_t width) {
+    if (count == 0) {
+      return;
+    }
+    family->projected.reserve(count);
+    family->offsets.reserve(static_cast<std::size_t>(count) + 1);
+    family->offsets.push_back(0);
+    family->support.reserve(width);
+    family->raw = Eigen::MatrixXd::Zero(n_raw, width);
+  };
+  initialize_family(
+      &row_supported_channels_,
+      layout.row_family_count,
+      layout.row_width);
+  initialize_family(
+      &column_supported_channels_,
+      layout.column_family_count,
+      layout.column_width);
+  opposite_spin_channels_.reserve(layout.retained_channel_count);
+
+  for (const int packed_pair : active_pairs) {
+    ChannelPlan& plan = plans[packed_pair];
+    if (plan.storage == ChannelStorage::RowFamily ||
+        plan.storage == ChannelStorage::ColumnFamily) {
+      SupportedChannelFamily& family =
+          plan.storage == ChannelStorage::RowFamily
+          ? row_supported_channels_
+          : column_supported_channels_;
+      family.projected.push_back(
+          Eigen::MatrixXd::Zero(n_projected, n_projected));
+      family.support.insert(
+          family.support.end(),
+          plan.support.indices.begin(),
+          plan.support.indices.end());
+      family.offsets.push_back(
+          plan.family_offset + static_cast<int>(plan.support.indices.size()));
+      continue;
+    }
+
+    OppositeSpinChannel channel;
+    channel.projected = Eigen::MatrixXd::Zero(n_projected, n_projected);
+    if (plan.storage == ChannelStorage::Dense) {
+      channel.dense = Eigen::MatrixXd::Zero(n_raw, n_raw);
+    } else {
+      channel.sparse.reserve(plan.nonzeros);
+    }
+    opposite_spin_channels_.push_back(std::move(channel));
+  }
+
+  const auto projected_matrix = [this, &plans](
+      int packed_pair) -> Eigen::MatrixXd& {
+    const ChannelPlan& plan = plans[packed_pair];
+    if (plan.storage == ChannelStorage::RowFamily) {
+      return row_supported_channels_.projected[plan.destination];
+    }
+    if (plan.storage == ChannelStorage::ColumnFamily) {
+      return column_supported_channels_.projected[plan.destination];
+    }
+    return opposite_spin_channels_[plan.destination].projected;
+  };
+  for (int left = 0; left < n_projected; ++left) {
+    for (int right = 0; right < n_projected; ++right) {
+      const auto& projection = projected_cache[
+          ordered_spin_pair_storage_index(left, right, n_projected)]
+                                   .opposite_spin_pair_cache
+                                   .first_order_cofactor_projection;
+      if (projection.packed_pair_indices.empty()) {
+        continue;
+      }
+      for (const int packed_pair : active_pairs) {
+        projected_matrix(packed_pair)(left, right) =
+            projection.projected_pair_values[packed_pair];
+      }
+    }
+  }
+
+  const auto support_position = [](const ChannelPlan& plan, int index) {
+    const auto position = std::lower_bound(
+        plan.support.indices.begin(), plan.support.indices.end(), index);
+    if (position == plan.support.indices.end() || *position != index) {
+      throw std::logic_error("channel support scan is inconsistent");
+    }
+    return static_cast<int>(position - plan.support.indices.begin());
+  };
+  for (int left = 0; left < n_raw; ++left) {
+    for (int right = 0; right < n_raw; ++right) {
+      const auto& projection = raw_cache[
+          ordered_spin_pair_storage_index(left, right, n_raw)]
+                                   .opposite_spin_pair_cache
+                                   .first_order_cofactor_projection;
+      for (std::size_t entry = 0;
+           entry < projection.packed_pair_indices.size();
+           ++entry) {
+        const int packed_pair = projection.packed_pair_indices[entry];
+        const double value = projection.packed_pair_values[entry];
+        const ChannelPlan& plan = plans[packed_pair];
+        if (!plan.active()) {
+          continue;
+        }
+        if (plan.storage == ChannelStorage::Dense) {
+          opposite_spin_channels_[plan.destination].dense(left, right) = value;
+          continue;
+        }
+        if (plan.storage == ChannelStorage::Sparse) {
+          opposite_spin_channels_[plan.destination].sparse.emplace_back(
+              left, right, value);
+          continue;
+        }
+
+        SupportedChannelFamily& family =
+            plan.storage == ChannelStorage::RowFamily
+            ? row_supported_channels_
+            : column_supported_channels_;
+        const int supported_index = plan.support.rows ? left : right;
+        const int raw_index = plan.support.rows ? right : left;
+        family.raw(
+            raw_index,
+            plan.family_offset + support_position(plan, supported_index)) =
+            value;
+      }
+    }
   }
 }
 

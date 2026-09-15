@@ -130,6 +130,12 @@ private:
     bool enabled() const noexcept { return !projected.empty(); }
   };
 
+  /** @brief Builds the retained opposite-spin factors without full-channel temporaries. */
+  void build_opposite_spin_channels(
+      const std::vector<SpinDeterminantPairEvaluation>& alpha_pair_cache,
+      const std::vector<SpinDeterminantPairEvaluation>& beta_pair_cache,
+      int n_packed_pairs);
+
   void apply_supported_channels(
       const SupportedChannelFamily& family,
       bool supports_rows,
