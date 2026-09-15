@@ -87,6 +87,16 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
 
   /**
+   * @brief Contracts packed unique-string-product images into structures.
+   *
+   * Each horizontal block has shape `(n_unique_alpha, n_unique_beta)`.
+   * The result contains one structure-space column per block and uses the
+   * retained direct unique-string-pair/structure expansion.
+   */
+  Eigen::MatrixXd contract_spin_product_block(
+      const Eigen::Ref<const Eigen::MatrixXd>& spin_images) const;
+
+  /**
    * @brief Returns the cached exact H/S diagonals without full matrices.
    */
   const StructureDiagonal& diagonal() const noexcept;

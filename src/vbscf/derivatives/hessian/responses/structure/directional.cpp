@@ -200,27 +200,6 @@ void accumulate_projected_channel(
   }
 }
 
-void scatter_spin_image(
-    const FullDeterminantStructureData& structure_data,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const Eigen::MatrixXd& spin_image,
-    int state_offset,
-    Eigen::MatrixXd* structure_image) {
-  for (int determinant = 0;
-       determinant < selected_states.n_determinants;
-       ++determinant) {
-    const double value = spin_image(
-        selected_states.determinant_to_unique_alpha_id[determinant],
-        selected_states.determinant_to_unique_beta_id[determinant]);
-    if (value == 0.0) continue;
-    for (const auto& term :
-         structure_data.determinant_to_structure_terms[determinant]) {
-      (*structure_image)(term.structure_index, state_offset) +=
-          term.coefficient * value;
-    }
-  }
-}
-
 }  // namespace
 
 struct AcceptedStructureResponseFactors {
@@ -288,7 +267,6 @@ build_selected_structure_direction(
         "factorized structure direction requires the same-spin cache");
   }
 
-  const int n_structures = input.structure_data.n_structures;
   const int n_active_orbitals =
       input.orbital_preparation_input.n_active_orbitals;
   const int n_pairs = packed_active_pair_count(n_active_orbitals);
@@ -334,29 +312,29 @@ build_selected_structure_direction(
   SelectedStateDirectionalStructureImages result;
   const int n_selected_states =
       static_cast<int>(selected_states.states.size());
-  result.delta_hamiltonian_selected =
-      Eigen::MatrixXd::Zero(n_structures, n_selected_states);
-  result.delta_overlap_selected =
-      Eigen::MatrixXd::Zero(n_structures, n_selected_states);
-  std::vector<Eigen::MatrixXd> delta_hamiltonian_images;
-  std::vector<Eigen::MatrixXd> delta_overlap_images;
-  delta_hamiltonian_images.reserve(n_selected_states);
-  delta_overlap_images.reserve(n_selected_states);
+  Eigen::MatrixXd delta_hamiltonian_images =
+      Eigen::MatrixXd::Zero(n_alpha, n_selected_states * n_beta);
+  Eigen::MatrixXd delta_overlap_images =
+      Eigen::MatrixXd::Zero(n_alpha, n_selected_states * n_beta);
   for (int state = 0; state < n_selected_states; ++state) {
     const Eigen::MatrixXd& coefficients =
         selected_states.states[state].coefficient_matrix;
-    delta_overlap_images.push_back(
-        delta_alpha_overlap * coefficients * beta_overlap.transpose());
-    delta_overlap_images.back().noalias() +=
+    auto delta_overlap_image = delta_overlap_images.middleCols(
+        state * n_beta, n_beta);
+    delta_overlap_image.noalias() =
+        delta_alpha_overlap * coefficients * beta_overlap.transpose();
+    delta_overlap_image.noalias() +=
         alpha_overlap * coefficients * delta_beta_overlap.transpose();
 
-    delta_hamiltonian_images.push_back(
-        delta_alpha_hamiltonian * coefficients * beta_overlap.transpose());
-    delta_hamiltonian_images.back().noalias() +=
+    auto delta_hamiltonian_image = delta_hamiltonian_images.middleCols(
+        state * n_beta, n_beta);
+    delta_hamiltonian_image.noalias() =
+        delta_alpha_hamiltonian * coefficients * beta_overlap.transpose();
+    delta_hamiltonian_image.noalias() +=
         alpha_hamiltonian * coefficients * delta_beta_overlap.transpose();
-    delta_hamiltonian_images.back().noalias() +=
+    delta_hamiltonian_image.noalias() +=
         delta_alpha_overlap * coefficients * beta_hamiltonian.transpose();
-    delta_hamiltonian_images.back().noalias() +=
+    delta_hamiltonian_image.noalias() +=
         alpha_overlap * coefficients * delta_beta_hamiltonian.transpose();
   }
 
@@ -408,31 +386,30 @@ build_selected_structure_direction(
     for (int state = 0; state < n_selected_states; ++state) {
       const Eigen::MatrixXd& coefficients =
           selected_states.states[state].coefficient_matrix;
+      auto delta_hamiltonian_image = delta_hamiltonian_images.middleCols(
+          state * n_beta, n_beta);
       if (!first_term_is_zero) {
-        delta_hamiltonian_images[state].noalias() +=
+        delta_hamiltonian_image.noalias() +=
             delta_alpha_projected * coefficients * beta.transpose();
       }
       if (!second_term_is_zero) {
-        delta_hamiltonian_images[state].noalias() +=
+        delta_hamiltonian_image.noalias() +=
             alpha_projected * coefficients * delta_beta.transpose();
       }
     }
   }
 
-  for (int state = 0; state < n_selected_states; ++state) {
-    scatter_spin_image(
-        input.structure_data,
-        selected_states,
-        delta_hamiltonian_images[state],
-        state,
-        &result.delta_hamiltonian_selected);
-    scatter_spin_image(
-        input.structure_data,
-        selected_states,
-        delta_overlap_images[state],
-        state,
-        &result.delta_overlap_selected);
+  const StructureAction* structure_action = accepted
+      .selected_state_eigen_response_operator.structure_action;
+  if (structure_action == nullptr) {
+    throw std::invalid_argument(
+        "factorized structure direction requires the structure action");
   }
+  result.delta_hamiltonian_selected =
+      structure_action->contract_spin_product_block(
+          delta_hamiltonian_images);
+  result.delta_overlap_selected =
+      structure_action->contract_spin_product_block(delta_overlap_images);
 
   require_finite(
       result.delta_hamiltonian_selected,

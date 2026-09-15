@@ -1019,6 +1019,38 @@ void StructureAction::add_individual_channels(
   }
 }
 
+Eigen::MatrixXd StructureAction::contract_spin_product_block(
+    const Eigen::Ref<const Eigen::MatrixXd>& spin_images) const {
+  if (spin_images.rows() != n_unique_alpha_ ||
+      spin_images.cols() <= 0 ||
+      spin_images.cols() % n_unique_beta_ != 0) {
+    throw std::invalid_argument(
+        "unique-string-product image block has incompatible dimensions");
+  }
+  const int block_width =
+      static_cast<int>(spin_images.cols()) / n_unique_beta_;
+  Eigen::MatrixXd result =
+      Eigen::MatrixXd::Zero(n_structures_, block_width);
+  const int n_spin_products = n_unique_alpha_ * n_unique_beta_;
+  for (int spin_product = 0;
+       spin_product < n_spin_products;
+       ++spin_product) {
+    const int alpha = spin_product / n_unique_beta_;
+    const int beta = spin_product % n_unique_beta_;
+    for (std::size_t term_index = spin_term_offsets_[spin_product];
+         term_index < spin_term_offsets_[spin_product + 1];
+         ++term_index) {
+      const StructureTerm& term = spin_terms_[term_index];
+      for (int vector = 0; vector < block_width; ++vector) {
+        result(term.structure, vector) +=
+            term.coefficient *
+            spin_images(alpha, vector * n_unique_beta_ + beta);
+      }
+    }
+  }
+  return result;
+}
+
 StructureActionResult StructureAction::apply(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
   if (vectors.rows() != n_structures_ || vectors.cols() <= 0) {
@@ -1087,32 +1119,9 @@ StructureActionResult StructureAction::apply(
         vector * n_unique_beta_, n_unique_beta_) += channel_hamiltonian;
   }
 
-  StructureActionResult result;
-  result.hamiltonian =
-      Eigen::MatrixXd::Zero(n_structures_, block_width);
-  result.overlap =
-      Eigen::MatrixXd::Zero(n_structures_, block_width);
-
-  for (int spin_product = 0;
-       spin_product < n_spin_products;
-       ++spin_product) {
-    const int alpha = spin_product / n_unique_beta_;
-    const int beta = spin_product % n_unique_beta_;
-    for (std::size_t term_index = spin_term_offsets_[spin_product];
-         term_index < spin_term_offsets_[spin_product + 1];
-         ++term_index) {
-      const StructureTerm& term = spin_terms_[term_index];
-      for (int vector = 0; vector < block_width; ++vector) {
-        result.hamiltonian(term.structure, vector) +=
-            term.coefficient *
-            spin_hamiltonians(alpha, vector * n_unique_beta_ + beta);
-        result.overlap(term.structure, vector) +=
-            term.coefficient *
-            spin_overlaps(alpha, vector * n_unique_beta_ + beta);
-      }
-    }
-  }
-  return result;
+  return StructureActionResult{
+      contract_spin_product_block(spin_hamiltonians),
+      contract_spin_product_block(spin_overlaps)};
 }
 
 const StructureDiagonal& StructureAction::diagonal() const noexcept {

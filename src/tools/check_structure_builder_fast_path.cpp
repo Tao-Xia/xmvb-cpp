@@ -299,6 +299,8 @@ int main(int argc, char** argv) {
       delta_overlap_selected(structure, 0) =
           0.01 * std::cos(0.023 * static_cast<double>(structure + 1));
     }
+    const Eigen::MatrixXd selected_overlap =
+        compact_structure_action.apply(selected_vector).overlap;
     const auto response_start = std::chrono::high_resolution_clock::now();
     const auto matrix_free_response =
         xmvb::core::solve_generalized_eigen_response(
@@ -307,6 +309,7 @@ int main(int argc, char** argv) {
             compact_diagonal.overlap,
             selected_energy,
             selected_vector,
+            selected_overlap,
             delta_hamiltonian_selected,
             delta_overlap_selected,
             xmvb::core::EigenResponseOptions{
