@@ -155,16 +155,12 @@ BackendRunResult run_truncated_newton_backend(
             return false;
           }
   
-          Eigen::VectorXd candidate_trial_parameters(
-              current_parameters.size());
-          if (!try_build_nonredundant_lifted_trial_parameters(
+          Eigen::VectorXd candidate_trial_parameters =
+              build_nonredundant_lifted_trial_parameters(
                   current_orbital_input,
                   current_space,
                   parameter_view,
-                  candidate_reduced_step,
-                  &candidate_trial_parameters)) {
-            return false;
-          }
+                  candidate_reduced_step);
           const Eigen::VectorXd candidate_packed_step =
               candidate_trial_parameters - current_parameters;
           if (is_effectively_zero_step(

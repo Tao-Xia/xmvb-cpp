@@ -2,7 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <exception>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -10,35 +10,27 @@
 
 namespace xmvb::vb {
 
-bool try_build_nonredundant_lifted_trial_parameters(
+Eigen::VectorXd build_nonredundant_lifted_trial_parameters(
     const OrbitalPreparationInput& current_orbital_input,
     const OrbitalChart& current_space,
     const SparseParameterLayout& parameter_view,
-    const Eigen::VectorXd& reduced_step,
-    Eigen::VectorXd* trial_parameters) {
+    const Eigen::VectorXd& reduced_step) {
   const Eigen::VectorXd current_parameters =
       parameter_view.pack(current_orbital_input);
   // The reduced coordinates parameterize a local tangent vector on the
   // accepted sparse-orbital chart. Build finite trial points with the same
   // retraction used by the reduced HVP finite-difference operator, then pack
   // the resulting orbital table back into the optimizer coordinate vector.
-  try {
-    const OrbitalPreparationInput trial_orbital_input =
-        current_space.retract_step(
-            current_orbital_input,
-            reduced_step);
-    *trial_parameters =
-        parameter_view.pack(trial_orbital_input);
-  } catch (const std::exception&) {
-    // In a line search or trust-radius retry, leaving the local retraction
-    // chart means this trial is too large; callers can shrink and retry.
-    return false;
+  const OrbitalPreparationInput trial_orbital_input =
+      current_space.retract_step(current_orbital_input, reduced_step);
+  Eigen::VectorXd trial_parameters =
+      parameter_view.pack(trial_orbital_input);
+  if (trial_parameters.size() != current_parameters.size() ||
+      !trial_parameters.allFinite()) {
+    throw std::runtime_error(
+        "nonredundant retraction returned invalid packed parameters");
   }
-  if (trial_parameters->size() != current_parameters.size() ||
-      !trial_parameters->allFinite()) {
-    return false;
-  }
-  return true;
+  return trial_parameters;
 }
 
 bool try_armijo_backtracking_nonredundant_direction(
@@ -75,15 +67,11 @@ bool try_armijo_backtracking_nonredundant_direction(
   // lift rather than by adding the reduced direction directly in packed sparse
   // coordinates.
   while (step >= minimum_step) {
-    if (!try_build_nonredundant_lifted_trial_parameters(
-            current_orbital_input,
-            current_space,
-            parameter_view,
-            step * reduced_search_direction,
-            &trial_parameters)) {
-      step *= 0.5;
-      continue;
-    }
+    trial_parameters = build_nonredundant_lifted_trial_parameters(
+        current_orbital_input,
+        current_space,
+        parameter_view,
+        step * reduced_search_direction);
     if (is_effectively_zero_step(
             trial_parameters - current_parameters,
             current_parameters)) {
