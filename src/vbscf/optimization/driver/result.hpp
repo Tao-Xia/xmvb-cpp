@@ -37,6 +37,7 @@ struct TnhvpIterationRecord {
   double forcing_term = 0.0;
   bool has_kkt_residual = false;
   double kkt_relative_residual = 0.0;
+  double kkt_inf_norm = 0.0;
 
   double initial_trust_radius = 0.0;
   double accepted_trial_radius = 0.0;

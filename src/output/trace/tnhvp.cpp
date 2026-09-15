@@ -28,7 +28,7 @@ void write_tnhvp_trace(
       << "iteration\treduced_dimension\tsubspace_dimension\trejected_trials"
       << "\thvp_directions\thvp_batches\tsubproblems\thvp_seconds"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
-      << "\thas_kkt_residual\tkkt_relative_residual"
+      << "\thas_kkt_residual\tkkt_relative_residual\tkkt_inf_norm"
       << "\tinitial_trust_radius\taccepted_trial_radius\tnext_trust_radius"
       << "\tstep_norm\tpredicted_decrease\tactual_decrease\ttrust_ratio"
       << "\tmodel_spectral_radius\ttrust_region_shift\treached_boundary"
@@ -49,6 +49,7 @@ void write_tnhvp_trace(
         << step.forcing_term << '\t'
         << (step.has_kkt_residual ? 1 : 0) << '\t'
         << step.kkt_relative_residual << '\t'
+        << step.kkt_inf_norm << '\t'
         << step.initial_trust_radius << '\t'
         << step.accepted_trial_radius << '\t'
         << step.next_trust_radius << '\t'

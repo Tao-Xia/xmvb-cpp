@@ -462,6 +462,8 @@ BackendRunResult run_truncated_newton_backend(
             std::max(
                 iteration_record.source_gradient_l2_norm,
                 std::numeric_limits<double>::min());
+        iteration_record.kkt_inf_norm =
+            gradient_infinity_norm(kkt_residual);
       }
     }
     iteration_record.initial_trust_radius =

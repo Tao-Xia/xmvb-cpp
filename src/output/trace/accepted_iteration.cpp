@@ -490,6 +490,7 @@ public:
           << "    \"has_kkt_residual\": "
           << (tnhvp.has_kkt_residual ? "true" : "false") << ",\n"
           << "    \"kkt_relative_residual\": " << tnhvp.kkt_relative_residual << ",\n"
+          << "    \"kkt_inf_norm\": " << tnhvp.kkt_inf_norm << ",\n"
           << "    \"initial_trust_radius\": " << tnhvp.initial_trust_radius << ",\n"
           << "    \"accepted_trial_radius\": " << tnhvp.accepted_trial_radius << ",\n"
           << "    \"next_trust_radius\": " << tnhvp.next_trust_radius << ",\n"
