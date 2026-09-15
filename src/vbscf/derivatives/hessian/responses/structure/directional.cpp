@@ -87,14 +87,21 @@ OppositeSpinPackedPairProjection build_directional_projection(
   return result;
 }
 
+struct ChannelEntry {
+  int row = 0;
+  int column = 0;
+  double value = 0.0;
+};
+
+/** Channel-major exact nonzeros used to stream one packed-pair channel. */
+using SparseChannels = std::vector<std::vector<ChannelEntry>>;
+
 template <typename ProjectionProvider>
-std::vector<Eigen::MatrixXd> raw_channel_matrices(
+SparseChannels index_channels(
     int n_unique,
     int n_pairs,
     ProjectionProvider&& projection_at) {
-  std::vector<Eigen::MatrixXd> channels(
-      n_pairs,
-      Eigen::MatrixXd::Zero(n_unique, n_unique));
+  SparseChannels channels(n_pairs);
   for (int left = 0; left < n_unique; ++left) {
     for (int right = 0; right < n_unique; ++right) {
       const auto& projection = projection_at(left, right);
@@ -111,19 +118,21 @@ std::vector<Eigen::MatrixXd> raw_channel_matrices(
           throw std::out_of_range(
               "packed-pair projection index is out of range");
         }
-        channels[packed_pair](left, right) =
-            projection.packed_pair_values[entry];
+        channels[packed_pair].push_back(ChannelEntry{
+            left,
+            right,
+            projection.packed_pair_values[entry]});
       }
     }
   }
   return channels;
 }
 
-std::vector<Eigen::MatrixXd> accepted_raw_channels(
+SparseChannels accepted_channels(
     const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
     int n_unique,
     int n_pairs) {
-  return raw_channel_matrices(
+  return index_channels(
       n_unique,
       n_pairs,
       [&](int left, int right) -> const OppositeSpinPackedPairProjection& {
@@ -133,7 +142,7 @@ std::vector<Eigen::MatrixXd> accepted_raw_channels(
       });
 }
 
-std::vector<Eigen::MatrixXd> directional_raw_channels(
+SparseChannels directional_channels(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SameSpinPolynomialDirectionalPairData>& directional_pairs,
     int n_active_orbitals) {
@@ -144,60 +153,51 @@ std::vector<Eigen::MatrixXd> directional_raw_channels(
     throw std::invalid_argument(
         "directional same-spin pair cache has inconsistent dimensions");
   }
-  std::vector<OppositeSpinPackedPairProjection> projections(
-      directional_pairs.size());
-  for (int left = 0; left < n_unique; ++left) {
-    for (int right = 0; right < n_unique; ++right) {
-      const std::size_t index = ordered_spin_pair_storage_index(
-          left, right, n_unique);
-      projections[index] = build_directional_projection(
-          unique_determinants[left],
-          unique_determinants[right],
-          directional_pairs[index].delta_cofactor_1st,
-          n_active_orbitals);
-    }
-  }
-  return raw_channel_matrices(
+  return index_channels(
       n_unique,
       n_pairs,
-      [&](int left, int right) -> const OppositeSpinPackedPairProjection& {
-        return projections[ordered_spin_pair_storage_index(
-            left, right, n_unique)];
+      [&](int left, int right) {
+        const std::size_t index = ordered_spin_pair_storage_index(
+            left, right, n_unique);
+        return build_directional_projection(
+            unique_determinants[left],
+            unique_determinants[right],
+            directional_pairs[index].delta_cofactor_1st,
+            n_active_orbitals);
       });
 }
 
-template <typename KernelValue>
-std::vector<Eigen::MatrixXd> project_channels(
-    const std::vector<Eigen::MatrixXd>& raw_channels,
-    KernelValue&& kernel_value) {
-  if (raw_channels.empty()) return {};
-  const int n_pairs = static_cast<int>(raw_channels.size());
-  std::vector<Eigen::MatrixXd> projected(
-      n_pairs,
-      Eigen::MatrixXd::Zero(
-          raw_channels.front().rows(),
-          raw_channels.front().cols()));
-  for (int target = 0; target < n_pairs; ++target) {
-    for (int source = 0; source < n_pairs; ++source) {
-      const double value = kernel_value(target, source);
-      if (value != 0.0) {
-        projected[target].noalias() += value * raw_channels[source];
-      }
-    }
+Eigen::MatrixXd dense_channel(
+    const SparseChannels& channels,
+    int channel,
+    int n_unique) {
+  Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n_unique, n_unique);
+  for (const ChannelEntry& entry : channels[channel]) {
+    result(entry.row, entry.column) = entry.value;
   }
-  return projected;
+  return result;
 }
 
-std::vector<Eigen::MatrixXd> add_channel_sets(
-    std::vector<Eigen::MatrixXd> first,
-    const std::vector<Eigen::MatrixXd>& second) {
-  if (first.size() != second.size()) {
-    throw std::invalid_argument("opposite-spin channel counts differ");
+template <typename KernelValue>
+void accumulate_projected_channel(
+    const SparseChannels& raw_channels,
+    int target,
+    KernelValue&& kernel_value,
+    Eigen::MatrixXd* projected) {
+  if (projected == nullptr) {
+    throw std::invalid_argument("projected channel output must not be null");
   }
-  for (std::size_t channel = 0; channel < first.size(); ++channel) {
-    first[channel] += second[channel];
+  for (int source = 0;
+       source < static_cast<int>(raw_channels.size());
+       ++source) {
+    const double weight = kernel_value(target, source);
+    if (weight == 0.0) {
+      continue;
+    }
+    for (const ChannelEntry& entry : raw_channels[source]) {
+      (*projected)(entry.row, entry.column) += weight * entry.value;
+    }
   }
-  return first;
 }
 
 void scatter_spin_image(
@@ -290,15 +290,15 @@ build_selected_structure_direction(
       beta_direction.delta_regular_total_hamiltonian_matrix +
       beta_direction.delta_singular_total_hamiltonian_matrix;
 
-  const auto alpha_raw = accepted_raw_channels(
+  const auto alpha_channels = accepted_channels(
       alpha_cache, n_alpha, n_pairs);
-  const auto beta_raw = accepted_raw_channels(
+  const auto beta_channels = accepted_channels(
       beta_cache, n_beta, n_pairs);
-  const auto delta_alpha_raw = directional_raw_channels(
+  const auto delta_alpha_channels = directional_channels(
       same_spin.alpha_reuse_table.unique_determinants,
       directional_pair_cache.alpha.ordered_pair_data,
       n_active_orbitals);
-  const auto delta_beta_raw = directional_raw_channels(
+  const auto delta_beta_channels = directional_channels(
       same_spin.beta_reuse_table.unique_determinants,
       beta_direction.ordered_pair_data,
       n_active_orbitals);
@@ -306,32 +306,6 @@ build_selected_structure_direction(
   const ActiveSpaceTwoElectronView accepted_kernel =
       make_active_space_two_electron_view(
           accepted_point.prepared_active_space.active_space_two_electron_result);
-  const auto alpha_projected = project_channels(
-      alpha_raw,
-      [&](int target, int source) {
-        return lookup_active_space_two_electron_kernel_value(
-            accepted_kernel,
-            target,
-            source,
-            n_active_orbitals);
-      });
-  const auto delta_alpha_projected = add_channel_sets(
-      project_channels(
-          delta_alpha_raw,
-          [&](int target, int source) {
-            return lookup_active_space_two_electron_kernel_value(
-                accepted_kernel,
-                target,
-                source,
-                n_active_orbitals);
-          }),
-      project_channels(
-          alpha_raw,
-          [&](int target, int source) {
-            return direction.packed_two_electron[
-                TwoElectronIndexer::packed_pair_of_pairs_index(
-                    target, source)];
-          }));
 
   SelectedStateDirectionalStructureImages result;
   const int n_selected_states =
@@ -340,41 +314,98 @@ build_selected_structure_direction(
       Eigen::MatrixXd::Zero(n_structures, n_selected_states);
   result.delta_overlap_selected =
       Eigen::MatrixXd::Zero(n_structures, n_selected_states);
+  std::vector<Eigen::MatrixXd> delta_hamiltonian_images;
+  std::vector<Eigen::MatrixXd> delta_overlap_images;
+  delta_hamiltonian_images.reserve(n_selected_states);
+  delta_overlap_images.reserve(n_selected_states);
   for (int state = 0; state < n_selected_states; ++state) {
     const Eigen::MatrixXd& coefficients =
         selected_states.states[state].coefficient_matrix;
-    Eigen::MatrixXd delta_overlap_image =
-        delta_alpha_overlap * coefficients * beta_overlap.transpose();
-    delta_overlap_image.noalias() +=
+    delta_overlap_images.push_back(
+        delta_alpha_overlap * coefficients * beta_overlap.transpose());
+    delta_overlap_images.back().noalias() +=
         alpha_overlap * coefficients * delta_beta_overlap.transpose();
 
-    Eigen::MatrixXd delta_hamiltonian_image =
-        delta_alpha_hamiltonian * coefficients * beta_overlap.transpose();
-    delta_hamiltonian_image.noalias() +=
+    delta_hamiltonian_images.push_back(
+        delta_alpha_hamiltonian * coefficients * beta_overlap.transpose());
+    delta_hamiltonian_images.back().noalias() +=
         alpha_hamiltonian * coefficients * delta_beta_overlap.transpose();
-    delta_hamiltonian_image.noalias() +=
+    delta_hamiltonian_images.back().noalias() +=
         delta_alpha_overlap * coefficients * beta_hamiltonian.transpose();
-    delta_hamiltonian_image.noalias() +=
+    delta_hamiltonian_images.back().noalias() +=
         alpha_overlap * coefficients * delta_beta_hamiltonian.transpose();
-    for (int channel = 0; channel < n_pairs; ++channel) {
-      delta_hamiltonian_image.noalias() +=
-          delta_alpha_projected[channel] * coefficients *
-          beta_raw[channel].transpose();
-      delta_hamiltonian_image.noalias() +=
-          alpha_projected[channel] * coefficients *
-          delta_beta_raw[channel].transpose();
-    }
+  }
 
+  for (int target = 0; target < n_pairs; ++target) {
+    Eigen::MatrixXd alpha_projected =
+        Eigen::MatrixXd::Zero(n_alpha, n_alpha);
+    accumulate_projected_channel(
+        alpha_channels,
+        target,
+        [&](int target_pair, int source_pair) {
+          return lookup_active_space_two_electron_kernel_value(
+              accepted_kernel,
+              target_pair,
+              source_pair,
+              n_active_orbitals);
+        },
+        &alpha_projected);
+    Eigen::MatrixXd delta_alpha_projected =
+        Eigen::MatrixXd::Zero(n_alpha, n_alpha);
+    accumulate_projected_channel(
+        delta_alpha_channels,
+        target,
+        [&](int target_pair, int source_pair) {
+          return lookup_active_space_two_electron_kernel_value(
+              accepted_kernel,
+              target_pair,
+              source_pair,
+              n_active_orbitals);
+        },
+        &delta_alpha_projected);
+    accumulate_projected_channel(
+        alpha_channels,
+        target,
+        [&](int target_pair, int source_pair) {
+          return direction.packed_two_electron[
+              TwoElectronIndexer::packed_pair_of_pairs_index(
+                  target_pair, source_pair)];
+        },
+        &delta_alpha_projected);
+
+    const Eigen::MatrixXd beta =
+        dense_channel(beta_channels, target, n_beta);
+    const Eigen::MatrixXd delta_beta =
+        dense_channel(delta_beta_channels, target, n_beta);
+    const bool first_term_is_zero =
+        delta_alpha_projected.isZero(0.0) || beta.isZero(0.0);
+    const bool second_term_is_zero =
+        alpha_projected.isZero(0.0) || delta_beta.isZero(0.0);
+    for (int state = 0; state < n_selected_states; ++state) {
+      const Eigen::MatrixXd& coefficients =
+          selected_states.states[state].coefficient_matrix;
+      if (!first_term_is_zero) {
+        delta_hamiltonian_images[state].noalias() +=
+            delta_alpha_projected * coefficients * beta.transpose();
+      }
+      if (!second_term_is_zero) {
+        delta_hamiltonian_images[state].noalias() +=
+            alpha_projected * coefficients * delta_beta.transpose();
+      }
+    }
+  }
+
+  for (int state = 0; state < n_selected_states; ++state) {
     scatter_spin_image(
         input.structure_data,
         selected_states,
-        delta_hamiltonian_image,
+        delta_hamiltonian_images[state],
         state,
         &result.delta_hamiltonian_selected);
     scatter_spin_image(
         input.structure_data,
         selected_states,
-        delta_overlap_image,
+        delta_overlap_images[state],
         state,
         &result.delta_overlap_selected);
   }
