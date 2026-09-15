@@ -436,7 +436,8 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     int max_subspace_dimension,
     ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
-    const Eigen::VectorXd* initial_reduced_step) {
+    const Eigen::VectorXd* initial_reduced_step,
+    const TruncatedNewtonSubspace* initial_subspace) {
   TruncatedNewtonStepResult result;
   const Eigen::VectorXd preconditioned_gradient_step =
       build_nonredundant_preconditioned_reduced_gradient_step(
@@ -476,12 +477,55 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   tangent_basis.reserve(max_subspace_dimension);
   hessian_basis.reserve(max_subspace_dimension);
 
+  const bool reuse_initial_subspace =
+      initial_subspace != nullptr &&
+      truncated_newton_subspace_is_usable(*initial_subspace, rhs.size()) &&
+      initial_subspace->orthonormal_basis.cols() <= max_subspace_dimension;
+  if (reuse_initial_subspace) {
+    const Eigen::Index initial_dimension =
+        initial_subspace->orthonormal_basis.cols();
+    for (Eigen::Index column = 0; column < initial_dimension; ++column) {
+      basis.push_back(initial_subspace->orthonormal_basis.col(column));
+      tangent_basis.push_back(initial_subspace->tangent_basis.col(column));
+      hessian_basis.push_back(initial_subspace->hessian_basis.col(column));
+    }
+
+    result = solve_trust_region_in_subspace(
+        current_projection,
+        trust_radius,
+        *initial_subspace);
+    if (truncated_newton_step_is_usable(
+            result,
+            current_projection.reduced_gradient)) {
+      const Eigen::VectorXd kkt_residual =
+          current_projection.reduced_gradient +
+          result.reduced_hessian_times_step +
+          result.trust_region_shift * result.reduced_step;
+      if (residual_converged(kkt_residual) ||
+          truncated_newton_model_is_below_outer_accuracy(
+              gradient_infinity_norm(current_projection.reduced_gradient),
+              result.predicted_decrease,
+              gradient_tolerance,
+              energy_tolerance)) {
+        return result;
+      }
+    }
+  }
+
   // Residual-driven block Davidson/GLTR iteration. Negative curvature belongs
   // in the projected Hessian and must not terminate subspace construction.
   // The raw KKT residual and its positive preconditioned image expose two
   // complementary directions in one fused block-HVP call.
   Eigen::VectorXd correction_rhs = rhs;
-  bool first_expansion = true;
+  if (truncated_newton_step_is_usable(
+          result,
+          current_projection.reduced_gradient)) {
+    correction_rhs = -(
+        current_projection.reduced_gradient +
+        result.reduced_hessian_times_step +
+        result.trust_region_shift * result.reduced_step);
+  }
+  bool first_expansion = !reuse_initial_subspace;
   while (static_cast<int>(basis.size()) < max_subspace_dimension) {
     const Eigen::VectorXd preconditioned_correction =
         apply_nonredundant_truncated_newton_preconditioner(

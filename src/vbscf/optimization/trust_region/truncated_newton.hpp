@@ -122,6 +122,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     int max_subspace_dimension,
     ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
-    const Eigen::VectorXd* initial_reduced_step = nullptr);
+    const Eigen::VectorXd* initial_reduced_step = nullptr,
+    const TruncatedNewtonSubspace* initial_subspace = nullptr);
 
 }  // namespace xmvb::vb

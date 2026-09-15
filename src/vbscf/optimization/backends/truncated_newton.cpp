@@ -240,30 +240,23 @@ BackendRunResult run_truncated_newton_backend(
           &rejected_step_cache.cached_step;
     }
   
+    const bool reused_subspace =
+        truncated_newton_subspace_is_usable(
+            cached_subspace,
+            current_projection.reduced_gradient.size());
     auto truncated_newton_step =
-        solve_trust_region_in_subspace(
+        solve_nonredundant_truncated_newton_step(
+            retraction_metric,
+            current_space,
             current_projection,
             trust_radius,
-            cached_subspace);
-    const bool reused_subspace =
-        truncated_newton_step_is_usable(
-            truncated_newton_step,
-            current_projection.reduced_gradient);
-    if (!reused_subspace) {
-      cached_subspace = TruncatedNewtonSubspace();
-      truncated_newton_step =
-          solve_nonredundant_truncated_newton_step(
-              retraction_metric,
-              current_space,
-              current_projection,
-              trust_radius,
-              options.energy_tolerance,
-              options.gradient_tolerance,
-              max_subspace_dimension,
-              &hvp,
-              &transported_preconditioner,
-              initial_reduced_step_for_current_solve);
-    }
+            options.energy_tolerance,
+            options.gradient_tolerance,
+            max_subspace_dimension,
+            &hvp,
+            &transported_preconditioner,
+            initial_reduced_step_for_current_solve,
+            reused_subspace ? &cached_subspace : nullptr);
     clamp_nonredundant_step_result_to_retract_tangent_radius(
         current_projection,
         trust_radius,
@@ -273,18 +266,18 @@ BackendRunResult run_truncated_newton_backend(
       if (!truncated_newton_step.reached_boundary) {
         ++result->matrix_free_interior_subproblem_count;
       }
-      if (!truncated_newton_step.reached_boundary &&
-          truncated_newton_step.reduced_hessian_times_step.size() ==
-          current_projection.reduced_gradient.size()) {
-        const double gradient_norm = current_projection.reduced_gradient.stableNorm();
-        const Eigen::VectorXd kkt_residual = current_projection.reduced_gradient +
-            truncated_newton_step.reduced_hessian_times_step +
-            truncated_newton_step.trust_region_shift * truncated_newton_step.reduced_step;
-        if (inexact_newton_residual_is_converged(
-                gradient_norm,
-                kkt_residual.stableNorm())) {
-          ++result->matrix_free_residual_converged_count;
-        }
+    }
+    if (!truncated_newton_step.reached_boundary &&
+        truncated_newton_step.reduced_hessian_times_step.size() ==
+        current_projection.reduced_gradient.size()) {
+      const double gradient_norm = current_projection.reduced_gradient.stableNorm();
+      const Eigen::VectorXd kkt_residual = current_projection.reduced_gradient +
+          truncated_newton_step.reduced_hessian_times_step +
+          truncated_newton_step.trust_region_shift * truncated_newton_step.reduced_step;
+      if (inexact_newton_residual_is_converged(
+              gradient_norm,
+              kkt_residual.stableNorm())) {
+        ++result->matrix_free_residual_converged_count;
       }
     }
     if (truncated_newton_subspace_is_usable(
