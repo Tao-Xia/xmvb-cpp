@@ -5,6 +5,7 @@
 #include <string>
 
 #include "core/eigen_response.hpp"
+#include "vbscf/derivatives/hessian/responses/structure/directional.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -123,6 +124,10 @@ AcceptedOuterResponseContext build_accepted_outer_response_context(
   context.selected_state_eigen_response_operator =
       build_accepted_selected_state_generalized_eigen_response_operator(
           *accepted_point_context);
+  context.structure_factors = build_accepted_structure_response_factors(
+      *input,
+      *accepted_point_context,
+      context.selected_state_eigen_response_operator.selected_eigenvectors);
   return context;
 }
 

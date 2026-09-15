@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include <Eigen/Core>
@@ -9,6 +10,8 @@
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 
 namespace xmvb::vb {
+
+struct AcceptedStructureResponseFactors;
 
 /**
  * @brief Directional structure-matrix images of the selected states.
@@ -55,6 +58,7 @@ struct AcceptedOuterResponseContext {
       nullptr;
   AcceptedSelectedStateGeneralizedEigenResponseOperator
       selected_state_eigen_response_operator;
+  std::shared_ptr<const AcceptedStructureResponseFactors> structure_factors;
 };
 
 AcceptedOuterResponseContext build_accepted_outer_response_context(

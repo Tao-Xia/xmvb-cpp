@@ -223,13 +223,60 @@ void scatter_spin_image(
 
 }  // namespace
 
+struct AcceptedStructureResponseFactors {
+  SelectedStateDeterminantMatrices selected_states;
+  Eigen::MatrixXd alpha_overlap;
+  Eigen::MatrixXd alpha_hamiltonian;
+  Eigen::MatrixXd beta_overlap;
+  Eigen::MatrixXd beta_hamiltonian;
+  SparseChannels alpha_channels;
+  SparseChannels beta_channels;
+};
+
+std::shared_ptr<const AcceptedStructureResponseFactors>
+build_accepted_structure_response_factors(
+    const VbScfInput& input,
+    const AcceptedPointContext& accepted_point,
+    const Eigen::MatrixXd& selected_columns) {
+  const auto& same_spin = accepted_point.same_spin_pair_cache;
+  if (!same_spin.enabled()) {
+    throw std::invalid_argument(
+        "accepted structure response requires the same-spin cache");
+  }
+  const int n_alpha = static_cast<int>(
+      same_spin.alpha_reuse_table.unique_determinants.size());
+  const int n_beta = static_cast<int>(
+      same_spin.beta_reuse_table.unique_determinants.size());
+  const int n_pairs = packed_active_pair_count(
+      input.orbital_preparation_input.n_active_orbitals);
+
+  auto factors = std::make_shared<AcceptedStructureResponseFactors>();
+  factors->selected_states =
+      build_selected_state_determinant_matrices_from_selected_columns(
+          input.structure_data,
+          selected_columns,
+          accepted_point.selected_state_indices,
+          accepted_point.normalized_state_weights,
+          same_spin);
+  const auto& alpha_cache = same_spin.alpha_pair_cache_ref();
+  const auto& beta_cache = same_spin.beta_pair_cache_ref();
+  factors->alpha_overlap = pair_scalar_matrix(alpha_cache, n_alpha, false);
+  factors->alpha_hamiltonian = pair_scalar_matrix(alpha_cache, n_alpha, true);
+  factors->beta_overlap = pair_scalar_matrix(beta_cache, n_beta, false);
+  factors->beta_hamiltonian = pair_scalar_matrix(beta_cache, n_beta, true);
+  factors->alpha_channels = accepted_channels(alpha_cache, n_alpha, n_pairs);
+  factors->beta_channels = accepted_channels(beta_cache, n_beta, n_pairs);
+  return factors;
+}
+
 SelectedStateDirectionalStructureImages
 build_selected_structure_direction(
     const AcceptedOuterResponseContext& accepted,
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairCache& directional_pair_cache) {
   if (accepted.input == nullptr ||
-      accepted.accepted_point_context == nullptr) {
+      accepted.accepted_point_context == nullptr ||
+      accepted.structure_factors == nullptr) {
     throw std::invalid_argument(
         "factorized structure direction requires a complete accepted context");
   }
@@ -249,33 +296,12 @@ build_selected_structure_direction(
       same_spin.alpha_reuse_table.unique_determinants.size());
   const int n_beta = static_cast<int>(
       same_spin.beta_reuse_table.unique_determinants.size());
-  const auto& selected_columns =
-      accepted.selected_state_eigen_response_operator.selected_eigenvectors;
-  if (selected_columns.rows() != n_structures ||
-      selected_columns.cols() !=
-          static_cast<int>(accepted_point.selected_state_indices.size())) {
-    throw std::invalid_argument(
-        "selected structure coefficients have inconsistent dimensions");
-  }
-
-  const auto selected_states =
-      build_selected_state_determinant_matrices_from_selected_columns(
-          input.structure_data,
-          selected_columns,
-          accepted_point.selected_state_indices,
-          accepted_point.normalized_state_weights,
-          same_spin);
-
-  const auto& alpha_cache = same_spin.alpha_pair_cache_ref();
-  const auto& beta_cache = same_spin.beta_pair_cache_ref();
-  const Eigen::MatrixXd alpha_overlap =
-      pair_scalar_matrix(alpha_cache, n_alpha, false);
-  const Eigen::MatrixXd alpha_hamiltonian =
-      pair_scalar_matrix(alpha_cache, n_alpha, true);
-  const Eigen::MatrixXd beta_overlap =
-      pair_scalar_matrix(beta_cache, n_beta, false);
-  const Eigen::MatrixXd beta_hamiltonian =
-      pair_scalar_matrix(beta_cache, n_beta, true);
+  const auto& factors = *accepted.structure_factors;
+  const auto& selected_states = factors.selected_states;
+  const auto& alpha_overlap = factors.alpha_overlap;
+  const auto& alpha_hamiltonian = factors.alpha_hamiltonian;
+  const auto& beta_overlap = factors.beta_overlap;
+  const auto& beta_hamiltonian = factors.beta_hamiltonian;
   const Eigen::MatrixXd delta_alpha_overlap =
       directional_pair_cache.alpha.delta_overlap_determinant_matrix;
   const Eigen::MatrixXd delta_alpha_hamiltonian =
@@ -290,10 +316,8 @@ build_selected_structure_direction(
       beta_direction.delta_regular_total_hamiltonian_matrix +
       beta_direction.delta_singular_total_hamiltonian_matrix;
 
-  const auto alpha_channels = accepted_channels(
-      alpha_cache, n_alpha, n_pairs);
-  const auto beta_channels = accepted_channels(
-      beta_cache, n_beta, n_pairs);
+  const auto& alpha_channels = factors.alpha_channels;
+  const auto& beta_channels = factors.beta_channels;
   const auto delta_alpha_channels = directional_channels(
       same_spin.alpha_reuse_table.unique_determinants,
       directional_pair_cache.alpha.ordered_pair_data,
