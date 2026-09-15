@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace xmvb::vb {
@@ -57,7 +58,8 @@ Eigen::VectorXd TransportedReducedLbfgsPreconditioner::apply(
     const double alpha =
         pair.inverse_curvature * pair.reduced_step.dot(q);
     if (!std::isfinite(alpha)) {
-      return space_->apply_inverse_reduced_block_preconditioner(reduced_vector);
+      throw std::runtime_error(
+          "transported L-BFGS preconditioner produced a non-finite first loop");
     }
     alphas[pair_index] = alpha;
     q.noalias() -= alpha * pair.reduced_gradient_change;
@@ -71,7 +73,8 @@ Eigen::VectorXd TransportedReducedLbfgsPreconditioner::apply(
     const double beta =
         pair.inverse_curvature * pair.reduced_gradient_change.dot(z);
     if (!std::isfinite(beta)) {
-      return space_->apply_inverse_reduced_block_preconditioner(reduced_vector);
+      throw std::runtime_error(
+          "transported L-BFGS preconditioner produced a non-finite second loop");
     }
     z.noalias() += pair.reduced_step * (alphas[pair_index] - beta);
   }
@@ -120,8 +123,8 @@ Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
       transported_preconditioner->apply(reduced_vector);
   const double curvature = reduced_vector.dot(preconditioned);
   if (!std::isfinite(curvature) || curvature <= 0.0) {
-    return current_space.apply_inverse_reduced_block_preconditioner(
-        reduced_vector);
+    throw std::runtime_error(
+        "transported L-BFGS preconditioner lost positive definiteness");
   }
   return preconditioned;
 }

@@ -73,10 +73,6 @@ public:
     return has_reduced_curvature_diagonal_;
   }
 
-  bool use_block_preconditioner_by_default() const noexcept {
-    return use_block_preconditioner_by_default_;
-  }
-
   std::uint64_t rank_signature() const noexcept {
     return rank_signature_;
   }
@@ -165,7 +161,6 @@ private:
   int reduced_size_ = 0;
   std::uint64_t rank_signature_ = 1469598103934665603ull;
   bool has_reduced_curvature_diagonal_ = false;
-  bool use_block_preconditioner_by_default_ = false;
 };
 
 }  // namespace xmvb::vb

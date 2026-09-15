@@ -97,16 +97,16 @@ BlockOrbitalMapping build_block_orbital_mapping(
 
 Eigen::VectorXd normalize_curvature_diagonal(const Eigen::VectorXd& diag) {
   if (diag.size() == 0) return Eigen::VectorXd::Zero(0);
+  require_finite_vector(diag, "orbital-chart curvature diagonal");
   Eigen::VectorXd out = diag.cwiseAbs();
-  double spectral_scale = 0.0;
-  for (Eigen::Index i = 0; i < out.size(); ++i) {
-    if (std::isfinite(out[i])) spectral_scale = std::max(spectral_scale, out[i]);
+  const double spectral_scale = out.maxCoeff();
+  if (!(spectral_scale > 0.0)) {
+    throw std::runtime_error(
+        "orbital-chart curvature diagonal has zero spectral scale");
   }
-  if (!(spectral_scale > 0.0)) return Eigen::VectorXd::Ones(diag.size());
   const double spectral_floor =
       std::sqrt(std::numeric_limits<double>::epsilon()) * spectral_scale;
   for (Eigen::Index i = 0; i < out.size(); ++i) {
-    if (!std::isfinite(out[i])) out[i] = spectral_scale;
     out[i] = std::max(out[i], spectral_floor);
   }
   return out;
@@ -124,9 +124,8 @@ PositiveCurvatureBlock build_positive_curvature_block(
   }
   if (curvature_block.rows() != curvature_block.cols() ||
       !curvature_block.allFinite()) {
-    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
-        curvature_block.rows(), curvature_block.rows());
-    return {identity, identity};
+    throw std::invalid_argument(
+        "orbital-chart curvature block must be finite and square");
   }
 
   const Eigen::MatrixXd sym_block =
@@ -135,17 +134,15 @@ PositiveCurvatureBlock build_positive_curvature_block(
   if (solver.info() != Eigen::Success ||
       !solver.eigenvalues().allFinite() ||
       !solver.eigenvectors().allFinite()) {
-    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
-        curvature_block.rows(), curvature_block.rows());
-    return {identity, identity};
+    throw std::runtime_error(
+        "failed to diagonalize orbital-chart curvature block");
   }
 
   Eigen::VectorXd safe_eigenvalues = solver.eigenvalues().cwiseAbs();
   const double spectral_scale = safe_eigenvalues.maxCoeff();
   if (!(spectral_scale > 0.0) || !std::isfinite(spectral_scale)) {
-    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
-        curvature_block.rows(), curvature_block.rows());
-    return {identity, identity};
+    throw std::runtime_error(
+        "orbital-chart curvature block has zero spectral scale");
   }
   const double spectral_floor =
       std::sqrt(std::numeric_limits<double>::epsilon()) * spectral_scale;
@@ -688,7 +685,6 @@ OrbitalChart::OrbitalChart(
     block_bases_.push_back(std::move(bb));
     ++block_index;
   }
-  use_block_preconditioner_by_default_ = has_reduced_curvature_diagonal_;
 }
 
 OrbitalChart::StructuralDiagnostics
@@ -832,7 +828,8 @@ Eigen::VectorXd OrbitalChart::apply_inverse_reduced_curvature(
           p.curvature_diagonal.array().max(kMin);
     }
   }
-  return out.allFinite() ? out : reduced_vector;
+  require_finite_vector(out, "orbital-chart inverse-curvature result");
+  return out;
 }
 
 Eigen::VectorXd
@@ -851,12 +848,8 @@ OrbitalChart::apply_inverse_reduced_block_preconditioner(
       if (p.inverse_curvature_block.rows() != p.local_reduced_size ||
           p.inverse_curvature_block.cols() != p.local_reduced_size ||
           !p.inverse_curvature_block.allFinite()) {
-        if (p.curvature_diagonal.size() == p.local_reduced_size &&
-            p.curvature_diagonal.allFinite()) {
-          out.segment(p.local_reduced_offset, p.local_reduced_size).array() /=
-              p.curvature_diagonal.array().max(1.0e-12);
-        }
-        continue;
+        throw std::runtime_error(
+            "orbital-chart inverse-curvature block is inconsistent");
       }
       const Eigen::VectorXd solved =
           p.inverse_curvature_block *
@@ -864,12 +857,14 @@ OrbitalChart::apply_inverse_reduced_block_preconditioner(
               p.local_reduced_offset,
               p.local_reduced_size);
       if (!solved.allFinite()) {
-        return apply_inverse_reduced_curvature(reduced_vector);
+        throw std::runtime_error(
+            "orbital-chart block preconditioner returned non-finite values");
       }
       out.segment(p.local_reduced_offset, p.local_reduced_size) = solved;
     }
   }
-  return out.allFinite() ? out : apply_inverse_reduced_curvature(reduced_vector);
+  require_finite_vector(out, "orbital-chart block preconditioner result");
+  return out;
 }
 
 Eigen::VectorXd OrbitalChart::apply_reduced_curvature(
