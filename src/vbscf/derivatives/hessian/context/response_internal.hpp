@@ -42,6 +42,16 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
 
   SelectedStateGeneralizedEigenDirectionalResponse apply(
       const SelectedStateDirectionalStructureImages& directional_images) const;
+
+  /**
+   * @brief Solves several directional responses as one state/direction block.
+   *
+   * Columns are ordered by direction, with all selected states contiguous
+   * inside each direction.
+   */
+  SelectedStateGeneralizedEigenDirectionalResponse apply_direction_block(
+      const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+      const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected) const;
 };
 
 /**

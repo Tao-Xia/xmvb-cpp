@@ -225,7 +225,7 @@ EigenResponseResult solve_generalized_eigen_response(
         overlap_selected,
         w,
         &result.block_actions);
-    bool all_converged = true;
+    std::vector<Eigen::Index> estimated_converged_states;
     for (Eigen::Index state = 0; state < n_selected; ++state) {
       if (converged[static_cast<std::size_t>(state)]) {
         continue;
@@ -272,38 +272,54 @@ EigenResponseResult solve_generalized_eigen_response(
           beta_first[state] * cosine[state] * eta[state] * p.col(state);
       residual_norms[state] *= std::abs(sine[state]);
       result.iterations[static_cast<std::size_t>(state)] = iteration + 1;
-      converged[static_cast<std::size_t>(state)] =
+      const bool estimated_converged =
           residual_norms[state] <=
           options.relative_residual_tolerance * rhs_norms[state];
-      if (!converged[static_cast<std::size_t>(state)]) {
+      converged[static_cast<std::size_t>(state)] = estimated_converged;
+      if (estimated_converged) {
+        estimated_converged_states.push_back(state);
+      } else {
         eta[state] = -sine[state] * eta[state];
-        all_converged = false;
       }
     }
-    if (all_converged) {
+
+    if (!estimated_converged_states.empty()) {
+      const Eigen::Index n_candidates =
+          static_cast<Eigen::Index>(estimated_converged_states.size());
+      Eigen::VectorXd candidate_eigenvalues(n_candidates);
+      Eigen::MatrixXd candidate_overlap_selected(n, n_candidates);
+      Eigen::MatrixXd candidate_solutions(n + 1, n_candidates);
+      for (Eigen::Index candidate = 0;
+           candidate < n_candidates;
+           ++candidate) {
+        const Eigen::Index state =
+            estimated_converged_states[static_cast<std::size_t>(candidate)];
+        candidate_eigenvalues[candidate] = selected_eigenvalues[state];
+        candidate_overlap_selected.col(candidate) =
+            overlap_selected.col(state);
+        candidate_solutions.col(candidate) = solution.col(state);
+      }
       const Eigen::MatrixXd checked_images = apply_bordered_operators(
           action,
-          selected_eigenvalues,
-          overlap_selected,
-          solution,
+          candidate_eigenvalues,
+          candidate_overlap_selected,
+          candidate_solutions,
           &result.block_actions);
-      bool all_true_residuals_converged = true;
-      for (Eigen::Index state = 0; state < n_selected; ++state) {
-        if (rhs_norms[state] == 0.0) {
-          continue;
-        }
+      for (Eigen::Index candidate = 0;
+           candidate < n_candidates;
+           ++candidate) {
+        const Eigen::Index state =
+            estimated_converged_states[static_cast<std::size_t>(candidate)];
         const Eigen::VectorXd true_residual =
-            rhs.col(state) - checked_images.col(state);
+            rhs.col(state) - checked_images.col(candidate);
         if (true_residual.norm() <=
             options.relative_residual_tolerance * rhs_norms[state]) {
           continue;
         }
 
-        // Restart only a column whose recursively estimated MINRES residual
-        // was optimistic. This reliable update preserves the current solution
-        // while preventing loss of Lanczos orthogonality from silently
-        // accepting an inaccurate response.
-        all_true_residuals_converged = false;
+        // Verify and restart each candidate as soon as its recursive residual
+        // reaches tolerance. A converged column must not lose its remaining
+        // iteration budget while waiting for slower columns in the same block.
         converged[static_cast<std::size_t>(state)] = false;
         v_old.col(state).setZero();
         v.col(state).setZero();
@@ -329,9 +345,11 @@ EigenResponseResult solve_generalized_eigen_response(
         old_sine[state] = 0.0;
         eta[state] = 1.0;
       }
-      if (all_true_residuals_converged) {
-        break;
-      }
+    }
+    if (std::all_of(converged.begin(), converged.end(), [](bool value) {
+          return value;
+        })) {
+      break;
     }
   }
 

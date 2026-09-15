@@ -138,6 +138,15 @@ AcceptedOuterResponseContext build_accepted_outer_response_context(
 SelectedStateGeneralizedEigenDirectionalResponse
 AcceptedSelectedStateGeneralizedEigenResponseOperator::apply(
     const SelectedStateDirectionalStructureImages& directional_images) const {
+  return apply_direction_block(
+      directional_images.delta_hamiltonian_selected,
+      directional_images.delta_overlap_selected);
+}
+
+SelectedStateGeneralizedEigenDirectionalResponse
+AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected) const {
   if (structure_action == nullptr) {
     throw std::invalid_argument(
         "accepted selected-state eigen-response operator has no structure action");
@@ -151,13 +160,26 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply(
     throw std::invalid_argument(
         "accepted selected-state eigen-response operator is inconsistent");
   }
-  if (directional_images.delta_hamiltonian_selected.rows() != n_structures ||
-      directional_images.delta_hamiltonian_selected.cols() !=
-          n_selected_states ||
-      directional_images.delta_overlap_selected.rows() != n_structures ||
-      directional_images.delta_overlap_selected.cols() != n_selected_states) {
+  const int n_rhs = static_cast<int>(delta_hamiltonian_selected.cols());
+  if (delta_hamiltonian_selected.rows() != n_structures ||
+      n_rhs <= 0 || n_rhs % n_selected_states != 0 ||
+      delta_overlap_selected.rows() != n_structures ||
+      delta_overlap_selected.cols() != n_rhs) {
     throw std::invalid_argument(
-        "directional structure images do not match the selected-state response operator");
+        "directional structure image block does not match the selected-state response operator");
+  }
+  const int n_directions = n_rhs / n_selected_states;
+  Eigen::VectorXd block_eigenvalues(n_rhs);
+  Eigen::MatrixXd block_eigenvectors(n_structures, n_rhs);
+  Eigen::MatrixXd block_overlap_selected(n_structures, n_rhs);
+  for (int direction = 0; direction < n_directions; ++direction) {
+    const int first = direction * n_selected_states;
+    block_eigenvalues.segment(first, n_selected_states) =
+        selected_eigenvalues;
+    block_eigenvectors.middleCols(first, n_selected_states) =
+        selected_eigenvectors;
+    block_overlap_selected.middleCols(first, n_selected_states) =
+        overlap_selected;
   }
   const StructureDiagonal& diagonal = structure_action->diagonal();
   const xmvb::core::GeneralizedEigenAction action =
@@ -172,11 +194,11 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply(
           action,
           diagonal.hamiltonian,
           diagonal.overlap,
-          selected_eigenvalues,
-          selected_eigenvectors,
-          overlap_selected,
-          directional_images.delta_hamiltonian_selected,
-          directional_images.delta_overlap_selected,
+          block_eigenvalues,
+          block_eigenvectors,
+          block_overlap_selected,
+          delta_hamiltonian_selected,
+          delta_overlap_selected,
           xmvb::core::EigenResponseOptions{
               n_structures + 1,
               relative_residual_tolerance});

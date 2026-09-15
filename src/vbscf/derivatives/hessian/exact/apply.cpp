@@ -261,6 +261,11 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
   if (compute_outer_response) {
     const auto outer_response_start_time =
         std::chrono::steady_clock::now();
+    const PrecomputedOuterResponse* precomputed_outer_response =
+        precomputed_direction != nullptr &&
+            precomputed_direction->outer_response.has_value()
+        ? &precomputed_direction->outer_response.value()
+        : nullptr;
 
     const auto active_space_integrals_start_time =
         std::chrono::steady_clock::now();
@@ -272,41 +277,68 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_,
         accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_,
         *accepted_exact_two_electron_cache_.accepted_active_coefficients};
-    const ActiveSpaceIntegralTangent integral_tangent{
-        orbital_preparation_directional_result.delta_active_auxiliary_orbitals,
-        delta_dense_active_coefficients,
-        delta_ao_effective_h1e_times_active_auxiliary_orbitals,
-        precomputed_delta_packed_active_two_electron};
     const ActiveSpaceIntegralDirectionView active_space_integral_direction =
-        build_active_space_integral_direction(
-            integral_direction_context,
-            integral_tangent,
-            &outer_response_integral_direction_workspace_);
-    apply_timing_totals_.outer_response_active_space_integrals_wall_time_seconds +=
-        detail::exact_hvp_elapsed_seconds(active_space_integrals_start_time);
+        precomputed_outer_response != nullptr
+        ? ActiveSpaceIntegralDirectionView{
+              precomputed_outer_response->integral_direction.overlap,
+              precomputed_outer_response->integral_direction.one_electron,
+              precomputed_outer_response->integral_direction
+                  .packed_two_electron}
+        : build_active_space_integral_direction(
+              integral_direction_context,
+              ActiveSpaceIntegralTangent{
+                  orbital_preparation_directional_result
+                      .delta_active_auxiliary_orbitals,
+                  delta_dense_active_coefficients,
+                  delta_ao_effective_h1e_times_active_auxiliary_orbitals,
+                  precomputed_delta_packed_active_two_electron},
+              &outer_response_integral_direction_workspace_);
+    if (precomputed_outer_response == nullptr) {
+      apply_timing_totals_
+          .outer_response_active_space_integrals_wall_time_seconds +=
+          detail::exact_hvp_elapsed_seconds(active_space_integrals_start_time);
+    }
 
     const auto structure_matrices_start_time =
         std::chrono::steady_clock::now();
     // The polynomial pair response is consumed first by the projected
     // structure action and later by the local same-spin adjoint. Build it once
     // for this HVP direction so both stages share the same cofactor actions.
-    const SameSpinDirectionalPairCache directional_pair_cache =
-        build_same_spin_directional_pair_cache(
-            accepted_point_context_->same_spin_pair_cache,
-            current_input_->orbital_preparation_input.n_active_orbitals,
-            active_space_integral_direction);
-    const auto directional_structure_images =
-        build_selected_structure_direction(
-            accepted_outer_response_context_,
-            active_space_integral_direction,
-            directional_pair_cache);
-    apply_timing_totals_.outer_response_structure_matrices_wall_time_seconds +=
-        detail::exact_hvp_elapsed_seconds(structure_matrices_start_time);
+    SameSpinDirectionalPairCache local_directional_pair_cache;
+    if (precomputed_outer_response == nullptr) {
+      local_directional_pair_cache = build_same_spin_directional_pair_cache(
+          accepted_point_context_->same_spin_pair_cache,
+          current_input_->orbital_preparation_input.n_active_orbitals,
+          active_space_integral_direction);
+    }
+    const SameSpinDirectionalPairCache& directional_pair_cache =
+        precomputed_outer_response != nullptr
+        ? precomputed_outer_response->pair_cache
+        : local_directional_pair_cache;
+    SelectedStateDirectionalStructureImages local_directional_structure_images;
+    if (precomputed_outer_response == nullptr) {
+      local_directional_structure_images = build_selected_structure_direction(
+          accepted_outer_response_context_,
+          active_space_integral_direction,
+          directional_pair_cache);
+      apply_timing_totals_
+          .outer_response_structure_matrices_wall_time_seconds +=
+          detail::exact_hvp_elapsed_seconds(structure_matrices_start_time);
+    }
 
     const auto eigensystem_start_time = std::chrono::steady_clock::now();
-    const auto directional_selected_state_response =
-        accepted_outer_response_context_.selected_state_eigen_response_operator.apply(
-            directional_structure_images);
+    SelectedStateGeneralizedEigenDirectionalResponse
+        local_directional_selected_state_response;
+    if (precomputed_outer_response == nullptr) {
+      local_directional_selected_state_response =
+          accepted_outer_response_context_
+              .selected_state_eigen_response_operator.apply(
+                  local_directional_structure_images);
+    }
+    const auto& directional_selected_state_response =
+        precomputed_outer_response != nullptr
+        ? precomputed_outer_response->selected_state_response
+        : local_directional_selected_state_response;
     apply_timing_totals_.structure_response_block_actions +=
         directional_selected_state_response.block_actions;
     if (!directional_selected_state_response.linear_iterations.empty()) {
@@ -319,8 +351,10 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     apply_timing_totals_.max_structure_response_relative_residual = std::max(
         apply_timing_totals_.max_structure_response_relative_residual,
         directional_selected_state_response.max_relative_residual);
-    apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
-        detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
+    if (precomputed_outer_response == nullptr) {
+      apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
+          detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
+    }
 
     const auto active_gradient_start_time = std::chrono::steady_clock::now();
     const SelectedStateDeterminantMatrices directional_selected_states =
