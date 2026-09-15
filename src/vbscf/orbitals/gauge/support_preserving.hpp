@@ -41,4 +41,17 @@ bool apply_support_preserving_inactive_gauge(
 bool apply_support_preserving_inactive_gauge(
     OrbitalPreparationInput* orbital_preparation_input);
 
+/**
+ * @brief Balances a sparse active orbital inside its exact inactive-addition gauge.
+ *
+ * For HAO/BDO orbitals, the minimum-AO-norm representative is selected among
+ * support-admissible inactive additions, then normalized when active scaling
+ * is itself admissible. This preserves each projected active ray and all fixed
+ * sparse coefficients. Full-AO OEO can have additional active-subspace gauge
+ * and is deliberately not canonicalized by this per-orbital operation.
+ *
+ * @return Whether an active representative changed beyond backward error.
+ */
+bool balance_active_gauge(OrbitalPreparationInput* orbital_preparation_input);
+
 }  // namespace xmvb::vb

@@ -8,9 +8,11 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 
+#include "input/deck/keywords.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb {
@@ -172,10 +174,6 @@ Eigen::MatrixXd build_admissible_gauge_basis(
   }
   Eigen::MatrixXd basis =
       svd.matrixV().rightCols(n_inactive - rank);
-  if (basis.cols() == 0) {
-    throw std::runtime_error(
-        "inactive orbital has no support-preserving gauge representative");
-  }
   return basis;
 }
 
@@ -199,6 +197,10 @@ Eigen::MatrixXd build_balanced_inactive_right_transform(
     admissible_bases.push_back(build_admissible_gauge_basis(
         inactive_orbitals,
         collect_support_indices_from_layout(target_layout, orbital)));
+    if (admissible_bases.back().cols() == 0) {
+      throw std::runtime_error(
+          "inactive orbital has no support-preserving gauge representative");
+    }
   }
 
   Eigen::MatrixXd transform =
@@ -461,6 +463,100 @@ bool apply_support_preserving_inactive_gauge(
   return apply_support_preserving_inactive_gauge(
       reference_layout,
       orbital_preparation_input);
+}
+
+bool balance_active_gauge(OrbitalPreparationInput* input) {
+  if (input == nullptr) {
+    throw std::invalid_argument("active gauge target must not be null");
+  }
+  // Full-AO OEO with complete structures admits active GL gauge, so this
+  // per-orbital section is not its complete quotient. The generic chart is
+  // likewise outside the validated HAO/BDO sparse-ray case.
+  if (input->orbital_type != kOrbitalTypeHao &&
+      input->orbital_type != kOrbitalTypeBdo) {
+    return false;
+  }
+
+  const int n_active = static_cast<int>(input->n_active_orbitals);
+  const int n_inactive = static_cast<int>(
+      (input->n_total_electrons - input->n_active_electrons) / 2);
+  if (n_active == 0 || n_inactive == 0) return false;
+  const int n_bf = static_cast<int>(input->n_basis_functions);
+  const Eigen::MatrixXd occupied =
+      build_dense_sparse_orbital_columns(*input, n_inactive + n_active);
+  const auto inactive = occupied.leftCols(n_inactive);
+  const Eigen::MatrixXd& S = input->ao_overlap_matrix;
+  SparseParameterLayout layout(*input);
+  bool changed = false;
+  for (int orbital = n_inactive;
+       orbital < n_inactive + n_active;
+       ++orbital) {
+    const int count = layout.orbital_coefficient_count(orbital);
+    std::vector<int> support;
+    support.reserve(count);
+    for (int slot = 0; slot < count; ++slot) {
+      support.push_back(
+          input->orbital_basis_index_table[orbital * n_bf + slot] - 1);
+    }
+    const Eigen::MatrixXd N =
+        build_admissible_gauge_basis(inactive, support);
+    if (N.cols() == 0) continue;
+    const Eigen::MatrixXd Z = inactive * N;
+    const Eigen::MatrixXd gram = Z.transpose() * S * Z;
+    Eigen::LDLT<Eigen::MatrixXd> factor(gram);
+    if (factor.info() != Eigen::Success || !factor.isPositive()) {
+      throw std::runtime_error(
+          "support-admissible active gauge has singular AO metric");
+    }
+    const Eigen::VectorXd raw = occupied.col(orbital);
+    const Eigen::VectorXd correction =
+        Z * factor.solve(Z.transpose() * S * raw);
+    Eigen::VectorXd balanced = raw - correction;
+    const double norm_squared = balanced.dot(S * balanced);
+    if (!(norm_squared > 0.0) || !std::isfinite(norm_squared)) {
+      throw std::runtime_error(
+          "balanced active representative has zero AO norm");
+    }
+    const int stored_count =
+        stored_sparse_orbital_coefficient_count(*input, orbital);
+    bool scaling_admissible = true;
+    for (int slot = count; slot < stored_count; ++slot) {
+      if (input->orbital_value_table[orbital * n_bf + slot] != 0.0) {
+        scaling_admissible = false;
+        break;
+      }
+    }
+    const double scale = scaling_admissible
+        ? 1.0 / std::sqrt(norm_squared)
+        : 1.0;
+    balanced *= scale;
+
+    // Off-support cancellation is exact algebraically; permit only its
+    // dimension-scaled floating-point backward error after normalization.
+    const double backward_error =
+        128.0 * std::numeric_limits<double>::epsilon() *
+        static_cast<double>(n_bf * n_inactive) *
+        (raw.norm() + correction.norm()) * scale;
+    std::vector<unsigned char> allowed(n_bf, 0);
+    for (int ao : support) allowed[ao] = 1;
+    for (int ao = 0; ao < n_bf; ++ao) {
+      if (allowed[ao] == 0 &&
+          std::abs(balanced[ao] - raw[ao]) > backward_error) {
+        throw std::runtime_error(
+            "active gauge balancing violated strict support");
+      }
+    }
+    for (int slot = 0; slot < count; ++slot) {
+      const int flat = orbital * n_bf + slot;
+      const double value = balanced[support[slot]];
+      changed = changed ||
+          std::abs(input->orbital_value_table[flat] - value) >
+              backward_error;
+      input->orbital_value_table[flat] = value;
+    }
+  }
+  enforce_strict_sparse_orbital_support(input);
+  return changed;
 }
 
 }  // namespace xmvb::vb

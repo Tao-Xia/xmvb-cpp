@@ -7,8 +7,10 @@
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
+#include <Eigen/LU>
 #include <Eigen/QR>
 
+#include "input/deck/keywords.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
 
@@ -27,7 +29,7 @@ OrbitalPreparationInput make_input(const Eigen::MatrixXd& orbitals) {
   input.n_active_orbitals = 0;
   input.n_total_electrons = 4;
   input.n_active_electrons = 0;
-  input.orbital_type = 1;
+  input.orbital_type = xmvb::vb::kOrbitalTypeHao;
   input.ao_overlap_matrix = Eigen::MatrixXd::Identity(3, 3);
   input.orbital_basis_counts = {2, 2};
   input.orbital_basis_index_table = {1, 2, 0, 1, 2, 0};
@@ -114,12 +116,95 @@ void check_well_conditioned_gauge_is_unchanged() {
           "well-conditioned orbital coefficients were modified");
 }
 
+OrbitalPreparationInput make_active_gauge_input() {
+  OrbitalPreparationInput input;
+  input.n_basis_functions = 4;
+  input.n_orbitals = 3;
+  input.n_active_orbitals = 1;
+  input.n_total_electrons = 6;
+  input.n_active_electrons = 2;
+  input.orbital_type = xmvb::vb::kOrbitalTypeHao;
+  input.ao_overlap_matrix = Eigen::MatrixXd::Identity(4, 4);
+  input.orbital_basis_counts = {1, 1, 3};
+  input.orbital_basis_index_table = {
+      1, 0, 0, 0,
+      2, 0, 0, 0,
+      1, 2, 3, 0};
+  input.orbital_value_table = {
+      1.0, 0.0, 0.0, 0.0,
+      1.0, 0.0, 0.0, 0.0,
+      1.0, 2.0, 1.0e-3, 0.0};
+  return input;
+}
+
+void check_active_sparse_gauge_balance() {
+  OrbitalPreparationInput input = make_active_gauge_input();
+  require(xmvb::vb::balance_active_gauge(&input),
+          "active gauge was not balanced");
+  require(input.orbital_value_table[8] == 0.0 &&
+              input.orbital_value_table[9] == 0.0 &&
+              std::abs(input.orbital_value_table[10] - 1.0) < 1.0e-12 &&
+              input.orbital_value_table[11] == 0.0,
+          "active balancing changed the projected ray or strict support");
+  require(!xmvb::vb::balance_active_gauge(&input),
+          "active gauge balance is not idempotent");
+
+  input = make_active_gauge_input();
+  input.original_orbital_basis_counts = {1, 1, 2};
+  input.orbital_value_table[10] = 0.5;  // Stored but fixed active coefficient.
+  require(xmvb::vb::balance_active_gauge(&input),
+          "active gauge with a fixed coefficient was not balanced");
+  require(input.orbital_value_table[8] == 0.0 &&
+              input.orbital_value_table[9] == 0.0 &&
+              input.orbital_value_table[10] == 0.5,
+          "active balancing rescaled a fixed physical coefficient");
+
+  input = make_active_gauge_input();
+  input.orbital_type = xmvb::vb::kOrbitalTypeOeo;
+  const std::vector<double> before = input.orbital_value_table;
+  require(!xmvb::vb::balance_active_gauge(&input) &&
+              input.orbital_value_table == before,
+          "per-orbital balancing was applied to the OEO subspace");
+}
+
+void check_nonorthogonal_active_ray() {
+  OrbitalPreparationInput input = make_active_gauge_input();
+  input.ao_overlap_matrix(0, 2) = 0.2;
+  input.ao_overlap_matrix(2, 0) = 0.2;
+  input.ao_overlap_matrix(1, 2) = -0.1;
+  input.ao_overlap_matrix(2, 1) = -0.1;
+  const Eigen::MatrixXd& S = input.ao_overlap_matrix;
+  Eigen::MatrixXd inactive = Eigen::MatrixXd::Zero(4, 2);
+  inactive(0, 0) = 1.0;
+  inactive(1, 1) = 1.0;
+  const Eigen::MatrixXd complement =
+      Eigen::MatrixXd::Identity(4, 4) -
+      inactive * (inactive.transpose() * S * inactive).inverse() *
+          inactive.transpose() * S;
+  auto projected_ray = [&](const OrbitalPreparationInput& state) {
+    Eigen::VectorXd active = Eigen::VectorXd::Zero(4);
+    for (int slot = 0; slot < 3; ++slot) {
+      const int ao = state.orbital_basis_index_table[8 + slot] - 1;
+      active[ao] = state.orbital_value_table[8 + slot];
+    }
+    Eigen::VectorXd projected = complement * active;
+    return (projected / std::sqrt(projected.dot(S * projected))).eval();
+  };
+  const Eigen::VectorXd before = projected_ray(input);
+  require(xmvb::vb::balance_active_gauge(&input),
+          "nonorthogonal active gauge was not balanced");
+  require((projected_ray(input) - before).norm() < 1.0e-10,
+          "nonorthogonal projected active ray changed under gauge balance");
+}
+
 }  // namespace
 
 int main() {
   try {
     check_ill_conditioned_sparse_gauge();
     check_well_conditioned_gauge_is_unchanged();
+    check_active_sparse_gauge_balance();
+    check_nonorthogonal_active_ray();
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

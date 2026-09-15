@@ -622,6 +622,62 @@ initial point is insufficient: subsequent additive retractions can drift back
 into the ill-conditioned vertical coordinates even when the occupied Gram
 matrix has not yet become numerically singular.
 
+### 4.3 Support-preserving active representative
+
+An algebraically nonredundant tangent space can still be poorly conditioned
+when a raw active representative contains a large inactive component. For an
+active target $p$, let $\mathbf N_p$ span the kernel of the forbidden-row
+constraint on the complete inactive columns, including stored but fixed
+coefficient rows, and define the support-admissible addition basis
+
+$$
+\mathbf N_p
+=\operatorname{null}(\mathbf Z_{\perp,p}^{\mathrm T}\mathbf C_{\mathrm I}),
+\qquad
+\mathbf Z_p=\mathbf C_{\mathrm I}\mathbf N_p.
+\tag{27k}
+$$
+
+On a regular stratum, $\mathbf Z_p^{\mathrm T}\mathbf S\mathbf Z_p$ is positive
+definite. The unique minimum-$\mathbf S$-norm representative of the coset
+$\mathbf c_p+\operatorname{range}(\mathbf Z_p)$ is
+
+$$
+\mathbf c_p^{\star}
+=\mathbf c_p
+-\mathbf Z_p
+ (\mathbf Z_p^{\mathrm T}\mathbf S\mathbf Z_p)^{-1}
+ \mathbf Z_p^{\mathrm T}\mathbf S\mathbf c_p,
+\qquad
+\mathbf Z_p^{\mathrm T}\mathbf S\mathbf c_p^{\star}=\mathbf 0.
+\tag{27l}
+$$
+
+The subtraction in eq 27l lies exactly in the inactive span and satisfies
+every strict-support constraint. Consequently,
+
+$$
+\mathbf O_{\mathrm I}\mathbf c_p^{\star}
+=\mathbf O_{\mathrm I}\mathbf c_p,
+\tag{27m}
+$$
+
+so the projected active ray, the VB variational space, and its relaxed energy
+are unchanged. A nonzero scalar normalization of $\mathbf c_p^{\star}$ is
+applied only if every stored but nondifferentiable active coefficient is zero;
+otherwise active scaling is not an admissible variation and the fixed
+coefficients are preserved exactly. Both energy-only screening and accepted
+gradient/HVP evaluation use the same representative section.
+
+This choice removes avoidable cancellation in the accepted raw coefficients;
+it does **not** regularize a genuine loss of transversality between the fixed
+support and the inactive subspace. Such a loss is diagnosed by the smallest
+nonzero singular value of
+$\mathbf O_{\mathrm I}\vert_{\mathcal S_p}$ in the AO metric, not by the
+dimension of the algebraic quotient. A complete-CAS full-AO OEO orbital space
+has additional active--active gauge and requires an active-subspace, rather
+than per-orbital-ray, representative construction.
+
 ## 5. A natural quotient metric
 
 Euclidean distances between raw sparse coefficients are not invariant to AO scaling or to the choice of orbital representatives. A physically meaningful trust-region norm should instead measure changes in the inactive subspace and projected active rays.

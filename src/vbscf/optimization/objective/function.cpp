@@ -85,6 +85,7 @@ VbScfObjective::evaluate_trial(
   if (canonicalize_sparse_gauge) {
     chart_changed =
         apply_support_preserving_inactive_gauge(&trial_orbitals);
+    chart_changed = balance_active_gauge(&trial_orbitals) || chart_changed;
   }
   ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
 
@@ -151,6 +152,7 @@ double VbScfObjective::evaluate_energy_only(
   OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
   layout_.unpack(parameter_vector, &trial_orbitals);
   apply_support_preserving_inactive_gauge(&trial_orbitals);
+  balance_active_gauge(&trial_orbitals);
   ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
   const auto evaluation_start_time = std::chrono::steady_clock::now();
   const double energy = scf_->evaluate_energy_only(
