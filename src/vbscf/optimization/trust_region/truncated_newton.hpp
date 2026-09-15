@@ -12,13 +12,18 @@ struct TruncatedNewtonSubspace {
   Eigen::MatrixXd orthonormal_basis;
   Eigen::MatrixXd tangent_basis;
   Eigen::MatrixXd hessian_basis;
+  // Full-space metric images, one per admitted Newton direction.
+  Eigen::MatrixXd metric_basis;
   Eigen::MatrixXd reduced_hessian;
+  // Only this small projected Gram matrix is factored by the trust solver.
+  Eigen::MatrixXd reduced_metric;
   Eigen::VectorXd projected_gradient;
 };
 
 struct TruncatedNewtonStepResult {
   Eigen::VectorXd reduced_step;
   Eigen::VectorXd reduced_hessian_times_step;
+  Eigen::VectorXd reduced_metric_times_step;
   TruncatedNewtonSubspace subspace;
   double retract_tangent_norm = 0.0;
   bool reached_boundary = false;
@@ -43,7 +48,8 @@ struct RejectedTruncatedNewtonStepCache {
   void update(
       const TruncatedNewtonStepResult& model_step,
       Eigen::Index expected_size,
-      double trust_radius);
+      double trust_radius,
+      const NonredundantRetractionMetric& metric);
 };
 
 double inexact_newton_forcing_term(double gradient_norm);
@@ -78,6 +84,7 @@ bool truncated_newton_trial_is_acceptable(
 void clamp_nonredundant_step_result_to_retract_tangent_radius(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
+    const NonredundantRetractionMetric& metric,
     TruncatedNewtonStepResult* step);
 
 bool truncated_newton_subspace_is_usable(
@@ -91,6 +98,7 @@ bool truncated_newton_step_is_usable(
 TruncatedNewtonStepResult solve_trust_region_in_subspace(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
+    const NonredundantRetractionMetric& metric,
     const TruncatedNewtonSubspace& subspace);
 
 Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(

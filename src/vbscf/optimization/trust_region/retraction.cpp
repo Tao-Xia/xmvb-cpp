@@ -26,26 +26,31 @@ Eigen::VectorXd gather_nonredundant_retract_tangent(
   return packed_tangent;
 }
 
-double nonredundant_step_norm(const Eigen::VectorXd& reduced_step) {
-  if (reduced_step.size() == 0) {
-    return 0.0;
-  }
-  // OrbitalChart whitens reduced coordinates in the accepted-point
-  // normalized-orbital AO metric. Their Euclidean norm is therefore the
-  // physical trust-region norm; the raw packed tangent norm is coordinate-
-  // scale dependent and must not control globalization.
-  const double tangent_norm = reduced_step.stableNorm();
-  return std::isfinite(tangent_norm) ? tangent_norm : 0.0;
-}
+NonredundantRetractionMetric::NonredundantRetractionMetric(
+    const OrbitalChart& space,
+    const SparseParameterLayout& parameter_view,
+    const OrbitalPreparationInput& input)
+    : space_(space),
+      parameter_view_(parameter_view),
+      physical_metric_(input) {}
 
 Eigen::VectorXd NonredundantRetractionMetric::tangent(
     const Eigen::VectorXd& reduced_step) const {
   return reduced_step;
 }
 
+Eigen::VectorXd NonredundantRetractionMetric::apply(
+    const Eigen::VectorXd& reduced_step) const {
+  return space_.project_reduced_gradient(
+      physical_metric_.apply(
+          parameter_view_, space_.expand_step(reduced_step)));
+}
+
 double NonredundantRetractionMetric::norm(
     const Eigen::VectorXd& reduced_step) const {
-  const double tangent_norm = reduced_step.stableNorm();
+  const double squared_norm = physical_metric_.squared_norm(
+      parameter_view_, space_.expand_step(reduced_step));
+  const double tangent_norm = std::sqrt(squared_norm);
   return std::isfinite(tangent_norm) ? tangent_norm : 0.0;
 }
 
@@ -67,7 +72,8 @@ Eigen::VectorXd NonredundantRetractionMetric::clip_to_radius(
 
 Eigen::VectorXd shrink_reduced_step_inside_trust_radius(
     const Eigen::VectorXd& reduced_step,
-    double trust_radius) {
+    double trust_radius,
+    const NonredundantRetractionMetric& metric) {
   if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
     return Eigen::VectorXd::Zero(reduced_step.size());
   }
@@ -76,7 +82,7 @@ Eigen::VectorXd shrink_reduced_step_inside_trust_radius(
   if (!(target_radius > 0.0) || !std::isfinite(target_radius)) {
     return Eigen::VectorXd::Zero(reduced_step.size());
   }
-  const double tangent_norm = nonredundant_step_norm(reduced_step);
+  const double tangent_norm = metric.norm(reduced_step);
   if (!(tangent_norm > 0.0) || !std::isfinite(tangent_norm)) {
     return Eigen::VectorXd::Zero(reduced_step.size());
   }

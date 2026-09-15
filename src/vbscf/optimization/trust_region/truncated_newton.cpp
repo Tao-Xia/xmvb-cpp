@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include <Eigen/Eigenvalues>
+#include <Eigen/Cholesky>
 
 #include "vbscf/optimization/krylov/orthonormal_basis.hpp"
 #include "vbscf/optimization/trust_region/spectral.hpp"
@@ -71,17 +73,16 @@ bool truncated_newton_trial_is_acceptable(
 
 double truncated_newton_step_effective_norm(
     const TruncatedNewtonStepResult& step) {
-  if (std::isfinite(step.retract_tangent_norm) &&
-      step.retract_tangent_norm > 0.0) {
-    return step.retract_tangent_norm;
-  }
-  const double reduced_norm = step.reduced_step.norm();
-  return std::isfinite(reduced_norm) ? reduced_norm : 0.0;
+  return std::isfinite(step.retract_tangent_norm) &&
+                 step.retract_tangent_norm > 0.0
+             ? step.retract_tangent_norm
+             : 0.0;
 }
 
 void clamp_nonredundant_step_result_to_retract_tangent_radius(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
+    const NonredundantRetractionMetric& metric,
     TruncatedNewtonStepResult* step) {
   if (step == nullptr ||
       step->reduced_step.size() != current_projection.reduced_gradient.size() ||
@@ -91,7 +92,7 @@ void clamp_nonredundant_step_result_to_retract_tangent_radius(
   }
 
   const double tangent_norm =
-      nonredundant_step_norm(step->reduced_step);
+      metric.norm(step->reduced_step);
   step->retract_tangent_norm = tangent_norm;
   if (!(trust_radius > 0.0) ||
       !std::isfinite(trust_radius) ||
@@ -107,6 +108,9 @@ void clamp_nonredundant_step_result_to_retract_tangent_radius(
             current_projection.reduced_gradient.size() &&
         step->reduced_hessian_times_step.allFinite()) {
       step->reduced_hessian_times_step *= scale;
+      if (step->reduced_metric_times_step.size() == step->reduced_step.size()) {
+        step->reduced_metric_times_step *= scale;
+      }
       step->predicted_decrease =
           -current_projection.reduced_gradient.dot(step->reduced_step) -
           0.5 * step->reduced_step.dot(step->reduced_hessian_times_step);
@@ -135,12 +139,14 @@ void RejectedTruncatedNewtonStepCache::clear() {
 void RejectedTruncatedNewtonStepCache::update(
     const TruncatedNewtonStepResult& model_step,
     Eigen::Index expected_size,
-    double trust_radius) {
+    double trust_radius,
+    const NonredundantRetractionMetric& metric) {
   cached_step =
       finite_nonzero_vector_matches_size(model_step.reduced_step, expected_size)
           ? shrink_reduced_step_inside_trust_radius(
                 model_step.reduced_step,
-                trust_radius)
+                trust_radius,
+                metric)
           : Eigen::VectorXd();
 }
 
@@ -157,9 +163,15 @@ bool truncated_newton_subspace_is_usable(
       subspace.hessian_basis.rows() == reduced_size &&
       subspace.hessian_basis.cols() == subspace.orthonormal_basis.cols() &&
       subspace.hessian_basis.allFinite() &&
+      subspace.metric_basis.rows() == reduced_size &&
+      subspace.metric_basis.cols() == subspace.orthonormal_basis.cols() &&
+      subspace.metric_basis.allFinite() &&
       subspace.reduced_hessian.rows() == subspace.orthonormal_basis.cols() &&
       subspace.reduced_hessian.cols() == subspace.orthonormal_basis.cols() &&
       subspace.reduced_hessian.allFinite() &&
+      subspace.reduced_metric.rows() == subspace.orthonormal_basis.cols() &&
+      subspace.reduced_metric.cols() == subspace.orthonormal_basis.cols() &&
+      subspace.reduced_metric.allFinite() &&
       subspace.projected_gradient.size() == subspace.orthonormal_basis.cols() &&
       subspace.projected_gradient.allFinite();
 }
@@ -178,6 +190,7 @@ bool truncated_newton_step_is_usable(
 
 static TruncatedNewtonSubspace build_truncated_newton_subspace(
     const Eigen::VectorXd& reduced_gradient,
+    const NonredundantRetractionMetric& metric,
     const std::vector<Eigen::VectorXd>& basis_vectors,
     const std::vector<Eigen::VectorXd>& tangent_basis_vectors,
     const std::vector<Eigen::VectorXd>& hessian_basis_vectors) {
@@ -196,7 +209,9 @@ static TruncatedNewtonSubspace build_truncated_newton_subspace(
       tangent_basis_vectors.front().size(),
       basis_size);
   subspace.hessian_basis.resize(reduced_size, basis_size);
+  subspace.metric_basis.resize(reduced_size, basis_size);
   subspace.reduced_hessian.resize(basis_size, basis_size);
+  subspace.reduced_metric.resize(basis_size, basis_size);
   subspace.projected_gradient.resize(basis_size);
 
   for (Eigen::Index column = 0; column < basis_size; ++column) {
@@ -206,6 +221,7 @@ static TruncatedNewtonSubspace build_truncated_newton_subspace(
         tangent_basis_vectors[column];
     subspace.hessian_basis.col(column) =
         hessian_basis_vectors[column];
+    subspace.metric_basis.col(column) = metric.apply(basis_vectors[column]);
     subspace.projected_gradient[column] =
         basis_vectors[column].dot(reduced_gradient);
   }
@@ -215,12 +231,16 @@ static TruncatedNewtonSubspace build_truncated_newton_subspace(
       subspace.reduced_hessian(row, column) =
           basis_vectors[row].dot(
               hessian_basis_vectors[column]);
+      subspace.reduced_metric(row, column) =
+          basis_vectors[row].dot(subspace.metric_basis.col(column));
     }
   }
   subspace.reduced_hessian =
       0.5 *
       (subspace.reduced_hessian +
        subspace.reduced_hessian.transpose()).eval();
+  subspace.reduced_metric = 0.5 *
+      (subspace.reduced_metric + subspace.reduced_metric.transpose()).eval();
   if (!truncated_newton_subspace_is_usable(
           subspace,
           reduced_size)) {
@@ -232,11 +252,14 @@ static TruncatedNewtonSubspace build_truncated_newton_subspace(
 TruncatedNewtonStepResult solve_trust_region_in_subspace(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
+    const NonredundantRetractionMetric& metric,
     const TruncatedNewtonSubspace& subspace) {
   TruncatedNewtonStepResult result;
   result.reduced_step =
       Eigen::VectorXd::Zero(current_projection.reduced_gradient.size());
   result.reduced_hessian_times_step =
+      Eigen::VectorXd::Zero(current_projection.reduced_gradient.size());
+  result.reduced_metric_times_step =
       Eigen::VectorXd::Zero(current_projection.reduced_gradient.size());
   if (!(trust_radius > 0.0) ||
       !std::isfinite(trust_radius) ||
@@ -250,7 +273,23 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
       0.5 *
       (subspace.reduced_hessian +
        subspace.reduced_hessian.transpose());
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(reduced_hessian);
+  const Eigen::MatrixXd reduced_metric = 0.5 *
+      (subspace.reduced_metric + subspace.reduced_metric.transpose()).eval();
+  Eigen::LLT<Eigen::MatrixXd> metric_factor(reduced_metric);
+  if (metric_factor.info() != Eigen::Success) {
+    throw std::runtime_error("projected orbital metric is not positive definite");
+  }
+  const Eigen::MatrixXd upper = metric_factor.matrixU();
+  const Eigen::MatrixXd inverse_upper =
+      upper.triangularView<Eigen::Upper>().solve(
+          Eigen::MatrixXd::Identity(upper.rows(), upper.cols()));
+  const Eigen::MatrixXd whitened_hessian = 0.5 *
+      (inverse_upper.transpose() * reduced_hessian * inverse_upper +
+       inverse_upper.transpose() * reduced_hessian.transpose() *
+           inverse_upper).eval();
+  const Eigen::VectorXd whitened_gradient =
+      inverse_upper.transpose() * subspace.projected_gradient;
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(whitened_hessian);
   if (eigensolver.info() != Eigen::Success) {
     return result;
   }
@@ -263,7 +302,7 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
     return result;
   }
   const Eigen::VectorXd projected_gradient_in_eigenbasis =
-      eigenvectors.transpose() * subspace.projected_gradient;
+      eigenvectors.transpose() * whitened_gradient;
   if (!projected_gradient_in_eigenbasis.allFinite()) {
     return result;
   }
@@ -278,10 +317,10 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
       64.0 * std::numeric_limits<double>::epsilon();
 
   Eigen::VectorXd subspace_coordinates =
-      eigenvectors * eigen_coordinates;
+      inverse_upper * eigenvectors * eigen_coordinates;
   Eigen::VectorXd reduced_step =
       subspace.orthonormal_basis * subspace_coordinates;
-  double step_metric_norm = subspace_coordinates.norm();
+  double step_metric_norm = metric.norm(reduced_step);
   if (!(step_metric_norm > 0.0) || !std::isfinite(step_metric_norm)) {
     return result;
   }
@@ -290,13 +329,16 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
     const double scale = trust_radius / step_metric_norm;
     subspace_coordinates *= scale;
     reduced_step *= scale;
-    step_metric_norm = subspace_coordinates.norm();
+    step_metric_norm = metric.norm(reduced_step);
   }
   const Eigen::VectorXd reduced_hessian_times_step =
       subspace.hessian_basis * subspace_coordinates;
+  const Eigen::VectorXd reduced_metric_times_step =
+      subspace.metric_basis * subspace_coordinates;
   if (reduced_hessian_times_step.size() !=
-          current_projection.reduced_gradient.size() ||
-      !reduced_hessian_times_step.allFinite()) {
+      current_projection.reduced_gradient.size() ||
+      !reduced_hessian_times_step.allFinite() ||
+      !reduced_metric_times_step.allFinite()) {
     return result;
   }
 
@@ -313,6 +355,7 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
 
   result.reduced_step = std::move(reduced_step);
   result.reduced_hessian_times_step = reduced_hessian_times_step;
+  result.reduced_metric_times_step = reduced_metric_times_step;
   result.subspace = subspace;
   result.subspace_dimension =
       static_cast<int>(subspace.orthonormal_basis.cols());
@@ -322,7 +365,7 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
   result.encountered_negative_curvature =
       minimum_eigenvalue <= -kShiftToleranceFactor * spectral_scale;
   result.projected_model_gradient_norm =
-      subspace.projected_gradient.norm();
+      whitened_gradient.norm();
   result.model_spectral_radius = eigenvalues.cwiseAbs().maxCoeff();
   result.trust_region_shift = trust_region_shift;
   result.predicted_decrease = predicted_decrease;
@@ -493,6 +536,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     result = solve_trust_region_in_subspace(
         current_projection,
         trust_radius,
+        retraction_metric,
         *initial_subspace);
     if (truncated_newton_step_is_usable(
             result,
@@ -500,7 +544,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       const Eigen::VectorXd kkt_residual =
           current_projection.reduced_gradient +
           result.reduced_hessian_times_step +
-          result.trust_region_shift * result.reduced_step;
+          result.trust_region_shift * result.reduced_metric_times_step;
       if (residual_converged(kkt_residual) ||
           truncated_newton_model_is_below_outer_accuracy(
               gradient_infinity_norm(current_projection.reduced_gradient),
@@ -523,7 +567,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     correction_rhs = -(
         current_projection.reduced_gradient +
         result.reduced_hessian_times_step +
-        result.trust_region_shift * result.reduced_step);
+        result.trust_region_shift * result.reduced_metric_times_step);
   }
   bool first_expansion = !reuse_initial_subspace;
   while (static_cast<int>(basis.size()) < max_subspace_dimension) {
@@ -570,6 +614,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const TruncatedNewtonSubspace subspace =
         build_truncated_newton_subspace(
             current_projection.reduced_gradient,
+            retraction_metric,
             basis,
             tangent_basis,
             hessian_basis);
@@ -577,6 +622,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         solve_trust_region_in_subspace(
             current_projection,
             trust_radius,
+            retraction_metric,
             subspace);
     if (!truncated_newton_step_is_usable(
             candidate_step,
@@ -589,7 +635,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     const Eigen::VectorXd kkt_residual =
         current_projection.reduced_gradient +
         result.reduced_hessian_times_step +
-        result.trust_region_shift * result.reduced_step;
+        result.trust_region_shift * result.reduced_metric_times_step;
     if (residual_converged(kkt_residual)) return result;
 
     // Once the outer gradient condition already holds, resolving a model

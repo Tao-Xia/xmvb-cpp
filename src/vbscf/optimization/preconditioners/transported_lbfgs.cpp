@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -123,8 +124,16 @@ Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
       transported_preconditioner->apply(reduced_vector);
   const double curvature = reduced_vector.dot(preconditioned);
   if (!std::isfinite(curvature) || curvature <= 0.0) {
-    throw std::runtime_error(
-        "transported L-BFGS preconditioner lost positive definiteness");
+    const Eigen::VectorXd base =
+        current_space.apply_inverse_reduced_block_preconditioner(reduced_vector);
+    std::ostringstream message;
+    message << "transported L-BFGS preconditioner lost positive definiteness"
+            << ": pairs=" << transported_preconditioner->size()
+            << " curvature=" << curvature
+            << " base_curvature=" << reduced_vector.dot(base)
+            << " input_norm=" << reduced_vector.norm()
+            << " output_norm=" << preconditioned.norm();
+    throw std::runtime_error(message.str());
   }
   return preconditioned;
 }

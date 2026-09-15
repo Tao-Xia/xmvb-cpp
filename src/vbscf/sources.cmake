@@ -33,6 +33,7 @@ set(XMVB_VBSCF_ORBITAL_SOURCES
   vbscf/orbitals/charts/support_adapter.cpp
   vbscf/orbitals/charts/chart.cpp
   vbscf/orbitals/charts/layout.cpp
+  vbscf/orbitals/charts/physical_metric.cpp
   vbscf/orbitals/gauge/support_preserving.cpp
 )
 

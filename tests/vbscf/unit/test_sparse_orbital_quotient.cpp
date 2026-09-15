@@ -8,6 +8,9 @@
 #include <Eigen/SVD>
 
 #include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/physical_metric.hpp"
+#include "vbscf/optimization/trust_region/retraction.hpp"
+#include "vbscf/optimization/trust_region/truncated_newton.hpp"
 #include "vbscf/diagnostics/orbitals/chart_audit.hpp"
 
 namespace {
@@ -82,6 +85,75 @@ Eigen::VectorXd physical_map(const OrbitalPreparationInput& input) {
   return result;
 }
 
+double finite_physical_metric_squared_norm(
+    const OrbitalPreparationInput& input,
+    const SparseParameterLayout& view,
+    const Eigen::VectorXd& direction) {
+  constexpr double step = 1.0e-5;
+  auto plus = input;
+  auto minus = input;
+  view.unpack(view.pack(input) + step * direction, &plus);
+  view.unpack(view.pack(input) - step * direction, &minus);
+
+  const Eigen::MatrixXd current = dense(input);
+  const Eigen::MatrixXd displaced_plus = dense(plus);
+  const Eigen::MatrixXd displaced_minus = dense(minus);
+  const int n_inactive =
+      (input.n_total_electrons - input.n_active_electrons) / 2;
+  const int n_active = input.n_active_orbitals;
+  const int n_bf = input.n_basis_functions;
+  const Eigen::MatrixXd& overlap = input.ao_overlap_matrix;
+  Eigen::MatrixXd complement = Eigen::MatrixXd::Identity(n_bf, n_bf);
+  Eigen::MatrixXd inverse = Eigen::MatrixXd::Zero(n_inactive, n_inactive);
+  if (n_inactive > 0) {
+    const auto inactive = current.leftCols(n_inactive);
+    inverse = (inactive.transpose() * overlap * inactive)
+                  .ldlt()
+                  .solve(Eigen::MatrixXd::Identity(n_inactive, n_inactive));
+    complement.noalias() -=
+        inactive * inverse * inactive.transpose() * overlap;
+  }
+  auto projected_active = [&](const Eigen::MatrixXd& orbitals) {
+    Eigen::MatrixXd projector = Eigen::MatrixXd::Identity(n_bf, n_bf);
+    if (n_inactive > 0) {
+      const auto inactive = orbitals.leftCols(n_inactive);
+      const Eigen::MatrixXd local_inverse =
+          (inactive.transpose() * overlap * inactive)
+              .ldlt()
+              .solve(Eigen::MatrixXd::Identity(n_inactive, n_inactive));
+      projector.noalias() -=
+          inactive * local_inverse * inactive.transpose() * overlap;
+    }
+    return (projector * orbitals.middleCols(n_inactive, n_active)).eval();
+  };
+
+  double squared_norm = 0.0;
+  if (n_inactive > 0) {
+    const Eigen::MatrixXd delta_inactive =
+        (displaced_plus.leftCols(n_inactive) -
+         displaced_minus.leftCols(n_inactive)) /
+        (2.0 * step);
+    const Eigen::MatrixXd horizontal = complement * delta_inactive;
+    squared_norm +=
+        (inverse * horizontal.transpose() * overlap * horizontal).trace();
+  }
+  const Eigen::MatrixXd base_active =
+      projected_active(current);
+  const Eigen::MatrixXd delta_active =
+      (projected_active(displaced_plus) -
+       projected_active(displaced_minus)) /
+      (2.0 * step);
+  for (int active = 0; active < n_active; ++active) {
+    const Eigen::VectorXd ray = base_active.col(active);
+    const double norm_squared = ray.dot(overlap * ray);
+    Eigen::VectorXd horizontal = delta_active.col(active);
+    horizontal.noalias() -=
+        ray * (ray.dot(overlap * horizontal) / norm_squared);
+    squared_norm += horizontal.dot(overlap * horizontal) / norm_squared;
+  }
+  return squared_norm;
+}
+
 void check(const std::string& name, const OrbitalPreparationInput& input,
            int expected_dimension) {
   const SparseParameterLayout view(input);
@@ -100,6 +172,29 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
   require(audit.current_retained_gauge_dimension == 0 &&
               audit.current_missing_physical_dimension == 0,
           name + ": incorrect physical image");
+  const OrbitalPhysicalMetric coupled_metric(input);
+  for (int gauge = 0; gauge < audit.packed_gauge_basis.cols(); ++gauge) {
+    require(coupled_metric.squared_norm(
+                view, audit.packed_gauge_basis.col(gauge)) < 1.0e-18,
+            name + ": coupled metric did not annihilate gauge");
+    require(coupled_metric.apply(view, audit.packed_gauge_basis.col(gauge))
+                .norm() < 1.0e-10,
+            name + ": matrix-free metric action retained gauge");
+  }
+  if (u.cols() > 0) {
+    const Eigen::VectorXd direction =
+        u * Eigen::VectorXd::LinSpaced(u.cols(), -0.7, 0.9).normalized();
+    const double analytic = coupled_metric.squared_norm(view, direction);
+    const double finite =
+        finite_physical_metric_squared_norm(input, view, direction);
+    require(std::abs(analytic - finite) <
+                1.0e-7 * std::max(1.0, finite),
+            name + ": coupled metric differs from finite physical map");
+    const Eigen::VectorXd action = coupled_metric.apply(view, direction);
+    require(std::abs(direction.dot(action) - analytic) <
+                1.0e-10 * std::max(1.0, analytic),
+            name + ": matrix-free metric action is not the feature adjoint");
+  }
   for (int column = 0; column < u.cols(); ++column) {
     const Eigen::VectorXd recovered =
         space.project_vector(u.col(column)).reduced_gradient;
@@ -107,41 +202,61 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
         (recovered - Eigen::VectorXd::Unit(u.cols(), column)).norm() < 1e-10,
         name + ": reduced vector coordinates are not invertible");
   }
-  Eigen::MatrixXd physical_gram = Eigen::MatrixXd::Zero(u.cols(), u.cols());
-  for (int orbital = 0; orbital < input.n_orbitals; ++orbital) {
-    const int count = stored_sparse_orbital_coefficient_count(input, orbital);
-    Eigen::VectorXd raw(count);
-    Eigen::MatrixXd local_overlap(count, count);
-    Eigen::MatrixXd local_directions = Eigen::MatrixXd::Zero(count, u.cols());
-    for (int row = 0; row < count; ++row) {
-      raw[row] = input.orbital_value_table[
-          orbital * input.n_basis_functions + row];
-      const int packed = view.packed_index(orbital, row);
-      if (packed >= 0) local_directions.row(row) = u.row(packed);
-      const int ao_row = input.orbital_basis_index_table[
-          orbital * input.n_basis_functions + row] - 1;
-      for (int column = 0; column < count; ++column) {
-        const int ao_column = input.orbital_basis_index_table[
-            orbital * input.n_basis_functions + column] - 1;
-        local_overlap(row, column) =
-            input.ao_overlap_matrix(ao_row, ao_column);
+  Eigen::MatrixXd physical_actions(view.size(), u.cols());
+  for (int column = 0; column < u.cols(); ++column) {
+    physical_actions.col(column) = coupled_metric.apply(view, u.col(column));
+  }
+  const Eigen::MatrixXd physical_gram = u.transpose() * physical_actions;
+  require(
+      (physical_gram - physical_gram.transpose()).norm() < 1.0e-12 &&
+      (physical_gram.diagonal().array() > 0.0).all(),
+      name + ": coupled quotient physical metric is not positive");
+  if (u.cols() > 0) {
+    const Eigen::VectorXd first = u.col(0);
+    const Eigen::VectorXd last = u.col(u.cols() - 1);
+    const double polarization = 0.5 *
+        (coupled_metric.squared_norm(view, first + last) -
+         coupled_metric.squared_norm(view, first) -
+         coupled_metric.squared_norm(view, last));
+    require(std::abs(polarization - physical_gram(0, u.cols() - 1)) < 1.0e-10,
+            name + ": matrix-free metric action disagrees with polarization");
+    if (u.cols() <= 14) {
+      const NonredundantRetractionMetric metric(space, view, input);
+      const Eigen::MatrixXd model_hessian = physical_gram +
+          Eigen::MatrixXd::Identity(u.cols(), u.cols());
+      const Eigen::VectorXd gradient =
+          Eigen::VectorXd::LinSpaced(u.cols(), 0.2, 1.1);
+      TruncatedNewtonSubspace subspace;
+      subspace.orthonormal_basis =
+          Eigen::MatrixXd::Identity(u.cols(), u.cols());
+      subspace.tangent_basis = subspace.orthonormal_basis;
+      subspace.hessian_basis = model_hessian;
+      subspace.metric_basis = physical_gram;
+      subspace.reduced_hessian = model_hessian;
+      subspace.reduced_metric = physical_gram;
+      subspace.projected_gradient = gradient;
+      OrbitalChart::ProjectionResult projection;
+      projection.reduced_gradient = gradient;
+      const Eigen::VectorXd exact_step =
+          -model_hessian.ldlt().solve(gradient);
+      const double exact_norm = metric.norm(exact_step);
+      for (double radius : {2.0 * exact_norm, 0.5 * exact_norm}) {
+        const auto step = solve_trust_region_in_subspace(
+            projection, radius, metric, subspace);
+        require(step.predicted_decrease > 0.0 &&
+                    metric.norm(step.reduced_step) <= radius * (1.0 + 1.0e-7),
+                name + ": generalized trust-region radius mismatch");
+        require((gradient + step.reduced_hessian_times_step +
+                 step.trust_region_shift * step.reduced_metric_times_step)
+                    .norm() < 1.0e-7 * gradient.norm(),
+                name + ": generalized trust-region KKT mismatch");
+        if (radius > exact_norm) {
+          require((step.reduced_step - exact_step).norm() < 1.0e-8,
+                  name + ": generalized interior Newton step mismatch");
+        }
       }
     }
-    const double norm = std::sqrt(raw.dot(local_overlap * raw));
-    const Eigen::VectorXd normalized = raw / norm;
-    const Eigen::MatrixXd normalization_jacobian =
-        (Eigen::MatrixXd::Identity(count, count) -
-         normalized * (local_overlap * normalized).transpose()) /
-        norm;
-    const Eigen::MatrixXd physical_directions =
-        normalization_jacobian * local_directions;
-    physical_gram.noalias() +=
-        physical_directions.transpose() * local_overlap * physical_directions;
   }
-  require(
-      (physical_gram - Eigen::MatrixXd::Identity(u.cols(), u.cols())).norm() <
-          1e-9 * std::max(1, static_cast<int>(u.cols())),
-      name + ": normalized-orbital physical metric is not whitened");
   require((audit.packed_gauge_basis.transpose() * u).norm() < 1e-11,
           name + ": nonzero gauge overlap");
 

@@ -504,9 +504,9 @@ and is incorrect.
 The production implementation uses eq 27a and stores only local dense blocks,
 requiring $O(\sum_p m_p n_{\mathrm{red},p})$ basis storage instead of
 $O(m n_{\mathrm{red}})$. Its gradient pullback and step expansion remain exact
-adjoints. It applies the local normalized-orbital whitening in eqs 27c--27f;
-therefore the trust-region norm is invariant to independent rescaling of raw
-orbital representatives.
+adjoints. It applies the local normalized-orbital prewhitening in eqs 27c--27f;
+the actual trust-region norm uses the coupled quotient metric of eq 31 and
+annihilates support-admissible first-order gauge directions.
 
 After whitening, vector coordinates and gradient coordinates are different
 linear maps. For a packed tangent $\mathbf v$ in the range of
@@ -700,7 +700,21 @@ $$
 \tag{32}
 $$
 
-The metric removes dependence on independent orbital scalings, but full invariance under active additions from a moving inactive span requires care: differentiating $\mathbf c_p\mapsto\mathbf c_p+\mathbf C_{\mathrm I}\boldsymbol\ell_p$ also changes the active tangent by $\delta\mathbf C_{\mathrm I}\boldsymbol\ell_p$. The production code now implements the per-orbital normalized metric of eqs 27c--27f. Equation 31 is the stronger coupled quotient metric: it additionally accounts for motion of the inactive projector and projected active rays. Full representative invariance under moving inactive additions still requires that coupled metric or an equivalent connection, so the present local whitening must not be described as a complete invariant Riemannian Newton method.
+The metric removes dependence on independent orbital scalings, but full invariance under active additions from a moving inactive span requires care: differentiating $\mathbf c_p\mapsto\mathbf c_p+\mathbf C_{\mathrm I}\boldsymbol\ell_p$ also changes the active tangent by $\delta\mathbf C_{\mathrm I}\boldsymbol\ell_p$. The production chart retains the support-admissible algebraic horizontal lift of eqs 27a--27b and the inexpensive per-orbital prewhitening of eqs 27c--27f. Its trust-region constraint, however, now uses the complete coupled metric of eq 31, including motion of the inactive projector and projected active rays. The horizontal lift is a representative section of the quotient, not a claim of an invariant Levi-Civita connection or an intrinsic Riemannian Hessian.
+
+Let $\mathbf U_{\rm loc}$ denote the accepted-point sparse quotient lift and let $\mathbf M_{\rm phys}$ denote the pullback metric in eq 31. No full reduced metric is stored. For a reduced direction $\mathbf v$, the optimizer evaluates its metric covector through the analytic matrix-free action
+
+$$
+\mathbf M_{\rm red}\mathbf v
+=\mathbf U_{\rm loc}^{\rm T}\mathbf M_{\rm phys}
+\mathbf U_{\rm loc}\mathbf v,
+\qquad
+\lVert\mathbf v\rVert_{\rm phys}^{2}
+=\mathbf v^{\rm T}\mathbf M_{\rm red}\mathbf v.
+\tag{32a}
+$$
+
+For a Newton subspace $\mathbf Q$ of dimension $k$, the only assembled metric is $\mathbf G_k=\mathbf Q^{\rm T}\mathbf M_{\rm red}\mathbf Q$; its Cholesky factor converts the $k$-dimensional generalized trust-region problem to a Euclidean one. In the ambient reduced space, the shifted residual is $\mathbf g+\mathbf H\mathbf s+\lambda\mathbf M_{\rm red}\mathbf s$, not $\mathbf g+\mathbf H\mathbf s+\lambda\mathbf s$. Thus metric assembly and factorization scale with $k$, not with the potentially thousands-dimensional orbital quotient. The trust radius measures the tangent length at the accepted point; it is not asserted to equal the finite geodesic distance to the trial orbital frame.
 
 ## 6. Directional derivatives of the orbital-preparation map
 
@@ -1294,7 +1308,7 @@ $$
 
 and solve the reduced trust-region problem in $\operatorname{span}(\mathbf Q)$. Residual directions, preconditioned residuals, and transported Ritz vectors may be added in blocks. Recycling changes only how the Newton equation is solved; it does not alter the Hessian operator defined by eqs 50--63.
 
-In the current physically whitened quotient chart, basis construction must preserve the
+In the locally prewhitened quotient chart, basis construction must preserve the
 identity $\mathbf Y=\mathbf H_k\mathbf Q$ numerically, not only in exact
 arithmetic. For a candidate direction $\mathbf p$, first orthogonalize and
 normalize the direction itself:
@@ -1327,15 +1341,18 @@ also destroy their mutual consistency. The implementation now regenerates each
 packed tangent from its admitted reduced vector. A small-gradient molecular
 regression that exposed both failures is documented in the validation record.
 
-For the current physically whitened quotient chart, the small trust-region problem must
+For the coupled physical metric, the small trust-region problem must
 be solved as a constrained quadratic problem, including singular and indefinite
-models. With $\mathbf h=\mathbf Q^{\mathrm T}\mathbf g_k$ and
-$\mathbf T=\mathbf Q^{\mathrm T}\mathbf H_k\mathbf Q$, its global optimality
-conditions are
+models. Let $\mathbf G=\mathbf Q^{\mathrm T}\mathbf M_{\rm red}\mathbf Q
+=\mathbf R^{\mathrm T}\mathbf R$ and $\widehat{\mathbf Q}=\mathbf Q
+\mathbf R^{-1}$. With $\widehat{\mathbf h}=\widehat{\mathbf Q}^{\mathrm T}
+\mathbf g_k$ and $\widehat{\mathbf T}=\widehat{\mathbf Q}^{\mathrm T}
+\mathbf H_k\widehat{\mathbf Q}$, its global optimality conditions in the
+whitened *small subspace* are
 
 $$
-(\mathbf T+\lambda\mathbf I)\mathbf z=-\mathbf h,
-\qquad \mathbf T+\lambda\mathbf I\succeq\mathbf 0,
+(\widehat{\mathbf T}+\lambda\mathbf I)\mathbf z=-\widehat{\mathbf h},
+\qquad \widehat{\mathbf T}+\lambda\mathbf I\succeq\mathbf 0,
 \qquad \lambda\geq 0,
 \qquad \lVert\mathbf z\rVert\leq\Delta,
 \qquad \lambda(\lVert\mathbf z\rVert-\Delta)=0.
@@ -1343,20 +1360,20 @@ $$
 $$
 
 These conditions certify a minimum of the **projected** model. To see
-sufficiency, let $m(\mathbf z)=\mathbf h^{\mathrm T}\mathbf z+
-\tfrac12\mathbf z^{\mathrm T}\mathbf T\mathbf z$. For any feasible
+sufficiency, let $m(\mathbf z)=\widehat{\mathbf h}^{\mathrm T}\mathbf z+
+\tfrac12\mathbf z^{\mathrm T}\widehat{\mathbf T}\mathbf z$. For any feasible
 $\mathbf w$,
 
 $$
 m(\mathbf w)-m(\mathbf z)
 =\frac12(\mathbf w-\mathbf z)^{\mathrm T}
- (\mathbf T+\lambda\mathbf I)(\mathbf w-\mathbf z)
+ (\widehat{\mathbf T}+\lambda\mathbf I)(\mathbf w-\mathbf z)
 +\frac{\lambda}{2}(\lVert\mathbf z\rVert^2-\lVert\mathbf w\rVert^2)
 \geq 0.
 \tag{65d}
 $$
 
-In the eigenbasis of $\mathbf T$, let $\theta_j$ and $\widehat h_j$ be the
+In the eigenbasis of $\widehat{\mathbf T}$, let $\theta_j$ and $\widehat h_j$ be the
 eigenvalues and gradient components. At
 $\lambda_0=\max(0,-\theta_{\min})$, a singular denominator is not a solver
 failure: the endpoint is evaluated by a pseudoinverse if its null-space
@@ -1366,12 +1383,13 @@ minimum-eigenvalue direction to reach the boundary. The implementation scales
 to a unit ball and keeps the excess shift $\lambda-\lambda_0$ separate to avoid
 losing a small positive denominator through cancellation.
 
-The accuracy of the actual returned step, $\mathbf s=\mathbf Q\mathbf z$, can
+The accuracy of the actual returned step, $\mathbf s=\widehat{\mathbf Q}\mathbf z$, can
 be measured using its full reduced-coordinate KKT residual. This is not in
 general the residual of an intermediate CG accumulation:
 
 $$
-\mathbf r=\mathbf g_k+\mathbf H_k\mathbf s+\lambda\mathbf s,
+\mathbf r=\mathbf g_k+\mathbf H_k\mathbf s+
+\lambda\mathbf M_{\rm red}\mathbf s,
 \qquad
 \lVert\mathbf r\rVert_2\leq\eta_k\lVert\mathbf g_k\rVert_2.
 \tag{65e}
@@ -1563,13 +1581,14 @@ invariance under arbitrary inactive-orbital mixing.
 
 ### 10.2 Stable inner conjugate directions
 
-In the physically whitened quotient chart, the reduced Euclidean norm is the
-local normalized-orbital AO norm of eq 27f. The production forcing function
-takes $\lVert\mathbf g_k\rVert_2$, and the CG residual is checked in the same
-norm. This removes independent raw-orbital scale dependence. It does not yet
-implement the fully coupled metric of eq 31 or make the rule invariant under
-energy-unit rescaling. The outer stopping criterion uses the corresponding
-reduced gradient infinity norm.
+The sparse quotient chart is locally prewhitened by eq 27f, whereas the
+trust-region norm and shifted KKT equation now use the coupled metric of eq
+31 through eq 32a. The production forcing function still uses the local
+coordinate $\lVert\mathbf g_k\rVert_2$, and the residual is checked in that
+same norm. This is a coordinate-consistent inexact-Newton test, but not yet
+the fully coupled dual norm and not invariant under energy-unit rescaling.
+The outer stopping criterion uses the corresponding reduced-gradient
+infinity norm.
 
 The three-term preconditioned-CG recurrence can lose conjugacy in finite
 precision even when its Euclidean HVP cache remains consistent. Let
@@ -1855,10 +1874,10 @@ However, this agreement does not validate the physical quotient coordinates. The
 1. **Gauge sources must use the global inactive span.** Treating the restriction of another inactive orbital to the support of orbital $p$ as a local gauge vector is generally invalid. A support-restricted orbital is not, in general, a member of the original inactive span.
 2. **Inactive additions to active orbitals are redundant.** Directions of the form $\delta\mathbf c_{\mathrm A,p}=\mathbf C_{\mathrm I}\boldsymbol\ell_p$ are annihilated by the projector in eq 14, up to an irrelevant active-orbital scaling induced by normalization. Retaining these directions introduces exact or near-zero modes.
 3. **The existing rank diagnostics are not independent validation.** They test rank and intersection properties using the same per-orbital gauge model employed to construct the basis. They can therefore pass even if the assumed gauge space is physically incorrect.
-4. **Euclidean local orthogonalization is coordinate dependent.** Orthogonalizing against the correct admissible gauge defines a valid algebraic complement, but does not by itself provide a scale-invariant physical norm for the trust-region method. Equations 27c--27g now supply that local normalized-orbital metric while preserving the exact quotient span.
+4. **Euclidean local orthogonalization is coordinate dependent.** Orthogonalizing against the correct admissible gauge defines a valid algebraic complement, but does not by itself provide a scale-invariant physical norm for the trust-region method. Equations 27c--27g supply inexpensive local prewhitening, while eqs 31 and 32a now supply the coupled physical trust norm without a global metric factorization.
 
 The corrected production construction uses the exact factorization in eqs 27a
-and 27b followed by the physical whitening in eqs 27c--27f. The previous
+and 27b followed by the local prewhitening in eqs 27c--27f. The previous
 occupied/virtual generator, its empirical rank cutoffs, and the raw-coordinate
 trust norm have been removed. The independent full global construction remains
 a diagnostic oracle. Vector recovery and covector pullback are tested

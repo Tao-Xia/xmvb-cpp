@@ -28,8 +28,8 @@ $$
 \mathbf U_k\mathbf v,
 $$
 
-where the accepted-point basis is whitened in the pullback metric of the
-per-orbital normalization maps,
+where the accepted-point basis is prewhitened in the inexpensive local
+pullback metric of the per-orbital normalization maps,
 
 $$
 \mathbf U_k^{\mathrm T}\mathbf M_k\mathbf U_k=\mathbf I,
@@ -39,6 +39,14 @@ $$
 \bigoplus_p
 \mathbf J_{N,p}^{\mathrm T}\mathbf S_p\mathbf J_{N,p}.
 $$
+
+This local prewhitening is not the trust-region metric. The optimizer uses
+the coupled inactive-subspace/projected-active-ray metric of eq 31 in the
+theory note through matrix-free metric-vector actions. Only its projection
+onto the current Newton subspace is factored; no full orbital Hessian or full
+reduced physical metric is assembled. The trial retraction remains additive
+on the immutable sparse supports, and the trust radius bounds the physical
+length of its accepted-point tangent.
 
 Here, the normalization Jacobians act on the stored sparse coefficient slots;
 the raw Euclidean identity is not the trust-region metric. The columns of the

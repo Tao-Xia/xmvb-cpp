@@ -117,7 +117,8 @@ BackendRunResult run_truncated_newton_backend(
             current_projection.reduced_gradient.size());
     const OrbitalPreparationInput current_orbital_input =
         objective->input().orbital_preparation_input;
-    const NonredundantRetractionMetric retraction_metric;
+    const NonredundantRetractionMetric retraction_metric(
+        current_space, parameter_view, current_orbital_input);
     const auto admit_energy_only_trial_screen = [&]() {
       const auto& objective_time_history =
           objective->iteration_time_history_seconds();
@@ -260,6 +261,7 @@ BackendRunResult run_truncated_newton_backend(
     clamp_nonredundant_step_result_to_retract_tangent_radius(
         current_projection,
         trust_radius,
+        retraction_metric,
         &truncated_newton_step);
     if (!reused_subspace) {
       ++result->matrix_free_subproblem_count;
@@ -273,7 +275,8 @@ BackendRunResult run_truncated_newton_backend(
       const double gradient_norm = current_projection.reduced_gradient.stableNorm();
       const Eigen::VectorXd kkt_residual = current_projection.reduced_gradient +
           truncated_newton_step.reduced_hessian_times_step +
-          truncated_newton_step.trust_region_shift * truncated_newton_step.reduced_step;
+          truncated_newton_step.trust_region_shift *
+              truncated_newton_step.reduced_metric_times_step;
       if (inexact_newton_residual_is_converged(
               gradient_norm,
               kkt_residual.stableNorm())) {
@@ -310,8 +313,9 @@ BackendRunResult run_truncated_newton_backend(
               &hvp);
       truncated_newton_step.reduced_step = reduced_step;
       truncated_newton_step.reduced_hessian_times_step.resize(0);
+      truncated_newton_step.reduced_metric_times_step.resize(0);
       truncated_newton_step.retract_tangent_norm =
-          nonredundant_step_norm(reduced_step);
+          retraction_metric.norm(reduced_step);
       truncated_newton_step.reached_boundary =
           truncated_newton_step.retract_tangent_norm >=
           (1.0 - 1.0e-8) * trust_radius;
@@ -362,7 +366,8 @@ BackendRunResult run_truncated_newton_backend(
       rejected_step_cache.update(
           model_step,
           reduced_size,
-          trust_radius);
+          trust_radius,
+          retraction_metric);
       continue;
     }
     const bool accepted_point_chart_changed =

@@ -7,6 +7,7 @@
 
 #include "input/loading/loader.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/physical_metric.hpp"
 #include "vbscf/diagnostics/orbitals/chart_audit.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -47,6 +48,7 @@ int main(int argc, char** argv) {
     }
     const auto audit = xmvb::vb::audit_orbital_chart(
         orbital, parameter_view, &basis);
+    const xmvb::vb::OrbitalPhysicalMetric physical_metric(orbital);
 
     std::cout << std::setprecision(12);
     std::cout << "input = " << argv[1] << '\n';
@@ -77,6 +79,17 @@ int main(int argc, char** argv) {
     std::cout << "current_missing_physical_dimension = "
               << audit.current_missing_physical_dimension << '\n';
     std::cout << "current_basis_gauge_overlap = " << gauge_overlap << '\n';
+    if (space.reduced_size() > 0) {
+      Eigen::VectorXd probe = Eigen::VectorXd::LinSpaced(
+          space.reduced_size(), -0.7, 0.9);
+      probe.normalize();
+      const Eigen::VectorXd packed_probe = space.expand_step(probe);
+      std::cout << "local_metric_probe_squared_norm = "
+                << probe.squaredNorm() << '\n';
+      std::cout << "coupled_metric_probe_squared_norm = "
+                << physical_metric.squared_norm(parameter_view, packed_probe)
+                << '\n';
+    }
     const double tolerance = 100 * std::numeric_limits<double>::epsilon() *
         std::max(1, audit.packed_dimension);
     if (audit.unmapped_parameter_count != 0 ||
