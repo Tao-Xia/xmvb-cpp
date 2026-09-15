@@ -34,7 +34,7 @@ struct StructureDiagonal {
 struct StructureActionStorage {
   /** Payload retained by the spin-factorized action. */
   std::size_t factor_bytes = 0;
-  /** Bidirectional determinant/structure expansion in contiguous CSR form. */
+  /** Unique-string-pair/structure expansion in contiguous CSR form. */
   std::size_t expansion_bytes = 0;
   /** Exact Hamiltonian and overlap diagonals retained by Davidson. */
   std::size_t diagonal_bytes = 0;
@@ -53,18 +53,19 @@ struct StructureActionStorage {
 /**
  * @brief Matrix-free structure-space Hamiltonian and overlap action.
  *
- * Let `B` be the sparse determinant-to-structure expansion and let `X` be a
- * determinant vector reshaped over the unique alpha/beta spin spaces. The
- * determinant Hamiltonian action is factorized as
+ * Let `C` map structure coefficients directly onto unique alpha/beta string
+ * products, and reshape `X = C V` over those two spin spaces. The spin-product
+ * Hamiltonian action is factorized as
  *
  * `H_alpha X S_beta^T + S_alpha X H_beta^T`
  *
  * plus one factored alpha/beta product per active-orbital pair channel. This
  * replaces the quadratic full-determinant pair traversal with dense spin-space
- * contractions. The sparse `B` expansion is applied before and after these
- * contractions, and dense structure-space matrices are never allocated. The
- * constructed action owns every expansion, factor, and diagonal needed by
- * `apply()`; its lifetime is independent of the construction inputs.
+ * contractions. The sparse `C` and `C^T` contractions are applied without an
+ * intermediate determinant vector, and dense structure-space matrices are
+ * never allocated. The constructed action owns every expansion, factor, and
+ * diagonal needed by `apply()`; its lifetime is independent of the
+ * construction inputs.
  */
 class StructureAction {
 public:
@@ -99,11 +100,6 @@ public:
 private:
   struct StructureTerm {
     int structure = 0;
-    double coefficient = 0.0;
-  };
-
-  struct DeterminantTerm {
-    int determinant = 0;
     double coefficient = 0.0;
   };
 
@@ -171,10 +167,8 @@ private:
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
       Eigen::MatrixXd* spin_hamiltonian) const;
 
-  std::vector<std::size_t> determinant_term_offsets_;
-  std::vector<StructureTerm> determinant_terms_;
-  std::vector<std::size_t> structure_term_offsets_;
-  std::vector<DeterminantTerm> structure_terms_;
+  std::vector<std::size_t> spin_term_offsets_;
+  std::vector<StructureTerm> spin_terms_;
   StructureDiagonal diagonal_;
   Eigen::MatrixXd alpha_overlap_;
   Eigen::MatrixXd alpha_hamiltonian_;
@@ -183,7 +177,6 @@ private:
   std::vector<OppositeSpinChannel> opposite_spin_channels_;
   SupportedChannelFamily row_supported_channels_;
   SupportedChannelFamily column_supported_channels_;
-  std::vector<int> determinant_to_spin_product_;
   bool alpha_projection_is_dense_ = false;
   int n_determinants_ = 0;
   int n_structures_ = 0;

@@ -380,21 +380,18 @@ Eigen::MatrixXd pack_transposed_row_slices(
   return packed;
 }
 
-DeterminantPairScalars evaluate_pair(
+DeterminantPairScalars evaluate_spin_product_pair(
     const SameSpinPairCacheContext& cache,
-    int left_determinant,
-    int right_determinant,
+    int left_spin_product,
+    int right_spin_product,
+    int n_unique_beta,
     const ActiveSpaceTwoElectronView& two_electron_view,
     int n_active_orbitals,
     int n_packed_pairs) {
-  const int alpha_left =
-      cache.alpha_reuse_table.determinant_to_unique_id[left_determinant];
-  const int alpha_right =
-      cache.alpha_reuse_table.determinant_to_unique_id[right_determinant];
-  const int beta_left =
-      cache.beta_reuse_table.determinant_to_unique_id[left_determinant];
-  const int beta_right =
-      cache.beta_reuse_table.determinant_to_unique_id[right_determinant];
+  const int alpha_left = left_spin_product / n_unique_beta;
+  const int alpha_right = right_spin_product / n_unique_beta;
+  const int beta_left = left_spin_product % n_unique_beta;
+  const int beta_right = right_spin_product % n_unique_beta;
 
   const auto& alpha = cache.alpha_pair_cache_ref()[
       ordered_spin_pair_storage_index(
@@ -526,7 +523,9 @@ StructureAction::StructureAction(
   build_opposite_spin_channels(
       alpha_pair_cache, beta_pair_cache, n_packed_pairs);
 
-  determinant_to_spin_product_.resize(n_determinants_);
+  const int n_spin_products = n_unique_alpha_ * n_unique_beta_;
+  std::vector<std::vector<StructureTerm>> terms_by_spin_product(
+      n_spin_products);
   for (int determinant = 0;
        determinant < n_determinants_;
        ++determinant) {
@@ -534,44 +533,62 @@ StructureAction::StructureAction(
                           .determinant_to_unique_id[determinant];
     const int beta = same_spin_pair_cache.beta_reuse_table
                          .determinant_to_unique_id[determinant];
-    determinant_to_spin_product_[determinant] =
-        alpha * n_unique_beta_ + beta;
-  }
-
-  determinant_term_offsets_.resize(n_determinants_ + 1, 0);
-  structure_term_offsets_.resize(n_structures_ + 1, 0);
-  std::size_t n_expansion_terms = 0;
-  for (int determinant = 0;
-       determinant < n_determinants_;
-       ++determinant) {
-    determinant_term_offsets_[determinant] = n_expansion_terms;
+    const int spin_product = alpha * n_unique_beta_ + beta;
     for (const auto& term : determinant_to_structure_terms[determinant]) {
       if (term.structure_index < 0 ||
           term.structure_index >= n_structures_) {
         throw std::out_of_range(
             "determinant expansion structure index is out of range");
       }
-      ++structure_term_offsets_[term.structure_index + 1];
-      ++n_expansion_terms;
+      terms_by_spin_product[spin_product].push_back(
+          StructureTerm{term.structure_index, term.coefficient});
     }
   }
-  determinant_term_offsets_[n_determinants_] = n_expansion_terms;
-  for (int structure = 0; structure < n_structures_; ++structure) {
-    structure_term_offsets_[structure + 1] +=
-        structure_term_offsets_[structure];
+
+  spin_term_offsets_.reserve(static_cast<std::size_t>(n_spin_products) + 1);
+  spin_term_offsets_.push_back(0);
+  for (auto& terms : terms_by_spin_product) {
+    std::sort(
+        terms.begin(),
+        terms.end(),
+        [](const StructureTerm& left, const StructureTerm& right) {
+          return left.structure < right.structure;
+        });
+    const std::size_t first = spin_terms_.size();
+    for (const StructureTerm& term : terms) {
+      if (spin_terms_.size() > first &&
+          spin_terms_.back().structure == term.structure) {
+        spin_terms_.back().coefficient += term.coefficient;
+      } else {
+        spin_terms_.push_back(term);
+      }
+    }
+    spin_terms_.erase(
+        std::remove_if(
+            spin_terms_.begin() + first,
+            spin_terms_.end(),
+            [](const StructureTerm& term) {
+              return term.coefficient == 0.0;
+            }),
+        spin_terms_.end());
+    spin_term_offsets_.push_back(spin_terms_.size());
   }
 
-  determinant_terms_.reserve(n_expansion_terms);
-  structure_terms_.resize(n_expansion_terms);
-  std::vector<std::size_t> structure_cursors = structure_term_offsets_;
-  for (int determinant = 0;
-       determinant < n_determinants_;
-       ++determinant) {
-    for (const auto& term : determinant_to_structure_terms[determinant]) {
-      determinant_terms_.push_back(
-          StructureTerm{term.structure_index, term.coefficient});
-      structure_terms_[structure_cursors[term.structure_index]++] =
-          DeterminantTerm{determinant, term.coefficient};
+  struct StructureSpinTerm {
+    int spin_product = 0;
+    double coefficient = 0.0;
+  };
+  std::vector<std::vector<StructureSpinTerm>> terms_by_structure(
+      n_structures_);
+  for (int spin_product = 0;
+       spin_product < n_spin_products;
+       ++spin_product) {
+    for (std::size_t term_index = spin_term_offsets_[spin_product];
+         term_index < spin_term_offsets_[spin_product + 1];
+         ++term_index) {
+      const StructureTerm& term = spin_terms_[term_index];
+      terms_by_structure[term.structure].push_back(
+          StructureSpinTerm{spin_product, term.coefficient});
     }
   }
 
@@ -587,18 +604,13 @@ StructureAction::StructureAction(
   for (int structure = 0; structure < n_structures_; ++structure) {
     double hamiltonian = 0.0;
     double overlap = 0.0;
-    const std::size_t first = structure_term_offsets_[structure];
-    const std::size_t last = structure_term_offsets_[structure + 1];
-    for (std::size_t left_index = first; left_index < last; ++left_index) {
-      const auto& left = structure_terms_[left_index];
-      for (std::size_t right_index = first;
-           right_index < last;
-           ++right_index) {
-        const auto& right = structure_terms_[right_index];
-        const DeterminantPairScalars pair = evaluate_pair(
+    for (const StructureSpinTerm& left : terms_by_structure[structure]) {
+      for (const StructureSpinTerm& right : terms_by_structure[structure]) {
+        const DeterminantPairScalars pair = evaluate_spin_product_pair(
             same_spin_pair_cache,
-            left.determinant,
-            right.determinant,
+            left.spin_product,
+            right.spin_product,
+            n_unique_beta_,
             two_electron_view,
             n_active_orbitals,
             n_packed_pairs);
@@ -1015,35 +1027,22 @@ StructureActionResult StructureAction::apply(
   }
 
   const int block_width = static_cast<int>(vectors.cols());
-  Eigen::MatrixXd determinant_vectors =
-      Eigen::MatrixXd::Zero(n_determinants_, block_width);
-  for (int determinant = 0;
-       determinant < n_determinants_;
-       ++determinant) {
-    for (std::size_t term_index = determinant_term_offsets_[determinant];
-         term_index < determinant_term_offsets_[determinant + 1];
-         ++term_index) {
-      const auto& term = determinant_terms_[term_index];
-      determinant_vectors.row(determinant).noalias() +=
-          term.coefficient * vectors.row(term.structure);
-    }
-  }
-
-  Eigen::MatrixXd determinant_hamiltonian =
-      Eigen::MatrixXd::Zero(n_determinants_, block_width);
-  Eigen::MatrixXd determinant_overlap =
-      Eigen::MatrixXd::Zero(n_determinants_, block_width);
   Eigen::MatrixXd spin_vectors = Eigen::MatrixXd::Zero(
       n_unique_alpha_, block_width * n_unique_beta_);
-  for (int determinant = 0;
-       determinant < n_determinants_;
-       ++determinant) {
-    const int spin_product = determinant_to_spin_product_[determinant];
+  const int n_spin_products = n_unique_alpha_ * n_unique_beta_;
+  for (int spin_product = 0;
+       spin_product < n_spin_products;
+       ++spin_product) {
     const int alpha = spin_product / n_unique_beta_;
     const int beta = spin_product % n_unique_beta_;
-    for (int vector = 0; vector < block_width; ++vector) {
-      spin_vectors(alpha, vector * n_unique_beta_ + beta) =
-          determinant_vectors(determinant, vector);
+    for (std::size_t term_index = spin_term_offsets_[spin_product];
+         term_index < spin_term_offsets_[spin_product + 1];
+         ++term_index) {
+      const StructureTerm& term = spin_terms_[term_index];
+      for (int vector = 0; vector < block_width; ++vector) {
+        spin_vectors(alpha, vector * n_unique_beta_ + beta) +=
+            term.coefficient * vectors(term.structure, vector);
+      }
     }
   }
 
@@ -1088,37 +1087,29 @@ StructureActionResult StructureAction::apply(
         vector * n_unique_beta_, n_unique_beta_) += channel_hamiltonian;
   }
 
-  for (int determinant = 0;
-       determinant < n_determinants_;
-       ++determinant) {
-    const int spin_product = determinant_to_spin_product_[determinant];
-    const int alpha = spin_product / n_unique_beta_;
-    const int beta = spin_product % n_unique_beta_;
-    for (int vector = 0; vector < block_width; ++vector) {
-      determinant_hamiltonian(determinant, vector) =
-          spin_hamiltonians(alpha, vector * n_unique_beta_ + beta);
-      determinant_overlap(determinant, vector) =
-          spin_overlaps(alpha, vector * n_unique_beta_ + beta);
-    }
-  }
-
   StructureActionResult result;
   result.hamiltonian =
       Eigen::MatrixXd::Zero(n_structures_, block_width);
   result.overlap =
       Eigen::MatrixXd::Zero(n_structures_, block_width);
 
-  for (int structure = 0; structure < n_structures_; ++structure) {
-    for (std::size_t term_index = structure_term_offsets_[structure];
-         term_index < structure_term_offsets_[structure + 1];
+  for (int spin_product = 0;
+       spin_product < n_spin_products;
+       ++spin_product) {
+    const int alpha = spin_product / n_unique_beta_;
+    const int beta = spin_product % n_unique_beta_;
+    for (std::size_t term_index = spin_term_offsets_[spin_product];
+         term_index < spin_term_offsets_[spin_product + 1];
          ++term_index) {
-      const auto& term = structure_terms_[term_index];
-      result.hamiltonian.row(structure).noalias() +=
-          term.coefficient *
-          determinant_hamiltonian.row(term.determinant);
-      result.overlap.row(structure).noalias() +=
-          term.coefficient *
-          determinant_overlap.row(term.determinant);
+      const StructureTerm& term = spin_terms_[term_index];
+      for (int vector = 0; vector < block_width; ++vector) {
+        result.hamiltonian(term.structure, vector) +=
+            term.coefficient *
+            spin_hamiltonians(alpha, vector * n_unique_beta_ + beta);
+        result.overlap(term.structure, vector) +=
+            term.coefficient *
+            spin_overlaps(alpha, vector * n_unique_beta_ + beta);
+      }
     }
   }
   return result;
@@ -1141,10 +1132,8 @@ StructureActionStorage StructureAction::storage() const noexcept {
   result.channel_nonzeros = channel_nonzeros_;
   result.channel_dense_values = channel_dense_values_;
   result.expansion_bytes =
-      (determinant_term_offsets_.size() + structure_term_offsets_.size()) *
-          sizeof(std::size_t) +
-      determinant_terms_.size() * sizeof(StructureTerm) +
-      structure_terms_.size() * sizeof(DeterminantTerm);
+      spin_term_offsets_.size() * sizeof(std::size_t) +
+      spin_terms_.size() * sizeof(StructureTerm);
   result.diagonal_bytes =
       static_cast<std::size_t>(
           diagonal_.hamiltonian.size() + diagonal_.overlap.size()) *
