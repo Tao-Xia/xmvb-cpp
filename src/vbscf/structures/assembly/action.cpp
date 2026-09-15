@@ -329,6 +329,57 @@ ChannelLayout select_channel_layout(
   return layout;
 }
 
+/**
+ * @brief Transposes each horizontal matrix block without changing block order.
+ *
+ * The input layout is `[X_0 X_1 ...]`; the returned layout is
+ * `[X_0^T X_1^T ...]`. Packing all right-hand sides horizontally lets Eigen
+ * execute the common factor contraction as one matrix multiplication.
+ */
+Eigen::MatrixXd transpose_matrix_blocks(
+    const Eigen::Ref<const Eigen::MatrixXd>& blocks,
+    int block_rows,
+    int block_columns) {
+  if (block_rows <= 0 || block_columns <= 0 ||
+      blocks.rows() != block_rows ||
+      blocks.cols() % block_columns != 0) {
+    throw std::invalid_argument("matrix block transpose dimensions differ");
+  }
+  const int block_count = static_cast<int>(blocks.cols()) / block_columns;
+  Eigen::MatrixXd transposed(block_columns, block_count * block_rows);
+  for (int block = 0; block < block_count; ++block) {
+    transposed.middleCols(block * block_rows, block_rows) =
+        blocks.middleCols(block * block_columns, block_columns).transpose();
+  }
+  return transposed;
+}
+
+/**
+ * @brief Packs one row slice from every horizontal block as transposed columns.
+ */
+Eigen::MatrixXd pack_transposed_row_slices(
+    const Eigen::Ref<const Eigen::MatrixXd>& blocks,
+    int first_row,
+    int slice_rows,
+    int block_columns) {
+  if (first_row < 0 || slice_rows <= 0 ||
+      first_row + slice_rows > blocks.rows() ||
+      block_columns <= 0 || blocks.cols() % block_columns != 0) {
+    throw std::invalid_argument("matrix row-slice dimensions differ");
+  }
+  const int block_count = static_cast<int>(blocks.cols()) / block_columns;
+  Eigen::MatrixXd packed(block_columns, block_count * slice_rows);
+  for (int block = 0; block < block_count; ++block) {
+    packed.middleCols(block * slice_rows, slice_rows) =
+        blocks.block(
+            first_row,
+            block * block_columns,
+            slice_rows,
+            block_columns).transpose();
+  }
+  return packed;
+}
+
 DeterminantPairScalars evaluate_pair(
     const SameSpinPairCacheContext& cache,
     int left_determinant,
@@ -740,73 +791,219 @@ void StructureAction::build_opposite_spin_channels(
   }
 }
 
-void StructureAction::apply_supported_channels(
+void StructureAction::add_supported_channel_block(
     const SupportedChannelFamily& family,
     bool supports_rows,
-    const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
-    Eigen::MatrixXd* spin_hamiltonian) const {
-  if (!family.enabled() || spin_hamiltonian == nullptr) {
+    const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& transposed_spin_vectors,
+    Eigen::MatrixXd* spin_hamiltonians) const {
+  if (!family.enabled() || spin_hamiltonians == nullptr ||
+      spin_vectors.rows() != n_unique_alpha_ ||
+      spin_vectors.cols() % n_unique_beta_ != 0) {
     throw std::invalid_argument(
-        "supported channel action requires initialized inputs");
+        "supported channel block has incompatible dimensions");
+  }
+  const int block_width =
+      static_cast<int>(spin_vectors.cols()) / n_unique_beta_;
+  if (transposed_spin_vectors.rows() != n_unique_beta_ ||
+      transposed_spin_vectors.cols() != block_width * n_unique_alpha_ ||
+      spin_hamiltonians->rows() != n_unique_alpha_ ||
+      spin_hamiltonians->cols() != spin_vectors.cols()) {
+    throw std::invalid_argument(
+        "transposed supported channel block has incompatible dimensions");
   }
   if (alpha_projection_is_dense_) {
-    Eigen::MatrixXd raw_images(n_unique_alpha_, family.raw.cols());
     if (supports_rows) {
-      raw_images.noalias() = spin_vector * family.raw;
-    } else {
-      for (int column = 0; column < family.raw.cols(); ++column) {
-        raw_images.col(column) = spin_vector.col(family.support[column]);
-      }
+      add_alpha_projected_row_support(
+          family, transposed_spin_vectors, spin_hamiltonians);
+      return;
     }
-    Eigen::MatrixXd projected_images(
-        n_unique_alpha_, family.raw.cols());
-    for (std::size_t channel = 0;
-         channel < family.projected.size();
-         ++channel) {
-      const int first = family.offsets[channel];
-      const int width = family.offsets[channel + 1] - first;
-      projected_images.middleCols(first, width).noalias() =
-          family.projected[channel] *
-          raw_images.middleCols(first, width);
-    }
-    if (supports_rows) {
-      for (int column = 0; column < family.raw.cols(); ++column) {
-        spin_hamiltonian->col(family.support[column]).noalias() +=
-            projected_images.col(column);
-      }
-    } else {
-      spin_hamiltonian->noalias() +=
-          projected_images * family.raw.transpose();
-    }
+    add_alpha_projected_column_support(
+        family, spin_vectors, spin_hamiltonians);
     return;
   }
 
-  Eigen::MatrixXd raw_images(family.raw.cols(), n_unique_beta_);
   if (supports_rows) {
-    raw_images.noalias() = family.raw.transpose() * spin_vector;
-  } else {
-    for (int row = 0; row < family.raw.cols(); ++row) {
-      raw_images.row(row) = spin_vector.row(family.support[row]);
-    }
+    add_beta_projected_row_support(
+        family, spin_vectors, spin_hamiltonians);
+    return;
   }
-  Eigen::MatrixXd projected_images(
-      family.raw.cols(), n_unique_beta_);
+
+  add_beta_projected_column_support(
+      family, spin_vectors, spin_hamiltonians);
+}
+
+void StructureAction::add_alpha_projected_row_support(
+    const SupportedChannelFamily& family,
+    const Eigen::Ref<const Eigen::MatrixXd>& transposed_spin_vectors,
+    Eigen::MatrixXd* spin_hamiltonians) const {
+  const int block_width = static_cast<int>(
+      transposed_spin_vectors.cols()) / n_unique_alpha_;
+  const Eigen::MatrixXd raw_images_transposed =
+      family.raw.transpose() * transposed_spin_vectors;
   for (std::size_t channel = 0;
        channel < family.projected.size();
        ++channel) {
     const int first = family.offsets[channel];
     const int width = family.offsets[channel + 1] - first;
-    projected_images.middleRows(first, width).noalias() =
-        raw_images.middleRows(first, width) *
-        family.projected[channel].transpose();
-  }
-  if (supports_rows) {
-    for (int row = 0; row < family.raw.cols(); ++row) {
-      spin_hamiltonian->row(family.support[row]).noalias() +=
-          projected_images.row(row);
+    const Eigen::MatrixXd packed = pack_transposed_row_slices(
+        raw_images_transposed, first, width, n_unique_alpha_);
+    const Eigen::MatrixXd projected = family.projected[channel] * packed;
+    for (int vector = 0; vector < block_width; ++vector) {
+      for (int local = 0; local < width; ++local) {
+        spin_hamiltonians->col(
+            vector * n_unique_beta_ + family.support[first + local]) +=
+            projected.col(vector * width + local);
+      }
     }
-  } else {
-    spin_hamiltonian->noalias() += family.raw * projected_images;
+  }
+}
+
+void StructureAction::add_alpha_projected_column_support(
+    const SupportedChannelFamily& family,
+    const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
+    Eigen::MatrixXd* spin_hamiltonians) const {
+  const int block_width =
+      static_cast<int>(spin_vectors.cols()) / n_unique_beta_;
+  const int family_width = static_cast<int>(family.raw.cols());
+  Eigen::MatrixXd raw_images(n_unique_alpha_, block_width * family_width);
+  for (int vector = 0; vector < block_width; ++vector) {
+    for (int column = 0; column < family_width; ++column) {
+      raw_images.col(vector * family_width + column) =
+          spin_vectors.col(
+              vector * n_unique_beta_ + family.support[column]);
+    }
+  }
+
+  Eigen::MatrixXd projected_images(n_unique_alpha_, raw_images.cols());
+  for (std::size_t channel = 0;
+       channel < family.projected.size();
+       ++channel) {
+    const int first = family.offsets[channel];
+    const int width = family.offsets[channel + 1] - first;
+    Eigen::MatrixXd packed(n_unique_alpha_, block_width * width);
+    for (int vector = 0; vector < block_width; ++vector) {
+      packed.middleCols(vector * width, width) =
+          raw_images.middleCols(vector * family_width + first, width);
+    }
+    const Eigen::MatrixXd projected = family.projected[channel] * packed;
+    for (int vector = 0; vector < block_width; ++vector) {
+      projected_images.middleCols(
+          vector * family_width + first, width) =
+          projected.middleCols(vector * width, width);
+    }
+  }
+  const Eigen::MatrixXd projected_images_transposed = transpose_matrix_blocks(
+      projected_images, n_unique_alpha_, family_width);
+  const Eigen::MatrixXd spin_images_transposed =
+      family.raw * projected_images_transposed;
+  spin_hamiltonians->noalias() += transpose_matrix_blocks(
+      spin_images_transposed, n_unique_beta_, n_unique_alpha_);
+}
+
+void StructureAction::add_beta_projected_row_support(
+    const SupportedChannelFamily& family,
+    const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
+    Eigen::MatrixXd* spin_hamiltonians) const {
+  const int block_width =
+      static_cast<int>(spin_vectors.cols()) / n_unique_beta_;
+  const Eigen::MatrixXd raw_images = family.raw.transpose() * spin_vectors;
+  for (std::size_t channel = 0;
+       channel < family.projected.size();
+       ++channel) {
+    const int first = family.offsets[channel];
+    const int width = family.offsets[channel + 1] - first;
+    const Eigen::MatrixXd packed = pack_transposed_row_slices(
+        raw_images, first, width, n_unique_beta_);
+    const Eigen::MatrixXd projected = family.projected[channel] * packed;
+    for (int vector = 0; vector < block_width; ++vector) {
+      for (int local = 0; local < width; ++local) {
+        spin_hamiltonians->row(family.support[first + local])
+            .segment(vector * n_unique_beta_, n_unique_beta_) +=
+            projected.col(vector * width + local).transpose();
+      }
+    }
+  }
+}
+
+void StructureAction::add_beta_projected_column_support(
+    const SupportedChannelFamily& family,
+    const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
+    Eigen::MatrixXd* spin_hamiltonians) const {
+  const int block_width =
+      static_cast<int>(spin_vectors.cols()) / n_unique_beta_;
+  const int family_width = static_cast<int>(family.raw.cols());
+
+  Eigen::MatrixXd raw_images(family_width, spin_vectors.cols());
+  for (int row = 0; row < family_width; ++row) {
+    for (int vector = 0; vector < block_width; ++vector) {
+      raw_images.row(row).segment(
+          vector * n_unique_beta_, n_unique_beta_) =
+          spin_vectors.row(family.support[row]).segment(
+              vector * n_unique_beta_, n_unique_beta_);
+    }
+  }
+  Eigen::MatrixXd projected_images(family_width, spin_vectors.cols());
+  for (std::size_t channel = 0;
+       channel < family.projected.size();
+       ++channel) {
+    const int first = family.offsets[channel];
+    const int width = family.offsets[channel + 1] - first;
+    const Eigen::MatrixXd packed = pack_transposed_row_slices(
+        raw_images, first, width, n_unique_beta_);
+    const Eigen::MatrixXd projected = family.projected[channel] * packed;
+    for (int vector = 0; vector < block_width; ++vector) {
+      projected_images.block(
+          first,
+          vector * n_unique_beta_,
+          width,
+          n_unique_beta_) =
+          projected.middleCols(vector * width, width).transpose();
+    }
+  }
+  spin_hamiltonians->noalias() += family.raw * projected_images;
+}
+
+void StructureAction::add_individual_channels(
+    const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
+    Eigen::MatrixXd* spin_hamiltonian) const {
+  if (spin_vector.rows() != n_unique_alpha_ ||
+      spin_vector.cols() != n_unique_beta_ ||
+      spin_hamiltonian == nullptr ||
+      spin_hamiltonian->rows() != n_unique_alpha_ ||
+      spin_hamiltonian->cols() != n_unique_beta_) {
+    throw std::invalid_argument(
+        "opposite-spin channel action has incompatible dimensions");
+  }
+  Eigen::MatrixXd product(n_unique_alpha_, n_unique_beta_);
+  for (const auto& channel : opposite_spin_channels_) {
+    if (alpha_projection_is_dense_) {
+      product.noalias() = channel.projected * spin_vector;
+      if (channel.dense.size() != 0) {
+        spin_hamiltonian->noalias() +=
+            product * channel.dense.transpose();
+        continue;
+      }
+      for (const auto& entry : channel.sparse) {
+        spin_hamiltonian->col(entry.row()).noalias() +=
+            entry.value() * product.col(entry.col());
+      }
+      continue;
+    }
+
+    if (channel.dense.size() != 0) {
+      product.noalias() = channel.dense * spin_vector;
+      spin_hamiltonian->noalias() +=
+          product * channel.projected.transpose();
+      continue;
+    }
+    product.setZero();
+    for (const auto& entry : channel.sparse) {
+      product.row(entry.row()).noalias() +=
+          entry.value() * spin_vector.row(entry.col());
+    }
+    spin_hamiltonian->noalias() +=
+        product * channel.projected.transpose();
   }
 }
 
@@ -836,76 +1033,72 @@ StructureActionResult StructureAction::apply(
       Eigen::MatrixXd::Zero(n_determinants_, block_width);
   Eigen::MatrixXd determinant_overlap =
       Eigen::MatrixXd::Zero(n_determinants_, block_width);
-  for (int vector = 0; vector < block_width; ++vector) {
-    Eigen::MatrixXd spin_vector =
-        Eigen::MatrixXd::Zero(n_unique_alpha_, n_unique_beta_);
-    for (int determinant = 0;
-         determinant < n_determinants_;
-         ++determinant) {
-      const int spin_product =
-          determinant_to_spin_product_[determinant];
-      spin_vector(
-          spin_product / n_unique_beta_,
-          spin_product % n_unique_beta_) =
+  Eigen::MatrixXd spin_vectors = Eigen::MatrixXd::Zero(
+      n_unique_alpha_, block_width * n_unique_beta_);
+  for (int determinant = 0;
+       determinant < n_determinants_;
+       ++determinant) {
+    const int spin_product = determinant_to_spin_product_[determinant];
+    const int alpha = spin_product / n_unique_beta_;
+    const int beta = spin_product % n_unique_beta_;
+    for (int vector = 0; vector < block_width; ++vector) {
+      spin_vectors(alpha, vector * n_unique_beta_ + beta) =
           determinant_vectors(determinant, vector);
     }
+  }
 
-    Eigen::MatrixXd left_product(n_unique_alpha_, n_unique_beta_);
-    Eigen::MatrixXd spin_hamiltonian(n_unique_alpha_, n_unique_beta_);
-    Eigen::MatrixXd spin_overlap(n_unique_alpha_, n_unique_beta_);
-    left_product.noalias() = alpha_hamiltonian_ * spin_vector;
-    spin_hamiltonian.noalias() = left_product * beta_overlap_.transpose();
-    left_product.noalias() = alpha_overlap_ * spin_vector;
-    spin_hamiltonian.noalias() +=
-        left_product * beta_hamiltonian_.transpose();
-    spin_overlap.noalias() = left_product * beta_overlap_.transpose();
-    if (row_supported_channels_.enabled()) {
-      apply_supported_channels(
-          row_supported_channels_, true, spin_vector, &spin_hamiltonian);
-    }
-    if (column_supported_channels_.enabled()) {
-      apply_supported_channels(
-          column_supported_channels_, false, spin_vector, &spin_hamiltonian);
-    }
-    for (const auto& channel : opposite_spin_channels_) {
-      if (alpha_projection_is_dense_) {
-        left_product.noalias() = channel.projected * spin_vector;
-        if (channel.dense.size() != 0) {
-          spin_hamiltonian.noalias() +=
-              left_product * channel.dense.transpose();
-          continue;
-        }
-        for (const auto& entry : channel.sparse) {
-          spin_hamiltonian.col(entry.row()).noalias() +=
-              entry.value() * left_product.col(entry.col());
-        }
-      } else {
-        if (channel.dense.size() != 0) {
-          left_product.noalias() = channel.dense * spin_vector;
-          spin_hamiltonian.noalias() +=
-              left_product * channel.projected.transpose();
-          continue;
-        }
-        left_product.setZero();
-        for (const auto& entry : channel.sparse) {
-          left_product.row(entry.row()).noalias() +=
-              entry.value() * spin_vector.row(entry.col());
-        }
-        spin_hamiltonian.noalias() +=
-            left_product * channel.projected.transpose();
-      }
-    }
+  const Eigen::MatrixXd transposed_spin_vectors = transpose_matrix_blocks(
+      spin_vectors, n_unique_alpha_, n_unique_beta_);
+  const Eigen::MatrixXd right_overlap_transposed =
+      beta_overlap_ * transposed_spin_vectors;
+  const Eigen::MatrixXd right_hamiltonian_transposed =
+      beta_hamiltonian_ * transposed_spin_vectors;
+  const Eigen::MatrixXd right_overlap = transpose_matrix_blocks(
+      right_overlap_transposed, n_unique_beta_, n_unique_alpha_);
+  const Eigen::MatrixXd right_hamiltonian = transpose_matrix_blocks(
+      right_hamiltonian_transposed, n_unique_beta_, n_unique_alpha_);
+  Eigen::MatrixXd spin_hamiltonians = alpha_hamiltonian_ * right_overlap;
+  spin_hamiltonians.noalias() += alpha_overlap_ * right_hamiltonian;
+  Eigen::MatrixXd spin_overlaps = alpha_overlap_ * right_overlap;
+  if (row_supported_channels_.enabled()) {
+    add_supported_channel_block(
+        row_supported_channels_,
+        true,
+        spin_vectors,
+        transposed_spin_vectors,
+        &spin_hamiltonians);
+  }
+  if (column_supported_channels_.enabled()) {
+    add_supported_channel_block(
+        column_supported_channels_,
+        false,
+        spin_vectors,
+        transposed_spin_vectors,
+        &spin_hamiltonians);
+  }
 
-    for (int determinant = 0;
-         determinant < n_determinants_;
-         ++determinant) {
-      const int spin_product =
-          determinant_to_spin_product_[determinant];
-      const int alpha = spin_product / n_unique_beta_;
-      const int beta = spin_product % n_unique_beta_;
+  for (int vector = 0; vector < block_width; ++vector) {
+    Eigen::MatrixXd channel_hamiltonian =
+        Eigen::MatrixXd::Zero(n_unique_alpha_, n_unique_beta_);
+    add_individual_channels(
+        spin_vectors.middleCols(
+            vector * n_unique_beta_, n_unique_beta_),
+        &channel_hamiltonian);
+    spin_hamiltonians.middleCols(
+        vector * n_unique_beta_, n_unique_beta_) += channel_hamiltonian;
+  }
+
+  for (int determinant = 0;
+       determinant < n_determinants_;
+       ++determinant) {
+    const int spin_product = determinant_to_spin_product_[determinant];
+    const int alpha = spin_product / n_unique_beta_;
+    const int beta = spin_product % n_unique_beta_;
+    for (int vector = 0; vector < block_width; ++vector) {
       determinant_hamiltonian(determinant, vector) =
-          spin_hamiltonian(alpha, beta);
-      determinant_overlap(determinant, vector) = spin_overlap(alpha, beta);
+          spin_hamiltonians(alpha, vector * n_unique_beta_ + beta);
+      determinant_overlap(determinant, vector) =
+          spin_overlaps(alpha, vector * n_unique_beta_ + beta);
     }
   }
 
