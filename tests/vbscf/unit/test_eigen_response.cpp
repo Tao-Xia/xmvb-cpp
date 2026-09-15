@@ -72,6 +72,7 @@ int main() {
       overlap.diagonal(),
       eigenvalues,
       eigenvectors,
+      overlap * eigenvectors,
       delta_hamiltonian_selected,
       delta_overlap_selected,
       options);

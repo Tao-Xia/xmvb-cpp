@@ -14,6 +14,7 @@ void validate_inputs(
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
     const EigenResponseOptions& options) {
@@ -22,6 +23,8 @@ void validate_inputs(
   if (n <= 0 || n_selected <= 0 || overlap_diagonal.size() != n ||
       selected_eigenvectors.rows() != n ||
       selected_eigenvectors.cols() != n_selected ||
+      overlap_selected.rows() != n ||
+      overlap_selected.cols() != n_selected ||
       delta_hamiltonian_selected.rows() != n ||
       delta_hamiltonian_selected.cols() != n_selected ||
       delta_overlap_selected.rows() != n ||
@@ -33,6 +36,7 @@ void validate_inputs(
       !overlap_diagonal.allFinite() ||
       !selected_eigenvalues.allFinite() ||
       !selected_eigenvectors.allFinite() ||
+      !overlap_selected.allFinite() ||
       !delta_hamiltonian_selected.allFinite() ||
       !delta_overlap_selected.allFinite() ||
       (overlap_diagonal.array() <= 0.0).any()) {
@@ -121,6 +125,7 @@ EigenResponseResult solve_generalized_eigen_response(
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
     const EigenResponseOptions& options) {
@@ -129,6 +134,7 @@ EigenResponseResult solve_generalized_eigen_response(
       overlap_diagonal,
       selected_eigenvalues,
       selected_eigenvectors,
+      overlap_selected,
       delta_hamiltonian_selected,
       delta_overlap_selected,
       options);
@@ -138,9 +144,6 @@ EigenResponseResult solve_generalized_eigen_response(
   EigenResponseResult result;
   result.eigenvalue_response.resize(n_selected);
 
-  const GeneralizedEigenActionResult accepted_images = apply_checked(
-      action, selected_eigenvectors, &result.block_actions);
-  const Eigen::MatrixXd& overlap_selected = accepted_images.overlap;
   Eigen::MatrixXd rhs(n + 1, n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const Eigen::VectorXd forcing =

@@ -78,6 +78,10 @@ build_accepted_selected_state_generalized_eigen_response_operator(
       n_selected_states);
   response_operator.selected_eigenvectors =
       accepted_point_context.selected_state_eigenvectors;
+  response_operator.overlap_selected =
+      response_operator.structure_action
+          ->apply(response_operator.selected_eigenvectors)
+          .overlap;
   accepted_point_context.structure_solve_accuracy.validate();
   // A first-order eigensystem response feeds a second-order orbital model.
   // Reusing the outer gradient threshold directly can leave the Rayleigh
@@ -170,6 +174,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply(
           diagonal.overlap,
           selected_eigenvalues,
           selected_eigenvectors,
+          overlap_selected,
           directional_images.delta_hamiltonian_selected,
           directional_images.delta_overlap_selected,
           xmvb::core::EigenResponseOptions{

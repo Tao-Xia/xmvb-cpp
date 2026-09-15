@@ -37,6 +37,7 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   const StructureAction* structure_action = nullptr;
   Eigen::VectorXd selected_eigenvalues;
   Eigen::MatrixXd selected_eigenvectors;
+  Eigen::MatrixXd overlap_selected;
   double relative_residual_tolerance = 0.0;
 
   SelectedStateGeneralizedEigenDirectionalResponse apply(
