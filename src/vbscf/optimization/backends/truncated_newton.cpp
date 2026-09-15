@@ -458,7 +458,7 @@ BackendRunResult run_truncated_newton_backend(
           current_projection.reduced_gradient +
           truncated_newton_step.reduced_hessian_times_step +
           truncated_newton_step.trust_region_shift *
-              truncated_newton_step.reduced_step;
+              retraction_metric.apply(truncated_newton_step.reduced_step);
       const double residual_norm = kkt_residual.stableNorm();
       if (std::isfinite(residual_norm)) {
         iteration_record.has_kkt_residual = true;
