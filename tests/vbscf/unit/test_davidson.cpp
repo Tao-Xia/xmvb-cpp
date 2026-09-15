@@ -245,11 +245,52 @@ bool run_default_option_cases() {
   return passed;
 }
 
+bool run_complete_spectrum_case() {
+  constexpr int dimension = 48;
+  const DenseProblem problem = make_nonorthogonal_problem(dimension);
+  const xmvb::core::GeneralizedEigenAction action =
+      [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+        return xmvb::core::GeneralizedEigenActionResult{
+            problem.hamiltonian * vectors,
+            problem.overlap * vectors};
+      };
+  xmvb::core::DavidsonOptions options =
+      xmvb::core::make_davidson_options(
+          dimension, 1, 1.0e-7, 1.0e-7);
+  options.complete_spectrum = true;
+  const xmvb::core::GeneralizedEigensolver solver;
+  const auto computed = solver.solve_davidson(
+      action,
+      problem.hamiltonian.diagonal(),
+      problem.overlap.diagonal(),
+      options);
+  const auto dense = solver.solve_dense(
+      flatten(problem.hamiltonian),
+      flatten(problem.overlap),
+      dimension);
+  const Eigen::Map<const Eigen::MatrixXd> vectors(
+      computed.eigenpairs.eigenvector_matrix.data(),
+      dimension, dimension);
+  const bool passed =
+      computed.eigenpairs.eigenvalues.size() == dimension &&
+      computed.peak_subspace_dimension == dimension &&
+      max_eigenvalue_error(
+          dense.eigenvalues, computed.eigenpairs.eigenvalues,
+          dimension) < 1.0e-9 &&
+      (vectors.transpose() * problem.overlap * vectors -
+           Eigen::MatrixXd::Identity(dimension, dimension))
+              .cwiseAbs().maxCoeff() < 1.0e-10;
+  std::cout << "complete Davidson spectrum n=" << dimension
+            << (passed ? " PASS\n" : " FAIL\n");
+  return passed;
+}
+
 }  // namespace
 
 int main() {
   bool passed = true;
   passed = run_default_option_cases() && passed;
+  passed = run_complete_spectrum_case() && passed;
   for (const int dimension : {80, 120, 200, 400, 600}) {
     for (const int n_roots : {1, 3, 5, 8}) {
       passed = run_case(

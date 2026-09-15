@@ -47,4 +47,23 @@ EigenResponseResult solve_generalized_eigen_response(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
     const EigenResponseOptions& options);
 
+/**
+ * @brief Applies the complete generalized eigenspectrum to selected responses.
+ *
+ * Dense solves and memory-affordable Davidson bases retain the full spectrum.
+ * This route evaluates its first-order response and certifies the bordered true
+ * residual with the independent H/S action; it never forms an orbital Hessian.
+ */
+EigenResponseResult solve_generalized_eigen_response_from_full_spectrum(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& full_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& full_eigenvectors,
+    const std::vector<int>& selected_root_indices,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    double relative_residual_tolerance);
+
 }  // namespace xmvb::core

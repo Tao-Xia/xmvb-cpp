@@ -76,6 +76,18 @@ int main() {
       delta_hamiltonian_selected,
       delta_overlap_selected,
       options);
+  const auto spectral_response =
+      xmvb::core::solve_generalized_eigen_response_from_full_spectrum(
+          action,
+          eigensolver.eigenvalues(),
+          eigensolver.eigenvectors(),
+          roots,
+          eigenvalues,
+          eigenvectors,
+          overlap * eigenvectors,
+          delta_hamiltonian_selected,
+          delta_overlap_selected,
+          options.relative_residual_tolerance);
 
   double max_vector_error = 0.0;
   double max_energy_error = 0.0;
@@ -120,12 +132,22 @@ int main() {
       max_energy_error <= 1.0e-12 &&
       max_gauge_error <= 1.0e-8 &&
       max_residual <= options.relative_residual_tolerance;
+  const double spectral_difference =
+      (spectral_response.eigenvector_response -
+       response.eigenvector_response)
+          .cwiseAbs().maxCoeff();
+  const bool spectral_passed =
+      spectral_response.block_actions == 1 &&
+      spectral_response.relative_residual_norms.maxCoeff() <=
+          options.relative_residual_tolerance &&
+      spectral_difference <= 1.0e-8;
   std::cout << "block_width=" << widest_action
             << " actions=" << response.block_actions
             << " vector_error=" << max_vector_error
             << " energy_error=" << max_energy_error
             << " gauge_error=" << max_gauge_error
             << " residual=" << max_residual
-            << (passed ? " PASS\n" : " FAIL\n");
-  return passed ? 0 : 1;
+            << " full_spectrum_difference=" << spectral_difference
+            << (passed && spectral_passed ? " PASS\n" : " FAIL\n");
+  return passed && spectral_passed ? 0 : 1;
 }

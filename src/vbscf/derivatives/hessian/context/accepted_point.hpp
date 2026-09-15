@@ -37,8 +37,7 @@ struct AcceptedPointContext {
   /**
    * @brief Self-contained matrix-free accepted structure problem.
    *
-   * The action supplies selected-root response solves without storing or
-   * reconstructing dense structure matrices.
+   * The action certifies selected-root responses without retaining dense H/S.
    */
   std::optional<StructureAction> structure_action;
 
@@ -82,9 +81,12 @@ struct AcceptedPointContext {
   Eigen::MatrixXd selected_state_eigenvectors;
 
   /**
-   * @brief Consecutive lowest roots retained for Davidson recycling.
+   * @brief Lowest roots, or a memory-affordable complete spectrum, for recycling.
    */
   Eigen::MatrixXd root_eigenvectors;
+
+  /** @brief Complete structure eigenvalues retained when the basis fits memory. */
+  std::vector<double> full_structure_eigenvalues;
 
   /**
    * @brief State-dependent determinant coefficient matrices on unique-spin space.

@@ -116,6 +116,11 @@ void validate_davidson_options(
       options.max_subspace_dimension > dimension) {
     throw std::invalid_argument("invalid Davidson iteration or subspace budget");
   }
+  if (options.complete_spectrum &&
+      options.max_subspace_dimension != dimension) {
+    throw std::invalid_argument(
+        "complete Davidson spectrum exceeds the basis workspace budget");
+  }
   if (!std::isfinite(options.residual_tolerance) ||
       options.residual_tolerance <= 0.0) {
     throw std::invalid_argument("Davidson residual tolerance must be positive");
@@ -294,6 +299,95 @@ void update_projected_hamiltonian(
       (0.5 * (diagonal_block + diagonal_block.transpose())).eval();
 }
 
+/** @brief Completes an action-generated S-orthonormal Davidson basis. */
+DavidsonResult complete_davidson_spectrum(
+    const GeneralizedEigenAction& action,
+    const DavidsonOptions& options,
+    Eigen::MatrixXd* basis,
+    Eigen::MatrixXd* hamiltonian_basis,
+    Eigen::MatrixXd* overlap_basis,
+    Eigen::MatrixXd* projected_hamiltonian,
+    int active_dimension,
+    DavidsonResult result) {
+  const int dimension = static_cast<int>(basis->rows());
+  // Coordinate vectors span the structure space without assembling H or S.
+  constexpr std::size_t kImageBlockBytes = 1ULL << 20;
+  const int block_width = std::max(1, std::min(
+      dimension,
+      static_cast<int>(kImageBlockBytes /
+                       (3ULL * sizeof(double) * dimension))));
+  for (int first = 0;
+       first < dimension && active_dimension < dimension;
+       first += block_width) {
+    const int count = std::min(block_width, dimension - first);
+    Eigen::MatrixXd coordinates =
+        Eigen::MatrixXd::Zero(dimension, count);
+    for (int column = 0; column < count; ++column) {
+      coordinates(first + column, column) = 1.0;
+    }
+    auto images = apply_checked(
+        action, coordinates, dimension, &result.block_actions);
+    const int previous_dimension = active_dimension;
+    active_dimension = append_s_orthonormal_block(
+        std::move(coordinates),
+        std::move(images.hamiltonian),
+        std::move(images.overlap),
+        basis,
+        hamiltonian_basis,
+        overlap_basis,
+        active_dimension);
+    update_projected_hamiltonian(
+        *basis,
+        *hamiltonian_basis,
+        previous_dimension,
+        active_dimension,
+        projected_hamiltonian);
+  }
+  if (active_dimension != dimension) {
+    throw std::runtime_error(
+        "Davidson action basis could not span the overlap metric");
+  }
+
+  result.peak_subspace_dimension = dimension;
+  const ProjectedEigenpairs complete =
+      solve_lowest_projected_eigenpairs(
+          *projected_hamiltonian, dimension);
+  const Eigen::MatrixXd complete_vectors =
+      *basis * complete.eigenvectors;
+  const Eigen::MatrixXd root_coefficients =
+      complete.eigenvectors.leftCols(options.n_roots);
+  const Eigen::MatrixXd hamiltonian_roots =
+      *hamiltonian_basis * root_coefficients;
+  const Eigen::MatrixXd overlap_roots =
+      *overlap_basis * root_coefficients;
+  for (int root = 0; root < options.n_roots; ++root) {
+    const Eigen::VectorXd residual =
+        hamiltonian_roots.col(root) -
+        complete.eigenvalues[root] * overlap_roots.col(root);
+    const double scale = std::max(
+        1.0,
+        hamiltonian_roots.col(root).norm() +
+            std::abs(complete.eigenvalues[root]) *
+                overlap_roots.col(root).norm());
+    result.relative_residual_norms[root] = residual.norm() / scale;
+    if (result.relative_residual_norms[root] > std::min(
+            options.residual_tolerance,
+            options.energy_tolerance /
+                std::max(1.0, std::abs(complete.eigenvalues[root])))) {
+      throw std::runtime_error(
+          "complete Davidson spectrum disagrees with H/S actions");
+    }
+  }
+  result.eigenpairs.eigenvalues.assign(
+      complete.eigenvalues.data(),
+      complete.eigenvalues.data() + dimension);
+  result.eigenpairs.eigenvector_matrix.assign(
+      complete_vectors.data(),
+      complete_vectors.data() + complete_vectors.size());
+  result.overlap_eigenvectors = overlap_roots;
+  return result;
+}
+
 }  // namespace
 
 DavidsonOptions make_davidson_options(
@@ -310,17 +404,26 @@ DavidsonOptions make_davidson_options(
     throw std::invalid_argument(
         "Davidson accuracy tolerances must be positive");
   }
-  const int root_block = std::min(dimension, 2 * n_roots);
-  const int dimension_increment =
-      static_cast<int>(std::ceil(
-          std::sqrt(static_cast<double>(dimension)) *
-          std::log1p(static_cast<double>(dimension))));
+  // The stored basis and its H/S images use three dimension-by-subspace
+  // matrices; the projected Hamiltonian uses one subspace square. Cap this
+  // workspace by bytes, not by a molecular or structure-count heuristic.
+  constexpr long double kBasisBudgetDoubles =
+      static_cast<long double>(64ULL * 1024ULL * 1024ULL) / sizeof(double);
+  const long double n = static_cast<long double>(dimension);
+  const long double capacity =
+      2.0L * kBasisBudgetDoubles /
+      (std::sqrt(9.0L * n * n + 4.0L * kBasisBudgetDoubles) + 3.0L * n);
+  const int max_subspace = std::min(
+      dimension,
+      static_cast<int>(std::floor(capacity)));
+  if (max_subspace < std::min(dimension, 2 * n_roots)) {
+    throw std::runtime_error(
+        "Davidson selected-root block exceeds the basis workspace budget");
+  }
   return DavidsonOptions{
       n_roots,
       2 * dimension,
-      std::min(
-          dimension,
-          std::max(root_block, n_roots + dimension_increment)),
+      max_subspace,
       energy_tolerance,
       relative_residual_tolerance};
 }
@@ -504,6 +607,17 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
     }
 
     if (converged) {
+      if (options.complete_spectrum) {
+        return complete_davidson_spectrum(
+            action,
+            options,
+            &basis,
+            &hamiltonian_basis,
+            &overlap_basis,
+            &projected_hamiltonian,
+            active_dimension,
+            std::move(result));
+      }
       result.eigenpairs.eigenvalues.assign(
           projected_eigenvalues.data(),
           projected_eigenvalues.data() + options.n_roots);
@@ -514,19 +628,16 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
       return result;
     }
 
-    // Once the S-orthonormal basis spans the complete input space, the Ritz
-    // problem is the original finite-precision problem. No independent
-    // correction direction exists, so a smaller residual cannot be obtained
-    // by restarting the same complete space.
+    // A complete S-orthonormal basis leaves no independent correction
+    // direction. Returning an inaccurate root here would violate the outer
+    // derivative contract, so report the finite-precision limit explicitly.
     if (active_dimension == dimension) {
-      result.eigenpairs.eigenvalues.assign(
-          projected_eigenvalues.data(),
-          projected_eigenvalues.data() + options.n_roots);
-      result.eigenpairs.eigenvector_matrix.assign(
-          root_vectors.data(),
-          root_vectors.data() + root_vectors.size());
-      result.overlap_eigenvectors = overlap_root_vectors;
-      return result;
+      std::ostringstream message;
+      message << "complete Davidson basis cannot meet the requested Ritz residual: "
+              << *std::max_element(
+                     result.relative_residual_norms.begin(),
+                     result.relative_residual_norms.end());
+      throw std::runtime_error(message.str());
     }
 
     corrections.conservativeResize(Eigen::NoChange, n_corrections);

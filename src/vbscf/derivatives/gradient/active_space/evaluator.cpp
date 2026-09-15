@@ -207,12 +207,14 @@ void solve_structure_problem(
               std::move(images.overlap)};
         };
     structure_solve_accuracy.validate();
-    const xmvb::core::DavidsonOptions options =
+    xmvb::core::DavidsonOptions options =
         xmvb::core::make_davidson_options(
             n_structures,
             n_roots,
             structure_solve_accuracy.energy_tolerance,
             structure_solve_accuracy.gradient_tolerance);
+    options.complete_spectrum =
+        options.max_subspace_dimension == n_structures;
     stage_start_time = std::chrono::steady_clock::now();
     const bool can_recycle =
         initial_eigenvectors.rows() == n_structures &&
@@ -405,6 +407,10 @@ finalize_active_space_second_order_context(
       context->n_structures,
       n_roots);
   context->root_eigenvectors = accepted_roots;
+  if (n_roots == context->n_structures) {
+    context->full_structure_eigenvalues =
+        std::move(forward_context->eigen_result.eigenvalues);
+  }
   if (context->use_matrix_form_opposite_spin) {
     context->selected_state_matrices =
         build_selected_state_determinant_matrices_from_selected_columns(

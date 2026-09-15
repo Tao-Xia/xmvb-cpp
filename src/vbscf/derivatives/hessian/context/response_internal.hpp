@@ -38,6 +38,9 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   Eigen::VectorXd selected_eigenvalues;
   Eigen::MatrixXd selected_eigenvectors;
   Eigen::MatrixXd overlap_selected;
+  const std::vector<double>* full_eigenvalues = nullptr;
+  const Eigen::MatrixXd* full_eigenvectors = nullptr;
+  std::vector<int> selected_root_indices;
   double relative_residual_tolerance = 0.0;
 
   SelectedStateGeneralizedEigenDirectionalResponse apply(

@@ -1,5 +1,6 @@
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -82,6 +83,21 @@ build_accepted_selected_state_generalized_eigen_response_operator(
       response_operator.structure_action
           ->apply(response_operator.selected_eigenvectors)
           .overlap;
+  if (!accepted_point_context.full_structure_eigenvalues.empty()) {
+    if (accepted_point_context.full_structure_eigenvalues.size() !=
+            static_cast<std::size_t>(n_structures) ||
+        accepted_point_context.root_eigenvectors.rows() != n_structures ||
+        accepted_point_context.root_eigenvectors.cols() != n_structures) {
+      throw std::invalid_argument(
+          "accepted point lacks a complete structure eigenspectrum");
+    }
+    response_operator.full_eigenvalues =
+        &accepted_point_context.full_structure_eigenvalues;
+    response_operator.full_eigenvectors =
+        &accepted_point_context.root_eigenvectors;
+    response_operator.selected_root_indices =
+        accepted_point_context.selected_state_indices;
+  }
   accepted_point_context.structure_solve_accuracy.validate();
   // A first-order eigensystem response feeds a second-order orbital model.
   // Reusing the outer gradient threshold directly can leave the Rayleigh
@@ -172,6 +188,10 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
   Eigen::VectorXd block_eigenvalues(n_rhs);
   Eigen::MatrixXd block_eigenvectors(n_structures, n_rhs);
   Eigen::MatrixXd block_overlap_selected(n_structures, n_rhs);
+  std::vector<int> block_root_indices;
+  if (full_eigenvalues != nullptr && full_eigenvectors != nullptr) {
+    block_root_indices.resize(n_rhs);
+  }
   for (int direction = 0; direction < n_directions; ++direction) {
     const int first = direction * n_selected_states;
     block_eigenvalues.segment(first, n_selected_states) =
@@ -180,6 +200,12 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
         selected_eigenvectors;
     block_overlap_selected.middleCols(first, n_selected_states) =
         overlap_selected;
+    if (!block_root_indices.empty()) {
+      std::copy(
+          selected_root_indices.begin(),
+          selected_root_indices.end(),
+          block_root_indices.begin() + first);
+    }
   }
   const StructureDiagonal& diagonal = structure_action->diagonal();
   const xmvb::core::GeneralizedEigenAction action =
@@ -190,7 +216,20 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
             std::move(images.overlap)};
       };
   const xmvb::core::EigenResponseResult response =
-      xmvb::core::solve_generalized_eigen_response(
+      !block_root_indices.empty()
+      ? xmvb::core::solve_generalized_eigen_response_from_full_spectrum(
+          action,
+          Eigen::Map<const Eigen::VectorXd>(
+              full_eigenvalues->data(), n_structures),
+          *full_eigenvectors,
+          block_root_indices,
+          block_eigenvalues,
+          block_eigenvectors,
+          block_overlap_selected,
+          delta_hamiltonian_selected,
+          delta_overlap_selected,
+          relative_residual_tolerance)
+      : xmvb::core::solve_generalized_eigen_response(
           action,
           diagonal.hamiltonian,
           diagonal.overlap,

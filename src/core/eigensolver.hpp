@@ -49,13 +49,16 @@ struct DavidsonOptions {
   double energy_tolerance;
   /** Maximum normalized eigen-equation backward error. */
   double residual_tolerance;
+  /** Complete an action-generated spectrum after root convergence, if it fits. */
+  bool complete_spectrum = false;
 };
 
 /**
  * @brief Builds dimension-scaled Davidson budgets for consecutive low roots.
  *
- * The subspace grows as `sqrt(n) log(1+n)` and therefore remains subquadratic
- * in storage for a fixed number of requested roots. Accuracy is mandatory:
+ * The basis and projected matrix are bounded by a fixed workspace budget;
+ * a complete spectrum is possible only when that budget holds the full basis.
+ * Accuracy is mandatory:
  * this core routine does not invent a machine-precision stopping target.
  */
 DavidsonOptions make_davidson_options(

@@ -119,6 +119,112 @@ Eigen::MatrixXd build_inverse_preconditioner(
 
 }  // namespace
 
+EigenResponseResult solve_generalized_eigen_response_from_full_spectrum(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& full_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& full_eigenvectors,
+    const std::vector<int>& selected_root_indices,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    double relative_residual_tolerance) {
+  const Eigen::Index n = full_eigenvalues.size();
+  const Eigen::Index n_rhs = selected_eigenvalues.size();
+  if (n <= 0 || n_rhs <= 0 || full_eigenvectors.rows() != n ||
+      full_eigenvectors.cols() != n ||
+      selected_root_indices.size() != static_cast<std::size_t>(n_rhs) ||
+      selected_eigenvectors.rows() != n ||
+      selected_eigenvectors.cols() != n_rhs ||
+      overlap_selected.rows() != n || overlap_selected.cols() != n_rhs ||
+      delta_hamiltonian_selected.rows() != n ||
+      delta_hamiltonian_selected.cols() != n_rhs ||
+      delta_overlap_selected.rows() != n ||
+      delta_overlap_selected.cols() != n_rhs ||
+      !full_eigenvalues.allFinite() || !full_eigenvectors.allFinite() ||
+      !selected_eigenvalues.allFinite() ||
+      !selected_eigenvectors.allFinite() || !overlap_selected.allFinite() ||
+      !delta_hamiltonian_selected.allFinite() ||
+      !delta_overlap_selected.allFinite() ||
+      !std::isfinite(relative_residual_tolerance) ||
+      !(relative_residual_tolerance > 0.0)) {
+    throw std::invalid_argument(
+        "complete generalized-eigen response inputs are inconsistent");
+  }
+
+  Eigen::MatrixXd forcing(n, n_rhs);
+  Eigen::MatrixXd rhs(n + 1, n_rhs);
+  EigenResponseResult result;
+  result.eigenvalue_response.resize(n_rhs);
+  result.iterations.assign(static_cast<std::size_t>(n_rhs), 0);
+  for (Eigen::Index column = 0; column < n_rhs; ++column) {
+    const int root = selected_root_indices[static_cast<std::size_t>(column)];
+    if (root < 0 || root >= n ||
+        selected_eigenvalues[column] != full_eigenvalues[root]) {
+      throw std::invalid_argument(
+          "selected root does not match the complete eigenspectrum");
+    }
+    forcing.col(column) =
+        delta_hamiltonian_selected.col(column) -
+        selected_eigenvalues[column] *
+            delta_overlap_selected.col(column);
+    result.eigenvalue_response[column] =
+        selected_eigenvectors.col(column).dot(forcing.col(column));
+    rhs.col(column).head(n) = -forcing.col(column);
+    rhs(n, column) = -0.5 *
+        selected_eigenvectors.col(column).dot(
+            delta_overlap_selected.col(column));
+  }
+
+  Eigen::MatrixXd coefficients =
+      full_eigenvectors.transpose() * forcing;
+  for (Eigen::Index column = 0; column < n_rhs; ++column) {
+    const int root = selected_root_indices[static_cast<std::size_t>(column)];
+    for (Eigen::Index other = 0; other < n; ++other) {
+      if (other == root) {
+        coefficients(other, column) = rhs(n, column);
+        continue;
+      }
+      const double gap =
+          full_eigenvalues[other] - selected_eigenvalues[column];
+      if (gap == 0.0) {
+        throw std::runtime_error(
+            "selected structure root is degenerate; isolated-state response is undefined");
+      }
+      coefficients(other, column) /= -gap;
+    }
+  }
+  result.eigenvector_response = full_eigenvectors * coefficients;
+  Eigen::MatrixXd solution(n + 1, n_rhs);
+  solution.topRows(n) = result.eigenvector_response;
+  // The bordered multiplier is -delta E because its top-right block is +S c.
+  solution.bottomRows(1) = -result.eigenvalue_response.transpose();
+  const Eigen::MatrixXd images = apply_bordered_operators(
+      action,
+      selected_eigenvalues,
+      overlap_selected,
+      solution,
+      &result.block_actions);
+  result.relative_residual_norms.resize(n_rhs);
+  for (Eigen::Index column = 0; column < n_rhs; ++column) {
+    const double rhs_norm = rhs.col(column).norm();
+    result.relative_residual_norms[column] = rhs_norm == 0.0
+        ? (rhs.col(column) - images.col(column)).norm()
+        : (rhs.col(column) - images.col(column)).norm() / rhs_norm;
+    if (!std::isfinite(result.relative_residual_norms[column]) ||
+        result.relative_residual_norms[column] >
+            relative_residual_tolerance) {
+      std::ostringstream message;
+      message << "complete-spectrum structure response disagrees with the accepted H/S action: state="
+              << column << " relative residual="
+              << result.relative_residual_norms[column];
+      throw std::runtime_error(message.str());
+    }
+  }
+  return result;
+}
+
 EigenResponseResult solve_generalized_eigen_response(
     const GeneralizedEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
@@ -330,8 +436,7 @@ EigenResponseResult solve_generalized_eigen_response(
         p_older.col(state).setZero();
         p_old.col(state).setZero();
         p.col(state).setZero();
-        const double beta_squared =
-            true_residual.dot(w_new.col(state));
+        const double beta_squared = true_residual.dot(w_new.col(state));
         if (!(beta_squared > 0.0) || !std::isfinite(beta_squared)) {
           throw std::runtime_error(
               "generalized-eigen response reliable restart failed");
