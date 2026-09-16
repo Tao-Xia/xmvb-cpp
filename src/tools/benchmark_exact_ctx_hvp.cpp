@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -31,6 +32,12 @@
 
 namespace {
 
+enum class BenchmarkComponent {
+  Full,
+  CoreOnly,
+  OuterOnly,
+};
+
 struct Options {
   std::string input_path;
   int repeats = 1;
@@ -41,14 +48,12 @@ struct Options {
   double spectral_audit_trust_radius = 0.0;
   int dense_reference_block_width = 0;
   int block_width = 2;
+  std::vector<BenchmarkComponent> components = {
+      BenchmarkComponent::Full,
+      BenchmarkComponent::CoreOnly,
+      BenchmarkComponent::OuterOnly};
   bool stream_pair_products = false;
   std::string orbital_value_table_bin_path;
-};
-
-enum class BenchmarkComponent {
-  Full,
-  CoreOnly,
-  OuterOnly,
 };
 
 struct AcceptedPointBenchmarkContext {
@@ -87,7 +92,8 @@ void print_usage() {
   std::cerr << " [--spectral-audit-dimension count|0=disabled]\n";
   std::cerr << " [--spectral-audit-trust-radius value|0=disabled]\n";
   std::cerr << " [--dense-reference-block-width count|0=disabled]\n";
-  std::cerr << " [--block-width count]\n";
+  std::cerr << " [--block-width count|0=disabled]\n";
+  std::cerr << " [--components full,core,outer]\n";
   std::cerr << " [--stream-pair-products true|false]\n";
   std::cerr << " [--orbital-value-table-bin path]\n";
 }
@@ -100,6 +106,35 @@ bool parse_bool_argument(const std::string& value) {
     return false;
   }
   throw std::invalid_argument("invalid boolean value: " + value);
+}
+
+std::vector<BenchmarkComponent> parse_components(const std::string& value) {
+  std::vector<BenchmarkComponent> components;
+  std::size_t begin = 0;
+  while (begin <= value.size()) {
+    const std::size_t end = value.find(',', begin);
+    const std::string name = value.substr(begin, end - begin);
+    BenchmarkComponent component;
+    if (name == "full") {
+      component = BenchmarkComponent::Full;
+    } else if (name == "core") {
+      component = BenchmarkComponent::CoreOnly;
+    } else if (name == "outer") {
+      component = BenchmarkComponent::OuterOnly;
+    } else {
+      throw std::invalid_argument("unknown benchmark component: " + name);
+    }
+    if (std::find(components.begin(), components.end(), component) ==
+        components.end()) {
+      components.push_back(component);
+    }
+    if (end == std::string::npos) break;
+    begin = end + 1;
+  }
+  if (components.empty()) {
+    throw std::invalid_argument("--components must not be empty");
+  }
+  return components;
 }
 
 int parse_positive_or_zero_int(
@@ -161,9 +196,10 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (name == "--block-width") {
       options.block_width = parse_positive_or_zero_int(value, name.c_str());
-      if (options.block_width <= 0) {
-        throw std::invalid_argument("--block-width must be positive");
-      }
+      continue;
+    }
+    if (name == "--components") {
+      options.components = parse_components(value);
       continue;
     }
     if (name == "--stream-pair-products") {
@@ -925,25 +961,26 @@ int main(int argc, char** argv) {
     const Options options = parse_arguments(argc, argv);
     const AcceptedPointBenchmarkContext context =
         build_benchmark_context(options);
-
-    std::vector<BenchmarkComponent> components = {
-        BenchmarkComponent::Full,
-        BenchmarkComponent::CoreOnly,
-        BenchmarkComponent::OuterOnly};
+    std::cerr << "accepted_point_context_ready = true\n";
 
     std::vector<BenchmarkMeasurement> measurements;
-    measurements.reserve(components.size());
-    for (const BenchmarkComponent component : components) {
-      measurements.push_back(
-          run_component_benchmark(
-              context,
-              component,
-              options.warmup,
-              options.repeats));
+    measurements.reserve(options.components.size());
+    for (const BenchmarkComponent component : options.components) {
+      std::cerr << "benchmark_component_start = "
+                << benchmark_component_name(component) << '\n';
+      measurements.push_back(run_component_benchmark(
+          context,
+          component,
+          options.warmup,
+          options.repeats));
+      std::cerr << "benchmark_component_seconds = "
+                << measurements.back().external_wall_time_seconds << '\n';
     }
-    const BlockBenchmarkMeasurement block_measurement =
-        run_full_block_benchmark(
-            context, options.warmup, options.repeats, options.block_width);
+    std::optional<BlockBenchmarkMeasurement> block_measurement;
+    if (options.block_width > 0) {
+      block_measurement = run_full_block_benchmark(
+          context, options.warmup, options.repeats, options.block_width);
+    }
 
     const auto& first_diagnostics = measurements.front().diagnostics;
     const auto& ao = context.input.ao_integral_input;
@@ -1081,50 +1118,60 @@ int main(int argc, char** argv) {
     for (const BenchmarkMeasurement& measurement : measurements) {
       print_measurement(measurement);
     }
-    const double block_count = static_cast<double>(options.repeats);
-    const double block_average =
-        block_measurement.external_wall_time_seconds / block_count;
-    const double measured_block_width = std::min<Eigen::Index>(
-        options.block_width, context.reduced_direction.size());
-    std::cout << "full_block_width = " << measured_block_width << '\n';
-    std::cout << "full_block_apply_count = "
-              << block_measurement.diagnostics.batch_apply_count << '\n';
-    std::cout << "full_block_response_inf_norm = "
-              << block_measurement.response_inf_norm << '\n';
-    std::cout << "full_block_external_avg_wall_time_seconds = "
-              << block_average << '\n';
-    std::cout << "full_block_external_avg_per_direction_seconds = "
-              << block_average / measured_block_width << '\n';
-    std::cout << "full_block_scalar_reference_relative_error = "
-              << block_measurement.scalar_reference_relative_error << '\n';
-    std::cout << "full_block_diag_avg_h1e_wall_time_seconds = "
-              << average_wall_time_seconds(
-                     block_measurement.diagnostics
-                         .ao_effective_one_electron_fused_wall_time_seconds,
-                     block_measurement.diagnostics.batch_apply_count)
-              << '\n';
-    std::cout << "full_block_diag_avg_active_space_integrals_wall_time_seconds = "
-              << average_wall_time_seconds(
-                     block_measurement.diagnostics
-                         .outer_response_active_space_integrals_wall_time_seconds,
-                     block_measurement.diagnostics.batch_apply_count)
-              << '\n';
-    std::cout << "full_block_diag_avg_structure_matrices_wall_time_seconds = "
-              << average_wall_time_seconds(
-                     block_measurement.diagnostics
-                         .outer_response_structure_matrices_wall_time_seconds,
-                     block_measurement.diagnostics.batch_apply_count)
-              << '\n';
-    const double scalar_full_average =
-        measurements.front().external_wall_time_seconds /
-        static_cast<double>(options.repeats);
-    const double block_speedup =
-        (measured_block_width * scalar_full_average) / block_average;
-    std::cout << "full_block_speedup_over_scalar_actions = "
-              << block_speedup << '\n';
-    if (measured_block_width == 2.0) {
-      std::cout << "full_block_speedup_over_two_scalar = "
-                << block_speedup << '\n';
+    if (block_measurement.has_value()) {
+      const double block_count = static_cast<double>(options.repeats);
+      const double block_average =
+          block_measurement->external_wall_time_seconds / block_count;
+      const double measured_block_width = std::min<Eigen::Index>(
+          options.block_width, context.reduced_direction.size());
+      std::cout << "full_block_width = " << measured_block_width << '\n';
+      std::cout << "full_block_apply_count = "
+                << block_measurement->diagnostics.batch_apply_count << '\n';
+      std::cout << "full_block_response_inf_norm = "
+                << block_measurement->response_inf_norm << '\n';
+      std::cout << "full_block_external_avg_wall_time_seconds = "
+                << block_average << '\n';
+      std::cout << "full_block_external_avg_per_direction_seconds = "
+                << block_average / measured_block_width << '\n';
+      std::cout << "full_block_scalar_reference_relative_error = "
+                << block_measurement->scalar_reference_relative_error << '\n';
+      std::cout << "full_block_diag_avg_h1e_wall_time_seconds = "
+                << average_wall_time_seconds(
+                       block_measurement->diagnostics
+                           .ao_effective_one_electron_fused_wall_time_seconds,
+                       block_measurement->diagnostics.batch_apply_count)
+                << '\n';
+      std::cout << "full_block_diag_avg_active_space_integrals_wall_time_seconds = "
+                << average_wall_time_seconds(
+                       block_measurement->diagnostics
+                           .outer_response_active_space_integrals_wall_time_seconds,
+                       block_measurement->diagnostics.batch_apply_count)
+                << '\n';
+      std::cout << "full_block_diag_avg_structure_matrices_wall_time_seconds = "
+                << average_wall_time_seconds(
+                       block_measurement->diagnostics
+                           .outer_response_structure_matrices_wall_time_seconds,
+                       block_measurement->diagnostics.batch_apply_count)
+                << '\n';
+      const auto full_measurement = std::find_if(
+          measurements.begin(),
+          measurements.end(),
+          [](const BenchmarkMeasurement& measurement) {
+            return measurement.component == BenchmarkComponent::Full;
+          });
+      if (full_measurement != measurements.end()) {
+        const double scalar_full_average =
+            full_measurement->external_wall_time_seconds /
+            static_cast<double>(options.repeats);
+        const double block_speedup =
+            (measured_block_width * scalar_full_average) / block_average;
+        std::cout << "full_block_speedup_over_scalar_actions = "
+                  << block_speedup << '\n';
+        if (measured_block_width == 2.0) {
+          std::cout << "full_block_speedup_over_two_scalar = "
+                    << block_speedup << '\n';
+        }
+      }
     }
     run_dense_reduced_hessian_reference(
         context, options.dense_reference_block_width);
