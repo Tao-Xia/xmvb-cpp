@@ -147,18 +147,35 @@ Eigen::MatrixXd ClosedShellFockBuilder::build(
 
   const auto& core_hamiltonian_matrix =
       ao_integral_input.ao_core_hamiltonian_matrix;
-  const auto& integral_values =
-      ao_integral_input.ao_two_electron_integral_values;
-  const auto& integral_indices =
-      ao_integral_input.ao_two_electron_integral_indices;
+  const AoPairGraph& graph = ao_integral_input.pair_graph;
+  const std::size_t n_pairs =
+      static_cast<std::size_t>(n_basis_functions) *
+      (n_basis_functions + 1) / 2;
   if (core_hamiltonian_matrix.rows() != n_basis_functions ||
       core_hamiltonian_matrix.cols() != n_basis_functions) {
     throw std::invalid_argument(
         "ao_core_hamiltonian_matrix shape does not match n_basis_functions");
   }
-  if (integral_indices.size() != integral_values.size() * 4) {
-    throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
+  if (graph.row_offsets.size() != n_pairs + 1 ||
+      graph.columns.size() != graph.values.size() ||
+      graph.pair_first.size() != n_pairs ||
+      graph.pair_second.size() != n_pairs) {
+    throw std::invalid_argument("invalid AO-pair graph");
   }
+
+  const auto accumulate_edge =
+      [&](std::size_t integral_index, double* target) {
+        const AoPairIntegral eri = graph.integral(integral_index);
+        accumulate_integral_class(
+            eri.value,
+            graph.pair_first[eri.left_pair],
+            graph.pair_second[eri.left_pair],
+            graph.pair_first[eri.right_pair],
+            graph.pair_second[eri.right_pair],
+            density_projector.data(),
+            n_basis_functions,
+            target);
+      };
 
   Eigen::MatrixXd fock_matrix = core_hamiltonian_matrix;
 
@@ -168,17 +185,10 @@ Eigen::MatrixXd ClosedShellFockBuilder::build(
 #endif
 
   if (n_threads <= 1) {
-    for (std::size_t integral_index = 0; integral_index < integral_values.size(); ++integral_index) {
-      const int* indices = integral_indices.data() + integral_index * 4;
-      accumulate_integral_class(
-          integral_values[integral_index],
-          indices[0],
-          indices[1],
-          indices[2],
-          indices[3],
-          density_projector.data(),
-          n_basis_functions,
-          fock_matrix.data());
+    for (std::size_t integral = 0;
+         integral < graph.integral_count();
+         ++integral) {
+      accumulate_edge(integral, fock_matrix.data());
     }
   } else {
     std::vector<std::vector<double>> partial_fock_matrices(
@@ -195,19 +205,10 @@ Eigen::MatrixXd ClosedShellFockBuilder::build(
 
 #pragma omp for schedule(static)
       for (std::ptrdiff_t integral_offset = 0;
-           integral_offset < static_cast<std::ptrdiff_t>(integral_values.size());
+           integral_offset <
+               static_cast<std::ptrdiff_t>(graph.integral_count());
            ++integral_offset) {
-        const std::size_t integral_index = integral_offset;
-        const int* indices = integral_indices.data() + integral_index * 4;
-        accumulate_integral_class(
-            integral_values[integral_index],
-            indices[0],
-            indices[1],
-            indices[2],
-            indices[3],
-            density_projector.data(),
-            n_basis_functions,
-            local_fock_matrix.data());
+        accumulate_edge(integral_offset, local_fock_matrix.data());
       }
     }
 

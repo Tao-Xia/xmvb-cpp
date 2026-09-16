@@ -37,22 +37,19 @@ AoIntegralInput build_materialized_ao_integral_input(
     throw std::invalid_argument(
         "AO core Hamiltonian shape does not match n_basis_functions");
   }
-  if (buffers.ao_two_electron_integral_indices.size() !=
-      buffers.ao_two_electron_integral_values.size() * 4) {
-    throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
+  if (buffers.left_pair_indices.size() != buffers.two_electron_values.size() ||
+      buffers.right_pair_indices.size() != buffers.two_electron_values.size()) {
+    throw std::invalid_argument("AO-pair index/value sizes are inconsistent");
   }
 
   AoIntegralInput ao_integral_input;
   ao_integral_input.n_basis_functions = buffers.n_basis_functions;
   ao_integral_input.ao_core_hamiltonian_matrix =
       std::move(buffers.ao_core_hamiltonian_matrix);
-  ao_integral_input.ao_two_electron_integral_values =
-      std::move(buffers.ao_two_electron_integral_values);
-  ao_integral_input.ao_two_electron_integral_indices =
-      std::move(buffers.ao_two_electron_integral_indices);
   ao_integral_input.pair_graph = build_ao_pair_graph(
-      ao_integral_input.ao_two_electron_integral_indices,
-      ao_integral_input.ao_two_electron_integral_values,
+      std::move(buffers.left_pair_indices),
+      std::move(buffers.right_pair_indices),
+      std::move(buffers.two_electron_values),
       buffers.n_basis_functions);
   return ao_integral_input;
 }

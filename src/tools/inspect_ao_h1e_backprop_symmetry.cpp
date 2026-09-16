@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
         orbital_preparer.prepare(input.orbital_preparation_input);
 
     const auto backpropagation_result =
-        input.ao_integral_input.ao_two_electron_integral_values.empty()
+        input.ao_integral_input.pair_graph.empty()
             ? backpropagator.backpropagate(
                   orbital_result.inactive_density_matrix,
                   xmvb::vb::ensure_vbscf_input_ri_cache(input),

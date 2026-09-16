@@ -95,52 +95,42 @@ xmvb::vb::AoEffectiveOneElectronResult build_reference_ao_effective_one_electron
       ao_integral_input.ao_core_hamiltonian_matrix.size() != matrix_size) {
     throw std::invalid_argument("AO matrix size mismatch");
   }
-  if (ao_integral_input.ao_two_electron_integral_indices.size() !=
-      ao_integral_input.ao_two_electron_integral_values.size() * 4) {
-    throw std::invalid_argument("AO two-electron index/value size mismatch");
-  }
-
   const Eigen::Map<const Matrix> core_hamiltonian(
       ao_integral_input.ao_core_hamiltonian_matrix.data(),
       n_basis_functions,
       n_basis_functions);
   Matrix g11 = Matrix::Zero(n_basis_functions, n_basis_functions);
 
-  for (std::size_t integral_index = 0;
-       integral_index < ao_integral_input.ao_two_electron_integral_values.size();
-       ++integral_index) {
-    double two_electron_value =
-        ao_integral_input.ao_two_electron_integral_values[integral_index];
-    const int i = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4];
-    const int j = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4 + 1];
-    const int k = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4 + 2];
-    const int l = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4 + 3];
-    if (i < 0 || i >= n_basis_functions ||
-        j < 0 || j >= n_basis_functions ||
-        k < 0 || k >= n_basis_functions ||
-        l < 0 || l >= n_basis_functions) {
-      throw std::invalid_argument("AO two-electron index out of range");
-    }
+  ao_integral_input.pair_graph.for_each_integral(
+      [&](double two_electron_value, int i, int j, int k, int l) {
+        if (i < 0 || i >= n_basis_functions ||
+            j < 0 || j >= n_basis_functions ||
+            k < 0 || k >= n_basis_functions ||
+            l < 0 || l >= n_basis_functions) {
+          throw std::invalid_argument("AO two-electron index out of range");
+        }
 
-    if (i == j) {
-      two_electron_value *= 0.5;
-    }
-    if (k == l) {
-      two_electron_value *= 0.5;
-    }
-    if (i == k && j == l) {
-      two_electron_value *= 0.5;
-    }
+        if (i == j) {
+          two_electron_value *= 0.5;
+        }
+        if (k == l) {
+          two_electron_value *= 0.5;
+        }
+        if (i == k && j == l) {
+          two_electron_value *= 0.5;
+        }
 
-    const double a0 = inactive_density(i, j) * two_electron_value * 4.0;
-    const double a1 = inactive_density(k, l) * two_electron_value * 4.0;
-    g11(i, j) += a1;
-    g11(k, l) += a0;
-    g11(i, k) -= inactive_density(l, j) * two_electron_value;
-    g11(j, l) -= inactive_density(k, i) * two_electron_value;
-    g11(i, l) -= inactive_density(k, j) * two_electron_value;
-    g11(j, k) -= inactive_density(l, i) * two_electron_value;
-  }
+        const double a0 =
+            inactive_density(i, j) * two_electron_value * 4.0;
+        const double a1 =
+            inactive_density(k, l) * two_electron_value * 4.0;
+        g11(i, j) += a1;
+        g11(k, l) += a0;
+        g11(i, k) -= inactive_density(l, j) * two_electron_value;
+        g11(j, l) -= inactive_density(k, i) * two_electron_value;
+        g11(i, l) -= inactive_density(k, j) * two_electron_value;
+        g11(j, k) -= inactive_density(l, i) * two_electron_value;
+      });
 
   for (int row = 0; row < n_basis_functions; ++row) {
     for (int column = 0; column <= row; ++column) {
@@ -225,7 +215,7 @@ int main(int argc, char** argv) {
     std::cout << "n_basis_functions = " << n_basis_functions << '\n';
     std::cout << "n_active_orbitals = " << n_active_orbitals << '\n';
     std::cout << "n_ao_two_electron_integrals = "
-              << input.ao_integral_input.ao_two_electron_integral_values.size() << '\n';
+              << input.ao_integral_input.pair_graph.integral_count() << '\n';
     std::cout << "max_abs_g11_diff = "
               << max_abs_difference(
                      current_ao_result.ao_coulomb_exchange_matrix,

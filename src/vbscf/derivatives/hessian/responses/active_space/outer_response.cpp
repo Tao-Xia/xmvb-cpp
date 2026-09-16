@@ -349,8 +349,7 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
             .backpropagate(
                 active_space_gradient_direction
                     .packed_active_two_electron_gradient,
-                input.ao_integral_input.ao_two_electron_integral_values,
-                input.ao_integral_input.ao_two_electron_integral_indices,
+                input.ao_integral_input.pair_graph,
                 active_space_two_electron_result,
                 input.orbital_preparation_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,
@@ -438,8 +437,7 @@ AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
   const auto active_space_two_electron_backpropagation_result =
       active_space_two_electron_backpropagator.backpropagate(
           accepted_point_context.packed_active_two_electron_gradient,
-          input.ao_integral_input.ao_two_electron_integral_values,
-          input.ao_integral_input.ao_two_electron_integral_indices,
+          input.ao_integral_input.pair_graph,
           accepted_point_context.prepared_active_space.active_space_two_electron_result,
           n_basis_functions,
           n_inactive_doubly_occupied_orbitals,

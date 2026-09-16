@@ -100,18 +100,11 @@ CanonicalIntegralIndex canonicalize_integral_index(int i, int j, int k, int l) {
 std::unordered_map<std::uint64_t, double> build_two_electron_lookup(
     const xmvb::vb::AoIntegralInput& ao_integral_input) {
   std::unordered_map<std::uint64_t, double> lookup;
-  lookup.reserve(ao_integral_input.ao_two_electron_integral_values.size());
-  for (std::size_t integral_index = 0;
-       integral_index < ao_integral_input.ao_two_electron_integral_values.size();
-       ++integral_index) {
-    const int i = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4];
-    const int j = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4 + 1];
-    const int k = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4 + 2];
-    const int l = ao_integral_input.ao_two_electron_integral_indices[integral_index * 4 + 3];
-    lookup.emplace(
-        encode_integral_key(i, j, k, l),
-        ao_integral_input.ao_two_electron_integral_values[integral_index]);
-  }
+  lookup.reserve(ao_integral_input.pair_graph.integral_count());
+  ao_integral_input.pair_graph.for_each_integral(
+      [&](double value, int i, int j, int k, int l) {
+        lookup.emplace(encode_integral_key(i, j, k, l), value);
+      });
   return lookup;
 }
 

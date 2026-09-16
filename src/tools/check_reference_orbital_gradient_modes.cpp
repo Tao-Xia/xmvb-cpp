@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
     const Options options = parse_arguments(argc, argv);
     const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
-    const bool use_ri = input.ao_integral_input.ao_two_electron_integral_values.empty();
+    const bool use_ri = input.ao_integral_input.pair_graph.empty();
 
     xmvb::vb::OrbitalGradientEvaluator gradient_evaluator;
     auto gradient_result = gradient_evaluator.evaluate_without_reference_energy_gradient(

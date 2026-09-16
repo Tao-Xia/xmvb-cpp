@@ -178,8 +178,7 @@ bool ExactHvpOperator::State::supports_analytic_core_model() const noexcept {
       StandardTwoElectronMode::ResolutionOfIdentity) {
     return false;
   }
-  if (current_input_->ao_integral_input.ao_two_electron_integral_values.empty() ||
-      current_input_->ao_integral_input.ao_two_electron_integral_indices.empty()) {
+  if (current_input_->ao_integral_input.pair_graph.empty()) {
     return false;
   }
   const int n_active_orbitals =

@@ -14,28 +14,6 @@
 
 namespace xmvb::vb {
 
-namespace {
-
-std::size_t ao_pair_index(int first, int second) {
-  if (first >= second) {
-    const std::size_t first_index = first;
-    return first_index * (first_index + 1) / 2 + second;
-  }
-  const std::size_t second_index = second;
-  return second_index * (second_index + 1) / 2 + first;
-}
-
-std::pair<int, int> eri_pair_indices(
-    const std::vector<int>& eri_indices,
-    std::size_t eri) {
-  const int* index = eri_indices.data() + 4 * eri;
-  return {
-      static_cast<int>(ao_pair_index(index[0], index[1])),
-      static_cast<int>(ao_pair_index(index[2], index[3]))};
-}
-
-}  // namespace
-
 std::vector<std::size_t> AoPairGraph::balanced_row_boundaries(
     int n_partitions) const {
   if (n_partitions <= 0 || row_offsets.empty() ||
@@ -68,25 +46,23 @@ std::vector<std::size_t> AoPairGraph::balanced_row_boundaries(
 }
 
 AoPairGraph build_ao_pair_graph(
-    const std::vector<int>& eri_indices,
-    const std::vector<double>& eri_values,
+    std::vector<int> left_pairs,
+    std::vector<int> right_pairs,
+    std::vector<double> values,
     int n_bf) {
   if (n_bf <= 0) {
     throw std::invalid_argument("n_bf must be positive");
   }
-  if (eri_indices.size() % 4 != 0) {
-    throw std::invalid_argument("each AO ERI must have four indices");
-  }
-
   const std::size_t n_basis = n_bf;
   const std::size_t n_ao_pairs = n_basis * (n_basis + 1) / 2;
   if (n_ao_pairs > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
     throw std::overflow_error("AO pair index exceeds 32-bit storage");
   }
 
-  const std::size_t n_integrals = eri_indices.size() / 4;
-  if (eri_values.size() != n_integrals) {
-    throw std::invalid_argument("AO ERI index/value counts do not match");
+  const std::size_t n_integrals = values.size();
+  if (left_pairs.size() != n_integrals ||
+      right_pairs.size() != n_integrals) {
+    throw std::invalid_argument("AO-pair index/value counts do not match");
   }
   int n_threads = 1;
   n_threads = xmvb::effective_openmp_thread_count();
@@ -125,19 +101,18 @@ AoPairGraph build_ao_pair_graph(
          integral_offset < static_cast<std::ptrdiff_t>(n_integrals);
          ++integral_offset) {
       const std::size_t integral_index = integral_offset;
-      const int* index = eri_indices.data() + 4 * integral_index;
-      if (index[0] < 0 || index[0] >= n_bf ||
-          index[1] < 0 || index[1] >= n_bf ||
-          index[2] < 0 || index[2] >= n_bf ||
-          index[3] < 0 || index[3] >= n_bf) {
+      const int left_pair_index = left_pairs[integral_index];
+      const int right_pair_index = right_pairs[integral_index];
+      if (left_pair_index < 0 ||
+          left_pair_index >= static_cast<int>(n_ao_pairs) ||
+          right_pair_index < 0 ||
+          right_pair_index >= static_cast<int>(n_ao_pairs)) {
         int expected = -1;
         invalid_integral_index.compare_exchange_strong(
             expected,
             static_cast<int>(integral_index));
         continue;
       }
-      const auto [left_pair_index, right_pair_index] =
-          eri_pair_indices(eri_indices, integral_index);
       ++local_row_counts[left_pair_index];
       if (right_pair_index != left_pair_index) {
         ++local_row_counts[right_pair_index];
@@ -146,7 +121,7 @@ AoPairGraph build_ao_pair_graph(
   }
 
   if (invalid_integral_index.load() >= 0) {
-    throw std::invalid_argument("AO ERI index out of range");
+    throw std::invalid_argument("AO-pair index out of range");
   }
 
   std::vector<int> row_counts(n_ao_pairs, 0);
@@ -160,10 +135,17 @@ AoPairGraph build_ao_pair_graph(
 
   AoPairGraph graph;
   graph.row_offsets.resize(n_ao_pairs + 1, 0);
+  graph.pair_first.reserve(n_ao_pairs);
+  graph.pair_second.reserve(n_ao_pairs);
+  for (int first = 0; first < n_bf; ++first) {
+    for (int second = 0; second <= first; ++second) {
+      graph.pair_first.push_back(first);
+      graph.pair_second.push_back(second);
+    }
+  }
   for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
     graph.row_offsets[row_index + 1] = graph.row_offsets[row_index] + row_counts[row_index];
   }
-  graph.columns.resize(graph.row_offsets.back());
   graph.values.resize(graph.row_offsets.back());
 
   std::vector<std::vector<int>> thread_next_offsets(
@@ -190,17 +172,53 @@ AoPairGraph build_ao_pair_graph(
          integral_offset < static_cast<std::ptrdiff_t>(n_integrals);
          ++integral_offset) {
       const std::size_t integral_index = integral_offset;
-      const auto [left_pair_index, right_pair_index] =
-          eri_pair_indices(eri_indices, integral_index);
+      const int left_pair_index = left_pairs[integral_index];
+      const int right_pair_index = right_pairs[integral_index];
 
       const int left_offset = local_next_offsets[left_pair_index]++;
+      graph.values[left_offset] = values[integral_index];
+
+      if (right_pair_index != left_pair_index) {
+        const int right_offset = local_next_offsets[right_pair_index]++;
+        graph.values[right_offset] = values[integral_index];
+      }
+    }
+  }
+
+  std::vector<double>().swap(values);
+  for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
+    int next_offset = graph.row_offsets[row_index];
+    for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
+      thread_next_offsets[thread_index][row_index] = next_offset;
+      next_offset += thread_row_counts[thread_index][row_index];
+    }
+  }
+
+  graph.columns.resize(graph.row_offsets.back());
+  graph.integral_rows = std::move(left_pairs);
+  graph.integral_edges = std::move(right_pairs);
+#pragma omp parallel num_threads(n_threads)
+  {
+    int thread_index = 0;
+#ifdef _OPENMP
+    thread_index = omp_get_thread_num();
+#endif
+    auto& local_next_offsets = thread_next_offsets[thread_index];
+
+#pragma omp for schedule(static)
+    for (std::ptrdiff_t integral_offset = 0;
+         integral_offset < static_cast<std::ptrdiff_t>(n_integrals);
+         ++integral_offset) {
+      const std::size_t integral_index = integral_offset;
+      const int left_pair_index = graph.integral_rows[integral_index];
+      const int right_pair_index = graph.integral_edges[integral_index];
+      const int left_offset = local_next_offsets[left_pair_index]++;
       graph.columns[left_offset] = right_pair_index;
-      graph.values[left_offset] = eri_values[integral_index];
+      graph.integral_edges[integral_index] = left_offset;
 
       if (right_pair_index != left_pair_index) {
         const int right_offset = local_next_offsets[right_pair_index]++;
         graph.columns[right_offset] = left_pair_index;
-        graph.values[right_offset] = eri_values[integral_index];
       }
     }
   }

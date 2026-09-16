@@ -192,8 +192,7 @@ int main(int argc, char** argv) {
     const auto plus_backpropagation_result =
         backpropagator.backpropagate(
             gradient_result.packed_active_two_electron_gradient,
-            input.ao_integral_input.ao_two_electron_integral_values,
-            input.ao_integral_input.ao_two_electron_integral_indices,
+            input.ao_integral_input.pair_graph,
             plus_auxiliary_matrix,
             n_basis_functions,
             n_inactive_doubly_occupied_orbitals,
@@ -201,8 +200,7 @@ int main(int argc, char** argv) {
     const auto minus_backpropagation_result =
         backpropagator.backpropagate(
             gradient_result.packed_active_two_electron_gradient,
-            input.ao_integral_input.ao_two_electron_integral_values,
-            input.ao_integral_input.ao_two_electron_integral_indices,
+            input.ao_integral_input.pair_graph,
             minus_auxiliary_matrix,
             n_basis_functions,
             n_inactive_doubly_occupied_orbitals,

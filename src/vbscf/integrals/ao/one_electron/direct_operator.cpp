@@ -28,9 +28,17 @@ struct H1eTerms {
 
 std::size_t matrix_size(const AoIntegralInput& ao) {
   const int n_bf = ao.n_basis_functions;
-  if (n_bf <= 0 ||
-      ao.ao_two_electron_integral_indices.size() !=
-          ao.ao_two_electron_integral_values.size() * 4) {
+  if (n_bf <= 0) {
+    throw std::invalid_argument("invalid AO-H1E integral input");
+  }
+  const std::size_t n_pairs =
+      static_cast<std::size_t>(n_bf) * (n_bf + 1) / 2;
+  const AoPairGraph& graph = ao.pair_graph;
+  if (graph.row_offsets.size() != n_pairs + 1 ||
+      graph.columns.size() != graph.values.size() ||
+      graph.integral_rows.size() != graph.integral_edges.size() ||
+      graph.pair_first.size() != n_pairs ||
+      graph.pair_second.size() != n_pairs) {
     throw std::invalid_argument("invalid AO-H1E integral input");
   }
   const std::size_t n = n_bf;
@@ -41,14 +49,17 @@ int matrix_index(int row, int column, int n_bf) {
   return column * n_bf + row;
 }
 
-H1eTerms make_terms(const AoIntegralInput& ao, std::size_t eri_index) {
-  const int* eri = ao.ao_two_electron_integral_indices.data() + 4 * eri_index;
+H1eTerms make_terms(
+    const AoIntegralInput& ao,
+    std::size_t integral_index) {
+  const AoPairGraph& graph = ao.pair_graph;
+  const AoPairIntegral eri = graph.integral(integral_index);
   const int n_bf = ao.n_basis_functions;
-  const int i = eri[0];
-  const int j = eri[1];
-  const int k = eri[2];
-  const int l = eri[3];
-  double value = ao.ao_two_electron_integral_values[eri_index];
+  const int i = graph.pair_first[eri.left_pair];
+  const int j = graph.pair_second[eri.left_pair];
+  const int k = graph.pair_first[eri.right_pair];
+  const int l = graph.pair_second[eri.right_pair];
+  double value = eri.value;
   if (i == j) {
     value *= 0.5;
   }
@@ -135,7 +146,7 @@ std::vector<double> apply_ao_h1e(
     throw std::invalid_argument("AO-H1E source must not be null");
   }
   const std::size_t size = matrix_size(ao);
-  const std::size_t n_integrals = ao.ao_two_electron_integral_values.size();
+  const std::size_t n_integrals = ao.pair_graph.integral_count();
   n_threads = active_threads(n_threads, n_integrals);
   std::vector<std::vector<double>> partial(
       n_threads, std::vector<double>(size, 0.0));
@@ -166,7 +177,7 @@ std::vector<double> apply_ao_h1e_transpose(
     throw std::invalid_argument("AO-H1E adjoint must not be null");
   }
   const std::size_t size = matrix_size(ao);
-  const std::size_t n_integrals = ao.ao_two_electron_integral_values.size();
+  const std::size_t n_integrals = ao.pair_graph.integral_count();
   n_threads = active_threads(n_threads, n_integrals);
   std::vector<std::vector<double>> partial(
       n_threads, std::vector<double>(size, 0.0));
@@ -202,7 +213,7 @@ void apply_ao_h1e_fused(
     throw std::invalid_argument("AO-H1E fused buffers must not be null");
   }
   const std::size_t size = matrix_size(ao);
-  const std::size_t n_integrals = ao.ao_two_electron_integral_values.size();
+  const std::size_t n_integrals = ao.pair_graph.integral_count();
   n_threads = active_threads(n_threads, n_integrals);
   workspace->forward.resize(n_threads);
   workspace->transpose.resize(n_threads);
@@ -255,7 +266,7 @@ void apply_ao_h1e_fused_batch(
       sources.cols() != adjoints.cols()) {
     throw std::invalid_argument("AO-H1E batch input shape mismatch");
   }
-  const std::size_t n_integrals = ao.ao_two_electron_integral_values.size();
+  const std::size_t n_integrals = ao.pair_graph.integral_count();
   n_threads = active_threads(n_threads, n_integrals);
   const Eigen::Index n_directions = sources.cols();
   using RowMatrix =

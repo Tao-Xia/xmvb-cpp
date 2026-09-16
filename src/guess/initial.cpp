@@ -379,7 +379,7 @@ bool supports_rhf_auto_guess(
 
 bool has_materialized_ao_two_electron_integrals(
     const AoIntegralInput& ao_integral_input) {
-  return !ao_integral_input.ao_two_electron_integral_values.empty();
+  return !ao_integral_input.pair_graph.empty();
 }
 
 void build_hcore_block_guess(

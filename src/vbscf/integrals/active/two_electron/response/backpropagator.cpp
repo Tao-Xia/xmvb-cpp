@@ -1,6 +1,5 @@
 #include "vbscf/integrals/active/two_electron/response/backpropagator.hpp"
 
-#include <atomic>
 #include <stdexcept>
 #include <vector>
 
@@ -236,15 +235,17 @@ std::vector<double> multiply_pair_coefficients_by_gradient_matrix(
 }
 
 std::vector<double> apply_sparse_ao_integral_matrix(
-    const std::vector<double>& ao_two_electron_integral_values,
-    const std::vector<int>& ao_two_electron_integral_indices,
+    const AoPairGraph& graph,
     const std::vector<double>& transformed_pair_coefficients,
     int n_basis_functions,
     std::size_t n_active_pairs) {
   const std::size_t n_ao_pairs =
       n_basis_functions * (n_basis_functions + 1) / 2;
+  if (graph.row_offsets.size() != n_ao_pairs + 1 ||
+      graph.columns.size() != graph.values.size()) {
+    throw std::invalid_argument("invalid AO-pair graph");
+  }
   std::vector<std::vector<double>> partial_pair_gradients;
-  std::atomic<int> invalid_integral_index(-1);
 
   int n_threads = 1;
 #ifdef _OPENMP
@@ -265,28 +266,12 @@ std::vector<double> apply_sparse_ao_integral_matrix(
 
 #pragma omp for schedule(guided, 256)
     for (std::ptrdiff_t integral_offset = 0;
-         integral_offset < static_cast<std::ptrdiff_t>(ao_two_electron_integral_values.size());
+         integral_offset < static_cast<std::ptrdiff_t>(graph.integral_count());
          ++integral_offset) {
-      const std::size_t integral_index = integral_offset;
-      const double ao_integral_value = ao_two_electron_integral_values[integral_index];
-      const int i = ao_two_electron_integral_indices[integral_index * 4];
-      const int j = ao_two_electron_integral_indices[integral_index * 4 + 1];
-      const int k = ao_two_electron_integral_indices[integral_index * 4 + 2];
-      const int l = ao_two_electron_integral_indices[integral_index * 4 + 3];
-
-      if (i < 0 || i >= n_basis_functions ||
-          j < 0 || j >= n_basis_functions ||
-          k < 0 || k >= n_basis_functions ||
-          l < 0 || l >= n_basis_functions) {
-        int expected = -1;
-        invalid_integral_index.compare_exchange_strong(
-            expected,
-            static_cast<int>(integral_index));
-        continue;
-      }
-
-      const std::size_t left_pair_index = ao_pair_index(i, j);
-      const std::size_t right_pair_index = ao_pair_index(k, l);
+      const AoPairIntegral eri = graph.integral(integral_offset);
+      const std::size_t left_pair_index = eri.left_pair;
+      const std::size_t right_pair_index = eri.right_pair;
+      const double ao_integral_value = eri.value;
       const double* right_row =
           transformed_pair_coefficients.data() +
           right_pair_index * n_active_pairs;
@@ -315,10 +300,6 @@ std::vector<double> apply_sparse_ao_integral_matrix(
         }
       }
     }
-  }
-
-  if (invalid_integral_index.load() >= 0) {
-    throw std::invalid_argument("AO two-electron index out of range");
   }
 
   std::vector<double> pair_gradients(n_ao_pairs * n_active_pairs, 0.0);
@@ -422,8 +403,7 @@ Eigen::MatrixXd build_active_auxiliary_gradient_matrix(
 
 ActiveSpaceTwoElectronBackpropagationResult backpropagate_packed_active_two_electron_integrals(
     const std::vector<double>& packed_active_two_electron_gradient,
-    const std::vector<double>& ao_two_electron_integral_values,
-    const std::vector<int>& ao_two_electron_integral_indices,
+    const AoPairGraph& pair_graph,
     const std::vector<double>& dense_active_coefficients,
     const std::vector<double>* cached_dense_ao_pair_products,
     int n_basis_functions,
@@ -466,8 +446,7 @@ ActiveSpaceTwoElectronBackpropagationResult backpropagate_packed_active_two_elec
             n_active_pairs);
     pair_gradients =
         apply_sparse_ao_integral_matrix(
-            ao_two_electron_integral_values,
-            ao_two_electron_integral_indices,
+            pair_graph,
             transformed_pair_coefficients,
             n_basis_functions,
             n_active_pairs);
@@ -592,8 +571,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
 ActiveSpaceTwoElectronBackpropagationResult
 ActiveSpaceTwoElectronBackpropagator::backpropagate(
     const std::vector<double>& packed_active_two_electron_gradient,
-    const std::vector<double>& ao_two_electron_integral_values,
-    const std::vector<int>& ao_two_electron_integral_indices,
+    const AoPairGraph& pair_graph,
     const std::vector<double>& auxiliary_orbital_matrix,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -601,8 +579,8 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
   if (n_basis_functions <= 0 || n_active_orbitals <= 0) {
     throw std::invalid_argument("active-space two-electron backprop dimensions must be positive");
   }
-  if (ao_two_electron_integral_indices.size() != ao_two_electron_integral_values.size() * 4) {
-    throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
+  if (pair_graph.empty()) {
+    throw std::invalid_argument("AO-pair graph is empty");
   }
   const std::size_t auxiliary_matrix_size =
       n_basis_functions * n_basis_functions;
@@ -629,8 +607,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
           n_active_orbitals);
   return backpropagate_packed_active_two_electron_integrals(
       packed_active_two_electron_gradient,
-      ao_two_electron_integral_values,
-      ao_two_electron_integral_indices,
+      pair_graph,
       dense_active_coefficients,
       nullptr,
       n_basis_functions,
@@ -641,8 +618,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
 ActiveSpaceTwoElectronBackpropagationResult
 ActiveSpaceTwoElectronBackpropagator::backpropagate(
     const std::vector<double>& packed_active_two_electron_gradient,
-    const std::vector<double>& ao_two_electron_integral_values,
-    const std::vector<int>& ao_two_electron_integral_indices,
+    const AoPairGraph& pair_graph,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -650,8 +626,8 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
   if (n_basis_functions <= 0 || n_active_orbitals <= 0) {
     throw std::invalid_argument("active-space two-electron backprop dimensions must be positive");
   }
-  if (ao_two_electron_integral_indices.size() != ao_two_electron_integral_values.size() * 4) {
-    throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
+  if (pair_graph.empty()) {
+    throw std::invalid_argument("AO-pair graph is empty");
   }
   if (n_inactive_doubly_occupied_orbitals < 0 ||
       n_inactive_doubly_occupied_orbitals + n_active_orbitals > n_basis_functions) {
@@ -675,8 +651,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
   }
   return backpropagate_packed_active_two_electron_integrals(
       packed_active_two_electron_gradient,
-      ao_two_electron_integral_values,
-      ao_two_electron_integral_indices,
+      pair_graph,
       dense_active_coefficients,
       cached_dense_ao_pair_products,
       n_basis_functions,
@@ -687,8 +662,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
 ActiveSpaceTwoElectronBackpropagationResult
 ActiveSpaceTwoElectronBackpropagator::backpropagate(
     const std::vector<double>& packed_active_two_electron_gradient,
-    const std::vector<double>& ao_two_electron_integral_values,
-    const std::vector<int>& ao_two_electron_integral_indices,
+    const AoPairGraph& pair_graph,
     const OrbitalPreparationResult& orbital_preparation_result,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
@@ -696,8 +670,8 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
   if (n_basis_functions <= 0 || n_active_orbitals <= 0) {
     throw std::invalid_argument("active-space two-electron backprop dimensions must be positive");
   }
-  if (ao_two_electron_integral_indices.size() != ao_two_electron_integral_values.size() * 4) {
-    throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
+  if (pair_graph.empty()) {
+    throw std::invalid_argument("AO-pair graph is empty");
   }
   if (n_inactive_doubly_occupied_orbitals < 0 ||
       n_inactive_doubly_occupied_orbitals + n_active_orbitals > n_basis_functions) {
@@ -711,8 +685,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
           n_active_orbitals);
   return backpropagate_packed_active_two_electron_integrals(
       packed_active_two_electron_gradient,
-      ao_two_electron_integral_values,
-      ao_two_electron_integral_indices,
+      pair_graph,
       dense_active_coefficients,
       nullptr,
       n_basis_functions,

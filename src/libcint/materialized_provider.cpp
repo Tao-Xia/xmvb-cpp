@@ -146,7 +146,8 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
       [&](LibcintDirectShellEvaluator& shell_evaluator,
           int shell_i,
           std::vector<double>& values,
-          std::vector<int>& indices) {
+          std::vector<int>& left_pairs,
+          std::vector<int>& right_pairs) {
         // Keep the canonical `(i >= j, i >= k, k >= l)` AO ordering used by
         // the downstream sparse AO kernels, but write the final `(i,j,k,l)`
         // tuples directly instead of staging packed indices and decoding them
@@ -195,10 +196,8 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
                         continue;
                       }
                       values.push_back(value);
-                      indices.push_back(i);
-                      indices.push_back(j);
-                      indices.push_back(k);
-                      indices.push_back(l);
+                      left_pairs.push_back(pair_index(i, j));
+                      right_pairs.push_back(pair_index(k, l));
                     }
                   }
                 }
@@ -213,12 +212,14 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
       append_shell_i_integrals(
           evaluator,
           shell_i,
-          buffers.ao_two_electron_integral_values,
-          buffers.ao_two_electron_integral_indices);
+          buffers.two_electron_values,
+          buffers.left_pair_indices,
+          buffers.right_pair_indices);
     }
   } else {
     std::vector<std::vector<double>> shell_integral_values(n_shells);
-    std::vector<std::vector<int>> shell_integral_indices(n_shells);
+    std::vector<std::vector<int>> shell_left_pairs(n_shells);
+    std::vector<std::vector<int>> shell_right_pairs(n_shells);
 
 #pragma omp parallel
     {
@@ -238,7 +239,8 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
             *thread_evaluator,
             shell_i,
             shell_integral_values[shell_i],
-            shell_integral_indices[shell_i]);
+            shell_left_pairs[shell_i],
+            shell_right_pairs[shell_i]);
       }
     }
 
@@ -246,19 +248,25 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
     for (const auto& values : shell_integral_values) {
       total_integral_count += values.size();
     }
-    buffers.ao_two_electron_integral_values.reserve(total_integral_count);
-    buffers.ao_two_electron_integral_indices.reserve(total_integral_count * 4);
+    buffers.two_electron_values.reserve(total_integral_count);
+    buffers.left_pair_indices.reserve(total_integral_count);
+    buffers.right_pair_indices.reserve(total_integral_count);
     for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
       auto& values = shell_integral_values[shell_i];
-      auto& indices = shell_integral_indices[shell_i];
-      buffers.ao_two_electron_integral_values.insert(
-          buffers.ao_two_electron_integral_values.end(),
+      auto& left_pairs = shell_left_pairs[shell_i];
+      auto& right_pairs = shell_right_pairs[shell_i];
+      buffers.two_electron_values.insert(
+          buffers.two_electron_values.end(),
           std::make_move_iterator(values.begin()),
           std::make_move_iterator(values.end()));
-      buffers.ao_two_electron_integral_indices.insert(
-          buffers.ao_two_electron_integral_indices.end(),
-          std::make_move_iterator(indices.begin()),
-          std::make_move_iterator(indices.end()));
+      buffers.left_pair_indices.insert(
+          buffers.left_pair_indices.end(),
+          std::make_move_iterator(left_pairs.begin()),
+          std::make_move_iterator(left_pairs.end()));
+      buffers.right_pair_indices.insert(
+          buffers.right_pair_indices.end(),
+          std::make_move_iterator(right_pairs.begin()),
+          std::make_move_iterator(right_pairs.end()));
     }
   }
 

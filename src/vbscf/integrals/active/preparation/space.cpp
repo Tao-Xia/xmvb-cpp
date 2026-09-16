@@ -74,7 +74,7 @@ TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
             input.ao_integral_input.n_basis_functions,
             context.n_inactive_doubly_occupied_orbitals);
   } else {
-    if (input.ao_integral_input.ao_two_electron_integral_values.empty()) {
+    if (input.ao_integral_input.pair_graph.empty()) {
       throw std::invalid_argument(
           "standard exact AO h1e path requires materialized AO two-electron integrals");
     }

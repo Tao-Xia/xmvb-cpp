@@ -398,8 +398,7 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradi
                 input.orbital_preparation_input.n_active_orbitals)
           : active_space_two_electron_backpropagator_.backpropagate(
                 active_space_gradient_result.packed_active_two_electron_gradient,
-                input.ao_integral_input.ao_two_electron_integral_values,
-                input.ao_integral_input.ao_two_electron_integral_indices,
+                input.ao_integral_input.pair_graph,
                 active_space_gradient_result.active_space_two_electron_result,
                 input.orbital_preparation_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,
@@ -595,8 +594,7 @@ OrbitalGradientEvaluator::evaluate_sparse_orbital_gradient_with_fixed_active_spa
                 input.orbital_preparation_input.n_active_orbitals)
           : active_space_two_electron_backpropagator_.backpropagate(
                 accepted_point_context.packed_active_two_electron_gradient,
-                input.ao_integral_input.ao_two_electron_integral_values,
-                input.ao_integral_input.ao_two_electron_integral_indices,
+                input.ao_integral_input.pair_graph,
                 active_space_two_electron_result,
                 input.orbital_preparation_input.n_basis_functions,
                 n_inactive_doubly_occupied_orbitals,

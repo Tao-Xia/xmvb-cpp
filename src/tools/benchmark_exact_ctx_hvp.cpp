@@ -951,13 +951,14 @@ int main(int argc, char** argv) {
     const auto& active_two_electron =
         context.second_order_context->prepared_active_space
             .active_space_two_electron_result;
-    const std::size_t raw_eri_storage_bytes =
-        ao.ao_two_electron_integral_values.capacity() * sizeof(double) +
-        ao.ao_two_electron_integral_indices.capacity() * sizeof(int);
     const std::size_t pair_graph_storage_bytes =
         pair_graph.row_offsets.capacity() * sizeof(int) +
         pair_graph.columns.capacity() * sizeof(int) +
-        pair_graph.values.capacity() * sizeof(double);
+        pair_graph.values.capacity() * sizeof(double) +
+        pair_graph.integral_rows.capacity() * sizeof(int) +
+        pair_graph.integral_edges.capacity() * sizeof(int) +
+        pair_graph.pair_first.capacity() * sizeof(int) +
+        pair_graph.pair_second.capacity() * sizeof(int);
     const std::size_t packed_active_storage_bytes =
         active_two_electron.packed_active_two_electron_integrals.capacity() *
         sizeof(double);
@@ -1065,8 +1066,6 @@ int main(int argc, char** argv) {
               << bool_name(first_diagnostics.streams_exact_pair_products) << '\n';
     std::cout << "resident_exact_pair_elements = "
               << first_diagnostics.resident_exact_pair_elements << '\n';
-    std::cout << "raw_ao_eri_storage_bytes = "
-              << raw_eri_storage_bytes << '\n';
     std::cout << "ao_pair_graph_storage_bytes = "
               << pair_graph_storage_bytes << '\n';
     std::cout << "packed_active_2e_storage_bytes = "

@@ -59,7 +59,11 @@ bool retain_dense_pair_products(
   const long double graph_bytes =
       static_cast<long double>(graph.row_offsets.size()) * sizeof(int) +
       static_cast<long double>(graph.columns.size()) * sizeof(int) +
-      static_cast<long double>(graph.values.size()) * sizeof(double);
+      static_cast<long double>(graph.values.size()) * sizeof(double) +
+      static_cast<long double>(graph.integral_rows.size()) * sizeof(int) +
+      static_cast<long double>(graph.integral_edges.size()) * sizeof(int) +
+      static_cast<long double>(graph.pair_first.size()) * sizeof(int) +
+      static_cast<long double>(graph.pair_second.size()) * sizeof(int);
   const long double packed_active_bytes =
       static_cast<long double>(n_active_pairs) *
       static_cast<long double>(n_active_pairs + 1) * 0.5L * sizeof(double);
@@ -424,8 +428,7 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_graph(
 }
 
 ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
-    const std::vector<double>& ao_two_electron_integral_values,
-    const std::vector<int>& ao_two_electron_integral_indices,
+    const AoPairGraph& graph,
     const SparseAoPairCoefficients& sparse_pair_coefficients,
     Eigen::MatrixXd dense_active_coefficients,
     int n_basis_functions,
@@ -460,16 +463,12 @@ ActiveSpaceTwoElectronResult build_packed_active_two_electron_integrals_sparse(
 
 #pragma omp for schedule(guided, 256)
     for (std::ptrdiff_t integral_offset = 0;
-         integral_offset < static_cast<std::ptrdiff_t>(ao_two_electron_integral_values.size());
+         integral_offset < static_cast<std::ptrdiff_t>(graph.integral_count());
          ++integral_offset) {
-      const std::size_t integral_index = integral_offset;
-      const double ao_integral_value = ao_two_electron_integral_values[integral_index];
-      const int* eri =
-          ao_two_electron_integral_indices.data() + 4 * integral_index;
-      const std::size_t left_ao_pair_index =
-          ao_pair_index(eri[0], eri[1]);
-      const std::size_t right_ao_pair_index =
-          ao_pair_index(eri[2], eri[3]);
+      const AoPairIntegral eri = graph.integral(integral_offset);
+      const std::size_t left_ao_pair_index = eri.left_pair;
+      const std::size_t right_ao_pair_index = eri.right_pair;
+      const double ao_integral_value = eri.value;
       const int left_begin =
           sparse_pair_coefficients.row_offsets[left_ao_pair_index];
       const int left_end =
@@ -565,9 +564,8 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
   if (n_bf <= 0 || n_active_orbitals <= 0) {
     throw std::invalid_argument("active-space two-electron dimensions must be positive");
   }
-  if (ao_integral_input.ao_two_electron_integral_indices.size() !=
-      ao_integral_input.ao_two_electron_integral_values.size() * 4) {
-    throw std::invalid_argument("AO two-electron index/value sizes are inconsistent");
+  if (ao_integral_input.pair_graph.empty()) {
+    throw std::invalid_argument("AO-pair graph is empty");
   }
 
   const std::size_t n_active_pairs =
@@ -606,8 +604,7 @@ ActiveSpaceTwoElectronResult ActiveSpaceTwoElectronBuilder::build(
           n_bf,
           n_active_orbitals);
   return build_packed_active_two_electron_integrals_sparse(
-      ao_integral_input.ao_two_electron_integral_values,
-      ao_integral_input.ao_two_electron_integral_indices,
+      ao_integral_input.pair_graph,
       sparse_pair_coefficients,
       std::move(dense_active_coefficients),
       n_bf,

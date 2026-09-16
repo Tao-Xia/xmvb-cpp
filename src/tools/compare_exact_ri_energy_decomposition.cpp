@@ -189,7 +189,7 @@ EnergyBreakdown build_ri_breakdown(
 
   xmvb::vb::AoEffectiveOneElectronBuilder ao_builder;
   xmvb::vb::AoEffectiveOneElectronResult ao_result;
-  if (!input.ao_integral_input.ao_two_electron_integral_values.empty()) {
+  if (!input.ao_integral_input.pair_graph.empty()) {
     // Match the production objective: even under `INT=RI`, keep the AO-side
     // inactive/reference contraction on the validated exact four-center path
     // whenever materialized AO integrals are available. Only the active-space

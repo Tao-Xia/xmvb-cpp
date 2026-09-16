@@ -117,7 +117,7 @@ build_exact_packed_active_two_electron_adjoint_cache(
   if (n_bf <= 0 || n_ao <= 0) {
     throw std::invalid_argument("exact 2e HVP cache dimensions must be positive");
   }
-  if (ao_integral_input.ao_two_electron_integral_values.empty()) {
+  if (ao_integral_input.pair_graph.empty()) {
     throw std::invalid_argument("exact 2e HVP cache requires materialized AO integrals");
   }
 
@@ -206,7 +206,7 @@ void apply_exact_packed_active_two_electron_adjoint_hessian_vector(
       accepted_cache.accepted_active_coefficients->cols() != n_ao) {
     throw std::invalid_argument("exact 2e cache accepted coefficient mismatch");
   }
-  if (ao_integral_input.ao_two_electron_integral_values.empty()) {
+  if (ao_integral_input.pair_graph.empty()) {
     throw std::invalid_argument("exact two-electron HVP requires materialized AO integrals");
   }
 

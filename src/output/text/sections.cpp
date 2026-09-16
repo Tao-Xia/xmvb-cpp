@@ -1102,7 +1102,7 @@ void print_input_sections(
          << '\n';
   if (load_result.standard_two_electron_mode == vb::StandardTwoElectronMode::Exact) {
     output << " Non-zero 2-e integrals: "
-           << input.ao_integral_input.ao_two_electron_integral_values.size()
+           << input.ao_integral_input.pair_graph.integral_count()
            << '\n';
   }
 

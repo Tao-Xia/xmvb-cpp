@@ -51,7 +51,7 @@ bool use_standard_ri_active_space_path(
 
 bool has_materialized_ao_two_electron_integrals(
     const xmvb::vb::VbScfInput& input) {
-  return !input.ao_integral_input.ao_two_electron_integral_values.empty();
+  return !input.ao_integral_input.pair_graph.empty();
 }
 
 const char* active_space_representation_name(
@@ -522,8 +522,7 @@ int main(int argc, char** argv) {
                   n_active_orbitals)
             : active_space_two_electron_backpropagator.backpropagate(
                   active_space_gradient_result.packed_active_two_electron_gradient,
-                  input.ao_integral_input.ao_two_electron_integral_values,
-                  input.ao_integral_input.ao_two_electron_integral_indices,
+                  input.ao_integral_input.pair_graph,
                   active_space_gradient_result.orbital_preparation_result,
                   n_basis_functions,
                   n_inactive_doubly_occupied_orbitals,
