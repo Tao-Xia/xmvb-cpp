@@ -48,6 +48,9 @@ struct TruncatedNewtonStepResult {
   double model_spectral_radius = 0.0;
   double trust_region_shift = 0.0;
   double predicted_decrease = 0.0;
+  /** @brief Requested full-space KKT residual divided by ||g||. */
+  double target_kkt_relative_residual =
+      std::numeric_limits<double>::quiet_NaN();
   /** @brief Computed-model shifted KKT residual divided by Euclidean ||g||. */
   double model_kkt_relative_residual =
       std::numeric_limits<double>::infinity();
@@ -81,11 +84,6 @@ struct RejectedTruncatedNewtonStepCache {
 };
 
 double inexact_newton_forcing_term(double gradient_norm);
-
-/** @brief Tests the norm-consistent inexact-Newton KKT condition. */
-bool inexact_newton_residual_is_converged(
-    double gradient_l2_norm,
-    double residual_l2_norm);
 
 /**
  * @brief Tests whether further inner work is below both outer accuracies.
@@ -127,7 +125,8 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     const NonredundantRetractionMetric& metric,
-    const TruncatedNewtonSubspace& subspace);
+    const TruncatedNewtonSubspace& subspace,
+    double target_kkt_relative_residual);
 
 Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
     const NonredundantRetractionMetric& retraction_metric,
@@ -155,6 +154,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     double trust_radius,
     double energy_tolerance,
     double gradient_tolerance,
+    double target_kkt_relative_residual,
     int max_subspace_dimension,
     ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,

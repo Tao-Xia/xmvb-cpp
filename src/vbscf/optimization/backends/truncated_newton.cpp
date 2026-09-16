@@ -253,6 +253,8 @@ BackendRunResult run_truncated_newton_backend(
             trust_radius,
             options.energy_tolerance,
             options.gradient_tolerance,
+            inexact_newton_forcing_term(
+                current_projection.reduced_gradient.stableNorm()),
             max_subspace_dimension,
             &hvp,
             &transported_preconditioner,

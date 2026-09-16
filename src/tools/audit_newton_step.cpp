@@ -27,9 +27,13 @@ using namespace xmvb::vb;
 struct Options {
   std::string input_path;
   std::string orbitals_path;
+  std::string dump_trial_orbitals_path;
   StructureEigensolver eigensolver = StructureEigensolver::Davidson;
   int subspace_dimension = 0;
   double trust_radius = 0.0;
+  double target_kkt_relative_residual =
+      std::numeric_limits<double>::quiet_NaN();
+  bool target_kkt_explicit = false;
 };
 
 Options parse_options(int argc, char** argv) {
@@ -37,7 +41,9 @@ Options parse_options(int argc, char** argv) {
     throw std::invalid_argument(
         "usage: audit_newton_step input.xmi "
         "--subspace-dimension count --trust-radius value "
-        "[--orbital-value-table-bin path] [--eigensolver davidson|dense]");
+        "[--target-kkt-relative value] [--orbital-value-table-bin path] "
+        "[--dump-trial-orbitals-bin path] "
+        "[--eigensolver davidson|dense]");
   }
   Options options;
   options.input_path = argv[1];
@@ -46,10 +52,15 @@ Options parse_options(int argc, char** argv) {
     const std::string value = argv[index + 1];
     if (name == "--orbital-value-table-bin") {
       options.orbitals_path = value;
+    } else if (name == "--dump-trial-orbitals-bin") {
+      options.dump_trial_orbitals_path = value;
     } else if (name == "--subspace-dimension") {
       options.subspace_dimension = std::stoi(value);
     } else if (name == "--trust-radius") {
       options.trust_radius = std::stod(value);
+    } else if (name == "--target-kkt-relative") {
+      options.target_kkt_relative_residual = std::stod(value);
+      options.target_kkt_explicit = true;
     } else if (name == "--eigensolver") {
       if (value == "davidson") {
         options.eigensolver = StructureEigensolver::Davidson;
@@ -64,7 +75,11 @@ Options parse_options(int argc, char** argv) {
   }
   if (options.subspace_dimension <= 0 ||
       !(options.trust_radius > 0.0) ||
-      !std::isfinite(options.trust_radius)) {
+      !std::isfinite(options.trust_radius) ||
+      (options.target_kkt_explicit &&
+       (!std::isfinite(options.target_kkt_relative_residual) ||
+        !(options.target_kkt_relative_residual >= 0.0 &&
+          options.target_kkt_relative_residual < 1.0)))) {
     throw std::invalid_argument("invalid accepted-point audit options");
   }
   return options;
@@ -190,9 +205,14 @@ void run_audit(const Options& options) {
   AcceptedPointHvp hvp(accepted, input, layout, *chart);
 
   const auto solve_start = std::chrono::steady_clock::now();
+  const double target_kkt_relative_residual =
+      options.target_kkt_explicit
+      ? options.target_kkt_relative_residual
+      : inexact_newton_forcing_term(projected.reduced_gradient.stableNorm());
   auto step = solve_nonredundant_truncated_newton_step(
       metric, *chart, projected, options.trust_radius,
       accuracy.energy_tolerance, accuracy.gradient_tolerance,
+      target_kkt_relative_residual,
       options.subspace_dimension, &hvp, nullptr);
   clamp_nonredundant_step_result_to_retract_tangent_radius(
       projected, options.trust_radius, metric, &step);
@@ -225,6 +245,19 @@ void run_audit(const Options& options) {
   VbScfInput trial = input;
   trial.orbital_preparation_input = chart->retract_step(
       input.orbital_preparation_input, step.reduced_step);
+  if (!options.dump_trial_orbitals_path.empty()) {
+    const auto& values = trial.orbital_preparation_input.orbital_value_table;
+    std::ofstream file(options.dump_trial_orbitals_path, std::ios::binary);
+    if (!file) {
+      throw std::runtime_error("cannot open trial orbital table output");
+    }
+    file.write(
+        reinterpret_cast<const char*>(values.data()),
+        static_cast<std::streamsize>(values.size() * sizeof(double)));
+    if (!file) {
+      throw std::runtime_error("cannot write trial orbital table output");
+    }
+  }
   const auto trial_gradient = evaluator.evaluate_without_reference_energy_gradient(
       trial, {0}, {1.0}, loaded.nuclear_repulsion_energy,
       options.eigensolver, accuracy, no_initial_eigenvectors);
@@ -247,6 +280,7 @@ void run_audit(const Options& options) {
             << "reduced_dimension = " << chart->reduced_size() << '\n'
             << "subspace_budget = " << options.subspace_dimension << '\n'
             << "subspace_dimension = " << step.subspace_dimension << '\n'
+            << "target_kkt_relative = " << target_kkt_relative_residual << '\n'
             << "stop_reason = " << stop_reason_name(step.stop_reason) << '\n'
             << "source_gradient_l2 = " << projected.reduced_gradient.stableNorm() << '\n'
             << "trial_gradient_l2 = " << trial_projected_gradient.stableNorm() << '\n'

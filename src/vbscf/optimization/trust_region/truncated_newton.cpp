@@ -28,17 +28,6 @@ double inexact_newton_forcing_term(double gradient_norm) {
       kMaximumForcingTerm);
 }
 
-bool inexact_newton_residual_is_converged(
-    double gradient_l2_norm,
-    double residual_l2_norm) {
-  if (!std::isfinite(gradient_l2_norm) || gradient_l2_norm < 0.0 ||
-      !std::isfinite(residual_l2_norm) || residual_l2_norm < 0.0) {
-    return false;
-  }
-  return residual_l2_norm <=
-      inexact_newton_forcing_term(gradient_l2_norm) * gradient_l2_norm;
-}
-
 void refresh_truncated_newton_step_certificate(
     const Eigen::VectorXd& reduced_gradient,
     TruncatedNewtonStepResult* step) {
@@ -61,6 +50,11 @@ void refresh_truncated_newton_step_certificate(
   }
 
   const double gradient_norm = reduced_gradient.stableNorm();
+  if (!std::isfinite(step->target_kkt_relative_residual) ||
+      step->target_kkt_relative_residual < 0.0 ||
+      step->target_kkt_relative_residual >= 1.0) {
+    return;
+  }
   const Eigen::VectorXd residual = reduced_gradient +
       step->reduced_hessian_times_step +
       step->trust_region_shift * step->reduced_metric_times_step;
@@ -70,8 +64,8 @@ void refresh_truncated_newton_step_certificate(
       ? residual_norm / gradient_norm
       : (residual_norm == 0.0 ? 0.0
                               : std::numeric_limits<double>::infinity());
-  step->model_kkt_converged = inexact_newton_residual_is_converged(
-      gradient_norm, residual_norm);
+  step->model_kkt_converged = residual_norm <=
+      step->target_kkt_relative_residual * gradient_norm;
   step->newton_forcing_converged =
       step->model_kkt_converged &&
       step->trust_region_shift == 0.0 &&
@@ -298,8 +292,10 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     const NonredundantRetractionMetric& metric,
-    const TruncatedNewtonSubspace& subspace) {
+    const TruncatedNewtonSubspace& subspace,
+    double target_kkt_relative_residual) {
   TruncatedNewtonStepResult result;
+  result.target_kkt_relative_residual = target_kkt_relative_residual;
   result.reduced_step =
       Eigen::VectorXd::Zero(current_projection.reduced_gradient.size());
   result.reduced_hessian_times_step =
@@ -523,12 +519,19 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     double trust_radius,
     double energy_tolerance,
     double gradient_tolerance,
+    double target_kkt_relative_residual,
     int max_subspace_dimension,
     ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd* initial_reduced_step,
     const TruncatedNewtonSubspace* initial_subspace) {
   TruncatedNewtonStepResult result;
+  result.target_kkt_relative_residual = target_kkt_relative_residual;
+  if (!std::isfinite(target_kkt_relative_residual) ||
+      target_kkt_relative_residual < 0.0 ||
+      target_kkt_relative_residual >= 1.0) {
+    throw std::invalid_argument("invalid Newton KKT residual target");
+  }
   const Eigen::VectorXd preconditioned_gradient_step =
       build_nonredundant_preconditioned_reduced_gradient_step(
           retraction_metric,
@@ -588,7 +591,8 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         current_projection,
         trust_radius,
         retraction_metric,
-        *initial_subspace);
+        *initial_subspace,
+        target_kkt_relative_residual);
     if (truncated_newton_step_is_usable(
             result,
             current_projection.reduced_gradient)) {
@@ -685,7 +689,8 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
             current_projection,
             trust_radius,
             retraction_metric,
-            subspace);
+            subspace,
+            target_kkt_relative_residual);
     if (!truncated_newton_step_is_usable(
             candidate_step,
             current_projection.reduced_gradient)) {

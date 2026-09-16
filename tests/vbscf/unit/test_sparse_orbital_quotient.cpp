@@ -243,7 +243,8 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
       const double exact_norm = metric.norm(exact_step);
       for (double radius : {2.0 * exact_norm, 0.5 * exact_norm}) {
         const auto step = solve_trust_region_in_subspace(
-            projection, radius, metric, subspace);
+            projection, radius, metric, subspace,
+            inexact_newton_forcing_term(gradient.norm()));
         require(step.predicted_decrease > 0.0 &&
                     metric.norm(step.reduced_step) <= radius * (1.0 + 1.0e-7),
                 name + ": generalized trust-region radius mismatch");
@@ -383,9 +384,21 @@ void check_truncated_newton_certificates() {
   step.reduced_step = -gradient;
   step.reduced_hessian_times_step = -gradient;
   step.reduced_metric_times_step = -gradient;
+  step.target_kkt_relative_residual =
+      inexact_newton_forcing_term(gradient.norm());
   refresh_truncated_newton_step_certificate(gradient, &step);
   require(step.model_kkt_converged && step.newton_forcing_converged,
           "exact interior Newton model lacks a forcing certificate");
+
+  step.reduced_hessian_times_step = -0.9 * gradient;
+  step.target_kkt_relative_residual = 0.2;
+  refresh_truncated_newton_step_certificate(gradient, &step);
+  require(step.model_kkt_converged,
+          "explicit loose KKT target rejected a valid step");
+  step.target_kkt_relative_residual = 0.05;
+  refresh_truncated_newton_step_certificate(gradient, &step);
+  require(!step.model_kkt_converged,
+          "explicit tight KKT target accepted an unresolved step");
 
   step.reduced_hessian_times_step.setZero();
   step.trust_region_shift = 1.0;
@@ -410,7 +423,8 @@ void check_interior_work_extension(const OrbitalPreparationInput& input) {
   projection.reduced_gradient = gradient;
   DenseTestHvp hvp(hessian);
   const auto step = solve_nonredundant_truncated_newton_step(
-      metric, space, projection, 10.0, 1.0e-7, 1.0e-3, 2,
+      metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
+      inexact_newton_forcing_term(gradient.norm()), 2,
       &hvp, nullptr);
   require(step.subspace_dimension > 2 && step.subspace_dimension <= 4 &&
               hvp.applies > 2 && hvp.applies <= 4 &&
@@ -426,7 +440,8 @@ void check_interior_work_extension(const OrbitalPreparationInput& input) {
   }
   DenseTestHvp clustered_hvp(clustered);
   const auto certified = solve_nonredundant_truncated_newton_step(
-      metric, space, projection, 10.0, 1.0e-7, 1.0e-3, 2,
+      metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
+      inexact_newton_forcing_term(gradient.norm()), 2,
       &clustered_hvp, nullptr);
   require(certified.subspace_dimension > 2 &&
               certified.subspace_dimension <= 4 &&
@@ -440,7 +455,8 @@ void check_interior_work_extension(const OrbitalPreparationInput& input) {
   hessian(0, 0) = -10.0;
   DenseTestHvp indefinite(hessian);
   const auto boundary = solve_nonredundant_truncated_newton_step(
-      metric, space, projection, 1.0e-3, 1.0e-7, 1.0e-3, 2,
+      metric, space, projection, 1.0e-3, 1.0e-7, 1.0e-3,
+      inexact_newton_forcing_term(gradient.norm()), 2,
       &indefinite, nullptr);
   require(boundary.reached_boundary && boundary.subspace_dimension <= 2 &&
               indefinite.applies <= 2 &&
