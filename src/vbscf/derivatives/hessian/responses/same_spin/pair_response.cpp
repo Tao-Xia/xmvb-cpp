@@ -186,11 +186,10 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
           direction.one_electron.data(), n_active_orbitals, n_active_orbitals));
   const Eigen::MatrixXd dg = build_spin_antisymmetrized_interaction_direction(
       occ_L, occ_R, direction.packed_two_electron);
-  result.cofactor_1st = cofactor.value();
   result.delta_cofactor_1st = cofactor.first(ds);
-  result.delta_overlap_determinant = (result.cofactor_1st.cwiseProduct(ds)).sum();
+  result.delta_overlap_determinant = (cofactor.value().cwiseProduct(ds)).sum();
   result.delta_total_hamiltonian =
-      (dh.cwiseProduct(result.cofactor_1st)).sum() +
+      (dh.cwiseProduct(cofactor.value())).sum() +
       (dg.cwiseProduct(cofactor.second())).sum() +
       (pair_evaluation.same_spin_overlap_hamiltonian_gradient.cwiseProduct(ds)).sum();
   if (need_overlap_gradient)
@@ -242,7 +241,6 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
       scalars.ordered_pair_data[forward_index] = directional_data;
       if (left_id != right_id) {
         SameSpinPolynomialDirectionalPairData transposed = directional_data;
-        transposed.cofactor_1st.transposeInPlace();
         transposed.delta_cofactor_1st.transposeInPlace();
         transposed.delta_same_spin_overlap_hamiltonian_gradient
             .transposeInPlace();

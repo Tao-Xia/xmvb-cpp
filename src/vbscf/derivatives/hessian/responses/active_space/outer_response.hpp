@@ -19,6 +19,12 @@ struct ActiveSpaceGradientDirection {
   std::vector<double> packed_active_two_electron_gradient;
 };
 
+/** @brief Wall-clock breakdown of the selected-state adjoint contraction. */
+struct SelectedStateResponseTiming {
+  double same_spin_seconds = 0.0;
+  double opposite_spin_seconds = 0.0;
+};
+
 /** @brief Allocates a zero active-space gradient in canonical storage. */
 ActiveSpaceGradientDirection make_zero_active_space_gradient_direction(
     int n_active_orbitals);
@@ -34,7 +40,7 @@ ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
     const SameSpinDirectionalPairCache& directional_pair_cache);
 
 /** @brief Adds the selected-state coefficient/energy response contribution. */
-void add_selected_state_response_to_active_space_gradient(
+SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const SelectedStateDeterminantMatrices& directional_selected_states,

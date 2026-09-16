@@ -387,11 +387,13 @@ void accumulate_spin_local_matrix_backward_tile(
       const SameSpinPolynomialDirectionalPairData& directional_data =
           ordered_directional_data[ordered_spin_pair_storage_index(
               left_id, right_id, n_unique_determinants)];
+      const Eigen::MatrixXd& cofactor_1st =
+          cached_cofactor_differential(pair_evaluation).value();
 
       accumulate_directional_one_electron_gradient_contribution_local(
           occ_L,
           occ_R,
-          directional_data.cofactor_1st,
+          cofactor_1st,
           directional_data.delta_cofactor_1st,
           hamiltonian_weight,
           delta_hamiltonian_weight,
@@ -432,11 +434,11 @@ void accumulate_spin_local_matrix_backward_tile(
           overlap_weight + partner_total;
       const double delta_determinant_overlap_weight =
           delta_overlap_weight + delta_partner_total;
-      if (directional_data.cofactor_1st.size() != 0) {
+      if (cofactor_1st.size() != 0) {
         accumulate_overlap_block_gradient_contribution_local(
             occ_L,
             occ_R,
-            directional_data.cofactor_1st,
+            cofactor_1st,
             delta_determinant_overlap_weight,
             n_active_orbitals,
             active_orbital_overlap_gradient);
@@ -547,11 +549,13 @@ void accumulate_spin_local_matrix_backward(
           const SameSpinPolynomialDirectionalPairData& directional_data =
               ordered_directional_data[ordered_spin_pair_storage_index(
                   left_id, right_id, n_unique_determinants)];
+          const Eigen::MatrixXd& cofactor_1st =
+              cached_cofactor_differential(pair_evaluation).value();
 
           accumulate_directional_one_electron_gradient_contribution_local(
               occ_L,
               occ_R,
-              directional_data.cofactor_1st,
+              cofactor_1st,
               directional_data.delta_cofactor_1st,
               hamiltonian_weight,
               delta_hamiltonian_weight,
@@ -592,11 +596,11 @@ void accumulate_spin_local_matrix_backward(
               overlap_weight + partner_total;
           const double delta_determinant_overlap_weight =
               delta_overlap_weight + delta_partner_total;
-          if (directional_data.cofactor_1st.size() != 0) {
+          if (cofactor_1st.size() != 0) {
             accumulate_overlap_block_gradient_contribution_local(
                 occ_L,
                 occ_R,
-                directional_data.cofactor_1st,
+                cofactor_1st,
                 delta_determinant_overlap_weight,
                 n_active_orbitals,
                 active_orbital_overlap_gradient);

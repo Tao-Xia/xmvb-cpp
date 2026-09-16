@@ -989,6 +989,27 @@ void print_measurement(const BenchmarkMeasurement& measurement) {
                    diagnostics.apply_count)
             << '\n';
   std::cout << label
+            << "_diag_avg_outer_response_selected_state_rebuild_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics
+                       .outer_response_selected_state_rebuild_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
+            << "_diag_avg_outer_response_same_spin_backward_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics
+                       .outer_response_same_spin_backward_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
+            << "_diag_avg_outer_response_opposite_spin_backward_wall_time_seconds = "
+            << average_wall_time_seconds(
+                   diagnostics
+                       .outer_response_opposite_spin_backward_wall_time_seconds,
+                   diagnostics.apply_count)
+            << '\n';
+  std::cout << label
             << "_diag_avg_outer_response_orbital_pullback_wall_time_seconds = "
             << average_wall_time_seconds(
                    diagnostics.outer_response_orbital_pullback_wall_time_seconds,

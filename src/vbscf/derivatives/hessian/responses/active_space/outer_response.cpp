@@ -1,6 +1,7 @@
 #include "vbscf/derivatives/hessian/responses/active_space/outer_response.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -226,7 +227,7 @@ ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
   return direction;
 }
 
-void add_selected_state_response_to_active_space_gradient(
+SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const SelectedStateDeterminantMatrices& directional_selected_states,
@@ -244,6 +245,8 @@ void add_selected_state_response_to_active_space_gradient(
         "same-spin matrix-form adjoint path");
   }
 
+  SelectedStateResponseTiming timing;
+  const auto same_spin_start = std::chrono::steady_clock::now();
   const SameSpinMatrixBackwardContribution matrix_form_same_spin_direction =
       build_directional_same_spin_matrix_backward_contribution(
           accepted_point_context.same_spin_pair_cache,
@@ -255,6 +258,9 @@ void add_selected_state_response_to_active_space_gradient(
   validate_same_spin_matrix_backward_contribution(
       matrix_form_same_spin_direction,
       "exact outer-response directional same-spin backward contribution");
+  timing.same_spin_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - same_spin_start).count();
+  const auto opposite_spin_start = std::chrono::steady_clock::now();
   const OppositeSpinMatrixBackwardContribution matrix_form_opposite_spin_direction =
       build_directional_opposite_spin_matrix_backward_contribution(
           accepted_point_context.same_spin_pair_cache,
@@ -264,6 +270,8 @@ void add_selected_state_response_to_active_space_gradient(
   validate_opposite_spin_matrix_backward_contribution(
       matrix_form_opposite_spin_direction,
       "exact outer-response directional opposite-spin backward contribution");
+  timing.opposite_spin_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - opposite_spin_start).count();
   accumulate_scaled_same_spin_contribution(
       matrix_form_same_spin_direction,
       1.0,
@@ -276,6 +284,7 @@ void add_selected_state_response_to_active_space_gradient(
       matrix_form_opposite_spin_direction.packed_active_two_electron_gradient,
       1.0,
       &active_space_gradient->packed_active_two_electron_gradient);
+  return timing;
 }
 
 static void write_symmetric_active_matrix_average_local(

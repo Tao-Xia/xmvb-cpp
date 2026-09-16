@@ -255,6 +255,15 @@ ExactHvpOperator::State::diagnostics() const {
   info.outer_response_structure_active_gradient_wall_time_seconds =
       apply_timing_totals_
           .outer_response_structure_active_gradient_wall_time_seconds;
+  info.outer_response_selected_state_rebuild_wall_time_seconds =
+      apply_timing_totals_
+          .outer_response_selected_state_rebuild_wall_time_seconds;
+  info.outer_response_same_spin_backward_wall_time_seconds =
+      apply_timing_totals_
+          .outer_response_same_spin_backward_wall_time_seconds;
+  info.outer_response_opposite_spin_backward_wall_time_seconds =
+      apply_timing_totals_
+          .outer_response_opposite_spin_backward_wall_time_seconds;
   info.outer_response_orbital_pullback_wall_time_seconds =
       apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds;
   return info;

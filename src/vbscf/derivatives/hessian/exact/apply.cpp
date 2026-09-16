@@ -376,6 +376,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const auto structure_active_gradient_start_time =
         std::chrono::steady_clock::now();
     if (directional_selected_state_response != nullptr) {
+      const auto selected_state_rebuild_start_time =
+          std::chrono::steady_clock::now();
       const SelectedStateDeterminantMatrices directional_selected_states =
           build_selected_state_determinant_matrices_from_selected_columns(
               current_input_->structure_data,
@@ -384,12 +386,22 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
               accepted_point_context_->selected_state_indices,
               accepted_point_context_->normalized_state_weights,
               accepted_point_context_->same_spin_pair_cache);
-      add_selected_state_response_to_active_space_gradient(
-          *current_input_,
-          *accepted_point_context_,
-          directional_selected_states,
-          directional_selected_state_response->delta_selected_eigenvalues,
-          &directional_active_space_gradient);
+      apply_timing_totals_
+          .outer_response_selected_state_rebuild_wall_time_seconds +=
+          detail::exact_hvp_elapsed_seconds(selected_state_rebuild_start_time);
+      const SelectedStateResponseTiming response_timing =
+          add_selected_state_response_to_active_space_gradient(
+              *current_input_,
+              *accepted_point_context_,
+              directional_selected_states,
+              directional_selected_state_response->delta_selected_eigenvalues,
+              &directional_active_space_gradient);
+      apply_timing_totals_
+          .outer_response_same_spin_backward_wall_time_seconds +=
+          response_timing.same_spin_seconds;
+      apply_timing_totals_
+          .outer_response_opposite_spin_backward_wall_time_seconds +=
+          response_timing.opposite_spin_seconds;
     }
     apply_timing_totals_
         .outer_response_structure_active_gradient_wall_time_seconds +=

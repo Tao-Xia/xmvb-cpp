@@ -32,7 +32,6 @@ struct SameSpinMatrixBackwardContribution {
 struct SameSpinPolynomialDirectionalPairData {
   double delta_overlap_determinant = 0.0;
   double delta_total_hamiltonian = 0.0;
-  Eigen::MatrixXd cofactor_1st;
   Eigen::MatrixXd delta_cofactor_1st;
   Eigen::MatrixXd delta_same_spin_overlap_hamiltonian_gradient;
 };
