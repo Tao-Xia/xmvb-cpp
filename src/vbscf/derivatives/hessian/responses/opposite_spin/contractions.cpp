@@ -805,79 +805,80 @@ void accumulate_opposite_spin_packed_gradient_by_tiles(
     std::vector<double>* packed_active_two_electron_gradient) {
   const int unique_tile_size = kOppositeSpinUniqueTileSize;
   Eigen::MatrixXd alpha_pair_weight_tile;
-  for (int beta_batch_begin = 0;
-       beta_batch_begin < n_packed_active_pairs;
-       beta_batch_begin += dense_batch_size) {
-    const int beta_batch_end =
-        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
-    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
-        same_spin_pair_cache.beta_pair_cache_ref(),
-        selected_states.n_unique_beta,
-        beta_batch_begin,
-        beta_batch_end);
+  // A channel block is invariant across beta batches and unique-string tiles.
+  // Keeping it outside those loops bounds sparse storage by one block while
+  // avoiding a full ordered-pair-cache scan for every contraction tile.
+  for (int alpha_block_begin = 0;
+       alpha_block_begin < n_packed_active_pairs;
+       alpha_block_begin += sparse_block_size) {
+    const int alpha_block_end =
+        std::min(n_packed_active_pairs, alpha_block_begin + sparse_block_size);
+    const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
+        same_spin_pair_cache.alpha_pair_cache_ref(),
+        selected_states.n_unique_alpha,
+        alpha_block_begin,
+        alpha_block_end);
 
-    for (int alpha_left_begin = 0;
-         alpha_left_begin < selected_states.n_unique_alpha;
-         alpha_left_begin += unique_tile_size) {
-      const int alpha_left_end =
-          std::min(
-              selected_states.n_unique_alpha,
-              alpha_left_begin + unique_tile_size);
-      for (int alpha_right_begin = 0;
-           alpha_right_begin < selected_states.n_unique_alpha;
-           alpha_right_begin += unique_tile_size) {
-        const int alpha_right_end =
+    for (int beta_batch_begin = 0;
+         beta_batch_begin < n_packed_active_pairs;
+         beta_batch_begin += dense_batch_size) {
+      const int beta_batch_end =
+          std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
+      const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
+          same_spin_pair_cache.beta_pair_cache_ref(),
+          selected_states.n_unique_beta,
+          beta_batch_begin,
+          beta_batch_end);
+
+      for (int alpha_left_begin = 0;
+           alpha_left_begin < selected_states.n_unique_alpha;
+           alpha_left_begin += unique_tile_size) {
+        const int alpha_left_end =
             std::min(
                 selected_states.n_unique_alpha,
-                alpha_right_begin + unique_tile_size);
+                alpha_left_begin + unique_tile_size);
+        for (int alpha_right_begin = 0;
+             alpha_right_begin < selected_states.n_unique_alpha;
+             alpha_right_begin += unique_tile_size) {
+          const int alpha_right_end =
+              std::min(
+                  selected_states.n_unique_alpha,
+                  alpha_right_begin + unique_tile_size);
 
-        std::vector<int> active_beta_packed_pair_indices;
-        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
-        const int alpha_tile_area =
-            alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
-        Eigen::MatrixXd alpha_pair_weight_tiles(
-            alpha_tile_area,
-            beta_batch_end - beta_batch_begin);
-        active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
-        int active_beta_count = 0;
-        for (int beta_local_index = 0;
-             beta_local_index < beta_batch_end - beta_batch_begin;
-             ++beta_local_index) {
-          accumulate_alpha_pair_matrix_tile(
-              selected_states,
-              beta_sparse_batch[beta_local_index],
-              alpha_left_begin,
-              alpha_left_end,
-              alpha_right_begin,
-              alpha_right_end,
-              &alpha_pair_weight_tile);
-          if (dense_matrix_is_effectively_zero(alpha_pair_weight_tile)) {
+          std::vector<int> active_beta_packed_pair_indices;
+          const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+          const int alpha_tile_area =
+              alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
+          Eigen::MatrixXd alpha_pair_weight_tiles(
+              alpha_tile_area,
+              beta_batch_end - beta_batch_begin);
+          active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
+          int active_beta_count = 0;
+          for (int beta_local_index = 0;
+               beta_local_index < beta_batch_end - beta_batch_begin;
+               ++beta_local_index) {
+            accumulate_alpha_pair_matrix_tile(
+                selected_states,
+                beta_sparse_batch[beta_local_index],
+                alpha_left_begin,
+                alpha_left_end,
+                alpha_right_begin,
+                alpha_right_end,
+                &alpha_pair_weight_tile);
+            if (dense_matrix_is_effectively_zero(alpha_pair_weight_tile)) {
+              continue;
+            }
+            active_beta_packed_pair_indices.push_back(
+                beta_batch_begin + beta_local_index);
+            alpha_pair_weight_tiles.col(active_beta_count) =
+                Eigen::Map<const Eigen::VectorXd>(
+                    alpha_pair_weight_tile.data(),
+                    alpha_pair_weight_tile.size());
+            ++active_beta_count;
+          }
+          if (active_beta_packed_pair_indices.empty()) {
             continue;
           }
-          active_beta_packed_pair_indices.push_back(
-              beta_batch_begin + beta_local_index);
-          alpha_pair_weight_tiles.col(active_beta_count) =
-              Eigen::Map<const Eigen::VectorXd>(
-                  alpha_pair_weight_tile.data(),
-                  alpha_pair_weight_tile.size());
-          ++active_beta_count;
-        }
-        if (active_beta_packed_pair_indices.empty()) {
-          continue;
-        }
-
-        for (int alpha_block_begin = 0;
-             alpha_block_begin < n_packed_active_pairs;
-             alpha_block_begin += sparse_block_size) {
-          const int alpha_block_end =
-              std::min(
-                  n_packed_active_pairs,
-                  alpha_block_begin + sparse_block_size);
-          const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
-              same_spin_pair_cache.alpha_pair_cache_ref(),
-              selected_states.n_unique_alpha,
-              alpha_block_begin,
-              alpha_block_end);
 
           for (std::size_t beta_active_index = 0;
                beta_active_index < active_beta_packed_pair_indices.size();
@@ -925,80 +926,80 @@ void accumulate_directional_opposite_spin_packed_gradient_by_tiles(
     std::vector<double>* packed_active_two_electron_gradient) {
   const int unique_tile_size = kOppositeSpinUniqueTileSize;
   Eigen::MatrixXd alpha_pair_weight_tile;
-  for (int beta_batch_begin = 0;
-       beta_batch_begin < n_packed_active_pairs;
-       beta_batch_begin += dense_batch_size) {
-    const int beta_batch_end =
-        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
-    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
-        same_spin_pair_cache.beta_pair_cache_ref(),
-        selected_states.n_unique_beta,
-        beta_batch_begin,
-        beta_batch_end);
+  // See the accepted contraction above: channel blocks are streamed once,
+  // then reused over all beta batches and unique-string tiles.
+  for (int alpha_block_begin = 0;
+       alpha_block_begin < n_packed_active_pairs;
+       alpha_block_begin += sparse_block_size) {
+    const int alpha_block_end =
+        std::min(n_packed_active_pairs, alpha_block_begin + sparse_block_size);
+    const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
+        same_spin_pair_cache.alpha_pair_cache_ref(),
+        selected_states.n_unique_alpha,
+        alpha_block_begin,
+        alpha_block_end);
 
-    for (int alpha_left_begin = 0;
-         alpha_left_begin < selected_states.n_unique_alpha;
-         alpha_left_begin += unique_tile_size) {
-      const int alpha_left_end =
-          std::min(
-              selected_states.n_unique_alpha,
-              alpha_left_begin + unique_tile_size);
-      for (int alpha_right_begin = 0;
-           alpha_right_begin < selected_states.n_unique_alpha;
-           alpha_right_begin += unique_tile_size) {
-        const int alpha_right_end =
+    for (int beta_batch_begin = 0;
+         beta_batch_begin < n_packed_active_pairs;
+         beta_batch_begin += dense_batch_size) {
+      const int beta_batch_end =
+          std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
+      const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
+          same_spin_pair_cache.beta_pair_cache_ref(),
+          selected_states.n_unique_beta,
+          beta_batch_begin,
+          beta_batch_end);
+
+      for (int alpha_left_begin = 0;
+           alpha_left_begin < selected_states.n_unique_alpha;
+           alpha_left_begin += unique_tile_size) {
+        const int alpha_left_end =
             std::min(
                 selected_states.n_unique_alpha,
-                alpha_right_begin + unique_tile_size);
+                alpha_left_begin + unique_tile_size);
+        for (int alpha_right_begin = 0;
+             alpha_right_begin < selected_states.n_unique_alpha;
+             alpha_right_begin += unique_tile_size) {
+          const int alpha_right_end =
+              std::min(
+                  selected_states.n_unique_alpha,
+                  alpha_right_begin + unique_tile_size);
 
-        std::vector<int> active_beta_packed_pair_indices;
-        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
-        const int alpha_tile_area =
-            alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
-        Eigen::MatrixXd alpha_pair_weight_tiles(
-            alpha_tile_area,
-            beta_batch_end - beta_batch_begin);
-        active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
-        int active_beta_count = 0;
-        for (int beta_local_index = 0;
-             beta_local_index < beta_batch_end - beta_batch_begin;
-             ++beta_local_index) {
-          accumulate_directional_alpha_pair_matrix_tile(
-              selected_states,
-              directional_selected_states,
-              beta_sparse_batch[beta_local_index],
-              alpha_left_begin,
-              alpha_left_end,
-              alpha_right_begin,
-              alpha_right_end,
-              &alpha_pair_weight_tile);
-          if (dense_matrix_is_effectively_zero(alpha_pair_weight_tile)) {
+          std::vector<int> active_beta_packed_pair_indices;
+          const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+          const int alpha_tile_area =
+              alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
+          Eigen::MatrixXd alpha_pair_weight_tiles(
+              alpha_tile_area,
+              beta_batch_end - beta_batch_begin);
+          active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
+          int active_beta_count = 0;
+          for (int beta_local_index = 0;
+               beta_local_index < beta_batch_end - beta_batch_begin;
+               ++beta_local_index) {
+            accumulate_directional_alpha_pair_matrix_tile(
+                selected_states,
+                directional_selected_states,
+                beta_sparse_batch[beta_local_index],
+                alpha_left_begin,
+                alpha_left_end,
+                alpha_right_begin,
+                alpha_right_end,
+                &alpha_pair_weight_tile);
+            if (dense_matrix_is_effectively_zero(alpha_pair_weight_tile)) {
+              continue;
+            }
+            active_beta_packed_pair_indices.push_back(
+                beta_batch_begin + beta_local_index);
+            alpha_pair_weight_tiles.col(active_beta_count) =
+                Eigen::Map<const Eigen::VectorXd>(
+                    alpha_pair_weight_tile.data(),
+                    alpha_pair_weight_tile.size());
+            ++active_beta_count;
+          }
+          if (active_beta_packed_pair_indices.empty()) {
             continue;
           }
-          active_beta_packed_pair_indices.push_back(
-              beta_batch_begin + beta_local_index);
-          alpha_pair_weight_tiles.col(active_beta_count) =
-              Eigen::Map<const Eigen::VectorXd>(
-                  alpha_pair_weight_tile.data(),
-                  alpha_pair_weight_tile.size());
-          ++active_beta_count;
-        }
-        if (active_beta_packed_pair_indices.empty()) {
-          continue;
-        }
-
-        for (int alpha_block_begin = 0;
-             alpha_block_begin < n_packed_active_pairs;
-             alpha_block_begin += sparse_block_size) {
-          const int alpha_block_end =
-              std::min(
-                  n_packed_active_pairs,
-                  alpha_block_begin + sparse_block_size);
-          const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
-              same_spin_pair_cache.alpha_pair_cache_ref(),
-              selected_states.n_unique_alpha,
-              alpha_block_begin,
-              alpha_block_end);
 
           for (std::size_t beta_active_index = 0;
                beta_active_index < active_beta_packed_pair_indices.size();
@@ -1048,117 +1049,117 @@ void accumulate_local_opposite_spin_packed_gradient_by_tiles(
   const int unique_tile_size = kOppositeSpinUniqueTileSize;
   Eigen::MatrixXd alpha_pair_weight_tile;
   Eigen::MatrixXd alpha_directional_pair_weight_tile;
-  for (int beta_batch_begin = 0;
-       beta_batch_begin < n_packed_active_pairs;
-       beta_batch_begin += dense_batch_size) {
-    const int beta_batch_end =
-        std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
-    const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
-        same_spin_pair_cache.beta_pair_cache_ref(),
-        selected_states.n_unique_beta,
-        beta_batch_begin,
-        beta_batch_end);
-    const auto beta_directional_sparse_batch =
+  // Accepted and directional channels share the same bounded block lifetime;
+  // neither is rebuilt inside a unique-string tile.
+  for (int alpha_block_begin = 0;
+       alpha_block_begin < n_packed_active_pairs;
+       alpha_block_begin += sparse_block_size) {
+    const int alpha_block_end =
+        std::min(n_packed_active_pairs, alpha_block_begin + sparse_block_size);
+    const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
+        same_spin_pair_cache.alpha_pair_cache_ref(),
+        selected_states.n_unique_alpha,
+        alpha_block_begin,
+        alpha_block_end);
+    const auto alpha_directional_sparse_block =
         build_directional_first_order_sparse_matrix_block(
-            beta_directional_pair_data,
-            selected_states.n_unique_beta,
-            beta_batch_begin,
-            beta_batch_end);
+            alpha_directional_pair_data,
+            selected_states.n_unique_alpha,
+            alpha_block_begin,
+            alpha_block_end);
 
-    for (int alpha_left_begin = 0;
-         alpha_left_begin < selected_states.n_unique_alpha;
-         alpha_left_begin += unique_tile_size) {
-      const int alpha_left_end =
-          std::min(
-              selected_states.n_unique_alpha,
-              alpha_left_begin + unique_tile_size);
-      for (int alpha_right_begin = 0;
-           alpha_right_begin < selected_states.n_unique_alpha;
-           alpha_right_begin += unique_tile_size) {
-        const int alpha_right_end =
+    for (int beta_batch_begin = 0;
+         beta_batch_begin < n_packed_active_pairs;
+         beta_batch_begin += dense_batch_size) {
+      const int beta_batch_end =
+          std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
+      const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
+          same_spin_pair_cache.beta_pair_cache_ref(),
+          selected_states.n_unique_beta,
+          beta_batch_begin,
+          beta_batch_end);
+      const auto beta_directional_sparse_batch =
+          build_directional_first_order_sparse_matrix_block(
+              beta_directional_pair_data,
+              selected_states.n_unique_beta,
+              beta_batch_begin,
+              beta_batch_end);
+
+      for (int alpha_left_begin = 0;
+           alpha_left_begin < selected_states.n_unique_alpha;
+           alpha_left_begin += unique_tile_size) {
+        const int alpha_left_end =
             std::min(
                 selected_states.n_unique_alpha,
-                alpha_right_begin + unique_tile_size);
+                alpha_left_begin + unique_tile_size);
+        for (int alpha_right_begin = 0;
+             alpha_right_begin < selected_states.n_unique_alpha;
+             alpha_right_begin += unique_tile_size) {
+          const int alpha_right_end =
+              std::min(
+                  selected_states.n_unique_alpha,
+                  alpha_right_begin + unique_tile_size);
 
-        std::vector<int> active_beta_packed_pair_indices;
-        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
-        const int alpha_tile_area =
-            alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
-        Eigen::MatrixXd alpha_pair_weight_tiles(
-            alpha_tile_area,
-            beta_batch_end - beta_batch_begin);
-        Eigen::MatrixXd alpha_directional_pair_weight_tiles(
-            alpha_tile_area,
-            beta_batch_end - beta_batch_begin);
-        std::vector<unsigned char> accepted_tile_nonzero;
-        std::vector<unsigned char> directional_tile_nonzero;
-        active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
-        accepted_tile_nonzero.reserve(beta_sparse_batch.size());
-        directional_tile_nonzero.reserve(beta_sparse_batch.size());
-        int active_beta_count = 0;
-        for (int beta_local_index = 0;
-             beta_local_index < beta_batch_end - beta_batch_begin;
-             ++beta_local_index) {
-          accumulate_alpha_pair_matrix_tile(
-              selected_states,
-              beta_sparse_batch[beta_local_index],
-              alpha_left_begin,
-              alpha_left_end,
-              alpha_right_begin,
-              alpha_right_end,
-              &alpha_pair_weight_tile);
-          accumulate_alpha_pair_matrix_tile(
-              selected_states,
-              beta_directional_sparse_batch[beta_local_index],
-              alpha_left_begin,
-              alpha_left_end,
-              alpha_right_begin,
-              alpha_right_end,
-              &alpha_directional_pair_weight_tile);
-          const bool accepted_nonzero =
-              !dense_matrix_is_effectively_zero(alpha_pair_weight_tile);
-          const bool directional_nonzero =
-              !dense_matrix_is_effectively_zero(
-                  alpha_directional_pair_weight_tile);
-          if (!accepted_nonzero && !directional_nonzero) {
+          std::vector<int> active_beta_packed_pair_indices;
+          const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
+          const int alpha_tile_area =
+              alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
+          Eigen::MatrixXd alpha_pair_weight_tiles(
+              alpha_tile_area,
+              beta_batch_end - beta_batch_begin);
+          Eigen::MatrixXd alpha_directional_pair_weight_tiles(
+              alpha_tile_area,
+              beta_batch_end - beta_batch_begin);
+          std::vector<unsigned char> accepted_tile_nonzero;
+          std::vector<unsigned char> directional_tile_nonzero;
+          active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
+          accepted_tile_nonzero.reserve(beta_sparse_batch.size());
+          directional_tile_nonzero.reserve(beta_sparse_batch.size());
+          int active_beta_count = 0;
+          for (int beta_local_index = 0;
+               beta_local_index < beta_batch_end - beta_batch_begin;
+               ++beta_local_index) {
+            accumulate_alpha_pair_matrix_tile(
+                selected_states,
+                beta_sparse_batch[beta_local_index],
+                alpha_left_begin,
+                alpha_left_end,
+                alpha_right_begin,
+                alpha_right_end,
+                &alpha_pair_weight_tile);
+            accumulate_alpha_pair_matrix_tile(
+                selected_states,
+                beta_directional_sparse_batch[beta_local_index],
+                alpha_left_begin,
+                alpha_left_end,
+                alpha_right_begin,
+                alpha_right_end,
+                &alpha_directional_pair_weight_tile);
+            const bool accepted_nonzero =
+                !dense_matrix_is_effectively_zero(alpha_pair_weight_tile);
+            const bool directional_nonzero =
+                !dense_matrix_is_effectively_zero(
+                    alpha_directional_pair_weight_tile);
+            if (!accepted_nonzero && !directional_nonzero) {
+              continue;
+            }
+            active_beta_packed_pair_indices.push_back(
+                beta_batch_begin + beta_local_index);
+            alpha_pair_weight_tiles.col(active_beta_count) =
+                Eigen::Map<const Eigen::VectorXd>(
+                    alpha_pair_weight_tile.data(),
+                    alpha_pair_weight_tile.size());
+            alpha_directional_pair_weight_tiles.col(active_beta_count) =
+                Eigen::Map<const Eigen::VectorXd>(
+                    alpha_directional_pair_weight_tile.data(),
+                    alpha_directional_pair_weight_tile.size());
+            accepted_tile_nonzero.push_back(accepted_nonzero ? 1u : 0u);
+            directional_tile_nonzero.push_back(directional_nonzero ? 1u : 0u);
+            ++active_beta_count;
+          }
+          if (active_beta_packed_pair_indices.empty()) {
             continue;
           }
-          active_beta_packed_pair_indices.push_back(
-              beta_batch_begin + beta_local_index);
-          alpha_pair_weight_tiles.col(active_beta_count) =
-              Eigen::Map<const Eigen::VectorXd>(
-                  alpha_pair_weight_tile.data(),
-                  alpha_pair_weight_tile.size());
-          alpha_directional_pair_weight_tiles.col(active_beta_count) =
-              Eigen::Map<const Eigen::VectorXd>(
-                  alpha_directional_pair_weight_tile.data(),
-                  alpha_directional_pair_weight_tile.size());
-          accepted_tile_nonzero.push_back(accepted_nonzero ? 1u : 0u);
-          directional_tile_nonzero.push_back(directional_nonzero ? 1u : 0u);
-          ++active_beta_count;
-        }
-        if (active_beta_packed_pair_indices.empty()) {
-          continue;
-        }
-
-        for (int alpha_block_begin = 0;
-             alpha_block_begin < n_packed_active_pairs;
-             alpha_block_begin += sparse_block_size) {
-          const int alpha_block_end =
-              std::min(
-                  n_packed_active_pairs,
-                  alpha_block_begin + sparse_block_size);
-          const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
-              same_spin_pair_cache.alpha_pair_cache_ref(),
-              selected_states.n_unique_alpha,
-              alpha_block_begin,
-              alpha_block_end);
-          const auto alpha_directional_sparse_block =
-              build_directional_first_order_sparse_matrix_block(
-                  alpha_directional_pair_data,
-                  selected_states.n_unique_alpha,
-                  alpha_block_begin,
-                  alpha_block_end);
 
           for (std::size_t beta_active_index = 0;
                beta_active_index < active_beta_packed_pair_indices.size();
