@@ -97,11 +97,10 @@ Eigen::MatrixXd apply_bordered_operators(
 Eigen::MatrixXd build_inverse_preconditioner(
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
-    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected) {
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues) {
   const Eigen::Index n = hamiltonian_diagonal.size();
   const Eigen::Index n_selected = selected_eigenvalues.size();
-  Eigen::MatrixXd inverse(n + 1, n_selected);
+  Eigen::MatrixXd inverse(n, n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const Eigen::ArrayXd shifted_diagonal =
         hamiltonian_diagonal.array() -
@@ -109,12 +108,38 @@ Eigen::MatrixXd build_inverse_preconditioner(
     const double scale = std::max(1.0, shifted_diagonal.abs().maxCoeff());
     const double numerical_floor =
         std::numeric_limits<double>::epsilon() * scale;
-    inverse.col(state).head(n) =
+    inverse.col(state) =
         shifted_diagonal.abs().max(numerical_floor).inverse().matrix();
-    inverse(n, state) = 1.0 / std::max(
-        overlap_selected.col(state).norm(), numerical_floor);
   }
   return inverse;
+}
+
+void project_selected_roots(
+    Eigen::MatrixXd* vectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& root_units) {
+  for (Eigen::Index state = 0; state < vectors->cols(); ++state) {
+    vectors->col(state).noalias() -= root_units.col(state) *
+        root_units.col(state).dot(vectors->col(state));
+  }
+}
+
+Eigen::MatrixXd apply_projected_operators(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& root_units,
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+    int* block_actions) {
+  Eigen::MatrixXd projected = vectors;
+  project_selected_roots(&projected, root_units);
+  GeneralizedEigenActionResult images = apply_checked(
+      action, projected, block_actions);
+  Eigen::MatrixXd result(vectors.rows(), vectors.cols());
+  for (Eigen::Index state = 0; state < vectors.cols(); ++state) {
+    result.col(state).noalias() = images.hamiltonian.col(state) -
+        selected_eigenvalues[state] * images.overlap.col(state);
+  }
+  project_selected_roots(&result, root_units);
+  return result;
 }
 
 }  // namespace
@@ -250,34 +275,56 @@ EigenResponseResult solve_generalized_eigen_response(
   EigenResponseResult result;
   result.eigenvalue_response.resize(n_selected);
 
-  Eigen::MatrixXd rhs(n + 1, n_selected);
+  Eigen::MatrixXd full_rhs(n + 1, n_selected);
+  Eigen::MatrixXd rhs(n, n_selected);
+  Eigen::MatrixXd root_units(n, n_selected);
+  Eigen::VectorXd root_metric_norms(n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const Eigen::VectorXd forcing =
         delta_hamiltonian_selected.col(state) -
         selected_eigenvalues[state] * delta_overlap_selected.col(state);
+    root_metric_norms[state] = selected_eigenvectors.col(state).dot(
+        overlap_selected.col(state));
+    if (!(root_metric_norms[state] > 0.0) ||
+        !std::isfinite(root_metric_norms[state])) {
+      throw std::invalid_argument(
+          "selected generalized-eigen root has no positive overlap norm");
+    }
+    // The caller supplies S-normalized Ritz vectors. Dividing by the measured
+    // metric norm also removes harmless normalization drift from their images.
     result.eigenvalue_response[state] =
-        selected_eigenvectors.col(state).dot(forcing);
-    rhs.col(state).head(n) = -forcing;
-    rhs(n, state) = -0.5 * selected_eigenvectors.col(state).dot(
+        selected_eigenvectors.col(state).dot(forcing) /
+        root_metric_norms[state];
+    full_rhs.col(state).head(n) = -forcing;
+    full_rhs(n, state) = -0.5 * selected_eigenvectors.col(state).dot(
         delta_overlap_selected.col(state));
+    const double root_norm = selected_eigenvectors.col(state).norm();
+    if (!(root_norm > 0.0) || !std::isfinite(root_norm)) {
+      throw std::invalid_argument("selected generalized-eigen root is zero");
+    }
+    root_units.col(state) = selected_eigenvectors.col(state) / root_norm;
+    rhs.col(state) = -forcing +
+        result.eigenvalue_response[state] * overlap_selected.col(state);
   }
+  project_selected_roots(&rhs, root_units);
 
   const Eigen::MatrixXd inverse_preconditioner = build_inverse_preconditioner(
-      hamiltonian_diagonal,
-      overlap_diagonal,
-      selected_eigenvalues,
-      overlap_selected);
-  Eigen::MatrixXd solution = Eigen::MatrixXd::Zero(n + 1, n_selected);
-  Eigen::MatrixXd v_old = Eigen::MatrixXd::Zero(n + 1, n_selected);
-  Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n + 1, n_selected);
+      hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues);
+  Eigen::MatrixXd solution = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd v_old = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd v_new = rhs;
-  Eigen::MatrixXd w = Eigen::MatrixXd::Zero(n + 1, n_selected);
+  Eigen::MatrixXd w = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd w_new = inverse_preconditioner.array() * v_new.array();
-  Eigen::MatrixXd p_older(n + 1, n_selected);
-  Eigen::MatrixXd p_old = Eigen::MatrixXd::Zero(n + 1, n_selected);
-  Eigen::MatrixXd p = Eigen::MatrixXd::Zero(n + 1, n_selected);
+  project_selected_roots(&w_new, root_units);
+  Eigen::MatrixXd p_older = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd p_old = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd p = Eigen::MatrixXd::Zero(n, n_selected);
 
   Eigen::VectorXd rhs_norms(n_selected);
+  Eigen::VectorXd original_rhs_norms(n_selected);
+  Eigen::VectorXd projected_absolute_targets(n_selected);
+  Eigen::VectorXd preconditioned_absolute_targets(n_selected);
   Eigen::VectorXd residual_norms(n_selected);
   Eigen::VectorXd beta_new(n_selected);
   Eigen::VectorXd beta_first(n_selected);
@@ -288,9 +335,38 @@ EigenResponseResult solve_generalized_eigen_response(
   Eigen::VectorXd eta = Eigen::VectorXd::Ones(n_selected);
   result.iterations.assign(static_cast<std::size_t>(n_selected), 0);
   std::vector<bool> converged(static_cast<std::size_t>(n_selected), false);
+  std::vector<int> candidate_checks(static_cast<std::size_t>(n_selected), 0);
+  std::vector<int> reliable_restarts(static_cast<std::size_t>(n_selected), 0);
+  Eigen::VectorXd least_candidate_projected_residual =
+      Eigen::VectorXd::Constant(n_selected,
+          std::numeric_limits<double>::infinity());
+  Eigen::VectorXd last_candidate_projected_residual =
+      Eigen::VectorXd::Zero(n_selected);
+  Eigen::VectorXd least_candidate_bordered_residual =
+      Eigen::VectorXd::Constant(n_selected,
+          std::numeric_limits<double>::infinity());
+  Eigen::VectorXd last_candidate_bordered_residual =
+      Eigen::VectorXd::Zero(n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     rhs_norms[state] = rhs.col(state).norm();
-    residual_norms[state] = rhs_norms[state];
+    original_rhs_norms[state] = full_rhs.col(state).norm();
+    const double arithmetic_scale = std::max({
+        rhs_norms[state], original_rhs_norms[state],
+        std::abs(result.eigenvalue_response[state]) *
+            overlap_selected.col(state).norm()});
+    const double arithmetic_floor =
+        static_cast<double>(n + 1) *
+        std::numeric_limits<double>::epsilon() * arithmetic_scale;
+    projected_absolute_targets[state] = std::max(
+        options.relative_residual_tolerance * rhs_norms[state],
+        arithmetic_floor);
+    // MINRES estimates ||r||_{P}, while the candidate contract is Euclidean.
+    // Since ||r||_2 <= ||r||_{P}/sqrt(min_i P_ii), this sufficient trigger
+    // cannot claim a Euclidean tolerance before a true-residual check.
+    preconditioned_absolute_targets[state] = std::min(
+        projected_absolute_targets[state],
+        options.relative_residual_tolerance * original_rhs_norms[state]) *
+        std::sqrt(inverse_preconditioner.col(state).minCoeff());
     if (rhs_norms[state] == 0.0) {
       converged[static_cast<std::size_t>(state)] = true;
       beta_new[state] = 0.0;
@@ -304,6 +380,9 @@ EigenResponseResult solve_generalized_eigen_response(
     }
     beta_new[state] = std::sqrt(beta_squared);
     beta_first[state] = beta_new[state];
+    // The Lanczos/Givens residual is measured in the inverse-preconditioner
+    // metric; an Euclidean RHS norm gives an invalid trigger scale.
+    residual_norms[state] = beta_first[state];
   }
 
   for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
@@ -325,11 +404,8 @@ EigenResponseResult solve_generalized_eigen_response(
       w.col(state) = w_new.col(state);
     }
 
-    const Eigen::MatrixXd operator_images = apply_bordered_operators(
-        action,
-        selected_eigenvalues,
-        overlap_selected,
-        w,
+    const Eigen::MatrixXd operator_images = apply_projected_operators(
+        action, selected_eigenvalues, root_units, w,
         &result.block_actions);
     std::vector<Eigen::Index> estimated_converged_states;
     for (Eigen::Index state = 0; state < n_selected; ++state) {
@@ -344,6 +420,8 @@ EigenResponseResult solve_generalized_eigen_response(
       w_new.col(state) =
           inverse_preconditioner.col(state).array() *
           v_new.col(state).array();
+      w_new.col(state).noalias() -= root_units.col(state) *
+          root_units.col(state).dot(w_new.col(state));
       const double beta_squared = v_new.col(state).dot(w_new.col(state));
       if (beta_squared < 0.0 || !std::isfinite(beta_squared)) {
         throw std::runtime_error(
@@ -379,8 +457,7 @@ EigenResponseResult solve_generalized_eigen_response(
       residual_norms[state] *= std::abs(sine[state]);
       result.iterations[static_cast<std::size_t>(state)] = iteration + 1;
       const bool estimated_converged =
-          residual_norms[state] <=
-          options.relative_residual_tolerance * rhs_norms[state];
+          residual_norms[state] <= preconditioned_absolute_targets[state];
       converged[static_cast<std::size_t>(state)] = estimated_converged;
       if (estimated_converged) {
         estimated_converged_states.push_back(state);
@@ -403,47 +480,85 @@ EigenResponseResult solve_generalized_eigen_response(
         candidate_eigenvalues[candidate] = selected_eigenvalues[state];
         candidate_overlap_selected.col(candidate) =
             overlap_selected.col(state);
-        candidate_solutions.col(candidate) = solution.col(state);
+        const double gauge =
+            (full_rhs(n, state) - overlap_selected.col(state).dot(
+                 solution.col(state))) / root_metric_norms[state];
+        candidate_solutions.col(candidate).head(n) = solution.col(state) +
+            gauge * selected_eigenvectors.col(state);
+        candidate_solutions(n, candidate) =
+            -result.eigenvalue_response[state];
       }
       const Eigen::MatrixXd checked_images = apply_bordered_operators(
-          action,
-          candidate_eigenvalues,
-          candidate_overlap_selected,
-          candidate_solutions,
-          &result.block_actions);
+          action, candidate_eigenvalues, candidate_overlap_selected,
+          candidate_solutions, &result.block_actions);
       for (Eigen::Index candidate = 0;
            candidate < n_candidates;
            ++candidate) {
         const Eigen::Index state =
             estimated_converged_states[static_cast<std::size_t>(candidate)];
         const Eigen::VectorXd true_residual =
-            rhs.col(state) - checked_images.col(candidate);
+            full_rhs.col(state) - checked_images.col(candidate);
+        const Eigen::VectorXd correctable_residual =
+            true_residual.head(n) - root_units.col(state) *
+                root_units.col(state).dot(true_residual.head(n));
+        ++candidate_checks[static_cast<std::size_t>(state)];
+        last_candidate_projected_residual[state] =
+            correctable_residual.norm();
+        least_candidate_projected_residual[state] = std::min(
+            least_candidate_projected_residual[state],
+            last_candidate_projected_residual[state]);
+        last_candidate_bordered_residual[state] = true_residual.norm();
+        least_candidate_bordered_residual[state] = std::min(
+            least_candidate_bordered_residual[state],
+            last_candidate_bordered_residual[state]);
         if (true_residual.norm() <=
-            options.relative_residual_tolerance * rhs_norms[state]) {
+                options.relative_residual_tolerance *
+                    original_rhs_norms[state] &&
+            correctable_residual.norm() <=
+                projected_absolute_targets[state]) {
           continue;
         }
+        if (correctable_residual.norm() <=
+            projected_absolute_targets[state]) {
+          std::ostringstream message;
+          message << "selected-root response has an uncorrectable bordered "
+                     "residual after projected convergence: state=" << state
+                  << " bordered_residual=" << true_residual.norm()
+                  << " correctable_residual="
+                  << correctable_residual.norm();
+          throw std::runtime_error(message.str());
+        }
 
-        // Verify and restart each candidate as soon as its recursive residual
-        // reaches tolerance. A converged column must not lose its remaining
-        // iteration budget while waiting for slower columns in the same block.
+        // The projected equation has a different RHS scale and omits the Ritz
+        // root-drift term. Only the original bordered residual can certify a
+        // response. Restart its correctable component without another H/S
+        // action; do not freeze a column merely because MINRES estimated the
+        // smaller projected residual as converged.
         converged[static_cast<std::size_t>(state)] = false;
+        ++reliable_restarts[static_cast<std::size_t>(state)];
         v_old.col(state).setZero();
         v.col(state).setZero();
-        v_new.col(state) = true_residual;
+        v_new.col(state) = correctable_residual;
+        if (v_new.col(state).norm() == 0.0) {
+          throw std::runtime_error(
+              "accepted selected-root response residual has no correctable complement component");
+        }
         w_new.col(state) =
             inverse_preconditioner.col(state).array() *
-            true_residual.array();
+            v_new.col(state).array();
+        w_new.col(state).noalias() -= root_units.col(state) *
+            root_units.col(state).dot(w_new.col(state));
         p_older.col(state).setZero();
         p_old.col(state).setZero();
         p.col(state).setZero();
-        const double beta_squared = true_residual.dot(w_new.col(state));
+        const double beta_squared = v_new.col(state).dot(w_new.col(state));
         if (!(beta_squared > 0.0) || !std::isfinite(beta_squared)) {
           throw std::runtime_error(
               "generalized-eigen response reliable restart failed");
         }
         beta_new[state] = std::sqrt(beta_squared);
         beta_first[state] = beta_new[state];
-        residual_norms[state] = true_residual.norm();
+        residual_norms[state] = beta_first[state];
         cosine[state] = 1.0;
         old_cosine[state] = 1.0;
         sine[state] = 0.0;
@@ -458,31 +573,87 @@ EigenResponseResult solve_generalized_eigen_response(
     }
   }
 
+  result.eigenvector_response.resize(n, n_selected);
+  Eigen::MatrixXd bordered_solution(n + 1, n_selected);
+  Eigen::VectorXd gauge_coefficients(n_selected);
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    const double gauge =
+        (full_rhs(n, state) - overlap_selected.col(state).dot(
+             solution.col(state))) / root_metric_norms[state];
+    gauge_coefficients[state] = gauge;
+    result.eigenvector_response.col(state) = solution.col(state) +
+        gauge * selected_eigenvectors.col(state);
+    bordered_solution.col(state).head(n) =
+        result.eigenvector_response.col(state);
+    bordered_solution(n, state) = -result.eigenvalue_response[state];
+  }
   const Eigen::MatrixXd final_images = apply_bordered_operators(
-      action,
-      selected_eigenvalues,
-      overlap_selected,
-      solution,
+      action, selected_eigenvalues, overlap_selected, bordered_solution,
       &result.block_actions);
   result.relative_residual_norms.resize(n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
-    result.relative_residual_norms[state] = rhs_norms[state] == 0.0
+    const double original_rhs_norm = full_rhs.col(state).norm();
+    const Eigen::VectorXd bordered_residual =
+        full_rhs.col(state) - final_images.col(state);
+    const Eigen::VectorXd projected_residual =
+        bordered_residual.head(n) - root_units.col(state) *
+            root_units.col(state).dot(bordered_residual.head(n));
+    result.relative_residual_norms[state] = original_rhs_norm == 0.0
         ? 0.0
-        : (rhs.col(state) - final_images.col(state)).norm() /
-            rhs_norms[state];
+        : bordered_residual.norm() / original_rhs_norm;
     if (!std::isfinite(result.relative_residual_norms[state]) ||
         result.relative_residual_norms[state] >
-            options.relative_residual_tolerance) {
+            options.relative_residual_tolerance ||
+        projected_residual.norm() >
+            projected_absolute_targets[state]) {
+      const double root_component = std::abs(
+          root_units.col(state).dot(bordered_residual.head(n)));
+      const Eigen::MatrixXd root_column =
+          selected_eigenvectors.middleCols(state, 1);
+      const GeneralizedEigenActionResult root_images = apply_checked(
+          action, root_column, &result.block_actions);
+      const double ritz_residual =
+          (root_images.hamiltonian.col(0) - selected_eigenvalues[state] *
+           root_images.overlap.col(0)).norm();
+      const double overlap_image_mismatch =
+          (root_images.overlap.col(0) -
+           overlap_selected.col(state)).norm();
       std::ostringstream message;
-      message << "generalized-eigen response MINRES did not reach the requested residual: state="
+      message << "projected generalized-eigen response MINRES did not reach the requested bordered residual: state="
               << state << " residual="
               << result.relative_residual_norms[state] << " iterations="
-              << result.iterations[static_cast<std::size_t>(state)];
+              << result.iterations[static_cast<std::size_t>(state)]
+              << " projected_component=" << projected_residual.norm()
+              << " selected_root_component=" << root_component
+              << " gauge_norm=" << std::abs(gauge_coefficients[state]) *
+                     selected_eigenvectors.col(state).norm()
+              << " response_norm=" <<
+                     result.eigenvector_response.col(state).norm()
+              << " ritz_residual=" << ritz_residual
+              << " gauge_times_ritz=" <<
+                     std::abs(gauge_coefficients[state]) * ritz_residual
+              << " accepted_overlap_image_mismatch=" <<
+                     overlap_image_mismatch
+              << " projected_rhs_norm=" << rhs_norms[state]
+              << " original_rhs_norm=" << original_rhs_norms[state]
+              << " projected_absolute_target=" <<
+                     projected_absolute_targets[state]
+              << " candidate_checks=" <<
+                     candidate_checks[static_cast<std::size_t>(state)]
+              << " reliable_restarts=" <<
+                     reliable_restarts[static_cast<std::size_t>(state)]
+              << " least_candidate_projected=" <<
+                     least_candidate_projected_residual[state]
+              << " last_candidate_projected=" <<
+                     last_candidate_projected_residual[state]
+              << " least_candidate_bordered=" <<
+                     least_candidate_bordered_residual[state]
+              << " last_candidate_bordered=" <<
+                     last_candidate_bordered_residual[state];
       throw std::runtime_error(
           message.str());
     }
   }
-  result.eigenvector_response = solution.topRows(n);
   return result;
 }
 

@@ -122,6 +122,13 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   VbScfOptimizerResult result;
   const auto optimization_start_time = std::chrono::steady_clock::now();
 
+  // Keep the source in the same support-preserving section as accepted trials.
+  // Loaded guesses already carry an inactive section; inputs without one need
+  // its initial selection before the active representative is balanced.
+  if (!input.orbital_preparation_input.maintain_inactive_gauge) {
+    apply_support_preserving_inactive_gauge(&input.orbital_preparation_input);
+  }
+  balance_active_gauge(&input.orbital_preparation_input);
   const SparseParameterLayout parameter_view(
       input.orbital_preparation_input);
   Eigen::VectorXd parameter_vector =

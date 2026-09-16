@@ -1,5 +1,7 @@
 #pragma once
 
+#include <limits>
+
 #include <Eigen/Core>
 
 #include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
@@ -20,6 +22,19 @@ struct TruncatedNewtonSubspace {
   Eigen::VectorXd projected_gradient;
 };
 
+/** @brief Why the current-point Krylov expansion stopped. */
+enum class TruncatedNewtonStopReason {
+  None,
+  ModelKktConverged,
+  BelowOuterAccuracy,
+  SubspaceLimit,
+  InteriorPilotLimit,
+  DependentDirections,
+  InvalidProjectedStep,
+  RadiusAdjusted,
+  PreconditionedGradient,
+};
+
 struct TruncatedNewtonStepResult {
   Eigen::VectorXd reduced_step;
   Eigen::VectorXd reduced_hessian_times_step;
@@ -33,7 +48,20 @@ struct TruncatedNewtonStepResult {
   double model_spectral_radius = 0.0;
   double trust_region_shift = 0.0;
   double predicted_decrease = 0.0;
+  /** @brief Computed-model shifted KKT residual divided by Euclidean ||g||. */
+  double model_kkt_relative_residual =
+      std::numeric_limits<double>::infinity();
+  /** @brief The computed shifted model meets its forcing condition. */
+  bool model_kkt_converged = false;
+  /** @brief An interior unshifted step meets the Newton forcing condition. */
+  bool newton_forcing_converged = false;
+  TruncatedNewtonStopReason stop_reason = TruncatedNewtonStopReason::None;
 };
+
+/** @brief Rechecks model stationarity after a step or its radius changes. */
+void refresh_truncated_newton_step_certificate(
+    const Eigen::VectorXd& reduced_gradient,
+    TruncatedNewtonStepResult* step);
 
 struct TruncatedNewtonTrialEvaluation {
   double actual_decrease = 0.0;

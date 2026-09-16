@@ -269,19 +269,8 @@ BackendRunResult run_truncated_newton_backend(
         ++result->matrix_free_interior_subproblem_count;
       }
     }
-    if (!truncated_newton_step.reached_boundary &&
-        truncated_newton_step.reduced_hessian_times_step.size() ==
-        current_projection.reduced_gradient.size()) {
-      const double gradient_norm = current_projection.reduced_gradient.stableNorm();
-      const Eigen::VectorXd kkt_residual = current_projection.reduced_gradient +
-          truncated_newton_step.reduced_hessian_times_step +
-          truncated_newton_step.trust_region_shift *
-              truncated_newton_step.reduced_metric_times_step;
-      if (inexact_newton_residual_is_converged(
-              gradient_norm,
-              kkt_residual.stableNorm())) {
-        ++result->matrix_free_residual_converged_count;
-      }
+    if (truncated_newton_step.newton_forcing_converged) {
+      ++result->matrix_free_residual_converged_count;
     }
     if (truncated_newton_subspace_is_usable(
             truncated_newton_step.subspace,
@@ -320,6 +309,10 @@ BackendRunResult run_truncated_newton_backend(
           truncated_newton_step.retract_tangent_norm >=
           (1.0 - 1.0e-8) * trust_radius;
       truncated_newton_step.predicted_decrease = predicted_decrease;
+      truncated_newton_step.stop_reason =
+          TruncatedNewtonStopReason::PreconditionedGradient;
+      refresh_truncated_newton_step_certificate(
+          current_projection.reduced_gradient, &truncated_newton_step);
     }
     const TruncatedNewtonStepResult model_step = truncated_newton_step;
     const auto hvp_diagnostics = hvp.diagnostics();
@@ -458,7 +451,7 @@ BackendRunResult run_truncated_newton_backend(
           current_projection.reduced_gradient +
           truncated_newton_step.reduced_hessian_times_step +
           truncated_newton_step.trust_region_shift *
-              retraction_metric.apply(truncated_newton_step.reduced_step);
+              truncated_newton_step.reduced_metric_times_step;
       const double residual_norm = kkt_residual.stableNorm();
       if (std::isfinite(residual_norm)) {
         iteration_record.has_kkt_residual = true;

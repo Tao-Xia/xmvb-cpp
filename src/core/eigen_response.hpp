@@ -31,10 +31,16 @@ struct EigenResponseResult {
  * @brief Solves selected generalized-eigenpair response without a full spectrum.
  *
  * For each accepted pair `H c = E S c`, the solver applies preconditioned
- * MINRES to the symmetric bordered response equation. All selected roots
- * advance together, so each Krylov step uses one block H/S action. The caller
- * supplies the accepted-point product `S C` because it is invariant across
- * every directional response at the same accepted point.
+ * MINRES to `H - E S` on the Euclidean complement of each known Ritz vector.
+ * Removing the selected-root null mode before iteration keeps the metric gauge
+ * out of the Krylov recurrence. The response along that root is recovered from
+ * `c^T S dc = -0.5 c^T dS c`; the original symmetric bordered equation then
+ * certifies the true residual, including Davidson Ritz-vector drift. All
+ * selected roots advance together through one block H/S action per iteration.
+ * The caller supplies accepted-point `S C`, reused by every direction.
+ *
+ * The returned residual measures this linear equation at the supplied Ritz
+ * root, not the error of that Ritz root relative to an exact eigenpair.
  */
 EigenResponseResult solve_generalized_eigen_response(
     const GeneralizedEigenAction& action,

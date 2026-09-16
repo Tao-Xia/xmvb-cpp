@@ -39,6 +39,46 @@ bool inexact_newton_residual_is_converged(
       inexact_newton_forcing_term(gradient_l2_norm) * gradient_l2_norm;
 }
 
+void refresh_truncated_newton_step_certificate(
+    const Eigen::VectorXd& reduced_gradient,
+    TruncatedNewtonStepResult* step) {
+  if (step == nullptr) return;
+  step->model_kkt_relative_residual =
+      std::numeric_limits<double>::infinity();
+  step->model_kkt_converged = false;
+  step->newton_forcing_converged = false;
+  if (reduced_gradient.size() == 0 ||
+      !reduced_gradient.allFinite() ||
+      step->reduced_step.size() != reduced_gradient.size() ||
+      step->reduced_hessian_times_step.size() != reduced_gradient.size() ||
+      step->reduced_metric_times_step.size() != reduced_gradient.size() ||
+      !step->reduced_step.allFinite() ||
+      !step->reduced_hessian_times_step.allFinite() ||
+      !step->reduced_metric_times_step.allFinite() ||
+      !std::isfinite(step->trust_region_shift) ||
+      step->trust_region_shift < 0.0) {
+    return;
+  }
+
+  const double gradient_norm = reduced_gradient.stableNorm();
+  const Eigen::VectorXd residual = reduced_gradient +
+      step->reduced_hessian_times_step +
+      step->trust_region_shift * step->reduced_metric_times_step;
+  const double residual_norm = residual.stableNorm();
+  if (!std::isfinite(gradient_norm) || !std::isfinite(residual_norm)) return;
+  step->model_kkt_relative_residual = gradient_norm > 0.0
+      ? residual_norm / gradient_norm
+      : (residual_norm == 0.0 ? 0.0
+                              : std::numeric_limits<double>::infinity());
+  step->model_kkt_converged = inexact_newton_residual_is_converged(
+      gradient_norm, residual_norm);
+  step->newton_forcing_converged =
+      step->model_kkt_converged &&
+      step->trust_region_shift == 0.0 &&
+      !step->reached_boundary &&
+      !step->encountered_negative_curvature;
+}
+
 bool truncated_newton_model_is_below_outer_accuracy(
     double gradient_inf_norm,
     double predicted_decrease,
@@ -119,12 +159,17 @@ void clamp_nonredundant_step_result_to_retract_tangent_radius(
     }
     step->retract_tangent_norm = trust_radius;
     step->reached_boundary = true;
+    step->stop_reason = TruncatedNewtonStopReason::RadiusAdjusted;
+    refresh_truncated_newton_step_certificate(
+        current_projection.reduced_gradient, step);
     return;
   }
 
   step->reached_boundary =
       step->reached_boundary ||
       tangent_norm >= (1.0 - 1.0e-8) * trust_radius;
+  refresh_truncated_newton_step_certificate(
+      current_projection.reduced_gradient, step);
 }
 
 bool RejectedTruncatedNewtonStepCache::has_cached_step(
@@ -369,6 +414,8 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
   result.model_spectral_radius = eigenvalues.cwiseAbs().maxCoeff();
   result.trust_region_shift = trust_region_shift;
   result.predicted_decrease = predicted_decrease;
+  refresh_truncated_newton_step_certificate(
+      current_projection.reduced_gradient, &result);
   return result;
 }
 
@@ -493,20 +540,21 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       max_subspace_dimension <= 0) {
     result.reduced_step = preconditioned_gradient_step;
     result.reduced_hessian_times_step.resize(0);
+    result.stop_reason = TruncatedNewtonStopReason::PreconditionedGradient;
     return result;
   }
 
   const Eigen::VectorXd rhs = -current_projection.reduced_gradient;
-  const double outer_gradient_norm =
-      current_projection.reduced_gradient.stableNorm();
+  const int natural_limit = static_cast<int>(rhs.size());
+  int work_limit = std::min(max_subspace_dimension, natural_limit);
+  const int pilot_limit =
+      std::min(natural_limit, work_limit + std::min(2, natural_limit - work_limit));
+  bool interior_pilot_used = false;
+  TruncatedNewtonStopReason loop_stop_reason =
+      TruncatedNewtonStopReason::SubspaceLimit;
   // The inexact-Newton forcing term is an outer-iteration condition:
   // ||H s + g|| <= eta_k ||g||. A cached same-point trial changes the
   // initial residual but must not redefine the requested Newton accuracy.
-  const auto residual_converged = [&](const Eigen::VectorXd& value) {
-    return inexact_newton_residual_is_converged(
-        outer_gradient_norm,
-        value.stableNorm());
-  };
   // The relative two-norm condition is the inexact-Newton contract.  An
   // absolute outer gradient threshold is not a valid substitute: once each
   // residual component falls below that threshold it can still be comparable
@@ -523,10 +571,13 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   const bool reuse_initial_subspace =
       initial_subspace != nullptr &&
       truncated_newton_subspace_is_usable(*initial_subspace, rhs.size()) &&
-      initial_subspace->orthonormal_basis.cols() <= max_subspace_dimension;
+      initial_subspace->orthonormal_basis.cols() <= pilot_limit;
   if (reuse_initial_subspace) {
     const Eigen::Index initial_dimension =
         initial_subspace->orthonormal_basis.cols();
+    work_limit = std::max(work_limit, static_cast<int>(initial_dimension));
+    interior_pilot_used =
+        static_cast<int>(initial_dimension) > max_subspace_dimension;
     for (Eigen::Index column = 0; column < initial_dimension; ++column) {
       basis.push_back(initial_subspace->orthonormal_basis.col(column));
       tangent_basis.push_back(initial_subspace->tangent_basis.col(column));
@@ -541,17 +592,25 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     if (truncated_newton_step_is_usable(
             result,
             current_projection.reduced_gradient)) {
-      const Eigen::VectorXd kkt_residual =
-          current_projection.reduced_gradient +
-          result.reduced_hessian_times_step +
-          result.trust_region_shift * result.reduced_metric_times_step;
-      if (residual_converged(kkt_residual) ||
-          truncated_newton_model_is_below_outer_accuracy(
+      if (result.model_kkt_converged) {
+        result.stop_reason = TruncatedNewtonStopReason::ModelKktConverged;
+        return result;
+      }
+      if (truncated_newton_model_is_below_outer_accuracy(
               gradient_infinity_norm(current_projection.reduced_gradient),
               result.predicted_decrease,
               gradient_tolerance,
               energy_tolerance)) {
+        result.stop_reason = TruncatedNewtonStopReason::BelowOuterAccuracy;
         return result;
+      }
+      if (result.trust_region_shift == 0.0 &&
+          !result.reached_boundary &&
+          !result.encountered_negative_curvature &&
+          static_cast<int>(initial_dimension) >= work_limit &&
+          !interior_pilot_used && work_limit < pilot_limit) {
+        work_limit = pilot_limit;
+        interior_pilot_used = true;
       }
     }
   }
@@ -570,7 +629,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         result.trust_region_shift * result.reduced_metric_times_step);
   }
   bool first_expansion = !reuse_initial_subspace;
-  while (static_cast<int>(basis.size()) < max_subspace_dimension) {
+  while (static_cast<int>(basis.size()) < work_limit) {
     const Eigen::VectorXd preconditioned_correction =
         apply_nonredundant_truncated_newton_preconditioner(
             current_space,
@@ -589,7 +648,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     candidates.push_back(correction_rhs);
 
     const int candidate_count = std::min(
-        max_subspace_dimension - static_cast<int>(basis.size()),
+        work_limit - static_cast<int>(basis.size()),
         static_cast<int>(candidates.size()));
     Eigen::MatrixXd candidate_block(rhs.size(), candidate_count);
     for (int column = 0; column < candidate_count; ++column) {
@@ -604,7 +663,10 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         },
         &basis,
         &hessian_basis);
-    if (admitted == 0) break;
+    if (admitted == 0) {
+      loop_stop_reason = TruncatedNewtonStopReason::DependentDirections;
+      break;
+    }
     for (std::size_t column = previous_basis_size;
          column < basis.size();
          ++column) {
@@ -627,6 +689,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     if (!truncated_newton_step_is_usable(
             candidate_step,
             current_projection.reduced_gradient)) {
+      loop_stop_reason = TruncatedNewtonStopReason::InvalidProjectedStep;
       break;
     }
     candidate_step.subspace_dimension = static_cast<int>(basis.size());
@@ -636,7 +699,10 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         current_projection.reduced_gradient +
         result.reduced_hessian_times_step +
         result.trust_region_shift * result.reduced_metric_times_step;
-    if (residual_converged(kkt_residual)) return result;
+    if (result.model_kkt_converged) {
+      result.stop_reason = TruncatedNewtonStopReason::ModelKktConverged;
+      return result;
+    }
 
     // Once the outer gradient condition already holds, resolving a model
     // decrease below the requested energy accuracy cannot change the outer
@@ -648,6 +714,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
             result.predicted_decrease,
             gradient_tolerance,
             energy_tolerance)) {
+      result.stop_reason = TruncatedNewtonStopReason::BelowOuterAccuracy;
       return result;
     }
 
@@ -657,16 +724,38 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     // limit is reached.
     correction_rhs = -kkt_residual;
     first_expansion = false;
+    // The initial work tranche is a globalization budget, not a Newton
+    // accuracy certificate. One additional residual block probes whether an
+    // unshifted interior solve can resolve its full-space model residual.
+    // Further work needs a measured cost/benefit rule; a merely decreasing
+    // residual cannot safely authorize hundreds of HVPs.
+    if (static_cast<int>(basis.size()) >= work_limit &&
+        work_limit < pilot_limit &&
+        !interior_pilot_used &&
+        result.trust_region_shift == 0.0 &&
+        !result.reached_boundary &&
+        !result.encountered_negative_curvature) {
+      work_limit = pilot_limit;
+      interior_pilot_used = true;
+    }
   }
 
   if (truncated_newton_step_is_usable(
           result,
           current_projection.reduced_gradient)) {
+    if (loop_stop_reason == TruncatedNewtonStopReason::SubspaceLimit &&
+        interior_pilot_used) {
+      loop_stop_reason = TruncatedNewtonStopReason::InteriorPilotLimit;
+    }
+    result.stop_reason = loop_stop_reason;
     return result;
   }
   result.reduced_step = preconditioned_gradient_step;
   result.reduced_hessian_times_step.resize(0);
   result.predicted_decrease = 0.0;
+  result.stop_reason = TruncatedNewtonStopReason::PreconditionedGradient;
+  refresh_truncated_newton_step_certificate(
+      current_projection.reduced_gradient, &result);
   return result;
 }
 

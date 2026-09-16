@@ -2,6 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Cholesky>
@@ -358,6 +359,95 @@ void check_ill_conditioned_representative(
   std::cout << "ill-conditioned inactive representative: passed ("
             << view.size() << " -> " << space.reduced_size() << ")\n";
 }
+
+class DenseTestHvp final : public ReducedHvp {
+ public:
+  explicit DenseTestHvp(Eigen::MatrixXd hessian)
+      : hessian_(std::move(hessian)) {}
+
+  Eigen::VectorXd apply(const Eigen::VectorXd& direction) override {
+    ++applies;
+    return hessian_ * direction;
+  }
+
+  int applies = 0;
+
+ private:
+  Eigen::MatrixXd hessian_;
+};
+
+void check_truncated_newton_certificates() {
+  Eigen::VectorXd gradient(2);
+  gradient << 1.0, 2.0;
+  TruncatedNewtonStepResult step;
+  step.reduced_step = -gradient;
+  step.reduced_hessian_times_step = -gradient;
+  step.reduced_metric_times_step = -gradient;
+  refresh_truncated_newton_step_certificate(gradient, &step);
+  require(step.model_kkt_converged && step.newton_forcing_converged,
+          "exact interior Newton model lacks a forcing certificate");
+
+  step.reduced_hessian_times_step.setZero();
+  step.trust_region_shift = 1.0;
+  step.reached_boundary = true;
+  refresh_truncated_newton_step_certificate(gradient, &step);
+  require(step.model_kkt_converged && !step.newton_forcing_converged,
+          "shifted boundary KKT was misreported as Newton convergence");
+}
+
+void check_interior_work_extension(const OrbitalPreparationInput& input) {
+  const SparseParameterLayout view(input);
+  const Eigen::MatrixXd c = dense(input);
+  const OrbitalChart space(input, view, c, c, nullptr, true);
+  const NonredundantRetractionMetric metric(space, view, input);
+  const int dimension = space.reduced_size();
+  require(dimension > 4, "interior work fixture is too small");
+  Eigen::MatrixXd hessian = Eigen::MatrixXd::Zero(dimension, dimension);
+  for (int i = 0; i < dimension; ++i) hessian(i, i) = 1.0 + i;
+  const Eigen::VectorXd gradient =
+      Eigen::VectorXd::LinSpaced(dimension, 1.0e-3, 2.0e-3);
+  OrbitalChart::ProjectionResult projection;
+  projection.reduced_gradient = gradient;
+  DenseTestHvp hvp(hessian);
+  const auto step = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 10.0, 1.0e-7, 1.0e-3, 2,
+      &hvp, nullptr);
+  require(step.subspace_dimension > 2 && step.subspace_dimension <= 4 &&
+              hvp.applies > 2 && hvp.applies <= 4 &&
+              step.trust_region_shift == 0.0 && !step.reached_boundary,
+          "interior pilot did not respect the two-HVP work bound");
+  require(step.stop_reason == TruncatedNewtonStopReason::InteriorPilotLimit &&
+              !step.newton_forcing_converged,
+          "unresolved interior pilot did not report its forcing limit");
+
+  Eigen::MatrixXd clustered = Eigen::MatrixXd::Zero(dimension, dimension);
+  for (int i = 0; i < dimension; ++i) {
+    clustered(i, i) = (i % 3 == 0) ? 1.0 : (i % 3 == 1 ? 4.0 : 16.0);
+  }
+  DenseTestHvp clustered_hvp(clustered);
+  const auto certified = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 10.0, 1.0e-7, 1.0e-3, 2,
+      &clustered_hvp, nullptr);
+  require(certified.subspace_dimension > 2 &&
+              certified.subspace_dimension <= 4 &&
+              clustered_hvp.applies <= 4 &&
+              certified.stop_reason == TruncatedNewtonStopReason::ModelKktConverged &&
+              certified.newton_forcing_converged &&
+              certified.model_kkt_relative_residual <
+                  inexact_newton_forcing_term(gradient.norm()),
+          "clustered interior pilot did not certify the full-space model");
+
+  hessian(0, 0) = -10.0;
+  DenseTestHvp indefinite(hessian);
+  const auto boundary = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 1.0e-3, 1.0e-7, 1.0e-3, 2,
+      &indefinite, nullptr);
+  require(boundary.reached_boundary && boundary.subspace_dimension <= 2 &&
+              indefinite.applies <= 2 &&
+              !boundary.newton_forcing_converged,
+          "negative-curvature boundary step exceeded the initial work limit");
+  std::cout << "interior Newton extension and boundary work limit: passed\n";
+}
 }  // namespace
 
 int main() {
@@ -378,6 +468,8 @@ int main() {
     auto full = make_input(c, {{0,1,2,3,4,5}, {0,1,2,3,4,5},
                                {0,1,2,3,4,5}, {0,1,2,3,4,5}}, 2);
     check("full support", full, 14);
+    check_truncated_newton_certificates();
+    check_interior_work_extension(full);
     Eigen::MatrixXd rotated = c;
     Eigen::Matrix2d a;
     a << 1, 0.3, -0.2, 1.1;

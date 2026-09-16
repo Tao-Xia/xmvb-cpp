@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -89,6 +90,29 @@ void check_ill_conditioned_sparse_gauge() {
   require((before_basis * before_basis.transpose() -
            after_basis * after_basis.transpose()).norm() < 1.0e-10,
           "gauge balancing changed the inactive occupied subspace");
+
+  // Reapplying the gauge must preserve the occupied subspace, even if the
+  // numerical determinant-balancing sweep selects a new representative.
+  const std::vector<double> balanced_values = input.orbital_value_table;
+  xmvb::vb::apply_support_preserving_inactive_gauge(&input);
+  double repeated_max_change = 0.0;
+  for (std::size_t slot = 0; slot < balanced_values.size(); ++slot) {
+    repeated_max_change = std::max(
+        repeated_max_change,
+        std::abs(input.orbital_value_table[slot] - balanced_values[slot]));
+  }
+  const Eigen::MatrixXd repeated = dense_inactive(input);
+  const Eigen::MatrixXd repeated_basis =
+      repeated.householderQr().householderQ() *
+      Eigen::MatrixXd::Identity(3, 2);
+  require((after_basis * after_basis.transpose() -
+           repeated_basis * repeated_basis.transpose()).norm() < 1.0e-10,
+          "repeating inactive gauge balance changed the occupied subspace");
+  require(repeated_max_change <
+              32.0 * std::sqrt(std::numeric_limits<double>::epsilon()) *
+                  after.norm(),
+          "repeating inactive gauge balance moved the representative beyond "
+          "the finite-sweep convergence scale");
 
   // A later accepted point can be well-conditioned yet leave the selected
   // section. Once enabled, canonicalization must remain part of the chart.
