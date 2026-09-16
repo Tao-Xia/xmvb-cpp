@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/SparseCore>
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/integrals/active/matrix/backpropagator.hpp"
@@ -37,6 +38,22 @@ void throw_if_nonfinite(
     const char* label) {
   if (!values.allFinite()) {
     throw std::runtime_error(std::string(label) + " contains non-finite values");
+  }
+}
+
+void throw_if_nonfinite(
+    const Eigen::SparseMatrix<double, Eigen::RowMajor, int>& values,
+    const char* label) {
+  for (int outer = 0; outer < values.outerSize(); ++outer) {
+    for (Eigen::SparseMatrix<double, Eigen::RowMajor, int>::InnerIterator entry(
+             values,
+             outer);
+         entry;
+         ++entry) {
+      if (!std::isfinite(entry.value())) {
+        throw std::runtime_error(std::string(label) + " contains non-finite values");
+      }
+    }
   }
 }
 
@@ -91,9 +108,8 @@ static void validate_selected_state_determinant_matrices(
     throw_if_nonfinite(
         state.coefficient_matrix,
         label);
-    throw_if_nonfinite(
-        state.local_coefficient_matrix,
-        label);
+    throw_if_nonfinite(state.local_sparse_coefficient_matrix, label);
+    throw_if_nonfinite(state.local_sparse_coefficient_transpose, label);
   }
 }
 

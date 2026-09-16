@@ -63,7 +63,7 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
       selected_states,
       selected_state_energies);
 
-  if (should_use_support_sparse_selected_state_contractions(selected_states)) {
+  if (should_use_sparse_selected_state_contractions(selected_states)) {
     return build_support_sparse_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,
@@ -146,7 +146,7 @@ build_directional_same_spin_matrix_backward_contribution(
       selected_state_energies,
       directional_selected_state_energies);
 
-  if (should_use_support_sparse_selected_state_contractions(selected_states)) {
+  if (should_use_sparse_selected_state_contractions(selected_states)) {
     return build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,
@@ -231,7 +231,7 @@ build_local_same_spin_matrix_backward_contribution(
       selected_states,
       selected_state_energies);
 
-  if (should_use_support_sparse_selected_state_contractions(selected_states)) {
+  if (should_use_sparse_selected_state_contractions(selected_states)) {
     return build_support_sparse_local_same_spin_backward_contribution_by_tiles(
         same_spin_pair_cache,
         selected_states,

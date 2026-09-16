@@ -24,7 +24,7 @@ double estimate_dense_selected_state_contraction_work(
       static_cast<double>(selected_state_matrices.states.size());
 }
 
-double estimate_support_sparse_selected_state_contraction_work(
+double estimate_sparse_selected_state_contraction_work(
     const SelectedStateDeterminantMatrices& selected_state_matrices) {
   double total_work = 0.0;
   for (const auto& state_coefficients : selected_state_matrices.states) {
@@ -36,18 +36,19 @@ double estimate_support_sparse_selected_state_contraction_work(
       continue;
     }
 
-    // The trimmed contraction still needs local kernel gather/scatter, but it
-    // avoids the dense BLAS sweep on the full unique-spin product space.
-    total_work +=
-        alpha_support_size * beta_support_size *
-            (alpha_support_size + beta_support_size) +
+    const double nonzero_count =
+        static_cast<double>(state_coefficients.nonzero_coefficient_count);
+    // Alpha- and beta-oriented sparse sandwiches visit pairs of determinant
+    // connections rather than the Cartesian alpha/beta support.  Output-tile
+    // traversal remains quadratic only in each primary string support.
+    total_work += 2.0 * nonzero_count * nonzero_count +
         alpha_support_size * alpha_support_size +
         beta_support_size * beta_support_size;
   }
   return total_work;
 }
 
-bool selected_state_support_is_actually_trimmed(
+bool selected_state_support_is_trimmed(
     const SelectedStateDeterminantMatrices& selected_state_matrices) {
   for (const auto& state_coefficients : selected_state_matrices.states) {
     if (static_cast<int>(state_coefficients.alpha_support.size()) <
@@ -383,10 +384,6 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
       state_coefficients.beta_support.push_back(unique_beta_id);
     }
 
-    state_coefficients.local_coefficient_matrix =
-        Eigen::MatrixXd::Zero(
-            static_cast<int>(state_coefficients.alpha_support.size()),
-            static_cast<int>(state_coefficients.beta_support.size()));
     if (close_shell_diagonal) {
       state_coefficients.local_diagonal_coefficients.assign(
           state_coefficients.alpha_support.size(),
@@ -400,24 +397,6 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
             state_coefficients.diagonal_coefficients[unique_id];
         state_coefficients.local_diagonal_coefficients[local_index] =
             coefficient;
-        state_coefficients.local_coefficient_matrix(local_index, local_index) =
-            coefficient;
-      }
-    } else {
-      for (const std::size_t touched_pair_index : touched_pair_indices) {
-        const int unique_alpha_id = static_cast<int>(
-            touched_pair_index % n_unique_alpha);
-        const int unique_beta_id = static_cast<int>(
-            touched_pair_index / n_unique_alpha);
-        const int alpha_local =
-            alpha_global_to_local[unique_alpha_id];
-        const int beta_local =
-            beta_global_to_local[unique_beta_id];
-        if (alpha_local < 0 || beta_local < 0) {
-          continue;
-        }
-        state_coefficients.local_coefficient_matrix(alpha_local, beta_local) =
-            state_coefficients.coefficient_matrix(unique_alpha_id, unique_beta_id);
       }
     }
 
@@ -448,10 +427,9 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
         if (alpha_local < 0 || beta_local < 0) {
           continue;
         }
-        const double coefficient =
-            state_coefficients.local_coefficient_matrix(
-                alpha_local,
-                beta_local);
+        const double coefficient = state_coefficients.coefficient_matrix(
+            unique_alpha_id,
+            unique_beta_id);
         if (coefficient != 0.0) {
           local_sparse_triplets.emplace_back(
               alpha_local,
@@ -589,16 +567,15 @@ build_selected_state_determinant_matrices_from_selected_columns(
       });
 }
 
-bool should_use_support_sparse_selected_state_contractions(
+bool should_use_sparse_selected_state_contractions(
     const SelectedStateDeterminantMatrices& selected_state_matrices) {
-  if (!selected_state_support_is_actually_trimmed(selected_state_matrices)) {
+  if (!selected_state_support_is_trimmed(selected_state_matrices)) {
     return false;
   }
-
   const double dense_work =
       estimate_dense_selected_state_contraction_work(selected_state_matrices);
   const double sparse_work =
-      estimate_support_sparse_selected_state_contraction_work(
+      estimate_sparse_selected_state_contraction_work(
           selected_state_matrices);
   if (dense_work == 0.0) {
     return false;

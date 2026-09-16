@@ -113,7 +113,7 @@ bool selected_state_has_local_support(
     const SelectedStateDeterminantCoefficients& state_coefficients) {
   return !state_coefficients.alpha_support.empty() &&
       !state_coefficients.beta_support.empty() &&
-      state_coefficients.local_coefficient_matrix.size() != 0;
+      state_coefficients.local_sparse_coefficient_matrix.nonZeros() != 0;
 }
 
 bool selected_state_has_close_shell_diagonal(
@@ -124,14 +124,6 @@ bool selected_state_has_close_shell_diagonal(
       n_unique_alpha == n_unique_beta &&
       state_coefficients.diagonal_coefficients.size() ==
           static_cast<std::size_t>(n_unique_alpha);
-}
-
-bool selected_state_has_local_close_shell_diagonal(
-    const SelectedStateDeterminantCoefficients& state_coefficients) {
-  return state_coefficients.close_shell_diagonal &&
-      state_coefficients.alpha_support == state_coefficients.beta_support &&
-      state_coefficients.local_diagonal_coefficients.size() ==
-          state_coefficients.alpha_support.size();
 }
 
 void accumulate_diagonal_kernel_image_global(
@@ -238,220 +230,17 @@ void validate_state_coefficient_matrix(
 
 void validate_local_state_coefficient_matrix(
     const SelectedStateDeterminantCoefficients& state_coefficients) {
-  if (state_coefficients.local_coefficient_matrix.rows() !=
+  if (state_coefficients.local_sparse_coefficient_matrix.rows() !=
           static_cast<int>(state_coefficients.alpha_support.size()) ||
-      state_coefficients.local_coefficient_matrix.cols() !=
-          static_cast<int>(state_coefficients.beta_support.size())) {
+      state_coefficients.local_sparse_coefficient_matrix.cols() !=
+          static_cast<int>(state_coefficients.beta_support.size()) ||
+      state_coefficients.local_sparse_coefficient_transpose.rows() !=
+          static_cast<int>(state_coefficients.beta_support.size()) ||
+      state_coefficients.local_sparse_coefficient_transpose.cols() !=
+          static_cast<int>(state_coefficients.alpha_support.size())) {
     throw std::invalid_argument(
-        "selected-state local_coefficient_matrix shape does not match support dimensions");
+        "selected-state sparse coefficient shapes do not match support dimensions");
   }
-}
-
-void scatter_add_dense_submatrix(
-    const Eigen::MatrixXd& local_matrix,
-    const std::vector<int>& row_indices,
-    const std::vector<int>& column_indices,
-    double scale,
-    Eigen::MatrixXd* global_matrix) {
-  if (global_matrix == nullptr) {
-    throw std::invalid_argument("global_matrix must not be null");
-  }
-  if (local_matrix.rows() != static_cast<int>(row_indices.size()) ||
-      local_matrix.cols() != static_cast<int>(column_indices.size())) {
-    throw std::invalid_argument(
-        "local_matrix shape does not match scatter support dimensions");
-  }
-  if (std::abs(scale) <= kContributionTolerance) {
-    return;
-  }
-  for (int column_local = 0;
-       column_local < static_cast<int>(column_indices.size());
-       ++column_local) {
-    const int column_global = column_indices[column_local];
-    for (int row_local = 0;
-         row_local < static_cast<int>(row_indices.size());
-         ++row_local) {
-      const int row_global = row_indices[row_local];
-      (*global_matrix)(row_global, column_global) +=
-          scale * local_matrix(row_local, column_local);
-    }
-  }
-}
-
-std::vector<int> build_merged_support_indices(
-    const std::vector<int>& first,
-    const std::vector<int>& second) {
-  std::vector<int> merged;
-  merged.reserve(first.size() + second.size());
-  std::set_union(
-      first.begin(),
-      first.end(),
-      second.begin(),
-      second.end(),
-      std::back_inserter(merged));
-  return merged;
-}
-
-void accumulate_selected_state_alpha_image(
-    const SelectedStateDeterminantCoefficients& state_coefficients,
-    const Eigen::MatrixXd& beta_kernel_subblock,
-    double scale,
-    Eigen::MatrixXd* global_alpha_weight_matrix,
-    Eigen::MatrixXd* beta_push,
-    Eigen::MatrixXd* alpha_image) {
-  if (global_alpha_weight_matrix == nullptr ||
-      beta_push == nullptr ||
-      alpha_image == nullptr) {
-    throw std::invalid_argument("alpha image outputs must not be null");
-  }
-  if (std::abs(scale) <= kContributionTolerance ||
-      !selected_state_has_local_support(state_coefficients)) {
-    return;
-  }
-  if (selected_state_has_local_close_shell_diagonal(state_coefficients)) {
-    const auto& local_diagonal_coefficients =
-        state_coefficients.local_diagonal_coefficients;
-    if (beta_kernel_subblock.rows() !=
-            static_cast<int>(local_diagonal_coefficients.size()) ||
-        beta_kernel_subblock.cols() !=
-            static_cast<int>(local_diagonal_coefficients.size())) {
-      throw std::invalid_argument(
-          "beta support kernel shape does not match close-shell local diagonal coefficients");
-    }
-    alpha_image->setZero(
-        static_cast<int>(local_diagonal_coefficients.size()),
-        static_cast<int>(local_diagonal_coefficients.size()));
-    for (int column = 0;
-         column < static_cast<int>(local_diagonal_coefficients.size());
-         ++column) {
-      const double right_coefficient =
-          local_diagonal_coefficients[column];
-      if (std::abs(right_coefficient) <= kContributionTolerance) {
-        continue;
-      }
-      for (int row = 0;
-           row < static_cast<int>(local_diagonal_coefficients.size());
-           ++row) {
-        const double left_coefficient =
-            local_diagonal_coefficients[row];
-        if (std::abs(left_coefficient) <= kContributionTolerance) {
-          continue;
-        }
-        (*alpha_image)(row, column) =
-            left_coefficient *
-            beta_kernel_subblock(row, column) *
-            right_coefficient;
-      }
-    }
-    scatter_add_dense_submatrix(
-        *alpha_image,
-        state_coefficients.alpha_support,
-        state_coefficients.alpha_support,
-        scale,
-        global_alpha_weight_matrix);
-    return;
-  }
-  validate_local_state_coefficient_matrix(state_coefficients);
-  const auto& local_coefficients = state_coefficients.local_coefficient_matrix;
-  if (beta_kernel_subblock.rows() != local_coefficients.cols() ||
-      beta_kernel_subblock.cols() != local_coefficients.cols()) {
-    throw std::invalid_argument(
-        "beta support kernel shape does not match selected-state local coefficients");
-  }
-
-  multiply_right_symmetric(
-      local_coefficients,
-      beta_kernel_subblock,
-      beta_push);
-  alpha_image->noalias() =
-      (*beta_push) * local_coefficients.transpose();
-  scatter_add_dense_submatrix(
-      *alpha_image,
-      state_coefficients.alpha_support,
-      state_coefficients.alpha_support,
-      scale,
-      global_alpha_weight_matrix);
-}
-
-void accumulate_selected_state_beta_image(
-    const SelectedStateDeterminantCoefficients& state_coefficients,
-    const Eigen::MatrixXd& alpha_kernel_subblock,
-    double scale,
-    Eigen::MatrixXd* global_beta_weight_matrix,
-    Eigen::MatrixXd* alpha_push,
-    Eigen::MatrixXd* beta_image) {
-  if (global_beta_weight_matrix == nullptr ||
-      alpha_push == nullptr ||
-      beta_image == nullptr) {
-    throw std::invalid_argument("beta image outputs must not be null");
-  }
-  if (std::abs(scale) <= kContributionTolerance ||
-      !selected_state_has_local_support(state_coefficients)) {
-    return;
-  }
-  if (selected_state_has_local_close_shell_diagonal(state_coefficients)) {
-    const auto& local_diagonal_coefficients =
-        state_coefficients.local_diagonal_coefficients;
-    if (alpha_kernel_subblock.rows() !=
-            static_cast<int>(local_diagonal_coefficients.size()) ||
-        alpha_kernel_subblock.cols() !=
-            static_cast<int>(local_diagonal_coefficients.size())) {
-      throw std::invalid_argument(
-          "alpha support kernel shape does not match close-shell local diagonal coefficients");
-    }
-    beta_image->setZero(
-        static_cast<int>(local_diagonal_coefficients.size()),
-        static_cast<int>(local_diagonal_coefficients.size()));
-    for (int column = 0;
-         column < static_cast<int>(local_diagonal_coefficients.size());
-         ++column) {
-      const double right_coefficient =
-          local_diagonal_coefficients[column];
-      if (std::abs(right_coefficient) <= kContributionTolerance) {
-        continue;
-      }
-      for (int row = 0;
-           row < static_cast<int>(local_diagonal_coefficients.size());
-           ++row) {
-        const double left_coefficient =
-            local_diagonal_coefficients[row];
-        if (std::abs(left_coefficient) <= kContributionTolerance) {
-          continue;
-        }
-        (*beta_image)(row, column) =
-            left_coefficient *
-            alpha_kernel_subblock(row, column) *
-            right_coefficient;
-      }
-    }
-    scatter_add_dense_submatrix(
-        *beta_image,
-        state_coefficients.beta_support,
-        state_coefficients.beta_support,
-        scale,
-        global_beta_weight_matrix);
-    return;
-  }
-  validate_local_state_coefficient_matrix(state_coefficients);
-  const auto& local_coefficients = state_coefficients.local_coefficient_matrix;
-  if (alpha_kernel_subblock.rows() != local_coefficients.rows() ||
-      alpha_kernel_subblock.cols() != local_coefficients.rows()) {
-    throw std::invalid_argument(
-        "alpha support kernel shape does not match selected-state local coefficients");
-  }
-
-  multiply_left_symmetric(
-      alpha_kernel_subblock,
-      local_coefficients,
-      alpha_push);
-  beta_image->noalias() =
-      local_coefficients.transpose() * (*alpha_push);
-  scatter_add_dense_submatrix(
-      *beta_image,
-      state_coefficients.beta_support,
-      state_coefficients.beta_support,
-      scale,
-      global_beta_weight_matrix);
 }
 
 SameSpinPairScalarMatrices build_pair_scalar_matrices(

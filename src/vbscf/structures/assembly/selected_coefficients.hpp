@@ -28,10 +28,10 @@ namespace xmvb::vb {
  * and `diagonal_coefficients` / `local_diagonal_coefficients` cache the global
  * and trimmed diagonal entries directly for hot-path contractions.
  *
- * `local_coefficient_matrix` stores the same coefficients restricted to the
- * trimmed support block `alpha_support x beta_support`. This exact support-aware
- * view lets backward contractions skip global zero rows/columns for each
- * selected state.
+ * The row-major sparse local matrices store the same coefficients on the
+ * trimmed `alpha_support x beta_support` block.  Both orientations are kept so
+ * alpha- and beta-major contractions traverse determinant connections without
+ * materializing a Cartesian support block.
  */
 struct SelectedStateDeterminantCoefficients {
   int state_index = 0;
@@ -42,7 +42,6 @@ struct SelectedStateDeterminantCoefficients {
   std::vector<double> diagonal_coefficients;
   std::vector<int> alpha_support;
   std::vector<int> beta_support;
-  Eigen::MatrixXd local_coefficient_matrix;
   /** @brief Row-major sparse local coefficient matrix for string contractions. */
   Eigen::SparseMatrix<double, Eigen::RowMajor, int>
       local_sparse_coefficient_matrix;
@@ -148,12 +147,14 @@ build_selected_state_determinant_matrices_from_selected_columns(
     const SameSpinPairCacheContext& same_spin_pair_cache);
 
 /**
- * @brief Returns whether support-sparse selected-state contractions should run.
+ * @brief Returns whether sparse selected-state contractions should run.
  *
- * The decision compares the full unique-spin contraction work against the
- * trimmed per-state support work; it has no molecule-specific override.
+ * A tiled sweep is considered only when at least one selected-state support is
+ * actually trimmed, then dense unique-string work is compared with the
+ * determinant-connectivity traversal count. No molecule-specific override is
+ * used.
  */
-bool should_use_support_sparse_selected_state_contractions(
+bool should_use_sparse_selected_state_contractions(
     const SelectedStateDeterminantMatrices& selected_state_matrices);
 
 /**

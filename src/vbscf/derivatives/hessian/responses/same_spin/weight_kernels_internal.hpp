@@ -60,33 +60,6 @@ void validate_state_coefficient_matrix(
     int n_unique_alpha,
     int n_unique_beta);
 
-void scatter_add_dense_submatrix(
-    const Eigen::MatrixXd& local_matrix,
-    const std::vector<int>& row_indices,
-    const std::vector<int>& column_indices,
-    double scale,
-    Eigen::MatrixXd* global_matrix);
-
-std::vector<int> build_merged_support_indices(
-    const std::vector<int>& first,
-    const std::vector<int>& second);
-
-void accumulate_selected_state_alpha_image(
-    const SelectedStateDeterminantCoefficients& state_coefficients,
-    const Eigen::MatrixXd& beta_kernel_subblock,
-    double scale,
-    Eigen::MatrixXd* global_alpha_weight_matrix,
-    Eigen::MatrixXd* beta_push,
-    Eigen::MatrixXd* alpha_image);
-
-void accumulate_selected_state_beta_image(
-    const SelectedStateDeterminantCoefficients& state_coefficients,
-    const Eigen::MatrixXd& alpha_kernel_subblock,
-    double scale,
-    Eigen::MatrixXd* global_beta_weight_matrix,
-    Eigen::MatrixXd* alpha_push,
-    Eigen::MatrixXd* beta_image);
-
 SameSpinPairScalarMatrices build_pair_scalar_matrices(
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants);

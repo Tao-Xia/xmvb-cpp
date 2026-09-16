@@ -44,11 +44,7 @@ bool selected_state_has_local_support(
 
 void validate_local_state_coefficient_matrix(
     const SelectedStateDeterminantCoefficients& state_coefficients) {
-  if (state_coefficients.local_coefficient_matrix.rows() !=
-          static_cast<int>(state_coefficients.alpha_support.size()) ||
-      state_coefficients.local_coefficient_matrix.cols() !=
-          static_cast<int>(state_coefficients.beta_support.size()) ||
-      state_coefficients.local_sparse_coefficient_matrix.rows() !=
+  if (state_coefficients.local_sparse_coefficient_matrix.rows() !=
           static_cast<int>(state_coefficients.alpha_support.size()) ||
       state_coefficients.local_sparse_coefficient_matrix.cols() !=
           static_cast<int>(state_coefficients.beta_support.size()) ||
@@ -377,14 +373,11 @@ double contract_sparse_matrix_tile_with_dense_tile_matrix(
   return contraction;
 }
 
-using SparseCoefficientMatrix =
-    Eigen::SparseMatrix<double, Eigen::RowMajor, int>;
-
 void accumulate_sparse_coefficient_pair_tile(
-    const SparseCoefficientMatrix& left_coefficients,
+    const SparseLocalCoefficientMatrix& left_coefficients,
     const std::vector<int>& left_primary_support,
     const std::vector<int>& left_partner_support,
-    const SparseCoefficientMatrix& right_coefficients,
+    const SparseLocalCoefficientMatrix& right_coefficients,
     const std::vector<int>& right_primary_support,
     const std::vector<int>& right_partner_support,
     const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& partner_pair_matrix,
@@ -394,51 +387,26 @@ void accumulate_sparse_coefficient_pair_tile(
     int primary_right_end,
     double scale,
     Eigen::MatrixXd* primary_pair_tile) {
-  const SupportWindow left_window = find_support_window(
-      left_primary_support,
-      primary_left_begin,
-      primary_left_end);
-  const SupportWindow right_window = find_support_window(
-      right_primary_support,
-      primary_right_begin,
-      primary_right_end);
-  if (left_window.empty() || right_window.empty() || scale == 0.0) {
+  if (scale == 0.0) {
     return;
   }
-
-  for (int right_local = right_window.begin;
-       right_local < right_window.end;
-       ++right_local) {
-    const int tile_column =
-        right_primary_support[right_local] - primary_right_begin;
-    for (int left_local = left_window.begin;
-         left_local < left_window.end;
-         ++left_local) {
-      double image = 0.0;
-      for (SparseCoefficientMatrix::InnerIterator left_entry(
-               left_coefficients,
-               left_local);
-           left_entry;
-           ++left_entry) {
-        const int partner_left = left_partner_support[left_entry.col()];
-        for (SparseCoefficientMatrix::InnerIterator right_entry(
-                 right_coefficients,
-                 right_local);
-             right_entry;
-             ++right_entry) {
-          image +=
-              left_entry.value() *
-              partner_pair_matrix.coeff(
-                  partner_left,
-                  right_partner_support[right_entry.col()]) *
-              right_entry.value();
-        }
-      }
-      const int tile_row =
-          left_primary_support[left_local] - primary_left_begin;
-      (*primary_pair_tile)(tile_row, tile_column) += scale * image;
-    }
-  }
+  for_each_sparse_coefficient_pair_in_tile(
+      left_coefficients,
+      left_primary_support,
+      left_partner_support,
+      right_coefficients,
+      right_primary_support,
+      right_partner_support,
+      primary_left_begin,
+      primary_left_end,
+      primary_right_begin,
+      primary_right_end,
+      [&](int row, int column, int partner_left, int partner_right,
+          double coefficient_product) {
+        (*primary_pair_tile)(row, column) +=
+            scale * coefficient_product *
+            partner_pair_matrix.coeff(partner_left, partner_right);
+      });
 }
 
 void accumulate_alpha_pair_matrix_tile(
