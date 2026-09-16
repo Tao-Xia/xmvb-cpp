@@ -264,6 +264,15 @@ ExactHvpOperator::State::diagnostics() const {
   info.outer_response_opposite_spin_backward_wall_time_seconds =
       apply_timing_totals_
           .outer_response_opposite_spin_backward_wall_time_seconds;
+  info.outer_response_opposite_spin_packed_gradient_wall_time_seconds =
+      apply_timing_totals_
+          .outer_response_opposite_spin_packed_gradient_wall_time_seconds;
+  info.outer_response_opposite_spin_alpha_overlap_wall_time_seconds =
+      apply_timing_totals_
+          .outer_response_opposite_spin_alpha_overlap_wall_time_seconds;
+  info.outer_response_opposite_spin_beta_overlap_wall_time_seconds =
+      apply_timing_totals_
+          .outer_response_opposite_spin_beta_overlap_wall_time_seconds;
   info.outer_response_orbital_pullback_wall_time_seconds =
       apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds;
   return info;

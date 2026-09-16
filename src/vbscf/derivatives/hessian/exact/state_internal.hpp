@@ -77,6 +77,9 @@ private:
     double outer_response_selected_state_rebuild_wall_time_seconds = 0.0;
     double outer_response_same_spin_backward_wall_time_seconds = 0.0;
     double outer_response_opposite_spin_backward_wall_time_seconds = 0.0;
+    double outer_response_opposite_spin_packed_gradient_wall_time_seconds = 0.0;
+    double outer_response_opposite_spin_alpha_overlap_wall_time_seconds = 0.0;
+    double outer_response_opposite_spin_beta_overlap_wall_time_seconds = 0.0;
     double outer_response_orbital_pullback_wall_time_seconds = 0.0;
   };
 

@@ -25,6 +25,7 @@ void accumulate_directional_alpha_overlap_gradient(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     std::vector<double>* active_orbital_overlap_gradient);
 
 void accumulate_directional_beta_overlap_gradient(
@@ -32,6 +33,7 @@ void accumulate_directional_beta_overlap_gradient(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     std::vector<double>* active_orbital_overlap_gradient);
 
 void accumulate_local_alpha_overlap_gradient(

@@ -13,6 +13,7 @@ set(_xmvb_vbscf_unit_targets
   test_localized_representative_selector
   test_normalized_orbital_curvature
   test_oeo_normalization_pullback
+  test_opposite_spin_pair_graph
   test_orthonormal_hvp_basis
   test_positive_ritz_secants
   test_projected_orbital_surrogate
@@ -34,6 +35,7 @@ if (BUILD_TESTING)
   add_test(NAME orbital_block_partition COMMAND test_orbital_block_partition)
   add_test(NAME curvature_decomposition COMMAND test_curvature_decomposition)
   add_test(NAME oeo_normalization_pullback COMMAND test_oeo_normalization_pullback)
+  add_test(NAME opposite_spin_pair_graph COMMAND test_opposite_spin_pair_graph)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
   add_test(NAME davidson COMMAND test_davidson)
   add_test(NAME eigen_response COMMAND test_eigen_response)

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <exception>
 #include <functional>
 #include <stdexcept>
@@ -181,7 +182,8 @@ build_directional_opposite_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
-    int n_active_orbitals) {
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result) {
   validate_backward_inputs(same_spin_pair_cache, selected_states);
   validate_directional_states(selected_states, directional_selected_states);
   OppositeSpinMatrixBackwardContribution result =
@@ -202,30 +204,39 @@ build_directional_opposite_spin_matrix_backward_contribution(
           selected_states.n_unique_alpha,
           selected_states.n_unique_beta),
       [&] {
-        detail::accumulate_directional_opposite_spin_packed_gradient_by_tiles(
+        const auto start = std::chrono::steady_clock::now();
+        detail::accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
             same_spin_pair_cache,
             selected_states,
             directional_selected_states,
             n_packed_pairs,
-            blocking.sparse_block_size,
-            blocking.dense_batch_size,
             &result.packed_active_two_electron_gradient);
+        result.timing.packed_gradient_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start).count();
       },
       [&] {
+        const auto start = std::chrono::steady_clock::now();
         detail::accumulate_directional_alpha_overlap_gradient(
             same_spin_pair_cache,
             selected_states,
             directional_selected_states,
             n_active_orbitals,
+            active_space_two_electron_result,
             &alpha_overlap);
+        result.timing.alpha_overlap_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start).count();
       },
       [&] {
+        const auto start = std::chrono::steady_clock::now();
         detail::accumulate_directional_beta_overlap_gradient(
             same_spin_pair_cache,
             selected_states,
             directional_selected_states,
             n_active_orbitals,
+            active_space_two_electron_result,
             &beta_overlap);
+        result.timing.beta_overlap_seconds = std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start).count();
       });
   combine_overlap_channels(
       alpha_overlap,

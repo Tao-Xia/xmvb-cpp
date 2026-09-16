@@ -11,6 +11,13 @@ namespace xmvb::vb {
 
 struct SameSpinDirectionalPairCache;
 
+/** @brief Wall-clock breakdown of directional opposite-spin channels. */
+struct OppositeSpinBackwardTiming {
+  double packed_gradient_seconds = 0.0;
+  double alpha_overlap_seconds = 0.0;
+  double beta_overlap_seconds = 0.0;
+};
+
 /**
  * @brief Matrix-form opposite-spin backward contribution on unique spin pairs.
  *
@@ -21,6 +28,7 @@ struct SameSpinDirectionalPairCache;
 struct OppositeSpinMatrixBackwardContribution {
   std::vector<double> active_orbital_overlap_gradient;
   std::vector<double> packed_active_two_electron_gradient;
+  OppositeSpinBackwardTiming timing;
 };
 
 /**
@@ -56,7 +64,8 @@ build_directional_opposite_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
-    int n_active_orbitals);
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result);
 
 /**
  * @brief Builds the exact opposite-spin local-response contribution.

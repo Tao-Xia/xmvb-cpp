@@ -10,13 +10,16 @@
 
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin/directional_pair_graph_internal.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace xmvb::vb {
 
 using detail::DirectionalOppositeSpinPairData;
+using detail::DirectionalPairGraph;
 using detail::kOppositeSpinUniqueTileSize;
+using detail::PrimarySpin;
 
 namespace {
 
@@ -161,6 +164,145 @@ void accumulate_singular_spin_overlap_gradient_from_dense_image_local(
                                              n_active_orbitals +
                                          orbital_index_right] +=
           overlap_block_gradient(right_row, left_column);
+    }
+  }
+}
+
+void accumulate_directional_overlap_gradient_by_pair_graph(
+    const std::vector<SpinDeterminantPairEvaluation>& primary_pair_cache,
+    const std::vector<std::vector<int>>& unique_primary_determinants,
+    int n_unique_primary,
+    const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
+    int n_unique_partner,
+    const DirectionalPairGraph& pair_graph,
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronView& two_electron_view,
+    std::vector<double>* active_orbital_overlap_gradient) {
+  // For each primary-spin string pair, contract the accepted/directional
+  // coefficient rows directly with compatible partner-spin pairs.  This first
+  // forms the sparse raw partner projection y, then evaluates only the entries
+  // of G y required by the inverse-overlap pullback.  The former P-channel
+  // sweep repeated the coefficient contraction once for every active pair.
+  const int n_packed_active_pairs =
+      packed_active_pair_count(n_active_orbitals);
+  std::vector<double> partner_image(n_packed_active_pairs, 0.0);
+  std::vector<unsigned char> touched_flags(n_packed_active_pairs, 0u);
+  std::vector<int> touched_channels;
+  std::vector<double> touched_values;
+  touched_channels.reserve(n_packed_active_pairs);
+  touched_values.reserve(n_packed_active_pairs);
+  std::vector<unsigned char> target_flags(n_packed_active_pairs, 0u);
+  std::vector<int> target_channels;
+  target_channels.reserve(n_packed_active_pairs);
+  std::vector<double> projected_image(n_packed_active_pairs, 0.0);
+  Eigen::MatrixXd inverse_overlap_gradient;
+
+  for (int primary_right = 0;
+       primary_right < n_unique_primary;
+       ++primary_right) {
+    for (int primary_left = 0;
+         primary_left < n_unique_primary;
+         ++primary_left) {
+      const auto& pair_evaluation =
+          primary_pair_cache[ordered_spin_pair_storage_index(
+              primary_left,
+              primary_right,
+              n_unique_primary)];
+      if (pair_evaluation.overlap_result.nullity != 0) {
+        continue;
+      }
+      const auto& inverse_projection =
+          pair_evaluation.opposite_spin_pair_cache.inverse_overlap_projection;
+
+      pair_graph.accumulate_partner_projection(
+          primary_left,
+          primary_right,
+          partner_pair_cache,
+          n_unique_partner,
+          &partner_image,
+          &touched_flags,
+          &touched_channels);
+      if (touched_channels.empty()) {
+        continue;
+      }
+
+      touched_values.clear();
+      for (const int channel : touched_channels) {
+        touched_values.push_back(partner_image[channel]);
+      }
+      const auto& occ_L = unique_primary_determinants[primary_left];
+      const auto& occ_R = unique_primary_determinants[primary_right];
+      const auto add_target = [&](int channel) {
+        if (target_flags[channel] == 0u) {
+          target_flags[channel] = 1u;
+          target_channels.push_back(channel);
+        }
+      };
+      for (const int channel : inverse_projection.packed_pair_indices) {
+        add_target(channel);
+      }
+      for (const int orbital_left : occ_L) {
+        for (const int orbital_right : occ_R) {
+          add_target(TwoElectronIndexer::packed_pair_index(
+              orbital_right,
+              orbital_left));
+        }
+      }
+      const Eigen::VectorXd projected_targets =
+          apply_active_space_two_electron_kernel_to_sparse_projection_subset(
+              two_electron_view,
+              n_active_orbitals,
+              touched_channels,
+              touched_values,
+              target_channels);
+
+      for (std::size_t target = 0;
+           target < target_channels.size();
+           ++target) {
+        projected_image[target_channels[target]] =
+            projected_targets(static_cast<int>(target));
+      }
+
+      double determinant_overlap_weight = 0.0;
+      for (std::size_t entry = 0;
+           entry < inverse_projection.packed_pair_indices.size();
+           ++entry) {
+        const int channel = inverse_projection.packed_pair_indices[entry];
+        determinant_overlap_weight +=
+            inverse_projection.packed_pair_values[entry] *
+            projected_image[channel];
+      }
+
+      const int n_electrons = static_cast<int>(occ_L.size());
+      inverse_overlap_gradient.setZero(n_electrons, n_electrons);
+      for (int left_column = 0; left_column < n_electrons; ++left_column) {
+        for (int right_row = 0; right_row < n_electrons; ++right_row) {
+          const int channel = TwoElectronIndexer::packed_pair_index(
+              occ_R[right_row],
+              occ_L[left_column]);
+          inverse_overlap_gradient(left_column, right_row) =
+              projected_image[channel];
+        }
+      }
+      accumulate_spin_overlap_gradient(
+          occ_L,
+          occ_R,
+          pair_evaluation.overlap_result,
+          determinant_overlap_weight,
+          inverse_overlap_gradient,
+          n_active_orbitals,
+          active_orbital_overlap_gradient);
+
+      for (const int channel : target_channels) {
+        projected_image[channel] = 0.0;
+        target_flags[channel] = 0u;
+      }
+      target_channels.clear();
+      for (const int channel : touched_channels) {
+        partner_image[channel] = 0.0;
+        touched_flags[channel] = 0u;
+      }
+      touched_channels.clear();
     }
   }
 }
@@ -446,113 +588,25 @@ void accumulate_directional_alpha_overlap_gradient(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     std::vector<double>* active_orbital_overlap_gradient) {
   if (active_orbital_overlap_gradient == nullptr) {
     throw std::invalid_argument("active_orbital_overlap_gradient must not be null");
   }
-  const int n_packed_active_pairs =
-      infer_n_packed_active_pairs(
-          same_spin_pair_cache.alpha_pair_cache_ref(),
-          "alpha");
-  if (n_packed_active_pairs == 0) {
-    return;
-  }
-
-  const auto& unique_alpha_determinants =
-      same_spin_pair_cache.alpha_reuse_table.unique_determinants;
-  {
-    const int unique_tile_size = kOppositeSpinUniqueTileSize;
-    Eigen::MatrixXd inverse_overlap_gradient;
-    for (int alpha_left_begin = 0;
-         alpha_left_begin < selected_states.n_unique_alpha;
-         alpha_left_begin += unique_tile_size) {
-      const int alpha_left_end =
-          std::min(
-              selected_states.n_unique_alpha,
-              alpha_left_begin + unique_tile_size);
-      for (int alpha_right_begin = 0;
-           alpha_right_begin < selected_states.n_unique_alpha;
-           alpha_right_begin += unique_tile_size) {
-        const int alpha_right_end =
-            std::min(
-                selected_states.n_unique_alpha,
-                alpha_right_begin + unique_tile_size);
-
-        const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
-        const auto alpha_pair_weight_tiles =
-            build_directional_alpha_overlap_weight_tile_matrix(
-                same_spin_pair_cache,
-                selected_states,
-                directional_selected_states,
-                n_packed_active_pairs,
-                alpha_left_begin,
-                alpha_left_end,
-                alpha_right_begin,
-                alpha_right_end);
-
-        for (int alpha_left_id = alpha_left_begin;
-             alpha_left_id < alpha_left_end;
-             ++alpha_left_id) {
-          const int alpha_left_local = alpha_left_id - alpha_left_begin;
-          for (int alpha_right_id = alpha_right_begin;
-               alpha_right_id < alpha_right_end;
-               ++alpha_right_id) {
-            const int alpha_right_local = alpha_right_id - alpha_right_begin;
-            const int alpha_tile_index =
-                alpha_left_local + alpha_tile_left_size * alpha_right_local;
-            const std::size_t ordered_pair_index =
-                ordered_spin_pair_storage_index(
-                    alpha_left_id,
-                    alpha_right_id,
-                    selected_states.n_unique_alpha);
-            const auto& alpha_pair_evaluation =
-                same_spin_pair_cache.alpha_pair_cache_ref()[ordered_pair_index];
-            const auto& inverse_projection =
-                alpha_pair_evaluation
-                    .opposite_spin_pair_cache
-                    .inverse_overlap_projection;
-            if (inverse_projection.packed_pair_indices.empty() ||
-                inverse_projection.projected_pair_values.empty()) {
-              continue;
-            }
-            if (alpha_pair_evaluation.overlap_result.nullity != 0) {
-              continue;
-            }
-
-            double determinant_overlap_weight = 0.0;
-            for (std::size_t entry_index = 0;
-                 entry_index < inverse_projection.packed_pair_indices.size();
-                 ++entry_index) {
-              const int packed_pair_index =
-                  inverse_projection.packed_pair_indices[entry_index];
-              determinant_overlap_weight +=
-                  inverse_projection.packed_pair_values[entry_index] *
-                  alpha_pair_weight_tiles(alpha_tile_index, packed_pair_index);
-            }
-            if (std::abs(determinant_overlap_weight) <=
-                kContributionTolerance) {
-              continue;
-            }
-
-            build_inverse_overlap_gradient_from_tile_matrix(
-                unique_alpha_determinants[alpha_left_id],
-                unique_alpha_determinants[alpha_right_id],
-                alpha_pair_weight_tiles,
-                alpha_tile_index,
-                &inverse_overlap_gradient);
-            accumulate_spin_overlap_gradient(
-                unique_alpha_determinants[alpha_left_id],
-                unique_alpha_determinants[alpha_right_id],
-                alpha_pair_evaluation.overlap_result,
-                determinant_overlap_weight,
-                inverse_overlap_gradient,
-                n_active_orbitals,
-                active_orbital_overlap_gradient);
-          }
-        }
-      }
-    }
-  }
+  const DirectionalPairGraph pair_graph(
+      selected_states,
+      directional_selected_states,
+      PrimarySpin::Alpha);
+  accumulate_directional_overlap_gradient_by_pair_graph(
+      same_spin_pair_cache.alpha_pair_cache_ref(),
+      same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+      selected_states.n_unique_alpha,
+      same_spin_pair_cache.beta_pair_cache_ref(),
+      selected_states.n_unique_beta,
+      pair_graph,
+      n_active_orbitals,
+      make_active_space_two_electron_view(active_space_two_electron_result),
+      active_orbital_overlap_gradient);
 }
 
 void accumulate_directional_beta_overlap_gradient(
@@ -560,113 +614,25 @@ void accumulate_directional_beta_overlap_gradient(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     std::vector<double>* active_orbital_overlap_gradient) {
   if (active_orbital_overlap_gradient == nullptr) {
     throw std::invalid_argument("active_orbital_overlap_gradient must not be null");
   }
-  const int n_packed_active_pairs =
-      infer_n_packed_active_pairs(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          "beta");
-  if (n_packed_active_pairs == 0) {
-    return;
-  }
-
-  const auto& unique_beta_determinants =
-      same_spin_pair_cache.beta_reuse_table.unique_determinants;
-  {
-    const int unique_tile_size = kOppositeSpinUniqueTileSize;
-    Eigen::MatrixXd inverse_overlap_gradient;
-    for (int beta_left_begin = 0;
-         beta_left_begin < selected_states.n_unique_beta;
-         beta_left_begin += unique_tile_size) {
-      const int beta_left_end =
-          std::min(
-              selected_states.n_unique_beta,
-              beta_left_begin + unique_tile_size);
-      for (int beta_right_begin = 0;
-           beta_right_begin < selected_states.n_unique_beta;
-           beta_right_begin += unique_tile_size) {
-        const int beta_right_end =
-            std::min(
-                selected_states.n_unique_beta,
-                beta_right_begin + unique_tile_size);
-
-        const int beta_tile_left_size = beta_left_end - beta_left_begin;
-        const auto beta_pair_weight_tiles =
-            build_directional_beta_overlap_weight_tile_matrix(
-                same_spin_pair_cache,
-                selected_states,
-                directional_selected_states,
-                n_packed_active_pairs,
-                beta_left_begin,
-                beta_left_end,
-                beta_right_begin,
-                beta_right_end);
-
-        for (int beta_left_id = beta_left_begin;
-             beta_left_id < beta_left_end;
-             ++beta_left_id) {
-          const int beta_left_local = beta_left_id - beta_left_begin;
-          for (int beta_right_id = beta_right_begin;
-               beta_right_id < beta_right_end;
-               ++beta_right_id) {
-            const int beta_right_local = beta_right_id - beta_right_begin;
-            const int beta_tile_index =
-                beta_left_local + beta_tile_left_size * beta_right_local;
-            const std::size_t ordered_pair_index =
-                ordered_spin_pair_storage_index(
-                    beta_left_id,
-                    beta_right_id,
-                    selected_states.n_unique_beta);
-            const auto& beta_pair_evaluation =
-                same_spin_pair_cache.beta_pair_cache_ref()[ordered_pair_index];
-            const auto& inverse_projection =
-                beta_pair_evaluation
-                    .opposite_spin_pair_cache
-                    .inverse_overlap_projection;
-            if (inverse_projection.packed_pair_indices.empty() ||
-                inverse_projection.projected_pair_values.empty()) {
-              continue;
-            }
-            if (beta_pair_evaluation.overlap_result.nullity != 0) {
-              continue;
-            }
-
-            double determinant_overlap_weight = 0.0;
-            for (std::size_t entry_index = 0;
-                 entry_index < inverse_projection.packed_pair_indices.size();
-                 ++entry_index) {
-              const int packed_pair_index =
-                  inverse_projection.packed_pair_indices[entry_index];
-              determinant_overlap_weight +=
-                  inverse_projection.packed_pair_values[entry_index] *
-                  beta_pair_weight_tiles(beta_tile_index, packed_pair_index);
-            }
-            if (std::abs(determinant_overlap_weight) <=
-                kContributionTolerance) {
-              continue;
-            }
-
-            build_inverse_overlap_gradient_from_tile_matrix(
-                unique_beta_determinants[beta_left_id],
-                unique_beta_determinants[beta_right_id],
-                beta_pair_weight_tiles,
-                beta_tile_index,
-                &inverse_overlap_gradient);
-            accumulate_spin_overlap_gradient(
-                unique_beta_determinants[beta_left_id],
-                unique_beta_determinants[beta_right_id],
-                beta_pair_evaluation.overlap_result,
-                determinant_overlap_weight,
-                inverse_overlap_gradient,
-                n_active_orbitals,
-                active_orbital_overlap_gradient);
-          }
-        }
-      }
-    }
-  }
+  const DirectionalPairGraph pair_graph(
+      selected_states,
+      directional_selected_states,
+      PrimarySpin::Beta);
+  accumulate_directional_overlap_gradient_by_pair_graph(
+      same_spin_pair_cache.beta_pair_cache_ref(),
+      same_spin_pair_cache.beta_reuse_table.unique_determinants,
+      selected_states.n_unique_beta,
+      same_spin_pair_cache.alpha_pair_cache_ref(),
+      selected_states.n_unique_alpha,
+      pair_graph,
+      n_active_orbitals,
+      make_active_space_two_electron_view(active_space_two_electron_result),
+      active_orbital_overlap_gradient);
 }
 
 void accumulate_local_alpha_overlap_gradient(

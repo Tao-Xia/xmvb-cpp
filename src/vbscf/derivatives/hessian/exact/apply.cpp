@@ -402,6 +402,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       apply_timing_totals_
           .outer_response_opposite_spin_backward_wall_time_seconds +=
           response_timing.opposite_spin_seconds;
+      apply_timing_totals_
+          .outer_response_opposite_spin_packed_gradient_wall_time_seconds +=
+          response_timing.opposite_spin_packed_gradient_seconds;
+      apply_timing_totals_
+          .outer_response_opposite_spin_alpha_overlap_wall_time_seconds +=
+          response_timing.opposite_spin_alpha_overlap_seconds;
+      apply_timing_totals_
+          .outer_response_opposite_spin_beta_overlap_wall_time_seconds +=
+          response_timing.opposite_spin_beta_overlap_seconds;
     }
     apply_timing_totals_
         .outer_response_structure_active_gradient_wall_time_seconds +=

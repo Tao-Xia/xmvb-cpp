@@ -57,26 +57,6 @@ Eigen::MatrixXd build_beta_overlap_weight_tile_matrix(
     int beta_right_begin,
     int beta_right_end);
 
-Eigen::MatrixXd build_directional_alpha_overlap_weight_tile_matrix(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const SelectedStateDeterminantMatrices& directional_selected_states,
-    int n_packed_active_pairs,
-    int alpha_left_begin,
-    int alpha_left_end,
-    int alpha_right_begin,
-    int alpha_right_end);
-
-Eigen::MatrixXd build_directional_beta_overlap_weight_tile_matrix(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const SelectedStateDeterminantMatrices& directional_selected_states,
-    int n_packed_active_pairs,
-    int beta_left_begin,
-    int beta_left_end,
-    int beta_right_begin,
-    int beta_right_end);
-
 Eigen::MatrixXd build_local_directional_alpha_overlap_weight_tile_matrix(
     const std::vector<DirectionalOppositeSpinPairData>&
         beta_directional_pair_data,

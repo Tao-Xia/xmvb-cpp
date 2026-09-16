@@ -266,12 +266,20 @@ SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient
           accepted_point_context.same_spin_pair_cache,
           accepted_point_context.selected_state_matrices,
           directional_selected_states,
-          input.orbital_preparation_input.n_active_orbitals);
+          input.orbital_preparation_input.n_active_orbitals,
+          accepted_point_context.prepared_active_space
+              .active_space_two_electron_result);
   validate_opposite_spin_matrix_backward_contribution(
       matrix_form_opposite_spin_direction,
       "exact outer-response directional opposite-spin backward contribution");
   timing.opposite_spin_seconds = std::chrono::duration<double>(
       std::chrono::steady_clock::now() - opposite_spin_start).count();
+  timing.opposite_spin_packed_gradient_seconds =
+      matrix_form_opposite_spin_direction.timing.packed_gradient_seconds;
+  timing.opposite_spin_alpha_overlap_seconds =
+      matrix_form_opposite_spin_direction.timing.alpha_overlap_seconds;
+  timing.opposite_spin_beta_overlap_seconds =
+      matrix_form_opposite_spin_direction.timing.beta_overlap_seconds;
   accumulate_scaled_same_spin_contribution(
       matrix_form_same_spin_direction,
       1.0,

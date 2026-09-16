@@ -23,6 +23,9 @@ struct ActiveSpaceGradientDirection {
 struct SelectedStateResponseTiming {
   double same_spin_seconds = 0.0;
   double opposite_spin_seconds = 0.0;
+  double opposite_spin_packed_gradient_seconds = 0.0;
+  double opposite_spin_alpha_overlap_seconds = 0.0;
+  double opposite_spin_beta_overlap_seconds = 0.0;
 };
 
 /** @brief Allocates a zero active-space gradient in canonical storage. */
