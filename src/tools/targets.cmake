@@ -140,6 +140,14 @@ target_link_libraries(benchmark_exact_ctx_hvp
     xmvb_input
     xmvb_output)
 
+add_executable(audit_newton_step
+  tools/audit_newton_step.cpp)
+target_link_libraries(audit_newton_step
+  PRIVATE
+    xmvb_vbscf
+    xmvb_input
+    xmvb_output)
+
 add_executable(audit_sparse_orbital_gauge
   tools/audit_sparse_orbital_gauge.cpp)
 target_link_libraries(audit_sparse_orbital_gauge
@@ -347,6 +355,7 @@ add_dependencies(check_exact_active_space_builders xmvb_assets)
 add_dependencies(check_exact_two_electron_hvp xmvb_assets)
 add_dependencies(check_exact_ctx_hvp xmvb_assets)
 add_dependencies(benchmark_exact_ctx_hvp xmvb_assets)
+add_dependencies(audit_newton_step xmvb_assets)
 
 add_dependencies(check_structure_expansion_signs xmvb_assets)
 add_dependencies(check_same_spin_overlap_gradient xmvb_assets)

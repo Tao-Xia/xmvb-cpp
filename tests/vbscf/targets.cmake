@@ -52,6 +52,13 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
     PASS_REGULAR_EXPRESSION "audit_total_hvp_calls =")
 
+  add_test(NAME audit_newton_step_f2 COMMAND audit_newton_step
+    ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+    --subspace-dimension 4 --trust-radius 0.1 --eigensolver davidson)
+  set_tests_properties(audit_newton_step_f2 PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
+    PASS_REGULAR_EXPRESSION "fresh_kkt_relative =")
+
   add_test(NAME dense_reduced_hessian_f2 COMMAND benchmark_exact_ctx_hvp
     ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
     --repeats 1 --dense-reference-block-width 4)

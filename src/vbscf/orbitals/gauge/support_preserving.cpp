@@ -12,7 +12,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/SVD>
 
-#include "input/deck/keywords.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb {

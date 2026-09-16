@@ -10,14 +10,9 @@
 
 #include <vector>
 
-namespace xmvb::vb {
+#include "vbscf/core/contracts/orbital_type.hpp"
 
-// input orbital-chart enum codes carried by OrbitalPreparationInput::orbital_type.
-// Kept as constexpr int because the chart field is a plain int on the input
-// struct; new code should treat these as the canonical chart discriminators.
-constexpr int kOrbitalTypeHao = 1;
-constexpr int kOrbitalTypeBdo = 2;
-constexpr int kOrbitalTypeOeo = 3;
+namespace xmvb::vb {
 
 // One curvature pair in the common packed sparse-coefficient embedding.
 // Current-chart tangent and covector projections provide the quotient-space
