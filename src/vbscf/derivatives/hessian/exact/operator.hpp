@@ -15,9 +15,9 @@ struct VbScfInput;
 /**
  * @brief Selects which HVP sub-components to include.
  *
- * The orbital Hessian-vector product decomposes into four additive
- * contributions: direct core, fixed-upstream pullback, local active-space
- * response, and structure response. They can be independently toggled.
+ * The orbital Hessian-vector product decomposes into three additive
+ * contributions (direct core, fixed-upstream pullback, outer response) that
+ * can be independently toggled.
  */
 struct HvpComponents {
   bool direct_core_response = true;
