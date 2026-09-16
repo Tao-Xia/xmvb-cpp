@@ -417,15 +417,30 @@ EigenResponseResult solve_generalized_eigen_response(
           operator_images.col(state) - beta * v_old.col(state);
       const double alpha = v_new.col(state).dot(w_new.col(state));
       v_new.col(state).noalias() -= alpha * v.col(state);
+      v_new.col(state).noalias() -= root_units.col(state) *
+          root_units.col(state).dot(v_new.col(state));
       w_new.col(state) =
           inverse_preconditioner.col(state).array() *
           v_new.col(state).array();
       w_new.col(state).noalias() -= root_units.col(state) *
           root_units.col(state).dot(w_new.col(state));
       const double beta_squared = v_new.col(state).dot(w_new.col(state));
-      if (beta_squared < 0.0 || !std::isfinite(beta_squared)) {
-        throw std::runtime_error(
-            "generalized-eigen response MINRES lost positive preconditioner curvature");
+      const double absolute_dot =
+          v_new.col(state).cwiseAbs().dot(w_new.col(state).cwiseAbs());
+      const double dot_operations = 4.0 * static_cast<double>(n);
+      const double unit_roundoff = std::numeric_limits<double>::epsilon();
+      const double roundoff_factor =
+          dot_operations * unit_roundoff /
+          (1.0 - dot_operations * unit_roundoff);
+      const double negative_roundoff_bound =
+          roundoff_factor * absolute_dot;
+      if (!std::isfinite(beta_squared) ||
+          beta_squared < -negative_roundoff_bound) {
+        std::ostringstream message;
+        message << "generalized-eigen response MINRES lost positive "
+                   "preconditioner curvature: value=" << beta_squared
+                << " roundoff_bound=" << negative_roundoff_bound;
+        throw std::runtime_error(message.str());
       }
       beta_new[state] = std::sqrt(std::max(0.0, beta_squared));
 
