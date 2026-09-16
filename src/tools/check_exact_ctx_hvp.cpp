@@ -22,6 +22,9 @@ namespace {
 struct Options {
   std::string input_path;
   std::string orbital_value_table_bin_path;
+  xmvb::vb::StructureEigensolver eigensolver =
+      xmvb::vb::StructureEigensolver::Dense;
+  bool preconditioned_direction = false;
   double step = 1.0e-4;
   double max_relative_error = std::numeric_limits<double>::infinity();
   double response_tolerance = 1.0e-3;
@@ -35,6 +38,8 @@ void print_usage() {
       << " [--step h]"
       << " [--max-rel-error tolerance]"
       << " [--response-tolerance tolerance]"
+      << " [--eigensolver dense|davidson]"
+      << " [--direction gradient|preconditioned_gradient]"
       << " [--stream-pair-products 0|1]\n";
 }
 
@@ -56,6 +61,23 @@ Options parse_arguments(int argc, char** argv) {
       options.max_relative_error = std::stod(value);
     } else if (name == "--response-tolerance") {
       options.response_tolerance = std::stod(value);
+    } else if (name == "--eigensolver") {
+      if (value == "dense") {
+        options.eigensolver = xmvb::vb::StructureEigensolver::Dense;
+      } else if (value == "davidson") {
+        options.eigensolver = xmvb::vb::StructureEigensolver::Davidson;
+      } else {
+        throw std::invalid_argument("--eigensolver must be dense or davidson");
+      }
+    } else if (name == "--direction") {
+      if (value == "gradient") {
+        options.preconditioned_direction = false;
+      } else if (value == "preconditioned_gradient") {
+        options.preconditioned_direction = true;
+      } else {
+        throw std::invalid_argument(
+            "--direction must be gradient or preconditioned_gradient");
+      }
     } else if (name == "--stream-pair-products") {
       if (value != "0" && value != "1") {
         throw std::invalid_argument("--stream-pair-products must be 0 or 1");
@@ -126,7 +148,7 @@ int main(int argc, char** argv) {
         {0},
         {1.0},
         loaded.nuclear_repulsion_energy,
-        xmvb::vb::StructureEigensolver::Dense,
+        options.eigensolver,
         xmvb::vb::StructureSolveAccuracy{
             1.0e-7,
             options.response_tolerance},
@@ -158,7 +180,12 @@ int main(int argc, char** argv) {
 
     const Eigen::VectorXd packed_gradient =
         layout.gather_from_full(accepted.sparse_orbital_energy_gradient);
-    Eigen::VectorXd direction = chart.project_reduced_gradient(packed_gradient);
+    const Eigen::VectorXd accepted_reduced_gradient =
+        chart.project_reduced_gradient(packed_gradient);
+    Eigen::VectorXd direction = accepted_reduced_gradient;
+    if (options.preconditioned_direction) {
+      direction = chart.apply_inverse_reduced_block_preconditioner(direction);
+    }
     if (direction.size() == 0) {
       throw std::runtime_error("nonredundant orbital space is empty");
     }
@@ -227,6 +254,10 @@ int main(int argc, char** argv) {
                 loaded.nuclear_repulsion_energy)));
     const Eigen::VectorXd finite_difference =
         (plus_reduced - minus_reduced) / (2.0 * options.step);
+    const Eigen::VectorXd dense_midpoint_reduced_gradient =
+        0.5 * (plus_reduced + minus_reduced);
+    const double accepted_gradient_vs_dense_midpoint_inf = infinity_norm(
+        accepted_reduced_gradient - dense_midpoint_reduced_gradient);
     const Eigen::VectorXd finite_difference_core =
         (plus_core_reduced - minus_core_reduced) / (2.0 * options.step);
     const Eigen::VectorXd analytic_outer = analytic - analytic_core;
@@ -260,9 +291,18 @@ int main(int argc, char** argv) {
               << '\n'
               << "stream_pair_products = "
               << (options.stream_pair_products ? "true" : "false") << '\n'
+              << "eigensolver = "
+              << xmvb::vb::structure_eigensolver_name(options.eigensolver)
+              << '\n'
+              << "direction = "
+              << (options.preconditioned_direction
+                      ? "preconditioned_gradient"
+                      : "gradient") << '\n'
               << "reduced_dimension = " << direction.size() << '\n'
               << "finite_difference_step = " << options.step << '\n'
               << "response_tolerance = " << options.response_tolerance << '\n'
+              << "accepted_gradient_vs_dense_midpoint_inf = "
+              << accepted_gradient_vs_dense_midpoint_inf << '\n'
               << "structure_response_iterations = "
               << hvp_diagnostics.max_structure_response_iterations << '\n'
               << "structure_response_relative_residual = "
