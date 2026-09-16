@@ -7,6 +7,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -33,6 +34,7 @@ struct Options {
   double trust_radius = 0.0;
   double target_kkt_relative_residual =
       std::numeric_limits<double>::quiet_NaN();
+  double finite_difference_step = 0.0;
   bool target_kkt_explicit = false;
 };
 
@@ -42,7 +44,7 @@ Options parse_options(int argc, char** argv) {
         "usage: audit_newton_step input.xmi "
         "--subspace-dimension count --trust-radius value "
         "[--target-kkt-relative value] [--orbital-value-table-bin path] "
-        "[--dump-trial-orbitals-bin path] "
+        "[--dump-trial-orbitals-bin path] [--finite-difference-step value] "
         "[--eigensolver davidson|dense]");
   }
   Options options;
@@ -61,6 +63,8 @@ Options parse_options(int argc, char** argv) {
     } else if (name == "--target-kkt-relative") {
       options.target_kkt_relative_residual = std::stod(value);
       options.target_kkt_explicit = true;
+    } else if (name == "--finite-difference-step") {
+      options.finite_difference_step = std::stod(value);
     } else if (name == "--eigensolver") {
       if (value == "davidson") {
         options.eigensolver = StructureEigensolver::Davidson;
@@ -79,7 +83,9 @@ Options parse_options(int argc, char** argv) {
       (options.target_kkt_explicit &&
        (!std::isfinite(options.target_kkt_relative_residual) ||
         !(options.target_kkt_relative_residual >= 0.0 &&
-          options.target_kkt_relative_residual < 1.0)))) {
+          options.target_kkt_relative_residual < 1.0))) ||
+      (!std::isfinite(options.finite_difference_step) ||
+       options.finite_difference_step < 0.0)) {
     throw std::invalid_argument("invalid accepted-point audit options");
   }
   return options;
@@ -273,6 +279,44 @@ void run_audit(const Options& options) {
   const double fresh_predicted_decrease =
       -projected.reduced_gradient.dot(step.reduced_step) -
       0.5 * step.reduced_step.dot(fresh_hs);
+  double directional_hvp_fd_relative =
+      std::numeric_limits<double>::quiet_NaN();
+  double directional_energy_fd_relative =
+      std::numeric_limits<double>::quiet_NaN();
+  if (options.finite_difference_step > 0.0) {
+    const double h = options.finite_difference_step;
+    const Eigen::VectorXd direction =
+        step.reduced_step / metric.norm(step.reduced_step);
+    const auto evaluate_displaced = [&](double displacement) {
+      VbScfInput point = input;
+      point.orbital_preparation_input = chart->retract_step(
+          input.orbital_preparation_input, direction, displacement);
+      const auto evaluated =
+          evaluator.evaluate_without_reference_energy_gradient(
+              point, {0}, {1.0}, loaded.nuclear_repulsion_energy,
+              options.eigensolver, accuracy, no_initial_eigenvectors);
+      return std::pair{
+          chart->project_reduced_gradient(
+              layout.gather_from_full(
+                  evaluated.sparse_orbital_energy_gradient)),
+          evaluated.scf_result.total_energy};
+    };
+    const auto [plus_gradient, plus_energy] = evaluate_displaced(h);
+    const auto [minus_gradient, minus_energy] = evaluate_displaced(-h);
+    const Eigen::VectorXd analytic = fresh_hs /
+        metric.norm(step.reduced_step);
+    const Eigen::VectorXd finite_difference =
+        (plus_gradient - minus_gradient) / (2.0 * h);
+    directional_hvp_fd_relative = relative_norm(
+        analytic - finite_difference, finite_difference);
+    const double analytic_curvature = direction.dot(analytic);
+    const double energy_curvature =
+        (plus_energy - 2.0 * accepted.scf_result.total_energy +
+         minus_energy) / (h * h);
+    directional_energy_fd_relative =
+        std::abs(analytic_curvature - energy_curvature) /
+        std::max(1.0, std::abs(energy_curvature));
+  }
   const auto diagnostics = hvp.diagnostics();
 
   std::cout << std::setprecision(15)
@@ -311,7 +355,11 @@ void run_audit(const Options& options) {
             << "hvp_seconds = " << diagnostics.total_apply_wall_time_seconds << '\n'
             << "solve_seconds = " << solve_seconds << '\n'
             << "max_structure_response_relative_residual = "
-            << diagnostics.max_structure_response_relative_residual << '\n';
+            << diagnostics.max_structure_response_relative_residual << '\n'
+            << "directional_hvp_fd_relative = "
+            << directional_hvp_fd_relative << '\n'
+            << "directional_energy_fd_relative = "
+            << directional_energy_fd_relative << '\n';
 }
 
 }  // namespace
