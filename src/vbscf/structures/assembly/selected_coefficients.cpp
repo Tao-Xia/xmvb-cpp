@@ -421,6 +421,54 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
       }
     }
 
+    std::vector<Eigen::Triplet<double, int>> local_sparse_triplets;
+    local_sparse_triplets.reserve(state_coefficients.nonzero_coefficient_count);
+    if (close_shell_diagonal) {
+      for (int local_index = 0;
+           local_index <
+               static_cast<int>(state_coefficients.alpha_support.size());
+           ++local_index) {
+        const double coefficient =
+            state_coefficients.local_diagonal_coefficients[local_index];
+        if (coefficient != 0.0) {
+          local_sparse_triplets.emplace_back(
+              local_index,
+              local_index,
+              coefficient);
+        }
+      }
+    } else {
+      for (const std::size_t touched_pair_index : touched_pair_indices) {
+        const int unique_alpha_id = static_cast<int>(
+            touched_pair_index % n_unique_alpha);
+        const int unique_beta_id = static_cast<int>(
+            touched_pair_index / n_unique_alpha);
+        const int alpha_local = alpha_global_to_local[unique_alpha_id];
+        const int beta_local = beta_global_to_local[unique_beta_id];
+        if (alpha_local < 0 || beta_local < 0) {
+          continue;
+        }
+        const double coefficient =
+            state_coefficients.local_coefficient_matrix(
+                alpha_local,
+                beta_local);
+        if (coefficient != 0.0) {
+          local_sparse_triplets.emplace_back(
+              alpha_local,
+              beta_local,
+              coefficient);
+        }
+      }
+    }
+    state_coefficients.local_sparse_coefficient_matrix.resize(
+        static_cast<int>(state_coefficients.alpha_support.size()),
+        static_cast<int>(state_coefficients.beta_support.size()));
+    state_coefficients.local_sparse_coefficient_matrix.setFromTriplets(
+        local_sparse_triplets.begin(),
+        local_sparse_triplets.end());
+    state_coefficients.local_sparse_coefficient_transpose =
+        state_coefficients.local_sparse_coefficient_matrix.transpose();
+
     result.states.push_back(std::move(state_coefficients));
   }
 

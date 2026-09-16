@@ -3,6 +3,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/SparseCore>
 
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/expansion/types.hpp"
@@ -42,6 +43,12 @@ struct SelectedStateDeterminantCoefficients {
   std::vector<int> alpha_support;
   std::vector<int> beta_support;
   Eigen::MatrixXd local_coefficient_matrix;
+  /** @brief Row-major sparse local coefficient matrix for string contractions. */
+  Eigen::SparseMatrix<double, Eigen::RowMajor, int>
+      local_sparse_coefficient_matrix;
+  /** @brief Row-major sparse transpose for beta-oriented contractions. */
+  Eigen::SparseMatrix<double, Eigen::RowMajor, int>
+      local_sparse_coefficient_transpose;
   std::vector<double> local_diagonal_coefficients;
   int nonzero_coefficient_count = 0;
 };

@@ -39,7 +39,7 @@ bool selected_state_has_local_support(
     const SelectedStateDeterminantCoefficients& state_coefficients) {
   return !state_coefficients.alpha_support.empty() &&
       !state_coefficients.beta_support.empty() &&
-      state_coefficients.local_coefficient_matrix.size() != 0;
+      state_coefficients.local_sparse_coefficient_matrix.nonZeros() != 0;
 }
 
 void validate_local_state_coefficient_matrix(
@@ -47,9 +47,17 @@ void validate_local_state_coefficient_matrix(
   if (state_coefficients.local_coefficient_matrix.rows() !=
           static_cast<int>(state_coefficients.alpha_support.size()) ||
       state_coefficients.local_coefficient_matrix.cols() !=
-          static_cast<int>(state_coefficients.beta_support.size())) {
+          static_cast<int>(state_coefficients.beta_support.size()) ||
+      state_coefficients.local_sparse_coefficient_matrix.rows() !=
+          static_cast<int>(state_coefficients.alpha_support.size()) ||
+      state_coefficients.local_sparse_coefficient_matrix.cols() !=
+          static_cast<int>(state_coefficients.beta_support.size()) ||
+      state_coefficients.local_sparse_coefficient_transpose.rows() !=
+          static_cast<int>(state_coefficients.beta_support.size()) ||
+      state_coefficients.local_sparse_coefficient_transpose.cols() !=
+          static_cast<int>(state_coefficients.alpha_support.size())) {
     throw std::invalid_argument(
-        "selected-state local_coefficient_matrix shape does not match support dimensions");
+        "selected-state local coefficient shapes do not match support dimensions");
   }
 }
 
@@ -369,6 +377,70 @@ double contract_sparse_matrix_tile_with_dense_tile_matrix(
   return contraction;
 }
 
+using SparseCoefficientMatrix =
+    Eigen::SparseMatrix<double, Eigen::RowMajor, int>;
+
+void accumulate_sparse_coefficient_pair_tile(
+    const SparseCoefficientMatrix& left_coefficients,
+    const std::vector<int>& left_primary_support,
+    const std::vector<int>& left_partner_support,
+    const SparseCoefficientMatrix& right_coefficients,
+    const std::vector<int>& right_primary_support,
+    const std::vector<int>& right_partner_support,
+    const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& partner_pair_matrix,
+    int primary_left_begin,
+    int primary_left_end,
+    int primary_right_begin,
+    int primary_right_end,
+    double scale,
+    Eigen::MatrixXd* primary_pair_tile) {
+  const SupportWindow left_window = find_support_window(
+      left_primary_support,
+      primary_left_begin,
+      primary_left_end);
+  const SupportWindow right_window = find_support_window(
+      right_primary_support,
+      primary_right_begin,
+      primary_right_end);
+  if (left_window.empty() || right_window.empty() || scale == 0.0) {
+    return;
+  }
+
+  for (int right_local = right_window.begin;
+       right_local < right_window.end;
+       ++right_local) {
+    const int tile_column =
+        right_primary_support[right_local] - primary_right_begin;
+    for (int left_local = left_window.begin;
+         left_local < left_window.end;
+         ++left_local) {
+      double image = 0.0;
+      for (SparseCoefficientMatrix::InnerIterator left_entry(
+               left_coefficients,
+               left_local);
+           left_entry;
+           ++left_entry) {
+        const int partner_left = left_partner_support[left_entry.col()];
+        for (SparseCoefficientMatrix::InnerIterator right_entry(
+                 right_coefficients,
+                 right_local);
+             right_entry;
+             ++right_entry) {
+          image +=
+              left_entry.value() *
+              partner_pair_matrix.coeff(
+                  partner_left,
+                  right_partner_support[right_entry.col()]) *
+              right_entry.value();
+        }
+      }
+      const int tile_row =
+          left_primary_support[left_local] - primary_left_begin;
+      (*primary_pair_tile)(tile_row, tile_column) += scale * image;
+    }
+  }
+}
+
 void accumulate_alpha_pair_matrix_tile(
     const SelectedStateDeterminantMatrices& selected_states,
     const Eigen::SparseMatrix<double, Eigen::ColMajor, int>& beta_pair_matrix,
@@ -380,60 +452,25 @@ void accumulate_alpha_pair_matrix_tile(
   alpha_pair_tile->setZero(
       alpha_left_end - alpha_left_begin,
       alpha_right_end - alpha_right_begin);
-
-  const int beta_tile_size = kOppositeSpinUniqueTileSize;
   for (const auto& state_coefficients : selected_states.states) {
     if (!selected_state_has_local_support(state_coefficients)) {
       continue;
     }
     validate_local_state_coefficient_matrix(state_coefficients);
-
-    auto build_partner_tiles = [&](
-        const std::vector<int>& beta_support,
-        const SupportWindow& beta_left_window,
-        const SupportWindow& beta_right_window,
-        Eigen::MatrixXd* beta_tile,
-        Eigen::MatrixXd* unused_tile) {
-      gather_scalar_block_from_support(
-          beta_support,
-          beta_left_window,
-          beta_support,
-          beta_right_window,
-          [&](int row, int column) {
-            return beta_pair_matrix.coeff(row, column);
-          },
-          beta_tile);
-      unused_tile->setZero(beta_tile->rows(), beta_tile->cols());
-    };
-    auto consume_images = [&](
-        const SupportWindow& alpha_left_window,
-        const SupportWindow& alpha_right_window,
-        const Eigen::MatrixXd& alpha_image,
-        const Eigen::MatrixXd& unused_image) {
-      (void)unused_image;
-      scatter_add_dense_submatrix_to_tile(
-          alpha_image,
-          state_coefficients.alpha_support,
-          alpha_left_window,
-          alpha_left_begin,
-          state_coefficients.alpha_support,
-          alpha_right_window,
-          alpha_right_begin,
-          state_coefficients.normalized_state_weight,
-          alpha_pair_tile);
-    };
-
-    for_each_alpha_oriented_support_local_image_pair(
-        state_coefficients.local_coefficient_matrix,
+    accumulate_sparse_coefficient_pair_tile(
+        state_coefficients.local_sparse_coefficient_matrix,
         state_coefficients.alpha_support,
         state_coefficients.beta_support,
+        state_coefficients.local_sparse_coefficient_matrix,
+        state_coefficients.alpha_support,
+        state_coefficients.beta_support,
+        beta_pair_matrix,
         alpha_left_begin,
         alpha_left_end,
         alpha_right_begin,
         alpha_right_end,
-        beta_tile_size,
-        build_partner_tiles,
-        consume_images);
+        state_coefficients.normalized_state_weight,
+        alpha_pair_tile);
   }
 }
 
@@ -450,10 +487,6 @@ void accumulate_directional_alpha_pair_matrix_tile(
       alpha_left_end - alpha_left_begin,
       alpha_right_end - alpha_right_begin);
 
-  const int beta_tile_size = kOppositeSpinUniqueTileSize;
-  Eigen::MatrixXd beta_tile;
-  Eigen::MatrixXd beta_push;
-  Eigen::MatrixXd alpha_image;
   for (std::size_t state_offset = 0;
        state_offset < selected_states.states.size();
        ++state_offset) {
@@ -467,107 +500,36 @@ void accumulate_directional_alpha_pair_matrix_tile(
     validate_local_state_coefficient_matrix(state_coefficients);
     validate_local_state_coefficient_matrix(directional_state_coefficients);
 
-    // Directional selected-state packed-gradient weight:
-    //   d(C U_beta C^T) = dC U_beta C^T + C U_beta dC^T.
-    // The accepted and directional coefficient supports may differ, so both
-    // product-rule terms are streamed with their own left/right local supports
-    // instead of materializing a union-support dense coefficient block.
-    auto accumulate_mixed_image = [&](
-        const Eigen::MatrixXd& left_coefficients,
-        const std::vector<int>& left_alpha_support,
-        const std::vector<int>& left_beta_support,
-        const Eigen::MatrixXd& right_coefficients,
-        const std::vector<int>& right_alpha_support,
-        const std::vector<int>& right_beta_support) {
-      const SupportWindow alpha_left_window =
-          find_support_window(
-              left_alpha_support,
-              alpha_left_begin,
-              alpha_left_end);
-      const SupportWindow alpha_right_window =
-          find_support_window(
-              right_alpha_support,
-              alpha_right_begin,
-              alpha_right_end);
-      if (alpha_left_window.empty() ||
-          alpha_right_window.empty() ||
-          left_beta_support.empty() ||
-          right_beta_support.empty()) {
-        return;
-      }
-
-      const int n_left_beta_support =
-          static_cast<int>(left_beta_support.size());
-      const int n_right_beta_support =
-          static_cast<int>(right_beta_support.size());
-      for (int beta_left_begin_local = 0;
-           beta_left_begin_local < n_left_beta_support;
-           beta_left_begin_local += beta_tile_size) {
-        const SupportWindow beta_left_window{
-            beta_left_begin_local,
-            std::min(n_left_beta_support, beta_left_begin_local + beta_tile_size),
-        };
-        const auto left_block =
-            left_coefficients.block(
-                alpha_left_window.begin,
-                beta_left_window.begin,
-                alpha_left_window.size(),
-                beta_left_window.size());
-
-        for (int beta_right_begin_local = 0;
-             beta_right_begin_local < n_right_beta_support;
-             beta_right_begin_local += beta_tile_size) {
-          const SupportWindow beta_right_window{
-              beta_right_begin_local,
-              std::min(
-                  n_right_beta_support,
-                  beta_right_begin_local + beta_tile_size),
-          };
-          const auto right_block =
-              right_coefficients.block(
-                  alpha_right_window.begin,
-                  beta_right_window.begin,
-                  alpha_right_window.size(),
-                  beta_right_window.size());
-          gather_scalar_block_from_support(
-              left_beta_support,
-              beta_left_window,
-              right_beta_support,
-              beta_right_window,
-              [&](int row, int column) {
-                return beta_pair_matrix.coeff(row, column);
-              },
-              &beta_tile);
-          beta_push.noalias() = left_block * beta_tile;
-          alpha_image.noalias() = beta_push * right_block.transpose();
-          scatter_add_dense_submatrix_to_tile(
-              alpha_image,
-              left_alpha_support,
-              alpha_left_window,
-              alpha_left_begin,
-              right_alpha_support,
-              alpha_right_window,
-              alpha_right_begin,
-              state_coefficients.normalized_state_weight,
-              alpha_pair_tile);
-        }
-      }
-    };
-
-    accumulate_mixed_image(
-        directional_state_coefficients.local_coefficient_matrix,
+    // d(C B C^T) = dC B C^T + C B dC^T.  Sparse row traversal
+    // follows only determinant-supported string pairs in each product term.
+    accumulate_sparse_coefficient_pair_tile(
+        directional_state_coefficients.local_sparse_coefficient_matrix,
         directional_state_coefficients.alpha_support,
         directional_state_coefficients.beta_support,
-        state_coefficients.local_coefficient_matrix,
-        state_coefficients.alpha_support,
-        state_coefficients.beta_support);
-    accumulate_mixed_image(
-        state_coefficients.local_coefficient_matrix,
+        state_coefficients.local_sparse_coefficient_matrix,
         state_coefficients.alpha_support,
         state_coefficients.beta_support,
-        directional_state_coefficients.local_coefficient_matrix,
+        beta_pair_matrix,
+        alpha_left_begin,
+        alpha_left_end,
+        alpha_right_begin,
+        alpha_right_end,
+        state_coefficients.normalized_state_weight,
+        alpha_pair_tile);
+    accumulate_sparse_coefficient_pair_tile(
+        state_coefficients.local_sparse_coefficient_matrix,
+        state_coefficients.alpha_support,
+        state_coefficients.beta_support,
+        directional_state_coefficients.local_sparse_coefficient_matrix,
         directional_state_coefficients.alpha_support,
-        directional_state_coefficients.beta_support);
+        directional_state_coefficients.beta_support,
+        beta_pair_matrix,
+        alpha_left_begin,
+        alpha_left_end,
+        alpha_right_begin,
+        alpha_right_end,
+        state_coefficients.normalized_state_weight,
+        alpha_pair_tile);
   }
 }
 
@@ -583,59 +545,26 @@ void accumulate_beta_pair_matrix_tile(
       beta_left_end - beta_left_begin,
       beta_right_end - beta_right_begin);
 
-  const int alpha_tile_size = kOppositeSpinUniqueTileSize;
   for (const auto& state_coefficients : selected_states.states) {
     if (!selected_state_has_local_support(state_coefficients)) {
       continue;
     }
     validate_local_state_coefficient_matrix(state_coefficients);
 
-    auto build_partner_tiles = [&](
-        const std::vector<int>& alpha_support,
-        const SupportWindow& alpha_left_window,
-        const SupportWindow& alpha_right_window,
-        Eigen::MatrixXd* alpha_tile,
-        Eigen::MatrixXd* unused_tile) {
-      gather_scalar_block_from_support(
-          alpha_support,
-          alpha_left_window,
-          alpha_support,
-          alpha_right_window,
-          [&](int row, int column) {
-            return alpha_pair_matrix.coeff(row, column);
-          },
-          alpha_tile);
-      unused_tile->setZero(alpha_tile->rows(), alpha_tile->cols());
-    };
-    auto consume_images = [&](
-        const SupportWindow& beta_left_window,
-        const SupportWindow& beta_right_window,
-        const Eigen::MatrixXd& beta_image,
-        const Eigen::MatrixXd& unused_image) {
-      (void)unused_image;
-      scatter_add_dense_submatrix_to_tile(
-          beta_image,
-          state_coefficients.beta_support,
-          beta_left_window,
-          beta_left_begin,
-          state_coefficients.beta_support,
-          beta_right_window,
-          beta_right_begin,
-          state_coefficients.normalized_state_weight,
-          beta_pair_tile);
-    };
-
-    for_each_beta_oriented_support_local_image_pair(
-        state_coefficients.local_coefficient_matrix,
-        state_coefficients.alpha_support,
+    accumulate_sparse_coefficient_pair_tile(
+        state_coefficients.local_sparse_coefficient_transpose,
         state_coefficients.beta_support,
+        state_coefficients.alpha_support,
+        state_coefficients.local_sparse_coefficient_transpose,
+        state_coefficients.beta_support,
+        state_coefficients.alpha_support,
+        alpha_pair_matrix,
         beta_left_begin,
         beta_left_end,
         beta_right_begin,
         beta_right_end,
-        alpha_tile_size,
-        build_partner_tiles,
-        consume_images);
+        state_coefficients.normalized_state_weight,
+        beta_pair_tile);
   }
 }
 
@@ -652,10 +581,6 @@ void accumulate_directional_beta_pair_matrix_tile(
       beta_left_end - beta_left_begin,
       beta_right_end - beta_right_begin);
 
-  const int alpha_tile_size = kOppositeSpinUniqueTileSize;
-  Eigen::MatrixXd alpha_tile;
-  Eigen::MatrixXd alpha_push;
-  Eigen::MatrixXd beta_image;
   for (std::size_t state_offset = 0;
        state_offset < selected_states.states.size();
        ++state_offset) {
@@ -669,106 +594,35 @@ void accumulate_directional_beta_pair_matrix_tile(
     validate_local_state_coefficient_matrix(state_coefficients);
     validate_local_state_coefficient_matrix(directional_state_coefficients);
 
-    // Beta-side product rule:
-    //   d(C^T U_alpha C) = dC^T U_alpha C + C^T U_alpha dC.
-    auto accumulate_mixed_image = [&](
-        const Eigen::MatrixXd& left_coefficients,
-        const std::vector<int>& left_alpha_support,
-        const std::vector<int>& left_beta_support,
-        const Eigen::MatrixXd& right_coefficients,
-        const std::vector<int>& right_alpha_support,
-        const std::vector<int>& right_beta_support) {
-      const SupportWindow beta_left_window =
-          find_support_window(
-              left_beta_support,
-              beta_left_begin,
-              beta_left_end);
-      const SupportWindow beta_right_window =
-          find_support_window(
-              right_beta_support,
-              beta_right_begin,
-              beta_right_end);
-      if (beta_left_window.empty() ||
-          beta_right_window.empty() ||
-          left_alpha_support.empty() ||
-          right_alpha_support.empty()) {
-        return;
-      }
-
-      const int n_left_alpha_support =
-          static_cast<int>(left_alpha_support.size());
-      const int n_right_alpha_support =
-          static_cast<int>(right_alpha_support.size());
-      for (int alpha_left_begin_local = 0;
-           alpha_left_begin_local < n_left_alpha_support;
-           alpha_left_begin_local += alpha_tile_size) {
-        const SupportWindow alpha_left_window{
-            alpha_left_begin_local,
-            std::min(
-                n_left_alpha_support,
-                alpha_left_begin_local + alpha_tile_size),
-        };
-        const auto left_block =
-            left_coefficients.block(
-                alpha_left_window.begin,
-                beta_left_window.begin,
-                alpha_left_window.size(),
-                beta_left_window.size());
-
-        for (int alpha_right_begin_local = 0;
-             alpha_right_begin_local < n_right_alpha_support;
-             alpha_right_begin_local += alpha_tile_size) {
-          const SupportWindow alpha_right_window{
-              alpha_right_begin_local,
-              std::min(
-                  n_right_alpha_support,
-                  alpha_right_begin_local + alpha_tile_size),
-          };
-          const auto right_block =
-              right_coefficients.block(
-                  alpha_right_window.begin,
-                  beta_right_window.begin,
-                  alpha_right_window.size(),
-                  beta_right_window.size());
-          gather_scalar_block_from_support(
-              left_alpha_support,
-              alpha_left_window,
-              right_alpha_support,
-              alpha_right_window,
-              [&](int row, int column) {
-                return alpha_pair_matrix.coeff(row, column);
-              },
-              &alpha_tile);
-          alpha_push.noalias() = left_block.transpose() * alpha_tile;
-          beta_image.noalias() = alpha_push * right_block;
-          scatter_add_dense_submatrix_to_tile(
-              beta_image,
-              left_beta_support,
-              beta_left_window,
-              beta_left_begin,
-              right_beta_support,
-              beta_right_window,
-              beta_right_begin,
-              state_coefficients.normalized_state_weight,
-              beta_pair_tile);
-        }
-      }
-    };
-
-    accumulate_mixed_image(
-        directional_state_coefficients.local_coefficient_matrix,
-        directional_state_coefficients.alpha_support,
+    // d(C^T A C) = dC^T A C + C^T A dC.
+    accumulate_sparse_coefficient_pair_tile(
+        directional_state_coefficients.local_sparse_coefficient_transpose,
         directional_state_coefficients.beta_support,
-        state_coefficients.local_coefficient_matrix,
-        state_coefficients.alpha_support,
-        state_coefficients.beta_support);
-    accumulate_mixed_image(
-        state_coefficients.local_coefficient_matrix,
-        state_coefficients.alpha_support,
-        state_coefficients.beta_support,
-        directional_state_coefficients.local_coefficient_matrix,
         directional_state_coefficients.alpha_support,
-        directional_state_coefficients.beta_support);
+        state_coefficients.local_sparse_coefficient_transpose,
+        state_coefficients.beta_support,
+        state_coefficients.alpha_support,
+        alpha_pair_matrix,
+        beta_left_begin,
+        beta_left_end,
+        beta_right_begin,
+        beta_right_end,
+        state_coefficients.normalized_state_weight,
+        beta_pair_tile);
+    accumulate_sparse_coefficient_pair_tile(
+        state_coefficients.local_sparse_coefficient_transpose,
+        state_coefficients.beta_support,
+        state_coefficients.alpha_support,
+        directional_state_coefficients.local_sparse_coefficient_transpose,
+        directional_state_coefficients.beta_support,
+        directional_state_coefficients.alpha_support,
+        alpha_pair_matrix,
+        beta_left_begin,
+        beta_left_end,
+        beta_right_begin,
+        beta_right_end,
+        state_coefficients.normalized_state_weight,
+        beta_pair_tile);
   }
 }
 
