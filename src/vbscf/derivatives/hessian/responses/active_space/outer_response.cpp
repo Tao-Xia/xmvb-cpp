@@ -50,6 +50,24 @@ void resize_for_overwrite(
 
 }  // namespace
 
+ActiveSpaceGradientDirection make_zero_active_space_gradient_direction(
+    int n_active_orbitals) {
+  if (n_active_orbitals <= 0) {
+    throw std::invalid_argument("n_active_orbitals must be positive");
+  }
+  ActiveSpaceGradientDirection direction;
+  direction.active_orbital_overlap_gradient.assign(
+      n_active_orbitals * n_active_orbitals,
+      0.0);
+  direction.active_one_electron_gradient.assign(
+      n_active_orbitals * n_active_orbitals,
+      0.0);
+  direction.packed_active_two_electron_gradient.assign(
+      packed_active_two_electron_integral_count(n_active_orbitals),
+      0.0);
+  return direction;
+}
+
 void validate_outer_response_active_gradient(
     const ActiveSpaceGradientDirection& active_space_gradient) {
   throw_if_nonfinite(
@@ -144,19 +162,8 @@ ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
         "outer-response active-gradient direction requires selected-state matrices");
   }
   ActiveSpaceGradientDirection direction =
-      {};
-  direction.active_orbital_overlap_gradient.assign(
-      input.orbital_preparation_input.n_active_orbitals *
-          input.orbital_preparation_input.n_active_orbitals,
-      0.0);
-  direction.active_one_electron_gradient.assign(
-      input.orbital_preparation_input.n_active_orbitals *
-          input.orbital_preparation_input.n_active_orbitals,
-      0.0);
-  direction.packed_active_two_electron_gradient.assign(
-      packed_active_two_electron_integral_count(
-          input.orbital_preparation_input.n_active_orbitals),
-      0.0);
+      make_zero_active_space_gradient_direction(
+          input.orbital_preparation_input.n_active_orbitals);
   // The local outer-response is fully matrix-form again: same-spin uses the
   // repaired canonical half-pair contraction and opposite-spin stays on the
   // already-validated matrix-form block contraction. HHO/SSO are symmetrized

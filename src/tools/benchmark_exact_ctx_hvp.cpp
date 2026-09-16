@@ -36,6 +36,8 @@ enum class BenchmarkComponent {
   Full,
   CoreOnly,
   OuterOnly,
+  LocalActiveOnly,
+  StructureOnly,
 };
 
 struct Options {
@@ -72,6 +74,7 @@ struct BenchmarkMeasurement {
   BenchmarkComponent component = BenchmarkComponent::Full;
   double external_wall_time_seconds = 0.0;
   double response_inf_norm = 0.0;
+  Eigen::VectorXd response;
   xmvb::vb::ExactHvpOperator::Diagnostics diagnostics;
 };
 
@@ -93,7 +96,7 @@ void print_usage() {
   std::cerr << " [--spectral-audit-trust-radius value|0=disabled]\n";
   std::cerr << " [--dense-reference-block-width count|0=disabled]\n";
   std::cerr << " [--block-width count|0=disabled]\n";
-  std::cerr << " [--components full,core,outer]\n";
+  std::cerr << " [--components full,core,outer,local,structure]\n";
   std::cerr << " [--stream-pair-products true|false]\n";
   std::cerr << " [--orbital-value-table-bin path]\n";
 }
@@ -121,6 +124,10 @@ std::vector<BenchmarkComponent> parse_components(const std::string& value) {
       component = BenchmarkComponent::CoreOnly;
     } else if (name == "outer") {
       component = BenchmarkComponent::OuterOnly;
+    } else if (name == "local") {
+      component = BenchmarkComponent::LocalActiveOnly;
+    } else if (name == "structure") {
+      component = BenchmarkComponent::StructureOnly;
     } else {
       throw std::invalid_argument("unknown benchmark component: " + name);
     }
@@ -230,6 +237,10 @@ const char* benchmark_component_name(BenchmarkComponent component) {
       return "core_only";
     case BenchmarkComponent::OuterOnly:
       return "outer_only";
+    case BenchmarkComponent::LocalActiveOnly:
+      return "local_active_only";
+    case BenchmarkComponent::StructureOnly:
+      return "structure_only";
   }
   return "unknown";
 }
@@ -261,15 +272,31 @@ Eigen::VectorXd apply_component(
     case BenchmarkComponent::CoreOnly:
       return exact_operator.apply_reduced(
           reduced_direction,
-          {.direct_core_response = true,
-           .fixed_upstream_pullback = true,
-           .outer_response = false});
+           {.direct_core_response = true,
+            .fixed_upstream_pullback = true,
+            .local_active_response = false,
+            .structure_response = false});
     case BenchmarkComponent::OuterOnly:
+      return exact_operator.apply_reduced(
+          reduced_direction,
+           {.direct_core_response = false,
+            .fixed_upstream_pullback = false,
+            .local_active_response = true,
+            .structure_response = true});
+    case BenchmarkComponent::LocalActiveOnly:
       return exact_operator.apply_reduced(
           reduced_direction,
           {.direct_core_response = false,
            .fixed_upstream_pullback = false,
-           .outer_response = true});
+           .local_active_response = true,
+           .structure_response = false});
+    case BenchmarkComponent::StructureOnly:
+      return exact_operator.apply_reduced(
+          reduced_direction,
+          {.direct_core_response = false,
+           .fixed_upstream_pullback = false,
+           .local_active_response = false,
+           .structure_response = true});
   }
   throw std::invalid_argument("unsupported exact_ctx benchmark component");
 }
@@ -724,6 +751,7 @@ BenchmarkMeasurement run_component_benchmark(
   measurement.external_wall_time_seconds =
       std::chrono::duration<double>(stop_time - start_time).count();
   measurement.response_inf_norm = vector_infinity_norm(response);
+  measurement.response = std::move(response);
   measurement.diagnostics = exact_operator.diagnostics();
   return measurement;
 }
@@ -989,6 +1017,30 @@ int main(int argc, char** argv) {
           options.repeats));
       std::cerr << "benchmark_component_seconds = "
                 << measurements.back().external_wall_time_seconds << '\n';
+    }
+    const auto find_measurement = [&](BenchmarkComponent component)
+        -> const BenchmarkMeasurement* {
+      const auto iterator = std::find_if(
+          measurements.begin(),
+          measurements.end(),
+          [component](const BenchmarkMeasurement& measurement) {
+            return measurement.component == component;
+          });
+      return iterator == measurements.end() ? nullptr : &*iterator;
+    };
+    const BenchmarkMeasurement* outer =
+        find_measurement(BenchmarkComponent::OuterOnly);
+    const BenchmarkMeasurement* local =
+        find_measurement(BenchmarkComponent::LocalActiveOnly);
+    const BenchmarkMeasurement* structure =
+        find_measurement(BenchmarkComponent::StructureOnly);
+    if (outer != nullptr && local != nullptr && structure != nullptr) {
+      const double scale = std::max(1.0, outer->response.norm());
+      std::cout << "outer_component_additivity_relative_error = "
+                << (outer->response - local->response - structure->response)
+                           .norm() /
+                       scale
+                << '\n';
     }
     std::optional<BlockBenchmarkMeasurement> block_measurement;
     if (options.block_width > 0) {

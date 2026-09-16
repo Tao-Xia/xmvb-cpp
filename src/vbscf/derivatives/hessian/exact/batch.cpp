@@ -129,7 +129,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
   Eigen::MatrixXd delta_packed_active_two_electron_columns;
   std::vector<ExactCtxPairMatrix> directional_pair_products;
   std::vector<Eigen::MatrixXd> two_electron_fixed_adjoint_directions;
-  if (components.outer_response) {
+  if ((components.local_active_response || components.structure_response)) {
     const auto batch_active_two_electron_start_time =
         std::chrono::steady_clock::now();
     delta_packed_active_two_electron_columns =
@@ -150,15 +150,19 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
         batch_active_two_electron_seconds;
   }
 
-  if (components.outer_response) {
+  if ((components.local_active_response || components.structure_response)) {
     const auto outer_batch_start = std::chrono::steady_clock::now();
     const int n_selected_states = static_cast<int>(
         accepted_point_context_->selected_state_indices.size());
     const int n_structures = accepted_point_context_->n_structures;
-    Eigen::MatrixXd delta_hamiltonian_selected(
-        n_structures, n_directions * n_selected_states);
-    Eigen::MatrixXd delta_overlap_selected(
-        n_structures, n_directions * n_selected_states);
+    Eigen::MatrixXd delta_hamiltonian_selected;
+    Eigen::MatrixXd delta_overlap_selected;
+    if (components.structure_response) {
+      delta_hamiltonian_selected.resize(
+          n_structures, n_directions * n_selected_states);
+      delta_overlap_selected.resize(
+          n_structures, n_directions * n_selected_states);
+    }
     const ActiveSpaceIntegralDirectionContext integral_context{
         *current_input_,
         accepted_exact_two_electron_cache_,
@@ -203,16 +207,18 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
           accepted_point_context_->same_spin_pair_cache,
           n_active_orbitals,
           integral_direction);
-      const SelectedStateDirectionalStructureImages images =
-          build_selected_structure_direction(
-              accepted_outer_response_context_,
-              integral_direction,
-              outer.pair_cache);
-      const int first = static_cast<int>(column) * n_selected_states;
-      delta_hamiltonian_selected.middleCols(first, n_selected_states) =
-          images.delta_hamiltonian_selected;
-      delta_overlap_selected.middleCols(first, n_selected_states) =
-          images.delta_overlap_selected;
+      if (components.structure_response) {
+        const SelectedStateDirectionalStructureImages images =
+            build_selected_structure_direction(
+                accepted_outer_response_context_,
+                integral_direction,
+                outer.pair_cache);
+        const int first = static_cast<int>(column) * n_selected_states;
+        delta_hamiltonian_selected.middleCols(first, n_selected_states) =
+            images.delta_hamiltonian_selected;
+        delta_overlap_selected.middleCols(first, n_selected_states) =
+            images.delta_overlap_selected;
+      }
       outer.integral_direction.packed_two_electron.clear();
       structure_seconds += detail::exact_hvp_elapsed_seconds(structure_start);
     }
@@ -223,35 +229,37 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
         .outer_response_structure_matrices_wall_time_seconds +=
         structure_seconds;
 
-    const auto eigensystem_start = std::chrono::steady_clock::now();
-    const SelectedStateGeneralizedEigenDirectionalResponse block_response =
-        accepted_outer_response_context_
-            .selected_state_eigen_response_operator.apply_direction_block(
-                delta_hamiltonian_selected,
-                delta_overlap_selected);
-    apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
-        detail::exact_hvp_elapsed_seconds(eigensystem_start);
+    if (components.structure_response) {
+      const auto eigensystem_start = std::chrono::steady_clock::now();
+      const SelectedStateGeneralizedEigenDirectionalResponse block_response =
+          accepted_outer_response_context_
+              .selected_state_eigen_response_operator.apply_direction_block(
+                  delta_hamiltonian_selected,
+                  delta_overlap_selected);
+      apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
+          detail::exact_hvp_elapsed_seconds(eigensystem_start);
 
-    for (Eigen::Index column = 0; column < n_directions; ++column) {
-      const int first = static_cast<int>(column) * n_selected_states;
-      auto& response = precomputed_directions[column]
-                           .outer_response
-                           ->selected_state_response;
-      response.delta_selected_eigenvector_matrix =
-          block_response.delta_selected_eigenvector_matrix.middleCols(
-              first, n_selected_states);
-      response.delta_selected_eigenvalues.assign(
-          block_response.delta_selected_eigenvalues.begin() + first,
-          block_response.delta_selected_eigenvalues.begin() +
-              first + n_selected_states);
-      response.linear_iterations.assign(
-          block_response.linear_iterations.begin() + first,
-          block_response.linear_iterations.begin() +
-              first + n_selected_states);
-      if (column == 0) {
-        response.block_actions = block_response.block_actions;
-        response.max_relative_residual =
-            block_response.max_relative_residual;
+      for (Eigen::Index column = 0; column < n_directions; ++column) {
+        const int first = static_cast<int>(column) * n_selected_states;
+        auto& response = precomputed_directions[column]
+                             .outer_response
+                             ->selected_state_response;
+        response.delta_selected_eigenvector_matrix =
+            block_response.delta_selected_eigenvector_matrix.middleCols(
+                first, n_selected_states);
+        response.delta_selected_eigenvalues.assign(
+            block_response.delta_selected_eigenvalues.begin() + first,
+            block_response.delta_selected_eigenvalues.begin() +
+                first + n_selected_states);
+        response.linear_iterations.assign(
+            block_response.linear_iterations.begin() + first,
+            block_response.linear_iterations.begin() +
+                first + n_selected_states);
+        if (column == 0) {
+          response.block_actions = block_response.block_actions;
+          response.max_relative_residual =
+              block_response.max_relative_residual;
+        }
       }
     }
     const double outer_batch_seconds =
@@ -269,10 +277,10 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
     const Eigen::VectorXd inactive_density_gradient =
         inactive_density_gradient_columns.col(column);
     const Eigen::VectorXd delta_packed_active_two_electron =
-        components.outer_response
+        (components.local_active_response || components.structure_response)
             ? delta_packed_active_two_electron_columns.col(column)
             : Eigen::VectorXd();
-    if (components.outer_response) {
+    if ((components.local_active_response || components.structure_response)) {
       auto& packed = precomputed_directions[column]
                          .outer_response
                          ->integral_direction
@@ -287,19 +295,19 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
         components,
         &delta_h1e,
         &inactive_density_gradient,
-        components.outer_response
+        (components.local_active_response || components.structure_response)
             ? &delta_packed_active_two_electron
             : nullptr,
-        components.outer_response
+        (components.local_active_response || components.structure_response)
             ? &directional_pair_products[column]
             : nullptr,
-        components.outer_response &&
+        (components.local_active_response || components.structure_response) &&
                 two_electron_fixed_adjoint_directions[column].size() != 0
             ? &two_electron_fixed_adjoint_directions[column]
             : nullptr,
         &precomputed_directions[column]);
     responses.col(column) = response;
-    if (components.outer_response) {
+    if ((components.local_active_response || components.structure_response)) {
       precomputed_directions[column]
           .outer_response
           ->integral_direction

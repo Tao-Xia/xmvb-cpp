@@ -22,7 +22,8 @@ struct VbScfInput;
 struct HvpComponents {
   bool direct_core_response = true;
   bool fixed_upstream_pullback = true;
-  bool outer_response = true;
+  bool local_active_response = true;
+  bool structure_response = true;
 };
 
 /**

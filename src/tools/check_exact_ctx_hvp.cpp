@@ -207,10 +207,11 @@ int main(int argc, char** argv) {
         &chart);
     const Eigen::VectorXd analytic = exact_hvp.apply_reduced(direction);
     const Eigen::VectorXd analytic_core = exact_hvp.apply_reduced(
-        direction,
-        {.direct_core_response = true,
-         .fixed_upstream_pullback = true,
-         .outer_response = false});
+      direction,
+      {.direct_core_response = true,
+       .fixed_upstream_pullback = true,
+       .local_active_response = false,
+       .structure_response = false});
     const auto hvp_diagnostics = exact_hvp.diagnostics();
 
     xmvb::vb::VbScfInput displaced = input;

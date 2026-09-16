@@ -19,6 +19,10 @@ struct ActiveSpaceGradientDirection {
   std::vector<double> packed_active_two_electron_gradient;
 };
 
+/** @brief Allocates a zero active-space gradient in canonical storage. */
+ActiveSpaceGradientDirection make_zero_active_space_gradient_direction(
+    int n_active_orbitals);
+
 void validate_outer_response_active_gradient(
     const ActiveSpaceGradientDirection& active_space_gradient);
 

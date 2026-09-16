@@ -246,7 +246,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       n_basis_functions,
       n_basis_functions);
 
-  const bool compute_outer_response = components.outer_response;
+  const bool compute_outer_response =
+      components.local_active_response || components.structure_response;
   std::vector<double> combined_core_orbital_value_gradient;
   Eigen::MatrixXd delta_ao_effective_h1e_times_active_auxiliary_orbitals;
   if (compute_outer_response) {
@@ -315,75 +316,81 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         precomputed_outer_response != nullptr
         ? precomputed_outer_response->pair_cache
         : local_directional_pair_cache;
-    SelectedStateDirectionalStructureImages local_directional_structure_images;
-    if (precomputed_outer_response == nullptr) {
-      local_directional_structure_images = build_selected_structure_direction(
-          accepted_outer_response_context_,
-          active_space_integral_direction,
-          directional_pair_cache);
-      apply_timing_totals_
-          .outer_response_structure_matrices_wall_time_seconds +=
-          detail::exact_hvp_elapsed_seconds(structure_matrices_start_time);
-    }
-
-    const auto eigensystem_start_time = std::chrono::steady_clock::now();
+    const SelectedStateGeneralizedEigenDirectionalResponse*
+        directional_selected_state_response = nullptr;
     SelectedStateGeneralizedEigenDirectionalResponse
         local_directional_selected_state_response;
-    if (precomputed_outer_response == nullptr) {
-      local_directional_selected_state_response =
-          accepted_outer_response_context_
-              .selected_state_eigen_response_operator.apply(
-                  local_directional_structure_images);
-    }
-    const auto& directional_selected_state_response =
-        precomputed_outer_response != nullptr
-        ? precomputed_outer_response->selected_state_response
-        : local_directional_selected_state_response;
-    apply_timing_totals_.structure_response_block_actions +=
-        directional_selected_state_response.block_actions;
-    if (!directional_selected_state_response.linear_iterations.empty()) {
-      apply_timing_totals_.max_structure_response_iterations = std::max(
-          apply_timing_totals_.max_structure_response_iterations,
-          *std::max_element(
-              directional_selected_state_response.linear_iterations.begin(),
-              directional_selected_state_response.linear_iterations.end()));
-    }
-    apply_timing_totals_.max_structure_response_relative_residual = std::max(
-        apply_timing_totals_.max_structure_response_relative_residual,
-        directional_selected_state_response.max_relative_residual);
-    if (precomputed_outer_response == nullptr) {
-      apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
-          detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
+    if (components.structure_response) {
+      if (precomputed_outer_response != nullptr) {
+        directional_selected_state_response =
+            &precomputed_outer_response->selected_state_response;
+      } else {
+        const SelectedStateDirectionalStructureImages images =
+            build_selected_structure_direction(
+                accepted_outer_response_context_,
+                active_space_integral_direction,
+                directional_pair_cache);
+        apply_timing_totals_
+            .outer_response_structure_matrices_wall_time_seconds +=
+            detail::exact_hvp_elapsed_seconds(structure_matrices_start_time);
+
+        const auto eigensystem_start_time =
+            std::chrono::steady_clock::now();
+        local_directional_selected_state_response =
+            accepted_outer_response_context_
+                .selected_state_eigen_response_operator.apply(images);
+        apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
+            detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
+        directional_selected_state_response =
+            &local_directional_selected_state_response;
+      }
+      apply_timing_totals_.structure_response_block_actions +=
+          directional_selected_state_response->block_actions;
+      if (!directional_selected_state_response->linear_iterations.empty()) {
+        apply_timing_totals_.max_structure_response_iterations = std::max(
+            apply_timing_totals_.max_structure_response_iterations,
+            *std::max_element(
+                directional_selected_state_response->linear_iterations.begin(),
+                directional_selected_state_response->linear_iterations.end()));
+      }
+      apply_timing_totals_.max_structure_response_relative_residual = std::max(
+          apply_timing_totals_.max_structure_response_relative_residual,
+          directional_selected_state_response->max_relative_residual);
     }
 
     const auto active_gradient_start_time = std::chrono::steady_clock::now();
     const auto local_active_gradient_start_time =
         std::chrono::steady_clock::now();
     ActiveSpaceGradientDirection directional_active_space_gradient =
-        build_local_active_space_gradient_direction(
-            *current_input_,
-            *accepted_point_context_,
-            active_space_integral_direction,
-            directional_pair_cache);
+        components.local_active_response
+        ? build_local_active_space_gradient_direction(
+              *current_input_,
+              *accepted_point_context_,
+              active_space_integral_direction,
+              directional_pair_cache)
+        : make_zero_active_space_gradient_direction(n_active_orbitals);
     apply_timing_totals_
         .outer_response_local_active_gradient_wall_time_seconds +=
         detail::exact_hvp_elapsed_seconds(local_active_gradient_start_time);
 
     const auto structure_active_gradient_start_time =
         std::chrono::steady_clock::now();
-    const SelectedStateDeterminantMatrices directional_selected_states =
-        build_selected_state_determinant_matrices_from_selected_columns(
-            current_input_->structure_data,
-            directional_selected_state_response.delta_selected_eigenvector_matrix,
-            accepted_point_context_->selected_state_indices,
-            accepted_point_context_->normalized_state_weights,
-            accepted_point_context_->same_spin_pair_cache);
-    add_selected_state_response_to_active_space_gradient(
-            *current_input_,
-            *accepted_point_context_,
-            directional_selected_states,
-            directional_selected_state_response.delta_selected_eigenvalues,
-            &directional_active_space_gradient);
+    if (directional_selected_state_response != nullptr) {
+      const SelectedStateDeterminantMatrices directional_selected_states =
+          build_selected_state_determinant_matrices_from_selected_columns(
+              current_input_->structure_data,
+              directional_selected_state_response
+                  ->delta_selected_eigenvector_matrix,
+              accepted_point_context_->selected_state_indices,
+              accepted_point_context_->normalized_state_weights,
+              accepted_point_context_->same_spin_pair_cache);
+      add_selected_state_response_to_active_space_gradient(
+          *current_input_,
+          *accepted_point_context_,
+          directional_selected_states,
+          directional_selected_state_response->delta_selected_eigenvalues,
+          &directional_active_space_gradient);
+    }
     apply_timing_totals_
         .outer_response_structure_active_gradient_wall_time_seconds +=
         detail::exact_hvp_elapsed_seconds(structure_active_gradient_start_time);
