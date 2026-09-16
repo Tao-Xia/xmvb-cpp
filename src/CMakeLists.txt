@@ -227,6 +227,12 @@ add_custom_target(
 add_dependencies(xmvb xmvb_assets)
 
 if (BUILD_TESTING)
+  add_executable(
+    test_input_guess_selection
+    ${CMAKE_SOURCE_DIR}/tests/input/test_guess_selection.cpp)
+  target_link_libraries(test_input_guess_selection PRIVATE xmvb_input_deck)
+  add_test(NAME input_guess_selection COMMAND test_input_guess_selection)
+
   add_test(
     NAME text_report_f2
     COMMAND

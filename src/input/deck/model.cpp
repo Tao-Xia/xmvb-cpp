@@ -241,6 +241,7 @@ void apply_ctrl_assignment(
     return;
   }
   if (key == "GUESS") {
+    metadata->has_explicit_guess_type = true;
     if (value_upper == "AUTO") {
       metadata->guess_type = kGuessTypeAuto;
     } else if (value_upper == "UNIT") {
@@ -539,6 +540,15 @@ InputDeck parse_input_deck_model(
         parse_explicit_raw_structures(
             explicit_structure_lines,
             input_deck.metadata);
+  }
+
+  // Historical XMVB decks commonly omit `GUESS=READ`: the presence of a
+  // `$GUS` block itself selects the supplied orbitals.  Preserve an explicit
+  // `GUESS=` choice, but never silently replace an implicit `$GUS` guess with
+  // a newly generated AUTO guess.
+  if (input_deck.guess_block.present &&
+      !input_deck.metadata.has_explicit_guess_type) {
+    input_deck.metadata.guess_type = kGuessTypeRead;
   }
 
   return input_deck;

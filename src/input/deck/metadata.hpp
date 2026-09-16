@@ -27,6 +27,8 @@ struct InputDeckMetadata {
   std::string basis_name;
   std::string structure_class_keyword;
   int guess_type = kGuessTypeAuto;
+  /** @brief Whether `GUESS=` was explicitly present in `$CTRL`. */
+  bool has_explicit_guess_type = false;
   int orbital_type = kOrbitalTypeGen;
   int fragment_type = kFragmentTypeAtom;
   int wavefunction_type = kWavefunctionTypeStructure;
