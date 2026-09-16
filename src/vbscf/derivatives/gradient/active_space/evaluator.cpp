@@ -213,8 +213,6 @@ void solve_structure_problem(
             n_roots,
             structure_solve_accuracy.energy_tolerance,
             structure_solve_accuracy.gradient_tolerance);
-    options.complete_spectrum =
-        options.max_subspace_dimension == n_structures;
     stage_start_time = std::chrono::steady_clock::now();
     const bool can_recycle =
         initial_eigenvectors.rows() == n_structures &&

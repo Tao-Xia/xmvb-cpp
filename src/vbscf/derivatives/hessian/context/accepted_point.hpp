@@ -80,12 +80,10 @@ struct AcceptedPointContext {
    */
   Eigen::MatrixXd selected_state_eigenvectors;
 
-  /**
-   * @brief Lowest roots, or a memory-affordable complete spectrum, for recycling.
-   */
+  /** @brief Available roots retained for recycling at the next objective call. */
   Eigen::MatrixXd root_eigenvectors;
 
-  /** @brief Complete structure eigenvalues retained when the basis fits memory. */
+  /** @brief Complete structure eigenvalues retained only by the dense solver. */
   std::vector<double> full_structure_eigenvalues;
 
   /**
