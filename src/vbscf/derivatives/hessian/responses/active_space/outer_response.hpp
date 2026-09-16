@@ -22,13 +22,20 @@ struct ActiveSpaceGradientDirection {
 void validate_outer_response_active_gradient(
     const ActiveSpaceGradientDirection& active_space_gradient);
 
-ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_response(
+/** @brief Differentiates the active-space adjoint at fixed state coefficients. */
+ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const ActiveSpaceIntegralDirectionView& integral_direction,
+    const SameSpinDirectionalPairCache& directional_pair_cache);
+
+/** @brief Adds the selected-state coefficient/energy response contribution. */
+void add_selected_state_response_to_active_space_gradient(
+    const VbScfInput& input,
+    const AcceptedPointContext& accepted_point_context,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     const std::vector<double>& directional_selected_state_energies,
-    const SameSpinDirectionalPairCache& directional_pair_cache);
+    ActiveSpaceGradientDirection* active_space_gradient);
 
 std::vector<double> build_orbital_value_gradient_from_active_space_gradient_direction(
     const VbScfInput& input,

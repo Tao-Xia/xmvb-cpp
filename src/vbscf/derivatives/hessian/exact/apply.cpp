@@ -357,6 +357,20 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     }
 
     const auto active_gradient_start_time = std::chrono::steady_clock::now();
+    const auto local_active_gradient_start_time =
+        std::chrono::steady_clock::now();
+    ActiveSpaceGradientDirection directional_active_space_gradient =
+        build_local_active_space_gradient_direction(
+            *current_input_,
+            *accepted_point_context_,
+            active_space_integral_direction,
+            directional_pair_cache);
+    apply_timing_totals_
+        .outer_response_local_active_gradient_wall_time_seconds +=
+        detail::exact_hvp_elapsed_seconds(local_active_gradient_start_time);
+
+    const auto structure_active_gradient_start_time =
+        std::chrono::steady_clock::now();
     const SelectedStateDeterminantMatrices directional_selected_states =
         build_selected_state_determinant_matrices_from_selected_columns(
             current_input_->structure_data,
@@ -364,13 +378,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             accepted_point_context_->selected_state_indices,
             accepted_point_context_->normalized_state_weights,
             accepted_point_context_->same_spin_pair_cache);
-    ActiveSpaceGradientDirection directional_active_space_gradient =
-        build_active_space_gradient_direction_from_outer_response(
-            *current_input_, *accepted_point_context_,
-            active_space_integral_direction,
+    add_selected_state_response_to_active_space_gradient(
+            *current_input_,
+            *accepted_point_context_,
             directional_selected_states,
             directional_selected_state_response.delta_selected_eigenvalues,
-            directional_pair_cache);
+            &directional_active_space_gradient);
+    apply_timing_totals_
+        .outer_response_structure_active_gradient_wall_time_seconds +=
+        detail::exact_hvp_elapsed_seconds(structure_active_gradient_start_time);
     apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
         detail::exact_hvp_elapsed_seconds(active_gradient_start_time);
     validate_outer_response_active_gradient(

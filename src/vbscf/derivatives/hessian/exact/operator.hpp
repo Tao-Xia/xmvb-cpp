@@ -74,6 +74,8 @@ public:
     double outer_response_eigensystem_wall_time_seconds = 0.0;
     double outer_response_pair_weights_wall_time_seconds = 0.0;
     double outer_response_active_gradient_wall_time_seconds = 0.0;
+    double outer_response_local_active_gradient_wall_time_seconds = 0.0;
+    double outer_response_structure_active_gradient_wall_time_seconds = 0.0;
     double outer_response_orbital_pullback_wall_time_seconds = 0.0;
   };
 

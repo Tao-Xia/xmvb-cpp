@@ -134,8 +134,7 @@ static void accumulate_scaled_same_spin_contribution(
       &target->packed_active_two_electron_gradient);
 }
 
-static ActiveSpaceGradientDirection
-build_local_active_space_gradient_direction_from_outer_response(
+ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const ActiveSpaceIntegralDirectionView& integral_direction,
@@ -204,22 +203,18 @@ build_local_active_space_gradient_direction_from_outer_response(
   return direction;
 }
 
-ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_response(
+void add_selected_state_response_to_active_space_gradient(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
-    const ActiveSpaceIntegralDirectionView& integral_direction,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     const std::vector<double>& directional_selected_state_energies,
-    const SameSpinDirectionalPairCache& directional_pair_cache) {
+    ActiveSpaceGradientDirection* active_space_gradient) {
+  if (active_space_gradient == nullptr) {
+    throw std::invalid_argument("active_space_gradient must not be null");
+  }
   validate_selected_state_determinant_matrices(
       directional_selected_states,
       "exact outer-response directional selected-state coefficients");
-  ActiveSpaceGradientDirection direction =
-      build_local_active_space_gradient_direction_from_outer_response(
-          input,
-          accepted_point_context,
-          integral_direction,
-          directional_pair_cache);
   if (!accepted_point_context.use_full_matrix_form_adjoint) {
     throw std::runtime_error(
         "exact outer-response active-gradient direction requires the "
@@ -249,16 +244,15 @@ ActiveSpaceGradientDirection build_active_space_gradient_direction_from_outer_re
   accumulate_scaled_same_spin_contribution(
       matrix_form_same_spin_direction,
       1.0,
-      &direction);
+      active_space_gradient);
   accumulate_scaled_vector(
       matrix_form_opposite_spin_direction.active_orbital_overlap_gradient,
       1.0,
-      &direction.active_orbital_overlap_gradient);
+      &active_space_gradient->active_orbital_overlap_gradient);
   accumulate_scaled_vector(
       matrix_form_opposite_spin_direction.packed_active_two_electron_gradient,
       1.0,
-      &direction.packed_active_two_electron_gradient);
-  return direction;
+      &active_space_gradient->packed_active_two_electron_gradient);
 }
 
 static void write_symmetric_active_matrix_average_local(
