@@ -377,6 +377,47 @@ class DenseTestHvp final : public ReducedHvp {
   Eigen::MatrixXd hessian_;
 };
 
+void check_symmetric_response_model() {
+  Eigen::MatrixXd response = Eigen::MatrixXd::Zero(6, 6);
+  response.diagonal() << -3.0, -0.4, 0.2, 1.0, 4.0, 11.0;
+  response(0, 4) = response(4, 0) = 0.7;
+  response(1, 5) = response(5, 1) = -0.3;
+
+  Eigen::VectorXd first(6);
+  first << 1.0, -2.0, 0.5, 0.25, -0.75, 1.5;
+  Eigen::VectorXd second(6);
+  second << -0.2, 0.1, 1.0, -1.5, 0.4, 0.8;
+
+  SymmetricResponseModel model;
+  require(model.rank() == 0 &&
+              model.apply(first).norm() == 0.0,
+          "empty response model is not the zero operator");
+  require(model.add(first, response * first),
+          "first response direction was rejected");
+  require(model.add(second, response * second),
+          "independent response direction was rejected");
+  require(!model.add(first + 2.0 * second,
+                     response * (first + 2.0 * second)),
+          "dependent response direction increased the model rank");
+  require(model.rank() == 2 && model.dimension() == 6,
+          "response model has inconsistent dimensions");
+
+  const Eigen::MatrixXd samples =
+      (Eigen::MatrixXd(6, 2) << first, second).finished();
+  const Eigen::MatrixXd modeled_samples = model.apply_batch(samples);
+  require((modeled_samples - response * samples).norm() < 1.0e-11,
+          "symmetric response model lost its sampled secants");
+
+  Eigen::MatrixXd represented = Eigen::MatrixXd::Zero(6, 6);
+  for (int column = 0; column < represented.cols(); ++column) {
+    represented.col(column) = model.apply(
+        Eigen::VectorXd::Unit(represented.rows(), column));
+  }
+  require((represented - represented.transpose()).norm() < 1.0e-12,
+          "response model is not symmetric");
+  std::cout << "Symmetric matrix-free response interpolation: passed\n";
+}
+
 void check_truncated_newton_certificates() {
   Eigen::VectorXd gradient(2);
   gradient << 1.0, 2.0;
@@ -485,6 +526,7 @@ int main() {
                                {0,1,2,3,4,5}, {0,1,2,3,4,5}}, 2);
     check("full support", full, 14);
     check_truncated_newton_certificates();
+    check_symmetric_response_model();
     check_interior_work_extension(full);
     Eigen::MatrixXd rotated = c;
     Eigen::Matrix2d a;
