@@ -1047,6 +1047,16 @@ int main(int argc, char** argv) {
     }
     std::cout << "repeats = " << options.repeats << '\n';
     std::cout << "warmup = " << options.warmup << '\n';
+    const auto& selected_states =
+        context.second_order_context->selected_state_matrices;
+    std::cout << "n_unique_alpha = " << selected_states.n_unique_alpha << '\n';
+    std::cout << "n_unique_beta = " << selected_states.n_unique_beta << '\n';
+    if (!selected_states.states.empty()) {
+      std::cout << "selected_alpha_support = "
+                << selected_states.states.front().alpha_support.size() << '\n';
+      std::cout << "selected_beta_support = "
+                << selected_states.states.front().beta_support.size() << '\n';
+    }
     std::cout << "supports_analytic_core_model = "
               << bool_name(first_diagnostics.supports_analytic_core_model) << '\n';
     std::cout << "outer_response_runtime_enabled = "

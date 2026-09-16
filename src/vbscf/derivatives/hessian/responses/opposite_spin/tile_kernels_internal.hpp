@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <vector>
 
 #include <Eigen/Core>
@@ -12,6 +13,21 @@
 namespace xmvb::vb::detail {
 
 inline constexpr int kOppositeSpinUniqueTileSize = 64;
+
+/**
+ * @brief Enables channel-level parallelism once the pair space exceeds one tile.
+ */
+inline bool should_parallelize_opposite_spin_channels(
+    int n_unique_alpha,
+    int n_unique_beta) {
+  const std::size_t unique_pair_count =
+      static_cast<std::size_t>(n_unique_alpha) *
+      static_cast<std::size_t>(n_unique_beta);
+  const std::size_t tile_area =
+      static_cast<std::size_t>(kOppositeSpinUniqueTileSize) *
+      static_cast<std::size_t>(kOppositeSpinUniqueTileSize);
+  return unique_pair_count > tile_area;
+}
 
 void accumulate_spin_overlap_gradient_direction_local(
     const std::vector<int>& occ_L,
