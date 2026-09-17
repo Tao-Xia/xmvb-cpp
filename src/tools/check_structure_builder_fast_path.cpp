@@ -12,6 +12,7 @@
 #include "input/loading/loader.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
+#include "vbscf/structures/orthogonal_ci/planner.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -20,6 +21,7 @@ namespace {
 
 struct Options {
   std::string input_path;
+  bool direct_ci_only = false;
   xmvb::vb::StandardTwoElectronMode standard_two_electron_mode =
       xmvb::vb::StandardTwoElectronMode::Auto;
 };
@@ -28,13 +30,17 @@ Options parse_arguments(int argc, char** argv) {
   if (argc < 2) {
     throw std::invalid_argument(
         "usage: check_structure_builder_fast_path <input.xmi> "
-        "[--standard-two-electron-mode auto|exact|ri]");
+        "[--standard-two-electron-mode auto|exact|ri] [--direct-ci-only]");
   }
 
   Options options;
   options.input_path = argv[1];
   for (int argument_index = 2; argument_index < argc; ++argument_index) {
     const std::string argument = argv[argument_index];
+    if (argument == "--direct-ci-only") {
+      options.direct_ci_only = true;
+      continue;
+    }
     if (argument == "--standard-two-electron-mode") {
       if (argument_index + 1 >= argc) {
         throw std::invalid_argument(
@@ -203,12 +209,19 @@ int main(int argc, char** argv) {
             std::sin(0.013 * static_cast<double>((row + 1) * (column + 2)));
       }
     }
+    const auto structure_action_setup_start =
+        std::chrono::high_resolution_clock::now();
     const xmvb::vb::StructureAction structure_action(
         load_result.input.structure_data.determinant_to_structure_terms,
         n_structures,
         same_spin_pair_cache,
+        prepared_active_space.orbital_result.active_orbital_overlap_matrix,
+        prepared_active_space.active_space_one_electron_result.h1e_act,
         prepared_active_space.active_space_two_electron_result,
         load_result.input.orbital_preparation_input.n_active_orbitals);
+    const double structure_action_setup_seconds = std::chrono::duration<double>(
+        std::chrono::high_resolution_clock::now() - structure_action_setup_start)
+                                                    .count();
     const auto action_start = std::chrono::high_resolution_clock::now();
     const auto action_result = structure_action.apply(trial_vectors);
     const auto action_end = std::chrono::high_resolution_clock::now();
@@ -221,6 +234,52 @@ int main(int argc, char** argv) {
         dense_hamiltonian * trial_vectors;
     const Eigen::MatrixXd reference_overlap_action =
         dense_overlap * trial_vectors;
+    const auto direct_ci_plan =
+        xmvb::vb::plan_orthogonal_direct_ci_action(
+            same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+            same_spin_pair_cache.beta_reuse_table.unique_determinants,
+            load_result.input.orbital_preparation_input.n_active_orbitals,
+            static_cast<int>(trial_vectors.cols()));
+    const double direct_ci_action_seconds =
+        std::chrono::duration<double>(action_end - action_start).count();
+    const double direct_ci_hamiltonian_max_abs_diff =
+        (action_result.hamiltonian - reference_hamiltonian_action)
+            .cwiseAbs()
+            .maxCoeff();
+    const double direct_ci_overlap_max_abs_diff =
+        (action_result.overlap - reference_overlap_action)
+            .cwiseAbs()
+            .maxCoeff();
+    if (options.direct_ci_only) {
+      const auto action_storage = structure_action.storage();
+      std::cout << std::setprecision(15);
+      std::cout << "n_structures = " << n_structures << '\n';
+      std::cout << "n_unique_alpha = " << direct_ci_plan.n_alpha_strings << '\n';
+      std::cout << "n_unique_beta = " << direct_ci_plan.n_beta_strings << '\n';
+      std::cout << "orthogonal_direct_ci_selected = "
+                << (action_storage.orthogonal_direct_ci ? "true" : "false")
+                << '\n';
+      std::cout << "orthogonal_direct_ci_bytes = "
+                << action_storage.direct_ci_bytes << '\n';
+      std::cout << "direct_ci_complete_space = "
+                << (direct_ci_plan.complete() ? "true" : "false") << '\n';
+      std::cout << "direct_ci_kronecker_flops = "
+                << static_cast<double>(direct_ci_plan.kronecker_flops) << '\n';
+      std::cout << "direct_ci_sigma_flops = "
+                << static_cast<double>(direct_ci_plan.direct_ci_flops) << '\n';
+      std::cout << "direct_ci_exterior_transform_flops = "
+                << static_cast<double>(direct_ci_plan.exterior_transform_flops)
+                << '\n';
+      std::cout << "direct_ci_setup_seconds = "
+                << structure_action_setup_seconds << '\n';
+      std::cout << "direct_ci_action_seconds = "
+                << direct_ci_action_seconds << '\n';
+      std::cout << "direct_ci_hamiltonian_max_abs_diff = "
+                << direct_ci_hamiltonian_max_abs_diff << '\n';
+      std::cout << "direct_ci_overlap_max_abs_diff = "
+                << direct_ci_overlap_max_abs_diff << '\n';
+      return 0;
+    }
     const auto compact_pair_cache =
         xmvb::vb::build_same_spin_pair_cache_context(
             load_result.input.structure_data.alpha_det,
@@ -238,14 +297,22 @@ int main(int argc, char** argv) {
         load_result.input.structure_data.determinant_to_structure_terms,
         n_structures,
         compact_pair_cache,
+        prepared_active_space.orbital_result.active_orbital_overlap_matrix,
+        prepared_active_space.active_space_one_electron_result.h1e_act,
         prepared_active_space.active_space_two_electron_result,
         load_result.input.orbital_preparation_input.n_active_orbitals);
     const auto compact_action_setup_end =
         std::chrono::high_resolution_clock::now();
-    constexpr int kActionBenchmarkRepeats = 256;
+    const int action_benchmark_repeats = std::max(
+        1,
+        std::min(
+            256,
+            static_cast<int>(
+                2.0e9L /
+                std::max(1.0L, direct_ci_plan.kronecker_flops))));
     const auto compact_action_start = std::chrono::high_resolution_clock::now();
     xmvb::vb::StructureActionResult compact_action_result;
-    for (int repeat = 0; repeat < kActionBenchmarkRepeats; ++repeat) {
+    for (int repeat = 0; repeat < action_benchmark_repeats; ++repeat) {
       compact_action_result = compact_structure_action.apply(trial_vectors);
     }
     const auto compact_action_end = std::chrono::high_resolution_clock::now();
@@ -406,6 +473,38 @@ int main(int argc, char** argv) {
               << action_storage.channel_nonzeros << '\n';
     std::cout << "factorized_channel_dense_values = "
               << action_storage.channel_dense_values << '\n';
+    std::cout << "orthogonal_direct_ci_selected = "
+              << (action_storage.orthogonal_direct_ci ? "true" : "false")
+              << '\n';
+    std::cout << "orthogonal_direct_ci_bytes = "
+              << action_storage.direct_ci_bytes << '\n';
+    std::cout << "direct_ci_complete_space = "
+              << (direct_ci_plan.complete() ? "true" : "false") << '\n';
+    std::cout << "direct_ci_favored_by_flops = "
+              << (direct_ci_plan.favors_direct_ci() ? "true" : "false")
+              << '\n';
+    std::cout << "direct_ci_kronecker_flops = "
+              << static_cast<double>(direct_ci_plan.kronecker_flops) << '\n';
+    std::cout << "direct_ci_sigma_flops = "
+              << static_cast<double>(direct_ci_plan.direct_ci_flops) << '\n';
+    std::cout << "direct_ci_exterior_transform_flops = "
+              << static_cast<double>(direct_ci_plan.exterior_transform_flops)
+              << '\n';
+    std::cout << "direct_ci_total_flop_ratio = "
+              << (direct_ci_plan.kronecker_flops > 0.0L
+                      ? static_cast<double>(
+                            direct_ci_plan.total_direct_ci_flops() /
+                            direct_ci_plan.kronecker_flops)
+                      : 0.0)
+              << '\n';
+    std::cout << "direct_ci_setup_seconds = "
+              << structure_action_setup_seconds << '\n';
+    std::cout << "direct_ci_action_seconds = "
+              << direct_ci_action_seconds << '\n';
+    std::cout << "direct_ci_hamiltonian_max_abs_diff = "
+              << direct_ci_hamiltonian_max_abs_diff << '\n';
+    std::cout << "direct_ci_overlap_max_abs_diff = "
+              << direct_ci_overlap_max_abs_diff << '\n';
     std::cout << "fast_result_seconds = "
               << std::chrono::duration<double>(fast_end - fast_start).count() << '\n';
     std::cout << "matrix_free_action_seconds = "
@@ -438,7 +537,7 @@ int main(int argc, char** argv) {
     std::cout << "compact_matrix_free_action_seconds = "
               << std::chrono::duration<double>(
                      compact_action_end - compact_action_start).count() /
-                     kActionBenchmarkRepeats
+                     action_benchmark_repeats
               << '\n';
     std::cout << "compact_matrix_free_hamiltonian_action_max_abs_diff = "
               << (compact_action_result.hamiltonian -

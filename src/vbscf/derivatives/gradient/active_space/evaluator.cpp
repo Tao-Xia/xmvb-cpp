@@ -292,6 +292,8 @@ void solve_structure_problem(
         input.structure_data.determinant_to_structure_terms,
         n_structures,
         context->same_spin_pair_cache,
+        prepared.orbital_result.active_orbital_overlap_matrix,
+        prepared.active_space_one_electron_result.h1e_act,
         prepared.active_space_two_electron_result,
         input.orbital_preparation_input.n_active_orbitals);
     context->structure_matrix_wall_time_seconds =

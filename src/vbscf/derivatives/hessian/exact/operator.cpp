@@ -167,6 +167,10 @@ ExactHvpOperator::State::outer_response_context() const {
           current_input_->structure_data.determinant_to_structure_terms,
           current_input_->structure_data.n_structures,
           accepted_point_context_->same_spin_pair_cache,
+          accepted_point_context_->prepared_active_space.orbital_result
+              .active_orbital_overlap_matrix,
+          accepted_point_context_->prepared_active_space
+              .active_space_one_electron_result.h1e_act,
           accepted_point_context_->prepared_active_space
               .active_space_two_electron_result,
           current_input_->orbital_preparation_input.n_active_orbitals);

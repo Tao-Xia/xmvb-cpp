@@ -19,6 +19,10 @@ set(XMVB_VBSCF_STRUCTURE_SOURCES
   vbscf/structures/assembly/selected_coefficients.cpp
   vbscf/structures/evaluation/evaluator.cpp
   vbscf/structures/expansion/expander.cpp
+  vbscf/structures/orthogonal_ci/exterior_transform.cpp
+  vbscf/structures/orthogonal_ci/integrals.cpp
+  vbscf/structures/orthogonal_ci/planner.cpp
+  vbscf/structures/orthogonal_ci/sigma.cpp
   vbscf/structures/selection/subspace/selector.cpp
   vbscf/structures/selection/union_graph/rank_predictor.cpp
   vbscf/structures/selection/union_graph/screening.cpp

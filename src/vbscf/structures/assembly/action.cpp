@@ -5,6 +5,10 @@
 
 #include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
+#include "vbscf/structures/orthogonal_ci/exterior_transform.hpp"
+#include "vbscf/structures/orthogonal_ci/integrals.hpp"
+#include "vbscf/structures/orthogonal_ci/planner.hpp"
+#include "vbscf/structures/orthogonal_ci/sigma.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -424,11 +428,71 @@ DeterminantPairScalars evaluate_spin_product_pair(
 
 }  // namespace
 
+struct StructureAction::OrthogonalDirectCiData {
+  OrthogonalActiveIntegrals integrals;
+  ExteriorOrbitalTransform alpha_transform;
+  std::unique_ptr<ExteriorOrbitalTransform> distinct_beta_transform;
+  DirectCiSigmaAction sigma;
+
+  OrthogonalDirectCiData(
+      const std::vector<std::vector<int>>& alpha_determinants,
+      const std::vector<std::vector<int>>& beta_determinants,
+      const std::vector<double>& active_overlap,
+      const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
+      const ActiveSpaceTwoElectronResult& active_two_electron,
+      int n_active_orbitals)
+      : integrals(orthogonalize_active_integrals(
+            active_overlap,
+            active_one_electron,
+            active_two_electron,
+            n_active_orbitals)),
+        alpha_transform(alpha_determinants, integrals.orbital_transform),
+        distinct_beta_transform(
+            beta_determinants == alpha_determinants
+                ? nullptr
+                : std::make_unique<ExteriorOrbitalTransform>(
+                      beta_determinants,
+                      integrals.orbital_transform)),
+        sigma(alpha_determinants, beta_determinants, integrals) {
+    // The transforms and sigma graph own the retained data. Release the
+    // construction-only orthogonal integral buffers before Davidson starts.
+    integrals = OrthogonalActiveIntegrals{};
+  }
+
+  const ExteriorOrbitalTransform& beta_transform() const noexcept {
+    return distinct_beta_transform
+        ? *distinct_beta_transform
+        : alpha_transform;
+  }
+
+  std::size_t dynamic_bytes() const noexcept {
+    return static_cast<std::size_t>(
+               integrals.orbital_transform.size() +
+               integrals.one_electron.size() +
+               integrals.pair_kernel.size() +
+               integrals.two_electron.ri_active_pair_factors.size()) *
+            sizeof(double) +
+        integrals.two_electron.packed_active_two_electron_integrals.capacity() *
+            sizeof(double) +
+        alpha_transform.dynamic_bytes() +
+        (distinct_beta_transform
+             ? distinct_beta_transform->dynamic_bytes()
+             : 0) +
+        sigma.dynamic_bytes();
+  }
+};
+
+StructureAction::~StructureAction() = default;
+StructureAction::StructureAction(StructureAction&&) noexcept = default;
+StructureAction& StructureAction::operator=(StructureAction&&) noexcept = default;
+
 StructureAction::StructureAction(
     const std::vector<std::vector<StructureExpansionTerm>>&
         determinant_to_structure_terms,
     int n_structures,
     const SameSpinPairCacheContext& same_spin_pair_cache,
+    const std::vector<double>& active_overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_active_orbitals)
     : n_determinants_(
@@ -511,17 +575,32 @@ StructureAction::StructureAction(
       same_spin_pair_cache.alpha_pair_cache_ref();
   const auto& beta_pair_cache =
       same_spin_pair_cache.beta_pair_cache_ref();
-  alpha_overlap_ = build_pair_matrix(
-      alpha_pair_cache, n_unique_alpha_, false);
-  alpha_hamiltonian_ = build_pair_matrix(
-      alpha_pair_cache, n_unique_alpha_, true);
-  beta_overlap_ = build_pair_matrix(
-      beta_pair_cache, n_unique_beta_, false);
-  beta_hamiltonian_ = build_pair_matrix(
-      beta_pair_cache, n_unique_beta_, true);
-
-  build_opposite_spin_channels(
-      alpha_pair_cache, beta_pair_cache, n_packed_pairs);
+  const DirectCiActionPlan direct_ci_plan =
+      plan_orthogonal_direct_ci_action(
+          same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+          same_spin_pair_cache.beta_reuse_table.unique_determinants,
+          n_active_orbitals,
+          1);
+  if (direct_ci_plan.favors_direct_ci()) {
+    direct_ci_ = std::make_unique<OrthogonalDirectCiData>(
+        same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+        same_spin_pair_cache.beta_reuse_table.unique_determinants,
+        active_overlap,
+        active_one_electron,
+        active_space_two_electron_result,
+        n_active_orbitals);
+  } else {
+    alpha_overlap_ = build_pair_matrix(
+        alpha_pair_cache, n_unique_alpha_, false);
+    alpha_hamiltonian_ = build_pair_matrix(
+        alpha_pair_cache, n_unique_alpha_, true);
+    beta_overlap_ = build_pair_matrix(
+        beta_pair_cache, n_unique_beta_, false);
+    beta_hamiltonian_ = build_pair_matrix(
+        beta_pair_cache, n_unique_beta_, true);
+    build_opposite_spin_channels(
+        alpha_pair_cache, beta_pair_cache, n_packed_pairs);
+  }
 
   const int n_spin_products = n_unique_alpha_ * n_unique_beta_;
   std::vector<std::vector<StructureTerm>> terms_by_spin_product(
@@ -1051,7 +1130,7 @@ Eigen::MatrixXd StructureAction::contract_spin_product_block(
   return result;
 }
 
-StructureActionResult StructureAction::apply(
+Eigen::MatrixXd StructureAction::expand_structure_block(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
   if (vectors.rows() != n_structures_ || vectors.cols() <= 0) {
     throw std::invalid_argument(
@@ -1076,6 +1155,43 @@ StructureActionResult StructureAction::apply(
             term.coefficient * vectors(term.structure, vector);
       }
     }
+  }
+  return spin_vectors;
+}
+
+StructureActionResult StructureAction::apply(
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
+  Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
+  const int block_width = static_cast<int>(vectors.cols());
+  if (direct_ci_) {
+    direct_ci_->alpha_transform.apply_left(&spin_vectors);
+    for (int block = 0; block < block_width; ++block) {
+      Eigen::MatrixXd coefficient_block = spin_vectors.middleCols(
+          block * n_unique_beta_, n_unique_beta_);
+      direct_ci_->beta_transform().apply_right(&coefficient_block);
+      spin_vectors.middleCols(
+          block * n_unique_beta_, n_unique_beta_) = coefficient_block;
+    }
+
+    Eigen::MatrixXd spin_hamiltonians = direct_ci_->sigma.apply(spin_vectors);
+    Eigen::MatrixXd spin_overlaps = std::move(spin_vectors);
+    for (int block = 0; block < block_width; ++block) {
+      Eigen::MatrixXd hamiltonian_block = spin_hamiltonians.middleCols(
+          block * n_unique_beta_, n_unique_beta_);
+      Eigen::MatrixXd overlap_block = spin_overlaps.middleCols(
+          block * n_unique_beta_, n_unique_beta_);
+      direct_ci_->beta_transform().apply_adjoint_right(&hamiltonian_block);
+      direct_ci_->beta_transform().apply_adjoint_right(&overlap_block);
+      spin_hamiltonians.middleCols(
+          block * n_unique_beta_, n_unique_beta_) = hamiltonian_block;
+      spin_overlaps.middleCols(
+          block * n_unique_beta_, n_unique_beta_) = overlap_block;
+    }
+    direct_ci_->alpha_transform.apply_adjoint_left(&spin_hamiltonians);
+    direct_ci_->alpha_transform.apply_adjoint_left(&spin_overlaps);
+    return StructureActionResult{
+        contract_spin_product_block(spin_hamiltonians),
+        contract_spin_product_block(spin_overlaps)};
   }
 
   const Eigen::MatrixXd transposed_spin_vectors = transpose_matrix_blocks(
@@ -1138,6 +1254,10 @@ int StructureAction::n_structures() const noexcept {
 
 StructureActionStorage StructureAction::storage() const noexcept {
   StructureActionStorage result;
+  result.orthogonal_direct_ci = direct_ci_ != nullptr;
+  if (direct_ci_) {
+    result.direct_ci_bytes = direct_ci_->dynamic_bytes();
+  }
   result.channel_nonzeros = channel_nonzeros_;
   result.channel_dense_values = channel_dense_values_;
   result.expansion_bytes =

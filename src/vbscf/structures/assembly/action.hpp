@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #include <Eigen/Core>
@@ -48,6 +49,10 @@ struct StructureActionStorage {
   std::size_t channel_nonzeros = 0;
   /** Dense values required to store the same active channel matrices. */
   std::size_t channel_dense_values = 0;
+  /** Whether the action uses the complete-space orthogonal direct-CI form. */
+  bool orthogonal_direct_ci = false;
+  /** Persistent bytes owned by the orthogonal direct-CI representation. */
+  std::size_t direct_ci_bytes = 0;
 };
 
 /**
@@ -74,8 +79,16 @@ public:
           determinant_to_structure_terms,
       int n_structures,
       const SameSpinPairCacheContext& same_spin_pair_cache,
+      const std::vector<double>& active_overlap,
+      const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_active_orbitals);
+
+  ~StructureAction();
+  StructureAction(StructureAction&&) noexcept;
+  StructureAction& operator=(StructureAction&&) noexcept;
+  StructureAction(const StructureAction&) = delete;
+  StructureAction& operator=(const StructureAction&) = delete;
 
   /**
    * @brief Applies both structure matrices to one or more vectors.
@@ -84,6 +97,15 @@ public:
    * @return Hamiltonian and overlap images with the same shape.
    */
   StructureActionResult apply(
+      const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
+
+  /**
+   * @brief Expands structure vectors directly onto unique spin products.
+   *
+   * The returned shape is
+   * `(n_unique_alpha, block_width * n_unique_beta)`.
+   */
+  Eigen::MatrixXd expand_structure_block(
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
 
   /**
@@ -108,6 +130,7 @@ public:
   StructureActionStorage storage() const noexcept;
 
 private:
+  struct OrthogonalDirectCiData;
   struct StructureTerm {
     int structure = 0;
     double coefficient = 0.0;
@@ -194,6 +217,7 @@ private:
   int n_unique_beta_ = 0;
   std::size_t channel_nonzeros_ = 0;
   std::size_t channel_dense_values_ = 0;
+  std::unique_ptr<OrthogonalDirectCiData> direct_ci_;
 };
 
 }  // namespace xmvb::vb

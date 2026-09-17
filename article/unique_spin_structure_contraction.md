@@ -1306,7 +1306,166 @@ replaceable improvement.
 
 ---
 
-## 13. Short Conclusion
+## 13. Orthogonalized Direct-CI Action for Complete Fixed-Spin Spaces
+
+The factorized nonorthogonal action stores four dense unique-string matrices,
+
+$$
+S_{\alpha},\quad H_{\alpha},\quad S_{\beta},\quad H_{\beta},
+$$
+
+and applies them to each Davidson block by Kronecker-structured matrix
+multiplication.  For block width $b$, the five dense products require
+
+$$
+N_{\mathrm{kron}}
+=
+b\left(
+4U_{\alpha}U_{\beta}^{2}
++
+6U_{\alpha}^{2}U_{\beta}
+\right)
+$$
+
+floating-point operations before the opposite-spin channels are included.
+This scaling is avoidable when each unique-spin set is the complete
+fixed-particle-number Fock space.
+
+At a fixed accepted orbital point, let the active-orbital overlap be
+
+$$
+S_{\mathrm{act}}
+=
+\Phi^{\mathrm T}S_{\mathrm{AO}}\Phi
+=
+R^{\mathrm T}R,
+$$
+
+where $R$ is the upper Cholesky factor.  The orthonormal active orbitals are
+
+$$
+\chi=\Phi R^{-1},
+$$
+
+and the induced fixed-spin determinant transformation is the exterior power
+
+$$
+T_{\sigma}=\bigwedge^{n_{\sigma}}R.
+$$
+
+For a coefficient block $X$ on the unique alpha--beta string product, the
+orthonormal determinant coefficients are
+
+$$
+Y=T_{\alpha}XT_{\beta}^{\mathrm T}.
+$$
+
+The exact Hamiltonian and overlap actions in the original nonorthogonal
+product basis are therefore
+
+$$
+H X
+=
+T_{\alpha}^{\mathrm T}
+\sigma_{\mathrm{orth}}(Y)
+T_{\beta},
+$$
+
+and
+
+$$
+S X
+=
+T_{\alpha}^{\mathrm T}Y T_{\beta}.
+$$
+
+The surrounding sparse structure expansion supplies the maps from structure
+coefficients to $X$ and from these product-space images back to the structure
+basis.  Thus this replacement changes only the fixed-point $H/S$ action; it
+does not alter the VB structure definition.
+
+The compound matrices $T_{\sigma}$ are never assembled.  The triangular
+factor $R$ is decomposed into diagonal orbital scalings and elementary orbital
+shears.  Applying the corresponding exterior transforms costs
+
+$$
+O\!\left(N_{\mathrm{FCI}}n_{\mathrm{act}}^{2}b\right)
+$$
+
+and requires only lists of determinant pairs connected by each shear.  In the
+orthonormal basis, the Slater--Condon connection counts per determinant are
+
+$$
+z_{\sigma}
+=
+1+n_{\sigma}v_{\sigma}
++
+\binom{n_{\sigma}}{2}\binom{v_{\sigma}}{2},
+$$
+
+and
+
+$$
+z_{\alpha\beta}
+=
+n_{\alpha}v_{\alpha}n_{\beta}v_{\beta},
+$$
+
+where $v_{\sigma}=n_{\mathrm{act}}-n_{\sigma}$.  A target-driven exact sigma
+action consequently has the formal cost
+
+$$
+O\!\left[
+N_{\mathrm{FCI}}
+\left(z_{\alpha}+z_{\beta}+z_{\alpha\beta}\right)b
+\right]
+=
+O\!\left(N_{\mathrm{FCI}}n_{\mathrm{act}}^{4}b\right).
+$$
+
+The implementation verifies determinant-space completeness from the occupied
+orbital bit patterns rather than from the dimension alone.  Incomplete VB
+string spaces continue to use the exact nonorthogonal factorized action,
+because an exterior transform restricted to an incomplete space is not closed
+and would not be mathematically equivalent.  For complete spaces, an exact
+FLOP planner selects direct CI only when its predicted fixed-point work is
+smaller.  The Slater--Condon graph is generated directly from occupied--virtual
+single and double substitutions followed by determinant-bitmask lookup; it
+does not contain an $O(U_{\sigma}^{2})$ all-pairs setup scan.  Its construction
+therefore has the same
+$O(U_{\sigma}n_{\mathrm{act}}^{4})$ connection-count scaling as the retained
+same-spin graph.
+
+Independent validation compares the exterior transforms with explicitly
+formed compound matrices and compares the full nonorthogonal $H/S$ action with
+direct determinant-pair evaluation.  Unit-test maximum absolute errors are of
+order $10^{-13}$ for the exterior transform and $10^{-16}$ for the small
+end-to-end $H/S$ action.  A 32-core Slurm comparison at the same orbital point
+gave:
+
+| System | $U_{\alpha}\times U_{\beta}$ | Factorized action / s | Direct-CI action / s | Speedup | max $|\Delta Hx|$ | max $|\Delta Sx|$ |
+|---|---:|---:|---:|---:|---:|---:|
+| CERRAS | $462\times462$ | 1.8777 | 0.09491 | 19.79 | $2.57\times10^{-12}$ | $5.46\times10^{-14}$ |
+| LOFLEA | $924\times924$ | 26.7548 | 1.3166 | 20.32 | $1.59\times10^{-12}$ | $7.82\times10^{-14}$ |
+
+The measured gain exceeds the five-GEMM-only FLOP ratio because the old count
+does not include its opposite-spin channel traversal.  The direct-CI setup is
+performed once per accepted orbital point.  Identical alpha and beta string
+spaces share both the Slater--Condon graph and exterior-transform schedule.
+The final production construction took approximately $0.35$ s for CERRAS and
+$1.17$ s for LOFLEA.  Its measured persistent representation sizes were
+$3.33$ MB and $9.26$ MB, respectively; these figures exclude the accepted-point
+pair cache that remains shared with the orbital-gradient and HVP layers.
+
+This milestone removes the dense unique-string quadratic action from complete
+fixed-spin spaces.  It does not yet remove the cofactor and pair-response work
+used by orbital gradients and HVPs.  End-to-end TNHVP speedups therefore depend
+on the admitted outer-response frequency and on a later response-layer rewrite
+that shares the orthogonal direct-CI representation.
+
+---
+
+## 14. Short Conclusion
 
 The key conclusion is:
 
@@ -1314,7 +1473,7 @@ $$
 \text{The right fix is not "scalar to avoid OOM" and not "global matrix to go fast".}
 $$
 
-The right fix is:
+For general incomplete unique-string spaces, the bounded-memory contraction is:
 
 $$
 \text{trimmed coefficient blocks}
@@ -1326,8 +1485,8 @@ $$
 \text{streamed reduction}.
 $$
 
-That single framework applies to all contractions from unique-spin-string space
-into structure-space or selected-state-space:
+That framework applies to contractions from incomplete unique-spin-string
+spaces into structure-space or selected-state-space:
 
 1. forward structure matrices;
 2. selected-state builds;
@@ -1336,7 +1495,8 @@ into structure-space or selected-state-space:
 5. directional response;
 6. opposite-spin packed-pair contractions.
 
-So the main algorithmic task is not to invent a separate contraction strategy
-for each path.
-The main task is to make every path use the same bounded-memory matrix-form
-contraction model.
+Complete fixed-spin spaces admit the additional exact orthogonal direct-CI
+representation derived in Section 13.  The implementation therefore uses two
+mathematically defined regimes rather than molecule-specific tuning: streamed
+support-local contraction for incomplete spaces, and exterior transformation
+plus Slater--Condon sigma action for complete spaces.
