@@ -379,6 +379,16 @@ int main() {
   require(
       lazy_cache.alpha_pair_cache.front().cofactor_differential == nullptr,
       "forward-only pair cache constructed a derivative payload");
+  require(
+      !eager_cache.alpha_pair_cache.front()
+           .opposite_spin_pair_cache.inverse_overlap_projection
+           .packed_pair_indices.empty(),
+      "regular pair cache omitted its sparse inverse-overlap projection");
+  require(
+      eager_cache.alpha_pair_cache.front()
+          .opposite_spin_pair_cache.inverse_overlap_projection
+          .projected_pair_values.empty(),
+      "pair cache retained an unused dense inverse-overlap image");
   for (std::size_t pair = 0;
        pair < eager_cache.alpha_pair_cache.size();
        ++pair) {

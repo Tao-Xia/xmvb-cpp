@@ -256,7 +256,7 @@ void attach_opposite_spin_pair_cache(
     int n_orbitals,
     const ActiveSpaceTwoElectronView& two_electron_view,
     const std::vector<double>* dense_pair_kernel,
-    bool materialize_projected_pair_values,
+    bool materialize_first_order_projected_values,
     SpinDeterminantPairEvaluation* pair_evaluation) {
   if (pair_evaluation == nullptr) {
     throw std::invalid_argument("pair_evaluation must not be null");
@@ -276,11 +276,17 @@ void attach_opposite_spin_pair_cache(
           calc_cofactor_1st(overlap_result),
           true,
           n_orbitals,
-          two_electron_view,
-          dense_pair_kernel,
-          materialize_projected_pair_values);
+      two_electron_view,
+      dense_pair_kernel,
+      materialize_first_order_projected_values);
 
   if (overlap_result.nullity == 0) {
+    // Production overlap-response contractions consume the inverse-overlap
+    // projection sparsely and apply the active-space kernel only to the
+    // channels touched by the partner image.  Retaining a dense G*x image for
+    // every ordered unique-string pair duplicates O(P U^2) storage and
+    // O(P n_e^2 U^2) work without a production consumer.  The diagnostic
+    // scalar helpers retain their exact on-demand fallback.
     pair_evaluation->opposite_spin_pair_cache.inverse_overlap_projection =
         build_sparse_packed_pair_projection(
             occ_L,
@@ -290,7 +296,7 @@ void attach_opposite_spin_pair_cache(
             n_orbitals,
             two_electron_view,
             dense_pair_kernel,
-            materialize_projected_pair_values);
+            false);
   }
 }
 
