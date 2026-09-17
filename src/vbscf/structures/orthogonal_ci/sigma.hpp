@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -10,6 +11,12 @@
 #include "vbscf/structures/orthogonal_ci/integrals.hpp"
 
 namespace xmvb::vb {
+
+/** @brief Integral adjoint of one orthonormal direct-CI bilinear form. */
+struct DirectCiIntegralAdjoint {
+  Eigen::MatrixXd one_electron;
+  Eigen::MatrixXd pair_kernel;
+};
 
 /**
  * @brief Exact Slater--Condon sigma action in an orthonormal active basis.
@@ -30,14 +37,37 @@ public:
   Eigen::MatrixXd apply(
       const Eigen::Ref<const Eigen::MatrixXd>& coefficients) const;
 
+  /**
+   * @brief Differentiates `left.dot(H * right)` with respect to the integrals.
+   *
+   * Both returned matrices use the symmetric full-matrix Frobenius convention:
+   * their inner products with symmetric integral directions equal the exact
+   * directional derivative of the bilinear form. The traversal uses the same
+   * Slater--Condon connection graph as `apply()`.
+   */
+  DirectCiIntegralAdjoint integral_adjoint(
+      const Eigen::Ref<const Eigen::MatrixXd>& left,
+      const Eigen::Ref<const Eigen::MatrixXd>& right) const;
+
   std::size_t dynamic_bytes() const noexcept;
 
 private:
+  struct PairKernelTerm {
+    int first_pair = 0;
+    int second_pair = 0;
+    double coefficient = 0.0;
+  };
+
   struct HamiltonianConnection {
     int source = 0;
     double value = 0.0;
     int density_pair = -1;
     double density_sign = 0.0;
+    int one_electron_row = -1;
+    int one_electron_column = -1;
+    double one_electron_sign = 0.0;
+    std::array<PairKernelTerm, 2> pair_terms{};
+    int n_pair_terms = 0;
   };
 
   struct DensityConnection {

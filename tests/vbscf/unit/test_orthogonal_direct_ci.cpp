@@ -175,7 +175,7 @@ void check_planner() {
   require(loflea.favors_direct_ci(), "LOFLEA-size FLOP plan rejected direct CI");
 
   auto incomplete = cerras_alpha;
-  incomplete.back() = incomplete.front();
+  incomplete.pop_back();
   const auto rejected = xmvb::vb::plan_orthogonal_direct_ci_action(
       incomplete,
       cerras_beta,
@@ -329,6 +329,72 @@ void check_sigma_action() {
           std::sin(0.19 * static_cast<double>((row + 1) * (column + 2)));
     }
   }
+
+  Eigen::MatrixXd left_coefficients(coefficients.rows(), coefficients.cols());
+  for (int column = 0; column < left_coefficients.cols(); ++column) {
+    for (int row = 0; row < left_coefficients.rows(); ++row) {
+      left_coefficients(row, column) =
+          std::cos(0.23 * static_cast<double>((row + 2) * (column + 1)));
+    }
+  }
+  const xmvb::vb::DirectCiIntegralAdjoint integral_adjoint =
+      sigma_action.integral_adjoint(left_coefficients, coefficients);
+  const double predicted_integral_direction =
+      (integral_adjoint.one_electron.cwiseProduct(
+           orthogonal_direction.one_electron)).sum() +
+      (integral_adjoint.pair_kernel.cwiseProduct(
+           orthogonal_direction.pair_kernel)).sum();
+  const double applied_integral_direction =
+      (left_coefficients.cwiseProduct(
+           sigma_direction.apply(coefficients))).sum();
+  require(
+      std::abs(predicted_integral_direction - applied_integral_direction) <
+          3.0e-10 * std::max(1.0, std::abs(applied_integral_direction)),
+      "direct-CI integral adjoint fails the bilinear directional identity");
+  const auto pack_pair_kernel = [n_orbitals](
+      const Eigen::MatrixXd& kernel,
+      xmvb::vb::ActiveSpaceTwoElectronResult* result) {
+    result->packed_active_two_electron_integrals.resize(
+        xmvb::vb::packed_active_two_electron_integral_count(n_orbitals));
+    for (int column = 0; column < kernel.cols(); ++column) {
+      for (int row = 0; row <= column; ++row) {
+        result->packed_active_two_electron_integrals[
+            xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+                row, column)] = kernel(row, column);
+      }
+    }
+  };
+  constexpr double adjoint_step = 1.0e-6;
+  auto plus_sigma_integrals = orthogonal;
+  auto minus_sigma_integrals = orthogonal;
+  plus_sigma_integrals.one_electron +=
+      adjoint_step * orthogonal_direction.one_electron;
+  minus_sigma_integrals.one_electron -=
+      adjoint_step * orthogonal_direction.one_electron;
+  plus_sigma_integrals.pair_kernel +=
+      adjoint_step * orthogonal_direction.pair_kernel;
+  minus_sigma_integrals.pair_kernel -=
+      adjoint_step * orthogonal_direction.pair_kernel;
+  pack_pair_kernel(
+      plus_sigma_integrals.pair_kernel,
+      &plus_sigma_integrals.two_electron);
+  pack_pair_kernel(
+      minus_sigma_integrals.pair_kernel,
+      &minus_sigma_integrals.two_electron);
+  const double plus_bilinear =
+      (left_coefficients.cwiseProduct(
+           xmvb::vb::DirectCiSigmaAction(
+               alpha, beta, plus_sigma_integrals).apply(coefficients))).sum();
+  const double minus_bilinear =
+      (left_coefficients.cwiseProduct(
+           xmvb::vb::DirectCiSigmaAction(
+               alpha, beta, minus_sigma_integrals).apply(coefficients))).sum();
+  const double finite_difference_bilinear =
+      (plus_bilinear - minus_bilinear) / (2.0 * adjoint_step);
+  require(
+      std::abs(predicted_integral_direction - finite_difference_bilinear) <
+          2.0e-8 * std::max(1.0, std::abs(finite_difference_bilinear)),
+      "direct-CI integral adjoint fails central finite differences");
 
   const auto alpha_transform_direction = alpha_transform.direction(
       orthogonal_direction.orbital_transform);
@@ -685,6 +751,92 @@ void check_sigma_action() {
       }
     }
   }
+
+  // Project the exact determinant-product action onto three arbitrary sparse
+  // structure vectors. The structure subspace is deliberately tiny and is
+  // not invariant under H; exactness therefore cannot rely on a full-CI
+  // structure basis.
+  constexpr int n_test_structures = 3;
+  Eigen::MatrixXd structure_expansion = Eigen::MatrixXd::Zero(
+      product_dimension, n_test_structures);
+  for (int structure = 0; structure < n_test_structures; ++structure) {
+    for (int term = 0; term < 7; ++term) {
+      const int product =
+          (5 * term + 11 * structure + structure * term) % product_dimension;
+      structure_expansion(product, structure) +=
+          std::sin(0.31 * static_cast<double>((term + 1) * (structure + 2)));
+    }
+  }
+  Eigen::MatrixXd structure_vectors(n_test_structures, block_width);
+  for (int column = 0; column < block_width; ++column) {
+    for (int row = 0; row < n_test_structures; ++row) {
+      structure_vectors(row, column) =
+          std::cos(0.27 * static_cast<double>((row + 1) * (column + 3)));
+    }
+  }
+  const Eigen::MatrixXd product_vectors =
+      structure_expansion * structure_vectors;
+  Eigen::MatrixXd packed_product_vectors(
+      static_cast<int>(alpha.size()),
+      block_width * static_cast<int>(beta.size()));
+  for (int block = 0; block < block_width; ++block) {
+    for (int alpha_index = 0;
+         alpha_index < static_cast<int>(alpha.size());
+         ++alpha_index) {
+      for (int beta_index = 0;
+           beta_index < static_cast<int>(beta.size());
+           ++beta_index) {
+        packed_product_vectors(
+            alpha_index,
+            block * static_cast<int>(beta.size()) + beta_index) =
+            product_vectors(
+                alpha_index * static_cast<int>(beta.size()) + beta_index,
+                block);
+      }
+    }
+  }
+  const auto projected_action = apply_orthogonal_action(
+      orthogonal, packed_product_vectors);
+  Eigen::MatrixXd projected_hamiltonian_products(
+      product_dimension, block_width);
+  Eigen::MatrixXd projected_overlap_products(
+      product_dimension, block_width);
+  for (int block = 0; block < block_width; ++block) {
+    for (int alpha_index = 0;
+         alpha_index < static_cast<int>(alpha.size());
+         ++alpha_index) {
+      for (int beta_index = 0;
+           beta_index < static_cast<int>(beta.size());
+           ++beta_index) {
+        const int product =
+            alpha_index * static_cast<int>(beta.size()) + beta_index;
+        const int packed_column =
+            block * static_cast<int>(beta.size()) + beta_index;
+        projected_hamiltonian_products(product, block) =
+            projected_action.first(alpha_index, packed_column);
+        projected_overlap_products(product, block) =
+            projected_action.second(alpha_index, packed_column);
+      }
+    }
+  }
+  const Eigen::MatrixXd direct_three_structure_hamiltonian =
+      structure_expansion.transpose() * projected_hamiltonian_products;
+  const Eigen::MatrixXd direct_three_structure_overlap =
+      structure_expansion.transpose() * projected_overlap_products;
+  const Eigen::MatrixXd reference_three_structure_hamiltonian =
+      structure_expansion.transpose() * dense_hamiltonian *
+      structure_expansion * structure_vectors;
+  const Eigen::MatrixXd reference_three_structure_overlap =
+      structure_expansion.transpose() * dense_overlap *
+      structure_expansion * structure_vectors;
+  require(
+      (direct_three_structure_hamiltonian -
+       reference_three_structure_hamiltonian).cwiseAbs().maxCoeff() < 2.0e-10,
+      "direct CI is inexact on an arbitrary three-structure subspace");
+  require(
+      (direct_three_structure_overlap -
+       reference_three_structure_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
+      "direct-CI overlap is inexact on an arbitrary three-structure subspace");
 }
 
 }  // namespace
