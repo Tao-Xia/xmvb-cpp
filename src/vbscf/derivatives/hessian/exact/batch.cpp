@@ -178,6 +178,14 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
 
     double integral_seconds = 0.0;
     double structure_seconds = 0.0;
+    const bool direct_structure_direction =
+        components.structure_response &&
+        outer_response_context()
+            .selected_state_eigen_response_operator.structure_action
+            ->supports_integral_direction();
+    const bool pair_cache_required =
+        components.local_active_response ||
+        (components.structure_response && !direct_structure_direction);
     for (Eigen::Index column = 0; column < n_directions; ++column) {
       PrecomputedOuterResponse& outer =
           precomputed_directions[column].outer_response.emplace();
@@ -207,10 +215,12 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
       integral_seconds += detail::exact_hvp_elapsed_seconds(integral_start);
 
       const auto structure_start = std::chrono::steady_clock::now();
-      outer.pair_cache = build_same_spin_directional_pair_cache(
-          accepted_point_context_->same_spin_pair_cache,
-          n_active_orbitals,
-          integral_direction);
+      if (pair_cache_required) {
+        outer.pair_cache = build_same_spin_directional_pair_cache(
+            accepted_point_context_->same_spin_pair_cache,
+            n_active_orbitals,
+            integral_direction);
+      }
       if (components.structure_response) {
         const SelectedStateDirectionalStructureImages images =
             build_selected_structure_direction(

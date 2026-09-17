@@ -302,11 +302,19 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
 
     const auto structure_matrices_start_time =
         std::chrono::steady_clock::now();
-    // The polynomial pair response is consumed first by the projected
-    // structure action and later by the local same-spin adjoint. Build it once
-    // for this HVP direction so both stages share the same cofactor actions.
+    // The local same-spin adjoint requires the directional pair cache. An
+    // incomplete-space structure action shares that cache; a complete-space
+    // orthogonal direct-CI action differentiates its own representation.
     SameSpinDirectionalPairCache local_directional_pair_cache;
-    if (precomputed_outer_response == nullptr) {
+    const bool direct_structure_direction =
+        components.structure_response &&
+        outer_response_context()
+            .selected_state_eigen_response_operator.structure_action
+            ->supports_integral_direction();
+    const bool pair_cache_required =
+        components.local_active_response ||
+        (components.structure_response && !direct_structure_direction);
+    if (precomputed_outer_response == nullptr && pair_cache_required) {
       local_directional_pair_cache = build_same_spin_directional_pair_cache(
           accepted_point_context_->same_spin_pair_cache,
           current_input_->orbital_preparation_input.n_active_orbitals,

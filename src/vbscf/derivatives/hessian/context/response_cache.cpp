@@ -141,10 +141,13 @@ AcceptedOuterResponseContext build_accepted_outer_response_context(
   context.selected_state_eigen_response_operator =
       build_accepted_selected_state_generalized_eigen_response_operator(
           *accepted_point_context);
-  context.structure_factors = build_accepted_structure_response_factors(
-      *input,
-      *accepted_point_context,
-      context.selected_state_eigen_response_operator.selected_eigenvectors);
+  if (!context.selected_state_eigen_response_operator.structure_action
+           ->supports_integral_direction()) {
+    context.structure_factors = build_accepted_structure_response_factors(
+        *input,
+        *accepted_point_context,
+        context.selected_state_eigen_response_operator.selected_eigenvectors);
+  }
   return context;
 }
 

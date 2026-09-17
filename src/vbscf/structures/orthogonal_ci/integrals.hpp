@@ -29,4 +29,17 @@ OrthogonalActiveIntegrals orthogonalize_active_integrals(
     const ActiveSpaceTwoElectronResult& two_electron,
     int n_active_orbitals);
 
+/**
+ * @brief Differentiates the Cholesky-orthogonalized active integrals.
+ *
+ * The returned `orbital_transform` is `delta R`; the other members are the
+ * first derivatives of the orthonormal one- and two-electron integrals.
+ */
+OrthogonalActiveIntegrals orthogonalize_active_integral_direction(
+    const OrthogonalActiveIntegrals& accepted,
+    const std::vector<double>& overlap_direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& one_electron_direction,
+    const std::vector<double>& packed_two_electron_direction,
+    int n_active_orbitals);
+
 }  // namespace xmvb::vb

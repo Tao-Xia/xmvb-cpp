@@ -260,8 +260,7 @@ build_selected_structure_direction(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairCache& directional_pair_cache) {
   if (accepted.input == nullptr ||
-      accepted.accepted_point_context == nullptr ||
-      accepted.structure_factors == nullptr) {
+      accepted.accepted_point_context == nullptr) {
     throw std::invalid_argument(
         "factorized structure direction requires a complete accepted context");
   }
@@ -280,6 +279,34 @@ build_selected_structure_direction(
       same_spin.alpha_reuse_table.unique_determinants.size());
   const int n_beta = static_cast<int>(
       same_spin.beta_reuse_table.unique_determinants.size());
+  const StructureAction* structure_action = accepted
+      .selected_state_eigen_response_operator.structure_action;
+  if (structure_action == nullptr) {
+    throw std::invalid_argument(
+        "factorized structure direction requires the structure action");
+  }
+  if (structure_action->supports_integral_direction()) {
+    const StructureActionResult direct_direction =
+        structure_action->apply_integral_direction(
+            accepted.selected_state_eigen_response_operator
+                .selected_eigenvectors,
+            direction.overlap,
+            direction.one_electron,
+            direction.packed_two_electron);
+    require_finite(
+        direct_direction.hamiltonian,
+        "orthogonal direct-CI directional Hamiltonian images");
+    require_finite(
+        direct_direction.overlap,
+        "orthogonal direct-CI directional overlap images");
+    return SelectedStateDirectionalStructureImages{
+        direct_direction.hamiltonian,
+        direct_direction.overlap};
+  }
+  if (accepted.structure_factors == nullptr) {
+    throw std::invalid_argument(
+        "factorized structure direction requires accepted factors");
+  }
   const auto& factors = *accepted.structure_factors;
   const auto& selected_states = factors.selected_states;
   const auto& alpha_overlap = factors.alpha_overlap;
@@ -437,12 +464,6 @@ build_selected_structure_direction(
     delta_hamiltonian_images += partial;
   }
 
-  const StructureAction* structure_action = accepted
-      .selected_state_eigen_response_operator.structure_action;
-  if (structure_action == nullptr) {
-    throw std::invalid_argument(
-        "factorized structure direction requires the structure action");
-  }
   result.delta_hamiltonian_selected =
       structure_action->contract_spin_product_block(
           delta_hamiltonian_images);

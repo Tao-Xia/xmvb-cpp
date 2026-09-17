@@ -1436,6 +1436,136 @@ therefore has the same
 $O(U_{\sigma}n_{\mathrm{act}}^{4})$ connection-count scaling as the retained
 same-spin graph.
 
+### 13.1 Exact directional action
+
+The complete-space representation can also be differentiated without returning
+to the nonorthogonal cofactor channels.  For an active-overlap direction
+$\delta S_{\mathrm{act}}$, define
+
+$$
+A
+=
+R^{-\mathrm T}\delta S_{\mathrm{act}}R^{-1}
+=
+E^{\mathrm T}+E,
+$$
+
+where $E$ is upper triangular, with
+
+$$
+E_{ii}=\frac{1}{2}A_{ii},
+\qquad
+E_{ij}=A_{ij}\quad(i<j).
+$$
+
+The Cholesky-factor direction is then
+
+$$
+\delta R=ER.
+$$
+
+Writing $Q=R^{-1}$ and denoting the accepted orthonormal one-electron matrix by
+$\bar h=Q^{\mathrm T}hQ$, its exact direction is
+
+$$
+\delta\bar h
+=
+Q^{\mathrm T}(\delta h)Q
+-
+E^{\mathrm T}\bar h
+-
+\bar h E.
+$$
+
+Let $P(Q)$ be the induced transformation on packed symmetric orbital pairs,
+and let
+
+$$
+D
+=
+\left.
+\frac{\mathrm d}{\mathrm d\epsilon}
+P(I-\epsilon E)
+\right|_{\epsilon=0}.
+$$
+
+For the accepted orthonormal pair kernel $\bar G$, the corresponding exact
+two-electron direction is
+
+$$
+\delta\bar G
+=
+P(Q)^{\mathrm T}(\delta G)P(Q)
++
+D^{\mathrm T}\bar G
++
+\bar G D.
+$$
+
+The exterior transformations are differentiated through the same sequence of
+diagonal scalings and elementary orbital shears used by the primal action.  No
+compound matrix or compound-matrix derivative is formed.  For
+
+$$
+Y=T_{\alpha}XT_{\beta}^{\mathrm T},
+$$
+
+the determinant-coefficient direction is
+
+$$
+\delta Y
+=
+(\delta T_{\alpha})XT_{\beta}^{\mathrm T}
++
+T_{\alpha}X(\delta T_{\beta})^{\mathrm T}.
+$$
+
+If $Z=\sigma_{\mathrm{orth}}(Y)$, its direction is
+
+$$
+\delta Z
+=
+(\delta\sigma_{\mathrm{orth}})(Y)
++
+\sigma_{\mathrm{orth}}(\delta Y).
+$$
+
+Therefore the complete Hamiltonian image direction is
+
+$$
+\begin{aligned}
+\delta(HX)
+={}&
+(\delta T_{\alpha})^{\mathrm T}ZT_{\beta}
++T_{\alpha}^{\mathrm T}(\delta Z)T_{\beta}\\
+&+T_{\alpha}^{\mathrm T}Z(\delta T_{\beta}),
+\end{aligned}
+$$
+
+and the overlap-image direction follows by replacing $Z$ and $\delta Z$ with
+$Y$ and $\delta Y$.  This route removes the directional
+$U_{\sigma}\times U_{\sigma}$ cofactor-channel matrices from complete-space
+structure response.  The local active-gradient derivative is a different
+adjoint and continues to use the same-spin cofactor cache until it receives an
+equivalent orthogonal direct-CI formulation.
+
+A 32-core Slurm comparison on LOFLEA isolates this replacement.  The baseline
+already used the orthogonal direct-CI fixed-point action but retained the
+cofactor-channel directional action; the candidate differentiates the
+orthogonal action directly:
+
+| Component | Cofactor direction / s | Orthogonal direction / s | Speedup |
+|---|---:|---:|---:|
+| Structure response only | 19.9471 | 11.3440 | 1.76 |
+| Complete outer response | 21.6774 | 14.4919 | 1.50 |
+| Directional structure-image stage within the outer response | 9.6613 | 2.2684 | 4.26 |
+
+The complete benchmark peak RSS decreased from $13.14$ GiB to $11.52$ GiB
+because the accepted dense same-spin factors and channel indices are no longer
+retained for a complete-space action.  The structure-only response infinity
+norm remained exactly $0.300863442993$ in the printed precision, and the
+outer-component additivity error was $1.17\times10^{-14}$.
+
 Independent validation compares the exterior transforms with explicitly
 formed compound matrices and compares the full nonorthogonal $H/S$ action with
 direct determinant-pair evaluation.  Unit-test maximum absolute errors are of
@@ -1452,10 +1582,12 @@ The measured gain exceeds the five-GEMM-only FLOP ratio because the old count
 does not include its opposite-spin channel traversal.  The direct-CI setup is
 performed once per accepted orbital point.  Identical alpha and beta string
 spaces share both the Slater--Condon graph and exterior-transform schedule.
-The final production construction took approximately $0.35$ s for CERRAS and
-$1.17$ s for LOFLEA.  Its measured persistent representation sizes were
-$3.33$ MB and $9.26$ MB, respectively; these figures exclude the accepted-point
-pair cache that remains shared with the orbital-gradient and HVP layers.
+The final production construction took approximately $0.49$ s for CERRAS and
+$1.10$ s for LOFLEA.  After retaining the small orthogonal-integral payload
+needed by the exact directional action, the measured persistent representation
+sizes were $3.41$ MB and $9.38$ MB, respectively; these figures exclude the
+accepted-point pair cache that remains shared with the orbital-gradient and HVP
+layers.
 
 This milestone removes the dense unique-string quadratic action from complete
 fixed-spin spaces.  It does not yet remove the cofactor and pair-response work

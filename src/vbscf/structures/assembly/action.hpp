@@ -100,6 +100,22 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
 
   /**
+   * @brief Applies the exact first derivative of a complete-space direct-CI action.
+   *
+   * The vectors are held fixed while all active overlap and integral tensors
+   * are differentiated. This operation is available only when the retained
+   * representation is the orthogonal direct-CI form.
+   */
+  StructureActionResult apply_integral_direction(
+      const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+      const std::vector<double>& overlap_direction,
+      const std::vector<double>& one_electron_direction,
+      const std::vector<double>& packed_two_electron_direction) const;
+
+  /** @brief Whether exact orthogonal direct-CI directional actions are available. */
+  bool supports_integral_direction() const noexcept;
+
+  /**
    * @brief Expands structure vectors directly onto unique spin products.
    *
    * The returned shape is

@@ -1,6 +1,7 @@
 #include "vbscf/structures/assembly/action.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
 
 #include "core/openmp.hpp"
@@ -430,6 +431,8 @@ DeterminantPairScalars evaluate_spin_product_pair(
 
 struct StructureAction::OrthogonalDirectCiData {
   OrthogonalActiveIntegrals integrals;
+  std::vector<std::vector<int>> alpha_determinants;
+  std::optional<std::vector<std::vector<int>>> distinct_beta_determinants;
   ExteriorOrbitalTransform alpha_transform;
   std::unique_ptr<ExteriorOrbitalTransform> distinct_beta_transform;
   DirectCiSigmaAction sigma;
@@ -446,6 +449,12 @@ struct StructureAction::OrthogonalDirectCiData {
             active_one_electron,
             active_two_electron,
             n_active_orbitals)),
+        alpha_determinants(alpha_determinants),
+        distinct_beta_determinants(
+            beta_determinants == alpha_determinants
+                ? std::nullopt
+                : std::optional<std::vector<std::vector<int>>>(
+                      beta_determinants)),
         alpha_transform(alpha_determinants, integrals.orbital_transform),
         distinct_beta_transform(
             beta_determinants == alpha_determinants
@@ -453,10 +462,12 @@ struct StructureAction::OrthogonalDirectCiData {
                 : std::make_unique<ExteriorOrbitalTransform>(
                       beta_determinants,
                       integrals.orbital_transform)),
-        sigma(alpha_determinants, beta_determinants, integrals) {
-    // The transforms and sigma graph own the retained data. Release the
-    // construction-only orthogonal integral buffers before Davidson starts.
-    integrals = OrthogonalActiveIntegrals{};
+        sigma(alpha_determinants, beta_determinants, integrals) {}
+
+  const std::vector<std::vector<int>>& beta_determinants() const noexcept {
+    return distinct_beta_determinants
+        ? *distinct_beta_determinants
+        : alpha_determinants;
   }
 
   const ExteriorOrbitalTransform& beta_transform() const noexcept {
@@ -466,7 +477,7 @@ struct StructureAction::OrthogonalDirectCiData {
   }
 
   std::size_t dynamic_bytes() const noexcept {
-    return static_cast<std::size_t>(
+    std::size_t bytes = static_cast<std::size_t>(
                integrals.orbital_transform.size() +
                integrals.one_electron.size() +
                integrals.pair_kernel.size() +
@@ -479,6 +490,19 @@ struct StructureAction::OrthogonalDirectCiData {
              ? distinct_beta_transform->dynamic_bytes()
              : 0) +
         sigma.dynamic_bytes();
+    const auto determinant_bytes = [](const auto& determinants) {
+      std::size_t result =
+          determinants.capacity() * sizeof(std::vector<int>);
+      for (const auto& determinant : determinants) {
+        result += determinant.capacity() * sizeof(int);
+      }
+      return result;
+    };
+    bytes += determinant_bytes(alpha_determinants);
+    if (distinct_beta_determinants) {
+      bytes += determinant_bytes(*distinct_beta_determinants);
+    }
+    return bytes;
   }
 };
 
@@ -1238,6 +1262,120 @@ StructureActionResult StructureAction::apply(
   return StructureActionResult{
       contract_spin_product_block(spin_hamiltonians),
       contract_spin_product_block(spin_overlaps)};
+}
+
+StructureActionResult StructureAction::apply_integral_direction(
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+    const std::vector<double>& overlap_direction,
+    const std::vector<double>& one_electron_direction,
+    const std::vector<double>& packed_two_electron_direction) const {
+  if (!direct_ci_) {
+    throw std::logic_error(
+        "integral-direction action requires orthogonal direct CI");
+  }
+  const int n_active_orbitals =
+      static_cast<int>(direct_ci_->integrals.one_electron.rows());
+  if (one_electron_direction.size() !=
+      static_cast<std::size_t>(n_active_orbitals) * n_active_orbitals) {
+    throw std::invalid_argument(
+        "active one-electron direction has incompatible dimensions");
+  }
+  const Eigen::Map<const Eigen::MatrixXd> delta_one_electron(
+      one_electron_direction.data(),
+      n_active_orbitals,
+      n_active_orbitals);
+  const OrthogonalActiveIntegrals integral_direction =
+      orthogonalize_active_integral_direction(
+          direct_ci_->integrals,
+          overlap_direction,
+          delta_one_electron,
+          packed_two_electron_direction,
+          n_active_orbitals);
+  const ExteriorTransformDirection alpha_direction =
+      direct_ci_->alpha_transform.direction(
+          integral_direction.orbital_transform);
+  const ExteriorTransformDirection beta_direction =
+      direct_ci_->beta_transform().direction(
+          integral_direction.orbital_transform);
+  const DirectCiSigmaAction sigma_direction(
+      direct_ci_->alpha_determinants,
+      direct_ci_->beta_determinants(),
+      integral_direction);
+
+  Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
+  Eigen::MatrixXd delta_spin_vectors = Eigen::MatrixXd::Zero(
+      spin_vectors.rows(),
+      spin_vectors.cols());
+  direct_ci_->alpha_transform.apply_directional_left(
+      alpha_direction,
+      &spin_vectors,
+      &delta_spin_vectors);
+  const int block_width = static_cast<int>(vectors.cols());
+  for (int block = 0; block < block_width; ++block) {
+    Eigen::MatrixXd coefficient_block = spin_vectors.middleCols(
+        block * n_unique_beta_, n_unique_beta_);
+    Eigen::MatrixXd delta_coefficient_block =
+        delta_spin_vectors.middleCols(
+            block * n_unique_beta_, n_unique_beta_);
+    direct_ci_->beta_transform().apply_directional_right(
+        beta_direction,
+        &coefficient_block,
+        &delta_coefficient_block);
+    spin_vectors.middleCols(
+        block * n_unique_beta_, n_unique_beta_) = coefficient_block;
+    delta_spin_vectors.middleCols(
+        block * n_unique_beta_, n_unique_beta_) = delta_coefficient_block;
+  }
+
+  Eigen::MatrixXd spin_overlaps = spin_vectors;
+  Eigen::MatrixXd delta_spin_overlaps = delta_spin_vectors;
+  Eigen::MatrixXd spin_hamiltonians = direct_ci_->sigma.apply(spin_vectors);
+  Eigen::MatrixXd delta_spin_hamiltonians =
+      direct_ci_->sigma.apply(delta_spin_vectors);
+  delta_spin_hamiltonians += sigma_direction.apply(spin_vectors);
+  for (int block = 0; block < block_width; ++block) {
+    Eigen::MatrixXd hamiltonian_block = spin_hamiltonians.middleCols(
+        block * n_unique_beta_, n_unique_beta_);
+    Eigen::MatrixXd delta_hamiltonian_block =
+        delta_spin_hamiltonians.middleCols(
+            block * n_unique_beta_, n_unique_beta_);
+    Eigen::MatrixXd overlap_block = spin_overlaps.middleCols(
+        block * n_unique_beta_, n_unique_beta_);
+    Eigen::MatrixXd delta_overlap_block =
+        delta_spin_overlaps.middleCols(
+            block * n_unique_beta_, n_unique_beta_);
+    direct_ci_->beta_transform().apply_directional_adjoint_right(
+        beta_direction,
+        &hamiltonian_block,
+        &delta_hamiltonian_block);
+    direct_ci_->beta_transform().apply_directional_adjoint_right(
+        beta_direction,
+        &overlap_block,
+        &delta_overlap_block);
+    spin_hamiltonians.middleCols(
+        block * n_unique_beta_, n_unique_beta_) = hamiltonian_block;
+    delta_spin_hamiltonians.middleCols(
+        block * n_unique_beta_, n_unique_beta_) = delta_hamiltonian_block;
+    spin_overlaps.middleCols(
+        block * n_unique_beta_, n_unique_beta_) = overlap_block;
+    delta_spin_overlaps.middleCols(
+        block * n_unique_beta_, n_unique_beta_) = delta_overlap_block;
+  }
+  direct_ci_->alpha_transform.apply_directional_adjoint_left(
+      alpha_direction,
+      &spin_hamiltonians,
+      &delta_spin_hamiltonians);
+  direct_ci_->alpha_transform.apply_directional_adjoint_left(
+      alpha_direction,
+      &spin_overlaps,
+      &delta_spin_overlaps);
+  return StructureActionResult{
+      contract_spin_product_block(delta_spin_hamiltonians),
+      contract_spin_product_block(delta_spin_overlaps)};
+}
+
+bool StructureAction::supports_integral_direction() const noexcept {
+  return direct_ci_ != nullptr;
 }
 
 const StructureDiagonal& StructureAction::diagonal() const noexcept {

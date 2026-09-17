@@ -2,6 +2,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -232,12 +233,91 @@ void check_sigma_action() {
       one_electron,
       two_electron,
       n_orbitals);
+
+  Eigen::MatrixXd overlap_direction(n_orbitals, n_orbitals);
+  Eigen::MatrixXd one_electron_direction(n_orbitals, n_orbitals);
+  for (int column = 0; column < n_orbitals; ++column) {
+    for (int row = 0; row <= column; ++row) {
+      const double overlap_value =
+          0.02 * std::sin(static_cast<double>((row + 1) * (column + 3)));
+      const double one_electron_value =
+          0.03 * std::cos(static_cast<double>((row + 2) * (column + 4)));
+      overlap_direction(row, column) = overlap_value;
+      overlap_direction(column, row) = overlap_value;
+      one_electron_direction(row, column) = one_electron_value;
+      one_electron_direction(column, row) = one_electron_value;
+    }
+  }
+  std::vector<double> packed_overlap_direction(
+      overlap_direction.data(),
+      overlap_direction.data() + overlap_direction.size());
+  std::vector<double> packed_two_electron_direction(
+      two_electron.packed_active_two_electron_integrals.size());
+  for (std::size_t index = 0;
+       index < packed_two_electron_direction.size();
+       ++index) {
+    packed_two_electron_direction[index] =
+        0.01 * std::sin(0.13 * static_cast<double>(index + 1));
+  }
+  const auto orthogonal_direction =
+      xmvb::vb::orthogonalize_active_integral_direction(
+          orthogonal,
+          packed_overlap_direction,
+          one_electron_direction,
+          packed_two_electron_direction,
+          n_orbitals);
+  constexpr double direction_step = 1.0e-6;
+  std::vector<double> plus_overlap = packed_overlap;
+  std::vector<double> minus_overlap = packed_overlap;
+  auto plus_two_electron = two_electron;
+  auto minus_two_electron = two_electron;
+  for (std::size_t index = 0; index < plus_overlap.size(); ++index) {
+    plus_overlap[index] += direction_step * packed_overlap_direction[index];
+    minus_overlap[index] -= direction_step * packed_overlap_direction[index];
+  }
+  for (std::size_t index = 0;
+       index < packed_two_electron_direction.size();
+       ++index) {
+    plus_two_electron.packed_active_two_electron_integrals[index] +=
+        direction_step * packed_two_electron_direction[index];
+    minus_two_electron.packed_active_two_electron_integrals[index] -=
+        direction_step * packed_two_electron_direction[index];
+  }
+  const auto plus_orthogonal = xmvb::vb::orthogonalize_active_integrals(
+      plus_overlap,
+      one_electron + direction_step * one_electron_direction,
+      plus_two_electron,
+      n_orbitals);
+  const auto minus_orthogonal = xmvb::vb::orthogonalize_active_integrals(
+      minus_overlap,
+      one_electron - direction_step * one_electron_direction,
+      minus_two_electron,
+      n_orbitals);
+  require(
+      (((plus_orthogonal.orbital_transform -
+         minus_orthogonal.orbital_transform) /
+        (2.0 * direction_step)) -
+       orthogonal_direction.orbital_transform).cwiseAbs().maxCoeff() < 2.0e-9,
+      "orthogonal orbital-transform direction fails finite differences");
+  require(
+      (((plus_orthogonal.one_electron - minus_orthogonal.one_electron) /
+        (2.0 * direction_step)) -
+       orthogonal_direction.one_electron).cwiseAbs().maxCoeff() < 2.0e-9,
+      "orthogonal one-electron direction fails finite differences");
+  require(
+      (((plus_orthogonal.pair_kernel - minus_orthogonal.pair_kernel) /
+        (2.0 * direction_step)) -
+       orthogonal_direction.pair_kernel).cwiseAbs().maxCoeff() < 2.0e-9,
+      "orthogonal two-electron direction fails finite differences");
+
   const xmvb::vb::ExteriorOrbitalTransform alpha_transform(
       alpha, orthogonal.orbital_transform);
   const xmvb::vb::ExteriorOrbitalTransform beta_transform(
       beta, orthogonal.orbital_transform);
   const xmvb::vb::DirectCiSigmaAction sigma_action(
       alpha, beta, orthogonal);
+  const xmvb::vb::DirectCiSigmaAction sigma_direction(
+      alpha, beta, orthogonal_direction);
 
   constexpr int block_width = 2;
   Eigen::MatrixXd coefficients(
@@ -249,6 +329,245 @@ void check_sigma_action() {
           std::sin(0.19 * static_cast<double>((row + 1) * (column + 2)));
     }
   }
+
+  const auto alpha_transform_direction = alpha_transform.direction(
+      orthogonal_direction.orbital_transform);
+  Eigen::MatrixXd transformed_coefficients = coefficients;
+  Eigen::MatrixXd transformed_direction = Eigen::MatrixXd::Zero(
+      coefficients.rows(), coefficients.cols());
+  alpha_transform.apply_directional_left(
+      alpha_transform_direction,
+      &transformed_coefficients,
+      &transformed_direction);
+  Eigen::MatrixXd plus_transformed = coefficients;
+  Eigen::MatrixXd minus_transformed = coefficients;
+  xmvb::vb::ExteriorOrbitalTransform(
+      alpha, plus_orthogonal.orbital_transform).apply_left(&plus_transformed);
+  xmvb::vb::ExteriorOrbitalTransform(
+      alpha, minus_orthogonal.orbital_transform).apply_left(&minus_transformed);
+  require(
+      (((plus_transformed - minus_transformed) /
+        (2.0 * direction_step)) -
+       transformed_direction).cwiseAbs().maxCoeff() < 2.0e-9,
+      "exterior-transform direction fails finite differences");
+
+  Eigen::MatrixXd right_probe(5, static_cast<int>(alpha.size()));
+  for (int column = 0; column < right_probe.cols(); ++column) {
+    for (int row = 0; row < right_probe.rows(); ++row) {
+      right_probe(row, column) =
+          std::cos(0.09 * static_cast<double>((row + 2) * (column + 1)));
+    }
+  }
+  Eigen::MatrixXd directional_right = right_probe;
+  Eigen::MatrixXd delta_directional_right = Eigen::MatrixXd::Zero(
+      right_probe.rows(), right_probe.cols());
+  alpha_transform.apply_directional_right(
+      alpha_transform_direction,
+      &directional_right,
+      &delta_directional_right);
+  Eigen::MatrixXd plus_right = right_probe;
+  Eigen::MatrixXd minus_right = right_probe;
+  xmvb::vb::ExteriorOrbitalTransform(
+      alpha, plus_orthogonal.orbital_transform).apply_right(&plus_right);
+  xmvb::vb::ExteriorOrbitalTransform(
+      alpha, minus_orthogonal.orbital_transform).apply_right(&minus_right);
+  require(
+      (((plus_right - minus_right) / (2.0 * direction_step)) -
+       delta_directional_right).cwiseAbs().maxCoeff() < 2.0e-9,
+      "right exterior-transform direction fails finite differences");
+
+  Eigen::MatrixXd directional_adjoint_left = coefficients;
+  Eigen::MatrixXd delta_directional_adjoint_left = Eigen::MatrixXd::Zero(
+      coefficients.rows(), coefficients.cols());
+  alpha_transform.apply_directional_adjoint_left(
+      alpha_transform_direction,
+      &directional_adjoint_left,
+      &delta_directional_adjoint_left);
+  Eigen::MatrixXd plus_adjoint_left = coefficients;
+  Eigen::MatrixXd minus_adjoint_left = coefficients;
+  xmvb::vb::ExteriorOrbitalTransform(
+      alpha,
+      plus_orthogonal.orbital_transform).apply_adjoint_left(
+          &plus_adjoint_left);
+  xmvb::vb::ExteriorOrbitalTransform(
+      alpha,
+      minus_orthogonal.orbital_transform).apply_adjoint_left(
+          &minus_adjoint_left);
+  require(
+      (((plus_adjoint_left - minus_adjoint_left) /
+        (2.0 * direction_step)) -
+       delta_directional_adjoint_left).cwiseAbs().maxCoeff() < 2.0e-9,
+      "adjoint-left exterior direction fails finite differences");
+
+  Eigen::MatrixXd directional_adjoint_right = right_probe;
+  Eigen::MatrixXd delta_directional_adjoint_right = Eigen::MatrixXd::Zero(
+      right_probe.rows(), right_probe.cols());
+  alpha_transform.apply_directional_adjoint_right(
+      alpha_transform_direction,
+      &directional_adjoint_right,
+      &delta_directional_adjoint_right);
+  Eigen::MatrixXd plus_adjoint_right = right_probe;
+  Eigen::MatrixXd minus_adjoint_right = right_probe;
+  xmvb::vb::ExteriorOrbitalTransform(
+      alpha,
+      plus_orthogonal.orbital_transform).apply_adjoint_right(
+          &plus_adjoint_right);
+  xmvb::vb::ExteriorOrbitalTransform(
+      alpha,
+      minus_orthogonal.orbital_transform).apply_adjoint_right(
+          &minus_adjoint_right);
+  require(
+      (((plus_adjoint_right - minus_adjoint_right) /
+        (2.0 * direction_step)) -
+       delta_directional_adjoint_right).cwiseAbs().maxCoeff() < 2.0e-9,
+      "adjoint-right exterior direction fails finite differences");
+
+  Eigen::MatrixXd sigma_probe = coefficients;
+  const Eigen::MatrixXd plus_sigma =
+      xmvb::vb::DirectCiSigmaAction(
+          alpha, beta, plus_orthogonal).apply(sigma_probe);
+  const Eigen::MatrixXd minus_sigma =
+      xmvb::vb::DirectCiSigmaAction(
+          alpha, beta, minus_orthogonal).apply(sigma_probe);
+  require(
+      (((plus_sigma - minus_sigma) / (2.0 * direction_step)) -
+       sigma_direction.apply(sigma_probe)).cwiseAbs().maxCoeff() < 2.0e-9,
+      "direct-CI sigma direction fails finite differences");
+
+  const auto apply_orthogonal_action = [&alpha, &beta, block_width](
+      const xmvb::vb::OrthogonalActiveIntegrals& integrals,
+      const Eigen::MatrixXd& input) {
+    const xmvb::vb::ExteriorOrbitalTransform alpha_action_transform(
+        alpha, integrals.orbital_transform);
+    const xmvb::vb::ExteriorOrbitalTransform beta_action_transform(
+        beta, integrals.orbital_transform);
+    const xmvb::vb::DirectCiSigmaAction action_sigma(
+        alpha, beta, integrals);
+    Eigen::MatrixXd values = input;
+    alpha_action_transform.apply_left(&values);
+    for (int block = 0; block < block_width; ++block) {
+      Eigen::MatrixXd value_block = values.middleCols(
+          block * static_cast<int>(beta.size()),
+          static_cast<int>(beta.size()));
+      beta_action_transform.apply_right(&value_block);
+      values.middleCols(
+          block * static_cast<int>(beta.size()),
+          static_cast<int>(beta.size())) = value_block;
+    }
+    Eigen::MatrixXd hamiltonian = action_sigma.apply(values);
+    Eigen::MatrixXd overlap_image = values;
+    for (int block = 0; block < block_width; ++block) {
+      Eigen::MatrixXd hamiltonian_block = hamiltonian.middleCols(
+          block * static_cast<int>(beta.size()),
+          static_cast<int>(beta.size()));
+      Eigen::MatrixXd overlap_block = overlap_image.middleCols(
+          block * static_cast<int>(beta.size()),
+          static_cast<int>(beta.size()));
+      beta_action_transform.apply_adjoint_right(&hamiltonian_block);
+      beta_action_transform.apply_adjoint_right(&overlap_block);
+      hamiltonian.middleCols(
+          block * static_cast<int>(beta.size()),
+          static_cast<int>(beta.size())) = hamiltonian_block;
+      overlap_image.middleCols(
+          block * static_cast<int>(beta.size()),
+          static_cast<int>(beta.size())) = overlap_block;
+    }
+    alpha_action_transform.apply_adjoint_left(&hamiltonian);
+    alpha_action_transform.apply_adjoint_left(&overlap_image);
+    return std::make_pair(hamiltonian, overlap_image);
+  };
+
+  Eigen::MatrixXd action_values = coefficients;
+  Eigen::MatrixXd delta_action_values = Eigen::MatrixXd::Zero(
+      coefficients.rows(), coefficients.cols());
+  alpha_transform.apply_directional_left(
+      alpha_transform_direction,
+      &action_values,
+      &delta_action_values);
+  const auto beta_transform_direction = beta_transform.direction(
+      orthogonal_direction.orbital_transform);
+  for (int block = 0; block < block_width; ++block) {
+    Eigen::MatrixXd value_block = action_values.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size()));
+    Eigen::MatrixXd delta_value_block = delta_action_values.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size()));
+    beta_transform.apply_directional_right(
+        beta_transform_direction,
+        &value_block,
+        &delta_value_block);
+    action_values.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size())) = value_block;
+    delta_action_values.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size())) = delta_value_block;
+  }
+  Eigen::MatrixXd action_hamiltonian = sigma_action.apply(action_values);
+  Eigen::MatrixXd delta_action_hamiltonian =
+      sigma_action.apply(delta_action_values) +
+      sigma_direction.apply(action_values);
+  Eigen::MatrixXd action_overlap = action_values;
+  Eigen::MatrixXd delta_action_overlap = delta_action_values;
+  for (int block = 0; block < block_width; ++block) {
+    Eigen::MatrixXd hamiltonian_block = action_hamiltonian.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size()));
+    Eigen::MatrixXd delta_hamiltonian_block =
+        delta_action_hamiltonian.middleCols(
+            block * static_cast<int>(beta.size()),
+            static_cast<int>(beta.size()));
+    Eigen::MatrixXd overlap_block = action_overlap.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size()));
+    Eigen::MatrixXd delta_overlap_block =
+        delta_action_overlap.middleCols(
+            block * static_cast<int>(beta.size()),
+            static_cast<int>(beta.size()));
+    beta_transform.apply_directional_adjoint_right(
+        beta_transform_direction,
+        &hamiltonian_block,
+        &delta_hamiltonian_block);
+    beta_transform.apply_directional_adjoint_right(
+        beta_transform_direction,
+        &overlap_block,
+        &delta_overlap_block);
+    action_hamiltonian.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size())) = hamiltonian_block;
+    delta_action_hamiltonian.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size())) = delta_hamiltonian_block;
+    action_overlap.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size())) = overlap_block;
+    delta_action_overlap.middleCols(
+        block * static_cast<int>(beta.size()),
+        static_cast<int>(beta.size())) = delta_overlap_block;
+  }
+  alpha_transform.apply_directional_adjoint_left(
+      alpha_transform_direction,
+      &action_hamiltonian,
+      &delta_action_hamiltonian);
+  alpha_transform.apply_directional_adjoint_left(
+      alpha_transform_direction,
+      &action_overlap,
+      &delta_action_overlap);
+  const auto plus_action = apply_orthogonal_action(
+      plus_orthogonal, coefficients);
+  const auto minus_action = apply_orthogonal_action(
+      minus_orthogonal, coefficients);
+  require(
+      ((((plus_action.first - minus_action.first) /
+         (2.0 * direction_step)) -
+        delta_action_hamiltonian).cwiseAbs().maxCoeff()) < 5.0e-9,
+      "complete direct-CI Hamiltonian direction fails finite differences");
+  require(
+      ((((plus_action.second - minus_action.second) /
+         (2.0 * direction_step)) -
+        delta_action_overlap).cwiseAbs().maxCoeff()) < 5.0e-9,
+      "complete direct-CI overlap direction fails finite differences");
 
   Eigen::MatrixXd orthogonal_coefficients = coefficients;
   for (int block = 0; block < block_width; ++block) {
