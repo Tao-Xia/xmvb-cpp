@@ -112,6 +112,76 @@ int required_root_count(const std::vector<int>& selected_state_indices) {
       1;
 }
 
+bool materialized_structure_operator_uses_less_storage(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    int n_structures) {
+  const long double n_alpha = static_cast<long double>(
+      same_spin_pair_cache.alpha_reuse_table.unique_determinants.size());
+  const long double n_beta = static_cast<long double>(
+      same_spin_pair_cache.beta_reuse_table.unique_determinants.size());
+  const long double n_structure = static_cast<long double>(n_structures);
+
+  // A factorized StructureAction must retain at least H and S for both
+  // ordered same-spin spaces.  If this lower bound already exceeds the two
+  // structure matrices, materialization is both the smaller representation
+  // and the cheaper Davidson action.  Opposite-spin channel storage can only
+  // strengthen this decision; no molecule-specific threshold is involved.
+  const long double minimum_factor_values =
+      2.0L * (n_alpha * n_alpha + n_beta * n_beta);
+  const long double matrix_values =
+      2.0L * n_structure * n_structure;
+  return matrix_values <= minimum_factor_values;
+}
+
+xmvb::core::DavidsonResult solve_selected_structure_roots(
+    const xmvb::core::GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    int n_structures,
+    int n_roots,
+    StructureSolveAccuracy structure_solve_accuracy,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
+    const xmvb::core::GeneralizedEigensolver& generalized_eigensolver) {
+  structure_solve_accuracy.validate();
+  const xmvb::core::DavidsonOptions options =
+      xmvb::core::make_davidson_options(
+          n_structures,
+          n_roots,
+          structure_solve_accuracy.energy_tolerance,
+          structure_solve_accuracy.gradient_tolerance);
+  const bool can_recycle =
+      initial_eigenvectors.rows() == n_structures &&
+      initial_eigenvectors.cols() >= n_roots &&
+      initial_eigenvectors.allFinite();
+  return can_recycle
+      ? generalized_eigensolver.solve_davidson(
+            action,
+            hamiltonian_diagonal,
+            overlap_diagonal,
+            initial_eigenvectors.leftCols(n_roots),
+            options)
+      : generalized_eigensolver.solve_davidson(
+            action,
+            hamiltonian_diagonal,
+            overlap_diagonal,
+            options);
+}
+
+void retain_davidson_result(
+    xmvb::core::DavidsonResult davidson,
+    ActiveSpaceGradientForwardContext* context) {
+  context->davidson_diagnostics = DavidsonDiagnostics{
+      davidson.iterations,
+      davidson.block_actions,
+      davidson.peak_subspace_dimension,
+      *std::max_element(
+          davidson.relative_residual_norms.begin(),
+          davidson.relative_residual_norms.end())};
+  context->eigen_result = std::move(davidson.eigenpairs);
+  context->overlap_eigenvectors =
+      std::move(davidson.overlap_eigenvectors);
+}
+
 void select_structure_states(
     int n_structures,
     const std::vector<int>& selected_state_indices,
@@ -153,8 +223,13 @@ void solve_structure_problem(
   const int n_structures = input.structure_data.n_structures;
   const int n_roots = required_root_count(selected_state_indices);
   auto stage_start_time = std::chrono::steady_clock::now();
+  const bool use_materialized_operator =
+      structure_eigensolver == StructureEigensolver::Dense ||
+      materialized_structure_operator_uses_less_storage(
+          context->same_spin_pair_cache,
+          n_structures);
 
-  if (structure_eigensolver == StructureEigensolver::Dense) {
+  if (use_materialized_operator) {
     context->structure_matrices = structure_builder.build(
         input.structure_data.alpha_det,
         input.structure_data.beta_det,
@@ -179,10 +254,39 @@ void solve_structure_problem(
               static_cast<std::size_t>(structure) * n_structures + structure];
     }
     stage_start_time = std::chrono::steady_clock::now();
-    context->eigen_result = generalized_eigensolver.solve_dense(
-        context->structure_matrices.hamiltonian_matrix,
-        context->structure_matrices.overlap_matrix,
-        n_structures);
+    if (structure_eigensolver == StructureEigensolver::Dense) {
+      context->eigen_result = generalized_eigensolver.solve_dense(
+          context->structure_matrices.hamiltonian_matrix,
+          context->structure_matrices.overlap_matrix,
+          n_structures);
+    } else {
+      const Eigen::Map<const Eigen::MatrixXd> hamiltonian(
+          context->structure_matrices.hamiltonian_matrix.data(),
+          n_structures,
+          n_structures);
+      const Eigen::Map<const Eigen::MatrixXd> overlap(
+          context->structure_matrices.overlap_matrix.data(),
+          n_structures,
+          n_structures);
+      const xmvb::core::GeneralizedEigenAction matrix_action =
+          [&hamiltonian, &overlap](
+              const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+            return xmvb::core::GeneralizedEigenActionResult{
+                hamiltonian * vectors,
+                overlap * vectors};
+          };
+      retain_davidson_result(
+          solve_selected_structure_roots(
+              matrix_action,
+              hamiltonian.diagonal(),
+              overlap.diagonal(),
+              n_structures,
+              n_roots,
+              structure_solve_accuracy,
+              initial_eigenvectors,
+              generalized_eigensolver),
+          context);
+    }
   } else {
     context->structure_action.emplace(
         input.structure_data.determinant_to_structure_terms,
@@ -206,40 +310,18 @@ void solve_structure_problem(
               std::move(images.hamiltonian),
               std::move(images.overlap)};
         };
-    structure_solve_accuracy.validate();
-    xmvb::core::DavidsonOptions options =
-        xmvb::core::make_davidson_options(
+    stage_start_time = std::chrono::steady_clock::now();
+    retain_davidson_result(
+        solve_selected_structure_roots(
+            action,
+            structure_action.diagonal().hamiltonian,
+            structure_action.diagonal().overlap,
             n_structures,
             n_roots,
-            structure_solve_accuracy.energy_tolerance,
-            structure_solve_accuracy.gradient_tolerance);
-    stage_start_time = std::chrono::steady_clock::now();
-    const bool can_recycle =
-        initial_eigenvectors.rows() == n_structures &&
-        initial_eigenvectors.cols() >= n_roots &&
-        initial_eigenvectors.allFinite();
-    xmvb::core::DavidsonResult davidson = can_recycle
-        ? generalized_eigensolver.solve_davidson(
-              action,
-              structure_action.diagonal().hamiltonian,
-              structure_action.diagonal().overlap,
-              initial_eigenvectors.leftCols(n_roots),
-              options)
-        : generalized_eigensolver.solve_davidson(
-              action,
-              structure_action.diagonal().hamiltonian,
-              structure_action.diagonal().overlap,
-              options);
-    context->davidson_diagnostics = DavidsonDiagnostics{
-        davidson.iterations,
-        davidson.block_actions,
-        davidson.peak_subspace_dimension,
-        *std::max_element(
-            davidson.relative_residual_norms.begin(),
-            davidson.relative_residual_norms.end())};
-    context->eigen_result = std::move(davidson.eigenpairs);
-    context->overlap_eigenvectors =
-        std::move(davidson.overlap_eigenvectors);
+            structure_solve_accuracy,
+            initial_eigenvectors,
+            generalized_eigensolver),
+        context);
   }
   context->eigensolver_wall_time_seconds =
       std::chrono::duration<double>(
@@ -368,13 +450,6 @@ finalize_active_space_second_order_context(
   context->same_spin_pair_cache = std::move(forward_context->same_spin_pair_cache);
   if (forward_context->structure_action.has_value()) {
     context->structure_action = std::move(forward_context->structure_action);
-  } else {
-    context->structure_action.emplace(
-        input.structure_data.determinant_to_structure_terms,
-        input.structure_data.n_structures,
-        context->same_spin_pair_cache,
-        context->prepared_active_space.active_space_two_electron_result,
-        input.orbital_preparation_input.n_active_orbitals);
   }
   context->active_orbital_overlap_gradient =
       gradient_result.active_orbital_overlap_gradient;

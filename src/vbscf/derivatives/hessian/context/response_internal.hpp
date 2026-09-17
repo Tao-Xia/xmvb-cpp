@@ -6,7 +6,6 @@
 #include <Eigen/Core>
 
 #include "vbscf/core/contracts/input.hpp"
-#include "vbscf/structures/assembly/coefficient_blocks.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 
 namespace xmvb::vb {
@@ -68,8 +67,6 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
 struct AcceptedOuterResponseContext {
   const VbScfInput* input = nullptr;
   const AcceptedPointContext* accepted_point_context = nullptr;
-  const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks =
-      nullptr;
   AcceptedSelectedStateGeneralizedEigenResponseOperator
       selected_state_eigen_response_operator;
   std::shared_ptr<const AcceptedStructureResponseFactors> structure_factors;
@@ -77,7 +74,6 @@ struct AcceptedOuterResponseContext {
 
 AcceptedOuterResponseContext build_accepted_outer_response_context(
     const VbScfInput* input,
-    const AcceptedPointContext* accepted_point_context,
-    const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks);
+    const AcceptedPointContext* accepted_point_context);
 
 }  // namespace xmvb::vb

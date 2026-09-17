@@ -35,11 +35,13 @@ struct AcceptedPointContext {
   SameSpinPairCacheContext same_spin_pair_cache;
 
   /**
-   * @brief Self-contained matrix-free accepted structure problem.
+   * @brief On-demand matrix-free accepted structure problem.
    *
-   * The action certifies selected-root responses without retaining dense H/S.
+   * A forward Davidson solve may transfer its action here.  Dense and
+   * matrix-backed solves leave it empty; the exact HVP operator constructs it
+   * only if an outer structure response is actually admitted.
    */
-  std::optional<StructureAction> structure_action;
+  mutable std::optional<StructureAction> structure_action;
 
   /**
    * @brief Accepted-point active-space adjoint with respect to `SSO`.

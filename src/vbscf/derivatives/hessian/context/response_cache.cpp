@@ -129,10 +129,8 @@ build_accepted_selected_state_generalized_eigen_response_operator(
 
 AcceptedOuterResponseContext build_accepted_outer_response_context(
     const VbScfInput* input,
-    const AcceptedPointContext* accepted_point_context,
-    const std::vector<StructureCoefficientBlock>* structure_coefficient_blocks) {
-  if (input == nullptr || accepted_point_context == nullptr ||
-      structure_coefficient_blocks == nullptr) {
+    const AcceptedPointContext* accepted_point_context) {
+  if (input == nullptr || accepted_point_context == nullptr) {
     throw std::invalid_argument(
         "accepted outer-response cache inputs must not be null");
   }
@@ -140,7 +138,6 @@ AcceptedOuterResponseContext build_accepted_outer_response_context(
   AcceptedOuterResponseContext context;
   context.input = input;
   context.accepted_point_context = accepted_point_context;
-  context.structure_coefficient_blocks = structure_coefficient_blocks;
   context.selected_state_eigen_response_operator =
       build_accepted_selected_state_generalized_eigen_response_operator(
           *accepted_point_context);

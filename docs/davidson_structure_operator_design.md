@@ -1,105 +1,87 @@
-# Davidson 结构矩阵算子设计
+# Davidson Structure-Operator Design
 
-## 核心思想
+## Separation of concerns
 
-Davidson 需要矩阵自由的 $H_{\mathrm{VB}} x$ 和 $M_{\mathrm{VB}} x$。不应物化 $N\times N$ 稠密矩阵，而应复用正向构建的分块基础设施。
+The structure eigensolver and the representation of the Hamiltonian and
+overlap operators are independent choices. Davidson requires exact block
+actions, but those actions may be supplied by either:
 
-## 矩阵元素结构
+1. materialized structure-space matrices followed by dense block products; or
+2. a matrix-free support-local contraction.
 
-每个 VB 结构 $I$ 有一个 `StructureCoefficientBlock`：
+Selecting Davidson must not force the construction of a larger intermediate
+representation than the structure matrices themselves.
 
-- $\mathrm{alpha\_support}_I$：对该结构有贡献的唯一 alpha 自旋串 ID 列表
-- $\mathrm{beta\_support}_I$：唯一 beta 自旋串 ID 列表  
-- $C_I[a,b]$：局部系数矩阵（`local_coefficients`）
+## Exact representation selection
 
-结构矩阵元素为：
+Let `n_str` be the number of VB structures and let `n_u_alpha` and
+`n_u_beta` be the numbers of unique alpha and beta strings. A global
+Cartesian-factor action must retain at least the same-spin Hamiltonian and
+overlap matrices,
 
 $$
-H_{\mathrm{VB}}[I,J] = \sum_{\substack{a,a'\in\mathrm{supp}(I,J) \\ b,b'\in\mathrm{supp}(I,J)}} C_I[a,b] \cdot H_{\mathrm{spin}}(a,b;a',b') \cdot C_J[a',b']
+N_{\mathrm{factor,min}}
+=2\left(n_{u,\alpha}^{2}+n_{u,\beta}^{2}\right),
 $$
 
-其中 $H_{\mathrm{spin}}$ 存储在 `ForwardSpinPairTileProvider` 中，按唯一自旋串对进行分块。
+whereas materialized structure-space Hamiltonian and overlap matrices require
 
-## 代码组织
+$$
+N_{\mathrm{matrix}}=2n_{\mathrm{str}}^{2}.
+$$
 
-### 1. 抽象接口 (`structure_matrix_operator.hpp`)
+When `N_matrix <= N_factor,min`, the materialized representation is selected.
+This comparison is an exact storage-dominance test, not a molecule-specific
+threshold. Opposite-spin channel storage can only make the global factorized
+representation larger.
 
-```cpp
-class StructureMatrixOperator {
-public:
-  virtual ~StructureMatrixOperator() = default;
-  virtual int dimension() const = 0;
-  virtual void apply_hamiltonian(const double* x, double* y) const = 0;
-  virtual void apply_overlap(const double* x, double* y) const = 0;
-  virtual Eigen::VectorXd precondition_diag() const;  // diag(H) or diag(H - shift*S)
-};
-```
+Davidson still computes only the requested roots in this branch. The
+materialized matrices provide its block actions and do not imply a dense
+eigensolve.
 
-### 2. 稠密算子（LAPACK 路径）
+## Matrix-free large-structure branch
 
-```cpp
-class DenseStructureMatrixOperator : public StructureMatrixOperator {
-  // 包装已物化的 H 和 S。apply_* 使用 BLAS dsymv。
-  std::vector<double> H_, S_;
-  int dim_;
-};
-```
+The intended large-scale operator is support-local. Each structure owns a
+`StructureCoefficientBlock` containing its active unique-string support and
+local coefficient matrix. For a block of Davidson vectors, the operator must:
 
-**用法**：先正向构建→物化 H,S→包装为 Dense→传给 `solve()`（LAPACK dsygvd）。
+1. traverse structure-pair tiles;
+2. obtain only the unique-string-pair kernels touched by the two local
+   supports;
+3. contract the local Hamiltonian and overlap contribution with every
+   right-hand side in the block; and
+4. immediately accumulate the result in structure space.
 
-### 3. 分块算子（Davidson 路径）
+The implementation must not form a global
+`n_u_alpha * n_u_beta * block_width` Cartesian image and must not retain one
+global `n_u^2` matrix per active-pair channel. The existing dense H/S builder
+already implements the validated support-local pair kernels and is the
+reference algebra for this streamed block action.
 
-```cpp
-class TiledStructureMatrixOperator : public StructureMatrixOperator {
-  // 引用正向构建基础设施。apply_* 实现矩阵自由的 H*x、S*x。
-  const std::vector<StructureCoefficientBlock>& blocks_;
-  ForwardSpinPairTileProvider<...>& alpha_provider_;
-  ForwardSpinPairTileProvider<...>& beta_provider_;
-  const std::vector<double>& det_overlap_cache_;
-  int n_structures_, n_unique_alpha_, n_unique_beta_;
-  bool close_shell_same_spin_;
-};
-```
+## Accepted-point lifetime
 
-**用法**：获取系数块和分块提供者→构造 Tiled→传给 `solve_davidson()`。
+The structure action is derivative-only state. A core-only TNHVP step does not
+construct it. Dense and matrix-backed forward solves leave the accepted action
+empty; the exact HVP operator creates the matrix-free action only when an outer
+structure response is actually admitted. A forward matrix-free Davidson solve
+may transfer its already-built action into the accepted-point context.
 
-每个结构对的 `apply_hamiltonian` 伪代码：
-```
-对于每个结构 I（可能并行化）：
-  y[I] = 0
-  对于每个结构 J（其中 supp(I) ∩ supp(J) 非空——仅相邻结构）：
-    H_tile = alpha_provider.entries(alpha_I, alpha_J)
-          ⊗ beta_provider.entries(beta_I, beta_J)
-    y[I] += C_I · H_tile · C_J^T · x[J]
-  加上对角线贡献
-```
+## Accuracy contract
 
-### 4. 本征求解器 (`core/eigensolver.hpp`)
+Davidson convergence is governed by both the outer energy accuracy and the
+eigen-equation residual needed by the orbital gradient. The solver must use a
+Ritz-energy error certificate together with the requested residual bound. A
+linear conversion of absolute energy tolerance to relative residual by
+dividing by the eigenvalue magnitude is not a valid near-solution error model
+and can over-solve the structure problem by many orders of magnitude.
 
-现有内容保留：
-```cpp
-class GeneralizedEigensolver {
-  // 稠密 LAPACK（现有，不变）
-  GeneralizedEigenResult solve(
-      const std::vector<double>& H, const std::vector<double>& S, int dim) const;
+## Required validation
 
-  // 矩阵自由 Davidson（新增，接受任意算子）
-  GeneralizedEigenResult solve_davidson(
-      const StructureMatrixOperator& op, int n_roots) const;
-};
-```
-
-### 5. 构建位置
-
-| 文件 | 内容 |
-|------|---------|
-| `vb/matrices/structure_matrix_operator.hpp` | 抽象接口 + Dense + Tiled 声明 |
-| `vb/matrices/structure_matrix_operator.cpp` | Dense + Tiled 实现 |
-| `core/eigensolver.cpp` | `solve_davidson(operator, n_roots)` |
-
-## 关键设计决策
-
-1. **接口使用原始指针而非 Eigen**：为与 LAPACK 约定和现有 `std::vector<double>` 存储保持一致。
-2. **Tiled 算子持有引用**而非副本：它引用正向构建基础设施，生命周期由调用者管理。
-3. **预条件器**：`precondition_diag()` 返回近似于 $\mathrm{diag}(H - \lambda S)^{-1}$ 的向量，所有算子实现均相同。
-4. **两种方法均可切换**：使用 Tiled 算子时启用 Davidson，否则回退到 LAPACK。
+- Compare dense and Davidson selected energies, eigen-equation residuals,
+  orbital gradients, structure coefficients, and structure weights.
+- Test cold and recycled solves separately.
+- Verify block action against column-wise action and explicit H/S products.
+- Record operator construction time, action count, action block width,
+  cumulative action time, and peak resident memory.
+- Cover sparse HAO, full-AO OEO, open-shell, large unique-string, and large
+  structure-space cases.

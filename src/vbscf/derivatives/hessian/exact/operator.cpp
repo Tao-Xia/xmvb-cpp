@@ -162,19 +162,20 @@ ExactHvpOperator::State::outer_response_context() const {
         "outer response requires the accepted same-spin pair cache");
   }
   if (accepted_outer_response_context_ == nullptr) {
-    structure_coefficient_blocks_ =
-        build_structure_coefficient_blocks(
-            current_input_->structure_data.determinant_to_structure_terms,
-            current_input_->structure_data.n_structures,
-            accepted_point_context_->same_spin_pair_cache.alpha_reuse_table,
-            accepted_point_context_->same_spin_pair_cache.beta_reuse_table,
-            true);
+    if (!accepted_point_context_->structure_action.has_value()) {
+      accepted_point_context_->structure_action.emplace(
+          current_input_->structure_data.determinant_to_structure_terms,
+          current_input_->structure_data.n_structures,
+          accepted_point_context_->same_spin_pair_cache,
+          accepted_point_context_->prepared_active_space
+              .active_space_two_electron_result,
+          current_input_->orbital_preparation_input.n_active_orbitals);
+    }
     accepted_outer_response_context_ =
         std::make_unique<AcceptedOuterResponseContext>(
             build_accepted_outer_response_context(
                 current_input_,
-                accepted_point_context_.get(),
-                &structure_coefficient_blocks_));
+                accepted_point_context_.get()));
   }
   return *accepted_outer_response_context_;
 }
