@@ -76,6 +76,17 @@ VbScfObjective::TrialEvaluation
 VbScfObjective::evaluate_trial(
     const Eigen::VectorXd& parameter_vector,
     bool canonicalize_sparse_gauge) const {
+  TrialEvaluation evaluation = evaluate_trial_energy(
+      parameter_vector,
+      canonicalize_sparse_gauge);
+  complete_trial(&evaluation);
+  return evaluation;
+}
+
+VbScfObjective::TrialEvaluation
+VbScfObjective::evaluate_trial_energy(
+    const Eigen::VectorXd& parameter_vector,
+    bool canonicalize_sparse_gauge) const {
   const auto iteration_start_time = std::chrono::steady_clock::now();
   OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
   layout_.unpack(parameter_vector, &trial_orbitals);
@@ -95,25 +106,16 @@ VbScfObjective::evaluate_trial(
     initial_eigenvectors =
         gradient_result_.second_order_context->root_eigenvectors;
   }
-  evaluation.gradient_result =
-      gradient_evaluator_->evaluate_without_reference_energy_gradient(
+  evaluation.forward_evaluation.emplace(
+      gradient_evaluator_->evaluate_forward(
           input_,
           state_indices_,
           state_weights_,
           nuclear_repulsion_,
           structure_eigensolver_,
           structure_solve_accuracy_,
-          initial_eigenvectors);
-  if (evaluation.gradient_result.second_order_context == nullptr) {
-    throw std::runtime_error(
-        "relaxed orbital gradient did not populate the accepted-point second-order context");
-  }
-
-  evaluation.gradient = layout_.gather_from_full(
-      evaluation.gradient_result.sparse_orbital_energy_gradient);
-  evaluation.energy = evaluation.gradient_result.scf_result.total_energy;
-  evaluation.gradient_inf_norm =
-      gradient_infinity_norm(evaluation.gradient);
+          initial_eigenvectors));
+  evaluation.energy = evaluation.forward_evaluation->total_energy();
   evaluation.chart_changed = chart_changed;
   evaluation.wall_time_seconds =
       std::chrono::duration<double>(
@@ -123,9 +125,41 @@ VbScfObjective::evaluate_trial(
   return evaluation;
 }
 
+void VbScfObjective::complete_trial(TrialEvaluation* evaluation) const {
+  if (evaluation == nullptr || !evaluation->valid ||
+      evaluation->gradient_ready ||
+      !evaluation->forward_evaluation.has_value()) {
+    throw std::invalid_argument(
+        "trial completion requires a valid energy-only evaluation");
+  }
+  const auto completion_start_time = std::chrono::steady_clock::now();
+  ScopedTrialOrbitals trial_scope(
+      &input_,
+      evaluation->orbital_preparation_input);
+  evaluation->gradient_result = gradient_evaluator_->complete_gradient(
+      input_,
+      std::move(*evaluation->forward_evaluation));
+  evaluation->forward_evaluation.reset();
+  if (evaluation->gradient_result.second_order_context == nullptr) {
+    throw std::runtime_error(
+        "relaxed orbital gradient did not populate the accepted-point second-order context");
+  }
+  evaluation->gradient = layout_.gather_from_full(
+      evaluation->gradient_result.sparse_orbital_energy_gradient);
+  evaluation->energy = evaluation->gradient_result.scf_result.total_energy;
+  evaluation->gradient_inf_norm =
+      gradient_infinity_norm(evaluation->gradient);
+  evaluation->wall_time_seconds +=
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - completion_start_time)
+          .count();
+  evaluation->gradient_ready = true;
+}
+
 void VbScfObjective::commit(TrialEvaluation evaluation) {
-  if (!evaluation.valid) {
-    throw std::invalid_argument("cannot commit an invalid orbital trial evaluation");
+  if (!evaluation.valid || !evaluation.gradient_ready) {
+    throw std::invalid_argument(
+        "cannot commit a trial evaluation without an exact gradient");
   }
   input_.orbital_preparation_input =
       std::move(evaluation.orbital_preparation_input);

@@ -322,6 +322,45 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_without_reference_energ
       total_start_time);
 }
 
+ActiveSpaceForwardEvaluation OrbitalGradientEvaluator::evaluate_forward(
+    const VbScfInput& input,
+    const std::vector<int>& selected_state_indices,
+    const std::vector<double>& state_average_weights,
+    double nuclear_repulsion_energy,
+    StructureEigensolver structure_eigensolver,
+    StructureSolveAccuracy structure_solve_accuracy,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
+  if (input.orbital_preparation_input.orbital_value_table.empty()) {
+    throw std::invalid_argument("orbital_value_table must not be empty");
+  }
+  return active_space_gradient_evaluator_.evaluate_forward(
+      input,
+      selected_state_indices,
+      state_average_weights,
+      nuclear_repulsion_energy,
+      structure_eigensolver,
+      structure_solve_accuracy,
+      initial_eigenvectors);
+}
+
+OrbitalGradientResult OrbitalGradientEvaluator::complete_gradient(
+    const VbScfInput& input,
+    ActiveSpaceForwardEvaluation forward_evaluation) const {
+  const double forward_wall_time_seconds =
+      forward_evaluation.wall_time_seconds();
+  const auto completion_start_time = std::chrono::steady_clock::now();
+  auto active_space_gradient_result =
+      active_space_gradient_evaluator_.complete_gradient(
+          input,
+          std::move(forward_evaluation));
+  auto result = evaluate_from_active_space_gradient_result(
+      input,
+      std::move(active_space_gradient_result),
+      completion_start_time);
+  result.total_wall_time_seconds += forward_wall_time_seconds;
+  return result;
+}
+
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradient_result(
     const VbScfInput& input,
     ActiveSpaceGradientResult active_space_gradient_result,

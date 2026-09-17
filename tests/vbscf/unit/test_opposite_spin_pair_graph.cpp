@@ -342,6 +342,73 @@ int main() {
   constexpr int n_beta = 3;
   constexpr int n_channels = 3;
 
+  const std::vector<std::vector<int>> one_electron_determinants = {
+      {0}, {1}};
+  const std::vector<double> active_overlap = {
+      1.0, 0.2,
+      0.2, 1.0};
+  Eigen::Matrix2d active_one_electron;
+  active_one_electron << -0.7, 0.1,
+                          0.1, -0.4;
+  xmvb::vb::ActiveSpaceTwoElectronResult cache_two_electron_result;
+  cache_two_electron_result.packed_active_two_electron_integrals = {
+      0.8, 0.1, 0.6, 0.2, 0.15, 0.5};
+  xmvb::vb::DeterminantPairEvaluator pair_evaluator;
+  auto eager_cache = xmvb::vb::build_same_spin_pair_cache_context(
+      one_electron_determinants,
+      one_electron_determinants,
+      pair_evaluator,
+      active_overlap,
+      active_one_electron,
+      2,
+      cache_two_electron_result);
+  auto lazy_cache = xmvb::vb::build_same_spin_pair_cache_context(
+      one_electron_determinants,
+      one_electron_determinants,
+      pair_evaluator,
+      active_overlap,
+      active_one_electron,
+      2,
+      cache_two_electron_result,
+      xmvb::vb::SameSpinPairCacheBuildOptions{
+          xmvb::vb::PairProjectionCache::Both,
+          false});
+  require(
+      eager_cache.alpha_pair_cache.front().cofactor_differential != nullptr,
+      "eager pair cache omitted its derivative payload");
+  require(
+      lazy_cache.alpha_pair_cache.front().cofactor_differential == nullptr,
+      "forward-only pair cache constructed a derivative payload");
+  xmvb::vb::populate_same_spin_phi_cache(
+      &eager_cache,
+      active_one_electron,
+      2,
+      cache_two_electron_result);
+  xmvb::vb::populate_same_spin_phi_cache(
+      &lazy_cache,
+      active_one_electron,
+      2,
+      cache_two_electron_result);
+  for (std::size_t pair = 0;
+       pair < eager_cache.alpha_pair_cache.size();
+       ++pair) {
+    const auto& eager = eager_cache.alpha_pair_cache[pair];
+    const auto& lazy = lazy_cache.alpha_pair_cache[pair];
+    require(
+        lazy.cofactor_differential != nullptr,
+        "lazy pair cache did not complete its derivative payload");
+    require(
+        std::abs(eager.total_hamiltonian - lazy.total_hamiltonian) <= 1.0e-14 &&
+            std::abs(
+                eager.same_spin_total_phi - lazy.same_spin_total_phi) <=
+                1.0e-14 &&
+            (eager.same_spin_inverse_overlap_gradient -
+             lazy.same_spin_inverse_overlap_gradient).norm() <= 1.0e-14 &&
+            (eager.same_spin_overlap_hamiltonian_gradient -
+             lazy.same_spin_overlap_hamiltonian_gradient).norm() <= 1.0e-14,
+        "lazy derivative cache disagrees with eager construction");
+  }
+
   xmvb::vb::SameSpinPairCacheContext cache;
   fill_pair_cache(n_alpha, n_channels, 0, &cache.alpha_pair_cache);
   fill_pair_cache(n_beta, n_channels, 1, &cache.beta_pair_cache);

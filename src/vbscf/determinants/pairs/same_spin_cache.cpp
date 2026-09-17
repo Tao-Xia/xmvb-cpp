@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
@@ -339,7 +340,8 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
     int n_orbitals,
     const std::vector<double>& eri_act,
     const std::vector<double>* dense_pair_kernel,
-    bool materialize_projected_pair_values) {
+    bool materialize_projected_pair_values,
+    bool retain_derivative_payload) {
   const int n_unique_determinants = static_cast<int>(unique_spin_determinants.size());
   std::vector<SpinDeterminantPairEvaluation> pair_cache(
       n_unique_determinants *
@@ -367,7 +369,8 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
               ovlp_act,
               h1e_act,
               n_orbitals,
-              eri_act);
+              eri_act,
+              retain_derivative_payload);
       attach_opposite_spin_pair_cache(
           unique_spin_determinants[left_index],
           unique_spin_determinants[right_index],
@@ -393,7 +396,8 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const std::vector<double>* dense_pair_kernel,
-    bool materialize_projected_pair_values) {
+    bool materialize_projected_pair_values,
+    bool retain_derivative_payload) {
   const int n_unique_determinants = static_cast<int>(unique_spin_determinants.size());
   std::vector<SpinDeterminantPairEvaluation> pair_cache(
       n_unique_determinants *
@@ -416,7 +420,8 @@ std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
               ovlp_act,
               h1e_act,
               n_orbitals,
-              active_space_two_electron_result);
+              active_space_two_electron_result,
+              retain_derivative_payload);
       attach_opposite_spin_pair_cache(
           unique_spin_determinants[left_index],
           unique_spin_determinants[right_index],
@@ -462,6 +467,11 @@ void populate_same_spin_phi_cache_entries(
           left_index,
           right_index,
           n_unique_determinants)];
+      if (!pair_evaluation.cofactor_differential) {
+        pair_evaluation.cofactor_differential =
+            std::make_shared<const CofactorDifferential>(
+                pair_evaluation.overlap_result.overlap_submatrix);
+      }
       pair_evaluation.has_same_spin_phi_cache = false;
       pair_evaluation.same_spin_one_electron_phi = 0.0;
       pair_evaluation.same_spin_total_phi = 0.0;
@@ -710,7 +720,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
       n_orbitals,
       eri_act,
       dense_pair_kernel_ptr,
-      projection_policy.alpha);
+      projection_policy.alpha,
+      build_options.retain_derivative_payload);
   if (!cache_context.beta_reuses_alpha_pair_cache) {
     cache_context.beta_pair_cache = build_same_spin_pair_cache(
         cache_context.beta_reuse_table.unique_determinants,
@@ -720,7 +731,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
         n_orbitals,
         eri_act,
         dense_pair_kernel_ptr,
-        projection_policy.beta);
+        projection_policy.beta,
+        build_options.retain_derivative_payload);
   } else {
     cache_context.beta_pair_cache.clear();
   }
@@ -839,7 +851,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
         n_orbitals,
         eri_act,
         dense_pair_kernel_ptr,
-        projection_policy.alpha);
+        projection_policy.alpha,
+        build_options.retain_derivative_payload);
 
     if (!cache_context.beta_reuses_alpha_pair_cache) {
       cache_context.beta_pair_cache = build_same_spin_pair_cache(
@@ -850,7 +863,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
           n_orbitals,
           eri_act,
           dense_pair_kernel_ptr,
-          projection_policy.beta);
+          projection_policy.beta,
+          build_options.retain_derivative_payload);
     } else {
       cache_context.beta_pair_cache.clear();
     }
@@ -878,7 +892,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
         n_orbitals,
         active_space_two_electron_result,
         dense_pair_kernel_ptr,
-        projection_policy.alpha);
+        projection_policy.alpha,
+        build_options.retain_derivative_payload);
 
     if (!cache_context.beta_reuses_alpha_pair_cache) {
       cache_context.beta_pair_cache = build_same_spin_pair_cache(
@@ -889,7 +904,8 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
           n_orbitals,
           active_space_two_electron_result,
           dense_pair_kernel_ptr,
-          projection_policy.beta);
+          projection_policy.beta,
+          build_options.retain_derivative_payload);
     } else {
       cache_context.beta_pair_cache.clear();
     }

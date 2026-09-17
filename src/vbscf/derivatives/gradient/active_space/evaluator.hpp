@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include <Eigen/Core>
@@ -19,6 +20,37 @@
 namespace xmvb::vb {
 
 struct AcceptedPointContext;
+
+/**
+ * @brief Move-only forward evaluation awaiting the active-space adjoint.
+ *
+ * The stored context contains the orbital-dependent integrals, structure
+ * operator or matrices, and selected eigensystem. A rejected optimization
+ * trial can discard it without evaluating derivatives; an accepted trial can
+ * consume it to finish the exact gradient without repeating forward work.
+ */
+class ActiveSpaceForwardEvaluation {
+public:
+  ActiveSpaceForwardEvaluation();
+  ~ActiveSpaceForwardEvaluation();
+  ActiveSpaceForwardEvaluation(ActiveSpaceForwardEvaluation&&) noexcept;
+  ActiveSpaceForwardEvaluation& operator=(
+      ActiveSpaceForwardEvaluation&&) noexcept;
+
+  ActiveSpaceForwardEvaluation(const ActiveSpaceForwardEvaluation&) = delete;
+  ActiveSpaceForwardEvaluation& operator=(
+      const ActiveSpaceForwardEvaluation&) = delete;
+
+  double total_energy() const noexcept;
+  double wall_time_seconds() const noexcept;
+  bool valid() const noexcept;
+
+private:
+  struct State;
+  std::unique_ptr<State> state_;
+
+  friend class ActiveSpaceGradientEvaluator;
+};
 
 /**
  * @brief Analytic gradient evaluator for the active-space integral layer.
@@ -80,6 +112,21 @@ public:
       StructureEigensolver structure_eigensolver,
       StructureSolveAccuracy structure_solve_accuracy,
       const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+
+  /** @brief Evaluates energy and retains the forward context for lazy differentiation. */
+  ActiveSpaceForwardEvaluation evaluate_forward(
+      const VbScfInput& input,
+      const std::vector<int>& selected_state_indices,
+      const std::vector<double>& state_average_weights,
+      double nuclear_repulsion_energy,
+      StructureEigensolver structure_eigensolver,
+      StructureSolveAccuracy structure_solve_accuracy,
+      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+
+  /** @brief Completes the exact gradient from a retained forward evaluation. */
+  ActiveSpaceGradientResult complete_gradient(
+      const VbScfInput& input,
+      ActiveSpaceForwardEvaluation forward_evaluation) const;
 
   /**
    * @brief Evaluates a state-averaged gradient reusing a prebuilt active-space context.

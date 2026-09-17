@@ -113,6 +113,21 @@ public:
       StructureSolveAccuracy structure_solve_accuracy,
       const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
 
+  /** @brief Evaluates a trial energy while retaining all reusable forward work. */
+  ActiveSpaceForwardEvaluation evaluate_forward(
+      const VbScfInput& input,
+      const std::vector<int>& selected_state_indices,
+      const std::vector<double>& state_average_weights,
+      double nuclear_repulsion_energy,
+      StructureEigensolver structure_eigensolver,
+      StructureSolveAccuracy structure_solve_accuracy,
+      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
+
+  /** @brief Completes the orbital gradient without repeating a trial forward pass. */
+  OrbitalGradientResult complete_gradient(
+      const VbScfInput& input,
+      ActiveSpaceForwardEvaluation forward_evaluation) const;
+
   /**
    * @brief Evaluates the orbital gradient pullback from a precomputed active-space result.
    */

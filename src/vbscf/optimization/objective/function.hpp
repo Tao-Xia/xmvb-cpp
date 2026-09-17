@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -28,7 +29,10 @@ struct VbScfObjectiveTrialEvaluation {
   double gradient_inf_norm = 0.0;
   double wall_time_seconds = 0.0;
   bool chart_changed = false;
+  bool gradient_ready = false;
   bool valid = false;
+
+  std::optional<ActiveSpaceForwardEvaluation> forward_evaluation;
 };
 
 /**
@@ -103,6 +107,14 @@ class VbScfObjective {
   TrialEvaluation evaluate_trial(
       const Eigen::VectorXd& parameter_vector,
       bool canonicalize_sparse_gauge = false) const;
+
+  /** @brief Evaluates only the trial energy and retains reusable forward work. */
+  TrialEvaluation evaluate_trial_energy(
+      const Eigen::VectorXd& parameter_vector,
+      bool canonicalize_sparse_gauge = false) const;
+
+  /** @brief Completes the exact gradient for an energy-screened trial. */
+  void complete_trial(TrialEvaluation* evaluation) const;
 
   /** @brief Makes a previously evaluated trial the accepted point. */
   void commit(TrialEvaluation evaluation);

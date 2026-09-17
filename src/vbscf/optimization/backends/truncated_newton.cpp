@@ -182,10 +182,10 @@ BackendRunResult run_truncated_newton_backend(
           }
   
           VbScfObjective::TrialEvaluation candidate_trial_evaluation =
-              objective->evaluate_trial(
+              objective->evaluate_trial_energy(
                   candidate_trial_parameters,
                   true);
-          const double candidate_trial_energy =
+          double candidate_trial_energy =
               candidate_trial_evaluation.energy;
           const double actual_decrease =
               energy - candidate_trial_energy;
@@ -202,6 +202,9 @@ BackendRunResult run_truncated_newton_backend(
                       effective_predicted_decrease})) {
             return false;
           }
+
+          objective->complete_trial(&candidate_trial_evaluation);
+          candidate_trial_energy = candidate_trial_evaluation.energy;
   
           *accepted_trial_parameters = parameter_view.pack(
               candidate_trial_evaluation.orbital_preparation_input);

@@ -283,14 +283,10 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       prepared_active_space.orbital_result.active_orbital_overlap_matrix,
       prepared_active_space.active_space_one_electron_result.h1e_act,
       input.orbital_preparation_input.n_active_orbitals,
-      prepared_active_space.active_space_two_electron_result);
-  if (context.same_spin_pair_cache.enabled()) {
-    populate_same_spin_phi_cache(
-        &context.same_spin_pair_cache,
-        prepared_active_space.active_space_one_electron_result.h1e_act,
-        input.orbital_preparation_input.n_active_orbitals,
-        prepared_active_space.active_space_two_electron_result);
-  }
+      prepared_active_space.active_space_two_electron_result,
+      SameSpinPairCacheBuildOptions{
+          PairProjectionCache::Both,
+          false});
   solve_structure_problem(
       input,
       selected_state_indices,
@@ -597,6 +593,35 @@ void accumulate_active_space_gradient(
 
 }  // namespace
 
+struct ActiveSpaceForwardEvaluation::State {
+  ActiveSpaceGradientForwardContext forward_context;
+  std::vector<int> selected_state_indices;
+  std::vector<double> normalized_weights;
+  double nuclear_repulsion_energy = 0.0;
+  double total_energy = 0.0;
+  double wall_time_seconds = 0.0;
+  StructureSolveAccuracy structure_solve_accuracy;
+};
+
+ActiveSpaceForwardEvaluation::ActiveSpaceForwardEvaluation() = default;
+ActiveSpaceForwardEvaluation::~ActiveSpaceForwardEvaluation() = default;
+ActiveSpaceForwardEvaluation::ActiveSpaceForwardEvaluation(
+    ActiveSpaceForwardEvaluation&&) noexcept = default;
+ActiveSpaceForwardEvaluation& ActiveSpaceForwardEvaluation::operator=(
+    ActiveSpaceForwardEvaluation&&) noexcept = default;
+
+double ActiveSpaceForwardEvaluation::total_energy() const noexcept {
+  return state_ == nullptr ? 0.0 : state_->total_energy;
+}
+
+double ActiveSpaceForwardEvaluation::wall_time_seconds() const noexcept {
+  return state_ == nullptr ? 0.0 : state_->wall_time_seconds;
+}
+
+bool ActiveSpaceForwardEvaluation::valid() const noexcept {
+  return state_ != nullptr;
+}
+
 ActiveSpaceGradientEvaluator::ActiveSpaceGradientEvaluator()
     : orbital_preparer_(),
       ao_effective_one_electron_builder_(),
@@ -649,6 +674,26 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
     StructureEigensolver structure_eigensolver,
     StructureSolveAccuracy structure_solve_accuracy,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
+  return complete_gradient(
+      input,
+      evaluate_forward(
+          input,
+          selected_state_indices,
+          state_average_weights,
+          nuclear_repulsion_energy,
+          structure_eigensolver,
+          structure_solve_accuracy,
+          initial_eigenvectors));
+}
+
+ActiveSpaceForwardEvaluation ActiveSpaceGradientEvaluator::evaluate_forward(
+    const VbScfInput& input,
+    const std::vector<int>& selected_state_indices,
+    const std::vector<double>& state_average_weights,
+    double nuclear_repulsion_energy,
+    StructureEigensolver structure_eigensolver,
+    StructureSolveAccuracy structure_solve_accuracy,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
   const auto total_start_time = std::chrono::steady_clock::now();
   if (input.structure_data.n_structures <= 0) {
     throw std::invalid_argument("input.structure_data.n_structures must be positive");
@@ -657,9 +702,15 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       selected_state_indices,
       state_average_weights,
       input.structure_data.n_structures);
-  const std::vector<double> normalized_weights =
+  ActiveSpaceForwardEvaluation evaluation;
+  evaluation.state_ = std::make_unique<ActiveSpaceForwardEvaluation::State>();
+  auto& state = *evaluation.state_;
+  state.selected_state_indices = selected_state_indices;
+  state.normalized_weights =
       normalize_state_average_weights_local(state_average_weights);
-  auto forward_context = build_active_space_gradient_forward_context(
+  state.nuclear_repulsion_energy = nuclear_repulsion_energy;
+  state.structure_solve_accuracy = structure_solve_accuracy;
+  state.forward_context = build_active_space_gradient_forward_context(
       input,
       selected_state_indices,
       structure_eigensolver,
@@ -671,29 +722,61 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(
       active_space_two_electron_builder_,
       structure_builder_,
       generalized_eigensolver_);
+  const auto& prepared =
+      state.forward_context.timed_active_space_context.prepared_active_space;
+  state.total_energy =
+      prepared.one_electron_reference_energy +
+      selected_state_average_energy(
+          state.forward_context.eigen_result.eigenvalues,
+          state.selected_state_indices,
+          state.normalized_weights) +
+      nuclear_repulsion_energy;
+  state.wall_time_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - total_start_time).count();
+  return evaluation;
+}
+
+ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::complete_gradient(
+    const VbScfInput& input,
+    ActiveSpaceForwardEvaluation forward_evaluation) const {
+  if (!forward_evaluation.valid()) {
+    throw std::invalid_argument(
+        "cannot complete an invalid active-space forward evaluation");
+  }
+  const auto completion_start_time = std::chrono::steady_clock::now();
+  auto state = std::move(forward_evaluation.state_);
+  auto& prepared =
+      state->forward_context.timed_active_space_context.prepared_active_space;
+  populate_same_spin_phi_cache(
+      &state->forward_context.same_spin_pair_cache,
+      prepared.active_space_one_electron_result.h1e_act,
+      input.orbital_preparation_input.n_active_orbitals,
+      prepared.active_space_two_electron_result);
   ActiveSpaceGradientResult result;
   initialize_active_space_gradient_result(
       input,
-      selected_state_indices,
-      normalized_weights,
-      nuclear_repulsion_energy,
-      forward_context,
+      state->selected_state_indices,
+      state->normalized_weights,
+      state->nuclear_repulsion_energy,
+      state->forward_context,
       &result);
   accumulate_active_space_gradient(
       input,
-      selected_state_indices,
-      normalized_weights,
-      forward_context,
+      state->selected_state_indices,
+      state->normalized_weights,
+      state->forward_context,
       &result);
   result.second_order_context = finalize_active_space_second_order_context(
       input,
-      selected_state_indices,
-      normalized_weights,
-      structure_solve_accuracy,
+      state->selected_state_indices,
+      state->normalized_weights,
+      state->structure_solve_accuracy,
       result,
-      &forward_context);
+      &state->forward_context);
   result.total_wall_time_seconds =
-      std::chrono::duration<double>(std::chrono::steady_clock::now() - total_start_time).count();
+      state->wall_time_seconds +
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - completion_start_time).count();
 
   return result;
 }

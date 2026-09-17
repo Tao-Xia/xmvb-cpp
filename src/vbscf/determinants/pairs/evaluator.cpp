@@ -21,12 +21,15 @@ PreparedSpinDeterminantPair prepare_spin_determinant_pair(
     const std::vector<int>& occ_R,
     const std::vector<double>& ovlp_act,
     int n_orbitals,
-    const DeterminantOverlapResolver& determinant_overlap_resolver) {
+    const DeterminantOverlapResolver& determinant_overlap_resolver,
+    bool retain_derivative_payload) {
   PreparedSpinDeterminantPair result;
   if (occ_L.empty()) {
     result.evaluation.overlap_result.overlap_determinant = 1.0;
-    result.evaluation.cofactor_differential =
-        std::make_shared<const CofactorDifferential>(Eigen::MatrixXd(0, 0));
+    if (retain_derivative_payload) {
+      result.evaluation.cofactor_differential =
+          std::make_shared<const CofactorDifferential>(Eigen::MatrixXd(0, 0));
+    }
     return result;
   }
 
@@ -38,8 +41,10 @@ PreparedSpinDeterminantPair prepare_spin_determinant_pair(
 
   result.evaluation.overlap_result =
       determinant_overlap_resolver.resolve_matrix(result.overlap_submatrix);
-  result.evaluation.cofactor_differential =
-      std::make_shared<const CofactorDifferential>(result.overlap_submatrix);
+  if (retain_derivative_payload) {
+    result.evaluation.cofactor_differential =
+        std::make_shared<const CofactorDifferential>(result.overlap_submatrix);
+  }
   cache_first_order_cofactor(&result.evaluation.overlap_result);
 
   return result;
@@ -314,7 +319,8 @@ SpinDeterminantPairEvaluation DeterminantPairEvaluator::evaluate_same_spin_pair(
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
-    const std::vector<double>& eri_act) const {
+    const std::vector<double>& eri_act,
+    bool retain_derivative_payload) const {
   // This is the cacheable same-spin kernel: it resolves the occupied-overlap
   // submatrix once, then evaluates the same-spin Hamiltonian for that spin
   // block without reference to the opposite spin. The structure builder reuses
@@ -325,7 +331,8 @@ SpinDeterminantPairEvaluation DeterminantPairEvaluator::evaluate_same_spin_pair(
       occ_R,
       ovlp_act,
       n_orbitals,
-      determinant_overlap_resolver_);
+      determinant_overlap_resolver_,
+      retain_derivative_payload);
   if (!occ_L.empty()) {
     evaluate_spin_determinant_hamiltonian(
         occ_L,
@@ -345,13 +352,15 @@ SpinDeterminantPairEvaluation DeterminantPairEvaluator::evaluate_same_spin_pair(
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result) const {
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    bool retain_derivative_payload) const {
   auto prepared_result = prepare_spin_determinant_pair(
       occ_L,
       occ_R,
       ovlp_act,
       n_orbitals,
-      determinant_overlap_resolver_);
+      determinant_overlap_resolver_,
+      retain_derivative_payload);
   if (!occ_L.empty()) {
     evaluate_spin_determinant_hamiltonian(
         occ_L,
@@ -465,13 +474,15 @@ DeterminantPairEvaluation DeterminantPairEvaluator::evaluate(
       alpha_occ_R,
       ovlp_act,
       n_orbitals,
-      determinant_overlap_resolver_);
+      determinant_overlap_resolver_,
+      true);
   auto beta_prepared = prepare_spin_determinant_pair(
       beta_occ_L,
       beta_occ_R,
       ovlp_act,
       n_orbitals,
-      determinant_overlap_resolver_);
+      determinant_overlap_resolver_,
+      true);
 
   const int alpha_nullity = alpha_prepared.evaluation.overlap_result.nullity;
   const int beta_nullity = beta_prepared.evaluation.overlap_result.nullity;
@@ -521,13 +532,15 @@ DeterminantPairEvaluation DeterminantPairEvaluator::evaluate(
       alpha_occ_R,
       ovlp_act,
       n_orbitals,
-      determinant_overlap_resolver_);
+      determinant_overlap_resolver_,
+      true);
   auto beta_prepared = prepare_spin_determinant_pair(
       beta_occ_L,
       beta_occ_R,
       ovlp_act,
       n_orbitals,
-      determinant_overlap_resolver_);
+      determinant_overlap_resolver_,
+      true);
 
   const int alpha_nullity = alpha_prepared.evaluation.overlap_result.nullity;
   const int beta_nullity = beta_prepared.evaluation.overlap_result.nullity;

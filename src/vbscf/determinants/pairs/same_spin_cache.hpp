@@ -32,6 +32,8 @@ enum class PairProjectionCache {
  */
 struct SameSpinPairCacheBuildOptions {
   PairProjectionCache pair_projection_cache = PairProjectionCache::Both;
+  /** Build cofactor derivatives immediately instead of deferring until acceptance. */
+  bool retain_derivative_payload = true;
 };
 
 /**

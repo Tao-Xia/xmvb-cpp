@@ -75,7 +75,8 @@ public:
       const std::vector<double>& ovlp_act,
       const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
-      const std::vector<double>& eri_act) const;
+      const std::vector<double>& eri_act,
+      bool retain_derivative_payload = true) const;
 
   /**
    * @brief Evaluates one same-spin determinant pair from packed or RI active ERIs.
@@ -86,7 +87,8 @@ public:
       const std::vector<double>& ovlp_act,
       const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
-      const ActiveSpaceTwoElectronResult& active_space_two_electron_result) const;
+      const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+      bool retain_derivative_payload = true) const;
 
   /**
    * @brief Combines cached alpha/beta same-spin kernels into one full pair.
