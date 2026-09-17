@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "core/openmp.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
@@ -224,6 +225,8 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
       Eigen::MatrixXd::Zero(n_unique_determinants, n_unique_determinants);
   scalars.ordered_pair_data.resize(expected_size);
 
+  const int n_threads = xmvb::effective_openmp_thread_count();
+#pragma omp parallel for schedule(dynamic, 1) if(n_threads > 1) num_threads(n_threads)
   for (int left_id = 0; left_id < n_unique_determinants; ++left_id) {
     for (int right_id = left_id; right_id < n_unique_determinants; ++right_id) {
       const std::size_t forward_index = ordered_spin_pair_storage_index(

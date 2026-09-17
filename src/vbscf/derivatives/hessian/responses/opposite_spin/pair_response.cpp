@@ -3,6 +3,7 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -113,6 +114,8 @@ build_directional_opposite_spin_pair_data(
   std::vector<DirectionalOppositeSpinPairData> result(expected_size);
   const ActiveSpaceTwoElectronView two_electron_view =
       make_active_space_two_electron_view(active_space_two_electron_result);
+  const int n_threads = xmvb::effective_openmp_thread_count();
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int left = 0; left < n_unique_determinants; ++left) {
     for (int right = 0; right < n_unique_determinants; ++right) {
       const std::size_t pair_index = ordered_spin_pair_storage_index(

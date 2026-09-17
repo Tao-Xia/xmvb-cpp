@@ -7,6 +7,7 @@
 
 #include <Eigen/Core>
 
+#include "core/openmp.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -202,27 +203,39 @@ void accumulate_overlap_gradient_by_pair_graph(
   // forms the sparse raw partner projection y, then evaluates only the entries
   // of G y required by the inverse-overlap pullback.  The former P-channel
   // sweep repeated the coefficient contraction once for every active pair.
-  const int n_packed_active_pairs =
-      packed_active_pair_count(n_active_orbitals);
-  std::vector<double> partner_image(n_packed_active_pairs, 0.0);
-  std::vector<unsigned char> touched_flags(n_packed_active_pairs, 0u);
-  std::vector<int> touched_channels;
-  std::vector<double> touched_values;
-  touched_channels.reserve(n_packed_active_pairs);
-  touched_values.reserve(n_packed_active_pairs);
-  std::vector<unsigned char> target_flags(n_packed_active_pairs, 0u);
-  std::vector<int> target_channels;
-  target_channels.reserve(n_packed_active_pairs);
-  std::vector<double> projected_image(n_packed_active_pairs, 0.0);
-  Eigen::MatrixXd pair_dense_image;
-  Eigen::MatrixXd inverse_overlap_gradient;
-
-  for (int primary_right = 0;
-       primary_right < n_unique_primary;
-       ++primary_right) {
-    for (int primary_left = 0;
-         primary_left < n_unique_primary;
-         ++primary_left) {
+  const int n_packed_active_pairs = packed_active_pair_count(n_active_orbitals);
+  const int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      n_unique_primary);
+  std::vector<std::vector<double>> partial_gradients(
+      n_threads,
+      std::vector<double>(active_orbital_overlap_gradient->size(), 0.0));
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+#ifdef _OPENMP
+    const int thread = omp_get_thread_num();
+#else
+    const int thread = 0;
+#endif
+    std::vector<double> partner_image(n_packed_active_pairs, 0.0);
+    std::vector<unsigned char> touched_flags(n_packed_active_pairs, 0u);
+    std::vector<int> touched_channels;
+    std::vector<double> touched_values;
+    touched_channels.reserve(n_packed_active_pairs);
+    touched_values.reserve(n_packed_active_pairs);
+    std::vector<unsigned char> target_flags(n_packed_active_pairs, 0u);
+    std::vector<int> target_channels;
+    target_channels.reserve(n_packed_active_pairs);
+    std::vector<double> projected_image(n_packed_active_pairs, 0.0);
+    Eigen::MatrixXd pair_dense_image;
+    Eigen::MatrixXd inverse_overlap_gradient;
+#pragma omp for schedule(static)
+    for (int primary_right = 0;
+         primary_right < n_unique_primary;
+         ++primary_right) {
+      for (int primary_left = 0;
+           primary_left < n_unique_primary;
+           ++primary_left) {
       const auto& pair_evaluation =
           primary_pair_cache[ordered_spin_pair_storage_index(
               primary_left,
@@ -301,7 +314,7 @@ void accumulate_overlap_gradient_by_pair_graph(
             pair_evaluation.overlap_result,
             pair_dense_image,
             n_active_orbitals,
-            active_orbital_overlap_gradient);
+            &partial_gradients[thread]);
       } else {
         double determinant_overlap_weight = 0.0;
         for (std::size_t entry = 0;
@@ -329,7 +342,7 @@ void accumulate_overlap_gradient_by_pair_graph(
             determinant_overlap_weight,
             inverse_overlap_gradient,
             n_active_orbitals,
-            active_orbital_overlap_gradient);
+            &partial_gradients[thread]);
       }
 
       for (const int channel : target_channels) {
@@ -342,6 +355,14 @@ void accumulate_overlap_gradient_by_pair_graph(
         touched_flags[channel] = 0u;
       }
       touched_channels.clear();
+      }
+    }
+  }
+  for (const auto& partial : partial_gradients) {
+    for (std::size_t entry = 0;
+         entry < active_orbital_overlap_gradient->size();
+         ++entry) {
+      (*active_orbital_overlap_gradient)[entry] += partial[entry];
     }
   }
 }
@@ -357,14 +378,31 @@ void accumulate_local_overlap_gradient_by_pair_graph(
     const SelectedStatePairGraph& pair_graph,
     int n_active_orbitals,
     std::vector<double>* active_orbital_overlap_gradient) {
-  std::vector<int> target_channels;
-  std::vector<double> accepted_values;
-  std::vector<double> directional_values;
-  Eigen::MatrixXd cofactor_weight;
-  Eigen::MatrixXd delta_cofactor_weight;
-
-  for (int primary_right = 0; primary_right < n_unique_primary; ++primary_right) {
-    for (int primary_left = 0; primary_left < n_unique_primary; ++primary_left) {
+  const int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      n_unique_primary);
+  std::vector<std::vector<double>> partial_gradients(
+      n_threads,
+      std::vector<double>(active_orbital_overlap_gradient->size(), 0.0));
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+#ifdef _OPENMP
+    const int thread = omp_get_thread_num();
+#else
+    const int thread = 0;
+#endif
+    std::vector<int> target_channels;
+    std::vector<double> accepted_values;
+    std::vector<double> directional_values;
+    Eigen::MatrixXd cofactor_weight;
+    Eigen::MatrixXd delta_cofactor_weight;
+#pragma omp for schedule(static)
+    for (int primary_right = 0;
+         primary_right < n_unique_primary;
+         ++primary_right) {
+      for (int primary_left = 0;
+           primary_left < n_unique_primary;
+           ++primary_left) {
       const auto& occ_left = unique_primary_determinants[primary_left];
       const auto& occ_right = unique_primary_determinants[primary_right];
       const int n_electrons = static_cast<int>(occ_left.size());
@@ -417,7 +455,15 @@ void accumulate_local_overlap_gradient_by_pair_graph(
           cofactor_weight,
           delta_cofactor_weight,
           n_active_orbitals,
-          active_orbital_overlap_gradient);
+          &partial_gradients[thread]);
+      }
+    }
+  }
+  for (const auto& partial : partial_gradients) {
+    for (std::size_t entry = 0;
+         entry < active_orbital_overlap_gradient->size();
+         ++entry) {
+      (*active_orbital_overlap_gradient)[entry] += partial[entry];
     }
   }
 }

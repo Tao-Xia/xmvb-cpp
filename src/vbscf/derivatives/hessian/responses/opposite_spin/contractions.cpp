@@ -1,10 +1,12 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
 #include <Eigen/Core>
 
+#include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
@@ -39,19 +41,36 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
     const SelectedStatePairGraph& pair_graph,
     int n_packed_active_pairs,
     Eigen::MatrixXd* ordered_gradient) {
-  std::vector<double> beta_image(n_packed_active_pairs, 0.0);
-  std::vector<int> touched_beta_channels;
-  touched_beta_channels.reserve(n_packed_active_pairs);
-  std::vector<unsigned char> beta_channel_touched(
-      n_packed_active_pairs,
-      0u);
-
-  for (int alpha_right = 0;
-       alpha_right < selected_states.n_unique_alpha;
-       ++alpha_right) {
-    for (int alpha_left = 0;
-         alpha_left < selected_states.n_unique_alpha;
-         ++alpha_left) {
+  const int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      selected_states.n_unique_alpha);
+  std::vector<Eigen::MatrixXd> partial_gradients;
+  partial_gradients.reserve(n_threads);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    partial_gradients.emplace_back(Eigen::MatrixXd::Zero(
+        n_packed_active_pairs,
+        n_packed_active_pairs));
+  }
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+#ifdef _OPENMP
+    const int thread = omp_get_thread_num();
+#else
+    const int thread = 0;
+#endif
+    std::vector<double> beta_image(n_packed_active_pairs, 0.0);
+    std::vector<int> touched_beta_channels;
+    touched_beta_channels.reserve(n_packed_active_pairs);
+    std::vector<unsigned char> beta_channel_touched(
+        n_packed_active_pairs,
+        0u);
+#pragma omp for schedule(static)
+    for (int alpha_right = 0;
+         alpha_right < selected_states.n_unique_alpha;
+         ++alpha_right) {
+      for (int alpha_left = 0;
+           alpha_left < selected_states.n_unique_alpha;
+           ++alpha_left) {
       const auto& alpha_projection = packed_projection(
           primary_pairs[ordered_spin_pair_storage_index(
               alpha_left,
@@ -78,7 +97,7 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
         const double alpha_value =
             alpha_projection.packed_pair_values[alpha_entry];
         for (const int beta_channel : touched_beta_channels) {
-          (*ordered_gradient)(alpha_channel, beta_channel) +=
+          partial_gradients[thread](alpha_channel, beta_channel) +=
               alpha_value * beta_image[beta_channel];
         }
       }
@@ -87,7 +106,11 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
         beta_channel_touched[beta_channel] = 0u;
       }
       touched_beta_channels.clear();
+      }
     }
+  }
+  for (const Eigen::MatrixXd& partial : partial_gradients) {
+    *ordered_gradient += partial;
   }
 }
 

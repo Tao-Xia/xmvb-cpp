@@ -1,14 +1,8 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 
-#include <algorithm>
-#include <array>
 #include <chrono>
-#include <exception>
-#include <functional>
 #include <stdexcept>
-#include <utility>
 
-#include "core/openmp.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/packed_contractions_internal.hpp"
@@ -19,14 +13,6 @@
 
 namespace xmvb::vb {
 namespace {
-
-bool should_parallelize_opposite_spin_channels(
-    int n_unique_alpha,
-    int n_unique_beta) {
-  constexpr std::size_t kMinimumPairCount = 64u * 64u;
-  return static_cast<std::size_t>(n_unique_alpha) * n_unique_beta >
-      kMinimumPairCount;
-}
 
 int require_packed_pair_count(
     const SameSpinPairCacheContext& same_spin_pair_cache) {
@@ -86,30 +72,6 @@ OppositeSpinBackwardContribution make_zero_contribution(
   return result;
 }
 
-template <typename... Tasks>
-void run_independent_channels(bool parallel, Tasks&&... tasks) {
-  constexpr int n_channels = sizeof...(Tasks);
-  std::array<std::exception_ptr, n_channels> failures{};
-  std::array<std::function<void()>, n_channels> channels{
-      std::forward<Tasks>(tasks)...};
-  const int n_threads = parallel
-      ? std::min(n_channels, xmvb::effective_openmp_thread_count())
-      : 1;
-#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
-  for (int channel = 0; channel < n_channels; ++channel) {
-    try {
-      channels[channel]();
-    } catch (...) {
-      failures[channel] = std::current_exception();
-    }
-  }
-  for (const std::exception_ptr& failure : failures) {
-    if (failure != nullptr) {
-      std::rethrow_exception(failure);
-    }
-  }
-}
-
 void combine_overlap_channels(
     const std::vector<double>& alpha,
     const std::vector<double>& beta,
@@ -138,33 +100,23 @@ build_opposite_spin_backward_contribution(
       result.active_orbital_overlap_gradient.size(), 0.0);
   std::vector<double> beta_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
-  run_independent_channels(
-      should_parallelize_opposite_spin_channels(
-          selected_states.n_unique_alpha,
-          selected_states.n_unique_beta),
-      [&] {
-        detail::accumulate_opposite_spin_packed_gradient_by_pair_graph(
-            same_spin_pair_cache,
-            selected_states,
-            n_packed_pairs,
-            &result.packed_active_two_electron_gradient);
-      },
-      [&] {
-        detail::accumulate_alpha_overlap_gradient_by_pair_graph(
-            same_spin_pair_cache,
-            selected_states,
-            n_active_orbitals,
-            active_space_two_electron_result,
-            &alpha_overlap);
-      },
-      [&] {
-        detail::accumulate_beta_overlap_gradient_by_pair_graph(
-            same_spin_pair_cache,
-            selected_states,
-            n_active_orbitals,
-            active_space_two_electron_result,
-            &beta_overlap);
-      });
+  detail::accumulate_opposite_spin_packed_gradient_by_pair_graph(
+      same_spin_pair_cache,
+      selected_states,
+      n_packed_pairs,
+      &result.packed_active_two_electron_gradient);
+  detail::accumulate_alpha_overlap_gradient_by_pair_graph(
+      same_spin_pair_cache,
+      selected_states,
+      n_active_orbitals,
+      active_space_two_electron_result,
+      &alpha_overlap);
+  detail::accumulate_beta_overlap_gradient_by_pair_graph(
+      same_spin_pair_cache,
+      selected_states,
+      n_active_orbitals,
+      active_space_two_electron_result,
+      &beta_overlap);
   combine_overlap_channels(
       alpha_overlap,
       beta_overlap,
@@ -191,45 +143,35 @@ build_directional_opposite_spin_backward_contribution(
       result.active_orbital_overlap_gradient.size(), 0.0);
   std::vector<double> beta_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
-  run_independent_channels(
-      should_parallelize_opposite_spin_channels(
-          selected_states.n_unique_alpha,
-          selected_states.n_unique_beta),
-      [&] {
-        const auto start = std::chrono::steady_clock::now();
-        detail::accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
-            same_spin_pair_cache,
-            selected_states,
-            directional_selected_states,
-            n_packed_pairs,
-            &result.packed_active_two_electron_gradient);
-        result.timing.packed_gradient_seconds = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - start).count();
-      },
-      [&] {
-        const auto start = std::chrono::steady_clock::now();
-        detail::accumulate_directional_alpha_overlap_gradient(
-            same_spin_pair_cache,
-            selected_states,
-            directional_selected_states,
-            n_active_orbitals,
-            active_space_two_electron_result,
-            &alpha_overlap);
-        result.timing.alpha_overlap_seconds = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - start).count();
-      },
-      [&] {
-        const auto start = std::chrono::steady_clock::now();
-        detail::accumulate_directional_beta_overlap_gradient(
-            same_spin_pair_cache,
-            selected_states,
-            directional_selected_states,
-            n_active_orbitals,
-            active_space_two_electron_result,
-            &beta_overlap);
-        result.timing.beta_overlap_seconds = std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - start).count();
-      });
+  auto start = std::chrono::steady_clock::now();
+  detail::accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
+      same_spin_pair_cache,
+      selected_states,
+      directional_selected_states,
+      n_packed_pairs,
+      &result.packed_active_two_electron_gradient);
+  result.timing.packed_gradient_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - start).count();
+  start = std::chrono::steady_clock::now();
+  detail::accumulate_directional_alpha_overlap_gradient(
+      same_spin_pair_cache,
+      selected_states,
+      directional_selected_states,
+      n_active_orbitals,
+      active_space_two_electron_result,
+      &alpha_overlap);
+  result.timing.alpha_overlap_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - start).count();
+  start = std::chrono::steady_clock::now();
+  detail::accumulate_directional_beta_overlap_gradient(
+      same_spin_pair_cache,
+      selected_states,
+      directional_selected_states,
+      n_active_orbitals,
+      active_space_two_electron_result,
+      &beta_overlap);
+  result.timing.beta_overlap_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - start).count();
   combine_overlap_channels(
       alpha_overlap,
       beta_overlap,
@@ -253,73 +195,60 @@ build_local_opposite_spin_backward_contribution(
     return result;
   }
 
-  std::vector<detail::DirectionalOppositeSpinPairData> alpha_directional_pairs;
-  std::vector<detail::DirectionalOppositeSpinPairData> beta_directional_pairs;
+  std::vector<detail::DirectionalOppositeSpinPairData> alpha_directional_pairs =
+      detail::build_directional_opposite_spin_pair_data(
+          same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+          same_spin_pair_cache.alpha_pair_cache_ref(),
+          selected_states.n_unique_alpha,
+          n_active_orbitals,
+          active_space_two_electron_result,
+          direction,
+          directional_pair_cache.alpha.ordered_pair_data);
+  std::vector<detail::DirectionalOppositeSpinPairData> beta_directional_storage;
   const auto& beta_same_spin_pairs =
       directional_pair_cache.close_shell_same_spin
           ? directional_pair_cache.alpha.ordered_pair_data
           : directional_pair_cache.beta.ordered_pair_data;
-  run_independent_channels(
-      should_parallelize_opposite_spin_channels(
-          selected_states.n_unique_alpha,
-          selected_states.n_unique_beta),
-      [&] {
-        alpha_directional_pairs =
-            detail::build_directional_opposite_spin_pair_data(
-                same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-                same_spin_pair_cache.alpha_pair_cache_ref(),
-                selected_states.n_unique_alpha,
-                n_active_orbitals,
-                active_space_two_electron_result,
-                direction,
-                directional_pair_cache.alpha.ordered_pair_data);
-      },
-      [&] {
-        beta_directional_pairs =
-            detail::build_directional_opposite_spin_pair_data(
-                same_spin_pair_cache.beta_reuse_table.unique_determinants,
-                same_spin_pair_cache.beta_pair_cache_ref(),
-                selected_states.n_unique_beta,
-                n_active_orbitals,
-                active_space_two_electron_result,
-                direction,
-                beta_same_spin_pairs);
-      });
+  if (!directional_pair_cache.close_shell_same_spin) {
+    beta_directional_storage =
+        detail::build_directional_opposite_spin_pair_data(
+            same_spin_pair_cache.beta_reuse_table.unique_determinants,
+            same_spin_pair_cache.beta_pair_cache_ref(),
+            selected_states.n_unique_beta,
+            n_active_orbitals,
+            active_space_two_electron_result,
+            direction,
+            beta_same_spin_pairs);
+  }
+  const auto& beta_directional_pairs =
+      directional_pair_cache.close_shell_same_spin
+          ? alpha_directional_pairs
+          : beta_directional_storage;
   std::vector<double> alpha_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
   std::vector<double> beta_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
-  run_independent_channels(
-      should_parallelize_opposite_spin_channels(
-          selected_states.n_unique_alpha,
-          selected_states.n_unique_beta),
-      [&] {
-        detail::accumulate_local_opposite_spin_packed_gradient_by_pair_graph(
-            same_spin_pair_cache,
-            alpha_directional_pairs,
-            beta_directional_pairs,
-            selected_states,
-            n_packed_pairs,
-            &result.packed_active_two_electron_gradient);
-      },
-      [&] {
-        detail::accumulate_local_alpha_overlap_gradient(
-            same_spin_pair_cache,
-            alpha_directional_pairs,
-            beta_directional_pairs,
-            selected_states,
-            n_active_orbitals,
-            &alpha_overlap);
-      },
-      [&] {
-        detail::accumulate_local_beta_overlap_gradient(
-            same_spin_pair_cache,
-            alpha_directional_pairs,
-            beta_directional_pairs,
-            selected_states,
-            n_active_orbitals,
-            &beta_overlap);
-      });
+  detail::accumulate_local_opposite_spin_packed_gradient_by_pair_graph(
+      same_spin_pair_cache,
+      alpha_directional_pairs,
+      beta_directional_pairs,
+      selected_states,
+      n_packed_pairs,
+      &result.packed_active_two_electron_gradient);
+  detail::accumulate_local_alpha_overlap_gradient(
+      same_spin_pair_cache,
+      alpha_directional_pairs,
+      beta_directional_pairs,
+      selected_states,
+      n_active_orbitals,
+      &alpha_overlap);
+  detail::accumulate_local_beta_overlap_gradient(
+      same_spin_pair_cache,
+      alpha_directional_pairs,
+      beta_directional_pairs,
+      selected_states,
+      n_active_orbitals,
+      &beta_overlap);
   combine_overlap_channels(
       alpha_overlap,
       beta_overlap,

@@ -8,6 +8,7 @@
 
 #include <Eigen/Core>
 
+#include "core/openmp.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
@@ -210,6 +211,7 @@ struct AcceptedStructureResponseFactors {
   Eigen::MatrixXd beta_hamiltonian;
   SparseChannels alpha_channels;
   SparseChannels beta_channels;
+  bool beta_channels_reuse_alpha = false;
 };
 
 std::shared_ptr<const AcceptedStructureResponseFactors>
@@ -244,7 +246,11 @@ build_accepted_structure_response_factors(
   factors->beta_overlap = pair_scalar_matrix(beta_cache, n_beta, false);
   factors->beta_hamiltonian = pair_scalar_matrix(beta_cache, n_beta, true);
   factors->alpha_channels = accepted_channels(alpha_cache, n_alpha, n_pairs);
-  factors->beta_channels = accepted_channels(beta_cache, n_beta, n_pairs);
+  factors->beta_channels_reuse_alpha =
+      same_spin.shares_same_spin_pair_cache_between_spins();
+  if (!factors->beta_channels_reuse_alpha) {
+    factors->beta_channels = accepted_channels(beta_cache, n_beta, n_pairs);
+  }
   return factors;
 }
 
@@ -295,15 +301,23 @@ build_selected_structure_direction(
       beta_direction.delta_singular_total_hamiltonian_matrix;
 
   const auto& alpha_channels = factors.alpha_channels;
-  const auto& beta_channels = factors.beta_channels;
+  const auto& beta_channels = factors.beta_channels_reuse_alpha
+      ? factors.alpha_channels
+      : factors.beta_channels;
   const auto delta_alpha_channels = directional_channels(
       same_spin.alpha_reuse_table.unique_determinants,
       directional_pair_cache.alpha.ordered_pair_data,
       n_active_orbitals);
-  const auto delta_beta_channels = directional_channels(
-      same_spin.beta_reuse_table.unique_determinants,
-      beta_direction.ordered_pair_data,
-      n_active_orbitals);
+  SparseChannels delta_beta_storage;
+  if (!directional_pair_cache.close_shell_same_spin) {
+    delta_beta_storage = directional_channels(
+        same_spin.beta_reuse_table.unique_determinants,
+        beta_direction.ordered_pair_data,
+        n_active_orbitals);
+  }
+  const auto& delta_beta_channels = directional_pair_cache.close_shell_same_spin
+      ? delta_alpha_channels
+      : delta_beta_storage;
 
   const ActiveSpaceTwoElectronView accepted_kernel =
       make_active_space_two_electron_view(
@@ -338,9 +352,28 @@ build_selected_structure_direction(
         alpha_overlap * coefficients * delta_beta_hamiltonian.transpose();
   }
 
-  for (int target = 0; target < n_pairs; ++target) {
-    Eigen::MatrixXd alpha_projected =
-        Eigen::MatrixXd::Zero(n_alpha, n_alpha);
+  const int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      n_pairs);
+  std::vector<Eigen::MatrixXd> partial_hamiltonian_images;
+  partial_hamiltonian_images.reserve(n_threads);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    partial_hamiltonian_images.emplace_back(Eigen::MatrixXd::Zero(
+        n_alpha,
+        n_selected_states * n_beta));
+  }
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+#ifdef _OPENMP
+    const int thread = omp_get_thread_num();
+#else
+    const int thread = 0;
+#endif
+    Eigen::MatrixXd alpha_projected(n_alpha, n_alpha);
+    Eigen::MatrixXd delta_alpha_projected(n_alpha, n_alpha);
+#pragma omp for schedule(static)
+    for (int target = 0; target < n_pairs; ++target) {
+      alpha_projected.setZero();
     accumulate_projected_channel(
         alpha_channels,
         target,
@@ -352,8 +385,7 @@ build_selected_structure_direction(
               n_active_orbitals);
         },
         &alpha_projected);
-    Eigen::MatrixXd delta_alpha_projected =
-        Eigen::MatrixXd::Zero(n_alpha, n_alpha);
+      delta_alpha_projected.setZero();
     accumulate_projected_channel(
         delta_alpha_channels,
         target,
@@ -375,28 +407,34 @@ build_selected_structure_direction(
         },
         &delta_alpha_projected);
 
-    const Eigen::MatrixXd beta =
-        dense_channel(beta_channels, target, n_beta);
-    const Eigen::MatrixXd delta_beta =
-        dense_channel(delta_beta_channels, target, n_beta);
-    const bool first_term_is_zero =
-        delta_alpha_projected.isZero(0.0) || beta.isZero(0.0);
-    const bool second_term_is_zero =
-        alpha_projected.isZero(0.0) || delta_beta.isZero(0.0);
-    for (int state = 0; state < n_selected_states; ++state) {
-      const Eigen::MatrixXd& coefficients =
-          selected_states.states[state].coefficient_matrix;
-      auto delta_hamiltonian_image = delta_hamiltonian_images.middleCols(
-          state * n_beta, n_beta);
-      if (!first_term_is_zero) {
-        delta_hamiltonian_image.noalias() +=
-            delta_alpha_projected * coefficients * beta.transpose();
-      }
-      if (!second_term_is_zero) {
-        delta_hamiltonian_image.noalias() +=
-            alpha_projected * coefficients * delta_beta.transpose();
+      const Eigen::MatrixXd beta =
+          dense_channel(beta_channels, target, n_beta);
+      const Eigen::MatrixXd delta_beta =
+          dense_channel(delta_beta_channels, target, n_beta);
+      const bool first_term_is_zero =
+          delta_alpha_projected.isZero(0.0) || beta.isZero(0.0);
+      const bool second_term_is_zero =
+          alpha_projected.isZero(0.0) || delta_beta.isZero(0.0);
+      for (int state = 0; state < n_selected_states; ++state) {
+        const Eigen::MatrixXd& coefficients =
+            selected_states.states[state].coefficient_matrix;
+        auto delta_hamiltonian_image =
+            partial_hamiltonian_images[thread].middleCols(
+                state * n_beta,
+                n_beta);
+        if (!first_term_is_zero) {
+          delta_hamiltonian_image.noalias() +=
+              delta_alpha_projected * coefficients * beta.transpose();
+        }
+        if (!second_term_is_zero) {
+          delta_hamiltonian_image.noalias() +=
+              alpha_projected * coefficients * delta_beta.transpose();
+        }
       }
     }
+  }
+  for (const Eigen::MatrixXd& partial : partial_hamiltonian_images) {
+    delta_hamiltonian_images += partial;
   }
 
   const StructureAction* structure_action = accepted

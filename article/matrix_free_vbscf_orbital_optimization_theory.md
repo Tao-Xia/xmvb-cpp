@@ -2225,6 +2225,93 @@ force repeated expensive enrichment.  Direct interpolation of isolated
 vectors $\mathbf R_k\mathbf s$ without the Schur factorization and an
 independent exact certificate is therefore excluded.
 
+### 10.8 Exact pair-domain decomposition of one response probe
+
+Low-rank Schur compression reduces the number of exact response probes, whereas
+the cost of every retained probe must still be minimized without changing its
+algebra. In the unique-string representation, the active-space adjoint is a
+sum of independent ordered-pair contributions. For a generic active-space
+gradient component,
+
+$$
+\delta\mathbf g_{\mathrm{act}}
+=
+\sum_{I,J\in\mathcal U_\alpha}
+\mathcal A^{\alpha}_{IJ}
++
+\sum_{K,L\in\mathcal U_\beta}
+\mathcal A^{\beta}_{KL}.
+\tag{66af}
+$$
+
+For any disjoint partition of either pair domain,
+
+$$
+\delta\mathbf g_{\mathrm{act}}
+=
+\sum_{t=1}^{n_{\mathrm{thread}}}
+\delta\mathbf g_{\mathrm{act}}^{(t)},
+\qquad
+\delta\mathbf g_{\mathrm{act}}^{(t)}
+=
+\sum_{(I,J)\in\mathcal P_t}
+\mathcal A_{IJ}.
+\tag{66ag}
+$$
+
+Thread-local active one-electron, overlap, and packed two-electron adjoints are
+reduced only after all pair tiles have been consumed. Equation 66ag changes
+the evaluation order but neither truncates the pair domain nor alters the HVP.
+It also removes the previous three-channel concurrency ceiling: the packed
+opposite-spin contraction and the two overlap pullbacks each use the complete
+worker team rather than competing as three internally serial tasks.
+
+The directional structure images admit an analogous channel decomposition.
+Writing the opposite-spin part in packed active-pair channels gives
+
+$$
+\delta\mathbf H_{\mathrm{os}}\mathbf C
+=
+\sum_P
+\left[
+\delta\mathbf A_P\mathbf C\mathbf B_P^{\mathrm T}
++
+\mathbf A_P\mathbf C\delta\mathbf B_P^{\mathrm T}
+\right],
+\tag{66ah}
+$$
+
+so the packed-pair index can be distributed independently and accumulated into
+thread-local structure images. This is an exact block contraction and retains
+the direct unique-string-product-to-structure projection; no determinant-space
+intermediate is introduced.
+
+For a closed-shell unique-string space, the alpha and beta accepted and
+directional pair kernels are identical after the shared string indexing,
+
+$$
+\mathcal U_\alpha=\mathcal U_\beta,
+\qquad
+\mathbf P_{IJ}^{\alpha}=\mathbf P_{IJ}^{\beta},
+\qquad
+\delta\mathbf P_{IJ}^{\alpha}=\delta\mathbf P_{IJ}^{\beta}.
+\tag{66ai}
+$$
+
+The beta pair projection graph and directional pair payload can consequently
+alias the alpha objects. This identity removes duplicate construction and
+storage; it is not a spin approximation and is enabled only when the accepted
+same-spin cache certifies the shared representation.
+
+On the 12-electron, 12-orbital LOFLEA calculation with 924 unique strings per
+spin, one 32-thread full exact HVP decreased from 86.56 to 30.24 s while its
+infinity norm remained 16.1201446991. The peak resident set decreased from
+19.47 to 18.63 GB. The largest individual reductions were the directional
+structure construction, from 42.56 to 13.01 s, and the active-gradient
+response, from 34.57 to 7.65 s. These changes reduce the constant multiplying
+one exact probe in eq 66ae; they do not remove the quadratic accepted-point
+unique-pair cache, which remains the principal memory-scaling target.
+
 ## 11. Implications for the present implementation
 
 The current exact-context HVP differentiates orbital normalization, the inactive projector, active-space integrals, and the outer VB structure response. Its agreement with directional finite differences is evidence that the HVP is consistent with the present raw-coordinate computational graph.
