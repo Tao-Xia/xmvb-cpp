@@ -1,7 +1,10 @@
 #include "vbscf/integrals/active/two_electron/transformation/ao_pair_operator.hpp"
 
+#include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
+#include <vector>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -28,13 +31,6 @@ void apply_exact_ao_pair_kernel(
   }
 
   const AoPairGraph& graph = ao.pair_graph;
-  if (graph.row_offsets.size() != n_bf_pairs + 1 ||
-      graph.columns.size() != graph.values.size() ||
-      graph.values.size() !=
-          static_cast<std::size_t>(graph.row_offsets.back())) {
-    throw std::invalid_argument("invalid AO-pair graph");
-  }
-
   result->setZero(
       static_cast<Eigen::Index>(n_bf_pairs),
       static_cast<Eigen::Index>(n_active_pairs));
@@ -45,6 +41,74 @@ void apply_exact_ao_pair_kernel(
 #endif
   const double* source = coefficients.data();
   double* target = result->data();
+
+  if (graph.has_compact_integral_stream()) {
+    if (graph.integral_columns.size() != graph.integral_count() ||
+        graph.integral_values.size() != graph.integral_count()) {
+      throw std::invalid_argument("invalid compact AO integral stream");
+    }
+    n_threads = std::min(
+        n_threads,
+        std::max(1, static_cast<int>(std::min<std::size_t>(
+            graph.integral_count(),
+            static_cast<std::size_t>(std::numeric_limits<int>::max())))));
+    std::vector<ExactCtxPairMatrix> partial_products;
+    partial_products.reserve(n_threads);
+    for (int thread = 0; thread < n_threads; ++thread) {
+      partial_products.emplace_back(
+          ExactCtxPairMatrix::Zero(
+              static_cast<Eigen::Index>(n_bf_pairs),
+              static_cast<Eigen::Index>(n_active_pairs)));
+    }
+#pragma omp parallel num_threads(n_threads)
+    {
+      int thread = 0;
+#ifdef _OPENMP
+      thread = omp_get_thread_num();
+#endif
+      double* local_target = partial_products[thread].data();
+#pragma omp for schedule(static)
+      for (std::ptrdiff_t integral_offset = 0;
+           integral_offset <
+               static_cast<std::ptrdiff_t>(graph.integral_count());
+           ++integral_offset) {
+        const AoPairIntegral integral = graph.integral(integral_offset);
+        double* left_target =
+            local_target +
+            static_cast<std::size_t>(integral.left_pair) * n_active_pairs;
+        const double* right_source =
+            source +
+            static_cast<std::size_t>(integral.right_pair) * n_active_pairs;
+#pragma omp simd
+        for (std::size_t pair = 0; pair < n_active_pairs; ++pair) {
+          left_target[pair] += integral.value * right_source[pair];
+        }
+        if (integral.left_pair != integral.right_pair) {
+          double* right_target =
+              local_target +
+              static_cast<std::size_t>(integral.right_pair) * n_active_pairs;
+          const double* left_source =
+              source +
+              static_cast<std::size_t>(integral.left_pair) * n_active_pairs;
+#pragma omp simd
+          for (std::size_t pair = 0; pair < n_active_pairs; ++pair) {
+            right_target[pair] += integral.value * left_source[pair];
+          }
+        }
+      }
+    }
+    for (const auto& partial : partial_products) {
+      *result += partial;
+    }
+    return;
+  }
+
+  if (graph.row_offsets.size() != n_bf_pairs + 1 ||
+      graph.columns.size() != graph.values.size() ||
+      graph.values.size() !=
+          static_cast<std::size_t>(graph.row_offsets.back())) {
+    throw std::invalid_argument("invalid AO-pair graph");
+  }
 
   n_threads = std::min(n_threads, static_cast<int>(n_bf_pairs));
   const auto row_boundaries =

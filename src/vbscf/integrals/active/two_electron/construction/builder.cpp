@@ -62,6 +62,8 @@ bool retain_dense_pair_products(
       static_cast<long double>(graph.values.size()) * sizeof(double) +
       static_cast<long double>(graph.integral_rows.size()) * sizeof(int) +
       static_cast<long double>(graph.integral_edges.size()) * sizeof(int) +
+      static_cast<long double>(graph.integral_columns.size()) * sizeof(int) +
+      static_cast<long double>(graph.integral_values.size()) * sizeof(double) +
       static_cast<long double>(graph.pair_first.size()) * sizeof(int) +
       static_cast<long double>(graph.pair_second.size()) * sizeof(int);
   const long double packed_active_bytes =

@@ -1,6 +1,7 @@
 #include "libcint/materialized_provider.hpp"
 
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <vector>
@@ -142,12 +143,10 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
     }
   }
 
-  auto append_shell_i_integrals =
+  auto visit_shell_i_integrals =
       [&](LibcintDirectShellEvaluator& shell_evaluator,
           int shell_i,
-          std::vector<double>& values,
-          std::vector<int>& left_pairs,
-          std::vector<int>& right_pairs) {
+          auto&& visit_integral) {
         // Keep the canonical `(i >= j, i >= k, k >= l)` AO ordering used by
         // the downstream sparse AO kernels, but write the final `(i,j,k,l)`
         // tuples directly instead of staging packed indices and decoding them
@@ -195,9 +194,10 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
                       if (std::abs(value) < options.integral_tolerance) {
                         continue;
                       }
-                      values.push_back(value);
-                      left_pairs.push_back(pair_index(i, j));
-                      right_pairs.push_back(pair_index(k, l));
+                      visit_integral(
+                          value,
+                          pair_index(i, j),
+                          pair_index(k, l));
                     }
                   }
                 }
@@ -207,14 +207,130 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
         }
       };
 
-  if (n_threads <= 1) {
+  const std::size_t n_basis = static_cast<std::size_t>(n_basis_functions);
+  const std::size_t n_ao_pairs = n_basis * (n_basis + 1) / 2;
+  const std::size_t max_32_bit_graph_edges =
+      static_cast<std::size_t>(std::numeric_limits<int>::max());
+  const bool symmetric_graph_can_exceed_32_bits =
+      n_ao_pairs != 0 &&
+      n_ao_pairs > max_32_bit_graph_edges / n_ao_pairs;
+
+  if (symmetric_graph_can_exceed_32_bits) {
+    // A fully connected symmetric AO-pair CSR graph has n_ao_pairs^2
+    // directed edges.  Once that can exceed INT_MAX, the downstream graph
+    // keeps this once-symmetry-reduced integral stream instead.  Avoid the
+    // much larger materialization peak from retaining every per-shell vector
+    // while also growing/copying a complete aggregate: count first, allocate
+    // the exact final buffers, then let each shell write its disjoint range.
+    std::vector<std::size_t> shell_integral_counts(n_shells, 0);
+    if (n_threads <= 1) {
+      for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+        visit_shell_i_integrals(
+            evaluator,
+            shell_i,
+            [&](double, int, int) {
+              ++shell_integral_counts[shell_i];
+            });
+      }
+    } else {
+#pragma omp parallel
+      {
+        int thread_index = 0;
+#ifdef _OPENMP
+        thread_index = omp_get_thread_num();
+#endif
+        LibcintDirectShellEvaluator* thread_evaluator = &evaluator;
+        if (thread_index > 0) {
+          thread_evaluator = thread_evaluators[thread_index - 1].get();
+        }
+
+#pragma omp for schedule(dynamic)
+        for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+          std::size_t count = 0;
+          visit_shell_i_integrals(
+              *thread_evaluator,
+              shell_i,
+              [&](double, int, int) { ++count; });
+          shell_integral_counts[shell_i] = count;
+        }
+      }
+    }
+
+    std::vector<std::size_t> shell_integral_offsets(n_shells + 1, 0);
     for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-      append_shell_i_integrals(
+      const std::size_t previous_offset = shell_integral_offsets[shell_i];
+      const std::size_t shell_count = shell_integral_counts[shell_i];
+      if (shell_count >
+          std::numeric_limits<std::size_t>::max() - previous_offset) {
+        throw std::overflow_error("materialized ERI count exceeds size_t");
+      }
+      shell_integral_offsets[shell_i + 1] = previous_offset + shell_count;
+    }
+    const std::size_t total_integral_count = shell_integral_offsets.back();
+    buffers.two_electron_values.resize(total_integral_count);
+    buffers.left_pair_indices.resize(total_integral_count);
+    buffers.right_pair_indices.resize(total_integral_count);
+
+    std::vector<std::size_t> filled_shell_counts(n_shells, 0);
+    auto fill_shell_i = [&](LibcintDirectShellEvaluator& shell_evaluator,
+                            int shell_i) {
+      const std::size_t begin = shell_integral_offsets[shell_i];
+      const std::size_t expected_count = shell_integral_counts[shell_i];
+      std::size_t count = 0;
+      visit_shell_i_integrals(
+          shell_evaluator,
+          shell_i,
+          [&](double value, int left_pair, int right_pair) {
+            if (count < expected_count) {
+              const std::size_t offset = begin + count;
+              buffers.two_electron_values[offset] = value;
+              buffers.left_pair_indices[offset] = left_pair;
+              buffers.right_pair_indices[offset] = right_pair;
+            }
+            ++count;
+          });
+      filled_shell_counts[shell_i] = count;
+    };
+
+    if (n_threads <= 1) {
+      for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+        fill_shell_i(evaluator, shell_i);
+      }
+    } else {
+#pragma omp parallel
+      {
+        int thread_index = 0;
+#ifdef _OPENMP
+        thread_index = omp_get_thread_num();
+#endif
+        LibcintDirectShellEvaluator* thread_evaluator = &evaluator;
+        if (thread_index > 0) {
+          thread_evaluator = thread_evaluators[thread_index - 1].get();
+        }
+
+#pragma omp for schedule(dynamic)
+        for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+          fill_shell_i(*thread_evaluator, shell_i);
+        }
+      }
+    }
+
+    for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+      if (filled_shell_counts[shell_i] != shell_integral_counts[shell_i]) {
+        throw std::runtime_error(
+            "materialized ERI count changed between count and fill passes");
+      }
+    }
+  } else if (n_threads <= 1) {
+    for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
+      visit_shell_i_integrals(
           evaluator,
           shell_i,
-          buffers.two_electron_values,
-          buffers.left_pair_indices,
-          buffers.right_pair_indices);
+          [&](double value, int left_pair, int right_pair) {
+            buffers.two_electron_values.push_back(value);
+            buffers.left_pair_indices.push_back(left_pair);
+            buffers.right_pair_indices.push_back(right_pair);
+          });
     }
   } else {
     std::vector<std::vector<double>> shell_integral_values(n_shells);
@@ -235,12 +351,14 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
 
 #pragma omp for schedule(dynamic)
       for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
-        append_shell_i_integrals(
+        visit_shell_i_integrals(
             *thread_evaluator,
             shell_i,
-            shell_integral_values[shell_i],
-            shell_left_pairs[shell_i],
-            shell_right_pairs[shell_i]);
+            [&](double value, int left_pair, int right_pair) {
+              shell_integral_values[shell_i].push_back(value);
+              shell_left_pairs[shell_i].push_back(left_pair);
+              shell_right_pairs[shell_i].push_back(right_pair);
+            });
       }
     }
 

@@ -1095,7 +1095,9 @@ void print_input_sections(
          << '\n'
          << " 2-e integral strategy: "
          << (load_result.standard_two_electron_mode == vb::StandardTwoElectronMode::Exact
-                 ? "Continuous storage."
+                 ? (input.ao_integral_input.pair_graph.has_row_graph()
+                        ? "Symmetric AO-pair CSR."
+                        : "Canonical unique-integral stream.")
                  : "Factorized storage.")
          << '\n';
   if (load_result.standard_two_electron_mode == vb::StandardTwoElectronMode::Exact) {

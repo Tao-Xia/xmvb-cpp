@@ -156,8 +156,15 @@ Eigen::MatrixXd ClosedShellFockBuilder::build(
     throw std::invalid_argument(
         "ao_core_hamiltonian_matrix shape does not match n_basis_functions");
   }
-  if (graph.row_offsets.size() != n_pairs + 1 ||
-      graph.columns.size() != graph.values.size() ||
+  const bool valid_row_graph =
+      graph.has_row_graph() &&
+      graph.row_offsets.size() == n_pairs + 1 &&
+      graph.columns.size() == graph.values.size();
+  const bool valid_compact_stream =
+      graph.has_compact_integral_stream() &&
+      graph.integral_rows.size() == graph.integral_columns.size() &&
+      graph.integral_rows.size() == graph.integral_values.size();
+  if ((!valid_row_graph && !valid_compact_stream) ||
       graph.pair_first.size() != n_pairs ||
       graph.pair_second.size() != n_pairs) {
     throw std::invalid_argument("invalid AO-pair graph");

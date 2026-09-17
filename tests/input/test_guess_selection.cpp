@@ -78,6 +78,29 @@ int main() {
         state_average.metadata.state_average_count == 3,
         "NSTATE must select the equal-weight state count");
 
+    const auto historical_state_average_path =
+        root / "historical-state-average.xmi";
+    write_deck(historical_state_average_path, "wstate(1)=1,1");
+    const auto historical_state_average = xmvb::vb::parse_input_deck_model(
+        historical_state_average_path.string());
+    require(
+        historical_state_average.metadata.state_average_count == 2,
+        "equal historical WSTATE weights must select the state count");
+
+    const auto unequal_state_average_path =
+        root / "unequal-state-average.xmi";
+    write_deck(unequal_state_average_path, "wstate(1)=1,2");
+    bool rejected_unequal_weights = false;
+    try {
+      (void)xmvb::vb::parse_input_deck_model(
+          unequal_state_average_path.string());
+    } catch (const std::invalid_argument&) {
+      rejected_unequal_weights = true;
+    }
+    require(
+        rejected_unequal_weights,
+        "unequal WSTATE weights must be rejected by the equal-weight implementation");
+
     const auto invalid_state_average_path = root / "invalid-state-average.xmi";
     write_deck(invalid_state_average_path, "nstate=0");
     bool rejected_invalid_state_count = false;

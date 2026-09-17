@@ -241,8 +241,15 @@ std::vector<double> apply_sparse_ao_integral_matrix(
     std::size_t n_active_pairs) {
   const std::size_t n_ao_pairs =
       n_basis_functions * (n_basis_functions + 1) / 2;
-  if (graph.row_offsets.size() != n_ao_pairs + 1 ||
-      graph.columns.size() != graph.values.size()) {
+  const bool valid_row_graph =
+      graph.has_row_graph() &&
+      graph.row_offsets.size() == n_ao_pairs + 1 &&
+      graph.columns.size() == graph.values.size();
+  const bool valid_compact_stream =
+      graph.has_compact_integral_stream() &&
+      graph.integral_rows.size() == graph.integral_columns.size() &&
+      graph.integral_rows.size() == graph.integral_values.size();
+  if (!valid_row_graph && !valid_compact_stream) {
     throw std::invalid_argument("invalid AO-pair graph");
   }
   std::vector<std::vector<double>> partial_pair_gradients;

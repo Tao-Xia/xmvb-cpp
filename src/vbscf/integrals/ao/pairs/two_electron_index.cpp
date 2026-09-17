@@ -125,16 +125,17 @@ AoPairGraph build_ao_pair_graph(
   }
 
   std::vector<int> row_counts(n_ao_pairs, 0);
+  std::size_t n_graph_edges = 0;
   for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
     int total_count = 0;
     for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
       total_count += thread_row_counts[thread_index][row_index];
     }
     row_counts[row_index] = total_count;
+    n_graph_edges += static_cast<std::size_t>(total_count);
   }
 
   AoPairGraph graph;
-  graph.row_offsets.resize(n_ao_pairs + 1, 0);
   graph.pair_first.reserve(n_ao_pairs);
   graph.pair_second.reserve(n_ao_pairs);
   for (int first = 0; first < n_bf; ++first) {
@@ -143,6 +144,18 @@ AoPairGraph build_ao_pair_graph(
       graph.pair_second.push_back(second);
     }
   }
+  // The symmetric CSR representation duplicates every off-diagonal unique
+  // integral.  Preserve the once-symmetry-reduced stream when those directed
+  // edges no longer fit the 32-bit hot-path offsets.
+  if (n_graph_edges >
+      static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    graph.integral_rows = std::move(left_pairs);
+    graph.integral_columns = std::move(right_pairs);
+    graph.integral_values = std::move(values);
+    return graph;
+  }
+
+  graph.row_offsets.resize(n_ao_pairs + 1, 0);
   for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
     graph.row_offsets[row_index + 1] = graph.row_offsets[row_index] + row_counts[row_index];
   }

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <fstream>
 #include <stdexcept>
 #include <string>
@@ -186,6 +187,49 @@ void apply_ctrl_assignment(
     if (metadata->state_average_count <= 0) {
       throw std::invalid_argument("NSTATE must be positive");
     }
+    return;
+  }
+  if (key.rfind("WSTATE(", 0) == 0 && !key.empty() && key.back() == ')') {
+    const int first_state = std::stoi(
+        key.substr(7, key.size() - 8));
+    if (first_state <= 0) {
+      throw std::invalid_argument("WSTATE indices must be positive");
+    }
+    std::vector<double> weights;
+    std::size_t begin = 0;
+    while (begin <= raw_value.size()) {
+      const std::size_t comma = raw_value.find(',', begin);
+      const std::string token = trim_ascii_whitespace(
+          raw_value.substr(
+              begin,
+              comma == std::string::npos
+                  ? std::string::npos
+                  : comma - begin));
+      if (token.empty()) {
+        throw std::invalid_argument("WSTATE contains an empty weight");
+      }
+      weights.push_back(parse_fortran_double(token));
+      if (comma == std::string::npos) {
+        break;
+      }
+      begin = comma + 1;
+    }
+    const double reference_weight = weights.front();
+    if (!(reference_weight > 0.0)) {
+      throw std::invalid_argument("WSTATE weights must be positive");
+    }
+    for (const double weight : weights) {
+      const double scale = std::max(
+          {1.0, std::abs(reference_weight), std::abs(weight)});
+      if (!(weight > 0.0) ||
+          std::abs(weight - reference_weight) > 1.0e-12 * scale) {
+        throw std::invalid_argument(
+            "only equal positive WSTATE weights are supported");
+      }
+    }
+    metadata->state_average_count = std::max(
+        metadata->state_average_count,
+        first_state - 1 + static_cast<int>(weights.size()));
     return;
   }
   if (key == "ISCF") {

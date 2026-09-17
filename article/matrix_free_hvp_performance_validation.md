@@ -384,6 +384,79 @@ channel. The smaller complete-HVP speedups, $1.412\times$ and $1.280\times$,
 are consistent with Amdahl's law because structure response and other HVP
 stages are unchanged.
 
+### 8.2 Symmetry-preserving exact AO integral storage
+
+The exact LIBCINT path previously expanded the canonical permutationally
+unique AO integrals into a symmetric directed AO-pair CSR operator.  For
+$n_{\mathrm{bf}}$ AO basis functions, the packed AO-pair dimension is
+
+$$
+N_{\mathrm{pair}}
+=
+\frac{n_{\mathrm{bf}}(n_{\mathrm{bf}}+1)}{2},
+$$
+
+and the maximum number of unique pair-pair integrals is
+
+$$
+N_{\mathrm{ERI}}^{\mathrm{unique}}
+=
+\frac{N_{\mathrm{pair}}(N_{\mathrm{pair}}+1)}{2}.
+$$
+
+This count already includes the eightfold AO-integral permutation symmetry.
+The symmetric CSR expansion nevertheless introduces
+
+$$
+N_{\mathrm{edge}}
+=
+2N_{\mathrm{ERI}}^{\mathrm{stored}}-N_{\mathrm{diag}}
+$$
+
+directed edges.  Consequently, a valid symmetry-compressed integral list can
+still overflow a signed 32-bit CSR edge offset.  The revised representation
+retains the canonical tuple $(p,q,K_{pq})$ exactly once whenever
+$N_{\mathrm{edge}}>\mathrm{INT\_MAX}$ and applies both symmetric
+contributions directly during a block action:
+
+$$
+Y_p \mathrel{+}=K_{pq}X_q,
+\qquad
+Y_q \mathrel{+}=K_{pq}X_p
+\quad (p\ne q).
+$$
+
+With 32-bit pair indices and double-precision values, the leading persistent
+storage is therefore reduced from
+
+$$
+M_{\mathrm{CSR}}
+\simeq
+12N_{\mathrm{edge}}+8N_{\mathrm{ERI}}^{\mathrm{stored}}
+$$
+
+bytes to
+
+$$
+M_{\mathrm{unique}}
+=
+16N_{\mathrm{ERI}}^{\mathrm{stored}}
+$$
+
+bytes.  Large integral materializations use a deterministic two-pass
+count-and-fill algorithm.  The first pass counts retained integrals per outer
+shell; the second writes directly into disjoint, exactly sized ranges.  This
+removes the former simultaneous residency of all per-shell buffers and their
+complete aggregate while preserving the canonical integral order and the
+original screening threshold.
+
+For the 322-AO state-averaged test, $N_{\mathrm{pair}}=52{,}003$ and
+$N_{\mathrm{ERI}}^{\mathrm{stored}}=1{,}108{,}932{,}855$.  The old CSR path
+failed while constructing approximately $2.218\times10^9$ directed edges.
+The canonical-stream path completed the initial objective and a subsequent
+orbital update.  On the same 32-core Slurm node, the measured process peak RSS
+decreased from 36,054,456 KiB to 19,224,224 KiB, a reduction of $46.68\%$.
+
 ## 9. Reproducibility
 
 The configured test suite contains 30 tests, including independent polynomial
