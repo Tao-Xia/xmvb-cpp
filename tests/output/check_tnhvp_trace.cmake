@@ -134,3 +134,21 @@ endif()
 if (NOT tnhvp_table MATCHES "\n1" OR NOT tnhvp_table MATCHES "42")
   message(FATAL_ERROR "F2 lightweight TNHVP trace is missing its first step")
 endif()
+
+# F2 has an inexpensive outer-response space.  Its late Newton steps must
+# exercise the exact-HVP subproblem path after a core-model KKT failure; this
+# guards against silently reducing all systems to one sampled response image.
+file(GLOB accepted_metadata
+  "${XMVB_TRACE_ROOT}/F2/steps/step_*/metadata.json")
+set(found_full_hvp false)
+foreach(metadata_path IN LISTS accepted_metadata)
+  file(READ "${metadata_path}" metadata_json)
+  if (metadata_json MATCHES "\"used_full_hvp\": true")
+    set(found_full_hvp true)
+    break()
+  endif()
+endforeach()
+if (NOT found_full_hvp)
+  message(FATAL_ERROR
+    "F2 never entered the affordable exact-HVP subproblem path")
+endif()
