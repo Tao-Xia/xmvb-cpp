@@ -12,9 +12,11 @@ struct SpinDeterminantPairEvaluation;
  * @brief Exact determinant-cofactor values and directional derivatives.
  *
  * Numerically regular overlap blocks use Jacobi identities without storing
- * occupied-pair compound matrices. Ill-conditioned and rank-deficient blocks
- * use an inverse-free SVD polynomial representation. These are local
- * determinant-overlap blocks, not an assembled orbital Hessian.
+ * occupied-pair compound matrices. Blocks with a small dangerous singular
+ * subspace use exact multilinear interpolation over well-conditioned exterior
+ * nodes. The remaining blocks use the inverse-free SVD polynomial form.
+ * These are local determinant-overlap blocks, not an assembled orbital
+ * Hessian.
  */
 class CofactorDifferential {
  public:
@@ -36,10 +38,24 @@ class CofactorDifferential {
       const Eigen::MatrixXd& direction, const Eigen::MatrixXd& weights,
       const Eigen::MatrixXd& delta_weights) const;
   /** @brief Whether this object uses the regular inverse/exterior form. */
-  bool uses_regular_form() const noexcept { return regular_; }
+  bool uses_regular_form() const noexcept {
+    return representation_ == Representation::Regular;
+  }
+  /** @brief Whether this object uses exact singular-value interpolation. */
+  bool uses_interpolated_form() const noexcept {
+    return representation_ == Representation::Interpolated;
+  }
+  /** @brief Number of interpolated dangerous singular modes. */
+  int dangerous_mode_count() const noexcept { return dangerous_mode_count_; }
   std::size_t dynamic_bytes() const;
 
  private:
+  enum class Representation {
+    Regular,
+    Interpolated,
+    Polynomial,
+  };
+
   struct ExteriorContraction {
     double value = 0.0;
     Eigen::MatrixXd gradient;
@@ -58,6 +74,38 @@ class CofactorDifferential {
       const Eigen::MatrixXd& inverse_direction,
       const Eigen::MatrixXd& weights,
       const Eigen::MatrixXd& delta_weights) const;
+  bool initialize_interpolation(double stable_condition_limit);
+  std::size_t direct_node_count() const noexcept;
+  void build_direct_node(
+      std::size_t node_index,
+      double* weighted_determinant,
+      Eigen::MatrixXd* inverse) const;
+  Eigen::MatrixXd direct_first(
+      double determinant,
+      const Eigen::MatrixXd& inverse,
+      const Eigen::MatrixXd& direction) const;
+  Eigen::MatrixXd direct_mixed(
+      double determinant,
+      const Eigen::MatrixXd& inverse,
+      const Eigen::MatrixXd& direction_a,
+      const Eigen::MatrixXd& direction_b) const;
+  Eigen::MatrixXd direct_second(
+      double determinant,
+      const Eigen::MatrixXd& inverse) const;
+  Eigen::MatrixXd direct_second_first(
+      double determinant,
+      const Eigen::MatrixXd& inverse,
+      const Eigen::MatrixXd& direction) const;
+  Eigen::MatrixXd direct_second_contraction_gradient(
+      double determinant,
+      const Eigen::MatrixXd& inverse,
+      const Eigen::MatrixXd& weights) const;
+  Eigen::MatrixXd direct_second_contraction_gradient_direction(
+      double determinant,
+      const Eigen::MatrixXd& inverse,
+      const Eigen::MatrixXd& direction,
+      const Eigen::MatrixXd& weights,
+      const Eigen::MatrixXd& delta_weights) const;
   double complement_product(int i, int j = -1, int k = -1, int l = -1) const;
   double cached_pair_complement(int i, int j) const;
   double cached_triple_complement(int i, int j, int k) const;
@@ -66,8 +114,11 @@ class CofactorDifferential {
   Eigen::MatrixXd second_gradient_in_diagonal_chart(const Eigen::MatrixXd& weights) const;
   Eigen::MatrixXd rotate(const Eigen::MatrixXd& direction) const;
   Eigen::MatrixXd restore(const Eigen::MatrixXd& cofactor) const;
-  bool regular_ = false;
+  Representation representation_ = Representation::Polynomial;
+  int dangerous_mode_count_ = 0;
   double determinant_ = 0.0;
+  double interpolation_tau_ = 0.0;
+  double interpolation_node_determinant_ = 0.0;
   Eigen::MatrixXd inverse_;
   Eigen::MatrixXd u_, v_, u2_, v2_, value_, second_;
   Eigen::VectorXd singular_values_;

@@ -329,17 +329,73 @@ full-rank pairs use the polynomial form, and 14 nullity-one pairs use the same
 polynomial form. The accepted cofactor dynamic storage is 5,072,888,032 bytes;
 the separate-process peak RSS decreases by approximately 682 MiB.
 
+### 8.1 Exact interpolation over the dangerous singular subspace
+
+The next implementation stage replaces the second-cofactor polynomial object
+for nonregular pairs by exact tensor-product interpolation over only the
+dangerous singular coordinates. The regular-only implementation at commit
+`952303f` is the A/B baseline. Both executables were compiled in separate
+worktrees and run as separate processes on the same Slurm node with 32 OpenMP
+threads and one BLAS thread. The local-action values below are medians of two
+runs in interleaved baseline--candidate--candidate--baseline order.
+
+| System | Quantity | Regular-only baseline | Exact interpolation | Change |
+|---|---|---:|---:|---:|
+| CERRAS | Local HVP action / s | 2.821783 | 1.397666 | $-50.47\%$ |
+| CERRAS | Local active-gradient stage / s | 1.723514 | 1.007430 | $-41.55\%$ |
+| CERRAS | Whole process / s | 26.355 | 23.900 | $-9.32\%$ |
+| CERRAS | Peak RSS / KiB | 5,644,308 | 4,714,872 | $-16.47\%$ |
+| LOFLEA | Local HVP action / s | 9.675633 | 4.973933 | $-48.59\%$ |
+| LOFLEA | Local active-gradient stage / s | 5.586146 | 3.679822 | $-34.13\%$ |
+| LOFLEA | Whole process / s | 28.895 | 20.920 | $-27.60\%$ |
+| LOFLEA | Peak RSS / KiB | 15,890,126 | 12,074,242 | $-24.01\%$ |
+
+The local HVP speedups are $2.019\times$ for CERRAS and $1.945\times$ for
+LOFLEA. Cofactor dynamic storage decreases from 1,252,096,600 to 289,298,728
+bytes for CERRAS ($-76.89\%$), and from 5,072,888,032 to 1,166,697,760 bytes
+for LOFLEA ($-77.00\%$). The corresponding peak-RSS reductions are about
+0.89 GiB and 3.64 GiB. The response infinity norms remain identical at the
+printed precision: $0.277727397311$ and $0.282004273478$, respectively.
+
+The pair classification confirms that the new representation covers every
+nonregular pair in these systems:
+
+| System | Regular | Interpolated | Residual polynomial | Dangerous-mode distribution |
+|---|---:|---:|---:|---|
+| CERRAS | 29,423 | 184,021 | 0 | $q=1$: 79,393; $q=2$: 88,340; $q=3$: 15,856; $q=4$: 432 |
+| LOFLEA | 107,180 | 746,596 | 0 | $q=1$: 273,430; $q=2$: 375,401; $q=3$: 93,009; $q=4$: 4,712; $q=5$: 44 |
+
+A second A/B measurement evaluated the complete exact HVP, including the
+structure response rather than only its local component:
+
+| System | Quantity | Regular-only baseline | Exact interpolation | Change |
+|---|---|---:|---:|---:|
+| CERRAS | Complete exact HVP / s | 6.762652 | 4.788595 | $-29.19\%$ |
+| CERRAS | Whole process / s | 29.88 | 27.40 | $-8.30\%$ |
+| CERRAS | Peak RSS / KiB | 5,643,780 | 4,722,404 | $-16.33\%$ |
+| LOFLEA | Complete exact HVP / s | 45.574557 | 35.595521 | $-21.90\%$ |
+| LOFLEA | Whole process / s | 64.98 | 51.59 | $-20.61\%$ |
+| LOFLEA | Peak RSS / KiB | 17,541,768 | 13,670,296 | $-22.07\%$ |
+
+The complete-HVP response infinity norms are unchanged at
+$17.2965082974$ for CERRAS and $16.1201446991$ for LOFLEA. Thus the measured
+gain is not produced by weakening the response model or omitting a derivative
+channel. The smaller complete-HVP speedups, $1.412\times$ and $1.280\times$,
+are consistent with Amdahl's law because structure response and other HVP
+stages are unchanged.
+
 ## 9. Reproducibility
 
 The configured test suite contains 30 tests, including independent polynomial
-cofactor derivatives and complete HAO/OEO HVP finite differences. All 15 pass
+cofactor derivatives and complete HAO/OEO HVP finite differences. All 30 pass
 after the performance changes. The two additional tests validate block basis
 assembly at the utility and molecular-integration levels; the orthonormal-basis
 test was also extended to verify single-call block admission. The benchmark
 logs used in this note are kept
 under `/tmp/xmvb-oeo-fix.Cdw3GW/` and
-`/tmp/xmvb-hvp-cofactor-direct/` on the validation machine and are not treated
-as repository test assets.
+`/tmp/xmvb-hvp-cofactor-direct/`. The interpolation A/B logs are under
+`/tmp/xmvb-interpolation-ab/` on the validation machine. These logs are not
+treated as repository test assets.
 
 The explicit references can be reproduced with
 

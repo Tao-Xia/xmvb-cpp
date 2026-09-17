@@ -137,10 +137,11 @@ p_I=\eta\prod_{k\notin I}\sigma_k.
 $$
 
 For ill-conditioned full-rank blocks and all rank-deficient blocks, the
-factors $\mathbf U$ and $\mathbf V$ are held fixed while evaluating
-directional derivatives. No singular-vector differentiation or inverse
-singular value occurs in this polynomial branch. Complementary products are
-formed directly, including at zero singular values. For
+factors $\mathbf U$ and $\mathbf V$ are held fixed while evaluating the
+inverse-free low-order cofactor polynomials. No singular-vector
+differentiation or inverse singular value enters these expressions.
+Complementary products are formed directly, including at zero singular
+values. For
 $\widetilde{\boldsymbol\Delta}
 =\mathbf U^{\mathrm T}\boldsymbol\Delta\mathbf V$,
 the first cofactor derivative in this fixed diagonal chart is
@@ -157,8 +158,10 @@ $$
 
 The result is transformed back with $\mathbf U$ and $\mathbf V^{\mathrm T}$.
 Mixed first-cofactor derivatives similarly use three-index complementary
-products. The inverse-free branch is therefore an exact polynomial
-representation, not a compatibility fallback.
+products. These expressions are exact polynomials, not compatibility
+fallbacks. Section 3.2 gives the exact interpolation used to avoid the much
+larger fourth-order complementary-product representation required by the
+second-cofactor response.
 
 ### 3.1 Direct exterior-algebra contraction for regular pairs
 
@@ -260,22 +263,6 @@ M_{\mathrm{exterior}}=O(n^2).
 \tag{7g}
 $$
 
-For $U$ unique strings and $P_{\mathrm{bad}}$ ill-conditioned or
-rank-deficient ordered string pairs, the cofactor part of the pair cache and
-one contracted response action therefore scale as
-
-$$
-\begin{aligned}
-M
-&=O\left[(U^2-P_{\mathrm{bad}})n^2
-          +P_{\mathrm{bad}}n^4\right],\\
-T
-&=O\left[(U^2-P_{\mathrm{bad}})n^4
-          +P_{\mathrm{bad}}n^6\right].
-\end{aligned}
-\tag{7h}
-$$
-
 The regular formula contains at most four inverse factors. It is admitted
 when the cached inverse exists, the numerical nullity is zero, and
 
@@ -284,17 +271,128 @@ $$
 =\lVert\mathbf X\rVert_{\infty}
  \lVert\mathbf X^{-1}\rVert_{\infty}
 \leq \epsilon_{\mathrm{mach}}^{-1/8},
-\tag{7i}
+\tag{7h}
 $$
 
 which bounds the leading inverse amplification
 $\kappa_{\infty}^4\epsilon_{\mathrm{mach}}$ by
-$\sqrt{\epsilon_{\mathrm{mach}}}$. All other pairs use the exact inverse-free
-polynomial representation. This admission rule depends only on numerical
-conditioning and machine precision; it contains no molecule- or input-specific
-parameter. Blocks with fewer than four same-spin electrons also remain on the
-polynomial path because compound-space work is then negligible and an inverse
-representation provides no asymptotic benefit.
+$\sqrt{\epsilon_{\mathrm{mach}}}$. This admission rule depends only on
+numerical conditioning and machine precision; it contains no molecule- or
+input-specific parameter. Nonregular blocks with at least four same-spin
+electrons enter the interpolation construction below. Smaller blocks remain
+on the exact polynomial path because compound-space work is then negligible.
+
+For the remaining blocks, define
+
+$$
+K_*=\epsilon_{\mathrm{mach}}^{-1/8},
+\qquad
+\tau=\frac{n\sigma_{\max}}{K_*},
+\qquad
+I_{\mathrm d}=\{i:\sigma_i<\tau\},
+\qquad
+q=|I_{\mathrm d}|.
+\tag{7i}
+$$
+
+The indices in $I_{\mathrm d}$ span only the dangerous singular subspace.
+For every sign vector $\mathbf s\in\{-1,+1\}^q$, construct the regular node
+
+$$
+\mathbf X_{\mathbf s}
+=\mathbf U\operatorname{diag}(z_1^{(\mathbf s)},\ldots,
+z_n^{(\mathbf s)})\mathbf V^{\mathrm T},
+\qquad
+z_i^{(\mathbf s)}=
+\begin{cases}
+s_i\tau,&i\in I_{\mathrm d},\\
+\sigma_i,&i\notin I_{\mathrm d}.
+\end{cases}
+\tag{7j}
+$$
+
+Every deleted-minor cofactor and every directional derivative used here is
+multi-affine in the dangerous singular coordinates. Tensor-product two-point
+interpolation is consequently exact:
+
+$$
+\mathcal C(\mathbf X)
+=\sum_{\mathbf s\in\{-1,+1\}^q}
+\lambda_{\mathbf s}\mathcal C(\mathbf X_{\mathbf s}),
+\qquad
+\lambda_{\mathbf s}
+=\prod_{i\in I_{\mathrm d}}
+\frac{1+s_i\sigma_i/\tau}{2}.
+\tag{7k}
+$$
+
+Because $0\leq\sigma_i/\tau<1$ on the dangerous subspace, the weights are
+nonnegative and sum to one. Thus the interpolation has Lebesgue constant one:
+it is a convex combination rather than an extrapolation. Each node satisfies
+
+$$
+\kappa_2(\mathbf X_{\mathbf s})
+\leq\frac{\sigma_{\max}}{\tau}
+=\frac{K_*}{n},
+\qquad
+\kappa_\infty(\mathbf X_{\mathbf s})\leq K_*.
+\tag{7l}
+$$
+
+The node inverse and determinant-weight product are evaluated without
+reconstructing or refactorizing the node:
+
+$$
+\begin{aligned}
+\mathbf X_{\mathbf s}^{-1}
+&=\sum_{i\notin I_{\mathrm d}}\sigma_i^{-1}
+  \mathbf v_i\mathbf u_i^{\mathrm T}
+ +\sum_{i\in I_{\mathrm d}}\frac{s_i}{\tau}
+  \mathbf v_i\mathbf u_i^{\mathrm T},\\
+\lambda_{\mathbf s}\det(\mathbf X_{\mathbf s})
+&=\eta\left(\prod_{i\notin I_{\mathrm d}}\sigma_i\right)
+  \prod_{i\in I_{\mathrm d}}\frac{\sigma_i+s_i\tau}{2}.
+\end{aligned}
+\tag{7m}
+$$
+
+Interpolation is admitted when
+
+$$
+2^q\leq n^2,
+\tag{7n}
+$$
+
+which compares its $O(2^q n^4)$ direct-node work with the former
+$O(n^6)$ compound-space action. This is an asymptotic, molecule-independent
+rule. The implementation deliberately retains the $O(n^3)$ polynomial
+formulas for the value, first cofactor, and mixed first-cofactor derivative;
+interpolating those quantities would add a needless factor $2^q$ to the
+opposite-spin path. Exact interpolation is used for the second-cofactor
+series, where it removes the fourth-order persistent tensor.
+
+For $P_{\mathrm r}$ regular pairs, $P_{\mathrm i}$ admitted interpolation
+pairs, and $P_{\mathrm p}$ residual polynomial pairs, the leading pair-local
+costs are therefore
+
+$$
+\begin{aligned}
+T
+&=O\left(P_{\mathrm r}n^4
+ +P_{\mathrm i}2^q n^4
+ +P_{\mathrm p}n^6\right),\\
+M
+&=O\left(P_{\mathrm r}n^2
+ +P_{\mathrm i}n^3
+ +P_{\mathrm p}n^4\right).
+\end{aligned}
+\tag{7o}
+$$
+
+The $O(n^3)$ interpolated-pair storage is the complementary-product data
+still shared by the low-order and opposite-spin kernels; the second-order
+exterior payload itself is only $O(n^2)$. The residual polynomial branch is
+retained only when the exact node count fails Eq. (7n).
 
 With the Frobenius inner product $\langle\mathbf A,\mathbf B\rangle
 =\operatorname{tr}(\mathbf A^{\mathrm T}\mathbf B)$, a same-spin Hamiltonian

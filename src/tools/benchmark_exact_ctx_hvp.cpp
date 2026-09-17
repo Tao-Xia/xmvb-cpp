@@ -89,8 +89,10 @@ struct BlockBenchmarkMeasurement {
 
 struct CofactorRepresentationStatistics {
   std::size_t regular_pairs = 0;
+  std::size_t interpolated_pairs = 0;
   std::size_t polynomial_pairs = 0;
   std::size_t dynamic_bytes = 0;
+  std::array<std::size_t, 9> dangerous_mode_counts{};
   std::array<std::size_t, 6> nullity_counts{};
   std::array<std::size_t, 8> condition_decade_counts{};
 };
@@ -133,6 +135,11 @@ CofactorRepresentationStatistics collect_cofactor_statistics(
       }
       if (pair.cofactor_differential->uses_regular_form()) {
         ++statistics.regular_pairs;
+      } else if (pair.cofactor_differential->uses_interpolated_form()) {
+        ++statistics.interpolated_pairs;
+        const int dangerous_modes = std::clamp(
+            pair.cofactor_differential->dangerous_mode_count(), 0, 8);
+        ++statistics.dangerous_mode_counts[dangerous_modes];
       } else {
         ++statistics.polynomial_pairs;
       }
@@ -1264,8 +1271,21 @@ int main(int argc, char** argv) {
     std::cout << "n_unique_beta = " << selected_states.n_unique_beta << '\n';
     std::cout << "cofactor_regular_pair_count = "
               << cofactor_statistics.regular_pairs << '\n';
+    std::cout << "cofactor_interpolated_pair_count = "
+              << cofactor_statistics.interpolated_pairs << '\n';
     std::cout << "cofactor_polynomial_pair_count = "
               << cofactor_statistics.polynomial_pairs << '\n';
+    for (std::size_t dangerous_modes = 1;
+         dangerous_modes + 1 <
+             cofactor_statistics.dangerous_mode_counts.size();
+         ++dangerous_modes) {
+      std::cout << "cofactor_interpolated_q_" << dangerous_modes
+                << "_pair_count = "
+                << cofactor_statistics.dangerous_mode_counts[dangerous_modes]
+                << '\n';
+    }
+    std::cout << "cofactor_interpolated_q_8plus_pair_count = "
+              << cofactor_statistics.dangerous_mode_counts.back() << '\n';
     std::cout << "cofactor_dynamic_storage_bytes = "
               << cofactor_statistics.dynamic_bytes << '\n';
     for (std::size_t nullity = 0;

@@ -1316,11 +1316,35 @@ $$
 
 Direct contraction of eqs 60g--60h reduces the regular pair-local time from
 $O(n^6)$ to $O(n^4)$ and persistent memory from $O(n^4)$ to $O(n^2)$, where
-$n$ is the same-spin electron count. Ill-conditioned and rank-deficient pairs
-retain the exact inverse-free complementary-product representation. The
-representation switch is determined by matrix conditioning and machine
-precision, not by a molecular label. The full directional derivation,
-admission bound, and mixed regular/singular complexity are given in
+$n$ is the same-spin electron count. For an ill-conditioned or rank-deficient
+pair, let $I_{\mathrm d}$ contain the $q$ singular values below
+$\tau=n\sigma_{\max}\epsilon_{\mathrm{mach}}^{1/8}$. Since deleted minors are
+multi-affine in these singular coordinates, their second-cofactor response is
+recovered exactly from the $2^q$ regular nodes
+
+$$
+z_i^{(\mathbf s)}=s_i\tau,
+\qquad
+\lambda_{\mathbf s}
+=\prod_{i\in I_{\mathrm d}}
+\frac{1+s_i\sigma_i/\tau}{2},
+\qquad
+\mathcal C(\mathbf X)
+=\sum_{\mathbf s\in\{-1,+1\}^q}
+\lambda_{\mathbf s}\mathcal C(\mathbf X_{\mathbf s}).
+\tag{60i}
+$$
+
+The weights are nonnegative and sum to one, while every node obeys the same
+inverse-amplification bound used for a regular pair. Exact interpolation is
+admitted when $2^q\leq n^2$, reducing its second-order response from
+$O(n^6)$ time and $O(n^4)$ storage to $O(2^q n^4)$ time and $O(n^3)$ complete
+hybrid storage. The lower-order and opposite-spin kernels retain their faster
+inverse-free $O(n^3)$ polynomial representation. Only a pair failing the node
+admission test retains the full polynomial second-cofactor representation.
+All switches are determined by matrix conditioning, electron count, and
+machine precision, not by a molecular label. The full directional derivation,
+stability bound, and mixed-representation complexity are given in
 [Full-AO OEO derivative validation](full_ao_oeo_derivative_validation.md).
 
 ## 10. Matrix-free trust-region Newton equation
