@@ -42,6 +42,8 @@ struct ExactHvpOperator::State {
   Diagnostics diagnostics() const;
 
 private:
+  const AcceptedOuterResponseContext& outer_response_context() const;
+
   Eigen::VectorXd apply_reduced_impl(
       const Eigen::VectorXd& reduced_direction,
       HvpComponents components,
@@ -112,8 +114,9 @@ private:
   mutable std::vector<double>
       outer_response_symmetric_active_one_electron_gradient_workspace_;
   std::unique_ptr<AcceptedOrbitalPreparationCache> accepted_orbital_preparation_cache_;
-  std::vector<StructureCoefficientBlock> structure_coefficient_blocks_;
-  AcceptedOuterResponseContext accepted_outer_response_context_;
+  mutable std::vector<StructureCoefficientBlock> structure_coefficient_blocks_;
+  mutable std::unique_ptr<AcceptedOuterResponseContext>
+      accepted_outer_response_context_;
   mutable ApplyTimingTotals apply_timing_totals_;
 };
 

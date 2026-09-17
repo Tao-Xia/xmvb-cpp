@@ -214,7 +214,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
       if (components.structure_response) {
         const SelectedStateDirectionalStructureImages images =
             build_selected_structure_direction(
-                accepted_outer_response_context_,
+                outer_response_context(),
                 integral_direction,
                 outer.pair_cache);
         const int first = static_cast<int>(column) * n_selected_states;
@@ -236,7 +236,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
     if (components.structure_response) {
       const auto eigensystem_start = std::chrono::steady_clock::now();
       const SelectedStateGeneralizedEigenDirectionalResponse block_response =
-          accepted_outer_response_context_
+          outer_response_context()
               .selected_state_eigen_response_operator.apply_direction_block(
                   delta_hamiltonian_selected,
                   delta_overlap_selected);

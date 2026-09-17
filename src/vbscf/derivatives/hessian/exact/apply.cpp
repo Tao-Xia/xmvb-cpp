@@ -327,7 +327,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       } else {
         const SelectedStateDirectionalStructureImages images =
             build_selected_structure_direction(
-                accepted_outer_response_context_,
+                outer_response_context(),
                 active_space_integral_direction,
                 directional_pair_cache);
         apply_timing_totals_
@@ -337,7 +337,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         const auto eigensystem_start_time =
             std::chrono::steady_clock::now();
         local_directional_selected_state_response =
-            accepted_outer_response_context_
+            outer_response_context()
                 .selected_state_eigen_response_operator.apply(images);
         apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
             detail::exact_hvp_elapsed_seconds(eigensystem_start_time);

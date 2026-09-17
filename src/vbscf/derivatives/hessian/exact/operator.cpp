@@ -2,6 +2,7 @@
 
 #include "vbscf/derivatives/hessian/exact/state_internal.hpp"
 
+#include <memory>
 #include <stdexcept>
 #include <utility>
 
@@ -151,21 +152,31 @@ ExactHvpOperator::State::State(
                 accepted_total_active_auxiliary_gradient_,
                 accepted_total_inactive_density_gradient_));
 
-    if (accepted_point_context_->same_spin_pair_cache.enabled()) {
-      structure_coefficient_blocks_ =
-          build_structure_coefficient_blocks(
-              current_input_->structure_data.determinant_to_structure_terms,
-              current_input_->structure_data.n_structures,
-              accepted_point_context_->same_spin_pair_cache.alpha_reuse_table,
-              accepted_point_context_->same_spin_pair_cache.beta_reuse_table,
-              true);
-      accepted_outer_response_context_ =
-          build_accepted_outer_response_context(
-              current_input_,
-              accepted_point_context_.get(),
-              &structure_coefficient_blocks_);
-    }
   }
+}
+
+const AcceptedOuterResponseContext&
+ExactHvpOperator::State::outer_response_context() const {
+  if (!accepted_point_context_->same_spin_pair_cache.enabled()) {
+    throw std::logic_error(
+        "outer response requires the accepted same-spin pair cache");
+  }
+  if (accepted_outer_response_context_ == nullptr) {
+    structure_coefficient_blocks_ =
+        build_structure_coefficient_blocks(
+            current_input_->structure_data.determinant_to_structure_terms,
+            current_input_->structure_data.n_structures,
+            accepted_point_context_->same_spin_pair_cache.alpha_reuse_table,
+            accepted_point_context_->same_spin_pair_cache.beta_reuse_table,
+            true);
+    accepted_outer_response_context_ =
+        std::make_unique<AcceptedOuterResponseContext>(
+            build_accepted_outer_response_context(
+                current_input_,
+                accepted_point_context_.get(),
+                &structure_coefficient_blocks_));
+  }
+  return *accepted_outer_response_context_;
 }
 
 bool ExactHvpOperator::State::supports_analytic_core_model() const noexcept {
