@@ -571,7 +571,9 @@ void accumulate_active_space_gradient(
       build_opposite_spin_matrix_backward_contribution(
           same_spin_pair_cache,
           selected_state_matrices,
-          n_active_orbitals);
+          n_active_orbitals,
+          forward_context.timed_active_space_context.prepared_active_space
+              .active_space_two_electron_result);
   accumulate_additive_vector(
       same_spin_contribution.active_orbital_overlap_gradient,
       &result->active_orbital_overlap_gradient);

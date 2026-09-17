@@ -129,7 +129,8 @@ OppositeSpinMatrixBackwardContribution
 build_opposite_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
-    int n_active_orbitals) {
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result) {
   validate_backward_inputs(same_spin_pair_cache, selected_states);
   OppositeSpinMatrixBackwardContribution result =
       make_zero_contribution(n_active_orbitals);
@@ -137,8 +138,6 @@ build_opposite_spin_matrix_backward_contribution(
   if (n_packed_pairs == 0) {
     return result;
   }
-  const PackedGradientBlocking blocking =
-      choose_packed_gradient_blocking(n_packed_pairs);
   std::vector<double> alpha_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
   std::vector<double> beta_overlap(
@@ -148,26 +147,26 @@ build_opposite_spin_matrix_backward_contribution(
           selected_states.n_unique_alpha,
           selected_states.n_unique_beta),
       [&] {
-        detail::accumulate_opposite_spin_packed_gradient_by_tiles(
+        detail::accumulate_opposite_spin_packed_gradient_by_pair_graph(
             same_spin_pair_cache,
             selected_states,
             n_packed_pairs,
-            blocking.sparse_block_size,
-            blocking.dense_batch_size,
             &result.packed_active_two_electron_gradient);
       },
       [&] {
-        detail::accumulate_alpha_overlap_gradient(
+        detail::accumulate_alpha_overlap_gradient_by_pair_graph(
             same_spin_pair_cache,
             selected_states,
             n_active_orbitals,
+            active_space_two_electron_result,
             &alpha_overlap);
       },
       [&] {
-        detail::accumulate_beta_overlap_gradient(
+        detail::accumulate_beta_overlap_gradient_by_pair_graph(
             same_spin_pair_cache,
             selected_states,
             n_active_orbitals,
+            active_space_two_electron_result,
             &beta_overlap);
       });
   combine_overlap_channels(

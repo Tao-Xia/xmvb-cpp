@@ -277,7 +277,7 @@ regrouping.
 
 The beta overlap adjoint is obtained by interchanging alpha and beta and using
 the sparse transposed coefficient matrices. Both spin sectors use the same
-`DirectionalPairGraph` implementation.
+`SelectedStatePairGraph` implementation.
 
 ## 6. Complexity and memory
 
@@ -364,10 +364,13 @@ $$
 0.292594498619,
 $$
 
-while the wall time changed from approximately $93.55$ s to $13.74$ s. The
-directional opposite-spin backward contribution changed from approximately
-$83.32$ s to $3.45$ s. Peak resident memory remained approximately $6.55$ GB
-and no swap was used.
+while the HVP wall time changed from approximately $93.55$ s to $13.7$--$14.0$
+s. The directional opposite-spin backward contribution changed from
+approximately $83.32$ s to $3.45$--$3.59$ s. Replacing the accepted-point
+adjoints reduced the complete benchmark-process wall time from approximately
+$87.31$ s to $43.07$ s and peak resident memory from approximately $6.55$ GB
+to $6.20$ GB; no swap was used. The difference between process and HVP wall
+times is accepted-point construction and teardown outside the timed HVP.
 
 For the full-AO FeCl2 test, the complete structure-only HVP required
 approximately $0.157$ s, of which approximately $0.051$ s was the
@@ -380,11 +383,11 @@ selected-state coefficient connectivity before active-pair channels.
 
 | Opposite-spin path | Current method | Pair-graph rewrite |
 |---|---|---|
-| Directional selected-state packed adjoint | `DirectionalPairGraph` plus sparse projection outer products | Complete |
+| Directional selected-state packed adjoint | `SelectedStatePairGraph` plus sparse projection outer products | Complete |
 | Directional selected-state alpha overlap adjoint | Pair graph, aggregate-then-apply kernel, targeted output | Complete |
 | Directional selected-state beta overlap adjoint | Transposed pair graph, aggregate-then-apply kernel, targeted output | Complete |
-| Accepted-point packed adjoint | Channel-blocked unique-string tiles | Not yet rewritten |
-| Accepted-point alpha/beta overlap adjoints | Channel-blocked projected-image tiles | Not yet rewritten |
+| Accepted-point packed adjoint | `SelectedStatePairGraph` plus sparse projection outer products | Complete |
+| Accepted-point alpha/beta overlap adjoints | Pair graph, aggregate-then-apply kernel, targeted output | Complete |
 | Local orbital/integral response packed adjoint | Accepted and directional pair-payload tiles | Not yet rewritten |
 | Local orbital/integral response overlap adjoints | Directional projected-image tiles | Not yet rewritten |
 | Forward structure H/S action | Unique-string channel factorization with streamed block action | Already factorized, but not this pair-graph algorithm |
@@ -392,10 +395,10 @@ selected-state coefficient connectivity before active-pair channels.
 | Determinant-pair scalar evaluator | Sparse projection dot product | Pair-local operation; this rewrite is not applicable |
 | Same-spin pair-cache construction | Per-spin cofactor and inverse projections | Producer of graph payloads; this rewrite is not applicable |
 
-The completed paths are the dominant selected-state outer-response terms in
-the profiled large unique-string case. The most plausible next use of the same
-principle is the local orbital/integral response, but it requires a generalized
-graph carrying $\delta A$, $\delta B$, and $\delta G$ payloads. It should not be
+The completed paths include both accepted-state and directional-state global
+coefficient contractions. The most plausible next use of the same principle is
+the local orbital/integral response, but it requires a generalized graph
+carrying $\delta A$, $\delta B$, and $\delta G$ payloads. It should not be
 implemented as a mechanical substitution because its derivative structure is
 different from the pure $\delta C$ response derived above.
 
@@ -403,14 +406,15 @@ different from the pure $\delta C$ response derived above.
 
 The shared sparse graph traversal is implemented in:
 
-- `src/vbscf/derivatives/hessian/responses/opposite_spin/directional_pair_graph_internal.hpp`
-- `src/vbscf/derivatives/hessian/responses/opposite_spin/directional_pair_graph.cpp`
+- `src/vbscf/derivatives/hessian/responses/opposite_spin/selected_state_pair_graph_internal.hpp`
+- `src/vbscf/derivatives/hessian/responses/opposite_spin/selected_state_pair_graph.cpp`
 
-The directional packed adjoint is implemented in:
+The accepted and directional packed adjoints are implemented in:
 
 - `src/vbscf/derivatives/hessian/responses/opposite_spin/contractions.cpp`
 
-The targeted alpha/beta overlap adjoints are implemented in:
+The accepted and directional targeted alpha/beta overlap adjoints are
+implemented in:
 
 - `src/vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions.cpp`
 

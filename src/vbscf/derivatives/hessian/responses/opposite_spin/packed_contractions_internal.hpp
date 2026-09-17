@@ -8,12 +8,10 @@
 
 namespace xmvb::vb::detail {
 
-void accumulate_opposite_spin_packed_gradient_by_tiles(
+void accumulate_opposite_spin_packed_gradient_by_pair_graph(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_packed_active_pairs,
-    int sparse_block_size,
-    int dense_batch_size,
     std::vector<double>* packed_active_two_electron_gradient);
 
 void accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(

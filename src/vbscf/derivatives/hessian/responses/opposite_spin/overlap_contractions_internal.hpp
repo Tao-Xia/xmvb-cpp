@@ -8,16 +8,18 @@
 
 namespace xmvb::vb::detail {
 
-void accumulate_alpha_overlap_gradient(
+void accumulate_alpha_overlap_gradient_by_pair_graph(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     std::vector<double>* active_orbital_overlap_gradient);
 
-void accumulate_beta_overlap_gradient(
+void accumulate_beta_overlap_gradient_by_pair_graph(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     std::vector<double>* active_orbital_overlap_gradient);
 
 void accumulate_directional_alpha_overlap_gradient(

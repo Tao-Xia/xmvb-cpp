@@ -97,6 +97,55 @@ double channel_value(
   return 0.0;
 }
 
+std::vector<double> direct_packed_gradient(
+    const xmvb::vb::SameSpinPairCacheContext& cache,
+    const Eigen::MatrixXd& accepted_coefficients,
+    const Eigen::MatrixXd& directional_coefficients,
+    int n_channels) {
+  const int n_alpha = accepted_coefficients.rows();
+  const int n_beta = accepted_coefficients.cols();
+  std::vector<double> result(
+      static_cast<std::size_t>(n_channels) * (n_channels + 1) / 2,
+      0.0);
+  for (int alpha_right = 0; alpha_right < n_alpha; ++alpha_right) {
+    for (int alpha_left = 0; alpha_left < n_alpha; ++alpha_left) {
+      const auto& alpha_projection =
+          cache.alpha_pair_cache[xmvb::vb::ordered_spin_pair_storage_index(
+              alpha_left, alpha_right, n_alpha)]
+              .opposite_spin_pair_cache.first_order_cofactor_projection;
+      for (int beta_right = 0; beta_right < n_beta; ++beta_right) {
+        for (int beta_left = 0; beta_left < n_beta; ++beta_left) {
+          const auto& beta_projection =
+              cache.beta_pair_cache[xmvb::vb::ordered_spin_pair_storage_index(
+                  beta_left, beta_right, n_beta)]
+                  .opposite_spin_pair_cache.first_order_cofactor_projection;
+          const double coefficient =
+              directional_coefficients(alpha_left, beta_left) *
+                  accepted_coefficients(alpha_right, beta_right) +
+              accepted_coefficients(alpha_left, beta_left) *
+                  directional_coefficients(alpha_right, beta_right);
+          for (int alpha_channel = 0;
+               alpha_channel < n_channels;
+               ++alpha_channel) {
+            const double alpha_value =
+                channel_value(alpha_projection, alpha_channel);
+            for (int beta_channel = 0;
+                 beta_channel < n_channels;
+                 ++beta_channel) {
+              result[xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+                  beta_channel,
+                  alpha_channel)] +=
+                  coefficient * alpha_value *
+                  channel_value(beta_projection, beta_channel);
+            }
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
 void fill_regular_overlap_data(
     int n_unique,
     int n_channels,
@@ -250,44 +299,11 @@ int main() {
       n_channels,
       &actual);
 
-  std::vector<double> expected(packed_size, 0.0);
-  for (int alpha_right = 0; alpha_right < n_alpha; ++alpha_right) {
-    for (int alpha_left = 0; alpha_left < n_alpha; ++alpha_left) {
-      const auto& alpha_projection =
-          cache.alpha_pair_cache[xmvb::vb::ordered_spin_pair_storage_index(
-              alpha_left, alpha_right, n_alpha)]
-              .opposite_spin_pair_cache.first_order_cofactor_projection;
-      for (int beta_right = 0; beta_right < n_beta; ++beta_right) {
-        for (int beta_left = 0; beta_left < n_beta; ++beta_left) {
-          const auto& beta_projection =
-              cache.beta_pair_cache[xmvb::vb::ordered_spin_pair_storage_index(
-                  beta_left, beta_right, n_beta)]
-                  .opposite_spin_pair_cache.first_order_cofactor_projection;
-          const double coefficient =
-              directional_coefficients(alpha_left, beta_left) *
-                  accepted_coefficients(alpha_right, beta_right) +
-              accepted_coefficients(alpha_left, beta_left) *
-                  directional_coefficients(alpha_right, beta_right);
-          for (int alpha_channel = 0;
-               alpha_channel < n_channels;
-               ++alpha_channel) {
-            const double alpha_value =
-                channel_value(alpha_projection, alpha_channel);
-            for (int beta_channel = 0;
-                 beta_channel < n_channels;
-                 ++beta_channel) {
-              const double beta_value =
-                  channel_value(beta_projection, beta_channel);
-              expected[xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
-                  beta_channel,
-                  alpha_channel)] +=
-                  coefficient * alpha_value * beta_value;
-            }
-          }
-        }
-      }
-    }
-  }
+  const std::vector<double> expected = direct_packed_gradient(
+      cache,
+      accepted_coefficients,
+      directional_coefficients,
+      n_channels);
 
   double max_error = 0.0;
   double reference_scale = 1.0;
@@ -350,5 +366,77 @@ int main() {
   require(
       max_error <= 1.0e-12 * reference_scale,
       "pair-major opposite-spin overlap adjoint disagrees with direct sum");
+
+  const auto accepted_contribution =
+      xmvb::vb::build_opposite_spin_matrix_backward_contribution(
+          cache,
+          accepted,
+          2,
+          two_electron_result);
+  const Eigen::MatrixXd half_accepted_coefficients =
+      0.5 * accepted_coefficients;
+  const std::vector<double> expected_accepted_packed = direct_packed_gradient(
+      cache,
+      accepted_coefficients,
+      half_accepted_coefficients,
+      n_channels);
+  max_error = 0.0;
+  reference_scale = 1.0;
+  for (std::size_t index = 0;
+       index < expected_accepted_packed.size();
+       ++index) {
+    max_error = std::max(
+        max_error,
+        std::abs(
+            accepted_contribution.packed_active_two_electron_gradient[index] -
+            expected_accepted_packed[index]));
+    reference_scale = std::max(
+        reference_scale,
+        std::abs(expected_accepted_packed[index]));
+  }
+  require(
+      max_error <= 1.0e-12 * reference_scale,
+      "accepted pair-major packed adjoint disagrees with direct sum");
+
+  std::vector<double> expected_accepted_overlap = direct_overlap_gradient(
+      cache.alpha_pair_cache,
+      cache.alpha_reuse_table.unique_determinants,
+      cache.beta_pair_cache,
+      accepted_coefficients,
+      half_accepted_coefficients,
+      two_electron_result.packed_active_two_electron_integrals,
+      2);
+  const std::vector<double> expected_accepted_beta_overlap =
+      direct_overlap_gradient(
+          cache.beta_pair_cache,
+          cache.beta_reuse_table.unique_determinants,
+          cache.alpha_pair_cache,
+          accepted_coefficients.transpose(),
+          half_accepted_coefficients.transpose(),
+          two_electron_result.packed_active_two_electron_integrals,
+          2);
+  for (std::size_t index = 0;
+       index < expected_accepted_overlap.size();
+       ++index) {
+    expected_accepted_overlap[index] +=
+        expected_accepted_beta_overlap[index];
+  }
+  max_error = 0.0;
+  reference_scale = 1.0;
+  for (std::size_t index = 0;
+       index < expected_accepted_overlap.size();
+       ++index) {
+    max_error = std::max(
+        max_error,
+        std::abs(
+            accepted_contribution.active_orbital_overlap_gradient[index] -
+            expected_accepted_overlap[index]));
+    reference_scale = std::max(
+        reference_scale,
+        std::abs(expected_accepted_overlap[index]));
+  }
+  require(
+      max_error <= 1.0e-12 * reference_scale,
+      "accepted pair-major overlap adjoint disagrees with direct sum");
   return 0;
 }

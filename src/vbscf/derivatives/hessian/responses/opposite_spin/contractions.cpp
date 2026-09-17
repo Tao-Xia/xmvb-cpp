@@ -14,10 +14,10 @@
 #include "vbscf/structures/assembly/local_contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin/directional_pair_graph_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/packed_contractions_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin/selected_state_pair_graph_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/tile_kernels_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 
@@ -502,130 +502,10 @@ void accumulate_spin_overlap_gradient_direction_local(
           gradient_direction(right, left);
 }
 
-void accumulate_opposite_spin_packed_gradient_by_tiles(
+void accumulate_opposite_spin_packed_gradient_from_pair_graph(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
-    int n_packed_active_pairs,
-    int sparse_block_size,
-    int dense_batch_size,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  const int unique_tile_size = kOppositeSpinUniqueTileSize;
-  Eigen::MatrixXd alpha_pair_weight_tile;
-  // A channel block is invariant across beta batches and unique-string tiles.
-  // Keeping it outside those loops bounds sparse storage by one block while
-  // avoiding a full ordered-pair-cache scan for every contraction tile.
-  for (int alpha_block_begin = 0;
-       alpha_block_begin < n_packed_active_pairs;
-       alpha_block_begin += sparse_block_size) {
-    const int alpha_block_end =
-        std::min(n_packed_active_pairs, alpha_block_begin + sparse_block_size);
-    const auto alpha_sparse_block = build_first_order_sparse_matrix_block(
-        same_spin_pair_cache.alpha_pair_cache_ref(),
-        selected_states.n_unique_alpha,
-        alpha_block_begin,
-        alpha_block_end);
-
-    for (int beta_batch_begin = 0;
-         beta_batch_begin < n_packed_active_pairs;
-         beta_batch_begin += dense_batch_size) {
-      const int beta_batch_end =
-          std::min(n_packed_active_pairs, beta_batch_begin + dense_batch_size);
-      const auto beta_sparse_batch = build_first_order_sparse_matrix_block(
-          same_spin_pair_cache.beta_pair_cache_ref(),
-          selected_states.n_unique_beta,
-          beta_batch_begin,
-          beta_batch_end);
-
-      for (int alpha_left_begin = 0;
-           alpha_left_begin < selected_states.n_unique_alpha;
-           alpha_left_begin += unique_tile_size) {
-        const int alpha_left_end =
-            std::min(
-                selected_states.n_unique_alpha,
-                alpha_left_begin + unique_tile_size);
-        for (int alpha_right_begin = 0;
-             alpha_right_begin < selected_states.n_unique_alpha;
-             alpha_right_begin += unique_tile_size) {
-          const int alpha_right_end =
-              std::min(
-                  selected_states.n_unique_alpha,
-                  alpha_right_begin + unique_tile_size);
-
-          std::vector<int> active_beta_packed_pair_indices;
-          const int alpha_tile_left_size = alpha_left_end - alpha_left_begin;
-          const int alpha_tile_area =
-              alpha_tile_left_size * (alpha_right_end - alpha_right_begin);
-          Eigen::MatrixXd alpha_pair_weight_tiles(
-              alpha_tile_area,
-              beta_batch_end - beta_batch_begin);
-          active_beta_packed_pair_indices.reserve(beta_sparse_batch.size());
-          int active_beta_count = 0;
-          for (int beta_local_index = 0;
-               beta_local_index < beta_batch_end - beta_batch_begin;
-               ++beta_local_index) {
-            accumulate_alpha_pair_matrix_tile(
-                selected_states,
-                beta_sparse_batch[beta_local_index],
-                alpha_left_begin,
-                alpha_left_end,
-                alpha_right_begin,
-                alpha_right_end,
-                &alpha_pair_weight_tile);
-            if (dense_matrix_is_effectively_zero(alpha_pair_weight_tile)) {
-              continue;
-            }
-            active_beta_packed_pair_indices.push_back(
-                beta_batch_begin + beta_local_index);
-            alpha_pair_weight_tiles.col(active_beta_count) =
-                Eigen::Map<const Eigen::VectorXd>(
-                    alpha_pair_weight_tile.data(),
-                    alpha_pair_weight_tile.size());
-            ++active_beta_count;
-          }
-          if (active_beta_packed_pair_indices.empty()) {
-            continue;
-          }
-
-          for (std::size_t beta_active_index = 0;
-               beta_active_index < active_beta_packed_pair_indices.size();
-               ++beta_active_index) {
-            const int beta_packed_pair_index =
-                active_beta_packed_pair_indices[beta_active_index];
-            for (int alpha_local_index = 0;
-                 alpha_local_index < alpha_block_end - alpha_block_begin;
-                 ++alpha_local_index) {
-              const double packed_gradient_value =
-                  contract_sparse_matrix_tile_with_dense_tile_matrix(
-                      alpha_sparse_block[alpha_local_index],
-                      alpha_pair_weight_tiles,
-                      static_cast<int>(beta_active_index),
-                      alpha_tile_left_size,
-                      alpha_left_begin,
-                      alpha_right_begin);
-              if (std::abs(packed_gradient_value) <= kContributionTolerance) {
-                continue;
-              }
-
-              const int alpha_packed_pair_index =
-                  alpha_block_begin + alpha_local_index;
-              const int packed_pair_of_pairs_index =
-                  TwoElectronIndexer::packed_pair_of_pairs_index(
-                      beta_packed_pair_index,
-                      alpha_packed_pair_index);
-              (*packed_active_two_electron_gradient)[
-                  packed_pair_of_pairs_index] += packed_gradient_value;
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-void accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const SelectedStateDeterminantMatrices& directional_selected_states,
+    const SelectedStatePairGraph& pair_graph,
     int n_packed_active_pairs,
     std::vector<double>* packed_active_two_electron_gradient) {
   const auto& alpha_pair_cache = same_spin_pair_cache.alpha_pair_cache_ref();
@@ -639,11 +519,6 @@ void accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
   std::vector<unsigned char> beta_channel_touched(
       n_packed_active_pairs,
       0u);
-
-  const DirectionalPairGraph pair_graph(
-      selected_states,
-      directional_selected_states,
-      PrimarySpin::Alpha);
 
   for (int alpha_right = 0;
        alpha_right < selected_states.n_unique_alpha;
@@ -708,6 +583,40 @@ void accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
           packed_pair_of_pairs_index] += value;
     }
   }
+}
+
+void accumulate_opposite_spin_packed_gradient_by_pair_graph(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    int n_packed_active_pairs,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  const SelectedStatePairGraph pair_graph(
+      selected_states,
+      PrimarySpin::Alpha);
+  accumulate_opposite_spin_packed_gradient_from_pair_graph(
+      same_spin_pair_cache,
+      selected_states,
+      pair_graph,
+      n_packed_active_pairs,
+      packed_active_two_electron_gradient);
+}
+
+void accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
+    const SameSpinPairCacheContext& same_spin_pair_cache,
+    const SelectedStateDeterminantMatrices& selected_states,
+    const SelectedStateDeterminantMatrices& directional_selected_states,
+    int n_packed_active_pairs,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  const SelectedStatePairGraph pair_graph(
+      selected_states,
+      directional_selected_states,
+      PrimarySpin::Alpha);
+  accumulate_opposite_spin_packed_gradient_from_pair_graph(
+      same_spin_pair_cache,
+      selected_states,
+      pair_graph,
+      n_packed_active_pairs,
+      packed_active_two_electron_gradient);
 }
 
 void accumulate_local_opposite_spin_packed_gradient_by_tiles(

@@ -47,7 +47,8 @@ struct OppositeSpinMatrixBackwardContribution {
 OppositeSpinMatrixBackwardContribution build_opposite_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
-    int n_active_orbitals);
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result);
 
 /**
  * @brief Builds the directional opposite-spin backward contribution.
