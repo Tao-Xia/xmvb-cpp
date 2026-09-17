@@ -74,7 +74,6 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/hessian/responses/active_space/integral_direction.cpp
   vbscf/derivatives/hessian/responses/active_space/outer_response.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/backward.cpp
-  vbscf/derivatives/hessian/responses/opposite_spin/channels.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/pair_response.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/contractions.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions.cpp

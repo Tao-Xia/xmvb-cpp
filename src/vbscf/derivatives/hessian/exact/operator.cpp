@@ -199,8 +199,8 @@ ExactHvpOperator::State::diagnostics() const {
       nonredundant_space_->has_reduced_curvature_diagonal();
   info.has_same_spin_matrix_form =
       accepted_point_context_->use_full_matrix_form_adjoint;
-  info.has_opposite_spin_matrix_form =
-      accepted_point_context_->use_matrix_form_opposite_spin;
+  info.has_opposite_spin_pair_graph =
+      accepted_point_context_->use_pair_graph_opposite_spin_adjoint;
   info.streams_exact_pair_products =
       accepted_exact_two_electron_cache_.accepted_pair_products == nullptr;
   info.n_selected_states =

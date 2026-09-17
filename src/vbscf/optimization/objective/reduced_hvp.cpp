@@ -65,8 +65,8 @@ std::string build_hvp_error(const ExactReducedHvp& hvp) {
           << bool_name(info.outer_response_enabled)
           << " has_same_spin_matrix_form="
           << bool_name(info.has_same_spin_matrix_form)
-          << " has_opposite_spin_matrix_form="
-          << bool_name(info.has_opposite_spin_matrix_form)
+          << " has_opposite_spin_pair_graph="
+          << bool_name(info.has_opposite_spin_pair_graph)
           << " n_selected_states=" << info.n_selected_states
           << " n_active_orbitals=" << info.n_active_orbitals
           << " n_blocks=" << info.n_blocks;

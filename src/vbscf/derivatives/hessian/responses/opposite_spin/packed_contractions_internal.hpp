@@ -21,7 +21,7 @@ void accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
     int n_packed_active_pairs,
     std::vector<double>* packed_active_two_electron_gradient);
 
-void accumulate_local_opposite_spin_packed_gradient_by_tiles(
+void accumulate_local_opposite_spin_packed_gradient_by_pair_graph(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const std::vector<DirectionalOppositeSpinPairData>&
         alpha_directional_pair_data,
@@ -29,8 +29,6 @@ void accumulate_local_opposite_spin_packed_gradient_by_tiles(
         beta_directional_pair_data,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_packed_active_pairs,
-    int sparse_block_size,
-    int dense_batch_size,
     std::vector<double>* packed_active_two_electron_gradient);
 
 }  // namespace xmvb::vb::detail

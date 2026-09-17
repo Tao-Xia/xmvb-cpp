@@ -392,7 +392,7 @@ finalize_active_space_second_order_context(
   context->n_structures = input.structure_data.n_structures;
   context->use_full_matrix_form_adjoint =
       context->same_spin_pair_cache.enabled();
-  context->use_matrix_form_opposite_spin =
+  context->use_pair_graph_opposite_spin_adjoint =
       context->same_spin_pair_cache.enabled();
   context->selected_state_energies =
       std::move(forward_context->selected_state_energies);
@@ -409,7 +409,7 @@ finalize_active_space_second_order_context(
     context->full_structure_eigenvalues =
         std::move(forward_context->eigen_result.eigenvalues);
   }
-  if (context->use_matrix_form_opposite_spin) {
+  if (context->use_pair_graph_opposite_spin_adjoint) {
     context->selected_state_matrices =
         build_selected_state_determinant_matrices_from_selected_columns(
             input.structure_data,
@@ -567,8 +567,8 @@ void accumulate_active_space_gradient(
           selected_state_matrices,
           selected_state_energies,
           n_active_orbitals);
-  const OppositeSpinMatrixBackwardContribution opposite_spin_contribution =
-      build_opposite_spin_matrix_backward_contribution(
+  const OppositeSpinBackwardContribution opposite_spin_contribution =
+      build_opposite_spin_backward_contribution(
           same_spin_pair_cache,
           selected_state_matrices,
           n_active_orbitals,

@@ -7,6 +7,7 @@
 #include <Eigen/SparseCore>
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/packed_contractions_internal.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
@@ -137,6 +138,83 @@ std::vector<double> direct_packed_gradient(
                   alpha_channel)] +=
                   coefficient * alpha_value *
                   channel_value(beta_projection, beta_channel);
+            }
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
+std::vector<xmvb::vb::detail::DirectionalOppositeSpinPairData>
+make_directional_pairs(
+    const std::vector<xmvb::vb::SpinDeterminantPairEvaluation>& accepted_pairs,
+    double pair_scale) {
+  std::vector<xmvb::vb::detail::DirectionalOppositeSpinPairData> result(
+      accepted_pairs.size());
+  for (std::size_t pair = 0; pair < accepted_pairs.size(); ++pair) {
+    const auto& accepted = accepted_pairs[pair]
+        .opposite_spin_pair_cache.first_order_cofactor_projection;
+    auto& directional = result[pair].delta_first_order_cofactor_projection;
+    directional.packed_pair_indices = accepted.packed_pair_indices;
+    directional.packed_pair_values.resize(accepted.packed_pair_values.size());
+    for (std::size_t entry = 0;
+         entry < accepted.packed_pair_values.size();
+         ++entry) {
+      directional.packed_pair_values[entry] =
+          pair_scale * accepted.packed_pair_values[entry] +
+          0.01 * static_cast<double>(pair + entry + 1);
+    }
+  }
+  return result;
+}
+
+std::vector<double> direct_local_packed_gradient(
+    const xmvb::vb::SameSpinPairCacheContext& cache,
+    const std::vector<xmvb::vb::detail::DirectionalOppositeSpinPairData>&
+        alpha_directional_pairs,
+    const std::vector<xmvb::vb::detail::DirectionalOppositeSpinPairData>&
+        beta_directional_pairs,
+    const Eigen::MatrixXd& coefficients,
+    int n_channels) {
+  const int n_alpha = coefficients.rows();
+  const int n_beta = coefficients.cols();
+  std::vector<double> result(
+      static_cast<std::size_t>(n_channels) * (n_channels + 1) / 2,
+      0.0);
+  for (int alpha_right = 0; alpha_right < n_alpha; ++alpha_right) {
+    for (int alpha_left = 0; alpha_left < n_alpha; ++alpha_left) {
+      const std::size_t alpha_pair = xmvb::vb::ordered_spin_pair_storage_index(
+          alpha_left, alpha_right, n_alpha);
+      const auto& alpha = cache.alpha_pair_cache[alpha_pair]
+          .opposite_spin_pair_cache.first_order_cofactor_projection;
+      const auto& delta_alpha = alpha_directional_pairs[alpha_pair]
+          .delta_first_order_cofactor_projection;
+      for (int beta_right = 0; beta_right < n_beta; ++beta_right) {
+        for (int beta_left = 0; beta_left < n_beta; ++beta_left) {
+          const std::size_t beta_pair = xmvb::vb::ordered_spin_pair_storage_index(
+              beta_left, beta_right, n_beta);
+          const auto& beta = cache.beta_pair_cache[beta_pair]
+              .opposite_spin_pair_cache.first_order_cofactor_projection;
+          const auto& delta_beta = beta_directional_pairs[beta_pair]
+              .delta_first_order_cofactor_projection;
+          const double coefficient =
+              coefficients(alpha_left, beta_left) *
+              coefficients(alpha_right, beta_right);
+          for (int alpha_channel = 0;
+               alpha_channel < n_channels;
+               ++alpha_channel) {
+            for (int beta_channel = 0;
+                 beta_channel < n_channels;
+                 ++beta_channel) {
+              result[xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+                  beta_channel,
+                  alpha_channel)] += coefficient *
+                  (channel_value(delta_alpha, alpha_channel) *
+                       channel_value(beta, beta_channel) +
+                   channel_value(alpha, alpha_channel) *
+                       channel_value(delta_beta, beta_channel));
             }
           }
         }
@@ -326,7 +404,7 @@ int main() {
     }
   }
   const auto contribution =
-      xmvb::vb::build_directional_opposite_spin_matrix_backward_contribution(
+      xmvb::vb::build_directional_opposite_spin_backward_contribution(
           cache,
           accepted,
           directional,
@@ -368,7 +446,7 @@ int main() {
       "pair-major opposite-spin overlap adjoint disagrees with direct sum");
 
   const auto accepted_contribution =
-      xmvb::vb::build_opposite_spin_matrix_backward_contribution(
+      xmvb::vb::build_opposite_spin_backward_contribution(
           cache,
           accepted,
           2,
@@ -438,5 +516,35 @@ int main() {
   require(
       max_error <= 1.0e-12 * reference_scale,
       "accepted pair-major overlap adjoint disagrees with direct sum");
+
+  const auto alpha_directional_pairs =
+      make_directional_pairs(cache.alpha_pair_cache, 0.17);
+  const auto beta_directional_pairs =
+      make_directional_pairs(cache.beta_pair_cache, -0.23);
+  std::vector<double> local_actual(packed_size, 0.0);
+  xmvb::vb::detail::accumulate_local_opposite_spin_packed_gradient_by_pair_graph(
+      cache,
+      alpha_directional_pairs,
+      beta_directional_pairs,
+      accepted,
+      n_channels,
+      &local_actual);
+  const std::vector<double> local_expected = direct_local_packed_gradient(
+      cache,
+      alpha_directional_pairs,
+      beta_directional_pairs,
+      accepted_coefficients,
+      n_channels);
+  max_error = 0.0;
+  reference_scale = 1.0;
+  for (std::size_t index = 0; index < local_expected.size(); ++index) {
+    max_error = std::max(
+        max_error,
+        std::abs(local_actual[index] - local_expected[index]));
+    reference_scale = std::max(reference_scale, std::abs(local_expected[index]));
+  }
+  require(
+      max_error <= 1.0e-12 * reference_scale,
+      "local pair-major packed adjoint disagrees with direct sum");
   return 0;
 }

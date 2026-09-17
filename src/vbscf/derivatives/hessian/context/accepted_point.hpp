@@ -105,9 +105,9 @@ struct AcceptedPointContext {
   bool use_full_matrix_form_adjoint = false;
 
   /**
-   * @brief Whether the accepted point supports matrix-form opposite-spin channels.
+   * @brief Whether the accepted point supports pair-graph opposite-spin adjoints.
    */
-  bool use_matrix_form_opposite_spin = false;
+  bool use_pair_graph_opposite_spin_adjoint = false;
 };
 
 }  // namespace xmvb::vb

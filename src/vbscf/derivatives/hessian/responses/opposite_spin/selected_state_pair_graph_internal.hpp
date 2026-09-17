@@ -8,6 +8,8 @@
 
 namespace xmvb::vb::detail {
 
+struct DirectionalOppositeSpinPairData;
+
 enum class PrimarySpin {
   Alpha,
   Beta,
@@ -41,6 +43,31 @@ class SelectedStatePairGraph {
       std::vector<unsigned char>* touched_flags,
       std::vector<int>* touched_channels) const;
 
+  void accumulate_partner_projected_values(
+      int primary_left,
+      int primary_right,
+      const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
+      int n_unique_partner,
+      const std::vector<int>& target_channels,
+      std::vector<double>* target_values) const;
+
+  void accumulate_partner_projected_values(
+      int primary_left,
+      int primary_right,
+      const std::vector<DirectionalOppositeSpinPairData>& partner_pair_data,
+      int n_unique_partner,
+      const std::vector<int>& target_channels,
+      std::vector<double>* target_values) const;
+
+  void accumulate_partner_projection(
+      int primary_left,
+      int primary_right,
+      const std::vector<DirectionalOppositeSpinPairData>& partner_pair_data,
+      int n_unique_partner,
+      std::vector<double>* partner_image,
+      std::vector<unsigned char>* touched_flags,
+      std::vector<int>* touched_channels) const;
+
  private:
   struct Term {
     const SparseLocalCoefficientMatrix* left_coefficients = nullptr;
@@ -58,6 +85,21 @@ class SelectedStatePairGraph {
       double weight,
       PrimarySpin primary_spin,
       int n_primary);
+
+  template <typename ProjectionAt>
+  void accumulate_partner_projection_impl(
+      int primary_left,
+      int primary_right,
+      ProjectionAt&& projection_at,
+      std::vector<double>* partner_image,
+      std::vector<unsigned char>* touched_flags,
+      std::vector<int>* touched_channels) const;
+
+  template <typename AccumulatePair>
+  void for_each_partner_pair(
+      int primary_left,
+      int primary_right,
+      AccumulatePair&& accumulate_pair) const;
 
   std::vector<Term> terms_;
 };

@@ -12,7 +12,6 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/packed_contractions_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/opposite_spin/tile_kernels_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -21,10 +20,13 @@
 namespace xmvb::vb {
 namespace {
 
-struct PackedGradientBlocking {
-  int sparse_block_size = 0;
-  int dense_batch_size = 0;
-};
+bool should_parallelize_opposite_spin_channels(
+    int n_unique_alpha,
+    int n_unique_beta) {
+  constexpr std::size_t kMinimumPairCount = 64u * 64u;
+  return static_cast<std::size_t>(n_unique_alpha) * n_unique_beta >
+      kMinimumPairCount;
+}
 
 int require_packed_pair_count(
     const SameSpinPairCacheContext& same_spin_pair_cache) {
@@ -46,7 +48,7 @@ void validate_backward_inputs(
     const SelectedStateDeterminantMatrices& selected_states) {
   if (!same_spin_pair_cache.enabled()) {
     throw std::invalid_argument(
-        "matrix-form opposite-spin backward requires an enabled same-spin cache");
+        "pair-graph opposite-spin backward requires an enabled same-spin cache");
   }
   if (selected_states.n_unique_alpha !=
           static_cast<int>(same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()) ||
@@ -71,9 +73,9 @@ void validate_directional_states(
   }
 }
 
-OppositeSpinMatrixBackwardContribution make_zero_contribution(
+OppositeSpinBackwardContribution make_zero_contribution(
     int n_active_orbitals) {
-  OppositeSpinMatrixBackwardContribution result;
+  OppositeSpinBackwardContribution result;
   result.active_orbital_overlap_gradient.assign(
       static_cast<std::size_t>(n_active_orbitals) *
           static_cast<std::size_t>(n_active_orbitals),
@@ -82,12 +84,6 @@ OppositeSpinMatrixBackwardContribution make_zero_contribution(
       packed_active_two_electron_integral_count(n_active_orbitals),
       0.0);
   return result;
-}
-
-PackedGradientBlocking choose_packed_gradient_blocking(int n_packed_pairs) {
-  return {
-      std::min(n_packed_pairs, 32),
-      std::min(n_packed_pairs, 8)};
 }
 
 template <typename... Tasks>
@@ -125,14 +121,14 @@ void combine_overlap_channels(
 
 }  // namespace
 
-OppositeSpinMatrixBackwardContribution
-build_opposite_spin_matrix_backward_contribution(
+OppositeSpinBackwardContribution
+build_opposite_spin_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result) {
   validate_backward_inputs(same_spin_pair_cache, selected_states);
-  OppositeSpinMatrixBackwardContribution result =
+  OppositeSpinBackwardContribution result =
       make_zero_contribution(n_active_orbitals);
   const int n_packed_pairs = require_packed_pair_count(same_spin_pair_cache);
   if (n_packed_pairs == 0) {
@@ -143,7 +139,7 @@ build_opposite_spin_matrix_backward_contribution(
   std::vector<double> beta_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
   run_independent_channels(
-      detail::should_parallelize_opposite_spin_channels(
+      should_parallelize_opposite_spin_channels(
           selected_states.n_unique_alpha,
           selected_states.n_unique_beta),
       [&] {
@@ -176,8 +172,8 @@ build_opposite_spin_matrix_backward_contribution(
   return result;
 }
 
-OppositeSpinMatrixBackwardContribution
-build_directional_opposite_spin_matrix_backward_contribution(
+OppositeSpinBackwardContribution
+build_directional_opposite_spin_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
@@ -185,21 +181,18 @@ build_directional_opposite_spin_matrix_backward_contribution(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result) {
   validate_backward_inputs(same_spin_pair_cache, selected_states);
   validate_directional_states(selected_states, directional_selected_states);
-  OppositeSpinMatrixBackwardContribution result =
+  OppositeSpinBackwardContribution result =
       make_zero_contribution(n_active_orbitals);
   const int n_packed_pairs = require_packed_pair_count(same_spin_pair_cache);
   if (n_packed_pairs == 0) {
     return result;
   }
-  const PackedGradientBlocking blocking =
-      choose_packed_gradient_blocking(n_packed_pairs);
-
   std::vector<double> alpha_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
   std::vector<double> beta_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
   run_independent_channels(
-      detail::should_parallelize_opposite_spin_channels(
+      should_parallelize_opposite_spin_channels(
           selected_states.n_unique_alpha,
           selected_states.n_unique_beta),
       [&] {
@@ -244,8 +237,8 @@ build_directional_opposite_spin_matrix_backward_contribution(
   return result;
 }
 
-OppositeSpinMatrixBackwardContribution
-build_local_opposite_spin_matrix_backward_contribution(
+OppositeSpinBackwardContribution
+build_local_opposite_spin_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
@@ -253,7 +246,7 @@ build_local_opposite_spin_matrix_backward_contribution(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairCache& directional_pair_cache) {
   validate_backward_inputs(same_spin_pair_cache, selected_states);
-  OppositeSpinMatrixBackwardContribution result =
+  OppositeSpinBackwardContribution result =
       make_zero_contribution(n_active_orbitals);
   const int n_packed_pairs = require_packed_pair_count(same_spin_pair_cache);
   if (n_packed_pairs == 0) {
@@ -267,7 +260,7 @@ build_local_opposite_spin_matrix_backward_contribution(
           ? directional_pair_cache.alpha.ordered_pair_data
           : directional_pair_cache.beta.ordered_pair_data;
   run_independent_channels(
-      detail::should_parallelize_opposite_spin_channels(
+      should_parallelize_opposite_spin_channels(
           selected_states.n_unique_alpha,
           selected_states.n_unique_beta),
       [&] {
@@ -292,26 +285,21 @@ build_local_opposite_spin_matrix_backward_contribution(
                 direction,
                 beta_same_spin_pairs);
       });
-  const PackedGradientBlocking blocking =
-      choose_packed_gradient_blocking(n_packed_pairs);
-
   std::vector<double> alpha_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
   std::vector<double> beta_overlap(
       result.active_orbital_overlap_gradient.size(), 0.0);
   run_independent_channels(
-      detail::should_parallelize_opposite_spin_channels(
+      should_parallelize_opposite_spin_channels(
           selected_states.n_unique_alpha,
           selected_states.n_unique_beta),
       [&] {
-        detail::accumulate_local_opposite_spin_packed_gradient_by_tiles(
+        detail::accumulate_local_opposite_spin_packed_gradient_by_pair_graph(
             same_spin_pair_cache,
             alpha_directional_pairs,
             beta_directional_pairs,
             selected_states,
             n_packed_pairs,
-            blocking.sparse_block_size,
-            blocking.dense_batch_size,
             &result.packed_active_two_electron_gradient);
       },
       [&] {

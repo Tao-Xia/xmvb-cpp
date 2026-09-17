@@ -25,14 +25,14 @@ struct OppositeSpinBackwardTiming {
  * adjoint. Callers are expected to add these buffers to the same-spin and
  * one-electron contributions accumulated elsewhere.
  */
-struct OppositeSpinMatrixBackwardContribution {
+struct OppositeSpinBackwardContribution {
   std::vector<double> active_orbital_overlap_gradient;
   std::vector<double> packed_active_two_electron_gradient;
   OppositeSpinBackwardTiming timing;
 };
 
 /**
- * @brief Builds the matrix-form opposite-spin backward contribution.
+ * @brief Builds the pair-graph opposite-spin backward contribution.
  *
  * This routine consumes the selected-state coefficient matrices `C^(n)` and
  * the packed-pair projections stored inside the unique same-spin cache. The
@@ -44,7 +44,7 @@ struct OppositeSpinMatrixBackwardContribution {
  * - `packed_active_two_electron_gradient`,
  * - `active_orbital_overlap_gradient`.
  */
-OppositeSpinMatrixBackwardContribution build_opposite_spin_matrix_backward_contribution(
+OppositeSpinBackwardContribution build_opposite_spin_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
@@ -60,8 +60,8 @@ OppositeSpinMatrixBackwardContribution build_opposite_spin_matrix_backward_contr
  *
  * while the accepted-point same-spin cache payloads stay fixed.
  */
-OppositeSpinMatrixBackwardContribution
-build_directional_opposite_spin_matrix_backward_contribution(
+OppositeSpinBackwardContribution
+build_directional_opposite_spin_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
@@ -83,8 +83,8 @@ build_directional_opposite_spin_matrix_backward_contribution(
  * only materializes the direction-dependent per-pair payloads needed for one
  * HVP application.
  */
-OppositeSpinMatrixBackwardContribution
-build_local_opposite_spin_matrix_backward_contribution(
+OppositeSpinBackwardContribution
+build_local_opposite_spin_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,

@@ -2,6 +2,8 @@
 
 #include <cstddef>
 
+#include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
+
 namespace xmvb::vb::detail {
 
 SelectedStatePairGraph::SelectedStatePairGraph(
@@ -91,14 +93,11 @@ void SelectedStatePairGraph::add_term(
   term.weight = weight;
 }
 
-void SelectedStatePairGraph::accumulate_partner_projection(
+template <typename AccumulatePair>
+void SelectedStatePairGraph::for_each_partner_pair(
     int primary_left,
     int primary_right,
-    const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
-    int n_unique_partner,
-    std::vector<double>* partner_image,
-    std::vector<unsigned char>* touched_flags,
-    std::vector<int>* touched_channels) const {
+    AccumulatePair&& accumulate_pair) const {
   const auto accumulate_row_product =
       [&](const SparseLocalCoefficientMatrix& left_coefficients,
           int left_local,
@@ -124,23 +123,7 @@ void SelectedStatePairGraph::accumulate_partner_projection(
             const int partner_right = right_partner_support[right_entry.col()];
             const double coefficient =
                 scale * left_entry.value() * right_entry.value();
-            const auto& projection =
-                partner_pair_cache[ordered_spin_pair_storage_index(
-                    partner_left,
-                    partner_right,
-                    n_unique_partner)]
-                    .opposite_spin_pair_cache.first_order_cofactor_projection;
-            for (std::size_t entry = 0;
-                 entry < projection.packed_pair_indices.size();
-                 ++entry) {
-              const int channel = projection.packed_pair_indices[entry];
-              if ((*touched_flags)[channel] == 0u) {
-                (*touched_flags)[channel] = 1u;
-                touched_channels->push_back(channel);
-              }
-              (*partner_image)[channel] +=
-                  coefficient * projection.packed_pair_values[entry];
-            }
+            accumulate_pair(partner_left, partner_right, coefficient);
           }
         }
       };
@@ -155,6 +138,126 @@ void SelectedStatePairGraph::accumulate_partner_projection(
         *term.right_partner_support,
         term.weight);
   }
+}
+
+template <typename ProjectionAt>
+void SelectedStatePairGraph::accumulate_partner_projection_impl(
+    int primary_left,
+    int primary_right,
+    ProjectionAt&& projection_at,
+    std::vector<double>* partner_image,
+    std::vector<unsigned char>* touched_flags,
+    std::vector<int>* touched_channels) const {
+  for_each_partner_pair(
+      primary_left,
+      primary_right,
+      [&](int partner_left, int partner_right, double coefficient) {
+        const auto& projection = projection_at(partner_left, partner_right);
+        for (std::size_t entry = 0;
+             entry < projection.packed_pair_indices.size();
+             ++entry) {
+          const int channel = projection.packed_pair_indices[entry];
+          if ((*touched_flags)[channel] == 0u) {
+            (*touched_flags)[channel] = 1u;
+            touched_channels->push_back(channel);
+          }
+          (*partner_image)[channel] +=
+              coefficient * projection.packed_pair_values[entry];
+        }
+      });
+}
+
+void SelectedStatePairGraph::accumulate_partner_projection(
+    int primary_left,
+    int primary_right,
+    const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
+    int n_unique_partner,
+    std::vector<double>* partner_image,
+    std::vector<unsigned char>* touched_flags,
+    std::vector<int>* touched_channels) const {
+  accumulate_partner_projection_impl(
+      primary_left,
+      primary_right,
+      [&](int partner_left, int partner_right) -> const auto& {
+        return partner_pair_cache[ordered_spin_pair_storage_index(
+            partner_left,
+            partner_right,
+            n_unique_partner)]
+            .opposite_spin_pair_cache.first_order_cofactor_projection;
+      },
+      partner_image,
+      touched_flags,
+      touched_channels);
+}
+
+void SelectedStatePairGraph::accumulate_partner_projected_values(
+    int primary_left,
+    int primary_right,
+    const std::vector<SpinDeterminantPairEvaluation>& partner_pair_cache,
+    int n_unique_partner,
+    const std::vector<int>& target_channels,
+    std::vector<double>* target_values) const {
+  for_each_partner_pair(
+      primary_left,
+      primary_right,
+      [&](int partner_left, int partner_right, double coefficient) {
+        const auto& values = partner_pair_cache[ordered_spin_pair_storage_index(
+            partner_left,
+            partner_right,
+            n_unique_partner)]
+            .opposite_spin_pair_cache.first_order_cofactor_projection
+            .projected_pair_values;
+        for (std::size_t target = 0; target < target_channels.size(); ++target) {
+          (*target_values)[target] +=
+              coefficient * values[target_channels[target]];
+        }
+      });
+}
+
+void SelectedStatePairGraph::accumulate_partner_projected_values(
+    int primary_left,
+    int primary_right,
+    const std::vector<DirectionalOppositeSpinPairData>& partner_pair_data,
+    int n_unique_partner,
+    const std::vector<int>& target_channels,
+    std::vector<double>* target_values) const {
+  for_each_partner_pair(
+      primary_left,
+      primary_right,
+      [&](int partner_left, int partner_right, double coefficient) {
+        const auto& values = partner_pair_data[ordered_spin_pair_storage_index(
+            partner_left,
+            partner_right,
+            n_unique_partner)]
+            .delta_first_order_cofactor_projection.projected_pair_values;
+        for (std::size_t target = 0; target < target_channels.size(); ++target) {
+          (*target_values)[target] +=
+              coefficient * values[target_channels[target]];
+        }
+      });
+}
+
+void SelectedStatePairGraph::accumulate_partner_projection(
+    int primary_left,
+    int primary_right,
+    const std::vector<DirectionalOppositeSpinPairData>& partner_pair_data,
+    int n_unique_partner,
+    std::vector<double>* partner_image,
+    std::vector<unsigned char>* touched_flags,
+    std::vector<int>* touched_channels) const {
+  accumulate_partner_projection_impl(
+      primary_left,
+      primary_right,
+      [&](int partner_left, int partner_right) -> const auto& {
+        return partner_pair_data[ordered_spin_pair_storage_index(
+            partner_left,
+            partner_right,
+            n_unique_partner)]
+            .delta_first_order_cofactor_projection;
+      },
+      partner_image,
+      touched_flags,
+      touched_channels);
 }
 
 }  // namespace xmvb::vb::detail

@@ -129,7 +129,7 @@ static void validate_same_spin_matrix_backward_contribution(
 }
 
 static void validate_opposite_spin_matrix_backward_contribution(
-    const OppositeSpinMatrixBackwardContribution& contribution,
+    const OppositeSpinBackwardContribution& contribution,
     const char* label) {
   throw_if_nonfinite(
       contribution.active_orbital_overlap_gradient,
@@ -174,16 +174,15 @@ ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
     const AcceptedPointContext& accepted_point_context,
     const ActiveSpaceIntegralDirectionView& integral_direction,
     const SameSpinDirectionalPairCache& directional_pair_cache) {
-  if (!accepted_point_context.use_matrix_form_opposite_spin) {
+  if (!accepted_point_context.use_pair_graph_opposite_spin_adjoint) {
     throw std::runtime_error(
         "outer-response active-gradient direction requires selected-state matrices");
   }
   ActiveSpaceGradientDirection direction =
       make_zero_active_space_gradient_direction(
           input.orbital_preparation_input.n_active_orbitals);
-  // The local outer-response is fully matrix-form again: same-spin uses the
-  // repaired canonical half-pair contraction and opposite-spin stays on the
-  // already-validated matrix-form block contraction. HHO/SSO are symmetrized
+  // Same-spin uses the canonical half-pair contraction and opposite-spin uses
+  // the exact pair-graph adjoint. HHO/SSO are symmetrized
   // later before the orbital pullback, so matching the pairwise canonical
   // storage convention here removes the previous diagnostic mismatch without
   // changing the physical HVP.
@@ -201,8 +200,8 @@ ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
   validate_same_spin_matrix_backward_contribution(
       matrix_form_local_same_spin_response,
       "exact outer-response local same-spin backward contribution");
-  const OppositeSpinMatrixBackwardContribution matrix_form_local_opposite_spin_response =
-      build_local_opposite_spin_matrix_backward_contribution(
+  const OppositeSpinBackwardContribution local_opposite_spin_response =
+      build_local_opposite_spin_backward_contribution(
           accepted_point_context.same_spin_pair_cache,
           accepted_point_context.selected_state_matrices,
           input.orbital_preparation_input.n_active_orbitals,
@@ -210,18 +209,18 @@ ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
           integral_direction,
           directional_pair_cache);
   validate_opposite_spin_matrix_backward_contribution(
-      matrix_form_local_opposite_spin_response,
+      local_opposite_spin_response,
       "exact outer-response local opposite-spin backward contribution");
   accumulate_scaled_same_spin_contribution(
       matrix_form_local_same_spin_response,
       1.0,
       &direction);
   accumulate_scaled_vector(
-      matrix_form_local_opposite_spin_response.active_orbital_overlap_gradient,
+      local_opposite_spin_response.active_orbital_overlap_gradient,
       1.0,
       &direction.active_orbital_overlap_gradient);
   accumulate_scaled_vector(
-      matrix_form_local_opposite_spin_response.packed_active_two_electron_gradient,
+      local_opposite_spin_response.packed_active_two_electron_gradient,
       1.0,
       &direction.packed_active_two_electron_gradient);
   return direction;
@@ -261,8 +260,8 @@ SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient
   timing.same_spin_seconds = std::chrono::duration<double>(
       std::chrono::steady_clock::now() - same_spin_start).count();
   const auto opposite_spin_start = std::chrono::steady_clock::now();
-  const OppositeSpinMatrixBackwardContribution matrix_form_opposite_spin_direction =
-      build_directional_opposite_spin_matrix_backward_contribution(
+  const OppositeSpinBackwardContribution opposite_spin_direction =
+      build_directional_opposite_spin_backward_contribution(
           accepted_point_context.same_spin_pair_cache,
           accepted_point_context.selected_state_matrices,
           directional_selected_states,
@@ -270,26 +269,26 @@ SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient
           accepted_point_context.prepared_active_space
               .active_space_two_electron_result);
   validate_opposite_spin_matrix_backward_contribution(
-      matrix_form_opposite_spin_direction,
+      opposite_spin_direction,
       "exact outer-response directional opposite-spin backward contribution");
   timing.opposite_spin_seconds = std::chrono::duration<double>(
       std::chrono::steady_clock::now() - opposite_spin_start).count();
   timing.opposite_spin_packed_gradient_seconds =
-      matrix_form_opposite_spin_direction.timing.packed_gradient_seconds;
+      opposite_spin_direction.timing.packed_gradient_seconds;
   timing.opposite_spin_alpha_overlap_seconds =
-      matrix_form_opposite_spin_direction.timing.alpha_overlap_seconds;
+      opposite_spin_direction.timing.alpha_overlap_seconds;
   timing.opposite_spin_beta_overlap_seconds =
-      matrix_form_opposite_spin_direction.timing.beta_overlap_seconds;
+      opposite_spin_direction.timing.beta_overlap_seconds;
   accumulate_scaled_same_spin_contribution(
       matrix_form_same_spin_direction,
       1.0,
       active_space_gradient);
   accumulate_scaled_vector(
-      matrix_form_opposite_spin_direction.active_orbital_overlap_gradient,
+      opposite_spin_direction.active_orbital_overlap_gradient,
       1.0,
       &active_space_gradient->active_orbital_overlap_gradient);
   accumulate_scaled_vector(
-      matrix_form_opposite_spin_direction.packed_active_two_electron_gradient,
+      opposite_spin_direction.packed_active_two_electron_gradient,
       1.0,
       &active_space_gradient->packed_active_two_electron_gradient);
   return timing;

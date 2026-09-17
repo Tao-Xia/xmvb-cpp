@@ -48,7 +48,7 @@ public:
     bool outer_response_enabled = false;
     bool used_reduced_curvature_diagonal = false;
     bool has_same_spin_matrix_form = false;
-    bool has_opposite_spin_matrix_form = false;
+    bool has_opposite_spin_pair_graph = false;
     bool streams_exact_pair_products = false;
     int n_selected_states = 0;
     int n_active_orbitals = 0;
