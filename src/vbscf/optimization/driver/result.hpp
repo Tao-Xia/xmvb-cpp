@@ -29,8 +29,16 @@ struct TnhvpIterationRecord {
 
   std::size_t hvp_direction_count = 0;
   std::size_t hvp_batch_count = 0;
+  std::size_t core_hvp_direction_count = 0;
+  std::size_t outer_response_direction_count = 0;
   std::size_t subproblem_count = 0;
   double hvp_wall_time_seconds = 0.0;
+  double outer_response_wall_time_seconds = 0.0;
+  double gradient_log_progress_per_second = 0.0;
+  bool used_outer_response = false;
+  bool response_probe_performed = false;
+  double response_probe_relative_residual = 0.0;
+  bool used_full_hvp = false;
 
   double source_gradient_l2_norm = 0.0;
   double accepted_gradient_l2_norm = 0.0;
@@ -242,6 +250,12 @@ struct VbScfOptimizerResult {
   /** Number of block-HVP calls (each may contain multiple directions). */
   std::size_t matrix_free_hvp_batch_count = 0;
 
+  /** Number of inexpensive core HVP directions used by TNHVP. */
+  std::size_t matrix_free_core_hvp_direction_count = 0;
+
+  /** Number of exact outer-response directions sampled by TNHVP. */
+  std::size_t matrix_free_outer_response_direction_count = 0;
+
   /** Fresh HVP-subspace solves; same-point cached-radius retries are excluded. */
   std::size_t matrix_free_subproblem_count = 0;
   /** Fresh subspace solves whose trust-region solution is interior. */
@@ -251,6 +265,9 @@ struct VbScfOptimizerResult {
 
   /** Wall time spent inside exact reduced Hessian actions. */
   double matrix_free_hvp_wall_time_seconds = 0.0;
+
+  /** Wall time spent in exact outer-response actions. */
+  double matrix_free_outer_response_wall_time_seconds = 0.0;
 
   /** Number of matrix-free structure-energy trial screens. */
   std::size_t energy_only_evaluation_count = 0;

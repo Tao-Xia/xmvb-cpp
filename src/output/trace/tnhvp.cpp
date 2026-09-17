@@ -26,7 +26,11 @@ void write_tnhvp_trace(
   }
   stream
       << "iteration\treduced_dimension\tsubspace_dimension\trejected_trials"
-      << "\thvp_directions\thvp_batches\tsubproblems\thvp_seconds"
+      << "\thvp_directions\thvp_batches\tcore_hvp_directions"
+      << "\touter_response_directions\tsubproblems\thvp_seconds"
+      << "\touter_response_seconds\tgradient_log_progress_per_second"
+      << "\tused_outer_response\tresponse_probe_performed"
+      << "\tresponse_probe_relative_residual\tused_full_hvp"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
       << "\thas_kkt_residual\tkkt_relative_residual\tkkt_inf_norm"
       << "\tinitial_trust_radius\taccepted_trial_radius\tnext_trust_radius"
@@ -42,8 +46,16 @@ void write_tnhvp_trace(
         << step.rejected_trial_count << '\t'
         << step.hvp_direction_count << '\t'
         << step.hvp_batch_count << '\t'
+        << step.core_hvp_direction_count << '\t'
+        << step.outer_response_direction_count << '\t'
         << step.subproblem_count << '\t'
         << step.hvp_wall_time_seconds << '\t'
+        << step.outer_response_wall_time_seconds << '\t'
+        << step.gradient_log_progress_per_second << '\t'
+        << (step.used_outer_response ? 1 : 0) << '\t'
+        << (step.response_probe_performed ? 1 : 0) << '\t'
+        << step.response_probe_relative_residual << '\t'
+        << (step.used_full_hvp ? 1 : 0) << '\t'
         << step.source_gradient_l2_norm << '\t'
         << step.accepted_gradient_l2_norm << '\t'
         << step.forcing_term << '\t'

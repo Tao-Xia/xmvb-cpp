@@ -221,7 +221,15 @@ bool truncated_newton_step_is_usable(
   return
       step.reduced_step.size() == reduced_gradient.size() &&
       step.reduced_step.allFinite() &&
+      std::isfinite(step.reduced_step.stableNorm()) &&
       step.reduced_step.squaredNorm() > 0.0 &&
+      step.reduced_hessian_times_step.size() == reduced_gradient.size() &&
+      step.reduced_hessian_times_step.allFinite() &&
+      std::isfinite(step.reduced_hessian_times_step.stableNorm()) &&
+      step.reduced_metric_times_step.size() == reduced_gradient.size() &&
+      step.reduced_metric_times_step.allFinite() &&
+      std::isfinite(step.reduced_metric_times_step.stableNorm()) &&
+      std::isfinite(step.trust_region_shift) &&
       std::isfinite(step.predicted_decrease) &&
       step.predicted_decrease > 0.0 &&
       reduced_gradient.dot(step.reduced_step) <= 0.0;

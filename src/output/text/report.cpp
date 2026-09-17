@@ -408,13 +408,22 @@ void print_summary(
     print_log_field(
         "Block-HVP calls",
         std::to_string(result.matrix_free_hvp_batch_count));
-  print_log_field(
-      "Interior Newton solves at target",
-      std::to_string(result.matrix_free_residual_converged_count) + " / " +
-            std::to_string(result.matrix_free_interior_subproblem_count));
+    print_log_field(
+        "Core HVP directions",
+        std::to_string(result.matrix_free_core_hvp_direction_count));
+    print_log_field(
+        "Outer-response directions",
+        std::to_string(result.matrix_free_outer_response_direction_count));
+    print_log_field(
+        "Interior Newton solves at target",
+        std::to_string(result.matrix_free_residual_converged_count) + " / " +
+              std::to_string(result.matrix_free_interior_subproblem_count));
     print_log_field(
         "Matrix-free HVP wall time",
         format_seconds(result.matrix_free_hvp_wall_time_seconds));
+    print_log_field(
+        "Outer-response wall time",
+        format_seconds(result.matrix_free_outer_response_wall_time_seconds));
     print_log_field(
         "Trial structure-energy solves",
         std::to_string(result.energy_only_evaluation_count));

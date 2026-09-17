@@ -1921,6 +1921,310 @@ curvature and its inverse for inactive and active targets; removing the
 inactive factor makes that test fail. No HVP formula, quotient basis, stopping
 tolerance, or inner budget is changed by this weighting.
 
+### 10.6 Cost-aware dynamic outer-response accuracy
+
+Solving every trust-region subproblem to the most accurate available relaxed
+Hessian residual does not in general minimize the time to convergence.  Split
+the reduced Hessian at accepted point $k$ into the inexpensive core action and
+the relaxed outer response,
+
+$$
+\mathbf H_k=\mathbf H_k^{\mathrm c}+\mathbf R_k,
+\tag{66o}
+$$
+
+where neither term is explicitly assembled.  If $n_{c,k}$ core actions,
+$n_{r,k}$ response actions, and $n_{f,k}$ exact trial evaluations are used at
+that point, the relevant computational objective is
+
+$$
+T_{\mathrm{total}}
+=\sum_k\left(
+n_{c,k}t_{c,k}+n_{r,k}t_{r,k}+n_{f,k}t_{f,k}
+\right),
+\tag{66p}
+$$
+
+not the number of outer iterations or the residual of one inner solve in
+isolation.  The measured costs $t_{c,k}$, $t_{r,k}$, and $t_{f,k}$ are allowed
+to vary with the accepted point.  No molecule name, active-space-size cutoff,
+or fixed response budget enters eq 66p.
+
+For a candidate $\mathbf s_k^{\mathrm c}$ obtained from the core action, the
+omitted directional response is
+
+$$
+\mathbf d_k=\mathbf R_k\mathbf s_k^{\mathrm c}.
+\tag{66q}
+$$
+
+One exact response action evaluates this vector.  It corrects the quadratic
+decrease without constructing or interpolating $\mathbf R_k$,
+
+$$
+p_k
+=-\mathbf g_k^{\mathrm T}\mathbf s_k^{\mathrm c}
+-\frac12(\mathbf s_k^{\mathrm c})^{\mathrm T}
+\left(\mathbf H_k^{\mathrm c}\mathbf s_k^{\mathrm c}+\mathbf d_k\right),
+\tag{66r}
+$$
+
+and gives the complete shifted KKT residual on the same candidate,
+
+$$
+\mathbf r_k^{\mathrm{probe}}
+=\mathbf g_k
++\mathbf H_k^{\mathrm c}\mathbf s_k^{\mathrm c}
++\mathbf d_k
++\lambda_k^{\mathrm c}\mathbf M_k\mathbf s_k^{\mathrm c}.
+\tag{66s}
+$$
+
+The probe is a certificate, not a rank-one Hessian model.  It certifies an
+inexact-Newton step when its corrected decrease is positive and its complete
+shifted residual satisfies
+
+$$
+\lVert\mathbf r_k^{\mathrm{probe}}\rVert_2
+\leq\eta_k\lVert\mathbf g_k\rVert_2,
+\tag{66t}
+$$
+
+using the same forcing term as the complete Newton solve.  If this condition
+fails, the core subspace is not incrementally fitted with additional response
+samples.  Instead, the measured probe time predicts the response cost of a
+complete Krylov solve.  With $n_{b,k}$ projected response batches and the most
+recent measured core progress rate $\Pi_k^{\mathrm c}$, define
+
+$$
+\widehat T_k^{\mathrm{full}}=n_{b,k}t_{r,k},
+\qquad
+\widehat T_k^{\mathrm{core}}
+=\frac{
+\max\!\left[0,
+\log\!\left(\lVert\mathbf g_k\rVert_2/\epsilon_g\right)
+\right]}
+{\Pi_k^{\mathrm c}}.
+\tag{66u}
+$$
+
+The cost comparison is supplemented by the measured affordability condition
+
+$$
+t_{r,k}\leq T_k^{\mathrm{core\ candidate}},
+\tag{66ua}
+$$
+
+where $T_k^{\mathrm{core\ candidate}}$ is the measured wall time already
+invested in constructing and solving the current core candidate.  This is the
+cost of the complete cheap alternative, not only its HVP kernel.  The most
+recent measured $t_{r,k}$ is retained across accepted points.  A requested
+probe is skipped before evaluation whenever that measured response cost
+exceeds the work invested in the new core candidate; it becomes eligible
+again only if accumulated core work reaches the same cost.  Thus an expensive
+calibration is not repeated blindly at every accepted point.  Equation 66ua
+also prevents a single response action from authorizing many equally
+expensive actions merely because a long core-only convergence time was
+extrapolated from early nonlinear iterations.  The complete solve is launched
+only if eqs 66u and 66ua both hold and the corrected candidate fails the
+shifted-KKT certificate or has nonpositive predicted decrease.  It is then
+restarted from an empty subspace, so every Krylov image belongs to the same
+complete analytic HVP.  A rejected certified trial may make the same
+cost-based transition.  Otherwise the radius is reduced and the core problem
+is retried; an uncertified direction is never reported as a converged Newton
+solution.
+
+This measured-cost switch avoids two failure modes of low-rank response
+interpolation: repeated expensive probes that do not span the important
+response eigenspace, and a nominally converged subproblem whose certificate
+belongs to a different approximate operator.  It also avoids spending more
+time on one complete response solve than the observed core trajectory is
+expected to need for the remaining gradient reduction.
+
+During trust-region globalization, the first core candidate does not require
+a precise Newton equation.  It can use zero response actions because the exact
+trial energy and gradient still guard acceptance.  An interior candidate,
+negative curvature, a rejected trial, or failure of an accepted boundary step
+to continue expanding the trust radius while reducing the gradient requests a
+response certificate at the next solve.  These events are properties of the
+optimization model; they introduce no molecular or active-space cutoff.
+
+Across accepted
+steps, the directly observed wall-time progress measure
+
+$$
+\Pi_k
+=\frac{-\log\!\left(
+\lVert\mathbf g_{k+1}\rVert_2/\lVert\mathbf g_k\rVert_2
+\right)}{T_k}
+\tag{66v}
+$$
+
+compares response fidelities in the quantity actually being optimized.  A
+nonpositive numerator records stagnation rather than being clipped into an
+apparent speedup.  Response time is subtracted when estimating
+$\Pi_k^{\mathrm c}$, so eq 66u compares marginal core and response work rather
+than charging a probe to both alternatives.  The global-to-local transition
+requires no fixed outer-iteration count.  In the absence of a cost deferral, a
+core step remains in the inexpensive globalization branch only while
+
+$$
+\lVert\mathbf s_k\rVert_{\mathbf M_k}=\Delta_k,
+\qquad
+\lVert\mathbf g_{k+1}\rVert_2<\lVert\mathbf g_k\rVert_2,
+\qquad
+\Delta_{k+1}>\Delta_k,
+\tag{66w}
+$$
+
+and no negative-curvature direction was detected.  When any part of eq 66w
+fails, the next candidate is response-certified.  If eq 66u defers the full
+solve and the exact trial still reduces the gradient, the core branch is
+continued; loss of gradient reduction requests a new certificate.  Thus the
+cheap branch is continued only while it makes measurable progress.
+
+This dynamic-accuracy construction deliberately permits a few extra accepted
+globalization steps when they are cheaper than one relaxed response action.
+As the gradient decreases and the step enters the interior Newton regime,
+eq 66t forces the response accuracy to increase, retaining the local
+second-order convergence target.  Fixed response counts and system-specific
+activation thresholds are excluded from the production algorithm.
+
+### 10.7 Residual-certified low-rank Schur response
+
+Cost-aware scheduling cannot change the asymptotic cost of one exact relaxed
+response.  In a large active space, the structure dimension, the number of
+unique string pairs, and the active integral-response dimension can all grow
+rapidly.  If a Krylov solve uses $m_k$ complete HVP directions, its relaxed
+part costs
+
+$$
+T_k^{\mathrm{response}}=
+\mathcal O\!\left(m_k C_{R,k}\right),
+\tag{66x}
+$$
+
+where $C_{R,k}$ denotes the full cost of one directional integral response,
+structure response solve, and backward orbital contraction.  Batching changes
+constants and memory traffic but not the factor $m_k$.
+
+The algebraic target for a lower-cost method is the Schur term in eq 50.  At
+one accepted point, write
+
+$$
+\mathbf R_k
+=-\mathbf B_k^{\mathrm T}\mathbf A_k^{\dagger}\mathbf B_k,
+\qquad
+\mathbf A_k=\mathscr L_{\mathbf z\mathbf z},
+\qquad
+\mathbf B_k=\mathscr L_{\mathbf z\mathbf x}.
+\tag{66y}
+$$
+
+Neither $\mathbf A_k$, $\mathbf B_k$, nor $\mathbf R_k$ should be assembled.
+For a small orthonormal set of orbital directions
+$\mathbf U_k\in\mathbb R^{n_x\times r_k}$, exact response probes provide
+
+$$
+\mathbf W_k=\mathbf R_k\mathbf U_k.
+\tag{66z}
+$$
+
+The samples should not be treated as arbitrary orbital secants.  Their Schur
+origin supplies response-space vectors and a small projected response matrix,
+
+$$
+\mathbf Z_k=\mathbf A_k^{\dagger}\mathbf B_k\mathbf U_k,
+\qquad
+\mathbf K_k=\mathbf Z_k^{\mathrm T}\mathbf A_k\mathbf Z_k
+=-\mathbf U_k^{\mathrm T}\mathbf W_k.
+\tag{66aa}
+$$
+
+The corresponding Galerkin--Schur approximation is
+
+$$
+\widehat{\mathbf R}_k
+=-\mathbf B_k^{\mathrm T}\mathbf Z_k
+  \mathbf K_k^{\dagger}
+  \mathbf Z_k^{\mathrm T}\mathbf B_k
+=-\mathbf W_k\mathbf K_k^{\dagger}\mathbf W_k^{\mathrm T}.
+\tag{66ab}
+$$
+
+For an exactly solved self-adjoint response, $\mathbf K_k$ is symmetric and
+eq 66ab satisfies
+$\widehat{\mathbf R}_k\mathbf U_k=\mathbf W_k$ on the resolved range of
+$\mathbf K_k$.  Its rank is at most $r_k$,
+its application costs $\mathcal O(n_x r_k)$, and only the orbital-space
+matrices $\mathbf W_k$ and $\mathbf K_k$ are required for application.
+The directions $\mathbf U_k$ are retained for enrichment and transport.
+Directional
+structure vectors of length $n_{\mathrm{str}}$ are transient and can be
+discarded after the backward contraction.  Thus this construction does not
+replace a dense structure-space object by another persistent
+$n_{\mathrm{str}}\times r_k$ cache.  A rank-revealing factorization of
+$\mathbf K_k$ must use the certified structure-response residual and floating
+point backward error; a fitted eigenvalue cutoff would reintroduce a
+system-dependent parameter.
+
+The low-rank operator is a subproblem accelerator, not a convergence
+certificate.  If $\widehat{\mathbf s}_k$ solves the approximate trust problem,
+one exact probe forms
+
+$$
+\mathbf e_k
+=\mathbf R_k\widehat{\mathbf s}_k
+ -\widehat{\mathbf R}_k\widehat{\mathbf s}_k.
+\tag{66ac}
+$$
+
+The candidate is accepted as an inexact Newton solution only when the exact
+corrected shifted residual satisfies eq 66t.  A useful sufficient allocation
+of the residual budget is
+
+$$
+\lVert\mathbf e_k\rVert_2
+\leq \theta_k\eta_k\lVert\mathbf g_k\rVert_2,
+\qquad 0<\theta_k<1,
+\tag{66ad}
+$$
+
+with the remaining budget assigned to the approximate subproblem residual.
+The parameter $\theta_k$ need not be a fitted molecular constant: it can be
+chosen from the ratio of the measured two residual components so that neither
+one dominates the certified total.  When eq 66ad fails, the normalized part of
+$\widehat{\mathbf s}_k$ outside $\operatorname{span}(\mathbf U_k)$ is appended
+to $\mathbf U_k$, the already computed exact probe becomes its new response
+sample, and the approximate Krylov solve is restarted.  Restarting is required
+because changing $\widehat{\mathbf R}_k$ inside one nominal Krylov solve would
+invalidate its recurrence and residual certificate.
+
+If the numerical response rank remains $r_k\ll m_k$, the resulting work is
+
+$$
+T_k^{\mathrm{response,LR}}
+=\mathcal O\!\left(r_k C_{R,k}+m_k n_x r_k\right),
+\qquad
+M_k^{\mathrm{LR}}=\mathcal O(n_x r_k),
+\tag{66ae}
+$$
+
+apart from the transient memory of one exact response action.  This is an
+algorithmic reduction in the number of expensive responses, not yet a lower
+asymptotic bound for $C_{R,k}$ itself.  Lowering that remaining factor requires
+the implicit maps $\mathbf B_k$ and $\mathbf B_k^{\mathrm T}$ to act directly
+through unique-string-pair factorizations and requires the projected solve
+with $\mathbf A_k$ to preserve the same residual certificate.  Consequently,
+the implementation should proceed in two independently testable stages:
+residual-certified response-rank compression first, followed by factorized
+lower-scaling exact probes.  A symmetric orbital-space multisecant formula by
+itself is insufficient: it can interpolate sampled products while missing the
+important range of $\mathbf A_k^{-1}\mathbf B_k$, and rejected trials can then
+force repeated expensive enrichment.  Direct interpolation of isolated
+vectors $\mathbf R_k\mathbf s$ without the Schur factorization and an
+independent exact certificate is therefore excluded.
+
 ## 11. Implications for the present implementation
 
 The current exact-context HVP differentiates orbital normalization, the inactive projector, active-space integrals, and the outer VB structure response. Its agreement with directional finite differences is evidence that the HVP is consistent with the present raw-coordinate computational graph.
