@@ -177,7 +177,10 @@ void print_tnhvp_summary(
   print_log_subsection_title("TNHVP Matrix-Free Newton");
   print_log_field(
       "Hessian model",
-      "core_hessian_with_bounded_outer_certificates");
+      "core_plus_adaptive_secant_with_bounded_outer_certificates");
+  print_log_field(
+      "Outer-response admission",
+      "unique-string/core work + measured wall time");
   print_log_field(
       "Inexact Newton forcing",
       "adaptive sqrt(projected gradient 2-norm)");

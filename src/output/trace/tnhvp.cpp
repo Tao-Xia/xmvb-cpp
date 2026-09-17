@@ -25,12 +25,15 @@ void write_tnhvp_trace(
         "failed to open TNHVP trace: " + output_path.string());
   }
   stream
-      << "iteration\treduced_dimension\tsubspace_dimension\trejected_trials"
+      << "iteration\treduced_dimension\tsubspace_dimension"
+      << "\tsecant_correction_size\trejected_trials"
       << "\thvp_directions\thvp_batches\tcore_hvp_directions"
       << "\touter_response_directions\tsubproblems\thvp_seconds"
       << "\touter_response_seconds\tgradient_log_progress_per_second"
       << "\tused_outer_response\tresponse_probe_performed"
-      << "\tresponse_probe_relative_residual\tused_full_hvp"
+      << "\tresponse_probe_relative_residual\tresponse_work_ratio"
+      << "\tresponse_scale_affordable\tresponse_deferred_for_cost"
+      << "\tused_full_hvp"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
       << "\thas_kkt_residual\tkkt_relative_residual\tkkt_inf_norm"
       << "\tinitial_trust_radius\taccepted_trial_radius\tnext_trust_radius"
@@ -43,6 +46,7 @@ void write_tnhvp_trace(
         << step.accepted_iteration_index << '\t'
         << step.reduced_dimension << '\t'
         << step.subspace_dimension << '\t'
+        << step.secant_correction_size << '\t'
         << step.rejected_trial_count << '\t'
         << step.hvp_direction_count << '\t'
         << step.hvp_batch_count << '\t'
@@ -55,6 +59,9 @@ void write_tnhvp_trace(
         << (step.used_outer_response ? 1 : 0) << '\t'
         << (step.response_probe_performed ? 1 : 0) << '\t'
         << step.response_probe_relative_residual << '\t'
+        << step.response_work_ratio << '\t'
+        << (step.response_scale_affordable ? 1 : 0) << '\t'
+        << (step.response_deferred_for_cost ? 1 : 0) << '\t'
         << (step.used_full_hvp ? 1 : 0) << '\t'
         << step.source_gradient_l2_norm << '\t'
         << step.accepted_gradient_l2_norm << '\t'

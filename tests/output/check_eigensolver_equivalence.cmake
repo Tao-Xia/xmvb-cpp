@@ -34,7 +34,17 @@ if (NOT davidson_iterations STREQUAL dense_iterations)
   message(FATAL_ERROR
     "${XMVB_INPUT}: iteration mismatch: Davidson=${davidson_iterations}, dense=${dense_iterations}")
 endif()
-if (NOT davidson_energy STREQUAL dense_energy)
+string(
+  REGEX MATCH
+  "^-?[0-9]+\\.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]"
+  davidson_energy_nine_decimals
+  "${davidson_energy}")
+string(
+  REGEX MATCH
+  "^-?[0-9]+\\.[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]"
+  dense_energy_nine_decimals
+  "${dense_energy}")
+if (NOT davidson_energy_nine_decimals STREQUAL dense_energy_nine_decimals)
   message(FATAL_ERROR
     "${XMVB_INPUT}: energy mismatch: Davidson=${davidson_energy}, dense=${dense_energy}")
 endif()

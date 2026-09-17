@@ -25,6 +25,7 @@ struct TnhvpIterationRecord {
   int accepted_iteration_index = 0;
   int reduced_dimension = 0;
   int subspace_dimension = 0;
+  int secant_correction_size = 0;
   int rejected_trial_count = 0;
 
   std::size_t hvp_direction_count = 0;
@@ -38,6 +39,9 @@ struct TnhvpIterationRecord {
   bool used_outer_response = false;
   bool response_probe_performed = false;
   double response_probe_relative_residual = 0.0;
+  double response_work_ratio = 0.0;
+  bool response_scale_affordable = false;
+  bool response_deferred_for_cost = false;
   bool used_full_hvp = false;
 
   double source_gradient_l2_norm = 0.0;

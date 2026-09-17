@@ -158,6 +158,16 @@ bool should_use_sparse_selected_state_contractions(
     const SelectedStateDeterminantMatrices& selected_state_matrices);
 
 /**
+ * @brief Estimates the selected-state unique-string contraction work.
+ *
+ * The returned count follows the same dense-versus-sparse decision used by
+ * the production kernels. It is an operation-count proxy, not a wall-time
+ * fit, and therefore remains independent of molecule names and hardware.
+ */
+double estimate_selected_state_contraction_work(
+    const SelectedStateDeterminantMatrices& selected_state_matrices);
+
+/**
  * @brief Extracts energies for selected states from the full eigenvalue vector.
  */
 std::vector<double> gather_selected_state_energies(

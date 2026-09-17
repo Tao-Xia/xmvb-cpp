@@ -11,6 +11,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/packed_contractions_internal.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace {
 
@@ -363,6 +364,11 @@ int main() {
   accepted.n_unique_alpha = n_alpha;
   accepted.n_unique_beta = n_beta;
   accepted.states.push_back(make_state(accepted_coefficients, 1.0));
+  require(
+      std::abs(
+          xmvb::vb::estimate_selected_state_contraction_work(accepted) -
+          30.0) <= 1.0e-12,
+      "dense unique-string contraction work estimate is incorrect");
   SelectedStateDeterminantMatrices directional;
   directional.n_unique_alpha = n_alpha;
   directional.n_unique_beta = n_beta;

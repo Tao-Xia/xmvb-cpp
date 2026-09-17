@@ -586,6 +586,19 @@ bool should_use_sparse_selected_state_contractions(
   return sparse_work < dense_work;
 }
 
+double estimate_selected_state_contraction_work(
+    const SelectedStateDeterminantMatrices& selected_state_matrices) {
+  const double dense_work =
+      estimate_dense_selected_state_contraction_work(selected_state_matrices);
+  if (!selected_state_support_is_trimmed(selected_state_matrices)) {
+    return dense_work;
+  }
+  return std::min(
+      dense_work,
+      estimate_sparse_selected_state_contraction_work(
+          selected_state_matrices));
+}
+
 std::vector<double> gather_selected_state_energies(
     const std::vector<double>& eigenvalues,
     const std::vector<int>& selected_state_indices) {

@@ -60,4 +60,8 @@ private:
 
 std::string build_hvp_error(const ExactReducedHvp& hvp);
 
+/** @brief Compares response-string work with the leading core pair work. */
+bool outer_response_scale_is_affordable(
+    const ExactHvpOperator::Diagnostics& diagnostics);
+
 }  // namespace xmvb::vb

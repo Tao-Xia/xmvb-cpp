@@ -20,6 +20,7 @@
 #include "vbscf/optimization/driver/types.hpp"
 #include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
 #include "vbscf/optimization/objective/reduced_hvp.hpp"
+#include "vbscf/optimization/objective/secant_hvp.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/optimization/trust_region/truncated_newton.hpp"
 #include "vbscf/optimization/objective/function.hpp"
@@ -62,6 +63,7 @@ BackendRunResult run_truncated_newton_backend(
   RejectedTruncatedNewtonStepCache rejected_step_cache;
   TruncatedNewtonSubspace cached_subspace;
   bool request_outer_response = false;
+  bool request_secant_correction = false;
   bool outer_response_used_for_current_point = false;
   double last_outer_response_seconds = 0.0;
   double initial_trust_radius_for_current_point = trust_radius;
@@ -113,9 +115,18 @@ BackendRunResult run_truncated_newton_backend(
     if (!exact_hvp.supports_analytic_core_model()) {
       throw std::runtime_error(build_hvp_error(exact_hvp));
     }
-    CoreReducedHvp core_hvp(&exact_hvp);
+    const auto response_scale_info = exact_hvp.diagnostics();
+    const bool response_scale_is_affordable =
+        outer_response_scale_is_affordable(response_scale_info);
     const int transport_history_size =
         choose_truncated_newton_transport_history_size(options);
+    SecantCorrectedCoreHvp core_hvp(
+        &exact_hvp,
+        current_space,
+        packed_secant_history,
+        !response_scale_is_affordable && request_secant_correction
+            ? transport_history_size
+            : 0);
     const auto transported_preconditioner =
         build_nonredundant_truncated_newton_preconditioner(
             current_space,
@@ -273,9 +284,11 @@ BackendRunResult run_truncated_newton_backend(
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - accepted_point_start_time)
             .count();
+    const auto response_cost_info = exact_hvp.diagnostics();
     const bool known_response_cost_is_affordable =
-        !(last_outer_response_seconds > 0.0) ||
-        last_outer_response_seconds <= core_candidate_wall_time_seconds;
+        response_scale_is_affordable &&
+        (!(last_outer_response_seconds > 0.0) ||
+         last_outer_response_seconds <= core_candidate_wall_time_seconds);
     const bool certify_core_candidate =
         request_outer_response &&
         !outer_response_used_for_current_point &&
@@ -384,6 +397,8 @@ BackendRunResult run_truncated_newton_backend(
     if (!accepted_trial) {
       ++rejected_trial_step_count_for_current_point;
       request_outer_response = !outer_response_used_for_current_point;
+      request_secant_correction =
+          request_secant_correction || !response_scale_is_affordable;
       const double next_trust_radius =
           update_nonredundant_truncated_newton_trust_radius(
               trust_radius,
@@ -490,6 +505,7 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.reduced_dimension = static_cast<int>(reduced_size);
     iteration_record.subspace_dimension =
         truncated_newton_step.subspace_dimension;
+    iteration_record.secant_correction_size = core_hvp.correction_size();
     iteration_record.rejected_trial_count =
         rejected_trial_step_count_for_current_point;
     iteration_record.hvp_direction_count =
@@ -528,6 +544,15 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.response_probe_performed = response_probe_performed;
     iteration_record.response_probe_relative_residual =
         response_probe_relative_residual;
+    if (response_cost_info.estimated_core_pair_contraction_work > 0.0) {
+      iteration_record.response_work_ratio =
+          response_cost_info.estimated_outer_string_contraction_work /
+          response_cost_info.estimated_core_pair_contraction_work;
+    }
+    iteration_record.response_scale_affordable =
+        response_scale_is_affordable;
+    iteration_record.response_deferred_for_cost =
+        response_deferred_for_cost;
     iteration_record.used_full_hvp = false;
     iteration_record.forcing_term =
         inexact_newton_forcing_term(iteration_record.source_gradient_l2_norm);
@@ -604,6 +629,7 @@ BackendRunResult run_truncated_newton_backend(
     accepted_point_start_time = std::chrono::steady_clock::now();
     if (nonredundant_rank_changed) {
       packed_secant_history.clear();
+      request_secant_correction = false;
     }
     if (!nonredundant_rank_changed &&
         transport_history_size > 0) {

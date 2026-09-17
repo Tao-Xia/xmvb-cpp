@@ -2024,8 +2024,35 @@ subsequent Krylov directions. Such a promotion would multiply the cost of one
 directional certificate by an unknown final subspace dimension while inferring
 global response curvature from one sample.
 
-Before a probe is evaluated, it must satisfy the measured affordability
-condition
+Before the first probe is evaluated, its unique-string contraction scale is
+compared with the leading AO-pair/active-pair scale of one core action.  For
+$N_\alpha$ and $N_\beta$ unique spin strings and $N_{\mathrm{st}}$ selected
+states, the dense response-work proxy is
+
+$$
+W_R^{\mathrm{dense}}
+=N_{\mathrm{st}}N_\alpha N_\beta(N_\alpha+N_\beta).
+\tag{66ua}
+$$
+
+When the selected-state coefficient support is trimmed, the implementation
+uses the smaller of eq 66ua and the operation count of the sparse contraction
+actually selected by the production kernel.  The corresponding leading core
+pair-contraction count is
+
+$$
+W_C
+=\frac{N_{\mathrm{AO}}(N_{\mathrm{AO}}+1)}{2}
+ \frac{N_{\mathrm{act}}(N_{\mathrm{act}}+1)}{2}.
+\tag{66ub}
+$$
+
+An unsampled response is admitted only when $W_R\leq W_C$.  This is an
+asymptotic algorithmic comparison, not an active-space-size threshold.  It
+prevents the matrix-free optimizer from expanding a large unique-string
+response space when its lower-level contraction already exceeds the leading
+core action.  Once a response has been sampled, it must additionally satisfy
+the measured affordability condition
 
 $$
 t_{r,k}\leq T_k^{\mathrm{core\ candidate}},
@@ -2101,6 +2128,68 @@ are excluded from the production algorithm. The bounded-response production
 path does not claim asymptotically quadratic convergence when eq 66t fails;
 that stronger property is the target of the certified low-rank Schur model
 below.
+
+#### 10.6.1 Transported accepted-step correction of the core Hessian
+
+When eq 66ua--66ub excludes exact outer response, repeatedly solving with
+$\mathbf H_k^{\mathrm c}$ alone generally gives linear local convergence
+because the omitted curvature does not vanish with the gradient.  The core
+model remains unchanged during successful globalization; a rejected trial is
+the parameter-free event that activates the missing-curvature model. Exact
+accepted-point gradients then provide full secant information without an
+additional structure-response solve.  After transporting an accepted
+displacement and gradient difference into the current quotient chart, define
+
+$$
+\mathbf s_i=\mathcal T_{i\rightarrow k}\Delta\mathbf d_i,
+\qquad
+\mathbf y_i=\mathcal T_{i\rightarrow k}\Delta\mathbf g_i,
+\qquad
+\mathbf z_i=\mathbf y_i-\mathbf H_k^{\mathrm c}\mathbf s_i.
+\tag{66wa}
+$$
+
+Thus $\mathbf z_i$ samples the curvature missing from the current core model,
+including the relaxed response to first order and the finite change of the
+core Hessian between accepted points.  Let $\mathbf B_i$ be the accumulated
+symmetric correction and
+
+$$
+\mathbf u_i=\mathbf z_i-\mathbf B_i\mathbf s_i.
+\tag{66wb}
+$$
+
+The Powell-symmetric-Broyden least-change update is
+
+$$
+\mathbf B_{i+1}
+=\mathbf B_i
++\frac{\mathbf u_i\mathbf s_i^{\mathrm T}
+       +\mathbf s_i\mathbf u_i^{\mathrm T}}
+      {\mathbf s_i^{\mathrm T}\mathbf s_i}
+-\frac{\mathbf u_i^{\mathrm T}\mathbf s_i}
+      {(\mathbf s_i^{\mathrm T}\mathbf s_i)^2}
+ \mathbf s_i\mathbf s_i^{\mathrm T}.
+\tag{66wc}
+$$
+
+Equation 66wc is symmetric, satisfies the newest transported residual secant,
+and permits indefinite curvature.  Its action is retained as two vectors per
+accepted pair; neither $\mathbf B_i$ nor the orbital Hessian is materialized.
+The large-space model applied by the Krylov solver is therefore
+
+$$
+\widetilde{\mathbf H}_k\mathbf v
+=\mathbf H_k^{\mathrm c}\mathbf v+\mathbf B_k\mathbf v.
+\tag{66wd}
+$$
+
+Every finite step remains guarded by the exact relaxed energy and gradient and
+by the trust-region acceptance test.  This correction is a quasi-Newton model,
+not an exact outer-response certificate; eq 66t is asserted only after an
+admitted exact response action.  Under the usual Dennis--Mor\'e secant
+condition, however, the correction can recover superlinear local behavior
+without paying the unique-string response cost on every HVP direction.
 
 ### 10.7 Residual-certified low-rank Schur response
 

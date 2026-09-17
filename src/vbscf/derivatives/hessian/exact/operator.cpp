@@ -207,6 +207,16 @@ ExactHvpOperator::State::diagnostics() const {
       static_cast<int>(accepted_point_context_->selected_state_indices.size());
   info.n_active_orbitals = accepted_point_context_->n_active_orbitals;
   info.n_blocks = nonredundant_space_->n_blocks();
+  const double n_basis_functions = static_cast<double>(
+      current_input_->orbital_preparation_input.n_basis_functions);
+  const double n_active_orbitals = static_cast<double>(
+      accepted_point_context_->n_active_orbitals);
+  info.estimated_core_pair_contraction_work =
+      0.5 * n_basis_functions * (n_basis_functions + 1.0) *
+      0.5 * n_active_orbitals * (n_active_orbitals + 1.0);
+  info.estimated_outer_string_contraction_work =
+      estimate_selected_state_contraction_work(
+          accepted_point_context_->selected_state_matrices);
   if (accepted_exact_two_electron_cache_.accepted_pair_products != nullptr) {
     info.resident_exact_pair_elements = static_cast<std::size_t>(
         accepted_exact_two_electron_cache_.accepted_pair_products->size());

@@ -138,4 +138,12 @@ std::string build_hvp_error(const ExactReducedHvp& hvp) {
   return message.str();
 }
 
+bool outer_response_scale_is_affordable(
+    const ExactHvpOperator::Diagnostics& diagnostics) {
+  return diagnostics.estimated_outer_string_contraction_work > 0.0 &&
+      diagnostics.estimated_core_pair_contraction_work > 0.0 &&
+      diagnostics.estimated_outer_string_contraction_work <=
+          diagnostics.estimated_core_pair_contraction_work;
+}
+
 }  // namespace xmvb::vb

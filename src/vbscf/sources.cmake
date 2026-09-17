@@ -103,6 +103,7 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/driver/session.cpp
   vbscf/optimization/preconditioners/transported_lbfgs.cpp
   vbscf/optimization/objective/reduced_hvp.cpp
+  vbscf/optimization/objective/secant_hvp.cpp
   vbscf/optimization/trust_region/retraction.cpp
   vbscf/optimization/trust_region/truncated_newton.cpp
   vbscf/optimization/objective/function.cpp

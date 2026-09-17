@@ -18,6 +18,7 @@ set(_xmvb_vbscf_unit_targets
   test_positive_ritz_secants
   test_projected_orbital_surrogate
   test_reduced_hessian_reference
+  test_secant_hvp
   test_sparse_orbital_quotient
   test_support_preserving_gauge
   test_spectral_trust_region
@@ -86,6 +87,9 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME reduced_hessian_reference COMMAND test_reduced_hessian_reference)
   set_tests_properties(reduced_hessian_reference PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME secant_hvp COMMAND test_secant_hvp)
+  set_tests_properties(secant_hvp PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME sparse_orbital_quotient COMMAND test_sparse_orbital_quotient)
   set_tests_properties(sparse_orbital_quotient PROPERTIES

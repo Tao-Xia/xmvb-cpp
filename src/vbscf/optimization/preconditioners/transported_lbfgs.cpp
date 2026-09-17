@@ -88,8 +88,25 @@ build_nonredundant_truncated_newton_preconditioner(
     const std::vector<PackedSecantPair>& packed_secant_history,
     int max_history_size) {
   TransportedReducedLbfgsPreconditioner preconditioner(&current_space);
+  for (auto& pair : transport_nonredundant_secant_pairs(
+           current_space,
+           packed_secant_history,
+           max_history_size)) {
+    preconditioner.try_add_pair(
+        std::move(pair.step),
+        std::move(pair.gradient_change));
+  }
+  return preconditioner;
+}
+
+std::vector<TransportedReducedSecantPair>
+transport_nonredundant_secant_pairs(
+    const OrbitalChart& current_space,
+    const std::vector<PackedSecantPair>& packed_secant_history,
+    int max_history_size) {
+  std::vector<TransportedReducedSecantPair> transported;
   if (max_history_size <= 0 || packed_secant_history.empty()) {
-    return preconditioner;
+    return transported;
   }
 
   const std::size_t history_begin =
@@ -97,17 +114,18 @@ build_nonredundant_truncated_newton_preconditioner(
           ? packed_secant_history.size() -
                 static_cast<std::size_t>(max_history_size)
           : 0;
+  transported.reserve(packed_secant_history.size() - history_begin);
   for (std::size_t pair_index = history_begin;
        pair_index < packed_secant_history.size();
        ++pair_index) {
     const auto& packed_pair = packed_secant_history[pair_index];
-    preconditioner.try_add_pair(
+    transported.push_back(TransportedReducedSecantPair{
         current_space.project_vector(packed_pair.packed_step).reduced_gradient,
         current_space
             .project_gradient(packed_pair.packed_gradient_change)
-            .reduced_gradient);
+            .reduced_gradient});
   }
-  return preconditioner;
+  return transported;
 }
 
 Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(

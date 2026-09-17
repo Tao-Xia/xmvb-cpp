@@ -9,6 +9,11 @@
 
 namespace xmvb::vb {
 
+struct TransportedReducedSecantPair {
+  Eigen::VectorXd step;
+  Eigen::VectorXd gradient_change;
+};
+
 class TransportedReducedLbfgsPreconditioner {
 public:
   explicit TransportedReducedLbfgsPreconditioner(const OrbitalChart* space);
@@ -33,6 +38,12 @@ private:
 
 TransportedReducedLbfgsPreconditioner
 build_nonredundant_truncated_newton_preconditioner(
+    const OrbitalChart& current_space,
+    const std::vector<PackedSecantPair>& packed_secant_history,
+    int max_history_size);
+
+std::vector<TransportedReducedSecantPair>
+transport_nonredundant_secant_pairs(
     const OrbitalChart& current_space,
     const std::vector<PackedSecantPair>& packed_secant_history,
     int max_history_size);

@@ -53,6 +53,8 @@ public:
     int n_selected_states = 0;
     int n_active_orbitals = 0;
     int n_blocks = 0;
+    double estimated_core_pair_contraction_work = 0.0;
+    double estimated_outer_string_contraction_work = 0.0;
     std::size_t resident_exact_pair_elements = 0;
     std::size_t exact_pair_tile_rows = 0;
     std::size_t apply_count = 0;
