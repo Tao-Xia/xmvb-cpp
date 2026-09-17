@@ -230,6 +230,7 @@ BackendRunResult run_truncated_newton_backend(
             current_projection.reduced_gradient.size());
     bool reused_subspace_for_trial = reused_subspace;
     bool candidate_has_exact_outer_response = false;
+    bool used_full_hvp_for_current_point = false;
     bool response_probe_performed = false;
     double response_probe_relative_residual = 0.0;
     bool response_deferred_for_cost = false;
@@ -337,6 +338,26 @@ BackendRunResult run_truncated_newton_backend(
       candidate_has_exact_outer_response = true;
       outer_response_used_for_current_point = true;
 
+      // A failed exact KKT certificate means the inexpensive core model is
+      // missing curvature that matters along the proposed Newton step.  When
+      // the unique-string work model says one outer-response direction is no
+      // more expensive than one core direction, solve this trust-region
+      // subproblem with the complete HVP.  Large response spaces remain on
+      // the bounded one-direction probe path.
+      if ((!truncated_newton_step.model_kkt_converged ||
+           !(truncated_newton_step.predicted_decrease > 0.0) ||
+           !std::isfinite(truncated_newton_step.predicted_decrease)) &&
+          response_scale_is_affordable) {
+        active_hvp = &exact_hvp;
+        cached_subspace = TruncatedNewtonSubspace();
+        reused_subspace_for_trial = false;
+        truncated_newton_step = solve_subproblem(
+            active_hvp,
+            false,
+            nullptr);
+        candidate_has_exact_outer_response = true;
+        used_full_hvp_for_current_point = true;
+      }
     }
     if (truncated_newton_step.newton_forcing_converged &&
         candidate_has_exact_outer_response) {
@@ -556,7 +577,7 @@ BackendRunResult run_truncated_newton_backend(
         response_scale_is_affordable;
     iteration_record.response_deferred_for_cost =
         response_deferred_for_cost;
-    iteration_record.used_full_hvp = false;
+    iteration_record.used_full_hvp = used_full_hvp_for_current_point;
     iteration_record.forcing_term =
         inexact_newton_forcing_term(iteration_record.source_gradient_l2_norm);
     if (candidate_has_exact_outer_response &&
