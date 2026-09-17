@@ -287,11 +287,16 @@ build_selected_structure_direction(
         "factorized structure direction requires the structure action");
   }
   if (structure_action->supports_integral_direction()) {
+    if (!accepted_point.structure_adjoint_state.has_value()) {
+      accepted_point.structure_adjoint_state =
+          structure_action->prepare_active_adjoint(
+              accepted_point.selected_state_matrices,
+              accepted_point.selected_state_energies);
+    }
     StructureIntegralDirection direct_ci_direction;
     const StructureActionResult direct_direction =
         structure_action->apply_integral_direction(
-            accepted.selected_state_eigen_response_operator
-                .selected_eigenvectors,
+            *accepted_point.structure_adjoint_state,
             direction.overlap,
             direction.one_electron,
             direction.packed_two_electron,

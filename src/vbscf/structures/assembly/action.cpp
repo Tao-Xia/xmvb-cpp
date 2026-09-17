@@ -1266,7 +1266,7 @@ StructureActionResult StructureAction::apply(
 }
 
 StructureActionResult StructureAction::apply_integral_direction(
-    const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+    const StructureAdjointState& state,
     const std::vector<double>& overlap_direction,
     const std::vector<double>& one_electron_direction,
     const std::vector<double>& packed_two_electron_direction,
@@ -1304,17 +1304,53 @@ StructureActionResult StructureAction::apply_integral_direction(
       direct_ci_->beta_determinants(),
       integral_direction);
 
-  Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
+  const int block_width =
+      static_cast<int>(state.source_coefficients.size());
+  if (block_width <= 0 ||
+      state.orthogonal_coefficients.size() !=
+          static_cast<std::size_t>(block_width) ||
+      state.residuals.size() != static_cast<std::size_t>(block_width) ||
+      state.energies.size() != static_cast<std::size_t>(block_width)) {
+    throw std::invalid_argument(
+        "prepared direct-CI state does not match the structure-vector block");
+  }
+  Eigen::MatrixXd transformed_sources(
+      n_unique_alpha_, block_width * n_unique_beta_);
+  Eigen::MatrixXd spin_vectors(
+      n_unique_alpha_, block_width * n_unique_beta_);
+  Eigen::MatrixXd spin_hamiltonians(
+      n_unique_alpha_, block_width * n_unique_beta_);
+  for (int block = 0; block < block_width; ++block) {
+    const auto& source = state.source_coefficients[block];
+    const auto& orthogonal = state.orthogonal_coefficients[block];
+    const auto& residual = state.residuals[block];
+    if (source.rows() != n_unique_alpha_ ||
+        source.cols() != n_unique_beta_ ||
+        orthogonal.rows() != n_unique_alpha_ ||
+        orthogonal.cols() != n_unique_beta_ ||
+        residual.rows() != n_unique_alpha_ ||
+        residual.cols() != n_unique_beta_ ||
+        !std::isfinite(state.energies[block])) {
+      throw std::invalid_argument(
+          "prepared direct-CI state has incompatible coefficient blocks");
+    }
+    transformed_sources.middleCols(
+        block * n_unique_beta_, n_unique_beta_) = source;
+    spin_vectors.middleCols(
+        block * n_unique_beta_, n_unique_beta_) = orthogonal;
+    spin_hamiltonians.middleCols(
+        block * n_unique_beta_, n_unique_beta_) =
+        residual + state.energies[block] * orthogonal;
+  }
   Eigen::MatrixXd delta_spin_vectors = Eigen::MatrixXd::Zero(
       spin_vectors.rows(),
       spin_vectors.cols());
   direct_ci_->alpha_transform.apply_directional_left(
       alpha_direction,
-      &spin_vectors,
+      &transformed_sources,
       &delta_spin_vectors);
-  const int block_width = static_cast<int>(vectors.cols());
   for (int block = 0; block < block_width; ++block) {
-    Eigen::MatrixXd coefficient_block = spin_vectors.middleCols(
+    Eigen::MatrixXd coefficient_block = transformed_sources.middleCols(
         block * n_unique_beta_, n_unique_beta_);
     Eigen::MatrixXd delta_coefficient_block =
         delta_spin_vectors.middleCols(
@@ -1323,7 +1359,7 @@ StructureActionResult StructureAction::apply_integral_direction(
         beta_direction,
         &coefficient_block,
         &delta_coefficient_block);
-    spin_vectors.middleCols(
+    transformed_sources.middleCols(
         block * n_unique_beta_, n_unique_beta_) = coefficient_block;
     delta_spin_vectors.middleCols(
         block * n_unique_beta_, n_unique_beta_) = delta_coefficient_block;
@@ -1331,7 +1367,6 @@ StructureActionResult StructureAction::apply_integral_direction(
 
   Eigen::MatrixXd spin_overlaps = spin_vectors;
   Eigen::MatrixXd delta_spin_overlaps = delta_spin_vectors;
-  Eigen::MatrixXd spin_hamiltonians = direct_ci_->sigma.apply(spin_vectors);
   Eigen::MatrixXd delta_spin_hamiltonians =
       direct_ci_->sigma.apply(delta_spin_vectors);
   delta_spin_hamiltonians += sigma_direction.apply(spin_vectors);

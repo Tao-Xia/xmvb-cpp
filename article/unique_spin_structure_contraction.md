@@ -1781,6 +1781,22 @@ s to $3.17$ s and its active-adjoint stage from $1.63$ s to $0.74$ s.  The
 response infinity norm remained $16.1201446991$, while peak RSS remained
 approximately $6.81$ GiB.
 
+The directional structure action also reuses the accepted selected-state
+payload retained by the adjoint.  In particular, it no longer repeats the
+structure expansion or accepted sigma action.  For every selected state, the
+accepted Hamiltonian image is reconstructed exactly from the stored residual,
+
+$$
+Z_n = Q_n + E_n Y_n,
+$$
+
+where $Q_n=Z_n-E_nY_n$.  Thus the directional action evaluates only the
+direction-dependent exterior transforms and sigma terms.  A subsequent
+32-core LOFLEA measurement reduced the complete HVP from $3.172$ s to $2.833$
+s, the directional structure-image stage from $1.886$ s to $1.697$ s, and the
+active-adjoint stage from $0.742$ s to $0.641$ s.  The response infinity norm
+again remained $16.1201446991$; peak RSS changed by less than $0.01$ GiB.
+
 For a block of $b$ HVP directions, concatenating all directional AO-pair
 coefficient matrices does not reduce the formal graph work,
 

@@ -128,12 +128,13 @@ public:
   /**
    * @brief Applies the exact first derivative of a complete-space direct-CI action.
    *
-   * The vectors are held fixed while all active overlap and integral tensors
-   * are differentiated. This operation is available only when the retained
-   * representation is the orthogonal direct-CI form.
+   * The selected vectors in the prepared state are held fixed while all active
+   * overlap and integral tensors are differentiated. This operation is
+   * available only when the retained representation is the orthogonal
+   * direct-CI form.
    */
   StructureActionResult apply_integral_direction(
-      const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+      const StructureAdjointState& state,
       const std::vector<double>& overlap_direction,
       const std::vector<double>& one_electron_direction,
       const std::vector<double>& packed_two_electron_direction,
