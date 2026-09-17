@@ -579,6 +579,88 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
   return result;
 }
 
+Eigen::MatrixXd DirectCiSigmaAction::one_body_generator_adjoint(
+    const Eigen::Ref<const Eigen::MatrixXd>& left,
+    const Eigen::Ref<const Eigen::MatrixXd>& right) const {
+  if (left.rows() != n_alpha_ || right.rows() != n_alpha_ ||
+      left.cols() <= 0 || left.cols() != right.cols() ||
+      left.cols() % n_beta_ != 0 || !left.allFinite() ||
+      !right.allFinite()) {
+    throw std::invalid_argument(
+        "direct-CI generator-adjoint blocks have incompatible dimensions");
+  }
+
+  const int block_width = static_cast<int>(left.cols()) / n_beta_;
+  const SpinConnections& beta_graph = beta_connections();
+  const int work_items = block_width * n_alpha_ * n_beta_;
+  const int n_threads = std::max(
+      1,
+      std::min(effective_openmp_thread_count(), work_items));
+  std::vector<Eigen::MatrixXd> partials(
+      n_threads,
+      Eigen::MatrixXd::Zero(n_orbitals_, n_orbitals_));
+
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+    int thread = 0;
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+    Eigen::MatrixXd& density = partials[thread];
+
+#pragma omp for schedule(static)
+    for (int work = 0; work < work_items; ++work) {
+      const int beta = work % n_beta_;
+      const int alpha = (work / n_beta_) % n_alpha_;
+      const int block = work / (n_alpha_ * n_beta_);
+      const int column = block * n_beta_ + beta;
+      const double left_value = left(alpha, column);
+      if (left_value == 0.0) {
+        continue;
+      }
+      const double diagonal_weight =
+          left_value * right(alpha, column);
+      for (const int orbital : alpha_.occupied[alpha]) {
+        density(orbital, orbital) += diagonal_weight;
+      }
+      for (const int orbital : beta_graph.occupied[beta]) {
+        density(orbital, orbital) += diagonal_weight;
+      }
+      for (const HamiltonianConnection& connection :
+           alpha_.off_diagonal[alpha]) {
+        if (connection.one_electron_row >= 0) {
+          density(
+              connection.one_electron_row,
+              connection.one_electron_column) +=
+              left_value * right(connection.source, column) *
+              connection.one_electron_sign;
+        }
+      }
+      for (const HamiltonianConnection& connection :
+           beta_graph.off_diagonal[beta]) {
+        if (connection.one_electron_row >= 0) {
+          density(
+              connection.one_electron_row,
+              connection.one_electron_column) +=
+              left_value *
+              right(alpha, block * n_beta_ + connection.source) *
+              connection.one_electron_sign;
+        }
+      }
+    }
+  }
+
+  Eigen::MatrixXd result = Eigen::MatrixXd::Zero(
+      n_orbitals_, n_orbitals_);
+  for (const Eigen::MatrixXd& partial : partials) {
+    result += partial;
+  }
+  // The determinant Hamiltonian stores a one-body element for the
+  // source-orbital/target-orbital pair. An orbital generator instead carries
+  // the target/source convention in `E(kappa)`, hence the transpose.
+  return result.transpose();
+}
+
 std::size_t DirectCiSigmaAction::dynamic_bytes() const noexcept {
   const auto spin_bytes = [](const SpinConnections& spin) {
     std::size_t bytes =

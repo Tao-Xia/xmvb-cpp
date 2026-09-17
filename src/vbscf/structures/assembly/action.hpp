@@ -9,6 +9,7 @@
 
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 #include "vbscf/structures/expansion/types.hpp"
 
 namespace xmvb::vb {
@@ -30,6 +31,13 @@ struct StructureActionResult {
 struct StructureDiagonal {
   Eigen::VectorXd hamiltonian;
   Eigen::VectorXd overlap;
+};
+
+/** @brief Active-integral adjoint of selected structure-space states. */
+struct StructureActiveIntegralAdjoint {
+  Eigen::MatrixXd overlap;
+  Eigen::MatrixXd one_electron;
+  Eigen::MatrixXd pair_kernel;
 };
 
 struct StructureActionStorage {
@@ -114,6 +122,28 @@ public:
 
   /** @brief Whether exact orthogonal direct-CI directional actions are available. */
   bool supports_integral_direction() const noexcept;
+
+  /**
+   * @brief Builds the exact selected-state active-integral adjoint.
+   *
+   * Each coefficient matrix is expressed on the retained unique alpha/beta
+   * string grid. The operation is available for complete-space orthogonal
+   * direct CI and remains exact for any embedded structure subspace.
+   */
+  StructureActiveIntegralAdjoint active_integral_adjoint(
+      const SelectedStateDeterminantMatrices& selected_states,
+      const std::vector<double>& state_energies) const;
+
+  /** @brief Differentiates the selected-state active-integral adjoint. */
+  StructureActiveIntegralAdjoint active_integral_adjoint_direction(
+      const SelectedStateDeterminantMatrices& selected_states,
+      const std::vector<double>& state_energies,
+      const SelectedStateDeterminantMatrices* directional_selected_states,
+      const std::vector<double>* directional_state_energies,
+      const std::vector<double>& overlap_direction,
+      const std::vector<double>& one_electron_direction,
+      const std::vector<double>& packed_two_electron_direction,
+      bool include_integral_response) const;
 
   /**
    * @brief Expands structure vectors directly onto unique spin products.

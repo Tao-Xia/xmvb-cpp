@@ -1545,9 +1545,187 @@ $$
 and the overlap-image direction follows by replacing $Z$ and $\delta Z$ with
 $Y$ and $\delta Y$.  This route removes the directional
 $U_{\sigma}\times U_{\sigma}$ cofactor-channel matrices from complete-space
-structure response.  The local active-gradient derivative is a different
-adjoint and continues to use the same-spin cofactor cache until it receives an
-equivalent orthogonal direct-CI formulation.
+structure response.
+
+The completeness requirement applies to the fixed-spin determinant carriers,
+not to the selected VB structure subspace.  Let $B$ expand an arbitrary set of
+structure coefficients into the complete alpha--beta determinant product
+space.  The projected action is exactly
+
+$$
+H_{\mathrm{str}}x=B^{\mathrm T}H_{\mathrm{det}}Bx,
+\qquad
+S_{\mathrm{str}}x=B^{\mathrm T}S_{\mathrm{det}}Bx.
+$$
+
+Consequently, $B$ may contain all structures, three arbitrarily chosen sparse
+structures, or any other subspace.  No closure of the structure subspace is
+required.  Closure is required only for applying $T_{\sigma}$ within each
+fixed-spin string carrier.  A dedicated three-structure test compares this
+projection with explicit nonorthogonal determinant-pair $H/S$ assembly and
+obtains maximum absolute errors below $2\times10^{-10}$.
+
+### 13.2 Direct active-integral adjoint and exact HVP
+
+The accepted active-space gradient can be obtained without returning to the
+nonorthogonal cofactor representation.  For selected state $n$, define
+
+$$
+Y_n=T_{\alpha}C_nT_{\beta}^{\mathrm T},
+\qquad
+Q_n=\sigma_{\mathrm{orth}}(Y_n)-E_nY_n.
+$$
+
+Let $\mathcal A_h(L,R)$ and $\mathcal A_G(L,R)$ denote the adjoints of the
+orthonormal direct-CI sigma action with respect to the one-electron matrix and
+packed-pair kernel, respectively.  Let $\mathcal A_K(L,R)$ denote the adjoint
+of an infinitesimal one-body generator acting through the exterior
+transformations.  With normalized state weights $w_n$, the orthonormal
+integral and generator adjoints are
+
+$$
+\bar D_h
+=
+\sum_n w_n\mathcal A_h(Y_n,Y_n),
+$$
+
+$$
+\bar D_G
+=
+\sum_n w_n\mathcal A_G(Y_n,Y_n),
+$$
+
+and
+
+$$
+\Gamma
+=
+2\sum_n w_n\mathcal A_K(Q_n,Y_n).
+$$
+
+The residual term $Q_n$ is essential.  It accounts for the dependence of the
+exterior transformations on the active overlap and therefore supplies the
+overlap part of the nonorthogonal orbital gradient.
+
+Write $A=R^{-1}$ and let $P(A)$ be the packed symmetric-pair transform.  The
+direct integral pullbacks are
+
+$$
+D_h=A\bar D_hA^{\mathrm T},
+$$
+
+and
+
+$$
+D_G=P(A)\bar D_GP(A)^{\mathrm T}.
+$$
+
+Define the relative Cholesky-generator adjoint
+
+$$
+\begin{aligned}
+B={}&\Gamma
+-\bar h\bar D_h^{\mathrm T}
+-\bar h^{\mathrm T}\bar D_h\\
+&-\mathcal P^{*}
+\left(
+\bar G\bar D_G^{\mathrm T}
++\bar G^{\mathrm T}\bar D_G
+\right),
+\end{aligned}
+$$
+
+where $\mathcal P^{*}$ is the adjoint of the infinitesimal packed-pair
+transform at the identity.  The symmetric normalized-overlap adjoint $C$ is
+
+$$
+C_{ii}=\frac{1}{2}B_{ii},
+\qquad
+C_{ij}=C_{ji}=\frac{1}{2}B_{ij}quad(i<j),
+$$
+
+and the original nonorthogonal overlap adjoint is
+
+$$
+D_S=ACA^{\mathrm T}.
+$$
+
+The exact HVP differentiates this complete reverse sweep.  If $\delta Y_n$
+contains both the local integral response and the selected-state response,
+then
+
+$$
+\delta Q_n
+=
+\delta\sigma_{\mathrm{orth}}(Y_n)
++\sigma_{\mathrm{orth}}(\delta Y_n)
+-E_n\delta Y_n
+-\delta E_nY_n.
+$$
+
+The directional adjoints are
+
+$$
+\delta\bar D_h
+=
+\sum_n w_n
+\left[
+\mathcal A_h(\delta Y_n,Y_n)
++\mathcal A_h(Y_n,\delta Y_n)
+\right],
+$$
+
+$$
+\delta\bar D_G
+=
+\sum_n w_n
+\left[
+\mathcal A_G(\delta Y_n,Y_n)
++\mathcal A_G(Y_n,\delta Y_n)
+\right],
+$$
+
+and
+
+$$
+\delta\Gamma
+=
+2\sum_n w_n
+\left[
+\mathcal A_K(\delta Q_n,Y_n)
++\mathcal A_K(Q_n,\delta Y_n)
+\right].
+$$
+
+Differentiating the three pullbacks above gives the active-integral component
+of the exact matrix-free Hessian--vector product.  The direct adjoint traverses
+the same Slater--Condon graph as the sigma action, so its formal cost per
+selected state is
+
+$$
+O\!\left[
+N_{\mathrm{FCI}}
+\left(z_{\alpha}+z_{\beta}+z_{\alpha\beta}\right)
+\right]
+=
+O\!\left(N_{\mathrm{FCI}}n_{\mathrm{act}}^4\right),
+$$
+
+with working storage independent of $U_{\alpha}^2+U_{\beta}^2$.  Once the
+accepted direct-CI action and selected-state coefficient blocks exist, the
+ordered same-spin pair evaluations are no longer part of the persistent HVP
+state.  Incomplete fixed-spin spaces retain the streamed cofactor adjoint,
+because the direct exterior representation is not exact there.
+
+A 32-core Slurm measurement on LOFLEA confirms the memory consequence of this
+replacement.  Releasing the accepted ordered-pair payload changed the reported
+cofactor storage from $1{,}166{,}697{,}760$ bytes to zero and reduced peak RSS
+from $10{,}867{,}100$ KiB to $7{,}130{,}252$ KiB, a $34.4\%$ reduction.  The
+single-run wall time for the three-component response benchmark decreased from
+$50.28$ s to $46.59$ s.  The local, structure, and combined-outer response
+infinity norms remained $0.282004273479$, $0.300863442993$, and
+$0.0203509012709$, respectively, and the component-additivity relative error
+was $1.07\times10^{-14}$.
 
 A 32-core Slurm comparison on LOFLEA isolates this replacement.  The baseline
 already used the orthogonal direct-CI fixed-point action but retained the
@@ -1585,15 +1763,15 @@ spaces share both the Slater--Condon graph and exterior-transform schedule.
 The final production construction took approximately $0.49$ s for CERRAS and
 $1.10$ s for LOFLEA.  After retaining the small orthogonal-integral payload
 needed by the exact directional action, the measured persistent representation
-sizes were $3.41$ MB and $9.38$ MB, respectively; these figures exclude the
-accepted-point pair cache that remains shared with the orbital-gradient and HVP
-layers.
+sizes were $3.41$ MB and $9.38$ MB, respectively.  The direct active-integral
+adjoint described above now also permits the accepted-point pair-evaluation
+payload to be released before subsequent HVP applications.
 
 This milestone removes the dense unique-string quadratic action from complete
-fixed-spin spaces.  It does not yet remove the cofactor and pair-response work
-used by orbital gradients and HVPs.  End-to-end TNHVP speedups therefore depend
-on the admitted outer-response frequency and on a later response-layer rewrite
-that shares the orthogonal direct-CI representation.
+fixed-spin spaces and removes the cofactor pair-response traversal from their
+accepted gradients and exact HVPs.  End-to-end TNHVP speedups still depend on
+the admitted outer-response frequency and on the AO-to-active integral and
+orbital-pullback costs outside the structure representation.
 
 ---
 

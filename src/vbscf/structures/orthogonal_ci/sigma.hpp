@@ -49,6 +49,17 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& left,
       const Eigen::Ref<const Eigen::MatrixXd>& right) const;
 
+  /**
+   * @brief Unsymmetrized one-body adjoint for an orbital-generator action.
+   *
+   * The returned matrix `D` satisfies
+   * `left.dot(E(kappa) * right) = D.cwiseProduct(kappa).sum()` for a general,
+   * not necessarily symmetric one-body generator `kappa`.
+   */
+  Eigen::MatrixXd one_body_generator_adjoint(
+      const Eigen::Ref<const Eigen::MatrixXd>& left,
+      const Eigen::Ref<const Eigen::MatrixXd>& right) const;
+
   std::size_t dynamic_bytes() const noexcept;
 
 private:

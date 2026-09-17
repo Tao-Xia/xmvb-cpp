@@ -20,6 +20,7 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
 #include "vbscf/structures/assembly/action.hpp"
+#include "vbscf/structures/orthogonal_ci/planner.hpp"
 
 namespace xmvb::vb {
 
@@ -131,6 +132,34 @@ bool materialized_structure_operator_uses_less_storage(
   const long double matrix_values =
       2.0L * n_structure * n_structure;
   return matrix_values <= minimum_factor_values;
+}
+
+bool retain_direct_ci_action_if_available(
+    const VbScfInput& input,
+    int block_width,
+    ActiveSpaceGradientForwardContext* context) {
+  if (context->structure_action.has_value()) {
+    return context->structure_action->supports_integral_direction();
+  }
+  const DirectCiActionPlan plan = plan_orthogonal_direct_ci_action(
+      context->same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+      context->same_spin_pair_cache.beta_reuse_table.unique_determinants,
+      input.orbital_preparation_input.n_active_orbitals,
+      block_width);
+  if (!plan.favors_direct_ci()) {
+    return false;
+  }
+  const auto& prepared =
+      context->timed_active_space_context.prepared_active_space;
+  context->structure_action.emplace(
+      input.structure_data.determinant_to_structure_terms,
+      input.structure_data.n_structures,
+      context->same_spin_pair_cache,
+      prepared.orbital_result.active_orbital_overlap_matrix,
+      prepared.active_space_one_electron_result.h1e_act,
+      prepared.active_space_two_electron_result,
+      input.orbital_preparation_input.n_active_orbitals);
+  return context->structure_action->supports_integral_direction();
 }
 
 xmvb::core::DavidsonResult solve_selected_structure_roots(
@@ -286,6 +315,9 @@ void solve_structure_problem(
               initial_eigenvectors,
               generalized_eigensolver),
           context);
+    }
+    if (structure_eigensolver == StructureEigensolver::Davidson) {
+      retain_direct_ci_action_if_available(input, n_roots, context);
     }
   } else {
     context->structure_action.emplace(
@@ -491,6 +523,12 @@ finalize_active_space_second_order_context(
             normalized_weights,
             context->same_spin_pair_cache);
   }
+  if (context->structure_action.has_value() &&
+      context->structure_action->supports_integral_direction()) {
+    release_same_spin_pair_evaluations(&context->same_spin_pair_cache);
+    context->use_full_matrix_form_adjoint = false;
+    context->use_pair_graph_opposite_spin_adjoint = false;
+  }
   return context;
 }
 
@@ -610,6 +648,38 @@ void accumulate_additive_vector(
   }
 }
 
+void write_direct_ci_active_gradient(
+    const StructureActiveIntegralAdjoint& adjoint,
+    int n_active_orbitals,
+    ActiveSpaceGradientResult* result) {
+  const int n_pairs = packed_active_pair_count(n_active_orbitals);
+  if (adjoint.overlap.rows() != n_active_orbitals ||
+      adjoint.overlap.cols() != n_active_orbitals ||
+      adjoint.one_electron.rows() != n_active_orbitals ||
+      adjoint.one_electron.cols() != n_active_orbitals ||
+      adjoint.pair_kernel.rows() != n_pairs ||
+      adjoint.pair_kernel.cols() != n_pairs) {
+    throw std::runtime_error(
+        "direct-CI active-integral adjoint has inconsistent dimensions");
+  }
+  result->active_orbital_overlap_gradient.assign(
+      adjoint.overlap.data(),
+      adjoint.overlap.data() + adjoint.overlap.size());
+  result->active_one_electron_gradient.assign(
+      adjoint.one_electron.data(),
+      adjoint.one_electron.data() + adjoint.one_electron.size());
+  for (int column = 0; column < n_pairs; ++column) {
+    for (int row = 0; row <= column; ++row) {
+      result->packed_active_two_electron_gradient[
+          TwoElectronIndexer::packed_pair_of_pairs_index(row, column)] =
+          row == column
+          ? adjoint.pair_kernel(row, column)
+          : adjoint.pair_kernel(row, column) +
+                adjoint.pair_kernel(column, row);
+    }
+  }
+}
+
 
 void accumulate_active_space_gradient(
     const VbScfInput& input,
@@ -634,6 +704,19 @@ void accumulate_active_space_gradient(
           same_spin_pair_cache);
   const std::vector<double>& selected_state_energies =
       forward_context.selected_state_energies;
+  if (forward_context.structure_action.has_value() &&
+      forward_context.structure_action->supports_integral_direction()) {
+    write_direct_ci_active_gradient(
+        forward_context.structure_action->active_integral_adjoint(
+            selected_state_matrices,
+            selected_state_energies),
+        n_active_orbitals,
+        result);
+    result->adjoint_wall_time_seconds =
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - stage_start_time).count();
+    return;
+  }
   const SameSpinMatrixBackwardContribution same_spin_contribution =
       build_same_spin_matrix_backward_contribution(
           same_spin_pair_cache,
@@ -824,11 +907,17 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::complete_gradient(
   auto state = std::move(forward_evaluation.state_);
   auto& prepared =
       state->forward_context.timed_active_space_context.prepared_active_space;
-  populate_same_spin_phi_cache(
-      &state->forward_context.same_spin_pair_cache,
-      prepared.active_space_one_electron_result.h1e_act,
-      input.orbital_preparation_input.n_active_orbitals,
-      prepared.active_space_two_electron_result);
+  const bool direct_ci_adjoint = retain_direct_ci_action_if_available(
+      input,
+      static_cast<int>(state->selected_state_indices.size()),
+      &state->forward_context);
+  if (!direct_ci_adjoint) {
+    populate_same_spin_phi_cache(
+        &state->forward_context.same_spin_pair_cache,
+        prepared.active_space_one_electron_result.h1e_act,
+        input.orbital_preparation_input.n_active_orbitals,
+        prepared.active_space_two_electron_result);
+  }
   ActiveSpaceGradientResult result;
   initialize_active_space_gradient_result(
       input,

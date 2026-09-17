@@ -178,14 +178,13 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
 
     double integral_seconds = 0.0;
     double structure_seconds = 0.0;
-    const bool direct_structure_direction =
-        components.structure_response &&
+    const bool direct_active_gradient =
         outer_response_context()
             .selected_state_eigen_response_operator.structure_action
             ->supports_integral_direction();
     const bool pair_cache_required =
-        components.local_active_response ||
-        (components.structure_response && !direct_structure_direction);
+        !direct_active_gradient &&
+        (components.local_active_response || components.structure_response);
     for (Eigen::Index column = 0; column < n_directions; ++column) {
       PrecomputedOuterResponse& outer =
           precomputed_directions[column].outer_response.emplace();

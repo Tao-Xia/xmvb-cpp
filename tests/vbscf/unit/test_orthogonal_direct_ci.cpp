@@ -570,6 +570,26 @@ void check_sigma_action() {
         block * static_cast<int>(beta.size()),
         static_cast<int>(beta.size())) = delta_value_block;
   }
+  const Eigen::MatrixXd inverse_orbital_transform =
+      orthogonal.orbital_transform
+          .template triangularView<Eigen::Upper>()
+          .solve(Eigen::MatrixXd::Identity(n_orbitals, n_orbitals));
+  const Eigen::MatrixXd relative_orbital_direction =
+      orthogonal_direction.orbital_transform * inverse_orbital_transform;
+  const Eigen::MatrixXd generator_adjoint =
+      sigma_action.one_body_generator_adjoint(
+          left_coefficients,
+          action_values);
+  const double predicted_exterior_direction =
+      (generator_adjoint.cwiseProduct(relative_orbital_direction)).sum();
+  const double applied_exterior_direction =
+      (left_coefficients.cwiseProduct(delta_action_values)).sum();
+  require(
+      std::abs(predicted_exterior_direction - applied_exterior_direction) <
+          3.0e-10 * std::max(1.0, std::abs(applied_exterior_direction)),
+      "direct-CI orbital-generator adjoint is inconsistent: predicted=" +
+          std::to_string(predicted_exterior_direction) +
+          ", applied=" + std::to_string(applied_exterior_direction));
   Eigen::MatrixXd action_hamiltonian = sigma_action.apply(action_values);
   Eigen::MatrixXd delta_action_hamiltonian =
       sigma_action.apply(delta_action_values) +
@@ -634,6 +654,153 @@ void check_sigma_action() {
          (2.0 * direction_step)) -
         delta_action_overlap).cwiseAbs().maxCoeff()) < 5.0e-9,
       "complete direct-CI overlap direction fails finite differences");
+
+  constexpr double test_energy = 0.37;
+  const Eigen::MatrixXd state_coefficients = coefficients.leftCols(
+      static_cast<int>(beta.size()));
+  const Eigen::MatrixXd orthogonal_state = action_values.leftCols(
+      static_cast<int>(beta.size()));
+  const Eigen::MatrixXd orthogonal_sigma = sigma_action.apply(
+      orthogonal_state);
+  const Eigen::MatrixXd orthogonal_residual =
+      orthogonal_sigma - test_energy * orthogonal_state;
+  const xmvb::vb::DirectCiIntegralAdjoint state_integral_adjoint =
+      sigma_action.integral_adjoint(
+          orthogonal_state,
+          orthogonal_state);
+  const Eigen::MatrixXd state_generator_adjoint =
+      2.0 * sigma_action.one_body_generator_adjoint(
+          orthogonal_residual,
+          orthogonal_state);
+  const xmvb::vb::NonorthogonalActiveIntegralAdjoint state_adjoint =
+      xmvb::vb::backpropagate_orthogonal_active_integral_adjoint(
+          orthogonal,
+          state_integral_adjoint.one_electron,
+          state_integral_adjoint.pair_kernel,
+          state_generator_adjoint);
+  Eigen::MatrixXd original_pair_direction(n_pairs, n_pairs);
+  for (int column = 0; column < n_pairs; ++column) {
+    for (int row = 0; row < n_pairs; ++row) {
+      original_pair_direction(row, column) =
+          packed_two_electron_direction[
+              xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+                  row, column)];
+    }
+  }
+  const double predicted_state_direction =
+      (state_adjoint.overlap.cwiseProduct(overlap_direction)).sum() +
+      (state_adjoint.one_electron.cwiseProduct(
+           one_electron_direction)).sum() +
+      (state_adjoint.pair_kernel.cwiseProduct(
+           original_pair_direction)).sum();
+  const auto state_lagrangian = [test_energy, &state_coefficients](
+      const std::pair<Eigen::MatrixXd, Eigen::MatrixXd>& images) {
+    return (state_coefficients.cwiseProduct(
+        images.first.leftCols(state_coefficients.cols()) -
+        test_energy * images.second.leftCols(
+            state_coefficients.cols()))).sum();
+  };
+  const double finite_difference_state_direction =
+      (state_lagrangian(plus_action) - state_lagrangian(minus_action)) /
+      (2.0 * direction_step);
+  require(
+      std::abs(predicted_state_direction -
+               finite_difference_state_direction) <
+          3.0e-8 *
+          std::max(1.0, std::abs(finite_difference_state_direction)),
+      "direct-CI active-integral adjoint fails finite differences");
+
+  const Eigen::MatrixXd directional_orthogonal_state =
+      delta_action_values.leftCols(static_cast<int>(beta.size()));
+  const Eigen::MatrixXd directional_orthogonal_sigma =
+      sigma_action.apply(directional_orthogonal_state) +
+      sigma_direction.apply(orthogonal_state);
+  const Eigen::MatrixXd directional_orthogonal_residual =
+      directional_orthogonal_sigma -
+      test_energy * directional_orthogonal_state;
+  const xmvb::vb::DirectCiIntegralAdjoint left_state_adjoint_direction =
+      sigma_action.integral_adjoint(
+          directional_orthogonal_state,
+          orthogonal_state);
+  const xmvb::vb::DirectCiIntegralAdjoint right_state_adjoint_direction =
+      sigma_action.integral_adjoint(
+          orthogonal_state,
+          directional_orthogonal_state);
+  const Eigen::MatrixXd one_gradient_direction =
+      left_state_adjoint_direction.one_electron +
+      right_state_adjoint_direction.one_electron;
+  const Eigen::MatrixXd pair_gradient_direction =
+      left_state_adjoint_direction.pair_kernel +
+      right_state_adjoint_direction.pair_kernel;
+  const Eigen::MatrixXd generator_gradient_direction = 2.0 *
+      (sigma_action.one_body_generator_adjoint(
+           directional_orthogonal_residual,
+           orthogonal_state) +
+       sigma_action.one_body_generator_adjoint(
+           orthogonal_residual,
+           directional_orthogonal_state));
+  const xmvb::vb::NonorthogonalActiveIntegralAdjoint
+      analytic_state_adjoint_direction =
+          xmvb::vb::backpropagate_orthogonal_active_integral_adjoint_direction(
+              orthogonal,
+              orthogonal_direction,
+              state_integral_adjoint.one_electron,
+              state_integral_adjoint.pair_kernel,
+              state_generator_adjoint,
+              one_gradient_direction,
+              pair_gradient_direction,
+              generator_gradient_direction);
+  const auto build_state_adjoint = [
+      &alpha,
+      &beta,
+      &state_coefficients,
+      test_energy](const xmvb::vb::OrthogonalActiveIntegrals& integrals) {
+    const xmvb::vb::ExteriorOrbitalTransform alpha_state_transform(
+        alpha, integrals.orbital_transform);
+    const xmvb::vb::ExteriorOrbitalTransform beta_state_transform(
+        beta, integrals.orbital_transform);
+    const xmvb::vb::DirectCiSigmaAction state_sigma(alpha, beta, integrals);
+    Eigen::MatrixXd state = state_coefficients;
+    alpha_state_transform.apply_left(&state);
+    beta_state_transform.apply_right(&state);
+    const Eigen::MatrixXd sigma = state_sigma.apply(state);
+    const Eigen::MatrixXd residual = sigma - test_energy * state;
+    const xmvb::vb::DirectCiIntegralAdjoint integral_gradient =
+        state_sigma.integral_adjoint(state, state);
+    const Eigen::MatrixXd generator_gradient =
+        2.0 * state_sigma.one_body_generator_adjoint(residual, state);
+    return xmvb::vb::backpropagate_orthogonal_active_integral_adjoint(
+        integrals,
+        integral_gradient.one_electron,
+        integral_gradient.pair_kernel,
+        generator_gradient);
+  };
+  const xmvb::vb::NonorthogonalActiveIntegralAdjoint plus_state_adjoint =
+      build_state_adjoint(plus_orthogonal);
+  const xmvb::vb::NonorthogonalActiveIntegralAdjoint minus_state_adjoint =
+      build_state_adjoint(minus_orthogonal);
+  require(
+      ((((plus_state_adjoint.overlap - minus_state_adjoint.overlap) /
+         (2.0 * direction_step)) -
+        analytic_state_adjoint_direction.overlap).cwiseAbs().maxCoeff()) <
+          2.0e-7,
+      "direct-CI overlap-adjoint direction fails finite differences");
+  require(
+      ((((plus_state_adjoint.one_electron -
+          minus_state_adjoint.one_electron) /
+         (2.0 * direction_step)) -
+        analytic_state_adjoint_direction.one_electron)
+           .cwiseAbs()
+           .maxCoeff()) < 2.0e-7,
+      "direct-CI one-electron-adjoint direction fails finite differences");
+  require(
+      ((((plus_state_adjoint.pair_kernel -
+          minus_state_adjoint.pair_kernel) /
+         (2.0 * direction_step)) -
+        analytic_state_adjoint_direction.pair_kernel)
+           .cwiseAbs()
+           .maxCoeff()) < 2.0e-7,
+      "direct-CI pair-kernel-adjoint direction fails finite differences");
 
   Eigen::MatrixXd orthogonal_coefficients = coefficients;
   for (int block = 0; block < block_width; ++block) {

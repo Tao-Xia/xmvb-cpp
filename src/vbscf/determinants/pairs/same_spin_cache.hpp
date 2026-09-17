@@ -105,6 +105,15 @@ struct SameSpinPairCacheContext {
 };
 
 /**
+ * @brief Releases pair-evaluation payload after a direct-CI action owns all operators.
+ *
+ * Unique-string reuse tables and determinant-to-string maps remain intact for
+ * selected-state coefficient reconstruction.
+ */
+void release_same_spin_pair_evaluations(
+    SameSpinPairCacheContext* cache_context);
+
+/**
  * @brief Compresses repeated same-spin occupied strings into a unique table.
  */
 SpinDeterminantReuseTable build_spin_determinant_reuse_table(

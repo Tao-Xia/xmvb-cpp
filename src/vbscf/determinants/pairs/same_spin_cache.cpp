@@ -16,6 +16,21 @@
 
 namespace xmvb::vb {
 
+void release_same_spin_pair_evaluations(
+    SameSpinPairCacheContext* cache_context) {
+  if (cache_context == nullptr) {
+    throw std::invalid_argument("same-spin cache context must not be null");
+  }
+  std::vector<SpinDeterminantPairEvaluation>().swap(
+      cache_context->alpha_pair_cache);
+  std::vector<SpinDeterminantPairEvaluation>().swap(
+      cache_context->beta_pair_cache);
+  std::vector<double>().swap(cache_context->opposite_spin_cache);
+  std::vector<bool>().swap(cache_context->opposite_spin_cache_computed);
+  cache_context->cached_same_spin_evaluation_count = 0;
+  cache_context->estimated_cache_bytes = 0;
+}
+
 namespace {
 
 constexpr double kContributionTolerance = 1.0e-15;

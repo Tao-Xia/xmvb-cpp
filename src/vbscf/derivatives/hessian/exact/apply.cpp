@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -14,6 +15,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/outer_response.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
@@ -71,6 +73,40 @@ void throw_if_nonfinite(
   }
   throw std::runtime_error(
       std::string(label) + " contains non-finite values");
+}
+
+ActiveSpaceGradientDirection make_active_gradient_direction(
+    const StructureActiveIntegralAdjoint& adjoint,
+    int n_active_orbitals) {
+  const int n_pairs = packed_active_pair_count(n_active_orbitals);
+  if (adjoint.overlap.rows() != n_active_orbitals ||
+      adjoint.overlap.cols() != n_active_orbitals ||
+      adjoint.one_electron.rows() != n_active_orbitals ||
+      adjoint.one_electron.cols() != n_active_orbitals ||
+      adjoint.pair_kernel.rows() != n_pairs ||
+      adjoint.pair_kernel.cols() != n_pairs) {
+    throw std::runtime_error(
+        "direct-CI active-gradient direction has inconsistent dimensions");
+  }
+  ActiveSpaceGradientDirection result =
+      make_zero_active_space_gradient_direction(n_active_orbitals);
+  result.active_orbital_overlap_gradient.assign(
+      adjoint.overlap.data(),
+      adjoint.overlap.data() + adjoint.overlap.size());
+  result.active_one_electron_gradient.assign(
+      adjoint.one_electron.data(),
+      adjoint.one_electron.data() + adjoint.one_electron.size());
+  for (int column = 0; column < n_pairs; ++column) {
+    for (int row = 0; row <= column; ++row) {
+      result.packed_active_two_electron_gradient[
+          TwoElectronIndexer::packed_pair_of_pairs_index(row, column)] =
+          row == column
+          ? adjoint.pair_kernel(row, column)
+          : adjoint.pair_kernel(row, column) +
+                adjoint.pair_kernel(column, row);
+    }
+  }
+  return result;
 }
 
 }  // namespace
@@ -306,14 +342,14 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     // incomplete-space structure action shares that cache; a complete-space
     // orthogonal direct-CI action differentiates its own representation.
     SameSpinDirectionalPairCache local_directional_pair_cache;
-    const bool direct_structure_direction =
-        components.structure_response &&
+    const StructureAction* accepted_structure_action =
         outer_response_context()
-            .selected_state_eigen_response_operator.structure_action
-            ->supports_integral_direction();
+            .selected_state_eigen_response_operator.structure_action;
+    const bool direct_active_gradient =
+        accepted_structure_action->supports_integral_direction();
     const bool pair_cache_required =
-        components.local_active_response ||
-        (components.structure_response && !direct_structure_direction);
+        !direct_active_gradient &&
+        (components.local_active_response || components.structure_response);
     if (precomputed_outer_response == nullptr && pair_cache_required) {
       local_directional_pair_cache = build_same_spin_directional_pair_cache(
           accepted_point_context_->same_spin_pair_cache,
@@ -366,63 +402,101 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
           directional_selected_state_response->max_relative_residual);
     }
 
-    const auto active_gradient_start_time = std::chrono::steady_clock::now();
-    const auto local_active_gradient_start_time =
-        std::chrono::steady_clock::now();
-    ActiveSpaceGradientDirection directional_active_space_gradient =
-        components.local_active_response
-        ? build_local_active_space_gradient_direction(
-              *current_input_,
-              *accepted_point_context_,
-              active_space_integral_direction,
-              directional_pair_cache)
-        : make_zero_active_space_gradient_direction(n_active_orbitals);
-    apply_timing_totals_
-        .outer_response_local_active_gradient_wall_time_seconds +=
-        detail::exact_hvp_elapsed_seconds(local_active_gradient_start_time);
-
-    const auto structure_active_gradient_start_time =
-        std::chrono::steady_clock::now();
+    std::optional<SelectedStateDeterminantMatrices>
+        directional_selected_states;
     if (directional_selected_state_response != nullptr) {
       const auto selected_state_rebuild_start_time =
           std::chrono::steady_clock::now();
-      const SelectedStateDeterminantMatrices directional_selected_states =
+      directional_selected_states.emplace(
           build_selected_state_determinant_matrices_from_selected_columns(
               current_input_->structure_data,
               directional_selected_state_response
                   ->delta_selected_eigenvector_matrix,
               accepted_point_context_->selected_state_indices,
               accepted_point_context_->normalized_state_weights,
-              accepted_point_context_->same_spin_pair_cache);
+              accepted_point_context_->same_spin_pair_cache));
       apply_timing_totals_
           .outer_response_selected_state_rebuild_wall_time_seconds +=
           detail::exact_hvp_elapsed_seconds(selected_state_rebuild_start_time);
-      const SelectedStateResponseTiming response_timing =
-          add_selected_state_response_to_active_space_gradient(
-              *current_input_,
-              *accepted_point_context_,
-              directional_selected_states,
-              directional_selected_state_response->delta_selected_eigenvalues,
-              &directional_active_space_gradient);
-      apply_timing_totals_
-          .outer_response_same_spin_backward_wall_time_seconds +=
-          response_timing.same_spin_seconds;
-      apply_timing_totals_
-          .outer_response_opposite_spin_backward_wall_time_seconds +=
-          response_timing.opposite_spin_seconds;
-      apply_timing_totals_
-          .outer_response_opposite_spin_packed_gradient_wall_time_seconds +=
-          response_timing.opposite_spin_packed_gradient_seconds;
-      apply_timing_totals_
-          .outer_response_opposite_spin_alpha_overlap_wall_time_seconds +=
-          response_timing.opposite_spin_alpha_overlap_seconds;
-      apply_timing_totals_
-          .outer_response_opposite_spin_beta_overlap_wall_time_seconds +=
-          response_timing.opposite_spin_beta_overlap_seconds;
     }
-    apply_timing_totals_
-        .outer_response_structure_active_gradient_wall_time_seconds +=
-        detail::exact_hvp_elapsed_seconds(structure_active_gradient_start_time);
+
+    const auto active_gradient_start_time = std::chrono::steady_clock::now();
+    ActiveSpaceGradientDirection directional_active_space_gradient;
+    if (direct_active_gradient) {
+      directional_active_space_gradient = make_active_gradient_direction(
+          accepted_structure_action->active_integral_adjoint_direction(
+              accepted_point_context_->selected_state_matrices,
+              accepted_point_context_->selected_state_energies,
+              directional_selected_states
+                  ? &directional_selected_states.value()
+                  : nullptr,
+              directional_selected_state_response != nullptr
+                  ? &directional_selected_state_response
+                         ->delta_selected_eigenvalues
+                  : nullptr,
+              active_space_integral_direction.overlap,
+              active_space_integral_direction.one_electron,
+              active_space_integral_direction.packed_two_electron,
+              components.local_active_response),
+          n_active_orbitals);
+      const double direct_seconds = detail::exact_hvp_elapsed_seconds(
+          active_gradient_start_time);
+      if (components.local_active_response) {
+        apply_timing_totals_
+            .outer_response_local_active_gradient_wall_time_seconds +=
+            direct_seconds;
+      } else {
+        apply_timing_totals_
+            .outer_response_structure_active_gradient_wall_time_seconds +=
+            direct_seconds;
+      }
+    } else {
+      const auto local_active_gradient_start_time =
+          std::chrono::steady_clock::now();
+      directional_active_space_gradient = components.local_active_response
+          ? build_local_active_space_gradient_direction(
+                *current_input_,
+                *accepted_point_context_,
+                active_space_integral_direction,
+                directional_pair_cache)
+          : make_zero_active_space_gradient_direction(n_active_orbitals);
+      apply_timing_totals_
+          .outer_response_local_active_gradient_wall_time_seconds +=
+          detail::exact_hvp_elapsed_seconds(
+              local_active_gradient_start_time);
+
+      const auto structure_active_gradient_start_time =
+          std::chrono::steady_clock::now();
+      if (directional_selected_states) {
+        const SelectedStateResponseTiming response_timing =
+            add_selected_state_response_to_active_space_gradient(
+                *current_input_,
+                *accepted_point_context_,
+                directional_selected_states.value(),
+                directional_selected_state_response
+                    ->delta_selected_eigenvalues,
+                &directional_active_space_gradient);
+        apply_timing_totals_
+            .outer_response_same_spin_backward_wall_time_seconds +=
+            response_timing.same_spin_seconds;
+        apply_timing_totals_
+            .outer_response_opposite_spin_backward_wall_time_seconds +=
+            response_timing.opposite_spin_seconds;
+        apply_timing_totals_
+            .outer_response_opposite_spin_packed_gradient_wall_time_seconds +=
+            response_timing.opposite_spin_packed_gradient_seconds;
+        apply_timing_totals_
+            .outer_response_opposite_spin_alpha_overlap_wall_time_seconds +=
+            response_timing.opposite_spin_alpha_overlap_seconds;
+        apply_timing_totals_
+            .outer_response_opposite_spin_beta_overlap_wall_time_seconds +=
+            response_timing.opposite_spin_beta_overlap_seconds;
+      }
+      apply_timing_totals_
+          .outer_response_structure_active_gradient_wall_time_seconds +=
+          detail::exact_hvp_elapsed_seconds(
+              structure_active_gradient_start_time);
+    }
     apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
         detail::exact_hvp_elapsed_seconds(active_gradient_start_time);
     validate_outer_response_active_gradient(
