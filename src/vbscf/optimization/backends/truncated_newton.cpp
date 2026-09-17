@@ -64,6 +64,7 @@ BackendRunResult run_truncated_newton_backend(
   TruncatedNewtonSubspace cached_subspace;
   bool request_outer_response = false;
   bool request_secant_correction = false;
+  bool use_full_hvp_for_current_point = false;
   bool outer_response_used_for_current_point = false;
   double last_outer_response_seconds = 0.0;
   double initial_trust_radius_for_current_point = trust_radius;
@@ -229,12 +230,15 @@ BackendRunResult run_truncated_newton_backend(
             cached_subspace,
             current_projection.reduced_gradient.size());
     bool reused_subspace_for_trial = reused_subspace;
-    bool candidate_has_exact_outer_response = false;
-    bool used_full_hvp_for_current_point = false;
+    bool candidate_has_exact_outer_response =
+        use_full_hvp_for_current_point;
+    bool used_full_hvp_for_trial = use_full_hvp_for_current_point;
     bool response_probe_performed = false;
     double response_probe_relative_residual = 0.0;
     bool response_deferred_for_cost = false;
-    ReducedHvp* active_hvp = &core_hvp;
+    ReducedHvp* active_hvp = use_full_hvp_for_current_point
+        ? static_cast<ReducedHvp*>(&exact_hvp)
+        : static_cast<ReducedHvp*>(&core_hvp);
     auto solve_subproblem =
         [&](ReducedHvp* operator_hvp,
             bool reuse,
@@ -276,6 +280,9 @@ BackendRunResult run_truncated_newton_backend(
         active_hvp,
         reused_subspace,
         initial_reduced_step_for_current_solve);
+    outer_response_used_for_current_point =
+        outer_response_used_for_current_point ||
+        use_full_hvp_for_current_point;
 
     // The core model is sufficient while a successful boundary step is still
     // globalizing the orbitals. An interior step, detected negative curvature,
@@ -348,6 +355,7 @@ BackendRunResult run_truncated_newton_backend(
            !(truncated_newton_step.predicted_decrease > 0.0) ||
            !std::isfinite(truncated_newton_step.predicted_decrease)) &&
           response_scale_is_affordable) {
+        use_full_hvp_for_current_point = true;
         active_hvp = &exact_hvp;
         cached_subspace = TruncatedNewtonSubspace();
         reused_subspace_for_trial = false;
@@ -356,7 +364,7 @@ BackendRunResult run_truncated_newton_backend(
             false,
             nullptr);
         candidate_has_exact_outer_response = true;
-        used_full_hvp_for_current_point = true;
+        used_full_hvp_for_trial = true;
       }
     }
     if (truncated_newton_step.newton_forcing_converged &&
@@ -577,7 +585,7 @@ BackendRunResult run_truncated_newton_backend(
         response_scale_is_affordable;
     iteration_record.response_deferred_for_cost =
         response_deferred_for_cost;
-    iteration_record.used_full_hvp = used_full_hvp_for_current_point;
+    iteration_record.used_full_hvp = used_full_hvp_for_trial;
     iteration_record.forcing_term =
         inexact_newton_forcing_term(iteration_record.source_gradient_l2_norm);
     if (candidate_has_exact_outer_response &&
@@ -634,6 +642,7 @@ BackendRunResult run_truncated_newton_backend(
         &next_projection.reduced_gradient);
     trust_radius = next_trust_radius;
     rejected_trial_step_count_for_current_point = 0;
+    use_full_hvp_for_current_point = false;
     outer_response_used_for_current_point = false;
     initial_trust_radius_for_current_point = trust_radius;
     initial_hvp_direction_count_for_current_point =
