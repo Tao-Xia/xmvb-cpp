@@ -234,6 +234,20 @@ if (BUILD_TESTING)
   add_test(NAME input_guess_selection COMMAND test_input_guess_selection)
 
   add_test(
+    NAME state_average_f2
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
+      -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_SA2.xmi
+      -P ${CMAKE_SOURCE_DIR}/tests/output/check_f2_state_average.cmake)
+  set_tests_properties(
+    state_average_f2
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+
+  add_test(
     NAME text_report_f2
     COMMAND
       ${CMAKE_COMMAND}

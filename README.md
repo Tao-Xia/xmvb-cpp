@@ -74,6 +74,11 @@ while `EIGENSOLVER=DENSE` selects the explicit dense reference solver. An
 explicit `--optimizer-backend` or `--eigensolver` command-line option overrides
 the corresponding input keyword.
 
+`NSTATE=n` selects an equal-weight average over the consecutive lowest `n`
+VB states. Omitting it is equivalent to `NSTATE=1`. The optimizer uses the
+same normalized weight `1/n` for the energy, analytic gradient, and TNHVP
+Hessian-vector product. See `testdata/vbscf/F2_SA2.xmi` for a two-state input.
+
 Davidson runs retain only the requested roots, the structure-overlap diagonal,
 and the matrix-free products needed for exact Coulson--Chirgwin weights. Their
 reports omit the full structure Hamiltonian/overlap matrices and the Lowdin and

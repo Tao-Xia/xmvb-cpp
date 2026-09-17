@@ -234,6 +234,7 @@ std::string ao_label(
 
 Eigen::VectorXd selected_structure_coefficients(
     const vb::VbScfResult& result,
+    int state,
     double* phase = nullptr) {
   const int n_str = result.n_structures;
   if (n_str <= 0 ||
@@ -242,9 +243,6 @@ Eigen::VectorXd selected_structure_coefficients(
   }
   const int n_roots =
       static_cast<int>(result.eigenvector_matrix.size() / n_str);
-  const int state = result.selected_state_indices.empty()
-      ? 0
-      : result.selected_state_indices.front();
   if (state < 0 || state >= n_roots) {
     return {};
   }
@@ -284,7 +282,8 @@ struct NormalizedStructureState {
 };
 
 NormalizedStructureState normalize_structure_state(
-    const vb::VbScfResult& result) {
+    const vb::VbScfResult& result,
+    int state) {
   const int n_str = result.n_structures;
   const Eigen::MatrixXd raw_overlap =
       structure_matrix(result.structure_matrices.overlap_matrix, n_str);
@@ -292,7 +291,7 @@ NormalizedStructureState normalize_structure_state(
       structure_matrix(result.structure_matrices.hamiltonian_matrix, n_str);
   double coefficient_phase = 1.0;
   const Eigen::VectorXd raw_coefficients =
-      selected_structure_coefficients(result, &coefficient_phase);
+      selected_structure_coefficients(result, state, &coefficient_phase);
   const bool has_full_matrices =
       raw_overlap.rows() == n_str && raw_hamiltonian.rows() == n_str;
   if (raw_coefficients.size() != n_str ||
@@ -334,9 +333,6 @@ NormalizedStructureState normalize_structure_state(
       }
     }
   } else {
-    const int state = result.selected_state_indices.empty()
-        ? 0
-        : result.selected_state_indices.front();
     const std::size_t required_size =
         static_cast<std::size_t>(n_str) * (state + 1);
     if (result.overlap_eigenvector_matrix.size() < required_size) {
@@ -1088,6 +1084,8 @@ void print_input_sections(
   }
   output << "\n\n Differentiable sparse-orbital coefficients : "
          << n_sparse_coefficients
+         << "\n\n Number of equally averaged states          : "
+         << load_result.state_average_count
          << "\n\n VBSCF algorithm: " << optimizer_name
          << ".\n\n Maximum number of Iterations: " << max_iterations << "\n\n"
          << " Integral evaluation: "
@@ -1134,18 +1132,58 @@ void print_final_state_sections(
     const vb::VbScfInputLoadResult& load_result,
     const vb::VbScfOptimizerResult& result) {
   const auto& scf = result.scf_result;
-  const NormalizedStructureState normalized = normalize_structure_state(scf);
+  const std::vector<int> selected_states = scf.selected_state_indices.empty()
+      ? std::vector<int>{0}
+      : scf.selected_state_indices;
+  if (selected_states.size() != scf.state_average_weights.size() ||
+      selected_states.size() != scf.selected_state_total_energies.size()) {
+    throw std::invalid_argument(
+        "final selected-state energies and weights have inconsistent dimensions");
+  }
 
-  const bool has_full_structure_matrices = normalized.overlap.size() != 0;
+  if (selected_states.size() > 1) {
+    output << "\n\n          ******  EQUAL-WEIGHT STATE-AVERAGED VBSCF ******\n\n"
+           << "       STATE              WEIGHT          TOTAL ENERGY\n";
+    for (std::size_t state_offset = 0;
+         state_offset < selected_states.size();
+         ++state_offset) {
+      output << std::setw(12) << selected_states[state_offset] + 1
+             << std::fixed << std::setprecision(8) << std::setw(20)
+             << scf.state_average_weights[state_offset]
+             << std::fixed << std::setprecision(12) << std::setw(22)
+             << scf.selected_state_total_energies[state_offset] << '\n';
+    }
+    output << "\n       STATE-AVERAGED TOTAL ENERGY : "
+           << std::fixed << std::setprecision(12)
+           << result.final_total_energy << '\n';
+  }
+
+  const NormalizedStructureState first_state =
+      normalize_structure_state(scf, selected_states.front());
+
+  const bool has_full_structure_matrices = first_state.overlap.size() != 0;
   if (has_full_structure_matrices) {
-    print_structure_matrix(output, "OVERLAP", normalized.overlap);
+    print_structure_matrix(output, "OVERLAP", first_state.overlap);
     print_structure_matrix(
-        output, "HAMILTONIAN", normalized.electronic_hamiltonian);
+        output, "HAMILTONIAN", first_state.electronic_hamiltonian);
   } else {
     output << "\n\n Full structure Hamiltonian and overlap matrices are omitted"
               " in matrix-free Davidson mode.\n";
   }
-  if (normalized.coefficients.size() != 0) {
+  for (std::size_t state_offset = 0;
+       state_offset < selected_states.size();
+       ++state_offset) {
+    const NormalizedStructureState normalized = state_offset == 0
+        ? first_state
+        : normalize_structure_state(scf, selected_states[state_offset]);
+    if (normalized.coefficients.size() == 0) {
+      continue;
+    }
+    if (selected_states.size() > 1) {
+      output << "\n\n              ******  STATE "
+             << selected_states[state_offset] + 1
+             << " STRUCTURE ANALYSIS ******\n";
+    }
     output << "\n\n              ******  COEFFICIENTS OF STRUCTURES ******\n\n";
     for (int structure = 0; structure < normalized.coefficients.size(); ++structure) {
       output << std::setw(8) << structure + 1

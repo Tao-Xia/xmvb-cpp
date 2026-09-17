@@ -586,6 +586,7 @@ void populate_scf_result(
        selected_state_offset < selected_state_indices.size();
        ++selected_state_offset) {
     scf_result->selected_state_total_energies[selected_state_offset] =
+        scf_result->one_electron_reference_energy +
         eigen_result.eigenvalues[
             selected_state_indices[selected_state_offset]] +
         nuclear_repulsion_energy;

@@ -3,9 +3,11 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "output/text/report.hpp"
 #include "output/trace/binary.hpp"
@@ -87,9 +89,16 @@ int run(Options command_line) {
   }
 
   xmvb::vb::VbScfOptimizer optimizer(options);
+  std::vector<int> selected_states(load_result.state_average_count);
+  std::iota(selected_states.begin(), selected_states.end(), 0);
+  const std::vector<double> equal_weights(
+      selected_states.size(),
+      1.0);
   const xmvb::vb::VbScfOptimizerResult result =
       optimizer.optimize(
           std::move(load_result.input),
+          selected_states,
+          equal_weights,
           load_result.nuclear_repulsion_energy);
   if (!tnhvp_trace_path.empty()) {
     xmvb::output::write_tnhvp_trace(tnhvp_trace_path, result);

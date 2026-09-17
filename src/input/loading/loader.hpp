@@ -54,6 +54,8 @@ struct VbScfInputLoadResult {
   InputScfOptimizer scf_optimizer = InputScfOptimizer::Unspecified;
   StructureEigensolver structure_eigensolver = StructureEigensolver::Davidson;
   int requested_scf_max_iterations = 2000;
+  /** @brief Number of consecutive lowest roots in the equal-weight objective. */
+  int state_average_count = 1;
   bool request_molden_output = false;
   int source_raw_structure_count = 0;
   double ao_integral_provider_seconds = 0.0;

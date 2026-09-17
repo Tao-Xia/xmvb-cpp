@@ -38,6 +38,8 @@ struct InputDeckMetadata {
   int declared_spin_multiplicity = 1;
   int total_charge = 0;
   int requested_scf_max_iterations = 0;
+  /** @brief Number of consecutive lowest states in an equal-weight average. */
+  int state_average_count = 1;
   InputScfOptimizer scf_optimizer = InputScfOptimizer::Unspecified;
   StructureEigensolver structure_eigensolver = StructureEigensolver::Davidson;
   bool geometry_coordinates_in_bohr = false;

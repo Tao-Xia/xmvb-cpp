@@ -141,6 +141,7 @@ VbScfResult VbScfEvaluator::evaluate(
     const double electronic_state_energy =
         result.electronic_state_energies[state_index];
     result.selected_state_total_energies[selection_index] =
+        result.one_electron_reference_energy +
         electronic_state_energy + nuclear_repulsion_energy;
   }
   result.total_energy =

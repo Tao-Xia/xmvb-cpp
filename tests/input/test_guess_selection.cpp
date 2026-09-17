@@ -69,6 +69,27 @@ int main() {
     require(
         explicit_unit.metadata.guess_type == xmvb::vb::kGuessTypeUnit,
         "explicit GUESS=UNIT must override the $GUS default");
+
+    const auto state_average_path = root / "state-average.xmi";
+    write_deck(state_average_path, "nstate=3");
+    const auto state_average = xmvb::vb::parse_input_deck_model(
+        state_average_path.string());
+    require(
+        state_average.metadata.state_average_count == 3,
+        "NSTATE must select the equal-weight state count");
+
+    const auto invalid_state_average_path = root / "invalid-state-average.xmi";
+    write_deck(invalid_state_average_path, "nstate=0");
+    bool rejected_invalid_state_count = false;
+    try {
+      (void)xmvb::vb::parse_input_deck_model(
+          invalid_state_average_path.string());
+    } catch (const std::invalid_argument&) {
+      rejected_invalid_state_count = true;
+    }
+    require(
+        rejected_invalid_state_count,
+        "non-positive NSTATE must be rejected");
   } catch (...) {
     std::filesystem::remove_all(root);
     throw;

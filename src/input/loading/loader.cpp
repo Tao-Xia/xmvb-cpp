@@ -588,6 +588,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   load_result.scf_optimizer = input_deck_metadata.scf_optimizer;
   load_result.structure_eigensolver =
       input_deck_metadata.structure_eigensolver;
+  load_result.state_average_count = input_deck_metadata.state_average_count;
   load_result.request_molden_output = input_deck_metadata.request_molden_output;
   result.standard_two_electron_mode = load_result.standard_two_electron_mode;
   result.orbital_preparation_input.n_basis_functions = static_topology.n_basis_functions;
@@ -743,6 +744,10 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - structure_expansion_start_time)
             .count();
+    if (load_result.state_average_count > result.structure_data.n_structures) {
+      throw std::invalid_argument(
+          "NSTATE exceeds the number of expanded VB structures");
+    }
   }
   load_result.input = std::move(result);
   load_result.raw_structure_data = std::move(selected_raw_structure_data);

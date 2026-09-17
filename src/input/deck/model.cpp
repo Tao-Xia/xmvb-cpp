@@ -181,6 +181,13 @@ void apply_ctrl_assignment(
     metadata->requested_scf_max_iterations = std::stoi(raw_value);
     return;
   }
+  if (key == "NSTATE") {
+    metadata->state_average_count = std::stoi(raw_value);
+    if (metadata->state_average_count <= 0) {
+      throw std::invalid_argument("NSTATE must be positive");
+    }
+    return;
+  }
   if (key == "ISCF") {
     const int iscf = std::stoi(raw_value);
     if (iscf == 5) {

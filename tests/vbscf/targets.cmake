@@ -116,6 +116,37 @@ if (BUILD_TESTING)
         "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
 
   add_test(
+    NAME exact_ctx_hvp_f2_state_average_finite_difference
+    COMMAND
+      check_exact_ctx_hvp
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_SA2.xmi
+      --step 1e-4
+      --probe full
+      --max-rel-error 1e-7)
+  set_tests_properties(
+    exact_ctx_hvp_f2_state_average_finite_difference
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+
+  add_test(
+    NAME exact_ctx_hvp_f2_state_average_davidson_finite_difference
+    COMMAND
+      check_exact_ctx_hvp
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_SA2.xmi
+      --step 1e-4
+      --probe full
+      --eigensolver davidson
+      --max-rel-error 1e-7)
+  set_tests_properties(
+    exact_ctx_hvp_f2_state_average_davidson_finite_difference
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+
+  add_test(
     NAME exact_ctx_hvp_f2_oeo_finite_difference
     COMMAND
       check_exact_ctx_hvp

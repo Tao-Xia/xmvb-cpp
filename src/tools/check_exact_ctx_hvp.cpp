@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -143,10 +144,15 @@ int main(int argc, char** argv) {
 
     xmvb::vb::OrbitalGradientEvaluator evaluator;
     const Eigen::MatrixXd no_initial_eigenvectors;
+    std::vector<int> selected_states(loaded.state_average_count);
+    std::iota(selected_states.begin(), selected_states.end(), 0);
+    const std::vector<double> equal_weights(
+        selected_states.size(),
+        1.0);
     auto accepted = evaluator.evaluate_without_reference_energy_gradient(
         input,
-        {0},
-        {1.0},
+        selected_states,
+        equal_weights,
         loaded.nuclear_repulsion_energy,
         options.eigensolver,
         xmvb::vb::StructureSolveAccuracy{
@@ -213,6 +219,55 @@ int main(int argc, char** argv) {
        .local_active_response = false,
        .structure_response = false});
     const auto hvp_diagnostics = exact_hvp.diagnostics();
+
+    double state_energy_average_error = 0.0;
+    double state_gradient_average_error = 0.0;
+    double state_hvp_average_error = 0.0;
+    if (selected_states.size() > 1) {
+      double state_energy_average = 0.0;
+      Eigen::VectorXd state_gradient_average = Eigen::VectorXd::Zero(
+          accepted_reduced_gradient.size());
+      Eigen::VectorXd state_hvp_average = Eigen::VectorXd::Zero(
+          analytic.size());
+      for (std::size_t offset = 0; offset < selected_states.size(); ++offset) {
+        const auto state = evaluator.evaluate_without_reference_energy_gradient(
+            input,
+            {selected_states[offset]},
+            {1.0},
+            loaded.nuclear_repulsion_energy,
+            options.eigensolver,
+            xmvb::vb::StructureSolveAccuracy{
+                1.0e-7,
+                options.response_tolerance},
+            no_initial_eigenvectors);
+        const double weight =
+            accepted.second_order_context->normalized_state_weights[offset];
+        state_energy_average += weight * state.scf_result.total_energy;
+        state_gradient_average.noalias() += weight *
+            chart.project_reduced_gradient(
+                layout.gather_from_full(
+                    state.sparse_orbital_energy_gradient));
+        xmvb::vb::ExactHvpOperator state_hvp(
+            state.second_order_context,
+            &input,
+            layout,
+            &chart);
+        state_hvp_average.noalias() +=
+            weight * state_hvp.apply_reduced(direction);
+      }
+      state_energy_average_error = std::abs(
+          accepted.scf_result.total_energy - state_energy_average);
+      state_gradient_average_error = infinity_norm(
+          accepted_reduced_gradient - state_gradient_average);
+      state_hvp_average_error = infinity_norm(
+          analytic - state_hvp_average);
+      if (state_energy_average_error > 1.0e-10 ||
+          state_gradient_average_error > 1.0e-9 ||
+          state_hvp_average_error > 1.0e-8) {
+        throw std::runtime_error(
+            "equal-weight state-average linearity check failed");
+      }
+    }
 
     xmvb::vb::VbScfInput displaced = input;
     displaced.orbital_preparation_input = chart.retract_step(
@@ -302,6 +357,13 @@ int main(int argc, char** argv) {
               << "reduced_dimension = " << direction.size() << '\n'
               << "finite_difference_step = " << options.step << '\n'
               << "response_tolerance = " << options.response_tolerance << '\n'
+              << "state_average_count = " << selected_states.size() << '\n'
+              << "state_energy_average_error = "
+              << state_energy_average_error << '\n'
+              << "state_gradient_average_inf_error = "
+              << state_gradient_average_error << '\n'
+              << "state_hvp_average_inf_error = "
+              << state_hvp_average_error << '\n'
               << "accepted_gradient_vs_dense_midpoint_inf = "
               << accepted_gradient_vs_dense_midpoint_inf << '\n'
               << "structure_response_iterations = "

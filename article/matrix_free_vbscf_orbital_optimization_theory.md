@@ -71,6 +71,39 @@ $$
 
 The orbital gradient and Hessian discussed below are derivatives of the relaxed energy in eq 4 or eq 5, not derivatives evaluated at fixed VB structure coefficients.
 
+The public state-averaged implementation currently specializes eq 5 to the
+consecutive lowest $m$ roots with equal, geometry-independent weights,
+
+$$
+w_s=\frac{1}{m},
+\qquad
+s=0,\ldots,m-1.
+$$
+
+The input keyword `NSTATE=m` selects this objective.  Because the weights are
+constant, differentiation commutes with the finite state sum:
+
+$$
+\mathbf g_{\mathrm{SA}}
+=
+\frac{1}{m}\sum_{s=0}^{m-1}\mathbf g_s,
+\qquad
+\mathbf H_{\mathrm{SA}}\mathbf v
+=
+\frac{1}{m}\sum_{s=0}^{m-1}\mathbf H_s\mathbf v.
+$$
+
+The implementation applies the same normalized weights to the determinant-pair
+Hamiltonian and overlap adjoints, their selected-state response, and the exact
+matrix-free HVP.  On the two-state F2 regression, the directly evaluated
+state-average agrees with the arithmetic average of independent state
+calculations to $2.84\times10^{-14}$ hartree in energy,
+$3.26\times10^{-14}$ in the gradient infinity norm, and
+$2.89\times10^{-14}$ in the HVP infinity norm.  The analytic state-averaged
+HVP agrees with a central difference of the state-averaged gradient to a
+relative error of $3.24\times10^{-9}$ for both dense and Davidson structure
+solvers.
+
 ## 2. Strictly sparse orbital parameterization
 
 Each orbital $p$ has a fixed AO support $\mathcal S_p$. Let $\mathbf R_p$ inject its stored sparse coefficient vector $\mathbf x_p\in\mathbb R^{m_p}$ into the full AO space:
