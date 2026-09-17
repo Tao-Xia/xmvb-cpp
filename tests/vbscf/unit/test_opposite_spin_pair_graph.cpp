@@ -379,6 +379,32 @@ int main() {
   require(
       lazy_cache.alpha_pair_cache.front().cofactor_differential == nullptr,
       "forward-only pair cache constructed a derivative payload");
+  for (std::size_t pair = 0;
+       pair < eager_cache.alpha_pair_cache.size();
+       ++pair) {
+    const auto& eager = eager_cache.alpha_pair_cache[pair];
+    const auto& lazy = lazy_cache.alpha_pair_cache[pair];
+    require(
+        std::abs(
+            eager.overlap_result.overlap_determinant -
+            lazy.overlap_result.overlap_determinant) <= 1.0e-14 &&
+            std::abs(eager.total_hamiltonian - lazy.total_hamiltonian) <=
+                1.0e-14,
+        "transpose-generated forward pair scalar disagrees with direct evaluation");
+    for (int channel = 0; channel < n_channels; ++channel) {
+      require(
+          std::abs(
+              channel_value(
+                  eager.opposite_spin_pair_cache
+                      .first_order_cofactor_projection,
+                  channel) -
+              channel_value(
+                  lazy.opposite_spin_pair_cache
+                      .first_order_cofactor_projection,
+                  channel)) <= 1.0e-14,
+          "transpose-generated pair projection disagrees with direct evaluation");
+    }
+  }
   xmvb::vb::populate_same_spin_phi_cache(
       &eager_cache,
       active_one_electron,
