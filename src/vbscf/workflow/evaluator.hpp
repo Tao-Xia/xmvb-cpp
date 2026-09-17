@@ -2,10 +2,7 @@
 
 #include <vector>
 
-#include <Eigen/Core>
-
 #include "core/eigensolver.hpp"
-#include "vbscf/core/contracts/eigensolver.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/evaluation/evaluator.hpp"
 #include "vbscf/core/contracts/result.hpp"
@@ -59,23 +56,6 @@ public:
       const VbScfInput& input,
       const std::vector<int>& selected_state_indices,
       const std::vector<double>& state_average_weights,
-      double nuclear_repulsion_energy) const;
-
-  /**
-   * @brief Evaluates only the relaxed state-averaged total energy.
-   *
-   * This skips eigenvector materialization and should be used for trial-point
-   * screening paths that do not need gradients, selected-state coefficients,
-   * or the accepted-point second-order context. `initial_eigenvectors`
-   * supplies recycled structure roots from the accepted orbital point.
-   */
-  double evaluate_energy_only(
-      const VbScfInput& input,
-      const std::vector<int>& selected_state_indices,
-      const std::vector<double>& state_average_weights,
-      StructureEigensolver structure_eigensolver,
-      StructureSolveAccuracy structure_solve_accuracy,
-      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
       double nuclear_repulsion_energy) const;
 
 private:

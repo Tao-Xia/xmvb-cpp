@@ -45,8 +45,7 @@ VbScfObjective::VbScfObjective(
     double nuclear_repulsion_energy,
     StructureEigensolver structure_eigensolver,
     StructureSolveAccuracy structure_solve_accuracy,
-    const OrbitalGradientEvaluator* orbital_gradient_evaluator,
-    const VbScfEvaluator* scf_evaluator)
+    const OrbitalGradientEvaluator* orbital_gradient_evaluator)
     : input_(std::move(input)),
       layout_(std::move(layout)),
       state_indices_(selected_state_indices),
@@ -54,8 +53,7 @@ VbScfObjective::VbScfObjective(
       nuclear_repulsion_(nuclear_repulsion_energy),
       structure_eigensolver_(structure_eigensolver),
       structure_solve_accuracy_(structure_solve_accuracy),
-      gradient_evaluator_(orbital_gradient_evaluator),
-      scf_(scf_evaluator) {}
+      gradient_evaluator_(orbital_gradient_evaluator) {}
 
 double VbScfObjective::operator()(
     const Eigen::VectorXd& parameter_vector,
@@ -136,41 +134,6 @@ void VbScfObjective::commit(TrialEvaluation evaluation) {
   gradient_inf_norm_history_.push_back(evaluation.gradient_inf_norm);
   iteration_time_history_seconds_.push_back(evaluation.wall_time_seconds);
   objective_wall_time_seconds_ += evaluation.wall_time_seconds;
-}
-
-double VbScfObjective::evaluate_energy_only(
-    const Eigen::VectorXd& parameter_vector) const {
-  if (scf_ == nullptr) {
-    throw std::runtime_error("energy-only objective evaluation requires a live SCF evaluator");
-  }
-  if (gradient_result_.second_order_context == nullptr) {
-    throw std::runtime_error(
-        "energy-only objective evaluation requires accepted structure eigenvectors");
-  }
-  const Eigen::MatrixXd& accepted_eigenvectors =
-      gradient_result_.second_order_context->root_eigenvectors;
-  OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
-  layout_.unpack(parameter_vector, &trial_orbitals);
-  apply_support_preserving_inactive_gauge(&trial_orbitals);
-  balance_active_gauge(&trial_orbitals);
-  ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
-  const auto evaluation_start_time = std::chrono::steady_clock::now();
-  const double energy = scf_->evaluate_energy_only(
-      input_,
-      state_indices_,
-      state_weights_,
-      structure_eigensolver_,
-      structure_solve_accuracy_,
-      accepted_eigenvectors,
-      nuclear_repulsion_);
-  const double elapsed_seconds =
-      std::chrono::duration<double>(
-          std::chrono::steady_clock::now() - evaluation_start_time)
-          .count();
-  ++energy_only_call_count_;
-  energy_only_wall_time_seconds_ += elapsed_seconds;
-  last_energy_only_wall_time_seconds_ = elapsed_seconds;
-  return energy;
 }
 
 }  // namespace xmvb::vb

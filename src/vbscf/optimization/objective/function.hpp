@@ -12,7 +12,6 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/gradient/orbital/result.hpp"
-#include "vbscf/workflow/evaluator.hpp"
 
 namespace xmvb::vb {
 
@@ -51,8 +50,7 @@ class VbScfObjective {
       double nuclear_repulsion_energy,
       StructureEigensolver structure_eigensolver,
       StructureSolveAccuracy structure_solve_accuracy,
-      const OrbitalGradientEvaluator* orbital_gradient_evaluator,
-      const VbScfEvaluator* scf_evaluator);
+      const OrbitalGradientEvaluator* orbital_gradient_evaluator);
 
   VbScfObjective(const VbScfObjective&) = delete;
   VbScfObjective& operator=(const VbScfObjective&) = delete;
@@ -94,13 +92,6 @@ class VbScfObjective {
   double objective_wall_time_seconds() const {
     return objective_wall_time_seconds_;
   }
-  std::size_t energy_only_call_count() const { return energy_only_call_count_; }
-  double energy_only_wall_time_seconds() const {
-    return energy_only_wall_time_seconds_;
-  }
-  double last_energy_only_wall_time_seconds() const {
-    return last_energy_only_wall_time_seconds_;
-  }
   double last_gradient_inf_norm() const {
     if (gradient_inf_norm_history_.empty()) {
       return 0.0;
@@ -116,10 +107,7 @@ class VbScfObjective {
   /** @brief Makes a previously evaluated trial the accepted point. */
   void commit(TrialEvaluation evaluation);
 
-  /** @brief Evaluates only the relaxed energy at a trial point. */
-  double evaluate_energy_only(const Eigen::VectorXd& parameter_vector) const;
-
- private:
+private:
   mutable VbScfInput input_;
   SparseParameterLayout layout_;
   std::vector<int> state_indices_;
@@ -129,16 +117,12 @@ class VbScfObjective {
       StructureEigensolver::Davidson;
   StructureSolveAccuracy structure_solve_accuracy_;
   const OrbitalGradientEvaluator* gradient_evaluator_ = nullptr;
-  const VbScfEvaluator* scf_ = nullptr;
 
   OrbitalGradientResult gradient_result_;
   std::vector<double> energy_history_;
   std::vector<double> gradient_inf_norm_history_;
   std::vector<double> iteration_time_history_seconds_;
   double objective_wall_time_seconds_ = 0.0;
-  mutable std::size_t energy_only_call_count_ = 0;
-  mutable double energy_only_wall_time_seconds_ = 0.0;
-  mutable double last_energy_only_wall_time_seconds_ = 0.0;
 };
 
 }  // namespace xmvb::vb

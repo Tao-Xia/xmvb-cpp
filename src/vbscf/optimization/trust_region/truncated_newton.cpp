@@ -166,6 +166,51 @@ void clamp_nonredundant_step_result_to_retract_tangent_radius(
       current_projection.reduced_gradient, step);
 }
 
+bool minimize_truncated_newton_step_on_ray(
+    const OrbitalChart::ProjectionResult& current_projection,
+    TruncatedNewtonStepResult* step) {
+  if (step == nullptr || step->reduced_step.size() == 0 ||
+      step->reduced_step.size() !=
+          current_projection.reduced_gradient.size() ||
+      step->reduced_hessian_times_step.size() !=
+          step->reduced_step.size() ||
+      step->reduced_metric_times_step.size() !=
+          step->reduced_step.size() ||
+      !step->reduced_step.allFinite() ||
+      !step->reduced_hessian_times_step.allFinite() ||
+      !step->reduced_metric_times_step.allFinite()) {
+    return false;
+  }
+  const double linear_decrease =
+      -current_projection.reduced_gradient.dot(step->reduced_step);
+  const double directional_curvature =
+      step->reduced_step.dot(step->reduced_hessian_times_step);
+  if (!(linear_decrease > 0.0) || !(directional_curvature > 0.0) ||
+      !std::isfinite(linear_decrease) ||
+      !std::isfinite(directional_curvature)) {
+    return false;
+  }
+  const double scale = linear_decrease / directional_curvature;
+  if (!(scale > 0.0) || !(scale < 1.0) || !std::isfinite(scale)) {
+    return false;
+  }
+
+  step->reduced_step *= scale;
+  step->reduced_hessian_times_step *= scale;
+  step->reduced_metric_times_step *= scale;
+  step->retract_tangent_norm *= scale;
+  step->trust_region_shift = 0.0;
+  step->reached_boundary = false;
+  step->predicted_decrease =
+      -current_projection.reduced_gradient.dot(step->reduced_step) -
+      0.5 * step->reduced_step.dot(
+          step->reduced_hessian_times_step);
+  step->stop_reason = TruncatedNewtonStopReason::RadiusAdjusted;
+  refresh_truncated_newton_step_certificate(
+      current_projection.reduced_gradient, step);
+  return true;
+}
+
 bool RejectedTruncatedNewtonStepCache::has_cached_step(
     Eigen::Index expected_size) const {
   return finite_nonzero_vector_matches_size(cached_step, expected_size);

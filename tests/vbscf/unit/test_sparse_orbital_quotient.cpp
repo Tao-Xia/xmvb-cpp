@@ -406,6 +406,23 @@ void check_truncated_newton_certificates() {
   refresh_truncated_newton_step_certificate(gradient, &step);
   require(step.model_kkt_converged && !step.newton_forcing_converged,
           "shifted boundary KKT was misreported as Newton convergence");
+
+  OrbitalChart::ProjectionResult ray_projection;
+  ray_projection.reduced_gradient = Eigen::Vector2d(1.0, 0.0);
+  TruncatedNewtonStepResult ray_step;
+  ray_step.reduced_step = Eigen::Vector2d(-1.0, 0.0);
+  ray_step.reduced_hessian_times_step = Eigen::Vector2d(-3.0, 0.0);
+  ray_step.reduced_metric_times_step = ray_step.reduced_step;
+  ray_step.retract_tangent_norm = 1.0;
+  ray_step.reached_boundary = true;
+  ray_step.trust_region_shift = 2.0;
+  ray_step.target_kkt_relative_residual = 0.5;
+  require(
+      minimize_truncated_newton_step_on_ray(ray_projection, &ray_step) &&
+      std::abs(ray_step.reduced_step[0] + 1.0 / 3.0) < 1.0e-14 &&
+      std::abs(ray_step.predicted_decrease - 1.0 / 6.0) < 1.0e-14 &&
+      !ray_step.reached_boundary && ray_step.trust_region_shift == 0.0,
+      "exact directional quadratic was not minimized on the sampled ray");
 }
 
 void check_interior_work_extension(const OrbitalPreparationInput& input) {

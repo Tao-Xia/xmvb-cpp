@@ -177,7 +177,7 @@ void print_tnhvp_summary(
   print_log_subsection_title("TNHVP Matrix-Free Newton");
   print_log_field(
       "Hessian model",
-      "full_exact_hessian");
+      "core_hessian_with_bounded_outer_certificates");
   print_log_field(
       "Inexact Newton forcing",
       "adaptive sqrt(projected gradient 2-norm)");
@@ -424,12 +424,6 @@ void print_summary(
     print_log_field(
         "Outer-response wall time",
         format_seconds(result.matrix_free_outer_response_wall_time_seconds));
-    print_log_field(
-        "Trial structure-energy solves",
-        std::to_string(result.energy_only_evaluation_count));
-    print_log_field(
-        "Trial structure-energy wall time",
-        format_seconds(result.energy_only_wall_time_seconds));
   }
   print_tnhvp_summary(options, input);
   print_log_subsection_title("Timing Breakdown (Wall Time)");

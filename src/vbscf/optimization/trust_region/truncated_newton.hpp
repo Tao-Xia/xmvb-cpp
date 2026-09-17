@@ -113,6 +113,17 @@ void clamp_nonredundant_step_result_to_retract_tangent_radius(
     const NonredundantRetractionMetric& metric,
     TruncatedNewtonStepResult* step);
 
+/**
+ * @brief Minimizes the available quadratic model along a sampled step ray.
+ *
+ * This uses the exact directional quantities already stored in `step`; no
+ * additional HVP is evaluated. The step is shortened only when the positive
+ * directional curvature places the one-dimensional minimizer inside it.
+ */
+bool minimize_truncated_newton_step_on_ray(
+    const OrbitalChart::ProjectionResult& current_projection,
+    TruncatedNewtonStepResult* step);
+
 bool truncated_newton_subspace_is_usable(
     const TruncatedNewtonSubspace& subspace,
     Eigen::Index reduced_size);

@@ -62,9 +62,7 @@ BackendRunResult run_truncated_newton_backend(
   RejectedTruncatedNewtonStepCache rejected_step_cache;
   TruncatedNewtonSubspace cached_subspace;
   bool request_outer_response = false;
-  bool use_full_hvp_for_current_point = false;
   bool outer_response_used_for_current_point = false;
-  double last_core_log_progress_per_second = 0.0;
   double last_outer_response_seconds = 0.0;
   double initial_trust_radius_for_current_point = trust_radius;
   std::size_t initial_hvp_direction_count_for_current_point =
@@ -131,30 +129,9 @@ BackendRunResult run_truncated_newton_backend(
         objective->input().orbital_preparation_input;
     const NonredundantRetractionMetric retraction_metric(
         current_space, parameter_view, current_orbital_input);
-    const auto admit_energy_only_trial_screen = [&]() {
-      const auto& objective_time_history =
-          objective->iteration_time_history_seconds();
-      const double last_objective_seconds =
-          objective_time_history.empty()
-              ? 0.0
-              : objective_time_history.back();
-      // Measure the two available trial-evaluation paths directly.
-      // After one sample, use energy-only screening exactly when its
-      // observed cost is below a full objective-and-gradient call.
-      if (objective->energy_only_call_count() == 0) {
-        return true;
-      }
-      const double last_energy_only_seconds =
-          objective->last_energy_only_wall_time_seconds();
-      return
-          std::isfinite(last_energy_only_seconds) &&
-          last_energy_only_seconds > 0.0 &&
-          last_energy_only_seconds < last_objective_seconds;
-    };
     auto try_truncated_newton_trial_step =
         [&](const Eigen::VectorXd& candidate_reduced_step,
             double candidate_predicted_decrease,
-            bool screen_with_energy_only,
             TruncatedNewtonTrialEvaluation* trial_evaluation,
             VbScfObjective::TrialEvaluation* accepted_trial_evaluation,
             Eigen::VectorXd* accepted_trial_parameters,
@@ -193,26 +170,6 @@ BackendRunResult run_truncated_newton_backend(
                 effective_predicted_decrease;
           }
   
-          if (screen_with_energy_only) {
-            const double candidate_trial_energy =
-                objective->evaluate_energy_only(
-                    candidate_trial_parameters);
-            const double actual_decrease =
-                energy - candidate_trial_energy;
-            const double candidate_trust_ratio =
-                actual_decrease / effective_predicted_decrease;
-            if (trial_evaluation != nullptr) {
-              trial_evaluation->actual_decrease = actual_decrease;
-            }
-            if (!std::isfinite(candidate_trial_energy) ||
-                !std::isfinite(candidate_trust_ratio) ||
-                !truncated_newton_trial_is_acceptable(
-                    TruncatedNewtonTrialEvaluation{
-                        actual_decrease,
-                        effective_predicted_decrease})) {
-              return false;
-            }
-          }
           VbScfObjective::TrialEvaluation candidate_trial_evaluation =
               objective->evaluate_trial(
                   candidate_trial_parameters,
@@ -262,10 +219,7 @@ BackendRunResult run_truncated_newton_backend(
     bool response_probe_performed = false;
     double response_probe_relative_residual = 0.0;
     bool response_deferred_for_cost = false;
-    bool full_hvp_is_cost_effective_for_candidate = false;
-    ReducedHvp* active_hvp = use_full_hvp_for_current_point
-        ? static_cast<ReducedHvp*>(&exact_hvp)
-        : static_cast<ReducedHvp*>(&core_hvp);
+    ReducedHvp* active_hvp = &core_hvp;
     auto solve_subproblem =
         [&](ReducedHvp* operator_hvp,
             bool reuse,
@@ -307,16 +261,14 @@ BackendRunResult run_truncated_newton_backend(
         active_hvp,
         reused_subspace,
         initial_reduced_step_for_current_solve);
-    candidate_has_exact_outer_response = use_full_hvp_for_current_point;
-    outer_response_used_for_current_point =
-        outer_response_used_for_current_point ||
-        use_full_hvp_for_current_point;
 
     // The core model is sufficient while a successful boundary step is still
     // globalizing the orbitals. An interior step, detected negative curvature,
-    // or a retry after deficient progress is certified with one exact outer
-    // action. If that action violates the full shifted-KKT forcing condition,
-    // solve the current trust problem with the complete Hessian action.
+    // or a retry after deficient progress is certified with an exact outer
+    // action. The exact image corrects the candidate's model decrease and KKT
+    // certificate, but a single sampled direction must not authorize full
+    // outer responses throughout the Krylov subspace. Thus outer work is
+    // bounded by candidate samples rather than multiplied by subspace size.
     const double core_candidate_wall_time_seconds =
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - accepted_point_start_time)
@@ -325,8 +277,8 @@ BackendRunResult run_truncated_newton_backend(
         !(last_outer_response_seconds > 0.0) ||
         last_outer_response_seconds <= core_candidate_wall_time_seconds;
     const bool certify_core_candidate =
-        !use_full_hvp_for_current_point &&
         request_outer_response &&
+        !outer_response_used_for_current_point &&
         known_response_cost_is_affordable &&
         truncated_newton_step.reduced_step.size() == reduced_size &&
         truncated_newton_step.reduced_hessian_times_step.size() ==
@@ -336,8 +288,8 @@ BackendRunResult run_truncated_newton_backend(
         truncated_newton_step.reduced_step.allFinite() &&
         truncated_newton_step.reduced_hessian_times_step.allFinite() &&
         truncated_newton_step.reduced_metric_times_step.allFinite();
-    if (!use_full_hvp_for_current_point &&
-        request_outer_response &&
+    if (request_outer_response &&
+        !outer_response_used_for_current_point &&
         !known_response_cost_is_affordable) {
       response_deferred_for_cost = true;
     }
@@ -361,63 +313,14 @@ BackendRunResult run_truncated_newton_backend(
       refresh_truncated_newton_step_certificate(
           current_projection.reduced_gradient,
           &truncated_newton_step);
+      minimize_truncated_newton_step_on_ray(
+          current_projection,
+          &truncated_newton_step);
       response_probe_relative_residual =
           truncated_newton_step.model_kkt_relative_residual;
       candidate_has_exact_outer_response = true;
       outer_response_used_for_current_point = true;
 
-      const double gradient_norm =
-          current_projection.reduced_gradient.stableNorm();
-      const double remaining_log_reduction =
-          gradient_norm > options.gradient_tolerance
-              ? std::log(gradient_norm / options.gradient_tolerance)
-              : 0.0;
-      const double elapsed_point_seconds =
-          std::chrono::duration<double>(
-              std::chrono::steady_clock::now() -
-              accepted_point_start_time)
-              .count();
-      const double elapsed_core_completion_seconds =
-          remaining_log_reduction * elapsed_point_seconds;
-      const double rate_based_core_completion_seconds =
-          last_core_log_progress_per_second > 0.0
-              ? remaining_log_reduction /
-                  last_core_log_progress_per_second
-              : elapsed_core_completion_seconds;
-      const int projected_response_batches = std::max(
-          1,
-          (truncated_newton_step.subspace_dimension + 1) / 2);
-      const double estimated_full_response_seconds =
-          projected_response_batches * probe_wall_time_seconds;
-      // A calibrated response image must be no more expensive than all work
-      // already invested in the current core candidate. One-time response
-      // calibration is remembered across accepted points, so an unaffordable
-      // image is not sampled again until core work grows to the same cost.
-      const bool response_action_is_affordable =
-          core_candidate_wall_time_seconds > 0.0 &&
-          probe_wall_time_seconds <= core_candidate_wall_time_seconds;
-      full_hvp_is_cost_effective_for_candidate =
-          response_action_is_affordable &&
-          std::isfinite(estimated_full_response_seconds) &&
-          estimated_full_response_seconds <=
-              rate_based_core_completion_seconds;
-      if (!truncated_newton_step.model_kkt_converged ||
-          !(truncated_newton_step.predicted_decrease > 0.0) ||
-          !std::isfinite(truncated_newton_step.predicted_decrease)) {
-        response_deferred_for_cost =
-            !full_hvp_is_cost_effective_for_candidate;
-        if (full_hvp_is_cost_effective_for_candidate) {
-          use_full_hvp_for_current_point = true;
-          active_hvp = &exact_hvp;
-          cached_subspace = TruncatedNewtonSubspace();
-          reused_subspace_for_trial = false;
-          truncated_newton_step = solve_subproblem(
-              active_hvp,
-              false,
-              nullptr);
-          candidate_has_exact_outer_response = true;
-        }
-      }
     }
     if (truncated_newton_step.newton_forcing_converged &&
         candidate_has_exact_outer_response) {
@@ -434,6 +337,7 @@ BackendRunResult run_truncated_newton_backend(
         truncated_newton_step.predicted_decrease;
     if (!std::isfinite(predicted_decrease) ||
         predicted_decrease <= 0.0) {
+      candidate_has_exact_outer_response = false;
       reduced_step =
           build_nonredundant_preconditioned_reduced_gradient_step(
               retraction_metric,
@@ -468,14 +372,10 @@ BackendRunResult run_truncated_newton_backend(
     Eigen::VectorXd trial_parameters(current_parameters.size());
     Eigen::VectorXd trial_gradient(current_gradient.size());
     double trial_energy = energy;
-    const bool screen_rejected_trials_with_energy_only =
-        rejected_trial_step_count_for_current_point > 0 &&
-        admit_energy_only_trial_screen();
     bool accepted_trial =
         try_truncated_newton_trial_step(
             reduced_step,
             predicted_decrease,
-            screen_rejected_trials_with_energy_only,
             &trial_evaluation_cache,
             &accepted_trial_evaluation,
             &trial_parameters,
@@ -483,14 +383,7 @@ BackendRunResult run_truncated_newton_backend(
             &trial_energy);
     if (!accepted_trial) {
       ++rejected_trial_step_count_for_current_point;
-      if (response_probe_performed &&
-          full_hvp_is_cost_effective_for_candidate) {
-        use_full_hvp_for_current_point = true;
-        cached_subspace = TruncatedNewtonSubspace();
-        request_outer_response = true;
-      } else {
-        request_outer_response = !response_probe_performed;
-      }
+      request_outer_response = !outer_response_used_for_current_point;
       const double next_trust_radius =
           update_nonredundant_truncated_newton_trust_radius(
               trust_radius,
@@ -592,22 +485,6 @@ BackendRunResult run_truncated_newton_backend(
         response_deferred_for_cost && gradient_progressed;
     request_outer_response =
         !boundary_globalization_progressed && !continue_core_for_cost;
-    const bool use_full_hvp_at_next_point =
-        use_full_hvp_for_current_point &&
-        !boundary_globalization_progressed;
-    const double core_point_wall_time_seconds =
-        accepted_point_wall_time_seconds -
-        (result->matrix_free_outer_response_wall_time_seconds -
-         initial_outer_response_wall_time_for_current_point);
-    if (!use_full_hvp_for_current_point &&
-        source_gradient_l2_norm > accepted_gradient_l2_norm &&
-        accepted_gradient_l2_norm > 0.0 &&
-        core_point_wall_time_seconds > 0.0 &&
-        std::isfinite(core_point_wall_time_seconds)) {
-      last_core_log_progress_per_second =
-          -std::log(accepted_gradient_l2_norm / source_gradient_l2_norm) /
-          core_point_wall_time_seconds;
-    }
     TnhvpIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations;
     iteration_record.reduced_dimension = static_cast<int>(reduced_size);
@@ -651,7 +528,7 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.response_probe_performed = response_probe_performed;
     iteration_record.response_probe_relative_residual =
         response_probe_relative_residual;
-    iteration_record.used_full_hvp = use_full_hvp_for_current_point;
+    iteration_record.used_full_hvp = false;
     iteration_record.forcing_term =
         inexact_newton_forcing_term(iteration_record.source_gradient_l2_norm);
     if (candidate_has_exact_outer_response &&
@@ -708,7 +585,6 @@ BackendRunResult run_truncated_newton_backend(
         &next_projection.reduced_gradient);
     trust_radius = next_trust_radius;
     rejected_trial_step_count_for_current_point = 0;
-    use_full_hvp_for_current_point = use_full_hvp_at_next_point;
     outer_response_used_for_current_point = false;
     initial_trust_radius_for_current_point = trust_radius;
     initial_hvp_direction_count_for_current_point =

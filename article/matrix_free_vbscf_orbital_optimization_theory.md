@@ -1980,6 +1980,33 @@ $$
 \tag{66s}
 $$
 
+The exact directional image also permits minimization of the corrected
+quadratic model on the already sampled ray without another HVP. Define
+
+$$
+\ell_k=-\mathbf g_k^{\mathrm T}\mathbf s_k^{\mathrm c},
+\qquad
+q_k=(\mathbf s_k^{\mathrm c})^{\mathrm T}
+\left(\mathbf H_k^{\mathrm c}\mathbf s_k^{\mathrm c}+\mathbf d_k\right).
+\tag{66sa}
+$$
+
+When $\ell_k>0$ and $q_k>0$, the ray minimizer retained inside the sampled
+step is
+
+$$
+\alpha_k=
+\min\left(1,\frac{\ell_k}{q_k}\right),
+\qquad
+\widetilde{\mathbf s}_k=\alpha_k\mathbf s_k^{\mathrm c}.
+\tag{66sb}
+$$
+
+For nonpositive directional curvature the original trust-region step is
+retained. This scalar minimization uses the exact sampled curvature, preserves
+the matrix-free representation, and prevents a response correction from
+submitting a point beyond the minimum of its own corrected ray model.
+
 The probe is a certificate, not a rank-one Hessian model.  It certifies an
 inexact-Newton step when its corrected decrease is positive and its complete
 shifted residual satisfies
@@ -1990,29 +2017,19 @@ $$
 \tag{66t}
 $$
 
-using the same forcing term as the complete Newton solve.  If this condition
-fails, the core subspace is not incrementally fitted with additional response
-samples.  Instead, the measured probe time predicts the response cost of a
-complete Krylov solve.  With $n_{b,k}$ projected response batches and the most
-recent measured core progress rate $\Pi_k^{\mathrm c}$, define
+using the same forcing term as the complete Newton solve. If this condition
+fails, the core subspace is not fitted with arbitrary orbital-space secants,
+and one sampled direction does not authorize complete response actions on all
+subsequent Krylov directions. Such a promotion would multiply the cost of one
+directional certificate by an unknown final subspace dimension while inferring
+global response curvature from one sample.
 
-$$
-\widehat T_k^{\mathrm{full}}=n_{b,k}t_{r,k},
-\qquad
-\widehat T_k^{\mathrm{core}}
-=\frac{
-\max\!\left[0,
-\log\!\left(\lVert\mathbf g_k\rVert_2/\epsilon_g\right)
-\right]}
-{\Pi_k^{\mathrm c}}.
-\tag{66u}
-$$
-
-The cost comparison is supplemented by the measured affordability condition
+Before a probe is evaluated, it must satisfy the measured affordability
+condition
 
 $$
 t_{r,k}\leq T_k^{\mathrm{core\ candidate}},
-\tag{66ua}
+\tag{66u}
 $$
 
 where $T_k^{\mathrm{core\ candidate}}$ is the measured wall time already
@@ -2021,25 +2038,20 @@ cost of the complete cheap alternative, not only its HVP kernel.  The most
 recent measured $t_{r,k}$ is retained across accepted points.  A requested
 probe is skipped before evaluation whenever that measured response cost
 exceeds the work invested in the new core candidate; it becomes eligible
-again only if accumulated core work reaches the same cost.  Thus an expensive
-calibration is not repeated blindly at every accepted point.  Equation 66ua
-also prevents a single response action from authorizing many equally
-expensive actions merely because a long core-only convergence time was
-extrapolated from early nonlinear iterations.  The complete solve is launched
-only if eqs 66u and 66ua both hold and the corrected candidate fails the
-shifted-KKT certificate or has nonpositive predicted decrease.  It is then
-restarted from an empty subspace, so every Krylov image belongs to the same
-complete analytic HVP.  A rejected certified trial may make the same
-cost-based transition.  Otherwise the radius is reduced and the core problem
-is retried; an uncertified direction is never reported as a converged Newton
-solution.
+again only if accumulated core work reaches the same cost. Thus an expensive
+calibration is not repeated blindly at every accepted point.
 
-This measured-cost switch avoids two failure modes of low-rank response
-interpolation: repeated expensive probes that do not span the important
-response eigenspace, and a nominally converged subproblem whose certificate
-belongs to a different approximate operator.  It also avoids spending more
-time on one complete response solve than the observed core trajectory is
-expected to need for the remaining gradient reduction.
+When the exact probe fails eq 66t but the corrected decrease in eq 66r remains
+positive, the direction may still be submitted as a trust-region trial. Its
+acceptance is guarded by the exact relaxed energy and gradient; it is not
+reported as a converged Newton solve. A rejected trial contracts the radius
+and returns to the core model at the same accepted point. Consequently, the
+bounded-response implementation uses at most one exact outer-response
+direction per accepted point and never incurs
+$\mathcal O(m_k C_{R,k})$ response work merely because one probe exposed an
+unresolved residual. Recovering a complete Newton certificate without that
+multiplication requires the response-space construction of Section 10.7,
+rather than an unconstrained orbital-space secant fit.
 
 During trust-region globalization, the first core candidate does not require
 a precise Newton equation.  It can use zero response actions because the exact
@@ -2049,8 +2061,7 @@ to continue expanding the trust radius while reducing the gradient requests a
 response certificate at the next solve.  These events are properties of the
 optimization model; they introduce no molecular or active-space cutoff.
 
-Across accepted
-steps, the directly observed wall-time progress measure
+Across accepted steps, the directly observed wall-time progress measure
 
 $$
 \Pi_k
@@ -2060,11 +2071,9 @@ $$
 \tag{66v}
 $$
 
-compares response fidelities in the quantity actually being optimized.  A
+compares response fidelities in the quantity actually being optimized. A
 nonpositive numerator records stagnation rather than being clipped into an
-apparent speedup.  Response time is subtracted when estimating
-$\Pi_k^{\mathrm c}$, so eq 66u compares marginal core and response work rather
-than charging a probe to both alternatives.  The global-to-local transition
+apparent speedup. The global-to-local transition
 requires no fixed outer-iteration count.  In the absence of a cost deferral, a
 core step remains in the inexpensive globalization branch only while
 
@@ -2078,17 +2087,20 @@ $$
 $$
 
 and no negative-curvature direction was detected.  When any part of eq 66w
-fails, the next candidate is response-certified.  If eq 66u defers the full
-solve and the exact trial still reduces the gradient, the core branch is
-continued; loss of gradient reduction requests a new certificate.  Thus the
+fails, the next candidate requests a response certificate. If eq 66u defers
+that probe and the exact trial still reduces the gradient, the core branch is
+continued; loss of gradient reduction requests a new certificate. Thus the
 cheap branch is continued only while it makes measurable progress.
 
 This dynamic-accuracy construction deliberately permits a few extra accepted
 globalization steps when they are cheaper than one relaxed response action.
 As the gradient decreases and the step enters the interior Newton regime,
-eq 66t forces the response accuracy to increase, retaining the local
-second-order convergence target.  Fixed response counts and system-specific
-activation thresholds are excluded from the production algorithm.
+eq 66t determines whether a candidate possesses a complete Newton
+certificate. Fixed response counts and system-specific activation thresholds
+are excluded from the production algorithm. The bounded-response production
+path does not claim asymptotically quadratic convergence when eq 66t fails;
+that stronger property is the target of the certified low-rank Schur model
+below.
 
 ### 10.7 Residual-certified low-rank Schur response
 

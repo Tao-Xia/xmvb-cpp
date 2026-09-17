@@ -5,7 +5,6 @@
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/optimization/driver/options.hpp"
-#include "vbscf/workflow/evaluator.hpp"
 
 namespace xmvb::vb {
 
@@ -28,7 +27,6 @@ public:
    */
   VbScfOptimizer(
       OrbitalGradientEvaluator orbital_gradient_evaluator,
-      VbScfEvaluator scf_evaluator,
       VbScfOptimizerOptions options);
 
   /**
@@ -53,7 +51,6 @@ public:
 
 private:
   OrbitalGradientEvaluator orbital_gradient_evaluator_;
-  VbScfEvaluator scf_evaluator_;
   VbScfOptimizerOptions options_;
 };
 

@@ -1,12 +1,8 @@
 #include "vbscf/workflow/evaluator.hpp"
 
-#include <algorithm>
 #include <stdexcept>
 #include <utility>
 
-#include <Eigen/Core>
-
-#include "vbscf/structures/assembly/action.hpp"
 
 namespace xmvb::vb {
 
@@ -153,96 +149,6 @@ VbScfResult VbScfEvaluator::evaluate(
       nuclear_repulsion_energy;
 
   return result;
-}
-
-double VbScfEvaluator::evaluate_energy_only(
-    const VbScfInput& input,
-    const std::vector<int>& selected_state_indices,
-    const std::vector<double>& state_average_weights,
-    StructureEigensolver structure_eigensolver,
-    StructureSolveAccuracy structure_solve_accuracy,
-    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors,
-    double nuclear_repulsion_energy) const {
-  if (input.structure_data.n_structures <= 0) {
-    throw std::invalid_argument("input.structure_data.n_structures must be positive");
-  }
-
-  validate_state_selection(
-      selected_state_indices,
-      state_average_weights,
-      input.structure_data.n_structures);
-  const std::vector<double> normalized_weights =
-      normalize_state_average_weights(state_average_weights);
-  const int n_structures = input.structure_data.n_structures;
-  const int n_roots =
-      *std::max_element(
-          selected_state_indices.begin(),
-          selected_state_indices.end()) +
-      1;
-
-  const auto prepared_active_space = matrix_evaluator_.prepare_active_space(input);
-  if (structure_eigensolver == StructureEigensolver::Dense) {
-    const auto structure_matrices = matrix_evaluator_.evaluate(
-        input,
-        prepared_active_space);
-    const std::vector<double> eigenvalues =
-        generalized_eigensolver_.solve_dense_eigenvalues(
-            structure_matrices.hamiltonian_matrix,
-            structure_matrices.overlap_matrix,
-            n_structures);
-    return
-        prepared_active_space.one_electron_reference_energy +
-        compute_selected_state_average_energy(
-            eigenvalues,
-            selected_state_indices,
-            normalized_weights) +
-        nuclear_repulsion_energy;
-  }
-  if (initial_eigenvectors.rows() != n_structures ||
-      initial_eigenvectors.cols() < n_roots ||
-      !initial_eigenvectors.allFinite()) {
-    throw std::invalid_argument(
-        "energy-only Davidson requires recycled structure eigenvectors");
-  }
-
-  auto pair_cache = matrix_evaluator_.build_pair_cache(
-      input,
-      prepared_active_space,
-      SameSpinPairCacheBuildOptions{PairProjectionCache::SmallerSpin});
-  const StructureAction structure_action(
-      input.structure_data.determinant_to_structure_terms,
-      n_structures,
-      pair_cache,
-      prepared_active_space.active_space_two_electron_result,
-      input.orbital_preparation_input.n_active_orbitals);
-  const StructureDiagonal& diagonal = structure_action.diagonal();
-  const xmvb::core::GeneralizedEigenAction action =
-      [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
-        auto images = structure_action.apply(vectors);
-        return xmvb::core::GeneralizedEigenActionResult{
-            std::move(images.hamiltonian),
-            std::move(images.overlap)};
-      };
-  structure_solve_accuracy.validate();
-  const xmvb::core::DavidsonOptions options =
-      xmvb::core::make_davidson_options(
-          n_structures,
-          n_roots,
-          structure_solve_accuracy.energy_tolerance,
-          structure_solve_accuracy.gradient_tolerance);
-  const auto eigen_result = generalized_eigensolver_.solve_davidson(
-      action,
-      diagonal.hamiltonian,
-      diagonal.overlap,
-      initial_eigenvectors.leftCols(n_roots),
-      options);
-  return
-      prepared_active_space.one_electron_reference_energy +
-      compute_selected_state_average_energy(
-          eigen_result.eigenpairs.eigenvalues,
-          selected_state_indices,
-          normalized_weights) +
-      nuclear_repulsion_energy;
 }
 
 }  // namespace xmvb::vb

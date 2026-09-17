@@ -74,15 +74,12 @@ using optimizer_detail::uses_nonredundant_space;
 VbScfOptimizer::VbScfOptimizer(
     VbScfOptimizerOptions options)
     : orbital_gradient_evaluator_(),
-      scf_evaluator_(),
       options_(options) {}
 
 VbScfOptimizer::VbScfOptimizer(
     OrbitalGradientEvaluator orbital_gradient_evaluator,
-    VbScfEvaluator scf_evaluator,
     VbScfOptimizerOptions options)
     : orbital_gradient_evaluator_(std::move(orbital_gradient_evaluator)),
-      scf_evaluator_(std::move(scf_evaluator)),
       options_(options) {}
 
 VbScfOptimizerResult VbScfOptimizer::optimize(
@@ -145,8 +142,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
       StructureSolveAccuracy{
           options_.energy_tolerance,
           options_.gradient_tolerance},
-      &orbital_gradient_evaluator_,
-      &scf_evaluator_);
+      &orbital_gradient_evaluator_);
   const int n = static_cast<int>(parameter_vector.size());
   int n_iterations = 0;
   double final_gradient_l2_norm = 0.0;
@@ -267,10 +263,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   result.one_particle_density_matrix = build_one_particle_density_matrix(
       objective.gradient_result(),
       objective.input().orbital_preparation_input);
-  result.energy_only_evaluation_count =
-      objective.energy_only_call_count();
-  result.energy_only_wall_time_seconds =
-      objective.energy_only_wall_time_seconds();
   Eigen::MatrixXd final_normalized_orbital_matrix =
       objective.gradient_result()
           .orbital_preparation_result
