@@ -4,6 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -286,13 +287,15 @@ build_selected_structure_direction(
         "factorized structure direction requires the structure action");
   }
   if (structure_action->supports_integral_direction()) {
+    StructureIntegralDirection direct_ci_direction;
     const StructureActionResult direct_direction =
         structure_action->apply_integral_direction(
             accepted.selected_state_eigen_response_operator
                 .selected_eigenvectors,
             direction.overlap,
             direction.one_electron,
-            direction.packed_two_electron);
+            direction.packed_two_electron,
+            &direct_ci_direction);
     require_finite(
         direct_direction.hamiltonian,
         "orthogonal direct-CI directional Hamiltonian images");
@@ -301,7 +304,8 @@ build_selected_structure_direction(
         "orthogonal direct-CI directional overlap images");
     return SelectedStateDirectionalStructureImages{
         direct_direction.hamiltonian,
-        direct_direction.overlap};
+        direct_direction.overlap,
+        std::move(direct_ci_direction)};
   }
   if (accepted.structure_factors == nullptr) {
     throw std::invalid_argument(

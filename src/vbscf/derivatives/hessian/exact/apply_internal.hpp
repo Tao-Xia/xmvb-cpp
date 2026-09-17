@@ -17,6 +17,7 @@ namespace xmvb::vb {
 struct PrecomputedOuterResponse {
   ActiveSpaceIntegralDirectionWorkspace integral_direction;
   SameSpinDirectionalPairCache pair_cache;
+  std::optional<StructureIntegralDirection> direct_ci_direction;
   SelectedStateGeneralizedEigenDirectionalResponse selected_state_response;
 };
 

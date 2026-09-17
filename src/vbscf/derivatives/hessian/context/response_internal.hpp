@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <Eigen/Core>
@@ -22,6 +23,7 @@ struct AcceptedStructureResponseFactors;
 struct SelectedStateDirectionalStructureImages {
   Eigen::MatrixXd delta_hamiltonian_selected;
   Eigen::MatrixXd delta_overlap_selected;
+  std::optional<StructureIntegralDirection> direct_ci_direction;
 };
 
 struct SelectedStateGeneralizedEigenDirectionalResponse {

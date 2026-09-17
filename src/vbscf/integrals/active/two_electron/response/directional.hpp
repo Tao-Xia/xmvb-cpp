@@ -25,11 +25,11 @@ void compute_exact_packed_active_two_electron_integral_directional_derivative(
     std::vector<double>* delta_packed_active_two_electron_integrals);
 
 /**
- * @brief Computes several cached exact `delta GGO` directions in one AO-pair sweep.
+ * @brief Computes several exact `delta GGO` directions with bounded workspace.
  *
- * The result has one packed active-2e derivative per column. Directional
- * AO-pair coefficient blocks are concatenated so the fixed AO-pair graph is
- * traversed once for the whole block.
+ * The result has one packed active-2e derivative per column. Directions reuse
+ * one workspace but remain separate AO-pair actions; concatenating them into a
+ * wider matrix reduces cache locality on the production graph kernel.
  */
 Eigen::MatrixXd
 compute_exact_packed_active_two_electron_integral_directional_derivative_batch(

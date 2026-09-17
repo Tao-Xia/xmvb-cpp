@@ -226,108 +226,36 @@ compute_exact_packed_active_two_electron_integral_directional_derivative_batch(
         "cached exact delta GGO batch has inconsistent accepted dimensions");
   }
 
-  if (accepted_cache.accepted_pair_products == nullptr) {
-    if (directional_pair_products != nullptr) {
-      directional_pair_products->assign(
-          static_cast<std::size_t>(n_directions),
-          ExactCtxPairMatrix{});
-    }
-    if (fixed_adjoint_directions != nullptr) {
-      fixed_adjoint_directions->resize(
-          static_cast<std::size_t>(n_directions));
-    }
-    ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace workspace;
-    std::vector<double> packed_direction;
-    for (Eigen::Index direction = 0;
-         direction < n_directions;
-         ++direction) {
-      compute_exact_packed_active_two_electron_integral_directional_derivative(
-          accepted_cache,
-          dense_active_directions[direction],
-          ao_integral_input,
-          &workspace,
-          &packed_direction);
-      packed_directions.col(direction) =
-          Eigen::Map<const Eigen::VectorXd>(
-              packed_direction.data(),
-              static_cast<Eigen::Index>(packed_direction.size()));
-      if (fixed_adjoint_directions != nullptr) {
-        (*fixed_adjoint_directions)[direction] =
-            workspace.dense_fixed_adjoint_direction;
-      }
-    }
-    return packed_directions;
+  if (directional_pair_products != nullptr) {
+    directional_pair_products->resize(
+        static_cast<std::size_t>(n_directions));
   }
   if (fixed_adjoint_directions != nullptr) {
-    fixed_adjoint_directions->assign(
-        static_cast<std::size_t>(n_directions),
-        Eigen::MatrixXd{});
+    fixed_adjoint_directions->resize(
+        static_cast<std::size_t>(n_directions));
   }
-
-  ExactCtxPairMatrix combined_directional_coefficients(
-      n_bf_pairs,
-      n_active_pairs * n_directions);
+  ExactPackedActiveTwoElectronDirectionalDerivativeWorkspace workspace;
+  std::vector<double> packed_direction;
   for (Eigen::Index direction = 0;
        direction < n_directions;
        ++direction) {
-    if (dense_active_directions[direction].rows() != n_bf ||
-        dense_active_directions[direction].cols() != n_ao) {
-      throw std::invalid_argument(
-          "dense active direction shape mismatch in delta GGO batch");
-    }
-    ExactCtxPairMatrix directional_coefficients;
-    build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
-        *accepted_cache.accepted_active_coefficients,
-        dense_active_directions[direction],
+    compute_exact_packed_active_two_electron_integral_directional_derivative(
         accepted_cache,
-        &directional_coefficients);
-    combined_directional_coefficients.middleCols(
-        direction * n_active_pairs,
-        n_active_pairs) = directional_coefficients;
-  }
-
-  ExactCtxPairMatrix combined_directional_products;
-  apply_exact_ao_pair_kernel(
-      ao_integral_input,
-      combined_directional_coefficients,
-      n_bf,
-      static_cast<std::size_t>(n_active_pairs * n_directions),
-      &combined_directional_products);
-  if (directional_pair_products != nullptr) {
-    directional_pair_products->resize(n_directions);
-  }
-
-  for (Eigen::Index direction = 0;
-       direction < n_directions;
-       ++direction) {
-    const auto directional_coefficients =
-        combined_directional_coefficients.middleCols(
-            direction * n_active_pairs,
-            n_active_pairs);
-    const auto directional_products =
-        combined_directional_products.middleCols(
-            direction * n_active_pairs,
-            n_active_pairs);
+        dense_active_directions[direction],
+        ao_integral_input,
+        &workspace,
+        &packed_direction);
+    packed_directions.col(direction) =
+        Eigen::Map<const Eigen::VectorXd>(
+            packed_direction.data(),
+            static_cast<Eigen::Index>(packed_direction.size()));
     if (directional_pair_products != nullptr) {
-      (*directional_pair_products)[direction] = directional_products;
+      (*directional_pair_products)[direction] =
+          workspace.directional_pair_products;
     }
-    const Eigen::MatrixXd directional_active_pair_contraction =
-        directional_coefficients.transpose() *
-        *accepted_cache.accepted_pair_products;
-    // Apply the same symmetric-kernel identity independently to every block
-    // direction; the directional products remain available for direct-core HVP.
-    const Eigen::MatrixXd delta_active_pair_matrix =
-        directional_active_pair_contraction +
-        directional_active_pair_contraction.transpose();
-    for (Eigen::Index left = 0; left < n_active_pairs; ++left) {
-      for (Eigen::Index right = 0; right <= left; ++right) {
-        const int packed_index =
-            TwoElectronIndexer::packed_pair_of_pairs_index(
-                static_cast<int>(left),
-                static_cast<int>(right));
-        packed_directions(packed_index, direction) =
-            delta_active_pair_matrix(left, right);
-      }
+    if (fixed_adjoint_directions != nullptr) {
+      (*fixed_adjoint_directions)[direction] =
+          workspace.dense_fixed_adjoint_direction;
     }
   }
   return packed_directions;

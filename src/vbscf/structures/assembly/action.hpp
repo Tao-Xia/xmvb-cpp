@@ -52,6 +52,12 @@ struct StructureAdjointState {
   Eigen::MatrixXd generator_gradient;
 };
 
+/** @brief Direct-CI intermediates shared by structure and adjoint directions. */
+struct StructureIntegralDirection {
+  Eigen::MatrixXd coefficient_direction;
+  Eigen::MatrixXd sigma_direction;
+};
+
 struct StructureActionStorage {
   /** Payload retained by the spin-factorized action. */
   std::size_t factor_bytes = 0;
@@ -130,7 +136,8 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& vectors,
       const std::vector<double>& overlap_direction,
       const std::vector<double>& one_electron_direction,
-      const std::vector<double>& packed_two_electron_direction) const;
+      const std::vector<double>& packed_two_electron_direction,
+      StructureIntegralDirection* direct_ci_direction) const;
 
   /** @brief Whether exact orthogonal direct-CI directional actions are available. */
   bool supports_integral_direction() const noexcept;
@@ -152,6 +159,7 @@ public:
       const std::vector<double>& overlap_direction,
       const std::vector<double>& one_electron_direction,
       const std::vector<double>& packed_two_electron_direction,
+      const StructureIntegralDirection* direct_ci_direction,
       bool include_integral_response) const;
 
   /**

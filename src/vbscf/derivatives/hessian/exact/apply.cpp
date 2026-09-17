@@ -10,6 +10,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -364,16 +365,18 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         directional_selected_state_response = nullptr;
     SelectedStateGeneralizedEigenDirectionalResponse
         local_directional_selected_state_response;
+    std::optional<StructureIntegralDirection> local_direct_ci_direction;
     if (components.structure_response) {
       if (precomputed_outer_response != nullptr) {
         directional_selected_state_response =
             &precomputed_outer_response->selected_state_response;
       } else {
-        const SelectedStateDirectionalStructureImages images =
+        SelectedStateDirectionalStructureImages images =
             build_selected_structure_direction(
                 outer_response_context(),
                 active_space_integral_direction,
                 directional_pair_cache);
+        local_direct_ci_direction = std::move(images.direct_ci_direction);
         apply_timing_totals_
             .outer_response_structure_matrices_wall_time_seconds +=
             detail::exact_hvp_elapsed_seconds(structure_matrices_start_time);
@@ -429,6 +432,14 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                 accepted_point_context_->selected_state_matrices,
                 accepted_point_context_->selected_state_energies);
       }
+      const StructureIntegralDirection* direct_ci_direction = nullptr;
+      if (precomputed_outer_response != nullptr &&
+          precomputed_outer_response->direct_ci_direction.has_value()) {
+        direct_ci_direction =
+            &*precomputed_outer_response->direct_ci_direction;
+      } else if (local_direct_ci_direction.has_value()) {
+        direct_ci_direction = &*local_direct_ci_direction;
+      }
       directional_active_space_gradient = make_active_gradient_direction(
           accepted_structure_action->active_integral_adjoint_direction(
               *accepted_point_context_->structure_adjoint_state,
@@ -442,6 +453,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
               active_space_integral_direction.overlap,
               active_space_integral_direction.one_electron,
               active_space_integral_direction.packed_two_electron,
+              direct_ci_direction,
               components.local_active_response),
           n_active_orbitals);
       const double direct_seconds = detail::exact_hvp_elapsed_seconds(

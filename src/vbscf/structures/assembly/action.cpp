@@ -1269,7 +1269,8 @@ StructureActionResult StructureAction::apply_integral_direction(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors,
     const std::vector<double>& overlap_direction,
     const std::vector<double>& one_electron_direction,
-    const std::vector<double>& packed_two_electron_direction) const {
+    const std::vector<double>& packed_two_electron_direction,
+    StructureIntegralDirection* direct_ci_direction) const {
   if (!direct_ci_) {
     throw std::logic_error(
         "integral-direction action requires orthogonal direct CI");
@@ -1334,6 +1335,10 @@ StructureActionResult StructureAction::apply_integral_direction(
   Eigen::MatrixXd delta_spin_hamiltonians =
       direct_ci_->sigma.apply(delta_spin_vectors);
   delta_spin_hamiltonians += sigma_direction.apply(spin_vectors);
+  if (direct_ci_direction != nullptr) {
+    direct_ci_direction->coefficient_direction = delta_spin_vectors;
+    direct_ci_direction->sigma_direction = delta_spin_hamiltonians;
+  }
   for (int block = 0; block < block_width; ++block) {
     Eigen::MatrixXd hamiltonian_block = spin_hamiltonians.middleCols(
         block * n_unique_beta_, n_unique_beta_);
@@ -1483,6 +1488,7 @@ StructureAction::active_integral_adjoint_direction(
     const std::vector<double>& overlap_direction,
     const std::vector<double>& one_electron_direction,
     const std::vector<double>& packed_two_electron_direction,
+    const StructureIntegralDirection* direct_ci_direction,
     bool include_integral_response) const {
   if (!direct_ci_) {
     throw std::logic_error(
@@ -1508,6 +1514,16 @@ StructureAction::active_integral_adjoint_direction(
   const int n_orbitals =
       static_cast<int>(direct_ci_->integrals.one_electron.rows());
   const int n_pairs = packed_active_pair_count(n_orbitals);
+  if (include_integral_response && direct_ci_direction != nullptr &&
+      (direct_ci_direction->coefficient_direction.rows() != n_unique_alpha_ ||
+       direct_ci_direction->coefficient_direction.cols() !=
+           static_cast<Eigen::Index>(n_states) * n_unique_beta_ ||
+       direct_ci_direction->sigma_direction.rows() != n_unique_alpha_ ||
+       direct_ci_direction->sigma_direction.cols() !=
+           static_cast<Eigen::Index>(n_states) * n_unique_beta_)) {
+    throw std::invalid_argument(
+        "prepared direct-CI direction has incompatible dimensions");
+  }
   OrthogonalActiveIntegrals integral_direction;
   if (include_integral_response) {
     if (one_electron_direction.size() !=
@@ -1534,7 +1550,7 @@ StructureAction::active_integral_adjoint_direction(
   ExteriorTransformDirection alpha_transform_direction;
   ExteriorTransformDirection beta_transform_direction;
   std::unique_ptr<DirectCiSigmaAction> sigma_direction;
-  if (include_integral_response) {
+  if (include_integral_response && direct_ci_direction == nullptr) {
     alpha_transform_direction = direct_ci_->alpha_transform.direction(
         integral_direction.orbital_transform);
     beta_transform_direction = direct_ci_->beta_transform().direction(
@@ -1578,18 +1594,26 @@ StructureAction::active_integral_adjoint_direction(
     Eigen::MatrixXd directional_orthogonal_coefficients =
         Eigen::MatrixXd::Zero(n_unique_alpha_, n_unique_beta_);
     if (include_integral_response) {
-      Eigen::MatrixXd transformed_source =
-          state.source_coefficients[state_index];
-      direct_ci_->alpha_transform.apply_directional_left(
-          alpha_transform_direction,
-          &transformed_source,
-          &directional_orthogonal_coefficients);
-      direct_ci_->beta_transform().apply_directional_right(
-          beta_transform_direction,
-          &transformed_source,
-          &directional_orthogonal_coefficients);
+      if (direct_ci_direction != nullptr) {
+        directional_orthogonal_coefficients =
+            direct_ci_direction->coefficient_direction.middleCols(
+                static_cast<Eigen::Index>(state_index) * n_unique_beta_,
+                n_unique_beta_);
+      } else {
+        Eigen::MatrixXd transformed_source =
+            state.source_coefficients[state_index];
+        direct_ci_->alpha_transform.apply_directional_left(
+            alpha_transform_direction,
+            &transformed_source,
+            &directional_orthogonal_coefficients);
+        direct_ci_->beta_transform().apply_directional_right(
+            beta_transform_direction,
+            &transformed_source,
+            &directional_orthogonal_coefficients);
+      }
     }
     double directional_energy = 0.0;
+    Eigen::MatrixXd orthogonal_state_response;
     if (include_state_response) {
       const auto& directional_state =
           directional_selected_states->states[state_index];
@@ -1600,18 +1624,30 @@ StructureAction::active_integral_adjoint_direction(
         throw std::invalid_argument(
             "invalid directional selected-state adjoint input");
       }
-      Eigen::MatrixXd state_response = directional_state.coefficient_matrix;
-      direct_ci_->alpha_transform.apply_left(&state_response);
-      direct_ci_->beta_transform().apply_right(&state_response);
-      directional_orthogonal_coefficients += state_response;
+      orthogonal_state_response = directional_state.coefficient_matrix;
+      direct_ci_->alpha_transform.apply_left(&orthogonal_state_response);
+      direct_ci_->beta_transform().apply_right(&orthogonal_state_response);
+      directional_orthogonal_coefficients += orthogonal_state_response;
       directional_energy = (*directional_state_energies)[state_index];
     }
 
-    Eigen::MatrixXd directional_sigma = direct_ci_->sigma.apply(
-        directional_orthogonal_coefficients);
-    if (include_integral_response) {
+    Eigen::MatrixXd directional_sigma;
+    if (include_integral_response && direct_ci_direction != nullptr) {
+      directional_sigma = direct_ci_direction->sigma_direction.middleCols(
+          static_cast<Eigen::Index>(state_index) * n_unique_beta_,
+          n_unique_beta_);
+    } else {
+      directional_sigma = direct_ci_->sigma.apply(
+          directional_orthogonal_coefficients);
+    }
+    if (include_integral_response && direct_ci_direction == nullptr) {
       directional_sigma.noalias() +=
           sigma_direction->apply(orthogonal_coefficients);
+    }
+    if (include_state_response && include_integral_response &&
+        direct_ci_direction != nullptr) {
+      directional_sigma.noalias() +=
+          direct_ci_->sigma.apply(orthogonal_state_response);
     }
     const Eigen::MatrixXd directional_residual =
         directional_sigma -

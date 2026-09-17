@@ -221,7 +221,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
             integral_direction);
       }
       if (components.structure_response) {
-        const SelectedStateDirectionalStructureImages images =
+        SelectedStateDirectionalStructureImages images =
             build_selected_structure_direction(
                 outer_response_context(),
                 integral_direction,
@@ -231,6 +231,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
             images.delta_hamiltonian_selected;
         delta_overlap_selected.middleCols(first, n_selected_states) =
             images.delta_overlap_selected;
+        outer.direct_ci_direction = std::move(images.direct_ci_direction);
       }
       outer.integral_direction.packed_two_electron.clear();
       structure_seconds += detail::exact_hvp_elapsed_seconds(structure_start);

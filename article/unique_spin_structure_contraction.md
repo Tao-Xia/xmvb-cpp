@@ -1749,6 +1749,72 @@ $9.36$, and $10.48$ s.  Their active-adjoint stages decreased by $22\%$,
 $33\%$, and $17\%$, respectively.  Peak RSS increased by only $14$ MiB for
 the retained selected-state coefficient and residual blocks.
 
+For a direction that includes structure response, the directional structure
+action and the active-adjoint direction require the same determinant-space
+intermediates,
+
+$$
+\delta Y_n
+$$
+
+and
+
+$$
+\delta Z_n
+=
+\delta\sigma_{\mathrm{orth}}(Y_n)
++\sigma_{\mathrm{orth}}(\delta Y_n).
+$$
+
+The structure stage now transfers these two blocks directly to the adjoint
+stage.  The latter forms
+
+$$
+\delta Q_n
+=
+\delta Z_n-E_n\delta Y_n-\delta E_nY_n
+$$
+
+without repeating the exterior-transform directions or sigma actions.  On the
+default fast AO-pair path for LOFLEA, this reduced a complete HVP from $4.05$
+s to $3.17$ s and its active-adjoint stage from $1.63$ s to $0.74$ s.  The
+response infinity norm remained $16.1201446991$, while peak RSS remained
+approximately $6.81$ GiB.
+
+For a block of $b$ HVP directions, concatenating all directional AO-pair
+coefficient matrices does not reduce the formal graph work,
+
+$$
+O\!\left(
+bE_{\mathrm{AO-pair}}N_{\mathrm{active-pair}}
+\right),
+$$
+
+but increases the live matrix from
+
+$$
+O\!\left(
+N_{\mathrm{AO-pair}}N_{\mathrm{active-pair}}
+\right)
+$$
+
+to
+
+$$
+O\!\left(
+bN_{\mathrm{AO-pair}}N_{\mathrm{active-pair}}
+\right).
+$$
+
+The wider traversal was slower on the production AO-pair graph because it
+reduced cache locality.  The block path now reuses one bounded workspace and
+keeps each AO-pair action separate, while retaining block structure and
+eigensystem response.  For LOFLEA at width two, the block active-integral stage
+decreased from $0.918$ s to $0.254$ s and the block/scalar wall-time ratio
+improved from $0.910$ to $0.945$.  At width four the ratio was $0.985$; the
+block-to-scalar relative errors were $2.63\times10^{-17}$ and
+$4.02\times10^{-17}$, respectively.
+
 A 32-core Slurm comparison on LOFLEA isolates this replacement.  The baseline
 already used the orthogonal direct-CI fixed-point action but retained the
 cofactor-channel directional action; the candidate differentiates the
