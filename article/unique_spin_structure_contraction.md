@@ -1797,6 +1797,40 @@ s, the directional structure-image stage from $1.886$ s to $1.697$ s, and the
 active-adjoint stage from $0.742$ s to $0.641$ s.  The response infinity norm
 again remained $16.1201446991$; peak RSS changed by less than $0.01$ GiB.
 
+The exterior-transform derivative itself can be applied in the accepted
+orthogonal determinant basis.  Let
+
+$$
+K=\delta R\,R^{-1}
+$$
+
+and let $d\Gamma(K)$ denote its number-conserving one-body representation on
+the alpha--beta determinant product space.  The exterior representation gives
+the exact identities
+
+$$
+\delta Y=d\Gamma(K)Y,
+$$
+
+and, for the adjoint transformation of an orthogonal-basis image $Z$,
+
+$$
+\delta\!\left(T^{\mathsf T}Z\right)
+=
+T^{\mathsf T}
+\left[\delta Z+d\Gamma(K)^{\mathsf T}Z\right].
+$$
+
+Consequently, neither the accepted determinant coefficients nor the accepted
+adjoint images need to be replayed through the elementary exterior-transform
+schedule.  Both directional terms use the single-excitation graph already
+owned by the direct-CI sigma action.  This is an algebraic reformulation, not
+an approximation, and remains restricted to complete fixed-spin string
+spaces.  On the same 32-core LOFLEA benchmark it further reduced the complete
+HVP from $2.833$ s to $2.548$ s and the directional structure-image stage from
+$1.697$ s to $1.348$ s.  The response infinity norm remained
+$16.1201446991$ and peak RSS remained approximately $6.81$ GiB.
+
 For a block of $b$ HVP directions, concatenating all directional AO-pair
 coefficient matrices does not reduce the formal graph work,
 

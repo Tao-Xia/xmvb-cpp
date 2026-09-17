@@ -600,6 +600,14 @@ void check_sigma_action() {
       "direct-CI orbital-generator adjoint is inconsistent: predicted=" +
           std::to_string(predicted_exterior_direction) +
           ", applied=" + std::to_string(applied_exterior_direction));
+  const Eigen::MatrixXd generator_action =
+      sigma_action.apply_one_body_generator(
+          action_values,
+          relative_orbital_direction);
+  require(
+      (generator_action - delta_action_values).cwiseAbs().maxCoeff() < 2.0e-11,
+      "direct-CI one-body generator action is inconsistent with the "
+      "exterior derivative");
   Eigen::MatrixXd action_hamiltonian = sigma_action.apply(action_values);
   Eigen::MatrixXd delta_action_hamiltonian =
       sigma_action.apply(delta_action_values) +

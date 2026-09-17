@@ -221,7 +221,9 @@ DirectCiSigmaAction::build_spin_connections(
         singles.push_back(DensityConnection{
             source,
             connection.density_pair,
-            connection.density_sign});
+            connection.density_sign,
+            inserted,
+            removed});
       } else if (changed_orbitals == 4) {
         if (inserted.size() != 2 || removed.size() != 2) {
           throw std::logic_error(
@@ -385,6 +387,60 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
     sigma(alpha, column) = value;
   }
   return sigma;
+}
+
+Eigen::MatrixXd DirectCiSigmaAction::apply_one_body_generator(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+    const Eigen::Ref<const Eigen::MatrixXd>& generator) const {
+  if (coefficients.rows() != n_alpha_ || coefficients.cols() <= 0 ||
+      coefficients.cols() % n_beta_ != 0 ||
+      generator.rows() != n_orbitals_ ||
+      generator.cols() != n_orbitals_ ||
+      !coefficients.allFinite() || !generator.allFinite()) {
+    throw std::invalid_argument(
+        "direct-CI one-body generator has incompatible dimensions");
+  }
+  const int block_width = static_cast<int>(coefficients.cols()) / n_beta_;
+  const SpinConnections& beta_graph = beta_connections();
+  Eigen::MatrixXd result = Eigen::MatrixXd::Zero(
+      n_alpha_, coefficients.cols());
+  const int work_items = block_width * n_alpha_ * n_beta_;
+  const int n_threads = std::max(
+      1,
+      std::min(effective_openmp_thread_count(), work_items));
+
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+  for (int work = 0; work < work_items; ++work) {
+    const int beta = work % n_beta_;
+    const int alpha = (work / n_beta_) % n_alpha_;
+    const int block = work / (n_alpha_ * n_beta_);
+    const int column = block * n_beta_ + beta;
+    double value = 0.0;
+    for (const int orbital : alpha_.occupied[alpha]) {
+      value += generator(orbital, orbital) * coefficients(alpha, column);
+    }
+    for (const int orbital : beta_graph.occupied[beta]) {
+      value += generator(orbital, orbital) * coefficients(alpha, column);
+    }
+    for (const DensityConnection& connection : alpha_.singles[alpha]) {
+      value += connection.sign *
+          generator(
+              connection.created_orbital,
+              connection.annihilated_orbital) *
+          coefficients(connection.source, column);
+    }
+    for (const DensityConnection& connection : beta_graph.singles[beta]) {
+      value += connection.sign *
+          generator(
+              connection.created_orbital,
+              connection.annihilated_orbital) *
+          coefficients(
+              alpha,
+              block * n_beta_ + connection.source);
+    }
+    result(alpha, column) = value;
+  }
+  return result;
 }
 
 DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(

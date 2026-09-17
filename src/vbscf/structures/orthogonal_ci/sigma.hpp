@@ -38,6 +38,16 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& coefficients) const;
 
   /**
+   * @brief Applies a general one-body orbital generator.
+   *
+   * The generator follows `sum_pq kappa(p,q) a_p^+ a_q` and need not be
+   * symmetric. The coefficient packing is identical to `apply()`.
+   */
+  Eigen::MatrixXd apply_one_body_generator(
+      const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+      const Eigen::Ref<const Eigen::MatrixXd>& generator) const;
+
+  /**
    * @brief Differentiates `left.dot(H * right)` with respect to the integrals.
    *
    * Both returned matrices use the symmetric full-matrix Frobenius convention:
@@ -85,6 +95,8 @@ private:
     int source = 0;
     int pair = 0;
     double sign = 1.0;
+    int created_orbital = 0;
+    int annihilated_orbital = 0;
   };
 
   struct SpinConnections {
