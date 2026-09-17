@@ -1618,20 +1618,14 @@ StructureAction::active_integral_adjoint_direction(
         state.energies[state_index] * directional_orthogonal_coefficients -
         directional_energy * orthogonal_coefficients;
 
-    const DirectCiIntegralAdjoint left_directional_integral_gradient =
+    const DirectCiIntegralAdjoint directional_integral_gradient =
         direct_ci_->sigma.integral_adjoint(
             directional_orthogonal_coefficients,
             orthogonal_coefficients);
-    const DirectCiIntegralAdjoint right_directional_integral_gradient =
-        direct_ci_->sigma.integral_adjoint(
-            orthogonal_coefficients,
-            directional_orthogonal_coefficients);
-    orthogonal_one_gradient_direction.noalias() += state_weight *
-        (left_directional_integral_gradient.one_electron +
-         right_directional_integral_gradient.one_electron);
-    orthogonal_pair_gradient_direction.noalias() += state_weight *
-        (left_directional_integral_gradient.pair_kernel +
-         right_directional_integral_gradient.pair_kernel);
+    orthogonal_one_gradient_direction.noalias() +=
+        2.0 * state_weight * directional_integral_gradient.one_electron;
+    orthogonal_pair_gradient_direction.noalias() +=
+        2.0 * state_weight * directional_integral_gradient.pair_kernel;
     generator_gradient_direction.noalias() += 2.0 * state_weight *
         (direct_ci_->sigma.one_body_generator_adjoint(
              directional_residual,

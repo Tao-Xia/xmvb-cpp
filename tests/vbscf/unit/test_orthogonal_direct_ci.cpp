@@ -339,6 +339,16 @@ void check_sigma_action() {
   }
   const xmvb::vb::DirectCiIntegralAdjoint integral_adjoint =
       sigma_action.integral_adjoint(left_coefficients, coefficients);
+  const xmvb::vb::DirectCiIntegralAdjoint reverse_integral_adjoint =
+      sigma_action.integral_adjoint(coefficients, left_coefficients);
+  require(
+      (integral_adjoint.one_electron -
+       reverse_integral_adjoint.one_electron).cwiseAbs().maxCoeff() < 2.0e-12,
+      "direct-CI one-electron adjoint violates bilinear reciprocity");
+  require(
+      (integral_adjoint.pair_kernel -
+       reverse_integral_adjoint.pair_kernel).cwiseAbs().maxCoeff() < 2.0e-12,
+      "direct-CI pair-kernel adjoint violates bilinear reciprocity");
   const double predicted_integral_direction =
       (integral_adjoint.one_electron.cwiseProduct(
            orthogonal_direction.one_electron)).sum() +

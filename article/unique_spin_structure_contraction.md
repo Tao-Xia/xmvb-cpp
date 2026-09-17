@@ -1672,7 +1672,9 @@ $$
 \left[
 \mathcal A_h(\delta Y_n,Y_n)
 +\mathcal A_h(Y_n,\delta Y_n)
-\right],
+\right]
+=
+2\sum_n w_n\mathcal A_h(\delta Y_n,Y_n),
 $$
 
 $$
@@ -1682,8 +1684,18 @@ $$
 \left[
 \mathcal A_G(\delta Y_n,Y_n)
 +\mathcal A_G(Y_n,\delta Y_n)
-\right],
+\right]
+=
+2\sum_n w_n\mathcal A_G(\delta Y_n,Y_n),
 $$
+
+where the second equality follows from the symmetry of every real
+Slater--Condon integral derivative.  The implementation therefore traverses
+the direct-CI connection graph once, rather than twice, for the directional
+one- and two-electron adjoints.  On LOFLEA this reduced the local, structure,
+and combined-outer active-adjoint stages from $1.85$, $0.95$, and $1.95$ s to
+$1.62$, $0.68$, and $1.64$ s, respectively.  The complete three-component
+benchmark decreased from $44.17$ s to $42.99$ s without additional storage.
 
 and
 
