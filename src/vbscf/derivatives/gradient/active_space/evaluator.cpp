@@ -30,6 +30,7 @@ struct ActiveSpaceGradientForwardContext {
   TimedPreparedActiveSpaceContext timed_active_space_context;
   SameSpinPairCacheContext same_spin_pair_cache;
   std::optional<StructureAction> structure_action;
+  std::optional<StructureAdjointState> structure_adjoint_state;
   StructureAccumulationResult structure_matrices;
   xmvb::core::GeneralizedEigenResult eigen_result;
   Eigen::VectorXd structure_overlap_diagonal;
@@ -485,6 +486,10 @@ finalize_active_space_second_order_context(
   if (forward_context->structure_action.has_value()) {
     context->structure_action = std::move(forward_context->structure_action);
   }
+  if (forward_context->structure_adjoint_state.has_value()) {
+    context->structure_adjoint_state =
+        std::move(forward_context->structure_adjoint_state);
+  }
   context->active_orbital_overlap_gradient =
       gradient_result.active_orbital_overlap_gradient;
   context->active_one_electron_gradient =
@@ -685,7 +690,7 @@ void accumulate_active_space_gradient(
     const VbScfInput& input,
     const std::vector<int>& selected_state_indices,
     const std::vector<double>& normalized_weights,
-    const ActiveSpaceGradientForwardContext& forward_context,
+    ActiveSpaceGradientForwardContext& forward_context,
     ActiveSpaceGradientResult* result) {
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
   const auto stage_start_time = std::chrono::steady_clock::now();
@@ -706,10 +711,13 @@ void accumulate_active_space_gradient(
       forward_context.selected_state_energies;
   if (forward_context.structure_action.has_value() &&
       forward_context.structure_action->supports_integral_direction()) {
+    forward_context.structure_adjoint_state =
+        forward_context.structure_action->prepare_active_adjoint(
+            selected_state_matrices,
+            selected_state_energies);
     write_direct_ci_active_gradient(
         forward_context.structure_action->active_integral_adjoint(
-            selected_state_matrices,
-            selected_state_energies),
+            *forward_context.structure_adjoint_state),
         n_active_orbitals,
         result);
     result->adjoint_wall_time_seconds =

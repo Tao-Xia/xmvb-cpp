@@ -43,6 +43,9 @@ struct AcceptedPointContext {
    */
   mutable std::optional<StructureAction> structure_action;
 
+  /** @brief Direction-independent direct-CI data reused by every exact HVP. */
+  mutable std::optional<StructureAdjointState> structure_adjoint_state;
+
   /**
    * @brief Accepted-point active-space adjoint with respect to `SSO`.
    *

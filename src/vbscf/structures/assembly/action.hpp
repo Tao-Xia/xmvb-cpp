@@ -40,6 +40,18 @@ struct StructureActiveIntegralAdjoint {
   Eigen::MatrixXd pair_kernel;
 };
 
+/** @brief Direction-independent selected-state data for direct-CI adjoints. */
+struct StructureAdjointState {
+  std::vector<Eigen::MatrixXd> source_coefficients;
+  std::vector<Eigen::MatrixXd> orthogonal_coefficients;
+  std::vector<Eigen::MatrixXd> residuals;
+  std::vector<double> weights;
+  std::vector<double> energies;
+  Eigen::MatrixXd one_electron_gradient;
+  Eigen::MatrixXd pair_kernel_gradient;
+  Eigen::MatrixXd generator_gradient;
+};
+
 struct StructureActionStorage {
   /** Payload retained by the spin-factorized action. */
   std::size_t factor_bytes = 0;
@@ -123,21 +135,18 @@ public:
   /** @brief Whether exact orthogonal direct-CI directional actions are available. */
   bool supports_integral_direction() const noexcept;
 
-  /**
-   * @brief Builds the exact selected-state active-integral adjoint.
-   *
-   * Each coefficient matrix is expressed on the retained unique alpha/beta
-   * string grid. The operation is available for complete-space orthogonal
-   * direct CI and remains exact for any embedded structure subspace.
-   */
-  StructureActiveIntegralAdjoint active_integral_adjoint(
+  /** @brief Precomputes direction-independent selected-state adjoint data. */
+  StructureAdjointState prepare_active_adjoint(
       const SelectedStateDeterminantMatrices& selected_states,
       const std::vector<double>& state_energies) const;
 
+  /** @brief Pulls a prepared direct-CI adjoint back to active integrals. */
+  StructureActiveIntegralAdjoint active_integral_adjoint(
+      const StructureAdjointState& state) const;
+
   /** @brief Differentiates the selected-state active-integral adjoint. */
   StructureActiveIntegralAdjoint active_integral_adjoint_direction(
-      const SelectedStateDeterminantMatrices& selected_states,
-      const std::vector<double>& state_energies,
+      const StructureAdjointState& state,
       const SelectedStateDeterminantMatrices* directional_selected_states,
       const std::vector<double>* directional_state_energies,
       const std::vector<double>& overlap_direction,

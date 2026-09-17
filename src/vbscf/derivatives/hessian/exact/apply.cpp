@@ -423,10 +423,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const auto active_gradient_start_time = std::chrono::steady_clock::now();
     ActiveSpaceGradientDirection directional_active_space_gradient;
     if (direct_active_gradient) {
+      if (!accepted_point_context_->structure_adjoint_state.has_value()) {
+        accepted_point_context_->structure_adjoint_state =
+            accepted_structure_action->prepare_active_adjoint(
+                accepted_point_context_->selected_state_matrices,
+                accepted_point_context_->selected_state_energies);
+      }
       directional_active_space_gradient = make_active_gradient_direction(
           accepted_structure_action->active_integral_adjoint_direction(
-              accepted_point_context_->selected_state_matrices,
-              accepted_point_context_->selected_state_energies,
+              *accepted_point_context_->structure_adjoint_state,
               directional_selected_states
                   ? &directional_selected_states.value()
                   : nullptr,

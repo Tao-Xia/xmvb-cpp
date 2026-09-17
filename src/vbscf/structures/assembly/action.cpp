@@ -1379,7 +1379,7 @@ bool StructureAction::supports_integral_direction() const noexcept {
   return direct_ci_ != nullptr;
 }
 
-StructureActiveIntegralAdjoint StructureAction::active_integral_adjoint(
+StructureAdjointState StructureAction::prepare_active_adjoint(
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& state_energies) const {
   if (!direct_ci_) {
@@ -1397,11 +1397,17 @@ StructureActiveIntegralAdjoint StructureAction::active_integral_adjoint(
   const int n_orbitals =
       static_cast<int>(direct_ci_->integrals.one_electron.rows());
   const int n_pairs = packed_active_pair_count(n_orbitals);
-  Eigen::MatrixXd orthogonal_one_gradient = Eigen::MatrixXd::Zero(
+  StructureAdjointState result;
+  result.source_coefficients.reserve(selected_states.states.size());
+  result.orthogonal_coefficients.reserve(selected_states.states.size());
+  result.residuals.reserve(selected_states.states.size());
+  result.weights.reserve(selected_states.states.size());
+  result.energies = state_energies;
+  result.one_electron_gradient = Eigen::MatrixXd::Zero(
       n_orbitals, n_orbitals);
-  Eigen::MatrixXd orthogonal_pair_gradient = Eigen::MatrixXd::Zero(
+  result.pair_kernel_gradient = Eigen::MatrixXd::Zero(
       n_pairs, n_pairs);
-  Eigen::MatrixXd generator_gradient = Eigen::MatrixXd::Zero(
+  result.generator_gradient = Eigen::MatrixXd::Zero(
       n_orbitals, n_orbitals);
 
   for (std::size_t state = 0; state < selected_states.states.size(); ++state) {
@@ -1414,39 +1420,55 @@ StructureActiveIntegralAdjoint StructureAction::active_integral_adjoint(
         !std::isfinite(state_energies[state])) {
       throw std::invalid_argument("invalid selected-state adjoint input");
     }
+    result.weights.push_back(state_weight);
+    result.source_coefficients.push_back(
+        selected_state.coefficient_matrix);
     if (state_weight == 0.0) {
+      result.orthogonal_coefficients.emplace_back();
+      result.residuals.emplace_back();
       continue;
     }
-
     Eigen::MatrixXd orthogonal_coefficients =
-        selected_state.coefficient_matrix;
+        result.source_coefficients.back();
     direct_ci_->alpha_transform.apply_left(&orthogonal_coefficients);
     direct_ci_->beta_transform().apply_right(&orthogonal_coefficients);
     const Eigen::MatrixXd sigma =
         direct_ci_->sigma.apply(orthogonal_coefficients);
-    const Eigen::MatrixXd residual =
-        sigma - state_energies[state] * orthogonal_coefficients;
+    result.orthogonal_coefficients.push_back(
+        std::move(orthogonal_coefficients));
+    result.residuals.push_back(
+        sigma - state_energies[state] *
+            result.orthogonal_coefficients.back());
     const DirectCiIntegralAdjoint integral_gradient =
         direct_ci_->sigma.integral_adjoint(
-            orthogonal_coefficients,
-            orthogonal_coefficients);
-    orthogonal_one_gradient.noalias() +=
+            result.orthogonal_coefficients.back(),
+            result.orthogonal_coefficients.back());
+    result.one_electron_gradient.noalias() +=
         state_weight * integral_gradient.one_electron;
-    orthogonal_pair_gradient.noalias() +=
+    result.pair_kernel_gradient.noalias() +=
         state_weight * integral_gradient.pair_kernel;
-    generator_gradient.noalias() +=
+    result.generator_gradient.noalias() +=
         2.0 * state_weight *
         direct_ci_->sigma.one_body_generator_adjoint(
-            residual,
-            orthogonal_coefficients);
+            result.residuals.back(),
+            result.orthogonal_coefficients.back());
   }
 
+  return result;
+}
+
+StructureActiveIntegralAdjoint StructureAction::active_integral_adjoint(
+    const StructureAdjointState& state) const {
+  if (!direct_ci_) {
+    throw std::logic_error(
+        "active-integral adjoint requires orthogonal direct CI");
+  }
   NonorthogonalActiveIntegralAdjoint result =
       backpropagate_orthogonal_active_integral_adjoint(
           direct_ci_->integrals,
-          orthogonal_one_gradient,
-          orthogonal_pair_gradient,
-          generator_gradient);
+          state.one_electron_gradient,
+          state.pair_kernel_gradient,
+          state.generator_gradient);
   return StructureActiveIntegralAdjoint{
       std::move(result.overlap),
       std::move(result.one_electron),
@@ -1455,8 +1477,7 @@ StructureActiveIntegralAdjoint StructureAction::active_integral_adjoint(
 
 StructureActiveIntegralAdjoint
 StructureAction::active_integral_adjoint_direction(
-    const SelectedStateDeterminantMatrices& selected_states,
-    const std::vector<double>& state_energies,
+    const StructureAdjointState& state,
     const SelectedStateDeterminantMatrices* directional_selected_states,
     const std::vector<double>* directional_state_energies,
     const std::vector<double>& overlap_direction,
@@ -1468,15 +1489,16 @@ StructureAction::active_integral_adjoint_direction(
         "active-integral adjoint direction requires orthogonal direct CI");
   }
   const bool include_state_response = directional_selected_states != nullptr;
-  if (selected_states.states.empty() ||
-      selected_states.states.size() != state_energies.size() ||
-      selected_states.n_unique_alpha != n_unique_alpha_ ||
-      selected_states.n_unique_beta != n_unique_beta_ ||
+  const std::size_t n_states = state.weights.size();
+  if (n_states == 0 || state.energies.size() != n_states ||
+      state.source_coefficients.size() != n_states ||
+      state.orthogonal_coefficients.size() != n_states ||
+      state.residuals.size() != n_states ||
       include_state_response != (directional_state_energies != nullptr) ||
       (include_state_response &&
        (directional_selected_states->states.size() !=
-            selected_states.states.size() ||
-        directional_state_energies->size() != state_energies.size() ||
+            n_states ||
+        directional_state_energies->size() != n_states ||
         directional_selected_states->n_unique_alpha != n_unique_alpha_ ||
         directional_selected_states->n_unique_beta != n_unique_beta_))) {
     throw std::invalid_argument(
@@ -1523,12 +1545,6 @@ StructureAction::active_integral_adjoint_direction(
         integral_direction);
   }
 
-  Eigen::MatrixXd orthogonal_one_gradient = Eigen::MatrixXd::Zero(
-      n_orbitals, n_orbitals);
-  Eigen::MatrixXd orthogonal_pair_gradient = Eigen::MatrixXd::Zero(
-      n_pairs, n_pairs);
-  Eigen::MatrixXd generator_gradient = Eigen::MatrixXd::Zero(
-      n_orbitals, n_orbitals);
   Eigen::MatrixXd orthogonal_one_gradient_direction = Eigen::MatrixXd::Zero(
       n_orbitals, n_orbitals);
   Eigen::MatrixXd orthogonal_pair_gradient_direction = Eigen::MatrixXd::Zero(
@@ -1536,45 +1552,51 @@ StructureAction::active_integral_adjoint_direction(
   Eigen::MatrixXd generator_gradient_direction = Eigen::MatrixXd::Zero(
       n_orbitals, n_orbitals);
 
-  for (std::size_t state = 0; state < selected_states.states.size(); ++state) {
-    const auto& selected_state = selected_states.states[state];
-    const double state_weight = selected_state.normalized_state_weight;
-    if (selected_state.coefficient_matrix.rows() != n_unique_alpha_ ||
-        selected_state.coefficient_matrix.cols() != n_unique_beta_ ||
-        !selected_state.coefficient_matrix.allFinite() ||
-        !std::isfinite(state_weight) || state_weight < 0.0 ||
-        !std::isfinite(state_energies[state])) {
+  for (std::size_t state_index = 0;
+       state_index < n_states;
+       ++state_index) {
+    const double state_weight = state.weights[state_index];
+    if (!std::isfinite(state_weight) || state_weight < 0.0 ||
+        !std::isfinite(state.energies[state_index])) {
       throw std::invalid_argument("invalid selected-state adjoint input");
     }
     if (state_weight == 0.0) {
       continue;
     }
+    const auto& orthogonal_coefficients =
+        state.orthogonal_coefficients[state_index];
+    const auto& residual = state.residuals[state_index];
+    if (state.source_coefficients[state_index].rows() != n_unique_alpha_ ||
+        state.source_coefficients[state_index].cols() != n_unique_beta_ ||
+        orthogonal_coefficients.rows() != n_unique_alpha_ ||
+        orthogonal_coefficients.cols() != n_unique_beta_ ||
+        residual.rows() != n_unique_alpha_ ||
+        residual.cols() != n_unique_beta_) {
+      throw std::invalid_argument("invalid selected-state adjoint input");
+    }
 
-    Eigen::MatrixXd orthogonal_coefficients =
-        selected_state.coefficient_matrix;
     Eigen::MatrixXd directional_orthogonal_coefficients =
         Eigen::MatrixXd::Zero(n_unique_alpha_, n_unique_beta_);
     if (include_integral_response) {
+      Eigen::MatrixXd transformed_source =
+          state.source_coefficients[state_index];
       direct_ci_->alpha_transform.apply_directional_left(
           alpha_transform_direction,
-          &orthogonal_coefficients,
+          &transformed_source,
           &directional_orthogonal_coefficients);
       direct_ci_->beta_transform().apply_directional_right(
           beta_transform_direction,
-          &orthogonal_coefficients,
+          &transformed_source,
           &directional_orthogonal_coefficients);
-    } else {
-      direct_ci_->alpha_transform.apply_left(&orthogonal_coefficients);
-      direct_ci_->beta_transform().apply_right(&orthogonal_coefficients);
     }
     double directional_energy = 0.0;
     if (include_state_response) {
       const auto& directional_state =
-          directional_selected_states->states[state];
+          directional_selected_states->states[state_index];
       if (directional_state.coefficient_matrix.rows() != n_unique_alpha_ ||
           directional_state.coefficient_matrix.cols() != n_unique_beta_ ||
           !directional_state.coefficient_matrix.allFinite() ||
-          !std::isfinite((*directional_state_energies)[state])) {
+          !std::isfinite((*directional_state_energies)[state_index])) {
         throw std::invalid_argument(
             "invalid directional selected-state adjoint input");
       }
@@ -1582,28 +1604,20 @@ StructureAction::active_integral_adjoint_direction(
       direct_ci_->alpha_transform.apply_left(&state_response);
       direct_ci_->beta_transform().apply_right(&state_response);
       directional_orthogonal_coefficients += state_response;
-      directional_energy = (*directional_state_energies)[state];
+      directional_energy = (*directional_state_energies)[state_index];
     }
 
-    const Eigen::MatrixXd sigma =
-        direct_ci_->sigma.apply(orthogonal_coefficients);
     Eigen::MatrixXd directional_sigma = direct_ci_->sigma.apply(
         directional_orthogonal_coefficients);
     if (include_integral_response) {
       directional_sigma.noalias() +=
           sigma_direction->apply(orthogonal_coefficients);
     }
-    const Eigen::MatrixXd residual =
-        sigma - state_energies[state] * orthogonal_coefficients;
     const Eigen::MatrixXd directional_residual =
         directional_sigma -
-        state_energies[state] * directional_orthogonal_coefficients -
+        state.energies[state_index] * directional_orthogonal_coefficients -
         directional_energy * orthogonal_coefficients;
 
-    const DirectCiIntegralAdjoint integral_gradient =
-        direct_ci_->sigma.integral_adjoint(
-            orthogonal_coefficients,
-            orthogonal_coefficients);
     const DirectCiIntegralAdjoint left_directional_integral_gradient =
         direct_ci_->sigma.integral_adjoint(
             directional_orthogonal_coefficients,
@@ -1612,20 +1626,12 @@ StructureAction::active_integral_adjoint_direction(
         direct_ci_->sigma.integral_adjoint(
             orthogonal_coefficients,
             directional_orthogonal_coefficients);
-    orthogonal_one_gradient.noalias() +=
-        state_weight * integral_gradient.one_electron;
-    orthogonal_pair_gradient.noalias() +=
-        state_weight * integral_gradient.pair_kernel;
     orthogonal_one_gradient_direction.noalias() += state_weight *
         (left_directional_integral_gradient.one_electron +
          right_directional_integral_gradient.one_electron);
     orthogonal_pair_gradient_direction.noalias() += state_weight *
         (left_directional_integral_gradient.pair_kernel +
          right_directional_integral_gradient.pair_kernel);
-    generator_gradient.noalias() += 2.0 * state_weight *
-        direct_ci_->sigma.one_body_generator_adjoint(
-            residual,
-            orthogonal_coefficients);
     generator_gradient_direction.noalias() += 2.0 * state_weight *
         (direct_ci_->sigma.one_body_generator_adjoint(
              directional_residual,
@@ -1639,9 +1645,9 @@ StructureAction::active_integral_adjoint_direction(
       backpropagate_orthogonal_active_integral_adjoint_direction(
           direct_ci_->integrals,
           integral_direction,
-          orthogonal_one_gradient,
-          orthogonal_pair_gradient,
-          generator_gradient,
+          state.one_electron_gradient,
+          state.pair_kernel_gradient,
+          state.generator_gradient,
           orthogonal_one_gradient_direction,
           orthogonal_pair_gradient_direction,
           generator_gradient_direction);

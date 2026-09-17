@@ -1727,6 +1727,16 @@ infinity norms remained $0.282004273479$, $0.300863442993$, and
 $0.0203509012709$, respectively, and the component-additivity relative error
 was $1.07\times10^{-14}$.
 
+The accepted quantities $Y_n$, $Q_n$, $\bar D_h$, $\bar D_G$, and $\Gamma$
+are invariant across all HVP directions at the same orbital point.  Retaining
+them once removes one accepted sigma action, one integral-adjoint graph
+traversal, and one generator-adjoint graph traversal from every subsequent
+direction.  On the same 32-core LOFLEA run, the local, structure, and combined
+outer response times decreased from $9.44$, $9.96$, and $11.89$ s to $8.55$,
+$9.36$, and $10.48$ s.  Their active-adjoint stages decreased by $22\%$,
+$33\%$, and $17\%$, respectively.  Peak RSS increased by only $14$ MiB for
+the retained selected-state coefficient and residual blocks.
+
 A 32-core Slurm comparison on LOFLEA isolates this replacement.  The baseline
 already used the orthogonal direct-CI fixed-point action but retained the
 cofactor-channel directional action; the candidate differentiates the
