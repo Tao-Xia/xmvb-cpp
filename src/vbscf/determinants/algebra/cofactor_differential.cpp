@@ -1,8 +1,12 @@
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
+#include "vbscf/determinants/contracts/types.hpp"
 #include "vbscf/determinants/pairs/evaluator.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
+
 #include <Eigen/LU>
 #include <Eigen/SVD>
 
@@ -17,31 +21,79 @@ int quadruple_index(int i, int j, int k, int l) {
   return i + j * (j - 1) / 2 + k * (k - 1) * (k - 2) / 6 +
       l * (l - 1) * (l - 2) * (l - 3) / 24;
 }
+
+double matrix_infinity_norm(const Eigen::MatrixXd& matrix) {
+  if (matrix.size() == 0) {
+    return 0.0;
+  }
+  return matrix.cwiseAbs().rowwise().sum().maxCoeff();
+}
 }
 
-CofactorDifferential::CofactorDifferential(const Eigen::MatrixXd& matrix) {
-  if (matrix.rows() != matrix.cols())
-    throw std::invalid_argument("cofactor differential requires a square matrix");
-  if (matrix.rows() == 0) {
-    u_.resize(0, 0); v_.resize(0, 0); singular_values_.resize(0);
-    u2_.resize(0, 0); v2_.resize(0, 0);
-    value_.resize(0, 0); second_.resize(0, 0);
-    pair_complements_.resize(0);
-    triple_complements_.resize(0);
-    quadruple_complements_.resize(0);
+CofactorDifferential::CofactorDifferential(
+    const DeterminantOverlapResult& overlap) {
+  const int n = overlap.n_electrons;
+  if (overlap.overlap_submatrix.rows() != n ||
+      overlap.overlap_submatrix.cols() != n) {
+    if (n != 0 || overlap.overlap_submatrix.size() != 0) {
+      throw std::invalid_argument(
+          "cofactor differential overlap dimensions are inconsistent");
+    }
+  }
+  if (n == 0) {
+    regular_ = true;
+    determinant_ = 1.0;
     return;
   }
-  Eigen::JacobiSVD<Eigen::MatrixXd> svd(matrix, Eigen::ComputeFullU | Eigen::ComputeFullV);
-  if (svd.info() != Eigen::Success)
-    throw std::runtime_error("cofactor differential SVD failed");
-  u_ = svd.matrixU(); v_ = svd.matrixV(); singular_values_ = svd.singularValues();
-  parity_ = u_.determinant() * v_.determinant() < 0.0 ? -1.0 : 1.0;
+  const bool has_inverse =
+      overlap.inverse_overlap_submatrix.rows() == n &&
+      overlap.inverse_overlap_submatrix.cols() == n;
+  const double condition_estimate = has_inverse
+      ? matrix_infinity_norm(overlap.overlap_submatrix) *
+            matrix_infinity_norm(overlap.inverse_overlap_submatrix)
+      : std::numeric_limits<double>::infinity();
+  // The highest regular formula below contains four inverse factors.  Bound
+  // their roundoff amplification by sqrt(machine epsilon); pairs outside this
+  // numerical region use the inverse-free SVD polynomial representation.
+  constexpr double highest_inverse_power = 4.0;
+  const double stable_condition_limit = std::pow(
+      std::numeric_limits<double>::epsilon(),
+      -1.0 / (2.0 * highest_inverse_power));
+  const bool stable_regular =
+      n >= 4 && overlap.nullity == 0 && has_inverse &&
+      condition_estimate <= stable_condition_limit;
+  if (stable_regular) {
+    regular_ = true;
+    determinant_ = overlap.overlap_determinant;
+    inverse_ = overlap.inverse_overlap_submatrix;
+    value_.noalias() = determinant_ * inverse_.transpose();
+    return;
+  }
+  if (overlap.matrix_U.rows() == n && overlap.matrix_U.cols() == n &&
+      overlap.matrix_V.rows() == n && overlap.matrix_V.cols() == n &&
+      overlap.singular_values.size() == n) {
+    u_ = overlap.matrix_U;
+    v_ = overlap.matrix_V;
+    singular_values_ = overlap.singular_values;
+    parity_ = overlap.parity;
+  } else {
+    const Eigen::JacobiSVD<Eigen::MatrixXd> svd(
+        overlap.overlap_submatrix,
+        Eigen::ComputeFullU | Eigen::ComputeFullV);
+    if (svd.info() != Eigen::Success) {
+      throw std::runtime_error(
+          "cofactor differential SVD failed on an ill-conditioned pair");
+    }
+    u_ = svd.matrixU();
+    v_ = svd.matrixV();
+    singular_values_ = svd.singularValues();
+    parity_ = u_.determinant() * v_.determinant() < 0.0 ? -1.0 : 1.0;
+  }
   u2_ = pair_rotation(u_);
   v2_ = pair_rotation(v_);
   value_ = Eigen::MatrixXd::Zero(u_.rows(), u_.rows());
   for (int i = 0; i < value_.rows(); ++i) value_(i, i) = complement_product(i);
   value_ = restore(value_);
-  const int n = u_.rows();
   const int pair_count = u_.rows() * (u_.rows() - 1) / 2;
   const int triple_count = n * (n - 1) * (n - 2) / 6;
   const int quadruple_count = n * (n - 1) * (n - 2) * (n - 3) / 24;
@@ -94,12 +146,18 @@ double CofactorDifferential::cached_quadruple_complement(
 }
 
 Eigen::MatrixXd CofactorDifferential::rotate(const Eigen::MatrixXd& direction) const {
+  if (regular_) {
+    throw std::logic_error("regular cofactor path does not use SVD rotations");
+  }
   if (direction.rows() != u_.rows() || direction.cols() != v_.rows())
     throw std::invalid_argument("cofactor direction has inconsistent dimensions");
   return u_.transpose() * direction * v_;
 }
 
 Eigen::MatrixXd CofactorDifferential::restore(const Eigen::MatrixXd& cofactor) const {
+  if (regular_) {
+    throw std::logic_error("regular cofactor path does not use SVD rotations");
+  }
   return u_ * cofactor * v_.transpose();
 }
 
@@ -108,6 +166,17 @@ const Eigen::MatrixXd& CofactorDifferential::value() const {
 }
 
 Eigen::MatrixXd CofactorDifferential::first(const Eigen::MatrixXd& direction) const {
+  if (regular_) {
+    if (direction.rows() != inverse_.rows() ||
+        direction.cols() != inverse_.cols()) {
+      throw std::invalid_argument(
+          "cofactor direction has inconsistent dimensions");
+    }
+    const double trace = (inverse_ * direction).trace();
+    return determinant_ *
+        (trace * inverse_.transpose() -
+         (inverse_ * direction * inverse_).transpose());
+  }
   const Eigen::MatrixXd a = rotate(direction);
   Eigen::MatrixXd c = Eigen::MatrixXd::Zero(a.rows(), a.cols());
   for (int i = 0; i < a.rows(); ++i) {
@@ -122,6 +191,29 @@ Eigen::MatrixXd CofactorDifferential::first(const Eigen::MatrixXd& direction) co
 
 Eigen::MatrixXd CofactorDifferential::mixed(
     const Eigen::MatrixXd& direction_a, const Eigen::MatrixXd& direction_b) const {
+  if (regular_) {
+    if (direction_a.rows() != inverse_.rows() ||
+        direction_a.cols() != inverse_.cols() ||
+        direction_b.rows() != inverse_.rows() ||
+        direction_b.cols() != inverse_.cols()) {
+      throw std::invalid_argument(
+          "mixed cofactor directions have inconsistent dimensions");
+    }
+    const Eigen::MatrixXd ra = inverse_ * direction_a;
+    const Eigen::MatrixXd rb = inverse_ * direction_b;
+    const double trace_a = ra.trace();
+    const double trace_b = rb.trace();
+    const double mixed_trace = (ra * rb).trace();
+    const Eigen::MatrixXd inverse_a = ra * inverse_;
+    const Eigen::MatrixXd inverse_b = rb * inverse_;
+    const Eigen::MatrixXd mixed_inverse =
+        rb * inverse_a + ra * inverse_b;
+    return determinant_ *
+        ((trace_a * trace_b - mixed_trace) * inverse_.transpose() -
+         trace_b * inverse_a.transpose() -
+         trace_a * inverse_b.transpose() +
+         mixed_inverse.transpose());
+  }
   const Eigen::MatrixXd a = rotate(direction_a), b = rotate(direction_b);
   Eigen::MatrixXd c = Eigen::MatrixXd::Zero(a.rows(), a.cols());
   for (int i = 0; i < a.rows(); ++i) {
@@ -151,11 +243,77 @@ Eigen::MatrixXd CofactorDifferential::pair_rotation(const Eigen::MatrixXd& matri
   return result;
 }
 
-const Eigen::MatrixXd& CofactorDifferential::second() const {
+Eigen::MatrixXd CofactorDifferential::second() const {
+  if (regular_) {
+    const int n = inverse_.rows();
+    const int pair_count = n * (n - 1) / 2;
+    Eigen::MatrixXd result = Eigen::MatrixXd::Zero(pair_count, pair_count);
+    for (int row_second = 1; row_second < n; ++row_second) {
+      for (int row_first = 0; row_first < row_second; ++row_first) {
+        const int row_pair = pair_index(row_first, row_second);
+        for (int column_second = 1; column_second < n; ++column_second) {
+          for (int column_first = 0;
+               column_first < column_second;
+               ++column_first) {
+            const int column_pair = pair_index(column_first, column_second);
+            result(row_pair, column_pair) = determinant_ *
+                (inverse_(column_first, row_first) *
+                     inverse_(column_second, row_second) -
+                 inverse_(column_first, row_second) *
+                     inverse_(column_second, row_first));
+          }
+        }
+      }
+    }
+    return result;
+  }
   return second_;
 }
 
 Eigen::MatrixXd CofactorDifferential::second_first(const Eigen::MatrixXd& direction) const {
+  if (regular_) {
+    if (direction.rows() != inverse_.rows() ||
+        direction.cols() != inverse_.cols()) {
+      throw std::invalid_argument(
+          "second-cofactor direction has inconsistent dimensions");
+    }
+    const int n = inverse_.rows();
+    const int pair_count = n * (n - 1) / 2;
+    const double trace = (inverse_ * direction).trace();
+    const Eigen::MatrixXd inverse_direction =
+        -inverse_ * direction * inverse_;
+    Eigen::MatrixXd result = Eigen::MatrixXd::Zero(pair_count, pair_count);
+    for (int row_second = 1; row_second < n; ++row_second) {
+      for (int row_first = 0; row_first < row_second; ++row_first) {
+        const int row_pair = pair_index(row_first, row_second);
+        for (int column_second = 1; column_second < n; ++column_second) {
+          for (int column_first = 0;
+               column_first < column_second;
+               ++column_first) {
+            const int column_pair = pair_index(column_first, column_second);
+            const double exterior =
+                inverse_(column_first, row_first) *
+                    inverse_(column_second, row_second) -
+                inverse_(column_first, row_second) *
+                    inverse_(column_second, row_first);
+            const double exterior_direction =
+                inverse_direction(column_first, row_first) *
+                    inverse_(column_second, row_second) +
+                inverse_(column_first, row_first) *
+                    inverse_direction(column_second, row_second) -
+                inverse_direction(column_first, row_second) *
+                    inverse_(column_second, row_first) -
+                inverse_(column_first, row_second) *
+                    inverse_direction(column_second, row_first);
+            result(row_pair, column_pair) =
+                determinant_ *
+                (trace * exterior + exterior_direction);
+          }
+        }
+      }
+    }
+    return result;
+  }
   const Eigen::MatrixXd a=rotate(direction);
   const int n=u_.rows(), m=n*(n-1)/2;
   Eigen::MatrixXd c=Eigen::MatrixXd::Zero(m,m);
@@ -167,6 +325,20 @@ Eigen::MatrixXd CofactorDifferential::second_first(const Eigen::MatrixXd& direct
       c(pairs[r],pairs[s]) += ((r+s)%2 ? -p:p)*a(index[r],index[s]);
   }
   return u2_*c*v2_.transpose();
+}
+
+double CofactorDifferential::second_contraction(
+    const Eigen::MatrixXd& weights) const {
+  if (regular_) {
+    return determinant_ *
+        regular_exterior_contraction(inverse_, weights).value;
+  }
+  if (weights.rows() != second_.rows() ||
+      weights.cols() != second_.cols()) {
+    throw std::invalid_argument(
+        "second-cofactor weights have inconsistent dimensions");
+  }
+  return (weights.cwiseProduct(second_)).sum();
 }
 
 Eigen::MatrixXd CofactorDifferential::second_gradient_in_diagonal_chart(
@@ -187,6 +359,13 @@ Eigen::MatrixXd CofactorDifferential::second_gradient_in_diagonal_chart(
 
 Eigen::MatrixXd CofactorDifferential::second_contraction_gradient(
     const Eigen::MatrixXd& weights) const {
+  if (regular_) {
+    const ExteriorContraction exterior =
+        regular_exterior_contraction(inverse_, weights);
+    return determinant_ *
+        (exterior.value * inverse_.transpose() -
+         inverse_.transpose() * exterior.gradient * inverse_.transpose());
+  }
   return restore(second_gradient_in_diagonal_chart(
       u2_.transpose()*weights*v2_));
 }
@@ -194,6 +373,29 @@ Eigen::MatrixXd CofactorDifferential::second_contraction_gradient(
 Eigen::MatrixXd CofactorDifferential::second_contraction_gradient_direction(
     const Eigen::MatrixXd& direction, const Eigen::MatrixXd& weights,
     const Eigen::MatrixXd& delta_weights) const {
+  if (regular_) {
+    if (direction.rows() != inverse_.rows() ||
+        direction.cols() != inverse_.cols()) {
+      throw std::invalid_argument(
+          "contracted second-cofactor direction has inconsistent dimensions");
+    }
+    const double trace = (inverse_ * direction).trace();
+    const Eigen::MatrixXd inverse_direction =
+        -inverse_ * direction * inverse_;
+    const ExteriorContractionDirection exterior =
+        regular_exterior_contraction_direction(
+            inverse_, inverse_direction, weights, delta_weights);
+    const Eigen::MatrixXd base =
+        exterior.base.value * inverse_.transpose() -
+        inverse_.transpose() * exterior.base.gradient * inverse_.transpose();
+    return determinant_ *
+        (trace * base +
+         exterior.direction.value * inverse_.transpose() +
+         exterior.base.value * inverse_direction.transpose() -
+         inverse_direction.transpose() * exterior.base.gradient * inverse_.transpose() -
+         inverse_.transpose() * exterior.direction.gradient * inverse_.transpose() -
+         inverse_.transpose() * exterior.base.gradient * inverse_direction.transpose());
+  }
   const Eigen::MatrixXd a=rotate(direction);
   const Eigen::MatrixXd w=u2_.transpose()*weights*v2_;
   Eigen::MatrixXd g=second_gradient_in_diagonal_chart(u2_.transpose()*delta_weights*v2_);
@@ -220,6 +422,121 @@ Eigen::MatrixXd CofactorDifferential::second_contraction_gradient_direction(
   return restore(g);
 }
 
+CofactorDifferential::ExteriorContraction
+CofactorDifferential::regular_exterior_contraction(
+    const Eigen::MatrixXd& inverse,
+    const Eigen::MatrixXd& weights) const {
+  const int n = inverse.rows();
+  const int pair_count = n * (n - 1) / 2;
+  if (inverse.cols() != n ||
+      weights.rows() != pair_count ||
+      weights.cols() != pair_count) {
+    throw std::invalid_argument(
+        "regular exterior contraction dimensions are inconsistent");
+  }
+  ExteriorContraction result;
+  result.gradient = Eigen::MatrixXd::Zero(n, n);
+  for (int row_second = 1; row_second < n; ++row_second) {
+    for (int row_first = 0; row_first < row_second; ++row_first) {
+      const int row_pair = pair_index(row_first, row_second);
+      for (int column_second = 1; column_second < n; ++column_second) {
+        for (int column_first = 0;
+             column_first < column_second;
+             ++column_first) {
+          const int column_pair = pair_index(column_first, column_second);
+          const double weight = weights(row_pair, column_pair);
+          const double first = inverse(column_first, row_first);
+          const double second = inverse(column_second, row_second);
+          const double crossed_first = inverse(column_first, row_second);
+          const double crossed_second = inverse(column_second, row_first);
+          result.value +=
+              weight *
+              (first * second - crossed_first * crossed_second);
+          result.gradient(column_first, row_first) += weight * second;
+          result.gradient(column_second, row_second) += weight * first;
+          result.gradient(column_first, row_second) -= weight * crossed_second;
+          result.gradient(column_second, row_first) -= weight * crossed_first;
+        }
+      }
+    }
+  }
+  return result;
+}
+
+CofactorDifferential::ExteriorContractionDirection
+CofactorDifferential::regular_exterior_contraction_direction(
+    const Eigen::MatrixXd& inverse,
+    const Eigen::MatrixXd& inverse_direction,
+    const Eigen::MatrixXd& weights,
+    const Eigen::MatrixXd& delta_weights) const {
+  const int n = inverse.rows();
+  const int pair_count = n * (n - 1) / 2;
+  if (inverse.cols() != n || inverse_direction.rows() != n ||
+      inverse_direction.cols() != n || weights.rows() != pair_count ||
+      weights.cols() != pair_count || delta_weights.rows() != pair_count ||
+      delta_weights.cols() != pair_count) {
+    throw std::invalid_argument(
+        "regular exterior direction dimensions are inconsistent");
+  }
+
+  ExteriorContractionDirection result;
+  result.base.gradient = Eigen::MatrixXd::Zero(n, n);
+  result.direction.gradient = Eigen::MatrixXd::Zero(n, n);
+  for (int row_second = 1; row_second < n; ++row_second) {
+    for (int row_first = 0; row_first < row_second; ++row_first) {
+      const int row_pair = pair_index(row_first, row_second);
+      for (int column_second = 1; column_second < n; ++column_second) {
+        for (int column_first = 0;
+             column_first < column_second;
+             ++column_first) {
+          const int column_pair = pair_index(column_first, column_second);
+          const double weight = weights(row_pair, column_pair);
+          const double delta_weight = delta_weights(row_pair, column_pair);
+          const double first = inverse(column_first, row_first);
+          const double second = inverse(column_second, row_second);
+          const double crossed_first = inverse(column_first, row_second);
+          const double crossed_second = inverse(column_second, row_first);
+          const double delta_first =
+              inverse_direction(column_first, row_first);
+          const double delta_second =
+              inverse_direction(column_second, row_second);
+          const double delta_crossed_first =
+              inverse_direction(column_first, row_second);
+          const double delta_crossed_second =
+              inverse_direction(column_second, row_first);
+          const double exterior =
+              first * second - crossed_first * crossed_second;
+          const double delta_exterior =
+              delta_first * second + first * delta_second -
+              delta_crossed_first * crossed_second -
+              crossed_first * delta_crossed_second;
+
+          result.base.value += weight * exterior;
+          result.direction.value +=
+              delta_weight * exterior + weight * delta_exterior;
+
+          result.base.gradient(column_first, row_first) += weight * second;
+          result.base.gradient(column_second, row_second) += weight * first;
+          result.base.gradient(column_first, row_second) -=
+              weight * crossed_second;
+          result.base.gradient(column_second, row_first) -=
+              weight * crossed_first;
+
+          result.direction.gradient(column_first, row_first) +=
+              delta_weight * second + weight * delta_second;
+          result.direction.gradient(column_second, row_second) +=
+              delta_weight * first + weight * delta_first;
+          result.direction.gradient(column_first, row_second) -=
+              delta_weight * crossed_second + weight * delta_crossed_second;
+          result.direction.gradient(column_second, row_first) -=
+              delta_weight * crossed_first + weight * delta_crossed_first;
+        }
+      }
+    }
+  }
+  return result;
+}
+
 const CofactorDifferential& cached_cofactor_differential(
     const SpinDeterminantPairEvaluation& pair_evaluation) {
   if (!pair_evaluation.cofactor_differential)
@@ -229,7 +546,7 @@ const CofactorDifferential& cached_cofactor_differential(
 
 std::size_t CofactorDifferential::dynamic_bytes() const {
   return sizeof(double) * static_cast<std::size_t>(
-      u_.size() + v_.size() + u2_.size() + v2_.size() + value_.size() +
+      inverse_.size() + u_.size() + v_.size() + u2_.size() + v2_.size() + value_.size() +
       second_.size() + singular_values_.size() + pair_complements_.size() +
       triple_complements_.size() + quadruple_complements_.size());
 }

@@ -263,15 +263,82 @@ kernel must instead traverse each determinant pair once and contract all
 directional overlap, one-electron, and two-electron channels while its accepted
 cofactor and coefficient data remain resident.
 
-## 8. Reproducibility
+## 8. Rank-aware cofactor exterior contraction
 
-The configured test suite contains 15 tests, including independent polynomial
+The regular determinant-pair cofactor representation now contracts the
+second exterior power directly. For $n$ same-spin electrons and
+$p=n(n-1)/2$, this changes the regular pair-local leading work and persistent
+storage from
+
+$$
+O(p^3)=O(n^6)
+\quad\hbox{and}\quad
+O(p^2)=O(n^4)
+$$
+
+to
+
+$$
+O(p^2)=O(n^4)
+\quad\hbox{and}\quad
+O(n^2),
+$$
+
+respectively. Ill-conditioned pairs retain the inverse-free polynomial form,
+so the optimization does not trade numerical stability for coverage. The
+complete formulas and the machine-precision-derived admission condition are
+given in
+[Full-AO OEO derivative validation](full_ao_oeo_derivative_validation.md).
+
+A same-node, separate-process A/B test used the CERRAS input, 32 OpenMP
+threads, one BLAS thread, and one `local` HVP action. Both runs returned the
+same response infinity norm, $0.277727397311$.
+
+| Quantity | Polynomial-only baseline | Rank-aware representation | Change |
+|---|---:|---:|---:|
+| Local HVP action / s | 3.125673 | 2.822618 | $-9.70\%$ |
+| Local active-gradient stage / s | 1.848025 | 1.672079 | $-9.52\%$ |
+| Whole process wall time / s | 26.97 | 25.82 | $-4.26\%$ |
+| Peak RSS / KiB | 5,835,356 | 5,644,808 | $-3.27\%$ |
+
+All 213,444 ordered CERRAS unique-string pairs were numerically full rank,
+but only 29,423 pairs, or $13.8\%$, satisfied the conservative regular-form
+condition. These pairs account for the measured reduction; the remaining
+184,021 pairs preserve the stable polynomial representation. The accepted
+cofactor dynamic storage is 1,252,096,600 bytes after the rewrite. The modest
+whole-process RSS reduction is expected because the AO-pair graph and other
+accepted-point objects remain larger than the eliminated compound matrices.
+
+The initial prototype used `BDCSVD` for the small ill-conditioned overlap
+blocks. Its workspace increased peak RSS and erased the gain. That prototype
+was removed; the retained polynomial branch reuses an accepted SVD when one
+exists and otherwise uses the original small-matrix Jacobi SVD.
+
+The corresponding 32-thread LOFLEA measurement gives
+
+| Quantity | Polynomial-only baseline | Rank-aware representation | Change |
+|---|---:|---:|---:|
+| Local HVP action / s | 10.617550 | 9.920676 | $-6.56\%$ |
+| Local active-gradient stage / s | 5.978685 | 5.790816 | $-3.14\%$ |
+| Whole process wall time / s | 30.98 | 29.65 | $-4.29\%$ |
+| Peak RSS / KiB | 16,589,768 | 15,890,972 | $-4.21\%$ |
+
+The LOFLEA response infinity norm is unchanged at $0.282004273478$.
+Of 853,776 ordered pairs, 107,180 use the regular exterior form, 746,582
+full-rank pairs use the polynomial form, and 14 nullity-one pairs use the same
+polynomial form. The accepted cofactor dynamic storage is 5,072,888,032 bytes;
+the separate-process peak RSS decreases by approximately 682 MiB.
+
+## 9. Reproducibility
+
+The configured test suite contains 30 tests, including independent polynomial
 cofactor derivatives and complete HAO/OEO HVP finite differences. All 15 pass
 after the performance changes. The two additional tests validate block basis
 assembly at the utility and molecular-integration levels; the orthonormal-basis
 test was also extended to verify single-call block admission. The benchmark
 logs used in this note are kept
-under `/tmp/xmvb-oeo-fix.Cdw3GW/` on the validation machine and are not treated
+under `/tmp/xmvb-oeo-fix.Cdw3GW/` and
+`/tmp/xmvb-hvp-cofactor-direct/` on the validation machine and are not treated
 as repository test assets.
 
 The explicit references can be reproduced with

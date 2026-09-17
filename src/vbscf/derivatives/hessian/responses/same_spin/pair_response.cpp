@@ -191,7 +191,7 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
   result.delta_overlap_determinant = (cofactor.value().cwiseProduct(ds)).sum();
   result.delta_total_hamiltonian =
       (dh.cwiseProduct(cofactor.value())).sum() +
-      (dg.cwiseProduct(cofactor.second())).sum() +
+      cofactor.second_contraction(dg) +
       (pair_evaluation.same_spin_overlap_hamiltonian_gradient.cwiseProduct(ds)).sum();
   if (need_overlap_gradient)
     result.delta_same_spin_overlap_hamiltonian_gradient =

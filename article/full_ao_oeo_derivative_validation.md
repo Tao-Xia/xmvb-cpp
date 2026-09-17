@@ -85,7 +85,7 @@ The new `F2_OEO.xmi` regression starts from a full-AO OEO guess and exposes
 this error. It has a different variational space from the existing HAO F2
 benchmark and must not be used as a like-for-like performance comparison.
 
-## 3. Polynomial cofactor actions replace unstable inverse identities
+## 3. Rank-aware exact cofactor actions
 
 Let $\mathbf X$ be a spin-determinant overlap block, not the AO metric or
 the orbital Hessian. Write its first cofactor matrix as
@@ -95,13 +95,35 @@ $$
 \tag{5}
 $$
 
-For nonsingular $\mathbf X$, the identity
-$\mathbf C^{(1)}=\det(\mathbf X)\mathbf X^{-\mathrm T}$ is exact.
-Differentiating inverse-based expressions, however, introduces large
-intermediate inverse powers whose cancellation is numerically unreliable
-for nearly singular determinant-pair overlaps. Full-AO calculations can
-encounter such overlaps even when the AO metric and the selected VB root
-are well conditioned. This is not an OEO-specific mathematical formula.
+For a nonsingular $\mathbf X$, define
+
+$$
+\mathcal D=\det(\mathbf X),
+\qquad
+\mathbf R=\mathbf X^{-1}.
+\tag{5a}
+$$
+
+Then the first cofactor and its directional derivative are
+
+$$
+\begin{aligned}
+\mathbf C^{(1)}
+&=\mathcal D\mathbf R^{\mathrm T},\\
+D\mathbf C^{(1)}[\boldsymbol\Delta]
+&=\mathcal D\left[
+\operatorname{tr}(\mathbf R\boldsymbol\Delta)\mathbf R^{\mathrm T}
+-\left(\mathbf R\boldsymbol\Delta\mathbf R\right)^{\mathrm T}
+\right].
+\end{aligned}
+\tag{5b}
+$$
+
+The production implementation uses these Jacobi identities only for
+numerically regular overlap blocks. Blindly applying them to nearly singular
+determinant pairs introduces large inverse powers whose cancellation is
+unreliable. Full-AO calculations can encounter such pairs even when the AO
+metric and selected VB root are well conditioned.
 
 The replacement uses an accepted-point SVD
 
@@ -114,29 +136,165 @@ p_I=\eta\prod_{k\notin I}\sigma_k.
 \tag{6}
 $$
 
-The factors $\mathbf U$ and $\mathbf V$ are held fixed while evaluating
-directional derivatives. No singular-vector differentiation, inverse
-singular values, or rank threshold occurs in these cofactor actions.
-Complementary products are formed directly, including at zero singular
-values. For $\widetilde{\mathbf D}=\mathbf U^{\mathrm T}\mathbf D\mathbf V$,
+For ill-conditioned full-rank blocks and all rank-deficient blocks, the
+factors $\mathbf U$ and $\mathbf V$ are held fixed while evaluating
+directional derivatives. No singular-vector differentiation or inverse
+singular value occurs in this polynomial branch. Complementary products are
+formed directly, including at zero singular values. For
+$\widetilde{\boldsymbol\Delta}
+=\mathbf U^{\mathrm T}\boldsymbol\Delta\mathbf V$,
 the first cofactor derivative in this fixed diagonal chart is
 
 $$
 \begin{aligned}
-[D\widetilde{\mathbf C}^{(1)}[\widetilde{\mathbf D}]]_{ii}
- &=\sum_{j\ne i}p_{\{i,j\}}\widetilde D_{jj},\\
-[D\widetilde{\mathbf C}^{(1)}[\widetilde{\mathbf D}]]_{ij}
- &=-p_{\{i,j\}}\widetilde D_{ji},\qquad i\ne j.
+[D\widetilde{\mathbf C}^{(1)}[\widetilde{\boldsymbol\Delta}]]_{ii}
+ &=\sum_{j\ne i}p_{\{i,j\}}\widetilde\Delta_{jj},\\
+[D\widetilde{\mathbf C}^{(1)}[\widetilde{\boldsymbol\Delta}]]_{ij}
+ &=-p_{\{i,j\}}\widetilde\Delta_{ji},\qquad i\ne j.
 \end{aligned}
 \tag{7}
 $$
 
 The result is transformed back with $\mathbf U$ and $\mathbf V^{\mathrm T}$.
 Mixed first-cofactor derivatives similarly use three-index complementary
-products. Second cofactors are indexed by ordered pairs $i<j$ and $k<l$;
-their transformations use the second compound matrices of $\mathbf U$ and
-$\mathbf V$. Their contracted gradient directions use complementary
-products with at most four excluded indices.
+products. The inverse-free branch is therefore an exact polynomial
+representation, not a compatibility fallback.
+
+### 3.1 Direct exterior-algebra contraction for regular pairs
+
+Let $i<k$ and $j<l$ index occupied-orbital pairs. For a regular overlap block,
+the second cofactor is
+
+$$
+C^{(2)}_{(i,k),(j,l)}
+=\mathcal D\left(R_{ji}R_{lk}-R_{jk}R_{li}\right).
+\tag{7a}
+$$
+
+Define the exterior-square kernel and its contraction with an
+antisymmetrized two-electron weight matrix $\mathbf W$ by
+
+$$
+\begin{aligned}
+A_{(i,k),(j,l)}(\mathbf R)
+&=R_{ji}R_{lk}-R_{jk}R_{li},\\
+F(\mathbf R,\mathbf W)
+&=\langle\mathbf W,\mathbf A(\mathbf R)\rangle,\\
+\mathbf Q(\mathbf R,\mathbf W)
+&=\frac{\partial F}{\partial\mathbf R}.
+\end{aligned}
+\tag{7b}
+$$
+
+Since
+
+$$
+\dot{\mathcal D}=\mathcal D\tau,
+\qquad
+\tau=\operatorname{tr}(\mathbf R\boldsymbol\Delta),
+\qquad
+\dot{\mathbf R}=-\mathbf R\boldsymbol\Delta\mathbf R,
+\tag{7c}
+$$
+
+the overlap gradient of the contracted second cofactor is
+
+$$
+\mathbf G_{\mathbf X}
+=\nabla_{\mathbf X}\left[\mathcal D F(\mathbf R,\mathbf W)\right]
+=\mathcal D\left[
+F\mathbf R^{\mathrm T}
+-\mathbf R^{\mathrm T}\mathbf Q\mathbf R^{\mathrm T}
+\right].
+\tag{7d}
+$$
+
+For simultaneous directions $\boldsymbol\Delta$ and $\dot{\mathbf W}$,
+
+$$
+\begin{aligned}
+\dot F
+&=\langle\dot{\mathbf W},\mathbf A(\mathbf R)\rangle
+ +\langle\mathbf Q,\dot{\mathbf R}\rangle,\\
+\dot{\mathbf Q}
+&=\mathbf Q(\dot{\mathbf R},\mathbf W)
+ +\mathbf Q(\mathbf R,\dot{\mathbf W}),\\
+\dot{\mathbf G}_{\mathbf X}
+&=\mathcal D\Bigl\{
+\tau\left(F\mathbf R^{\mathrm T}
+-\mathbf R^{\mathrm T}\mathbf Q\mathbf R^{\mathrm T}\right)
++\dot F\mathbf R^{\mathrm T}
++F\dot{\mathbf R}^{\mathrm T}\\
+&\hspace{2.4em}
+-\dot{\mathbf R}^{\mathrm T}\mathbf Q\mathbf R^{\mathrm T}
+-\mathbf R^{\mathrm T}\dot{\mathbf Q}\mathbf R^{\mathrm T}
+-\mathbf R^{\mathrm T}\mathbf Q\dot{\mathbf R}^{\mathrm T}
+\Bigr\}.
+\end{aligned}
+\tag{7e}
+$$
+
+Equations (7b)--(7e) are evaluated by direct four-index contraction. They do
+not materialize the second compound rotations or the second cofactor when
+only a scalar contraction or overlap gradient is required.
+
+### 3.2 Asymptotic reduction and numerical admission
+
+For $n$ same-spin electrons, let $p=n(n-1)/2$. The former regular-pair path
+formed two $p\times p$ compound rotations and transformed a $p\times p$
+second-cofactor object. Its dense pair-local leading costs were
+
+$$
+T_{\mathrm{compound}}=O(p^3)=O(n^6),
+\qquad
+M_{\mathrm{compound}}=O(p^2)=O(n^4).
+\tag{7f}
+$$
+
+The direct exterior contraction requires
+
+$$
+T_{\mathrm{exterior}}=O(p^2)=O(n^4),
+\qquad
+M_{\mathrm{exterior}}=O(n^2).
+\tag{7g}
+$$
+
+For $U$ unique strings and $P_{\mathrm{bad}}$ ill-conditioned or
+rank-deficient ordered string pairs, the cofactor part of the pair cache and
+one contracted response action therefore scale as
+
+$$
+\begin{aligned}
+M
+&=O\left[(U^2-P_{\mathrm{bad}})n^2
+          +P_{\mathrm{bad}}n^4\right],\\
+T
+&=O\left[(U^2-P_{\mathrm{bad}})n^4
+          +P_{\mathrm{bad}}n^6\right].
+\end{aligned}
+\tag{7h}
+$$
+
+The regular formula contains at most four inverse factors. It is admitted
+when the cached inverse exists, the numerical nullity is zero, and
+
+$$
+\kappa_{\infty}(\mathbf X)
+=\lVert\mathbf X\rVert_{\infty}
+ \lVert\mathbf X^{-1}\rVert_{\infty}
+\leq \epsilon_{\mathrm{mach}}^{-1/8},
+\tag{7i}
+$$
+
+which bounds the leading inverse amplification
+$\kappa_{\infty}^4\epsilon_{\mathrm{mach}}$ by
+$\sqrt{\epsilon_{\mathrm{mach}}}$. All other pairs use the exact inverse-free
+polynomial representation. This admission rule depends only on numerical
+conditioning and machine precision; it contains no molecule- or input-specific
+parameter. Blocks with fewer than four same-spin electrons also remain on the
+polynomial path because compound-space work is then negligible and an inverse
+representation provides no asymptotic benefit.
 
 With the Frobenius inner product $\langle\mathbf A,\mathbf B\rangle
 =\operatorname{tr}(\mathbf A^{\mathrm T}\mathbf B)$, a same-spin Hamiltonian
@@ -152,7 +310,7 @@ $$
 where $\mathbf G$ contains the antisymmetrized two-electron integrals on
 the determinant's occupied pair indices. Differentiating Eq. (8) gives
 the directional scalar, overlap gradient, and overlap-gradient direction
-without forming an orbital Hessian. The same polynomial actions cover
+without forming an orbital Hessian. The rank-aware exact actions cover both
 regular and rank-deficient pairs in the matrix-form response path.
 
 For the local opposite-spin contraction

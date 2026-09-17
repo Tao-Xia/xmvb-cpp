@@ -476,7 +476,7 @@ void populate_same_spin_phi_cache_entries(
       if (!pair_evaluation.cofactor_differential) {
         pair_evaluation.cofactor_differential =
             std::make_shared<const CofactorDifferential>(
-                pair_evaluation.overlap_result.overlap_submatrix);
+                pair_evaluation.overlap_result);
       }
       pair_evaluation.has_same_spin_phi_cache = false;
       pair_evaluation.same_spin_one_electron_phi = 0.0;

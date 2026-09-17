@@ -1287,6 +1287,42 @@ retraction. Such a change is valid only if its additional second derivative in
 eq 60 is included in the HVP; changing the finite orbital update alone would
 make the trust-region model inconsistent.
 
+### 9.3 Exact rank-aware determinant-cofactor action
+
+The local same-spin two-electron response also remains matrix free. For a
+regular determinant-overlap block $\mathbf X$, let
+$\mathcal D=\det(\mathbf X)$ and $\mathbf R=\mathbf X^{-1}$. Its second cofactor is the
+exterior-square action
+
+$$
+C^{(2)}_{(i,k),(j,l)}
+=\mathcal D\left(R_{ji}R_{lk}-R_{jk}R_{li}\right),
+\qquad i<k,\quad j<l.
+\tag{60g}
+$$
+
+For $\mathbf A(\mathbf R)=\mathbf R\wedge\mathbf R$,
+$F=\langle\mathbf W,\mathbf A(\mathbf R)\rangle$, and
+$\mathbf Q=\partial F/\partial\mathbf R$, its exact overlap gradient is
+
+$$
+\nabla_{\mathbf X}\left[\mathcal D F\right]
+=\mathcal D\left[
+F\mathbf R^{\mathrm T}
+-\mathbf R^{\mathrm T}\mathbf Q\mathbf R^{\mathrm T}
+\right].
+\tag{60h}
+$$
+
+Direct contraction of eqs 60g--60h reduces the regular pair-local time from
+$O(n^6)$ to $O(n^4)$ and persistent memory from $O(n^4)$ to $O(n^2)$, where
+$n$ is the same-spin electron count. Ill-conditioned and rank-deficient pairs
+retain the exact inverse-free complementary-product representation. The
+representation switch is determined by matrix conditioning and machine
+precision, not by a molecular label. The full directional derivation,
+admission bound, and mixed regular/singular complexity are given in
+[Full-AO OEO derivative validation](full_ao_oeo_derivative_validation.md).
+
 ## 10. Matrix-free trust-region Newton equation
 
 The local second-order model is

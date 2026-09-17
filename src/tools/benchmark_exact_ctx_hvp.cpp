@@ -1,5 +1,6 @@
-#include <chrono>
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <iomanip>
@@ -29,6 +30,7 @@
 #include "vbscf/derivatives/gradient/orbital/result.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
+#include "vbscf/determinants/algebra/cofactor_differential.hpp"
 
 namespace {
 
@@ -84,6 +86,66 @@ struct BlockBenchmarkMeasurement {
   double scalar_reference_relative_error = 0.0;
   xmvb::vb::ExactHvpOperator::Diagnostics diagnostics;
 };
+
+struct CofactorRepresentationStatistics {
+  std::size_t regular_pairs = 0;
+  std::size_t polynomial_pairs = 0;
+  std::size_t dynamic_bytes = 0;
+  std::array<std::size_t, 6> nullity_counts{};
+  std::array<std::size_t, 8> condition_decade_counts{};
+};
+
+CofactorRepresentationStatistics collect_cofactor_statistics(
+    const xmvb::vb::SameSpinPairCacheContext& cache) {
+  CofactorRepresentationStatistics statistics;
+  const auto collect = [&statistics](
+                           const std::vector<
+                               xmvb::vb::SpinDeterminantPairEvaluation>& pairs) {
+    for (const auto& pair : pairs) {
+      const int nullity = std::clamp(pair.overlap_result.nullity, 0, 5);
+      ++statistics.nullity_counts[nullity];
+      if (pair.overlap_result.nullity == 0 &&
+          pair.overlap_result.inverse_overlap_submatrix.size() != 0) {
+        const double matrix_norm = pair.overlap_result.overlap_submatrix
+                                       .cwiseAbs()
+                                       .rowwise()
+                                       .sum()
+                                       .maxCoeff();
+        const double inverse_norm =
+            pair.overlap_result.inverse_overlap_submatrix
+                .cwiseAbs()
+                .rowwise()
+                .sum()
+                .maxCoeff();
+        const double condition = matrix_norm * inverse_norm;
+        int condition_decade = 7;
+        if (std::isfinite(condition)) {
+          condition_decade = std::clamp(
+              static_cast<int>(std::floor(std::log10(
+                  std::max(1.0, condition)))) / 2,
+              0,
+              7);
+        }
+        ++statistics.condition_decade_counts[condition_decade];
+      }
+      if (!pair.cofactor_differential) {
+        continue;
+      }
+      if (pair.cofactor_differential->uses_regular_form()) {
+        ++statistics.regular_pairs;
+      } else {
+        ++statistics.polynomial_pairs;
+      }
+      statistics.dynamic_bytes +=
+          pair.cofactor_differential->dynamic_bytes();
+    }
+  };
+  collect(cache.alpha_pair_cache_ref());
+  if (!cache.shares_same_spin_pair_cache_between_spins()) {
+    collect(cache.beta_pair_cache_ref());
+  }
+  return statistics;
+}
 
 void print_usage() {
   std::cerr
@@ -1096,6 +1158,9 @@ int main(int argc, char** argv) {
     const auto& active_two_electron =
         context.second_order_context->prepared_active_space
             .active_space_two_electron_result;
+    const CofactorRepresentationStatistics cofactor_statistics =
+        collect_cofactor_statistics(
+            context.second_order_context->same_spin_pair_cache);
     const std::size_t pair_graph_storage_bytes =
         pair_graph.row_offsets.capacity() * sizeof(int) +
         pair_graph.columns.capacity() * sizeof(int) +
@@ -1197,6 +1262,29 @@ int main(int argc, char** argv) {
         context.second_order_context->selected_state_matrices;
     std::cout << "n_unique_alpha = " << selected_states.n_unique_alpha << '\n';
     std::cout << "n_unique_beta = " << selected_states.n_unique_beta << '\n';
+    std::cout << "cofactor_regular_pair_count = "
+              << cofactor_statistics.regular_pairs << '\n';
+    std::cout << "cofactor_polynomial_pair_count = "
+              << cofactor_statistics.polynomial_pairs << '\n';
+    std::cout << "cofactor_dynamic_storage_bytes = "
+              << cofactor_statistics.dynamic_bytes << '\n';
+    for (std::size_t nullity = 0;
+         nullity + 1 < cofactor_statistics.nullity_counts.size();
+         ++nullity) {
+      std::cout << "cofactor_nullity_" << nullity << "_pair_count = "
+                << cofactor_statistics.nullity_counts[nullity] << '\n';
+    }
+    std::cout << "cofactor_nullity_5plus_pair_count = "
+              << cofactor_statistics.nullity_counts.back() << '\n';
+    for (std::size_t bin = 0;
+         bin + 1 < cofactor_statistics.condition_decade_counts.size();
+         ++bin) {
+      std::cout << "cofactor_condition_1e" << 2 * bin << "_to_1e"
+                << 2 * (bin + 1) << "_pair_count = "
+                << cofactor_statistics.condition_decade_counts[bin] << '\n';
+    }
+    std::cout << "cofactor_condition_ge_1e14_pair_count = "
+              << cofactor_statistics.condition_decade_counts.back() << '\n';
     if (!selected_states.states.empty()) {
       std::cout << "selected_alpha_support = "
                 << selected_states.states.front().alpha_support.size() << '\n';

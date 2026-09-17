@@ -28,7 +28,8 @@ PreparedSpinDeterminantPair prepare_spin_determinant_pair(
     result.evaluation.overlap_result.overlap_determinant = 1.0;
     if (retain_derivative_payload) {
       result.evaluation.cofactor_differential =
-          std::make_shared<const CofactorDifferential>(Eigen::MatrixXd(0, 0));
+          std::make_shared<const CofactorDifferential>(
+              result.evaluation.overlap_result);
     }
     return result;
   }
@@ -43,7 +44,8 @@ PreparedSpinDeterminantPair prepare_spin_determinant_pair(
       determinant_overlap_resolver.resolve_matrix(result.overlap_submatrix);
   if (retain_derivative_payload) {
     result.evaluation.cofactor_differential =
-        std::make_shared<const CofactorDifferential>(result.overlap_submatrix);
+        std::make_shared<const CofactorDifferential>(
+            result.evaluation.overlap_result);
   }
   cache_first_order_cofactor(&result.evaluation.overlap_result);
 

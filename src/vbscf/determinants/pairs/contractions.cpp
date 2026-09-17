@@ -927,7 +927,7 @@ Eigen::MatrixXd build_directional_first_cofactor_matrix(
     return delta_cofactor;
   }
 
-  return CofactorDifferential(overlap_block).first(delta_overlap_block);
+  return CofactorDifferential(det_ovlp_result).first(delta_overlap_block);
 }
 
 SameSpinPhiResult compute_same_spin_original_phi(
