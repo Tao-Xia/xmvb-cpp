@@ -2339,6 +2339,23 @@ $$
 \tag{66wd}
 $$
 
+For a fixed accepted point, construction of $\mathbf B_k$ requires the single
+block action $\mathbf H_k^{\mathrm c}\mathbf S_k$, where the columns of
+$\mathbf S_k$ are the transported secant displacements.  Trust-radius retries
+change neither the chart, the accepted-point core Hessian, nor the transported
+history.  The correction is therefore built once and reused until a trial is
+accepted.  With $q_k$ retained secants and $r_k$ rejected trials, rebuilding
+the same correction would consume
+
+$$
+(r_k+1)q_k
+\tag{66we}
+$$
+
+core-HVP directions, whereas accepted-point caching requires only $q_k$.
+This removes retry-dependent HVP work without changing eq 66wd or any trial
+step.
+
 Every finite step remains guarded by the exact relaxed energy and gradient and
 by the trust-region acceptance test.  This correction is a quasi-Newton model,
 not an exact outer-response certificate; eq 66t is asserted only after an

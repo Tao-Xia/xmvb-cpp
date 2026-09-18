@@ -79,22 +79,22 @@ int SymmetricSecantCorrection::size() const noexcept {
   return static_cast<int>(updates_.size());
 }
 
-SecantCorrectedCoreHvp::SecantCorrectedCoreHvp(
+SymmetricSecantCorrection build_symmetric_secant_correction(
     ExactReducedHvp* exact_hvp,
     const OrbitalChart& current_space,
     const std::vector<PackedSecantPair>& packed_secant_history,
-    int max_history_size)
-    : exact_hvp_(exact_hvp) {
-  if (exact_hvp_ == nullptr) {
+    int max_history_size) {
+  if (exact_hvp == nullptr) {
     throw std::invalid_argument(
         "secant-corrected core HVP requires a core operator");
   }
+  SymmetricSecantCorrection correction;
   const auto pairs = transport_nonredundant_secant_pairs(
       current_space,
       packed_secant_history,
       max_history_size);
   if (pairs.empty()) {
-    return;
+    return correction;
   }
 
   const Eigen::Index reduced_size = current_space.reduced_size();
@@ -113,32 +113,49 @@ SecantCorrectedCoreHvp::SecantCorrectedCoreHvp(
     ++n_valid;
   }
   if (n_valid == 0) {
-    return;
+    return correction;
   }
   steps.conservativeResize(Eigen::NoChange, n_valid);
   gradient_changes.conservativeResize(Eigen::NoChange, n_valid);
-  const Eigen::MatrixXd core_images = exact_hvp_->apply_core_batch(steps);
+  const Eigen::MatrixXd core_images = exact_hvp->apply_core_batch(steps);
   for (Eigen::Index column = 0; column < n_valid; ++column) {
-    correction_.add_pair(
+    correction.add_pair(
         steps.col(column),
         gradient_changes.col(column) - core_images.col(column));
+  }
+  return correction;
+}
+
+SecantCorrectedCoreHvp::SecantCorrectedCoreHvp(
+    ExactReducedHvp* exact_hvp,
+    const SymmetricSecantCorrection* correction)
+    : exact_hvp_(exact_hvp), correction_(correction) {
+  if (exact_hvp_ == nullptr) {
+    throw std::invalid_argument(
+        "secant-corrected core HVP requires a core operator");
   }
 }
 
 Eigen::VectorXd SecantCorrectedCoreHvp::apply(
     const Eigen::VectorXd& reduced_direction) {
-  return exact_hvp_->apply_core(reduced_direction) +
-      correction_.apply(reduced_direction);
+  Eigen::VectorXd image = exact_hvp_->apply_core(reduced_direction);
+  if (correction_ != nullptr) {
+    image += correction_->apply(reduced_direction);
+  }
+  return image;
 }
 
 Eigen::MatrixXd SecantCorrectedCoreHvp::apply_batch(
     const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) {
-  return exact_hvp_->apply_core_batch(reduced_directions) +
-      correction_.apply_batch(reduced_directions);
+  Eigen::MatrixXd images = exact_hvp_->apply_core_batch(reduced_directions);
+  if (correction_ != nullptr) {
+    images += correction_->apply_batch(reduced_directions);
+  }
+  return images;
 }
 
 int SecantCorrectedCoreHvp::correction_size() const noexcept {
-  return correction_.size();
+  return correction_ == nullptr ? 0 : correction_->size();
 }
 
 }  // namespace xmvb::vb

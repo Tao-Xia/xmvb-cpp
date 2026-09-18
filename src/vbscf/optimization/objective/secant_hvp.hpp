@@ -43,9 +43,7 @@ class SecantCorrectedCoreHvp final : public ReducedHvp {
 public:
   SecantCorrectedCoreHvp(
       ExactReducedHvp* exact_hvp,
-      const OrbitalChart& current_space,
-      const std::vector<PackedSecantPair>& packed_secant_history,
-      int max_history_size);
+      const SymmetricSecantCorrection* correction);
 
   Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) override;
   Eigen::MatrixXd apply_batch(
@@ -54,7 +52,19 @@ public:
 
 private:
   ExactReducedHvp* exact_hvp_ = nullptr;
-  SymmetricSecantCorrection correction_;
+  const SymmetricSecantCorrection* correction_ = nullptr;
 };
+
+/**
+ * @brief Builds the accepted-point secant correction with one core-HVP block.
+ *
+ * The result depends only on the accepted orbital point and transported
+ * history, so trust-radius retries at that point must reuse it.
+ */
+SymmetricSecantCorrection build_symmetric_secant_correction(
+    ExactReducedHvp* exact_hvp,
+    const OrbitalChart& current_space,
+    const std::vector<PackedSecantPair>& packed_secant_history,
+    int max_history_size);
 
 }  // namespace xmvb::vb

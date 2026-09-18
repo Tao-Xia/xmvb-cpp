@@ -85,6 +85,8 @@ BackendRunResult run_truncated_newton_backend(
   TruncatedNewtonSubspace cached_subspace;
   bool request_outer_response = false;
   bool request_secant_correction = false;
+  bool secant_correction_built_for_current_point = false;
+  SymmetricSecantCorrection accepted_point_secant_correction;
   bool use_full_hvp_for_current_point = false;
   bool outer_response_used_for_current_point = false;
   double last_outer_response_seconds = 0.0;
@@ -142,13 +144,20 @@ BackendRunResult run_truncated_newton_backend(
         outer_response_scale_is_affordable(response_scale_info);
     const int transport_history_size =
         choose_truncated_newton_transport_history_size(options);
+    const bool use_secant_correction =
+        !full_response_scale_is_affordable && request_secant_correction;
+    if (use_secant_correction &&
+        !secant_correction_built_for_current_point) {
+      accepted_point_secant_correction = build_symmetric_secant_correction(
+          &exact_hvp,
+          current_space,
+          packed_secant_history,
+          transport_history_size);
+      secant_correction_built_for_current_point = true;
+    }
     SecantCorrectedCoreHvp core_hvp(
         &exact_hvp,
-        current_space,
-        packed_secant_history,
-        !full_response_scale_is_affordable && request_secant_correction
-            ? transport_history_size
-            : 0);
+        use_secant_correction ? &accepted_point_secant_correction : nullptr);
     const auto transported_preconditioner =
         build_nonredundant_truncated_newton_preconditioner(
             current_space,
@@ -703,6 +712,8 @@ BackendRunResult run_truncated_newton_backend(
     initial_outer_response_wall_time_for_current_point =
         result->matrix_free_outer_response_wall_time_seconds;
     accepted_point_start_time = std::chrono::steady_clock::now();
+    secant_correction_built_for_current_point = false;
+    accepted_point_secant_correction = SymmetricSecantCorrection();
     if (nonredundant_rank_changed) {
       packed_secant_history.clear();
       request_secant_correction = false;
