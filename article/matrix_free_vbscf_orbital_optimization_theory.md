@@ -3106,6 +3106,113 @@ constructed in the normalized structure tangent space, preserve the
 state-average weights, and use direct H/S actions so that neither a dense
 structure Hessian nor a dense orbital Hessian is formed.
 
+### 11.4 Matrix-free coupled orbital--structure Newton equation
+
+For an equal-weight cluster containing $m$ selected structure states, collect
+the accepted generalized eigenvectors in
+$\mathbf C\in\mathbb R^{n_s\times m}$ and their energies in the diagonal
+matrix $\boldsymbol\Lambda$.  They satisfy
+
+$$
+\mathbf H\mathbf C=\mathbf S\mathbf C\boldsymbol\Lambda,
+\qquad
+\mathbf C^{\mathrm T}\mathbf S\mathbf C=\mathbf I.
+$$
+
+An orbital direction $\mathbf p$ induces the structure-matrix images
+
+$$
+\mathbf F(\mathbf p)
+=D\mathbf H[\mathbf p]\mathbf C
+-D\mathbf S[\mathbf p]\mathbf C\boldsymbol\Lambda,
+\qquad
+\mathbf N(\mathbf p)
+=\frac{1}{2}\mathbf C^{\mathrm T}
+D\mathbf S[\mathbf p]\mathbf C.
+$$
+
+The selected-state tangent $\mathbf Z$ is defined in the symmetric horizontal
+gauge
+
+$$
+\mathbf C^{\mathrm T}\mathbf S\mathbf Z
+=-\frac{1}{2}\mathbf C^{\mathrm T}
+D\mathbf S[\mathbf p]\mathbf C.
+$$
+
+Consequently, a full matrix $\mathbf M\in\mathbb R^{m\times m}$ is required
+as the multiplier of the horizontal constraint.  Replacing $\mathbf M$ by one
+scalar per state is valid only for isolated one-state clusters; for a
+multistate cluster it reintroduces selected--selected inverse gaps that are
+pure gauge for an equal-weight average.  Define the matrix-free response block
+
+$$
+\mathcal C
+\begin{bmatrix}\mathbf Z\\\mathbf M\end{bmatrix}
+=
+\begin{bmatrix}
+\mathbf H\mathbf Z
+-\mathbf S\mathbf Z\boldsymbol\Lambda
++\mathbf S\mathbf C\mathbf M\\
+\mathbf C^{\mathrm T}\mathbf S\mathbf Z
+\end{bmatrix}.
+$$
+
+For a per-state weight $w$, the symmetric coupled coordinates are
+$\mathbf q=\sqrt{2w}\,\operatorname{vec}(\mathbf Z,\mathbf M)$.  The same
+factor multiplies the orbital-to-response forcing
+$\operatorname{vec}(\mathbf F,\mathbf N)$.  This scaling makes the two mixed
+actions exact Euclidean adjoints; it is not a numerical tuning parameter.
+Different state weights define different clusters, because rotations between
+states of unequal weight are physical rather than gauge degrees of freedom.
+
+At a trust-region shift $\lambda$, the coupled Newton equation is
+
+$$
+\begin{bmatrix}
+\mathbf A+\lambda\mathbf G & \mathbf B^{\mathrm T}\\
+\mathbf B & \mathbf C
+\end{bmatrix}
+\begin{bmatrix}\mathbf p\\\mathbf q\end{bmatrix}
+=-
+\begin{bmatrix}\mathbf g\\\mathbf 0\end{bmatrix},
+\qquad
+\|\mathbf p\|_{\mathbf G}\leq\Delta.
+$$
+
+Here $\mathbf G$ is the nonredundant orbital metric.  The shift and the trust
+constraint act only on $\mathbf p$: the structure tangent is an induced
+first-order response, not an independently bounded physical displacement.
+Eliminating $\mathbf q$ gives
+
+$$
+\left(
+\mathbf A-\mathbf B^{\mathrm T}\mathbf C^{-1}\mathbf B
++\lambda\mathbf G
+\right)\mathbf p=-\mathbf g,
+$$
+
+which is exactly the relaxed matrix-free orbital Newton equation.  The coupled
+form therefore changes the linear-algebra realization, not the energy model.
+Its advantage is that MINRES can reduce the joint residual using inexpensive
+H/S block actions without converging a separate structure-response problem for
+every orbital Krylov vector.
+
+The trust-region multiplier is accepted only when the explicit coupled KKT
+residual satisfies the inexact-Newton forcing condition and either
+$\lambda=0$ with an interior orbital step or
+
+$$
+\|\mathbf p\|_{\mathbf G}=\Delta,
+\qquad \lambda>0.
+$$
+
+For an indefinite reduced Hessian, the shifted reduced operator must also be
+positive semidefinite on the orbital tangent space.  A norm match alone is not
+a sufficient trust-region certificate.  This condition is obtained from the
+same Lanczos spectral information used by the coupled Krylov solve, rather
+than from a fixed iteration count or a molecule-dependent shift.
+
 ## 12. Verification requirements
 
 A revised implementation should satisfy the following system-independent tests.

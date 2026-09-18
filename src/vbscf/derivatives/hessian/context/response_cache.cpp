@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -38,6 +39,19 @@ void throw_if_nonfinite_vector(
           std::string(label) + " contains non-finite values");
     }
   }
+}
+
+bool weights_are_equal(const std::vector<double>& weights) {
+  if (weights.size() < 2) return false;
+  const double reference = weights.front();
+  const double tolerance = 64.0 * std::numeric_limits<double>::epsilon() *
+      std::max(1.0, std::abs(reference));
+  return std::all_of(
+      weights.begin() + 1,
+      weights.end(),
+      [&](double weight) {
+        return std::abs(weight - reference) <= tolerance;
+      });
 }
 
 AcceptedSelectedStateGeneralizedEigenResponseOperator
@@ -83,6 +97,8 @@ build_accepted_selected_state_generalized_eigen_response_operator(
       response_operator.structure_action
           ->apply(response_operator.selected_eigenvectors)
           .overlap;
+  response_operator.use_equal_weight_subspace_response = weights_are_equal(
+      accepted_point_context.normalized_state_weights);
   if (!accepted_point_context.full_structure_eigenvalues.empty()) {
     if (accepted_point_context.full_structure_eigenvalues.size() !=
             static_cast<std::size_t>(n_structures) ||
@@ -227,6 +243,67 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
   const double effective_relative_residual_tolerance = std::max(
       relative_residual_tolerance,
       requested_relative_residual_tolerance);
+  if (use_equal_weight_subspace_response) {
+    SelectedStateGeneralizedEigenDirectionalResponse result;
+    result.delta_selected_eigenvector_matrix.resize(n_structures, n_rhs);
+    result.delta_selected_eigenvalues.reserve(n_rhs);
+    result.linear_iterations.reserve(n_rhs);
+    for (int direction = 0; direction < n_directions; ++direction) {
+      const int first = direction * n_selected_states;
+      const auto delta_hamiltonian =
+          delta_hamiltonian_selected.middleCols(first, n_selected_states);
+      const auto delta_overlap =
+          delta_overlap_selected.middleCols(first, n_selected_states);
+      const xmvb::core::EigenSubspaceResponseResult response =
+          !block_root_indices.empty()
+          ? xmvb::core::
+              solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
+                  action,
+                  Eigen::Map<const Eigen::VectorXd>(
+                      full_eigenvalues->data(), n_structures),
+                  *full_eigenvectors,
+                  selected_root_indices,
+                  selected_eigenvalues,
+                  selected_eigenvectors,
+                  overlap_selected,
+                  delta_hamiltonian,
+                  delta_overlap,
+                  effective_relative_residual_tolerance)
+          : xmvb::core::solve_equal_weight_generalized_eigen_subspace_response(
+                action,
+                diagonal.hamiltonian,
+                diagonal.overlap,
+                selected_eigenvalues,
+                selected_eigenvectors,
+                overlap_selected,
+                delta_hamiltonian,
+                delta_overlap,
+                xmvb::core::EigenResponseOptions{
+                    n_structures + 1,
+                    effective_relative_residual_tolerance});
+      result.delta_selected_eigenvector_matrix.middleCols(
+          first, n_selected_states) = response.eigenvector_response;
+      for (int state = 0; state < n_selected_states; ++state) {
+        result.delta_selected_eigenvalues.push_back(
+            response.selected_matrix_response(state, state));
+      }
+      result.linear_iterations.insert(
+          result.linear_iterations.end(),
+          response.iterations.begin(),
+          response.iterations.end());
+      result.block_actions += response.block_actions;
+      result.max_relative_residual = std::max(
+          result.max_relative_residual,
+          response.relative_residual_norms.maxCoeff());
+    }
+    throw_if_nonfinite_matrix(
+        result.delta_selected_eigenvector_matrix,
+        "equal-weight outer-response directional selected subspace");
+    throw_if_nonfinite_vector(
+        result.delta_selected_eigenvalues,
+        "equal-weight outer-response directional selected energies");
+    return result;
+  }
   const xmvb::core::EigenResponseResult response =
       !block_root_indices.empty()
       ? xmvb::core::solve_generalized_eigen_response_from_full_spectrum(
