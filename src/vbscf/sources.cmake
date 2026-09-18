@@ -111,8 +111,10 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/coupled/cauchy.cpp
   vbscf/optimization/coupled/defect.cpp
   vbscf/optimization/coupled/forcing.cpp
+  vbscf/optimization/coupled/model_reduction.cpp
   vbscf/optimization/coupled/operator.cpp
   vbscf/optimization/coupled/preconditioner.cpp
+  vbscf/optimization/coupled/projected_trust.cpp
   vbscf/optimization/coupled/spectral.cpp
   vbscf/optimization/krylov/minres.cpp
   vbscf/optimization/globalization/line_search.cpp
