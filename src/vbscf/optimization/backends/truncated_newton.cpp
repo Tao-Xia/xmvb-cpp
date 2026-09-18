@@ -539,6 +539,10 @@ BackendRunResult run_truncated_newton_backend(
         current_projection.reduced_gradient.stableNorm();
     const double accepted_gradient_l2_norm =
         next_projection.reduced_gradient.stableNorm();
+    const bool gradient_progressed =
+        std::isfinite(source_gradient_l2_norm) &&
+        std::isfinite(accepted_gradient_l2_norm) &&
+        accepted_gradient_l2_norm < source_gradient_l2_norm;
     const double accepted_point_wall_time_seconds =
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - accepted_point_start_time)
@@ -553,14 +557,16 @@ BackendRunResult run_truncated_newton_backend(
                 ? TruncatedNewtonModelFidelity::DirectionallyExact
                 : TruncatedNewtonModelFidelity::CoreApproximate,
             true);
-    // Every accepted core-only model still lacks a full-Hessian certificate.
-    // Request one directional response at the next point; the admission rule
-    // above evaluates it only after the current core solve has accumulated
-    // enough work to amortize that response.  Thus cheap globalization steps
-    // remain core-only, while difficult large-subspace steps cannot suppress
-    // validation merely because their preceding boundary step reduced the
-    // gradient.
-    request_outer_response = !candidate_has_exact_outer_response;
+    const bool boundary_globalization_progressed =
+        truncated_newton_step.reached_boundary &&
+        !truncated_newton_step.encountered_negative_curvature &&
+        gradient_progressed &&
+        next_trust_radius > trust_radius;
+    // A deferred probe must not permanently suppress model validation.  Keep
+    // requesting it after an interior or radius-stagnating step; admission at
+    // the next point is still bounded by the measured core work available to
+    // amortize one outer direction.
+    request_outer_response = !boundary_globalization_progressed;
     TnhvpIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations;
     iteration_record.reduced_dimension = static_cast<int>(reduced_size);

@@ -2237,14 +2237,11 @@ rather than an unconstrained orbital-space secant fit.
 
 During trust-region globalization, the first core candidate does not require
 a precise Newton equation.  It can use zero response actions because the exact
-trial energy and gradient still guard acceptance.  After any accepted
-core-only candidate, the next solve requests a directional response
-certificate.  Equations 66uc and 66u still defer the actual response until the
-new core solve has accumulated enough work to amortize it.  Consequently,
-cheap boundary globalization remains core-only, whereas an expensive,
-unresolved core subproblem cannot suppress validation merely because the
-preceding step reduced the gradient.  This rule depends on model fidelity and
-measured work, not on a molecular or active-space cutoff.
+trial energy and gradient still guard acceptance.  An interior candidate,
+negative curvature, a rejected trial, or failure of an accepted boundary step
+to continue expanding the trust radius while reducing the gradient requests a
+response certificate at the next solve.  These events are properties of the
+optimization model; they introduce no molecular or active-space cutoff.
 
 Across accepted steps, the directly observed wall-time progress measure
 
