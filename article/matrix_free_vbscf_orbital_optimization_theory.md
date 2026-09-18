@@ -3210,6 +3210,43 @@ $$
 \|\mathbf p\|_{\mathbf G}\leq\Delta.
 $$
 
+An iterative structure eigensolver generally leaves a small accepted-point
+KKT defect.  In the same symmetric response coordinates it is
+
+$$
+\mathbf r_s
+=
+\sqrt{2w}\,\operatorname{vec}
+\left(
+\mathbf H\mathbf C-
+\mathbf S\mathbf C\boldsymbol\Lambda,
+\frac{1}{2}
+\left(
+\mathbf C^{\mathrm T}\mathbf S\mathbf C-mathbf I
+\right)
+\right).
+$$
+
+The exact coupled right-hand side is therefore
+$-(\mathbf g,\mathbf r_s)^{\mathrm T}$, rather than
+$-(\mathbf g,\mathbf 0)^{\mathrm T}$.  It is useful to remove this defect once
+per accepted orbital point by solving
+
+$$
+\mathcal C\mathbf q_0=-\mathbf r_s,
+\qquad
+\overline{\mathbf g}
+=
+\mathbf g+\mathbf B^{\mathrm T}\mathbf q_0.
+$$
+
+Writing the total response as $\mathbf q=\mathbf q_0+\mathbf z$ then restores
+the standard homogeneous response equation with orbital right-hand side
+$-\overline{\mathbf g}$.  This correction does not justify a loose Davidson
+solve: the preconditioned norm of $\mathbf r_s$ and its estimated energy
+correction must remain subordinate to the outer inexact-Newton and energy
+accuracy requirements.
+
 Here $\mathbf G$ is the nonredundant orbital metric.  The shift and the trust
 constraint act only on $\mathbf p$: the structure tangent is an induced
 first-order response, not an independently bounded physical displacement.
@@ -3227,6 +3264,57 @@ form therefore changes the linear-algebra realization, not the energy model.
 Its advantage is that MINRES can reduce the joint residual using inexpensive
 H/S block actions without converging a separate structure-response problem for
 every orbital Krylov vector.
+
+A symmetric positive-definite MINRES preconditioner can be constructed without
+inverting the indefinite response KKT block.  For selected state $i$, define
+
+$$
+\mathbf D_i
+=
+\operatorname{diag}
+\left[
+\max\left(
+|H_{aa}-E_iS_{aa}|,
+\epsilon_i
+\right)
+\right],
+$$
+
+where $\epsilon_i$ is only the floating-point roundoff floor at the diagonal
+scale.  With $\mathbf N=\mathbf S\mathbf C$ for the corresponding equal-weight
+cluster, set
+
+$$
+\mathbf R_i
+=
+\mathbf N^{\mathrm T}\mathbf D_i^{-1}\mathbf N,
+\qquad
+\mathbf L_i
+=
+\begin{bmatrix}
+\mathbf I&\mathbf 0\\
+\mathbf N^{\mathrm T}\mathbf D_i^{-1}&\mathbf I
+\end{bmatrix},
+$$
+
+and use the sign-flipped bordered factor
+
+$$
+\mathbf P_i
+=
+\mathbf L_i
+\begin{bmatrix}
+\mathbf D_i&\mathbf 0\\
+\mathbf 0&\mathbf R_i
+\end{bmatrix}
+\mathbf L_i^{\mathrm T}.
+$$
+
+This matrix is SPD, while retaining the coefficient--normalization coupling of
+the response KKT system.  The small $\mathbf R_i$ inverse needs only
+roundoff-scale numerical-rank protection.  Combining these response factors
+with the positive orbital preconditioner gives an SPD block preconditioner for
+the complete coupled MINRES iteration; no molecular threshold is introduced.
 
 The trust-region multiplier is accepted only when the explicit coupled KKT
 residual satisfies the inexact-Newton forcing condition and either

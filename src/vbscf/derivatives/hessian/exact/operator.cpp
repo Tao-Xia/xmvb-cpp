@@ -63,6 +63,11 @@ ExactHvpOperator::Diagnostics ExactHvpOperator::diagnostics() const {
   return state_->diagnostics();
 }
 
+bool ExactHvpOperator::represents_accepted_point(
+    const AcceptedPointContext& accepted_point) const noexcept {
+  return state_->represents_accepted_point(accepted_point);
+}
+
 Eigen::VectorXd ExactHvpOperator::apply_structure_response_adjoint(
     const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
     const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const {

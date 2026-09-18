@@ -240,4 +240,9 @@ int ExactHvpOperator::State::n_structures() const noexcept {
   return accepted_point_context_->n_structures;
 }
 
+bool ExactHvpOperator::State::represents_accepted_point(
+    const AcceptedPointContext& accepted_point) const noexcept {
+  return accepted_point_context_.get() == &accepted_point;
+}
+
 }  // namespace xmvb::vb

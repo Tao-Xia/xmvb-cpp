@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <stdexcept>
 #include <string>
@@ -15,6 +16,7 @@
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
+#include "vbscf/optimization/coupled/accepted_point.hpp"
 #include "vbscf/optimization/coupled/forcing.hpp"
 #include "vbscf/optimization/krylov/minres.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
@@ -233,11 +235,18 @@ int main(int argc, char** argv) {
       accepted.second_order_context->prepared_active_space
           .active_space_two_electron_result.dense_ao_pair_products.resize(0, 0);
     }
-    xmvb::vb::ExactHvpOperator exact_hvp(
-        accepted.second_order_context,
-        &input,
-        layout,
-        &chart);
+    const auto exact_hvp_owner =
+        std::make_shared<xmvb::vb::ExactHvpOperator>(
+            accepted.second_order_context,
+            &input,
+            layout,
+            &chart);
+    const xmvb::vb::ExactHvpOperator& exact_hvp = *exact_hvp_owner;
+    const xmvb::vb::AcceptedPointCoupledModel coupled_model =
+        xmvb::vb::make_accepted_point_coupled_model(
+            *accepted.second_order_context,
+            exact_hvp_owner,
+            chart.reduced_size());
     const xmvb::vb::SelectedStructureDirection structure_direction =
         exact_hvp.apply_selected_structure_direction(direction);
     const int n_selected_states = static_cast<int>(
@@ -254,10 +263,53 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "orbital-to-structure action returned invalid selected-state images");
     }
-    const xmvb::vb::SelectedSubspaceResponseLayout response_layout(
-        n_structures,
-        {{n_selected_states,
-          accepted.second_order_context->normalized_state_weights.front()}});
+    const xmvb::vb::SelectedSubspaceResponseLayout& response_layout =
+        coupled_model.newton_operator.response_layout();
+    if (coupled_model.structure_kkt_residual.size() !=
+            response_layout.response_size() ||
+        !coupled_model.structure_kkt_residual.allFinite()) {
+      throw std::runtime_error(
+          "accepted-point structure KKT residual is invalid");
+    }
+    const std::vector<xmvb::vb::SelectedStructureResponse>
+        accepted_subspace_action =
+            exact_hvp.apply_selected_structure_response_batch(
+                {xmvb::vb::SelectedStructureResponse{
+                    accepted.second_order_context
+                        ->selected_state_eigenvectors,
+                    Eigen::MatrixXd::Zero(
+                        n_selected_states,
+                        n_selected_states)}});
+    std::vector<xmvb::vb::ClusterResponse> reference_kkt_clusters;
+    reference_kkt_clusters.reserve(response_layout.n_clusters());
+    int first_selected = 0;
+    for (int cluster = 0;
+         cluster < response_layout.n_clusters();
+         ++cluster) {
+      const int width = response_layout.cluster(cluster).n_states;
+      reference_kkt_clusters.push_back(xmvb::vb::ClusterResponse{
+          accepted_subspace_action.front().coefficients.middleCols(
+              first_selected,
+              width),
+          0.5 *
+              (accepted_subspace_action.front().multipliers.block(
+                   first_selected,
+                   first_selected,
+                   width,
+                   width) -
+               Eigen::MatrixXd::Identity(width, width))});
+      first_selected += width;
+    }
+    const Eigen::VectorXd reference_structure_kkt_residual =
+        response_layout.pack(reference_kkt_clusters);
+    const double factory_structure_kkt_error =
+        (coupled_model.structure_kkt_residual -
+         reference_structure_kkt_residual).norm() /
+        std::max(1.0, reference_structure_kkt_residual.norm());
+    if (factory_structure_kkt_error > 1.0e-12) {
+      throw std::runtime_error(
+          "accepted-point factory packed the structure KKT residual incorrectly");
+    }
     const Eigen::MatrixXd orbital_direction = direction;
     const Eigen::MatrixXd coupling_forcing =
         xmvb::vb::apply_exact_orbital_to_selected_subspace(
@@ -287,6 +339,15 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "coupled orbital-to-subspace action is not reproducible");
     }
+    const Eigen::MatrixXd factory_coupling =
+        coupled_model.newton_operator.apply_orbital_to_response(
+            orbital_direction);
+    const double factory_coupling_error =
+        (factory_coupling - coupling_forcing).norm() / forcing_scale;
+    if (factory_coupling_error > 1.0e-12) {
+      throw std::runtime_error(
+          "accepted-point coupled factory changed the orbital coupling");
+    }
     const Eigen::VectorXd response_probe = Eigen::VectorXd::LinSpaced(
         response_layout.response_size(), -0.3, 0.2);
     const Eigen::MatrixXd response_probe_block = response_probe;
@@ -295,6 +356,16 @@ int main(int argc, char** argv) {
             exact_hvp,
             response_layout,
             response_probe_block);
+    const Eigen::MatrixXd factory_adjoint =
+        coupled_model.newton_operator.apply_response_to_orbital(
+            response_probe_block);
+    const double factory_adjoint_error =
+        (factory_adjoint - adjoint_image).norm() /
+        std::max(1.0, adjoint_image.norm());
+    if (factory_adjoint_error > 1.0e-12) {
+      throw std::runtime_error(
+          "accepted-point coupled factory changed the adjoint coupling");
+    }
     Eigen::VectorXd coefficient_probe = response_probe;
     coefficient_probe.segment(
         response_layout.multiplier_offset(0),
@@ -363,6 +434,16 @@ int main(int argc, char** argv) {
             exact_hvp,
             response_layout,
             response_hessian_probes);
+    const Eigen::MatrixXd factory_response_hessian =
+        coupled_model.newton_operator.apply_response_hessian(
+            response_hessian_probes);
+    const double factory_response_hessian_error =
+        (factory_response_hessian - response_hessian_images).norm() /
+        std::max(1.0, response_hessian_images.norm());
+    if (factory_response_hessian_error > 1.0e-12) {
+      throw std::runtime_error(
+          "accepted-point coupled factory changed the response Hessian");
+    }
     const double response_hessian_symmetry_error = relative_bilinear_error(
         response_hessian_probes.col(0).dot(
             response_hessian_images.col(1)),
@@ -412,6 +493,25 @@ int main(int argc, char** argv) {
     orbital_a_probe.col(1) = -0.375 * direction;
     const Eigen::MatrixXd analytic_orbital_a_block =
         exact_hvp.apply_unrelaxed_orbital_hessian_batch(orbital_a_probe);
+    const Eigen::MatrixXd factory_orbital_a =
+        coupled_model.newton_operator.apply_orbital_hessian(orbital_a_probe);
+    const double factory_orbital_a_error =
+        (factory_orbital_a - analytic_orbital_a_block).norm() /
+        std::max(1.0, analytic_orbital_a_block.norm());
+    if (factory_orbital_a_error > 1.0e-12) {
+      throw std::runtime_error(
+          "accepted-point coupled factory changed the orbital Hessian");
+    }
+    const Eigen::MatrixXd factory_metric =
+        coupled_model.newton_operator.apply_orbital_metric(
+            orbital_a_probe);
+    const double factory_metric_error =
+        (factory_metric - orbital_a_probe).norm() /
+        std::max(1.0, orbital_a_probe.norm());
+    if (factory_metric_error > 1.0e-15) {
+      throw std::runtime_error(
+          "accepted-point coupled factory default metric is not Euclidean");
+    }
     const Eigen::MatrixXd eliminated_response_adjoint =
         xmvb::vb::apply_exact_selected_subspace_to_orbital(
             exact_hvp,
@@ -623,6 +723,20 @@ int main(int argc, char** argv) {
               << multiplier_adjoint_error << '\n'
               << "coupling_total_adjoint_error = "
               << coupling_adjoint_error << '\n'
+              << "accepted_structure_kkt_residual_norm = "
+              << coupled_model.structure_kkt_residual.norm() << '\n'
+              << "factory_structure_kkt_error = "
+              << factory_structure_kkt_error << '\n'
+              << "factory_orbital_a_error = "
+              << factory_orbital_a_error << '\n'
+              << "factory_coupling_error = "
+              << factory_coupling_error << '\n'
+              << "factory_adjoint_error = "
+              << factory_adjoint_error << '\n'
+              << "factory_response_hessian_error = "
+              << factory_response_hessian_error << '\n'
+              << "factory_metric_error = "
+              << factory_metric_error << '\n'
               << "response_hessian_symmetry_error = "
               << response_hessian_symmetry_error << '\n'
               << "response_solve_iterations = "

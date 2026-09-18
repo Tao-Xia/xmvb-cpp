@@ -55,6 +55,8 @@ struct ExactHvpOperator::State {
 
   const std::vector<double>& selected_state_weights() const noexcept;
   int n_structures() const noexcept;
+  bool represents_accepted_point(
+      const AcceptedPointContext& accepted_point) const noexcept;
 
   bool supports_analytic_core_model() const noexcept;
   Diagnostics diagnostics() const;

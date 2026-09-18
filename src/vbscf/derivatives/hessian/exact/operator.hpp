@@ -210,6 +210,10 @@ public:
   /** @brief Number of structures at the accepted orbital point. */
   int n_structures() const noexcept;
 
+  /** @brief Whether this operator owns the specified accepted-point context. */
+  bool represents_accepted_point(
+      const AcceptedPointContext& accepted_point) const noexcept;
+
   bool supports_analytic_core_model() const noexcept;
 
   Diagnostics diagnostics() const;
