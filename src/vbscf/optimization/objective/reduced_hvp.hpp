@@ -25,7 +25,8 @@ class ExactReducedHvp final : public ReducedHvp {
 public:
   ExactReducedHvp(
       const VbScfObjective& objective,
-      const OrbitalChart& current_space);
+      const OrbitalChart& current_space,
+      double response_relative_residual_tolerance = 0.0);
 
   Eigen::VectorXd apply(const Eigen::VectorXd& reduced_direction) override;
   Eigen::MatrixXd apply_batch(
@@ -41,6 +42,7 @@ public:
 
 private:
   ExactHvpOperator exact_operator_;
+  double response_relative_residual_tolerance_ = 0.0;
   std::size_t core_direction_count_ = 0;
   std::size_t outer_response_direction_count_ = 0;
 };

@@ -29,7 +29,14 @@ void write_tnhvp_trace(
       << "\tsecant_correction_size\trejected_trials"
       << "\thvp_directions\thvp_batches\tcore_hvp_directions"
       << "\touter_response_directions\tsubproblems\thvp_seconds"
-      << "\touter_response_seconds\tgradient_log_progress_per_second"
+      << "\touter_response_seconds\tresponse_active_integral_seconds"
+      << "\tresponse_structure_matrix_seconds\tresponse_eigensystem_seconds"
+      << "\tresponse_active_gradient_seconds\tresponse_orbital_pullback_seconds"
+      << "\trequested_response_relative_residual_tolerance"
+      << "\tstructure_response_block_actions"
+      << "\tmax_structure_response_iterations"
+      << "\tmax_structure_response_relative_residual"
+      << "\tgradient_log_progress_per_second"
       << "\tused_outer_response\tresponse_probe_performed"
       << "\tresponse_probe_relative_residual\tresponse_work_ratio"
       << "\tresponse_scale_affordable\tresponse_deferred_for_cost"
@@ -58,6 +65,15 @@ void write_tnhvp_trace(
         << step.subproblem_count << '\t'
         << step.hvp_wall_time_seconds << '\t'
         << step.outer_response_wall_time_seconds << '\t'
+        << step.response_active_integral_wall_time_seconds << '\t'
+        << step.response_structure_matrix_wall_time_seconds << '\t'
+        << step.response_eigensystem_wall_time_seconds << '\t'
+        << step.response_active_gradient_wall_time_seconds << '\t'
+        << step.response_orbital_pullback_wall_time_seconds << '\t'
+        << step.requested_response_relative_residual_tolerance << '\t'
+        << step.structure_response_block_actions << '\t'
+        << step.max_structure_response_iterations << '\t'
+        << step.max_structure_response_relative_residual << '\t'
         << step.gradient_log_progress_per_second << '\t'
         << (step.used_outer_response ? 1 : 0) << '\t'
         << (step.response_probe_performed ? 1 : 0) << '\t'

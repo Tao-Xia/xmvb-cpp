@@ -124,6 +124,8 @@ BackendRunResult run_truncated_newton_backend(
     final_projected_gradient_inf_norm = reduced_gradient_inf_norm;
     final_projected_gradient_l2_norm =
         current_projection.reduced_gradient.norm();
+    const double newton_forcing_term = inexact_newton_forcing_term(
+        final_projected_gradient_l2_norm);
     if (run_result.n_iterations == 0 &&
         reduced_gradient_inf_norm < options.gradient_tolerance) {
       result->converged = true;
@@ -142,7 +144,10 @@ BackendRunResult run_truncated_newton_backend(
   
     if (accepted_point_hvp == nullptr) {
       accepted_point_hvp =
-          std::make_unique<ExactReducedHvp>(*objective, current_space);
+          std::make_unique<ExactReducedHvp>(
+              *objective,
+              current_space,
+              newton_forcing_term * newton_forcing_term);
     }
     ExactReducedHvp& exact_hvp = *accepted_point_hvp;
     if (!exact_hvp.supports_analytic_core_model()) {
@@ -332,8 +337,7 @@ BackendRunResult run_truncated_newton_backend(
               trust_radius,
               options.energy_tolerance,
               options.gradient_tolerance,
-              inexact_newton_forcing_term(
-                  current_projection.reduced_gradient.stableNorm()),
+              newton_forcing_term,
               max_subspace_dimension,
               operator_hvp,
               accepted_point_preconditioner.get(),
@@ -635,6 +639,30 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.outer_response_wall_time_seconds =
         result->matrix_free_outer_response_wall_time_seconds -
         initial_outer_response_wall_time_for_current_point;
+    const auto final_hvp_diagnostics = exact_hvp.diagnostics();
+    iteration_record.response_active_integral_wall_time_seconds =
+        final_hvp_diagnostics
+            .outer_response_active_space_integrals_wall_time_seconds;
+    iteration_record.response_structure_matrix_wall_time_seconds =
+        final_hvp_diagnostics
+            .outer_response_structure_matrices_wall_time_seconds;
+    iteration_record.response_eigensystem_wall_time_seconds =
+        final_hvp_diagnostics.outer_response_eigensystem_wall_time_seconds;
+    iteration_record.response_active_gradient_wall_time_seconds =
+        final_hvp_diagnostics
+            .outer_response_active_gradient_wall_time_seconds;
+    iteration_record.response_orbital_pullback_wall_time_seconds =
+        final_hvp_diagnostics
+            .outer_response_orbital_pullback_wall_time_seconds;
+    iteration_record.requested_response_relative_residual_tolerance =
+        newton_forcing_term * newton_forcing_term;
+    iteration_record.structure_response_block_actions =
+        final_hvp_diagnostics.structure_response_block_actions -
+        trial_initial_hvp_diagnostics.structure_response_block_actions;
+    iteration_record.max_structure_response_iterations =
+        final_hvp_diagnostics.max_structure_response_iterations;
+    iteration_record.max_structure_response_relative_residual =
+        final_hvp_diagnostics.max_structure_response_relative_residual;
     iteration_record.source_gradient_l2_norm = source_gradient_l2_norm;
     iteration_record.accepted_gradient_l2_norm = accepted_gradient_l2_norm;
     if (source_gradient_l2_norm > 0.0 &&
@@ -666,8 +694,7 @@ BackendRunResult run_truncated_newton_backend(
         truncated_newton_step.model_kkt_converged;
     iteration_record.subproblem_stopped_by_work_budget =
         stopped_by_subspace_work_budget(truncated_newton_step.stop_reason);
-    iteration_record.forcing_term =
-        inexact_newton_forcing_term(iteration_record.source_gradient_l2_norm);
+    iteration_record.forcing_term = newton_forcing_term;
     if (candidate_has_exact_outer_response &&
         truncated_newton_step.reduced_hessian_times_step.size() ==
             current_projection.reduced_gradient.size() &&

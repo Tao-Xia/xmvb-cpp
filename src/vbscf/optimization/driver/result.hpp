@@ -35,6 +35,15 @@ struct TnhvpIterationRecord {
   std::size_t subproblem_count = 0;
   double hvp_wall_time_seconds = 0.0;
   double outer_response_wall_time_seconds = 0.0;
+  double response_active_integral_wall_time_seconds = 0.0;
+  double response_structure_matrix_wall_time_seconds = 0.0;
+  double response_eigensystem_wall_time_seconds = 0.0;
+  double response_active_gradient_wall_time_seconds = 0.0;
+  double response_orbital_pullback_wall_time_seconds = 0.0;
+  double requested_response_relative_residual_tolerance = 0.0;
+  std::size_t structure_response_block_actions = 0;
+  int max_structure_response_iterations = 0;
+  double max_structure_response_relative_residual = 0.0;
   double gradient_log_progress_per_second = 0.0;
   bool used_outer_response = false;
   bool response_probe_performed = false;

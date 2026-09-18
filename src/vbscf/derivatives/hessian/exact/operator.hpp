@@ -24,6 +24,8 @@ struct HvpComponents {
   bool fixed_upstream_pullback = true;
   bool local_active_response = true;
   bool structure_response = true;
+  /** Requested inexact structure-response tolerance; zero keeps final accuracy. */
+  double response_relative_residual_tolerance = 0.0;
 };
 
 /**

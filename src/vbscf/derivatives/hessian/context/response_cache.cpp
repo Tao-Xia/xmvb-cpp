@@ -153,16 +153,19 @@ AcceptedOuterResponseContext build_accepted_outer_response_context(
 
 SelectedStateGeneralizedEigenDirectionalResponse
 AcceptedSelectedStateGeneralizedEigenResponseOperator::apply(
-    const SelectedStateDirectionalStructureImages& directional_images) const {
+    const SelectedStateDirectionalStructureImages& directional_images,
+    double requested_relative_residual_tolerance) const {
   return apply_direction_block(
       directional_images.delta_hamiltonian_selected,
-      directional_images.delta_overlap_selected);
+      directional_images.delta_overlap_selected,
+      requested_relative_residual_tolerance);
 }
 
 SelectedStateGeneralizedEigenDirectionalResponse
 AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
-    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected) const {
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    double requested_relative_residual_tolerance) const {
   if (structure_action == nullptr) {
     throw std::invalid_argument(
         "accepted selected-state eigen-response operator has no structure action");
@@ -215,6 +218,15 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
             std::move(images.hamiltonian),
             std::move(images.overlap)};
       };
+  if (!std::isfinite(requested_relative_residual_tolerance) ||
+      requested_relative_residual_tolerance < 0.0 ||
+      requested_relative_residual_tolerance >= 1.0) {
+    throw std::invalid_argument(
+        "requested eigen-response tolerance must be finite in [0, 1)");
+  }
+  const double effective_relative_residual_tolerance = std::max(
+      relative_residual_tolerance,
+      requested_relative_residual_tolerance);
   const xmvb::core::EigenResponseResult response =
       !block_root_indices.empty()
       ? xmvb::core::solve_generalized_eigen_response_from_full_spectrum(
@@ -228,7 +240,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
           block_overlap_selected,
           delta_hamiltonian_selected,
           delta_overlap_selected,
-          relative_residual_tolerance)
+          effective_relative_residual_tolerance)
       : xmvb::core::solve_generalized_eigen_response(
           action,
           diagonal.hamiltonian,
@@ -240,7 +252,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
           delta_overlap_selected,
           xmvb::core::EigenResponseOptions{
               n_structures + 1,
-              relative_residual_tolerance});
+              effective_relative_residual_tolerance});
 
   SelectedStateGeneralizedEigenDirectionalResponse result;
   result.delta_selected_eigenvector_matrix = response.eigenvector_response;

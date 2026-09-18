@@ -45,7 +45,8 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   double relative_residual_tolerance = 0.0;
 
   SelectedStateGeneralizedEigenDirectionalResponse apply(
-      const SelectedStateDirectionalStructureImages& directional_images) const;
+      const SelectedStateDirectionalStructureImages& directional_images,
+      double requested_relative_residual_tolerance = 0.0) const;
 
   /**
    * @brief Solves several directional responses as one state/direction block.
@@ -55,7 +56,8 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
    */
   SelectedStateGeneralizedEigenDirectionalResponse apply_direction_block(
       const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
-      const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected) const;
+      const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+      double requested_relative_residual_tolerance = 0.0) const;
 };
 
 /**

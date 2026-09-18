@@ -451,7 +451,9 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             std::chrono::steady_clock::now();
         local_directional_selected_state_response =
             outer_response_context()
-                .selected_state_eigen_response_operator.apply(images);
+                .selected_state_eigen_response_operator.apply(
+                    images,
+                    components.response_relative_residual_tolerance);
         apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
             detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
         directional_selected_state_response =

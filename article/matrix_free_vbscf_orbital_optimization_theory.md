@@ -2907,6 +2907,147 @@ residual 0.207, whereas the core solve reaches 0.675 and its step has complete
 residual 0.660.  A gradient-direction response test therefore systematically
 misses the important physics.
 
+The outer action was further separated into the fixed-selected-state
+active-gradient derivative and the structure-state derivative,
+
+$$
+\mathbf H^{\mathrm o}\mathbf v
+=\mathbf H^{\mathrm{loc}}\mathbf v
++\mathbf H^{\mathrm{str}}\mathbf v.
+$$
+
+On the same six-direction subspace, the relative skew norms of
+$\mathbf H^{\mathrm{loc}}$ and $\mathbf H^{\mathrm{str}}$ are
+$1.04\times10^{-13}$ and $2.11\times10^{-11}$, respectively, and the
+projected additivity defect is $1.18\times10^{-14}$.  Thus both components are
+linear and self-adjoint to numerical precision.  Nevertheless, on the softest
+sampled direction,
+
+$$
+\frac{\lVert\mathbf H^{\mathrm{loc}}\mathbf v\rVert}
+     {\lVert\mathbf H\mathbf v\rVert}=17.91,
+\qquad
+\frac{\lVert\mathbf H^{\mathrm{str}}\mathbf v\rVert}
+     {\lVert\mathbf H\mathbf v\rVert}=18.27,
+$$
+
+while their signed Rayleigh contributions are
+
+$$
+\mathbf v^{\mathrm T}\mathbf H^{\mathrm{loc}}\mathbf v
+=-1.59338\times10^{-2},
+\qquad
+\mathbf v^{\mathrm T}\mathbf H^{\mathrm{str}}\mathbf v
+=-3.96054\times10^{-5}.
+$$
+
+The small structure Rayleigh quotient therefore does not imply a negligible
+structure action: two large response vectors cancel in components orthogonal
+to $\mathbf v$.  Any approximation that retains only one response component
+destroys this vector cancellation even if it reproduces the scalar curvature
+along one direction.
+
+Single-direction timings on 32 CPU cores quantify the associated trade-off.
+The computational core, a fused core plus local-active action, and the complete
+HVP require 2.19, 3.38, and 3.83 s, respectively.  Replacing the core operator
+by the fused core plus local-active action is therefore only 12% cheaper than
+the complete HVP and 54% more expensive than the core.  More importantly, its
+first three accepted steps leave the projected-gradient infinity norm at
+$2.15\times10^{-2}$ after 3 min 42 s, essentially reproducing the initial
+core-only stagnation.  This experimental path was removed.  The result rules
+out component deletion as a useful response approximation.
+
+A complementary forced-complete-HVP experiment separates the outer optimizer
+from the fidelity policy.  The first exact subproblem uses six HVP directions
+in three width-two calls.  Its relative KKT residual is 0.316, below the
+inexact-Newton forcing term 0.411, and the trial is accepted without rejection
+with trust ratio 0.956.  In one outer step the energy decreases by
+$1.25703\times10^{-3}\ E_{\mathrm h}$ and the projected-gradient infinity
+norm decreases from $2.17\times10^{-2}$ to $5.08\times10^{-3}$.  A second
+complete-HVP step reaches $2.00\times10^{-3}$.  The core-only production path,
+by contrast, remains at $3.63\times10^{-3}$ after ten accepted steps.  This
+establishes that the trust-region/Krylov framework can generate the required
+near-Newton direction when the complete response curvature is present.
+
+The direct complete-HVP route is not yet competitive in wall time.  Two steps
+use 28 HVP directions in 14 width-two calls, 324.6 s of HVP time, 289.5 s of
+outer-response time, and 370.1 s end to end; peak RSS is 2.22 GiB.  The first
+step alone costs 71.9 s in HVP actions, of which 63.9 s is outer response.
+For this RI input the current block interface evaluates its columns through
+the scalar factor-native path.  A same-direction width-two check is exact to
+reported precision and gives only a 1.21-fold wall-time speedup, from 4.04 s
+per scalar action to 3.34 s per direction in the block.  The substantially
+higher average cost on residual Krylov directions must therefore be profiled
+separately; it cannot be attributed to a numerical block-action discrepancy.
+
+The apparent direction dependence was traced to a diagnostic mismatch rather
+than to the orbital direction.  The fixed-point benchmark initially called an
+evaluator overload that defaulted to dense structure diagonalization and
+therefore retained the complete eigenspectrum.  It ignored the input keyword
+`eigensolver=davidson`.  After the benchmark was corrected to propagate the
+requested eigensolver, one Davidson complete HVP costs 13.05 s, including
+9.22 s in the eigensystem response.  The shifted response equation takes 84
+linear iterations and 87 H/S block actions to reach relative residual
+$6.76\times10^{-6}$.  The corresponding dense/full-spectrum response takes
+approximately 0.11 s and no iterative response solve.  Thus Davidson is not
+intrinsically slower for the ground-state eigenproblem; the expensive stage is
+the repeatedly overconverged directional shifted solve used inside the HVP.
+
+The nested solves should obey one accuracy hierarchy.  Let $\eta_k$ be the
+inexact-Newton forcing term at accepted orbital point $k$, and let
+$\tau_{\mathrm{final}}$ denote the response tolerance implied by the final
+structure energy and gradient requirements.  The implemented response target
+is
+
+$$
+\tau_{\mathrm{resp},k}
+=\max\!\left(\tau_{\mathrm{final}},\eta_k^2\right).
+$$
+
+Because the current forcing sequence satisfies
+$\eta_k=O(\sqrt{\lVert\mathbf g_k\rVert})$ away from its numerical bounds,
+the directional structure solve has error
+$O(\lVert\mathbf g_k\rVert)$ far from convergence and automatically tightens
+to the requested final accuracy near stationarity.  No molecular dimension,
+element identity, or iteration number enters this rule.  Strict response
+accuracy is retained for isolated candidate-certification probes; the relaxed
+tolerance is used only inside an inexact complete-HVP Krylov solve.
+
+On the 524-structure case the first-step requested tolerance is 0.1686.  The
+HVP time decreases from 69.6 to 26.3 s, eigensystem-response time from 53.5 to
+10.5 s, outer-response time from 61.1 to 17.8 s, and end-to-end time from
+104.7 to 58.5 s.  The accepted energy decrease changes only from
+$1.25703\times10^{-3}$ to $1.25613\times10^{-3}\ E_{\mathrm h}$, and the
+projected-gradient infinity norm changes from $5.08\times10^{-3}$ to
+$5.12\times10^{-3}$.  After two steps the tolerance has automatically
+tightened to 0.0541; wall time is 184.9 s rather than 370.1 s, while the
+projected-gradient infinity norm is $1.94\times10^{-3}$ rather than
+$2.00\times10^{-3}$.  The relaxed nested solve therefore preserves the outer
+trajectory while approximately halving the complete-HVP time over the first
+two accepted steps.
+
+The five-step forced-complete trajectory clarifies the remaining limitation.
+At step 3 the projected-gradient infinity norm reaches
+$7.28\times10^{-4}$ and the energy is $-457.0979184159\ E_{\mathrm h}$, but
+the energy change is still $5.65\times10^{-5}\ E_{\mathrm h}$.  Subsequent
+steps lower the energy further to $-457.0980471425\ E_{\mathrm h}$, far below
+the ten-step core value $-457.0976648047\ E_{\mathrm h}$, while the fifth-step
+gradient is $1.12\times10^{-3}$.  The run is therefore exploring a materially
+lower valley rather than merely polishing the old core trajectory.
+
+Steps 3 and 4 both use 34 directions, including the two-direction interior
+pilot beyond the nominal 32-direction work tranche.  Their KKT relative
+residuals are 0.399 and 0.916, compared with forcing terms 0.135 and 0.0936;
+both stop by the subspace work budget.  They consume 198 and 224 s of HVP time,
+respectively.  Hence the remaining loss of local Newton behavior is no longer
+caused by the accuracy of an individual Davidson response solve.  It is caused
+by an orbital Krylov space that becomes too large before resolving the coupled
+Newton residual.  Simply removing the work limit would improve the formal
+subproblem residual but would not be a competitive algorithm: the five-step
+run already costs 1068 s.  The next optimization target is therefore a
+response-aware preconditioner or coupled orbital--structure block solve that
+reduces the required subspace dimension, not a larger fixed Krylov budget.
+
 An auxiliary three-root Davidson solve places the unselected boundary root
 approximately $0.205\ E_{\mathrm h}$ above the second selected root at the
 initial point.  The cancellation is consequently not attributable to a
@@ -2926,6 +3067,44 @@ residual and used to create new search directions.  A practical method must
 bound this enrichment by measured wall time and reuse block structure-response
 work; simply applying the complete HVP to every Krylov vector remains too
 expensive for the large-active-space regime.
+
+Equivalently, let $\mathbf p$ denote the orbital step and $\mathbf z$ the
+combined tangent response of the selected structure states.  The coupled
+Newton equation has the schematic saddle-point form
+
+$$
+\begin{bmatrix}
+\mathbf A & \mathbf B^{\mathrm T}\\
+\mathbf B & \mathbf C
+\end{bmatrix}
+\begin{bmatrix}
+\mathbf p\\
+\mathbf z
+\end{bmatrix}
+=-
+\begin{bmatrix}
+\mathbf g\\
+\mathbf 0
+\end{bmatrix},
+$$
+
+where $\mathbf A$ contains the fixed-state orbital curvature, $\mathbf B$ is
+the orbital--structure coupling, and $\mathbf C$ is the projected
+structure-state Hessian.  Explicit elimination gives the relaxed orbital
+operator
+
+$$
+\mathbf H_{\mathrm{rel}}
+=\mathbf A-\mathbf B^{\mathrm T}\mathbf C^{\dagger}\mathbf B.
+$$
+
+The present complete HVP realizes this Schur-complement physics through a new
+directional response calculation for every orbital Krylov vector.  A coupled
+matrix-free block solve is the principled route to retain the cancellation
+without repeatedly converging an eliminated response problem.  It must be
+constructed in the normalized structure tangent space, preserve the
+state-average weights, and use direct H/S actions so that neither a dense
+structure Hessian nor a dense orbital Hessian is formed.
 
 ## 12. Verification requirements
 

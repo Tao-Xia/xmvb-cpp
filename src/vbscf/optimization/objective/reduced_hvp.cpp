@@ -1,5 +1,6 @@
 #include "vbscf/optimization/objective/reduced_hvp.hpp"
 
+#include <cmath>
 #include <sstream>
 #include <stdexcept>
 
@@ -27,19 +28,36 @@ Eigen::MatrixXd ReducedHvp::apply_batch(
 
 ExactReducedHvp::ExactReducedHvp(
     const VbScfObjective& objective,
-    const OrbitalChart& current_space)
+    const OrbitalChart& current_space,
+    double response_relative_residual_tolerance)
     : exact_operator_(
           objective.second_order_context(),
           &objective.input(),
           SparseParameterLayout(
               objective.input().orbital_preparation_input),
-          &current_space) {}
+          &current_space),
+      response_relative_residual_tolerance_(
+          response_relative_residual_tolerance) {
+  if (!std::isfinite(response_relative_residual_tolerance_) ||
+      response_relative_residual_tolerance_ < 0.0 ||
+      response_relative_residual_tolerance_ >= 1.0) {
+    throw std::invalid_argument(
+        "reduced HVP response tolerance must be finite in [0, 1)");
+  }
+}
 
 Eigen::VectorXd ExactReducedHvp::apply(
     const Eigen::VectorXd& reduced_direction) {
   ++core_direction_count_;
   ++outer_response_direction_count_;
-  return exact_operator_.apply_reduced(reduced_direction);
+  return exact_operator_.apply_reduced(
+      reduced_direction,
+      {.direct_core_response = true,
+       .fixed_upstream_pullback = true,
+       .local_active_response = true,
+       .structure_response = true,
+       .response_relative_residual_tolerance =
+           response_relative_residual_tolerance_});
 }
 
 Eigen::MatrixXd ExactReducedHvp::apply_batch(
@@ -48,7 +66,14 @@ Eigen::MatrixXd ExactReducedHvp::apply_batch(
       static_cast<std::size_t>(reduced_directions.cols());
   core_direction_count_ += n_directions;
   outer_response_direction_count_ += n_directions;
-  return exact_operator_.apply_reduced_batch(reduced_directions);
+  return exact_operator_.apply_reduced_batch(
+      reduced_directions,
+      {.direct_core_response = true,
+       .fixed_upstream_pullback = true,
+       .local_active_response = true,
+       .structure_response = true,
+       .response_relative_residual_tolerance =
+           response_relative_residual_tolerance_});
 }
 
 Eigen::VectorXd ExactReducedHvp::apply_core(

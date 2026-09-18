@@ -38,6 +38,7 @@ namespace {
 enum class BenchmarkComponent {
   Full,
   CoreOnly,
+  ActiveRelaxedCore,
   OuterOnly,
   LocalActiveOnly,
   StructureOnly,
@@ -73,6 +74,9 @@ struct AcceptedPointBenchmarkContext {
   double nuclear_repulsion_energy = 0.0;
   std::vector<int> selected_states;
   std::vector<double> state_weights;
+  xmvb::vb::StructureEigensolver structure_eigensolver =
+      xmvb::vb::StructureEigensolver::Davidson;
+  xmvb::vb::StructureSolveAccuracy structure_solve_accuracy;
 };
 
 struct BenchmarkMeasurement {
@@ -168,7 +172,8 @@ void print_usage() {
   std::cerr << " [--spectral-audit-trust-radius value|0=disabled]\n";
   std::cerr << " [--dense-reference-block-width count|0=disabled]\n";
   std::cerr << " [--block-width count|0=disabled]\n";
-  std::cerr << " [--components full,core,outer,local,structure]\n";
+  std::cerr
+      << " [--components full,core,active-relaxed,outer,local,structure]\n";
   std::cerr << " [--stream-pair-products true|false]\n";
   std::cerr << " [--orbital-value-table-bin path]\n";
 }
@@ -194,6 +199,8 @@ std::vector<BenchmarkComponent> parse_components(const std::string& value) {
       component = BenchmarkComponent::Full;
     } else if (name == "core") {
       component = BenchmarkComponent::CoreOnly;
+    } else if (name == "active-relaxed") {
+      component = BenchmarkComponent::ActiveRelaxedCore;
     } else if (name == "outer") {
       component = BenchmarkComponent::OuterOnly;
     } else if (name == "local") {
@@ -307,6 +314,8 @@ const char* benchmark_component_name(BenchmarkComponent component) {
       return "full";
     case BenchmarkComponent::CoreOnly:
       return "core_only";
+    case BenchmarkComponent::ActiveRelaxedCore:
+      return "active_relaxed_core";
     case BenchmarkComponent::OuterOnly:
       return "outer_only";
     case BenchmarkComponent::LocalActiveOnly:
@@ -348,6 +357,13 @@ Eigen::VectorXd apply_component(
             .fixed_upstream_pullback = true,
             .local_active_response = false,
             .structure_response = false});
+    case BenchmarkComponent::ActiveRelaxedCore:
+      return exact_operator.apply_reduced(
+          reduced_direction,
+          {.direct_core_response = true,
+           .fixed_upstream_pullback = true,
+           .local_active_response = true,
+           .structure_response = false});
     case BenchmarkComponent::OuterOnly:
       return exact_operator.apply_reduced(
           reduced_direction,
@@ -388,6 +404,7 @@ AcceptedPointBenchmarkContext build_benchmark_context(
   context.parameter_view =
       xmvb::vb::SparseParameterLayout(context.input.orbital_preparation_input);
   context.nuclear_repulsion_energy = load_result.nuclear_repulsion_energy;
+  context.structure_eigensolver = load_result.structure_eigensolver;
   context.selected_states.resize(load_result.state_average_count);
   std::iota(
       context.selected_states.begin(), context.selected_states.end(), 0);
@@ -411,7 +428,10 @@ AcceptedPointBenchmarkContext build_benchmark_context(
           context.input,
           context.selected_states,
           context.state_weights,
-          load_result.nuclear_repulsion_energy));
+          load_result.nuclear_repulsion_energy,
+          context.structure_eigensolver,
+          context.structure_solve_accuracy,
+          Eigen::MatrixXd()));
   if (options.stream_pair_products &&
       context.gradient_result->second_order_context != nullptr) {
     context.gradient_result->second_order_context->prepared_active_space
@@ -589,7 +609,10 @@ void run_spectral_audit(
           trial,
           context.selected_states,
           context.state_weights,
-          context.nuclear_repulsion_energy);
+          context.nuclear_repulsion_energy,
+          context.structure_eigensolver,
+          context.structure_solve_accuracy,
+          context.second_order_context->root_eigenvectors);
   const double actual_decrease =
       context.gradient_result->scf_result.total_energy -
       trial_result.scf_result.total_energy;
@@ -614,6 +637,10 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
   ExactHvpOperator core_op(context.second_order_context, &context.input,
       context.parameter_view, &space);
   ExactHvpOperator outer_op(context.second_order_context, &context.input,
+      context.parameter_view, &space);
+  ExactHvpOperator local_op(context.second_order_context, &context.input,
+      context.parameter_view, &space);
+  ExactHvpOperator structure_op(context.second_order_context, &context.input,
       context.parameter_view, &space);
   const Eigen::VectorXd g = space.project_reduced_gradient(
       context.parameter_view.gather_from_full(context.gradient_result->sparse_orbital_energy_gradient));
@@ -666,16 +693,32 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
   std::cout << "audit_core_relative_residual = " << (g+core(core_sampled.step)).norm()/gradient_norm << '\n';
   std::cout << "audit_core_step_full_relative_residual = " << (g+full(core_sampled.step)).norm()/gradient_norm << '\n';
 
-  Eigen::MatrixXd mq(g.size(), sampled.q.cols()), cq(g.size(), sampled.q.cols());
+  Eigen::MatrixXd mq(g.size(), sampled.q.cols());
+  Eigen::MatrixXd cq(g.size(), sampled.q.cols());
+  Eigen::MatrixXd lq(g.size(), sampled.q.cols());
+  Eigen::MatrixXd sq(g.size(), sampled.q.cols());
   for (int j = 0; j < sampled.q.cols(); ++j) {
-    mq.col(j) = model(sampled.q.col(j)); cq.col(j) = core(sampled.q.col(j));
+    mq.col(j) = model(sampled.q.col(j));
+    cq.col(j) = core(sampled.q.col(j));
+    lq.col(j) = apply_component(
+        local_op, BenchmarkComponent::LocalActiveOnly, sampled.q.col(j));
+    sq.col(j) = apply_component(
+        structure_op, BenchmarkComponent::StructureOnly, sampled.q.col(j));
   }
   const Eigen::MatrixXd t = sampled.q.transpose() * sampled.hq;
   const Eigen::MatrixXd c = sampled.q.transpose() * cq;
+  const Eigen::MatrixXd l = sampled.q.transpose() * lq;
+  const Eigen::MatrixXd s = sampled.q.transpose() * sq;
   const Eigen::MatrixXd m = sampled.q.transpose() * mq;
   const auto symmetric = [](const Eigen::MatrixXd& a) -> Eigen::MatrixXd { return 0.5*(a+a.transpose()); };
   std::cout << "audit_full_relative_skew = " << (t-t.transpose()).norm()/t.norm() << '\n';
   std::cout << "audit_core_relative_skew = " << (c-c.transpose()).norm()/c.norm() << '\n';
+  std::cout << "audit_local_active_relative_skew = "
+            << (l-l.transpose()).norm()/l.norm() << '\n';
+  std::cout << "audit_structure_relative_skew = "
+            << (s-s.transpose()).norm()/s.norm() << '\n';
+  std::cout << "audit_outer_split_projected_additivity_error = "
+            << ((t-c)-(l+s)).norm()/t.norm() << '\n';
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(symmetric(t));
   Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> relative(symmetric(t), symmetric(m));
   if (eig.info() != Eigen::Success || relative.info() != Eigen::Success)
@@ -694,12 +737,18 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
         plus,
         context.selected_states,
         context.state_weights,
-        context.nuclear_repulsion_energy);
+        context.nuclear_repulsion_energy,
+        context.structure_eigensolver,
+        context.structure_solve_accuracy,
+        context.second_order_context->root_eigenvectors);
     const auto gm = evaluator.evaluate_without_reference_energy_gradient(
         minus,
         context.selected_states,
         context.state_weights,
-        context.nuclear_repulsion_energy);
+        context.nuclear_repulsion_energy,
+        context.structure_eigensolver,
+        context.structure_solve_accuracy,
+        context.second_order_context->root_eigenvectors);
     return space.project_reduced_gradient(context.parameter_view.gather_from_full(gp.sparse_orbital_energy_gradient) -
         context.parameter_view.gather_from_full(gm.sparse_orbital_energy_gradient)) / (2.0 * step);
   };
@@ -709,10 +758,22 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
       (hsoft-sampled.hq*eig.eigenvectors().col(0)).norm()/hsoft.norm() << '\n';
   const Eigen::VectorXd csoft = core(soft);
   const Eigen::VectorXd osoft = apply_component(outer_op, BenchmarkComponent::OuterOnly, soft);
+  const Eigen::VectorXd lsoft = apply_component(
+      local_op, BenchmarkComponent::LocalActiveOnly, soft);
+  const Eigen::VectorXd ssoft = apply_component(
+      structure_op, BenchmarkComponent::StructureOnly, soft);
   std::cout << "audit_soft_core_linearity_error_over_full = " <<
       (csoft-cq*eig.eigenvectors().col(0)).norm()/hsoft.norm() << '\n';
   std::cout << "audit_soft_outer_linearity_error_over_full = " <<
       (osoft-(sampled.hq-cq)*eig.eigenvectors().col(0)).norm()/hsoft.norm() << '\n';
+  std::cout << "audit_soft_outer_split_additivity_error = " <<
+      (osoft-lsoft-ssoft).norm()/hsoft.norm() << '\n';
+  std::cout << "audit_soft_local_active_ratio = " <<
+      lsoft.norm()/hsoft.norm() << '\n';
+  std::cout << "audit_soft_structure_ratio = " <<
+      ssoft.norm()/hsoft.norm() << '\n';
+  std::cout << "audit_soft_local_active_rayleigh = " << soft.dot(lsoft) << '\n';
+  std::cout << "audit_soft_structure_rayleigh = " << soft.dot(ssoft) << '\n';
   for (double scale : {-1.0, 2.0}) {
     std::cout << "audit_soft_homogeneity_error_scale" << scale << " = " <<
         (full(scale*soft)-scale*hsoft).norm()/(std::abs(scale)*hsoft.norm()) << '\n';
@@ -779,6 +840,35 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
     std::cout << prefix << "coupling_rayleigh = " << v.dot(d.coupling) << '\n';
     std::cout << prefix << "outer_rayleigh = " << v.dot(d.outer) << '\n';
   }
+  const auto audit_timing = op.diagnostics();
+  const double audit_apply_count = static_cast<double>(
+      std::max<std::size_t>(1, audit_timing.apply_count));
+  std::cout << "audit_full_apply_count = " << audit_timing.apply_count << '\n';
+  std::cout << "audit_full_avg_apply_seconds = "
+            << audit_timing.total_apply_wall_time_seconds / audit_apply_count
+            << '\n';
+  std::cout << "audit_full_avg_outer_seconds = "
+            << audit_timing.outer_response_wall_time_seconds /
+                   audit_apply_count
+            << '\n';
+  std::cout << "audit_full_avg_structure_matrix_seconds = "
+            << audit_timing.outer_response_structure_matrices_wall_time_seconds /
+                   audit_apply_count
+            << '\n';
+  std::cout << "audit_full_avg_eigensystem_seconds = "
+            << audit_timing.outer_response_eigensystem_wall_time_seconds /
+                   audit_apply_count
+            << '\n';
+  std::cout << "audit_full_avg_active_gradient_seconds = "
+            << audit_timing.outer_response_active_gradient_wall_time_seconds /
+                   audit_apply_count
+            << '\n';
+  std::cout << "audit_full_avg_orbital_pullback_seconds = "
+            << audit_timing.outer_response_orbital_pullback_wall_time_seconds /
+                   audit_apply_count
+            << '\n';
+  std::cout << "audit_full_max_structure_response_iterations = "
+            << audit_timing.max_structure_response_iterations << '\n';
   std::cout << "audit_total_hvp_calls = " << op.diagnostics().apply_count +
       core_op.diagnostics().apply_count + outer_op.diagnostics().apply_count << '\n';
 }

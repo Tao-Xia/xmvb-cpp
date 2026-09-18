@@ -262,7 +262,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
           outer_response_context()
               .selected_state_eigen_response_operator.apply_direction_block(
                   delta_hamiltonian_selected,
-                  delta_overlap_selected);
+                  delta_overlap_selected,
+                  components.response_relative_residual_tolerance);
       apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
           detail::exact_hvp_elapsed_seconds(eigensystem_start);
 
