@@ -2356,6 +2356,24 @@ core-HVP directions, whereas accepted-point caching requires only $q_k$.
 This removes retry-dependent HVP work without changing eq 66wd or any trial
 step.
 
+The same accepted-point lifetime applies to the RI response intermediates,
+orbital pullback cache, physical retraction metric, and transported
+preconditioner.  Denoting their common construction cost by
+$C_k^{\mathrm{setup}}$ and all actual directional actions by
+$C_k^{\mathrm{act}}$, the retry cost changes from
+
+$$
+C_k^{\mathrm{uncached}}
+=(r_k+1)C_k^{\mathrm{setup}}+C_k^{\mathrm{act}}
+\quad\hbox{to}\quad
+C_k^{\mathrm{cached}}
+=C_k^{\mathrm{setup}}+C_k^{\mathrm{act}}.
+\tag{66wf}
+$$
+
+This cache is invalidated immediately after acceptance or a quotient-rank
+change; it is never transported to a different orbital point.
+
 Every finite step remains guarded by the exact relaxed energy and gradient and
 by the trust-region acceptance test.  This correction is a quasi-Newton model,
 not an exact outer-response certificate; eq 66t is asserted only after an

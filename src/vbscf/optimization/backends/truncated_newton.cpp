@@ -9,6 +9,7 @@
 #include <cstring>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -87,6 +88,10 @@ BackendRunResult run_truncated_newton_backend(
   bool request_secant_correction = false;
   bool secant_correction_built_for_current_point = false;
   SymmetricSecantCorrection accepted_point_secant_correction;
+  std::unique_ptr<ExactReducedHvp> accepted_point_hvp;
+  std::unique_ptr<TransportedReducedLbfgsPreconditioner>
+      accepted_point_preconditioner;
+  std::unique_ptr<NonredundantRetractionMetric> accepted_point_metric;
   bool use_full_hvp_for_current_point = false;
   bool outer_response_used_for_current_point = false;
   double last_outer_response_seconds = 0.0;
@@ -135,10 +140,39 @@ BackendRunResult run_truncated_newton_backend(
       break;
     }
   
-    ExactReducedHvp exact_hvp(*objective, current_space);
+    if (accepted_point_hvp == nullptr) {
+      accepted_point_hvp =
+          std::make_unique<ExactReducedHvp>(*objective, current_space);
+    }
+    ExactReducedHvp& exact_hvp = *accepted_point_hvp;
     if (!exact_hvp.supports_analytic_core_model()) {
       throw std::runtime_error(build_hvp_error(exact_hvp));
     }
+    const auto trial_initial_hvp_diagnostics = exact_hvp.diagnostics();
+    const std::size_t trial_initial_core_direction_count =
+        exact_hvp.core_direction_count();
+    const std::size_t trial_initial_outer_response_direction_count =
+        exact_hvp.outer_response_direction_count();
+    auto accumulate_trial_hvp_work = [&]() {
+      const auto diagnostics = exact_hvp.diagnostics();
+      result->matrix_free_hvp_direction_count +=
+          diagnostics.apply_count - trial_initial_hvp_diagnostics.apply_count;
+      result->matrix_free_hvp_batch_count +=
+          diagnostics.batch_apply_count -
+          trial_initial_hvp_diagnostics.batch_apply_count;
+      result->matrix_free_hvp_wall_time_seconds +=
+          diagnostics.total_apply_wall_time_seconds -
+          trial_initial_hvp_diagnostics.total_apply_wall_time_seconds;
+      result->matrix_free_core_hvp_direction_count +=
+          exact_hvp.core_direction_count() -
+          trial_initial_core_direction_count;
+      result->matrix_free_outer_response_direction_count +=
+          exact_hvp.outer_response_direction_count() -
+          trial_initial_outer_response_direction_count;
+      result->matrix_free_outer_response_wall_time_seconds +=
+          diagnostics.outer_response_wall_time_seconds -
+          trial_initial_hvp_diagnostics.outer_response_wall_time_seconds;
+    };
     const auto response_scale_info = exact_hvp.diagnostics();
     const bool full_response_scale_is_affordable =
         outer_response_scale_is_affordable(response_scale_info);
@@ -158,19 +192,27 @@ BackendRunResult run_truncated_newton_backend(
     SecantCorrectedCoreHvp core_hvp(
         &exact_hvp,
         use_secant_correction ? &accepted_point_secant_correction : nullptr);
-    const auto transported_preconditioner =
-        build_nonredundant_truncated_newton_preconditioner(
-            current_space,
-            packed_secant_history,
-            transport_history_size);
+    if (accepted_point_preconditioner == nullptr) {
+      accepted_point_preconditioner =
+          std::make_unique<TransportedReducedLbfgsPreconditioner>(
+              build_nonredundant_truncated_newton_preconditioner(
+                  current_space,
+                  packed_secant_history,
+                  transport_history_size));
+    }
     const int max_subspace_dimension =
         choose_tnhvp_max_subspace_dimension(
             options,
             current_projection.reduced_gradient.size());
     const OrbitalPreparationInput current_orbital_input =
         objective->input().orbital_preparation_input;
-    const NonredundantRetractionMetric retraction_metric(
-        current_space, parameter_view, current_orbital_input);
+    if (accepted_point_metric == nullptr) {
+      accepted_point_metric =
+          std::make_unique<NonredundantRetractionMetric>(
+              current_space, parameter_view, current_orbital_input);
+    }
+    const NonredundantRetractionMetric& retraction_metric =
+        *accepted_point_metric;
     auto try_truncated_newton_trial_step =
         [&](const Eigen::VectorXd& candidate_reduced_step,
             double candidate_predicted_decrease,
@@ -287,7 +329,7 @@ BackendRunResult run_truncated_newton_backend(
                   current_projection.reduced_gradient.stableNorm()),
               max_subspace_dimension,
               operator_hvp,
-              &transported_preconditioner,
+              accepted_point_preconditioner.get(),
               initial_step,
               reuse ? &cached_subspace : nullptr);
           clamp_nonredundant_step_result_to_retract_tangent_radius(
@@ -332,7 +374,8 @@ BackendRunResult run_truncated_newton_backend(
     const bool probe_scale_is_affordable =
         one_outer_probe_fits_current_core_work(
             response_cost_info,
-            exact_hvp.core_direction_count());
+            exact_hvp.core_direction_count() -
+                trial_initial_core_direction_count);
     const bool known_response_cost_is_affordable =
         probe_scale_is_affordable &&
         (!(last_outer_response_seconds > 0.0) ||
@@ -426,7 +469,7 @@ BackendRunResult run_truncated_newton_backend(
               current_space,
               current_projection,
               trust_radius,
-              &transported_preconditioner);
+              accepted_point_preconditioner.get());
       predicted_decrease =
           estimate_nonredundant_reduced_model_decrease(
               current_projection,
@@ -478,18 +521,7 @@ BackendRunResult run_truncated_newton_backend(
                   ? TruncatedNewtonModelFidelity::DirectionallyExact
                   : TruncatedNewtonModelFidelity::CoreApproximate,
               false);
-      const auto hvp_diagnostics = exact_hvp.diagnostics();
-      result->matrix_free_hvp_direction_count += hvp_diagnostics.apply_count;
-      result->matrix_free_hvp_batch_count +=
-          hvp_diagnostics.batch_apply_count;
-      result->matrix_free_hvp_wall_time_seconds +=
-          hvp_diagnostics.total_apply_wall_time_seconds;
-      result->matrix_free_core_hvp_direction_count +=
-          exact_hvp.core_direction_count();
-      result->matrix_free_outer_response_direction_count +=
-          exact_hvp.outer_response_direction_count();
-      result->matrix_free_outer_response_wall_time_seconds +=
-          hvp_diagnostics.outer_response_wall_time_seconds;
+      accumulate_trial_hvp_work();
       trust_radius = next_trust_radius;
       if (trust_radius <= options.minimum_step_size) {
         result->termination_reason =
@@ -504,18 +536,7 @@ BackendRunResult run_truncated_newton_backend(
           retraction_metric);
       continue;
     }
-    const auto hvp_diagnostics = exact_hvp.diagnostics();
-    result->matrix_free_hvp_direction_count += hvp_diagnostics.apply_count;
-    result->matrix_free_hvp_batch_count +=
-        hvp_diagnostics.batch_apply_count;
-    result->matrix_free_hvp_wall_time_seconds +=
-        hvp_diagnostics.total_apply_wall_time_seconds;
-    result->matrix_free_core_hvp_direction_count +=
-        exact_hvp.core_direction_count();
-    result->matrix_free_outer_response_direction_count +=
-        exact_hvp.outer_response_direction_count();
-    result->matrix_free_outer_response_wall_time_seconds +=
-        hvp_diagnostics.outer_response_wall_time_seconds;
+    accumulate_trial_hvp_work();
     const bool accepted_point_chart_changed =
         accepted_trial_evaluation.chart_changed;
     const Eigen::VectorXd accepted_parameter_displacement =
@@ -712,6 +733,9 @@ BackendRunResult run_truncated_newton_backend(
     initial_outer_response_wall_time_for_current_point =
         result->matrix_free_outer_response_wall_time_seconds;
     accepted_point_start_time = std::chrono::steady_clock::now();
+    accepted_point_hvp.reset();
+    accepted_point_preconditioner.reset();
+    accepted_point_metric.reset();
     secant_correction_built_for_current_point = false;
     accepted_point_secant_correction = SymmetricSecantCorrection();
     if (nonredundant_rank_changed) {
