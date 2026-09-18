@@ -5,6 +5,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/optimization/coupled/operator.hpp"
+#include "vbscf/optimization/krylov/minres.hpp"
 
 namespace xmvb::vb {
 
@@ -23,6 +24,8 @@ struct AcceptedPointCoupledModel {
   std::shared_ptr<const ExactHvpOperator> exact_operator;
   CoupledNewtonOperator newton_operator;
   Eigen::VectorXd structure_kkt_residual;
+  /** @brief Accepted-point SPD inverse in response coordinates only. */
+  SymmetricOperatorAction response_inverse_preconditioner;
 };
 
 /**

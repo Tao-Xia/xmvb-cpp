@@ -3618,7 +3618,7 @@ $$
 \frac{
 \|\mathbf r_p\|_2
 }{
-1+\|\mathbf g\|_2+\|\mathbf A\mathbf p\|_2
+\|\mathbf g\|_2+\|\mathbf A\mathbf p\|_2
 +\|\mathbf B^{\mathrm T}\mathbf q\|_2
 +|\lambda|\|\mathbf G\mathbf p\|_2
 },
@@ -3630,10 +3630,17 @@ $$
 \frac{
 \|\mathbf r_q\|_2
 }{
-1+\|\mathbf r_s\|_2+\|\mathbf B\mathbf p\|_2
+\|\mathbf r_s\|_2+\|\mathbf B\mathbf p\|_2
 +\|\mathbf C\mathbf q\|_2
 }.
 $$
+
+No dimensionful constant is added to either denominator.  If every term in
+one equation vanishes, its backward error is defined as zero only when the
+corresponding residual also vanishes; otherwise it is infinite.  This
+convention is invariant to a common scaling of an equation and prevents an
+implicit one-hartree scale from weakening the structure or orbital
+certificate.
 
 If only $\eta_p$ fails, the orbital space is expanded with a suitably
 preconditioned orbital residual.  If only $\eta_q$ fails, the response space
@@ -3642,6 +3649,68 @@ outer subproblem iteration.  This replaces a fixed inner-iteration ceiling by
 the actual Newton-equation certificate.  Algebraic space dimensions may limit
 storage or establish completeness, but they are not physical convergence
 parameters.
+
+At a newly accepted point, the first orbital direction is the preconditioned
+gradient direction.  The response space is seeded by the preconditioned
+accepted structure residual, when nonzero, and by the already cached
+$\mathbf B\mathbf V$ images.  Conversely, cached
+$\mathbf B^{\mathrm T}\mathbf W$ images can seed additional orbital
+directions.  Subsequent additions are generated exclusively from unresolved
+full-space KKT residuals.  Each successful addition increases the numerical
+rank of $\mathbf V$ or $\mathbf W$; hence the coordinate dimensions provide a
+finite algebraic completion bound without imposing an empirical iteration
+count.
+
+The response residual is preconditioned directly in response coordinates.
+For state $i$, the accepted-point diagonal model and selected-overlap columns
+define
+
+$$
+\mathbf D_i
+=
+\operatorname{diag}
+\left[
+\max\left(
+|H_{aa}-E_iS_{aa}|,
+\epsilon_i
+\right)
+\right],
+$$
+
+$$
+\mathbf R_i
+=
+\mathbf N^{\mathrm T}\mathbf D_i^{-1}\mathbf N,
+\qquad
+\mathbf N=(\mathbf S\mathbf C)_{\mathrm{cluster}},
+$$
+
+and the SPD inverse of the bordered factor in Section 11.5 is applied without
+introducing an artificial orbital block.  Both $\epsilon_i$ and the numerical
+rank floor used for $\mathbf R_i$ are determined solely by floating-point
+roundoff at the corresponding matrix scale.  The accepted-point model owns
+this response inverse action, so the projected solver and its residual
+expansion cannot accidentally use inconsistent response metrics.
+
+A $\mathbf q=\mathbf 0$ orbital ray is not a valid relaxed-objective Cauchy
+incumbent.  The structure variables are stationary KKT response variables,
+not independently bounded minimization variables, and the unrelaxed orbital
+ray can predict a larger decrease than the response-stationary reduced model.
+A sufficient-decrease incumbent must therefore use the certified stationary
+lift in Section 11.5, or an algebraically equivalent certified construction.
+Until such an incumbent is supplied, the two-space workspace requires a
+positive exact coupled-model prediction but performs no unrelaxed Cauchy
+comparison.  This avoids converting an invalid heuristic into a convergence
+or rejection condition.
+
+An optional external work limit may cap the admitted numerical ranks of
+$\mathbf V$ and $\mathbf W$.  Reaching such a limit is reported explicitly as
+a work-limit result with its unresolved residuals; it is never treated as
+Newton convergence.  In the absence of an explicit limit, the solver proceeds
+until the KKT certificate, an algebraic completion, or a numerical breakdown.
+Repeated solves at new trust radii reuse all five cached image blocks and
+therefore require zero additional matrix-free actions unless the new solution
+itself exposes an unresolved full-space residual.
 
 ## 12. Verification requirements
 

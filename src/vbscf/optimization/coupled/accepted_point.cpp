@@ -12,6 +12,7 @@
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/optimization/coupled/forcing.hpp"
+#include "vbscf/optimization/coupled/preconditioner.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -129,6 +130,54 @@ Eigen::VectorXd build_structure_kkt_residual(
   return layout.pack(residuals);
 }
 
+struct AcceptedStructureSnapshot {
+  Eigen::VectorXd kkt_residual;
+  StructureResponsePreconditionerData preconditioner_data;
+};
+
+AcceptedStructureSnapshot build_structure_snapshot(
+    const AcceptedPointContext& accepted_point,
+    const SelectedSubspaceResponseLayout& layout) {
+  if (!accepted_point.structure_action.has_value()) {
+    throw std::logic_error(
+        "accepted coupled model did not initialize its structure action");
+  }
+  const StructureAction& structure_action =
+      *accepted_point.structure_action;
+  const StructureDiagonal& diagonal = structure_action.diagonal();
+  StructureActionResult selected_action = structure_action.apply(
+      accepted_point.selected_state_eigenvectors);
+  const int n_selected = static_cast<int>(
+      accepted_point.selected_state_energies.size());
+  const Eigen::Map<const Eigen::VectorXd> selected_energies(
+      accepted_point.selected_state_energies.data(),
+      n_selected);
+  const Eigen::MatrixXd coefficient_residual =
+      selected_action.hamiltonian -
+      selected_action.overlap * selected_energies.asDiagonal();
+  const Eigen::MatrixXd multiplier_residual = 0.5 *
+      (accepted_point.selected_state_eigenvectors.transpose() *
+           selected_action.overlap -
+       Eigen::MatrixXd::Identity(n_selected, n_selected));
+  std::vector<ClusterResponse> residuals;
+  residuals.reserve(static_cast<std::size_t>(layout.n_clusters()));
+  int first = 0;
+  for (int cluster = 0; cluster < layout.n_clusters(); ++cluster) {
+    const int width = layout.cluster(cluster).n_states;
+    residuals.push_back(ClusterResponse{
+        coefficient_residual.middleCols(first, width),
+        multiplier_residual.block(first, first, width, width)});
+    first += width;
+  }
+  return AcceptedStructureSnapshot{
+      layout.pack(residuals),
+      StructureResponsePreconditionerData{
+          diagonal.hamiltonian,
+          diagonal.overlap,
+          selected_energies,
+          std::move(selected_action.overlap)}};
+}
+
 }  // namespace
 
 AcceptedPointCoupledModel make_accepted_point_coupled_model(
@@ -152,11 +201,21 @@ AcceptedPointCoupledModel make_accepted_point_coupled_model(
       accepted_point.selected_state_energies.size());
   const Eigen::MatrixXd selected_eigenvectors =
       accepted_point.selected_state_eigenvectors;
-  const Eigen::VectorXd structure_kkt_residual =
-      build_structure_kkt_residual(
-          accepted_point,
-          *exact_operator,
-          layout);
+  if (!accepted_point.structure_action.has_value()) {
+    // The exact response action initializes the accepted matrix-free H/S
+    // action for matrix-backed forward solves.  Davidson points already own
+    // this action and avoid the initialization application.
+    static_cast<void>(build_structure_kkt_residual(
+        accepted_point,
+        *exact_operator,
+        layout));
+  }
+  AcceptedStructureSnapshot structure_snapshot =
+      build_structure_snapshot(accepted_point, layout);
+  const SymmetricOperatorAction response_inverse_preconditioner =
+      make_structure_response_inverse_preconditioner(
+          layout,
+          structure_snapshot.preconditioner_data);
 
   CoupledNewtonActions actions;
   actions.orbital_hessian =
@@ -198,7 +257,8 @@ AcceptedPointCoupledModel make_accepted_point_coupled_model(
           n_orbital_coordinates,
           std::move(layout),
           std::move(actions)),
-      structure_kkt_residual};
+      std::move(structure_snapshot.kkt_residual),
+      response_inverse_preconditioner};
 }
 
 }  // namespace xmvb::vb

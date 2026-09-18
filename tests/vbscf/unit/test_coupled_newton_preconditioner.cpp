@@ -61,6 +61,10 @@ int main() {
             [orbital_diagonal](const Eigen::VectorXd& residual) {
               return (residual.array() / orbital_diagonal.array()).matrix();
             });
+    const auto response_inverse =
+        xmvb::vb::make_structure_response_inverse_preconditioner(
+            layout,
+            data);
 
     // Build the exact dense SPD model represented by the matrix-free inverse.
     const int size = n_orbitals + layout.response_size();
@@ -121,6 +125,14 @@ int main() {
         (inverse(probe) - expected).stableNorm() <=
             2.0e-11 * std::max(1.0, expected.stableNorm()),
         "coupled inverse disagrees with its dense SPD factorization");
+    const Eigen::VectorXd response_probe = probe.tail(layout.response_size());
+    require(
+        (response_inverse(response_probe) -
+         expected.tail(layout.response_size())).stableNorm() <=
+            2.0e-11 * std::max(
+                1.0,
+                expected.tail(layout.response_size()).stableNorm()),
+        "response-only inverse disagrees with the coupled response block");
     for (int sample = 1; sample <= 4; ++sample) {
       const Eigen::VectorXd direction =
           Eigen::VectorXd::LinSpaced(
@@ -130,7 +142,23 @@ int main() {
       require(
           direction.dot(inverse(direction)) > 0.0,
           "coupled inverse preconditioner is not positive definite");
+      const Eigen::VectorXd response_direction =
+          direction.tail(layout.response_size());
+      require(
+          response_direction.dot(response_inverse(response_direction)) > 0.0,
+          "response-only inverse preconditioner is not positive definite");
     }
+
+    bool rejected_wrong_dimension = false;
+    try {
+      static_cast<void>(response_inverse(
+          Eigen::VectorXd::Zero(layout.response_size() + 1)));
+    } catch (const std::invalid_argument&) {
+      rejected_wrong_dimension = true;
+    }
+    require(
+        rejected_wrong_dimension,
+        "response-only inverse accepted the wrong coordinate dimension");
 
     xmvb::vb::MinresOptions options;
     options.relative_residual_tolerance = 2.0e-11;

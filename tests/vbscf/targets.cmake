@@ -15,6 +15,7 @@ set(_xmvb_vbscf_unit_targets
   test_coupled_projected_model
   test_coupled_projected_trust
   test_coupled_subspace_solver
+  test_coupled_workspace
   test_coupled_newton_defect
   test_coupled_newton_spectral
   test_curvature_decomposition
@@ -80,6 +81,9 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME coupled_subspace_solver COMMAND test_coupled_subspace_solver)
   set_tests_properties(coupled_subspace_solver PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME coupled_workspace COMMAND test_coupled_workspace)
+  set_tests_properties(coupled_workspace PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME coupled_newton_defect COMMAND test_coupled_newton_defect)
   set_tests_properties(coupled_newton_defect PROPERTIES

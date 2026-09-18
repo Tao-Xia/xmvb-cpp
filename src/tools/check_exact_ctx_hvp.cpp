@@ -20,8 +20,10 @@
 #include "vbscf/optimization/coupled/forcing.hpp"
 #include "vbscf/optimization/coupled/projected_model.hpp"
 #include "vbscf/optimization/coupled/projection_cache.hpp"
+#include "vbscf/optimization/coupled/workspace.hpp"
 #include "vbscf/optimization/krylov/minres.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
+#include "vbscf/optimization/trust_region/truncated_newton.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -143,6 +145,22 @@ struct CoupledProjectionAudit {
   double first_radius_response_residual = 0.0;
   double second_radius_response_residual = 0.0;
   xmvb::vb::CoupledActionCounts action_counts;
+  int workspace_orbital_dimension = 0;
+  int workspace_response_dimension = 0;
+  int workspace_expansions = 0;
+  double workspace_forcing_tolerance = 0.0;
+  double workspace_orbital_backward_error =
+      std::numeric_limits<double>::infinity();
+  double workspace_response_backward_error =
+      std::numeric_limits<double>::infinity();
+  double workspace_predicted_decrease =
+      -std::numeric_limits<double>::infinity();
+  double workspace_orbital_residual_norm =
+      std::numeric_limits<double>::infinity();
+  double workspace_response_residual_norm =
+      std::numeric_limits<double>::infinity();
+  xmvb::vb::CoupledActionCounts workspace_action_counts;
+  bool workspace_repeat_zero_action = false;
 };
 
 double relative_matrix_error(
@@ -157,10 +175,12 @@ double relative_matrix_error(
 }
 
 CoupledProjectionAudit audit_coupled_projection(
-    const xmvb::vb::AcceptedPointCoupledModel& model,
+    xmvb::vb::AcceptedPointCoupledModel model,
     const xmvb::vb::ExactHvpOperator& exact_hvp,
     const Eigen::Ref<const Eigen::VectorXd>& orbital_gradient,
-    const Eigen::Ref<const Eigen::VectorXd>& primary_direction) {
+    const Eigen::Ref<const Eigen::VectorXd>& primary_direction,
+    const xmvb::vb::SymmetricOperatorAction&
+        apply_inverse_orbital_preconditioner) {
   const xmvb::vb::CoupledNewtonOperator& direct = model.newton_operator;
   xmvb::vb::CoupledProjectionCache cache(direct);
 
@@ -327,6 +347,62 @@ CoupledProjectionAudit audit_coupled_projection(
         "two-space Schur model disagrees with the relaxed orbital HVP");
   }
 
+  if (!apply_inverse_orbital_preconditioner ||
+      !model.response_inverse_preconditioner) {
+    throw std::runtime_error(
+        "coupled workspace audit requires explicit inverse actions");
+  }
+  xmvb::vb::AcceptedPointCoupledWorkspace workspace(
+      std::move(model),
+      orbital_gradient,
+      apply_inverse_orbital_preconditioner);
+  const double forcing_tolerance =
+      xmvb::vb::inexact_newton_forcing_term(orbital_gradient.stableNorm());
+  const xmvb::vb::CoupledKktTolerances kkt_tolerances{
+      forcing_tolerance,
+      forcing_tolerance};
+  const xmvb::vb::CoupledWorkspaceResult workspace_first = workspace.solve(
+      0.25,
+      kkt_tolerances);
+  if (!(workspace_first.step.predicted_decrease > 0.0) ||
+      workspace_first.step.orbital_backward_error > forcing_tolerance ||
+      workspace_first.step.response_backward_error > forcing_tolerance) {
+    std::cerr << "workspace_status = "
+              << static_cast<int>(workspace_first.status) << '\n'
+              << "workspace_step_status = "
+              << static_cast<int>(workspace_first.step.status) << '\n'
+              << "workspace_orbital_dimension = "
+              << workspace_first.orbital_dimension << '\n'
+              << "workspace_response_dimension = "
+              << workspace_first.response_dimension << '\n'
+              << "workspace_orbital_backward_error = "
+              << workspace_first.step.orbital_backward_error << '\n'
+              << "workspace_response_backward_error = "
+              << workspace_first.step.response_backward_error << '\n'
+              << "workspace_predicted_decrease = "
+              << workspace_first.step.predicted_decrease << '\n';
+    throw std::runtime_error(
+        "accepted-point coupled workspace lacks a positive decrease or "
+        "full-KKT certificate");
+  }
+
+  const xmvb::vb::CoupledActionCounts workspace_counts_before_repeat =
+      workspace_first.action_counts;
+  const xmvb::vb::CoupledWorkspaceResult workspace_repeat = workspace.solve(
+      0.25,
+      kkt_tolerances);
+  if (!(workspace_repeat.step.predicted_decrease > 0.0) ||
+      workspace_repeat.step.orbital_backward_error > forcing_tolerance ||
+      workspace_repeat.step.response_backward_error > forcing_tolerance ||
+      !(workspace_repeat.action_counts == workspace_counts_before_repeat) ||
+      workspace_repeat.orbital_dimension !=
+          workspace_first.orbital_dimension ||
+      workspace_repeat.response_dimension !=
+          workspace_first.response_dimension) {
+    throw std::runtime_error(
+        "repeated coupled workspace solve changed the accepted-point action cache");
+  }
+
   return CoupledProjectionAudit{
       cache.orbital_subspace_size(),
       cache.response_subspace_size(),
@@ -337,7 +413,18 @@ CoupledProjectionAudit audit_coupled_projection(
       relaxed_schur_error,
       first_radius.projected_response_kkt_residual_norm,
       second_radius.projected_response_kkt_residual_norm,
-      cache.action_counts()};
+      cache.action_counts(),
+      workspace_first.orbital_dimension,
+      workspace_first.response_dimension,
+      workspace_first.expansions,
+      forcing_tolerance,
+      workspace_first.step.orbital_backward_error,
+      workspace_first.step.response_backward_error,
+      workspace_first.step.predicted_decrease,
+      workspace_first.step.orbital_kkt_residual.stableNorm(),
+      workspace_first.step.response_kkt_residual.stableNorm(),
+      workspace_first.action_counts,
+      true};
 }
 
 /** @brief Loads an exact accepted-point orbital table for derivative checks. */
@@ -465,7 +552,7 @@ int main(int argc, char** argv) {
             layout,
             &chart);
     const xmvb::vb::ExactHvpOperator& exact_hvp = *exact_hvp_owner;
-    const xmvb::vb::AcceptedPointCoupledModel coupled_model =
+    xmvb::vb::AcceptedPointCoupledModel coupled_model =
         xmvb::vb::make_accepted_point_coupled_model(
             *accepted.second_order_context,
             exact_hvp_owner,
@@ -507,6 +594,8 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "accepted-point structure KKT residual is invalid");
     }
+    const double accepted_structure_kkt_residual_norm =
+        coupled_model.structure_kkt_residual.norm();
     const std::vector<xmvb::vb::SelectedStructureResponse>
         accepted_subspace_action =
             exact_hvp.apply_selected_structure_response_batch(
@@ -823,10 +912,13 @@ int main(int argc, char** argv) {
     CoupledProjectionAudit coupled_projection_audit;
     if (options.coupled_projection_audit) {
       coupled_projection_audit = audit_coupled_projection(
-          coupled_model,
+          std::move(coupled_model),
           exact_hvp,
           accepted_reduced_gradient,
-          direction);
+          direction,
+          [&chart](const Eigen::VectorXd& residual) {
+            return chart.apply_inverse_reduced_block_preconditioner(residual);
+          });
     }
 
     double state_energy_average_error = 0.0;
@@ -931,7 +1023,54 @@ int main(int argc, char** argv) {
                 << "projection_response_hessian_actions = "
                 << counts.response_hessian << '\n'
                 << "projection_orbital_metric_actions = "
-                << counts.orbital_metric << '\n';
+                << counts.orbital_metric << '\n'
+                << "workspace_forcing_tolerance = "
+                << coupled_projection_audit.workspace_forcing_tolerance << '\n'
+                << "workspace_orbital_dimension = "
+                << coupled_projection_audit.workspace_orbital_dimension << '\n'
+                << "workspace_response_dimension = "
+                << coupled_projection_audit.workspace_response_dimension << '\n'
+                << "workspace_expansions = "
+                << coupled_projection_audit.workspace_expansions << '\n'
+                << "workspace_orbital_backward_error = "
+                << coupled_projection_audit.workspace_orbital_backward_error
+                << '\n'
+                << "workspace_response_backward_error = "
+                << coupled_projection_audit.workspace_response_backward_error
+                << '\n'
+                << "workspace_orbital_residual_norm = "
+                << coupled_projection_audit.workspace_orbital_residual_norm
+                << '\n'
+                << "workspace_response_residual_norm = "
+                << coupled_projection_audit.workspace_response_residual_norm
+                << '\n'
+                << "workspace_predicted_decrease = "
+                << coupled_projection_audit.workspace_predicted_decrease << '\n'
+                << "workspace_orbital_hessian_actions = "
+                << coupled_projection_audit.workspace_action_counts
+                       .orbital_hessian
+                << '\n'
+                << "workspace_orbital_to_response_actions = "
+                << coupled_projection_audit.workspace_action_counts
+                       .orbital_to_response
+                << '\n'
+                << "workspace_response_to_orbital_actions = "
+                << coupled_projection_audit.workspace_action_counts
+                       .response_to_orbital
+                << '\n'
+                << "workspace_response_hessian_actions = "
+                << coupled_projection_audit.workspace_action_counts
+                       .response_hessian
+                << '\n'
+                << "workspace_orbital_metric_actions = "
+                << coupled_projection_audit.workspace_action_counts
+                       .orbital_metric
+                << '\n'
+                << "workspace_repeat_zero_action = "
+                << (coupled_projection_audit.workspace_repeat_zero_action
+                        ? "true"
+                        : "false")
+                << '\n';
       return 0;
     }
 
@@ -1037,7 +1176,7 @@ int main(int argc, char** argv) {
               << "coupling_total_adjoint_error = "
               << coupling_adjoint_error << '\n'
               << "accepted_structure_kkt_residual_norm = "
-              << coupled_model.structure_kkt_residual.norm() << '\n'
+              << accepted_structure_kkt_residual_norm << '\n'
               << "factory_structure_kkt_error = "
               << factory_structure_kkt_error << '\n'
               << "factory_orbital_a_error = "

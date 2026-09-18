@@ -17,6 +17,18 @@ struct StructureResponsePreconditionerData {
 };
 
 /**
+ * @brief Builds the SPD inverse action for selected-subspace response space.
+ *
+ * The returned action accepts and returns exactly
+ * `response_layout.response_size()` coordinates.  It is therefore directly
+ * usable by response-only Krylov solves and `CoupledSubspaceSolver::expand`;
+ * no artificial orbital block is required.
+ */
+SymmetricOperatorAction make_structure_response_inverse_preconditioner(
+    const SelectedSubspaceResponseLayout& response_layout,
+    const StructureResponsePreconditionerData& structure_data);
+
+/**
  * @brief Builds an SPD inverse preconditioner for the coupled Newton system.
  *
  * The orbital block is supplied by the caller and must be an SPD inverse
