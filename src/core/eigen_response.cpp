@@ -6,6 +6,9 @@
 #include <sstream>
 #include <stdexcept>
 
+#include <Eigen/QR>
+#include <Eigen/LU>
+
 namespace xmvb::core {
 namespace {
 
@@ -670,6 +673,471 @@ EigenResponseResult solve_generalized_eigen_response(
     }
   }
   return result;
+}
+
+namespace {
+
+struct EqualWeightResponseData {
+  Eigen::MatrixXd metric;
+  Eigen::MatrixXd forcing;
+  Eigen::MatrixXd gauge_target;
+};
+
+EqualWeightResponseData prepare_equal_weight_response(
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    const EigenResponseOptions& options) {
+  validate_inputs(
+      hamiltonian_diagonal,
+      overlap_diagonal,
+      selected_eigenvalues,
+      selected_eigenvectors,
+      overlap_selected,
+      delta_hamiltonian_selected,
+      delta_overlap_selected,
+      options);
+  EqualWeightResponseData data;
+  data.metric = selected_eigenvectors.transpose() * overlap_selected;
+  const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
+      data.metric.rows(), data.metric.cols());
+  const double metric_error = (data.metric - identity).norm();
+  const double metric_tolerance = 1.0e3 *
+      std::numeric_limits<double>::epsilon() *
+      std::max(1.0, static_cast<double>(selected_eigenvectors.rows()));
+  if (metric_error > metric_tolerance) {
+    std::ostringstream message;
+    message << "equal-weight response requires S-orthonormal selected roots: error="
+            << metric_error;
+    throw std::invalid_argument(message.str());
+  }
+
+  data.forcing = delta_hamiltonian_selected -
+      delta_overlap_selected * selected_eigenvalues.asDiagonal();
+  Eigen::MatrixXd metric_derivative =
+      selected_eigenvectors.transpose() * delta_overlap_selected;
+  const double antisymmetric_error =
+      (metric_derivative - metric_derivative.transpose()).norm();
+  const double derivative_scale = std::max(1.0, metric_derivative.norm());
+  if (antisymmetric_error > 1.0e-10 * derivative_scale) {
+    throw std::invalid_argument(
+        "equal-weight response requires one symmetric overlap derivative for the complete selected cluster");
+  }
+  metric_derivative =
+      0.5 * (metric_derivative + metric_derivative.transpose()).eval();
+  data.gauge_target = -0.5 * metric_derivative;
+  return data;
+}
+
+Eigen::MatrixXd selected_span_units(
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors) {
+  Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(selected_eigenvectors);
+  qr.setThreshold(std::numeric_limits<double>::epsilon() *
+      std::max(selected_eigenvectors.rows(), selected_eigenvectors.cols()));
+  if (qr.rank() != selected_eigenvectors.cols()) {
+    throw std::invalid_argument(
+        "equal-weight response selected roots are linearly dependent");
+  }
+  return qr.householderQ() * Eigen::MatrixXd::Identity(
+      selected_eigenvectors.rows(), selected_eigenvectors.cols());
+}
+
+void project_selected_span(
+    Eigen::MatrixXd* vectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_units) {
+  vectors->noalias() -= selected_units *
+      (selected_units.transpose() * (*vectors));
+}
+
+Eigen::MatrixXd apply_cluster_projected_operators(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_units,
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+    int* block_actions) {
+  Eigen::MatrixXd projected = vectors;
+  project_selected_span(&projected, selected_units);
+  const GeneralizedEigenActionResult images = apply_checked(
+      action, projected, block_actions);
+  Eigen::MatrixXd result(vectors.rows(), vectors.cols());
+  for (Eigen::Index state = 0; state < vectors.cols(); ++state) {
+    result.col(state).noalias() = images.hamiltonian.col(state) -
+        eigenvalues[state] * images.overlap.col(state);
+  }
+  project_selected_span(&result, selected_units);
+  return result;
+}
+
+EigenSubspaceResponseResult finish_equal_weight_response(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& forcing,
+    const Eigen::Ref<const Eigen::MatrixXd>& gauge_target,
+    const Eigen::Ref<const Eigen::MatrixXd>& external_response,
+    double relative_residual_tolerance,
+    std::vector<int> iterations,
+    int block_actions) {
+  const GeneralizedEigenActionResult external_images = apply_checked(
+      action, external_response, &block_actions);
+  const Eigen::MatrixXd metric =
+      selected_eigenvectors.transpose() * overlap_selected;
+  const Eigen::MatrixXd internal_coefficients = metric.partialPivLu().solve(
+      gauge_target -
+      selected_eigenvectors.transpose() * external_images.overlap);
+
+  EigenSubspaceResponseResult result;
+  result.eigenvector_response = external_response +
+      selected_eigenvectors * internal_coefficients;
+  const GeneralizedEigenActionResult response_images = apply_checked(
+      action, result.eigenvector_response, &block_actions);
+  Eigen::MatrixXd shifted_response = response_images.hamiltonian -
+      response_images.overlap * selected_eigenvalues.asDiagonal();
+  result.selected_matrix_response = metric.partialPivLu().solve(
+      selected_eigenvectors.transpose() * (forcing + shifted_response));
+
+  const Eigen::MatrixXd equation_residual = forcing + shifted_response -
+      overlap_selected * result.selected_matrix_response;
+  const Eigen::MatrixXd gauge_residual =
+      selected_eigenvectors.transpose() * response_images.overlap -
+      gauge_target;
+  result.relative_residual_norms.resize(selected_eigenvalues.size());
+  result.iterations = std::move(iterations);
+  result.block_actions = block_actions;
+  for (Eigen::Index state = 0;
+       state < selected_eigenvalues.size();
+       ++state) {
+    const double rhs_norm = std::hypot(
+        forcing.col(state).norm(), gauge_target.col(state).norm());
+    const double residual_norm = std::hypot(
+        equation_residual.col(state).norm(),
+        gauge_residual.col(state).norm());
+    result.relative_residual_norms[state] = rhs_norm == 0.0
+        ? residual_norm
+        : residual_norm / rhs_norm;
+    if (!std::isfinite(result.relative_residual_norms[state]) ||
+        result.relative_residual_norms[state] >
+            relative_residual_tolerance) {
+      std::ostringstream message;
+      message << "equal-weight generalized-eigen subspace response did not reach the requested residual: state="
+              << state << " relative_residual="
+              << result.relative_residual_norms[state];
+      throw std::runtime_error(message.str());
+    }
+  }
+  return result;
+}
+
+}  // namespace
+
+EigenSubspaceResponseResult
+solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& full_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& full_eigenvectors,
+    const std::vector<int>& selected_root_indices,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    double relative_residual_tolerance) {
+  const Eigen::Index n = full_eigenvalues.size();
+  const Eigen::Index n_selected = selected_eigenvalues.size();
+  if (n <= 0 || n_selected <= 0 || full_eigenvectors.rows() != n ||
+      full_eigenvectors.cols() != n ||
+      selected_root_indices.size() !=
+          static_cast<std::size_t>(n_selected) ||
+      selected_eigenvectors.rows() != n ||
+      selected_eigenvectors.cols() != n_selected ||
+      overlap_selected.rows() != n ||
+      overlap_selected.cols() != n_selected ||
+      delta_hamiltonian_selected.rows() != n ||
+      delta_hamiltonian_selected.cols() != n_selected ||
+      delta_overlap_selected.rows() != n ||
+      delta_overlap_selected.cols() != n_selected ||
+      !full_eigenvalues.allFinite() || !full_eigenvectors.allFinite() ||
+      !selected_eigenvalues.allFinite() ||
+      !selected_eigenvectors.allFinite() ||
+      !overlap_selected.allFinite() ||
+      !delta_hamiltonian_selected.allFinite() ||
+      !delta_overlap_selected.allFinite() ||
+      !std::isfinite(relative_residual_tolerance) ||
+      !(relative_residual_tolerance > 0.0)) {
+    throw std::invalid_argument(
+        "complete equal-weight subspace response inputs are inconsistent");
+  }
+
+  const EigenResponseOptions validation_options{
+      1, relative_residual_tolerance};
+  const EqualWeightResponseData data = prepare_equal_weight_response(
+      Eigen::VectorXd::Ones(n), Eigen::VectorXd::Ones(n),
+      selected_eigenvalues, selected_eigenvectors, overlap_selected,
+      delta_hamiltonian_selected, delta_overlap_selected,
+      validation_options);
+
+  std::vector<bool> selected(static_cast<std::size_t>(n), false);
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    const int root = selected_root_indices[static_cast<std::size_t>(state)];
+    if (root < 0 || root >= n || selected[static_cast<std::size_t>(root)] ||
+        selected_eigenvalues[state] != full_eigenvalues[root]) {
+      throw std::invalid_argument(
+          "selected cluster does not match the complete eigenspectrum");
+    }
+    selected[static_cast<std::size_t>(root)] = true;
+  }
+
+  Eigen::MatrixXd coefficients =
+      full_eigenvectors.transpose() * data.forcing;
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    for (Eigen::Index other = 0; other < n; ++other) {
+      if (selected[static_cast<std::size_t>(other)]) {
+        coefficients(other, state) = 0.0;
+        continue;
+      }
+      const double gap =
+          selected_eigenvalues[state] - full_eigenvalues[other];
+      const double scale = std::max({
+          1.0, std::abs(selected_eigenvalues[state]),
+          std::abs(full_eigenvalues[other])});
+      if (std::abs(gap) <=
+          std::numeric_limits<double>::epsilon() * scale) {
+        throw std::runtime_error(
+            "a degenerate root omitted from the equal-weight cluster makes its response undefined");
+      }
+      coefficients(other, state) /= gap;
+    }
+  }
+  const Eigen::MatrixXd external_response =
+      full_eigenvectors * coefficients;
+  return finish_equal_weight_response(
+      action, selected_eigenvalues, selected_eigenvectors,
+      overlap_selected, data.forcing, data.gauge_target,
+      external_response, relative_residual_tolerance,
+      std::vector<int>(static_cast<std::size_t>(n_selected), 0), 0);
+}
+
+EigenSubspaceResponseResult
+solve_equal_weight_generalized_eigen_subspace_response(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    const EigenResponseOptions& options) {
+  const EqualWeightResponseData data = prepare_equal_weight_response(
+      hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues,
+      selected_eigenvectors, overlap_selected,
+      delta_hamiltonian_selected, delta_overlap_selected, options);
+  const Eigen::Index n = hamiltonian_diagonal.size();
+  const Eigen::Index n_selected = selected_eigenvalues.size();
+  const Eigen::MatrixXd selected_units =
+      selected_span_units(selected_eigenvectors);
+
+  Eigen::MatrixXd rhs = -data.forcing;
+  project_selected_span(&rhs, selected_units);
+  const Eigen::MatrixXd inverse_preconditioner = build_inverse_preconditioner(
+      hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues);
+  Eigen::MatrixXd solution = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd v_old = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd v_new = rhs;
+  Eigen::MatrixXd w = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd w_new = inverse_preconditioner.array() * v_new.array();
+  project_selected_span(&w_new, selected_units);
+  Eigen::MatrixXd p_older = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd p_old = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd p = Eigen::MatrixXd::Zero(n, n_selected);
+
+  const Eigen::VectorXd rhs_norms = rhs.colwise().norm();
+  Eigen::VectorXd absolute_targets(n_selected);
+  Eigen::VectorXd estimated_targets(n_selected);
+  Eigen::VectorXd residual_norms(n_selected);
+  Eigen::VectorXd beta_new(n_selected);
+  Eigen::VectorXd beta_first(n_selected);
+  Eigen::VectorXd cosine = Eigen::VectorXd::Ones(n_selected);
+  Eigen::VectorXd old_cosine = Eigen::VectorXd::Ones(n_selected);
+  Eigen::VectorXd sine = Eigen::VectorXd::Zero(n_selected);
+  Eigen::VectorXd old_sine = Eigen::VectorXd::Zero(n_selected);
+  Eigen::VectorXd eta = Eigen::VectorXd::Ones(n_selected);
+  std::vector<int> iterations(static_cast<std::size_t>(n_selected), 0);
+  std::vector<bool> converged(static_cast<std::size_t>(n_selected), false);
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    const double full_rhs_norm = std::hypot(
+        data.forcing.col(state).norm(),
+        data.gauge_target.col(state).norm());
+    absolute_targets[state] = options.relative_residual_tolerance *
+        std::max(full_rhs_norm, rhs_norms[state]);
+    estimated_targets[state] = absolute_targets[state] *
+        std::sqrt(inverse_preconditioner.col(state).minCoeff());
+    if (rhs_norms[state] == 0.0) {
+      converged[static_cast<std::size_t>(state)] = true;
+      beta_new[state] = 0.0;
+      beta_first[state] = 0.0;
+      continue;
+    }
+    const double beta_squared = v_new.col(state).dot(w_new.col(state));
+    if (!(beta_squared > 0.0) || !std::isfinite(beta_squared)) {
+      throw std::runtime_error(
+          "equal-weight response preconditioner is not positive definite");
+    }
+    beta_new[state] = std::sqrt(beta_squared);
+    beta_first[state] = beta_new[state];
+    residual_norms[state] = beta_first[state];
+  }
+
+  int block_actions = 0;
+  for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+    for (Eigen::Index state = 0; state < n_selected; ++state) {
+      if (converged[static_cast<std::size_t>(state)]) {
+        w.col(state).setZero();
+        w_new.col(state).setZero();
+        continue;
+      }
+      if (!(beta_new[state] > 0.0) || !std::isfinite(beta_new[state])) {
+        throw std::runtime_error(
+            "equal-weight response MINRES encountered a Lanczos breakdown");
+      }
+      v_old.col(state) = v.col(state);
+      v_new.col(state) /= beta_new[state];
+      w_new.col(state) /= beta_new[state];
+      v.col(state) = v_new.col(state);
+      w.col(state) = w_new.col(state);
+    }
+    const Eigen::MatrixXd images = apply_cluster_projected_operators(
+        action, selected_eigenvalues, selected_units, w, &block_actions);
+    std::vector<Eigen::Index> candidates;
+    for (Eigen::Index state = 0; state < n_selected; ++state) {
+      if (converged[static_cast<std::size_t>(state)]) continue;
+      const double beta = beta_new[state];
+      v_new.col(state).noalias() =
+          images.col(state) - beta * v_old.col(state);
+      const double alpha = v_new.col(state).dot(w_new.col(state));
+      v_new.col(state).noalias() -= alpha * v.col(state);
+      project_selected_span(&v_new, selected_units);
+      w_new.col(state) = inverse_preconditioner.col(state).array() *
+          v_new.col(state).array();
+      Eigen::MatrixXd projected_preconditioned = w_new.middleCols(state, 1);
+      project_selected_span(&projected_preconditioned, selected_units);
+      w_new.col(state) = projected_preconditioned.col(0);
+      const double beta_squared = v_new.col(state).dot(w_new.col(state));
+      const double roundoff_bound = 16.0 * static_cast<double>(n) *
+          std::numeric_limits<double>::epsilon() *
+          v_new.col(state).cwiseAbs().dot(w_new.col(state).cwiseAbs());
+      if (!std::isfinite(beta_squared) || beta_squared < -roundoff_bound) {
+        throw std::runtime_error(
+            "equal-weight response MINRES lost preconditioner curvature");
+      }
+      beta_new[state] = std::sqrt(std::max(0.0, beta_squared));
+
+      const double r2 = sine[state] * alpha +
+          cosine[state] * old_cosine[state] * beta;
+      const double r3 = old_sine[state] * beta;
+      const double r1_head = cosine[state] * alpha -
+          old_cosine[state] * sine[state] * beta;
+      const double r1 = std::hypot(r1_head, beta_new[state]);
+      if (!(r1 > 0.0) || !std::isfinite(r1)) {
+        throw std::runtime_error(
+            "equal-weight response MINRES encountered a singular rotation");
+      }
+      old_cosine[state] = cosine[state];
+      old_sine[state] = sine[state];
+      cosine[state] = r1_head / r1;
+      sine[state] = beta_new[state] / r1;
+      p_older.col(state) = p_old.col(state);
+      p_old.col(state) = p.col(state);
+      p.col(state).noalias() =
+          (w.col(state) - r2 * p_old.col(state) -
+           r3 * p_older.col(state)) / r1;
+      solution.col(state).noalias() +=
+          beta_first[state] * cosine[state] * eta[state] * p.col(state);
+      residual_norms[state] *= std::abs(sine[state]);
+      iterations[static_cast<std::size_t>(state)] = iteration + 1;
+      if (residual_norms[state] <= estimated_targets[state]) {
+        candidates.push_back(state);
+        converged[static_cast<std::size_t>(state)] = true;
+      } else {
+        eta[state] = -sine[state] * eta[state];
+      }
+    }
+
+    if (!candidates.empty()) {
+      Eigen::VectorXd candidate_energies(candidates.size());
+      Eigen::MatrixXd candidate_solutions(n, candidates.size());
+      for (Eigen::Index candidate = 0;
+           candidate < static_cast<Eigen::Index>(candidates.size());
+           ++candidate) {
+        candidate_energies[candidate] =
+            selected_eigenvalues[candidates[static_cast<std::size_t>(candidate)]];
+        candidate_solutions.col(candidate) =
+            solution.col(candidates[static_cast<std::size_t>(candidate)]);
+      }
+      const Eigen::MatrixXd candidate_images =
+          apply_cluster_projected_operators(
+              action, candidate_energies, selected_units,
+              candidate_solutions, &block_actions);
+      for (Eigen::Index candidate = 0;
+           candidate < static_cast<Eigen::Index>(candidates.size());
+           ++candidate) {
+        const Eigen::Index state =
+            candidates[static_cast<std::size_t>(candidate)];
+        Eigen::VectorXd true_residual =
+            rhs.col(state) - candidate_images.col(candidate);
+        if (true_residual.norm() <= absolute_targets[state]) continue;
+        converged[static_cast<std::size_t>(state)] = false;
+        v_old.col(state).setZero();
+        v.col(state).setZero();
+        v_new.col(state) = true_residual;
+        w_new.col(state) = inverse_preconditioner.col(state).array() *
+            true_residual.array();
+        Eigen::MatrixXd projected_preconditioned =
+            w_new.middleCols(state, 1);
+        project_selected_span(&projected_preconditioned, selected_units);
+        w_new.col(state) = projected_preconditioned.col(0);
+        p_older.col(state).setZero();
+        p_old.col(state).setZero();
+        p.col(state).setZero();
+        const double beta_squared = v_new.col(state).dot(w_new.col(state));
+        if (!(beta_squared > 0.0) || !std::isfinite(beta_squared)) {
+          throw std::runtime_error(
+              "equal-weight response reliable restart failed");
+        }
+        beta_new[state] = std::sqrt(beta_squared);
+        beta_first[state] = beta_new[state];
+        residual_norms[state] = beta_first[state];
+        cosine[state] = 1.0;
+        old_cosine[state] = 1.0;
+        sine[state] = 0.0;
+        old_sine[state] = 0.0;
+        eta[state] = 1.0;
+      }
+    }
+    if (std::all_of(converged.begin(), converged.end(), [](bool value) {
+          return value;
+        })) {
+      break;
+    }
+  }
+
+  if (!std::all_of(converged.begin(), converged.end(), [](bool value) {
+        return value;
+      })) {
+    throw std::runtime_error(
+        "equal-weight generalized-eigen subspace response exhausted its iteration budget");
+  }
+  return finish_equal_weight_response(
+      action, selected_eigenvalues, selected_eigenvectors,
+      overlap_selected, data.forcing, data.gauge_target, solution,
+      options.relative_residual_tolerance, std::move(iterations),
+      block_actions);
 }
 
 }  // namespace xmvb::core

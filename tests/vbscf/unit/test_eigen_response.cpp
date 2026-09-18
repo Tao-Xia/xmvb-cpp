@@ -361,6 +361,197 @@ bool test_repeated_root_bordered_candidate() {
   }
 }
 
+/** @brief Verifies equal-weight selected-selected cancellation and Hessian. */
+bool test_equal_weight_subspace_response() {
+  constexpr int n = 12;
+  const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> mixer(
+      symmetric_test_matrix(n, 0.0));
+  if (mixer.info() != Eigen::Success) return false;
+  const Eigen::MatrixXd basis = mixer.eigenvectors();
+  Eigen::VectorXd metric(n);
+  Eigen::VectorXd energies(n);
+  for (int index = 0; index < n; ++index) {
+    metric[index] = 0.35 + 0.11 * index;
+    energies[index] = -2.0 + 0.3 * index;
+  }
+  // The individual derivatives are ill-conditioned in this small gap, while
+  // the equally weighted two-state projector has no selected-selected pole.
+  energies[2] = energies[1] + 1.0e-6;
+  const Eigen::MatrixXd overlap =
+      basis * metric.asDiagonal() * basis.transpose();
+  const Eigen::MatrixXd hamiltonian =
+      basis * (metric.array() * energies.array()).matrix().asDiagonal() *
+      basis.transpose();
+  const Eigen::MatrixXd full_vectors =
+      basis * metric.cwiseSqrt().cwiseInverse().asDiagonal();
+  const std::vector<int> roots{1, 2};
+  Eigen::VectorXd selected_energies(2);
+  Eigen::MatrixXd selected_vectors(n, 2);
+  for (int state = 0; state < 2; ++state) {
+    selected_energies[state] = energies[roots[state]];
+    selected_vectors.col(state) = full_vectors.col(roots[state]);
+  }
+  const Eigen::MatrixXd metric_sqrt =
+      basis * metric.cwiseSqrt().asDiagonal() * basis.transpose();
+  const Eigen::MatrixXd delta_hamiltonian =
+      0.007 * metric_sqrt * directional_test_matrix(n) * metric_sqrt;
+  const Eigen::MatrixXd delta_overlap =
+      0.002 * metric_sqrt * symmetric_test_matrix(n, 0.0) * metric_sqrt;
+  const Eigen::MatrixXd delta_hamiltonian_selected =
+      delta_hamiltonian * selected_vectors;
+  const Eigen::MatrixXd delta_overlap_selected =
+      delta_overlap * selected_vectors;
+  const xmvb::core::GeneralizedEigenAction action =
+      [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+        return xmvb::core::GeneralizedEigenActionResult{
+            hamiltonian * vectors, overlap * vectors};
+      };
+  const xmvb::core::EigenResponseOptions options{n + 1, 1.0e-9};
+  try {
+    const auto response =
+        xmvb::core::solve_equal_weight_generalized_eigen_subspace_response(
+            action, hamiltonian.diagonal(), overlap.diagonal(),
+            selected_energies, selected_vectors,
+            overlap * selected_vectors, delta_hamiltonian_selected,
+            delta_overlap_selected, options);
+    const auto spectral =
+        xmvb::core::
+            solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
+                action, energies, full_vectors, roots, selected_energies,
+                selected_vectors, overlap * selected_vectors,
+                delta_hamiltonian_selected, delta_overlap_selected,
+                options.relative_residual_tolerance);
+    const auto isolated =
+        xmvb::core::solve_generalized_eigen_response_from_full_spectrum(
+            action, energies, full_vectors, roots, selected_energies,
+            selected_vectors, overlap * selected_vectors,
+            delta_hamiltonian_selected, delta_overlap_selected,
+            options.relative_residual_tolerance);
+
+    const Eigen::MatrixXd projector_response =
+        response.eigenvector_response * selected_vectors.transpose() +
+        selected_vectors * response.eigenvector_response.transpose();
+    const Eigen::MatrixXd spectral_projector_response =
+        spectral.eigenvector_response * selected_vectors.transpose() +
+        selected_vectors * spectral.eigenvector_response.transpose();
+    const Eigen::MatrixXd isolated_projector_response =
+        isolated.eigenvector_response * selected_vectors.transpose() +
+        selected_vectors * isolated.eigenvector_response.transpose();
+    const double spectral_error =
+        (projector_response - spectral_projector_response).norm();
+    const double cancellation_error =
+        (projector_response - isolated_projector_response).norm();
+    const Eigen::MatrixXd gauge = selected_vectors.transpose() *
+        overlap * response.eigenvector_response;
+    const Eigen::MatrixXd gauge_target = -0.5 *
+        selected_vectors.transpose() * delta_overlap_selected;
+    const double gauge_error = (gauge - gauge_target).norm();
+
+    constexpr double step = 2.0e-5;
+    Eigen::MatrixXd finite_difference_projector;
+    double finite_difference_curvature = 0.0;
+    double central_energy = selected_energies.sum();
+    Eigen::MatrixXd projectors[2];
+    double energy_sums[2];
+    for (int side = 0; side < 2; ++side) {
+      const double sign = side == 0 ? -1.0 : 1.0;
+      const Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> perturbed(
+          hamiltonian + sign * step * delta_hamiltonian,
+          overlap + sign * step * delta_overlap);
+      if (perturbed.info() != Eigen::Success) return false;
+      const Eigen::MatrixXd perturbed_selected =
+          perturbed.eigenvectors().middleCols(roots.front(), 2);
+      projectors[side] =
+          perturbed_selected * perturbed_selected.transpose();
+      energy_sums[side] =
+          perturbed.eigenvalues().segment(roots.front(), 2).sum();
+    }
+    finite_difference_projector =
+        (projectors[1] - projectors[0]) / (2.0 * step);
+    finite_difference_curvature =
+        (energy_sums[1] - 2.0 * central_energy + energy_sums[0]) /
+        (step * step);
+    const double projector_fd_error =
+        (projector_response - finite_difference_projector).norm();
+
+    const Eigen::MatrixXd forcing = delta_hamiltonian_selected -
+        delta_overlap_selected * selected_energies.asDiagonal();
+    double analytic_curvature = 0.0;
+    for (int state = 0; state < 2; ++state) {
+      analytic_curvature +=
+          2.0 * response.eigenvector_response.col(state).dot(
+              forcing.col(state)) -
+          response.selected_matrix_response(state, state) *
+              selected_vectors.col(state).dot(
+                  delta_overlap_selected.col(state));
+    }
+    const double curvature_error =
+        std::abs(analytic_curvature - finite_difference_curvature);
+
+    Eigen::VectorXd degenerate_energies = energies;
+    degenerate_energies[2] = degenerate_energies[1];
+    const Eigen::MatrixXd degenerate_hamiltonian =
+        basis *
+        (metric.array() * degenerate_energies.array()).matrix().asDiagonal() *
+        basis.transpose();
+    const Eigen::VectorXd degenerate_selected_energies =
+        degenerate_energies.segment(1, 2);
+    const xmvb::core::GeneralizedEigenAction degenerate_action =
+        [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+          return xmvb::core::GeneralizedEigenActionResult{
+              degenerate_hamiltonian * vectors, overlap * vectors};
+        };
+    const auto degenerate_response =
+        xmvb::core::solve_equal_weight_generalized_eigen_subspace_response(
+            degenerate_action, degenerate_hamiltonian.diagonal(),
+            overlap.diagonal(), degenerate_selected_energies,
+            selected_vectors, overlap * selected_vectors,
+            delta_hamiltonian_selected, delta_overlap_selected, options);
+    const auto degenerate_spectral =
+        xmvb::core::
+            solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
+                degenerate_action, degenerate_energies, full_vectors, roots,
+                degenerate_selected_energies, selected_vectors,
+                overlap * selected_vectors, delta_hamiltonian_selected,
+                delta_overlap_selected,
+                options.relative_residual_tolerance);
+    const Eigen::MatrixXd degenerate_projector_response =
+        degenerate_response.eigenvector_response *
+            selected_vectors.transpose() +
+        selected_vectors *
+            degenerate_response.eigenvector_response.transpose();
+    const Eigen::MatrixXd degenerate_spectral_projector_response =
+        degenerate_spectral.eigenvector_response *
+            selected_vectors.transpose() +
+        selected_vectors *
+            degenerate_spectral.eigenvector_response.transpose();
+    const double degeneracy_error =
+        (degenerate_projector_response -
+         degenerate_spectral_projector_response).norm();
+    std::cout << "equal_weight_subspace residual="
+              << response.relative_residual_norms.maxCoeff()
+              << " spectral_error=" << spectral_error
+              << " selected_cancellation_error=" << cancellation_error
+              << " gauge_error=" << gauge_error
+              << " projector_fd_error=" << projector_fd_error
+              << " curvature_error=" << curvature_error
+              << " degeneracy_error=" << degeneracy_error
+              << " isolated_norm=" << isolated.eigenvector_response.norm()
+              << " subspace_norm=" << response.eigenvector_response.norm()
+              << '\n';
+    return response.relative_residual_norms.maxCoeff() <= 1.0e-9 &&
+        spectral_error <= 1.0e-8 && cancellation_error <= 1.0e-8 &&
+        gauge_error <= 1.0e-10 && projector_fd_error <= 1.0e-6 &&
+        curvature_error <= 1.0e-5 && degeneracy_error <= 1.0e-8 &&
+        degenerate_response.relative_residual_norms.maxCoeff() <= 1.0e-9 &&
+        isolated.eigenvector_response.norm() >
+            1.0e2 * response.eigenvector_response.norm();
+  } catch (const std::exception& error) {
+    std::cout << "equal_weight_subspace failed=" << error.what() << '\n';
+    return false;
+  }
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -493,7 +684,10 @@ int main(int argc, char** argv) {
   const bool solvable_ill_passed = test_solvable_ill_conditioned_overlap();
   const bool inexact_ritz_passed = test_inexact_ritz_root();
   const bool repeated_root_passed = test_repeated_root_bordered_candidate();
+  const bool equal_weight_subspace_passed =
+      test_equal_weight_subspace_response();
   return passed && spectral_passed && solvable_ill_passed &&
       minres_scale_passed &&
-      inexact_ritz_passed && repeated_root_passed ? 0 : 1;
+      inexact_ritz_passed && repeated_root_passed &&
+      equal_weight_subspace_passed ? 0 : 1;
 }

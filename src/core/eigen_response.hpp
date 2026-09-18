@@ -28,6 +28,28 @@ struct EigenResponseResult {
 };
 
 /**
+ * @brief Response of an equally weighted generalized-eigen subspace.
+ *
+ * `selected_matrix_response` is the selected-space effective-Hamiltonian
+ * response in
+ *
+ * `H dC - S dC E - S C dE = -(dH C - dS C E)`.
+ *
+ * Unlike isolated-root response, `dE` is generally not diagonal.  Its
+ * off-diagonal entries absorb the chosen rotation within the selected
+ * subspace.  The returned vectors use the symmetric metric gauge
+ *
+ * `C^T S dC = -0.5 C^T dS C`.
+ */
+struct EigenSubspaceResponseResult {
+  Eigen::MatrixXd eigenvector_response;
+  Eigen::MatrixXd selected_matrix_response;
+  Eigen::VectorXd relative_residual_norms;
+  std::vector<int> iterations;
+  int block_actions = 0;
+};
+
+/**
  * @brief Solves selected generalized-eigenpair response without a full spectrum.
  *
  * For each accepted pair `H c = E S c`, the solver applies preconditioned
@@ -61,6 +83,46 @@ EigenResponseResult solve_generalized_eigen_response(
  * residual with the independent H/S action; it never forms an orbital Hessian.
  */
 EigenResponseResult solve_generalized_eigen_response_from_full_spectrum(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& full_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& full_eigenvectors,
+    const std::vector<int>& selected_root_indices,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    double relative_residual_tolerance);
+
+/**
+ * @brief Solves the response of one equally weighted selected-state cluster.
+ *
+ * All selected-selected rotations are gauge degrees of freedom for an equal
+ * state average.  This routine therefore projects the linear systems against
+ * the complete selected subspace and solves only selected-external response.
+ * It remains well-defined when selected roots are degenerate; a degeneracy
+ * with an omitted external root must instead be included in the cluster.
+ *
+ * The selected columns must be S-orthonormal generalized eigenvectors and
+ * `delta_*_selected` must contain `dH C` and `dS C`, respectively.
+ */
+EigenSubspaceResponseResult
+solve_equal_weight_generalized_eigen_subspace_response(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    const EigenResponseOptions& options);
+
+/**
+ * @brief Full-spectrum reference for equal-weight invariant-subspace response.
+ */
+EigenSubspaceResponseResult
+solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
     const GeneralizedEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& full_eigenvalues,
     const Eigen::Ref<const Eigen::MatrixXd>& full_eigenvectors,

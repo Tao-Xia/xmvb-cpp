@@ -105,6 +105,8 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/backends/lbfgs.cpp
   vbscf/optimization/backends/projected_gradient.cpp
   vbscf/optimization/backends/truncated_newton.cpp
+  vbscf/optimization/coupled/operator.cpp
+  vbscf/optimization/krylov/minres.cpp
   vbscf/optimization/globalization/line_search.cpp
   vbscf/optimization/driver/session.cpp
   vbscf/optimization/preconditioners/transported_lbfgs.cpp
