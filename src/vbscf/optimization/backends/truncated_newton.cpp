@@ -94,7 +94,6 @@ BackendRunResult run_truncated_newton_backend(
   std::unique_ptr<NonredundantRetractionMetric> accepted_point_metric;
   bool use_full_hvp_for_current_point = false;
   bool outer_response_used_for_current_point = false;
-  double last_outer_response_seconds = 0.0;
   double initial_trust_radius_for_current_point = trust_radius;
   std::size_t initial_hvp_direction_count_for_current_point =
       result->matrix_free_hvp_direction_count;
@@ -377,24 +376,16 @@ BackendRunResult run_truncated_newton_backend(
     // certificate, but a single sampled direction must not authorize full
     // outer responses throughout the Krylov subspace. Thus outer work is
     // bounded by candidate samples rather than multiplied by subspace size.
-    const double core_candidate_wall_time_seconds =
-        std::chrono::duration<double>(
-            std::chrono::steady_clock::now() - accepted_point_start_time)
-            .count();
     const auto response_cost_info = exact_hvp.diagnostics();
     const bool probe_scale_is_affordable =
         one_outer_probe_fits_current_core_work(
             response_cost_info,
             exact_hvp.core_direction_count() -
                 trial_initial_core_direction_count);
-    const bool known_response_cost_is_affordable =
-        probe_scale_is_affordable &&
-        (!(last_outer_response_seconds > 0.0) ||
-         last_outer_response_seconds <= core_candidate_wall_time_seconds);
     const bool certify_core_candidate =
         request_outer_response &&
         !outer_response_used_for_current_point &&
-        known_response_cost_is_affordable &&
+        probe_scale_is_affordable &&
         truncated_newton_step.reduced_step.size() == reduced_size &&
         truncated_newton_step.reduced_hessian_times_step.size() ==
             reduced_size &&
@@ -405,21 +396,14 @@ BackendRunResult run_truncated_newton_backend(
         truncated_newton_step.reduced_metric_times_step.allFinite();
     if (request_outer_response &&
         !outer_response_used_for_current_point &&
-        !known_response_cost_is_affordable) {
+        !probe_scale_is_affordable) {
       response_deferred_for_cost = true;
     }
     if (certify_core_candidate) {
       response_probe_performed = true;
-      const auto diagnostics_before_probe = exact_hvp.diagnostics();
-      const double outer_response_seconds_before_probe =
-          diagnostics_before_probe.outer_response_wall_time_seconds;
       const Eigen::VectorXd outer_response =
           exact_hvp.apply_outer(truncated_newton_step.reduced_step);
       truncated_newton_step.reduced_hessian_times_step += outer_response;
-      const double probe_wall_time_seconds =
-          exact_hvp.diagnostics().outer_response_wall_time_seconds -
-          outer_response_seconds_before_probe;
-      last_outer_response_seconds = probe_wall_time_seconds;
       truncated_newton_step.predicted_decrease =
           -current_projection.reduced_gradient.dot(
               truncated_newton_step.reduced_step) -
