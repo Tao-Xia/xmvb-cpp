@@ -72,7 +72,6 @@ struct CoupledSpectralAnalysis {
       std::numeric_limits<double>::infinity();
   double left_response_stationarity_target = 0.0;
   bool response_stationarity_certified = false;
-  bool negative_curvature_certified = false;
 };
 
 /**
@@ -99,9 +98,10 @@ CoupledResponseStationaryLifts build_response_stationary_lifts(
  * @f]
  *
  * The returned full residual is evaluated by the original coupled operator,
- * not reconstructed from the projected matrices. Negative curvature is
- * certified only when the selected lift meets its response-stationarity
- * target and its evaluated coupled Rayleigh quotient is negative.
+ * not reconstructed from the projected matrices. A finite response solve
+ * cannot certify the sign of the exact Schur curvature without an inverse
+ * error bound for @f$C@f$; the coupled Rayleigh quotient is therefore retained
+ * only as a diagnostic.
  */
 CoupledSpectralAnalysis analyze_coupled_explored_spectrum(
     const CoupledNewtonOperator& coupled_operator,

@@ -54,6 +54,10 @@ void certify(
           "projected trust-region stationarity is inaccurate");
   require(result.stationarity_residual <= 2.0e-12 * scale,
           "reported stationarity residual is inaccurate");
+  require(result.stationarity_backward_error <= 2.0e-12,
+          "reported stationarity backward error is too large");
+  require(result.feasibility_violation <= 2.0e-12 * radius,
+          "reported feasibility violation is inaccurate");
   require(result.shift == 0.0 ||
               std::abs(norm - radius) <= 2.0e-12 * radius,
           "projected trust-region complementarity is inaccurate");
@@ -75,6 +79,10 @@ void certify(
   require(shifted_solver.eigenvalues().minCoeff() >=
               -2.0e-12 * std::max(1.0, shifted_whitened.stableNorm()),
           "shifted projected Hessian is not positive semidefinite");
+  require(std::abs(result.minimum_shifted_ritz_value -
+                   shifted_solver.eigenvalues().minCoeff()) <=
+              2.0e-12 * std::max(1.0, shifted_whitened.stableNorm()),
+          "reported shifted projected minimum Ritz value is inaccurate");
 }
 
 }  // namespace

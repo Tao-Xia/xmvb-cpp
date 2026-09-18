@@ -29,10 +29,12 @@ struct CoupledProjectedModelResult {
   Eigen::MatrixXd reduced_hessian;
   Eigen::VectorXd orbital_coordinates;
   Eigen::VectorXd response_coordinates;
-  Eigen::VectorXd orbital_kkt_residual;
-  Eigen::VectorXd response_kkt_residual;
-  double orbital_kkt_residual_norm = std::numeric_limits<double>::infinity();
-  double response_kkt_residual_norm = std::numeric_limits<double>::infinity();
+  Eigen::VectorXd projected_orbital_kkt_residual;
+  Eigen::VectorXd projected_response_kkt_residual;
+  double projected_orbital_kkt_residual_norm =
+      std::numeric_limits<double>::infinity();
+  double projected_response_kkt_residual_norm =
+      std::numeric_limits<double>::infinity();
   double response_baseline_model_change =
       std::numeric_limits<double>::quiet_NaN();
   double reduced_incremental_model_change =
@@ -68,6 +70,9 @@ struct CoupledProjectedModelResult {
  * regularization or fallback is applied: a singular projected @f$C@f$ is
  * reported as `ResponseProjectionSingular`. All optimality claims remain
  * restricted to the supplied orbital and response subspaces.
+ * An empty supplied response space is valid and gives the orbital-only
+ * projected problem; its omitted response equations must still be checked by
+ * the full-space coordinator.
  */
 CoupledProjectedModelResult solve_coupled_projected_model(
     const Eigen::Ref<const Eigen::MatrixXd>& orbital_hessian,

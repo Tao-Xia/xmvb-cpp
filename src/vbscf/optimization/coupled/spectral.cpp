@@ -241,9 +241,6 @@ CoupledSpectralAnalysis analyze_coupled_explored_spectrum(
       all_response_solves_converged &&
       analysis.left_response_stationarity_residual <=
       analysis.left_response_stationarity_target;
-  analysis.negative_curvature_certified =
-      analysis.response_stationarity_certified &&
-      analysis.response_stationary_rayleigh_quotient < 0.0;
   analysis.orbital_residual_expansion = deterministic_expansion(
       coupled_operator,
       orbital_trial_basis,

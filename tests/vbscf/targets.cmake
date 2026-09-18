@@ -14,6 +14,7 @@ set(_xmvb_vbscf_unit_targets
   test_coupled_projection_cache
   test_coupled_projected_model
   test_coupled_projected_trust
+  test_coupled_subspace_solver
   test_coupled_newton_defect
   test_coupled_newton_spectral
   test_curvature_decomposition
@@ -76,6 +77,9 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME coupled_projected_trust COMMAND test_coupled_projected_trust)
   set_tests_properties(coupled_projected_trust PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME coupled_subspace_solver COMMAND test_coupled_subspace_solver)
+  set_tests_properties(coupled_subspace_solver PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME coupled_newton_defect COMMAND test_coupled_newton_defect)
   set_tests_properties(coupled_newton_defect PROPERTIES
@@ -199,6 +203,27 @@ if (BUILD_TESTING)
       WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
       ENVIRONMENT
         "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+
+  foreach(coupled_case IN ITEMS
+      "coupled_projection_f2_dense|F2.xmi|dense"
+      "coupled_projection_f2_state_average_dense|F2_SA2.xmi|dense"
+      "coupled_projection_f2_state_average_davidson|F2_SA2.xmi|davidson")
+    string(REPLACE "|" ";" coupled_fields "${coupled_case}")
+    list(GET coupled_fields 0 coupled_test_name)
+    list(GET coupled_fields 1 coupled_input_name)
+    list(GET coupled_fields 2 coupled_eigensolver)
+    add_test(
+      NAME ${coupled_test_name}
+      COMMAND
+        check_exact_ctx_hvp
+        ${CMAKE_SOURCE_DIR}/testdata/vbscf/${coupled_input_name}
+        --eigensolver ${coupled_eigensolver}
+        --coupled-projection-audit 1)
+    set_tests_properties(${coupled_test_name} PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+  endforeach()
 
   foreach(ri_case IN ITEMS
       "ri_ctx_hvp_f2_finite_difference|F2.xmi|dense"

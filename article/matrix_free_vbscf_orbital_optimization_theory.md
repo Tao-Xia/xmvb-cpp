@@ -3380,12 +3380,32 @@ $$
 
 When $\mathbf V$ does not span the full orbital coordinate space, its smallest
 Ritz value is an upper bound to the global smallest generalized eigenvalue,
-not a lower bound.  A negative response-stationary Rayleigh quotient therefore
-certifies a discovered negative-curvature direction, whereas a positive
-projected Ritz value does not certify global positive semidefiniteness.  The
-full residual of the lifted Ritz pair provides a deterministic expansion
-direction; the status must remain ``explored subspace'' until full-space
-coverage or an independent analytic global bound is available.
+not a lower bound.  For an inexact response lift with residual
+$\mathbf r=\mathbf B\mathbf v+\mathbf C\mathbf q$, the evaluated coupled-ray
+curvature and the exact Schur curvature differ by
+
+$$
+\kappa_{\mathrm{ray}}
+=
+\mathbf v^{\mathrm T}\mathbf H_R\mathbf v
++\mathbf r^{\mathrm T}\mathbf C^{-1}\mathbf r.
+$$
+
+Because the response KKT block $\mathbf C$ is indefinite, a small residual by
+itself does not determine the sign of the correction.  A strict negative
+Schur-curvature certificate requires, for example, a proven bound
+$\gamma\geq\|\mathbf C^{-1}\|_2$ and
+
+$$
+\kappa_{\mathrm{ray}}+\gamma\|\mathbf r\|_2^2<0.
+$$
+
+Without such a bound the ray curvature is only a diagnostic.  Likewise, a
+positive projected Ritz value does not certify global positive
+semidefiniteness.  The full residual of the lifted Ritz pair provides a
+deterministic expansion direction; the status must remain ``explored
+subspace'' until full-space coverage or an independent analytic global bound
+is available.
 
 Before such a global certificate is available, every accepted projected
 Newton step should be compared with a matrix-free relaxed Cauchy incumbent.
@@ -3405,6 +3425,17 @@ For a finite response solve let
 
 $$
 \mathbf e=\mathbf B\mathbf d+\mathbf C\mathbf y.
+$$
+
+If the preceding structure-defect correction leaves
+$\mathbf e_0=\mathbf r_s+\mathbf C\mathbf q_0$, the exact linear coefficient
+of this coupled ray is
+
+$$
+\ell
+=
+\overline{\mathbf g}^{\mathrm T}\mathbf d
++\mathbf e_0^{\mathrm T}\mathbf y.
 $$
 
 The exact curvature of the returned coupled ray is
@@ -3436,7 +3467,7 @@ $$
 \alpha_{\max}, & \kappa\leq 0,\\
 \min\left(
 \alpha_{\max},
--\overline{\mathbf g}^{\mathrm T}\mathbf d/\kappa
+-\ell/\kappa
 \right), & \kappa>0,
 \end{cases}
 $$
@@ -3461,6 +3492,156 @@ because the response KKT block is itself indefinite.  Until a complete
 relaxed-spectrum certificate and the classical hard-case completion are
 available, the algorithm should report projected convergence and retain the
 Cauchy decrease guarantee rather than label the step a global solution.
+
+### 11.6 Two-space coupled Newton--Krylov projection
+
+Solving one complete response equation for every new orbital Krylov vector
+would reproduce the Schur action, but it would also make structure response
+the compulsory inner loop.  A more efficient matrix-free construction grows
+the orbital and response spaces independently.  Let
+
+$$
+\mathbf V^{\mathrm T}\mathbf G\mathbf V=\mathbf I,
+\qquad
+\mathbf W^{\mathrm T}\mathbf W=\mathbf I,
+$$
+
+and cache only the block images
+
+$$
+\mathbf A\mathbf V,
+\quad
+\mathbf B\mathbf V,
+\quad
+\mathbf G\mathbf V,
+\quad
+\mathbf B^{\mathrm T}\mathbf W,
+\quad
+\mathbf C\mathbf W.
+$$
+
+The small coupled blocks are then
+
+$$
+\mathbf A_V=\mathbf V^{\mathrm T}\mathbf A\mathbf V,
+\qquad
+\mathbf M_V=\mathbf V^{\mathrm T}\mathbf G\mathbf V,
+$$
+
+$$
+\mathbf C_W=\mathbf W^{\mathrm T}\mathbf C\mathbf W,
+\qquad
+\mathbf D=\mathbf W^{\mathrm T}\mathbf B\mathbf V.
+$$
+
+For projected gradients
+
+$$
+\mathbf g_V=\mathbf V^{\mathrm T}\mathbf g,
+\qquad
+\mathbf r_W=\mathbf W^{\mathrm T}\mathbf r_s,
+$$
+
+the response coordinates satisfy
+
+$$
+\mathbf C_W\mathbf u_0=-\mathbf r_W,
+\qquad
+\mathbf C_W\mathbf U_y=-\mathbf D.
+$$
+
+Thus
+
+$$
+\overline{\mathbf g}_V
+=
+\mathbf g_V+\mathbf D^{\mathrm T}\mathbf u_0,
+$$
+
+$$
+\overline{\mathbf H}_V
+=
+\mathbf A_V+\mathbf D^{\mathrm T}\mathbf U_y,
+$$
+
+and the small orbital trust-region problem is
+
+$$
+\min_{\mathbf y}
+\left(
+\overline{\mathbf g}_V^{\mathrm T}\mathbf y
++\frac12\mathbf y^{\mathrm T}
+\overline{\mathbf H}_V\mathbf y
+\right),
+\qquad
+\mathbf y^{\mathrm T}\mathbf M_V\mathbf y\leq\Delta^2.
+$$
+
+The physical trial is reconstructed as
+
+$$
+\mathbf p=\mathbf V\mathbf y,
+\qquad
+\mathbf q=\mathbf W
+\left(
+\mathbf u_0+\mathbf U_y\mathbf y
+\right).
+$$
+
+Changing only $\Delta$ therefore requires another small projected solve and
+no new application of $\mathbf A$, $\mathbf B$, $\mathbf B^{\mathrm T}$,
+$\mathbf C$, or $\mathbf G$.  A newly accepted orbital point invalidates all
+five image caches; a rejected trial or a radius-only change does not.
+
+The projected equations alone are not a stopping certificate.  The complete
+shifted KKT residual must be reconstructed from cached full-space images:
+
+$$
+\mathbf r_p
+=
+\mathbf g+\mathbf A\mathbf p
++\mathbf B^{\mathrm T}\mathbf q
++\lambda\mathbf G\mathbf p,
+$$
+
+$$
+\mathbf r_q
+=
+\mathbf r_s+\mathbf B\mathbf p+\mathbf C\mathbf q.
+$$
+
+Scale-free backward errors are, for example,
+
+$$
+\eta_p
+=
+\frac{
+\|\mathbf r_p\|_2
+}{
+1+\|\mathbf g\|_2+\|\mathbf A\mathbf p\|_2
++\|\mathbf B^{\mathrm T}\mathbf q\|_2
++|\lambda|\|\mathbf G\mathbf p\|_2
+},
+$$
+
+$$
+\eta_q
+=
+\frac{
+\|\mathbf r_q\|_2
+}{
+1+\|\mathbf r_s\|_2+\|\mathbf B\mathbf p\|_2
++\|\mathbf C\mathbf q\|_2
+}.
+$$
+
+If only $\eta_p$ fails, the orbital space is expanded with a suitably
+preconditioned orbital residual.  If only $\eta_q$ fails, the response space
+is expanded.  If both fail, the two independent blocks may be expanded in one
+outer subproblem iteration.  This replaces a fixed inner-iteration ceiling by
+the actual Newton-equation certificate.  Algebraic space dimensions may limit
+storage or establish completeness, but they are not physical convergence
+parameters.
 
 ## 12. Verification requirements
 

@@ -51,7 +51,8 @@ struct RelaxedCauchyResult {
 /**
  * @brief Builds a sufficient-decrease incumbent for the relaxed orbital model.
  *
- * With the defect-corrected orbital gradient @f$\bar g@f$, this routine forms
+ * With the defect-corrected orbital gradient @f$\bar g@f$ and remaining
+ * structure residual @f$e_0@f$, this routine forms
  * the inverse-metric direction @f$d=-G^{-1}\bar g@f$ and obtains its induced
  * structure response from the explicitly certified matrix-free solve
  *
@@ -66,23 +67,32 @@ struct RelaxedCauchyResult {
  * \alpha_{\max}=\Delta/\lVert d\rVert_G.
  * @f]
  *
- * A finite response solve leaves @f$e=Bd+Cy@f$. The exact curvature of the
+ * A finite response solve leaves @f$e=Bd+Cy@f$. The exact first derivative
+ * and curvature of the returned coupled ray are
+ *
+ * @f[
+ * \ell=\bar g^Td+e_0^Ty,
+ * @f]
+ *
+ * and
  * actually returned coupled ray is therefore
  *
  * @f[
  * \kappa=[d;y]^TK[d;y]=\kappa_\star+y^Te,
  * @f]
  *
- * and this exact value, not @f$\kappa_\star@f$, defines the predicted decrease.
+ * The exact @f$\ell@f$ and @f$\kappa@f$, rather than their stationary limits,
+ * define the predicted decrease.
  * The returned length minimizes the quadratic model on this ray:
  * @f$\alpha=\alpha_{\max}@f$ for @f$\kappa\leq0@f$, otherwise
- * @f$\alpha=\min(\alpha_{\max},-\bar g^Td/\kappa)@f$.  Certification asserts
+ * @f$\alpha=\min(\alpha_{\max},-\ell/\kappa)@f$.  Certification asserts
  * only positive Cauchy decrease. It makes no claim that the relaxed Hessian is
  * positive semidefinite or that the step globally solves the trust-region
  * subproblem.
  *
  * @param coupled_operator Accepted coupled Newton block operator.
  * @param corrected_orbital_gradient Defect-corrected gradient @f$\bar g@f$.
+ * @param remaining_structure_residual Finite defect @f$e_0@f$.
  * @param trust_radius Positive orbital trust radius @f$\Delta@f$.
  * @param response_options Explicit residual target for the @f$C@f$ solve.
  * @param apply_inverse_orbital_metric SPD action @f$G^{-1}v@f$.
@@ -91,6 +101,7 @@ struct RelaxedCauchyResult {
 RelaxedCauchyResult build_relaxed_cauchy_incumbent(
     const CoupledNewtonOperator& coupled_operator,
     const Eigen::Ref<const Eigen::VectorXd>& corrected_orbital_gradient,
+    const Eigen::Ref<const Eigen::VectorXd>& remaining_structure_residual,
     double trust_radius,
     const MinresOptions& response_options,
     const SymmetricOperatorAction& apply_inverse_orbital_metric,

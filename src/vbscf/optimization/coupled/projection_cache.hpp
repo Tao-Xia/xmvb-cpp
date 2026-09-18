@@ -6,6 +6,23 @@
 
 namespace xmvb::vb {
 
+/** @brief Number of cached matrix-free block evaluations. */
+struct CoupledActionCounts {
+  int orbital_hessian = 0;
+  int orbital_to_response = 0;
+  int response_to_orbital = 0;
+  int response_hessian = 0;
+  int orbital_metric = 0;
+
+  bool operator==(const CoupledActionCounts& other) const noexcept {
+    return orbital_hessian == other.orbital_hessian &&
+        orbital_to_response == other.orbital_to_response &&
+        response_to_orbital == other.response_to_orbital &&
+        response_hessian == other.response_hessian &&
+        orbital_metric == other.orbital_metric;
+  }
+};
+
 /** @brief Orbital and response blocks reconstructed from projection caches. */
 struct CoupledCachedBlocks {
   Eigen::VectorXd orbital;
@@ -41,6 +58,7 @@ public:
   const Eigen::MatrixXd& orbital_metric_images() const noexcept;
   const Eigen::MatrixXd& response_to_orbital_images() const noexcept;
   const Eigen::MatrixXd& response_hessian_images() const noexcept;
+  const CoupledActionCounts& action_counts() const noexcept;
 
   /**
    * @brief Appends the numerically independent part of an orbital block.
@@ -110,6 +128,7 @@ private:
   Eigen::MatrixXd orbital_metric_images_;
   Eigen::MatrixXd response_to_orbital_images_;
   Eigen::MatrixXd response_hessian_images_;
+  CoupledActionCounts action_counts_;
 };
 
 }  // namespace xmvb::vb

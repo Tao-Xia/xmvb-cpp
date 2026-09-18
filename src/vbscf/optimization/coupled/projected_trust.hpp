@@ -34,11 +34,17 @@ struct ProjectedTrustResult {
       ProjectedTrustStatus::NumericalFailure;
   Eigen::VectorXd coordinates;
   double shift = std::numeric_limits<double>::quiet_NaN();
+  /** @brief Smallest generalized Hessian eigenvalue in this projection. */
+  double minimum_ritz_value = std::numeric_limits<double>::quiet_NaN();
+  /** @brief Smallest shifted generalized eigenvalue in this projection. */
+  double minimum_shifted_ritz_value =
+      std::numeric_limits<double>::quiet_NaN();
   double metric_norm = std::numeric_limits<double>::quiet_NaN();
   double predicted_decrease = -std::numeric_limits<double>::infinity();
   double stationarity_residual = std::numeric_limits<double>::infinity();
+  double stationarity_backward_error = std::numeric_limits<double>::infinity();
   double complementarity_residual = std::numeric_limits<double>::infinity();
-  double boundary_residual = std::numeric_limits<double>::infinity();
+  double feasibility_violation = std::numeric_limits<double>::infinity();
 
   bool converged() const noexcept {
     return status == ProjectedTrustStatus::InteriorGlobal ||

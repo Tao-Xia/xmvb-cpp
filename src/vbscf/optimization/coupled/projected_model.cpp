@@ -38,7 +38,7 @@ CoupledProjectedModelResult solve_coupled_projected_model(
     double trust_radius) {
   const int n_orbital = orbital_gradient.size();
   const int n_response = response_gradient.size();
-  if (n_orbital <= 0 || n_response <= 0 ||
+  if (n_orbital <= 0 || n_response < 0 ||
       orbital_hessian.rows() != n_orbital ||
       orbital_hessian.cols() != n_orbital ||
       response_hessian.rows() != n_response ||
@@ -63,8 +63,8 @@ CoupledProjectedModelResult solve_coupled_projected_model(
   result.reduced_hessian = Eigen::MatrixXd::Zero(n_orbital, n_orbital);
   result.orbital_coordinates = Eigen::VectorXd::Zero(n_orbital);
   result.response_coordinates = Eigen::VectorXd::Zero(n_response);
-  result.orbital_kkt_residual = Eigen::VectorXd::Zero(n_orbital);
-  result.response_kkt_residual = Eigen::VectorXd::Zero(n_response);
+  result.projected_orbital_kkt_residual = Eigen::VectorXd::Zero(n_orbital);
+  result.projected_response_kkt_residual = Eigen::VectorXd::Zero(n_response);
 
   const Eigen::MatrixXd symmetric_orbital_hessian =
       0.5 * (orbital_hessian + orbital_hessian.transpose());
@@ -72,22 +72,23 @@ CoupledProjectedModelResult solve_coupled_projected_model(
       0.5 * (response_hessian + response_hessian.transpose());
   const Eigen::MatrixXd symmetric_orbital_metric =
       0.5 * (orbital_metric + orbital_metric.transpose());
-  Eigen::FullPivLU<Eigen::MatrixXd> response_factor(
-      symmetric_response_hessian);
-  if (!response_factor.isInvertible()) {
-    result.status =
-        CoupledProjectedModelStatus::ResponseProjectionSingular;
-    return result;
+  if (n_response != 0) {
+    Eigen::FullPivLU<Eigen::MatrixXd> response_factor(
+        symmetric_response_hessian);
+    if (!response_factor.isInvertible()) {
+      result.status =
+          CoupledProjectedModelStatus::ResponseProjectionSingular;
+      return result;
+    }
+    Eigen::MatrixXd response_right_hand_sides(n_response, n_orbital + 1);
+    response_right_hand_sides.col(0) = -response_gradient;
+    response_right_hand_sides.rightCols(n_orbital) = -coupling;
+    const Eigen::MatrixXd response_solutions =
+        response_factor.solve(response_right_hand_sides);
+    if (!response_solutions.allFinite()) return result;
+    result.response_baseline = response_solutions.col(0);
+    result.response_lift = response_solutions.rightCols(n_orbital);
   }
-
-  Eigen::MatrixXd response_right_hand_sides(n_response, n_orbital + 1);
-  response_right_hand_sides.col(0) = -response_gradient;
-  response_right_hand_sides.rightCols(n_orbital) = -coupling;
-  const Eigen::MatrixXd response_solutions =
-      response_factor.solve(response_right_hand_sides);
-  if (!response_solutions.allFinite()) return result;
-  result.response_baseline = response_solutions.col(0);
-  result.response_lift = response_solutions.rightCols(n_orbital);
   result.reduced_gradient =
       orbital_gradient + coupling.transpose() * result.response_baseline;
   result.reduced_hessian =
@@ -117,17 +118,17 @@ CoupledProjectedModelResult solve_coupled_projected_model(
       result.response_lift * result.orbital_coordinates;
   const Eigen::VectorXd metric_image =
       symmetric_orbital_metric * result.orbital_coordinates;
-  result.orbital_kkt_residual = orbital_gradient +
+  result.projected_orbital_kkt_residual = orbital_gradient +
       symmetric_orbital_hessian * result.orbital_coordinates +
       coupling.transpose() * result.response_coordinates +
       result.orbital_solution.shift * metric_image;
-  result.response_kkt_residual = response_gradient +
+  result.projected_response_kkt_residual = response_gradient +
       coupling * result.orbital_coordinates +
       symmetric_response_hessian * result.response_coordinates;
-  result.orbital_kkt_residual_norm =
-      result.orbital_kkt_residual.stableNorm();
-  result.response_kkt_residual_norm =
-      result.response_kkt_residual.stableNorm();
+  result.projected_orbital_kkt_residual_norm =
+      result.projected_orbital_kkt_residual.stableNorm();
+  result.projected_response_kkt_residual_norm =
+      result.projected_response_kkt_residual.stableNorm();
 
   result.response_baseline_model_change =
       response_gradient.dot(result.response_baseline) +
@@ -142,10 +143,10 @@ CoupledProjectedModelResult solve_coupled_projected_model(
   result.total_predicted_decrease = -result.total_model_change;
   if (!result.orbital_coordinates.allFinite() ||
       !result.response_coordinates.allFinite() ||
-      !result.orbital_kkt_residual.allFinite() ||
-      !result.response_kkt_residual.allFinite() ||
-      !std::isfinite(result.orbital_kkt_residual_norm) ||
-      !std::isfinite(result.response_kkt_residual_norm) ||
+      !result.projected_orbital_kkt_residual.allFinite() ||
+      !result.projected_response_kkt_residual.allFinite() ||
+      !std::isfinite(result.projected_orbital_kkt_residual_norm) ||
+      !std::isfinite(result.projected_response_kkt_residual_norm) ||
       !std::isfinite(result.response_baseline_model_change) ||
       !std::isfinite(result.reduced_incremental_model_change) ||
       !std::isfinite(result.total_model_change) ||

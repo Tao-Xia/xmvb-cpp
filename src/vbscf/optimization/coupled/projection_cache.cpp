@@ -110,6 +110,11 @@ CoupledProjectionCache::response_hessian_images() const noexcept {
   return response_hessian_images_;
 }
 
+const CoupledActionCounts&
+CoupledProjectionCache::action_counts() const noexcept {
+  return action_counts_;
+}
+
 int CoupledProjectionCache::append_orbital_block(
     const Eigen::Ref<const Eigen::MatrixXd>& candidates) {
   const int n_orbitals = coupled_operator_->n_orbital_coordinates();
@@ -120,6 +125,7 @@ int CoupledProjectionCache::append_orbital_block(
   if (candidates.cols() == 0) return 0;
   const Eigen::MatrixXd candidate_metric_images =
       coupled_operator_->apply_orbital_metric(candidates);
+  ++action_counts_.orbital_metric;
   Eigen::MatrixXd accepted(n_orbitals, candidates.cols());
   Eigen::MatrixXd accepted_metric(n_orbitals, candidates.cols());
   int n_accepted = 0;
@@ -180,8 +186,10 @@ int CoupledProjectionCache::append_orbital_block(
   accepted_metric.conservativeResize(Eigen::NoChange, n_accepted);
   const Eigen::MatrixXd hessian_images =
       coupled_operator_->apply_orbital_hessian(accepted);
+  ++action_counts_.orbital_hessian;
   const Eigen::MatrixXd response_images =
       coupled_operator_->apply_orbital_to_response(accepted);
+  ++action_counts_.orbital_to_response;
   append_columns(&orbital_basis_, accepted);
   append_columns(&orbital_metric_images_, accepted_metric);
   append_columns(&orbital_hessian_images_, hessian_images);
@@ -230,8 +238,10 @@ int CoupledProjectionCache::append_response_block(
   accepted.conservativeResize(Eigen::NoChange, n_accepted);
   const Eigen::MatrixXd orbital_images =
       coupled_operator_->apply_response_to_orbital(accepted);
+  ++action_counts_.response_to_orbital;
   const Eigen::MatrixXd hessian_images =
       coupled_operator_->apply_response_hessian(accepted);
+  ++action_counts_.response_hessian;
   append_columns(&response_basis_, accepted);
   append_columns(&response_to_orbital_images_, orbital_images);
   append_columns(&response_hessian_images_, hessian_images);

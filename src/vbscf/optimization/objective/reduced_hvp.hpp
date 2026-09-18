@@ -1,5 +1,6 @@
 #pragma once
 
+#include <memory>
 #include <string>
 
 #include <Eigen/Core>
@@ -39,9 +40,11 @@ public:
   std::size_t outer_response_direction_count() const noexcept;
   bool supports_analytic_core_model() const noexcept;
   ExactHvpOperator::Diagnostics diagnostics() const;
+  /** @brief Shared accepted-point operator for coupled Newton block actions. */
+  std::shared_ptr<const ExactHvpOperator> exact_operator() const noexcept;
 
 private:
-  ExactHvpOperator exact_operator_;
+  std::shared_ptr<const ExactHvpOperator> exact_operator_;
   double response_relative_residual_tolerance_ = 0.0;
   std::size_t core_direction_count_ = 0;
   std::size_t outer_response_direction_count_ = 0;

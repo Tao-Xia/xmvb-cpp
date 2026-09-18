@@ -206,6 +206,7 @@ ProjectedTrustResult solve_projected_generalized_trust_region(
     result.status = ProjectedTrustStatus::NumericalFailure;
     return result;
   }
+  result.minimum_ritz_value = spectral_solver.eigenvalues().minCoeff();
 
   const Eigen::VectorXd spectral_gradient =
       spectral_solver.eigenvectors().transpose() * whitened_gradient;
@@ -235,10 +236,21 @@ ProjectedTrustResult solve_projected_generalized_trust_region(
       symmetric_hessian * result.coordinates + projected_gradient +
       result.shift * metric_image;
   result.stationarity_residual = stationarity.stableNorm();
-  result.boundary_residual =
-      std::abs(result.metric_norm - trust_radius);
+  const double stationarity_scale =
+      (symmetric_hessian * result.coordinates).stableNorm() +
+      projected_gradient.stableNorm() +
+      result.shift * metric_image.stableNorm();
+  result.stationarity_backward_error = stationarity_scale > 0.0
+      ? result.stationarity_residual / stationarity_scale
+      : result.stationarity_residual == 0.0
+          ? 0.0
+          : std::numeric_limits<double>::infinity();
+  result.feasibility_violation =
+      std::max(0.0, result.metric_norm - trust_radius);
   result.complementarity_residual =
-      result.shift * result.boundary_residual;
+      result.shift * std::abs(result.metric_norm - trust_radius);
+  result.minimum_shifted_ritz_value =
+      result.minimum_ritz_value + result.shift;
   const double model_value =
       projected_gradient.dot(result.coordinates) +
       0.5 * result.coordinates.dot(

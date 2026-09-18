@@ -118,6 +118,7 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/coupled/projected_model.cpp
   vbscf/optimization/coupled/projected_trust.cpp
   vbscf/optimization/coupled/spectral.cpp
+  vbscf/optimization/coupled/solver.cpp
   vbscf/optimization/krylov/minres.cpp
   vbscf/optimization/globalization/line_search.cpp
   vbscf/optimization/driver/session.cpp

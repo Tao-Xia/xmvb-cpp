@@ -9,6 +9,7 @@ namespace xmvb::vb {
 RelaxedCauchyResult build_relaxed_cauchy_incumbent(
     const CoupledNewtonOperator& coupled_operator,
     const Eigen::Ref<const Eigen::VectorXd>& corrected_orbital_gradient,
+    const Eigen::Ref<const Eigen::VectorXd>& remaining_structure_residual,
     double trust_radius,
     const MinresOptions& response_options,
     const SymmetricOperatorAction& apply_inverse_orbital_metric,
@@ -17,6 +18,8 @@ RelaxedCauchyResult build_relaxed_cauchy_incumbent(
   const int n_response = coupled_operator.n_response_coordinates();
   if (corrected_orbital_gradient.size() != n_orbitals ||
       !corrected_orbital_gradient.allFinite() ||
+      remaining_structure_residual.size() != n_response ||
+      !remaining_structure_residual.allFinite() ||
       !(trust_radius > 0.0) || !std::isfinite(trust_radius) ||
       !apply_inverse_orbital_metric) {
     throw std::invalid_argument("invalid relaxed Cauchy problem");
@@ -33,14 +36,6 @@ RelaxedCauchyResult build_relaxed_cauchy_incumbent(
     result.stop_reason = RelaxedCauchyStopReason::InvalidInverseMetric;
     return result;
   }
-  result.directional_derivative =
-      corrected_orbital_gradient.dot(result.orbital_direction);
-  if (!(result.directional_derivative < 0.0) ||
-      !std::isfinite(result.directional_derivative)) {
-    result.stop_reason = RelaxedCauchyStopReason::NonDescentDirection;
-    return result;
-  }
-
   result.orbital_metric_image = coupled_operator.apply_orbital_metric(
       result.orbital_direction).col(0);
   const double squared_orbital_norm =
@@ -69,6 +64,15 @@ RelaxedCauchyResult build_relaxed_cauchy_incumbent(
       -result.response_linear_result.residual;
   if (!result.response_linear_result.converged()) {
     result.stop_reason = RelaxedCauchyStopReason::ResponseLiftFailure;
+    return result;
+  }
+
+  result.directional_derivative =
+      corrected_orbital_gradient.dot(result.orbital_direction) +
+      remaining_structure_residual.dot(result.response_direction);
+  if (!(result.directional_derivative < 0.0) ||
+      !std::isfinite(result.directional_derivative)) {
+    result.stop_reason = RelaxedCauchyStopReason::NonDescentDirection;
     return result;
   }
 

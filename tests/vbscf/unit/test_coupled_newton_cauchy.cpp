@@ -72,6 +72,7 @@ int main() {
     const auto coupled_operator = make_operator(
         orbital_hessian, coupling, response_hessian, metric);
     const Eigen::Vector2d corrected_gradient(0.8, -0.4);
+    const Eigen::Vector2d zero_structure_defect = Eigen::Vector2d::Zero();
     const double radius = 0.25;
     xmvb::vb::MinresOptions response_options;
     response_options.relative_residual_tolerance = 1.0e-12;
@@ -83,6 +84,7 @@ int main() {
         xmvb::vb::build_relaxed_cauchy_incumbent(
             coupled_operator,
             corrected_gradient,
+            zero_structure_defect,
             radius,
             response_options,
             inverse_metric);
@@ -176,6 +178,7 @@ int main() {
         xmvb::vb::build_relaxed_cauchy_incumbent(
             coupled_operator,
             corrected_gradient,
+            zero_structure_defect,
             radius,
             insufficient_response_options,
             inverse_metric);
@@ -189,10 +192,12 @@ int main() {
     xmvb::vb::MinresOptions finite_response_options = response_options;
     finite_response_options.relative_residual_tolerance = 0.9;
     finite_response_options.maximum_iterations = 1;
+    const Eigen::Vector2d finite_structure_defect(0.03, -0.02);
     const auto finite_response =
         xmvb::vb::build_relaxed_cauchy_incumbent(
             coupled_operator,
             corrected_gradient,
+            finite_structure_defect,
             radius,
             finite_response_options,
             inverse_metric);
@@ -209,6 +214,19 @@ int main() {
     require(std::abs(finite_response.coupled_ray_curvature -
                      explicit_finite_curvature) <= 2.0e-13,
             "finite-solve prediction omitted the response residual correction");
+    const double explicit_finite_derivative =
+        corrected_gradient.dot(finite_response.orbital_direction) +
+        finite_structure_defect.dot(finite_response.response_direction);
+    require(std::abs(finite_response.directional_derivative -
+                     explicit_finite_derivative) <= 2.0e-13,
+            "finite structure defect was omitted from the Cauchy derivative");
+    const double explicit_finite_prediction =
+        -finite_response.step_length * explicit_finite_derivative -
+        0.5 * finite_response.step_length * finite_response.step_length *
+            explicit_finite_curvature;
+    require(std::abs(finite_response.predicted_decrease -
+                     explicit_finite_prediction) <= 2.0e-13,
+            "finite structure defect was omitted from the Cauchy prediction");
 
     // The gradient Krylov ray does not see the second orbital direction, whose
     // curvature is strongly negative. The layer must still return its positive
@@ -226,6 +244,7 @@ int main() {
         xmvb::vb::build_relaxed_cauchy_incumbent(
             hidden_indefinite_operator,
             Eigen::Vector2d(0.1, 0.0),
+            zero_structure_defect,
             1.0,
             response_options,
             [](const Eigen::VectorXd& vector) { return vector; });

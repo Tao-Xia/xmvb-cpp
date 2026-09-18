@@ -30,12 +30,12 @@ ExactReducedHvp::ExactReducedHvp(
     const VbScfObjective& objective,
     const OrbitalChart& current_space,
     double response_relative_residual_tolerance)
-    : exact_operator_(
+    : exact_operator_(std::make_shared<ExactHvpOperator>(
           objective.second_order_context(),
           &objective.input(),
           SparseParameterLayout(
               objective.input().orbital_preparation_input),
-          &current_space),
+          &current_space)),
       response_relative_residual_tolerance_(
           response_relative_residual_tolerance) {
   if (!std::isfinite(response_relative_residual_tolerance_) ||
@@ -50,7 +50,7 @@ Eigen::VectorXd ExactReducedHvp::apply(
     const Eigen::VectorXd& reduced_direction) {
   ++core_direction_count_;
   ++outer_response_direction_count_;
-  return exact_operator_.apply_reduced(
+  return exact_operator_->apply_reduced(
       reduced_direction,
       {.direct_core_response = true,
        .fixed_upstream_pullback = true,
@@ -66,7 +66,7 @@ Eigen::MatrixXd ExactReducedHvp::apply_batch(
       static_cast<std::size_t>(reduced_directions.cols());
   core_direction_count_ += n_directions;
   outer_response_direction_count_ += n_directions;
-  return exact_operator_.apply_reduced_batch(
+  return exact_operator_->apply_reduced_batch(
       reduced_directions,
       {.direct_core_response = true,
        .fixed_upstream_pullback = true,
@@ -79,7 +79,7 @@ Eigen::MatrixXd ExactReducedHvp::apply_batch(
 Eigen::VectorXd ExactReducedHvp::apply_core(
     const Eigen::VectorXd& reduced_direction) {
   ++core_direction_count_;
-  return exact_operator_.apply_reduced(
+  return exact_operator_->apply_reduced(
       reduced_direction,
       {.direct_core_response = true,
        .fixed_upstream_pullback = true,
@@ -91,7 +91,7 @@ Eigen::MatrixXd ExactReducedHvp::apply_core_batch(
     const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) {
   core_direction_count_ +=
       static_cast<std::size_t>(reduced_directions.cols());
-  return exact_operator_.apply_reduced_batch(
+  return exact_operator_->apply_reduced_batch(
       reduced_directions,
       {.direct_core_response = true,
        .fixed_upstream_pullback = true,
@@ -102,7 +102,7 @@ Eigen::MatrixXd ExactReducedHvp::apply_core_batch(
 Eigen::VectorXd ExactReducedHvp::apply_outer(
     const Eigen::VectorXd& reduced_direction) {
   ++outer_response_direction_count_;
-  return exact_operator_.apply_reduced(
+  return exact_operator_->apply_reduced(
       reduced_direction,
       {.direct_core_response = false,
        .fixed_upstream_pullback = false,
@@ -120,12 +120,17 @@ std::size_t ExactReducedHvp::outer_response_direction_count() const noexcept {
 
 bool ExactReducedHvp::supports_analytic_core_model()
     const noexcept {
-  return exact_operator_.supports_analytic_core_model();
+  return exact_operator_->supports_analytic_core_model();
 }
 
 ExactHvpOperator::Diagnostics ExactReducedHvp::diagnostics()
     const {
-  return exact_operator_.diagnostics();
+  return exact_operator_->diagnostics();
+}
+
+std::shared_ptr<const ExactHvpOperator>
+ExactReducedHvp::exact_operator() const noexcept {
+  return exact_operator_;
 }
 
 CoreReducedHvp::CoreReducedHvp(ExactReducedHvp* exact_hvp)

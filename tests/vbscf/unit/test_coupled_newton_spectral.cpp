@@ -137,8 +137,6 @@ int main() {
         "explored-subspace Ritz value differs from the dense Schur reference");
     require(explored.response_stationarity_certified,
             "constructed response lift lacks a stationarity certificate");
-    require(explored.negative_curvature_certified,
-            "negative response-stationary curvature was not certified");
     require_close(
         explored.response_stationary_rayleigh_quotient,
         explored.leftmost_ritz_value,
@@ -200,9 +198,8 @@ int main() {
             coupled_operator,
             explored_basis,
             unstationary_lifts);
-    require(!unstationary.response_stationarity_certified &&
-                !unstationary.negative_curvature_certified,
-            "nonstationary response lift produced a curvature certificate");
+    require(!unstationary.response_stationarity_certified,
+            "nonstationary response lift was certified");
     require(
         (unstationary.projected_coupled_hessian -
          unstationary.projected_relaxed_hessian).norm() > 1.0e-4,
@@ -226,8 +223,7 @@ int main() {
         coupled_operator,
         explored_basis,
         failed_lifts);
-    require(!failed.response_stationarity_certified &&
-                !failed.negative_curvature_certified,
+    require(!failed.response_stationarity_certified,
             "nonconverged response solve was silently certified");
 
     const Eigen::Matrix3d full_basis = Eigen::Matrix3d::Identity();

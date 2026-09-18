@@ -100,22 +100,22 @@ void verify_kkt_and_model(
       result.orbital_solution.shift * problem.metric *
           result.orbital_coordinates;
   require_close(
-      result.response_kkt_residual,
+      result.projected_response_kkt_residual,
       response_residual,
       2.0e-14,
       "reported projected response KKT residual is inaccurate");
   require_close(
-      result.orbital_kkt_residual,
+      result.projected_orbital_kkt_residual,
       orbital_residual,
       2.0e-14,
       "reported projected orbital KKT residual is inaccurate");
   require_close(
-      result.response_kkt_residual_norm,
+      result.projected_response_kkt_residual_norm,
       response_residual.stableNorm(),
       2.0e-14,
       "reported response KKT norm is inaccurate");
   require_close(
-      result.orbital_kkt_residual_norm,
+      result.projected_orbital_kkt_residual_norm,
       orbital_residual.stableNorm(),
       2.0e-14,
       "reported orbital KKT norm is inaccurate");

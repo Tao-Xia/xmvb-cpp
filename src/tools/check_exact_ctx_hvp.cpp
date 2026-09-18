@@ -18,7 +18,10 @@
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/optimization/coupled/accepted_point.hpp"
 #include "vbscf/optimization/coupled/forcing.hpp"
+#include "vbscf/optimization/coupled/projected_model.hpp"
+#include "vbscf/optimization/coupled/projection_cache.hpp"
 #include "vbscf/optimization/krylov/minres.hpp"
+#include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -36,6 +39,7 @@ struct Options {
   double max_relative_error = std::numeric_limits<double>::infinity();
   double response_tolerance = 1.0e-3;
   bool stream_pair_products = false;
+  bool coupled_projection_audit = false;
 };
 
 void print_usage() {
@@ -48,7 +52,8 @@ void print_usage() {
       << " [--eigensolver dense|davidson]"
       << " [--standard-two-electron-mode exact|ri]"
       << " [--direction gradient|preconditioned_gradient]"
-      << " [--stream-pair-products 0|1]\n";
+      << " [--stream-pair-products 0|1]"
+      << " [--coupled-projection-audit 0|1]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -102,6 +107,12 @@ Options parse_arguments(int argc, char** argv) {
         throw std::invalid_argument("--stream-pair-products must be 0 or 1");
       }
       options.stream_pair_products = value == "1";
+    } else if (name == "--coupled-projection-audit") {
+      if (value != "0" && value != "1") {
+        throw std::invalid_argument(
+            "--coupled-projection-audit must be 0 or 1");
+      }
+      options.coupled_projection_audit = value == "1";
     } else if (name == "--probe") {
       if (value != "full") {
         throw std::invalid_argument("only the complete exact HVP is supported");
@@ -119,6 +130,214 @@ Options parse_arguments(int argc, char** argv) {
 
 double infinity_norm(const Eigen::Ref<const Eigen::VectorXd>& values) {
   return values.size() == 0 ? 0.0 : values.cwiseAbs().maxCoeff();
+}
+
+struct CoupledProjectionAudit {
+  int orbital_subspace_size = 0;
+  int response_subspace_size = 0;
+  double cached_block_relative_error = 0.0;
+  double cached_image_relative_error = 0.0;
+  double projected_adjoint_error = 0.0;
+  double response_hessian_symmetry_error = 0.0;
+  double relaxed_schur_relative_error = 0.0;
+  double first_radius_response_residual = 0.0;
+  double second_radius_response_residual = 0.0;
+  xmvb::vb::CoupledActionCounts action_counts;
+};
+
+double relative_matrix_error(
+    const Eigen::Ref<const Eigen::MatrixXd>& actual,
+    const Eigen::Ref<const Eigen::MatrixXd>& reference) {
+  if (actual.rows() != reference.rows() ||
+      actual.cols() != reference.cols()) {
+    return std::numeric_limits<double>::infinity();
+  }
+  return (actual - reference).stableNorm() /
+      std::max(1.0, reference.stableNorm());
+}
+
+CoupledProjectionAudit audit_coupled_projection(
+    const xmvb::vb::AcceptedPointCoupledModel& model,
+    const xmvb::vb::ExactHvpOperator& exact_hvp,
+    const Eigen::Ref<const Eigen::VectorXd>& orbital_gradient,
+    const Eigen::Ref<const Eigen::VectorXd>& primary_direction) {
+  const xmvb::vb::CoupledNewtonOperator& direct = model.newton_operator;
+  xmvb::vb::CoupledProjectionCache cache(direct);
+
+  const int n_orbital = direct.n_orbital_coordinates();
+  const int n_orbital_candidates = std::min(3, n_orbital);
+  Eigen::MatrixXd orbital_candidates = Eigen::MatrixXd::Zero(
+      n_orbital,
+      n_orbital_candidates);
+  orbital_candidates.col(0) = primary_direction;
+  if (n_orbital_candidates >= 2) orbital_candidates(0, 1) = 1.0;
+  if (n_orbital_candidates >= 3) {
+    orbital_candidates(n_orbital - 1, 2) = 1.0;
+  }
+  const int accepted_orbitals =
+      cache.append_orbital_block(orbital_candidates);
+  const xmvb::vb::CoupledActionCounts orbital_counts =
+      cache.action_counts();
+  if (accepted_orbitals < std::min(2, n_orbital) ||
+      orbital_counts.orbital_metric != 1 ||
+      orbital_counts.orbital_hessian != 1 ||
+      orbital_counts.orbital_to_response != 1 ||
+      orbital_counts.response_to_orbital != 0 ||
+      orbital_counts.response_hessian != 0) {
+    throw std::runtime_error(
+        "coupled orbital cache did not use one action per accepted block");
+  }
+
+  const int n_response = direct.n_response_coordinates();
+  if (cache.append_response_block(
+          Eigen::MatrixXd::Identity(n_response, n_response)) != n_response ||
+      cache.action_counts().response_to_orbital != 1 ||
+      cache.action_counts().response_hessian != 1) {
+    throw std::runtime_error(
+        "coupled response cache did not retain the complete response space");
+  }
+
+  const Eigen::MatrixXd& orbital_basis = cache.orbital_basis();
+  const Eigen::MatrixXd& response_basis = cache.response_basis();
+  const Eigen::MatrixXd direct_a =
+      direct.apply_orbital_hessian(orbital_basis);
+  const Eigen::MatrixXd direct_b =
+      direct.apply_orbital_to_response(orbital_basis);
+  const Eigen::MatrixXd direct_g =
+      direct.apply_orbital_metric(orbital_basis);
+  const Eigen::MatrixXd direct_bt =
+      direct.apply_response_to_orbital(response_basis);
+  const Eigen::MatrixXd direct_c =
+      direct.apply_response_hessian(response_basis);
+  double cached_block_error = 0.0;
+  cached_block_error = std::max(
+      cached_block_error,
+      relative_matrix_error(cache.orbital_hessian_images(), direct_a));
+  cached_block_error = std::max(
+      cached_block_error,
+      relative_matrix_error(cache.orbital_to_response_images(), direct_b));
+  cached_block_error = std::max(
+      cached_block_error,
+      relative_matrix_error(cache.orbital_metric_images(), direct_g));
+  cached_block_error = std::max(
+      cached_block_error,
+      relative_matrix_error(cache.response_to_orbital_images(), direct_bt));
+  cached_block_error = std::max(
+      cached_block_error,
+      relative_matrix_error(cache.response_hessian_images(), direct_c));
+  if (cached_block_error > 1.0e-12) {
+    throw std::runtime_error(
+        "coupled projection cache differs from direct production actions");
+  }
+  const double projected_adjoint_error =
+      cache.projected_coupling_adjoint_error();
+  const Eigen::MatrixXd full_projected_c =
+      response_basis.transpose() * direct_c;
+  const double full_response_symmetry_error = relative_matrix_error(
+      full_projected_c,
+      full_projected_c.transpose());
+  if (projected_adjoint_error > 1.0e-10 ||
+      full_response_symmetry_error > 1.0e-10) {
+    throw std::runtime_error(
+        "coupled production blocks are not symmetric-adjoint consistent");
+  }
+
+  const Eigen::VectorXd orbital_coordinates = Eigen::VectorXd::LinSpaced(
+      cache.orbital_subspace_size(), -0.31, 0.27);
+  const Eigen::VectorXd response_coordinates = Eigen::VectorXd::LinSpaced(
+      cache.response_subspace_size(), 0.19, -0.23);
+  constexpr double audit_shift = 0.17;
+  const xmvb::vb::CoupledCachedBlocks cached_image =
+      cache.reconstruct_image(
+          orbital_coordinates,
+          response_coordinates,
+          audit_shift);
+  Eigen::VectorXd full_direction(direct.size());
+  full_direction.head(n_orbital) = orbital_basis * orbital_coordinates;
+  full_direction.tail(n_response) = response_basis * response_coordinates;
+  const Eigen::VectorXd direct_image =
+      direct.apply(full_direction, audit_shift);
+  const double cached_image_error = relative_matrix_error(
+      cached_image.packed(),
+      direct_image);
+  if (cached_image_error > 1.0e-12) {
+    throw std::runtime_error(
+        "cached coupled image differs from a direct block action");
+  }
+
+  const Eigen::MatrixXd projected_a =
+      cache.projected_orbital_hessian();
+  const Eigen::MatrixXd projected_c =
+      cache.projected_response_hessian();
+  const Eigen::MatrixXd projected_d = cache.projected_coupling();
+  const Eigen::MatrixXd projected_g = cache.projected_orbital_metric();
+  const Eigen::VectorXd projected_orbital_gradient =
+      orbital_basis.transpose() * orbital_gradient;
+  const Eigen::VectorXd projected_response_gradient =
+      response_basis.transpose() * model.structure_kkt_residual;
+
+  const xmvb::vb::CoupledActionCounts counts_before_radius_solves =
+      cache.action_counts();
+  const auto first_radius = xmvb::vb::solve_coupled_projected_model(
+      projected_a,
+      projected_c,
+      projected_d,
+      projected_g,
+      projected_orbital_gradient,
+      projected_response_gradient,
+      0.25);
+  const auto second_radius = xmvb::vb::solve_coupled_projected_model(
+      projected_a,
+      projected_c,
+      projected_d,
+      projected_g,
+      projected_orbital_gradient,
+      projected_response_gradient,
+      0.5);
+  if (!first_radius.converged() || !second_radius.converged()) {
+    throw std::runtime_error(
+        "coupled projected trust model did not solve at both radii");
+  }
+  if (!(cache.action_counts() == counts_before_radius_solves)) {
+    throw std::runtime_error(
+        "changing the trust radius triggered a new production action");
+  }
+
+  Eigen::MatrixXd relaxed_images(
+      orbital_basis.rows(), orbital_basis.cols());
+  for (Eigen::Index column = 0; column < orbital_basis.cols(); ++column) {
+    relaxed_images.col(column) =
+        exact_hvp.apply_reduced(orbital_basis.col(column));
+  }
+  Eigen::MatrixXd projected_relaxed =
+      orbital_basis.transpose() * relaxed_images;
+  projected_relaxed =
+      0.5 * (projected_relaxed + projected_relaxed.transpose());
+  const double relaxed_schur_error = relative_matrix_error(
+      first_radius.reduced_hessian,
+      projected_relaxed);
+  if (relaxed_schur_error > 2.0e-10) {
+    std::cerr << std::setprecision(16)
+              << "projected_relaxed_hessian =\n"
+              << first_radius.reduced_hessian << '\n'
+              << "direct_relaxed_hessian =\n"
+              << projected_relaxed << '\n'
+              << "relative_error = " << relaxed_schur_error << '\n';
+    throw std::runtime_error(
+        "two-space Schur model disagrees with the relaxed orbital HVP");
+  }
+
+  return CoupledProjectionAudit{
+      cache.orbital_subspace_size(),
+      cache.response_subspace_size(),
+      cached_block_error,
+      cached_image_error,
+      projected_adjoint_error,
+      full_response_symmetry_error,
+      relaxed_schur_error,
+      first_radius.projected_response_kkt_residual_norm,
+      second_radius.projected_response_kkt_residual_norm,
+      cache.action_counts()};
 }
 
 /** @brief Loads an exact accepted-point orbital table for derivative checks. */
@@ -207,6 +426,10 @@ int main(int argc, char** argv) {
             n_occupied),
         normalized_orbitals,
         &accepted.ao_effective_one_electron_result.ao_effective_h1e);
+    const xmvb::vb::NonredundantRetractionMetric retraction_metric(
+        chart,
+        layout,
+        input.orbital_preparation_input);
 
     const Eigen::VectorXd packed_gradient =
         layout.gather_from_full(accepted.sparse_orbital_energy_gradient);
@@ -246,7 +469,20 @@ int main(int argc, char** argv) {
         xmvb::vb::make_accepted_point_coupled_model(
             *accepted.second_order_context,
             exact_hvp_owner,
-            chart.reduced_size());
+            chart.reduced_size(),
+            [&retraction_metric](
+                const Eigen::Ref<const Eigen::MatrixXd>& directions) {
+              Eigen::MatrixXd images(
+                  directions.rows(),
+                  directions.cols());
+              for (Eigen::Index column = 0;
+                   column < directions.cols();
+                   ++column) {
+                images.col(column) =
+                    retraction_metric.apply(directions.col(column));
+              }
+              return images;
+            });
     const xmvb::vb::SelectedStructureDirection structure_direction =
         exact_hvp.apply_selected_structure_direction(direction);
     const int n_selected_states = static_cast<int>(
@@ -505,12 +741,24 @@ int main(int argc, char** argv) {
     const Eigen::MatrixXd factory_metric =
         coupled_model.newton_operator.apply_orbital_metric(
             orbital_a_probe);
+    Eigen::MatrixXd reference_metric(
+        orbital_a_probe.rows(),
+        orbital_a_probe.cols());
+    for (Eigen::Index column = 0;
+         column < orbital_a_probe.cols();
+         ++column) {
+      reference_metric.col(column) =
+          retraction_metric.apply(orbital_a_probe.col(column));
+    }
     const double factory_metric_error =
+        (factory_metric - reference_metric).norm() /
+        std::max(1.0, reference_metric.norm());
+    const double factory_metric_identity_difference =
         (factory_metric - orbital_a_probe).norm() /
-        std::max(1.0, orbital_a_probe.norm());
-    if (factory_metric_error > 1.0e-15) {
+        std::max(1.0, factory_metric.norm());
+    if (factory_metric_error > 1.0e-12) {
       throw std::runtime_error(
-          "accepted-point coupled factory default metric is not Euclidean");
+          "accepted-point coupled factory changed the retraction metric");
     }
     const Eigen::MatrixXd eliminated_response_adjoint =
         xmvb::vb::apply_exact_selected_subspace_to_orbital(
@@ -572,6 +820,14 @@ int main(int argc, char** argv) {
           "coupled orbital A action has inconsistent response decomposition");
     }
     const auto hvp_diagnostics = exact_hvp.diagnostics();
+    CoupledProjectionAudit coupled_projection_audit;
+    if (options.coupled_projection_audit) {
+      coupled_projection_audit = audit_coupled_projection(
+          coupled_model,
+          exact_hvp,
+          accepted_reduced_gradient,
+          direction);
+    }
 
     double state_energy_average_error = 0.0;
     double state_gradient_average_error = 0.0;
@@ -620,6 +876,63 @@ int main(int argc, char** argv) {
         throw std::runtime_error(
             "equal-weight state-average linearity check failed");
       }
+    }
+
+    if (options.coupled_projection_audit) {
+      const xmvb::vb::CoupledActionCounts& counts =
+          coupled_projection_audit.action_counts;
+      std::cout << std::setprecision(12)
+                << "input = " << options.input_path << '\n'
+                << "eigensolver = "
+                << xmvb::vb::structure_eigensolver_name(options.eigensolver)
+                << '\n'
+                << "state_average_count = " << selected_states.size() << '\n'
+                << "accepted_energy = "
+                << accepted.scf_result.total_energy << '\n'
+                << "accepted_gradient_inf_norm = "
+                << infinity_norm(accepted_reduced_gradient) << '\n'
+                << "factory_metric_relative_error = "
+                << factory_metric_error << '\n'
+                << "factory_metric_identity_difference = "
+                << factory_metric_identity_difference << '\n'
+                << "state_energy_average_error = "
+                << state_energy_average_error << '\n'
+                << "state_gradient_average_inf_error = "
+                << state_gradient_average_error << '\n'
+                << "state_hvp_average_inf_error = "
+                << state_hvp_average_error << '\n'
+                << "projection_orbital_dimension = "
+                << coupled_projection_audit.orbital_subspace_size << '\n'
+                << "projection_response_dimension = "
+                << coupled_projection_audit.response_subspace_size << '\n'
+                << "projection_cached_block_relative_error = "
+                << coupled_projection_audit.cached_block_relative_error << '\n'
+                << "projection_cached_image_relative_error = "
+                << coupled_projection_audit.cached_image_relative_error << '\n'
+                << "projection_adjoint_error = "
+                << coupled_projection_audit.projected_adjoint_error << '\n'
+                << "projection_response_hessian_symmetry_error = "
+                << coupled_projection_audit.response_hessian_symmetry_error
+                << '\n'
+                << "projection_relaxed_schur_relative_error = "
+                << coupled_projection_audit.relaxed_schur_relative_error << '\n'
+                << "projection_first_radius_response_residual = "
+                << coupled_projection_audit.first_radius_response_residual
+                << '\n'
+                << "projection_second_radius_response_residual = "
+                << coupled_projection_audit.second_radius_response_residual
+                << '\n'
+                << "projection_orbital_hessian_actions = "
+                << counts.orbital_hessian << '\n'
+                << "projection_orbital_to_response_actions = "
+                << counts.orbital_to_response << '\n'
+                << "projection_response_to_orbital_actions = "
+                << counts.response_to_orbital << '\n'
+                << "projection_response_hessian_actions = "
+                << counts.response_hessian << '\n'
+                << "projection_orbital_metric_actions = "
+                << counts.orbital_metric << '\n';
+      return 0;
     }
 
     xmvb::vb::VbScfInput displaced = input;
@@ -737,6 +1050,8 @@ int main(int argc, char** argv) {
               << factory_response_hessian_error << '\n'
               << "factory_metric_error = "
               << factory_metric_error << '\n'
+              << "factory_metric_identity_difference = "
+              << factory_metric_identity_difference << '\n'
               << "response_hessian_symmetry_error = "
               << response_hessian_symmetry_error << '\n'
               << "response_solve_iterations = "
