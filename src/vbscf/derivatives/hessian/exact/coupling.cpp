@@ -4,6 +4,9 @@
 #include "vbscf/derivatives/hessian/exact/apply_internal.hpp"
 #include "vbscf/derivatives/hessian/exact/state_internal.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -23,6 +26,12 @@ SelectedStructureDirection copy_selected_images(
   return SelectedStructureDirection{
       std::move(images.delta_hamiltonian_selected),
       std::move(images.delta_overlap_selected)};
+}
+
+bool same_weight(double left, double right) {
+  const double scale = std::max({1.0, std::abs(left), std::abs(right)});
+  return std::abs(left - right) <=
+      64.0 * std::numeric_limits<double>::epsilon() * scale;
 }
 
 }  // namespace
@@ -46,6 +55,21 @@ ExactHvpOperator::apply_selected_structure_direction_batch(
             reduced_directions.col(column)));
   }
   return images;
+}
+
+std::vector<SelectedStructureResponse>
+ExactHvpOperator::apply_selected_structure_response_batch(
+    const std::vector<SelectedStructureResponse>& responses) const {
+  return state_->apply_selected_structure_response_batch(responses);
+}
+
+const std::vector<double>&
+ExactHvpOperator::selected_state_weights() const noexcept {
+  return state_->selected_state_weights();
+}
+
+int ExactHvpOperator::n_structures() const noexcept {
+  return state_->n_structures();
 }
 
 SelectedStructureDirection
@@ -129,6 +153,91 @@ ExactHvpOperator::State::apply_selected_structure_direction(
           outer_response_context(),
           integral_direction,
           pair_cache));
+}
+
+std::vector<SelectedStructureResponse>
+ExactHvpOperator::State::apply_selected_structure_response_batch(
+    const std::vector<SelectedStructureResponse>& responses) const {
+  if (responses.empty()) {
+    throw std::invalid_argument(
+        "selected-subspace response action requires at least one direction");
+  }
+  const int n_structures = accepted_point_context_->n_structures;
+  const int n_states = static_cast<int>(
+      accepted_point_context_->selected_state_indices.size());
+  const auto& weights = accepted_point_context_->normalized_state_weights;
+  if (n_structures <= 0 || n_states <= 0 ||
+      weights.size() != static_cast<std::size_t>(n_states)) {
+    throw std::logic_error(
+        "accepted selected-subspace response dimensions are inconsistent");
+  }
+
+  Eigen::MatrixXd coefficient_block(
+      n_structures,
+      n_states * static_cast<int>(responses.size()));
+  for (std::size_t direction = 0; direction < responses.size(); ++direction) {
+    const SelectedStructureResponse& response = responses[direction];
+    if (response.coefficients.rows() != n_structures ||
+        response.coefficients.cols() != n_states ||
+        response.multipliers.rows() != n_states ||
+        response.multipliers.cols() != n_states ||
+        !response.coefficients.allFinite() ||
+        !response.multipliers.allFinite()) {
+      throw std::invalid_argument(
+          "selected-subspace response has incompatible dimensions or values");
+    }
+    for (int column = 0; column < n_states; ++column) {
+      for (int row = 0; row < n_states; ++row) {
+        if (response.multipliers(row, column) != 0.0 &&
+            !same_weight(weights[row], weights[column])) {
+          throw std::invalid_argument(
+              "selected-subspace response multipliers may couple only equal-weight states");
+        }
+      }
+    }
+    coefficient_block.middleCols(
+        static_cast<int>(direction) * n_states,
+        n_states) = response.coefficients;
+  }
+
+  const auto& response_operator =
+      outer_response_context().selected_state_eigen_response_operator;
+  if (response_operator.structure_action == nullptr ||
+      response_operator.selected_eigenvalues.size() != n_states ||
+      response_operator.selected_eigenvectors.rows() != n_structures ||
+      response_operator.selected_eigenvectors.cols() != n_states ||
+      response_operator.overlap_selected.rows() != n_structures ||
+      response_operator.overlap_selected.cols() != n_states) {
+    throw std::logic_error(
+        "accepted selected-subspace response action is unavailable");
+  }
+  const StructureActionResult action =
+      response_operator.structure_action->apply(coefficient_block);
+
+  std::vector<SelectedStructureResponse> images;
+  images.reserve(responses.size());
+  for (std::size_t direction = 0; direction < responses.size(); ++direction) {
+    const int first = static_cast<int>(direction) * n_states;
+    const auto h_z = action.hamiltonian.middleCols(first, n_states);
+    const auto s_z = action.overlap.middleCols(first, n_states);
+    SelectedStructureResponse image;
+    image.coefficients =
+        h_z - s_z * response_operator.selected_eigenvalues.asDiagonal() +
+        response_operator.overlap_selected * responses[direction].multipliers;
+    image.multipliers =
+        response_operator.selected_eigenvectors.transpose() * s_z;
+    images.push_back(std::move(image));
+  }
+  return images;
+}
+
+const std::vector<double>&
+ExactHvpOperator::State::selected_state_weights() const noexcept {
+  return accepted_point_context_->normalized_state_weights;
+}
+
+int ExactHvpOperator::State::n_structures() const noexcept {
+  return accepted_point_context_->n_structures;
 }
 
 }  // namespace xmvb::vb

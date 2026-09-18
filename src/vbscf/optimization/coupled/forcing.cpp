@@ -1,5 +1,8 @@
 #include "vbscf/optimization/coupled/forcing.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -15,6 +18,53 @@ int selected_state_count(const SelectedSubspaceResponseLayout& layout) {
     count += layout.cluster(cluster).n_states;
   }
   return count;
+}
+
+bool same_weight(double left, double right) {
+  const double scale = std::max({1.0, std::abs(left), std::abs(right)});
+  return std::abs(left - right) <=
+      64.0 * std::numeric_limits<double>::epsilon() * scale;
+}
+
+void validate_layout_against_accepted_point(
+    const ExactHvpOperator& exact_operator,
+    const SelectedSubspaceResponseLayout& layout) {
+  const std::vector<double>& accepted_weights =
+      exact_operator.selected_state_weights();
+  if (layout.n_structures() != exact_operator.n_structures() ||
+      selected_state_count(layout) !=
+          static_cast<int>(accepted_weights.size())) {
+    throw std::invalid_argument(
+        "selected-subspace layout does not match the accepted point");
+  }
+
+  int first = 0;
+  for (int cluster = 0; cluster < layout.n_clusters(); ++cluster) {
+    const SelectedStateCluster& descriptor = layout.cluster(cluster);
+    if (first > 0 && same_weight(
+                         accepted_weights[first - 1],
+                         accepted_weights[first])) {
+      throw std::invalid_argument(
+          "equal-weight accepted states must share one response cluster");
+    }
+    for (int state = 0; state < descriptor.n_states; ++state) {
+      const double accepted_weight = accepted_weights[first + state];
+      if (!std::isfinite(accepted_weight) ||
+          !same_weight(accepted_weight, descriptor.state_weight)) {
+        throw std::invalid_argument(
+            "selected-subspace cluster order or weight does not match the accepted point");
+      }
+    }
+    if (first + descriptor.n_states <
+            static_cast<int>(accepted_weights.size()) &&
+        same_weight(
+            accepted_weights[first + descriptor.n_states - 1],
+            accepted_weights[first + descriptor.n_states])) {
+      throw std::invalid_argument(
+          "equal-weight accepted states must share one response cluster");
+    }
+    first += descriptor.n_states;
+  }
 }
 
 void validate_inputs(
@@ -96,6 +146,7 @@ Eigen::MatrixXd apply_exact_orbital_to_selected_subspace(
     const Eigen::Ref<const Eigen::VectorXd>& selected_energies,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
     const Eigen::Ref<const Eigen::MatrixXd>& orbital_directions) {
+  validate_layout_against_accepted_point(exact_operator, layout);
   return pack_selected_subspace_forcing_block(
       layout,
       selected_energies,
@@ -108,6 +159,7 @@ Eigen::MatrixXd apply_exact_selected_subspace_to_orbital(
     const ExactHvpOperator& exact_operator,
     const SelectedSubspaceResponseLayout& layout,
     const Eigen::Ref<const Eigen::MatrixXd>& response_directions) {
+  validate_layout_against_accepted_point(exact_operator, layout);
   if (response_directions.rows() != layout.response_size() ||
       response_directions.cols() <= 0 ||
       !response_directions.allFinite()) {
@@ -150,6 +202,71 @@ Eigen::MatrixXd apply_exact_selected_subspace_to_orbital(
     orbital_images.col(column) = image;
   }
   return orbital_images;
+}
+
+Eigen::MatrixXd apply_exact_selected_subspace_hessian(
+    const ExactHvpOperator& exact_operator,
+    const SelectedSubspaceResponseLayout& layout,
+    const Eigen::Ref<const Eigen::MatrixXd>& response_directions) {
+  validate_layout_against_accepted_point(exact_operator, layout);
+  if (response_directions.rows() != layout.response_size() ||
+      response_directions.cols() <= 0 ||
+      !response_directions.allFinite()) {
+    throw std::invalid_argument(
+        "selected-subspace Hessian directions have inconsistent dimensions or values");
+  }
+
+  const int n_selected = selected_state_count(layout);
+  std::vector<SelectedStructureResponse> physical_responses;
+  physical_responses.reserve(
+      static_cast<std::size_t>(response_directions.cols()));
+  for (Eigen::Index column = 0;
+       column < response_directions.cols();
+       ++column) {
+    const std::vector<ClusterResponse> clusters =
+        layout.unpack(response_directions.col(column));
+    SelectedStructureResponse response{
+        Eigen::MatrixXd(layout.n_structures(), n_selected),
+        Eigen::MatrixXd::Zero(n_selected, n_selected)};
+    int first = 0;
+    for (int cluster = 0; cluster < layout.n_clusters(); ++cluster) {
+      const int width = layout.cluster(cluster).n_states;
+      response.coefficients.middleCols(first, width) =
+          clusters[cluster].coefficients;
+      response.multipliers.block(first, first, width, width) =
+          clusters[cluster].multipliers;
+      first += width;
+    }
+    physical_responses.push_back(std::move(response));
+  }
+
+  const std::vector<SelectedStructureResponse> physical_images =
+      exact_operator.apply_selected_structure_response_batch(
+          physical_responses);
+  if (physical_images.size() != physical_responses.size()) {
+    throw std::runtime_error(
+        "selected-subspace Hessian changed its block width");
+  }
+
+  Eigen::MatrixXd images(layout.response_size(), response_directions.cols());
+  for (std::size_t column = 0; column < physical_images.size(); ++column) {
+    std::vector<ClusterResponse> clusters;
+    clusters.reserve(static_cast<std::size_t>(layout.n_clusters()));
+    int first = 0;
+    for (int cluster = 0; cluster < layout.n_clusters(); ++cluster) {
+      const int width = layout.cluster(cluster).n_states;
+      clusters.push_back(ClusterResponse{
+          physical_images[column].coefficients.middleCols(first, width),
+          physical_images[column].multipliers.block(
+              first,
+              first,
+              width,
+              width)});
+      first += width;
+    }
+    images.col(static_cast<Eigen::Index>(column)) = layout.pack(clusters);
+  }
+  return images;
 }
 
 }  // namespace xmvb::vb

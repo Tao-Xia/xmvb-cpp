@@ -83,14 +83,24 @@ int main() {
                       0.1, 1.1, 0.1,
                       0.0, 0.1, 0.9;
 
+    // Q is a deliberately nonorthogonal structure basis. Defining
+    // S=Q^{-T}Q^{-1} and H=Q^{-T}Lambda Q^{-1} gives H Q=S Q Lambda
+    // while Q^T S Q=I, so the dense bordered block is an exact oracle for a
+    // genuinely nonorthogonal two-state selected subspace.
+    Eigen::Matrix3d generalized_eigenvectors;
+    generalized_eigenvectors << 1.0, 0.2, -0.1,
+                                0.3, 1.0,  0.2,
+                               -0.2, 0.1,  1.0;
+    const Eigen::Matrix3d inverse_eigenvectors =
+        generalized_eigenvectors.inverse();
     const Eigen::Matrix3d overlap =
-        (Eigen::Vector3d(1.0, 1.0, 2.0)).asDiagonal();
+        inverse_eigenvectors.transpose() * inverse_eigenvectors;
     const Eigen::Matrix3d hamiltonian =
-        (Eigen::Vector3d(1.0, 2.0, 8.0)).asDiagonal();
-    Eigen::Matrix<double, 3, 2> selected =
-        Eigen::Matrix<double, 3, 2>::Zero();
-    selected(0, 0) = 1.0;
-    selected(1, 1) = 1.0;
+        inverse_eigenvectors.transpose() *
+        (Eigen::Vector3d(1.0, 2.0, 8.0)).asDiagonal() *
+        inverse_eigenvectors;
+    const Eigen::Matrix<double, 3, 2> selected =
+        generalized_eigenvectors.leftCols<2>();
     const Eigen::Matrix2d selected_energies =
         (Eigen::Vector2d(1.0, 2.0)).asDiagonal();
 

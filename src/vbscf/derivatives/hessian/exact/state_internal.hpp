@@ -49,6 +49,13 @@ struct ExactHvpOperator::State {
   SelectedStructureDirection apply_selected_structure_direction(
       const Eigen::VectorXd& reduced_direction) const;
 
+  std::vector<SelectedStructureResponse>
+  apply_selected_structure_response_batch(
+      const std::vector<SelectedStructureResponse>& responses) const;
+
+  const std::vector<double>& selected_state_weights() const noexcept;
+  int n_structures() const noexcept;
+
   bool supports_analytic_core_model() const noexcept;
   Diagnostics diagnostics() const;
 

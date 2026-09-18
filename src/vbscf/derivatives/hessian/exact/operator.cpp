@@ -16,6 +16,17 @@
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 
 namespace xmvb::vb {
+namespace {
+
+constexpr HvpComponents unrelaxed_orbital_hessian_components() {
+  return {
+      .direct_core_response = true,
+      .fixed_upstream_pullback = true,
+      .local_active_response = true,
+      .structure_response = false};
+}
+
+}  // namespace
 
 ExactHvpOperator::ExactHvpOperator(
     std::shared_ptr<const AcceptedPointContext> accepted_point_context,
@@ -29,6 +40,20 @@ ExactHvpOperator::ExactHvpOperator(
           nonredundant_space)) {}
 
 ExactHvpOperator::~ExactHvpOperator() = default;
+
+Eigen::VectorXd ExactHvpOperator::apply_unrelaxed_orbital_hessian(
+    const Eigen::VectorXd& reduced_direction) const {
+  return apply_reduced(
+      reduced_direction,
+      unrelaxed_orbital_hessian_components());
+}
+
+Eigen::MatrixXd ExactHvpOperator::apply_unrelaxed_orbital_hessian_batch(
+    const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const {
+  return apply_reduced_batch(
+      reduced_directions,
+      unrelaxed_orbital_hessian_components());
+}
 
 bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
   return state_->supports_analytic_core_model();

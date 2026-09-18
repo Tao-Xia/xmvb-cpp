@@ -65,4 +65,17 @@ Eigen::MatrixXd apply_exact_selected_subspace_to_orbital(
     const SelectedSubspaceResponseLayout& layout,
     const Eigen::Ref<const Eigen::MatrixXd>& response_directions);
 
+/**
+ * @brief Production matrix-free selected-subspace response Hessian @f$Cq@f$.
+ *
+ * The layout must be the maximal contiguous clustering of the accepted states
+ * by normalized weight. The physical response matrices are sent to the exact
+ * accepted-point H/S action as one block and then returned in the same
+ * @f$\sqrt{2w}@f$ coordinates as the input.
+ */
+Eigen::MatrixXd apply_exact_selected_subspace_hessian(
+    const ExactHvpOperator& exact_operator,
+    const SelectedSubspaceResponseLayout& layout,
+    const Eigen::Ref<const Eigen::MatrixXd>& response_directions);
+
 }  // namespace xmvb::vb

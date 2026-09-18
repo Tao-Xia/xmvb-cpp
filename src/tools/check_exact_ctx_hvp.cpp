@@ -16,6 +16,7 @@
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/optimization/coupled/forcing.hpp"
+#include "vbscf/optimization/krylov/minres.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -350,13 +351,126 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "production orbital-structure coupling is not adjoint consistent");
     }
+    Eigen::MatrixXd response_hessian_probes(
+        response_layout.response_size(),
+        2);
+    response_hessian_probes.col(0) = Eigen::VectorXd::LinSpaced(
+        response_layout.response_size(), -0.23, 0.31);
+    response_hessian_probes.col(1) = Eigen::VectorXd::LinSpaced(
+        response_layout.response_size(), 0.19, -0.37);
+    const Eigen::MatrixXd response_hessian_images =
+        xmvb::vb::apply_exact_selected_subspace_hessian(
+            exact_hvp,
+            response_layout,
+            response_hessian_probes);
+    const double response_hessian_symmetry_error = relative_bilinear_error(
+        response_hessian_probes.col(0).dot(
+            response_hessian_images.col(1)),
+        response_hessian_images.col(0).dot(
+            response_hessian_probes.col(1)));
+
+    constexpr double response_hessian_tolerance = 1.0e-10;
+    if (response_hessian_symmetry_error > response_hessian_tolerance) {
+      throw std::runtime_error(
+          "production selected-subspace Hessian failed its symmetry check");
+    }
+    const auto apply_response_hessian = [&](const Eigen::VectorXd& probe) {
+      const Eigen::MatrixXd probe_block = probe;
+      return xmvb::vb::apply_exact_selected_subspace_hessian(
+                 exact_hvp,
+                 response_layout,
+                 probe_block)
+          .col(0)
+          .eval();
+    };
+    const Eigen::VectorXd response_rhs = -coupling_forcing.col(0);
+    const xmvb::vb::MinresResult response_solve =
+        xmvb::vb::solve_symmetric_minres(
+            apply_response_hessian,
+            response_rhs,
+            {.relative_residual_tolerance = 1.0e-10,
+             .absolute_residual_tolerance = 0.0,
+             .maximum_iterations = 0});
+    if (!response_solve.converged()) {
+      throw std::runtime_error(
+          "matrix-free selected-subspace response elimination did not converge");
+    }
+    const Eigen::MatrixXd eliminated_response = response_solve.solution;
+    const double response_solve_relative_residual =
+        response_solve.residual_norm /
+        std::max(1.0, coupling_forcing.norm());
+    if (response_solve_relative_residual > 1.0e-10) {
+      throw std::runtime_error(
+          "selected-subspace response elimination lacks a residual certificate");
+    }
     const Eigen::VectorXd analytic = exact_hvp.apply_reduced(direction);
+    const auto diagnostics_before_orbital_a = exact_hvp.diagnostics();
+    const Eigen::VectorXd analytic_orbital_a =
+        exact_hvp.apply_unrelaxed_orbital_hessian(direction);
+    Eigen::MatrixXd orbital_a_probe(direction.size(), 2);
+    orbital_a_probe.col(0) = direction;
+    orbital_a_probe.col(1) = -0.375 * direction;
+    const Eigen::MatrixXd analytic_orbital_a_block =
+        exact_hvp.apply_unrelaxed_orbital_hessian_batch(orbital_a_probe);
+    const Eigen::MatrixXd eliminated_response_adjoint =
+        xmvb::vb::apply_exact_selected_subspace_to_orbital(
+            exact_hvp,
+            response_layout,
+            eliminated_response);
+    const Eigen::VectorXd schur_image =
+        analytic_orbital_a + eliminated_response_adjoint.col(0);
+    const double schur_identity_error = infinity_norm(
+        schur_image - analytic) /
+        std::max(1.0, infinity_norm(analytic));
+    if (schur_identity_error > 1.0e-10) {
+      throw std::runtime_error(
+          "coupled response elimination disagrees with the relaxed orbital HVP");
+    }
+    const auto diagnostics_after_orbital_a = exact_hvp.diagnostics();
     const Eigen::VectorXd analytic_core = exact_hvp.apply_reduced(
       direction,
       {.direct_core_response = true,
        .fixed_upstream_pullback = true,
        .local_active_response = false,
        .structure_response = false});
+    const Eigen::VectorXd analytic_local_active = exact_hvp.apply_reduced(
+      direction,
+      {.direct_core_response = false,
+       .fixed_upstream_pullback = false,
+       .local_active_response = true,
+       .structure_response = false});
+    const Eigen::VectorXd analytic_structure_response = exact_hvp.apply_reduced(
+      direction,
+      {.direct_core_response = false,
+       .fixed_upstream_pullback = false,
+       .local_active_response = false,
+       .structure_response = true});
+    const double orbital_a_decomposition_error = infinity_norm(
+        analytic_orbital_a - analytic_core - analytic_local_active) /
+        std::max(1.0, infinity_norm(analytic_orbital_a));
+    const double relaxed_decomposition_error = infinity_norm(
+        analytic - analytic_orbital_a - analytic_structure_response) /
+        std::max(1.0, infinity_norm(analytic));
+    const double orbital_a_block_error = std::max(
+        infinity_norm(
+            analytic_orbital_a_block.col(0) - analytic_orbital_a),
+        infinity_norm(
+            analytic_orbital_a_block.col(1) +
+            0.375 * analytic_orbital_a)) /
+        std::max(1.0, infinity_norm(analytic_orbital_a));
+    constexpr double decomposition_tolerance = 1.0e-10;
+    if (diagnostics_after_orbital_a.structure_response_block_actions !=
+            diagnostics_before_orbital_a.structure_response_block_actions ||
+        diagnostics_after_orbital_a
+                .outer_response_eigensystem_wall_time_seconds !=
+            diagnostics_before_orbital_a
+                .outer_response_eigensystem_wall_time_seconds ||
+        orbital_a_decomposition_error > decomposition_tolerance ||
+        relaxed_decomposition_error > decomposition_tolerance ||
+        orbital_a_block_error > decomposition_tolerance) {
+      throw std::runtime_error(
+          "coupled orbital A action has inconsistent response decomposition");
+    }
     const auto hvp_diagnostics = exact_hvp.diagnostics();
 
     double state_energy_average_error = 0.0;
@@ -509,6 +623,20 @@ int main(int argc, char** argv) {
               << multiplier_adjoint_error << '\n'
               << "coupling_total_adjoint_error = "
               << coupling_adjoint_error << '\n'
+              << "response_hessian_symmetry_error = "
+              << response_hessian_symmetry_error << '\n'
+              << "response_solve_iterations = "
+              << response_solve.iterations << '\n'
+              << "response_solve_relative_residual = "
+              << response_solve_relative_residual << '\n'
+              << "response_schur_identity_error = "
+              << schur_identity_error << '\n'
+              << "orbital_a_decomposition_error = "
+              << orbital_a_decomposition_error << '\n'
+              << "relaxed_a_plus_structure_decomposition_error = "
+              << relaxed_decomposition_error << '\n'
+              << "orbital_a_block_error = "
+              << orbital_a_block_error << '\n'
               << "accepted_gradient_vs_dense_midpoint_inf = "
               << accepted_gradient_vs_dense_midpoint_inf << '\n'
               << "structure_response_iterations = "
