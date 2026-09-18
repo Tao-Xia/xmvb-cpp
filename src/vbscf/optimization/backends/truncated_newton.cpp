@@ -174,8 +174,13 @@ BackendRunResult run_truncated_newton_backend(
           trial_initial_hvp_diagnostics.outer_response_wall_time_seconds;
     };
     const auto response_scale_info = exact_hvp.diagnostics();
+    const bool response_scale_is_known =
+        response_scale_info.estimated_outer_string_contraction_work > 0.0 &&
+        response_scale_info.estimated_core_pair_contraction_work > 0.0;
     const bool full_response_scale_is_affordable =
         outer_response_scale_is_affordable(response_scale_info);
+    const bool outer_response_scale_is_unaffordable =
+        response_scale_is_known && !full_response_scale_is_affordable;
     const int transport_history_size =
         choose_truncated_newton_transport_history_size(options);
     const bool use_secant_correction =
@@ -216,6 +221,7 @@ BackendRunResult run_truncated_newton_backend(
     auto try_truncated_newton_trial_step =
         [&](const Eigen::VectorXd& candidate_reduced_step,
             double candidate_predicted_decrease,
+            bool accept_model_inaccurate_monotone,
             TruncatedNewtonTrialEvaluation* trial_evaluation,
             VbScfObjective::TrialEvaluation* accepted_trial_evaluation,
             Eigen::VectorXd* accepted_trial_parameters,
@@ -275,7 +281,8 @@ BackendRunResult run_truncated_newton_backend(
               !truncated_newton_trial_is_acceptable(
                   TruncatedNewtonTrialEvaluation{
                       actual_decrease,
-                      effective_predicted_decrease})) {
+                      effective_predicted_decrease},
+                  accept_model_inaccurate_monotone)) {
             return false;
           }
 
@@ -501,6 +508,8 @@ BackendRunResult run_truncated_newton_backend(
         try_truncated_newton_trial_step(
             reduced_step,
             predicted_decrease,
+            outer_response_scale_is_unaffordable &&
+                !candidate_has_exact_outer_response,
             &trial_evaluation_cache,
             &accepted_trial_evaluation,
             &trial_parameters,

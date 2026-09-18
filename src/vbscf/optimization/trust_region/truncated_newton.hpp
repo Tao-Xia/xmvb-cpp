@@ -108,14 +108,16 @@ bool truncated_newton_model_is_below_outer_accuracy(
     double energy_tolerance);
 
 /**
- * @brief Accepts a trial only when its measured decrease resolves model error.
+ * @brief Tests energy decrease and the fidelity-specific model certificate.
  *
- * A merely positive energy change is insufficient evidence for trusting a
- * quadratic step. This criterion requires the actual decrease to exceed the
- * absolute disagreement between actual and predicted decrease.
+ * Full or directionally exact models require resolved model agreement.  When
+ * full response is unaffordable, a monotone core-model trial may instead be
+ * retained so its exact gradient updates the missing-curvature secants; its
+ * measured model error contracts the next trust radius.
  */
 bool truncated_newton_trial_is_acceptable(
-    const TruncatedNewtonTrialEvaluation& trial);
+    const TruncatedNewtonTrialEvaluation& trial,
+    bool accept_model_inaccurate_monotone);
 
 void clamp_nonredundant_step_result_to_retract_tangent_radius(
     const OrbitalChart::ProjectionResult& current_projection,

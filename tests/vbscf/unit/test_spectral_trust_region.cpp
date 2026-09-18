@@ -128,6 +128,27 @@ void check_rejected_trial_interpolation() {
       std::abs(positive_decrease_radius - 0.3125) <= 1.0e-14,
       "rejected overpredicting trial did not minimize its measured ray model");
 }
+
+void check_monotone_model_error_contraction() {
+  using xmvb::vb::TruncatedNewtonModelFidelity;
+  xmvb::vb::TruncatedNewtonStepResult boundary_step;
+  boundary_step.retract_tangent_norm = 0.5;
+  boundary_step.reached_boundary = true;
+
+  const xmvb::vb::TruncatedNewtonTrialEvaluation monotone_trial{
+      0.2, 1.0};
+  const double approximate_radius =
+      xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
+          0.5,
+          1.0e-12,
+          monotone_trial,
+          boundary_step,
+          TruncatedNewtonModelFidelity::CoreApproximate,
+          true);
+  require(
+      std::abs(approximate_radius - 0.25) <= 1.0e-14,
+      "accepted approximate-model error did not contract the next radius");
+}
 }  // namespace
 
 int main() {
@@ -142,19 +163,32 @@ int main() {
             9.0e-4, 1.1e-7, 1.0e-3, 1.0e-7),
         "energy-unresolved model work was stopped");
     require(
-        xmvb::vb::truncated_newton_trial_is_acceptable({0.8, 1.0}),
+        xmvb::vb::truncated_newton_trial_is_acceptable(
+            {0.8, 1.0}, false),
         "well-resolved model decrease was rejected");
     require(
-        xmvb::vb::truncated_newton_trial_is_acceptable({1.5, 1.0}),
+        xmvb::vb::truncated_newton_trial_is_acceptable(
+            {1.5, 1.0}, false),
         "underpredicted model decrease was rejected");
     require(
-        !xmvb::vb::truncated_newton_trial_is_acceptable({0.4, 1.0}),
-        "model-error-dominated decrease was accepted");
+        xmvb::vb::truncated_newton_trial_is_acceptable(
+            {0.4, 1.0}, true),
+        "monotone model-inaccurate decrease was rejected");
     require(
-        !xmvb::vb::truncated_newton_trial_is_acceptable({-0.1, 1.0}),
+        !xmvb::vb::truncated_newton_trial_is_acceptable(
+            {0.4, 1.0}, false),
+        "model-inaccurate decrease bypassed strict exact-model acceptance");
+    require(
+        !xmvb::vb::truncated_newton_trial_is_acceptable(
+            {1.0e-16, 1.0}, true),
+        "roundoff-sized decrease was accepted");
+    require(
+        !xmvb::vb::truncated_newton_trial_is_acceptable(
+            {-0.1, 1.0}, true),
         "energy-increasing trial was accepted");
     check_model_fidelity_radius_scaling();
     check_rejected_trial_interpolation();
+    check_monotone_model_error_contraction();
     check("positive definite interior", V(2, 4), V(1, 2), 2, false);
     check("positive definite boundary", V(2, 4), V(1, 2), 0.1, true);
     check("zero-multiplier boundary", V(2, 4), V(2, 0), 1, true);

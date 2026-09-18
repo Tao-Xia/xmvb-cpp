@@ -90,18 +90,21 @@ bool truncated_newton_model_is_below_outer_accuracy(
 }
 
 bool truncated_newton_trial_is_acceptable(
-    const TruncatedNewtonTrialEvaluation& trial) {
+    const TruncatedNewtonTrialEvaluation& trial,
+    bool accept_model_inaccurate_monotone) {
   if (!(trial.predicted_decrease > 0.0) ||
       !(trial.actual_decrease > 0.0) ||
       !std::isfinite(trial.predicted_decrease) ||
       !std::isfinite(trial.actual_decrease)) {
     return false;
   }
-  const double model_error =
-      std::abs(trial.actual_decrease - trial.predicted_decrease);
   const double roundoff =
       16.0 * std::numeric_limits<double>::epsilon() *
-      std::max(trial.actual_decrease, trial.predicted_decrease);
+      trial.predicted_decrease;
+  if (!(trial.actual_decrease > roundoff)) return false;
+  if (accept_model_inaccurate_monotone) return true;
+  const double model_error =
+      std::abs(trial.actual_decrease - trial.predicted_decrease);
   return model_error <= trial.actual_decrease + roundoff;
 }
 
@@ -558,11 +561,31 @@ double update_nonredundant_truncated_newton_trust_radius(
         std::min(trust_radius, candidate_radius));
   }
 
+  // A model-inaccurate but energy-lowering step is useful: accepting it gives
+  // the next point an exact gradient and hence a new transported secant.  Do
+  // not repeatedly solve the deficient model at the old point.  Instead,
+  // carry its measured error into the next point as a contracted validity
+  // radius.  This separates monotone objective acceptance from model trust.
+  const double model_error =
+      std::abs(trial.actual_decrease - trial.predicted_decrease);
+  const double roundoff =
+      16.0 * std::numeric_limits<double>::epsilon() *
+      std::max(trial.actual_decrease, trial.predicted_decrease);
+  const double resolved_error = std::max(model_error, roundoff);
+  if (resolved_error > trial.actual_decrease + roundoff) {
+    const double candidate_radius =
+        step_norm * scale_model_error_ratio(
+                        trial.actual_decrease / resolved_error);
+    if (!(candidate_radius > 0.0) || !std::isfinite(candidate_radius)) {
+      return safe_radius_update();
+    }
+    return std::max(minimum_step_size, candidate_radius);
+  }
+
   // An interior minimizer contains no evidence that the current radius is
-  // restrictive.  Preserve it; repeatedly rescaling an interior radius by
-  // rho would turn otherwise valid Newton convergence into tiny first-order
-  // steps whenever the nonlinear retraction makes rho slightly smaller than
-  // one.
+  // restrictive once the measured model error is below the actual decrease.
+  // Preserve it so local Newton convergence is not damped by harmless rho
+  // fluctuations from the nonlinear retraction.
   if (!model_step.reached_boundary) {
     return std::max(minimum_step_size, trust_radius);
   }
@@ -573,12 +596,6 @@ double update_nonredundant_truncated_newton_trust_radius(
   // approximate Hessian and p=3 for a directionally exact Hessian. Unlike a
   // bound based on the largest Ritz value, this does not let an unrelated
   // stiff mode freeze a well-resolved boundary direction.
-  const double model_error =
-      std::abs(trial.actual_decrease - trial.predicted_decrease);
-  const double roundoff =
-      16.0 * std::numeric_limits<double>::epsilon() *
-      std::max(trial.actual_decrease, trial.predicted_decrease);
-  const double resolved_error = std::max(model_error, roundoff);
   const double radius_scale =
       scale_model_error_ratio(trial.actual_decrease / resolved_error);
   const double candidate_radius =

@@ -1614,29 +1614,48 @@ $$
 
 Both the trust radius and the required inner accuracy should be adapted from $\rho_k$, the Newton residual, and the observed spectral information. Fixed system-dependent HVP or CG budgets are not part of the mathematical algorithm.
 
-In particular, a positive actual decrease alone does not establish that the
-quadratic model resolved the step. Write the predicted and actual decreases as
-$p_k>0$ and $a_k$, and define the measured model error
+Acceptance of a physical step and trust in its quadratic model are distinct.
+Write the predicted and actual decreases as $p_k>0$ and $a_k$, and define the
+measured model error
 
 $$
 e_k=\lvert a_k-p_k\rvert.
 $$
 
-The production acceptance test requires
+The production acceptance test first requires a numerically resolved monotone
+trial,
 
 $$
-a_k>0,
+a_k>e_{\mathrm{acc},k},
 \qquad
-e_k\leq a_k.
+e_{\mathrm{acc},k}=16\epsilon p_k.
 $$
 
-Thus an overpredicting model is accepted only when the observed decrease is at
-least as large as its model error; equivalently, $\rho_k\geq 1/2$ in that
-case. An underpredicting model with $p_k>0$ satisfies the second inequality.
-Rejected trials contract the radius and resolve the projected problem in the
-already evaluated accepted-point Krylov space. Negative curvature is handled
-by the trust-region boundary conditions in eq 65c; it is not replaced by an
-unrelated first-order line-search step.
+For a full or directionally exact Hessian model it additionally requires
+
+$$
+e_k\leq a_k+e_{\mathrm{acc},k}.
+$$
+
+For a core-only candidate this additional certificate is relaxed only when
+the measured work model declares full response asymptotically more expensive
+than the core action,
+
+$$
+\mathcal W_k^{\mathrm{out}}>\mathcal W_k^{\mathrm{core}}.
+$$
+
+The exact trial energy therefore protects monotonicity, whereas $e_k$ controls
+the validity radius of the model that proposed the step.  This separation is
+important for an approximate core Hessian with unaffordable response:
+rejecting an energy-lowering step solely because $e_k>a_k$ repeatedly resolves
+the same systematically deficient model at the old point.  Accepting it
+instead supplies the exact new gradient and a transported secant that corrects
+the next Hessian model.  If full response is affordable, poor agreement instead
+signals that the nonlinear step is too large and the strict certificate is
+retained.  Negative curvature is still handled by the trust-region boundary
+conditions in eq 65c; it is not replaced by an unrelated first-order
+line-search step.
 
 For an accepted boundary step of length $\lVert\mathbf s_k\rVert$, the observed
 model remainder $e_k$ also supplies a scale for radius growth.  The order of
@@ -1665,8 +1684,9 @@ $$
 The missing outer response therefore leaves a quadratic model defect even
 when the core HVP itself is evaluated exactly.  Only a full HVP or an exact
 directional outer-response correction removes that term and exposes the cubic
-Taylor remainder.  Requiring the extrapolated error to remain no larger than
-the observed decrease gives
+Taylor remainder.  For a model-resolved accepted step,
+$e_k\leq a_k+e_{\mathrm{round}}$, requiring the extrapolated error to remain no
+larger than the observed decrease gives
 
 $$
 \Delta_{k+1}
@@ -1681,7 +1701,25 @@ e_{\mathrm{round}}
 =16\epsilon\max(a_k,p_k).
 $$
 
-For a rejected trial, the measured energy also determines a direct
+If an unaffordable-response core step is monotone but model-inaccurate,
+$e_k>a_k+e_{\mathrm{round}}$, it is accepted but the same measured remainder
+contracts the next validity radius:
+
+$$
+\Delta_{k+1}
+=
+\lVert\mathbf s_k\rVert
+\left(
+\frac{a_k}{\max(e_k,e_{\mathrm{round}})}
+\right)^{1/\nu_k}.
+$$
+
+Thus a poor trust ratio cannot authorize another step of the same scale, but
+it also cannot discard a useful monotone displacement and its exact gradient.
+This update has no molecule-dependent acceptance ratio or contraction factor.
+
+For a nonmonotone or numerically unresolved trial, the measured energy also
+determines a direct
 one-dimensional interpolation.  Define the positive linear decrease
 
 $$
@@ -2747,6 +2785,24 @@ full-AO preconditioner is therefore a separate performance task.
 
 Earlier full-AO F$_2$, alternate C$_6$H$_6$, and `10698` timings were produced
 by older solver revisions and are not mixed into this current-code table.
+
+The fidelity-dependent acceptance rule was also tested on the larger
+524-structure, two-state-average OEO/RI input with a 11670-dimensional reduced
+orbital space.  At this point the work estimator classifies full outer response
+as unaffordable.  Over the same first ten accepted steps, replacing the
+unconditional model-agreement certificate by the conditional core-model rule
+above reduces rejected trials from 18 to 4 and wall time from 500.42 to
+493.02 s.  The projected-gradient infinity norm decreases from
+$5.18\times10^{-3}$ to $3.63\times10^{-3}$, and the energy decreases from
+$-457.0975983163$ to $-457.0976648047\ E_{\mathrm h}$.  HVP directions increase
+from 211 to 234 and outer-response directions from 3 to 6, while peak RSS
+remains approximately 2.4 GiB.  The increase in sampled curvature is therefore
+repaid by substantially better outer progress rather than by a large short-run
+wall-time reduction.  Neither ten-step run satisfies the projected-gradient
+threshold, so these data establish improved globalization efficiency rather
+than local quadratic convergence.  Affordable-response F$_2$, benzene, and
+MnF$_2$ retain the strict trajectory; their regression iteration counts and
+first ten MnF$_2$ steps are unchanged.
 
 No molecule-dependent budgets or thresholds are used. Reproduction commands,
 earlier coordinate audits, and additional limitations are recorded in
