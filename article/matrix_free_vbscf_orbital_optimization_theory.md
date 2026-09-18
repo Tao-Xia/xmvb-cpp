@@ -3158,6 +3158,36 @@ $$
 \end{bmatrix}.
 $$
 
+For a matrix-free projected solution, both the horizontal constraint and the
+multiplier image select the Euclidean complement of
+$\operatorname{range}(\mathbf S\mathbf C)$.  If
+$\mathbf Q_{SC}$ is an orthonormal basis for this range, the symmetric
+projector is
+
+$$
+\mathbf P_{SC}
+=
+\mathbf I-\mathbf Q_{SC}\mathbf Q_{SC}^{\mathrm T},
+$$
+
+and the external response for column $i$ is obtained from
+
+$$
+\mathbf P_{SC}
+(\mathbf H-E_i\mathbf S)
+\mathbf P_{SC}\mathbf z_i
+=
+-\mathbf P_{SC}\mathbf f_i.
+$$
+
+Projecting against $\operatorname{range}(\mathbf C)$ instead is incorrect in
+a nonorthogonal structure basis: the residual is then left in
+$\operatorname{range}(\mathbf C)$, whereas the multiplier can absorb only an
+$\mathbf S\mathbf C$ component.  The two spaces coincide only in special
+commuting or orthogonal cases.  The $\mathbf P_{SC}$ construction preserves a
+symmetric projected operator and enforces
+$\mathbf C^{\mathrm T}\mathbf S\mathbf Z_{\mathrm{ext}}=\mathbf 0$ directly.
+
 For a per-state weight $w$, the symmetric coupled coordinates are
 $\mathbf q=\sqrt{2w}\,\operatorname{vec}(\mathbf Z,\mathbf M)$.  The same
 factor multiplies the orbital-to-response forcing
