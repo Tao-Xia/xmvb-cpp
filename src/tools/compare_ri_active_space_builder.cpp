@@ -6,6 +6,8 @@
 #include <string>
 
 #include "input/loading/loader.hpp"
+#include "input/deck/model.hpp"
+#include "input/deck/primary_basis.hpp"
 #include "libcint/ri_provider.hpp"
 #include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/builder.hpp"
@@ -15,14 +17,13 @@ namespace {
 
 struct Options {
   std::string input_path;
-  int level = 2;
-  bool use_star = true;
+  std::string auxiliary_basis_name;
   double metric_eigenvalue_cutoff = 1.0e-10;
 };
 
 void print_usage() {
   std::cerr << "usage: compare_ri_active_space_builder <input.xmi> "
-               "[--level n] [--no-star] [--metric-cutoff value]\n";
+               "[--aux-basis name] [--metric-cutoff value]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -35,19 +36,11 @@ Options parse_arguments(int argc, char** argv) {
   options.input_path = argv[1];
   for (int argument_index = 2; argument_index < argc;) {
     const std::string argument_name = argv[argument_index++];
-    if (argument_name == "--level") {
+    if (argument_name == "--aux-basis") {
       if (argument_index >= argc) {
-        throw std::invalid_argument("--level expects 1 integer");
+        throw std::invalid_argument("--aux-basis expects a basis name");
       }
-      options.level = std::stoi(argv[argument_index++]);
-      continue;
-    }
-    if (argument_name == "--star") {
-      options.use_star = true;
-      continue;
-    }
-    if (argument_name == "--no-star") {
-      options.use_star = false;
+      options.auxiliary_basis_name = argv[argument_index++];
       continue;
     }
     if (argument_name == "--metric-cutoff") {
@@ -82,16 +75,29 @@ int main(int argc, char** argv) {
 
     xmvb::vb::LibcintRiIntegralProvider provider;
     xmvb::vb::LibcintRiIntegralProviderOptions provider_options;
-    provider_options.auxiliary_basis_options.level = options.level;
-    provider_options.auxiliary_basis_options.use_star = options.use_star;
     provider_options.metric_eigenvalue_cutoff = options.metric_eigenvalue_cutoff;
-    const auto ao_ri_result =
-        input.auxiliary_libcint_input.n_shells > 0
-            ? provider.build(
-                  input.libcint_input,
-                  input.auxiliary_libcint_input,
-                  provider_options)
-            : provider.build(input.libcint_input, provider_options);
+    const xmvb::vb::InputDeck input_deck =
+        xmvb::vb::parse_input_deck_model(options.input_path);
+    std::string auxiliary_basis_name = options.auxiliary_basis_name;
+    if (auxiliary_basis_name.empty()) {
+      auxiliary_basis_name = input_deck.metadata.auxiliary_basis_name;
+    }
+    if (auxiliary_basis_name.empty()) {
+      auxiliary_basis_name = input_deck.metadata.basis_name;
+      if (auxiliary_basis_name.size() >= 4 &&
+          auxiliary_basis_name.substr(auxiliary_basis_name.size() - 4) ==
+              ".gbs") {
+        auxiliary_basis_name.resize(auxiliary_basis_name.size() - 4);
+      }
+      auxiliary_basis_name += "-jkfit";
+    }
+    const auto auxiliary_input = xmvb::vb::build_input_deck_basis(
+        input_deck,
+        auxiliary_basis_name).libcint_input;
+    const auto ao_ri_result = provider.build(
+        input.libcint_input,
+        auxiliary_input,
+        provider_options);
 
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_builder;
     xmvb::vb::RiActiveSpaceTwoElectronBuilderOptions ri_builder_options;
@@ -134,8 +140,7 @@ int main(int argc, char** argv) {
               << input.orbital_preparation_input.n_basis_functions << '\n';
     std::cout << "n_active_orbitals = "
               << input.orbital_preparation_input.n_active_orbitals << '\n';
-    std::cout << "auxiliary_level = " << options.level << '\n';
-    std::cout << "auxiliary_star = " << (options.use_star ? 1 : 0) << '\n';
+    std::cout << "auxiliary_basis = " << auxiliary_basis_name << '\n';
     std::cout << "n_auxiliary_functions = " << ao_ri_result.n_auxiliary_functions << '\n';
     std::cout << "n_packed_ao_pairs = " << ao_ri_result.n_packed_ao_pairs << '\n';
     std::cout << "n_active_pair_factors = "

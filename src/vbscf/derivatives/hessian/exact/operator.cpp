@@ -10,6 +10,8 @@
 
 #include "vbscf/structures/assembly/coefficient_blocks.hpp"
 #include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
+#include "vbscf/integrals/active/two_electron/response/ri.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/outer_response.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 
@@ -128,18 +130,36 @@ ExactHvpOperator::State::State(
         accepted_active_auxiliary_orbitals_ * accepted_hho_gradient_symmetric_;
     zero_core_hamiltonian_ =
         Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions);
-    accepted_exact_two_electron_cache_ =
-        build_exact_packed_active_two_electron_adjoint_cache(
-            accepted_point_context_->packed_active_two_electron_gradient,
-            accepted_two_electron_result.dense_active_coefficients,
-            current_input_->ao_integral_input,
-            n_active_orbitals,
-            accepted_two_electron_result);
+    if (current_input_->standard_two_electron_mode ==
+        StandardTwoElectronMode::ResolutionOfIdentity) {
+      accepted_ri_factorization_ =
+          &ensure_vbscf_input_ri_cache(*current_input_);
+      accepted_ri_two_electron_cache_.emplace(
+          build_ri_active_two_electron_response_cache(
+              *accepted_ri_factorization_,
+              accepted_two_electron_result,
+              n_active_orbitals));
+    } else {
+      accepted_exact_two_electron_cache_ =
+          build_exact_packed_active_two_electron_adjoint_cache(
+              accepted_point_context_->packed_active_two_electron_gradient,
+              accepted_two_electron_result.dense_active_coefficients,
+              current_input_->ao_integral_input,
+              n_active_orbitals,
+              accepted_two_electron_result);
+    }
 
     const auto accepted_orbital_backprop_inputs =
         build_accepted_orbital_backprop_inputs(
             *accepted_point_context_,
-            *current_input_);
+            *current_input_,
+            accepted_ri_two_electron_cache_.has_value()
+                ? nullptr
+                : &accepted_exact_two_electron_cache_,
+            accepted_ri_two_electron_cache_.has_value()
+                ? &*accepted_ri_two_electron_cache_
+                : nullptr,
+            accepted_ri_factorization_);
     accepted_total_active_auxiliary_gradient_ =
         accepted_orbital_backprop_inputs.total_active_auxiliary_gradient;
     accepted_total_inactive_density_gradient_ =
@@ -190,11 +210,13 @@ bool ExactHvpOperator::State::supports_analytic_core_model() const noexcept {
       nonredundant_space_ == nullptr) {
     return false;
   }
-  if (current_input_->standard_two_electron_mode ==
-      StandardTwoElectronMode::ResolutionOfIdentity) {
+  const bool uses_ri = current_input_->standard_two_electron_mode ==
+      StandardTwoElectronMode::ResolutionOfIdentity;
+  if (!uses_ri && current_input_->ao_integral_input.pair_graph.empty()) {
     return false;
   }
-  if (current_input_->ao_integral_input.pair_graph.empty()) {
+  if (uses_ri && current_input_->ri_factorization == nullptr &&
+      current_input_->ri_factorization_provider == nullptr) {
     return false;
   }
   const int n_active_orbitals =
@@ -218,6 +240,7 @@ ExactHvpOperator::State::diagnostics() const {
   info.has_opposite_spin_pair_graph =
       accepted_point_context_->use_pair_graph_opposite_spin_adjoint;
   info.streams_exact_pair_products =
+      !accepted_ri_two_electron_cache_.has_value() &&
       accepted_exact_two_electron_cache_.accepted_pair_products == nullptr;
   info.n_selected_states =
       static_cast<int>(accepted_point_context_->selected_state_indices.size());
@@ -233,12 +256,15 @@ ExactHvpOperator::State::diagnostics() const {
   info.estimated_outer_string_contraction_work =
       estimate_selected_state_contraction_work(
           accepted_point_context_->selected_state_matrices);
-  if (accepted_exact_two_electron_cache_.accepted_pair_products != nullptr) {
+  if (!accepted_ri_two_electron_cache_.has_value() &&
+      accepted_exact_two_electron_cache_.accepted_pair_products != nullptr) {
     info.resident_exact_pair_elements = static_cast<std::size_t>(
         accepted_exact_two_electron_cache_.accepted_pair_products->size());
   }
-  info.exact_pair_tile_rows = static_cast<std::size_t>(
-      accepted_exact_two_electron_cache_.n_basis_functions);
+  info.exact_pair_tile_rows = accepted_ri_two_electron_cache_.has_value()
+      ? 0
+      : static_cast<std::size_t>(
+            accepted_exact_two_electron_cache_.n_basis_functions);
   info.apply_count = apply_timing_totals_.apply_count;
   info.batch_apply_count = apply_timing_totals_.batch_apply_count;
   info.structure_response_block_actions =

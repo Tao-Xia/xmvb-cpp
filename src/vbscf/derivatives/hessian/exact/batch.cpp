@@ -43,6 +43,19 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
     throw std::runtime_error(
         "exact_ctx analytic core HVP is unavailable for the current accepted point");
   }
+  // The RI scalar path is fully factor-native and is the canonical reference
+  // implementation.  Keep block semantics exact by applying it column-wise;
+  // a wide auxiliary-factor GEMM can replace this loop without changing the
+  // public HVP contract.
+  if (accepted_ri_two_electron_cache_.has_value()) {
+    for (Eigen::Index column = 0;
+         column < reduced_directions.cols();
+         ++column) {
+      responses.col(column) =
+          apply_reduced(reduced_directions.col(column), components);
+    }
+    return responses;
+  }
 
   const int n_basis_functions =
       current_input_->orbital_preparation_input.n_basis_functions;
@@ -169,7 +182,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
     }
     const ActiveSpaceIntegralDirectionContext integral_context{
         *current_input_,
-        accepted_exact_two_electron_cache_,
+        &accepted_exact_two_electron_cache_,
         accepted_active_auxiliary_orbitals_,
         accepted_basis_overlap_times_active_auxiliary_orbitals_,
         accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_,

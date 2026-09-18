@@ -111,24 +111,85 @@ double packed_row_symmetric_matrix_dot(
   return result;
 }
 
-std::vector<double> build_weighted_packed_symmetric_matrix(
-    const Eigen::Ref<const Eigen::MatrixXd>& input_matrix) {
+void accumulate_dense_ri_factor_action(
+    const Eigen::Ref<const Eigen::MatrixXd>& packed_factor_matrix,
+    int auxiliary_index,
+    const Eigen::Ref<const Eigen::MatrixXd>& input_matrix,
+    const std::vector<double>& weighted_packed_input,
+    const Eigen::MatrixXd& factor_matrix,
+    Eigen::MatrixXd* left_workspace,
+    Eigen::MatrixXd* exchange_matrix,
+    double* local_output) {
+  if (left_workspace == nullptr || exchange_matrix == nullptr ||
+      local_output == nullptr) {
+    throw std::invalid_argument("dense RI factor action received null workspace");
+  }
   const int n_basis_functions = static_cast<int>(input_matrix.rows());
-  std::vector<double> weighted_packed_matrix(
-      packed_pair_count(n_basis_functions),
-      0.0);
+  const double coulomb_projection =
+      packed_row_symmetric_matrix_dot(
+          packed_factor_matrix,
+          auxiliary_index,
+          weighted_packed_input);
+
+  cblas_dsymm(
+      CblasColMajor,
+      CblasLeft,
+      CblasLower,
+      n_basis_functions,
+      n_basis_functions,
+      1.0,
+      factor_matrix.data(),
+      n_basis_functions,
+      input_matrix.data(),
+      n_basis_functions,
+      0.0,
+      left_workspace->data(),
+      n_basis_functions);
+  cblas_dsymm(
+      CblasColMajor,
+      CblasRight,
+      CblasLower,
+      n_basis_functions,
+      n_basis_functions,
+      1.0,
+      factor_matrix.data(),
+      n_basis_functions,
+      left_workspace->data(),
+      n_basis_functions,
+      0.0,
+      exchange_matrix->data(),
+      n_basis_functions);
+  add_scaled_packed_factor_row_to_lower_triangle(
+      packed_factor_matrix,
+      auxiliary_index,
+      2.0 * coulomb_projection,
+      local_output,
+      n_basis_functions);
+  subtract_lower_triangle_in_place(
+      *exchange_matrix,
+      local_output,
+      n_basis_functions);
+}
+
+void build_weighted_packed_symmetric_matrix(
+    const Eigen::Ref<const Eigen::MatrixXd>& input_matrix,
+    std::vector<double>* weighted_packed_matrix) {
+  if (weighted_packed_matrix == nullptr) {
+    throw std::invalid_argument("weighted packed matrix output must not be null");
+  }
+  const int n_basis_functions = static_cast<int>(input_matrix.rows());
+  weighted_packed_matrix->resize(packed_pair_count(n_basis_functions));
   std::size_t packed_index = 0;
   for (int column = 0; column < n_basis_functions; ++column) {
     for (int row = 0; row <= column; ++row) {
       if (row == column) {
-        weighted_packed_matrix[packed_index++] = input_matrix(row, column);
+        (*weighted_packed_matrix)[packed_index++] = input_matrix(row, column);
       } else {
-        weighted_packed_matrix[packed_index++] =
+        (*weighted_packed_matrix)[packed_index++] =
             input_matrix(row, column) + input_matrix(column, row);
       }
     }
   }
-  return weighted_packed_matrix;
 }
 
 SpectralFactorization build_spectral_factorization(
@@ -269,6 +330,159 @@ void symmetrize_in_place(
       matrix(row, column) = symmetrized_sum;
     }
   }
+}
+
+void symmetrize_in_place(Eigen::MatrixXd* matrix) {
+  if (matrix == nullptr || matrix->rows() != matrix->cols()) {
+    throw std::invalid_argument("invalid RI matrix symmetrization target");
+  }
+  for (int column = 0; column < matrix->cols(); ++column) {
+    for (int row = 0; row < column; ++row) {
+      const double symmetrized_sum =
+          (*matrix)(column, row) + (*matrix)(row, column);
+      (*matrix)(column, row) = symmetrized_sum;
+      (*matrix)(row, column) = symmetrized_sum;
+    }
+  }
+}
+
+void validate_ri_factorization(
+    const RiAoFactorization& ri_factorization,
+    int n_basis_functions) {
+  if (n_basis_functions <= 0) {
+    throw std::invalid_argument("n_basis_functions must be positive");
+  }
+  if (ri_factorization.n_basis_functions != n_basis_functions) {
+    throw std::invalid_argument("RI basis-function count mismatch");
+  }
+  if (ri_factorization.n_auxiliary_functions < 0) {
+    throw std::invalid_argument("RI auxiliary-function count must be non-negative");
+  }
+
+  const std::size_t n_packed_pairs = packed_pair_count(n_basis_functions);
+  if (ri_factorization.n_packed_ao_pairs != 0 &&
+      ri_factorization.n_packed_ao_pairs !=
+          static_cast<int>(n_packed_pairs)) {
+    throw std::invalid_argument("RI packed AO pair count mismatch");
+  }
+  if (ri_factorization.metric_whitened_ao_pair_factors.rows() !=
+          ri_factorization.n_auxiliary_functions ||
+      ri_factorization.metric_whitened_ao_pair_factors.cols() !=
+          static_cast<Eigen::Index>(n_packed_pairs)) {
+    throw std::invalid_argument("RI AO pair-factor matrix shape mismatch");
+  }
+}
+
+void resize_fused_workspace(
+    AoEffectiveOneElectronRiFusedWorkspace* workspace,
+    int n_threads,
+    int n_basis_functions) {
+  if (workspace == nullptr) {
+    throw std::invalid_argument("RI fused workspace must not be null");
+  }
+  workspace->partial_forward.resize(n_threads);
+  workspace->partial_adjoint.resize(n_threads);
+  workspace->factor_matrices.resize(n_threads);
+  workspace->left_products.resize(n_threads);
+  workspace->exchange_products.resize(n_threads);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    workspace->partial_forward[thread].setZero(
+        n_basis_functions,
+        n_basis_functions);
+    workspace->partial_adjoint[thread].setZero(
+        n_basis_functions,
+        n_basis_functions);
+    workspace->factor_matrices[thread].resize(
+        n_basis_functions,
+        n_basis_functions);
+    workspace->left_products[thread].resize(
+        n_basis_functions,
+        n_basis_functions);
+    workspace->exchange_products[thread].resize(
+        n_basis_functions,
+        n_basis_functions);
+  }
+}
+
+void apply_fused_dense_ri_operator(
+    const Eigen::Ref<const Eigen::MatrixXd>& source,
+    const Eigen::Ref<const Eigen::MatrixXd>& adjoint,
+    const RiAoFactorization& ri_factorization,
+    AoEffectiveOneElectronRiFusedWorkspace* workspace,
+    Eigen::MatrixXd* forward,
+    Eigen::MatrixXd* transpose) {
+  const int n_basis_functions = ri_factorization.n_basis_functions;
+  const int n_threads = ri_auxiliary_thread_count(
+      ri_factorization.n_auxiliary_functions);
+  resize_fused_workspace(
+      workspace,
+      n_threads,
+      n_basis_functions);
+  build_weighted_packed_symmetric_matrix(
+      source,
+      &workspace->weighted_packed_forward);
+  build_weighted_packed_symmetric_matrix(
+      adjoint,
+      &workspace->weighted_packed_adjoint);
+
+  const auto& packed_factor_matrix =
+      ri_factorization.metric_whitened_ao_pair_factors;
+#pragma omp parallel num_threads(n_threads)
+  {
+    int thread_index = 0;
+#ifdef _OPENMP
+    thread_index = omp_get_thread_num();
+#endif
+    Eigen::MatrixXd& factor_matrix =
+        workspace->factor_matrices[thread_index];
+    Eigen::MatrixXd& left_product =
+        workspace->left_products[thread_index];
+    Eigen::MatrixXd& exchange_product =
+        workspace->exchange_products[thread_index];
+    Eigen::MatrixXd& local_forward =
+        workspace->partial_forward[thread_index];
+    Eigen::MatrixXd& local_adjoint =
+        workspace->partial_adjoint[thread_index];
+
+#pragma omp for schedule(static)
+    for (std::ptrdiff_t auxiliary_offset = 0;
+         auxiliary_offset < ri_factorization.n_auxiliary_functions;
+         ++auxiliary_offset) {
+      const int auxiliary_index = static_cast<int>(auxiliary_offset);
+      unpack_packed_factor_row_lower_triangle(
+          packed_factor_matrix,
+          auxiliary_index,
+          n_basis_functions,
+          &factor_matrix);
+      accumulate_dense_ri_factor_action(
+          packed_factor_matrix,
+          auxiliary_index,
+          source,
+          workspace->weighted_packed_forward,
+          factor_matrix,
+          &left_product,
+          &exchange_product,
+          local_forward.data());
+      accumulate_dense_ri_factor_action(
+          packed_factor_matrix,
+          auxiliary_index,
+          adjoint,
+          workspace->weighted_packed_adjoint,
+          factor_matrix,
+          &left_product,
+          &exchange_product,
+          local_adjoint.data());
+    }
+  }
+
+  forward->setZero(n_basis_functions, n_basis_functions);
+  transpose->setZero(n_basis_functions, n_basis_functions);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    *forward += workspace->partial_forward[thread];
+    *transpose += workspace->partial_adjoint[thread];
+  }
+  symmetrize_in_place(forward);
+  symmetrize_in_place(transpose);
 }
 
 std::vector<double> apply_low_rank_ri_operator(
@@ -418,8 +632,10 @@ std::vector<double> apply_dense_ri_operator(
   const std::size_t matrix_size =
       n_basis_functions * n_basis_functions;
   std::vector<double> output_storage(matrix_size, 0.0);
-  const auto weighted_packed_input =
-      build_weighted_packed_symmetric_matrix(input_matrix);
+  std::vector<double> weighted_packed_input;
+  build_weighted_packed_symmetric_matrix(
+      input_matrix,
+      &weighted_packed_input);
   const auto& packed_factor_matrix =
       ri_factorization.metric_whitened_ao_pair_factors;
 
@@ -451,11 +667,6 @@ std::vector<double> apply_dense_ri_operator(
     for (std::ptrdiff_t auxiliary_offset = 0;
          auxiliary_offset < ri_factorization.n_auxiliary_functions;
          ++auxiliary_offset) {
-      const double coulomb_projection =
-          packed_row_symmetric_matrix_dot(
-              packed_factor_matrix,
-              static_cast<int>(auxiliary_offset),
-              weighted_packed_input);
       unpack_packed_factor_row_lower_triangle(
           packed_factor_matrix,
           static_cast<int>(auxiliary_offset),
@@ -465,44 +676,15 @@ std::vector<double> apply_dense_ri_operator(
       // In the dense contraction we expose only the lower triangle of `L_A`
       // to BLAS symmetric kernels, which avoids treating the RI factor as a
       // generic dense matrix and matches the dense-lower cache layout.
-      cblas_dsymm(
-          CblasColMajor,
-          CblasLeft,
-          CblasLower,
-          n_basis_functions,
-          n_basis_functions,
-          1.0,
-          factor_matrix.data(),
-          n_basis_functions,
-          input_matrix.data(),
-          n_basis_functions,
-          0.0,
-          left_workspace.data(),
-          n_basis_functions);
-      cblas_dsymm(
-          CblasColMajor,
-          CblasRight,
-          CblasLower,
-          n_basis_functions,
-          n_basis_functions,
-          1.0,
-          factor_matrix.data(),
-          n_basis_functions,
-          left_workspace.data(),
-          n_basis_functions,
-          0.0,
-          exchange_matrix.data(),
-          n_basis_functions);
-      add_scaled_packed_factor_row_to_lower_triangle(
+      accumulate_dense_ri_factor_action(
           packed_factor_matrix,
           static_cast<int>(auxiliary_offset),
-          2.0 * coulomb_projection,
-          local_output.data(),
-          n_basis_functions);
-      subtract_lower_triangle_in_place(
-          exchange_matrix,
-          local_output.data(),
-          n_basis_functions);
+          input_matrix,
+          weighted_packed_input,
+          factor_matrix,
+          &left_workspace,
+          &exchange_matrix,
+          local_output.data());
     }
   }
 
@@ -522,25 +704,12 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
     const RiAoFactorization& ri_factorization,
     int n_basis_functions,
     const AoEffectiveOneElectronRiOperatorOptions& options) {
-  if (n_basis_functions <= 0) {
-    throw std::invalid_argument("n_basis_functions must be positive");
-  }
-  if (ri_factorization.n_basis_functions != n_basis_functions) {
-    throw std::invalid_argument("RI basis-function count mismatch");
-  }
+  validate_ri_factorization(ri_factorization, n_basis_functions);
 
   const std::size_t matrix_size =
       n_basis_functions * n_basis_functions;
   if (input_matrix.size() != matrix_size) {
     throw std::invalid_argument("input_matrix size mismatch");
-  }
-
-  const std::size_t n_packed_pairs = packed_pair_count(n_basis_functions);
-  if (ri_factorization.metric_whitened_ao_pair_factors.rows() !=
-          ri_factorization.n_auxiliary_functions ||
-      ri_factorization.metric_whitened_ao_pair_factors.cols() !=
-          static_cast<Eigen::Index>(n_packed_pairs)) {
-    throw std::invalid_argument("RI AO pair-factor matrix shape mismatch");
   }
 
   const Eigen::Map<const Eigen::MatrixXd> input(
@@ -565,20 +734,7 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
     const AoEffectiveOneElectronRiLowRankFactors& low_rank_factors,
     const RiAoFactorization& ri_factorization,
     int n_basis_functions) {
-  if (n_basis_functions <= 0) {
-    throw std::invalid_argument("n_basis_functions must be positive");
-  }
-  if (ri_factorization.n_basis_functions != n_basis_functions) {
-    throw std::invalid_argument("RI basis-function count mismatch");
-  }
-
-  const std::size_t n_packed_pairs = packed_pair_count(n_basis_functions);
-  if (ri_factorization.metric_whitened_ao_pair_factors.rows() !=
-          ri_factorization.n_auxiliary_functions ||
-      ri_factorization.metric_whitened_ao_pair_factors.cols() !=
-          static_cast<Eigen::Index>(n_packed_pairs)) {
-    throw std::invalid_argument("RI AO pair-factor matrix shape mismatch");
-  }
+  validate_ri_factorization(ri_factorization, n_basis_functions);
 
   const auto spectral_factorization =
       build_prefactorized_spectral_factorization(
@@ -588,6 +744,40 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
       ri_factorization,
       n_basis_functions,
       spectral_factorization);
+}
+
+void apply_ao_effective_one_electron_ri_operator_fused(
+    const Eigen::Ref<const Eigen::MatrixXd>& source,
+    const Eigen::Ref<const Eigen::MatrixXd>& adjoint,
+    const RiAoFactorization& ri_factorization,
+    AoEffectiveOneElectronRiFusedWorkspace* workspace,
+    Eigen::MatrixXd* forward,
+    Eigen::MatrixXd* transpose) {
+  const int n_basis_functions = ri_factorization.n_basis_functions;
+  validate_ri_factorization(ri_factorization, n_basis_functions);
+  if (source.rows() != n_basis_functions ||
+      source.cols() != n_basis_functions ||
+      adjoint.rows() != n_basis_functions ||
+      adjoint.cols() != n_basis_functions) {
+    throw std::invalid_argument("RI fused input matrix shape mismatch");
+  }
+  if (workspace == nullptr || forward == nullptr || transpose == nullptr) {
+    throw std::invalid_argument("RI fused buffers must not be null");
+  }
+  if (forward == transpose || forward->data() == source.data() ||
+      forward->data() == adjoint.data() ||
+      transpose->data() == source.data() ||
+      transpose->data() == adjoint.data()) {
+    throw std::invalid_argument("RI fused outputs must not alias inputs or each other");
+  }
+
+  apply_fused_dense_ri_operator(
+      source,
+      adjoint,
+      ri_factorization,
+      workspace,
+      forward,
+      transpose);
 }
 
 }  // namespace xmvb::vb

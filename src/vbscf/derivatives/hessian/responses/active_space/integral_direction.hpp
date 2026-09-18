@@ -28,7 +28,14 @@ struct ActiveSpaceIntegralDirectionView {
  */
 struct ActiveSpaceIntegralDirectionContext {
   const VbScfInput& input;
-  const ExactPackedActiveTwoElectronAdjointCache& exact_two_electron_cache;
+  /**
+   * @brief Optional exact AO-pair cache used when no 2e direction is supplied.
+   *
+   * Factorized integral representations provide their packed active-space
+   * direction through `ActiveSpaceIntegralTangent::precomputed_packed_two_electron`
+   * and therefore do not carry an exact AO-pair cache.
+   */
+  const ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache = nullptr;
   const Eigen::MatrixXd& active_auxiliary_orbitals;
   const Eigen::MatrixXd& overlap_times_active_auxiliary_orbitals;
   const Eigen::MatrixXd& effective_h1e_times_active_auxiliary_orbitals;

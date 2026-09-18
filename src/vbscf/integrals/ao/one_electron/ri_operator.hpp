@@ -46,6 +46,22 @@ struct AoEffectiveOneElectronRiLowRankFactors {
 };
 
 /**
+ * @brief Caller-owned buffers for repeated fused RI AO-H1E actions.
+ *
+ * The storage is resized on demand and retained between calls.  A workspace
+ * must not be used concurrently by more than one call.
+ */
+struct AoEffectiveOneElectronRiFusedWorkspace {
+  std::vector<Eigen::MatrixXd> partial_forward;
+  std::vector<Eigen::MatrixXd> partial_adjoint;
+  std::vector<Eigen::MatrixXd> factor_matrices;
+  std::vector<Eigen::MatrixXd> left_products;
+  std::vector<Eigen::MatrixXd> exchange_products;
+  std::vector<double> weighted_packed_forward;
+  std::vector<double> weighted_packed_adjoint;
+};
+
+/**
  * @brief Applies the AO-side RI Coulomb-exchange operator to an AO matrix.
  *
  * The RI cache stores metric-whitened AO-pair factors `L_{A,mu,nu}` on packed
@@ -76,5 +92,26 @@ std::vector<double> apply_ao_effective_one_electron_ri_operator(
     const AoEffectiveOneElectronRiLowRankFactors& low_rank_factors,
     const RiAoFactorization& ri_factorization,
     int n_basis_functions);
+
+/**
+ * @brief Applies the RI AO-H1E operator to a source and an adjoint together.
+ *
+ * Both inputs are symmetric AO matrices.  The metric-whitened RI factors are
+ * swept once, producing the complete symmetric matrices `G_RI[source]` and
+ * `G_RI[adjoint]`.  Since `G_RI` is a constant linear self-adjoint map, the
+ * second result is also its transpose action.  Consequently the derivative
+ * of that transpose action at a fixed adjoint is identically zero; Hessian
+ * code only needs to pass the directional adjoint to this routine.
+ *
+ * The outputs may alias neither the inputs nor each other.  Caller-owned
+ * workspace retains all thread-local AO-sized buffers across repeated HVPs.
+ */
+void apply_ao_effective_one_electron_ri_operator_fused(
+    const Eigen::Ref<const Eigen::MatrixXd>& source,
+    const Eigen::Ref<const Eigen::MatrixXd>& adjoint,
+    const RiAoFactorization& ri_factorization,
+    AoEffectiveOneElectronRiFusedWorkspace* workspace,
+    Eigen::MatrixXd* forward,
+    Eigen::MatrixXd* transpose);
 
 }  // namespace xmvb::vb

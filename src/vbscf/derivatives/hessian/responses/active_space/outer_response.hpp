@@ -10,6 +10,8 @@
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/integrals/active/two_electron/response/types.hpp"
+#include "vbscf/integrals/active/two_electron/response/ri.hpp"
+#include "vbscf/integrals/ao/ri/factorization.hpp"
 
 namespace xmvb::vb {
 
@@ -56,6 +58,8 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
     const ActiveSpaceGradientDirection& active_space_gradient_direction,
     const AcceptedOrbitalPreparationCache& orbital_preparation_cache,
     const ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache,
+    const RiActiveTwoElectronResponseCache* ri_two_electron_cache,
+    const RiAoFactorization* ri_factorization,
     std::vector<double>* symmetric_active_overlap_gradient_workspace,
     std::vector<double>* symmetric_active_one_electron_gradient_workspace);
 
@@ -70,6 +74,9 @@ struct AcceptedOrbitalBackpropInputs {
 
 AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
     const AcceptedPointContext& context,
-    const VbScfInput& input);
+    const VbScfInput& input,
+    const ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache,
+    const RiActiveTwoElectronResponseCache* ri_two_electron_cache,
+    const RiAoFactorization* ri_factorization);
 
 }  // namespace xmvb::vb

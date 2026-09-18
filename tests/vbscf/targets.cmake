@@ -19,6 +19,8 @@ set(_xmvb_vbscf_unit_targets
   test_positive_ritz_secants
   test_projected_orbital_surrogate
   test_reduced_hessian_reference
+  test_ri_ao_h1e_hvp
+  test_ri_active_two_electron_response
   test_secant_hvp
   test_sparse_orbital_quotient
   test_support_preserving_gauge
@@ -89,6 +91,14 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME reduced_hessian_reference COMMAND test_reduced_hessian_reference)
   set_tests_properties(reduced_hessian_reference PROPERTIES
+      ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME ri_ao_h1e_hvp COMMAND test_ri_ao_h1e_hvp)
+  set_tests_properties(ri_ao_h1e_hvp PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(
+    NAME ri_active_two_electron_response
+    COMMAND test_ri_active_two_electron_response)
+  set_tests_properties(ri_active_two_electron_response PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME secant_hvp COMMAND test_secant_hvp)
   set_tests_properties(secant_hvp PROPERTIES
@@ -145,6 +155,31 @@ if (BUILD_TESTING)
       WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
       ENVIRONMENT
         "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+
+  foreach(ri_case IN ITEMS
+      "ri_ctx_hvp_f2_finite_difference|F2.xmi|dense"
+      "ri_ctx_hvp_f2_oeo_finite_difference|F2_OEO.xmi|dense"
+      "ri_ctx_hvp_f2_state_average_finite_difference|F2_SA2.xmi|dense"
+      "ri_ctx_hvp_f2_state_average_davidson_finite_difference|F2_SA2.xmi|davidson")
+    string(REPLACE "|" ";" ri_fields "${ri_case}")
+    list(GET ri_fields 0 ri_test_name)
+    list(GET ri_fields 1 ri_input_name)
+    list(GET ri_fields 2 ri_eigensolver)
+    add_test(
+      NAME ${ri_test_name}
+      COMMAND
+        check_exact_ctx_hvp
+        ${CMAKE_SOURCE_DIR}/testdata/vbscf/${ri_input_name}
+        --standard-two-electron-mode ri
+        --eigensolver ${ri_eigensolver}
+        --step 1e-4
+        --probe full
+        --max-rel-error 1e-7)
+    set_tests_properties(${ri_test_name} PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+  endforeach()
 
   add_test(
     NAME exact_ctx_hvp_f2_oeo_finite_difference

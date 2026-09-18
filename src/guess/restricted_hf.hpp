@@ -5,6 +5,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/ao/contracts/input.hpp"
+#include "vbscf/integrals/ao/ri/factorization.hpp"
 
 namespace xmvb::vb {
 
@@ -42,7 +43,28 @@ public:
       const AoIntegralInput& ao_integral_input,
       const std::vector<double>& initial_density_projector) const;
 
+  RestrictedHartreeFockResult solve(
+      int n_total_electrons,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& core_hamiltonian_matrix,
+      const RiAoFactorization& ri_factorization) const;
+
+  RestrictedHartreeFockResult solve(
+      int n_total_electrons,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& core_hamiltonian_matrix,
+      const RiAoFactorization& ri_factorization,
+      const std::vector<double>& initial_density_projector) const;
+
 private:
+  RestrictedHartreeFockResult solve_impl(
+      int n_total_electrons,
+      const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+      const Eigen::Ref<const Eigen::MatrixXd>& core_hamiltonian_matrix,
+      const AoIntegralInput* ao_integral_input,
+      const RiAoFactorization* ri_factorization,
+      const std::vector<double>& initial_density_projector) const;
+
   RestrictedHartreeFockOptions options_;
 };
 

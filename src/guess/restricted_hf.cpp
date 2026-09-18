@@ -209,9 +209,70 @@ RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
     const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
     const AoIntegralInput& ao_integral_input,
     const std::vector<double>& initial_density_projector) const {
-  const int n_basis_functions = ao_integral_input.n_basis_functions;
+  return solve_impl(
+      n_total_electrons,
+      ao_overlap_matrix,
+      ao_integral_input.ao_core_hamiltonian_matrix,
+      &ao_integral_input,
+      nullptr,
+      initial_density_projector);
+}
+
+RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
+    int n_total_electrons,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& core_hamiltonian_matrix,
+    const RiAoFactorization& ri_factorization) const {
+  return solve(
+      n_total_electrons,
+      ao_overlap_matrix,
+      core_hamiltonian_matrix,
+      ri_factorization,
+      {});
+}
+
+RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
+    int n_total_electrons,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& core_hamiltonian_matrix,
+    const RiAoFactorization& ri_factorization,
+    const std::vector<double>& initial_density_projector) const {
+  return solve_impl(
+      n_total_electrons,
+      ao_overlap_matrix,
+      core_hamiltonian_matrix,
+      nullptr,
+      &ri_factorization,
+      initial_density_projector);
+}
+
+RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve_impl(
+    int n_total_electrons,
+    const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap_matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& core_hamiltonian_matrix,
+    const AoIntegralInput* ao_integral_input,
+    const RiAoFactorization* ri_factorization,
+    const std::vector<double>& initial_density_projector) const {
+  if ((ao_integral_input == nullptr) == (ri_factorization == nullptr)) {
+    throw std::invalid_argument(
+        "RHF solver requires exactly one two-electron representation");
+  }
+  const int n_basis_functions = core_hamiltonian_matrix.rows();
   if (n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
+  }
+  if (core_hamiltonian_matrix.cols() != n_basis_functions ||
+      ao_overlap_matrix.rows() != n_basis_functions ||
+      ao_overlap_matrix.cols() != n_basis_functions) {
+    throw std::invalid_argument("RHF AO matrix dimensions do not match");
+  }
+  if (ao_integral_input != nullptr &&
+      ao_integral_input->n_basis_functions != n_basis_functions) {
+    throw std::invalid_argument("exact RHF basis-function count mismatch");
+  }
+  if (ri_factorization != nullptr &&
+      ri_factorization->n_basis_functions != n_basis_functions) {
+    throw std::invalid_argument("RI RHF basis-function count mismatch");
   }
   if (n_total_electrons < 0 || n_total_electrons % 2 != 0) {
     throw std::invalid_argument("RHF solver requires an even non-negative electron count");
@@ -239,10 +300,20 @@ RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
   const auto symmetric_overlap_matrix =
       symmetrize_matrix(ao_overlap_matrix);
   const auto symmetric_core_hamiltonian =
-      symmetrize_matrix(ao_integral_input.ao_core_hamiltonian_matrix);
+      symmetrize_matrix(core_hamiltonian_matrix);
 
   core::GeneralizedEigensolver eigensolver;
   ClosedShellFockBuilder fock_builder;
+  const auto build_fock = [&](
+      const Eigen::Ref<const Eigen::MatrixXd>& density) {
+    if (ri_factorization != nullptr) {
+      return fock_builder.build(
+          density,
+          symmetric_core_hamiltonian,
+          *ri_factorization);
+    }
+    return fock_builder.build(density, *ao_integral_input);
+  };
 
   auto core_eigen_result = eigensolver.solve_dense(
       flatten_matrix_column_major(symmetric_core_hamiltonian),
@@ -279,8 +350,7 @@ RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
   diis_history.reserve(std::max(0, options_.diis_history));
 
   for (int iteration = 0; iteration < options_.max_iterations; ++iteration) {
-    auto symmetric_fock_matrix =
-        fock_builder.build(density_projector, ao_integral_input);
+    auto symmetric_fock_matrix = build_fock(density_projector);
     const auto cdiis_error_matrix = build_cdiis_error_matrix(
         symmetric_fock_matrix,
         density_projector,
@@ -335,8 +405,7 @@ RestrictedHartreeFockResult RestrictedHartreeFockSolver::solve(
     result.density_projector = density_projector;
   }
 
-  result.fock_matrix =
-      fock_builder.build(result.density_projector, ao_integral_input);
+  result.fock_matrix = build_fock(result.density_projector);
   auto final_eigen_result = eigensolver.solve_dense(
       flatten_matrix_column_major(result.fock_matrix),
       flatten_matrix_column_major(symmetric_overlap_matrix),

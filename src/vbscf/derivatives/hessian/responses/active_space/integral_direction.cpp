@@ -89,8 +89,13 @@ ActiveSpaceIntegralDirectionView build_active_space_integral_direction(
         tangent.precomputed_packed_two_electron->data() + packed_size);
     workspace->two_electron.dense_fixed_adjoint_direction.resize(0, 0);
   } else {
+    if (context.exact_two_electron_cache == nullptr) {
+      throw std::invalid_argument(
+          "active-space 2e direction requires either a precomputed direction "
+          "or an exact AO-pair cache");
+    }
     compute_exact_packed_active_two_electron_integral_directional_derivative(
-        context.exact_two_electron_cache,
+        *context.exact_two_electron_cache,
         tangent.dense_active_coefficients,
         context.input.ao_integral_input,
         &workspace->two_electron,

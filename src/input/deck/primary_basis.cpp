@@ -513,14 +513,15 @@ LibcintInput build_libcint_input(
 
 }  // namespace
 
-InputDeckPrimaryBasisBuildResult build_input_deck_primary_basis(
-    const InputDeck& input_deck) {
+InputDeckBasisBuildResult build_input_deck_basis(
+    const InputDeck& input_deck,
+    const std::string& basis_name) {
   if (input_deck.geometry_atoms.empty()) {
     throw std::runtime_error("input loader requires $GEO");
   }
 
   const std::string basis_display_name =
-      normalize_basis_leaf_name(input_deck.metadata.basis_name);
+      normalize_basis_leaf_name(basis_name);
   const std::filesystem::path basis_file_path =
       resolve_basis_file_path(basis_display_name);
 
@@ -535,7 +536,7 @@ InputDeckPrimaryBasisBuildResult build_input_deck_primary_basis(
           basis_file_path,
           required_atomic_numbers);
 
-  InputDeckPrimaryBasisBuildResult result;
+  InputDeckBasisBuildResult result;
   result.basis_file_path = basis_file_path;
   result.basis_display_name = basis_display_name;
   result.libcint_input =

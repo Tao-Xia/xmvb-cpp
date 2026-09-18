@@ -17,7 +17,6 @@
 #include "input/deck/model.hpp"
 #include "input/deck/orbital_support.hpp"
 #include "input/deck/primary_basis.hpp"
-#include "libcint/auxiliary_basis.hpp"
 #include "libcint/c_api.hpp"
 #include "libcint/direct_shell.hpp"
 #include "libcint/materialized_provider.hpp"
@@ -27,6 +26,7 @@
 #include "vbscf/structures/expansion/expander.hpp"
 #include "vbscf/structures/selection/subspace/selector.hpp"
 #include "vbscf/integrals/ao/libcint/validation.hpp"
+#include "vbscf/integrals/ao/ri/cache.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
 
@@ -516,8 +516,8 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   const InputDeck input_deck =
       parse_input_deck_model(input_file_path);
   const InputDeckMetadata& input_deck_metadata = input_deck.metadata;
-  const InputDeckPrimaryBasisBuildResult primary_basis_build_result =
-      build_input_deck_primary_basis(input_deck);
+  const InputDeckBasisBuildResult primary_basis_build_result =
+      build_input_deck_basis(input_deck, input_deck_metadata.basis_name);
   const LibcintInput& primary_libcint_input =
       primary_basis_build_result.libcint_input;
   const StaticMoleculeTopology static_topology =
@@ -648,9 +648,19 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   result.ri_factorization_provider =
       std::make_shared<const LibcintRiIntegralProvider>();
   if (use_standard_ri_two_electron_mode) {
-    LibcintAuxiliaryBasisBuilder auxiliary_basis_builder;
+    std::string auxiliary_basis_name =
+        input_deck_metadata.auxiliary_basis_name;
+    if (auxiliary_basis_name.empty()) {
+      auxiliary_basis_name = input_deck_metadata.basis_name;
+      if (auxiliary_basis_name.size() >= 4 &&
+          auxiliary_basis_name.substr(auxiliary_basis_name.size() - 4) ==
+              ".gbs") {
+        auxiliary_basis_name.resize(auxiliary_basis_name.size() - 4);
+      }
+      auxiliary_basis_name += "-jkfit";
+    }
     result.auxiliary_libcint_input =
-        auxiliary_basis_builder.build(primary_libcint_input);
+        build_input_deck_basis(input_deck, auxiliary_basis_name).libcint_input;
   }
 
   const auto ao_integral_provider_start_time = std::chrono::steady_clock::now();
@@ -680,11 +690,16 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
           .count();
   if (!options.skip_orbital_guess) {
     const auto orbital_guess_start_time = std::chrono::steady_clock::now();
+    const RiAoFactorization* ri_guess_factorization = nullptr;
+    if (use_standard_ri_two_electron_mode) {
+      ri_guess_factorization = &ensure_vbscf_input_ri_cache(result);
+    }
     build_initial_orbital_guess(
         input_file_path,
         input_deck_metadata.guess_type,
         result.libcint_input,
         result.ao_integral_input,
+        ri_guess_factorization,
         input_deck.guess_block.present ? &input_deck.guess_block.raw_lines : nullptr,
         &result.orbital_preparation_input);
     // Select a well-conditioned inactive representative inside the exact

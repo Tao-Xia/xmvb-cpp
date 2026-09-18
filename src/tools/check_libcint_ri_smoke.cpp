@@ -5,16 +5,19 @@
 #include <stdexcept>
 #include <string>
 
+#include <Eigen/Eigenvalues>
+
 #include "input/loading/loader.hpp"
-#include "libcint/auxiliary_basis.hpp"
+#include "input/deck/model.hpp"
+#include "input/deck/primary_basis.hpp"
 #include "libcint/direct_shell.hpp"
+#include "libcint/ri_provider.hpp"
 
 namespace {
 
 struct Options {
   std::string input_path;
-  int level = 2;
-  bool use_star = true;
+  std::string auxiliary_basis_name;
   int primary_left_shell = 0;
   int primary_right_shell = 0;
   int auxiliary_left_shell = 0;
@@ -26,7 +29,7 @@ struct Options {
 
 void print_usage() {
   std::cerr << "usage: check_libcint_ri_smoke <input.xmi> "
-               "[--level n] [--no-star] [--primary-shell-pair i j] "
+               "[--aux-basis name] [--primary-shell-pair i j] "
                "[--aux-shell-pair a b] [--three-center i j a]\n";
 }
 
@@ -40,19 +43,11 @@ Options parse_arguments(int argc, char** argv) {
   options.input_path = argv[1];
   for (int argument_index = 2; argument_index < argc;) {
     const std::string argument_name = argv[argument_index++];
-    if (argument_name == "--level") {
+    if (argument_name == "--aux-basis") {
       if (argument_index >= argc) {
-        throw std::invalid_argument("--level expects 1 integer");
+        throw std::invalid_argument("--aux-basis expects a basis name");
       }
-      options.level = std::stoi(argv[argument_index++]);
-      continue;
-    }
-    if (argument_name == "--star") {
-      options.use_star = true;
-      continue;
-    }
-    if (argument_name == "--no-star") {
-      options.use_star = false;
+      options.auxiliary_basis_name = argv[argument_index++];
       continue;
     }
     if (argument_name == "--primary-shell-pair") {
@@ -175,6 +170,13 @@ double three_center_transpose_max_abs_diff(
   return max_abs_diff;
 }
 
+int packed_pair_index(int first, int second) {
+  if (first < second) {
+    std::swap(first, second);
+  }
+  return first * (first + 1) / 2 + second;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -183,11 +185,24 @@ int main(int argc, char** argv) {
     const auto load_result = xmvb::vb::load_vbscf_input_with_timings(options.input_path);
     const auto& input = load_result.input;
 
-    xmvb::vb::LibcintAuxiliaryBasisBuilder builder;
-    xmvb::vb::LibcintAuxiliaryBasisBuilderOptions builder_options;
-    builder_options.level = options.level;
-    builder_options.use_star = options.use_star;
-    const auto auxiliary_input = builder.build(input.libcint_input, builder_options);
+    const xmvb::vb::InputDeck auxiliary_deck =
+        xmvb::vb::parse_input_deck_model(options.input_path);
+    std::string auxiliary_basis_name = options.auxiliary_basis_name;
+    if (auxiliary_basis_name.empty()) {
+      auxiliary_basis_name = auxiliary_deck.metadata.auxiliary_basis_name;
+    }
+    if (auxiliary_basis_name.empty()) {
+      auxiliary_basis_name = auxiliary_deck.metadata.basis_name;
+      if (auxiliary_basis_name.size() >= 4 &&
+          auxiliary_basis_name.substr(auxiliary_basis_name.size() - 4) ==
+              ".gbs") {
+        auxiliary_basis_name.resize(auxiliary_basis_name.size() - 4);
+      }
+      auxiliary_basis_name += "-jkfit";
+    }
+    const auto auxiliary_input = xmvb::vb::build_input_deck_basis(
+        auxiliary_deck,
+        auxiliary_basis_name).libcint_input;
     xmvb::vb::LibcintDirectShellEvaluator evaluator(
         input.libcint_input,
         auxiliary_input);
@@ -206,12 +221,31 @@ int main(int argc, char** argv) {
         options.three_center_primary_right_shell,
         options.three_center_primary_left_shell,
         options.three_center_auxiliary_shell);
+    xmvb::vb::LibcintRiIntegralProvider ri_provider;
+    const auto ri = ri_provider.build(
+        input.libcint_input,
+        auxiliary_input,
+        xmvb::vb::LibcintRiIntegralProviderOptions{});
+    const Eigen::MatrixXd ri_pair_kernel =
+        ri.metric_whitened_ao_pair_factors.transpose() *
+        ri.metric_whitened_ao_pair_factors;
+    Eigen::MatrixXd exact_pair_kernel = Eigen::MatrixXd::Zero(
+        ri.n_packed_ao_pairs,
+        ri.n_packed_ao_pairs);
+    input.ao_integral_input.pair_graph.for_each_integral(
+        [&](double value, int i, int j, int k, int l) {
+          const int left = packed_pair_index(i, j);
+          const int right = packed_pair_index(k, l);
+          exact_pair_kernel(left, right) = value;
+          exact_pair_kernel(right, left) = value;
+        });
+    const Eigen::MatrixXd pair_error = ri_pair_kernel - exact_pair_kernel;
+    const double exact_pair_norm = exact_pair_kernel.norm();
 
     std::cout << std::setprecision(12);
     std::cout << "primary_n_shells = " << input.libcint_input.n_shells << '\n';
     std::cout << "primary_n_basis_functions = " << evaluator.n_basis_functions() << '\n';
-    std::cout << "auxiliary_level = " << options.level << '\n';
-    std::cout << "auxiliary_star = " << (options.use_star ? 1 : 0) << '\n';
+    std::cout << "auxiliary_basis = " << auxiliary_basis_name << '\n';
     std::cout << "auxiliary_n_shells = " << auxiliary_input.n_shells << '\n';
     std::cout << "auxiliary_n_basis_functions = "
               << evaluator.n_auxiliary_basis_functions() << '\n';
@@ -240,6 +274,14 @@ int main(int argc, char** argv) {
                      three_center_block,
                      three_center_block_transposed)
               << '\n';
+    const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> metric_solver(
+        ri.auxiliary_metric_matrix);
+    std::cout << "ri_metric_min_eigenvalue = "
+              << metric_solver.eigenvalues().minCoeff() << '\n';
+    std::cout << "ri_pair_kernel_max_abs_error = "
+              << pair_error.cwiseAbs().maxCoeff() << '\n';
+    std::cout << "ri_pair_kernel_relative_frobenius_error = "
+              << pair_error.norm() / std::max(1.0, exact_pair_norm) << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

@@ -5,6 +5,7 @@
 
 #include "vbscf/integrals/ao/contracts/input.hpp"
 #include "vbscf/integrals/ao/libcint/input.hpp"
+#include "vbscf/integrals/ao/ri/factorization.hpp"
 #include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::vb {
@@ -24,6 +25,7 @@ void build_initial_orbital_guess(
     int guess_type,
     const LibcintInput& libcint_input,
     const AoIntegralInput& ao_integral_input,
+    const RiAoFactorization* ri_factorization,
     const std::vector<std::string>* read_guess_lines,
     OrbitalPreparationInput* orbital_preparation_input);
 

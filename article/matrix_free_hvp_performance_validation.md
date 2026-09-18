@@ -457,13 +457,151 @@ The canonical-stream path completed the initial objective and a subsequent
 orbital update.  On the same 32-core Slurm node, the measured process peak RSS
 decreased from 36,054,456 KiB to 19,224,224 KiB, a reduction of $46.68\%$.
 
+### 8.3 Factor-native RI Hessian action
+
+The TNHVP operator also supports the resolution-of-the-identity (RI)
+two-electron representation without reconstructing AO four-index integrals.
+Let $\mathbf L$ contain the metric-whitened three-index factors in packed AO
+pair space and let $\mathbf Q(\mathbf C)$ denote the quadratic packed-pair map
+from AO coefficients $\mathbf C$ to active-orbital pairs.  The accepted active
+pair factors and active two-electron kernel are
+
+$$
+\mathbf B(\mathbf C)=\mathbf L\mathbf Q(\mathbf C),
+\qquad
+\mathbf G(\mathbf C)=\mathbf B(\mathbf C)^{\mathrm T}
+                     \mathbf B(\mathbf C).
+$$
+
+For an orbital direction $\mathbf D$, their directional derivatives are
+
+$$
+\dot{\mathbf B}
+=
+\mathbf L\mathbf Q'(\mathbf C)[\mathbf D],
+$$
+
+$$
+\dot{\mathbf G}
+=
+\dot{\mathbf B}^{\mathrm T}\mathbf B
++
+\mathbf B^{\mathrm T}\dot{\mathbf B}.
+$$
+
+If $\boldsymbol\lambda$ is the packed active-integral adjoint, define the
+symmetric pair matrix $\mathbf W(\boldsymbol\lambda)$ using the canonical
+pair-of-pairs multiplicities,
+
+$$
+W_{PQ}
+=
+\begin{cases}
+2\lambda_{PP}, & P=Q,\\
+\lambda_{\{P,Q\}}, & P\ne Q.
+\end{cases}
+$$
+
+The fixed-adjoint RI two-electron Hessian action is then evaluated as
+
+$$
+\dot{\mathbf g}_{\mathbf C}^{(2e)}
+=
+\mathbf Q'(\mathbf C)^{*}
+\!\left[
+\mathbf L^{\mathrm T}\dot{\mathbf B}\mathbf W
+\right]
++
+\mathbf Q'(\mathbf D)^{*}
+\!\left[
+\mathbf L^{\mathrm T}\mathbf B\mathbf W
+\right].
+$$
+
+The first term is the response of the RI factor adjoint; the second is the
+derivative of the quadratic orbital pair map.  The structure response produces
+a directional adjoint $\dot{\boldsymbol\lambda}$ and contributes only
+
+$$
+\mathbf g_{\mathbf C,\mathrm{outer}}^{(2e)}
+=
+\mathbf Q'(\mathbf C)^{*}
+\!\left[
+\mathbf L^{\mathrm T}\mathbf B
+\mathbf W(\dot{\boldsymbol\lambda})
+\right],
+$$
+
+because the fixed-adjoint terms are already included in the direct core HVP.
+The same packed-$\dot{\mathbf G}$ interface is consumed by the local
+same-spin, opposite-spin, direct-CI, and generalized-eigenvector response
+paths, so those physical response equations are independent of the AO
+integral representation.
+
+For the inactive-density contribution, each whitened factor is interpreted as
+a symmetric AO matrix $\mathbf L_A$.  The RI Coulomb--exchange map is
+
+$$
+\mathcal G_{\mathrm{RI}}[\mathbf X]
+=
+2\sum_A
+\langle\mathbf L_A,\mathbf X\rangle_F\mathbf L_A
+-
+\sum_A\mathbf L_A\mathbf X\mathbf L_A.
+$$
+
+This linear map is self-adjoint.  A fused auxiliary-factor sweep therefore
+computes both the forward $\dot{\mathbf F}$ and its transpose pullback without
+forming the AO-pair Gram matrix.  The production builder consumes the complete
+symmetric RI result directly; only the reverse-mode density gradient is
+encoded in the canonical lower-triangular storage with one-half diagonal
+weights.
+
+The leading factor contraction is
+
+$$
+O\!\left(
+N_{\mathrm{aux}}N_{\mathrm{AO-pair}}N_{\mathrm{active-pair}}
+\right),
+$$
+
+with no AO four-index tensor.  Random-matrix tests independently verify
+$\dot{\mathbf B}$, $\dot{\mathbf G}$, the packed adjoint identity, and the
+fixed-adjoint HVP by centered finite differences.  End-to-end F$_2$ HAO, OEO,
+two-state dense, and two-state Davidson checks give maximum relative gradient
+finite-difference errors between $2.13\times10^{-8}$ and
+$2.80\times10^{-8}$; the tests explicitly remove the exact AO-pair graph so
+that an exact-integral fallback cannot pass unnoticed.
+
+The RI path also uses the same factor representation during closed-shell RHF
+initialization.  For the spinless occupied-orbital projector
+$\mathbf D=\mathbf C_{\mathrm{occ}}\mathbf C_{\mathrm{occ}}^{\mathrm T}$,
+the initial Fock operator is
+
+$$
+\mathbf F_{\mathrm{RI}}
+=
+\mathbf H_{\mathrm{core}}
++2\mathbf J_{\mathrm{RI}}[\mathbf D]
+-\mathbf K_{\mathrm{RI}}[\mathbf D].
+$$
+
+Thus exact and RI optimizations start from equivalent RHF-quality orbitals;
+RI does not silently replace the two-electron Fock contribution by a core-only
+guess.  With cc-pVDZ/cc-pVDZ-JKFIT, the F$_2$ RI calculation starts at
+$-198.4881856608\ E_h$ and converges in six TNHVP iterations, matching the
+exact path's iteration count.  Its final energy is $-198.7509765327\ E_h$,
+while the remaining difference from the exact result is the controlled RI
+integral approximation.
+
 ## 9. Reproducibility
 
-The configured test suite contains 30 tests, including independent polynomial
-cofactor derivatives and complete HAO/OEO HVP finite differences. All 30 pass
-after the performance changes. The two additional tests validate block basis
-assembly at the utility and molecular-integration levels; the orthonormal-basis
-test was also extended to verify single-call block admission. The benchmark
+The configured test suite contains 41 tests, including independent polynomial
+cofactor derivatives, complete exact-integral HAO/OEO HVP finite differences,
+factor-native RI response tests, and RI HAO/OEO/state-averaged HVP finite
+differences. All 41 pass after the performance changes. The block-basis tests
+validate assembly at the utility and molecular-integration levels; the
+orthonormal-basis test also verifies single-call block admission. The benchmark
 logs used in this note are kept
 under `/tmp/xmvb-oeo-fix.Cdw3GW/` and
 `/tmp/xmvb-hvp-cofactor-direct/`. The interpolation A/B logs are under

@@ -219,27 +219,11 @@ RiAoFactorization build_libcint_ri_factorization(
 
 RiAoFactorization LibcintRiIntegralProvider::build(
     const LibcintInput& primary_input,
-    const LibcintRiIntegralProviderOptions& options) const {
-  LibcintAuxiliaryBasisBuilder auxiliary_basis_builder;
-  const LibcintInput auxiliary_input = auxiliary_basis_builder.build(
-      primary_input,
-      options.auxiliary_basis_options);
-  return build_libcint_ri_factorization(
+    const LibcintInput& auxiliary_input) const {
+  return build(
       primary_input,
       auxiliary_input,
-      options.metric_eigenvalue_cutoff);
-}
-
-RiAoFactorization LibcintRiIntegralProvider::build(
-    const LibcintInput& primary_input,
-    const LibcintInput* explicit_auxiliary_input) const {
-  if (explicit_auxiliary_input != nullptr) {
-    return build(
-        primary_input,
-        *explicit_auxiliary_input,
-        LibcintRiIntegralProviderOptions{});
-  }
-  return build(primary_input, LibcintRiIntegralProviderOptions{});
+      LibcintRiIntegralProviderOptions{});
 }
 
 RiAoFactorization LibcintRiIntegralProvider::build(

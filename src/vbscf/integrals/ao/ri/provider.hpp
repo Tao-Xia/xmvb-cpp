@@ -17,7 +17,7 @@ public:
 
   virtual RiAoFactorization build(
       const LibcintInput& primary_input,
-      const LibcintInput* explicit_auxiliary_input) const = 0;
+      const LibcintInput& auxiliary_input) const = 0;
 };
 
 }  // namespace xmvb::vb

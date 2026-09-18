@@ -6,34 +6,11 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/two_electron/transformation/packed_pair_map.hpp"
 
 namespace xmvb::vb {
 
 namespace {
-
-struct ActivePair {
-  int first = 0;
-  int second = 0;
-};
-
-std::size_t ao_pair_index(int first, int second) {
-  if (first >= second) {
-    return first * (first + 1) / 2 + second;
-  }
-  return second * (second + 1) / 2 + first;
-}
-
-std::vector<ActivePair> build_active_pair_list(int n_active_orbitals) {
-  std::vector<ActivePair> active_pairs;
-  active_pairs.reserve(
-      n_active_orbitals * (n_active_orbitals + 1) / 2);
-  for (int first = 0; first < n_active_orbitals; ++first) {
-    for (int second = 0; second <= first; ++second) {
-      active_pairs.push_back({first, second});
-    }
-  }
-  return active_pairs;
-}
 
 Eigen::MatrixXd build_dense_active_coefficients(
     const OrbitalPreparationResult& orbital_preparation_result,
@@ -73,48 +50,6 @@ Eigen::MatrixXd build_dense_active_coefficients(
   return dense_active_coefficients;
 }
 
-Eigen::MatrixXd build_ao_pair_to_active_pair_coefficients(
-    const Eigen::Ref<const Eigen::MatrixXd>& dense_active_coefficients,
-    int n_basis_functions,
-    const std::vector<ActivePair>& active_pairs) {
-  const std::size_t n_ao_pairs =
-      n_basis_functions * (n_basis_functions + 1) / 2;
-  const std::size_t n_active_pairs = active_pairs.size();
-  Eigen::MatrixXd ao_pair_to_active_pair_coefficients =
-      Eigen::MatrixXd::Zero(
-          static_cast<Eigen::Index>(n_ao_pairs),
-          static_cast<Eigen::Index>(n_active_pairs));
-
-  for (int first_basis_function = 0;
-       first_basis_function < n_basis_functions;
-       ++first_basis_function) {
-    for (int second_basis_function = 0;
-         second_basis_function <= first_basis_function;
-         ++second_basis_function) {
-      const Eigen::Index ao_pair_offset = static_cast<Eigen::Index>(
-          ao_pair_index(first_basis_function, second_basis_function));
-      for (std::size_t active_pair_index_offset = 0;
-           active_pair_index_offset < n_active_pairs;
-           ++active_pair_index_offset) {
-        const auto& active_pair = active_pairs[active_pair_index_offset];
-        double coefficient =
-            dense_active_coefficients(first_basis_function, active_pair.first) *
-            dense_active_coefficients(second_basis_function, active_pair.second);
-        if (first_basis_function != second_basis_function) {
-          coefficient +=
-              dense_active_coefficients(second_basis_function, active_pair.first) *
-              dense_active_coefficients(first_basis_function, active_pair.second);
-        }
-        ao_pair_to_active_pair_coefficients(
-            ao_pair_offset,
-            static_cast<Eigen::Index>(active_pair_index_offset)) = coefficient;
-      }
-    }
-  }
-
-  return ao_pair_to_active_pair_coefficients;
-}
-
 }  // namespace
 
 ActiveSpaceTwoElectronResult RiActiveSpaceTwoElectronBuilder::build(
@@ -146,12 +81,10 @@ ActiveSpaceTwoElectronResult RiActiveSpaceTwoElectronBuilder::build(
           orbital_preparation_result,
           n_basis_functions,
           n_active_orbitals);
-  const auto active_pairs = build_active_pair_list(n_active_orbitals);
-  const auto ao_pair_to_active_pair_coefficients =
-      build_ao_pair_to_active_pair_coefficients(
-          dense_active_coefficients,
-          n_basis_functions,
-          active_pairs);
+  PackedOrbitalPairMapMatrix ao_pair_to_active_pair_coefficients;
+  build_packed_orbital_pair_map(
+      dense_active_coefficients,
+      &ao_pair_to_active_pair_coefficients);
   const Eigen::MatrixXd active_pair_factors =
       ao_ri_result.metric_whitened_ao_pair_factors *
       ao_pair_to_active_pair_coefficients;

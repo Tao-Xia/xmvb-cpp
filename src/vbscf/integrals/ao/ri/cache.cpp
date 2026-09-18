@@ -17,14 +17,14 @@ const RiAoFactorization& ensure_vbscf_input_ri_cache(
       throw std::invalid_argument(
           "VbScfInput does not contain an RI factorization provider");
     }
-    const LibcintInput* auxiliary_input =
-        input.auxiliary_libcint_input.n_shells > 0
-            ? &input.auxiliary_libcint_input
-            : nullptr;
+    if (input.auxiliary_libcint_input.n_shells <= 0) {
+      throw std::invalid_argument(
+          "VbScfInput does not contain an RI auxiliary basis");
+    }
     input.ri_factorization = std::make_shared<const RiAoFactorization>(
         input.ri_factorization_provider->build(
             input.libcint_input,
-            auxiliary_input));
+            input.auxiliary_libcint_input));
   }
   return *input.ri_factorization;
 }

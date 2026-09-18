@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/integrals/ao/contracts/input.hpp"
+#include "vbscf/integrals/ao/ri/factorization.hpp"
 
 namespace xmvb::vb {
 
@@ -17,6 +18,11 @@ public:
   Eigen::MatrixXd build(
       const Eigen::Ref<const Eigen::MatrixXd>& density_projector,
       const AoIntegralInput& ao_integral_input) const;
+
+  Eigen::MatrixXd build(
+      const Eigen::Ref<const Eigen::MatrixXd>& density_projector,
+      const Eigen::Ref<const Eigen::MatrixXd>& core_hamiltonian_matrix,
+      const RiAoFactorization& ri_factorization) const;
 };
 
 }  // namespace xmvb::vb

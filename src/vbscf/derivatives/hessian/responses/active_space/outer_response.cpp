@@ -316,6 +316,8 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
     const ActiveSpaceGradientDirection& active_space_gradient_direction,
     const AcceptedOrbitalPreparationCache& orbital_preparation_cache,
     const ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache,
+    const RiActiveTwoElectronResponseCache* ri_two_electron_cache,
+    const RiAoFactorization* ri_factorization,
     std::vector<double>* symmetric_active_overlap_gradient_workspace,
     std::vector<double>* symmetric_active_one_electron_gradient_workspace) {
   const int n_inactive_doubly_occupied_orbitals =
@@ -367,6 +369,15 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
           n_active_orbitals);
 
   Eigen::MatrixXd active_two_electron_auxiliary_gradient;
+  if ((exact_two_electron_cache == nullptr) ==
+      (ri_two_electron_cache == nullptr)) {
+    throw std::invalid_argument(
+        "outer-response requires exactly one active 2e representation");
+  }
+  if ((ri_two_electron_cache != nullptr) != (ri_factorization != nullptr)) {
+    throw std::invalid_argument(
+        "RI outer-response requires both active and AO RI caches");
+  }
   if (exact_two_electron_cache != nullptr &&
       exact_two_electron_cache->n_basis_functions > 0) {
     active_two_electron_auxiliary_gradient =
@@ -374,27 +385,28 @@ std::vector<double> build_orbital_value_gradient_from_active_space_gradient_dire
             active_space_gradient_direction
                 .packed_active_two_electron_gradient,
             *exact_two_electron_cache);
-  } else {
-    ActiveSpaceTwoElectronBackpropagator
-        active_space_two_electron_backpropagator;
+  } else if (ri_two_electron_cache != nullptr) {
     active_two_electron_auxiliary_gradient =
-        active_space_two_electron_backpropagator
-            .backpropagate(
-                active_space_gradient_direction
-                    .packed_active_two_electron_gradient,
-                input.ao_integral_input.pair_graph,
-                active_space_two_electron_result,
-                input.orbital_preparation_input.n_basis_functions,
-                n_inactive_doubly_occupied_orbitals,
-                n_active_orbitals)
-            .active_auxiliary_orbital_gradient;
+        backpropagate_ri_packed_active_two_electron_gradient(
+            active_space_gradient_direction
+                .packed_active_two_electron_gradient,
+            *ri_two_electron_cache);
+  } else {
+    throw std::logic_error("unreachable active 2e representation");
   }
 
   AoEffectiveOneElectronBackpropagator ao_effective_one_electron_backpropagator;
   const auto ao_effective_one_electron_backpropagation_result =
-      ao_effective_one_electron_backpropagator.backpropagate(
-          active_space_matrix_backpropagation_result.ao_effective_one_electron_gradient,
-          input.ao_integral_input);
+      ri_factorization != nullptr
+      ? ao_effective_one_electron_backpropagator.backpropagate(
+            active_space_matrix_backpropagation_result
+                .ao_effective_one_electron_gradient,
+            *ri_factorization,
+            input.orbital_preparation_input.n_basis_functions)
+      : ao_effective_one_electron_backpropagator.backpropagate(
+            active_space_matrix_backpropagation_result
+                .ao_effective_one_electron_gradient,
+            input.ao_integral_input);
 
   std::vector<double> total_inactive_density_gradient =
       ao_effective_one_electron_backpropagation_result.inactive_density_gradient;
@@ -432,7 +444,10 @@ bool has_active_matrix_gradient(
 
 AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
     const AcceptedPointContext& accepted_point_context,
-    const VbScfInput& input) {
+    const VbScfInput& input,
+    const ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache,
+    const RiActiveTwoElectronResponseCache* ri_two_electron_cache,
+    const RiAoFactorization* ri_factorization) {
   const int n_basis_functions = input.orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
   const int n_inactive_doubly_occupied_orbitals =
@@ -466,15 +481,23 @@ AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
           n_inactive_doubly_occupied_orbitals,
           n_active_orbitals);
 
-  ActiveSpaceTwoElectronBackpropagator active_space_two_electron_backpropagator;
-  const auto active_space_two_electron_backpropagation_result =
-      active_space_two_electron_backpropagator.backpropagate(
-          accepted_point_context.packed_active_two_electron_gradient,
-          input.ao_integral_input.pair_graph,
-          accepted_point_context.prepared_active_space.active_space_two_electron_result,
-          n_basis_functions,
-          n_inactive_doubly_occupied_orbitals,
-          n_active_orbitals);
+  if ((exact_two_electron_cache == nullptr) ==
+      (ri_two_electron_cache == nullptr)) {
+    throw std::invalid_argument(
+        "accepted orbital backprop requires exactly one active 2e representation");
+  }
+  if ((ri_two_electron_cache != nullptr) != (ri_factorization != nullptr)) {
+    throw std::invalid_argument(
+        "accepted RI orbital backprop requires active and AO RI caches");
+  }
+  Eigen::MatrixXd active_two_electron_auxiliary_gradient =
+      exact_two_electron_cache != nullptr
+      ? backpropagate_exact_packed_active_two_electron_gradient(
+            accepted_point_context.packed_active_two_electron_gradient,
+            *exact_two_electron_cache)
+      : backpropagate_ri_packed_active_two_electron_gradient(
+            accepted_point_context.packed_active_two_electron_gradient,
+            *ri_two_electron_cache);
 
   std::vector<double> total_inactive_density_gradient =
       std::vector<double>(
@@ -501,9 +524,14 @@ AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
 
   AoEffectiveOneElectronBackpropagator ao_backpropagator;
   const auto ao_effective_one_electron_backpropagation_result =
-      ao_backpropagator.backpropagate(
-          total_ao_effective_one_electron_gradient,
-          input.ao_integral_input);
+      ri_factorization != nullptr
+      ? ao_backpropagator.backpropagate(
+            total_ao_effective_one_electron_gradient,
+            *ri_factorization,
+            n_basis_functions)
+      : ao_backpropagator.backpropagate(
+            total_ao_effective_one_electron_gradient,
+            input.ao_integral_input);
   for (std::size_t index = 0;
        index < total_inactive_density_gradient.size();
        ++index) {
@@ -515,8 +543,7 @@ AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
   Eigen::MatrixXd total_active_auxiliary_gradient =
       matrix_backpropagation_result.active_auxiliary_orbital_gradient;
   total_active_auxiliary_gradient.noalias() +=
-      active_space_two_electron_backpropagation_result
-          .active_auxiliary_orbital_gradient;
+      active_two_electron_auxiliary_gradient;
 
   AcceptedOrbitalBackpropInputs result;
   result.total_active_auxiliary_gradient =

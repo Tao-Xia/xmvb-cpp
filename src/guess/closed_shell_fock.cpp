@@ -8,6 +8,8 @@
 
 #include <Eigen/Core>
 
+#include "vbscf/integrals/ao/one_electron/builder.hpp"
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -228,6 +230,26 @@ Eigen::MatrixXd ClosedShellFockBuilder::build(
 
   symmetrize_in_place(&fock_matrix);
   return fock_matrix;
+}
+
+Eigen::MatrixXd ClosedShellFockBuilder::build(
+    const Eigen::Ref<const Eigen::MatrixXd>& density_projector,
+    const Eigen::Ref<const Eigen::MatrixXd>& core_hamiltonian_matrix,
+    const RiAoFactorization& ri_factorization) const {
+  const int n_basis_functions = ri_factorization.n_basis_functions;
+  if (n_basis_functions <= 0 ||
+      density_projector.rows() != n_basis_functions ||
+      density_projector.cols() != n_basis_functions ||
+      core_hamiltonian_matrix.rows() != n_basis_functions ||
+      core_hamiltonian_matrix.cols() != n_basis_functions) {
+    throw std::invalid_argument("invalid RI closed-shell Fock dimensions");
+  }
+  AoEffectiveOneElectronBuilder builder;
+  return builder.build(
+      density_projector,
+      core_hamiltonian_matrix,
+      ri_factorization,
+      n_basis_functions).ao_effective_h1e;
 }
 
 }  // namespace xmvb::vb

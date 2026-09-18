@@ -9,6 +9,7 @@
 
 #include "core/openmp.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/two_electron/transformation/packed_pair_map.hpp"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -117,41 +118,14 @@ void build_ao_pair_to_active_pair_coefficients(
       dense_active_coefficients.cols() != n_ao) {
     throw std::invalid_argument("dense active coefficient matrix shape mismatch");
   }
-  const std::size_t n_bf_pairs =
-      n_bf * (n_bf + 1) / 2;
-  const std::size_t n_active_pairs = active_pairs.size();
-  ao_pair_to_active_pair_coefficients->resize(
-      static_cast<Eigen::Index>(n_bf_pairs),
-      static_cast<Eigen::Index>(n_active_pairs));
-
-#pragma omp parallel for schedule(static)
-  for (int first_basis_function = 0;
-       first_basis_function < n_bf;
-       ++first_basis_function) {
-    for (int second_basis_function = 0;
-         second_basis_function <= first_basis_function;
-         ++second_basis_function) {
-      const Eigen::Index ao_pair_offset =
-          static_cast<Eigen::Index>(
-              ao_pair_index(first_basis_function, second_basis_function));
-      for (std::size_t active_pair_index_offset = 0;
-           active_pair_index_offset < n_active_pairs;
-           ++active_pair_index_offset) {
-        const auto& active_pair = active_pairs[active_pair_index_offset];
-        double coefficient =
-            dense_active_coefficients(first_basis_function, active_pair.first) *
-            dense_active_coefficients(second_basis_function, active_pair.second);
-        if (first_basis_function != second_basis_function) {
-          coefficient +=
-              dense_active_coefficients(second_basis_function, active_pair.first) *
-              dense_active_coefficients(first_basis_function, active_pair.second);
-        }
-        (*ao_pair_to_active_pair_coefficients)(
-            ao_pair_offset,
-            static_cast<Eigen::Index>(active_pair_index_offset)) = coefficient;
-      }
-    }
+  const std::size_t expected_active_pairs =
+      static_cast<std::size_t>(n_ao) * (n_ao + 1) / 2;
+  if (active_pairs.size() != expected_active_pairs) {
+    throw std::invalid_argument("active-pair list size mismatch");
   }
+  build_packed_orbital_pair_map(
+      dense_active_coefficients,
+      ao_pair_to_active_pair_coefficients);
 }
 
 namespace {
@@ -193,34 +167,12 @@ void build_mixed_pair_rows(
       dense_active_direction.cols() != cache.n_active_orbitals) {
     throw std::invalid_argument("mixed pair-row dimensions are inconsistent");
   }
-  const Eigen::Index n_active_pairs =
-      static_cast<Eigen::Index>(cache.active_pair_first_indices.size());
-  mixed_pair_coefficients->resize(row_count, n_active_pairs);
-#pragma omp parallel for schedule(static)
-  for (Eigen::Index local_row = 0; local_row < row_count; ++local_row) {
-    const Eigen::Index pair_row = row_begin + local_row;
-    const int first_bf = cache.ao_pair_first_indices[pair_row];
-    const int second_bf = cache.ao_pair_second_indices[pair_row];
-    for (Eigen::Index active_pair = 0;
-         active_pair < n_active_pairs;
-         ++active_pair) {
-      const int first_active = cache.active_pair_first_indices[active_pair];
-      const int second_active = cache.active_pair_second_indices[active_pair];
-      double value =
-          dense_active_direction(first_bf, first_active) *
-              dense_active_coefficients(second_bf, second_active) +
-          dense_active_coefficients(first_bf, first_active) *
-              dense_active_direction(second_bf, second_active);
-      if (first_bf != second_bf) {
-        value +=
-            dense_active_direction(second_bf, first_active) *
-                dense_active_coefficients(first_bf, second_active) +
-            dense_active_coefficients(second_bf, first_active) *
-                dense_active_direction(first_bf, second_active);
-      }
-      (*mixed_pair_coefficients)(local_row, active_pair) = value;
-    }
-  }
+  build_packed_orbital_pair_map_directional_derivative_rows(
+      dense_active_coefficients,
+      dense_active_direction,
+      row_begin,
+      row_count,
+      mixed_pair_coefficients);
 }
 
 void build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
@@ -242,47 +194,10 @@ void build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
     throw std::invalid_argument("dense active coefficient matrix shape mismatch");
   }
 
-  const std::size_t n_bf_pairs =
-      n_bf * (n_bf + 1) / 2;
-  mixed_ao_pair_to_active_pair_coefficients->resize(
-      static_cast<Eigen::Index>(n_bf_pairs),
-      static_cast<Eigen::Index>(n_active_pairs));
-
-#pragma omp parallel for schedule(static)
-  for (int first_basis_function = 0;
-       first_basis_function < n_bf;
-       ++first_basis_function) {
-    for (int second_basis_function = 0;
-         second_basis_function <= first_basis_function;
-         ++second_basis_function) {
-      const Eigen::Index ao_pair_offset =
-          static_cast<Eigen::Index>(
-              ao_pair_index(first_basis_function, second_basis_function));
-      for (std::size_t active_pair_index = 0;
-           active_pair_index < n_active_pairs;
-           ++active_pair_index) {
-        const int first_active =
-            cache.active_pair_first_indices[active_pair_index];
-        const int second_active =
-            cache.active_pair_second_indices[active_pair_index];
-        double coefficient =
-            dense_active_direction(first_basis_function, first_active) *
-                dense_active_coefficients(second_basis_function, second_active) +
-            dense_active_coefficients(first_basis_function, first_active) *
-                dense_active_direction(second_basis_function, second_active);
-        if (first_basis_function != second_basis_function) {
-          coefficient +=
-              dense_active_direction(second_basis_function, first_active) *
-                  dense_active_coefficients(first_basis_function, second_active) +
-              dense_active_coefficients(second_basis_function, first_active) *
-                  dense_active_direction(first_basis_function, second_active);
-        }
-        (*mixed_ao_pair_to_active_pair_coefficients)(
-            ao_pair_offset,
-            static_cast<Eigen::Index>(active_pair_index)) = coefficient;
-      }
-    }
-  }
+  build_packed_orbital_pair_map_directional_derivative(
+      dense_active_coefficients,
+      dense_active_direction,
+      mixed_ao_pair_to_active_pair_coefficients);
 }
 
 ExactCtxPairMatrix build_mixed_ao_pair_to_active_pair_coefficients_from_cache(
@@ -347,90 +262,10 @@ void accumulate_backpropagated_pair_coefficients_to_dense_active_coefficients_fr
     throw std::invalid_argument("pair-gradient / dense-active matrix shape mismatch");
   }
 
-  // This Eigen path is the accepted-point HVP accumulator. Preserve any fixed
-  // term already stored in the output and zero only when we need a fresh shape.
-  if (dense_active_gradients->rows() != n_bf ||
-      dense_active_gradients->cols() != n_ao) {
-    dense_active_gradients->resize(n_bf, n_ao);
-    dense_active_gradients->setZero();
-  }
-  int n_threads = 1;
-#ifdef _OPENMP
-  n_threads = xmvb::effective_openmp_thread_count();
-#endif
-  if (n_threads <= 1) {
-    for (int first_basis_function = 0;
-         first_basis_function < n_bf;
-         ++first_basis_function) {
-      for (int second_basis_function = 0;
-           second_basis_function <= first_basis_function;
-           ++second_basis_function) {
-        const Eigen::Index pair_row =
-            static_cast<Eigen::Index>(
-                ao_pair_index(first_basis_function, second_basis_function));
-        for (std::size_t active_pair_index = 0;
-             active_pair_index < n_active_pairs;
-             ++active_pair_index) {
-          const double pair_gradient =
-              pair_gradients(pair_row, static_cast<Eigen::Index>(active_pair_index));
-          if (pair_gradient == 0.0) {
-            continue;
-          }
-          const int first_active =
-              cache.active_pair_first_indices[active_pair_index];
-          const int second_active =
-              cache.active_pair_second_indices[active_pair_index];
-          (*dense_active_gradients)(first_basis_function, first_active) +=
-              pair_gradient *
-              dense_active_coefficients(second_basis_function, second_active);
-          (*dense_active_gradients)(first_basis_function, second_active) +=
-              pair_gradient *
-              dense_active_coefficients(second_basis_function, first_active);
-          if (second_basis_function != first_basis_function) {
-            (*dense_active_gradients)(second_basis_function, first_active) +=
-                pair_gradient *
-                dense_active_coefficients(first_basis_function, second_active);
-            (*dense_active_gradients)(second_basis_function, second_active) +=
-                pair_gradient *
-                dense_active_coefficients(first_basis_function, first_active);
-          }
-        }
-      }
-    }
-    return;
-  }
-
-#pragma omp parallel for schedule(static)
-  for (int basis_function_index = 0;
-       basis_function_index < n_bf;
-       ++basis_function_index) {
-    for (int other_basis_function = 0;
-         other_basis_function < n_bf;
-         ++other_basis_function) {
-      const Eigen::Index pair_row =
-          static_cast<Eigen::Index>(
-              ao_pair_index(basis_function_index, other_basis_function));
-      for (std::size_t active_pair_index = 0;
-           active_pair_index < n_active_pairs;
-           ++active_pair_index) {
-        const double pair_gradient =
-            pair_gradients(pair_row, static_cast<Eigen::Index>(active_pair_index));
-        if (pair_gradient == 0.0) {
-          continue;
-        }
-        const int first_active =
-            cache.active_pair_first_indices[active_pair_index];
-        const int second_active =
-            cache.active_pair_second_indices[active_pair_index];
-        (*dense_active_gradients)(basis_function_index, first_active) +=
-            pair_gradient *
-            dense_active_coefficients(other_basis_function, second_active);
-        (*dense_active_gradients)(basis_function_index, second_active) +=
-            pair_gradient *
-            dense_active_coefficients(other_basis_function, first_active);
-      }
-    }
-  }
+  accumulate_packed_orbital_pair_map_adjoint(
+      pair_gradients,
+      dense_active_coefficients,
+      dense_active_gradients);
 }
 
 void accumulate_pair_gradient_rows(
@@ -449,38 +284,11 @@ void accumulate_pair_gradient_rows(
       dense_active_coefficients.cols() != cache.n_active_orbitals) {
     throw std::invalid_argument("pair-gradient row dimensions are inconsistent");
   }
-  if (dense_active_gradients->rows() != cache.n_basis_functions ||
-      dense_active_gradients->cols() != cache.n_active_orbitals) {
-    dense_active_gradients->setZero(
-        cache.n_basis_functions,
-        cache.n_active_orbitals);
-  }
-
-  for (Eigen::Index local_row = 0; local_row < row_count; ++local_row) {
-    const Eigen::Index pair_row = row_begin + local_row;
-    const int first_bf = cache.ao_pair_first_indices[pair_row];
-    const int second_bf = cache.ao_pair_second_indices[pair_row];
-    for (Eigen::Index active_pair = 0;
-         active_pair < n_active_pairs;
-         ++active_pair) {
-      const double pair_gradient = pair_gradients(local_row, active_pair);
-      if (pair_gradient == 0.0) {
-        continue;
-      }
-      const int first_active = cache.active_pair_first_indices[active_pair];
-      const int second_active = cache.active_pair_second_indices[active_pair];
-      (*dense_active_gradients)(first_bf, first_active) +=
-          pair_gradient * dense_active_coefficients(second_bf, second_active);
-      (*dense_active_gradients)(first_bf, second_active) +=
-          pair_gradient * dense_active_coefficients(second_bf, first_active);
-      if (first_bf != second_bf) {
-        (*dense_active_gradients)(second_bf, first_active) +=
-            pair_gradient * dense_active_coefficients(first_bf, second_active);
-        (*dense_active_gradients)(second_bf, second_active) +=
-            pair_gradient * dense_active_coefficients(first_bf, first_active);
-      }
-    }
-  }
+  accumulate_packed_orbital_pair_map_adjoint_rows(
+      pair_gradients,
+      row_begin,
+      dense_active_coefficients,
+      dense_active_gradients);
 }
 
 void accumulate_pair_product_adjoint(
@@ -552,38 +360,11 @@ void accumulate_pair_product_adjoint(
       pair_gradient_tile.noalias() =
           pair_products.middleRows(row_begin, row_count) * active_pair_gradient;
 
-      for (Eigen::Index local_row = 0; local_row < row_count; ++local_row) {
-        const Eigen::Index pair_row = row_begin + local_row;
-        const int first_bf = cache.ao_pair_first_indices[pair_row];
-        const int second_bf = cache.ao_pair_second_indices[pair_row];
-        for (Eigen::Index active_pair = 0;
-             active_pair < n_active_pairs;
-             ++active_pair) {
-          const double pair_gradient =
-              pair_gradient_tile(local_row, active_pair);
-          if (pair_gradient == 0.0) {
-            continue;
-          }
-          const int first_active =
-              cache.active_pair_first_indices[active_pair];
-          const int second_active =
-              cache.active_pair_second_indices[active_pair];
-          local_gradient(first_bf, first_active) +=
-              pair_gradient *
-              dense_active_coefficients(second_bf, second_active);
-          local_gradient(first_bf, second_active) +=
-              pair_gradient *
-              dense_active_coefficients(second_bf, first_active);
-          if (first_bf != second_bf) {
-            local_gradient(second_bf, first_active) +=
-                pair_gradient *
-                dense_active_coefficients(first_bf, second_active);
-            local_gradient(second_bf, second_active) +=
-                pair_gradient *
-                dense_active_coefficients(first_bf, first_active);
-          }
-        }
-      }
+      accumulate_packed_orbital_pair_map_adjoint_rows(
+          pair_gradient_tile,
+          row_begin,
+          dense_active_coefficients,
+          &local_gradient);
     }
   }
 

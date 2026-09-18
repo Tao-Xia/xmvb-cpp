@@ -51,8 +51,8 @@ struct VbScfInput {
   /**
    * @brief Optional explicit RI auxiliary basis parsed from the input deck.
    *
-   * When present, the RI path uses this basis. Otherwise the RI provider
-   * generates the auxiliary basis defined by its numerical contract.
+   * RI calculations require this basis. The input loader resolves an explicit
+   * `AUXBASIS` keyword or the `${BASIS}-jkfit` default before factorization.
    */
   LibcintInput auxiliary_libcint_input;
 

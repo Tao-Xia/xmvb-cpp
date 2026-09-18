@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <Eigen/Core>
@@ -12,7 +13,9 @@
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
 #include "vbscf/integrals/active/two_electron/response/types.hpp"
+#include "vbscf/integrals/active/two_electron/response/ri.hpp"
 #include "vbscf/integrals/ao/one_electron/direct_operator.hpp"
+#include "vbscf/integrals/ao/one_electron/ri_operator.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/assembly/coefficient_blocks.hpp"
@@ -99,12 +102,18 @@ private:
   Eigen::MatrixXd accepted_active_auxiliary_orbitals_times_hho_gradient_symmetric_;
   mutable Eigen::MatrixXd ao_h1e_symmetrized_gradient_workspace_;
   mutable AoH1eFusedWorkspace ao_h1e_fused_workspace_;
+  mutable AoEffectiveOneElectronRiFusedWorkspace ri_ao_h1e_fused_workspace_;
+  mutable Eigen::MatrixXd ri_ao_h1e_forward_workspace_;
+  mutable Eigen::MatrixXd ri_ao_h1e_adjoint_workspace_;
   Eigen::MatrixXd accepted_total_active_auxiliary_gradient_;
   std::vector<double> accepted_total_inactive_density_gradient_;
   Eigen::MatrixXd zero_core_hamiltonian_;
   mutable std::vector<double> ao_h1e_delta_h1e_workspace_;
   mutable std::vector<double> ao_h1e_inactive_density_gradient_workspace_;
   ExactPackedActiveTwoElectronAdjointCache accepted_exact_two_electron_cache_;
+  std::optional<RiActiveTwoElectronResponseCache>
+      accepted_ri_two_electron_cache_;
+  const RiAoFactorization* accepted_ri_factorization_ = nullptr;
   mutable ExactPackedActiveTwoElectronApplyWorkspace
       accepted_exact_two_electron_apply_workspace_;
   mutable ActiveSpaceIntegralDirectionWorkspace

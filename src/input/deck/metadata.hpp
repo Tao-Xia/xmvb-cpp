@@ -25,6 +25,8 @@ enum class InputScfOptimizer {
  */
 struct InputDeckMetadata {
   std::string basis_name;
+  /** @brief Optional explicit RI fitting basis; defaults to `BASIS-jkfit`. */
+  std::string auxiliary_basis_name;
   std::string structure_class_keyword;
   int guess_type = kGuessTypeAuto;
   /** @brief Whether `GUESS=` was explicitly present in `$CTRL`. */

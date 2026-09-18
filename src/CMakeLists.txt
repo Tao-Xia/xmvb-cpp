@@ -40,7 +40,6 @@ set(XMVB_INPUT_DECK_SOURCES
 )
 
 set(XMVB_LIBCINT_SOURCES
-  libcint/auxiliary_basis.cpp
   libcint/direct_shell.cpp
   libcint/materialized_provider.cpp
   libcint/ri_provider.cpp
@@ -260,6 +259,22 @@ if (BUILD_TESTING)
       WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
       ENVIRONMENT
         "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+
+  add_test(
+    NAME ri_tnhvp_f2
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
+      -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      -DXMVB_SCRATCH=${CMAKE_BINARY_DIR}/tests/ri_tnhvp_f2
+      -P ${CMAKE_SOURCE_DIR}/tests/output/check_f2_ri_tnhvp.cmake)
+  set_tests_properties(
+    ri_tnhvp_f2
+    PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
+
   add_test(
     NAME tnhvp_trace_f2
     COMMAND

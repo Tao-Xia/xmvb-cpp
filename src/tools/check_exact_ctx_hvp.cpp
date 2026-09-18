@@ -25,6 +25,8 @@ struct Options {
   std::string orbital_value_table_bin_path;
   xmvb::vb::StructureEigensolver eigensolver =
       xmvb::vb::StructureEigensolver::Dense;
+  xmvb::vb::StandardTwoElectronMode two_electron_mode =
+      xmvb::vb::StandardTwoElectronMode::Exact;
   bool preconditioned_direction = false;
   double step = 1.0e-4;
   double max_relative_error = std::numeric_limits<double>::infinity();
@@ -40,6 +42,7 @@ void print_usage() {
       << " [--max-rel-error tolerance]"
       << " [--response-tolerance tolerance]"
       << " [--eigensolver dense|davidson]"
+      << " [--standard-two-electron-mode exact|ri]"
       << " [--direction gradient|preconditioned_gradient]"
       << " [--stream-pair-products 0|1]\n";
 }
@@ -69,6 +72,17 @@ Options parse_arguments(int argc, char** argv) {
         options.eigensolver = xmvb::vb::StructureEigensolver::Davidson;
       } else {
         throw std::invalid_argument("--eigensolver must be dense or davidson");
+      }
+    } else if (name == "--standard-two-electron-mode") {
+      if (value == "exact") {
+        options.two_electron_mode =
+            xmvb::vb::StandardTwoElectronMode::Exact;
+      } else if (value == "ri") {
+        options.two_electron_mode =
+            xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity;
+      } else {
+        throw std::invalid_argument(
+            "--standard-two-electron-mode must be exact or ri");
       }
     } else if (name == "--direction") {
       if (value == "gradient") {
@@ -133,11 +147,17 @@ int main(int argc, char** argv) {
   try {
     const Options options = parse_arguments(argc, argv);
     xmvb::vb::VbScfInputLoadOptions load_options;
-    load_options.standard_two_electron_mode =
-        xmvb::vb::StandardTwoElectronMode::Exact;
+    load_options.standard_two_electron_mode = options.two_electron_mode;
     const auto loaded =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
     xmvb::vb::VbScfInput input = loaded.input;
+    if (options.two_electron_mode ==
+        xmvb::vb::StandardTwoElectronMode::ResolutionOfIdentity) {
+      // RI derivative checks must remain factor-native.  Removing any exact
+      // graph supplied by a future loader change makes an accidental exact
+      // fallback fail immediately instead of silently passing this test.
+      input.ao_integral_input.pair_graph = {};
+    }
     overwrite_orbital_values_from_binary(
         options.orbital_value_table_bin_path,
         &input.orbital_preparation_input);
@@ -203,6 +223,11 @@ int main(int argc, char** argv) {
     }
 
     if (options.stream_pair_products) {
+      if (options.two_electron_mode !=
+          xmvb::vb::StandardTwoElectronMode::Exact) {
+        throw std::invalid_argument(
+            "--stream-pair-products is only defined for exact AO integrals");
+      }
       accepted.second_order_context->prepared_active_space
           .active_space_two_electron_result.dense_ao_pair_products.resize(0, 0);
     }

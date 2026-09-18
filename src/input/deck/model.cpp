@@ -263,6 +263,10 @@ void apply_ctrl_assignment(
     metadata->basis_name = to_ascii_lower(raw_value);
     return;
   }
+  if (key == "AUXBASIS") {
+    metadata->auxiliary_basis_name = to_ascii_lower(raw_value);
+    return;
+  }
   if (key == "STR") {
     metadata->structure_class_keyword = value_upper;
     return;

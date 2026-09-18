@@ -92,17 +92,25 @@ void validate_shared_atom_tables(
   if (auxiliary_input.n_atoms != primary_input.n_atoms) {
     throw std::invalid_argument("primary and auxiliary LibcintInput atom counts differ");
   }
-  if (auxiliary_input.atm != primary_input.atm) {
-    throw std::invalid_argument("primary and auxiliary LibcintInput atm tables differ");
-  }
-  if (auxiliary_input.env.size() < primary_input.env.size()) {
-    throw std::invalid_argument("auxiliary env does not contain the primary env prefix");
-  }
-  if (!std::equal(
-          primary_input.env.begin(),
-          primary_input.env.end(),
-          auxiliary_input.env.begin())) {
-    throw std::invalid_argument("auxiliary env prefix differs from the primary env");
+  for (int atom = 0; atom < primary_input.n_atoms; ++atom) {
+    const int primary_atom_offset = atom * ATM_SLOTS;
+    const int auxiliary_atom_offset = atom * ATM_SLOTS;
+    if (primary_input.atm[primary_atom_offset + CHARGE_OF] !=
+        auxiliary_input.atm[auxiliary_atom_offset + CHARGE_OF]) {
+      throw std::invalid_argument(
+          "primary and auxiliary atom charges differ");
+    }
+    const int primary_coordinate_offset =
+        primary_input.atm[primary_atom_offset + PTR_COORD];
+    const int auxiliary_coordinate_offset =
+        auxiliary_input.atm[auxiliary_atom_offset + PTR_COORD];
+    for (int component = 0; component < 3; ++component) {
+      if (primary_input.env[primary_coordinate_offset + component] !=
+          auxiliary_input.env[auxiliary_coordinate_offset + component]) {
+        throw std::invalid_argument(
+            "primary and auxiliary atom coordinates differ");
+      }
+    }
   }
 }
 
@@ -111,15 +119,14 @@ std::vector<double> build_combined_env(
     const LibcintInput& auxiliary_input) {
   std::vector<double> combined_env;
   combined_env.reserve(
-      primary_input.env.size() +
-      (auxiliary_input.env.size() - primary_input.env.size()));
+      primary_input.env.size() + auxiliary_input.env.size());
   combined_env.insert(
       combined_env.end(),
       primary_input.env.begin(),
       primary_input.env.end());
   combined_env.insert(
       combined_env.end(),
-      auxiliary_input.env.begin() + static_cast<std::ptrdiff_t>(primary_input.env.size()),
+      auxiliary_input.env.begin(),
       auxiliary_input.env.end());
   return combined_env;
 }
@@ -130,7 +137,18 @@ std::vector<int> build_combined_basis(
   std::vector<int> combined_bas;
   combined_bas.reserve(primary_input.bas.size() + auxiliary_input.bas.size());
   combined_bas.insert(combined_bas.end(), primary_input.bas.begin(), primary_input.bas.end());
-  combined_bas.insert(combined_bas.end(), auxiliary_input.bas.begin(), auxiliary_input.bas.end());
+  const int auxiliary_env_offset = static_cast<int>(primary_input.env.size());
+  for (int shell = 0; shell < auxiliary_input.n_shells; ++shell) {
+    const std::size_t shell_offset =
+        static_cast<std::size_t>(shell) * BAS_SLOTS;
+    const std::size_t combined_offset = combined_bas.size();
+    combined_bas.insert(
+        combined_bas.end(),
+        auxiliary_input.bas.begin() + shell_offset,
+        auxiliary_input.bas.begin() + shell_offset + BAS_SLOTS);
+    combined_bas[combined_offset + PTR_EXP] += auxiliary_env_offset;
+    combined_bas[combined_offset + PTR_COEFF] += auxiliary_env_offset;
+  }
   return combined_bas;
 }
 

@@ -23,7 +23,7 @@ void validate_ao_matrices(
   }
 }
 
-AoEffectiveOneElectronResult make_result(
+AoEffectiveOneElectronResult make_result_from_triangular_storage(
     std::vector<double> g_storage,
     const Eigen::Ref<const Eigen::MatrixXd>& core,
     int n_bf) {
@@ -40,13 +40,30 @@ AoEffectiveOneElectronResult make_result(
   return result;
 }
 
+AoEffectiveOneElectronResult make_result_from_complete_symmetric_storage(
+    std::vector<double> g_storage,
+    const Eigen::Ref<const Eigen::MatrixXd>& core,
+    int n_bf) {
+  const std::size_t matrix_size =
+      static_cast<std::size_t>(n_bf) * static_cast<std::size_t>(n_bf);
+  if (g_storage.size() != matrix_size) {
+    throw std::invalid_argument("invalid complete AO-H1E result size");
+  }
+  const Eigen::Map<const Eigen::MatrixXd> g(
+      g_storage.data(), n_bf, n_bf);
+  AoEffectiveOneElectronResult result;
+  result.ao_coulomb_exchange_matrix = g;
+  result.ao_effective_h1e = core + g;
+  return result;
+}
+
 AoEffectiveOneElectronResult build_exact(
     const Eigen::Ref<const Eigen::MatrixXd>& density,
     const Eigen::Ref<const Eigen::MatrixXd>& core,
     const AoIntegralInput& ao) {
   const int n_bf = ao.n_basis_functions;
   validate_ao_matrices(density, core, n_bf);
-  return make_result(
+  return make_result_from_triangular_storage(
       apply_ao_h1e(
           density.data(),
           ao,
@@ -64,7 +81,7 @@ AoEffectiveOneElectronResult build_ri(
   if (ri.n_basis_functions != n_bf) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
-  return make_result(
+  return make_result_from_complete_symmetric_storage(
       apply_ao_effective_one_electron_ri_operator(
           flatten_matrix_column_major(density),
           ri,
@@ -85,7 +102,7 @@ AoEffectiveOneElectronResult build_ri(
   if (ri.n_basis_functions != n_bf) {
     throw std::invalid_argument("RI basis-function count mismatch");
   }
-  return make_result(
+  return make_result_from_complete_symmetric_storage(
       apply_ao_effective_one_electron_ri_operator(factors, ri, n_bf),
       core,
       n_bf);

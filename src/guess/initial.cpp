@@ -397,6 +397,7 @@ void build_hcore_block_guess(
 RestrictedHartreeFockResult solve_rhf_guess(
     const LibcintInput& libcint_input,
     const AoIntegralInput& ao_integral_input,
+    const RiAoFactorization* ri_factorization,
     const OrbitalPreparationInput& orbital_preparation_input) {
   const int n_basis_functions = orbital_preparation_input.n_basis_functions;
   std::vector<std::vector<int>> atom_ao_indices(
@@ -497,6 +498,14 @@ RestrictedHartreeFockResult solve_rhf_guess(
   }
 
   RestrictedHartreeFockSolver solver;
+  if (ri_factorization != nullptr) {
+    return solver.solve(
+        orbital_preparation_input.n_total_electrons,
+        orbital_preparation_input.ao_overlap_matrix,
+        ao_integral_input.ao_core_hamiltonian_matrix,
+        *ri_factorization,
+        initial_density_projector);
+  }
   return solver.solve(
       orbital_preparation_input.n_total_electrons,
       orbital_preparation_input.ao_overlap_matrix,
@@ -507,11 +516,13 @@ RestrictedHartreeFockResult solve_rhf_guess(
 void build_rhf_block_guess(
     const LibcintInput& libcint_input,
     const AoIntegralInput& ao_integral_input,
+    const RiAoFactorization* ri_factorization,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* orbital_value_table) {
   const auto rhf_result = solve_rhf_guess(
       libcint_input,
       ao_integral_input,
+      ri_factorization,
       orbital_preparation_input);
   const std::size_t matrix_size =
       orbital_preparation_input.n_basis_functions *
@@ -656,6 +667,7 @@ void build_rhf_mo_guess(
     const std::string& input_file_path,
     const LibcintInput& libcint_input,
     const AoIntegralInput& ao_integral_input,
+    const RiAoFactorization* ri_factorization,
     const OrbitalPreparationInput& orbital_preparation_input,
     std::vector<double>* orbital_value_table) {
   if (orbital_value_table == nullptr) {
@@ -667,6 +679,7 @@ void build_rhf_mo_guess(
   const auto rhf_result = solve_rhf_guess(
       libcint_input,
       ao_integral_input,
+      ri_factorization,
       orbital_preparation_input);
   const auto ao_normalization = build_ao_normalization(orbital_preparation_input);
   Eigen::MatrixXd orbital_matrix = rhf_result.molecular_orbital_matrix;
@@ -753,6 +766,7 @@ void build_initial_orbital_guess(
     int guess_type,
     const LibcintInput& libcint_input,
     const AoIntegralInput& ao_integral_input,
+    const RiAoFactorization* ri_factorization,
     const std::vector<std::string>* read_guess_lines,
     OrbitalPreparationInput* orbital_preparation_input) {
   if (orbital_preparation_input == nullptr) {
@@ -767,13 +781,16 @@ void build_initial_orbital_guess(
       0.0);
   switch (guess_type) {
     case kGuessTypeAuto:
-      // Exact mode uses an RHF-like guess. RI mode has no materialized AO
-      // four-center tensor, so it uses the one-electron block guess.
-      if (supports_rhf_auto_guess(*orbital_preparation_input) &&
-          has_materialized_ao_two_electron_integrals(ao_integral_input)) {
+      if (supports_rhf_auto_guess(*orbital_preparation_input)) {
+        if (ri_factorization == nullptr &&
+            !has_materialized_ao_two_electron_integrals(ao_integral_input)) {
+          throw std::runtime_error(
+              "closed-shell AUTO guess requires exact AO integrals or RI factors");
+        }
         build_rhf_block_guess(
             libcint_input,
             ao_integral_input,
+            ri_factorization,
             *orbital_preparation_input,
             &orbital_value_table);
       } else {
@@ -788,14 +805,17 @@ void build_initial_orbital_guess(
       build_unit_guess(*orbital_preparation_input, &orbital_value_table);
       break;
     case kGuessTypeMo:
-      // `GUESS=MO` uses canonical RHF orbitals in exact mode and the core
-      // Hamiltonian eigensystem in RI mode.
-      if (supports_rhf_auto_guess(*orbital_preparation_input) &&
-          has_materialized_ao_two_electron_integrals(ao_integral_input)) {
+      if (supports_rhf_auto_guess(*orbital_preparation_input)) {
+        if (ri_factorization == nullptr &&
+            !has_materialized_ao_two_electron_integrals(ao_integral_input)) {
+          throw std::runtime_error(
+              "closed-shell MO guess requires exact AO integrals or RI factors");
+        }
         build_rhf_mo_guess(
             input_file_path,
             libcint_input,
             ao_integral_input,
+            ri_factorization,
             *orbital_preparation_input,
             &orbital_value_table);
       } else {
