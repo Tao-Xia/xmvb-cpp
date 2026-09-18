@@ -238,10 +238,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
         response.delta_selected_eigenvector_matrix =
             block_response.delta_selected_eigenvector_matrix.middleCols(
                 first, n_selected_states);
-        response.delta_selected_eigenvalues.assign(
-            block_response.delta_selected_eigenvalues.begin() + first,
-            block_response.delta_selected_eigenvalues.begin() +
-                first + n_selected_states);
+        response.selected_matrix_responses = {
+            block_response.selected_matrix_responses[column]};
         response.linear_iterations.assign(
             block_response.linear_iterations.begin() + first,
             block_response.linear_iterations.begin() +

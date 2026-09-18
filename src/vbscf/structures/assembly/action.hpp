@@ -152,11 +152,17 @@ public:
   StructureActiveIntegralAdjoint active_integral_adjoint(
       const StructureAdjointState& state) const;
 
-  /** @brief Differentiates the selected-state active-integral adjoint. */
+  /**
+   * @brief Differentiates the selected-state active-integral adjoint.
+   *
+   * `directional_state_multipliers` is the full multiplier @f$M@f$ in
+   * @f$HZ-SZ\Lambda+SCM@f$. Equal-weight selected states therefore retain
+   * their off-diagonal horizontal-gauge coupling.
+   */
   StructureActiveIntegralAdjoint active_integral_adjoint_direction(
       const StructureAdjointState& state,
       const SelectedStateDeterminantMatrices* directional_selected_states,
-      const std::vector<double>* directional_state_energies,
+      const Eigen::MatrixXd* directional_state_multipliers,
       const std::vector<double>& overlap_direction,
       const std::vector<double>& one_electron_direction,
       const std::vector<double>& packed_two_electron_direction,

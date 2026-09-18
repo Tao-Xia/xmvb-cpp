@@ -28,7 +28,8 @@ struct SelectedStateDirectionalStructureImages {
 
 struct SelectedStateGeneralizedEigenDirectionalResponse {
   Eigen::MatrixXd delta_selected_eigenvector_matrix;
-  std::vector<double> delta_selected_eigenvalues;
+  /** Full selected-space response for each orbital direction. */
+  std::vector<Eigen::MatrixXd> selected_matrix_responses;
   std::vector<int> linear_iterations;
   int block_actions = 0;
   double max_relative_residual = 0.0;

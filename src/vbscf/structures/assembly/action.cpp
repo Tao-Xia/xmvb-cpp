@@ -1489,7 +1489,7 @@ StructureActiveIntegralAdjoint
 StructureAction::active_integral_adjoint_direction(
     const StructureAdjointState& state,
     const SelectedStateDeterminantMatrices* directional_selected_states,
-    const std::vector<double>* directional_state_energies,
+    const Eigen::MatrixXd* directional_state_multipliers,
     const std::vector<double>& overlap_direction,
     const std::vector<double>& one_electron_direction,
     const std::vector<double>& packed_two_electron_direction,
@@ -1505,11 +1505,15 @@ StructureAction::active_integral_adjoint_direction(
       state.source_coefficients.size() != n_states ||
       state.orthogonal_coefficients.size() != n_states ||
       state.residuals.size() != n_states ||
-      include_state_response != (directional_state_energies != nullptr) ||
+      include_state_response != (directional_state_multipliers != nullptr) ||
       (include_state_response &&
        (directional_selected_states->states.size() !=
             n_states ||
-        directional_state_energies->size() != n_states ||
+        directional_state_multipliers->rows() !=
+            static_cast<Eigen::Index>(n_states) ||
+        directional_state_multipliers->cols() !=
+            static_cast<Eigen::Index>(n_states) ||
+        !directional_state_multipliers->allFinite() ||
         directional_selected_states->n_unique_alpha != n_unique_alpha_ ||
         directional_selected_states->n_unique_beta != n_unique_beta_))) {
     throw std::invalid_argument(
@@ -1617,15 +1621,13 @@ StructureAction::active_integral_adjoint_direction(
             &directional_orthogonal_coefficients);
       }
     }
-    double directional_energy = 0.0;
     Eigen::MatrixXd orthogonal_state_response;
     if (include_state_response) {
       const auto& directional_state =
           directional_selected_states->states[state_index];
       if (directional_state.coefficient_matrix.rows() != n_unique_alpha_ ||
           directional_state.coefficient_matrix.cols() != n_unique_beta_ ||
-          !directional_state.coefficient_matrix.allFinite() ||
-          !std::isfinite((*directional_state_energies)[state_index])) {
+          !directional_state.coefficient_matrix.allFinite()) {
         throw std::invalid_argument(
             "invalid directional selected-state adjoint input");
       }
@@ -1633,7 +1635,6 @@ StructureAction::active_integral_adjoint_direction(
       direct_ci_->alpha_transform.apply_left(&orthogonal_state_response);
       direct_ci_->beta_transform().apply_right(&orthogonal_state_response);
       directional_orthogonal_coefficients += orthogonal_state_response;
-      directional_energy = (*directional_state_energies)[state_index];
     }
 
     Eigen::MatrixXd directional_sigma;
@@ -1654,10 +1655,26 @@ StructureAction::active_integral_adjoint_direction(
       directional_sigma.noalias() +=
           direct_ci_->sigma.apply(orthogonal_state_response);
     }
-    const Eigen::MatrixXd directional_residual =
+    Eigen::MatrixXd directional_residual =
         directional_sigma -
-        state.energies[state_index] * directional_orthogonal_coefficients -
-        directional_energy * orthogonal_coefficients;
+        state.energies[state_index] * directional_orthogonal_coefficients;
+    if (include_state_response) {
+      for (std::size_t coupled_state = 0;
+           coupled_state < n_states;
+           ++coupled_state) {
+        const double multiplier = (*directional_state_multipliers)(
+                static_cast<Eigen::Index>(coupled_state),
+                static_cast<Eigen::Index>(state_index)) * 0.5 +
+            (*directional_state_multipliers)(
+                static_cast<Eigen::Index>(state_index),
+                static_cast<Eigen::Index>(coupled_state)) *
+                (0.5 * state.weights[coupled_state] / state_weight);
+        if (multiplier != 0.0) {
+          directional_residual.noalias() +=
+              multiplier * state.orthogonal_coefficients[coupled_state];
+        }
+      }
+    }
 
     const DirectCiIntegralAdjoint directional_integral_gradient =
         direct_ci_->sigma.integral_adjoint(

@@ -437,6 +437,18 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       apply_timing_totals_.max_structure_response_relative_residual = std::max(
           apply_timing_totals_.max_structure_response_relative_residual,
           directional_selected_state_response->max_relative_residual);
+      if (directional_selected_state_response
+              ->selected_matrix_responses.size() != 1) {
+        throw std::logic_error(
+            "one HVP direction must produce one selected-space response matrix");
+      }
+    }
+
+    Eigen::MatrixXd state_multipliers;
+    if (directional_selected_state_response != nullptr) {
+      state_multipliers =
+          -directional_selected_state_response
+               ->selected_matrix_responses.front();
     }
 
     std::optional<SelectedStateDeterminantMatrices>
@@ -481,8 +493,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                   ? &directional_selected_states.value()
                   : nullptr,
               directional_selected_state_response != nullptr
-                  ? &directional_selected_state_response
-                         ->delta_selected_eigenvalues
+                  ? &state_multipliers
                   : nullptr,
               active_space_integral_direction.overlap,
               active_space_integral_direction.one_electron,
@@ -520,12 +531,11 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
           std::chrono::steady_clock::now();
       if (directional_selected_states) {
         const SelectedStateResponseTiming response_timing =
-            add_selected_state_response_to_active_space_gradient(
+            add_selected_subspace_response_to_active_space_gradient(
                 *current_input_,
                 *accepted_point_context_,
                 directional_selected_states.value(),
-                directional_selected_state_response
-                    ->delta_selected_eigenvalues,
+                state_multipliers,
                 &directional_active_space_gradient);
         apply_timing_totals_
             .outer_response_same_spin_backward_wall_time_seconds +=

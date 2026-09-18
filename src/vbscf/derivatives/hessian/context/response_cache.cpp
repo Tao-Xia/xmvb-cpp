@@ -30,13 +30,21 @@ void throw_if_nonfinite_matrix(
   }
 }
 
-void throw_if_nonfinite_vector(
-    const std::vector<double>& values,
+void throw_if_invalid_selected_matrix_responses(
+    const std::vector<Eigen::MatrixXd>& responses,
+    int n_directions,
+    int n_selected_states,
     const char* label) {
-  for (const double value : values) {
-    if (!std::isfinite(value)) {
+  if (responses.size() != static_cast<std::size_t>(n_directions)) {
+    throw std::runtime_error(
+        std::string(label) + " has the wrong direction count");
+  }
+  for (const Eigen::MatrixXd& response : responses) {
+    if (response.rows() != n_selected_states ||
+        response.cols() != n_selected_states ||
+        !response.allFinite()) {
       throw std::runtime_error(
-          std::string(label) + " contains non-finite values");
+          std::string(label) + " has invalid dimensions or values");
     }
   }
 }
@@ -246,7 +254,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
   if (use_equal_weight_subspace_response) {
     SelectedStateGeneralizedEigenDirectionalResponse result;
     result.delta_selected_eigenvector_matrix.resize(n_structures, n_rhs);
-    result.delta_selected_eigenvalues.reserve(n_rhs);
+    result.selected_matrix_responses.reserve(n_directions);
     result.linear_iterations.reserve(n_rhs);
     for (int direction = 0; direction < n_directions; ++direction) {
       const int first = direction * n_selected_states;
@@ -283,10 +291,8 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
                     effective_relative_residual_tolerance});
       result.delta_selected_eigenvector_matrix.middleCols(
           first, n_selected_states) = response.eigenvector_response;
-      for (int state = 0; state < n_selected_states; ++state) {
-        result.delta_selected_eigenvalues.push_back(
-            response.selected_matrix_response(state, state));
-      }
+      result.selected_matrix_responses.push_back(
+          response.selected_matrix_response);
       result.linear_iterations.insert(
           result.linear_iterations.end(),
           response.iterations.begin(),
@@ -299,9 +305,11 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
     throw_if_nonfinite_matrix(
         result.delta_selected_eigenvector_matrix,
         "equal-weight outer-response directional selected subspace");
-    throw_if_nonfinite_vector(
-        result.delta_selected_eigenvalues,
-        "equal-weight outer-response directional selected energies");
+    throw_if_invalid_selected_matrix_responses(
+        result.selected_matrix_responses,
+        n_directions,
+        n_selected_states,
+        "equal-weight outer-response directional selected matrices");
     return result;
   }
   const xmvb::core::EigenResponseResult response =
@@ -333,9 +341,13 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
 
   SelectedStateGeneralizedEigenDirectionalResponse result;
   result.delta_selected_eigenvector_matrix = response.eigenvector_response;
-  result.delta_selected_eigenvalues.assign(
-      response.eigenvalue_response.data(),
-      response.eigenvalue_response.data() + response.eigenvalue_response.size());
+  result.selected_matrix_responses.reserve(n_directions);
+  for (int direction = 0; direction < n_directions; ++direction) {
+    result.selected_matrix_responses.push_back(
+        response.eigenvalue_response
+            .segment(direction * n_selected_states, n_selected_states)
+            .asDiagonal());
+  }
   result.linear_iterations = response.iterations;
   result.block_actions = response.block_actions;
   result.max_relative_residual =
@@ -344,9 +356,11 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
   throw_if_nonfinite_matrix(
       result.delta_selected_eigenvector_matrix,
       "exact outer-response directional selected-state eigenvectors");
-  throw_if_nonfinite_vector(
-      result.delta_selected_eigenvalues,
-      "exact outer-response directional selected-state energies");
+  throw_if_invalid_selected_matrix_responses(
+      result.selected_matrix_responses,
+      n_directions,
+      n_selected_states,
+      "exact outer-response directional selected-state matrices");
   return result;
 }
 
