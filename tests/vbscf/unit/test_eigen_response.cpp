@@ -377,13 +377,18 @@ bool test_equal_weight_subspace_response() {
   // The individual derivatives are ill-conditioned in this small gap, while
   // the equally weighted two-state projector has no selected-selected pole.
   energies[2] = energies[1] + 1.0e-6;
-  const Eigen::MatrixXd overlap =
-      basis * metric.asDiagonal() * basis.transpose();
-  const Eigen::MatrixXd hamiltonian =
-      basis * (metric.array() * energies.array()).matrix().asDiagonal() *
+  const Eigen::MatrixXd metric_sqrt =
+      basis * metric.cwiseSqrt().asDiagonal() * basis.transpose();
+  const Eigen::MatrixXd metric_inverse_sqrt =
+      basis * metric.cwiseSqrt().cwiseInverse().asDiagonal() *
       basis.transpose();
-  const Eigen::MatrixXd full_vectors =
-      basis * metric.cwiseSqrt().cwiseInverse().asDiagonal();
+  const Eigen::MatrixXd overlap = metric_sqrt * metric_sqrt;
+  // Deliberately keep the generalized eigenvectors out of the ordinary
+  // eigenspace of S.  Then span(C) != span(S C), which detects projecting a
+  // generalized-eigen response against C instead of its metric image S C.
+  const Eigen::MatrixXd hamiltonian =
+      metric_sqrt * energies.asDiagonal() * metric_sqrt;
+  const Eigen::MatrixXd full_vectors = metric_inverse_sqrt;
   const std::vector<int> roots{1, 2};
   Eigen::VectorXd selected_energies(2);
   Eigen::MatrixXd selected_vectors(n, 2);
@@ -391,8 +396,6 @@ bool test_equal_weight_subspace_response() {
     selected_energies[state] = energies[roots[state]];
     selected_vectors.col(state) = full_vectors.col(roots[state]);
   }
-  const Eigen::MatrixXd metric_sqrt =
-      basis * metric.cwiseSqrt().asDiagonal() * basis.transpose();
   const Eigen::MatrixXd delta_hamiltonian =
       0.007 * metric_sqrt * directional_test_matrix(n) * metric_sqrt;
   const Eigen::MatrixXd delta_overlap =
@@ -491,9 +494,7 @@ bool test_equal_weight_subspace_response() {
     Eigen::VectorXd degenerate_energies = energies;
     degenerate_energies[2] = degenerate_energies[1];
     const Eigen::MatrixXd degenerate_hamiltonian =
-        basis *
-        (metric.array() * degenerate_energies.array()).matrix().asDiagonal() *
-        basis.transpose();
+        metric_sqrt * degenerate_energies.asDiagonal() * metric_sqrt;
     const Eigen::VectorXd degenerate_selected_energies =
         degenerate_energies.segment(1, 2);
     const xmvb::core::GeneralizedEigenAction degenerate_action =

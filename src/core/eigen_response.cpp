@@ -940,7 +940,7 @@ solve_equal_weight_generalized_eigen_subspace_response(
   const Eigen::Index n = hamiltonian_diagonal.size();
   const Eigen::Index n_selected = selected_eigenvalues.size();
   const Eigen::MatrixXd selected_units =
-      selected_span_units(selected_eigenvectors);
+      selected_span_units(overlap_selected);
 
   Eigen::MatrixXd rhs = -data.forcing;
   project_selected_span(&rhs, selected_units);
