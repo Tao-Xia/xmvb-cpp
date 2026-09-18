@@ -38,6 +38,14 @@ ExactHvpOperator::Diagnostics ExactHvpOperator::diagnostics() const {
   return state_->diagnostics();
 }
 
+Eigen::VectorXd ExactHvpOperator::apply_structure_response_adjoint(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+    const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const {
+  return state_->apply_structure_response_adjoint(
+      coefficient_response,
+      state_multipliers);
+}
+
 ExactHvpOperator::State::State(
     std::shared_ptr<const AcceptedPointContext> accepted_point_context,
     const VbScfInput* current_input,

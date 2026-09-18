@@ -15,6 +15,17 @@ namespace detail {
 int choose_exact_ao_h1e_thread_count(
     const OrbitalPreparationInput& orbital_preparation_input);
 
+/** Restores the symmetric AO matrix represented by the direct kernel output. */
+void symmetrize_exact_ao_h1e_forward(
+    Eigen::Ref<Eigen::MatrixXd> delta_h1e);
+
+/** Applies only the forward AO effective-one-electron derivative. */
+void apply_forward_exact_ao_one_electron_response(
+    const Eigen::MatrixXd& inactive_density_matrix,
+    const AoIntegralInput& ao_integral_input,
+    const OrbitalPreparationInput& orbital_preparation_input,
+    std::vector<double>* delta_ao_effective_h1e_storage);
+
 /**
  * Applies the AO effective-one-electron forward derivative and its transpose
  * pullback in one pass over the accepted AO integral representation.

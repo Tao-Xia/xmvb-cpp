@@ -12,6 +12,7 @@
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 #include "vbscf/integrals/active/two_electron/response/types.hpp"
 #include "vbscf/integrals/active/two_electron/response/ri.hpp"
 #include "vbscf/integrals/ao/one_electron/direct_operator.hpp"
@@ -41,11 +42,28 @@ struct ExactHvpOperator::State {
       const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
       HvpComponents components) const;
 
+  Eigen::VectorXd apply_structure_response_adjoint(
+      const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+      const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const;
+
+  SelectedStructureDirection apply_selected_structure_direction(
+      const Eigen::VectorXd& reduced_direction) const;
+
   bool supports_analytic_core_model() const noexcept;
   Diagnostics diagnostics() const;
 
 private:
   const AcceptedOuterResponseContext& outer_response_context() const;
+
+  PrecomputedDirection prepare_direction(
+      Eigen::VectorXd packed_direction) const;
+
+  ActiveSpaceIntegralDirectionView build_active_integral_direction(
+      const OrbitalPreparationDirectionalResult& orbital_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& delta_h1e_times_active,
+      const Eigen::VectorXd* precomputed_delta_packed_two_electron,
+      Eigen::VectorXd* ri_delta_packed_two_electron,
+      ActiveSpaceIntegralDirectionWorkspace* workspace) const;
 
   Eigen::VectorXd apply_reduced_impl(
       const Eigen::VectorXd& reduced_direction,

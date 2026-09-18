@@ -29,6 +29,19 @@ struct HvpComponents {
 };
 
 /**
+ * @brief Directional selected-state images produced before eigensystem response.
+ *
+ * The matrices are @f$(\delta H)C@f$ and @f$(\delta S)C@f$ in the structure
+ * basis. Columns follow the accepted selected-state order. They are the
+ * physical orbital-to-structure coupling data used to assemble @f$Bp@f$;
+ * no structure response equation is solved by this operation.
+ */
+struct SelectedStructureDirection {
+  Eigen::MatrixXd delta_hamiltonian_selected;
+  Eigen::MatrixXd delta_overlap_selected;
+};
+
+/**
  * @brief Accepted-point matrix-free orbital second-order operator.
  *
  * This module is the home for exact direct-action orbital Hessian contributions
@@ -119,6 +132,35 @@ public:
   Eigen::MatrixXd apply_reduced_batch(
       const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
       HvpComponents components = {}) const;
+
+  /**
+   * @brief Applies @f$B^T@f$ from a physical selected-subspace response.
+   *
+   * `coefficient_response` is the unscaled structure coefficient block
+   * @f$Z@f$ in accepted selected-state order. `state_multipliers` is the full
+   * multiplier matrix @f$M@f$ in the same order; off-diagonal entries must not
+   * be discarded for an equal-weight multistate cluster.  The result is in the
+   * accepted nonredundant orbital coordinates.
+   */
+  Eigen::VectorXd apply_structure_response_adjoint(
+      const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+      const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const;
+
+  /**
+   * @brief Applies the orbital-to-structure coupling before response elimination.
+   *
+   * This reuses the accepted-point orbital/integral directional kernels and
+   * selected-state H/S image builder. It deliberately stops before solving a
+   * generalized-eigen response, allowing a coupled Newton solver to carry the
+   * structure response as an explicit Krylov variable.
+   */
+  SelectedStructureDirection apply_selected_structure_direction(
+      const Eigen::VectorXd& reduced_direction) const;
+
+  /** @brief Applies the uneliminated coupling to a block of orbital directions. */
+  std::vector<SelectedStructureDirection>
+  apply_selected_structure_direction_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const;
 
   bool supports_analytic_core_model() const noexcept;
 

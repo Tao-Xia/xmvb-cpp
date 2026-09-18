@@ -52,6 +52,21 @@ SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient
     const std::vector<double>& directional_selected_state_energies,
     ActiveSpaceGradientDirection* active_space_gradient);
 
+/**
+ * @brief Adds the exact selected-subspace coupling adjoint.
+ *
+ * The coefficient block is the physical (unscaled) @f$Z@f$ response.  The
+ * multiplier is the full selected-state matrix @f$M@f$; its off-diagonal
+ * entries are required for an equal-weight multistate horizontal gauge.
+ */
+SelectedStateResponseTiming
+add_selected_subspace_response_to_active_space_gradient(
+    const VbScfInput& input,
+    const AcceptedPointContext& accepted_point_context,
+    const SelectedStateDeterminantMatrices& coefficient_response,
+    const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers,
+    ActiveSpaceGradientDirection* active_space_gradient);
+
 std::vector<double> build_orbital_value_gradient_from_active_space_gradient_direction(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,

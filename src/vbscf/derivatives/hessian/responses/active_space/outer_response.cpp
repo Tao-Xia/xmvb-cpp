@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/Eigenvalues>
 #include <Eigen/SparseCore>
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
@@ -291,6 +292,112 @@ SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient
       opposite_spin_direction.packed_active_two_electron_gradient,
       1.0,
       &active_space_gradient->packed_active_two_electron_gradient);
+  return timing;
+}
+
+SelectedStateResponseTiming
+add_selected_subspace_response_to_active_space_gradient(
+    const VbScfInput& input,
+    const AcceptedPointContext& accepted_point_context,
+    const SelectedStateDeterminantMatrices& coefficient_response,
+    const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers,
+    ActiveSpaceGradientDirection* active_space_gradient) {
+  const int n_states = static_cast<int>(
+      accepted_point_context.selected_state_matrices.states.size());
+  if (n_states <= 0 ||
+      state_multipliers.rows() != n_states ||
+      state_multipliers.cols() != n_states ||
+      !state_multipliers.allFinite() ||
+      accepted_point_context.normalized_state_weights.size() !=
+          static_cast<std::size_t>(n_states) ||
+      accepted_point_context.selected_state_eigenvectors.cols() != n_states) {
+    throw std::invalid_argument(
+        "selected-subspace response adjoint has incompatible dimensions");
+  }
+
+  // The coefficient part is the ordinary selected-state response with a zero
+  // scalar multiplier.  Keeping this call on the production backward kernels
+  // preserves the unique-string contractions and the opposite-spin adjoint.
+  const std::vector<double> zero_energy_response(n_states, 0.0);
+  SelectedStateResponseTiming timing =
+      add_selected_state_response_to_active_space_gradient(
+          input,
+          accepted_point_context,
+          coefficient_response,
+          zero_energy_response,
+          active_space_gradient);
+
+  // Only the symmetric overlap image can couple to an orbital direction.  If
+  // W is the diagonal state-weight matrix, the exact multiplier contribution
+  // is C sym(M W) C^T.  Diagonalizing this small selected-state matrix rewrites
+  // the full (including off-diagonal) multiplier as scalar channels accepted
+  // by the existing same-spin overlap-adjoint kernel.  This is an exact change
+  // of contraction order, not a truncated spectral approximation.
+  const Eigen::Map<const Eigen::VectorXd> state_weights(
+      accepted_point_context.normalized_state_weights.data(),
+      n_states);
+  const Eigen::MatrixXd weighted_multipliers =
+      state_multipliers * state_weights.asDiagonal();
+  const Eigen::MatrixXd symmetric_weighted_multipliers =
+      0.5 * (weighted_multipliers + weighted_multipliers.transpose());
+  if (symmetric_weighted_multipliers.isZero(0.0)) {
+    return timing;
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> multiplier_spectrum(
+      symmetric_weighted_multipliers);
+  if (multiplier_spectrum.info() != Eigen::Success) {
+    throw std::runtime_error(
+        "selected-subspace multiplier eigendecomposition failed");
+  }
+
+  const Eigen::MatrixXd rotated_selected_columns =
+      accepted_point_context.selected_state_eigenvectors *
+      multiplier_spectrum.eigenvectors();
+  const Eigen::MatrixXd zero_columns = Eigen::MatrixXd::Zero(
+      rotated_selected_columns.rows(), n_states);
+  const std::vector<double> uniform_weights(
+      n_states,
+      1.0 / static_cast<double>(n_states));
+  const SelectedStateDeterminantMatrices rotated_selected_states =
+      build_selected_state_determinant_matrices_from_selected_columns(
+          input.structure_data,
+          rotated_selected_columns,
+          accepted_point_context.selected_state_indices,
+          uniform_weights,
+          accepted_point_context.same_spin_pair_cache);
+  const SelectedStateDeterminantMatrices zero_directional_states =
+      build_selected_state_determinant_matrices_from_selected_columns(
+          input.structure_data,
+          zero_columns,
+          accepted_point_context.selected_state_indices,
+          uniform_weights,
+          accepted_point_context.same_spin_pair_cache);
+  const std::vector<double> zero_energies(n_states, 0.0);
+  std::vector<double> scalar_multipliers(n_states);
+  for (int state = 0; state < n_states; ++state) {
+    scalar_multipliers[state] =
+        -static_cast<double>(n_states) *
+        multiplier_spectrum.eigenvalues()[state];
+  }
+
+  const auto multiplier_start = std::chrono::steady_clock::now();
+  const SameSpinMatrixBackwardContribution multiplier_contribution =
+      build_directional_same_spin_matrix_backward_contribution(
+          accepted_point_context.same_spin_pair_cache,
+          rotated_selected_states,
+          zero_directional_states,
+          zero_energies,
+          scalar_multipliers,
+          input.orbital_preparation_input.n_active_orbitals);
+  validate_same_spin_matrix_backward_contribution(
+      multiplier_contribution,
+      "selected-subspace full-multiplier backward contribution");
+  timing.same_spin_seconds += std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - multiplier_start).count();
+  accumulate_scaled_same_spin_contribution(
+      multiplier_contribution,
+      1.0,
+      active_space_gradient);
   return timing;
 }
 

@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 #include <Eigen/LU>
 
+#include "vbscf/optimization/coupled/forcing.hpp"
 #include "vbscf/optimization/coupled/operator.hpp"
 
 namespace {
@@ -29,6 +30,7 @@ int main() {
     using xmvb::vb::CoupledNewtonActions;
     using xmvb::vb::CoupledNewtonOperator;
     using xmvb::vb::SelectedStateCluster;
+    using xmvb::vb::SelectedStructureDirection;
     using xmvb::vb::SelectedSubspaceResponseLayout;
 
     SelectedSubspaceResponseLayout response_layout(
@@ -120,7 +122,8 @@ int main() {
 
     // Build Bp from synthetic directional integral matrices:
     // [(delta H - delta S Lambda) C; C^T delta S C / 2].
-    Eigen::MatrixXd coupling(n_response, n_orbitals);
+    std::vector<SelectedStructureDirection> structure_directions;
+    structure_directions.reserve(n_orbitals);
     for (int orbital = 0; orbital < n_orbitals; ++orbital) {
       Eigen::Matrix3d delta_hamiltonian;
       Eigen::Matrix3d delta_overlap;
@@ -132,14 +135,16 @@ int main() {
               0.002 * (orbital + 2) * (row + column + 1);
         }
       }
-      ClusterResponse forcing;
-      forcing.coefficients =
-          delta_hamiltonian * selected -
-          delta_overlap * selected * selected_energies;
-      forcing.multipliers =
-          0.5 * selected.transpose() * delta_overlap * selected;
-      coupling.col(orbital) = cluster_layout.pack({forcing});
+      structure_directions.push_back(SelectedStructureDirection{
+          delta_hamiltonian * selected,
+          delta_overlap * selected});
     }
+    const Eigen::MatrixXd coupling =
+        xmvb::vb::pack_selected_subspace_forcing_block(
+            cluster_layout,
+            selected_energies.diagonal(),
+            selected,
+            structure_directions);
 
     CoupledNewtonOperator op(
         n_orbitals,

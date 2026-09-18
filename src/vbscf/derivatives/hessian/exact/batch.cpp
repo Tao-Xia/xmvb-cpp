@@ -61,10 +61,6 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
       current_input_->orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals =
       current_input_->orbital_preparation_input.n_active_orbitals;
-  const int n_inactive_doubly_occupied_orbitals =
-      (current_input_->orbital_preparation_input.n_total_electrons -
-       current_input_->orbital_preparation_input.n_active_electrons) /
-      2;
   const Eigen::Index ao_matrix_size =
       static_cast<Eigen::Index>(n_basis_functions) * n_basis_functions;
   const Eigen::Index n_directions = reduced_directions.cols();
@@ -75,22 +71,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
   std::vector<Eigen::MatrixXd> dense_active_directions;
   dense_active_directions.reserve(n_directions);
   for (Eigen::Index column = 0; column < n_directions; ++column) {
-    PrecomputedDirection precomputed;
-    precomputed.packed_direction =
-        nonredundant_space_->expand_step(reduced_directions.col(column));
-    precomputed.dense_orbital_tangent_context =
-        build_dense_orbital_tangent_context(
-            current_input_->orbital_preparation_input,
-            parameter_view_,
-            precomputed.packed_direction,
-            *accepted_orbital_preparation_cache_);
-    precomputed.orbital_preparation_directional_result =
-        build_orbital_preparation_directional_result(
-            current_input_->orbital_preparation_input,
-            precomputed.dense_orbital_tangent_context,
-            n_inactive_doubly_occupied_orbitals,
-            n_active_orbitals,
-            *accepted_orbital_preparation_cache_);
+    PrecomputedDirection precomputed = prepare_direction(
+        nonredundant_space_->expand_step(reduced_directions.col(column)));
     const auto& directional_result =
         precomputed.orbital_preparation_directional_result;
     dense_active_directions.push_back(
@@ -126,12 +108,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
         delta_h1e_columns.col(column).data(),
         n_basis_functions,
         n_basis_functions);
-    for (int row = 0; row < n_basis_functions; ++row) {
-      for (int matrix_column = 0; matrix_column <= row; ++matrix_column) {
-        delta_h1e(row, matrix_column) += delta_h1e(matrix_column, row);
-        delta_h1e(matrix_column, row) = delta_h1e(row, matrix_column);
-      }
-    }
+    detail::symmetrize_exact_ao_h1e_forward(delta_h1e);
   }
   const double batch_h1e_seconds =
       detail::exact_hvp_elapsed_seconds(batch_h1e_start_time);
@@ -180,15 +157,6 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
       delta_overlap_selected.resize(
           n_structures, n_directions * n_selected_states);
     }
-    const ActiveSpaceIntegralDirectionContext integral_context{
-        *current_input_,
-        &accepted_exact_two_electron_cache_,
-        accepted_active_auxiliary_orbitals_,
-        accepted_basis_overlap_times_active_auxiliary_orbitals_,
-        accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_,
-        accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_,
-        *accepted_exact_two_electron_cache_.accepted_active_coefficients};
-
     double integral_seconds = 0.0;
     double structure_seconds = 0.0;
     const bool direct_active_gradient =
@@ -212,17 +180,12 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
       const Eigen::VectorXd delta_packed_two_electron =
           delta_packed_active_two_electron_columns.col(column);
       const ActiveSpaceIntegralDirectionView integral_direction =
-          build_active_space_integral_direction(
-              integral_context,
-              ActiveSpaceIntegralTangent{
-                  precomputed_directions[column]
-                      .orbital_preparation_directional_result
-                      .delta_active_auxiliary_orbitals,
-                  precomputed_directions[column]
-                      .orbital_preparation_directional_result
-                      .delta_active_auxiliary_orbitals,
-                  delta_h1e_times_active,
-                  &delta_packed_two_electron},
+          build_active_integral_direction(
+              precomputed_directions[column]
+                  .orbital_preparation_directional_result,
+              delta_h1e_times_active,
+              &delta_packed_two_electron,
+              nullptr,
               &outer.integral_direction);
       integral_seconds += detail::exact_hvp_elapsed_seconds(integral_start);
 

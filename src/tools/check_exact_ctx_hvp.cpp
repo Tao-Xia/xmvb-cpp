@@ -15,6 +15,7 @@
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
+#include "vbscf/optimization/coupled/forcing.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -236,6 +237,119 @@ int main(int argc, char** argv) {
         &input,
         layout,
         &chart);
+    const xmvb::vb::SelectedStructureDirection structure_direction =
+        exact_hvp.apply_selected_structure_direction(direction);
+    const int n_selected_states = static_cast<int>(
+        accepted.second_order_context->selected_state_indices.size());
+    const int n_structures = accepted.second_order_context->n_structures;
+    if (structure_direction.delta_hamiltonian_selected.rows() != n_structures ||
+        structure_direction.delta_hamiltonian_selected.cols() !=
+            n_selected_states ||
+        structure_direction.delta_overlap_selected.rows() != n_structures ||
+        structure_direction.delta_overlap_selected.cols() !=
+            n_selected_states ||
+        !structure_direction.delta_hamiltonian_selected.allFinite() ||
+        !structure_direction.delta_overlap_selected.allFinite()) {
+      throw std::runtime_error(
+          "orbital-to-structure action returned invalid selected-state images");
+    }
+    const xmvb::vb::SelectedSubspaceResponseLayout response_layout(
+        n_structures,
+        {{n_selected_states,
+          accepted.second_order_context->normalized_state_weights.front()}});
+    const Eigen::MatrixXd orbital_direction = direction;
+    const Eigen::MatrixXd coupling_forcing =
+        xmvb::vb::apply_exact_orbital_to_selected_subspace(
+            exact_hvp,
+            response_layout,
+            Eigen::Map<const Eigen::VectorXd>(
+                accepted.second_order_context->selected_state_energies.data(),
+                n_selected_states),
+            accepted.second_order_context->selected_state_eigenvectors,
+            orbital_direction);
+    if (coupling_forcing.rows() != response_layout.response_size() ||
+        coupling_forcing.cols() != 1 || !coupling_forcing.allFinite()) {
+      throw std::runtime_error(
+          "coupled orbital-to-subspace action returned invalid forcing");
+    }
+    const Eigen::VectorXd reference_forcing =
+        xmvb::vb::pack_selected_subspace_forcing(
+            response_layout,
+            Eigen::Map<const Eigen::VectorXd>(
+                accepted.second_order_context->selected_state_energies.data(),
+                n_selected_states),
+            accepted.second_order_context->selected_state_eigenvectors,
+            structure_direction);
+    const double forcing_scale = std::max(1.0, reference_forcing.norm());
+    if ((coupling_forcing.col(0) - reference_forcing).norm() >
+        1.0e-11 * forcing_scale) {
+      throw std::runtime_error(
+          "coupled orbital-to-subspace action is not reproducible");
+    }
+    const Eigen::VectorXd response_probe = Eigen::VectorXd::LinSpaced(
+        response_layout.response_size(), -0.3, 0.2);
+    const Eigen::MatrixXd response_probe_block = response_probe;
+    const Eigen::MatrixXd adjoint_image =
+        xmvb::vb::apply_exact_selected_subspace_to_orbital(
+            exact_hvp,
+            response_layout,
+            response_probe_block);
+    Eigen::VectorXd coefficient_probe = response_probe;
+    coefficient_probe.segment(
+        response_layout.multiplier_offset(0),
+        n_selected_states * n_selected_states).setZero();
+    const Eigen::VectorXd multiplier_probe =
+        response_probe - coefficient_probe;
+    const Eigen::MatrixXd coefficient_adjoint =
+        xmvb::vb::apply_exact_selected_subspace_to_orbital(
+            exact_hvp,
+            response_layout,
+            Eigen::MatrixXd(coefficient_probe));
+    const Eigen::MatrixXd multiplier_adjoint =
+        xmvb::vb::apply_exact_selected_subspace_to_orbital(
+            exact_hvp,
+            response_layout,
+            Eigen::MatrixXd(multiplier_probe));
+    const auto relative_bilinear_error = [](double forward,
+                                            double reverse) {
+      return std::abs(forward - reverse) /
+             std::max({1.0, std::abs(forward), std::abs(reverse)});
+    };
+    const double forward_bilinear = response_probe.dot(reference_forcing);
+    const double reverse_bilinear = direction.dot(adjoint_image.col(0));
+    const double coefficient_forward =
+        coefficient_probe.dot(reference_forcing);
+    const double coefficient_reverse =
+        direction.dot(coefficient_adjoint.col(0));
+    const double multiplier_forward = multiplier_probe.dot(reference_forcing);
+    const double multiplier_reverse =
+        direction.dot(multiplier_adjoint.col(0));
+    const double coupling_adjoint_error =
+        relative_bilinear_error(forward_bilinear, reverse_bilinear);
+    const double coefficient_adjoint_error =
+        relative_bilinear_error(coefficient_forward, coefficient_reverse);
+    const double multiplier_adjoint_error =
+        relative_bilinear_error(multiplier_forward, multiplier_reverse);
+    constexpr double coupling_adjoint_tolerance = 1.0e-10;
+    if (coupling_adjoint_error > coupling_adjoint_tolerance ||
+        coefficient_adjoint_error > coupling_adjoint_tolerance ||
+        multiplier_adjoint_error > coupling_adjoint_tolerance) {
+      std::cerr << std::setprecision(16)
+                << "forward_bilinear=" << forward_bilinear
+                << " reverse_bilinear=" << reverse_bilinear
+                << " coupling_adjoint_error=" << coupling_adjoint_error
+                << " coefficient_forward=" << coefficient_forward
+                << " coefficient_reverse=" << coefficient_reverse
+                << " coefficient_adjoint_error="
+                << coefficient_adjoint_error
+                << " multiplier_forward=" << multiplier_forward
+                << " multiplier_reverse=" << multiplier_reverse
+                << " multiplier_adjoint_error="
+                << multiplier_adjoint_error
+                << '\n';
+      throw std::runtime_error(
+          "production orbital-structure coupling is not adjoint consistent");
+    }
     const Eigen::VectorXd analytic = exact_hvp.apply_reduced(direction);
     const Eigen::VectorXd analytic_core = exact_hvp.apply_reduced(
       direction,
@@ -389,6 +503,12 @@ int main(int argc, char** argv) {
               << state_gradient_average_error << '\n'
               << "state_hvp_average_inf_error = "
               << state_hvp_average_error << '\n'
+              << "coupling_coefficient_adjoint_error = "
+              << coefficient_adjoint_error << '\n'
+              << "coupling_multiplier_adjoint_error = "
+              << multiplier_adjoint_error << '\n'
+              << "coupling_total_adjoint_error = "
+              << coupling_adjoint_error << '\n'
               << "accepted_gradient_vs_dense_midpoint_inf = "
               << accepted_gradient_vs_dense_midpoint_inf << '\n'
               << "structure_response_iterations = "

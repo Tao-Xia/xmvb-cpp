@@ -8,6 +8,7 @@ set(_xmvb_vbscf_unit_targets
   test_active_two_electron_sparse
   test_cofactor_differential
   test_coupled_newton_operator
+  test_coupled_newton_subproblem
   test_curvature_decomposition
   test_davidson
   test_eigen_response
@@ -46,6 +47,9 @@ if (BUILD_TESTING)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
   add_test(NAME coupled_newton_operator COMMAND test_coupled_newton_operator)
   set_tests_properties(coupled_newton_operator PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME coupled_newton_subproblem COMMAND test_coupled_newton_subproblem)
+  set_tests_properties(coupled_newton_subproblem PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME davidson COMMAND test_davidson)
   add_test(NAME eigen_response COMMAND test_eigen_response)

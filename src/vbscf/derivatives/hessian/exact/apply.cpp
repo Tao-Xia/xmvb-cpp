@@ -177,19 +177,14 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       current_input_->orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals =
       current_input_->orbital_preparation_input.n_active_orbitals;
-  const int n_inactive_doubly_occupied_orbitals =
-      (current_input_->orbital_preparation_input.n_total_electrons -
-       current_input_->orbital_preparation_input.n_active_electrons) /
-      2;
   const std::size_t ao_matrix_size =
       n_basis_functions * n_basis_functions;
 
   const auto core_setup_start_time = std::chrono::steady_clock::now();
-  Eigen::VectorXd local_packed_direction;
-  if (precomputed_direction == nullptr) {
-    local_packed_direction =
-        nonredundant_space_->expand_step(reduced_direction);
-  }
+  const Eigen::VectorXd local_packed_direction =
+      precomputed_direction == nullptr
+          ? nonredundant_space_->expand_step(reduced_direction)
+          : Eigen::VectorXd();
   const Eigen::VectorXd& packed_direction =
       precomputed_direction != nullptr
           ? precomputed_direction->packed_direction
@@ -201,41 +196,26 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
 
   const AcceptedOrbitalPreparationCache* orbital_preparation_cache =
       accepted_orbital_preparation_cache_.get();
-  DenseOrbitalTangentContext local_dense_orbital_tangent_context;
+  std::optional<PrecomputedDirection> local_precomputed_direction;
   if (precomputed_direction == nullptr) {
-    local_dense_orbital_tangent_context =
-        build_dense_orbital_tangent_context(
-            current_input_->orbital_preparation_input,
-            parameter_view_,
-            packed_direction,
-            *orbital_preparation_cache);
+    local_precomputed_direction.emplace(
+        prepare_direction(local_packed_direction));
   }
-  const DenseOrbitalTangentContext& dense_orbital_tangent_context =
+  const PrecomputedDirection& prepared_direction =
       precomputed_direction != nullptr
-          ? precomputed_direction->dense_orbital_tangent_context
-          : local_dense_orbital_tangent_context;
+          ? *precomputed_direction
+          : *local_precomputed_direction;
+  const DenseOrbitalTangentContext& dense_orbital_tangent_context =
+      prepared_direction.dense_orbital_tangent_context;
   const Eigen::VectorXd input_retract_tangent =
       components.fixed_upstream_pullback
           ? nonredundant_space_->expand_retract_input_tangent(
                 current_input_->orbital_preparation_input,
                 reduced_direction)
           : Eigen::VectorXd();
-  OrbitalPreparationDirectionalResult
-      local_orbital_preparation_directional_result;
-  if (precomputed_direction == nullptr) {
-    local_orbital_preparation_directional_result =
-        build_orbital_preparation_directional_result(
-            current_input_->orbital_preparation_input,
-            dense_orbital_tangent_context,
-            n_inactive_doubly_occupied_orbitals,
-            n_active_orbitals,
-            *orbital_preparation_cache);
-  }
   const OrbitalPreparationDirectionalResult&
       orbital_preparation_directional_result =
-          precomputed_direction != nullptr
-              ? precomputed_direction->orbital_preparation_directional_result
-              : local_orbital_preparation_directional_result;
+          prepared_direction.orbital_preparation_directional_result;
 
   const Eigen::Map<const Eigen::MatrixXd> basis_overlap(
       current_input_->orbital_preparation_input.ao_overlap_matrix.data(),
@@ -366,17 +346,6 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
 
     const auto active_space_integrals_start_time =
         std::chrono::steady_clock::now();
-    const ActiveSpaceIntegralDirectionContext integral_direction_context{
-        *current_input_,
-        accepted_ri_two_electron_cache_.has_value()
-            ? nullptr
-            : &accepted_exact_two_electron_cache_,
-        accepted_active_auxiliary_orbitals_,
-        accepted_basis_overlap_times_active_auxiliary_orbitals_,
-        accepted_ao_effective_one_electron_times_active_auxiliary_orbitals_,
-        accepted_ao_effective_one_electron_transpose_times_active_auxiliary_orbitals_,
-        accepted_point_context_->prepared_active_space
-            .active_space_two_electron_result.dense_active_coefficients};
     const ActiveSpaceIntegralDirectionView active_space_integral_direction =
         precomputed_outer_response != nullptr
         ? ActiveSpaceIntegralDirectionView{
@@ -384,18 +353,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
               precomputed_outer_response->integral_direction.one_electron,
               precomputed_outer_response->integral_direction
                   .packed_two_electron}
-        : build_active_space_integral_direction(
-              integral_direction_context,
-              ActiveSpaceIntegralTangent{
-                  orbital_preparation_directional_result
-                      .delta_active_auxiliary_orbitals,
-                  delta_dense_active_coefficients,
-                  delta_ao_effective_h1e_times_active_auxiliary_orbitals,
-                  precomputed_delta_packed_active_two_electron != nullptr
-                      ? precomputed_delta_packed_active_two_electron
-                      : (accepted_ri_two_electron_cache_.has_value()
-                             ? &ri_delta_packed_active_two_electron
-                             : nullptr)},
+        : build_active_integral_direction(
+              orbital_preparation_directional_result,
+              delta_ao_effective_h1e_times_active_auxiliary_orbitals,
+              precomputed_delta_packed_active_two_electron != nullptr
+                  ? precomputed_delta_packed_active_two_electron
+                  : (accepted_ri_two_electron_cache_.has_value()
+                         ? &ri_delta_packed_active_two_electron
+                         : nullptr),
+              &ri_delta_packed_active_two_electron,
               &outer_response_integral_direction_workspace_);
     if (precomputed_outer_response == nullptr) {
       apply_timing_totals_
@@ -761,6 +727,106 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
 
   record_apply_wall_time();
   return response;
+}
+
+Eigen::VectorXd ExactHvpOperator::State::apply_structure_response_adjoint(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+    const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const {
+  const int n_structures = accepted_point_context_->n_structures;
+  const int n_states = static_cast<int>(
+      accepted_point_context_->selected_state_indices.size());
+  if (coefficient_response.rows() != n_structures ||
+      coefficient_response.cols() != n_states ||
+      state_multipliers.rows() != n_states ||
+      state_multipliers.cols() != n_states ||
+      !coefficient_response.allFinite() ||
+      !state_multipliers.allFinite()) {
+    throw std::invalid_argument(
+        "structure-response adjoint has incompatible dimensions or values");
+  }
+  if (accepted_point_context_->normalized_state_weights.size() !=
+      static_cast<std::size_t>(n_states)) {
+    throw std::logic_error(
+        "structure-response adjoint is missing selected-state weights");
+  }
+  for (int column = 0; column < n_states; ++column) {
+    for (int row = 0; row < n_states; ++row) {
+      if (state_multipliers(row, column) != 0.0 &&
+          accepted_point_context_->normalized_state_weights[row] !=
+              accepted_point_context_->normalized_state_weights[column]) {
+        throw std::invalid_argument(
+            "structure-response multipliers may couple only equal-weight states");
+      }
+    }
+  }
+  if (!supports_analytic_core_model() ||
+      accepted_orbital_preparation_cache_ == nullptr) {
+    throw std::logic_error(
+        "structure-response adjoint requires the analytic orbital pullback");
+  }
+
+  const int n_active_orbitals =
+      current_input_->orbital_preparation_input.n_active_orbitals;
+  const SelectedStateDeterminantMatrices directional_selected_states =
+      build_selected_state_determinant_matrices_from_selected_columns(
+          current_input_->structure_data,
+          coefficient_response,
+          accepted_point_context_->selected_state_indices,
+          accepted_point_context_->normalized_state_weights,
+          accepted_point_context_->same_spin_pair_cache);
+
+  const StructureAction* structure_action =
+      outer_response_context()
+          .selected_state_eigen_response_operator.structure_action;
+  if (structure_action == nullptr) {
+    throw std::logic_error(
+        "structure-response adjoint requires a structure action");
+  }
+
+  ActiveSpaceGradientDirection active_gradient;
+  if (structure_action->supports_integral_direction()) {
+    if (!accepted_point_context_->structure_adjoint_state.has_value()) {
+      accepted_point_context_->structure_adjoint_state =
+          structure_action->prepare_active_adjoint(
+              accepted_point_context_->selected_state_matrices,
+              accepted_point_context_->selected_state_energies);
+    }
+    active_gradient = make_active_gradient_direction(
+        structure_action->active_integral_response_adjoint(
+            *accepted_point_context_->structure_adjoint_state,
+            directional_selected_states,
+            state_multipliers),
+        n_active_orbitals);
+  } else {
+    active_gradient = make_zero_active_space_gradient_direction(
+        n_active_orbitals);
+    add_selected_subspace_response_to_active_space_gradient(
+        *current_input_,
+        *accepted_point_context_,
+        directional_selected_states,
+        state_multipliers,
+        &active_gradient);
+  }
+  validate_outer_response_active_gradient(active_gradient);
+
+  const std::vector<double> orbital_value_gradient =
+      build_orbital_value_gradient_from_active_space_gradient_direction(
+          *current_input_,
+          *accepted_point_context_,
+          active_gradient,
+          *accepted_orbital_preparation_cache_,
+          accepted_ri_two_electron_cache_.has_value()
+              ? nullptr
+              : &accepted_exact_two_electron_cache_,
+          accepted_ri_two_electron_cache_.has_value()
+              ? &*accepted_ri_two_electron_cache_
+              : nullptr,
+          accepted_ri_factorization_,
+          &outer_response_symmetric_active_overlap_gradient_workspace_,
+          &outer_response_symmetric_active_one_electron_gradient_workspace_);
+  const Eigen::VectorXd packed =
+      parameter_view_.gather_from_full(orbital_value_gradient);
+  return nonredundant_space_->project_reduced_gradient(packed);
 }
 
 }  // namespace xmvb::vb

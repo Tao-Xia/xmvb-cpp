@@ -164,6 +164,21 @@ public:
       bool include_integral_response) const;
 
   /**
+   * @brief Applies the selected-subspace coupling adjoint to active integrals.
+   *
+   * `directional_selected_states` stores the coefficient block @f$Z@f$ and
+   * `state_multipliers` stores the full selected-state multiplier @f$M@f$ in
+   * the accepted-state ordering.  The latter must remain a matrix: within an
+   * equal-weight state cluster its off-diagonal entries enforce the horizontal
+   * gauge and contribute through @f$C M@f$.  Replacing it by directional
+   * eigenvalues would retain only the diagonal part of @f$B^T z@f$.
+   */
+  StructureActiveIntegralAdjoint active_integral_response_adjoint(
+      const StructureAdjointState& state,
+      const SelectedStateDeterminantMatrices& directional_selected_states,
+      const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const;
+
+  /**
    * @brief Expands structure vectors directly onto unique spin products.
    *
    * The returned shape is
