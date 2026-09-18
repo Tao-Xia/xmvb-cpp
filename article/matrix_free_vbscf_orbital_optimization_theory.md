@@ -2810,6 +2810,123 @@ earlier coordinate audits, and additional limitations are recorded in
 and
 [Matrix-free curvature decomposition diagnostics](matrix_free_curvature_decomposition_diagnostics.md).
 
+### 11.3 State-averaged response cancellation in the 524-structure case
+
+The difficult 524-structure, two-state-average OEO/RI case was used to test
+whether the transported sequential PSB correction was itself responsible for
+the large sampled curvature and slow outer convergence.  A rank-revealing
+simultaneous block multisecant prototype formed the transported displacement
+and missing-curvature blocks
+
+$$
+\mathbf S=[\mathbf s_1,\ldots,\mathbf s_m],
+\qquad
+\mathbf Z=[\mathbf y_1-\mathbf H_k^{\mathrm c}\mathbf s_1,
+            \ldots,
+            \mathbf y_m-\mathbf H_k^{\mathrm c}\mathbf s_m],
+$$
+
+and used the thin singular-value decomposition
+
+$$
+\mathbf S=\mathbf Q\boldsymbol\Sigma\mathbf V^{\mathrm T},
+\qquad
+\mathbf T=\mathbf Z\mathbf V\boldsymbol\Sigma^{-1}.
+$$
+
+With
+
+$$
+\mathbf A=\operatorname{sym}(\mathbf Q^{\mathrm T}\mathbf T),
+\qquad
+\mathbf T_\perp=(\mathbf I-\mathbf Q\mathbf Q^{\mathrm T})\mathbf T,
+$$
+
+the simultaneous symmetric correction was
+
+$$
+\mathbf B
+=\mathbf Q\mathbf A\mathbf Q^{\mathrm T}
++\mathbf T_\perp\mathbf Q^{\mathrm T}
++\mathbf Q\mathbf T_\perp^{\mathrm T}.
+$$
+
+Numerical rank was determined from the floating-point backward-error scale,
+not from a molecular threshold.  The prototype preserved the important third
+accepted-step decrease, and all 42 regression tests passed.  It nevertheless
+gave a worse ten-step trajectory: the final energy was
+$-457.097610990672\ E_{\mathrm h}$ and the projected-gradient infinity norm
+was $4.53\times10^{-3}$, compared with $-457.097664804657\ E_{\mathrm h}$ and
+$3.63\times10^{-3}$ for sequential PSB.  Wall time decreased from 498.6 to
+434.9 s because the altered trajectory requested only three rather than six
+outer-response directions; the lower cost did not compensate for the lost
+outer progress.  Sampled spectral radii of approximately
+$1.2$--$1.6\times10^4$ remained at accepted steps 4, 6, and 9.  At step 4 the
+relative block compatibility defect was only 0.0124, excluding accumulated
+sequential incompatibility as the primary origin of that spectral scale.  The
+prototype was therefore removed rather than retained as an alternative path.
+
+A separate fixed-point audit then exposed the physical source of the difficult
+geometry.  The audit tool previously hard-coded a single selected state even
+for a state-averaged input; it was corrected to use the consecutive selected
+roots and equal weights parsed from `WSTATE`.  The corrected initial-point
+audit has projected-gradient two-norm 0.1686088, identical to the production
+trajectory.  The complete and core HVPs are symmetric on the six-direction
+sampled space to relative errors $2.83\times10^{-12}$ and
+$2.96\times10^{-13}$, respectively.  The soft-direction HVP linearity error is
+$3.56\times10^{-8}$.  Thus neither a nonlinear HVP action nor a large
+antisymmetric implementation defect explains this trajectory.
+
+For a unit direction $\mathbf v$, decompose the complete action as
+
+$$
+\mathbf H\mathbf v
+=\mathbf D\mathbf v
++(\mathbf H^{\mathrm c}-\mathbf D)\mathbf v
++\mathbf H^{\mathrm o}\mathbf v,
+$$
+
+where $\mathbf D$ is the target-orbital block diagonal of the computational
+core, the second term is cross-target core coupling, and
+$\mathbf H^{\mathrm o}$ is outer response.  The measured signed Rayleigh
+contributions are
+
+| Direction | Diagonal core | Cross-target core | Outer response | Complete |
+|---|---:|---:|---:|---:|
+| projected gradient | 12.5911 | 5.63026 | -0.0166605 | 18.2047 |
+| six-direction minimum-residual step | 0.0118130 | 0.00363556 | -0.00982474 | 0.00562386 |
+| softest sampled Ritz direction | 0.00593426 | 0.0108592 | -0.0159734 | 0.000820048 |
+
+Outer response is small on the gradient direction, with norm only 0.0207 times
+the complete HVP norm.  It is not small on the directions that determine a
+Newton step: the corresponding norm ratios are 2.00 for the sampled Newton
+step and 6.95 for the softest Ritz direction.  In the latter direction two
+positive core contributions are almost cancelled by negative relaxation
+curvature.  A six-direction complete minimum-residual solve reaches relative
+residual 0.207, whereas the core solve reaches 0.675 and its step has complete
+residual 0.660.  A gradient-direction response test therefore systematically
+misses the important physics.
+
+An auxiliary three-root Davidson solve places the unselected boundary root
+approximately $0.205\ E_{\mathrm h}$ above the second selected root at the
+initial point.  The cancellation is consequently not attributable to a
+second/third-root near degeneracy or simple root flipping.  It is a collective
+orbital--structure relaxation effect: fixed-structure core curvature makes the
+mode appear hard, while response makes the complete mode soft.  A core-only
+Krylov space followed by one exact action on its final candidate can certify
+that the candidate is inadequate, but it cannot generate a direction that is
+soft only after response is included.  Cross-point PSB learns such curvature
+only after accepted motion and becomes progressively less transferable as the
+response-softened subspace rotates.
+
+The resulting algorithmic target is therefore a same-point,
+response-informed Krylov enrichment, not a more aggressive cross-point secant
+fit.  Exact outer actions must be selected by the unresolved complete Newton
+residual and used to create new search directions.  A practical method must
+bound this enrichment by measured wall time and reuse block structure-response
+work; simply applying the complete HVP to every Krylov vector remains too
+expensive for the large-active-space regime.
+
 ## 12. Verification requirements
 
 A revised implementation should satisfy the following system-independent tests.

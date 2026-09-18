@@ -8,6 +8,7 @@
 #include <iostream>
 #include <memory>
 #include <limits>
+#include <numeric>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -70,6 +71,8 @@ struct AcceptedPointBenchmarkContext {
   Eigen::VectorXd reduced_direction;
   Eigen::VectorXd reduced_gradient;
   double nuclear_repulsion_energy = 0.0;
+  std::vector<int> selected_states;
+  std::vector<double> state_weights;
 };
 
 struct BenchmarkMeasurement {
@@ -385,6 +388,10 @@ AcceptedPointBenchmarkContext build_benchmark_context(
   context.parameter_view =
       xmvb::vb::SparseParameterLayout(context.input.orbital_preparation_input);
   context.nuclear_repulsion_energy = load_result.nuclear_repulsion_energy;
+  context.selected_states.resize(load_result.state_average_count);
+  std::iota(
+      context.selected_states.begin(), context.selected_states.end(), 0);
+  context.state_weights.assign(context.selected_states.size(), 1.0);
   if (!options.orbital_value_table_bin_path.empty()) {
     auto& values = context.input.orbital_preparation_input.orbital_value_table;
     std::ifstream file(options.orbital_value_table_bin_path, std::ios::binary | std::ios::ate);
@@ -402,8 +409,8 @@ AcceptedPointBenchmarkContext build_benchmark_context(
       std::make_shared<xmvb::vb::OrbitalGradientResult>(
           evaluator.evaluate_without_reference_energy_gradient(
           context.input,
-          {0},
-          {1.0},
+          context.selected_states,
+          context.state_weights,
           load_result.nuclear_repulsion_energy));
   if (options.stream_pair_products &&
       context.gradient_result->second_order_context != nullptr) {
@@ -580,8 +587,8 @@ void run_spectral_audit(
   const auto trial_result =
       evaluator.evaluate_without_reference_energy_gradient(
           trial,
-          {0},
-          {1.0},
+          context.selected_states,
+          context.state_weights,
           context.nuclear_repulsion_energy);
   const double actual_decrease =
       context.gradient_result->scf_result.total_energy -
@@ -684,9 +691,15 @@ void run_curvature_audit(const AcceptedPointBenchmarkContext& context, int budge
     plus.orbital_preparation_input = space.retract_step(context.input.orbital_preparation_input, v, step);
     minus.orbital_preparation_input = space.retract_step(context.input.orbital_preparation_input, v, -step);
     const auto gp = evaluator.evaluate_without_reference_energy_gradient(
-        plus, {0}, {1.0}, context.nuclear_repulsion_energy);
+        plus,
+        context.selected_states,
+        context.state_weights,
+        context.nuclear_repulsion_energy);
     const auto gm = evaluator.evaluate_without_reference_energy_gradient(
-        minus, {0}, {1.0}, context.nuclear_repulsion_energy);
+        minus,
+        context.selected_states,
+        context.state_weights,
+        context.nuclear_repulsion_energy);
     return space.project_reduced_gradient(context.parameter_view.gather_from_full(gp.sparse_orbital_energy_gradient) -
         context.parameter_view.gather_from_full(gm.sparse_orbital_energy_gradient)) / (2.0 * step);
   };
@@ -1185,6 +1198,8 @@ int main(int argc, char** argv) {
     std::cout << "orbital_value_table_override = " << options.orbital_value_table_bin_path << '\n';
     std::cout << "reduced_dimension = "
               << context.reduced_direction.size() << '\n';
+    std::cout << "state_average_count = "
+              << context.selected_states.size() << '\n';
     const auto space_diagnostics =
         context.nonredundant_space->structural_diagnostics();
     std::cout << "packed_dimension = "
