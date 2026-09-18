@@ -1639,9 +1639,34 @@ by the trust-region boundary conditions in eq 65c; it is not replaced by an
 unrelated first-order line-search step.
 
 For an accepted boundary step of length $\lVert\mathbf s_k\rVert$, the observed
-quadratic-model remainder $e_k$ also supplies a scale for radius growth. Under
-a locally Lipschitz Hessian, the leading Taylor remainder is cubic. Requiring
-the extrapolated error to remain no larger than the observed decrease gives
+model remainder $e_k$ also supplies a scale for radius growth.  The order of
+that remainder depends on the fidelity of the Hessian action that actually
+generated the trial.  Let
+
+$$
+\nu_k=
+\begin{cases}
+2, & \mathbf B_k=\mathbf H_k^{\mathrm c}
+     \text{ or another approximate Hessian},\\
+3, & \mathbf B_k\mathbf s_k=\mathbf H_k\mathbf s_k
+     \text{ on the accepted direction}.
+\end{cases}
+$$
+
+Indeed, Taylor expansion gives
+
+$$
+p_k-a_k
+=\frac12\mathbf s_k^{\mathrm T}
+  (\mathbf H_k-\mathbf B_k)\mathbf s_k
++\mathcal O(\lVert\mathbf s_k\rVert^3).
+$$
+
+The missing outer response therefore leaves a quadratic model defect even
+when the core HVP itself is evaluated exactly.  Only a full HVP or an exact
+directional outer-response correction removes that term and exposes the cubic
+Taylor remainder.  Requiring the extrapolated error to remain no larger than
+the observed decrease gives
 
 $$
 \Delta_{k+1}
@@ -1649,16 +1674,18 @@ $$
 \lVert\mathbf s_k\rVert
 \max\left[
 1,
-\left(\frac{a_k}{\max(e_k,e_{\mathrm{round}})}\right)^{1/3}
+\left(\frac{a_k}{\max(e_k,e_{\mathrm{round}})}\right)^{1/\nu_k}
 \right],
 \qquad
 e_{\mathrm{round}}
 =16\epsilon\max(a_k,p_k).
 $$
 
-This update uses the measured nonquadratic error in the direction actually
-taken. A cap derived from the largest Ritz magnitude can instead freeze the
-radius because of a stiff mode unrelated to the accepted boundary direction.
+Rejected trials use the same model order when scaling the retained trustworthy
+fraction.  This update prevents a core-only step from being treated as though
+it had the cubic remainder of an exact Newton model.  A cap derived from the
+largest Ritz magnitude can instead freeze the radius because of a stiff mode
+unrelated to the accepted boundary direction.
 
 ### 10.1 Coordinate-consistent local preconditioning model
 
@@ -2140,12 +2167,20 @@ W_C
 \tag{66ub}
 $$
 
-An unsampled response is admitted only when $W_R\leq W_C$.  This is an
-asymptotic algorithmic comparison, not an active-space-size threshold.  It
-prevents the matrix-free optimizer from expanding a large unique-string
-response space when its lower-level contraction already exceeds the leading
-core action.  Once a response has been sampled, it must additionally satisfy
-the measured affordability condition
+If the current core solve has already evaluated $m_k$ HVP directions, one
+unsampled response probe is admitted only when
+
+$$
+W_R\leq m_k W_C.
+\tag{66uc}
+$$
+
+Thus a response direction may be more expensive than one core direction but
+must still fit inside the work already invested in the complete core
+candidate.  This is an asymptotic algorithmic comparison, not an
+active-space-size threshold, and it does not authorize full outer response on
+all $m_k$ Krylov directions.  Once a response has been sampled, it must
+additionally satisfy the measured affordability condition
 
 $$
 t_{r,k}\leq T_k^{\mathrm{core\ candidate}},

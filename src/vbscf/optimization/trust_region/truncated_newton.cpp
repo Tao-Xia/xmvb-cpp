@@ -489,7 +489,21 @@ double update_nonredundant_truncated_newton_trust_radius(
     double minimum_step_size,
     const TruncatedNewtonTrialEvaluation& trial,
     const TruncatedNewtonStepResult& model_step,
+    TruncatedNewtonModelFidelity model_fidelity,
     bool accepted) {
+  // If B omits a finite Hessian contribution, the leading discrepancy is
+  // 1/2 s^T(H-B)s = O(||s||^2).  A directionally exact Hessian instead leaves
+  // the O(||s||^3) Taylor remainder.  Radius extrapolation must use the order
+  // of the model that actually generated the trial.
+  const auto scale_model_error_ratio = [model_fidelity](double ratio) {
+    switch (model_fidelity) {
+      case TruncatedNewtonModelFidelity::CoreApproximate:
+        return std::sqrt(ratio);
+      case TruncatedNewtonModelFidelity::DirectionallyExact:
+        return std::cbrt(ratio);
+    }
+    throw std::invalid_argument("unknown truncated-Newton model fidelity");
+  };
   const double step_norm = truncated_newton_step_effective_norm(model_step);
   const auto safe_radius_update = [&]() {
     if (accepted && step_norm > 0.0 && std::isfinite(step_norm)) {
@@ -516,7 +530,8 @@ double update_nonredundant_truncated_newton_trust_radius(
     const double retained_model_fraction =
         trial.predicted_decrease /
         (trial.predicted_decrease + model_error);
-    const double candidate_radius = step_norm * retained_model_fraction;
+    const double candidate_radius =
+        step_norm * scale_model_error_ratio(retained_model_fraction);
     return std::max(
         minimum_step_size,
         std::min(trust_radius, candidate_radius));
@@ -531,13 +546,12 @@ double update_nonredundant_truncated_newton_trust_radius(
     return std::max(minimum_step_size, trust_radius);
   }
 
-  // Estimate the admissible next radius from the observed quadratic-model
-  // remainder. For a twice differentiable objective with locally Lipschitz
-  // Hessian, the Taylor remainder is cubic in the step length. Keeping its
-  // extrapolated absolute error below the decrease just observed gives
-  // Delta_next = ||s|| (actual/error)^(1/3). Unlike a bound based on the
-  // largest Ritz value, this does not let an unrelated stiff mode freeze a
-  // well-resolved boundary direction.
+  // Estimate the admissible next radius from the observed model remainder.
+  // Keeping its extrapolated absolute error below the decrease just observed
+  // gives Delta_next = ||s|| (actual/error)^(1/p), where p=2 for an
+  // approximate Hessian and p=3 for a directionally exact Hessian. Unlike a
+  // bound based on the largest Ritz value, this does not let an unrelated
+  // stiff mode freeze a well-resolved boundary direction.
   const double model_error =
       std::abs(trial.actual_decrease - trial.predicted_decrease);
   const double roundoff =
@@ -545,7 +559,7 @@ double update_nonredundant_truncated_newton_trust_radius(
       std::max(trial.actual_decrease, trial.predicted_decrease);
   const double resolved_error = std::max(model_error, roundoff);
   const double radius_scale =
-      std::cbrt(trial.actual_decrease / resolved_error);
+      scale_model_error_ratio(trial.actual_decrease / resolved_error);
   const double candidate_radius =
       step_norm * std::max(1.0, radius_scale);
   if (!(candidate_radius > 0.0) || !std::isfinite(candidate_radius)) {

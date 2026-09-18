@@ -32,6 +32,71 @@ void check(const std::string& name, const Eigen::VectorXd& d,
   require(result.hard_case == hard_case, name + ": hard-case classification");
   std::cout << name << ": passed\n";
 }
+
+void check_model_fidelity_radius_scaling() {
+  using xmvb::vb::TruncatedNewtonModelFidelity;
+  xmvb::vb::TruncatedNewtonStepResult boundary_step;
+  boundary_step.retract_tangent_norm = 0.5;
+  boundary_step.reached_boundary = true;
+
+  const xmvb::vb::TruncatedNewtonTrialEvaluation accepted_trial{
+      16.0, 15.0};
+  const double approximate_radius =
+      xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
+          0.5,
+          1.0e-12,
+          accepted_trial,
+          boundary_step,
+          TruncatedNewtonModelFidelity::CoreApproximate,
+          true);
+  const double exact_radius =
+      xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
+          0.5,
+          1.0e-12,
+          accepted_trial,
+          boundary_step,
+          TruncatedNewtonModelFidelity::DirectionallyExact,
+          true);
+  require(
+      std::abs(approximate_radius - 2.0) <= 1.0e-14,
+      "quadratic-discrepancy radius did not use square-root scaling");
+  require(
+      std::abs(exact_radius - 0.5 * std::cbrt(16.0)) <= 1.0e-14,
+      "cubic-remainder radius did not use cube-root scaling");
+  require(
+      approximate_radius > exact_radius,
+      "model fidelities produced indistinguishable accepted-step scaling");
+
+  const xmvb::vb::TruncatedNewtonTrialEvaluation rejected_trial{0.25, 1.0};
+  const double retained_fraction = 1.0 / 1.75;
+  const double approximate_contraction =
+      xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
+          0.5,
+          1.0e-12,
+          rejected_trial,
+          boundary_step,
+          TruncatedNewtonModelFidelity::CoreApproximate,
+          false);
+  const double exact_contraction =
+      xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
+          0.5,
+          1.0e-12,
+          rejected_trial,
+          boundary_step,
+          TruncatedNewtonModelFidelity::DirectionallyExact,
+          false);
+  require(
+      std::abs(approximate_contraction -
+               0.5 * std::sqrt(retained_fraction)) <= 1.0e-14,
+      "quadratic-discrepancy rejection did not use square-root scaling");
+  require(
+      std::abs(exact_contraction -
+               0.5 * std::cbrt(retained_fraction)) <= 1.0e-14,
+      "cubic-remainder rejection did not use cube-root scaling");
+  require(
+      approximate_contraction < exact_contraction,
+      "model fidelities produced indistinguishable rejected-step scaling");
+}
 }  // namespace
 
 int main() {
@@ -57,6 +122,7 @@ int main() {
     require(
         !xmvb::vb::truncated_newton_trial_is_acceptable({-0.1, 1.0}),
         "energy-increasing trial was accepted");
+    check_model_fidelity_radius_scaling();
     check("positive definite interior", V(2, 4), V(1, 2), 2, false);
     check("positive definite boundary", V(2, 4), V(1, 2), 0.1, true);
     check("zero-multiplier boundary", V(2, 4), V(2, 0), 1, true);

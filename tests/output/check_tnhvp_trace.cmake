@@ -102,6 +102,9 @@ set(required_tnhvp_patterns
   "\"accepted_gradient_l2_norm\""
   "\"forcing_term\""
   "\"has_kkt_residual\": (true|false)"
+  "\"trust_model_error_order\": [23]"
+  "\"subproblem_met_model_kkt\": (true|false)"
+  "\"subproblem_stopped_by_work_budget\": (true|false)"
   "\"response_probe_performed\""
   "\"used_full_hvp\""
   "\"initial_trust_radius\""
@@ -128,6 +131,9 @@ endif()
 file(READ "${tnhvp_trace}" tnhvp_table)
 if (NOT tnhvp_table MATCHES "^iteration" OR
     NOT tnhvp_table MATCHES "reduced_dimension" OR
+    NOT tnhvp_table MATCHES "trust_model_error_order" OR
+    NOT tnhvp_table MATCHES "subproblem_met_model_kkt" OR
+    NOT tnhvp_table MATCHES "subproblem_stopped_by_work_budget" OR
     NOT tnhvp_table MATCHES "reused_subspace")
   message(FATAL_ERROR "F2 lightweight TNHVP trace has an invalid header")
 endif()

@@ -29,6 +29,27 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb::optimizer_detail {
+namespace {
+
+bool one_outer_probe_fits_current_core_work(
+    const ExactHvpOperator::Diagnostics& diagnostics,
+    std::size_t core_direction_count) {
+  if (!(diagnostics.estimated_outer_string_contraction_work > 0.0) ||
+      !(diagnostics.estimated_core_pair_contraction_work > 0.0) ||
+      core_direction_count == 0) {
+    return false;
+  }
+  return diagnostics.estimated_outer_string_contraction_work <=
+      diagnostics.estimated_core_pair_contraction_work *
+          static_cast<double>(core_direction_count);
+}
+
+bool stopped_by_subspace_work_budget(TruncatedNewtonStopReason reason) {
+  return reason == TruncatedNewtonStopReason::SubspaceLimit ||
+      reason == TruncatedNewtonStopReason::InteriorPilotLimit;
+}
+
+}  // namespace
 
 BackendRunResult run_truncated_newton_backend(
     VbScfObjective* objective,
@@ -117,7 +138,7 @@ BackendRunResult run_truncated_newton_backend(
       throw std::runtime_error(build_hvp_error(exact_hvp));
     }
     const auto response_scale_info = exact_hvp.diagnostics();
-    const bool response_scale_is_affordable =
+    const bool full_response_scale_is_affordable =
         outer_response_scale_is_affordable(response_scale_info);
     const int transport_history_size =
         choose_truncated_newton_transport_history_size(options);
@@ -125,7 +146,7 @@ BackendRunResult run_truncated_newton_backend(
         &exact_hvp,
         current_space,
         packed_secant_history,
-        !response_scale_is_affordable && request_secant_correction
+        !full_response_scale_is_affordable && request_secant_correction
             ? transport_history_size
             : 0);
     const auto transported_preconditioner =
@@ -296,8 +317,12 @@ BackendRunResult run_truncated_newton_backend(
             std::chrono::steady_clock::now() - accepted_point_start_time)
             .count();
     const auto response_cost_info = exact_hvp.diagnostics();
+    const bool probe_scale_is_affordable =
+        one_outer_probe_fits_current_core_work(
+            response_cost_info,
+            exact_hvp.core_direction_count());
     const bool known_response_cost_is_affordable =
-        response_scale_is_affordable &&
+        probe_scale_is_affordable &&
         (!(last_outer_response_seconds > 0.0) ||
          last_outer_response_seconds <= core_candidate_wall_time_seconds);
     const bool certify_core_candidate =
@@ -354,7 +379,7 @@ BackendRunResult run_truncated_newton_backend(
       if ((!truncated_newton_step.model_kkt_converged ||
            !(truncated_newton_step.predicted_decrease > 0.0) ||
            !std::isfinite(truncated_newton_step.predicted_decrease)) &&
-          response_scale_is_affordable) {
+          full_response_scale_is_affordable) {
         use_full_hvp_for_current_point = true;
         active_hvp = &exact_hvp;
         cached_subspace = TruncatedNewtonSubspace();
@@ -430,13 +455,16 @@ BackendRunResult run_truncated_newton_backend(
       ++rejected_trial_step_count_for_current_point;
       request_outer_response = !outer_response_used_for_current_point;
       request_secant_correction =
-          request_secant_correction || !response_scale_is_affordable;
+          request_secant_correction || !full_response_scale_is_affordable;
       const double next_trust_radius =
           update_nonredundant_truncated_newton_trust_radius(
               trust_radius,
               options.minimum_step_size,
               trial_evaluation_cache,
               trial_step_for_current_trial,
+              candidate_has_exact_outer_response
+                  ? TruncatedNewtonModelFidelity::DirectionallyExact
+                  : TruncatedNewtonModelFidelity::CoreApproximate,
               false);
       const auto hvp_diagnostics = exact_hvp.diagnostics();
       result->matrix_free_hvp_direction_count += hvp_diagnostics.apply_count;
@@ -522,16 +550,20 @@ BackendRunResult run_truncated_newton_backend(
             options.minimum_step_size,
             trial_evaluation_cache,
             truncated_newton_step,
+            candidate_has_exact_outer_response
+                ? TruncatedNewtonModelFidelity::DirectionallyExact
+                : TruncatedNewtonModelFidelity::CoreApproximate,
             true);
     const bool boundary_globalization_progressed =
         truncated_newton_step.reached_boundary &&
         !truncated_newton_step.encountered_negative_curvature &&
         gradient_progressed &&
         next_trust_radius > trust_radius;
-    const bool continue_core_for_cost =
-        response_deferred_for_cost && gradient_progressed;
-    request_outer_response =
-        !boundary_globalization_progressed && !continue_core_for_cost;
+    // A deferred probe must not permanently suppress model validation.  Keep
+    // requesting it after an interior or radius-stagnating step; admission at
+    // the next point is still bounded by the measured core work available to
+    // amortize one outer direction.
+    request_outer_response = !boundary_globalization_progressed;
     TnhvpIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations;
     iteration_record.reduced_dimension = static_cast<int>(reduced_size);
@@ -582,10 +614,16 @@ BackendRunResult run_truncated_newton_backend(
           response_cost_info.estimated_core_pair_contraction_work;
     }
     iteration_record.response_scale_affordable =
-        response_scale_is_affordable;
+        full_response_scale_is_affordable;
     iteration_record.response_deferred_for_cost =
         response_deferred_for_cost;
     iteration_record.used_full_hvp = used_full_hvp_for_trial;
+    iteration_record.trust_model_error_order =
+        candidate_has_exact_outer_response ? 3 : 2;
+    iteration_record.subproblem_met_model_kkt =
+        truncated_newton_step.model_kkt_converged;
+    iteration_record.subproblem_stopped_by_work_budget =
+        stopped_by_subspace_work_budget(truncated_newton_step.stop_reason);
     iteration_record.forcing_term =
         inexact_newton_forcing_term(iteration_record.source_gradient_l2_norm);
     if (candidate_has_exact_outer_response &&

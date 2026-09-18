@@ -36,6 +36,8 @@ void write_tnhvp_trace(
       << "\tused_full_hvp"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
       << "\thas_kkt_residual\tkkt_relative_residual\tkkt_inf_norm"
+      << "\ttrust_model_error_order\tsubproblem_met_model_kkt"
+      << "\tsubproblem_stopped_by_work_budget"
       << "\tinitial_trust_radius\taccepted_trial_radius\tnext_trust_radius"
       << "\tstep_norm\tpredicted_decrease\tactual_decrease\ttrust_ratio"
       << "\tmodel_spectral_radius\ttrust_region_shift\treached_boundary"
@@ -69,6 +71,9 @@ void write_tnhvp_trace(
         << (step.has_kkt_residual ? 1 : 0) << '\t'
         << step.kkt_relative_residual << '\t'
         << step.kkt_inf_norm << '\t'
+        << step.trust_model_error_order << '\t'
+        << (step.subproblem_met_model_kkt ? 1 : 0) << '\t'
+        << (step.subproblem_stopped_by_work_budget ? 1 : 0) << '\t'
         << step.initial_trust_radius << '\t'
         << step.accepted_trial_radius << '\t'
         << step.next_trust_radius << '\t'

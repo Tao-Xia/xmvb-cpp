@@ -71,6 +71,14 @@ struct TruncatedNewtonTrialEvaluation {
   double predicted_decrease = 0.0;
 };
 
+/** @brief Local order of the error in the Hessian model used for a trial. */
+enum class TruncatedNewtonModelFidelity {
+  /** @brief A core/approximate Hessian leaves a quadratic model discrepancy. */
+  CoreApproximate,
+  /** @brief A full or directionally corrected Hessian has cubic remainder. */
+  DirectionallyExact,
+};
+
 struct RejectedTruncatedNewtonStepCache {
   Eigen::VectorXd cached_step;
 
@@ -151,6 +159,7 @@ double update_nonredundant_truncated_newton_trust_radius(
     double minimum_step_size,
     const TruncatedNewtonTrialEvaluation& trial,
     const TruncatedNewtonStepResult& model_step,
+    TruncatedNewtonModelFidelity model_fidelity,
     bool accepted);
 
 double estimate_nonredundant_reduced_model_decrease(

@@ -51,6 +51,21 @@ struct TnhvpIterationRecord {
   double kkt_relative_residual = 0.0;
   double kkt_inf_norm = 0.0;
 
+  /**
+   * @brief Leading order of the accepted trust model's local error.
+   *
+   * A core-only approximate Hessian has a quadratic model defect (2), while
+   * a directionally exact Hessian action leaves the cubic Taylor remainder
+   * (3).  The conservative default describes the core-only model.
+   */
+  int trust_model_error_order = 2;
+
+  /** Whether the accepted model subproblem satisfied its KKT certificate. */
+  bool subproblem_met_model_kkt = false;
+
+  /** Whether work limits stopped the accepted model subproblem first. */
+  bool subproblem_stopped_by_work_budget = false;
+
   double initial_trust_radius = 0.0;
   double accepted_trial_radius = 0.0;
   double next_trust_radius = 0.0;
