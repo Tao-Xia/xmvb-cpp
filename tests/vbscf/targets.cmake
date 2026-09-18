@@ -7,8 +7,11 @@
 set(_xmvb_vbscf_unit_targets
   test_active_two_electron_sparse
   test_cofactor_differential
+  test_coupled_newton_cauchy
   test_coupled_newton_operator
   test_coupled_newton_preconditioner
+  test_coupled_newton_defect
+  test_coupled_newton_spectral
   test_coupled_newton_subproblem
   test_curvature_decomposition
   test_davidson
@@ -46,6 +49,9 @@ if (BUILD_TESTING)
   add_test(NAME opposite_spin_pair_graph COMMAND test_opposite_spin_pair_graph)
   add_test(NAME orthogonal_direct_ci COMMAND test_orthogonal_direct_ci)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
+  add_test(NAME coupled_newton_cauchy COMMAND test_coupled_newton_cauchy)
+  set_tests_properties(coupled_newton_cauchy PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME coupled_newton_operator COMMAND test_coupled_newton_operator)
   set_tests_properties(coupled_newton_operator PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
@@ -53,6 +59,12 @@ if (BUILD_TESTING)
     NAME coupled_newton_preconditioner
     COMMAND test_coupled_newton_preconditioner)
   set_tests_properties(coupled_newton_preconditioner PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME coupled_newton_defect COMMAND test_coupled_newton_defect)
+  set_tests_properties(coupled_newton_defect PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME coupled_newton_spectral COMMAND test_coupled_newton_spectral)
+  set_tests_properties(coupled_newton_spectral PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME coupled_newton_subproblem COMMAND test_coupled_newton_subproblem)
   set_tests_properties(coupled_newton_subproblem PROPERTIES
