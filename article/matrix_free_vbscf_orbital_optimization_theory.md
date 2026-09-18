@@ -1714,32 +1714,6 @@ exact Newton model.  A cap derived from the largest Ritz magnitude can instead
 freeze the radius because of a stiff mode unrelated to the accepted boundary
 direction.
 
-For an accepted boundary step with positive directional curvature, model
-agreement alone must also not expand the radius past the minimum of the same
-directional quadratic.  From
-
-$$
-p_k=\ell_k-\frac12 q_k,
-\qquad
-q_k=\mathbf s_k^{\mathrm T}\mathbf B_k\mathbf s_k,
-$$
-
-the ray minimizer has scale $\alpha_k^{\mathrm{ray}}=\ell_k/q_k$.  The
-accepted-step update therefore additionally enforces
-
-$$
-\Delta_{k+1}
-\leq
-\lVert\mathbf s_k\rVert
-\max\left(1,\frac{\ell_k}{q_k}\right),
-\qquad q_k>0.
-$$
-
-No such upper bound is inferred when $q_k\leq0$; negative curvature remains a
-trust-region boundary event.  This directional cap prevents a nearly exact
-small-step energy prediction from authorizing an arbitrarily large radius
-jump at the next accepted point.
-
 ### 10.1 Coordinate-consistent local preconditioning model
 
 The inexpensive one-electron model used for preconditioning must be

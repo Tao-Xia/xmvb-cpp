@@ -128,25 +128,6 @@ void check_rejected_trial_interpolation() {
       std::abs(positive_decrease_radius - 0.3125) <= 1.0e-14,
       "rejected overpredicting trial did not minimize its measured ray model");
 }
-
-void check_accepted_radius_ray_cap() {
-  using xmvb::vb::TruncatedNewtonModelFidelity;
-  xmvb::vb::TruncatedNewtonStepResult boundary_step;
-  boundary_step.retract_tangent_norm = 0.5;
-  boundary_step.reached_boundary = true;
-
-  const double radius =
-      xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
-          0.5,
-          1.0e-12,
-          {0.9001, 0.9, 1.0},
-          boundary_step,
-          TruncatedNewtonModelFidelity::CoreApproximate,
-          true);
-  require(
-      std::abs(radius - 2.5) <= 1.0e-12,
-      "accepted-step expansion exceeded its directional quadratic minimizer");
-}
 }  // namespace
 
 int main() {
@@ -174,7 +155,6 @@ int main() {
         "energy-increasing trial was accepted");
     check_model_fidelity_radius_scaling();
     check_rejected_trial_interpolation();
-    check_accepted_radius_ray_cap();
     check("positive definite interior", V(2, 4), V(1, 2), 2, false);
     check("positive definite boundary", V(2, 4), V(1, 2), 0.1, true);
     check("zero-multiplier boundary", V(2, 4), V(2, 0), 1, true);

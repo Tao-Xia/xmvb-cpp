@@ -581,28 +581,8 @@ double update_nonredundant_truncated_newton_trust_radius(
   const double resolved_error = std::max(model_error, roundoff);
   const double radius_scale =
       scale_model_error_ratio(trial.actual_decrease / resolved_error);
-  double candidate_radius =
+  const double candidate_radius =
       step_norm * std::max(1.0, radius_scale);
-  // Agreement on one boundary step does not justify expanding beyond the
-  // minimizer of that direction's own quadratic model. Recover its curvature
-  // from p = l - q/2, where l=-g^T s and q=s^T B s. This cap is local to the
-  // sampled direction and leaves negative-curvature directions uncapped.
-  if (trial.linear_decrease > 0.0 &&
-      std::isfinite(trial.linear_decrease)) {
-    const double directional_curvature =
-        2.0 * (trial.linear_decrease - trial.predicted_decrease);
-    if (directional_curvature > 0.0 &&
-        std::isfinite(directional_curvature)) {
-      const double ray_minimizer_scale =
-          trial.linear_decrease / directional_curvature;
-      if (ray_minimizer_scale > 0.0 &&
-          std::isfinite(ray_minimizer_scale)) {
-        candidate_radius = std::min(
-            candidate_radius,
-            step_norm * std::max(1.0, ray_minimizer_scale));
-      }
-    }
-  }
   if (!(candidate_radius > 0.0) || !std::isfinite(candidate_radius)) {
     return safe_radius_update();
   }
