@@ -114,6 +114,8 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/coupled/model_reduction.cpp
   vbscf/optimization/coupled/operator.cpp
   vbscf/optimization/coupled/preconditioner.cpp
+  vbscf/optimization/coupled/projection_cache.cpp
+  vbscf/optimization/coupled/projected_model.cpp
   vbscf/optimization/coupled/projected_trust.cpp
   vbscf/optimization/coupled/spectral.cpp
   vbscf/optimization/krylov/minres.cpp

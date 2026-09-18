@@ -11,6 +11,8 @@ set(_xmvb_vbscf_unit_targets
   test_coupled_newton_model_reduction
   test_coupled_newton_operator
   test_coupled_newton_preconditioner
+  test_coupled_projection_cache
+  test_coupled_projected_model
   test_coupled_projected_trust
   test_coupled_newton_defect
   test_coupled_newton_spectral
@@ -65,6 +67,12 @@ if (BUILD_TESTING)
     NAME coupled_newton_preconditioner
     COMMAND test_coupled_newton_preconditioner)
   set_tests_properties(coupled_newton_preconditioner PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME coupled_projection_cache COMMAND test_coupled_projection_cache)
+  set_tests_properties(coupled_projection_cache PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME coupled_projected_model COMMAND test_coupled_projected_model)
+  set_tests_properties(coupled_projected_model PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME coupled_projected_trust COMMAND test_coupled_projected_trust)
   set_tests_properties(coupled_projected_trust PROPERTIES
