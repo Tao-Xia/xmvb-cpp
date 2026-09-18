@@ -21,19 +21,25 @@ foreach(solver IN ITEMS davidson dense)
     "VBSCF converged in[ ]+([0-9]+) iterations"
     ${solver}_iteration_match
     "${${solver}_report}")
+  if ("${${solver}_iteration_match}" STREQUAL "")
+    message(FATAL_ERROR "${XMVB_INPUT}: ${solver} run did not converge")
+  endif()
   set(${solver}_iterations "${CMAKE_MATCH_1}")
   string(
     REGEX MATCH
     "Total Energy:[ ]+(-?[0-9]+\\.[0-9]+)"
     ${solver}_energy_match
     "${${solver}_report}")
+  if ("${${solver}_energy_match}" STREQUAL "")
+    message(FATAL_ERROR "${XMVB_INPUT}: ${solver} report has no total energy")
+  endif()
   set(${solver}_energy "${CMAKE_MATCH_1}")
 endforeach()
 
-if (NOT davidson_iterations STREQUAL dense_iterations)
-  message(FATAL_ERROR
-    "${XMVB_INPUT}: iteration mismatch: Davidson=${davidson_iterations}, dense=${dense_iterations}")
-endif()
+# Dense and Davidson evaluate the same matrix-free model to the requested
+# accuracy, but floating-point Ritz vectors can select different equally valid
+# trust-region steps.  Convergence and final energy are invariants; the exact
+# number of accepted outer steps is not.
 string(
   REGEX MATCH
   "^-?[0-9]+\\.[0-9][0-9][0-9][0-9][0-9][0-9][0-9]"

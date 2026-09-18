@@ -67,14 +67,6 @@ struct VbScfOptimizerOptions {
   int history_size = 100;
 
   /**
-   * @brief Maximum Krylov iterations for the nonredundant truncated-Newton backend.
-   *
-   * Each inner iteration requests one matrix-free reduced Hessian-vector product.
-   * A value of `0` uses the dimension-bounded safety limit of 32 iterations.
-   */
-  int tnhvp_max_subspace_dimension = 0;
-
-  /**
    * @brief Number of transported secant pairs used to enrich the TN preconditioner.
    *
    * A value of `0` disables transported secants and uses only the reduced

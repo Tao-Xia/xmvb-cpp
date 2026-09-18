@@ -96,17 +96,20 @@ endif()
 set(required_tnhvp_patterns
   "\"tnhvp\""
   "\"reduced_dimension\": 42"
-  "\"subspace_dimension\": [1-9][0-9]*"
-  "\"hvp_direction_count\": [1-9][0-9]*"
+  "\"coupled_orbital_subspace_dimension\": [1-9][0-9]*"
+  "\"coupled_response_subspace_dimension\": [1-9][0-9]*"
+  "\"coupled_orbital_hessian_block_actions\": [1-9][0-9]*"
+  "\"coupled_orbital_to_response_block_actions\": [1-9][0-9]*"
+  "\"coupled_response_to_orbital_block_actions\": [1-9][0-9]*"
+  "\"coupled_response_hessian_block_actions\": [1-9][0-9]*"
+  "\"coupled_orbital_metric_block_actions\": [1-9][0-9]*"
+  "\"preconditioner_history_size\": [0-9]+"
+  "\"outer_iteration_wall_time_seconds\": [0-9]"
   "\"source_gradient_l2_norm\""
   "\"accepted_gradient_l2_norm\""
   "\"forcing_term\""
-  "\"has_kkt_residual\": (true|false)"
-  "\"trust_model_error_order\": [23]"
-  "\"subproblem_met_model_kkt\": (true|false)"
-  "\"subproblem_stopped_by_work_budget\": (true|false)"
-  "\"response_probe_performed\""
-  "\"used_full_hvp\""
+  "\"orbital_backward_error\""
+  "\"response_backward_error\""
   "\"initial_trust_radius\""
   "\"accepted_trial_radius\""
   "\"next_trust_radius\""
@@ -114,7 +117,8 @@ set(required_tnhvp_patterns
   "\"predicted_decrease\""
   "\"actual_decrease\""
   "\"trust_ratio\""
-  "\"model_spectral_radius\""
+  "\"minimum_ritz_value\""
+  "\"minimum_shifted_ritz_value\""
   "\"trust_region_shift\""
   "\"encountered_negative_curvature\""
   "\"reused_subspace\"")
@@ -126,15 +130,32 @@ foreach(pattern IN LISTS required_tnhvp_patterns)
   endif()
 endforeach()
 
+foreach(retired_field IN ITEMS
+    "hvp_direction_count"
+    "core_hvp_direction_count"
+    "response_probe_performed"
+    "response_scale_affordable"
+    "used_full_hvp"
+    "kkt_relative_residual"
+    "model_spectral_radius")
+  if (first_step_json MATCHES "\"${retired_field}\"")
+    message(FATAL_ERROR
+      "F2 TNHVP trace retained obsolete field: ${retired_field}")
+  endif()
+endforeach()
+
 if (NOT EXISTS "${tnhvp_trace}")
   message(FATAL_ERROR "F2 lightweight TNHVP trace was not written")
 endif()
 file(READ "${tnhvp_trace}" tnhvp_table)
 if (NOT tnhvp_table MATCHES "^iteration" OR
     NOT tnhvp_table MATCHES "reduced_dimension" OR
-    NOT tnhvp_table MATCHES "trust_model_error_order" OR
-    NOT tnhvp_table MATCHES "subproblem_met_model_kkt" OR
-    NOT tnhvp_table MATCHES "subproblem_stopped_by_work_budget" OR
+    NOT tnhvp_table MATCHES "coupled_orbital_subspace_dimension" OR
+    NOT tnhvp_table MATCHES "coupled_response_subspace_dimension" OR
+    NOT tnhvp_table MATCHES "coupled_orbital_hessian_block_actions" OR
+    NOT tnhvp_table MATCHES "orbital_backward_error" OR
+    NOT tnhvp_table MATCHES "response_backward_error" OR
+    NOT tnhvp_table MATCHES "minimum_shifted_ritz_value" OR
     NOT tnhvp_table MATCHES "reused_subspace")
   message(FATAL_ERROR "F2 lightweight TNHVP trace has an invalid header")
 endif()
@@ -142,20 +163,6 @@ if (NOT tnhvp_table MATCHES "\n1" OR NOT tnhvp_table MATCHES "42")
   message(FATAL_ERROR "F2 lightweight TNHVP trace is missing its first step")
 endif()
 
-# F2 has an inexpensive outer-response space.  Its late Newton steps must
-# exercise the exact-HVP subproblem path after a core-model KKT failure; this
-# guards against silently reducing all systems to one sampled response image.
-file(GLOB accepted_metadata
-  "${XMVB_TRACE_ROOT}/F2/steps/step_*/metadata.json")
-set(found_full_hvp false)
-foreach(metadata_path IN LISTS accepted_metadata)
-  file(READ "${metadata_path}" metadata_json)
-  if (metadata_json MATCHES "\"used_full_hvp\": true")
-    set(found_full_hvp true)
-    break()
-  endif()
-endforeach()
-if (NOT found_full_hvp)
-  message(FATAL_ERROR
-    "F2 never entered the affordable exact-HVP subproblem path")
-endif()
+# The production TNHVP path is now the coupled orbital--structure workspace.
+# Its independently counted A/B/B^T/C/G actions above guard against silently
+# reverting to the retired orbital-only HVP admission path.

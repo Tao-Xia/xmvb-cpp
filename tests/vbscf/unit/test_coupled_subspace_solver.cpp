@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 
@@ -222,6 +223,69 @@ int main() {
     require(uncoupled.converged() && uncoupled.response_step.size() == 3 &&
                 uncoupled.response_step.isZero(0.0),
             "valid orbital-only coupled problem required a response basis");
+
+    Eigen::Matrix4d resolution_a;
+    resolution_a << 3.0, 0.4, -0.2, 0.1,
+                    0.4, 2.0, 0.3, -0.2,
+                   -0.2, 0.3, 1.5, 0.25,
+                    0.1, -0.2, 0.25, 1.2;
+    Eigen::Matrix4d resolution_g;
+    // The small leading metric scale deliberately exposes the accumulated
+    // roundoff from Schur elimination, metric whitening, and the eigensolve.
+    // The metric remains positive definite and the coupled problem is valid.
+    resolution_g << 1.0e-14, 2.0e-9, 0.0, 0.0,
+                    2.0e-9, 1.0, 0.1, 0.0,
+                    0.0, 0.1, 2.0, 0.2,
+                    0.0, 0.0, 0.2, 1.5;
+    Eigen::Matrix<double, 3, 4> resolution_b;
+    resolution_b << 0.2, -0.1, 0.05, 0.1,
+                    0.1, 0.15, -0.2, 0.05,
+                   -0.05, 0.1, 0.1, -0.15;
+    Eigen::Matrix3d resolution_c;
+    resolution_c << 1.0, 0.1, 0.0,
+                    0.1, 1.5, 0.2,
+                    0.0, 0.2, 2.0;
+    const xmvb::vb::CoupledNewtonOperator resolution_operator(
+        4,
+        xmvb::vb::SelectedSubspaceResponseLayout(
+            2,
+            {xmvb::vb::SelectedStateCluster{1, 0.5}}),
+        xmvb::vb::CoupledNewtonActions{
+            [resolution_a](const auto& x) {
+              return (resolution_a * x).eval();
+            },
+            [resolution_b](const auto& x) {
+              return (resolution_b * x).eval();
+            },
+            [resolution_b](const auto& x) {
+              return (resolution_b.transpose() * x).eval();
+            },
+            [resolution_c](const auto& x) {
+              return (resolution_c * x).eval();
+            },
+            [resolution_g](const auto& x) {
+              return (resolution_g * x).eval();
+            }});
+    xmvb::vb::CoupledSubspaceSolver resolution_solver(
+        resolution_operator,
+        Eigen::Vector4d(0.3, -0.2, 0.1, -0.05),
+        Eigen::Vector3d(0.1, -0.08, 0.04));
+    resolution_solver.append_orbital_block(Eigen::Matrix4d::Identity());
+    resolution_solver.append_response_block(Eigen::Matrix3d::Identity());
+    const auto resolution =
+        resolution_solver.solve(1.0, {1.0, 1.0});
+    require(resolution.converged(),
+            "valid composed projected solve was rejected as numerical failure");
+    const double projected_error = resolution.projected.orbital_solution
+        .stationarity_backward_error;
+    const double strict_roundoff =
+        256.0 * std::numeric_limits<double>::epsilon() * 4.0;
+    const double composed_resolution =
+        std::sqrt(std::numeric_limits<double>::epsilon()) * 4.0;
+    require(projected_error > strict_roundoff,
+            "resolution fixture no longer distinguishes a dot-product bound");
+    require(projected_error < composed_resolution,
+            "composed projected solve exceeds its numerical resolution");
 
     std::cout << "two-space coupled Newton coordinator: passed\n";
     return 0;

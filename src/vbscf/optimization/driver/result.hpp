@@ -24,56 +24,25 @@ namespace xmvb::vb {
 struct TnhvpIterationRecord {
   int accepted_iteration_index = 0;
   int reduced_dimension = 0;
-  int subspace_dimension = 0;
-  int secant_correction_size = 0;
+  int coupled_orbital_subspace_dimension = 0;
+  int coupled_response_subspace_dimension = 0;
+  int coupled_expansion_count = 0;
+  std::size_t coupled_orbital_hessian_block_actions = 0;
+  std::size_t coupled_orbital_to_response_block_actions = 0;
+  std::size_t coupled_response_to_orbital_block_actions = 0;
+  std::size_t coupled_response_hessian_block_actions = 0;
+  std::size_t coupled_orbital_metric_block_actions = 0;
+  int preconditioner_history_size = 0;
   int rejected_trial_count = 0;
 
-  std::size_t hvp_direction_count = 0;
-  std::size_t hvp_batch_count = 0;
-  std::size_t core_hvp_direction_count = 0;
-  std::size_t outer_response_direction_count = 0;
-  std::size_t subproblem_count = 0;
-  double hvp_wall_time_seconds = 0.0;
-  double outer_response_wall_time_seconds = 0.0;
-  double response_active_integral_wall_time_seconds = 0.0;
-  double response_structure_matrix_wall_time_seconds = 0.0;
-  double response_eigensystem_wall_time_seconds = 0.0;
-  double response_active_gradient_wall_time_seconds = 0.0;
-  double response_orbital_pullback_wall_time_seconds = 0.0;
-  double requested_response_relative_residual_tolerance = 0.0;
-  std::size_t structure_response_block_actions = 0;
-  int max_structure_response_iterations = 0;
-  double max_structure_response_relative_residual = 0.0;
+  double outer_iteration_wall_time_seconds = 0.0;
   double gradient_log_progress_per_second = 0.0;
-  bool used_outer_response = false;
-  bool response_probe_performed = false;
-  double response_probe_relative_residual = 0.0;
-  double response_work_ratio = 0.0;
-  bool response_scale_affordable = false;
-  bool response_deferred_for_cost = false;
-  bool used_full_hvp = false;
 
   double source_gradient_l2_norm = 0.0;
   double accepted_gradient_l2_norm = 0.0;
   double forcing_term = 0.0;
-  bool has_kkt_residual = false;
-  double kkt_relative_residual = 0.0;
-  double kkt_inf_norm = 0.0;
-
-  /**
-   * @brief Leading order of the accepted trust model's local error.
-   *
-   * A core-only approximate Hessian has a quadratic model defect (2), while
-   * a directionally exact Hessian action leaves the cubic Taylor remainder
-   * (3).  The conservative default describes the core-only model.
-   */
-  int trust_model_error_order = 2;
-
-  /** Whether the accepted model subproblem satisfied its KKT certificate. */
-  bool subproblem_met_model_kkt = false;
-
-  /** Whether work limits stopped the accepted model subproblem first. */
-  bool subproblem_stopped_by_work_budget = false;
+  double orbital_backward_error = 0.0;
+  double response_backward_error = 0.0;
 
   double initial_trust_radius = 0.0;
   double accepted_trial_radius = 0.0;
@@ -84,7 +53,8 @@ struct TnhvpIterationRecord {
   double predicted_decrease = 0.0;
   double actual_decrease = 0.0;
   double trust_ratio = 0.0;
-  double model_spectral_radius = 0.0;
+  double minimum_ritz_value = 0.0;
+  double minimum_shifted_ritz_value = 0.0;
   double trust_region_shift = 0.0;
 
   bool reached_boundary = false;
@@ -272,31 +242,6 @@ struct VbScfOptimizerResult {
    * @brief Total wall-clock optimization time in seconds.
    */
   double total_wall_time_seconds = 0.0;
-
-  /** Number of reduced directions evaluated by the matrix-free Hessian. */
-  std::size_t matrix_free_hvp_direction_count = 0;
-
-  /** Number of block-HVP calls (each may contain multiple directions). */
-  std::size_t matrix_free_hvp_batch_count = 0;
-
-  /** Number of inexpensive core HVP directions used by TNHVP. */
-  std::size_t matrix_free_core_hvp_direction_count = 0;
-
-  /** Number of exact outer-response directions sampled by TNHVP. */
-  std::size_t matrix_free_outer_response_direction_count = 0;
-
-  /** Fresh HVP-subspace solves; same-point cached-radius retries are excluded. */
-  std::size_t matrix_free_subproblem_count = 0;
-  /** Fresh subspace solves whose trust-region solution is interior. */
-  std::size_t matrix_free_interior_subproblem_count = 0;
-  /** Interior solves passing a post-hoc full 2-norm Newton residual check. */
-  std::size_t matrix_free_residual_converged_count = 0;
-
-  /** Wall time spent inside exact reduced Hessian actions. */
-  double matrix_free_hvp_wall_time_seconds = 0.0;
-
-  /** Wall time spent in exact outer-response actions. */
-  double matrix_free_outer_response_wall_time_seconds = 0.0;
 
   /** Lightweight per-accepted-step diagnostics for the TNHVP backend. */
   std::vector<TnhvpIterationRecord> tnhvp_iteration_trace;

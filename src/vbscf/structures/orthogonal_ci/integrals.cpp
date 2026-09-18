@@ -351,7 +351,8 @@ backpropagate_orthogonal_active_integral_adjoint(
   result.overlap =
       inverse_transform * normalized_overlap_gradient *
       inverse_transform.transpose();
-  result.overlap = 0.5 * (result.overlap + result.overlap.transpose());
+  result.overlap =
+      (0.5 * (result.overlap + result.overlap.transpose())).eval();
   return result;
 }
 
@@ -475,7 +476,8 @@ backpropagate_orthogonal_active_integral_adjoint_direction(
           inverse_transform.transpose() +
       inverse_transform * normalized_overlap_gradient *
           inverse_transform_direction.transpose();
-  result.overlap = 0.5 * (result.overlap + result.overlap.transpose());
+  result.overlap =
+      (0.5 * (result.overlap + result.overlap.transpose())).eval();
   return result;
 }
 

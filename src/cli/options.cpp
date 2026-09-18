@@ -109,7 +109,6 @@ void print_usage() {
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
                "\n"
-               " [--tnhvp-max-subspace-dimension <count|0=32>]"
                " [--nonredundant-truncated-newton-transport-history-size <count>]"
                " [--standard-two-electron-mode auto|exact|ri]"
                " [--skip-orbital-guess true|false]"
@@ -172,9 +171,6 @@ std::optional<Options> parse_options(int argc, char** argv) {
         options.gradient_tolerance = std::stod(argument_value);
       } else if (argument_name == "--energy-tolerance") {
         options.energy_tolerance = std::stod(argument_value);
-      } else if (argument_name == "--tnhvp-max-subspace-dimension") {
-        options.tnhvp_max_subspace_dimension =
-            std::stoi(argument_value);
       } else if (
           argument_name ==
           "--nonredundant-truncated-newton-transport-history-size") {

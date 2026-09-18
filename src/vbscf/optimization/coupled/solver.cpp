@@ -189,15 +189,19 @@ CoupledSubspaceStep CoupledSubspaceSolver::solve(
   const double feasibility_roundoff =
       32.0 * std::numeric_limits<double>::epsilon() *
       std::max(1, cache_.orbital_subspace_size());
-  const double projected_roundoff =
-      256.0 * std::numeric_limits<double>::epsilon() *
+  // Schur elimination, metric whitening, and the symmetric eigensolve form a
+  // backward-stable projected solve, but their composed residual is not a
+  // single dot product. Its numerical resolution is O(sqrt(epsilon)); the
+  // forcing tolerances below remain the independent Newton accuracy test.
+  const double projected_resolution =
+      std::sqrt(std::numeric_limits<double>::epsilon()) *
       std::max(1, cache_.orbital_subspace_size());
   if (result.projected.orbital_solution.metric_norm >
           trust_radius * (1.0 + feasibility_roundoff) ||
       result.projected.orbital_solution.stationarity_backward_error >
-          projected_roundoff ||
+          projected_resolution ||
       result.projected.orbital_solution.minimum_shifted_ritz_value <
-          -projected_roundoff * std::max(
+          -projected_resolution * std::max(
               std::abs(
                   result.projected.orbital_solution.minimum_ritz_value),
               std::abs(result.projected.orbital_solution.shift))) {

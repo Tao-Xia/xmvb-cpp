@@ -177,22 +177,17 @@ void print_tnhvp_summary(
   print_log_subsection_title("TNHVP Matrix-Free Newton");
   print_log_field(
       "Hessian model",
-      "core_plus_adaptive_secant_with_bounded_outer_certificates");
+      "matrix-free coupled orbital-structure Newton");
   print_log_field(
-      "Outer-response admission",
-      "unique-string/core work + measured wall time");
+      "Inner completion",
+      "full orbital/structure KKT backward errors");
   print_log_field(
       "Inexact Newton forcing",
       "adaptive sqrt(projected gradient 2-norm)");
   print_log_field(
       "Trust-radius update",
-      "Ritz spectrum + observed model remainder");
-  print_log_field(
-      "Subspace safety limit",
-      options.tnhvp_max_subspace_dimension > 0
-          ? std::to_string(
-                options.tnhvp_max_subspace_dimension)
-          : "32");
+      "projected spectrum + observed model remainder");
+  print_log_field("Subspace work limit", "algebraic completion");
   print_log_field(
       "Transport history",
       std::to_string(
@@ -401,32 +396,66 @@ void print_summary(
   if (options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     if (!result.tnhvp_iteration_trace.empty()) {
+      std::size_t orbital_hessian_actions = 0;
+      std::size_t orbital_to_response_actions = 0;
+      std::size_t response_to_orbital_actions = 0;
+      std::size_t response_hessian_actions = 0;
+      std::size_t orbital_metric_actions = 0;
+      int expansion_count = 0;
+      int rejected_trial_count = 0;
+      double outer_iteration_seconds = 0.0;
+      for (const auto& step : result.tnhvp_iteration_trace) {
+        orbital_hessian_actions +=
+            step.coupled_orbital_hessian_block_actions;
+        orbital_to_response_actions +=
+            step.coupled_orbital_to_response_block_actions;
+        response_to_orbital_actions +=
+            step.coupled_response_to_orbital_block_actions;
+        response_hessian_actions +=
+            step.coupled_response_hessian_block_actions;
+        orbital_metric_actions +=
+            step.coupled_orbital_metric_block_actions;
+        expansion_count += step.coupled_expansion_count;
+        rejected_trial_count += step.rejected_trial_count;
+        outer_iteration_seconds += step.outer_iteration_wall_time_seconds;
+      }
+      const auto& final_step = result.tnhvp_iteration_trace.back();
       print_log_field(
           "Final nonredundant dimension",
-          std::to_string(result.tnhvp_iteration_trace.back().reduced_dimension));
+          std::to_string(final_step.reduced_dimension));
+      print_log_field(
+          "Final coupled V/W dimensions",
+          std::to_string(final_step.coupled_orbital_subspace_dimension) + " / " +
+              std::to_string(final_step.coupled_response_subspace_dimension));
+      print_log_field(
+          "Coupled subspace expansions",
+          std::to_string(expansion_count));
+      print_log_field(
+          "Coupled orbital Hessian block actions",
+          std::to_string(orbital_hessian_actions));
+      print_log_field(
+          "Coupled orbital-response block actions",
+          std::to_string(orbital_to_response_actions));
+      print_log_field(
+          "Coupled response-orbital block actions",
+          std::to_string(response_to_orbital_actions));
+      print_log_field(
+          "Coupled response Hessian block actions",
+          std::to_string(response_hessian_actions));
+      print_log_field(
+          "Coupled orbital metric block actions",
+          std::to_string(orbital_metric_actions));
+      print_log_field(
+          "Rejected trust trials",
+          std::to_string(rejected_trial_count));
+      print_log_field(
+          "Final coupled backward errors",
+          format_scientific_double(final_step.orbital_backward_error, 4) + " / " +
+              format_scientific_double(final_step.response_backward_error, 4));
+      print_log_field(
+          "Coupled outer iteration wall",
+          format_seconds(outer_iteration_seconds));
     }
-    print_log_field(
-        "Matrix-free HVP directions",
-        std::to_string(result.matrix_free_hvp_direction_count));
-    print_log_field(
-        "Block-HVP calls",
-        std::to_string(result.matrix_free_hvp_batch_count));
-    print_log_field(
-        "Core HVP directions",
-        std::to_string(result.matrix_free_core_hvp_direction_count));
-    print_log_field(
-        "Outer-response directions",
-        std::to_string(result.matrix_free_outer_response_direction_count));
-    print_log_field(
-        "Interior Newton solves at target",
-        std::to_string(result.matrix_free_residual_converged_count) + " / " +
-              std::to_string(result.matrix_free_interior_subproblem_count));
-    print_log_field(
-        "Matrix-free HVP wall time",
-        format_seconds(result.matrix_free_hvp_wall_time_seconds));
-    print_log_field(
-        "Outer-response wall time",
-        format_seconds(result.matrix_free_outer_response_wall_time_seconds));
   }
   print_tnhvp_summary(options, input);
   print_log_subsection_title("Timing Breakdown (Wall Time)");

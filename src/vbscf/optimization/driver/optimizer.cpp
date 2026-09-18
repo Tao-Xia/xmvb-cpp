@@ -108,10 +108,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
   if (options_.history_size <= 0) {
     throw std::invalid_argument("history_size must be positive");
   }
-  if (options_.tnhvp_max_subspace_dimension < 0) {
-    throw std::invalid_argument(
-        "tnhvp_max_subspace_dimension must be nonnegative");
-  }
   if (options_.nonredundant_truncated_newton_transport_history_size < 0) {
     throw std::invalid_argument(
         "nonredundant_truncated_newton_transport_history_size must be nonnegative");

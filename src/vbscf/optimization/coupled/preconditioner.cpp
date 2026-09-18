@@ -48,7 +48,7 @@ Eigen::MatrixXd regularized_spd_inverse(
   Eigen::MatrixXd inverse =
       solver.eigenvectors() * inverse_eigenvalues.asDiagonal() *
       solver.eigenvectors().transpose();
-  inverse = 0.5 * (inverse + inverse.transpose());
+  inverse = (0.5 * (inverse + inverse.transpose())).eval();
   if (!inverse.allFinite()) {
     throw std::runtime_error(
         "structure-response Schur inverse is non-finite");

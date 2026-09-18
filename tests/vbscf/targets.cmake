@@ -33,7 +33,6 @@ set(_xmvb_vbscf_unit_targets
   test_reduced_hessian_reference
   test_ri_ao_h1e_hvp
   test_ri_active_two_electron_response
-  test_secant_hvp
   test_sparse_orbital_quotient
   test_support_preserving_gauge
   test_spectral_trust_region
@@ -151,9 +150,6 @@ if (BUILD_TESTING)
     NAME ri_active_two_electron_response
     COMMAND test_ri_active_two_electron_response)
   set_tests_properties(ri_active_two_electron_response PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME secant_hvp COMMAND test_secant_hvp)
-  set_tests_properties(secant_hvp PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME sparse_orbital_quotient COMMAND test_sparse_orbital_quotient)
   set_tests_properties(sparse_orbital_quotient PROPERTIES

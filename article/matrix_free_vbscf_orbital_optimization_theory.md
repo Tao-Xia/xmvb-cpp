@@ -3712,6 +3712,73 @@ Repeated solves at new trust radii reuse all five cached image blocks and
 therefore require zero additional matrix-free actions unless the new solution
 itself exposes an unresolved full-space residual.
 
+### 11.7 Production coupled solve and numerical certificates
+
+The production `iscf=7` path now applies the two-space construction of
+Section 11.6 directly.  It does not first solve an orbital-only Krylov problem,
+does not admit or defer an outer-response correction, and does not switch to a
+core-only fallback.  The accepted-point objects are ordered as
+
+$$
+\text{orbital metric}
+\longrightarrow
+\text{orbital preconditioner}
+\longrightarrow
+\text{exact block operator}
+\longrightarrow
+\text{coupled workspace}.
+$$
+
+A rejected trial changes only the trust radius and retains this workspace.  An
+accepted trial destroys the workspace and every callback referring to the old
+chart before committing the new orbital point.  This lifetime ordering is
+required because the matrix-free block actions are accepted-point operators.
+
+Both full-space backward errors are compared with the same local inexact-Newton
+forcing value,
+
+$$
+\eta_k
+=
+\min\!\left(
+\frac12,
+\max\!\left(10^{-3},\sqrt{\|\mathbf g_k\|_2}\right)
+\right),
+$$
+
+and a step is returned only if
+
+$$
+\eta_p\leq\eta_k,
+\qquad
+\eta_q\leq\eta_k.
+$$
+
+There is no default iteration or subspace cap.  The only intrinsic upper bound
+is algebraic completion of the orbital and response coordinate spaces.  An
+optional external work limit, if supplied by a future resource policy, must
+terminate with an unresolved-work status and cannot authorize a trial step.
+
+This Newton certificate is distinct from the numerical certificate of the
+small projected solve.  Schur elimination, metric whitening, and the symmetric
+eigensolve compose several backward-stable transformations.  Consequently,
+requiring their recomputed stationarity residual to be of the order of a
+single dot-product roundoff can reject a valid solution.  For projected
+orbital dimension `m_V`, the implementation uses the numerical resolution
+
+$$
+\tau_{\mathrm{proj}}
+=
+m_V\sqrt{\epsilon_{\mathrm{mach}}}
+$$
+
+only to distinguish a finite projected solution from numerical failure.  It
+does not replace or relax the two full-space Newton tests above.  This
+distinction is important for full-AO OEO coordinates: a recomputed projected
+backward error of approximately `1e-12` is numerically resolved and far more
+accurate than the outer forcing requirement, even though it need not reach the
+single-operation roundoff scale.
+
 ## 12. Verification requirements
 
 A revised implementation should satisfy the following system-independent tests.

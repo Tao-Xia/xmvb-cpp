@@ -1,27 +1,20 @@
 #include "vbscf/optimization/backends/truncated_newton.hpp"
 
 #include <algorithm>
-#include <cassert>
-#include <cerrno>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
-#include <cstring>
-#include <iomanip>
-#include <limits>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
 #include "vbscf/optimization/globalization/line_search.hpp"
+#include "vbscf/optimization/coupled/workspace.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/optimization/driver/session.hpp"
 #include "vbscf/optimization/driver/types.hpp"
 #include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
-#include "vbscf/optimization/objective/reduced_hvp.hpp"
-#include "vbscf/optimization/objective/secant_hvp.hpp"
+#include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/optimization/trust_region/truncated_newton.hpp"
 #include "vbscf/optimization/objective/function.hpp"
@@ -30,27 +23,6 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb::optimizer_detail {
-namespace {
-
-bool one_outer_probe_fits_current_core_work(
-    const ExactHvpOperator::Diagnostics& diagnostics,
-    std::size_t core_direction_count) {
-  if (!(diagnostics.estimated_outer_string_contraction_work > 0.0) ||
-      !(diagnostics.estimated_core_pair_contraction_work > 0.0) ||
-      core_direction_count == 0) {
-    return false;
-  }
-  return diagnostics.estimated_outer_string_contraction_work <=
-      diagnostics.estimated_core_pair_contraction_work *
-          static_cast<double>(core_direction_count);
-}
-
-bool stopped_by_subspace_work_budget(TruncatedNewtonStopReason reason) {
-  return reason == TruncatedNewtonStopReason::SubspaceLimit ||
-      reason == TruncatedNewtonStopReason::InteriorPilotLimit;
-}
-
-}  // namespace
 
 BackendRunResult run_truncated_newton_backend(
     VbScfObjective* objective,
@@ -61,7 +33,6 @@ BackendRunResult run_truncated_newton_backend(
     double initial_energy,
     VbScfOptimizerResult* result) {
   BackendRunResult run_result;
-  const int dimension = static_cast<int>(initial_parameters.size());
   double energy = initial_energy;
   double previous_energy = initial_energy;
   Eigen::VectorXd current_parameters = initial_parameters;
@@ -82,33 +53,14 @@ BackendRunResult run_truncated_newton_backend(
   double trust_radius =
       std::max(options.minimum_step_size, options.initial_step_size);
   int rejected_trial_step_count_for_current_point = 0;
-  RejectedTruncatedNewtonStepCache rejected_step_cache;
-  TruncatedNewtonSubspace cached_subspace;
-  bool request_outer_response = false;
-  bool request_secant_correction = false;
-  bool secant_correction_built_for_current_point = false;
-  SymmetricSecantCorrection accepted_point_secant_correction;
-  std::unique_ptr<ExactReducedHvp> accepted_point_hvp;
+  std::shared_ptr<ExactHvpOperator> accepted_point_operator;
   std::unique_ptr<TransportedReducedLbfgsPreconditioner>
       accepted_point_preconditioner;
   std::unique_ptr<NonredundantRetractionMetric> accepted_point_metric;
-  bool use_full_hvp_for_current_point = false;
-  bool outer_response_used_for_current_point = false;
+  std::unique_ptr<AcceptedPointCoupledWorkspace>
+      accepted_point_coupled_workspace;
+  int coupled_expansions_for_current_point = 0;
   double initial_trust_radius_for_current_point = trust_radius;
-  std::size_t initial_hvp_direction_count_for_current_point =
-      result->matrix_free_hvp_direction_count;
-  std::size_t initial_hvp_batch_count_for_current_point =
-      result->matrix_free_hvp_batch_count;
-  std::size_t initial_subproblem_count_for_current_point =
-      result->matrix_free_subproblem_count;
-  double initial_hvp_wall_time_for_current_point =
-      result->matrix_free_hvp_wall_time_seconds;
-  std::size_t initial_core_hvp_direction_count_for_current_point =
-      result->matrix_free_core_hvp_direction_count;
-  std::size_t initial_outer_response_direction_count_for_current_point =
-      result->matrix_free_outer_response_direction_count;
-  double initial_outer_response_wall_time_for_current_point =
-      result->matrix_free_outer_response_wall_time_seconds;
   auto accepted_point_start_time = std::chrono::steady_clock::now();
   
   while (run_result.n_iterations < options.max_iterations) {
@@ -141,66 +93,20 @@ BackendRunResult run_truncated_newton_backend(
       break;
     }
   
-    if (accepted_point_hvp == nullptr) {
-      accepted_point_hvp =
-          std::make_unique<ExactReducedHvp>(
-              *objective,
-              current_space,
-              newton_forcing_term * newton_forcing_term);
+    if (accepted_point_operator == nullptr) {
+      accepted_point_operator = std::make_shared<ExactHvpOperator>(
+          objective->second_order_context(),
+          &objective->input(),
+          parameter_view,
+          &current_space);
     }
-    ExactReducedHvp& exact_hvp = *accepted_point_hvp;
-    if (!exact_hvp.supports_analytic_core_model()) {
-      throw std::runtime_error(build_hvp_error(exact_hvp));
+    ExactHvpOperator& exact_operator = *accepted_point_operator;
+    if (!exact_operator.supports_analytic_core_model()) {
+      throw std::runtime_error(
+          "coupled Newton requires the analytic orbital Hessian action");
     }
-    const auto trial_initial_hvp_diagnostics = exact_hvp.diagnostics();
-    const std::size_t trial_initial_core_direction_count =
-        exact_hvp.core_direction_count();
-    const std::size_t trial_initial_outer_response_direction_count =
-        exact_hvp.outer_response_direction_count();
-    auto accumulate_trial_hvp_work = [&]() {
-      const auto diagnostics = exact_hvp.diagnostics();
-      result->matrix_free_hvp_direction_count +=
-          diagnostics.apply_count - trial_initial_hvp_diagnostics.apply_count;
-      result->matrix_free_hvp_batch_count +=
-          diagnostics.batch_apply_count -
-          trial_initial_hvp_diagnostics.batch_apply_count;
-      result->matrix_free_hvp_wall_time_seconds +=
-          diagnostics.total_apply_wall_time_seconds -
-          trial_initial_hvp_diagnostics.total_apply_wall_time_seconds;
-      result->matrix_free_core_hvp_direction_count +=
-          exact_hvp.core_direction_count() -
-          trial_initial_core_direction_count;
-      result->matrix_free_outer_response_direction_count +=
-          exact_hvp.outer_response_direction_count() -
-          trial_initial_outer_response_direction_count;
-      result->matrix_free_outer_response_wall_time_seconds +=
-          diagnostics.outer_response_wall_time_seconds -
-          trial_initial_hvp_diagnostics.outer_response_wall_time_seconds;
-    };
-    const auto response_scale_info = exact_hvp.diagnostics();
-    const bool response_scale_is_known =
-        response_scale_info.estimated_outer_string_contraction_work > 0.0 &&
-        response_scale_info.estimated_core_pair_contraction_work > 0.0;
-    const bool full_response_scale_is_affordable =
-        outer_response_scale_is_affordable(response_scale_info);
-    const bool outer_response_scale_is_unaffordable =
-        response_scale_is_known && !full_response_scale_is_affordable;
     const int transport_history_size =
         choose_truncated_newton_transport_history_size(options);
-    const bool use_secant_correction =
-        !full_response_scale_is_affordable && request_secant_correction;
-    if (use_secant_correction &&
-        !secant_correction_built_for_current_point) {
-      accepted_point_secant_correction = build_symmetric_secant_correction(
-          &exact_hvp,
-          current_space,
-          packed_secant_history,
-          transport_history_size);
-      secant_correction_built_for_current_point = true;
-    }
-    SecantCorrectedCoreHvp core_hvp(
-        &exact_hvp,
-        use_secant_correction ? &accepted_point_secant_correction : nullptr);
     if (accepted_point_preconditioner == nullptr) {
       accepted_point_preconditioner =
           std::make_unique<TransportedReducedLbfgsPreconditioner>(
@@ -209,10 +115,6 @@ BackendRunResult run_truncated_newton_backend(
                   packed_secant_history,
                   transport_history_size));
     }
-    const int max_subspace_dimension =
-        choose_tnhvp_max_subspace_dimension(
-            options,
-            current_projection.reduced_gradient.size());
     const OrbitalPreparationInput current_orbital_input =
         objective->input().orbital_preparation_input;
     if (accepted_point_metric == nullptr) {
@@ -225,6 +127,7 @@ BackendRunResult run_truncated_newton_backend(
     auto try_truncated_newton_trial_step =
         [&](const Eigen::VectorXd& candidate_reduced_step,
             double candidate_predicted_decrease,
+            double candidate_linear_decrease,
             bool accept_model_inaccurate_monotone,
             TruncatedNewtonTrialEvaluation* trial_evaluation,
             VbScfObjective::TrialEvaluation* accepted_trial_evaluation,
@@ -262,9 +165,7 @@ BackendRunResult run_truncated_newton_backend(
           if (trial_evaluation != nullptr) {
             trial_evaluation->predicted_decrease =
                 effective_predicted_decrease;
-            trial_evaluation->linear_decrease =
-                -current_projection.reduced_gradient.dot(
-                    candidate_reduced_step);
+            trial_evaluation->linear_decrease = candidate_linear_decrease;
           }
   
           VbScfObjective::TrialEvaluation candidate_trial_evaluation =
@@ -305,188 +206,109 @@ BackendRunResult run_truncated_newton_backend(
     const Eigen::Index reduced_size =
         current_projection.reduced_gradient.size();
     TruncatedNewtonTrialEvaluation trial_evaluation_cache;
-    const Eigen::VectorXd* initial_reduced_step_for_current_solve = nullptr;
-    if (rejected_step_cache.has_cached_step(reduced_size)) {
-      initial_reduced_step_for_current_solve =
-          &rejected_step_cache.cached_step;
-    }
-  
-    bool reused_subspace =
-        truncated_newton_subspace_is_usable(
-            cached_subspace,
-            current_projection.reduced_gradient.size());
-    bool reused_subspace_for_trial = reused_subspace;
-    bool candidate_has_exact_outer_response =
-        use_full_hvp_for_current_point;
-    bool used_full_hvp_for_trial = use_full_hvp_for_current_point;
-    bool response_probe_performed = false;
-    double response_probe_relative_residual = 0.0;
-    bool response_deferred_for_cost = false;
-    ReducedHvp* active_hvp = use_full_hvp_for_current_point
-        ? static_cast<ReducedHvp*>(&exact_hvp)
-        : static_cast<ReducedHvp*>(&core_hvp);
-    auto solve_subproblem =
-        [&](ReducedHvp* operator_hvp,
-            bool reuse,
-            const Eigen::VectorXd* initial_step) {
-          auto step = solve_nonredundant_truncated_newton_step(
-              retraction_metric,
-              current_space,
-              current_projection,
-              trust_radius,
-              options.energy_tolerance,
-              options.gradient_tolerance,
-              newton_forcing_term,
-              max_subspace_dimension,
-              operator_hvp,
-              accepted_point_preconditioner.get(),
-              initial_step,
-              reuse ? &cached_subspace : nullptr);
-          clamp_nonredundant_step_result_to_retract_tangent_radius(
-              current_projection,
-              trust_radius,
-              retraction_metric,
-              &step);
-          if (!reuse) {
-            ++result->matrix_free_subproblem_count;
-            if (!step.reached_boundary) {
-              ++result->matrix_free_interior_subproblem_count;
+    const bool reused_subspace_for_trial =
+        accepted_point_coupled_workspace != nullptr;
+    if (accepted_point_coupled_workspace == nullptr) {
+      auto apply_orbital_metric =
+          [&retraction_metric](
+              const Eigen::Ref<const Eigen::MatrixXd>& directions) {
+            Eigen::MatrixXd images(directions.rows(), directions.cols());
+            for (Eigen::Index column = 0;
+                 column < directions.cols();
+                 ++column) {
+              images.col(column) =
+                  retraction_metric.apply(directions.col(column));
             }
-          }
-          if (truncated_newton_subspace_is_usable(
-                  step.subspace,
-                  current_projection.reduced_gradient.size())) {
-            cached_subspace = step.subspace;
-          }
-          return step;
-        };
-
-    TruncatedNewtonStepResult truncated_newton_step = solve_subproblem(
-        active_hvp,
-        reused_subspace,
-        initial_reduced_step_for_current_solve);
-    outer_response_used_for_current_point =
-        outer_response_used_for_current_point ||
-        use_full_hvp_for_current_point;
-
-    // The core model is sufficient while a successful boundary step is still
-    // globalizing the orbitals. An interior step, detected negative curvature,
-    // or a retry after deficient progress is certified with an exact outer
-    // action. The exact image corrects the candidate's model decrease and KKT
-    // certificate, but a single sampled direction must not authorize full
-    // outer responses throughout the Krylov subspace. Thus outer work is
-    // bounded by candidate samples rather than multiplied by subspace size.
-    const auto response_cost_info = exact_hvp.diagnostics();
-    const bool probe_scale_is_affordable =
-        one_outer_probe_fits_current_core_work(
-            response_cost_info,
-            exact_hvp.core_direction_count() -
-                trial_initial_core_direction_count);
-    const bool certify_core_candidate =
-        request_outer_response &&
-        !outer_response_used_for_current_point &&
-        probe_scale_is_affordable &&
-        truncated_newton_step.reduced_step.size() == reduced_size &&
-        truncated_newton_step.reduced_hessian_times_step.size() ==
-            reduced_size &&
-        truncated_newton_step.reduced_metric_times_step.size() ==
-            reduced_size &&
-        truncated_newton_step.reduced_step.allFinite() &&
-        truncated_newton_step.reduced_hessian_times_step.allFinite() &&
-        truncated_newton_step.reduced_metric_times_step.allFinite();
-    if (request_outer_response &&
-        !outer_response_used_for_current_point &&
-        !probe_scale_is_affordable) {
-      response_deferred_for_cost = true;
+            return images;
+          };
+      AcceptedPointCoupledModel coupled_model =
+          make_accepted_point_coupled_model(
+              *objective->second_order_context(),
+              accepted_point_operator,
+              static_cast<int>(reduced_size),
+              std::move(apply_orbital_metric));
+      const OrbitalChart* const accepted_chart = &current_space;
+      const TransportedReducedLbfgsPreconditioner* const
+          orbital_preconditioner = accepted_point_preconditioner.get();
+      auto apply_inverse_orbital_preconditioner =
+          [accepted_chart, orbital_preconditioner](
+              const Eigen::VectorXd& vector) {
+            return apply_nonredundant_truncated_newton_preconditioner(
+                *accepted_chart,
+                orbital_preconditioner,
+                vector);
+          };
+      accepted_point_coupled_workspace =
+          std::make_unique<AcceptedPointCoupledWorkspace>(
+              std::move(coupled_model),
+              current_projection.reduced_gradient,
+              std::move(apply_inverse_orbital_preconditioner));
     }
-    if (certify_core_candidate) {
-      response_probe_performed = true;
-      const Eigen::VectorXd outer_response =
-          exact_hvp.apply_outer(truncated_newton_step.reduced_step);
-      truncated_newton_step.reduced_hessian_times_step += outer_response;
-      truncated_newton_step.predicted_decrease =
-          -current_projection.reduced_gradient.dot(
-              truncated_newton_step.reduced_step) -
-          0.5 * truncated_newton_step.reduced_step.dot(
-              truncated_newton_step.reduced_hessian_times_step);
-      refresh_truncated_newton_step_certificate(
-          current_projection.reduced_gradient,
-          &truncated_newton_step);
-      minimize_truncated_newton_step_on_ray(
-          current_projection,
-          &truncated_newton_step);
-      response_probe_relative_residual =
-          truncated_newton_step.model_kkt_relative_residual;
-      candidate_has_exact_outer_response = true;
-      outer_response_used_for_current_point = true;
 
-      // A failed exact KKT certificate means the inexpensive core model is
-      // missing curvature that matters along the proposed Newton step.  When
-      // the unique-string work model says one outer-response direction is no
-      // more expensive than one core direction, solve this trust-region
-      // subproblem with the complete HVP.  Large response spaces remain on
-      // the bounded one-direction probe path.
-      if ((!truncated_newton_step.model_kkt_converged ||
-           !(truncated_newton_step.predicted_decrease > 0.0) ||
-           !std::isfinite(truncated_newton_step.predicted_decrease)) &&
-          full_response_scale_is_affordable) {
-        use_full_hvp_for_current_point = true;
-        active_hvp = &exact_hvp;
-        cached_subspace = TruncatedNewtonSubspace();
-        reused_subspace_for_trial = false;
-        truncated_newton_step = solve_subproblem(
-            active_hvp,
-            false,
-            nullptr);
-        candidate_has_exact_outer_response = true;
-        used_full_hvp_for_trial = true;
-      }
+    const CoupledKktTolerances coupled_tolerances{
+        newton_forcing_term,
+        newton_forcing_term};
+    CoupledWorkspaceResult coupled_result =
+        accepted_point_coupled_workspace->solve(
+            trust_radius,
+            coupled_tolerances);
+    coupled_expansions_for_current_point += coupled_result.expansions;
+    if (coupled_result.status == CoupledWorkspaceStatus::WorkLimit) {
+      result->termination_reason =
+          "coupled_newton_algebraic_work_limit";
+      run_result.final_gradient_l2_norm =
+          current_projection.reduced_gradient.norm();
+      break;
     }
-    if (truncated_newton_step.newton_forcing_converged &&
-        candidate_has_exact_outer_response) {
-      ++result->matrix_free_residual_converged_count;
+    if (coupled_result.status == CoupledWorkspaceStatus::NumericalFailure) {
+      result->termination_reason = "coupled_newton_numerical_failure";
+      run_result.final_gradient_l2_norm =
+          current_projection.reduced_gradient.norm();
+      break;
     }
-    Eigen::VectorXd reduced_step = truncated_newton_step.reduced_step;
+    if (coupled_result.status == CoupledWorkspaceStatus::SubproblemFailure) {
+      result->termination_reason = "coupled_newton_subproblem_failure";
+      run_result.final_gradient_l2_norm =
+          current_projection.reduced_gradient.norm();
+      break;
+    }
+
+    const CoupledSubspaceStep& coupled_step = coupled_result.step;
+    TruncatedNewtonStepResult trust_region_step;
+    trust_region_step.retract_tangent_norm =
+        coupled_step.projected.orbital_solution.metric_norm;
+    trust_region_step.reached_boundary =
+        coupled_step.projected.orbital_solution.status !=
+        ProjectedTrustStatus::InteriorGlobal;
+    const bool encountered_negative_curvature =
+        coupled_step.projected.orbital_solution.minimum_ritz_value < 0.0;
+    if (coupled_step.orbital_backward_error > newton_forcing_term ||
+        coupled_step.response_backward_error > newton_forcing_term) {
+      throw std::logic_error(
+          "coupled Newton workspace returned an uncertified step");
+    }
+    const double coupled_linear_decrease =
+        -current_projection.reduced_gradient.dot(coupled_step.orbital_step) -
+        accepted_point_coupled_workspace->accepted_model()
+            .structure_kkt_residual.dot(coupled_step.response_step);
+    Eigen::VectorXd reduced_step = coupled_step.orbital_step;
     if (reduced_step.size() != current_projection.reduced_gradient.size()) {
       result->termination_reason =
           "nonredundant_truncated_newton_invalid_step_dimension";
       run_result.final_gradient_l2_norm = current_projection.reduced_gradient.norm();
       break;
     }
-    double predicted_decrease =
-        truncated_newton_step.predicted_decrease;
+    double predicted_decrease = coupled_step.predicted_decrease;
     if (!std::isfinite(predicted_decrease) ||
         predicted_decrease <= 0.0) {
-      candidate_has_exact_outer_response = false;
-      reduced_step =
-          build_nonredundant_preconditioned_reduced_gradient_step(
-              retraction_metric,
-              current_space,
-              current_projection,
-              trust_radius,
-              accepted_point_preconditioner.get());
-      predicted_decrease =
-          estimate_nonredundant_reduced_model_decrease(
-              current_projection,
-              reduced_step,
-              active_hvp);
-      truncated_newton_step.reduced_step = reduced_step;
-      truncated_newton_step.reduced_hessian_times_step.resize(0);
-      truncated_newton_step.reduced_metric_times_step.resize(0);
-      truncated_newton_step.retract_tangent_norm =
-          retraction_metric.norm(reduced_step);
-      truncated_newton_step.reached_boundary =
-          truncated_newton_step.retract_tangent_norm >=
-          (1.0 - 1.0e-8) * trust_radius;
-      truncated_newton_step.predicted_decrease = predicted_decrease;
-      truncated_newton_step.stop_reason =
-          TruncatedNewtonStopReason::PreconditionedGradient;
-      refresh_truncated_newton_step_certificate(
-          current_projection.reduced_gradient, &truncated_newton_step);
+      result->termination_reason =
+          "coupled_newton_nonpositive_predicted_decrease";
+      run_result.final_gradient_l2_norm =
+          current_projection.reduced_gradient.norm();
+      break;
     }
-    const TruncatedNewtonStepResult model_step = truncated_newton_step;
     TruncatedNewtonStepResult trial_step_for_current_trial =
-        truncated_newton_step;
+        trust_region_step;
   
     VbScfObjective::TrialEvaluation accepted_trial_evaluation;
     Eigen::VectorXd trial_parameters(current_parameters.size());
@@ -496,8 +318,8 @@ BackendRunResult run_truncated_newton_backend(
         try_truncated_newton_trial_step(
             reduced_step,
             predicted_decrease,
-            outer_response_scale_is_unaffordable &&
-                !candidate_has_exact_outer_response,
+            coupled_linear_decrease,
+            false,
             &trial_evaluation_cache,
             &accepted_trial_evaluation,
             &trial_parameters,
@@ -505,20 +327,14 @@ BackendRunResult run_truncated_newton_backend(
             &trial_energy);
     if (!accepted_trial) {
       ++rejected_trial_step_count_for_current_point;
-      request_outer_response = !outer_response_used_for_current_point;
-      request_secant_correction =
-          request_secant_correction || !full_response_scale_is_affordable;
       const double next_trust_radius =
           update_nonredundant_truncated_newton_trust_radius(
               trust_radius,
               options.minimum_step_size,
               trial_evaluation_cache,
               trial_step_for_current_trial,
-              candidate_has_exact_outer_response
-                  ? TruncatedNewtonModelFidelity::DirectionallyExact
-                  : TruncatedNewtonModelFidelity::CoreApproximate,
+              TruncatedNewtonModelFidelity::DirectionallyExact,
               false);
-      accumulate_trial_hvp_work();
       trust_radius = next_trust_radius;
       if (trust_radius <= options.minimum_step_size) {
         result->termination_reason =
@@ -526,27 +342,34 @@ BackendRunResult run_truncated_newton_backend(
         run_result.final_gradient_l2_norm = current_projection.reduced_gradient.norm();
         break;
       }
-      rejected_step_cache.update(
-          model_step,
-          reduced_size,
-          trust_radius,
-          retraction_metric);
       continue;
     }
-    accumulate_trial_hvp_work();
     const bool accepted_point_chart_changed =
         accepted_trial_evaluation.chart_changed;
     const Eigen::VectorXd accepted_parameter_displacement =
         trial_parameters - current_parameters;
     const Eigen::VectorXd accepted_gradient_change =
         trial_gradient - current_gradient;
+    const int accepted_preconditioner_history_size =
+        accepted_point_preconditioner->size();
+    const int accepted_coupled_orbital_dimension =
+        coupled_result.orbital_dimension;
+    const int accepted_coupled_response_dimension =
+        coupled_result.response_dimension;
+    const CoupledActionCounts accepted_coupled_action_counts =
+        coupled_result.action_counts;
+    // Every callback retained by the coupled workspace represents this exact
+    // accepted point and refers to its chart/metric.  Destroy it before the
+    // objective commit changes that point; rejected radius retries retain it.
+    accepted_point_coupled_workspace.reset();
+    accepted_point_operator.reset();
+    accepted_point_preconditioner.reset();
+    accepted_point_metric.reset();
     objective->commit(std::move(accepted_trial_evaluation));
     current_parameters = trial_parameters;
     current_gradient = std::move(trial_gradient);
     energy = trial_energy;
     ++run_result.n_iterations;
-    rejected_step_cache.clear();
-    cached_subspace = TruncatedNewtonSubspace();
     sync_result_from_objective(*objective, result);
     run_result.final_gradient_l2_norm = current_gradient.norm();
     const double de = energy - previous_energy;
@@ -566,10 +389,6 @@ BackendRunResult run_truncated_newton_backend(
         current_projection.reduced_gradient.stableNorm();
     const double accepted_gradient_l2_norm =
         next_projection.reduced_gradient.stableNorm();
-    const bool gradient_progressed =
-        std::isfinite(source_gradient_l2_norm) &&
-        std::isfinite(accepted_gradient_l2_norm) &&
-        accepted_gradient_l2_norm < source_gradient_l2_norm;
     const double accepted_point_wall_time_seconds =
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - accepted_point_start_time)
@@ -579,74 +398,34 @@ BackendRunResult run_truncated_newton_backend(
             trust_radius,
             options.minimum_step_size,
             trial_evaluation_cache,
-            truncated_newton_step,
-            candidate_has_exact_outer_response
-                ? TruncatedNewtonModelFidelity::DirectionallyExact
-                : TruncatedNewtonModelFidelity::CoreApproximate,
+            trust_region_step,
+            TruncatedNewtonModelFidelity::DirectionallyExact,
             true);
-    const bool boundary_globalization_progressed =
-        truncated_newton_step.reached_boundary &&
-        !truncated_newton_step.encountered_negative_curvature &&
-        gradient_progressed &&
-        next_trust_radius > trust_radius;
-    // A deferred probe must not permanently suppress model validation.  Keep
-    // requesting it after an interior or radius-stagnating step; admission at
-    // the next point is still bounded by the measured core work available to
-    // amortize one outer direction.
-    request_outer_response = !boundary_globalization_progressed;
     TnhvpIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations;
     iteration_record.reduced_dimension = static_cast<int>(reduced_size);
-    iteration_record.subspace_dimension =
-        truncated_newton_step.subspace_dimension;
-    iteration_record.secant_correction_size = core_hvp.correction_size();
+    iteration_record.coupled_orbital_subspace_dimension =
+        accepted_coupled_orbital_dimension;
+    iteration_record.coupled_response_subspace_dimension =
+        accepted_coupled_response_dimension;
+    iteration_record.coupled_expansion_count =
+        coupled_expansions_for_current_point;
+    iteration_record.coupled_orbital_hessian_block_actions =
+        accepted_coupled_action_counts.orbital_hessian;
+    iteration_record.coupled_orbital_to_response_block_actions =
+        accepted_coupled_action_counts.orbital_to_response;
+    iteration_record.coupled_response_to_orbital_block_actions =
+        accepted_coupled_action_counts.response_to_orbital;
+    iteration_record.coupled_response_hessian_block_actions =
+        accepted_coupled_action_counts.response_hessian;
+    iteration_record.coupled_orbital_metric_block_actions =
+        accepted_coupled_action_counts.orbital_metric;
+    iteration_record.preconditioner_history_size =
+        accepted_preconditioner_history_size;
     iteration_record.rejected_trial_count =
         rejected_trial_step_count_for_current_point;
-    iteration_record.hvp_direction_count =
-        result->matrix_free_hvp_direction_count -
-        initial_hvp_direction_count_for_current_point;
-    iteration_record.hvp_batch_count =
-        result->matrix_free_hvp_batch_count -
-        initial_hvp_batch_count_for_current_point;
-    iteration_record.core_hvp_direction_count =
-        result->matrix_free_core_hvp_direction_count -
-        initial_core_hvp_direction_count_for_current_point;
-    iteration_record.outer_response_direction_count =
-        result->matrix_free_outer_response_direction_count -
-        initial_outer_response_direction_count_for_current_point;
-    iteration_record.subproblem_count =
-        result->matrix_free_subproblem_count -
-        initial_subproblem_count_for_current_point;
-    iteration_record.hvp_wall_time_seconds =
-        result->matrix_free_hvp_wall_time_seconds -
-        initial_hvp_wall_time_for_current_point;
-    iteration_record.outer_response_wall_time_seconds =
-        result->matrix_free_outer_response_wall_time_seconds -
-        initial_outer_response_wall_time_for_current_point;
-    const auto final_hvp_diagnostics = exact_hvp.diagnostics();
-    iteration_record.response_active_integral_wall_time_seconds =
-        final_hvp_diagnostics
-            .outer_response_active_space_integrals_wall_time_seconds;
-    iteration_record.response_structure_matrix_wall_time_seconds =
-        final_hvp_diagnostics
-            .outer_response_structure_matrices_wall_time_seconds;
-    iteration_record.response_eigensystem_wall_time_seconds =
-        final_hvp_diagnostics.outer_response_eigensystem_wall_time_seconds;
-    iteration_record.response_active_gradient_wall_time_seconds =
-        final_hvp_diagnostics
-            .outer_response_active_gradient_wall_time_seconds;
-    iteration_record.response_orbital_pullback_wall_time_seconds =
-        final_hvp_diagnostics
-            .outer_response_orbital_pullback_wall_time_seconds;
-    iteration_record.requested_response_relative_residual_tolerance =
-        newton_forcing_term * newton_forcing_term;
-    iteration_record.structure_response_block_actions =
-        final_hvp_diagnostics.structure_response_block_actions -
-        trial_initial_hvp_diagnostics.structure_response_block_actions;
-    iteration_record.max_structure_response_iterations =
-        final_hvp_diagnostics.max_structure_response_iterations;
-    iteration_record.max_structure_response_relative_residual =
-        final_hvp_diagnostics.max_structure_response_relative_residual;
+    iteration_record.outer_iteration_wall_time_seconds =
+        accepted_point_wall_time_seconds;
     iteration_record.source_gradient_l2_norm = source_gradient_l2_norm;
     iteration_record.accepted_gradient_l2_norm = accepted_gradient_l2_norm;
     if (source_gradient_l2_norm > 0.0 &&
@@ -657,54 +436,16 @@ BackendRunResult run_truncated_newton_backend(
           -std::log(accepted_gradient_l2_norm / source_gradient_l2_norm) /
           accepted_point_wall_time_seconds;
     }
-    iteration_record.used_outer_response =
-        outer_response_used_for_current_point;
-    iteration_record.response_probe_performed = response_probe_performed;
-    iteration_record.response_probe_relative_residual =
-        response_probe_relative_residual;
-    if (response_cost_info.estimated_core_pair_contraction_work > 0.0) {
-      iteration_record.response_work_ratio =
-          response_cost_info.estimated_outer_string_contraction_work /
-          response_cost_info.estimated_core_pair_contraction_work;
-    }
-    iteration_record.response_scale_affordable =
-        full_response_scale_is_affordable;
-    iteration_record.response_deferred_for_cost =
-        response_deferred_for_cost;
-    iteration_record.used_full_hvp = used_full_hvp_for_trial;
-    iteration_record.trust_model_error_order =
-        candidate_has_exact_outer_response ? 3 : 2;
-    iteration_record.subproblem_met_model_kkt =
-        truncated_newton_step.model_kkt_converged;
-    iteration_record.subproblem_stopped_by_work_budget =
-        stopped_by_subspace_work_budget(truncated_newton_step.stop_reason);
+    iteration_record.orbital_backward_error =
+        coupled_step.orbital_backward_error;
+    iteration_record.response_backward_error =
+        coupled_step.response_backward_error;
     iteration_record.forcing_term = newton_forcing_term;
-    if (candidate_has_exact_outer_response &&
-        truncated_newton_step.reduced_hessian_times_step.size() ==
-            current_projection.reduced_gradient.size() &&
-        truncated_newton_step.reduced_hessian_times_step.allFinite()) {
-      const Eigen::VectorXd kkt_residual =
-          current_projection.reduced_gradient +
-          truncated_newton_step.reduced_hessian_times_step +
-          truncated_newton_step.trust_region_shift *
-              truncated_newton_step.reduced_metric_times_step;
-      const double residual_norm = kkt_residual.stableNorm();
-      if (std::isfinite(residual_norm)) {
-        iteration_record.has_kkt_residual = true;
-        iteration_record.kkt_relative_residual =
-            residual_norm /
-            std::max(
-                iteration_record.source_gradient_l2_norm,
-                std::numeric_limits<double>::min());
-        iteration_record.kkt_inf_norm =
-            gradient_infinity_norm(kkt_residual);
-      }
-    }
     iteration_record.initial_trust_radius =
         initial_trust_radius_for_current_point;
     iteration_record.accepted_trial_radius = trust_radius;
     iteration_record.next_trust_radius = next_trust_radius;
-    iteration_record.step_norm = truncated_newton_step.retract_tangent_norm;
+    iteration_record.step_norm = trust_region_step.retract_tangent_norm;
     iteration_record.linear_decrease =
         trial_evaluation_cache.linear_decrease;
     iteration_record.predicted_decrease =
@@ -716,13 +457,15 @@ BackendRunResult run_truncated_newton_backend(
           iteration_record.actual_decrease /
           iteration_record.predicted_decrease;
     }
-    iteration_record.model_spectral_radius =
-        truncated_newton_step.model_spectral_radius;
+    iteration_record.minimum_ritz_value =
+        coupled_step.projected.orbital_solution.minimum_ritz_value;
+    iteration_record.minimum_shifted_ritz_value =
+        coupled_step.projected.orbital_solution.minimum_shifted_ritz_value;
     iteration_record.trust_region_shift =
-        truncated_newton_step.trust_region_shift;
-    iteration_record.reached_boundary = truncated_newton_step.reached_boundary;
+        coupled_step.projected.orbital_solution.shift;
+    iteration_record.reached_boundary = trust_region_step.reached_boundary;
     iteration_record.encountered_negative_curvature =
-        model_step.encountered_negative_curvature;
+        encountered_negative_curvature;
     iteration_record.reused_subspace = reused_subspace_for_trial;
     iteration_record.chart_changed = accepted_point_chart_changed;
     result->tnhvp_iteration_trace.push_back(iteration_record);
@@ -735,32 +478,11 @@ BackendRunResult run_truncated_newton_backend(
         &next_projection.reduced_gradient);
     trust_radius = next_trust_radius;
     rejected_trial_step_count_for_current_point = 0;
-    use_full_hvp_for_current_point = false;
-    outer_response_used_for_current_point = false;
+    coupled_expansions_for_current_point = 0;
     initial_trust_radius_for_current_point = trust_radius;
-    initial_hvp_direction_count_for_current_point =
-        result->matrix_free_hvp_direction_count;
-    initial_hvp_batch_count_for_current_point =
-        result->matrix_free_hvp_batch_count;
-    initial_subproblem_count_for_current_point =
-        result->matrix_free_subproblem_count;
-    initial_hvp_wall_time_for_current_point =
-        result->matrix_free_hvp_wall_time_seconds;
-    initial_core_hvp_direction_count_for_current_point =
-        result->matrix_free_core_hvp_direction_count;
-    initial_outer_response_direction_count_for_current_point =
-        result->matrix_free_outer_response_direction_count;
-    initial_outer_response_wall_time_for_current_point =
-        result->matrix_free_outer_response_wall_time_seconds;
     accepted_point_start_time = std::chrono::steady_clock::now();
-    accepted_point_hvp.reset();
-    accepted_point_preconditioner.reset();
-    accepted_point_metric.reset();
-    secant_correction_built_for_current_point = false;
-    accepted_point_secant_correction = SymmetricSecantCorrection();
     if (nonredundant_rank_changed) {
       packed_secant_history.clear();
-      request_secant_correction = false;
     }
     if (!nonredundant_rank_changed &&
         transport_history_size > 0) {

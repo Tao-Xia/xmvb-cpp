@@ -94,7 +94,8 @@ CoupledProjectedModelResult solve_coupled_projected_model(
   result.reduced_hessian =
       symmetric_orbital_hessian + coupling.transpose() * result.response_lift;
   result.reduced_hessian =
-      0.5 * (result.reduced_hessian + result.reduced_hessian.transpose());
+      (0.5 *
+       (result.reduced_hessian + result.reduced_hessian.transpose())).eval();
   if (!result.response_baseline.allFinite() ||
       !result.response_lift.allFinite() ||
       !result.reduced_gradient.allFinite() ||
