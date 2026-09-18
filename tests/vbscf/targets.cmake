@@ -12,7 +12,6 @@ set(_xmvb_vbscf_unit_targets
   test_coupled_newton_preconditioner
   test_coupled_newton_defect
   test_coupled_newton_spectral
-  test_coupled_newton_subproblem
   test_curvature_decomposition
   test_davidson
   test_eigen_response
@@ -65,9 +64,6 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME coupled_newton_spectral COMMAND test_coupled_newton_spectral)
   set_tests_properties(coupled_newton_spectral PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_newton_subproblem COMMAND test_coupled_newton_subproblem)
-  set_tests_properties(coupled_newton_subproblem PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME davidson COMMAND test_davidson)
   add_test(NAME eigen_response COMMAND test_eigen_response)

@@ -3222,7 +3222,7 @@ $$
 \mathbf S\mathbf C\boldsymbol\Lambda,
 \frac{1}{2}
 \left(
-\mathbf C^{\mathrm T}\mathbf S\mathbf C-mathbf I
+\mathbf C^{\mathrm T}\mathbf S\mathbf C-\mathbf I
 \right)
 \right).
 $$
@@ -3247,6 +3247,33 @@ solve: the preconditioned norm of $\mathbf r_s$ and its estimated energy
 correction must remain subordinate to the outer inexact-Newton and energy
 accuracy requirements.
 
+For a finite matrix-free defect solve, define the remaining response residual
+
+$$
+\mathbf e_0
+=
+\mathbf r_s+\mathbf C\mathbf q_0.
+$$
+
+The exact change of the coupled quadratic model at fixed orbitals is
+
+$$
+\delta_0
+=
+\mathbf r_s^{\mathrm T}\mathbf q_0
++
+\frac{1}{2}\mathbf q_0^{\mathrm T}\mathbf C\mathbf q_0
+=
+\frac{1}{2}\mathbf r_s^{\mathrm T}\mathbf q_0
++
+\frac{1}{2}\mathbf q_0^{\mathrm T}\mathbf e_0.
+$$
+
+Thus $\frac{1}{2}\mathbf r_s^{\mathrm T}\mathbf q_0$ is only the stationary
+limit.  A finite residual must not be omitted from predicted-reduction
+bookkeeping, and $\overline{\mathbf g}$ may enter the orbital Newton equation
+only after the defect solve satisfies its explicit residual certificate.
+
 Here $\mathbf G$ is the nonredundant orbital metric.  The shift and the trust
 constraint act only on $\mathbf p$: the structure tangent is an induced
 first-order response, not an independently bounded physical displacement.
@@ -3256,7 +3283,7 @@ $$
 \left(
 \mathbf A-\mathbf B^{\mathrm T}\mathbf C^{-1}\mathbf B
 +\lambda\mathbf G
-\right)\mathbf p=-\mathbf g,
+\right)\mathbf p=-\overline{\mathbf g},
 $$
 
 which is exactly the relaxed matrix-free orbital Newton equation.  The coupled
@@ -3316,20 +3343,124 @@ roundoff-scale numerical-rank protection.  Combining these response factors
 with the positive orbital preconditioner gives an SPD block preconditioner for
 the complete coupled MINRES iteration; no molecular threshold is introduced.
 
-The trust-region multiplier is accepted only when the explicit coupled KKT
-residual satisfies the inexact-Newton forcing condition and either
-$\lambda=0$ with an interior orbital step or
+The spectrum relevant to orbital globalization is not the spectrum of the
+indefinite coupled KKT matrix.  It is the generalized spectrum of the relaxed
+Schur operator
+
+$$
+\mathbf H_R
+=
+\mathbf A-
+\mathbf B^{\mathrm T}\mathbf C^{-1}\mathbf B,
+\qquad
+\mathbf H_R\mathbf v
+=
+\theta\mathbf G\mathbf v.
+$$
+
+For an orbital trial basis $\mathbf V$, response-stationary lifts are obtained
+without constructing $\mathbf H_R$:
+
+$$
+\mathbf C\mathbf Q=-\mathbf B\mathbf V.
+$$
+
+The projected pencil is then
+
+$$
+\mathbf V^{\mathrm T}
+\left(
+\mathbf A\mathbf V+
+\mathbf B^{\mathrm T}\mathbf Q
+\right)\mathbf y
+=
+\theta
+\mathbf V^{\mathrm T}\mathbf G\mathbf V\mathbf y.
+$$
+
+When $\mathbf V$ does not span the full orbital coordinate space, its smallest
+Ritz value is an upper bound to the global smallest generalized eigenvalue,
+not a lower bound.  A negative response-stationary Rayleigh quotient therefore
+certifies a discovered negative-curvature direction, whereas a positive
+projected Ritz value does not certify global positive semidefiniteness.  The
+full residual of the lifted Ritz pair provides a deterministic expansion
+direction; the status must remain ``explored subspace'' until full-space
+coverage or an independent analytic global bound is available.
+
+Before such a global certificate is available, every accepted projected
+Newton step should be compared with a matrix-free relaxed Cauchy incumbent.
+Using the defect-corrected gradient, define
+
+$$
+\mathbf d=-\mathbf G^{-1}\overline{\mathbf g},
+\qquad
+\mathbf C\mathbf y=-\mathbf B\mathbf d,
+\qquad
+\alpha_{\max}
+=
+\frac{\Delta}{\|\mathbf d\|_{\mathbf G}}.
+$$
+
+For a finite response solve let
+
+$$
+\mathbf e=\mathbf B\mathbf d+\mathbf C\mathbf y.
+$$
+
+The exact curvature of the returned coupled ray is
+
+$$
+\kappa
+=
+\begin{bmatrix}\mathbf d\\\mathbf y\end{bmatrix}^{\mathrm T}
+\begin{bmatrix}
+\mathbf A&\mathbf B^{\mathrm T}\\
+\mathbf B&\mathbf C
+\end{bmatrix}
+\begin{bmatrix}\mathbf d\\\mathbf y\end{bmatrix}
+=
+\mathbf d^{\mathrm T}
+\left(
+\mathbf A\mathbf d+\mathbf B^{\mathrm T}\mathbf y
+\right)
++
+\mathbf y^{\mathrm T}\mathbf e.
+$$
+
+Consequently,
+
+$$
+\alpha_C
+=
+\begin{cases}
+\alpha_{\max}, & \kappa\leq 0,\\
+\min\left(
+\alpha_{\max},
+-\overline{\mathbf g}^{\mathrm T}\mathbf d/\kappa
+\right), & \kappa>0,
+\end{cases}
+$$
+
+gives a feasible positive-decrease incumbent whenever the response solve and
+the computed model decrease are explicitly certified.  This is a
+sufficient-decrease guarantee, not a claim of global trust-region optimality.
+
+A trust-region multiplier is globally certified only when the explicit
+coupled KKT residual satisfies the inexact-Newton forcing condition, the
+shifted relaxed operator is positive semidefinite on the complete orbital
+tangent space, and either $\lambda=0$ with an interior orbital step or
 
 $$
 \|\mathbf p\|_{\mathbf G}=\Delta,
 \qquad \lambda>0.
 $$
 
-For an indefinite reduced Hessian, the shifted reduced operator must also be
-positive semidefinite on the orbital tangent space.  A norm match alone is not
-a sufficient trust-region certificate.  This condition is obtained from the
-same Lanczos spectral information used by the coupled Krylov solve, rather
-than from a fixed iteration count or a molecule-dependent shift.
+A norm match alone is not a sufficient trust-region certificate.  In
+particular, ordinary coupled-KKT Ritz values cannot supply this condition,
+because the response KKT block is itself indefinite.  Until a complete
+relaxed-spectrum certificate and the classical hard-case completion are
+available, the algorithm should report projected convergence and retain the
+Cauchy decrease guarantee rather than label the step a global solution.
 
 ## 12. Verification requirements
 
