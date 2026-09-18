@@ -57,6 +57,9 @@ struct CoupledSpectralAnalysis {
   /** Deterministic orbital direction suggested for trial-space expansion. */
   Eigen::VectorXd orbital_residual_expansion;
   Eigen::VectorXd response_stationarity_residual_norms;
+  /** @brief Exact projected quadratic form @f$X^TKX@f$, @f$X=(V,Q)@f$. */
+  Eigen::MatrixXd projected_coupled_hessian;
+  /** @brief Stationary-limit Schur projection @f$V^T(AV+B^TQ)@f$. */
   Eigen::MatrixXd projected_relaxed_hessian;
   Eigen::MatrixXd projected_orbital_metric;
   double leftmost_ritz_value =

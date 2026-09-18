@@ -146,6 +146,9 @@ CoupledSpectralAnalysis analyze_coupled_explored_spectrum(
   analysis.status = orbital_trial_basis.cols() == n_orbitals
       ? CoupledSpectralStatus::FullOrbitalSpace
       : CoupledSpectralStatus::ExploredSubspace;
+  analysis.projected_coupled_hessian = 0.5 *
+      (full_basis.transpose() * full_images +
+       full_images.transpose() * full_basis);
   analysis.projected_relaxed_hessian = 0.5 *
       (orbital_trial_basis.transpose() * full_images.topRows(n_orbitals) +
        full_images.topRows(n_orbitals).transpose() * orbital_trial_basis);

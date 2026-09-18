@@ -144,6 +144,10 @@ int main() {
         explored.leftmost_ritz_value,
         1.0e-12,
         "stationary Rayleigh quotient differs from its Ritz value");
+    require(
+        (explored.projected_coupled_hessian -
+         explored.projected_relaxed_hessian).norm() < 1.0e-12,
+        "stationary lifts give inconsistent projected quadratic forms");
     const Eigen::Vector3d dense_orbital_residual =
         relaxed * explored.leftmost_orbital_ritz_vector -
         explored.leftmost_ritz_value * metric *
@@ -184,7 +188,9 @@ int main() {
         "constructed and consumed response lifts disagree");
 
     xmvb::vb::CoupledResponseStationaryLifts unstationary_lifts;
-    unstationary_lifts.values = Eigen::MatrixXd::Zero(2, 2);
+    unstationary_lifts.values.resize(2, 2);
+    unstationary_lifts.values << 0.2, -0.1,
+                                  0.3,  0.4;
     unstationary_lifts.residual_targets = Eigen::Vector2d::Zero();
     unstationary_lifts.stop_reasons.assign(
         2,
@@ -197,6 +203,10 @@ int main() {
     require(!unstationary.response_stationarity_certified &&
                 !unstationary.negative_curvature_certified,
             "nonstationary response lift produced a curvature certificate");
+    require(
+        (unstationary.projected_coupled_hessian -
+         unstationary.projected_relaxed_hessian).norm() > 1.0e-4,
+        "finite response residual was omitted from projected curvature");
 
     xmvb::vb::CoupledSpectralOptions failed_options = options;
     failed_options.response_solve.maximum_iterations = 1;
