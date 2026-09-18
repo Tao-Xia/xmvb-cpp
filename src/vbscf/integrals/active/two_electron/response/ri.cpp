@@ -1,11 +1,17 @@
 #include "vbscf/integrals/active/two_electron/response/ri.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
 
 #include <Eigen/Core>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+#include "core/openmp.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/transformation/packed_pair_map.hpp"
 
@@ -88,6 +94,98 @@ Eigen::MatrixXd build_active_pair_adjoint(
   return active_pair_adjoint;
 }
 
+bool direct_pair_factor_direction_has_lower_flop_count(
+    int n_basis_functions,
+    int n_active_orbitals) {
+  // Packed Q' followed by L * Q' costs approximately
+  // 2 n_aux n_ao_pair n_active_pair FLOPs.  The direct two-stage
+  // three-index transform costs 4 n_aux n_bf n_active (n_bf + n_active).
+  // The common auxiliary dimension cancels from the comparison.
+  const long double n_bf = n_basis_functions;
+  const long double n_active = n_active_orbitals;
+  const long double packed_cost =
+      0.5L * n_bf * (n_bf + 1.0L) *
+      n_active * (n_active + 1.0L);
+  const long double direct_cost =
+      4.0L * n_bf * n_active * (n_bf + n_active);
+  // The packed path is one large GEMM, whereas the direct path is a batch of
+  // AO-slice GEMMs plus two final contractions.  Admit the direct algorithm
+  // only after its arithmetic count is at least twofold smaller, leaving the
+  // near-crossover regime to the more efficient single-GEMM kernel.
+  return 2.0L * direct_cost < packed_cost;
+}
+
+Eigen::MatrixXd compute_direct_active_pair_factor_direction(
+    const RiActiveTwoElectronResponseCache& cache,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_direction) {
+  const int n_bf = cache.n_basis_functions;
+  const int n_active = cache.n_active_orbitals;
+  const int n_auxiliary = cache.n_auxiliary_functions;
+  const auto& ao_factors = *cache.metric_whitened_ao_pair_factors;
+  const auto& active_coefficients = *cache.accepted_active_coefficients;
+
+  Eigen::MatrixXd combined_coefficients(n_bf, 2 * n_active);
+  combined_coefficients.leftCols(n_active) = active_coefficients;
+  combined_coefficients.rightCols(n_active) = active_direction;
+
+  // Transform one contiguous auxiliary-major AO slice at a time.  Columns of
+  // `transformed` contain (L_A C) and (L_A D), grouped first by active orbital
+  // and then by auxiliary index.
+  Eigen::MatrixXd transformed(2 * n_auxiliary * n_active, n_bf);
+  const int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      n_bf);
+#pragma omp parallel num_threads(n_threads)
+  {
+    Eigen::MatrixXd ao_slice(n_auxiliary, n_bf);
+#pragma omp for schedule(static)
+    for (int first_basis = 0; first_basis < n_bf; ++first_basis) {
+      for (int second_basis = 0; second_basis < n_bf; ++second_basis) {
+        const int larger = std::max(first_basis, second_basis);
+        const int smaller = std::min(first_basis, second_basis);
+        const Eigen::Index packed_pair =
+            static_cast<Eigen::Index>(larger) * (larger + 1) / 2 + smaller;
+        ao_slice.col(second_basis) = ao_factors.col(packed_pair);
+      }
+      Eigen::Map<Eigen::MatrixXd> transformed_slice(
+          transformed.col(first_basis).data(),
+          n_auxiliary,
+          2 * n_active);
+      transformed_slice.noalias() = ao_slice * combined_coefficients;
+    }
+  }
+
+  const Eigen::Index channel_rows =
+      static_cast<Eigen::Index>(n_auxiliary) * n_active;
+  const auto accepted_transformed = transformed.topRows(channel_rows);
+  const auto directional_transformed = transformed.bottomRows(channel_rows);
+  const Eigen::MatrixXd accepted_times_direction =
+      accepted_transformed * active_direction;
+  const Eigen::MatrixXd direction_times_accepted =
+      directional_transformed * active_coefficients;
+
+  Eigen::MatrixXd result(
+      n_auxiliary,
+      static_cast<Eigen::Index>(packed_pair_count(n_active)));
+  Eigen::Index active_pair = 0;
+  for (int first_active = 0;
+       first_active < n_active;
+       ++first_active) {
+    for (int second_active = 0;
+         second_active <= first_active;
+         ++second_active, ++active_pair) {
+      result.col(active_pair) =
+          accepted_times_direction.middleRows(
+              static_cast<Eigen::Index>(second_active) * n_auxiliary,
+              n_auxiliary).col(first_active) +
+          direction_times_accepted.middleRows(
+              static_cast<Eigen::Index>(second_active) * n_auxiliary,
+              n_auxiliary).col(first_active);
+    }
+  }
+  return result;
+}
+
 }  // namespace
 
 RiActiveTwoElectronResponseCache build_ri_active_two_electron_response_cache(
@@ -167,6 +265,18 @@ Eigen::MatrixXd compute_ri_active_pair_factor_directional_derivative(
     const RiActiveTwoElectronResponseCache& accepted_cache,
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction) {
   validate_cache(accepted_cache, "RI active-pair factor direction");
+  if (dense_active_direction.rows() != accepted_cache.n_basis_functions ||
+      dense_active_direction.cols() != accepted_cache.n_active_orbitals) {
+    throw std::invalid_argument(
+        "RI active-pair factor direction has the wrong shape");
+  }
+  if (direct_pair_factor_direction_has_lower_flop_count(
+          accepted_cache.n_basis_functions,
+          accepted_cache.n_active_orbitals)) {
+    return compute_direct_active_pair_factor_direction(
+        accepted_cache,
+        dense_active_direction);
+  }
   PackedOrbitalPairMapMatrix mixed_pair_coefficients;
   build_packed_orbital_pair_map_directional_derivative(
       *accepted_cache.accepted_active_coefficients,

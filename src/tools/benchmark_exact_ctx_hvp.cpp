@@ -372,11 +372,8 @@ Eigen::VectorXd apply_component(
 
 AcceptedPointBenchmarkContext build_benchmark_context(
     const Options& options) {
-  xmvb::vb::VbScfInputLoadOptions load_options;
-  load_options.standard_two_electron_mode =
-      xmvb::vb::StandardTwoElectronMode::Exact;
   const auto load_result =
-      xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
+      xmvb::vb::load_vbscf_input_with_timings(options.input_path);
 
   AcceptedPointBenchmarkContext context{
       load_result.input,

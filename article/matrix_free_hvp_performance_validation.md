@@ -550,12 +550,69 @@ $$
 \sum_A\mathbf L_A\mathbf X\mathbf L_A.
 $$
 
-This linear map is self-adjoint.  A fused auxiliary-factor sweep therefore
-computes both the forward $\dot{\mathbf F}$ and its transpose pullback without
-forming the AO-pair Gram matrix.  The production builder consumes the complete
+This linear map is self-adjoint.  A fused auxiliary-factor sweep computes both
+the forward $\dot{\mathbf F}$ and its transpose pullback without forming the
+AO-pair Gram matrix when the AO inputs are dense.  Orbital-response inputs,
+however, are normally numerically low rank.  For a symmetric input, the
+retained signed spectral representation is
+
+$$
+\mathbf X
+=
+\mathbf U_{+}\mathbf U_{+}^{\mathrm T}
+-
+\mathbf U_{-}\mathbf U_{-}^{\mathrm T}.
+$$
+
+Define the auxiliary-transformed factors
+
+$$
+Z_{A k,\mu}
+=
+\sum_{\nu}L_{A,\mu\nu}U_{\nu k}.
+$$
+
+The exchange action is then a pair of level-3 symmetric rank contractions,
+
+$$
+-\sum_A\mathbf L_A\mathbf X\mathbf L_A
+=
+-\mathbf Z_{+}^{\mathrm T}\mathbf Z_{+}
++\mathbf Z_{-}^{\mathrm T}\mathbf Z_{-},
+$$
+
+and the Coulomb projection is recovered from the same transformed tensor,
+
+$$
+q_A
+=
+\sum_{\mu k}s_k U_{\mu k}Z_{Ak,\mu},
+\qquad
+s_k\in\{+1,-1\}.
+$$
+
+This replaces many auxiliary-local matrix products by AO-slice GEMMs followed
+by large SYRK contractions.  Its leading work and workspace are
+
+$$
+O\!\left(N_{\mathrm{aux}}N_{\mathrm{bf}}^2r\right),
+\qquad
+O\!\left(N_{\mathrm{aux}}N_{\mathrm{bf}}r\right),
+$$
+
+where $r$ is the retained signed rank.  AO slices and final rank contractions
+are partitioned across OpenMP workers; nested calls reduce to one worker to
+avoid oversubscription.  The production builder consumes the complete
 symmetric RI result directly; only the reverse-mode density gradient is
 encoded in the canonical lower-triangular storage with one-half diagonal
 weights.
+
+Rank alone does not determine wall time: the dense fused kernel has fewer
+launches and the spectral kernel has less arithmetic.  At each accepted
+orbital point, the first HVP therefore evaluates both kernels on the same
+forward and adjoint inputs, verifies their agreement, and retains the faster
+kernel for the remaining Krylov actions at that point.  This measured
+admission rule has no molecule, HAO/OEO, or input-file-specific threshold.
 
 The leading factor contraction is
 
@@ -572,6 +629,45 @@ two-state dense, and two-state Davidson checks give maximum relative gradient
 finite-difference errors between $2.13\times10^{-8}$ and
 $2.80\times10^{-8}$; the tests explicitly remove the exact AO-pair graph so
 that an exact-integral fallback cannot pass unnoticed.
+
+For sufficiently large active spaces, explicitly building the directional
+packed pair map is no longer the preferred contraction.  At a fixed auxiliary
+index,
+
+$$
+\dot{\mathbf B}_A
+=
+\mathbf C^{\mathrm T}\mathbf L_A\mathbf D
++
+\mathbf D^{\mathrm T}\mathbf L_A\mathbf C.
+$$
+
+The direct implementation first forms $\mathbf L_A\mathbf C$ and
+$\mathbf L_A\mathbf D$ by contiguous auxiliary-major AO-slice GEMMs and then
+performs the second AO-to-active transformation.  Its asymptotic work is
+
+$$
+O\!\left[
+N_{\mathrm{aux}}N_{\mathrm{bf}}N_{\mathrm{act}}
+\left(N_{\mathrm{bf}}+N_{\mathrm{act}}\right)
+\right],
+$$
+
+instead of
+
+$$
+O\!\left(
+N_{\mathrm{aux}}N_{\mathrm{AO-pair}}N_{\mathrm{active-pair}}
+\right).
+$$
+
+The single packed-GEMM path remains faster near the crossover because it has
+greater arithmetic intensity.  The implementation therefore selects the
+direct transformation only when its dimension-derived floating-point count is
+at least a factor of two smaller.  This rule depends only on the actual AO and
+active dimensions and is not tied to a molecule, orbital type, or input-file
+keyword.  A synthetic test in the admitted regime compares every transformed
+factor against the original packed-pair contraction.
 
 The RI path also uses the same factor representation during closed-shell RHF
 initialization.  For the spinless occupied-orbital projector

@@ -101,9 +101,55 @@ double packed_dot(
   return result;
 }
 
+void check_direct_factor_direction() {
+  constexpr int n_bf = 50;
+  constexpr int n_active = 24;
+  constexpr int n_auxiliary = 7;
+  constexpr int n_ao_pairs = n_bf * (n_bf + 1) / 2;
+
+  xmvb::vb::RiAoFactorization factorization;
+  factorization.n_basis_functions = n_bf;
+  factorization.n_auxiliary_functions = n_auxiliary;
+  factorization.n_packed_ao_pairs = n_ao_pairs;
+  factorization.metric_whitened_ao_pair_factors.resize(
+      n_auxiliary, n_ao_pairs);
+  for (Eigen::Index index = 0;
+       index < factorization.metric_whitened_ao_pair_factors.size();
+       ++index) {
+    factorization.metric_whitened_ao_pair_factors.data()[index] =
+        std::sin(0.013 * static_cast<double>(index + 1));
+  }
+
+  Eigen::MatrixXd coefficients(n_bf, n_active);
+  Eigen::MatrixXd direction(n_bf, n_active);
+  for (Eigen::Index index = 0; index < coefficients.size(); ++index) {
+    coefficients.data()[index] =
+        std::cos(0.021 * static_cast<double>(index + 2));
+    direction.data()[index] =
+        std::sin(0.017 * static_cast<double>(index + 3));
+  }
+
+  const auto accepted_result = make_result(coefficients, factorization);
+  const auto cache =
+      xmvb::vb::build_ri_active_two_electron_response_cache(
+          factorization, accepted_result, n_active);
+  const Eigen::MatrixXd actual =
+      xmvb::vb::compute_ri_active_pair_factor_directional_derivative(
+          cache, direction);
+  xmvb::vb::PackedOrbitalPairMapMatrix pair_direction;
+  xmvb::vb::build_packed_orbital_pair_map_directional_derivative(
+      coefficients, direction, &pair_direction);
+  const Eigen::MatrixXd expected =
+      factorization.metric_whitened_ao_pair_factors * pair_direction;
+  require(
+      is_close(actual, expected, 2.0e-13),
+      "direct RI active-pair factor direction changed the packed result");
+}
+
 }  // namespace
 
 int main() {
+  check_direct_factor_direction();
   constexpr int n_bf = 3;
   constexpr int n_active = 2;
   constexpr int n_auxiliary = 4;

@@ -498,127 +498,142 @@ std::vector<double> apply_low_rank_ri_operator(
 
   const auto& packed_factor_matrix =
       ri_factorization.metric_whitened_ao_pair_factors;
-  int n_threads = 1;
-  n_threads = ri_auxiliary_thread_count(
-      ri_factorization.n_auxiliary_functions);
-  std::vector<std::vector<double>> partial_outputs(
-      n_threads,
-      std::vector<double>(matrix_size, 0.0));
+  const int n_auxiliary = ri_factorization.n_auxiliary_functions;
+  const int rank = factorization.effective_rank;
 
-  // Each worker owns a full AO output matrix because every auxiliary RI factor
-  // contributes to many matrix entries. Cap the team to the effective
-  // non-nested width and auxiliary workload so these buffers do not multiply
-  // unnecessarily inside outer exact_ctx parallel regions.
+  // Store Z_(A,k),mu = sum_nu L_(A,mu,nu) U_(nu,k) as a
+  // (n_aux * rank)-by-n_bf matrix.  Each AO slice is obtained by one GEMM from
+  // a contiguous auxiliary-major view of the packed RI tensor.  This replaces
+  // n_aux small symmetric matrix products and rank updates by n_bf level-3
+  // transformations followed by two large SYRK contractions.
+  Eigen::MatrixXd transformed(n_auxiliary * rank, n_basis_functions);
+  const int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      n_basis_functions);
 #pragma omp parallel num_threads(n_threads)
   {
-    int thread_index = 0;
-#ifdef _OPENMP
-    thread_index = omp_get_thread_num();
-#endif
-    Eigen::Map<Eigen::MatrixXd> local_output(
-        partial_outputs[thread_index].data(),
-        n_basis_functions,
-        n_basis_functions);
-    Eigen::MatrixXd factor_matrix(n_basis_functions, n_basis_functions);
-    Eigen::MatrixXd transformed_eigenvectors(
-        n_basis_functions,
-        factorization.scaled_eigenvectors.cols());
-
+    Eigen::MatrixXd ao_slice(n_auxiliary, n_basis_functions);
 #pragma omp for schedule(static)
-    for (std::ptrdiff_t auxiliary_offset = 0;
-         auxiliary_offset < ri_factorization.n_auxiliary_functions;
-         ++auxiliary_offset) {
-      unpack_packed_factor_row_lower_triangle(
-          packed_factor_matrix,
-          static_cast<int>(auxiliary_offset),
-          n_basis_functions,
-          &factor_matrix);
-
-      // The inactive-density path is typically low-rank. We therefore apply the
-      // symmetric RI factor to the retained spectral columns and form the
-      // exchange term as signed rank updates instead of dense `L_A X L_A`.
-      //
-      // Unpack each packed factor into a thread-local matrix and reuse it
-      // immediately. This keeps the working set local while BLAS handles the
-      // symmetric multiplies.
-      cblas_dsymm(
-          CblasColMajor,
-          CblasLeft,
-          CblasLower,
-          n_basis_functions,
-          factorization.scaled_eigenvectors.cols(),
-          1.0,
-          factor_matrix.data(),
-          n_basis_functions,
-          factorization.scaled_eigenvectors.data(),
-          n_basis_functions,
-          0.0,
-          transformed_eigenvectors.data(),
-          n_basis_functions);
-
-      double coulomb_projection = 0.0;
-      for (int column = 0; column < factorization.n_positive_components; ++column) {
-        coulomb_projection +=
-            cblas_ddot(
-                n_basis_functions,
-                factorization.scaled_eigenvectors.col(column).data(),
-                1,
-                transformed_eigenvectors.col(column).data(),
-                1);
+    for (int first = 0; first < n_basis_functions; ++first) {
+      for (int second = 0; second < n_basis_functions; ++second) {
+        const int larger = std::max(first, second);
+        const int smaller = std::min(first, second);
+        const Eigen::Index packed_index =
+            static_cast<Eigen::Index>(larger) * (larger + 1) / 2 + smaller;
+        ao_slice.col(second) = packed_factor_matrix.col(packed_index);
       }
-      for (int column = factorization.n_positive_components;
-           column < transformed_eigenvectors.cols();
-           ++column) {
-        coulomb_projection -=
-            cblas_ddot(
-                n_basis_functions,
-                factorization.scaled_eigenvectors.col(column).data(),
-                1,
-                transformed_eigenvectors.col(column).data(),
-                1);
-      }
-      add_scaled_packed_factor_row_to_lower_triangle(
-          packed_factor_matrix,
-          static_cast<int>(auxiliary_offset),
-          2.0 * coulomb_projection,
-          local_output.data(),
-          n_basis_functions);
-      if (factorization.n_positive_components > 0) {
-        cblas_dsyrk(
-            CblasColMajor,
-            CblasLower,
-            CblasNoTrans,
-            n_basis_functions,
-            factorization.n_positive_components,
-            -1.0,
-            transformed_eigenvectors.data(),
-            n_basis_functions,
-            1.0,
-            local_output.data(),
-            n_basis_functions);
-      }
-      if (factorization.n_negative_components > 0) {
-        cblas_dsyrk(
-            CblasColMajor,
-            CblasLower,
-            CblasNoTrans,
-            n_basis_functions,
-            factorization.n_negative_components,
-            1.0,
-            transformed_eigenvectors.data() +
-                factorization.n_positive_components *
-                    n_basis_functions,
-            n_basis_functions,
-            1.0,
-            local_output.data(),
-            n_basis_functions);
-      }
+      Eigen::Map<Eigen::MatrixXd> transformed_slice(
+          transformed.col(first).data(),
+          n_auxiliary,
+          rank);
+      transformed_slice.noalias() =
+          ao_slice * factorization.scaled_eigenvectors;
     }
   }
 
-  for (const auto& partial_output : partial_outputs) {
-    for (std::size_t index = 0; index < output_storage.size(); ++index) {
-      output_storage[index] += partial_output[index];
+  std::vector<Eigen::VectorXd> partial_projections;
+  partial_projections.reserve(n_threads);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    partial_projections.emplace_back(Eigen::VectorXd::Zero(n_auxiliary));
+  }
+#pragma omp parallel num_threads(n_threads)
+  {
+    int thread = 0;
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+#pragma omp for schedule(static)
+    for (int orbital = 0; orbital < n_basis_functions; ++orbital) {
+      const Eigen::Map<const Eigen::MatrixXd> transformed_slice(
+          transformed.col(orbital).data(),
+          n_auxiliary,
+          rank);
+      for (int component = 0;
+           component < factorization.n_positive_components;
+           ++component) {
+        partial_projections[thread].noalias() +=
+            factorization.scaled_eigenvectors(orbital, component) *
+            transformed_slice.col(component);
+      }
+      for (int component = factorization.n_positive_components;
+           component < rank;
+           ++component) {
+        partial_projections[thread].noalias() -=
+            factorization.scaled_eigenvectors(orbital, component) *
+            transformed_slice.col(component);
+      }
+    }
+  }
+  Eigen::VectorXd auxiliary_projection =
+      Eigen::VectorXd::Zero(n_auxiliary);
+  for (const auto& partial_projection : partial_projections) {
+    auxiliary_projection += partial_projection;
+  }
+
+  Eigen::Map<Eigen::MatrixXd> output(
+      output_storage.data(),
+      n_basis_functions,
+      n_basis_functions);
+  std::vector<Eigen::MatrixXd> partial_exchange;
+  partial_exchange.reserve(n_threads);
+  for (int thread = 0; thread < n_threads; ++thread) {
+    partial_exchange.emplace_back(
+        Eigen::MatrixXd::Zero(n_basis_functions, n_basis_functions));
+  }
+#pragma omp parallel num_threads(n_threads)
+  {
+    int thread = 0;
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+    Eigen::MatrixXd& local_exchange = partial_exchange[thread];
+    const int positive_rows =
+        n_auxiliary * factorization.n_positive_components;
+    const int positive_begin = positive_rows * thread / n_threads;
+    const int positive_end = positive_rows * (thread + 1) / n_threads;
+    if (positive_end > positive_begin) {
+      cblas_dsyrk(
+          CblasColMajor,
+          CblasLower,
+          CblasTrans,
+          n_basis_functions,
+          positive_end - positive_begin,
+          -1.0,
+          transformed.data() + positive_begin,
+          transformed.rows(),
+          0.0,
+          local_exchange.data(),
+          n_basis_functions);
+    }
+    const int negative_rows =
+        n_auxiliary * factorization.n_negative_components;
+    const int negative_begin = negative_rows * thread / n_threads;
+    const int negative_end = negative_rows * (thread + 1) / n_threads;
+    if (negative_end > negative_begin) {
+      cblas_dsyrk(
+          CblasColMajor,
+          CblasLower,
+          CblasTrans,
+          n_basis_functions,
+          negative_end - negative_begin,
+          1.0,
+          transformed.data() + positive_rows + negative_begin,
+          transformed.rows(),
+          positive_end > positive_begin ? 1.0 : 0.0,
+          local_exchange.data(),
+          n_basis_functions);
+    }
+  }
+  for (const auto& local_exchange : partial_exchange) {
+    output += local_exchange;
+  }
+
+  const Eigen::VectorXd packed_coulomb =
+      2.0 * packed_factor_matrix.transpose() * auxiliary_projection;
+  Eigen::Index packed_index = 0;
+  for (int column = 0; column < n_basis_functions; ++column) {
+    for (int row = 0; row <= column; ++row) {
+      output(row, column) += packed_coulomb(packed_index++);
     }
   }
   symmetrize_in_place(&output_storage, n_basis_functions);

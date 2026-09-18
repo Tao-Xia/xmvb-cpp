@@ -45,6 +45,12 @@ struct ExactHvpOperator::State {
   Diagnostics diagnostics() const;
 
 private:
+  enum class RiAoH1eStrategy {
+    Uncalibrated,
+    DenseFused,
+    Spectral
+  };
+
   const AcceptedOuterResponseContext& outer_response_context() const;
 
   Eigen::VectorXd apply_reduced_impl(
@@ -105,6 +111,8 @@ private:
   mutable AoEffectiveOneElectronRiFusedWorkspace ri_ao_h1e_fused_workspace_;
   mutable Eigen::MatrixXd ri_ao_h1e_forward_workspace_;
   mutable Eigen::MatrixXd ri_ao_h1e_adjoint_workspace_;
+  mutable RiAoH1eStrategy ri_ao_h1e_strategy_ =
+      RiAoH1eStrategy::Uncalibrated;
   Eigen::MatrixXd accepted_total_active_auxiliary_gradient_;
   std::vector<double> accepted_total_inactive_density_gradient_;
   Eigen::MatrixXd zero_core_hamiltonian_;

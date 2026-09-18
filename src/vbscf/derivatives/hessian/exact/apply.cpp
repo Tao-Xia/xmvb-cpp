@@ -285,20 +285,105 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       ao_h1e_symmetrized_gradient_workspace_ =
           total_ao_effective_one_electron_direction +
           total_ao_effective_one_electron_direction.transpose();
-      apply_ao_effective_one_electron_ri_operator_fused(
-          orbital_preparation_directional_result.delta_inactive_density,
-          ao_h1e_symmetrized_gradient_workspace_,
-          *accepted_ri_factorization_,
-          &ri_ao_h1e_fused_workspace_,
-          &ri_ao_h1e_forward_workspace_,
-          &ri_ao_h1e_adjoint_workspace_);
-      ao_h1e_delta_h1e_workspace_.assign(
-          ri_ao_h1e_forward_workspace_.data(),
-          ri_ao_h1e_forward_workspace_.data() +
-              ri_ao_h1e_forward_workspace_.size());
-      encode_symmetric_ao_gradient(
-          ri_ao_h1e_adjoint_workspace_,
-          &ao_h1e_inactive_density_gradient_workspace_);
+      const auto& delta_inactive_density =
+          orbital_preparation_directional_result.delta_inactive_density;
+      const auto run_dense = [&]() {
+        apply_ao_effective_one_electron_ri_operator_fused(
+            delta_inactive_density,
+            ao_h1e_symmetrized_gradient_workspace_,
+            *accepted_ri_factorization_,
+            &ri_ao_h1e_fused_workspace_,
+            &ri_ao_h1e_forward_workspace_,
+            &ri_ao_h1e_adjoint_workspace_);
+        ao_h1e_delta_h1e_workspace_.assign(
+            ri_ao_h1e_forward_workspace_.data(),
+            ri_ao_h1e_forward_workspace_.data() +
+                ri_ao_h1e_forward_workspace_.size());
+        encode_symmetric_ao_gradient(
+            ri_ao_h1e_adjoint_workspace_,
+            &ao_h1e_inactive_density_gradient_workspace_);
+      };
+      const auto run_spectral = [&]() {
+        const std::vector<double> delta_inactive_density_storage(
+            delta_inactive_density.data(),
+            delta_inactive_density.data() + delta_inactive_density.size());
+        const std::vector<double> symmetrized_gradient_storage(
+            ao_h1e_symmetrized_gradient_workspace_.data(),
+            ao_h1e_symmetrized_gradient_workspace_.data() +
+                ao_h1e_symmetrized_gradient_workspace_.size());
+        constexpr AoEffectiveOneElectronRiOperatorOptions low_rank_options{
+            .attempt_spectral_factorization = true};
+        ao_h1e_delta_h1e_workspace_ =
+            apply_ao_effective_one_electron_ri_operator(
+                delta_inactive_density_storage,
+                *accepted_ri_factorization_,
+                n_basis_functions,
+                low_rank_options);
+        const std::vector<double> adjoint_action =
+            apply_ao_effective_one_electron_ri_operator(
+                symmetrized_gradient_storage,
+                *accepted_ri_factorization_,
+                n_basis_functions,
+                low_rank_options);
+        const Eigen::Map<const Eigen::MatrixXd> adjoint_action_matrix(
+            adjoint_action.data(),
+            n_basis_functions,
+            n_basis_functions);
+        encode_symmetric_ao_gradient(
+            adjoint_action_matrix,
+            &ao_h1e_inactive_density_gradient_workspace_);
+      };
+
+      if (ri_ao_h1e_strategy_ == RiAoH1eStrategy::DenseFused) {
+        run_dense();
+      } else if (ri_ao_h1e_strategy_ == RiAoH1eStrategy::Spectral) {
+        run_spectral();
+      } else {
+        const auto dense_start = std::chrono::steady_clock::now();
+        run_dense();
+        const double dense_seconds =
+            detail::exact_hvp_elapsed_seconds(dense_start);
+        std::vector<double> dense_forward = ao_h1e_delta_h1e_workspace_;
+        std::vector<double> dense_adjoint =
+            ao_h1e_inactive_density_gradient_workspace_;
+
+        const auto spectral_start = std::chrono::steady_clock::now();
+        run_spectral();
+        const double spectral_seconds =
+            detail::exact_hvp_elapsed_seconds(spectral_start);
+
+        const Eigen::Map<const Eigen::VectorXd> dense_forward_view(
+            dense_forward.data(), dense_forward.size());
+        const Eigen::Map<const Eigen::VectorXd> spectral_forward_view(
+            ao_h1e_delta_h1e_workspace_.data(),
+            ao_h1e_delta_h1e_workspace_.size());
+        const Eigen::Map<const Eigen::VectorXd> dense_adjoint_view(
+            dense_adjoint.data(), dense_adjoint.size());
+        const Eigen::Map<const Eigen::VectorXd> spectral_adjoint_view(
+            ao_h1e_inactive_density_gradient_workspace_.data(),
+            ao_h1e_inactive_density_gradient_workspace_.size());
+        const double forward_scale =
+            std::max(1.0, dense_forward_view.lpNorm<Eigen::Infinity>());
+        const double adjoint_scale =
+            std::max(1.0, dense_adjoint_view.lpNorm<Eigen::Infinity>());
+        if ((dense_forward_view - spectral_forward_view)
+                    .lpNorm<Eigen::Infinity>() >
+                1.0e-8 * forward_scale ||
+            (dense_adjoint_view - spectral_adjoint_view)
+                    .lpNorm<Eigen::Infinity>() >
+                1.0e-8 * adjoint_scale) {
+          throw std::runtime_error(
+              "RI AO-H1E spectral contraction disagrees with dense action");
+        }
+        if (spectral_seconds < dense_seconds) {
+          ri_ao_h1e_strategy_ = RiAoH1eStrategy::Spectral;
+        } else {
+          ri_ao_h1e_strategy_ = RiAoH1eStrategy::DenseFused;
+          ao_h1e_delta_h1e_workspace_ = std::move(dense_forward);
+          ao_h1e_inactive_density_gradient_workspace_ =
+              std::move(dense_adjoint);
+        }
+      }
     } else {
       detail::apply_fused_exact_ao_one_electron_response(
           orbital_preparation_directional_result.delta_inactive_density,
