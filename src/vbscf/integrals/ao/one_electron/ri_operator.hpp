@@ -61,6 +61,13 @@ struct AoEffectiveOneElectronRiFusedWorkspace {
   std::vector<double> weighted_packed_adjoint;
 };
 
+/** Runtime-selected implementation for repeated RI AO-H1E Hessian actions. */
+enum class AoEffectiveOneElectronRiStrategy {
+  Uncalibrated,
+  DenseFused,
+  Spectral
+};
+
 /**
  * @brief Applies the AO-side RI Coulomb-exchange operator to an AO matrix.
  *
@@ -111,6 +118,22 @@ void apply_ao_effective_one_electron_ri_operator_fused(
     const Eigen::Ref<const Eigen::MatrixXd>& adjoint,
     const RiAoFactorization& ri_factorization,
     AoEffectiveOneElectronRiFusedWorkspace* workspace,
+    Eigen::MatrixXd* forward,
+    Eigen::MatrixXd* transpose);
+
+/**
+ * @brief Applies and calibrates the repeated RI AO-H1E Hessian action.
+ *
+ * On the first call, dense-fused and signed-spectral contractions are timed on
+ * the same inputs and checked for numerical agreement. The faster strategy is
+ * retained in `strategy` for subsequent calls at the accepted orbital point.
+ */
+void apply_ao_effective_one_electron_ri_operator_adaptive(
+    const Eigen::Ref<const Eigen::MatrixXd>& source,
+    const Eigen::Ref<const Eigen::MatrixXd>& adjoint,
+    const RiAoFactorization& ri_factorization,
+    AoEffectiveOneElectronRiFusedWorkspace* workspace,
+    AoEffectiveOneElectronRiStrategy* strategy,
     Eigen::MatrixXd* forward,
     Eigen::MatrixXd* transpose);
 

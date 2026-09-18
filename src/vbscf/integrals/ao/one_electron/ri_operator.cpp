@@ -1,9 +1,11 @@
 #include "vbscf/integrals/ao/one_electron/ri_operator.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -793,6 +795,92 @@ void apply_ao_effective_one_electron_ri_operator_fused(
       workspace,
       forward,
       transpose);
+}
+
+void apply_ao_effective_one_electron_ri_operator_adaptive(
+    const Eigen::Ref<const Eigen::MatrixXd>& source,
+    const Eigen::Ref<const Eigen::MatrixXd>& adjoint,
+    const RiAoFactorization& ri_factorization,
+    AoEffectiveOneElectronRiFusedWorkspace* workspace,
+    AoEffectiveOneElectronRiStrategy* strategy,
+    Eigen::MatrixXd* forward,
+    Eigen::MatrixXd* transpose) {
+  if (strategy == nullptr) {
+    throw std::invalid_argument("RI adaptive strategy must not be null");
+  }
+  const int n_basis_functions = ri_factorization.n_basis_functions;
+  const auto run_dense = [&]() {
+    apply_ao_effective_one_electron_ri_operator_fused(
+        source,
+        adjoint,
+        ri_factorization,
+        workspace,
+        forward,
+        transpose);
+  };
+  const auto run_spectral = [&]() {
+    const std::vector<double> source_storage(
+        source.data(), source.data() + source.size());
+    const std::vector<double> adjoint_storage(
+        adjoint.data(), adjoint.data() + adjoint.size());
+    constexpr AoEffectiveOneElectronRiOperatorOptions options{
+        .attempt_spectral_factorization = true};
+    const std::vector<double> forward_storage =
+        apply_ao_effective_one_electron_ri_operator(
+            source_storage,
+            ri_factorization,
+            n_basis_functions,
+            options);
+    const std::vector<double> transpose_storage =
+        apply_ao_effective_one_electron_ri_operator(
+            adjoint_storage,
+            ri_factorization,
+            n_basis_functions,
+            options);
+    *forward = Eigen::Map<const Eigen::MatrixXd>(
+        forward_storage.data(), n_basis_functions, n_basis_functions);
+    *transpose = Eigen::Map<const Eigen::MatrixXd>(
+        transpose_storage.data(), n_basis_functions, n_basis_functions);
+  };
+
+  if (*strategy == AoEffectiveOneElectronRiStrategy::DenseFused) {
+    run_dense();
+    return;
+  }
+  if (*strategy == AoEffectiveOneElectronRiStrategy::Spectral) {
+    run_spectral();
+    return;
+  }
+
+  const auto dense_start = std::chrono::steady_clock::now();
+  run_dense();
+  const double dense_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - dense_start).count();
+  Eigen::MatrixXd dense_forward = *forward;
+  Eigen::MatrixXd dense_transpose = *transpose;
+
+  const auto spectral_start = std::chrono::steady_clock::now();
+  run_spectral();
+  const double spectral_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - spectral_start).count();
+  const double forward_scale =
+      std::max(1.0, dense_forward.cwiseAbs().maxCoeff());
+  const double transpose_scale =
+      std::max(1.0, dense_transpose.cwiseAbs().maxCoeff());
+  if ((dense_forward - *forward).cwiseAbs().maxCoeff() >
+          1.0e-8 * forward_scale ||
+      (dense_transpose - *transpose).cwiseAbs().maxCoeff() >
+          1.0e-8 * transpose_scale) {
+    throw std::runtime_error(
+        "RI AO-H1E spectral contraction disagrees with dense action");
+  }
+  if (spectral_seconds < dense_seconds) {
+    *strategy = AoEffectiveOneElectronRiStrategy::Spectral;
+  } else {
+    *strategy = AoEffectiveOneElectronRiStrategy::DenseFused;
+    *forward = std::move(dense_forward);
+    *transpose = std::move(dense_transpose);
+  }
 }
 
 }  // namespace xmvb::vb
