@@ -69,6 +69,8 @@ void refresh_truncated_newton_step_certificate(
 struct TruncatedNewtonTrialEvaluation {
   double actual_decrease = 0.0;
   double predicted_decrease = 0.0;
+  /** @brief Positive first-order decrease `-g^T s` along the trial step. */
+  double linear_decrease = 0.0;
 };
 
 /** @brief Local order of the error in the Hessian model used for a trial. */

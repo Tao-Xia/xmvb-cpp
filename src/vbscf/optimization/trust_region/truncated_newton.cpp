@@ -522,6 +522,27 @@ double update_nonredundant_truncated_newton_trust_radius(
   }
 
   if (!accepted) {
+    // Fit the measured directional decrease by
+    //   a(alpha) = alpha*l - alpha^2*(l-a),
+    // where l=-g^T s and a is the full-step actual decrease.  Its positive
+    // maximizer jumps directly to the scale supported by the observed energy,
+    // avoiding a long sequence of nearly identical rejected retractions.
+    // This is used only to contract the radius; invalid or noncontracting fits
+    // fall through to the fidelity-aware model-error rule below.
+    const double linear_decrease = trial.linear_decrease;
+    const double fitted_curvature = linear_decrease - trial.actual_decrease;
+    if (linear_decrease > 0.0 && fitted_curvature > 0.0 &&
+        std::isfinite(linear_decrease) && std::isfinite(fitted_curvature)) {
+      const double interpolated_scale =
+          linear_decrease / (2.0 * fitted_curvature);
+      if (interpolated_scale > 0.0 && interpolated_scale < 1.0 &&
+          std::isfinite(interpolated_scale)) {
+        return std::max(
+            minimum_step_size,
+            std::min(trust_radius, step_norm * interpolated_scale));
+      }
+    }
+
     // Estimate how much of the trial scale remains trustworthy from the
     // observed Taylor-model remainder.  This continuously contracts more for
     // worse disagreement instead of applying a fixed rejection multiplier.

@@ -201,6 +201,9 @@ BackendRunResult run_truncated_newton_backend(
           if (trial_evaluation != nullptr) {
             trial_evaluation->predicted_decrease =
                 effective_predicted_decrease;
+            trial_evaluation->linear_decrease =
+                -current_projection.reduced_gradient.dot(
+                    candidate_reduced_step);
           }
   
           VbScfObjective::TrialEvaluation candidate_trial_evaluation =
@@ -652,6 +655,8 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.accepted_trial_radius = trust_radius;
     iteration_record.next_trust_radius = next_trust_radius;
     iteration_record.step_norm = truncated_newton_step.retract_tangent_norm;
+    iteration_record.linear_decrease =
+        trial_evaluation_cache.linear_decrease;
     iteration_record.predicted_decrease =
         trial_evaluation_cache.predicted_decrease;
     iteration_record.actual_decrease = trial_evaluation_cache.actual_decrease;

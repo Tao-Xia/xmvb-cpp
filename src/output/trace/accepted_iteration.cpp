@@ -525,6 +525,7 @@ public:
           << "    \"accepted_trial_radius\": " << tnhvp.accepted_trial_radius << ",\n"
           << "    \"next_trust_radius\": " << tnhvp.next_trust_radius << ",\n"
           << "    \"step_norm\": " << tnhvp.step_norm << ",\n"
+          << "    \"linear_decrease\": " << tnhvp.linear_decrease << ",\n"
           << "    \"predicted_decrease\": " << tnhvp.predicted_decrease << ",\n"
           << "    \"actual_decrease\": " << tnhvp.actual_decrease << ",\n"
           << "    \"trust_ratio\": " << tnhvp.trust_ratio << ",\n"

@@ -71,6 +71,7 @@ struct TnhvpIterationRecord {
   double next_trust_radius = 0.0;
   double step_norm = 0.0;
 
+  double linear_decrease = 0.0;
   double predicted_decrease = 0.0;
   double actual_decrease = 0.0;
   double trust_ratio = 0.0;

@@ -110,6 +110,7 @@ set(required_tnhvp_patterns
   "\"initial_trust_radius\""
   "\"accepted_trial_radius\""
   "\"next_trust_radius\""
+  "\"linear_decrease\""
   "\"predicted_decrease\""
   "\"actual_decrease\""
   "\"trust_ratio\""

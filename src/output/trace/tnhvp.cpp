@@ -39,7 +39,8 @@ void write_tnhvp_trace(
       << "\ttrust_model_error_order\tsubproblem_met_model_kkt"
       << "\tsubproblem_stopped_by_work_budget"
       << "\tinitial_trust_radius\taccepted_trial_radius\tnext_trust_radius"
-      << "\tstep_norm\tpredicted_decrease\tactual_decrease\ttrust_ratio"
+      << "\tstep_norm\tlinear_decrease\tpredicted_decrease"
+      << "\tactual_decrease\ttrust_ratio"
       << "\tmodel_spectral_radius\ttrust_region_shift\treached_boundary"
       << "\tnegative_curvature\treused_subspace\tchart_changed\n";
   stream << std::setprecision(17);
@@ -78,6 +79,7 @@ void write_tnhvp_trace(
         << step.accepted_trial_radius << '\t'
         << step.next_trust_radius << '\t'
         << step.step_norm << '\t'
+        << step.linear_decrease << '\t'
         << step.predicted_decrease << '\t'
         << step.actual_decrease << '\t'
         << step.trust_ratio << '\t'

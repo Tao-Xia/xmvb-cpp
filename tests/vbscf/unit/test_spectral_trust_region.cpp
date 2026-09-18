@@ -97,6 +97,37 @@ void check_model_fidelity_radius_scaling() {
       approximate_contraction < exact_contraction,
       "model fidelities produced indistinguishable rejected-step scaling");
 }
+
+void check_rejected_trial_interpolation() {
+  using xmvb::vb::TruncatedNewtonModelFidelity;
+  xmvb::vb::TruncatedNewtonStepResult boundary_step;
+  boundary_step.retract_tangent_norm = 0.5;
+  boundary_step.reached_boundary = true;
+
+  const double interpolated_radius =
+      xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
+          0.5,
+          1.0e-12,
+          {-9.0, 1.0, 1.0},
+          boundary_step,
+          TruncatedNewtonModelFidelity::CoreApproximate,
+          false);
+  require(
+      std::abs(interpolated_radius - 0.025) <= 1.0e-14,
+      "rejected energy-increasing trial did not use directional interpolation");
+
+  const double positive_decrease_radius =
+      xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
+          0.5,
+          1.0e-12,
+          {0.2, 1.0, 1.0},
+          boundary_step,
+          TruncatedNewtonModelFidelity::DirectionallyExact,
+          false);
+  require(
+      std::abs(positive_decrease_radius - 0.3125) <= 1.0e-14,
+      "rejected overpredicting trial did not minimize its measured ray model");
+}
 }  // namespace
 
 int main() {
@@ -123,6 +154,7 @@ int main() {
         !xmvb::vb::truncated_newton_trial_is_acceptable({-0.1, 1.0}),
         "energy-increasing trial was accepted");
     check_model_fidelity_radius_scaling();
+    check_rejected_trial_interpolation();
     check("positive definite interior", V(2, 4), V(1, 2), 2, false);
     check("positive definite boundary", V(2, 4), V(1, 2), 0.1, true);
     check("zero-multiplier boundary", V(2, 4), V(2, 0), 1, true);

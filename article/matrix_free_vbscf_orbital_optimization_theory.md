@@ -1681,11 +1681,38 @@ e_{\mathrm{round}}
 =16\epsilon\max(a_k,p_k).
 $$
 
-Rejected trials use the same model order when scaling the retained trustworthy
-fraction.  This update prevents a core-only step from being treated as though
-it had the cubic remainder of an exact Newton model.  A cap derived from the
-largest Ritz magnitude can instead freeze the radius because of a stiff mode
-unrelated to the accepted boundary direction.
+For a rejected trial, the measured energy also determines a direct
+one-dimensional interpolation.  Define the positive linear decrease
+
+$$
+\ell_k=-\mathbf g_k^{\mathrm T}\mathbf s_k.
+$$
+
+The quadratic ray model that matches the derivative at the accepted point and
+the measured full-step decrease is
+
+$$
+\widehat a_k(\alpha)
+=\alpha\ell_k-\alpha^2(\ell_k-a_k).
+$$
+
+When $\ell_k>0$, $\ell_k-a_k>0$, and its maximizer lies strictly inside the
+trial, the next radius is
+
+$$
+\Delta_{k+1}
+=\lVert\mathbf s_k\rVert
+\frac{\ell_k}{2(\ell_k-a_k)}.
+$$
+
+This replaces a sequence of weak contractions by the scale inferred from the
+already evaluated energy.  If the interpolation is invalid or noncontracting,
+the rejected trial instead uses the same fidelity-dependent model order when
+scaling its retained trustworthy fraction.  The combined update prevents a
+core-only step from being treated as though it had the cubic remainder of an
+exact Newton model.  A cap derived from the largest Ritz magnitude can instead
+freeze the radius because of a stiff mode unrelated to the accepted boundary
+direction.
 
 ### 10.1 Coordinate-consistent local preconditioning model
 
