@@ -131,23 +131,13 @@ bool is_ecp_section_header_line(const std::vector<std::string>& tokens) {
 
 int angular_momentum_from_label(const std::string& raw_label) {
   const std::string label = to_ascii_lower(raw_label);
-  if (label == "s") {
-    return 0;
-  }
-  if (label == "p") {
-    return 1;
-  }
-  if (label == "d") {
-    return 2;
-  }
-  if (label == "f") {
-    return 3;
-  }
-  if (label == "g") {
-    return 4;
-  }
-  if (label == "h") {
-    return 5;
+  constexpr char kAngularMomentumLabels[] = "spdfghiklmnoqrtuvwxyz";
+  if (label.size() == 1) {
+    const std::string labels(kAngularMomentumLabels);
+    const std::size_t position = labels.find(label[0]);
+    if (position != std::string::npos) {
+      return static_cast<int>(position);
+    }
   }
   throw std::runtime_error("unsupported angular-momentum label in basis file: " + raw_label);
 }

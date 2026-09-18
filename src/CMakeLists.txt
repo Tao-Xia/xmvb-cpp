@@ -227,6 +227,16 @@ add_dependencies(xmvb xmvb_assets)
 
 if (BUILD_TESTING)
   add_executable(
+    test_input_auxiliary_basis
+    ${CMAKE_SOURCE_DIR}/tests/input/test_auxiliary_basis.cpp)
+  target_link_libraries(test_input_auxiliary_basis PRIVATE xmvb_input_deck)
+  add_test(
+    NAME input_auxiliary_basis
+    COMMAND
+      test_input_auxiliary_basis
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/MnF2.xmi)
+
+  add_executable(
     test_input_guess_selection
     ${CMAKE_SOURCE_DIR}/tests/input/test_guess_selection.cpp)
   target_link_libraries(test_input_guess_selection PRIVATE xmvb_input_deck)
