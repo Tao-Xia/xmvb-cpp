@@ -183,7 +183,7 @@ void print_tnhvp_summary(
       "full orbital/structure KKT backward errors");
   print_log_field(
       "Inexact Newton forcing",
-      "adaptive sqrt(projected gradient 2-norm)");
+      "gradient-progress ratio + outer-accuracy floor");
   print_log_field(
       "Trust-radius update",
       "projected spectrum + observed model remainder");
