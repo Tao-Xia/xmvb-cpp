@@ -376,6 +376,8 @@ BackendRunResult run_truncated_newton_backend(
         accepted_trial_evaluation.chart_changed;
     const Eigen::VectorXd accepted_packed_tangent =
         current_space.expand_step(reduced_step);
+    const Eigen::VectorXd accepted_gradient_change =
+        trial_gradient - current_gradient;
     const int accepted_preconditioner_history_size =
         accepted_point_preconditioner->size();
     const int accepted_coupled_orbital_dimension =
@@ -513,23 +515,10 @@ BackendRunResult run_truncated_newton_backend(
     }
     if (!nonredundant_rank_changed &&
         transport_history_size > 0) {
-      transport_packed_secant_history_to_chart(
+      append_projected_secant_pair(
           next_space,
-          transport_history_size,
-          &packed_secant_history);
-      const Eigen::VectorXd transported_step =
-          next_space
-              .project_vector(accepted_packed_tangent)
-              .reduced_gradient;
-      const Eigen::VectorXd transported_previous_gradient =
-          next_space
-              .project_gradient(current_space.expand_gradient(
-                  current_projection.reduced_gradient))
-              .reduced_gradient;
-      append_reduced_secant_pair(
-          next_space,
-          transported_step,
-          next_projection.reduced_gradient - transported_previous_gradient,
+          accepted_packed_tangent,
+          accepted_gradient_change,
           transport_history_size,
           &packed_secant_history);
     }

@@ -321,10 +321,10 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
     Eigen::VectorXd secant_gradient_change =
         (2.0 * secant_step).eval();
     std::vector<PackedSecantPair> secant_history;
-    append_reduced_secant_pair(
+    append_projected_secant_pair(
         space,
-        secant_step,
-        secant_gradient_change,
+        space.expand_step(secant_step),
+        space.expand_gradient(secant_gradient_change),
         1,
         &secant_history);
     auto inverse_hessian = build_transported_reduced_lbfgs_preconditioner(

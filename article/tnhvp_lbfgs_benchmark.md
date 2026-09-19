@@ -11,14 +11,14 @@ gradient change. Gauge canonicalization therefore corrupted the secant
 history, and the resulting iteration counts were not a valid nonredundant
 L-BFGS baseline.
 
-The corrected implementation stores each secant as a quotient-space primal
-step and dual gradient change lifted into the common packed embedding. After
-an accepted orbital update, it:
+The corrected implementation stores the accepted retraction tangent and the
+full ambient gradient-covector change in the common packed embedding. When a
+secant is used in a new accepted-point chart, it:
 
 1. transports a step with the new chart's vector projection;
 2. transports a gradient covector with the new chart's covector pullback;
-3. checks positive curvature only after both quantities occupy the same new
-   quotient chart; and
+3. checks positive curvature only after both quantities occupy the same
+   target quotient chart; and
 4. clears history only if the quotient rank changes, not when an equivalent
    orbital gauge representative changes.
 

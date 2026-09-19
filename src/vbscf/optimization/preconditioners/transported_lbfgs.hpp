@@ -48,28 +48,16 @@ transport_secant_pairs_to_chart(
     const std::vector<PackedSecantPair>& packed_secant_history,
     int max_history_size);
 
-/**
- * @brief Transports every stored primal/dual secant into `current_space`.
- *
- * Steps use the chart's vector projection, whereas gradient changes use its
- * covector pullback.  Re-lifting both reduced quantities makes subsequent
- * transports compositional and removes obsolete gauge components.
- */
-void transport_packed_secant_history_to_chart(
-    const OrbitalChart& current_space,
-    int max_history_size,
-    std::vector<PackedSecantPair>* packed_secant_history);
-
 Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
     const OrbitalChart& current_space,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd& reduced_vector);
 
-/** @brief Appends a curvature-valid secant expressed in one quotient chart. */
-void append_reduced_secant_pair(
+/** @brief Appends an embedding secant with positive target-chart curvature. */
+void append_projected_secant_pair(
     const OrbitalChart& current_space,
-    Eigen::VectorXd reduced_step,
-    Eigen::VectorXd reduced_gradient_change,
+    Eigen::VectorXd packed_step,
+    Eigen::VectorXd packed_gradient_change,
     int max_history_size,
     std::vector<PackedSecantPair>* packed_secant_history);
 

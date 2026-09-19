@@ -451,21 +451,10 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     if (rank_changed) {
       packed_secant_history.clear();
     } else {
-      transport_packed_secant_history_to_chart(
+      append_projected_secant_pair(
           next_space,
-          history_size,
-          &packed_secant_history);
-      const Eigen::VectorXd transported_step =
-          next_space.project_vector(accepted_packed_tangent).reduced_gradient;
-      const Eigen::VectorXd transported_previous_gradient =
-          next_space
-              .project_gradient(
-                  current_space.expand_gradient(previous_reduced_gradient))
-              .reduced_gradient;
-      append_reduced_secant_pair(
-          next_space,
-          transported_step,
-          next_projection.reduced_gradient - transported_previous_gradient,
+          std::move(accepted_packed_tangent),
+          current_gradient - previous_gradient,
           history_size,
           &packed_secant_history);
     }

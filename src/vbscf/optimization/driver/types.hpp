@@ -14,11 +14,12 @@
 
 namespace xmvb::vb {
 
-// One primal/dual curvature pair lifted from a quotient chart into the common
-// packed sparse-coefficient embedding.  The primal step and dual gradient
-// change must use expand_step and expand_gradient respectively; current-chart
-// vector projection and covector pullback then provide their distinct
-// transports after every accepted orbital update.
+// One curvature pair in the common packed sparse-coefficient embedding.  The
+// step is an accepted retraction tangent and the gradient change is the full
+// ambient covector difference.  Projecting both into the target chart retains
+// the pullback-curvature contribution from normalization and gauge motion;
+// replacing the covector difference by a transported projected gradient would
+// discard that contribution.
 struct PackedSecantPair {
   Eigen::VectorXd packed_step;
   Eigen::VectorXd packed_gradient_change;
