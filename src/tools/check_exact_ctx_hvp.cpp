@@ -360,6 +360,7 @@ CoupledProjectionAudit audit_coupled_projection(
   const double forcing_tolerance =
       xmvb::vb::inexact_newton_forcing_term(
           orbital_gradient.stableNorm(),
+          orbital_gradient.lpNorm<Eigen::Infinity>(),
           orbital_gradient.stableNorm(),
           gradient_tolerance);
   const xmvb::vb::CoupledKktTolerances kkt_tolerances{

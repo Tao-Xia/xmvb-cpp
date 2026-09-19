@@ -196,8 +196,7 @@ CoupledWorkspaceResult AcceptedPointCoupledWorkspace::result(
 CoupledWorkspaceResult AcceptedPointCoupledWorkspace::solve(
     double trust_radius,
     const CoupledKktTolerances& tolerances,
-    const CoupledWorkspaceLimits& limits,
-    double incumbent_predicted_decrease) {
+    const CoupledWorkspaceLimits& limits) {
   const int maximum_orbitals = orbital_limit(limits);
   const int maximum_responses = response_limit(limits);
   if (!initialize(limits)) {
@@ -230,7 +229,7 @@ CoupledWorkspaceResult AcceptedPointCoupledWorkspace::solve(
   int expansions = 0;
   while (true) {
     CoupledSubspaceStep step = subspace_solver_.solve(
-        trust_radius, tolerances, incumbent_predicted_decrease);
+        trust_radius, tolerances);
     if (step.converged()) {
       return result(
           CoupledWorkspaceStatus::Converged,

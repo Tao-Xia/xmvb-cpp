@@ -216,6 +216,7 @@ void run_audit(const Options& options) {
       ? options.target_kkt_relative_residual
       : inexact_newton_forcing_term(
             projected.reduced_gradient.stableNorm(),
+            projected.reduced_gradient.lpNorm<Eigen::Infinity>(),
             projected.reduced_gradient.stableNorm(),
             accuracy.gradient_tolerance);
   auto step = solve_nonredundant_truncated_newton_step(

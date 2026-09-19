@@ -99,11 +99,14 @@ struct RejectedTruncatedNewtonStepCache {
  * The progress ratio makes the forcing @f$O(\|g_k\|)@f$ relative to the
  * fixed initial scale, which preserves local quadratic convergence.  The
  * accuracy floor stops tightening once the predicted quadratic residual
- * reaches the outer gradient requirement.
+ * reaches the outer gradient requirement.  When one maximum admissible
+ * contraction can meet the componentwise outer threshold, the forcing is
+ * additionally bounded by @f$\epsilon_g/\|g_k\|_2@f$.
  */
 double inexact_newton_forcing_term(
-    double gradient_norm,
-    double initial_gradient_norm,
+    double gradient_l2_norm,
+    double gradient_inf_norm,
+    double initial_gradient_l2_norm,
     double gradient_tolerance);
 
 /**

@@ -183,15 +183,14 @@ void print_tnhvp_summary(
       "full orbital/structure KKT backward errors");
   print_log_field(
       "Inexact Newton forcing",
-      "gradient-progress ratio + outer-accuracy floor");
+      "gradient progress + one-contraction outer target");
   print_log_field(
       "Trust-radius update",
       "projected spectrum + observed model remainder");
   print_log_field("Subspace work limit", "algebraic completion");
   print_log_field(
       "Transport history",
-      std::to_string(
-          options.nonredundant_truncated_newton_transport_history_size));
+      std::to_string(options.history_size));
   print_log_field(
       "Physical chart",
       physical_chart_name(orbital_input));

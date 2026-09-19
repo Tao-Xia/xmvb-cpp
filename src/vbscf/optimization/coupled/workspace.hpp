@@ -1,7 +1,5 @@
 #pragma once
 
-#include <limits>
-
 #include <Eigen/Core>
 
 #include "vbscf/optimization/coupled/accepted_point.hpp"
@@ -89,8 +87,7 @@ public:
   CoupledWorkspaceResult solve(
       double trust_radius,
       const CoupledKktTolerances& tolerances,
-      const CoupledWorkspaceLimits& limits = {},
-      double incumbent_predicted_decrease = 0.0);
+      const CoupledWorkspaceLimits& limits = {});
 
 private:
   int orbital_limit(const CoupledWorkspaceLimits& limits) const;

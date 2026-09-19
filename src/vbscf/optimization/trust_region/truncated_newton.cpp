@@ -17,24 +17,37 @@
 namespace xmvb::vb {
 
 double inexact_newton_forcing_term(
-    double gradient_norm,
-    double initial_gradient_norm,
+    double gradient_l2_norm,
+    double gradient_inf_norm,
+    double initial_gradient_l2_norm,
     double gradient_tolerance) {
-  if (!std::isfinite(gradient_norm) || gradient_norm < 0.0 ||
-      !std::isfinite(initial_gradient_norm) ||
-      initial_gradient_norm <= 0.0 ||
+  if (!std::isfinite(gradient_l2_norm) || gradient_l2_norm < 0.0 ||
+      !std::isfinite(gradient_inf_norm) || gradient_inf_norm < 0.0 ||
+      !std::isfinite(initial_gradient_l2_norm) ||
+      initial_gradient_l2_norm <= 0.0 ||
       !std::isfinite(gradient_tolerance) ||
       gradient_tolerance <= 0.0) {
     throw std::invalid_argument(
         "inexact Newton forcing requires a valid outer accuracy contract");
   }
   constexpr double kContractionLimit = 0.5;
-  const double progress_ratio = gradient_norm / initial_gradient_norm;
+  const double progress_ratio =
+      gradient_l2_norm / initial_gradient_l2_norm;
   const double accuracy_floor =
-      std::sqrt(gradient_tolerance / initial_gradient_norm);
-  return std::min(
+      std::sqrt(gradient_tolerance / initial_gradient_l2_norm);
+  double forcing = std::min(
       kContractionLimit,
       std::max(progress_ratio, accuracy_floor));
+  // If even the maximum allowed inexact-Newton contraction would bring the
+  // componentwise gradient below the requested outer threshold, solve the
+  // current equation accurately enough to make that one-step target
+  // attainable.  This is an accuracy contract, not a system-specific switch.
+  if (kContractionLimit * gradient_inf_norm <= gradient_tolerance) {
+    const double outer_target = gradient_tolerance /
+        std::max(gradient_tolerance, gradient_l2_norm);
+    forcing = std::min(forcing, outer_target);
+  }
+  return forcing;
 }
 
 void refresh_truncated_newton_step_certificate(

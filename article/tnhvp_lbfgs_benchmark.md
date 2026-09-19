@@ -65,3 +65,26 @@ wall-time advantage, for TNHVP. A publication performance claim requires
 reducing the HVP/coupled-response cost or avoiding response work whose expected
 reduction cannot amortize its measured wall time. The corrected nonredundant
 L-BFGS implementation is the baseline for all subsequent comparisons.
+
+## Accuracy-triggered forcing regression
+
+A 32-core Hanhai25 regression on 2026-09-19 tested the production forcing rule
+derived in Section 11.7 of
+`matrix_free_vbscf_orbital_optimization_theory.md`. These runs used the same
+Davidson inputs and stopping thresholds as the corrected benchmark, but were
+not executed as a new paired TNHVP/L-BFGS timing experiment; they are recorded
+as an implementation regression rather than final article data.
+
+| System | TNHVP steps | SCF wall (s) | Final energy | Projected gradient infinity norm | Peak RSS (KiB) |
+|---|---:|---:|---:|---:|---:|
+| F2 | 5 | 0.255586 | -198.751155830509 | 1.18593384e-05 | 67584 |
+| MnF2 | 15 | 25.204288 | -1348.893353224099 | 2.49837891e-06 | 555384 |
+| FeCl2 | 5 | 2.501624 | -2181.617636436763 | 5.06137414e-04 | 425048 |
+| 240 | 7 | 20.601759 | -343.446302353175 | 3.80186083e-06 | 1911848 |
+
+The FeCl2 iteration count decreases from 10 in the earlier TNHVP benchmark to
+5, below the 7-step nonredundant L-BFGS baseline, while its SCF wall time falls
+from 22.16 s to 2.50 s. MnF2 retains a 15-step count while its SCF time falls
+from 55.98 s to 25.20 s. The 240 calculation requires one additional accepted
+step but decreases from 93.64 s to 20.60 s. A fresh interleaved paired run is
+still required before these wall-time changes are used as publication claims.

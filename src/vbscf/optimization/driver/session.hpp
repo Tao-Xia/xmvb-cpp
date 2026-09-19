@@ -20,9 +20,6 @@ OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
     const SparseParameterLayout& parameter_view);
 
-int choose_truncated_newton_transport_history_size(
-    const VbScfOptimizerOptions& options);
-
 void sync_result_from_objective(
     const VbScfObjective& objective,
     VbScfOptimizerResult* result);

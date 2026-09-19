@@ -162,9 +162,13 @@ int CoupledProjectionCache::append_orbital_block(
       }
     }
     const double squared_norm = vector.dot(metric_image);
-    const double absolute_product =
-        vector.cwiseAbs().dot(metric_image.cwiseAbs());
-    if (squared_norm < -rank_roundoff * absolute_product) {
+    // Orthogonalization subtracts nearly equal vectors when a correction is
+    // already represented.  Its dot-product error is bounded by the scale of
+    // the original candidate, not by the much smaller cancelled residual.
+    // Use that forward-error scale to distinguish loss of metric positivity
+    // from ordinary numerical-rank loss.
+    if (squared_norm <
+        -rank_roundoff * original_absolute_product) {
       throw std::runtime_error(
           "orbital metric lost positivity during numerical-rank filtering");
     }

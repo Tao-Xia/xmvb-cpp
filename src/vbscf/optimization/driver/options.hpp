@@ -67,14 +67,6 @@ struct VbScfOptimizerOptions {
   int history_size = 100;
 
   /**
-   * @brief Number of transported secant pairs used to enrich the TN preconditioner.
-   *
-   * A value of `0` disables transported secants and uses only the reduced
-   * curvature diagonal.
-   */
-  int nonredundant_truncated_newton_transport_history_size = 8;
-
-  /**
    * @brief Whether to print per-iteration optimizer diagnostics.
    */
   bool verbose = true;

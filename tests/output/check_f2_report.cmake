@@ -39,7 +39,7 @@ set(required_report_patterns
   "BOND ORDER"
   "1\\.400[ ]+0\\.773"
   "VALENCE ANALYSIS"
-  "gradient-progress ratio \\+ outer-accuracy floor"
+  "gradient progress \\+ one-contraction outer target"
   "F[ ]+1\\.000[ ]+0\\.773[ ]+0\\.227"
   "DIPOLE MOMENT ANALYSIS"
   "0\\.000000[ ]+0\\.000000[ ]+-?0\\.00000[0-9]"

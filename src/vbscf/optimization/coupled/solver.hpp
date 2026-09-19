@@ -103,8 +103,8 @@ public:
    *
    * Repeated calls, including calls with a changed trust radius, perform no
    * matrix-free operator action. `incumbent_predicted_decrease` is the exact
-   * decrease of a previously certified feasible step, normally the coupled
-   * Cauchy incumbent; a returned step may not be worse than that value.
+   * decrease of a certified feasible step retained in the supplied spaces; a
+   * returned curvature-enhanced step may not be worse than that value.
    */
   CoupledSubspaceStep solve(
       double trust_radius,

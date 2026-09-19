@@ -31,18 +31,33 @@ void check_accuracy_aware_forcing() {
       std::sqrt(gradient_tolerance / initial_norm);
   require(
       inexact_newton_forcing_term(
-          initial_norm, initial_norm, gradient_tolerance) == 0.5,
+          initial_norm, initial_norm, initial_norm,
+          gradient_tolerance) == 0.5,
       "accuracy-aware forcing lost its contraction limit");
   require(
       std::abs(inexact_newton_forcing_term(
-                   1.0, initial_norm, gradient_tolerance) -
+                   1.0, 1.0, initial_norm,
+                   gradient_tolerance) -
                0.25) < 1.0e-15,
       "accuracy-aware forcing does not track gradient progress");
   require(
       std::abs(inexact_newton_forcing_term(
-                   1.0e-2, initial_norm, gradient_tolerance) -
+                   1.0e-2, 1.0e-2, initial_norm,
+                   gradient_tolerance) -
                accuracy_floor) < 1.0e-15,
       "accuracy-aware forcing did not stop at the outer accuracy floor");
+  require(
+      std::abs(inexact_newton_forcing_term(
+                   1.0e-5, 1.0e-5, initial_norm,
+                   gradient_tolerance) -
+               accuracy_floor) < 1.0e-15,
+      "outer target over-solved beyond the requested accuracy");
+  require(
+      std::abs(inexact_newton_forcing_term(
+                   6.0e-3, 1.7e-3, 6.0e-3,
+                   gradient_tolerance) -
+               (gradient_tolerance / 6.0e-3)) < 1.0e-15,
+      "one-contraction outer target was not enforced");
 }
 
 OrbitalPreparationInput make_input(

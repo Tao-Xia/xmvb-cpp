@@ -109,7 +109,6 @@ void print_usage() {
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
                "\n"
-               " [--nonredundant-truncated-newton-transport-history-size <count>]"
                " [--standard-two-electron-mode auto|exact|ri]"
                " [--skip-orbital-guess true|false]"
                " [--raw-structure-selection full|covalent]"
@@ -171,11 +170,6 @@ std::optional<Options> parse_options(int argc, char** argv) {
         options.gradient_tolerance = std::stod(argument_value);
       } else if (argument_name == "--energy-tolerance") {
         options.energy_tolerance = std::stod(argument_value);
-      } else if (
-          argument_name ==
-          "--nonredundant-truncated-newton-transport-history-size") {
-        options.nonredundant_truncated_newton_transport_history_size =
-            std::stoi(argument_value);
       } else if (argument_name == "--standard-two-electron-mode") {
         apply_standard_two_electron_mode_argument(argument_value, &load_options);
       } else if (argument_name == "--skip-orbital-guess") {

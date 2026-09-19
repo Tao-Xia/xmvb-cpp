@@ -3996,11 +3996,10 @@ required because the matrix-free block actions are accepted-point operators.
 
 Let $\mathbf g_0$ be the projected gradient at the beginning of the orbital
 optimization and let $\tau_g$ be the requested outer gradient accuracy.  The
-orbital equation is compared with the accuracy-aware inexact-Newton forcing
-value
+global progress forcing is
 
 $$
-\eta_k
+\eta_k^{(\mathrm{prog})}
 =
 \min\!\left[
 \frac12,
@@ -4012,7 +4011,7 @@ $$
 $$
 
 Above the requested accuracy floor, the first ratio gives
-$\eta_k=O(\|\mathbf g_k\|_2)$ on the fixed initial gradient scale and hence
+$\eta_k^{(\mathrm{prog})}=O(\|\mathbf g_k\|_2)$ on the fixed initial gradient scale and hence
 retains the standard local quadratic inexact-Newton condition.  The two terms
 cross when the predicted quadratic residual
 $\|\mathbf g_k\|_2^2/\|\mathbf g_0\|_2$ reaches $\tau_g$; below that point the
@@ -4020,36 +4019,46 @@ second term stops further tightening.  The contraction limit $1/2$ keeps an
 unresolved Newton equation away from the unit-residual boundary; it is not a
 molecular tuning parameter.
 
-The selected-state response also supplies curvature to a second-order energy
-model. Its accuracy contract is therefore
+This global rule alone is too loose when the initial point is already close
+to the requested componentwise gradient accuracy. Define the one-contraction
+region by
 
 $$
-\tau_{\mathrm{resp}}
+\frac12\|\mathbf g_k\|_\infty\leq\tau_g.
+$$
+
+Inside this region, even the largest admissible inexact-Newton residual should
+be capable of reaching the outer threshold in one local contraction. The
+corresponding accuracy forcing is
+
+$$
+\eta_k^{(\mathrm{acc})}
 =
-\min\!\left[
-\tau_g,
-\sqrt{
-\frac{\tau_E}
-{\max\!\left(1,\max_i|E_i|\right)}
-}
-\right],
+\frac{\tau_g}
+{\max\!\left(\tau_g,\|\mathbf g_k\|_2\right)}.
 $$
 
-where $\tau_E$ and $\tau_g$ are the requested outer energy and gradient
-accuracies. The square root is the first-order accuracy associated with a
-second-order energy target. A step is returned only if
+The production forcing is therefore
 
 $$
-\eta_p\leq\eta_k,
-\qquad
-\eta_q\leq\min\!\left(\eta_k,\tau_{\mathrm{resp}}\right).
+\eta_k=
+\begin{cases}
+\min\!\left(\eta_k^{(\mathrm{prog})},
+             \eta_k^{(\mathrm{acc})}\right),
+& \frac12\|\mathbf g_k\|_\infty\leq\tau_g,\\
+\eta_k^{(\mathrm{prog})},
+& \text{otherwise}.
+\end{cases}
 $$
 
-The separate response condition is essential when the accepted structure
-state is already stationary, because then the response block of the original
-coupled right-hand side is nearly zero. Applying the loose orbital forcing
-value independently to a termwise response backward error can terminate the
-Schur elimination after only a few directions and destroy Newton convergence.
+No molecular size, identity, or empirical iteration budget enters this
+switch: it follows directly from the outer gradient contract and the maximum
+allowed inner contraction. The orbital and structure blocks receive the
+equal product-norm allocation from eq 56e,
+
+$$
+\eta_p=\eta_q=\frac{\eta_k}{\sqrt{2}}.
+$$
 
 The response coordinates remain in the same structure basis at consecutive
 accepted orbital points.  Consequently, the preceding certified response

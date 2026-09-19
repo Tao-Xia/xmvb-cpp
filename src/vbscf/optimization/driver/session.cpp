@@ -50,13 +50,6 @@ OrbitalChart build_orbital_chart(
       &objective.gradient_result().ao_effective_one_electron_result.ao_effective_h1e);
 }
 
-int choose_truncated_newton_transport_history_size(
-    const VbScfOptimizerOptions& options) {
-  return std::max(
-      0,
-      options.nonredundant_truncated_newton_transport_history_size);
-}
-
 void sync_result_from_objective(
     const VbScfObjective& objective,
     VbScfOptimizerResult* result) {
