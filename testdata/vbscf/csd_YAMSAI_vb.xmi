@@ -4,8 +4,9 @@ vbscf
 str=full
 nao=7
 nae=8
-iscf=5
+iscf=7
 int=libcint
+eigensolver=davidson
 basis=cc-pVDZ
 iprint=3
 orbtyp=hao
