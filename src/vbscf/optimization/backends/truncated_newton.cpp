@@ -11,7 +11,6 @@
 
 #include "vbscf/optimization/globalization/line_search.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
-#include "vbscf/optimization/coupled/workspace.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/optimization/driver/session.hpp"
 #include "vbscf/optimization/driver/types.hpp"
@@ -25,6 +24,36 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 
 namespace xmvb::vb::optimizer_detail {
+namespace {
+
+constexpr int kCurvatureBlockWidth = 2;
+constexpr int kCurvatureExpansionCount = 2;
+constexpr int kCurvatureModelDimension =
+    kCurvatureBlockWidth * kCurvatureExpansionCount;
+
+class AcceptedPointReducedHvp final : public ReducedHvp {
+public:
+  explicit AcceptedPointReducedHvp(const ExactHvpOperator* exact_operator)
+      : exact_operator_(exact_operator) {
+    if (exact_operator_ == nullptr) {
+      throw std::invalid_argument("exact HVP operator must not be null");
+    }
+  }
+
+  Eigen::VectorXd apply(const Eigen::VectorXd& direction) override {
+    return exact_operator_->apply_reduced(direction);
+  }
+
+  Eigen::MatrixXd apply_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& directions) override {
+    return exact_operator_->apply_reduced_batch(directions);
+  }
+
+private:
+  const ExactHvpOperator* exact_operator_;
+};
+
+}  // namespace
 
 BackendRunResult run_truncated_newton_backend(
     VbScfObjective* objective,
@@ -58,10 +87,6 @@ BackendRunResult run_truncated_newton_backend(
   std::unique_ptr<TransportedReducedLbfgsPreconditioner>
       accepted_point_preconditioner;
   std::unique_ptr<NonredundantRetractionMetric> accepted_point_metric;
-  std::unique_ptr<AcceptedPointCoupledWorkspace>
-      accepted_point_coupled_workspace;
-  Eigen::MatrixXd recycled_response_directions;
-  int coupled_expansions_for_current_point = 0;
   double initial_trust_radius_for_current_point = trust_radius;
   double accepted_point_setup_wall_time_seconds = 0.0;
   double trial_objective_wall_time_seconds = 0.0;
@@ -100,22 +125,6 @@ BackendRunResult run_truncated_newton_backend(
       break;
     }
   
-    if (accepted_point_operator == nullptr) {
-      const auto setup_start = std::chrono::steady_clock::now();
-      accepted_point_operator = std::make_shared<ExactHvpOperator>(
-          objective->second_order_context(),
-          &objective->input(),
-          parameter_view,
-          &current_space);
-      accepted_point_setup_wall_time_seconds +=
-          std::chrono::duration<double>(
-              std::chrono::steady_clock::now() - setup_start).count();
-    }
-    ExactHvpOperator& exact_operator = *accepted_point_operator;
-    if (!exact_operator.supports_analytic_core_model()) {
-      throw std::runtime_error(
-          "coupled Newton requires the analytic orbital Hessian action");
-    }
     // Use exactly the same secant memory as the standalone nonredundant
     // L-BFGS backend.  TNHVP may enrich that baseline with exact curvature,
     // but must not silently weaken it through a second history policy.
@@ -311,111 +320,64 @@ BackendRunResult run_truncated_newton_backend(
     const Eigen::Index reduced_size =
         current_projection.reduced_gradient.size();
     TruncatedNewtonTrialEvaluation trial_evaluation_cache;
-    const bool reused_subspace_for_trial =
-        accepted_point_coupled_workspace != nullptr ||
-        recycled_response_directions.cols() != 0;
-    const OrbitalChart* const accepted_chart = &current_space;
-    const TransportedReducedLbfgsPreconditioner* const
-        orbital_preconditioner = accepted_point_preconditioner.get();
-    auto apply_inverse_orbital_preconditioner =
-        [accepted_chart, orbital_preconditioner](
-            const Eigen::VectorXd& vector) {
-          return apply_nonredundant_truncated_newton_preconditioner(
-              *accepted_chart,
-              orbital_preconditioner,
-              vector);
-        };
-    if (accepted_point_coupled_workspace == nullptr) {
-      const auto setup_start = std::chrono::steady_clock::now();
-      auto apply_orbital_metric =
-          [&retraction_metric](
-              const Eigen::Ref<const Eigen::MatrixXd>& directions) {
-            Eigen::MatrixXd images(directions.rows(), directions.cols());
-            for (Eigen::Index column = 0;
-                 column < directions.cols();
-                 ++column) {
-              images.col(column) =
-                  retraction_metric.apply(directions.col(column));
-            }
-            return images;
-          };
-      AcceptedPointCoupledModel coupled_model =
-          make_accepted_point_coupled_model(
-              *objective->second_order_context(),
-              accepted_point_operator,
-              static_cast<int>(reduced_size),
-              std::move(apply_orbital_metric));
-      if (recycled_response_directions.rows() !=
-          coupled_model.newton_operator.n_response_coordinates()) {
-        recycled_response_directions.resize(0, 0);
-      }
-      accepted_point_coupled_workspace =
-          std::make_unique<AcceptedPointCoupledWorkspace>(
-              std::move(coupled_model),
-              current_projection.reduced_gradient,
-              apply_inverse_orbital_preconditioner,
-              recycled_response_directions);
-      accepted_point_setup_wall_time_seconds +=
-          std::chrono::duration<double>(
-              std::chrono::steady_clock::now() - setup_start).count();
-    }
-
-    // Both blocks belong to one inexact Newton equation and therefore obey
-    // the same outer forcing sequence.  The accepted eigensolver accuracy
-    // controls the data used to build C; it is not a reason to solve the
-    // coupled response equation orders of magnitude more accurately than the
-    // current Newton step.  Using that accuracy as a minimum target here used
-    // to force every early response solve to approximately 1e-5 even when the
-    // adaptive Newton forcing was O(1e-1).
-    // The orbital and response residuals are orthogonal blocks of the full
-    // KKT residual.  Splitting the Euclidean forcing budget equally keeps the
-    // combined residual within the requested inexact-Newton tolerance without
-    // introducing a chemistry- or dimension-dependent tuning parameter.
-    const double block_forcing_term =
-        newton_forcing_term / std::sqrt(2.0);
-    const CoupledKktTolerances coupled_tolerances{
-        block_forcing_term,
-        block_forcing_term};
-    CoupledWorkspaceResult coupled_result =
-        accepted_point_coupled_workspace->solve(
-            trust_radius,
-            coupled_tolerances);
-    coupled_expansions_for_current_point += coupled_result.expansions;
-    const CoupledSubspaceStep& coupled_step = coupled_result.step;
+    // Start with the L-BFGS step and raw gradient, then use one projected-KKT
+    // residual block. Exact curvature is admitted once the transported inverse
+    // model contains at least as many independent secant pairs as the
+    // correction subspace. Before that point the HVP merely replaces an
+    // immature L-BFGS model instead of correcting an established one.
+    const bool curvature_model_ready =
+        accepted_point_preconditioner->size() >=
+        std::min<int>(reduced_size, kCurvatureModelDimension);
     TruncatedNewtonStepResult trust_region_step;
-    bool newton_candidate_available = coupled_result.converged();
-    bool encountered_negative_curvature = false;
-    double coupled_linear_decrease = 0.0;
-    Eigen::VectorXd reduced_step = Eigen::VectorXd::Zero(reduced_size);
-    double predicted_decrease = 0.0;
-    if (newton_candidate_available) {
-      trust_region_step.retract_tangent_norm =
-          coupled_step.projected.orbital_solution.metric_norm;
-      trust_region_step.reached_boundary =
-          coupled_step.projected.orbital_solution.status !=
-          ProjectedTrustStatus::InteriorGlobal;
-      encountered_negative_curvature =
-          coupled_step.projected.orbital_solution.minimum_ritz_value < 0.0;
-      if (coupled_step.orbital_backward_error >
-              coupled_tolerances.orbital ||
-          coupled_step.response_backward_error >
-              coupled_tolerances.response) {
-        throw std::logic_error(
-            "coupled Newton workspace returned an uncertified step");
+    bool newton_candidate_available = false;
+    if (curvature_model_ready) {
+      if (accepted_point_operator == nullptr) {
+        const auto setup_start = std::chrono::steady_clock::now();
+        accepted_point_operator = std::make_shared<ExactHvpOperator>(
+            objective->second_order_context(),
+            &objective->input(),
+            parameter_view,
+            &current_space);
+        accepted_point_setup_wall_time_seconds +=
+            std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - setup_start).count();
       }
-      coupled_linear_decrease =
-          -current_projection.reduced_gradient.dot(
-              coupled_step.orbital_step) -
-          accepted_point_coupled_workspace->accepted_model()
-              .structure_kkt_residual.dot(coupled_step.response_step);
-      reduced_step = coupled_step.orbital_step;
-      predicted_decrease = coupled_step.predicted_decrease;
-      newton_candidate_available =
-          reduced_step.size() == reduced_size &&
-          reduced_step.allFinite() &&
-          std::isfinite(predicted_decrease) &&
-          predicted_decrease > 0.0;
+      ExactHvpOperator& exact_operator = *accepted_point_operator;
+      if (!exact_operator.supports_analytic_core_model()) {
+        throw std::runtime_error(
+            "TNHVP requires the analytic orbital Hessian action");
+      }
+      AcceptedPointReducedHvp reduced_hvp(&exact_operator);
+      trust_region_step = solve_nonredundant_truncated_newton_step(
+          retraction_metric,
+          current_space,
+          current_projection,
+          trust_radius,
+          options.energy_tolerance,
+          options.gradient_tolerance,
+          newton_forcing_term,
+          std::min<int>(reduced_size, kCurvatureModelDimension),
+          &reduced_hvp,
+          accepted_point_preconditioner.get(),
+          &baseline_reduced_direction);
+      clamp_nonredundant_step_result_to_retract_tangent_radius(
+          current_projection,
+          trust_radius,
+          retraction_metric,
+          &trust_region_step);
+      newton_candidate_available = truncated_newton_step_is_usable(
+          trust_region_step,
+          current_projection.reduced_gradient);
     }
+    Eigen::VectorXd reduced_step = newton_candidate_available
+        ? trust_region_step.reduced_step
+        : Eigen::VectorXd::Zero(reduced_size);
+    const double predicted_decrease = newton_candidate_available
+        ? trust_region_step.predicted_decrease
+        : 0.0;
+    const double model_linear_decrease = newton_candidate_available
+        ? -current_projection.reduced_gradient.dot(reduced_step)
+        : 0.0;
     TruncatedNewtonStepResult trial_step_for_current_trial =
         trust_region_step;
   
@@ -426,7 +388,7 @@ BackendRunResult run_truncated_newton_backend(
         try_truncated_newton_trial_step(
             reduced_step,
             predicted_decrease,
-            coupled_linear_decrease,
+            model_linear_decrease,
             false,
             &trial_evaluation_cache,
             &accepted_trial_evaluation,
@@ -434,7 +396,9 @@ BackendRunResult run_truncated_newton_backend(
             &trial_energy);
     bool accepted_baseline_trial = false;
     if (!accepted_newton_trial) {
-      ++rejected_trial_step_count_for_current_point;
+      if (curvature_model_ready) {
+        ++rejected_trial_step_count_for_current_point;
+      }
       Eigen::VectorXd accepted_baseline_reduced_step;
       accepted_baseline_trial = try_baseline_trial_step(
           baseline_reduced_direction,
@@ -488,24 +452,10 @@ BackendRunResult run_truncated_newton_backend(
         trial_gradient - current_gradient;
     const int accepted_preconditioner_history_size =
         accepted_point_preconditioner->size();
-    const int accepted_coupled_orbital_dimension =
-        coupled_result.orbital_dimension;
-    const int accepted_coupled_response_dimension =
-        coupled_result.response_dimension;
-    const CoupledActionCounts accepted_coupled_action_counts =
-        coupled_result.action_counts;
-    const CoupledActionTimings accepted_coupled_action_timings =
-        accepted_point_coupled_workspace->accepted_model()
-            .newton_operator.action_timings();
-    if (accepted_baseline_trial) {
-      recycled_response_directions.resize(0, 0);
-    } else {
-      recycled_response_directions = coupled_step.response_step;
-    }
-    // Every callback retained by the coupled workspace represents this exact
-    // accepted point and refers to its chart/metric.  Destroy it before the
-    // objective commit changes that point; rejected radius retries retain it.
-    accepted_point_coupled_workspace.reset();
+    const ExactHvpOperator::Diagnostics accepted_hvp_diagnostics =
+        accepted_point_operator != nullptr
+            ? accepted_point_operator->diagnostics()
+            : ExactHvpOperator::Diagnostics{};
     accepted_point_operator.reset();
     accepted_point_preconditioner.reset();
     accepted_point_metric.reset();
@@ -550,22 +500,13 @@ BackendRunResult run_truncated_newton_backend(
     TnhvpIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations;
     iteration_record.reduced_dimension = static_cast<int>(reduced_size);
-    iteration_record.coupled_orbital_subspace_dimension =
-        accepted_coupled_orbital_dimension;
-    iteration_record.coupled_response_subspace_dimension =
-        accepted_coupled_response_dimension;
-    iteration_record.coupled_expansion_count =
-        coupled_expansions_for_current_point;
-    iteration_record.coupled_orbital_hessian_block_actions =
-        accepted_coupled_action_counts.orbital_hessian;
-    iteration_record.coupled_orbital_to_response_block_actions =
-        accepted_coupled_action_counts.orbital_to_response;
-    iteration_record.coupled_response_to_orbital_block_actions =
-        accepted_coupled_action_counts.response_to_orbital;
-    iteration_record.coupled_response_hessian_block_actions =
-        accepted_coupled_action_counts.response_hessian;
-    iteration_record.coupled_orbital_metric_block_actions =
-        accepted_coupled_action_counts.orbital_metric;
+    iteration_record.curvature_subspace_dimension =
+        trust_region_step.subspace_dimension;
+    iteration_record.exact_hvp_block_actions =
+        static_cast<int>(accepted_hvp_diagnostics.batch_apply_count);
+    iteration_record.structure_response_block_actions =
+        static_cast<int>(
+            accepted_hvp_diagnostics.structure_response_block_actions);
     iteration_record.preconditioner_history_size =
         accepted_preconditioner_history_size;
     iteration_record.rejected_trial_count =
@@ -574,16 +515,10 @@ BackendRunResult run_truncated_newton_backend(
         accepted_point_wall_time_seconds;
     iteration_record.accepted_point_setup_wall_time_seconds =
         accepted_point_setup_wall_time_seconds;
-    iteration_record.orbital_hessian_wall_time_seconds =
-        accepted_coupled_action_timings.orbital_hessian_seconds;
-    iteration_record.orbital_to_response_wall_time_seconds =
-        accepted_coupled_action_timings.orbital_to_response_seconds;
-    iteration_record.response_to_orbital_wall_time_seconds =
-        accepted_coupled_action_timings.response_to_orbital_seconds;
-    iteration_record.response_hessian_wall_time_seconds =
-        accepted_coupled_action_timings.response_hessian_seconds;
-    iteration_record.orbital_metric_wall_time_seconds =
-        accepted_coupled_action_timings.orbital_metric_seconds;
+    iteration_record.exact_hvp_wall_time_seconds =
+        accepted_hvp_diagnostics.total_apply_wall_time_seconds;
+    iteration_record.outer_response_wall_time_seconds =
+        accepted_hvp_diagnostics.outer_response_wall_time_seconds;
     iteration_record.trial_objective_wall_time_seconds =
         trial_objective_wall_time_seconds;
     iteration_record.source_gradient_l2_norm = source_gradient_l2_norm;
@@ -596,10 +531,10 @@ BackendRunResult run_truncated_newton_backend(
           -std::log(accepted_gradient_l2_norm / source_gradient_l2_norm) /
           accepted_point_wall_time_seconds;
     }
-    iteration_record.orbital_backward_error =
-        coupled_step.orbital_backward_error;
-    iteration_record.response_backward_error =
-        coupled_step.response_backward_error;
+    iteration_record.model_kkt_relative_residual =
+        trust_region_step.model_kkt_relative_residual;
+    iteration_record.max_structure_response_relative_residual =
+        accepted_hvp_diagnostics.max_structure_response_relative_residual;
     iteration_record.forcing_term = newton_forcing_term;
     iteration_record.initial_trust_radius =
         initial_trust_radius_for_current_point;
@@ -619,16 +554,19 @@ BackendRunResult run_truncated_newton_backend(
           iteration_record.predicted_decrease;
     }
     iteration_record.minimum_ritz_value =
-        coupled_step.projected.orbital_solution.minimum_ritz_value;
+        trust_region_step.encountered_negative_curvature
+            ? -trust_region_step.model_spectral_radius
+            : 0.0;
     iteration_record.minimum_shifted_ritz_value =
-        coupled_step.projected.orbital_solution.minimum_shifted_ritz_value;
+        iteration_record.minimum_ritz_value +
+        trust_region_step.trust_region_shift;
     iteration_record.trust_region_shift =
-        coupled_step.projected.orbital_solution.shift;
+        trust_region_step.trust_region_shift;
     iteration_record.reached_boundary =
         trial_step_for_current_trial.reached_boundary;
     iteration_record.encountered_negative_curvature =
-        !accepted_baseline_trial && encountered_negative_curvature;
-    iteration_record.reused_subspace = reused_subspace_for_trial;
+        !accepted_baseline_trial &&
+        trust_region_step.encountered_negative_curvature;
     iteration_record.chart_changed = accepted_point_chart_changed;
     result->tnhvp_iteration_trace.push_back(iteration_record);
     record_accepted_iteration_snapshot(
@@ -640,7 +578,6 @@ BackendRunResult run_truncated_newton_backend(
         &next_projection.reduced_gradient);
     trust_radius = next_trust_radius;
     rejected_trial_step_count_for_current_point = 0;
-    coupled_expansions_for_current_point = 0;
     initial_trust_radius_for_current_point = trust_radius;
     accepted_point_setup_wall_time_seconds = 0.0;
     trial_objective_wall_time_seconds = 0.0;

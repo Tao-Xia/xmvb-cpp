@@ -389,45 +389,23 @@ void print_summary(
   if (options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {
     if (!result.tnhvp_iteration_trace.empty()) {
-      std::size_t orbital_hessian_actions = 0;
-      std::size_t orbital_to_response_actions = 0;
-      std::size_t response_to_orbital_actions = 0;
-      std::size_t response_hessian_actions = 0;
-      std::size_t orbital_metric_actions = 0;
-      int expansion_count = 0;
+      std::size_t exact_hvp_actions = 0;
+      std::size_t structure_response_actions = 0;
       int rejected_trial_count = 0;
       double outer_iteration_seconds = 0.0;
       double accepted_point_setup_seconds = 0.0;
-      double orbital_hessian_seconds = 0.0;
-      double orbital_to_response_seconds = 0.0;
-      double response_to_orbital_seconds = 0.0;
-      double response_hessian_seconds = 0.0;
-      double orbital_metric_seconds = 0.0;
+      double exact_hvp_seconds = 0.0;
+      double outer_response_seconds = 0.0;
       double trial_objective_seconds = 0.0;
       for (const auto& step : result.tnhvp_iteration_trace) {
-        orbital_hessian_actions +=
-            step.coupled_orbital_hessian_block_actions;
-        orbital_to_response_actions +=
-            step.coupled_orbital_to_response_block_actions;
-        response_to_orbital_actions +=
-            step.coupled_response_to_orbital_block_actions;
-        response_hessian_actions +=
-            step.coupled_response_hessian_block_actions;
-        orbital_metric_actions +=
-            step.coupled_orbital_metric_block_actions;
-        expansion_count += step.coupled_expansion_count;
+        exact_hvp_actions += step.exact_hvp_block_actions;
+        structure_response_actions += step.structure_response_block_actions;
         rejected_trial_count += step.rejected_trial_count;
         outer_iteration_seconds += step.outer_iteration_wall_time_seconds;
         accepted_point_setup_seconds +=
             step.accepted_point_setup_wall_time_seconds;
-        orbital_hessian_seconds += step.orbital_hessian_wall_time_seconds;
-        orbital_to_response_seconds +=
-            step.orbital_to_response_wall_time_seconds;
-        response_to_orbital_seconds +=
-            step.response_to_orbital_wall_time_seconds;
-        response_hessian_seconds +=
-            step.response_hessian_wall_time_seconds;
-        orbital_metric_seconds += step.orbital_metric_wall_time_seconds;
+        exact_hvp_seconds += step.exact_hvp_wall_time_seconds;
+        outer_response_seconds += step.outer_response_wall_time_seconds;
         trial_objective_seconds += step.trial_objective_wall_time_seconds;
       }
       const auto& final_step = result.tnhvp_iteration_trace.back();
@@ -435,55 +413,37 @@ void print_summary(
           "Final nonredundant dimension",
           std::to_string(final_step.reduced_dimension));
       print_log_field(
-          "Final coupled V/W dimensions",
-          std::to_string(final_step.coupled_orbital_subspace_dimension) + " / " +
-              std::to_string(final_step.coupled_response_subspace_dimension));
+          "Final curvature subspace dimension",
+          std::to_string(final_step.curvature_subspace_dimension));
       print_log_field(
-          "Coupled subspace expansions",
-          std::to_string(expansion_count));
+          "Exact HVP block actions",
+          std::to_string(exact_hvp_actions));
       print_log_field(
-          "Coupled orbital Hessian block actions",
-          std::to_string(orbital_hessian_actions));
-      print_log_field(
-          "Coupled orbital-response block actions",
-          std::to_string(orbital_to_response_actions));
-      print_log_field(
-          "Coupled response-orbital block actions",
-          std::to_string(response_to_orbital_actions));
-      print_log_field(
-          "Coupled response Hessian block actions",
-          std::to_string(response_hessian_actions));
-      print_log_field(
-          "Coupled orbital metric block actions",
-          std::to_string(orbital_metric_actions));
+          "Structure-response block actions",
+          std::to_string(structure_response_actions));
       print_log_field(
           "Rejected trust trials",
           std::to_string(rejected_trial_count));
       print_log_field(
-          "Final coupled backward errors",
-          format_scientific_double(final_step.orbital_backward_error, 4) + " / " +
-              format_scientific_double(final_step.response_backward_error, 4));
+          "Final model KKT residual",
+          format_scientific_double(
+              final_step.model_kkt_relative_residual, 4));
       print_log_field(
-          "Coupled outer iteration wall",
+          "Final structure-response residual",
+          format_scientific_double(
+              final_step.max_structure_response_relative_residual, 4));
+      print_log_field(
+          "TNHVP outer iteration wall",
           format_seconds(outer_iteration_seconds));
       print_log_field(
           "Accepted-point setup wall",
           format_seconds(accepted_point_setup_seconds));
       print_log_field(
-          "Orbital Hessian action wall",
-          format_seconds(orbital_hessian_seconds));
+          "Exact HVP wall",
+          format_seconds(exact_hvp_seconds));
       print_log_field(
-          "Orbital-response action wall",
-          format_seconds(orbital_to_response_seconds));
-      print_log_field(
-          "Response-orbital action wall",
-          format_seconds(response_to_orbital_seconds));
-      print_log_field(
-          "Response Hessian action wall",
-          format_seconds(response_hessian_seconds));
-      print_log_field(
-          "Orbital metric action wall",
-          format_seconds(orbital_metric_seconds));
+          "Outer-response wall",
+          format_seconds(outer_response_seconds));
       print_log_field(
           "Trial objective wall",
           format_seconds(trial_objective_seconds));

@@ -677,9 +677,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   const Eigen::VectorXd rhs = -current_projection.reduced_gradient;
   const int natural_limit = static_cast<int>(rhs.size());
   int work_limit = std::min(max_subspace_dimension, natural_limit);
-  const int pilot_limit =
-      std::min(natural_limit, work_limit + std::min(2, natural_limit - work_limit));
-  bool interior_pilot_used = false;
   TruncatedNewtonStopReason loop_stop_reason =
       TruncatedNewtonStopReason::SubspaceLimit;
   // The inexact-Newton forcing term is an outer-iteration condition:
@@ -701,13 +698,11 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   const bool reuse_initial_subspace =
       initial_subspace != nullptr &&
       truncated_newton_subspace_is_usable(*initial_subspace, rhs.size()) &&
-      initial_subspace->orthonormal_basis.cols() <= pilot_limit;
+      initial_subspace->orthonormal_basis.cols() <= work_limit;
   if (reuse_initial_subspace) {
     const Eigen::Index initial_dimension =
         initial_subspace->orthonormal_basis.cols();
     work_limit = std::max(work_limit, static_cast<int>(initial_dimension));
-    interior_pilot_used =
-        static_cast<int>(initial_dimension) > max_subspace_dimension;
     for (Eigen::Index column = 0; column < initial_dimension; ++column) {
       basis.push_back(initial_subspace->orthonormal_basis.col(column));
       tangent_basis.push_back(initial_subspace->tangent_basis.col(column));
@@ -735,14 +730,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         result.stop_reason = TruncatedNewtonStopReason::BelowOuterAccuracy;
         return result;
       }
-      if (result.trust_region_shift == 0.0 &&
-          !result.reached_boundary &&
-          !result.encountered_negative_curvature &&
-          static_cast<int>(initial_dimension) >= work_limit &&
-          !interior_pilot_used && work_limit < pilot_limit) {
-        work_limit = pilot_limit;
-        interior_pilot_used = true;
-      }
     }
   }
 
@@ -769,14 +756,23 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
 
     std::vector<Eigen::VectorXd> candidates;
     candidates.reserve(3);
-    if (first_expansion && initial_reduced_step != nullptr &&
+    const bool has_initial_step =
+        first_expansion && initial_reduced_step != nullptr &&
         initial_reduced_step->size() == rhs.size() &&
         initial_reduced_step->allFinite() &&
-        retraction_metric.norm(*initial_reduced_step) > 0.0) {
+        retraction_metric.norm(*initial_reduced_step) > 0.0;
+    if (has_initial_step) {
       candidates.push_back(*initial_reduced_step);
+      // The supplied step is normally -M^{-1}g. Putting the raw residual
+      // next avoids spending the second block slot on the collinear
+      // preconditioned residual. The orthogonalized raw residual exposes the
+      // curvature missing from the quasi-Newton direction.
+      candidates.push_back(correction_rhs);
+      candidates.push_back(preconditioned_correction);
+    } else {
+      candidates.push_back(preconditioned_correction);
+      candidates.push_back(correction_rhs);
     }
-    candidates.push_back(preconditioned_correction);
-    candidates.push_back(correction_rhs);
 
     const int candidate_count = std::min(
         work_limit - static_cast<int>(basis.size()),
@@ -856,29 +852,11 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     // limit is reached.
     correction_rhs = -kkt_residual;
     first_expansion = false;
-    // The initial work tranche is a globalization budget, not a Newton
-    // accuracy certificate. One additional residual block probes whether an
-    // unshifted interior solve can resolve its full-space model residual.
-    // Further work needs a measured cost/benefit rule; a merely decreasing
-    // residual cannot safely authorize hundreds of HVPs.
-    if (static_cast<int>(basis.size()) >= work_limit &&
-        work_limit < pilot_limit &&
-        !interior_pilot_used &&
-        result.trust_region_shift == 0.0 &&
-        !result.reached_boundary &&
-        !result.encountered_negative_curvature) {
-      work_limit = pilot_limit;
-      interior_pilot_used = true;
-    }
   }
 
   if (truncated_newton_step_is_usable(
           result,
           current_projection.reduced_gradient)) {
-    if (loop_stop_reason == TruncatedNewtonStopReason::SubspaceLimit &&
-        interior_pilot_used) {
-      loop_stop_reason = TruncatedNewtonStopReason::InteriorPilotLimit;
-    }
     result.stop_reason = loop_stop_reason;
     return result;
   }

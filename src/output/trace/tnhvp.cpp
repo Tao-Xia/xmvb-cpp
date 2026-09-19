@@ -26,60 +26,46 @@ void write_tnhvp_trace(
   }
   stream
       << "iteration\treduced_dimension"
-      << "\tcoupled_orbital_subspace_dimension"
-      << "\tcoupled_response_subspace_dimension"
-      << "\tcoupled_expansions\tcoupled_orbital_hessian_block_actions"
-      << "\tcoupled_orbital_to_response_block_actions"
-      << "\tcoupled_response_to_orbital_block_actions"
-      << "\tcoupled_response_hessian_block_actions"
-      << "\tcoupled_orbital_metric_block_actions"
+      << "\tcurvature_subspace_dimension"
+      << "\texact_hvp_block_actions"
+      << "\tstructure_response_block_actions"
       << "\tpreconditioner_history_size\trejected_trials"
       << "\touter_iteration_seconds"
       << "\taccepted_point_setup_seconds"
-      << "\torbital_hessian_seconds"
-      << "\torbital_to_response_seconds"
-      << "\tresponse_to_orbital_seconds"
-      << "\tresponse_hessian_seconds"
-      << "\torbital_metric_seconds"
+      << "\texact_hvp_seconds"
+      << "\touter_response_seconds"
       << "\ttrial_objective_seconds"
       << "\tgradient_log_progress_per_second"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
-      << "\torbital_backward_error\tresponse_backward_error"
+      << "\tmodel_kkt_relative_residual"
+      << "\tmax_structure_response_relative_residual"
       << "\tinitial_trust_radius\taccepted_trial_radius\tnext_trust_radius"
       << "\tstep_norm\tlinear_decrease\tpredicted_decrease"
       << "\tactual_decrease\ttrust_ratio"
       << "\tminimum_ritz_value\tminimum_shifted_ritz_value"
       << "\ttrust_region_shift\treached_boundary"
-      << "\tnegative_curvature\treused_subspace\tchart_changed\n";
+      << "\tnegative_curvature\tchart_changed\n";
   stream << std::setprecision(17);
   for (const auto& step : result.tnhvp_iteration_trace) {
     stream
         << step.accepted_iteration_index << '\t'
         << step.reduced_dimension << '\t'
-        << step.coupled_orbital_subspace_dimension << '\t'
-        << step.coupled_response_subspace_dimension << '\t'
-        << step.coupled_expansion_count << '\t'
-        << step.coupled_orbital_hessian_block_actions << '\t'
-        << step.coupled_orbital_to_response_block_actions << '\t'
-        << step.coupled_response_to_orbital_block_actions << '\t'
-        << step.coupled_response_hessian_block_actions << '\t'
-        << step.coupled_orbital_metric_block_actions << '\t'
+        << step.curvature_subspace_dimension << '\t'
+        << step.exact_hvp_block_actions << '\t'
+        << step.structure_response_block_actions << '\t'
         << step.preconditioner_history_size << '\t'
         << step.rejected_trial_count << '\t'
         << step.outer_iteration_wall_time_seconds << '\t'
         << step.accepted_point_setup_wall_time_seconds << '\t'
-        << step.orbital_hessian_wall_time_seconds << '\t'
-        << step.orbital_to_response_wall_time_seconds << '\t'
-        << step.response_to_orbital_wall_time_seconds << '\t'
-        << step.response_hessian_wall_time_seconds << '\t'
-        << step.orbital_metric_wall_time_seconds << '\t'
+        << step.exact_hvp_wall_time_seconds << '\t'
+        << step.outer_response_wall_time_seconds << '\t'
         << step.trial_objective_wall_time_seconds << '\t'
         << step.gradient_log_progress_per_second << '\t'
         << step.source_gradient_l2_norm << '\t'
         << step.accepted_gradient_l2_norm << '\t'
         << step.forcing_term << '\t'
-        << step.orbital_backward_error << '\t'
-        << step.response_backward_error << '\t'
+        << step.model_kkt_relative_residual << '\t'
+        << step.max_structure_response_relative_residual << '\t'
         << step.initial_trust_radius << '\t'
         << step.accepted_trial_radius << '\t'
         << step.next_trust_radius << '\t'
@@ -93,7 +79,6 @@ void write_tnhvp_trace(
         << step.trust_region_shift << '\t'
         << (step.reached_boundary ? 1 : 0) << '\t'
         << (step.encountered_negative_curvature ? 1 : 0) << '\t'
-        << (step.reused_subspace ? 1 : 0) << '\t'
         << (step.chart_changed ? 1 : 0) << '\n';
   }
   if (!stream) {

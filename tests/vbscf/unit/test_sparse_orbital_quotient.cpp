@@ -482,7 +482,7 @@ void check_truncated_newton_certificates() {
       "exact directional quadratic was not minimized on the sampled ray");
 }
 
-void check_interior_work_extension(const OrbitalPreparationInput& input) {
+void check_subspace_work_limit(const OrbitalPreparationInput& input) {
   const SparseParameterLayout view(input);
   const Eigen::MatrixXd c = dense(input);
   const OrbitalChart space(input, view, c, c, nullptr, true);
@@ -500,13 +500,12 @@ void check_interior_work_extension(const OrbitalPreparationInput& input) {
       metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
       kFixtureForcing, 2,
       &hvp, nullptr);
-  require(step.subspace_dimension > 2 && step.subspace_dimension <= 4 &&
-              hvp.applies > 2 && hvp.applies <= 4 &&
+  require(step.subspace_dimension <= 2 && hvp.applies <= 2 &&
               step.trust_region_shift == 0.0 && !step.reached_boundary,
-          "interior pilot did not respect the two-HVP work bound");
-  require(step.stop_reason == TruncatedNewtonStopReason::InteriorPilotLimit &&
+          "Newton subspace exceeded its declared work bound");
+  require(step.stop_reason == TruncatedNewtonStopReason::SubspaceLimit &&
               !step.newton_forcing_converged,
-          "unresolved interior pilot did not report its forcing limit");
+          "unresolved Newton model did not report its subspace limit");
 
   Eigen::MatrixXd clustered = Eigen::MatrixXd::Zero(dimension, dimension);
   for (int i = 0; i < dimension; ++i) {
@@ -515,16 +514,15 @@ void check_interior_work_extension(const OrbitalPreparationInput& input) {
   DenseTestHvp clustered_hvp(clustered);
   const auto certified = solve_nonredundant_truncated_newton_step(
       metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
-      kFixtureForcing, 2,
+      kFixtureForcing, 4,
       &clustered_hvp, nullptr);
-  require(certified.subspace_dimension > 2 &&
-              certified.subspace_dimension <= 4 &&
+  require(certified.subspace_dimension <= 4 &&
               clustered_hvp.applies <= 4 &&
               certified.stop_reason == TruncatedNewtonStopReason::ModelKktConverged &&
               certified.newton_forcing_converged &&
               certified.model_kkt_relative_residual <
                   kFixtureForcing,
-          "clustered interior pilot did not certify the full-space model");
+          "clustered Newton subspace did not certify the full-space model");
 
   hessian(0, 0) = -10.0;
   DenseTestHvp indefinite(hessian);
@@ -536,7 +534,7 @@ void check_interior_work_extension(const OrbitalPreparationInput& input) {
               indefinite.applies <= 2 &&
               !boundary.newton_forcing_converged,
           "negative-curvature boundary step exceeded the initial work limit");
-  std::cout << "interior Newton extension and boundary work limit: passed\n";
+  std::cout << "Newton subspace work limit: passed\n";
 }
 }  // namespace
 
@@ -560,7 +558,7 @@ int main() {
                                {0,1,2,3,4,5}, {0,1,2,3,4,5}}, 2);
     check("full support", full, 14);
     check_truncated_newton_certificates();
-    check_interior_work_extension(full);
+    check_subspace_work_limit(full);
     Eigen::MatrixXd rotated = c;
     Eigen::Matrix2d a;
     a << 1, 0.3, -0.2, 1.1;

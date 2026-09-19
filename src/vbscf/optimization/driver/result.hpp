@@ -24,32 +24,24 @@ namespace xmvb::vb {
 struct TnhvpIterationRecord {
   int accepted_iteration_index = 0;
   int reduced_dimension = 0;
-  int coupled_orbital_subspace_dimension = 0;
-  int coupled_response_subspace_dimension = 0;
-  int coupled_expansion_count = 0;
-  std::size_t coupled_orbital_hessian_block_actions = 0;
-  std::size_t coupled_orbital_to_response_block_actions = 0;
-  std::size_t coupled_response_to_orbital_block_actions = 0;
-  std::size_t coupled_response_hessian_block_actions = 0;
-  std::size_t coupled_orbital_metric_block_actions = 0;
+  int curvature_subspace_dimension = 0;
+  std::size_t exact_hvp_block_actions = 0;
+  std::size_t structure_response_block_actions = 0;
   int preconditioner_history_size = 0;
   int rejected_trial_count = 0;
 
   double outer_iteration_wall_time_seconds = 0.0;
   double accepted_point_setup_wall_time_seconds = 0.0;
-  double orbital_hessian_wall_time_seconds = 0.0;
-  double orbital_to_response_wall_time_seconds = 0.0;
-  double response_to_orbital_wall_time_seconds = 0.0;
-  double response_hessian_wall_time_seconds = 0.0;
-  double orbital_metric_wall_time_seconds = 0.0;
+  double exact_hvp_wall_time_seconds = 0.0;
+  double outer_response_wall_time_seconds = 0.0;
   double trial_objective_wall_time_seconds = 0.0;
   double gradient_log_progress_per_second = 0.0;
 
   double source_gradient_l2_norm = 0.0;
   double accepted_gradient_l2_norm = 0.0;
   double forcing_term = 0.0;
-  double orbital_backward_error = 0.0;
-  double response_backward_error = 0.0;
+  double model_kkt_relative_residual = 0.0;
+  double max_structure_response_relative_residual = 0.0;
 
   double initial_trust_radius = 0.0;
   double accepted_trial_radius = 0.0;
@@ -66,7 +58,6 @@ struct TnhvpIterationRecord {
 
   bool reached_boundary = false;
   bool encountered_negative_curvature = false;
-  bool reused_subspace = false;
   bool chart_changed = false;
 };
 

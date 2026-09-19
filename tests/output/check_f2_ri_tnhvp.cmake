@@ -31,7 +31,7 @@ foreach(pattern IN ITEMS
     "Initial total energy[ ]+:[ ]+-198[.]488[0-9]+"
     "VBSCF converged in[ ]+[1-8] iterations"
     "Final total energy[ ]+:[ ]+-198[.]7509[0-9]+"
-    "Coupled orbital Hessian block actions[ ]+:[ ]+[1-9][0-9]*")
+    "Exact HVP block actions[ ]+:[ ]+[1-9][0-9]*")
   if (NOT xmvb_report MATCHES "${pattern}")
     message(FATAL_ERROR
       "F2 RI-TNHVP report is missing required pattern: ${pattern}")

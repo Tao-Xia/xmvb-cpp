@@ -257,7 +257,6 @@ const char* stop_reason_name(TruncatedNewtonStopReason reason) {
     case TruncatedNewtonStopReason::ModelKktConverged: return "model_kkt";
     case TruncatedNewtonStopReason::BelowOuterAccuracy: return "below_outer_accuracy";
     case TruncatedNewtonStopReason::SubspaceLimit: return "subspace_limit";
-    case TruncatedNewtonStopReason::InteriorPilotLimit: return "interior_pilot_limit";
     case TruncatedNewtonStopReason::DependentDirections: return "dependent_directions";
     case TruncatedNewtonStopReason::InvalidProjectedStep: return "invalid_projected_step";
     case TruncatedNewtonStopReason::RadiusAdjusted: return "radius_adjusted";

@@ -28,7 +28,6 @@ enum class TruncatedNewtonStopReason {
   ModelKktConverged,
   BelowOuterAccuracy,
   SubspaceLimit,
-  InteriorPilotLimit,
   DependentDirections,
   InvalidProjectedStep,
   RadiusAdjusted,

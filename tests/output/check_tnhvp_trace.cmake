@@ -96,20 +96,16 @@ endif()
 set(required_tnhvp_patterns
   "\"tnhvp\""
   "\"reduced_dimension\": 42"
-  "\"coupled_orbital_subspace_dimension\": [1-9][0-9]*"
-  "\"coupled_response_subspace_dimension\": [1-9][0-9]*"
-  "\"coupled_orbital_hessian_block_actions\": [1-9][0-9]*"
-  "\"coupled_orbital_to_response_block_actions\": [1-9][0-9]*"
-  "\"coupled_response_to_orbital_block_actions\": [1-9][0-9]*"
-  "\"coupled_response_hessian_block_actions\": [1-9][0-9]*"
-  "\"coupled_orbital_metric_block_actions\": [1-9][0-9]*"
+  "\"curvature_subspace_dimension\": [0-9]+"
+  "\"exact_hvp_block_actions\": [0-9]+"
+  "\"structure_response_block_actions\": [0-9]+"
   "\"preconditioner_history_size\": [0-9]+"
   "\"outer_iteration_wall_time_seconds\": [0-9]"
   "\"source_gradient_l2_norm\""
   "\"accepted_gradient_l2_norm\""
   "\"forcing_term\""
-  "\"orbital_backward_error\""
-  "\"response_backward_error\""
+  "\"model_kkt_relative_residual\""
+  "\"max_structure_response_relative_residual\""
   "\"initial_trust_radius\""
   "\"accepted_trial_radius\""
   "\"next_trust_radius\""
@@ -120,8 +116,7 @@ set(required_tnhvp_patterns
   "\"minimum_ritz_value\""
   "\"minimum_shifted_ritz_value\""
   "\"trust_region_shift\""
-  "\"encountered_negative_curvature\""
-  "\"reused_subspace\"")
+  "\"encountered_negative_curvature\"")
 
 foreach(pattern IN LISTS required_tnhvp_patterns)
   if (NOT first_step_json MATCHES "${pattern}")
@@ -137,7 +132,10 @@ foreach(retired_field IN ITEMS
     "response_scale_affordable"
     "used_full_hvp"
     "kkt_relative_residual"
-    "model_spectral_radius")
+    "model_spectral_radius"
+    "coupled_orbital_subspace_dimension"
+    "coupled_response_subspace_dimension"
+    "coupled_orbital_hessian_block_actions")
   if (first_step_json MATCHES "\"${retired_field}\"")
     message(FATAL_ERROR
       "F2 TNHVP trace retained obsolete field: ${retired_field}")
@@ -150,23 +148,22 @@ endif()
 file(READ "${tnhvp_trace}" tnhvp_table)
 if (NOT tnhvp_table MATCHES "^iteration" OR
     NOT tnhvp_table MATCHES "reduced_dimension" OR
-    NOT tnhvp_table MATCHES "coupled_orbital_subspace_dimension" OR
-    NOT tnhvp_table MATCHES "coupled_response_subspace_dimension" OR
-    NOT tnhvp_table MATCHES "coupled_orbital_hessian_block_actions" OR
+    NOT tnhvp_table MATCHES "curvature_subspace_dimension" OR
+    NOT tnhvp_table MATCHES "exact_hvp_block_actions" OR
+    NOT tnhvp_table MATCHES "structure_response_block_actions" OR
     NOT tnhvp_table MATCHES "accepted_point_setup_seconds" OR
-    NOT tnhvp_table MATCHES "orbital_hessian_seconds" OR
-    NOT tnhvp_table MATCHES "response_hessian_seconds" OR
+    NOT tnhvp_table MATCHES "exact_hvp_seconds" OR
+    NOT tnhvp_table MATCHES "outer_response_seconds" OR
     NOT tnhvp_table MATCHES "trial_objective_seconds" OR
-    NOT tnhvp_table MATCHES "orbital_backward_error" OR
-    NOT tnhvp_table MATCHES "response_backward_error" OR
-    NOT tnhvp_table MATCHES "minimum_shifted_ritz_value" OR
-    NOT tnhvp_table MATCHES "reused_subspace")
+    NOT tnhvp_table MATCHES "model_kkt_relative_residual" OR
+    NOT tnhvp_table MATCHES "max_structure_response_relative_residual" OR
+    NOT tnhvp_table MATCHES "minimum_shifted_ritz_value")
   message(FATAL_ERROR "F2 lightweight TNHVP trace has an invalid header")
 endif()
 if (NOT tnhvp_table MATCHES "\n1" OR NOT tnhvp_table MATCHES "42")
   message(FATAL_ERROR "F2 lightweight TNHVP trace is missing its first step")
 endif()
 
-# The production TNHVP path is now the coupled orbital--structure workspace.
-# Its independently counted A/B/B^T/C/G actions above guard against silently
-# reverting to the retired orbital-only HVP admission path.
+# The production TNHVP path enriches the transported L-BFGS direction with an
+# exact relaxed HVP. These counters guard the second-order and structure-
+# response work independently.
