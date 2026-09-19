@@ -492,6 +492,13 @@ void check_truncated_newton_certificates() {
       std::abs(ray_step.predicted_decrease - 1.0 / 6.0) < 1.0e-14 &&
       !ray_step.reached_boundary && ray_step.trust_region_shift == 0.0,
       "exact directional quadratic was not minimized on the sampled ray");
+
+  require(!observed_contraction_requires_newton_correction(2.0, 0.5, 0.25) &&
+              observed_contraction_requires_newton_correction(
+                  2.0, 0.5000000001, 0.25) &&
+              observed_contraction_requires_newton_correction(
+                  0.0, 0.0, 0.25),
+          "observed outer contraction did not enforce the Newton target");
 }
 
 void check_subspace_work_limit(const OrbitalPreparationInput& input) {
@@ -546,6 +553,33 @@ void check_subspace_work_limit(const OrbitalPreparationInput& input) {
               indefinite.applies <= 2 &&
               !boundary.newton_forcing_converged,
           "negative-curvature boundary step exceeded the initial work limit");
+
+  const Eigen::VectorXd exact_predictor =
+      -clustered.ldlt().solve(gradient);
+  DenseTestHvp certified_predictor_hvp(clustered);
+  const auto certified_predictor = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
+      kFixtureForcing, 4, &certified_predictor_hvp, nullptr,
+      &exact_predictor);
+  require(certified_predictor_hvp.applies == 1 &&
+              certified_predictor.subspace_dimension == 1 &&
+              certified_predictor.newton_forcing_converged,
+          "exact block-L-BFGS predictor was not certified by one HVP");
+
+  Eigen::MatrixXd two_cluster =
+      Eigen::MatrixXd::Zero(dimension, dimension);
+  for (int i = 0; i < dimension; ++i) {
+    two_cluster(i, i) = i % 2 == 0 ? 1.0 : 4.0;
+  }
+  const Eigen::VectorXd identity_predictor = -gradient;
+  DenseTestHvp defect_hvp(two_cluster);
+  const auto corrected_predictor = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
+      kFixtureForcing, 2, &defect_hvp, nullptr, &identity_predictor);
+  require(defect_hvp.applies == 2 &&
+              corrected_predictor.subspace_dimension == 2 &&
+              corrected_predictor.newton_forcing_converged,
+          "predictor Newton defect was not resolved in its correction space");
   std::cout << "Newton subspace work limit: passed\n";
 }
 }  // namespace

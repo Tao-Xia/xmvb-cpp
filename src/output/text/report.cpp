@@ -177,10 +177,10 @@ void print_tnhvp_summary(
       "transported L-BFGS + local orbital block");
   print_log_field(
       "Curvature correction",
-      "two residual-driven block-HVP expansions");
+      "predictor HVP + Newton-defect expansion");
   print_log_field(
       "Curvature admission",
-      "secant count >= correction dimension");
+      "observed gradient contraction vs Newton forcing");
   print_log_field(
       "Globalization",
       "physical-metric trust region + model ratio");

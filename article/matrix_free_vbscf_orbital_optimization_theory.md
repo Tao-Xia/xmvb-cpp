@@ -1885,7 +1885,7 @@ tests of the implemented surrogate, not assumptions about its fidelity to the
 many-electron Hessian.
 
 Only small per-orbital blocks are formed. The inactive blocks carry the
-double-occupancy weight derived in section 10.5; active blocks retain the unit
+double-occupancy weight derived in section 10.6; active blocks retain the unit
 Rayleigh surrogate. Their existing positive spectral
 regularization and inverse action define the base preconditioner, augmented
 by transported positive-curvature L-BFGS secants. Negative curvature is not
@@ -1894,7 +1894,62 @@ The surrogate omits the variation of the effective one-electron matrix and
 many-electron response, and is not a physical-metric whitening or a proof of
 invariance under arbitrary inactive-orbital mixing.
 
-### 10.2 Stable inner conjugate directions
+### 10.2 Forcing-driven predictor--defect correction
+
+Let $\mathbf B_k$ denote the positive transported inverse model obtained from
+the local orbital blocks and the accepted L-BFGS secants. Its inexpensive
+predictor is
+
+$$
+\mathbf p_k^{\mathrm B}=-\mathbf B_k\mathbf g_k.
+$$
+
+Exact curvature is not admitted from a molecule-specific switch or a required
+number of stored secants. Instead, the preceding accepted outer step supplies
+the a posteriori contraction
+
+$$
+q_{k-1}=
+\frac{\lVert\mathbf g_k\rVert_2}
+     {\lVert\mathbf g_{k-1}\rVert_2}.
+$$
+
+When $q_{k-1}\leq\eta_{k-1}$, the cheap predictor has already achieved the
+contraction requested by the inexact-Newton forcing sequence, so no HVP is
+required at point $k$. Otherwise the exact relaxed Hessian is first applied to
+$\mathbf p_k^{\mathrm B}$. After minimizing the quadratic model on that ray,
+the shifted full-space defect is
+
+$$
+\mathbf r_k^{\mathrm B}=
+\mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}
++\lambda_k\mathbf M_k\mathbf p_k^{\mathrm B}.
+$$
+
+The predictor is certified by one HVP when
+
+$$
+\lVert\mathbf r_k^{\mathrm B}\rVert_2
+\leq\eta_k\lVert\mathbf g_k\rVert_2.
+$$
+
+Otherwise the correction space is expanded with the raw and preconditioned
+defects
+
+$$
+-\mathbf r_k^{\mathrm B},
+\qquad
+-\mathbf B_k\mathbf r_k^{\mathrm B},
+$$
+
+and the physical-metric trust problem is resolved in the augmented subspace.
+Thus HVPs estimate only curvature missing from the structured quasi-Newton
+predictor. As the forcing sequence vanishes, either the cheap predictor itself
+delivers the required contraction or exact defect correction is activated.
+The present implementation retains a four-dimensional correction safety limit;
+reaching this limit is not a Newton convergence certificate.
+
+### 10.3 Stable inner conjugate directions
 
 The sparse quotient chart is locally prewhitened by eq 27f, whereas the
 trust-region norm and shifted KKT equation now use the coupled metric of eq
@@ -1950,7 +2005,7 @@ ill-conditioned models. Negative-curvature and boundary exits continue to use
 the spectral trust-region solver; reaching the inner work limit still does not
 certify the final-step residual target.
 
-### 10.3 Recycling evaluated curvature into the preconditioner
+### 10.4 Recycling evaluated curvature into the preconditioner
 
 Discarding the inner HVP subspace after each accepted step loses information
 that can be useful without being treated as a new-point Hessian. Diagonalize
@@ -2032,7 +2087,7 @@ HVP evaluations. Its benefit depends on curvature persistence between points;
 neither recycling nor the unchanged inner work cap guarantees quadratic
 convergence.
 
-### 10.4 Inactive-projected local surrogate
+### 10.5 Inactive-projected local surrogate
 
 Normalization alone does not make the preconditioner consistent with the
 physical variables in section 3. For an inactive target $p$, let $\mathbf B_p$
@@ -2117,7 +2172,7 @@ remain absent from the preconditioner and present in the exact HVP. Fixed-span
 invariance does not imply covariance of the entire block-diagonal approximation
 under arbitrary simultaneous mixing of target and excluded orbitals.
 
-### 10.5 Double occupancy of the inactive reference
+### 10.6 Double occupancy of the inactive reference
 
 The unweighted projector identity must be distinguished from the reference
 energy convention used in the code. Let $\mathbf P_{\mathrm I}$ be the
@@ -2182,7 +2237,7 @@ curvature and its inverse for inactive and active targets; removing the
 inactive factor makes that test fail. No HVP formula, quotient basis, stopping
 tolerance, or inner budget is changed by this weighting.
 
-### 10.6 Cost-aware dynamic outer-response accuracy
+### 10.7 Cost-aware dynamic outer-response accuracy
 
 Solving every trust-region subproblem to the most accurate available relaxed
 Hessian residual does not in general minimize the time to convergence.  Split
@@ -2495,7 +2550,7 @@ admitted exact response action.  Under the usual Dennis--Mor\'e secant
 condition, however, the correction can recover superlinear local behavior
 without paying the unique-string response cost on every HVP direction.
 
-### 10.7 Residual-certified low-rank Schur response
+### 10.8 Residual-certified low-rank Schur response
 
 Cost-aware scheduling cannot change the asymptotic cost of one exact relaxed
 response.  In a large active space, the structure dimension, the number of
@@ -2630,7 +2685,7 @@ force repeated expensive enrichment.  Direct interpolation of isolated
 vectors $\mathbf R_k\mathbf s$ without the Schur factorization and an
 independent exact certificate is therefore excluded.
 
-### 10.8 Exact pair-domain decomposition of one response probe
+### 10.9 Exact pair-domain decomposition of one response probe
 
 Low-rank Schur compression reduces the number of exact response probes, whereas
 the cost of every retained probe must still be minimized without changing its

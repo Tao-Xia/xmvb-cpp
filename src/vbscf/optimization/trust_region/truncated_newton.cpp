@@ -50,6 +50,22 @@ double inexact_newton_forcing_term(
   return forcing;
 }
 
+bool observed_contraction_requires_newton_correction(
+    double source_gradient_l2_norm,
+    double accepted_gradient_l2_norm,
+    double forcing_term) {
+  if (!std::isfinite(source_gradient_l2_norm) ||
+      !std::isfinite(accepted_gradient_l2_norm) ||
+      !std::isfinite(forcing_term) ||
+      source_gradient_l2_norm <= 0.0 ||
+      accepted_gradient_l2_norm < 0.0 ||
+      forcing_term < 0.0 || forcing_term >= 1.0) {
+    return true;
+  }
+  return accepted_gradient_l2_norm >
+      forcing_term * source_gradient_l2_norm;
+}
+
 void refresh_truncated_newton_step_certificate(
     const Eigen::VectorXd& reduced_gradient,
     TruncatedNewtonStepResult* step) {
@@ -675,6 +691,9 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   }
 
   const Eigen::VectorXd rhs = -current_projection.reduced_gradient;
+  if (hvp == nullptr) {
+    throw std::invalid_argument("Newton correction requires an HVP operator");
+  }
   const int natural_limit = static_cast<int>(rhs.size());
   int work_limit = std::min(max_subspace_dimension, natural_limit);
   TruncatedNewtonStopReason loop_stop_reason =
@@ -733,10 +752,69 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     }
   }
 
-  // Residual-driven block Davidson/GLTR iteration. Negative curvature belongs
-  // in the projected Hessian and must not terminate subspace construction.
-  // The raw KKT residual and its positive preconditioned image expose two
-  // complementary directions in one fused block-HVP call.
+  // Apply the exact Hessian first to the block-L-BFGS predictor. Solving the
+  // one-dimensional trust problem also gives the optimal scaling on that ray.
+  // If its full-space KKT residual meets the forcing condition, this single HVP
+  // certifies the predictor and no correction subspace is needed.
+  if (!reuse_initial_subspace && basis.empty()) {
+    Eigen::VectorXd predictor = preconditioned_gradient_step;
+    if (initial_reduced_step != nullptr &&
+        initial_reduced_step->size() == rhs.size() &&
+        initial_reduced_step->allFinite() &&
+        retraction_metric.norm(*initial_reduced_step) > 0.0) {
+      predictor = retraction_metric.clip_to_radius(
+          *initial_reduced_step, trust_radius);
+    }
+    Eigen::MatrixXd predictor_block(rhs.size(), 1);
+    predictor_block.col(0) = predictor;
+    const int admitted = append_orthonormal_hvp_block(
+        predictor_block,
+        [&](const Eigen::Ref<const Eigen::MatrixXd>& directions) {
+          return hvp->apply_batch(directions);
+        },
+        &basis,
+        &hessian_basis);
+    if (admitted > 0) {
+      tangent_basis.push_back(retraction_metric.tangent(basis.back()));
+      const TruncatedNewtonSubspace predictor_subspace =
+          build_truncated_newton_subspace(
+              current_projection.reduced_gradient,
+              retraction_metric,
+              basis,
+              tangent_basis,
+              hessian_basis);
+      TruncatedNewtonStepResult predictor_step =
+          solve_trust_region_in_subspace(
+              current_projection,
+              trust_radius,
+              retraction_metric,
+              predictor_subspace,
+              target_kkt_relative_residual);
+      if (truncated_newton_step_is_usable(
+              predictor_step,
+              current_projection.reduced_gradient)) {
+        predictor_step.subspace_dimension = static_cast<int>(basis.size());
+        result = std::move(predictor_step);
+        if (result.model_kkt_converged) {
+          result.stop_reason = TruncatedNewtonStopReason::ModelKktConverged;
+          return result;
+        }
+        if (truncated_newton_model_is_below_outer_accuracy(
+                gradient_infinity_norm(current_projection.reduced_gradient),
+                result.predicted_decrease,
+                gradient_tolerance,
+                energy_tolerance)) {
+          result.stop_reason = TruncatedNewtonStopReason::BelowOuterAccuracy;
+          return result;
+        }
+      }
+    }
+  }
+
+  // Residual-driven block Davidson/GLTR correction. Negative curvature belongs
+  // in the projected Hessian and must not terminate subspace construction. The
+  // raw Newton defect and its positive preconditioned image expose complementary
+  // missing-curvature directions in one fused block-HVP call.
   Eigen::VectorXd correction_rhs = rhs;
   if (truncated_newton_step_is_usable(
           result,
@@ -746,7 +824,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         result.reduced_hessian_times_step +
         result.trust_region_shift * result.reduced_metric_times_step);
   }
-  bool first_expansion = !reuse_initial_subspace;
   while (static_cast<int>(basis.size()) < work_limit) {
     const Eigen::VectorXd preconditioned_correction =
         apply_nonredundant_truncated_newton_preconditioner(
@@ -755,24 +832,9 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
             correction_rhs);
 
     std::vector<Eigen::VectorXd> candidates;
-    candidates.reserve(3);
-    const bool has_initial_step =
-        first_expansion && initial_reduced_step != nullptr &&
-        initial_reduced_step->size() == rhs.size() &&
-        initial_reduced_step->allFinite() &&
-        retraction_metric.norm(*initial_reduced_step) > 0.0;
-    if (has_initial_step) {
-      candidates.push_back(*initial_reduced_step);
-      // The supplied step is normally -M^{-1}g. Putting the raw residual
-      // next avoids spending the second block slot on the collinear
-      // preconditioned residual. The orthogonalized raw residual exposes the
-      // curvature missing from the quasi-Newton direction.
-      candidates.push_back(correction_rhs);
-      candidates.push_back(preconditioned_correction);
-    } else {
-      candidates.push_back(preconditioned_correction);
-      candidates.push_back(correction_rhs);
-    }
+    candidates.reserve(2);
+    candidates.push_back(preconditioned_correction);
+    candidates.push_back(correction_rhs);
 
     const int candidate_count = std::min(
         work_limit - static_cast<int>(basis.size()),
@@ -851,7 +913,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     // shifted KKT residual meets the forcing condition or the subspace work
     // limit is reached.
     correction_rhs = -kkt_residual;
-    first_expansion = false;
   }
 
   if (truncated_newton_step_is_usable(

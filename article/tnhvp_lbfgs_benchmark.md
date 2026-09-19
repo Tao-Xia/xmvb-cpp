@@ -76,6 +76,41 @@ suite, at least five measured repetitions after a warm-up, a fixed executable
 checksum, identical eigensolver choices, and peak-RSS measurements from the
 batch scheduler.
 
+## Predictor-defect development validation
+
+The fixed four-secant admission rule was subsequently replaced by an
+a posteriori inexact-Newton test. Exact HVP correction is requested at point
+$k$ only when the preceding accepted step fails
+
+$$
+\frac{\lVert g_k\rVert_2}{\lVert g_{k-1}\rVert_2}\leq\eta_{k-1}.
+$$
+
+When admitted, the block-preconditioned L-BFGS predictor receives one exact
+HVP. Its shifted Newton defect either certifies that direction immediately or
+generates the raw and preconditioned correction directions. This removes the
+fixed secant-count trigger and avoids rebuilding a Newton model while the cheap
+predictor already supplies the requested nonlinear contraction.
+
+Slurm jobs `246497` and `246501` ran the incumbent and adaptive variants on the
+same Hanhai25 node (`anode018`) with 32 CPU cores, exact Libcint integrals and
+dense structure diagonalization. These are single-run development timings, not
+publication statistics.
+
+| System | TNHVP policy | Outer steps | HVP block actions | SCF wall / s | End-to-end wall / s |
+|---|---|---:|---:|---:|---:|
+| F2 HAO | fixed four-secant admission | 7 | 5 | 0.082771 | 0.116212 |
+| F2 HAO | forcing-driven predictor-defect | 6 | 5 | 0.065841 | 0.097006 |
+| 7975 HAO | fixed four-secant admission | 7 | 5 | 1.276700 | 1.937176 |
+| 7975 HAO | forcing-driven predictor-defect | 6 | 7 | 1.184973 | 1.843955 |
+
+The adaptive formulation reduces both iteration count and measured wall time
+on these two checks. An every-step full-HVP variant reached F2 and 7975 in six
+and five steps, respectively, but increased end-to-end wall times to 0.133494 s
+and 2.164674 s. This negative control confirms that fewer outer iterations
+alone are not the objective; exact curvature must be admitted according to its
+measured optimization value.
+
 ## Reporting rule
 
 Future tables must distinguish the following methods explicitly:

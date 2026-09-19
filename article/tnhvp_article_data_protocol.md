@@ -130,7 +130,7 @@ valid test of the nonlinear convergence basin or convergence order.
 ## 5. Production curvature-correction space
 
 TNHVP starts every outer iteration from the transported, orbital-block-
-preconditioned L-BFGS direction
+preconditioned L-BFGS predictor
 
 $$
 \mathbf p_k^{\mathrm B}=-\mathbf B_k\mathbf g_k.
@@ -139,24 +139,42 @@ $$
 The standard L-BFGS comparison does not use this orbital block; it uses
 $H_k^{(0)}=\gamma_k I$ as specified in `tnhvp_lbfgs_benchmark.md`.
 
-Once the accepted secant history contains at least four positive-curvature
-pairs, TNHVP constructs a four-dimensional, current-point correction model.
-The first block contains $\mathbf p_k^{\mathrm B}$ and $-\mathbf g_k$. After
-their exact relaxed HVP images have been evaluated, the projected
-trust-region problem gives $\mathbf p_k^{(1)}$ and the shifted KKT residual
+Exact curvature is admitted by an a posteriori forcing test rather than by a
+fixed secant count. For the preceding accepted step, define the measured
+nonlinear contraction
 
 $$
-\mathbf r_k^{(1)}=
-\mathbf g_k+\mathbf H_k\mathbf p_k^{(1)}
-+\lambda_k\mathbf M_k\mathbf p_k^{(1)}.
+q_{k-1}=\frac{\lVert\mathbf g_k\rVert_2}
+              {\lVert\mathbf g_{k-1}\rVert_2}.
 $$
 
-The second block contains the raw and preconditioned corrections
+If $q_{k-1}\leq\eta_{k-1}$, the inexpensive predictor has already delivered
+the contraction requested of the inexact Newton solve, and the next step
+remains on the cheap block-L-BFGS path. If $q_{k-1}>\eta_{k-1}$, TNHVP applies
+the current-point exact relaxed Hessian first to $\mathbf p_k^{\mathrm B}$.
+The one-dimensional trust problem supplies the optimal step on this ray and
+the shifted KKT defect
 
 $$
--\mathbf r_k^{(1)},
+\mathbf r_k^{\mathrm B}=
+\mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}
++\lambda_k\mathbf M_k\mathbf p_k^{\mathrm B}.
+$$
+
+If
+
+$$
+\lVert\mathbf r_k^{\mathrm B}\rVert_2
+\leq\eta_k\lVert\mathbf g_k\rVert_2,
+$$
+
+that single HVP certifies the predictor. Otherwise the correction space is
+expanded by the raw and preconditioned Newton defects
+
+$$
+-\mathbf r_k^{\mathrm B},
 \qquad
--\mathbf B_k\mathbf r_k^{(1)}.
+-\mathbf B_k\mathbf r_k^{\mathrm B}.
 $$
 
 Every admitted basis vector receives a current-point exact relaxed HVP,
@@ -165,10 +183,13 @@ in this correction space subject to the physical-metric trust radius. Thus the
 four-dimensional limit defines a low-rank curvature correction to L-BFGS; it
 must not be described as a fully converged Newton equation.
 
-The admission condition equates the number of established secant directions
-with the correction-space dimension. It contains no molecule name, basis-size
-threshold, orbital-type branch, or outer-iteration index. Before admission,
-TNHVP uses the inexpensive orbital-block-preconditioned L-BFGS direction.
+The admission condition contains no molecule name, basis-size threshold,
+orbital-type branch, outer-iteration index, or required number of secants. It
+asks whether the measured nonlinear contraction met the same forcing target
+used to certify the inner Newton equation. The current four-dimensional safety
+limit still defines a low-rank correction model; failure to meet the residual
+target at that limit is reported rather than labelled as a converged Newton
+solve.
 
 ## 6. Validation hierarchy
 

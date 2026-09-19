@@ -90,6 +90,7 @@ BackendRunResult run_truncated_newton_backend(
   double initial_trust_radius_for_current_point = trust_radius;
   double accepted_point_setup_wall_time_seconds = 0.0;
   double trial_objective_wall_time_seconds = 0.0;
+  bool curvature_correction_required = false;
   auto accepted_point_start_time = std::chrono::steady_clock::now();
   
   while (run_result.n_iterations < options.max_iterations) {
@@ -323,17 +324,13 @@ BackendRunResult run_truncated_newton_backend(
     const Eigen::Index reduced_size =
         current_projection.reduced_gradient.size();
     TruncatedNewtonTrialEvaluation trial_evaluation_cache;
-    // Start with the L-BFGS step and raw gradient, then use one projected-KKT
-    // residual block. Exact curvature is admitted once the transported inverse
-    // model contains at least as many independent secant pairs as the
-    // correction subspace. Before that point the HVP merely replaces an
-    // immature L-BFGS model instead of correcting an established one.
-    const bool curvature_model_ready =
-        accepted_point_preconditioner->size() >=
-        std::min<int>(reduced_size, kCurvatureModelDimension);
+    // Certify the block-L-BFGS predictor with its exact Hessian image, then
+    // expand only along the resulting Newton defect.  The forcing condition,
+    // rather than a fixed amount of secant history, decides whether curvature
+    // correction is required at this accepted point.
     TruncatedNewtonStepResult trust_region_step;
     bool newton_candidate_available = false;
-    if (curvature_model_ready) {
+    if (curvature_correction_required) {
       if (accepted_point_operator == nullptr) {
         const auto setup_start = std::chrono::steady_clock::now();
         accepted_point_operator = std::make_shared<ExactHvpOperator>(
@@ -399,7 +396,7 @@ BackendRunResult run_truncated_newton_backend(
             &trial_energy);
     bool accepted_baseline_trial = false;
     if (!accepted_newton_trial) {
-      if (curvature_model_ready) {
+      if (curvature_correction_required) {
         ++rejected_trial_step_count_for_current_point;
       }
       Eigen::VectorXd accepted_baseline_reduced_step;
@@ -486,6 +483,11 @@ BackendRunResult run_truncated_newton_backend(
         current_projection.reduced_gradient.stableNorm();
     const double accepted_gradient_l2_norm =
         next_projection.reduced_gradient.stableNorm();
+    curvature_correction_required =
+        observed_contraction_requires_newton_correction(
+            source_gradient_l2_norm,
+            accepted_gradient_l2_norm,
+            newton_forcing_term);
     const double accepted_point_wall_time_seconds =
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - accepted_point_start_time)

@@ -109,6 +109,18 @@ double inexact_newton_forcing_term(
     double gradient_tolerance);
 
 /**
+ * @brief Requests exact curvature when the last outer step missed its forcing.
+ *
+ * The accepted nonlinear contraction is an a posteriori test of the cheap
+ * predictor. Exact HVP correction is admitted at the next point only when the
+ * measured gradient contraction exceeds the inexact-Newton target.
+ */
+bool observed_contraction_requires_newton_correction(
+    double source_gradient_l2_norm,
+    double accepted_gradient_l2_norm,
+    double forcing_term);
+
+/**
  * @brief Tests whether further inner work is below both outer accuracies.
  *
  * This is an inner-work stopping rule, not an outer convergence declaration;
