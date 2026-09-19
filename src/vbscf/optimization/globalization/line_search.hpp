@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Eigen/Core>
-#include <LBFGS.h>
 
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
@@ -33,17 +32,5 @@ bool try_armijo_backtracking_nonredundant_direction(
     Eigen::VectorXd* accepted_gradient,
     double* accepted_energy,
     bool* accepted_chart_changed = nullptr);
-
-bool try_steepest_descent_armijo_step(
-    VbScfObjective* objective,
-    const LBFGSpp::LBFGSParam<double>& param,
-    const Eigen::VectorXd& start_parameters,
-    const Eigen::VectorXd& start_gradient,
-    double start_energy,
-    double initial_step,
-    Eigen::VectorXd* accepted_parameters,
-    Eigen::VectorXd* accepted_gradient,
-    double* accepted_energy,
-    double* accepted_step);
 
 }  // namespace xmvb::vb

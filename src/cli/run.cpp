@@ -39,8 +39,7 @@ int run(Options command_line) {
   if (!command_line.optimizer_backend_explicit) {
     switch (load_result.scf_optimizer) {
       case xmvb::vb::InputScfOptimizer::Lbfgs:
-        options.backend =
-            xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp;
+        options.backend = xmvb::vb::VbScfOptimizerBackend::Lbfgs;
         break;
       case xmvb::vb::InputScfOptimizer::Tnhvp:
         options.backend =

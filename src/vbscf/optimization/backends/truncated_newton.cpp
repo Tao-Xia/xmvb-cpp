@@ -145,7 +145,7 @@ BackendRunResult run_truncated_newton_backend(
     }
     const NonredundantRetractionMetric& retraction_metric =
         *accepted_point_metric;
-    // Build the primary nonredundant L-BFGS direction before the coupled
+    // Build the primary L-BFGS direction before the coupled
     // workspace captures its inverse action.  If transported secants lose
     // descent through roundoff, discard them for both candidates so the
     // baseline and curvature model use one positive-definite preconditioner.

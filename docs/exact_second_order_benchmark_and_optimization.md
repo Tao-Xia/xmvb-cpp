@@ -38,9 +38,9 @@ input = test_molecule/C6H6_full.xmi
 
 | backend | HVP path | iterations | final gradient inf-norm | total wall time (s) | comment |
 |---|---|---:|---:|---:|---|
-| `lbfgspp` | N/A | 48 | `1.3279e-4` | `28.4372` | 当前代码实测，收敛 |
+| 已删除的 full-space L-BFGS | N/A | 48 | `1.3279e-4` | `28.4372` | 历史结果 |
 | `nonredundant_truncated_newton` | `exact_ctx` fallback | 5 | `7.6697e-4` | `12.1247` | 当前稳定生产路径 |
-| `nonredundant_lbfgspp` | N/A | 35 | `6.4631e-4` | `39.4930` | 历史参考值，未在本轮重跑 |
+| L-BFGS | N/A | 35 | `6.4631e-4` | `39.4930` | 历史参考值，未在本轮重跑 |
 | `nonredundant_truncated_newton` | `exact_ctx` analytic core | N/A | N/A | N/A | `F2` 端到端仍有段错误，暂不作为生产 benchmark |
 
 这里：
@@ -52,7 +52,7 @@ input = test_molecule/C6H6_full.xmi
 
 从总 wall-time 来看，当前稳定的精确积分二阶路径已经不只是“有潜力”，而是已经在这个 benchmark 上明显赢过现有的一阶基线。
 
-相对普通 `lbfgspp`：
+相对已删除的 full-space L-BFGS：
 
 \[
 \frac{28.4372}{12.1247} \approx 2.35.
@@ -62,7 +62,7 @@ input = test_molecule/C6H6_full.xmi
 
 - 当前生产可用的 TN fallback 路径，约快 `2.35x`。
 
-相对 `nonredundant_lbfgspp`：
+相对 L-BFGS：
 
 \[
 \frac{39.4930}{12.1247} \approx 3.26.

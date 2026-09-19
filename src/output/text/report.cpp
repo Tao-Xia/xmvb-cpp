@@ -23,12 +23,10 @@ namespace xmvb::output {
 bool core_backend_reports_projected_gradient(
     xmvb::vb::VbScfOptimizerBackend backend) {
   switch (backend) {
+    case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
-    case xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return true;
-    case xmvb::vb::VbScfOptimizerBackend::Lbfgspp:
-      return false;
   }
   throw std::invalid_argument("invalid VBSCF optimizer backend");
 }
@@ -36,10 +34,8 @@ bool core_backend_reports_projected_gradient(
 const char* gradient_tolerance_metric_name(
     xmvb::vb::VbScfOptimizerBackend backend) {
   switch (backend) {
-    case xmvb::vb::VbScfOptimizerBackend::Lbfgspp:
-      return "full |g|_2";
+    case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
-    case xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return "projected |g|_inf";
   }
@@ -48,12 +44,10 @@ const char* gradient_tolerance_metric_name(
 
 const char* optimizer_report_name(xmvb::vb::VbScfOptimizerBackend backend) {
   switch (backend) {
-    case xmvb::vb::VbScfOptimizerBackend::Lbfgspp:
+    case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
       return "L-BFGS";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
       return "nonredundant projected gradient";
-    case xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp:
-      return "nonredundant L-BFGS";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return "TNHVP (matrix-free truncated Newton)";
   }

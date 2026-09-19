@@ -6,7 +6,7 @@
 
 \[
 \boxed{
-\text{方法框架已经做出来了，而且稳定 exact 路径已经在大体系上赢过了 } \texttt{lbfgspp}.
+\text{方法框架已经做出来了，而且稳定 exact 路径已经在大体系上赢过了已删除的 full-space L-BFGS}.
 }
 \]
 
@@ -34,7 +34,7 @@
 =
 12.1247\ \mathrm{s},
 \qquad
-\texttt{lbfgspp}
+\text{已删除的 full-space L-BFGS}
 =
 28.4372\ \mathrm{s}.
 \]
@@ -254,7 +254,7 @@ test_molecule/C6H6_full.xmi
 
 | backend | iterations | final gradient inf-norm | total wall time (s) |
 |---|---:|---:|---:|
-| `lbfgspp` | 48 | `1.3279e-4` | `28.4372` |
+| 已删除的 full-space L-BFGS | 48 | `1.3279e-4` | `28.4372` |
 | `nonredundant_truncated_newton --nonredundant-truncated-newton-hvp-mode exact_ctx` | 5 | `7.6697e-4` | `12.1247` |
 
 因此：
@@ -263,7 +263,7 @@ test_molecule/C6H6_full.xmi
 \frac{28.4372}{12.1247} \approx 2.35.
 \]
 
-也就是说，当前稳定 fallback 二阶路径已经比 `lbfgspp` 快约 `2.35x`。
+也就是说，当前稳定 fallback 二阶路径已经比已删除的 full-space L-BFGS 快约 `2.35x`。
 
 ### 5.2 本轮新增的关键收益来自哪里
 

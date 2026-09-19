@@ -105,7 +105,6 @@ set_target_properties(xmvb_vbscf PROPERTIES OUTPUT_NAME xmvb-vbscf)
 target_include_directories(xmvb_vbscf
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/LBFGSpp/include
     ${EIGEN3_INCLUDE_DIR}
     ${LAPACK_INCLUDE}
     ${LAPACKE_INCLUDE}

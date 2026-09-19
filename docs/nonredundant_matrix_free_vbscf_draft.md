@@ -413,7 +413,7 @@ main implementation components are:
 
 The optimizer is fully integrated into the existing VBSCF infrastructure rather
 than implemented as a standalone prototype. This allows direct comparison with
-existing full-space L-BFGS and nonredundant L-BFGS backends under identical
+the L-BFGS and TNHVP backends under identical
 energy, gradient, and structure-expansion pathways.
 
 The present production implementation also preserves compatibility with sparse
@@ -440,10 +440,9 @@ benchmark set should include:
 
 The primary comparisons will be made against:
 
-1. full-space L-BFGS in raw orbital coordinates,
-2. nonredundant L-BFGS in the reduced orbital space,
-3. the present nonredundant truncated-Newton method,
-4. legacy reduced-Hessian or legacy Newton-style references when available.
+1. L-BFGS in the reduced orbital space,
+2. the present nonredundant truncated-Newton method,
+3. reduced-Hessian or Newton-style references when available.
 
 The key reported metrics will be:
 
@@ -480,10 +479,10 @@ The final manuscript should include at least one table of the following form.
 | System | Structure space | Optimizer | Iterations | Grad/Energy calls | HVP calls | Final energy (Eh) | Wall time (s) |
 |---|---|---:|---:|---:|---:|---:|---:|
 | F$_2$ | full | raw L-BFGS | TBD | TBD | 0 | TBD | TBD |
-| F$_2$ | full | nonredundant L-BFGS | TBD | TBD | 0 | TBD | TBD |
+| F$_2$ | full | L-BFGS | TBD | TBD | 0 | TBD | TBD |
 | F$_2$ | full | nonredundant TN | 3 | TBD | TBD | TBD | TBD |
 | C$_6$H$_6$ | full | raw L-BFGS | TBD | TBD | 0 | TBD | TBD |
-| C$_6$H$_6$ | full | nonredundant L-BFGS | TBD | TBD | 0 | TBD | TBD |
+| C$_6$H$_6$ | full | L-BFGS | TBD | TBD | 0 | TBD | TBD |
 | C$_6$H$_6$ | full | nonredundant TN | 6 | TBD | TBD | TBD | TBD |
 
 The partially overlapping cases should be summarized separately with an

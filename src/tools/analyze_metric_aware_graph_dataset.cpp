@@ -372,7 +372,7 @@ ActiveOverlapSelectionResult select_active_overlap_matrix(
   // optimized orbital basis. `active_overlap_matrix` stores that M x M spatial
   // overlap in column-major order, where M is the number of active orbitals.
   xmvb::vb::VbScfOptimizerOptions optimizer_options;
-  optimizer_options.backend = xmvb::vb::VbScfOptimizerBackend::Lbfgspp;
+  optimizer_options.backend = xmvb::vb::VbScfOptimizerBackend::Lbfgs;
   optimizer_options.max_iterations = options.optimizer_max_iterations;
   optimizer_options.gradient_tolerance = options.optimizer_gradient_tolerance;
   optimizer_options.energy_tolerance = options.optimizer_energy_tolerance;

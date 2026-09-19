@@ -14,8 +14,6 @@ struct TnhvpIterationRecord;
 
 namespace optimizer_detail {
 
-bool uses_nonredundant_space(VbScfOptimizerBackend backend);
-
 OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
     const SparseParameterLayout& parameter_view);

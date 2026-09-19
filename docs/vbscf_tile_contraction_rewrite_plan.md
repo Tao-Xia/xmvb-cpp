@@ -1255,7 +1255,7 @@ tile 版本。
 ```text
 cmake --build build --target xmvb -j8
 cmake --build build --target check_exact_ctx_hvp -j8
-F2 lbfgspp support_sparse=off/on: converged
+F2 L-BFGS support_sparse=off/on: converged
 F2 check_exact_ctx_hvp support_sparse=off/on:
   matrix_form_sum_sso/hho/ggo max_abs_diff ~= 1e-16
   matrix_vs_pairwise_local_same_spin max_abs_diff ~= 1e-16

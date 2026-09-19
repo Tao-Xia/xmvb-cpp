@@ -11,18 +11,6 @@
 
 namespace xmvb::vb::optimizer_detail {
 
-bool uses_nonredundant_space(VbScfOptimizerBackend backend) {
-  switch (backend) {
-    case VbScfOptimizerBackend::NonredundantProjectedGradient:
-    case VbScfOptimizerBackend::NonredundantLbfgspp:
-    case VbScfOptimizerBackend::NonredundantTruncatedNewton:
-      return true;
-    case VbScfOptimizerBackend::Lbfgspp:
-      return false;
-  }
-  return false;
-}
-
 OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
     const SparseParameterLayout& parameter_view) {
@@ -92,23 +80,21 @@ void record_accepted_iteration_snapshot(
   }
   snapshot.sparse_orbital_energy_gradient_l2_norm =
       std::sqrt(snapshot.sparse_orbital_energy_gradient_l2_norm);
-  if (uses_nonredundant_space(options.backend)) {
-    Eigen::VectorXd computed_reduced_gradient;
-    if (reduced_gradient == nullptr) {
-      const SparseParameterLayout parameter_view(
-          objective->input().orbital_preparation_input);
-      const OrbitalChart chart = build_orbital_chart(*objective, parameter_view);
-      const Eigen::VectorXd packed_gradient = parameter_view.gather_from_full(
-          gradient_result.sparse_orbital_energy_gradient);
-      computed_reduced_gradient =
-          chart.project_gradient(packed_gradient).reduced_gradient;
-      reduced_gradient = &computed_reduced_gradient;
-    }
-    snapshot.has_projected_gradient = true;
-    snapshot.projected_gradient_inf_norm =
-        gradient_infinity_norm(*reduced_gradient);
-    snapshot.projected_gradient_l2_norm = reduced_gradient->norm();
+  Eigen::VectorXd computed_reduced_gradient;
+  if (reduced_gradient == nullptr) {
+    const SparseParameterLayout parameter_view(
+        objective->input().orbital_preparation_input);
+    const OrbitalChart chart = build_orbital_chart(*objective, parameter_view);
+    const Eigen::VectorXd packed_gradient = parameter_view.gather_from_full(
+        gradient_result.sparse_orbital_energy_gradient);
+    computed_reduced_gradient =
+        chart.project_gradient(packed_gradient).reduced_gradient;
+    reduced_gradient = &computed_reduced_gradient;
   }
+  snapshot.has_projected_gradient = true;
+  snapshot.projected_gradient_inf_norm =
+      gradient_infinity_norm(*reduced_gradient);
+  snapshot.projected_gradient_l2_norm = reduced_gradient->norm();
   if (include_full_payload) {
     snapshot.orbital_value_table.assign(
         objective->input().orbital_preparation_input.orbital_value_table.begin(),

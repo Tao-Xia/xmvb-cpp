@@ -69,7 +69,6 @@ Eigen::MatrixXd build_one_particle_density_matrix(
 using optimizer_detail::build_orbital_chart;
 using optimizer_detail::record_accepted_iteration_snapshot;
 using optimizer_detail::sync_result_from_objective;
-using optimizer_detail::uses_nonredundant_space;
 
 VbScfOptimizer::VbScfOptimizer(
     VbScfOptimizerOptions options)
@@ -157,20 +156,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     final_gradient_l2_norm = gradient.norm();
     switch (options_.backend) {
 
-      case VbScfOptimizerBackend::Lbfgspp: {
-        const auto backend_result =
-            optimizer_detail::run_full_space_lbfgs_backend(
-                &objective,
-                options_,
-                parameter_vector,
-                gradient,
-                energy,
-                &result);
-        n_iterations = backend_result.n_iterations;
-        final_gradient_l2_norm = backend_result.final_gradient_l2_norm;
-        break;
-      }
-
       case VbScfOptimizerBackend::NonredundantProjectedGradient: {
         const auto backend_result =
             optimizer_detail::run_projected_gradient_backend(
@@ -186,9 +171,9 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
         break;
       }
 
-      case VbScfOptimizerBackend::NonredundantLbfgspp: {
+      case VbScfOptimizerBackend::Lbfgs: {
         const auto backend_result =
-            optimizer_detail::run_nonredundant_lbfgs_backend(
+            optimizer_detail::run_lbfgs_backend(
                 &objective,
                 parameter_view,
                 options_,
@@ -238,8 +223,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
       result.scf_result.one_electron_reference_energy;
   result.final_gradient_inf_norm = result.gradient_inf_norm_history.back();
   result.final_gradient_l2_norm = final_gradient_l2_norm;
-  if (uses_nonredundant_space(options_.backend) &&
-      !final_projected_gradient_ready) {
+  if (!final_projected_gradient_ready) {
     const OrbitalChart final_space =
         build_orbital_chart(objective, parameter_view);
     const Eigen::VectorXd final_packed_gradient =

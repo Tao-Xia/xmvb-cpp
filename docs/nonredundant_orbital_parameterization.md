@@ -527,5 +527,5 @@ summarized as follows:
    `retract_step()` helper.
 
 This is the nonredundant parameterization currently used by the
-`nonredundant_projected_gradient`, `nonredundant_lbfgspp`, and
+`nonredundant_projected_gradient`, `lbfgs`, and
 `nonredundant_truncated_newton` backends.

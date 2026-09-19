@@ -138,7 +138,7 @@ env OMP_NUM_THREADS=1 XMVB_SAME_SPIN_PAIR_CACHE_MB=0 \
 env OMP_NUM_THREADS=1 XMVB_LOG_OBJECTIVE_PROGRESS=1 \
   build/src/xmvb-cpp.exe \
   data/training_xmi/6e6o_full/10698_VBSCF.xmi \
-  --optimizer-backend lbfgspp \
+  --optimizer-backend lbfgs \
   --max-iterations 1 \
   --standard-two-electron-mode ri
 
@@ -146,7 +146,7 @@ env OMP_NUM_THREADS=1 XMVB_LOG_OBJECTIVE_PROGRESS=1 \
   XMVB_SAME_SPIN_PAIR_CACHE_MB=0 \
   build/src/xmvb-cpp.exe \
   data/training_xmi/6e6o_full/10698_VBSCF.xmi \
-  --optimizer-backend lbfgspp \
+  --optimizer-backend lbfgs \
   --max-iterations 1 \
   --standard-two-electron-mode ri
 ```

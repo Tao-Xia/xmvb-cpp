@@ -100,7 +100,7 @@
 建议在 `6526Y`、固定线程数（建议 32 线程）下，对每个正文体系比较：
 
 - `nonredundant_truncated_newton`
-- `nonredundant_lbfgspp`
+- `lbfgs`
 
 每行给出：
 
@@ -200,7 +200,7 @@
 对每个正文体系，至少跑：
 
 1. `nonredundant_truncated_newton`
-2. `nonredundant_lbfgspp`
+2. `lbfgs`
 
 运行环境统一为：
 

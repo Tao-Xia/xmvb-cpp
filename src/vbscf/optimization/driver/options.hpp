@@ -16,7 +16,7 @@ struct VbScfOptimizerOptions {
    * @brief Optimization backend implementation.
    */
   VbScfOptimizerBackend backend =
-      VbScfOptimizerBackend::NonredundantLbfgspp;
+      VbScfOptimizerBackend::Lbfgs;
 
   /** @brief Structure-space eigensolver used by objective evaluations. */
   StructureEigensolver structure_eigensolver = StructureEigensolver::Davidson;
@@ -32,10 +32,8 @@ struct VbScfOptimizerOptions {
   /**
    * @brief Convergence threshold on the gradient infinity norm.
    *
-   * The plain full-space `lbfgspp` backend uses
-   * the full gradient Euclidean norm, matching the original `gxn`
-   * convergence check. Nonredundant backends apply the same threshold to the
-   * projected / reduced gradient infinity norm.
+   * All production backends apply this threshold to the projected reduced
+   * gradient infinity norm.
    */
   double gradient_tolerance = 1.0e-3;
 

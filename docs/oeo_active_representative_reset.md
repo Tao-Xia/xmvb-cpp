@@ -53,7 +53,7 @@ The relevant current code paths are:
 
 The current behavior is:
 
-1. plain `lbfgspp` uses the full packed sparse-orbital chart,
+1. the now-removed full-space L-BFGS used the packed sparse-orbital chart,
 2. it does not use `NonredundantOrbitalSpace`,
 3. accepted-point chart reset exists only for the inactive MO gauge,
 4. active representative repair currently exists only at final export time.
@@ -328,7 +328,7 @@ If the covariance derivation succeeds, the implementation route should be:
 
 1. preserve active support-reference metadata in the input object,
 2. build a deterministic localized representative map for the active block,
-3. add accepted-point active chart reset to plain `lbfgspp`,
+3. add accepted-point active chart reset to the removed full-space L-BFGS,
 4. transport gradient and quasi-Newton state analytically,
 5. remove the need for export-only active representative repair.
 

@@ -16,7 +16,7 @@
 需要区分三条路线：
 
 1. `tnhvp`：`xmvb-cpp` 的 `nonredundant_truncated_newton`
-2. `lbfgs`：`xmvb-cpp` 的 `lbfgspp`
+2. `lbfgs`：`xmvb-cpp` 的默认 L-BFGS
 3. `legacy_xmvb`：通过 [xmvb.sh](/pool1/home/xiatao/project/xmvb-cpp/xmvb.sh) 调用的 legacy XMVB 端到端基线
 
 `legacy_xmvb` 不是“强制 legacy LBFGS”或“强制 legacy TNHVP”，而是按 deck 自身关键字运行，因此更适合作为历史生产基线。

@@ -23,7 +23,6 @@ src/
   output/          Molden and accepted-iteration output
   cli/             Command-line entry point and reporting
   tools/           Benchmarking and diagnostic tools
-  third_party/     Vendored dependencies (LBFGSpp)
 basis/             Standard basis set library (Pople, Dunning, etc.)
 testdata/vbscf/    Versioned VBSCF regression decks
 tests/vbscf/       Unit and numerical-regression tests
@@ -40,7 +39,6 @@ in [Code Organization and Naming](docs/code_organization.md).
 | [OpenBLAS](https://www.openblas.net/) | BLAS/LAPACK routines |
 | [libcint](https://github.com/sunqm/libcint) | Gaussian integral evaluation |
 | [libxc](https://www.tddft.org/programs/libxc/) | Exchange-correlation functionals |
-| [LBFGSpp](https://github.com/yixuan/LBFGSpp) (vendored) | L-BFGS optimization |
 
 ## Build
 
@@ -68,7 +66,7 @@ OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi>
 
 Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
 regression decks and `testdata/vbscf/F2.xmi` for the compact HAO smoke case.
-Within `$CTRL`, `ISCF=5` selects nonredundant L-BFGS and `ISCF=7` selects
+Within `$CTRL`, `ISCF=5` selects L-BFGS and `ISCF=7` selects
 TNHVP. `EIGENSOLVER=DAVIDSON` selects the default matrix-free structure solver,
 while `EIGENSOLVER=DENSE` selects the explicit dense reference solver. An
 explicit `--optimizer-backend` or `--eigensolver` command-line option overrides

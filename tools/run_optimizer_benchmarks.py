@@ -21,7 +21,7 @@ from typing import Iterable
 
 BACKENDS = {
     "tnhvp": "nonredundant_truncated_newton",
-    "lbfgs": "nonredundant_lbfgspp",
+    "lbfgs": "lbfgs",
 }
 
 SUMMARY_COLUMNS = [

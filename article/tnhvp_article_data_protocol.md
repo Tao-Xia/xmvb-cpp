@@ -206,7 +206,7 @@ a dense Hessian path to production.
 
 ### 6.3 Nonlinear convergence
 
-Use the same unmodified input for TNHVP and nonredundant L-BFGS. In addition,
+Use the same unmodified input for TNHVP and L-BFGS. In addition,
 construct deterministic quotient-space perturbations at several common,
 dimensionless tangent norms. The perturbation generator, seed, norm, and
 resulting input checksum must be archived. A method is not credited with a

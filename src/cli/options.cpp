@@ -13,18 +13,13 @@ void apply_optimizer_backend_argument(
   if (options == nullptr) {
     throw std::invalid_argument("optimizer options must not be null");
   }
-  if (backend_name == "lbfgspp") {
-    options->backend = xmvb::vb::VbScfOptimizerBackend::Lbfgspp;
+  if (backend_name == "lbfgs") {
+    options->backend = xmvb::vb::VbScfOptimizerBackend::Lbfgs;
     return;
   }
   if (backend_name == "nonredundant_projected_gradient") {
     options->backend =
         xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient;
-    return;
-  }
-  if (backend_name == "nonredundant_lbfgspp") {
-    options->backend =
-        xmvb::vb::VbScfOptimizerBackend::NonredundantLbfgspp;
     return;
   }
   if (backend_name == "nonredundant_truncated_newton") {
@@ -102,7 +97,7 @@ void apply_standard_two_electron_mode_argument(
 
 void print_usage() {
   std::cerr << "usage: xmvb-cpp.exe <input.xmi> "
-               "[--optimizer-backend lbfgspp|nonredundant_projected_gradient|nonredundant_lbfgspp|nonredundant_truncated_newton]"
+               "[--optimizer-backend lbfgs|nonredundant_projected_gradient|nonredundant_truncated_newton]"
                " [--max-iterations <count>]"
                " [--eigensolver davidson|dense]"
                " [--verbose true|false]"
@@ -115,7 +110,7 @@ void print_usage() {
                " [--dump-trace-dir <dataset_root>]"
                " [--tnhvp-trace <path.tsv>]"
                " [--dump-final-orbital-value-table-bin <path>]\n"
-               "input optimizer: ISCF=5 selects nonredundant L-BFGS; ISCF=7 selects TNHVP\n"
+               "input optimizer: ISCF=5 selects L-BFGS; ISCF=7 selects TNHVP\n"
                "input eigensolver: EIGENSOLVER=DAVIDSON|DENSE (default DAVIDSON)\n";
 }
 

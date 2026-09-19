@@ -35,7 +35,7 @@
 建议正文主表只比较两条主线：
 
 - `nonredundant_truncated_newton`
-- `nonredundant_lbfgspp`
+- `lbfgs`
 
 统一运行条件：
 

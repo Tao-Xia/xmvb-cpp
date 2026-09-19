@@ -1,14 +1,14 @@
-# TNHVP versus nonredundant L-BFGS benchmark
+# TNHVP versus L-BFGS benchmark
 
 ## Benchmark status
 
 The benchmark produced from revision `45e8e48` is withdrawn. Although its
-command line selected `nonredundant_lbfgspp`, the implementation applied the
+command line selected the reduced-coordinate L-BFGS backend, the implementation applied the
 L-BFGS inverse-Hessian history in the full packed sparse-coefficient space.
 It then subtracted projected gradients expressed in different accepted-point
 quotient charts without transporting either the primal step or the dual
 gradient change. Gauge canonicalization therefore corrupted the secant
-history, and the resulting iteration counts were not a valid nonredundant
+history, and the resulting iteration counts were not a valid reduced-coordinate
 L-BFGS baseline.
 
 The corrected implementation stores the accepted finite retraction
@@ -63,8 +63,8 @@ L-BFGS time for 240. FeCl2 also needs more TNHVP outer steps than L-BFGS.
 Therefore the present data support a convergence-quality advantage, but not a
 wall-time advantage, for TNHVP. A publication performance claim requires
 reducing the HVP/coupled-response cost or avoiding response work whose expected
-reduction cannot amortize its measured wall time. The corrected nonredundant
-L-BFGS implementation is the baseline for all subsequent comparisons.
+reduction cannot amortize its measured wall time. The corrected L-BFGS
+implementation is the baseline for all subsequent comparisons.
 
 ## Accuracy-triggered forcing regression
 
@@ -83,7 +83,7 @@ as an implementation regression rather than final article data.
 | 240 | 7 | 20.601759 | -343.446302353175 | 3.80186083e-06 | 1911848 |
 
 The FeCl2 iteration count decreases from 10 in the earlier TNHVP benchmark to
-5, below the 7-step nonredundant L-BFGS baseline, while its SCF wall time falls
+5, below the 7-step L-BFGS baseline, while its SCF wall time falls
 from 22.16 s to 2.50 s. MnF2 retains a 15-step count while its SCF time falls
 from 55.98 s to 25.20 s. The 240 calculation requires one additional accepted
 step but decreases from 93.64 s to 20.60 s. A fresh interleaved paired run is

@@ -44,8 +44,8 @@ if (NOT iscf5_status EQUAL 0)
   message(FATAL_ERROR
     "ISCF=5 selection run failed with status ${iscf5_status}:\n${iscf5_errors}")
 endif()
-if (NOT iscf5_report MATCHES "VBSCF algorithm: nonredundant L-BFGS")
-  message(FATAL_ERROR "ISCF=5 did not select nonredundant L-BFGS")
+if (NOT iscf5_report MATCHES "VBSCF algorithm: L-BFGS")
+  message(FATAL_ERROR "ISCF=5 did not select L-BFGS")
 endif()
 
 string(

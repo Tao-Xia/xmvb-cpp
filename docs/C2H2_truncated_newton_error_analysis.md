@@ -176,7 +176,7 @@ OMP_NUM_THREADS=1
 **LBFGS 优化器**（不需要 Hessian）：
 ```bash
 ./build/src/xmvb-cpp.exe test_molecule/C2H2.xmi \
-  --optimizer-backend nonredundant_lbfgspp \
+  --optimizer-backend lbfgs \
   --max-iterations 2000
 ```
 
@@ -184,7 +184,7 @@ OMP_NUM_THREADS=1
 ```bash
 cd /export/home/xiatao/project/xmvb-cpp
 ./build/src/xmvb-cpp.exe test_molecule/C2H2.xmi \
-  --optimizer-backend nonredundant_lbfgspp \
+  --optimizer-backend lbfgs \
   --max-iterations 1
 ```
 
@@ -273,13 +273,13 @@ enum class NonredundantTruncatedNewtonHvpMode {
 
 ```bash
 # 第 53 行
-optimizer_backend="${OPTIMIZER_BACKEND:-lbfgspp}"  # 原来是 truncated_newton
+optimizer_backend="${OPTIMIZER_BACKEND:-lbfgs}"  # 原来是 truncated_newton
 ```
 
 或者在提交时指定：
 
 ```bash
-OPTIMIZER_BACKEND=lbfgspp sbatch -c 32 vbscf-cpp-tnhvp.sh C2H2.xmi
+OPTIMIZER_BACKEND=lbfgs sbatch -c 32 vbscf-cpp-tnhvp.sh C2H2.xmi
 ```
 
 ### 2. 添加错误处理
@@ -349,7 +349,7 @@ if (pair_evaluation.overlap_result.nullity != 0) {
 
 1. **使用 LBFGS 优化器**（最简单）
    ```bash
-   --optimizer-backend nonredundant_lbfgspp
+   --optimizer-backend lbfgs
    ```
 
 2. **单线程调试**（如果必须用截断牛顿法）
@@ -358,7 +358,7 @@ if (pair_evaluation.overlap_result.nullity != 0) {
    ```
 
 3. **修改提交脚本**
-   - 将默认优化器改为 `lbfgspp`
+   - 将默认优化器改为 `lbfgs`
    - 或者添加错误处理
 
 ### 后续工作
