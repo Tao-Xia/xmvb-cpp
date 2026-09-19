@@ -10,6 +10,7 @@
 
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/physical_metric.hpp"
+#include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/optimization/trust_region/truncated_newton.hpp"
 #include "vbscf/diagnostics/orbitals/chart_audit.hpp"
@@ -315,6 +316,24 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
          reduced_covector)
                 .norm() < 1e-10,
         name + ": reduced covector lift is not a right inverse");
+    Eigen::VectorXd secant_step =
+        Eigen::VectorXd::LinSpaced(u.cols(), 0.3, 1.2).normalized();
+    Eigen::VectorXd secant_gradient_change =
+        (2.0 * secant_step).eval();
+    std::vector<PackedSecantPair> secant_history;
+    append_reduced_secant_pair(
+        space,
+        secant_step,
+        secant_gradient_change,
+        1,
+        &secant_history);
+    auto inverse_hessian = build_transported_reduced_lbfgs_preconditioner(
+        space, secant_history, 1);
+    require(inverse_hessian.size() == 1,
+            name + ": valid quotient secant was rejected");
+    require((inverse_hessian.apply(secant_gradient_change) - secant_step)
+                    .norm() < 1.0e-10,
+            name + ": quotient L-BFGS inverse violates its secant equation");
     const auto trial = space.retract_step(input, d, 0.01);
     require((view.pack(trial) - x - 0.01 * u * d).norm() < 1e-12,
             name + ": additive retraction");

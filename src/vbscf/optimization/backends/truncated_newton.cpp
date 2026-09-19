@@ -116,7 +116,7 @@ BackendRunResult run_truncated_newton_backend(
     if (accepted_point_preconditioner == nullptr) {
       accepted_point_preconditioner =
           std::make_unique<TransportedReducedLbfgsPreconditioner>(
-              build_nonredundant_truncated_newton_preconditioner(
+              build_transported_reduced_lbfgs_preconditioner(
                   current_space,
                   packed_secant_history,
                   transport_history_size));
@@ -374,10 +374,8 @@ BackendRunResult run_truncated_newton_backend(
     }
     const bool accepted_point_chart_changed =
         accepted_trial_evaluation.chart_changed;
-    const Eigen::VectorXd accepted_parameter_displacement =
-        trial_parameters - current_parameters;
-    const Eigen::VectorXd accepted_gradient_change =
-        trial_gradient - current_gradient;
+    const Eigen::VectorXd accepted_packed_tangent =
+        current_space.expand_step(reduced_step);
     const int accepted_preconditioner_history_size =
         accepted_point_preconditioner->size();
     const int accepted_coupled_orbital_dimension =
@@ -515,9 +513,23 @@ BackendRunResult run_truncated_newton_backend(
     }
     if (!nonredundant_rank_changed &&
         transport_history_size > 0) {
-      append_nonredundant_truncated_newton_secant_pair(
-          accepted_parameter_displacement,
-          accepted_gradient_change,
+      transport_packed_secant_history_to_chart(
+          next_space,
+          transport_history_size,
+          &packed_secant_history);
+      const Eigen::VectorXd transported_step =
+          next_space
+              .project_vector(accepted_packed_tangent)
+              .reduced_gradient;
+      const Eigen::VectorXd transported_previous_gradient =
+          next_space
+              .project_gradient(current_space.expand_gradient(
+                  current_projection.reduced_gradient))
+              .reduced_gradient;
+      append_reduced_secant_pair(
+          next_space,
+          transported_step,
+          next_projection.reduced_gradient - transported_previous_gradient,
           transport_history_size,
           &packed_secant_history);
     }

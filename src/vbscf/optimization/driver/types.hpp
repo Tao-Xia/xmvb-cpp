@@ -14,9 +14,11 @@
 
 namespace xmvb::vb {
 
-// One curvature pair in the common packed sparse-coefficient embedding.
-// Current-chart tangent and covector projections provide the quotient-space
-// vector transport when the pair is reused by the TNHVP preconditioner.
+// One primal/dual curvature pair lifted from a quotient chart into the common
+// packed sparse-coefficient embedding.  The primal step and dual gradient
+// change must use expand_step and expand_gradient respectively; current-chart
+// vector projection and covector pullback then provide their distinct
+// transports after every accepted orbital update.
 struct PackedSecantPair {
   Eigen::VectorXd packed_step;
   Eigen::VectorXd packed_gradient_change;

@@ -159,6 +159,22 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
 
   add_test(
+    NAME nonredundant_lbfgs_f2
+    COMMAND
+      xmvb
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      --optimizer-backend nonredundant_lbfgspp
+      --eigensolver davidson
+      --max-iterations 12
+      --gradient-tolerance 1e-3
+      --energy-tolerance 1e-7)
+  set_tests_properties(nonredundant_lbfgs_f2 PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    ENVIRONMENT
+      "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
+    PASS_REGULAR_EXPRESSION "nonredundant_lbfgspp_dual_tolerance")
+
+  add_test(
     NAME exact_ctx_hvp_f2_finite_difference
     COMMAND
       check_exact_ctx_hvp

@@ -83,12 +83,12 @@ Eigen::VectorXd TransportedReducedLbfgsPreconditioner::apply(
 }
 
 TransportedReducedLbfgsPreconditioner
-build_nonredundant_truncated_newton_preconditioner(
+build_transported_reduced_lbfgs_preconditioner(
     const OrbitalChart& current_space,
     const std::vector<PackedSecantPair>& packed_secant_history,
     int max_history_size) {
   TransportedReducedLbfgsPreconditioner preconditioner(&current_space);
-  for (auto& pair : transport_nonredundant_secant_pairs(
+  for (auto& pair : transport_secant_pairs_to_chart(
            current_space,
            packed_secant_history,
            max_history_size)) {
@@ -100,7 +100,7 @@ build_nonredundant_truncated_newton_preconditioner(
 }
 
 std::vector<TransportedReducedSecantPair>
-transport_nonredundant_secant_pairs(
+transport_secant_pairs_to_chart(
     const OrbitalChart& current_space,
     const std::vector<PackedSecantPair>& packed_secant_history,
     int max_history_size) {
@@ -126,6 +126,36 @@ transport_nonredundant_secant_pairs(
             .reduced_gradient});
   }
   return transported;
+}
+
+void transport_packed_secant_history_to_chart(
+    const OrbitalChart& current_space,
+    int max_history_size,
+    std::vector<PackedSecantPair>* packed_secant_history) {
+  if (packed_secant_history == nullptr) {
+    throw std::invalid_argument("packed secant history must not be null");
+  }
+  const auto transported = transport_secant_pairs_to_chart(
+      current_space, *packed_secant_history, max_history_size);
+  packed_secant_history->clear();
+  packed_secant_history->reserve(transported.size());
+  for (const auto& pair : transported) {
+    const double step_norm = pair.step.norm();
+    const double gradient_change_norm = pair.gradient_change.norm();
+    const double curvature = pair.step.dot(pair.gradient_change);
+    const double minimum_alignment =
+        std::sqrt(std::numeric_limits<double>::epsilon());
+    if (!(step_norm > 0.0) || !(gradient_change_norm > 0.0) ||
+        !std::isfinite(step_norm) ||
+        !std::isfinite(gradient_change_norm) ||
+        !std::isfinite(curvature) ||
+        curvature <= minimum_alignment * step_norm * gradient_change_norm) {
+      continue;
+    }
+    packed_secant_history->push_back(PackedSecantPair{
+        current_space.expand_step(pair.step),
+        current_space.expand_gradient(pair.gradient_change)});
+  }
 }
 
 Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
@@ -156,33 +186,35 @@ Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
   return preconditioned;
 }
 
-void append_nonredundant_truncated_newton_secant_pair(
-    Eigen::VectorXd packed_step,
-    Eigen::VectorXd packed_gradient_change,
+void append_reduced_secant_pair(
+    const OrbitalChart& current_space,
+    Eigen::VectorXd reduced_step,
+    Eigen::VectorXd reduced_gradient_change,
     int max_history_size,
     std::vector<PackedSecantPair>* packed_secant_history) {
+  if (packed_secant_history == nullptr) {
+    throw std::invalid_argument("packed secant history must not be null");
+  }
   if (max_history_size <= 0) {
     return;
   }
-  const double step_norm = packed_step.norm();
-  const double gradient_change_norm = packed_gradient_change.norm();
-  const double secant_curvature =
-      packed_step.dot(packed_gradient_change);
-  const double minimum_secant_alignment =
+  const double step_norm = reduced_step.norm();
+  const double gradient_change_norm = reduced_gradient_change.norm();
+  const double curvature = reduced_step.dot(reduced_gradient_change);
+  const double minimum_alignment =
       std::sqrt(std::numeric_limits<double>::epsilon());
   if (!(step_norm > 0.0) ||
       !(gradient_change_norm > 0.0) ||
       !std::isfinite(step_norm) ||
       !std::isfinite(gradient_change_norm) ||
-      !std::isfinite(secant_curvature) ||
-      secant_curvature <=
-          minimum_secant_alignment * step_norm * gradient_change_norm) {
+      !std::isfinite(curvature) ||
+      curvature <= minimum_alignment * step_norm * gradient_change_norm) {
     return;
   }
 
   packed_secant_history->push_back(PackedSecantPair{
-      std::move(packed_step),
-      std::move(packed_gradient_change)});
+      current_space.expand_step(reduced_step),
+      current_space.expand_gradient(reduced_gradient_change)});
   if (packed_secant_history->size() >
       static_cast<std::size_t>(max_history_size)) {
     packed_secant_history->erase(packed_secant_history->begin());

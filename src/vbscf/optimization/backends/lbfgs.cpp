@@ -5,6 +5,7 @@
 #include <limits>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <LBFGS.h>
 
@@ -13,6 +14,7 @@
 #include "vbscf/optimization/driver/session.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/optimization/objective/function.hpp"
+#include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
 #include "vbscf/optimization/driver/options.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
@@ -239,12 +241,10 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     const Eigen::VectorXd& initial_gradient,
     double initial_energy,
     VbScfOptimizerResult* result) {
-  constexpr double kCurvatureEpsilon = std::numeric_limits<double>::epsilon();
   BackendRunResult run_result;
-  const int dimension = static_cast<int>(initial_parameters.size());
   const int history_size = options.history_size;
-  LBFGSpp::BFGSMat<double> inverse_hessian;
-  inverse_hessian.reset(dimension, history_size);
+  std::vector<PackedSecantPair> packed_secant_history;
+  packed_secant_history.reserve(std::max(0, history_size));
 
   Eigen::VectorXd current_parameters = initial_parameters;
   Eigen::VectorXd current_gradient = initial_gradient;
@@ -252,9 +252,8 @@ BackendRunResult run_nonredundant_lbfgs_backend(
   double previous_energy = initial_energy;
   OrbitalChart current_space = build_orbital_chart(*objective, parameter_view);
   auto current_projection = current_space.project_gradient(current_gradient);
-  Eigen::VectorXd previous_parameters(dimension);
-  Eigen::VectorXd previous_gradient(dimension);
-  Eigen::VectorXd previous_projected_gradient(dimension);
+  Eigen::VectorXd previous_parameters(initial_parameters.size());
+  Eigen::VectorXd previous_gradient(initial_gradient.size());
 
   for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
     if (current_space.reduced_size() == 0) {
@@ -273,26 +272,28 @@ BackendRunResult run_nonredundant_lbfgs_backend(
       break;
     }
 
-    const Eigen::VectorXd steepest_descent_reduced_direction =
-        -current_projection.reduced_gradient;
+    auto inverse_hessian = build_transported_reduced_lbfgs_preconditioner(
+        current_space,
+        packed_secant_history,
+        history_size);
+    Eigen::VectorXd reduced_search_direction =
+        -inverse_hessian.apply(current_projection.reduced_gradient);
+    if (!reduced_search_direction.allFinite() ||
+        current_projection.reduced_gradient.dot(reduced_search_direction) >=
+            0.0) {
+      packed_secant_history.clear();
+      reduced_search_direction =
+          -current_space.apply_inverse_reduced_block_preconditioner(
+              current_projection.reduced_gradient);
+    }
+    if (!reduced_search_direction.allFinite() ||
+        current_projection.reduced_gradient.dot(reduced_search_direction) >=
+            0.0) {
+      reduced_search_direction = -current_projection.reduced_gradient;
+    }
     const OrbitalPreparationInput previous_orbital_input =
         objective->input().orbital_preparation_input;
-    const Eigen::VectorXd steepest_descent_direction =
-        gather_nonredundant_retract_tangent(
-            previous_orbital_input,
-            current_space,
-            parameter_view,
-            steepest_descent_reduced_direction);
-    Eigen::VectorXd search_direction;
-    inverse_hessian.apply_Hv(
-        current_projection.packed_projected_gradient,
-        -1.0,
-        search_direction);
-    const auto search_projection =
-        current_space.project_vector(search_direction);
-    Eigen::VectorXd reduced_search_direction =
-        search_projection.reduced_gradient;
-    search_direction = gather_nonredundant_retract_tangent(
+    Eigen::VectorXd search_direction = gather_nonredundant_retract_tangent(
         previous_orbital_input,
         current_space,
         parameter_view,
@@ -301,9 +302,13 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     if (!std::isfinite(directional_derivative) ||
         directional_derivative >= 0.0 ||
         is_effectively_zero_step(search_direction, current_parameters)) {
-      inverse_hessian.reset(dimension, history_size);
-      search_direction = steepest_descent_direction;
-      reduced_search_direction = steepest_descent_reduced_direction;
+      packed_secant_history.clear();
+      reduced_search_direction = -current_projection.reduced_gradient;
+      search_direction = gather_nonredundant_retract_tangent(
+          previous_orbital_input,
+          current_space,
+          parameter_view,
+          reduced_search_direction);
       directional_derivative = current_gradient.dot(search_direction);
     }
     if (!std::isfinite(directional_derivative) ||
@@ -317,15 +322,13 @@ BackendRunResult run_nonredundant_lbfgs_backend(
 
     previous_parameters = current_parameters;
     previous_gradient = current_gradient;
-    previous_projected_gradient =
-        current_projection.packed_projected_gradient;
     const Eigen::VectorXd previous_reduced_gradient =
         current_projection.reduced_gradient;
     const double reference_energy = energy;
     Eigen::VectorXd accepted_parameters(current_parameters.size());
     Eigen::VectorXd accepted_gradient(current_gradient.size());
     double accepted_energy = energy;
-    bool accepted_point_chart_reset = false;
+    double accepted_step_scale = 0.0;
     if (!try_armijo_backtracking_nonredundant_direction(
             objective,
             previous_orbital_input,
@@ -342,7 +345,8 @@ BackendRunResult run_nonredundant_lbfgs_backend(
             &accepted_parameters,
             &accepted_gradient,
             &accepted_energy,
-            &accepted_point_chart_reset)) {
+            nullptr,
+            &accepted_step_scale)) {
       result->termination_reason = "nonredundant_lbfgspp_line_search_failed";
       run_result.final_gradient_l2_norm =
           current_projection.reduced_gradient.norm();
@@ -352,6 +356,8 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     current_parameters = std::move(accepted_parameters);
     current_gradient = std::move(accepted_gradient);
     energy = accepted_energy;
+    Eigen::VectorXd accepted_packed_tangent =
+        accepted_step_scale * search_direction;
 
     OrbitalChart next_space = build_orbital_chart(*objective, parameter_view);
     auto next_projection = next_space.project_gradient(current_gradient);
@@ -359,7 +365,6 @@ BackendRunResult run_nonredundant_lbfgs_backend(
         gradient_infinity_norm(next_projection.reduced_gradient);
 
     Eigen::VectorXd parameter_step = current_parameters - previous_parameters;
-    bool recovered_from_stall = false;
     const bool stalled_line_search =
         is_effectively_zero_step(parameter_step, previous_parameters) ||
         line_search_made_no_meaningful_progress(
@@ -396,7 +401,8 @@ BackendRunResult run_nonredundant_lbfgs_backend(
               &current_parameters,
               &current_gradient,
               &energy,
-              &accepted_point_chart_reset)) {
+              nullptr,
+              &accepted_step_scale)) {
         energy = (*objective)(previous_parameters, current_gradient);
         current_parameters = previous_parameters;
         sync_result_from_objective(*objective, result);
@@ -410,8 +416,13 @@ BackendRunResult run_nonredundant_lbfgs_backend(
       next_reduced_gradient_inf_norm =
           gradient_infinity_norm(next_projection.reduced_gradient);
       parameter_step = current_parameters - previous_parameters;
-      inverse_hessian.reset(dimension, history_size);
-      recovered_from_stall = true;
+      accepted_packed_tangent = accepted_step_scale *
+          gather_nonredundant_retract_tangent(
+              previous_orbital_input,
+              current_space,
+              parameter_view,
+              -previous_reduced_gradient);
+      packed_secant_history.clear();
     }
 
     ++run_result.n_iterations;
@@ -434,21 +445,29 @@ BackendRunResult run_nonredundant_lbfgs_backend(
       break;
     }
 
-    if (accepted_point_chart_reset) {
-      inverse_hessian.reset(dimension, history_size);
+    const bool rank_changed =
+        next_space.rank_signature() != current_space.rank_signature() ||
+        next_space.reduced_size() != current_space.reduced_size();
+    if (rank_changed) {
+      packed_secant_history.clear();
     } else {
-      parameter_step = current_parameters - previous_parameters;
-      const Eigen::VectorXd projected_gradient_step =
-          next_projection.packed_projected_gradient -
-          previous_projected_gradient;
-      if (parameter_step.dot(projected_gradient_step) >
-          kCurvatureEpsilon * projected_gradient_step.squaredNorm()) {
-        inverse_hessian.add_correction(
-            parameter_step,
-            projected_gradient_step);
-      } else if (recovered_from_stall) {
-        inverse_hessian.reset(dimension, history_size);
-      }
+      transport_packed_secant_history_to_chart(
+          next_space,
+          history_size,
+          &packed_secant_history);
+      const Eigen::VectorXd transported_step =
+          next_space.project_vector(accepted_packed_tangent).reduced_gradient;
+      const Eigen::VectorXd transported_previous_gradient =
+          next_space
+              .project_gradient(
+                  current_space.expand_gradient(previous_reduced_gradient))
+              .reduced_gradient;
+      append_reduced_secant_pair(
+          next_space,
+          transported_step,
+          next_projection.reduced_gradient - transported_previous_gradient,
+          history_size,
+          &packed_secant_history);
     }
 
     current_space = std::move(next_space);
