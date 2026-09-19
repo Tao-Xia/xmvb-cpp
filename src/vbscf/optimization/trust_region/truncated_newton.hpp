@@ -96,6 +96,19 @@ struct RejectedTruncatedNewtonStepCache {
 double inexact_newton_forcing_term(double gradient_norm);
 
 /**
+ * @brief Accuracy-aware forcing for a sequence of inexact Newton solves.
+ *
+ * The progress ratio makes the forcing @f$O(\|g_k\|)@f$ relative to the
+ * fixed initial scale, which preserves local quadratic convergence.  The
+ * accuracy floor stops tightening once the predicted quadratic residual
+ * reaches the outer gradient requirement.
+ */
+double inexact_newton_forcing_term(
+    double gradient_norm,
+    double initial_gradient_norm,
+    double gradient_tolerance);
+
+/**
  * @brief Tests whether further inner work is below both outer accuracies.
  *
  * This is an inner-work stopping rule, not an outer convergence declaration;

@@ -122,6 +122,20 @@ int main() {
                 0.35 * (1.0 + 1.0e-12),
             "cached radius re-solve violated the physical trust metric");
 
+    const auto recycled_counts = std::make_shared<Counts>();
+    xmvb::vb::AcceptedPointCoupledWorkspace recycled_workspace(
+        make_model(a, b, c, g, residual, recycled_counts),
+        gradient,
+        identity_inverse,
+        complete.step.response_step);
+    const auto recycled = recycled_workspace.solve(
+        1.0, xmvb::vb::CoupledKktTolerances{2.0e-13, 2.0e-13});
+    require(recycled.converged(),
+            "recycled response direction lost the KKT certificate");
+    require(recycled.step.orbital_backward_error <= 2.0e-13 &&
+                recycled.step.response_backward_error <= 2.0e-13,
+            "recycled workspace returned an uncertified step");
+
     const auto limited_counts = std::make_shared<Counts>();
     xmvb::vb::AcceptedPointCoupledWorkspace limited_workspace(
         make_model(a, b, c, g, residual, limited_counts),

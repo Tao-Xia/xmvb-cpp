@@ -28,6 +28,26 @@ double inexact_newton_forcing_term(double gradient_norm) {
       kMaximumForcingTerm);
 }
 
+double inexact_newton_forcing_term(
+    double gradient_norm,
+    double initial_gradient_norm,
+    double gradient_tolerance) {
+  if (!std::isfinite(gradient_norm) || gradient_norm <= 0.0 ||
+      !std::isfinite(initial_gradient_norm) ||
+      initial_gradient_norm <= 0.0 ||
+      !std::isfinite(gradient_tolerance) ||
+      gradient_tolerance <= 0.0) {
+    return inexact_newton_forcing_term(gradient_norm);
+  }
+  constexpr double kContractionLimit = 0.5;
+  const double progress_ratio = gradient_norm / initial_gradient_norm;
+  const double accuracy_floor =
+      std::sqrt(gradient_tolerance / initial_gradient_norm);
+  return std::min(
+      kContractionLimit,
+      std::max(progress_ratio, accuracy_floor));
+}
+
 void refresh_truncated_newton_step_certificate(
     const Eigen::VectorXd& reduced_gradient,
     TruncatedNewtonStepResult* step) {

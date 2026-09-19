@@ -21,6 +21,27 @@ void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 
+void check_accuracy_aware_forcing() {
+  constexpr double initial_norm = 4.0;
+  constexpr double gradient_tolerance = 1.0e-3;
+  const double accuracy_floor =
+      std::sqrt(gradient_tolerance / initial_norm);
+  require(
+      inexact_newton_forcing_term(
+          initial_norm, initial_norm, gradient_tolerance) == 0.5,
+      "accuracy-aware forcing lost its contraction limit");
+  require(
+      std::abs(inexact_newton_forcing_term(
+                   1.0, initial_norm, gradient_tolerance) -
+               0.25) < 1.0e-15,
+      "accuracy-aware forcing does not track gradient progress");
+  require(
+      std::abs(inexact_newton_forcing_term(
+                   1.0e-2, initial_norm, gradient_tolerance) -
+               accuracy_floor) < 1.0e-15,
+      "accuracy-aware forcing did not stop at the outer accuracy floor");
+}
+
 OrbitalPreparationInput make_input(
     const Eigen::MatrixXd& coefficients,
     const std::vector<std::vector<int>>& supports, int inactive_count) {
@@ -485,6 +506,7 @@ void check_interior_work_extension(const OrbitalPreparationInput& input) {
 
 int main() {
   try {
+    check_accuracy_aware_forcing();
     check_occupation_curvature();
     Eigen::MatrixXd c(6, 4);
     c << 1, 0, 0.3, 0,

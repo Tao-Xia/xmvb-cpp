@@ -1824,11 +1824,13 @@ invariance under arbitrary inactive-orbital mixing.
 
 The sparse quotient chart is locally prewhitened by eq 27f, whereas the
 trust-region norm and shifted KKT equation now use the coupled metric of eq
-31 through eq 32a. The production forcing function still uses the local
-coordinate $\lVert\mathbf g_k\rVert_2$, and the residual is checked in that
-same norm. This is a coordinate-consistent inexact-Newton test, but not yet
-the fully coupled dual norm and not invariant under energy-unit rescaling.
-The outer stopping criterion uses the corresponding reduced-gradient
+31 through eq 32a.  The production forcing function uses the dimensionless
+ratio $\lVert\mathbf g_k\rVert_2/\lVert\mathbf g_0\rVert_2$ together with the
+outer accuracy ratio
+$\sqrt{\tau_g/\lVert\mathbf g_0\rVert_2}$ derived in Section 11.7.  The
+orbital KKT residual is checked in the same local coordinate norm.  This is a
+coordinate-consistent inexact-Newton test, but not yet the fully coupled dual
+norm.  The outer stopping criterion uses the corresponding reduced-gradient
 infinity norm.
 
 The three-term preconditioned-CG recurrence can lose conjugacy in finite
@@ -2993,18 +2995,17 @@ approximately 0.11 s and no iterative response solve.  Thus Davidson is not
 intrinsically slower for the ground-state eigenproblem; the expensive stage is
 the repeatedly overconverged directional shifted solve used inside the HVP.
 
-The nested solves should obey one accuracy hierarchy.  Let $\eta_k$ be the
-inexact-Newton forcing term at accepted orbital point $k$, and let
-$\tau_{\mathrm{final}}$ denote the response tolerance implied by the final
-structure energy and gradient requirements.  The implemented response target
-is
+The former nested-HVP implementation used one accuracy hierarchy.  Let
+$\eta_k$ be the inexact-Newton forcing term at accepted orbital point $k$, and
+let $\tau_{\mathrm{final}}$ denote the response tolerance implied by the final
+structure energy and gradient requirements.  Its response target was
 
 $$
 \tau_{\mathrm{resp},k}
 =\max\!\left(\tau_{\mathrm{final}},\eta_k^2\right).
 $$
 
-Because the current forcing sequence satisfies
+Because the forcing sequence used in that implementation satisfied
 $\eta_k=O(\sqrt{\lVert\mathbf g_k\rVert})$ away from its numerical bounds,
 the directional structure solve has error
 $O(\lVert\mathbf g_k\rVert)$ far from convergence and automatically tightens
@@ -3734,16 +3735,31 @@ accepted trial destroys the workspace and every callback referring to the old
 chart before committing the new orbital point.  This lifetime ordering is
 required because the matrix-free block actions are accepted-point operators.
 
-The orbital equation is compared with the local inexact-Newton forcing value,
+Let $\mathbf g_0$ be the projected gradient at the beginning of the orbital
+optimization and let $\tau_g$ be the requested outer gradient accuracy.  The
+orbital equation is compared with the accuracy-aware inexact-Newton forcing
+value
 
 $$
 \eta_k
 =
-\min\!\left(
+\min\!\left[
 \frac12,
-\max\!\left(10^{-3},\sqrt{\|\mathbf g_k\|_2}\right)
-\right),
+\max\!\left(
+\frac{\|\mathbf g_k\|_2}{\|\mathbf g_0\|_2},
+\sqrt{\frac{\tau_g}{\|\mathbf g_0\|_2}}
+\right)
+\right].
 $$
+
+Above the requested accuracy floor, the first ratio gives
+$\eta_k=O(\|\mathbf g_k\|_2)$ on the fixed initial gradient scale and hence
+retains the standard local quadratic inexact-Newton condition.  The two terms
+cross when the predicted quadratic residual
+$\|\mathbf g_k\|_2^2/\|\mathbf g_0\|_2$ reaches $\tau_g$; below that point the
+second term stops further tightening.  The contraction limit $1/2$ keeps an
+unresolved Newton equation away from the unit-residual boundary; it is not a
+molecular tuning parameter.
 
 The selected-state response also supplies curvature to a second-order energy
 model. Its accuracy contract is therefore
@@ -3775,6 +3791,32 @@ state is already stationary, because then the response block of the original
 coupled right-hand side is nearly zero. Applying the loose orbital forcing
 value independently to a termwise response backward error can terminate the
 Schur elimination after only a few directions and destroy Newton convergence.
+
+The response coordinates remain in the same structure basis at consecutive
+accepted orbital points.  Consequently, the preceding certified response
+step can be admitted as a recycled direction without transporting an orbital
+chart or changing the Newton equation.  If $\mathbf q_{k-1}$ is the preceding
+accepted response step, the initial response space is
+
+$$
+\mathcal W_k^{(0)}
+=
+\operatorname{orth}
+\left\{
+\mathbf q_{k-1},
+-\mathbf P_{q,k}^{-1}\mathbf r_{s,k},
+-\mathbf P_{q,k}^{-1}\mathbf B_k\mathcal V_k^{(0)}
+\right\}.
+$$
+
+Only the direction is reused; every image under $\mathbf C_k$ and
+$\mathbf B_k^{\mathrm T}$ is recomputed at the new accepted point.  Thus the
+recycled vector changes neither the current-point projected operator nor the
+full-space KKT certificate.  A coordinate-dimension change discards it, and
+numerical orthogonalization removes it automatically when it carries no new
+rank.  This one-vector recycle has no history-length parameter and prevents
+the response Krylov process from relearning the dominant solution direction
+after every accepted orbital update.
 
 There is no default iteration or subspace cap.  The only intrinsic upper bound
 is algebraic completion of the orbital and response coordinate spaces.  An

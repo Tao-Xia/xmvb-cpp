@@ -50,11 +50,12 @@ struct CoupledWorkspaceResult {
  * subspace directions.
  *
  * Initial orbital directions contain @f$-P_p^{-1}g@f$ and, when available,
- * preconditioned @f$B^TW@f$. Initial response directions contain
- * @f$-P_q^{-1}r_s@f$ and preconditioned cached @f$BV@f$. Subsequent directions
- * are generated only from the unresolved full coupled KKT residual. There is
- * no fixed Krylov iteration count: without caller limits, finite-dimensional
- * algebraic rank is the only work bound.
+ * preconditioned @f$B^TW@f$. Initial response directions contain an optional
+ * response step recycled from the preceding accepted point,
+ * @f$-P_q^{-1}r_s@f$, and preconditioned cached @f$BV@f$. Subsequent
+ * directions are generated only from the unresolved full coupled KKT
+ * residual. There is no fixed Krylov iteration count: without caller limits,
+ * finite-dimensional algebraic rank is the only work bound.
  *
  * Re-solving at a different trust radius uses the retained projected blocks.
  * A call that requires no residual expansion evaluates no matrix-free action.
@@ -64,7 +65,8 @@ public:
   AcceptedPointCoupledWorkspace(
       AcceptedPointCoupledModel accepted_model,
       Eigen::VectorXd orbital_gradient,
-      SymmetricOperatorAction apply_inverse_orbital_preconditioner);
+      SymmetricOperatorAction apply_inverse_orbital_preconditioner,
+      Eigen::MatrixXd recycled_response_directions = Eigen::MatrixXd());
 
   AcceptedPointCoupledWorkspace(
       const AcceptedPointCoupledWorkspace&) = delete;
@@ -103,6 +105,7 @@ private:
   Eigen::VectorXd orbital_gradient_;
   SymmetricOperatorAction apply_inverse_orbital_preconditioner_;
   SymmetricOperatorAction apply_inverse_response_preconditioner_;
+  Eigen::MatrixXd recycled_response_directions_;
   CoupledSubspaceSolver subspace_solver_;
   bool initialized_ = false;
 };

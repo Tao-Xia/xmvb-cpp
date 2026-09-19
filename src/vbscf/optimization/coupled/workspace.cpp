@@ -44,13 +44,16 @@ bool requests_response_expansion(CoupledSubspaceStatus status) {
 AcceptedPointCoupledWorkspace::AcceptedPointCoupledWorkspace(
     AcceptedPointCoupledModel accepted_model,
     Eigen::VectorXd orbital_gradient,
-    SymmetricOperatorAction apply_inverse_orbital_preconditioner)
+    SymmetricOperatorAction apply_inverse_orbital_preconditioner,
+    Eigen::MatrixXd recycled_response_directions)
     : accepted_model_(std::move(accepted_model)),
       orbital_gradient_(std::move(orbital_gradient)),
       apply_inverse_orbital_preconditioner_(
           std::move(apply_inverse_orbital_preconditioner)),
       apply_inverse_response_preconditioner_(
           accepted_model_.response_inverse_preconditioner),
+      recycled_response_directions_(
+          std::move(recycled_response_directions)),
       subspace_solver_(
           accepted_model_.newton_operator,
           orbital_gradient_,
@@ -59,7 +62,11 @@ AcceptedPointCoupledWorkspace::AcceptedPointCoupledWorkspace(
           accepted_model_.newton_operator.n_orbital_coordinates() ||
       !orbital_gradient_.allFinite() ||
       !apply_inverse_orbital_preconditioner_ ||
-      !apply_inverse_response_preconditioner_) {
+      !apply_inverse_response_preconditioner_ ||
+      (recycled_response_directions_.size() != 0 &&
+       recycled_response_directions_.rows() !=
+           accepted_model_.newton_operator.n_response_coordinates()) ||
+      !recycled_response_directions_.allFinite()) {
     throw std::invalid_argument(
         "accepted-point coupled workspace inputs are inconsistent");
   }
@@ -113,6 +120,11 @@ bool AcceptedPointCoupledWorkspace::initialize(
     initialized_ = true;
     return true;
   }
+  if (recycled_response_directions_.cols() != 0 &&
+      maximum_responses != 0) {
+    subspace_solver_.append_response_block(limited_columns(
+        recycled_response_directions_, maximum_responses));
+  }
   if (!structure_residual.isZero(0.0) && maximum_responses != 0) {
     const Eigen::VectorXd response_image =
         -apply_inverse_response_preconditioner_(structure_residual);
@@ -123,7 +135,12 @@ bool AcceptedPointCoupledWorkspace::initialize(
     }
     Eigen::MatrixXd response_seed(structure_residual.size(), 1);
     response_seed.col(0) = response_image;
-    subspace_solver_.append_response_block(response_seed);
+    const int response_room = maximum_responses -
+        subspace_solver_.cache().response_subspace_size();
+    if (response_room > 0) {
+      subspace_solver_.append_response_block(
+          limited_columns(response_seed, response_room));
+    }
   }
 
   const auto& cache = subspace_solver_.cache();

@@ -35,7 +35,7 @@ set(required_report_patterns
   "COMPUTED NATURAL ORBITALS"
   "1\\.87[0-9]+[ ]+0\\.12[0-9]+"
   "POPULATION AND CHARGE"
-  "F[ ]+9\\.000000"
+  "F[ ]+(8\\.99999[0-9]|9\\.00000[0-9])"
   "BOND ORDER"
   "1\\.400[ ]+0\\.773"
   "VALENCE ANALYSIS"

@@ -46,6 +46,8 @@ BackendRunResult run_truncated_newton_backend(
       gradient_infinity_norm(current_projection.reduced_gradient);
   double final_projected_gradient_l2_norm =
       current_projection.reduced_gradient.norm();
+  const double initial_projected_gradient_l2_norm =
+      final_projected_gradient_l2_norm;
   std::vector<PackedSecantPair> packed_secant_history;
   packed_secant_history.reserve(
       std::max(
@@ -60,6 +62,7 @@ BackendRunResult run_truncated_newton_backend(
   std::unique_ptr<NonredundantRetractionMetric> accepted_point_metric;
   std::unique_ptr<AcceptedPointCoupledWorkspace>
       accepted_point_coupled_workspace;
+  Eigen::MatrixXd recycled_response_directions;
   int coupled_expansions_for_current_point = 0;
   double initial_trust_radius_for_current_point = trust_radius;
   auto accepted_point_start_time = std::chrono::steady_clock::now();
@@ -77,7 +80,9 @@ BackendRunResult run_truncated_newton_backend(
     final_projected_gradient_l2_norm =
         current_projection.reduced_gradient.norm();
     const double newton_forcing_term = inexact_newton_forcing_term(
-        final_projected_gradient_l2_norm);
+        final_projected_gradient_l2_norm,
+        initial_projected_gradient_l2_norm,
+        options.gradient_tolerance);
     if (run_result.n_iterations == 0 &&
         reduced_gradient_inf_norm < options.gradient_tolerance) {
       result->converged = true;
@@ -208,7 +213,8 @@ BackendRunResult run_truncated_newton_backend(
         current_projection.reduced_gradient.size();
     TruncatedNewtonTrialEvaluation trial_evaluation_cache;
     const bool reused_subspace_for_trial =
-        accepted_point_coupled_workspace != nullptr;
+        accepted_point_coupled_workspace != nullptr ||
+        recycled_response_directions.cols() != 0;
     if (accepted_point_coupled_workspace == nullptr) {
       auto apply_orbital_metric =
           [&retraction_metric](
@@ -228,6 +234,10 @@ BackendRunResult run_truncated_newton_backend(
               accepted_point_operator,
               static_cast<int>(reduced_size),
               std::move(apply_orbital_metric));
+      if (recycled_response_directions.rows() !=
+          coupled_model.newton_operator.n_response_coordinates()) {
+        recycled_response_directions.resize(0, 0);
+      }
       const OrbitalChart* const accepted_chart = &current_space;
       const TransportedReducedLbfgsPreconditioner* const
           orbital_preconditioner = accepted_point_preconditioner.get();
@@ -243,7 +253,8 @@ BackendRunResult run_truncated_newton_backend(
           std::make_unique<AcceptedPointCoupledWorkspace>(
               std::move(coupled_model),
               current_projection.reduced_gradient,
-              std::move(apply_inverse_orbital_preconditioner));
+              std::move(apply_inverse_orbital_preconditioner),
+              recycled_response_directions);
     }
 
     const AcceptedPointContext& accepted_context =
@@ -375,6 +386,7 @@ BackendRunResult run_truncated_newton_backend(
         coupled_result.response_dimension;
     const CoupledActionCounts accepted_coupled_action_counts =
         coupled_result.action_counts;
+    recycled_response_directions = coupled_step.response_step;
     // Every callback retained by the coupled workspace represents this exact
     // accepted point and refers to its chart/metric.  Destroy it before the
     // objective commit changes that point; rejected radius retries retain it.
