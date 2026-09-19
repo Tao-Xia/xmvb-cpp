@@ -93,8 +93,6 @@ struct RejectedTruncatedNewtonStepCache {
       const NonredundantRetractionMetric& metric);
 };
 
-double inexact_newton_forcing_term(double gradient_norm);
-
 /**
  * @brief Accuracy-aware forcing for a sequence of inexact Newton solves.
  *

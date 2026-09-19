@@ -180,7 +180,8 @@ CoupledProjectionAudit audit_coupled_projection(
     const Eigen::Ref<const Eigen::VectorXd>& orbital_gradient,
     const Eigen::Ref<const Eigen::VectorXd>& primary_direction,
     const xmvb::vb::SymmetricOperatorAction&
-        apply_inverse_orbital_preconditioner) {
+        apply_inverse_orbital_preconditioner,
+    double gradient_tolerance) {
   const xmvb::vb::CoupledNewtonOperator& direct = model.newton_operator;
   xmvb::vb::CoupledProjectionCache cache(direct);
 
@@ -357,7 +358,10 @@ CoupledProjectionAudit audit_coupled_projection(
       orbital_gradient,
       apply_inverse_orbital_preconditioner);
   const double forcing_tolerance =
-      xmvb::vb::inexact_newton_forcing_term(orbital_gradient.stableNorm());
+      xmvb::vb::inexact_newton_forcing_term(
+          orbital_gradient.stableNorm(),
+          orbital_gradient.stableNorm(),
+          gradient_tolerance);
   const xmvb::vb::CoupledKktTolerances kkt_tolerances{
       forcing_tolerance,
       forcing_tolerance};
@@ -918,7 +922,8 @@ int main(int argc, char** argv) {
           direction,
           [&chart](const Eigen::VectorXd& residual) {
             return chart.apply_inverse_reduced_block_preconditioner(residual);
-          });
+          },
+          options.response_tolerance);
     }
 
     double state_energy_average_error = 0.0;

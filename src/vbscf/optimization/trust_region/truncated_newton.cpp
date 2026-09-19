@@ -16,28 +16,17 @@
 
 namespace xmvb::vb {
 
-double inexact_newton_forcing_term(double gradient_norm) {
-  if (!std::isfinite(gradient_norm) || gradient_norm <= 0.0) {
-    return 0.5;
-  }
-  constexpr double kMinimumForcingTerm = 1.0e-3;
-  constexpr double kMaximumForcingTerm = 0.5;
-  return std::clamp(
-      std::sqrt(gradient_norm),
-      kMinimumForcingTerm,
-      kMaximumForcingTerm);
-}
-
 double inexact_newton_forcing_term(
     double gradient_norm,
     double initial_gradient_norm,
     double gradient_tolerance) {
-  if (!std::isfinite(gradient_norm) || gradient_norm <= 0.0 ||
+  if (!std::isfinite(gradient_norm) || gradient_norm < 0.0 ||
       !std::isfinite(initial_gradient_norm) ||
       initial_gradient_norm <= 0.0 ||
       !std::isfinite(gradient_tolerance) ||
       gradient_tolerance <= 0.0) {
-    return inexact_newton_forcing_term(gradient_norm);
+    throw std::invalid_argument(
+        "inexact Newton forcing requires a valid outer accuracy contract");
   }
   constexpr double kContractionLimit = 0.5;
   const double progress_ratio = gradient_norm / initial_gradient_norm;

@@ -79,10 +79,6 @@ BackendRunResult run_truncated_newton_backend(
     final_projected_gradient_inf_norm = reduced_gradient_inf_norm;
     final_projected_gradient_l2_norm =
         current_projection.reduced_gradient.norm();
-    const double newton_forcing_term = inexact_newton_forcing_term(
-        final_projected_gradient_l2_norm,
-        initial_projected_gradient_l2_norm,
-        options.gradient_tolerance);
     if (run_result.n_iterations == 0 &&
         reduced_gradient_inf_norm < options.gradient_tolerance) {
       result->converged = true;
@@ -91,6 +87,10 @@ BackendRunResult run_truncated_newton_backend(
       run_result.final_gradient_l2_norm = current_projection.reduced_gradient.norm();
       break;
     }
+    const double newton_forcing_term = inexact_newton_forcing_term(
+        final_projected_gradient_l2_norm,
+        initial_projected_gradient_l2_norm,
+        options.gradient_tolerance);
   
     if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
       result->termination_reason =
