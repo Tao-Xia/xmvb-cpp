@@ -11,9 +11,9 @@ gradient change. Gauge canonicalization therefore corrupted the secant
 history, and the resulting iteration counts were not a valid nonredundant
 L-BFGS baseline.
 
-The corrected implementation stores the accepted retraction tangent and the
-full ambient gradient-covector change in the common packed embedding. When a
-secant is used in a new accepted-point chart, it:
+The corrected implementation stores the accepted finite retraction
+displacement and the full ambient gradient-covector change in the common
+packed embedding. When a secant is used in a new accepted-point chart, it:
 
 1. transports a step with the new chart's vector projection;
 2. transports a gradient covector with the new chart's covector pullback;

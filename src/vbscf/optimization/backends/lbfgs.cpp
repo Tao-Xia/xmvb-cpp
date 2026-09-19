@@ -328,7 +328,6 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     Eigen::VectorXd accepted_parameters(current_parameters.size());
     Eigen::VectorXd accepted_gradient(current_gradient.size());
     double accepted_energy = energy;
-    double accepted_step_scale = 0.0;
     if (!try_armijo_backtracking_nonredundant_direction(
             objective,
             previous_orbital_input,
@@ -344,9 +343,7 @@ BackendRunResult run_nonredundant_lbfgs_backend(
             options.armijo_constant,
             &accepted_parameters,
             &accepted_gradient,
-            &accepted_energy,
-            nullptr,
-            &accepted_step_scale)) {
+            &accepted_energy)) {
       result->termination_reason = "nonredundant_lbfgspp_line_search_failed";
       run_result.final_gradient_l2_norm =
           current_projection.reduced_gradient.norm();
@@ -356,8 +353,6 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     current_parameters = std::move(accepted_parameters);
     current_gradient = std::move(accepted_gradient);
     energy = accepted_energy;
-    Eigen::VectorXd accepted_packed_tangent =
-        accepted_step_scale * search_direction;
 
     OrbitalChart next_space = build_orbital_chart(*objective, parameter_view);
     auto next_projection = next_space.project_gradient(current_gradient);
@@ -400,9 +395,7 @@ BackendRunResult run_nonredundant_lbfgs_backend(
               options.armijo_constant,
               &current_parameters,
               &current_gradient,
-              &energy,
-              nullptr,
-              &accepted_step_scale)) {
+              &energy)) {
         energy = (*objective)(previous_parameters, current_gradient);
         current_parameters = previous_parameters;
         sync_result_from_objective(*objective, result);
@@ -416,12 +409,6 @@ BackendRunResult run_nonredundant_lbfgs_backend(
       next_reduced_gradient_inf_norm =
           gradient_infinity_norm(next_projection.reduced_gradient);
       parameter_step = current_parameters - previous_parameters;
-      accepted_packed_tangent = accepted_step_scale *
-          gather_nonredundant_retract_tangent(
-              previous_orbital_input,
-              current_space,
-              parameter_view,
-              -previous_reduced_gradient);
       packed_secant_history.clear();
     }
 
@@ -453,7 +440,7 @@ BackendRunResult run_nonredundant_lbfgs_backend(
     } else {
       append_projected_secant_pair(
           next_space,
-          std::move(accepted_packed_tangent),
+          std::move(parameter_step),
           current_gradient - previous_gradient,
           history_size,
           &packed_secant_history);

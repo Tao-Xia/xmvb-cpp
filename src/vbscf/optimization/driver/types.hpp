@@ -15,11 +15,11 @@
 namespace xmvb::vb {
 
 // One curvature pair in the common packed sparse-coefficient embedding.  The
-// step is an accepted retraction tangent and the gradient change is the full
-// ambient covector difference.  Projecting both into the target chart retains
-// the pullback-curvature contribution from normalization and gauge motion;
-// replacing the covector difference by a transported projected gradient would
-// discard that contribution.
+// step is the accepted finite retraction displacement and the gradient change
+// is the full ambient covector difference.  Projecting both into the target
+// chart retains the pullback-curvature contribution from normalization and
+// gauge motion; replacing the covector difference by a transported projected
+// gradient would discard that contribution.
 struct PackedSecantPair {
   Eigen::VectorXd packed_step;
   Eigen::VectorXd packed_gradient_change;

@@ -374,8 +374,8 @@ BackendRunResult run_truncated_newton_backend(
     }
     const bool accepted_point_chart_changed =
         accepted_trial_evaluation.chart_changed;
-    const Eigen::VectorXd accepted_packed_tangent =
-        current_space.expand_step(reduced_step);
+    const Eigen::VectorXd accepted_parameter_displacement =
+        trial_parameters - current_parameters;
     const Eigen::VectorXd accepted_gradient_change =
         trial_gradient - current_gradient;
     const int accepted_preconditioner_history_size =
@@ -517,7 +517,7 @@ BackendRunResult run_truncated_newton_backend(
         transport_history_size > 0) {
       append_projected_secant_pair(
           next_space,
-          accepted_packed_tangent,
+          accepted_parameter_displacement,
           accepted_gradient_change,
           transport_history_size,
           &packed_secant_history);

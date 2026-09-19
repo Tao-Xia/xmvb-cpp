@@ -49,13 +49,9 @@ bool try_armijo_backtracking_nonredundant_direction(
     Eigen::VectorXd* accepted_parameters,
     Eigen::VectorXd* accepted_gradient,
     double* accepted_energy,
-    bool* accepted_chart_changed,
-    double* accepted_step_scale) {
+    bool* accepted_chart_changed) {
   if (accepted_chart_changed != nullptr) {
     *accepted_chart_changed = false;
-  }
-  if (accepted_step_scale != nullptr) {
-    *accepted_step_scale = 0.0;
   }
   const double directional_derivative =
       current_gradient.dot(packed_tangent_search_direction);
@@ -95,9 +91,6 @@ bool try_armijo_backtracking_nonredundant_direction(
       *accepted_energy = trial_energy;
       if (accepted_chart_changed != nullptr) {
         *accepted_chart_changed = trial_evaluation.chart_changed;
-      }
-      if (accepted_step_scale != nullptr) {
-        *accepted_step_scale = step;
       }
       objective->commit(std::move(trial_evaluation));
       return true;
