@@ -289,9 +289,15 @@ BackendRunResult run_truncated_newton_backend(
     // current Newton step.  Using that accuracy as a minimum target here used
     // to force every early response solve to approximately 1e-5 even when the
     // adaptive Newton forcing was O(1e-1).
+    // The orbital and response residuals are orthogonal blocks of the full
+    // KKT residual.  Splitting the Euclidean forcing budget equally keeps the
+    // combined residual within the requested inexact-Newton tolerance without
+    // introducing a chemistry- or dimension-dependent tuning parameter.
+    const double block_forcing_term =
+        newton_forcing_term / std::sqrt(2.0);
     const CoupledKktTolerances coupled_tolerances{
-        newton_forcing_term,
-        newton_forcing_term};
+        block_forcing_term,
+        block_forcing_term};
     CoupledWorkspaceResult coupled_result =
         accepted_point_coupled_workspace->solve(
             trust_radius,
