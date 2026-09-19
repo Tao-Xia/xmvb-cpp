@@ -36,6 +36,13 @@ struct TnhvpIterationRecord {
   int rejected_trial_count = 0;
 
   double outer_iteration_wall_time_seconds = 0.0;
+  double accepted_point_setup_wall_time_seconds = 0.0;
+  double orbital_hessian_wall_time_seconds = 0.0;
+  double orbital_to_response_wall_time_seconds = 0.0;
+  double response_to_orbital_wall_time_seconds = 0.0;
+  double response_hessian_wall_time_seconds = 0.0;
+  double orbital_metric_wall_time_seconds = 0.0;
+  double trial_objective_wall_time_seconds = 0.0;
   double gradient_log_progress_per_second = 0.0;
 
   double source_gradient_l2_norm = 0.0;

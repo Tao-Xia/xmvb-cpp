@@ -153,6 +153,10 @@ if (NOT tnhvp_table MATCHES "^iteration" OR
     NOT tnhvp_table MATCHES "coupled_orbital_subspace_dimension" OR
     NOT tnhvp_table MATCHES "coupled_response_subspace_dimension" OR
     NOT tnhvp_table MATCHES "coupled_orbital_hessian_block_actions" OR
+    NOT tnhvp_table MATCHES "accepted_point_setup_seconds" OR
+    NOT tnhvp_table MATCHES "orbital_hessian_seconds" OR
+    NOT tnhvp_table MATCHES "response_hessian_seconds" OR
+    NOT tnhvp_table MATCHES "trial_objective_seconds" OR
     NOT tnhvp_table MATCHES "orbital_backward_error" OR
     NOT tnhvp_table MATCHES "response_backward_error" OR
     NOT tnhvp_table MATCHES "minimum_shifted_ritz_value" OR

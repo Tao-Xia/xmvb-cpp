@@ -1,6 +1,7 @@
 #include "vbscf/optimization/coupled/operator.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -180,6 +181,11 @@ CoupledNewtonOperator::response_layout() const noexcept {
   return response_layout_;
 }
 
+const CoupledActionTimings&
+CoupledNewtonOperator::action_timings() const noexcept {
+  return action_timings_;
+}
+
 Eigen::MatrixXd CoupledNewtonOperator::apply_checked(
     const CoupledBlockAction& action,
     const Eigen::Ref<const Eigen::MatrixXd>& directions,
@@ -204,60 +210,89 @@ Eigen::MatrixXd CoupledNewtonOperator::apply_checked(
 
 Eigen::MatrixXd CoupledNewtonOperator::apply_orbital_hessian(
     const Eigen::Ref<const Eigen::MatrixXd>& directions) const {
-  return apply_checked(
+  const auto start = std::chrono::steady_clock::now();
+  Eigen::MatrixXd images = apply_checked(
       actions_.orbital_hessian,
       directions,
       n_orbital_coordinates(),
       n_orbital_coordinates(),
       "orbital Hessian action");
+  action_timings_.orbital_hessian_seconds +=
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - start).count();
+  return images;
 }
 
 Eigen::MatrixXd CoupledNewtonOperator::apply_orbital_to_response(
     const Eigen::Ref<const Eigen::MatrixXd>& directions) const {
-  return apply_checked(
+  const auto start = std::chrono::steady_clock::now();
+  Eigen::MatrixXd images = apply_checked(
       actions_.orbital_to_response,
       directions,
       n_orbital_coordinates(),
       n_response_coordinates(),
       "orbital-to-response action");
+  action_timings_.orbital_to_response_seconds +=
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - start).count();
+  return images;
 }
 
 Eigen::MatrixXd CoupledNewtonOperator::apply_response_to_orbital(
     const Eigen::Ref<const Eigen::MatrixXd>& directions) const {
-  return apply_checked(
+  const auto start = std::chrono::steady_clock::now();
+  Eigen::MatrixXd images = apply_checked(
       actions_.response_to_orbital,
       directions,
       n_response_coordinates(),
       n_orbital_coordinates(),
       "response-to-orbital action");
+  action_timings_.response_to_orbital_seconds +=
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - start).count();
+  return images;
 }
 
 Eigen::MatrixXd CoupledNewtonOperator::apply_response_hessian(
     const Eigen::Ref<const Eigen::MatrixXd>& directions) const {
-  return apply_checked(
+  const auto start = std::chrono::steady_clock::now();
+  Eigen::MatrixXd images = apply_checked(
       actions_.response_hessian,
       directions,
       n_response_coordinates(),
       n_response_coordinates(),
       "response Hessian action");
+  action_timings_.response_hessian_seconds +=
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - start).count();
+  return images;
 }
 
 Eigen::MatrixXd CoupledNewtonOperator::apply_orbital_metric(
     const Eigen::Ref<const Eigen::MatrixXd>& directions) const {
+  const auto start = std::chrono::steady_clock::now();
   if (!actions_.orbital_metric) {
     if (directions.rows() != n_orbital_coordinates() ||
         !directions.allFinite()) {
       throw std::invalid_argument(
           "orbital metric input has inconsistent dimensions or values");
     }
-    return directions;
+    Eigen::MatrixXd images = directions;
+    action_timings_.orbital_metric_seconds +=
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - start).count();
+    return images;
   }
-  return apply_checked(
+  Eigen::MatrixXd images = apply_checked(
       actions_.orbital_metric,
       directions,
       n_orbital_coordinates(),
       n_orbital_coordinates(),
       "orbital metric action");
+  action_timings_.orbital_metric_seconds +=
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - start).count();
+  return images;
 }
 
 Eigen::MatrixXd CoupledNewtonOperator::apply_block(

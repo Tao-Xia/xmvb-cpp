@@ -108,6 +108,15 @@ struct CoupledNewtonActions {
   CoupledBlockAction orbital_metric;
 };
 
+/** @brief Accumulated wall time of the matrix-free coupled block actions. */
+struct CoupledActionTimings {
+  double orbital_hessian_seconds = 0.0;
+  double orbital_to_response_seconds = 0.0;
+  double response_to_orbital_seconds = 0.0;
+  double response_hessian_seconds = 0.0;
+  double orbital_metric_seconds = 0.0;
+};
+
 /**
  * @brief Matrix-free coupled orbital--selected-subspace Newton operator.
  *
@@ -127,6 +136,7 @@ public:
   int n_response_coordinates() const noexcept;
   int size() const noexcept;
   const SelectedSubspaceResponseLayout& response_layout() const noexcept;
+  const CoupledActionTimings& action_timings() const noexcept;
 
   Eigen::VectorXd apply(
       const Eigen::Ref<const Eigen::VectorXd>& direction,
@@ -162,6 +172,7 @@ private:
   int n_orbital_coordinates_ = 0;
   SelectedSubspaceResponseLayout response_layout_;
   CoupledNewtonActions actions_;
+  mutable CoupledActionTimings action_timings_;
 };
 
 }  // namespace xmvb::vb

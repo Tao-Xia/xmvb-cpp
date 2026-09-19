@@ -65,6 +65,8 @@ BackendRunResult run_truncated_newton_backend(
   Eigen::MatrixXd recycled_response_directions;
   int coupled_expansions_for_current_point = 0;
   double initial_trust_radius_for_current_point = trust_radius;
+  double accepted_point_setup_wall_time_seconds = 0.0;
+  double trial_objective_wall_time_seconds = 0.0;
   auto accepted_point_start_time = std::chrono::steady_clock::now();
   
   while (run_result.n_iterations < options.max_iterations) {
@@ -100,11 +102,15 @@ BackendRunResult run_truncated_newton_backend(
     }
   
     if (accepted_point_operator == nullptr) {
+      const auto setup_start = std::chrono::steady_clock::now();
       accepted_point_operator = std::make_shared<ExactHvpOperator>(
           objective->second_order_context(),
           &objective->input(),
           parameter_view,
           &current_space);
+      accepted_point_setup_wall_time_seconds +=
+          std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - setup_start).count();
     }
     ExactHvpOperator& exact_operator = *accepted_point_operator;
     if (!exact_operator.supports_analytic_core_model()) {
@@ -114,19 +120,27 @@ BackendRunResult run_truncated_newton_backend(
     const int transport_history_size =
         choose_truncated_newton_transport_history_size(options);
     if (accepted_point_preconditioner == nullptr) {
+      const auto setup_start = std::chrono::steady_clock::now();
       accepted_point_preconditioner =
           std::make_unique<TransportedReducedLbfgsPreconditioner>(
               build_transported_reduced_lbfgs_preconditioner(
                   current_space,
                   packed_secant_history,
                   transport_history_size));
+      accepted_point_setup_wall_time_seconds +=
+          std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - setup_start).count();
     }
     const OrbitalPreparationInput current_orbital_input =
         objective->input().orbital_preparation_input;
     if (accepted_point_metric == nullptr) {
+      const auto setup_start = std::chrono::steady_clock::now();
       accepted_point_metric =
           std::make_unique<NonredundantRetractionMetric>(
               current_space, parameter_view, current_orbital_input);
+      accepted_point_setup_wall_time_seconds +=
+          std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - setup_start).count();
     }
     const NonredundantRetractionMetric& retraction_metric =
         *accepted_point_metric;
@@ -178,6 +192,8 @@ BackendRunResult run_truncated_newton_backend(
               objective->evaluate_trial_energy(
                   candidate_trial_parameters,
                   true);
+          trial_objective_wall_time_seconds +=
+              candidate_trial_evaluation.wall_time_seconds;
           double candidate_trial_energy =
               candidate_trial_evaluation.energy;
           const double actual_decrease =
@@ -197,7 +213,12 @@ BackendRunResult run_truncated_newton_backend(
             return false;
           }
 
+          const double energy_only_wall_time_seconds =
+              candidate_trial_evaluation.wall_time_seconds;
           objective->complete_trial(&candidate_trial_evaluation);
+          trial_objective_wall_time_seconds +=
+              candidate_trial_evaluation.wall_time_seconds -
+              energy_only_wall_time_seconds;
           candidate_trial_energy = candidate_trial_evaluation.energy;
   
           *accepted_trial_parameters = parameter_view.pack(
@@ -216,6 +237,7 @@ BackendRunResult run_truncated_newton_backend(
         accepted_point_coupled_workspace != nullptr ||
         recycled_response_directions.cols() != 0;
     if (accepted_point_coupled_workspace == nullptr) {
+      const auto setup_start = std::chrono::steady_clock::now();
       auto apply_orbital_metric =
           [&retraction_metric](
               const Eigen::Ref<const Eigen::MatrixXd>& directions) {
@@ -255,6 +277,9 @@ BackendRunResult run_truncated_newton_backend(
               current_projection.reduced_gradient,
               std::move(apply_inverse_orbital_preconditioner),
               recycled_response_directions);
+      accepted_point_setup_wall_time_seconds +=
+          std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - setup_start).count();
     }
 
     const AcceptedPointContext& accepted_context =
@@ -386,6 +411,9 @@ BackendRunResult run_truncated_newton_backend(
         coupled_result.response_dimension;
     const CoupledActionCounts accepted_coupled_action_counts =
         coupled_result.action_counts;
+    const CoupledActionTimings accepted_coupled_action_timings =
+        accepted_point_coupled_workspace->accepted_model()
+            .newton_operator.action_timings();
     recycled_response_directions = coupled_step.response_step;
     // Every callback retained by the coupled workspace represents this exact
     // accepted point and refers to its chart/metric.  Destroy it before the
@@ -455,6 +483,20 @@ BackendRunResult run_truncated_newton_backend(
         rejected_trial_step_count_for_current_point;
     iteration_record.outer_iteration_wall_time_seconds =
         accepted_point_wall_time_seconds;
+    iteration_record.accepted_point_setup_wall_time_seconds =
+        accepted_point_setup_wall_time_seconds;
+    iteration_record.orbital_hessian_wall_time_seconds =
+        accepted_coupled_action_timings.orbital_hessian_seconds;
+    iteration_record.orbital_to_response_wall_time_seconds =
+        accepted_coupled_action_timings.orbital_to_response_seconds;
+    iteration_record.response_to_orbital_wall_time_seconds =
+        accepted_coupled_action_timings.response_to_orbital_seconds;
+    iteration_record.response_hessian_wall_time_seconds =
+        accepted_coupled_action_timings.response_hessian_seconds;
+    iteration_record.orbital_metric_wall_time_seconds =
+        accepted_coupled_action_timings.orbital_metric_seconds;
+    iteration_record.trial_objective_wall_time_seconds =
+        trial_objective_wall_time_seconds;
     iteration_record.source_gradient_l2_norm = source_gradient_l2_norm;
     iteration_record.accepted_gradient_l2_norm = accepted_gradient_l2_norm;
     if (source_gradient_l2_norm > 0.0 &&
@@ -509,6 +551,8 @@ BackendRunResult run_truncated_newton_backend(
     rejected_trial_step_count_for_current_point = 0;
     coupled_expansions_for_current_point = 0;
     initial_trust_radius_for_current_point = trust_radius;
+    accepted_point_setup_wall_time_seconds = 0.0;
+    trial_objective_wall_time_seconds = 0.0;
     accepted_point_start_time = std::chrono::steady_clock::now();
     if (nonredundant_rank_changed) {
       packed_secant_history.clear();

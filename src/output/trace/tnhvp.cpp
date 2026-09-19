@@ -35,6 +35,13 @@ void write_tnhvp_trace(
       << "\tcoupled_orbital_metric_block_actions"
       << "\tpreconditioner_history_size\trejected_trials"
       << "\touter_iteration_seconds"
+      << "\taccepted_point_setup_seconds"
+      << "\torbital_hessian_seconds"
+      << "\torbital_to_response_seconds"
+      << "\tresponse_to_orbital_seconds"
+      << "\tresponse_hessian_seconds"
+      << "\torbital_metric_seconds"
+      << "\ttrial_objective_seconds"
       << "\tgradient_log_progress_per_second"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
       << "\torbital_backward_error\tresponse_backward_error"
@@ -60,6 +67,13 @@ void write_tnhvp_trace(
         << step.preconditioner_history_size << '\t'
         << step.rejected_trial_count << '\t'
         << step.outer_iteration_wall_time_seconds << '\t'
+        << step.accepted_point_setup_wall_time_seconds << '\t'
+        << step.orbital_hessian_wall_time_seconds << '\t'
+        << step.orbital_to_response_wall_time_seconds << '\t'
+        << step.response_to_orbital_wall_time_seconds << '\t'
+        << step.response_hessian_wall_time_seconds << '\t'
+        << step.orbital_metric_wall_time_seconds << '\t'
+        << step.trial_objective_wall_time_seconds << '\t'
         << step.gradient_log_progress_per_second << '\t'
         << step.source_gradient_l2_norm << '\t'
         << step.accepted_gradient_l2_norm << '\t'
