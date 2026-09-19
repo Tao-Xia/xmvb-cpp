@@ -59,20 +59,14 @@ BackendRunResult run_lbfgs_backend(
     auto inverse_hessian = build_transported_reduced_lbfgs_preconditioner(
         current_space,
         packed_secant_history,
-        history_size);
+        history_size,
+        LbfgsInitialInverse::ScaledIdentity);
     Eigen::VectorXd reduced_search_direction =
         -inverse_hessian.apply(current_projection.reduced_gradient);
     if (!reduced_search_direction.allFinite() ||
         current_projection.reduced_gradient.dot(reduced_search_direction) >=
             0.0) {
       packed_secant_history.clear();
-      reduced_search_direction =
-          -current_space.apply_inverse_reduced_block_preconditioner(
-              current_projection.reduced_gradient);
-    }
-    if (!reduced_search_direction.allFinite() ||
-        current_projection.reduced_gradient.dot(reduced_search_direction) >=
-            0.0) {
       reduced_search_direction = -current_projection.reduced_gradient;
     }
     const OrbitalPreparationInput previous_orbital_input =

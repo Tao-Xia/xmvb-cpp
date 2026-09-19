@@ -127,53 +127,48 @@ FeCl2 starts only 1.34e-5 hartree above the final energy. It is a useful OEO
 derivative, memory, and endpoint-conditioning test, but it is not by itself a
 valid test of the nonlinear convergence basin or convergence order.
 
-## 5. Final algorithmic milestone
+## 5. Production curvature-correction space
 
-The remaining solver milestone is an operator-aligned correction-space method,
-not another molecule-dependent Krylov budget. The working decomposition is
-
-$$
-\mathbf H_k=\mathbf A_k+\mathbf R_k,
-$$
-
-where the first operator contains the direct and fixed-upstream orbital response
-and the second contains the relaxed structure response. Both remain available
-only as matrix-free actions. The existing local orbital blocks provide the
-lowest-cost positive approximation to the first operator.
-
-The next solver candidate should use a Davidson-type trust-region correction
-space. Its orthonormal basis and exact images satisfy
+TNHVP starts every outer iteration from the transported, orbital-block-
+preconditioned L-BFGS direction
 
 $$
-\mathbf Y_j=\mathbf H_k\mathbf Q_j.
+\mathbf p_k^{\mathrm B}=-\mathbf B_k\mathbf g_k.
 $$
 
-It solves the small symmetric
-trust-region problem, forms the full KKT residual, and generates a new
-preconditioned correction direction. The basis expansion is driven by observed
-residual components and Ritz information, rather than by a fixed number of
-iterations. This differs from the previously rejected transported block-HVP
-experiment: old-point Ritz vectors are not accepted as a new-point model, and
-every column entering the current projected Hessian receives a current-point
-exact HVP.
+The standard L-BFGS comparison does not use this orbital block; it uses
+$H_k^{(0)}=\gamma_k I$ as specified in `tnhvp_lbfgs_benchmark.md`.
 
-The implementation is eligible for production only if it satisfies all of the
-following conditions:
+Once the accepted secant history contains at least four positive-curvature
+pairs, TNHVP constructs a four-dimensional, current-point correction model.
+The first block contains $\mathbf p_k^{\mathrm B}$ and $-\mathbf g_k$. After
+their exact relaxed HVP images have been evaluated, the projected
+trust-region problem gives $\mathbf p_k^{(1)}$ and the shifted KKT residual
 
-- no system name, basis size, orbital type, or iteration index appears in a
-  decision rule;
-- the HAO and OEO finite-difference HVP regressions remain unchanged;
-- F2 and benzene do not require more HVP directions or outer iterations;
-- both MnF2 and FeCl2 show lower HVP counts and lower wall time, not merely one
-  of those systems;
-- accepted energies agree with the current reference within the converged
-  optimization tolerance;
-- improvement persists across deterministic perturbed starting points; and
-- every reported current-point projected model uses exact current-point HVP
-  images.
+$$
+\mathbf r_k^{(1)}=
+\mathbf g_k+\mathbf H_k\mathbf p_k^{(1)}
++\lambda_k\mathbf M_k\mathbf p_k^{(1)}.
+$$
 
-Failure of any condition means that the candidate remains a diagnostic branch
-and is not exposed as a production option.
+The second block contains the raw and preconditioned corrections
+
+$$
+-\mathbf r_k^{(1)},
+\qquad
+-\mathbf B_k\mathbf r_k^{(1)}.
+$$
+
+Every admitted basis vector receives a current-point exact relaxed HVP,
+including the structure response. The final step minimizes the quadratic model
+in this correction space subject to the physical-metric trust radius. Thus the
+four-dimensional limit defines a low-rank curvature correction to L-BFGS; it
+must not be described as a fully converged Newton equation.
+
+The admission condition equates the number of established secant directions
+with the correction-space dimension. It contains no molecule name, basis-size
+threshold, orbital-type branch, or outer-iteration index. Before admission,
+TNHVP uses the inexpensive orbital-block-preconditioned L-BFGS direction.
 
 ## 6. Validation hierarchy
 

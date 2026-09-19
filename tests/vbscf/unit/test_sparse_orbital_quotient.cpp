@@ -343,7 +343,7 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
         1,
         &secant_history);
     auto inverse_hessian = build_transported_reduced_lbfgs_preconditioner(
-        space, secant_history, 1);
+        space, secant_history, 1, LbfgsInitialInverse::ScaledIdentity);
     require(inverse_hessian.size() == 1,
             name + ": valid quotient secant was rejected");
     require((inverse_hessian.apply(secant_gradient_change) - secant_step)
@@ -391,6 +391,18 @@ void check_occupation_curvature() {
             "production block lost inactive double occupancy or changed active unit model");
     require((inverse * expected - Eigen::MatrixXd::Identity(2, 2)).norm() < 1e-12,
             "inverse occupation curvature is inconsistent");
+    const std::vector<PackedSecantPair> empty_history;
+    const auto standard_lbfgs = build_transported_reduced_lbfgs_preconditioner(
+        space, empty_history, 1, LbfgsInitialInverse::ScaledIdentity);
+    const auto block_preconditioner =
+        build_transported_reduced_lbfgs_preconditioner(
+            space, empty_history, 1, LbfgsInitialInverse::OrbitalBlock);
+    const Eigen::Vector2d probe(0.3, -0.7);
+    require((standard_lbfgs.apply(probe) - probe).norm() < 1.0e-14,
+            "standard L-BFGS did not start from the identity inverse");
+    require((block_preconditioner.apply(probe) - inverse * probe).norm() <
+                1.0e-14,
+            "TNHVP L-BFGS did not use the orbital-block inverse");
   }
   std::cout << "Inactive occupation and active unit-model production blocks: passed\n";
 }

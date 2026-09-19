@@ -9,8 +9,9 @@
 namespace xmvb::vb {
 
 TransportedReducedLbfgsPreconditioner::TransportedReducedLbfgsPreconditioner(
-    const OrbitalChart* space)
-    : space_(space) {}
+    const OrbitalChart* space,
+    LbfgsInitialInverse initial_inverse)
+    : space_(space), initial_inverse_(initial_inverse) {}
 
 bool TransportedReducedLbfgsPreconditioner::try_add_pair(
     Eigen::VectorXd reduced_step,
@@ -49,7 +50,9 @@ int TransportedReducedLbfgsPreconditioner::size() const noexcept {
 Eigen::VectorXd TransportedReducedLbfgsPreconditioner::apply(
     const Eigen::VectorXd& reduced_vector) const {
   if (pairs_.empty()) {
-    return space_->apply_inverse_reduced_block_preconditioner(reduced_vector);
+    return initial_inverse_ == LbfgsInitialInverse::OrbitalBlock
+        ? space_->apply_inverse_reduced_block_preconditioner(reduced_vector)
+        : reduced_vector;
   }
 
   Eigen::VectorXd q = reduced_vector;
@@ -66,7 +69,16 @@ Eigen::VectorXd TransportedReducedLbfgsPreconditioner::apply(
     q.noalias() -= alpha * pair.reduced_gradient_change;
   }
 
-  Eigen::VectorXd z = space_->apply_inverse_reduced_block_preconditioner(q);
+  Eigen::VectorXd z;
+  if (initial_inverse_ == LbfgsInitialInverse::OrbitalBlock) {
+    z = space_->apply_inverse_reduced_block_preconditioner(q);
+  } else {
+    const Pair& latest_pair = pairs_.back();
+    const double inverse_hessian_scale =
+        latest_pair.reduced_step.dot(latest_pair.reduced_gradient_change) /
+        latest_pair.reduced_gradient_change.squaredNorm();
+    z = inverse_hessian_scale * q;
+  }
   for (std::size_t pair_index = 0;
        pair_index < pairs_.size();
        ++pair_index) {
@@ -86,8 +98,10 @@ TransportedReducedLbfgsPreconditioner
 build_transported_reduced_lbfgs_preconditioner(
     const OrbitalChart& current_space,
     const std::vector<PackedSecantPair>& packed_secant_history,
-    int max_history_size) {
-  TransportedReducedLbfgsPreconditioner preconditioner(&current_space);
+    int max_history_size,
+    LbfgsInitialInverse initial_inverse) {
+  TransportedReducedLbfgsPreconditioner preconditioner(
+      &current_space, initial_inverse);
   for (auto& pair : transport_secant_pairs_to_chart(
            current_space,
            packed_secant_history,

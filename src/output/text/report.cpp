@@ -168,20 +168,22 @@ void print_tnhvp_summary(
   }
 
   const auto& orbital_input = input.orbital_preparation_input;
-  print_log_subsection_title("TNHVP Matrix-Free Newton");
+  print_log_subsection_title("TNHVP Curvature-Corrected L-BFGS");
   print_log_field(
-      "Hessian model",
-      "matrix-free coupled orbital-structure Newton");
+      "Hessian action",
+      "matrix-free relaxed orbital HVP");
   print_log_field(
-      "Inner completion",
-      "full orbital/structure KKT backward errors");
+      "Baseline inverse",
+      "transported L-BFGS + local orbital block");
   print_log_field(
-      "Inexact Newton forcing",
-      "gradient progress + one-contraction outer target");
+      "Curvature correction",
+      "two residual-driven block-HVP expansions");
   print_log_field(
-      "Trust-radius update",
-      "projected spectrum + observed model remainder");
-  print_log_field("Subspace work limit", "algebraic completion");
+      "Curvature admission",
+      "secant count >= correction dimension");
+  print_log_field(
+      "Globalization",
+      "physical-metric trust region + model ratio");
   print_log_field(
       "Transport history",
       std::to_string(options.history_size));

@@ -1,90 +1,90 @@
 # TNHVP versus L-BFGS benchmark
 
-## Benchmark status
+## Baseline definition
 
-The benchmark produced from revision `45e8e48` is withdrawn. Although its
-command line selected the reduced-coordinate L-BFGS backend, the implementation applied the
-L-BFGS inverse-Hessian history in the full packed sparse-coefficient space.
-It then subtracted projected gradients expressed in different accepted-point
-quotient charts without transporting either the primal step or the dual
-gradient change. Gauge canonicalization therefore corrupted the secant
-history, and the resulting iteration counts were not a valid reduced-coordinate
-L-BFGS baseline.
+The production `lbfgs` backend is the nonredundant, support-preserving
+first-order baseline. Its two-loop recursion uses the conventional scalar
+initial inverse Hessian
 
-The corrected implementation stores the accepted finite retraction
-displacement and the full ambient gradient-covector change in the common
-packed embedding. When a secant is used in a new accepted-point chart, it:
+$$
+H_k^{(0)} = \gamma_k I,
+\qquad
+\gamma_k = \frac{s_{k-1}^{\mathrm T}y_{k-1}}
+{y_{k-1}^{\mathrm T}y_{k-1}}.
+$$
 
-1. transports a step with the new chart's vector projection;
-2. transports a gradient covector with the new chart's covector pullback;
-3. checks positive curvature only after both quantities occupy the same
-   target quotient chart; and
-4. clears history only if the quotient rank changes, not when an equivalent
-   orbital gauge representative changes.
+The accepted displacement and gradient-covector difference are stored in the
+common packed embedding and transported into the current quotient chart before
+the secant recursion is applied. Positive-curvature pairs satisfy
 
-## Corrected paired benchmark
+$$
+s_i^{\mathrm T}y_i >
+\sqrt{\epsilon_{\mathrm{mach}}}\,\lVert s_i\rVert_2\lVert y_i\rVert_2.
+$$
 
-The corrected benchmark used revision `09579bd` and binary SHA-256
-`fc216e2c62c51bbce9878253bf439d703fb3924913a1355af124060c1134bf43`.
-Slurm job `245912` ran on Hanhai25 with 32 CPU cores per calculation. Each
-system ran TNHVP and L-BFGS sequentially on the same node, with alternating
-method order between systems. Both methods used Davidson, the same input
-orbitals, a projected-gradient infinity-norm threshold of `1e-3`, and an
-adjacent-step energy threshold of `1e-7` hartree. Their initial energies agree
-exactly.
+TNHVP uses the same transported secant history, but its inverse action is
+initialized by the positive local orbital-curvature block. This block is a
+second-order preconditioner and is intentionally not part of the L-BFGS
+baseline. TNHVP subsequently enriches the preconditioned L-BFGS direction with
+matrix-free relaxed Hessian-vector products.
 
-| System | TNHVP steps | TNHVP SCF wall (s) | TNHVP final energy | TNHVP projected gradient | L-BFGS steps | L-BFGS SCF wall (s) | L-BFGS final energy | L-BFGS projected gradient | TNHVP/L-BFGS wall |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| F2 | 6 | 0.383526 | -198.751155830526 | 2.10997520e-06 | 8 | 0.132126 | -198.751155821808 | 3.41375526e-04 | 2.90 |
-| 241 | 11 | 8.699289 | -230.720590392874 | 2.80391992e-06 | 24 | 4.368567 | -230.720590368221 | 1.08715828e-04 | 1.99 |
-| MnF2 | 15 | 55.976787 | -1348.893353224166 | 4.51189144e-06 | 98 | 27.725153 | -1348.893352802026 | 7.24461861e-04 | 2.02 |
-| FeCl2 | 10 | 22.156342 | -2181.617635683505 | 5.56753711e-04 | 7 | 11.518017 | -2181.617634827449 | 9.14020185e-04 | 1.92 |
-| 240 | 6 | 93.643589 | -343.446302353263 | 4.81382556e-07 | 10 | 4.972273 | -343.446302350844 | 3.26154740e-05 | 18.83 |
+## Baseline audit
 
-Peak RSS remains comparable:
+Earlier comparisons are withdrawn. Although the earlier backend used the
+correct nonredundant chart and transported secants, it initialized the L-BFGS
+two-loop recursion with the inverse local orbital-curvature block rather than
+with $\gamma_k I$. The reported method was therefore preconditioned L-BFGS,
+not a conventional first-order L-BFGS baseline.
 
-| System | TNHVP peak RSS (KiB) | L-BFGS peak RSS (KiB) |
-|---|---:|---:|
-| F2 | 67456 | 55296 |
-| 241 | 991608 | 1002048 |
-| MnF2 | 575804 | 564488 |
-| FeCl2 | 455352 | 436456 |
-| 240 | 1901152 | 1856368 |
+An isolated calculation in which only this initial inverse action was changed
+gave the following outer iteration counts:
 
-## Interpretation
+| System | Orbital-block L-BFGS | Standard L-BFGS | XMVB L-BFGS |
+|---|---:|---:|---:|
+| F2 HAO | 8 | 26 | 26 |
+| 7975 HAO | 9 | 57 | 89 |
 
-The corrected result reverses the conclusion of the withdrawn benchmark.
-TNHVP reduces the outer iteration count for F2, 241, MnF2, and 240, and reaches
-a substantially tighter final gradient under the same stopping thresholds.
-However, its accepted steps are currently too expensive: total TNHVP SCF time
-is about twice the L-BFGS time for four systems and about nineteen times the
-L-BFGS time for 240. FeCl2 also needs more TNHVP outer steps than L-BFGS.
+The exact agreement for F2 identifies the hidden block preconditioner as the
+cause of the anomalously small eight-step count. The remaining 7975 difference
+is consistent with the use of a nonredundant quotient chart, a physical
+retraction, and a monotone Armijo line search in XMVB-CPP; it is not caused by
+the stopping thresholds, which are identical.
 
-Therefore the present data support a convergence-quality advantage, but not a
-wall-time advantage, for TNHVP. A publication performance claim requires
-reducing the HVP/coupled-response cost or avoiding response work whose expected
-reduction cannot amortize its measured wall time. The corrected L-BFGS
-implementation is the baseline for all subsequent comparisons.
+## Corrected paired validation
 
-## Accuracy-triggered forcing regression
+Slurm job `246480` ran the corrected standard L-BFGS and TNHVP implementations
+sequentially on the same Hanhai25 node (`anode018`) with 32 CPU cores. Both
+methods used the same input orbitals, exact Libcint integrals, dense structure
+diagonalization, a projected-gradient infinity-norm threshold of `1e-3`, and
+an adjacent-step energy threshold of `1e-7` hartree.
 
-A 32-core Hanhai25 regression on 2026-09-19 tested the production forcing rule
-derived in Section 11.7 of
-`matrix_free_vbscf_orbital_optimization_theory.md`. These runs used the same
-Davidson inputs and stopping thresholds as the corrected benchmark, but were
-not executed as a new paired TNHVP/L-BFGS timing experiment; they are recorded
-as an implementation regression rather than final article data.
+| System | Method | Outer steps | SCF wall / s | End-to-end wall / s | Final energy / hartree | Final projected gradient |
+|---|---|---:|---:|---:|---:|---:|
+| F2 HAO | standard L-BFGS | 26 | 0.244541 | 0.622779 | -198.751155768900 | 7.13992385e-4 |
+| F2 HAO | TNHVP | 7 | 0.163298 | 0.522691 | -198.751155830497 | 2.94905488e-5 |
+| 7975 HAO | standard L-BFGS | 57 | 15.570932 | 16.248405 | -285.733616613173 | 8.53372951e-4 |
+| 7975 HAO | TNHVP | 7 | 2.854029 | 3.558416 | -285.733616922951 | 7.40072187e-5 |
 
-| System | TNHVP steps | SCF wall (s) | Final energy | Projected gradient infinity norm | Peak RSS (KiB) |
-|---|---:|---:|---:|---:|---:|
-| F2 | 5 | 0.255586 | -198.751155830509 | 1.18593384e-05 | 67584 |
-| MnF2 | 15 | 25.204288 | -1348.893353224099 | 2.49837891e-06 | 555384 |
-| FeCl2 | 5 | 2.501624 | -2181.617636436763 | 5.06137414e-04 | 425048 |
-| 240 | 7 | 20.601759 | -343.446302353175 | 3.80186083e-06 | 1911848 |
+TNHVP reduces the iteration count by factors of 3.7 and 8.1 for F2 and 7975,
+respectively. It is also faster in this paired validation: the SCF-region
+speedups are 1.50 and 5.46, while the end-to-end speedups are 1.19 and 4.57.
+TNHVP used five block-HVP applications for each system.
 
-The FeCl2 iteration count decreases from 10 in the earlier TNHVP benchmark to
-5, below the 7-step L-BFGS baseline, while its SCF wall time falls
-from 22.16 s to 2.50 s. MnF2 retains a 15-step count while its SCF time falls
-from 55.98 s to 25.20 s. The 240 calculation requires one additional accepted
-step but decreases from 93.64 s to 20.60 s. A fresh interleaved paired run is
-still required before these wall-time changes are used as publication claims.
+These two systems validate the corrected method separation, but they are not a
+publication benchmark set. Final article data require the complete molecular
+suite, at least five measured repetitions after a warm-up, a fixed executable
+checksum, identical eigensolver choices, and peak-RSS measurements from the
+batch scheduler.
+
+## Reporting rule
+
+Future tables must distinguish the following methods explicitly:
+
+1. standard nonredundant L-BFGS with $H_k^{(0)}=\gamma_k I$;
+2. orbital-block-preconditioned L-BFGS, if retained as an additional strong
+   quasi-Newton reference; and
+3. TNHVP with the orbital-block inverse, transported secants, and exact
+   matrix-free curvature correction.
+
+An orbital-block-preconditioned calculation must never be labelled simply as
+L-BFGS in an article table.

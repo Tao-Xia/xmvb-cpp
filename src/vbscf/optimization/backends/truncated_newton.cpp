@@ -125,9 +125,10 @@ BackendRunResult run_truncated_newton_backend(
       break;
     }
   
-    // Use exactly the same secant memory as the standalone nonredundant
-    // L-BFGS backend.  TNHVP may enrich that baseline with exact curvature,
-    // but must not silently weaken it through a second history policy.
+    // Use the same secant memory as standalone L-BFGS, but initialize its
+    // inverse action with the positive orbital-curvature block. This is part
+    // of the TNHVP preconditioner; standalone L-BFGS uses the conventional
+    // scalar initialization so it remains an honest first-order baseline.
     const int transport_history_size = options.history_size;
     if (accepted_point_preconditioner == nullptr) {
       const auto setup_start = std::chrono::steady_clock::now();
@@ -136,7 +137,8 @@ BackendRunResult run_truncated_newton_backend(
               build_transported_reduced_lbfgs_preconditioner(
                   current_space,
                   packed_secant_history,
-                  transport_history_size));
+                  transport_history_size,
+                  LbfgsInitialInverse::OrbitalBlock));
       accepted_point_setup_wall_time_seconds +=
           std::chrono::duration<double>(
               std::chrono::steady_clock::now() - setup_start).count();
@@ -169,7 +171,8 @@ BackendRunResult run_truncated_newton_backend(
           std::make_unique<TransportedReducedLbfgsPreconditioner>(
               build_transported_reduced_lbfgs_preconditioner(
                   current_space, packed_secant_history,
-                  transport_history_size));
+                  transport_history_size,
+                  LbfgsInitialInverse::OrbitalBlock));
       baseline_reduced_direction =
           -accepted_point_preconditioner->apply(
               current_projection.reduced_gradient);

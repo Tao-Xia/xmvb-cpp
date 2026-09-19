@@ -14,9 +14,19 @@ struct TransportedReducedSecantPair {
   Eigen::VectorXd gradient_change;
 };
 
+/** @brief Initial inverse action used inside the L-BFGS two-loop recursion. */
+enum class LbfgsInitialInverse {
+  /** Conventional secant scaling, H0 = (s^T y / y^T y) I. */
+  ScaledIdentity,
+  /** Positive local orbital-curvature inverse used as a TNHVP preconditioner. */
+  OrbitalBlock,
+};
+
 class TransportedReducedLbfgsPreconditioner {
 public:
-  explicit TransportedReducedLbfgsPreconditioner(const OrbitalChart* space);
+  TransportedReducedLbfgsPreconditioner(
+      const OrbitalChart* space,
+      LbfgsInitialInverse initial_inverse);
 
   bool try_add_pair(
       Eigen::VectorXd reduced_step,
@@ -33,6 +43,8 @@ private:
   };
 
   const OrbitalChart* space_ = nullptr;
+  LbfgsInitialInverse initial_inverse_ =
+      LbfgsInitialInverse::ScaledIdentity;
   std::vector<Pair> pairs_;
 };
 
@@ -40,7 +52,8 @@ TransportedReducedLbfgsPreconditioner
 build_transported_reduced_lbfgs_preconditioner(
     const OrbitalChart& current_space,
     const std::vector<PackedSecantPair>& packed_secant_history,
-    int max_history_size);
+    int max_history_size,
+    LbfgsInitialInverse initial_inverse);
 
 std::vector<TransportedReducedSecantPair>
 transport_secant_pairs_to_chart(

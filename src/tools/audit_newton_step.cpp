@@ -323,7 +323,8 @@ void run_audit(const Options& options) {
             build_transported_reduced_lbfgs_preconditioner(
                 *chart,
                 packed_secant_history,
-                kHistorySize));
+                kHistorySize,
+                LbfgsInitialInverse::OrbitalBlock));
   }
 
   const auto solve_start = std::chrono::steady_clock::now();

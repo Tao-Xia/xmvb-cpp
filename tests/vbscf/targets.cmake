@@ -169,7 +169,7 @@ if (BUILD_TESTING)
       ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
       --optimizer-backend lbfgs
       --eigensolver davidson
-      --max-iterations 12
+      --max-iterations 40
       --gradient-tolerance 1e-3
       --energy-tolerance 1e-7)
   set_tests_properties(lbfgs_f2 PROPERTIES
