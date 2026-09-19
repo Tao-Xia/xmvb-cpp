@@ -3344,6 +3344,191 @@ roundoff-scale numerical-rank protection.  Combining these response factors
 with the positive orbital preconditioner gives an SPD block preconditioner for
 the complete coupled MINRES iteration; no molecular threshold is introduced.
 
+#### 11.4.1 Spectral target for the structure-response preconditioner
+
+Positive definiteness is a necessary MINRES contract, but it does not by
+itself imply an effective preconditioner.  For one selected state, write the
+bordered structure-response operator as
+
+$$
+\mathcal C_i=
+\begin{bmatrix}
+\mathbf K_i&\mathbf N\\
+\mathbf N^{\mathrm T}&\mathbf 0
+\end{bmatrix},
+\qquad
+\mathbf K_i=\mathbf H-E_i\mathbf S,
+\qquad
+\mathbf N=\mathbf S\mathbf C_{\mathrm{cluster}}.
+$$
+
+For any nonsingular real symmetric matrix $\mathcal C_i=\mathbf U
+\boldsymbol\Gamma\mathbf U^{\mathrm T}$, the ideal SPD preconditioner is its
+matrix absolute value,
+
+$$
+\mathbf P_{\star,i}=|\mathcal C_i|
+=\mathbf U|\boldsymbol\Gamma|\mathbf U^{\mathrm T}.
+$$
+
+It gives
+
+$$
+\mathbf P_{\star,i}^{-1/2}\mathcal C_i
+\mathbf P_{\star,i}^{-1/2}
+=\mathbf U\operatorname{sign}(\boldsymbol\Gamma)\mathbf U^{\mathrm T},
+$$
+
+whose spectrum is contained in $\{-1,+1\}$.  Consequently, exact-arithmetic
+MINRES terminates after a polynomial of degree at most two.  This is the
+parameter-free spectral reference against which an approximate response
+preconditioner must be judged.  A candidate is not accepted merely because it
+is SPD or reduces wall time in one molecule; it must compress the absolute
+preconditioned spectrum and reduce H/S actions at the same residual
+certificate.
+
+The structure eigenproblem provides a corresponding coefficient-space
+reference.  Let
+
+$$
+\mathbf H\mathbf X=\mathbf S\mathbf X\boldsymbol\Lambda,
+\qquad
+\mathbf X^{\mathrm T}\mathbf S\mathbf X=\mathbf I.
+$$
+
+After removing the selected equal-weight cluster, denote the external
+eigenvectors and energy gaps by $\mathbf X_e$ and
+$\boldsymbol\Delta_i=\boldsymbol\Lambda_e-E_i\mathbf I$.  Then
+
+$$
+\mathbf B_{\star,i}
+=\mathbf X_e|\boldsymbol\Delta_i|^{-1}\mathbf X_e^{\mathrm T}
+$$
+
+is the exact absolute inverse on the external response space, because
+
+$$
+\mathbf B_{\star,i}\mathbf K_i\mathbf X_e
+=\mathbf X_e\operatorname{sign}(\boldsymbol\Delta_i).
+$$
+
+The selected-space null directions are not inverted by this expression; they
+are handled by the bordered normalization block.  For any SPD coefficient
+inverse $\mathbf B_i$, define
+
+$$
+\mathbf R_i=\mathbf N^{\mathrm T}\mathbf B_i\mathbf N.
+$$
+
+The inverse of the associated SPD bordered factor acts on a residual
+$(\mathbf r_c,\mathbf r_m)$ as
+
+$$
+\begin{aligned}
+\mathbf d&=\mathbf B_i\mathbf r_c,\\
+\boldsymbol\mu&=\mathbf R_i^{-1}
+\left(\mathbf r_m-\mathbf N^{\mathrm T}\mathbf d\right),\\
+\mathbf z&=\mathbf d-\mathbf B_i\mathbf N\boldsymbol\mu.
+\end{aligned}
+$$
+
+Thus the existing bordered construction remains valid if the diagonal
+coefficient inverse is replaced by a demonstrably better SPD spectral
+approximation.
+
+#### 11.4.2 Why the Newton response basis is not new preconditioning information
+
+Let $\mathbf W$ be the current response trial basis and let $\mathbf r$ be the
+Galerkin residual.  By construction,
+
+$$
+\mathbf W^{\mathrm T}\mathbf r=\mathbf 0.
+$$
+
+Every additive coarse inverse whose domain and range are both contained in
+$\operatorname{range}(\mathbf W)$ therefore gives
+
+$$
+\mathbf W\mathbf T\mathbf W^{\mathrm T}\mathbf r=\mathbf 0
+$$
+
+for any matrix $\mathbf T$.  Such a correction cannot change the next Krylov
+expansion direction.  A secant update assembled only from
+$\mathbf W$ and $\mathcal C_i\mathbf W$ can create components outside
+$\mathbf W$ through its base inverse, but it contains no independent spectral
+observation; it only reorganizes operator images already used by the Galerkin
+solve.  It therefore has no general condition-number improvement guarantee.
+
+An independent accepted-point Davidson subspace does provide new information.
+Let $\mathbf Q$ be a block of S-orthonormal projected Ritz vectors that is
+orthogonal to the selected cluster, and define
+
+$$
+\boldsymbol\Theta=\mathbf Q^{\mathrm T}\mathbf H\mathbf Q,
+\qquad
+\boldsymbol\Delta_i=\boldsymbol\Theta-E_i\mathbf I,
+$$
+
+where the Ritz basis diagonalizes $\boldsymbol\Theta$.  With
+
+$$
+\mathbf Y_i=
+(\mathbf H-E_i\mathbf S)\mathbf Q
+\operatorname{sign}(\boldsymbol\Delta_i),
+$$
+
+one has the exact projected identity
+
+$$
+\mathbf Q^{\mathrm T}\mathbf Y_i=|\boldsymbol\Delta_i|\succ\mathbf0
+$$
+
+for every retained nonzero Ritz gap, irrespective of the off-subspace Ritz
+residual.  Starting from an SPD inverse $\mathbf B_{0,i}$, the block inverse-DFP
+update
+
+$$
+\begin{aligned}
+\mathbf B_i={}&\mathbf B_{0,i}
+-\mathbf B_{0,i}\mathbf Y_i
+(\mathbf Y_i^{\mathrm T}\mathbf B_{0,i}\mathbf Y_i)^{-1}
+\mathbf Y_i^{\mathrm T}\mathbf B_{0,i}\\
+&+\mathbf Q(\mathbf Q^{\mathrm T}\mathbf Y_i)^{-1}\mathbf Q^{\mathrm T}
+\end{aligned}
+$$
+
+is SPD and satisfies the block secant equation
+
+$$
+\mathbf B_i\mathbf Y_i=\mathbf Q.
+$$
+
+No molecular gap cutoff is required for this algebraic guarantee.  Modes may
+be omitted only because of a stated memory budget or because their projected
+gap is below the floating-point numerical-rank floor; those are resource and
+arithmetic constraints, not fitted physical parameters.  The Davidson basis,
+its H image, and its S image are already generated during the accepted-point
+eigensolve, so this construction requires no additional H/S action.  Retaining
+$m$ Ritz modes costs $3n_sm$ floating-point values if all three blocks are
+stored.
+
+This construction is admitted to the production solver only after two
+separate tests.  First, dense reference systems must show that it reduces the
+absolute spectral spread
+
+$$
+\kappa_{|\lambda|}
+=\frac{\max_j|\lambda_j|}{\min_j|\lambda_j|},
+\qquad
+\mathcal C_i\mathbf v_j
+=\lambda_j\mathbf P_i\mathbf v_j,
+$$
+
+relative to the diagonal bordered factor.  Second, complete VBSCF runs must
+show fewer response H/S actions at the same coupled residual and outer energy
+and gradient tolerances.  Failure of either test rejects the update; timings
+alone are not used to tune a mode count or a molecular threshold.
+
 The spectrum relevant to orbital globalization is not the spectrum of the
 indefinite coupled KKT matrix.  It is the generalized spectrum of the relaxed
 Schur operator
