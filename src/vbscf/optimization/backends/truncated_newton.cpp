@@ -282,23 +282,16 @@ BackendRunResult run_truncated_newton_backend(
               std::chrono::steady_clock::now() - setup_start).count();
     }
 
-    const AcceptedPointContext& accepted_context =
-        *objective->second_order_context();
-    double selected_energy_scale = 0.0;
-    for (const double selected_energy :
-         accepted_context.selected_state_energies) {
-      selected_energy_scale = std::max(
-          selected_energy_scale,
-          std::abs(selected_energy));
-    }
-    const double response_backward_error_tolerance =
-        accepted_context.structure_solve_accuracy
-            .response_backward_error_tolerance(selected_energy_scale);
+    // Both blocks belong to one inexact Newton equation and therefore obey
+    // the same outer forcing sequence.  The accepted eigensolver accuracy
+    // controls the data used to build C; it is not a reason to solve the
+    // coupled response equation orders of magnitude more accurately than the
+    // current Newton step.  Using that accuracy as a minimum target here used
+    // to force every early response solve to approximately 1e-5 even when the
+    // adaptive Newton forcing was O(1e-1).
     const CoupledKktTolerances coupled_tolerances{
         newton_forcing_term,
-        std::min(
-            newton_forcing_term,
-            response_backward_error_tolerance)};
+        newton_forcing_term};
     CoupledWorkspaceResult coupled_result =
         accepted_point_coupled_workspace->solve(
             trust_radius,
