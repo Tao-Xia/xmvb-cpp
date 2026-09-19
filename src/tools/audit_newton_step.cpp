@@ -1,5 +1,8 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -17,6 +20,7 @@
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/optimization/objective/reduced_hvp.hpp"
+#include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
 #include "vbscf/optimization/trust_region/truncated_newton.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
@@ -24,10 +28,12 @@
 namespace {
 
 using namespace xmvb::vb;
+namespace fs = std::filesystem;
 
 struct Options {
   std::string input_path;
   std::string orbitals_path;
+  std::string lbfgs_history_steps_path;
   std::string dump_trial_orbitals_path;
   StructureEigensolver eigensolver = StructureEigensolver::Davidson;
   int subspace_dimension = 0;
@@ -44,6 +50,7 @@ Options parse_options(int argc, char** argv) {
         "usage: audit_newton_step input.xmi "
         "--subspace-dimension count --trust-radius value "
         "[--target-kkt-relative value] [--orbital-value-table-bin path] "
+        "[--lbfgs-history-steps-dir path] "
         "[--dump-trial-orbitals-bin path] [--finite-difference-step value] "
         "[--eigensolver davidson|dense]");
   }
@@ -54,6 +61,8 @@ Options parse_options(int argc, char** argv) {
     const std::string value = argv[index + 1];
     if (name == "--orbital-value-table-bin") {
       options.orbitals_path = value;
+    } else if (name == "--lbfgs-history-steps-dir") {
+      options.lbfgs_history_steps_path = value;
     } else if (name == "--dump-trial-orbitals-bin") {
       options.dump_trial_orbitals_path = value;
     } else if (name == "--subspace-dimension") {
@@ -89,6 +98,87 @@ Options parse_options(int argc, char** argv) {
     throw std::invalid_argument("invalid accepted-point audit options");
   }
   return options;
+}
+
+void load_orbitals(
+    const std::string& path,
+    OrbitalPreparationInput* input);
+
+std::unique_ptr<OrbitalChart> build_chart(
+    const VbScfInput& input,
+    const SparseParameterLayout& layout,
+    const OrbitalGradientResult& gradient);
+
+std::vector<fs::path> sorted_trace_step_directories(
+    const std::string& steps_path) {
+  std::vector<fs::path> paths;
+  for (const auto& entry : fs::directory_iterator(steps_path)) {
+    const std::string name = entry.path().filename().string();
+    if (entry.is_directory() &&
+        name.compare(0, 5, "step_") == 0) {
+      paths.push_back(entry.path());
+    }
+  }
+  std::sort(paths.begin(), paths.end());
+  if (paths.empty()) {
+    throw std::runtime_error("L-BFGS trace contains no accepted steps");
+  }
+  return paths;
+}
+
+std::vector<PackedSecantPair> rebuild_lbfgs_history(
+    const std::string& steps_path,
+    const VbScfInput& input,
+    const SparseParameterLayout& layout,
+    double nuclear_repulsion_energy,
+    StructureEigensolver eigensolver,
+    const StructureSolveAccuracy& accuracy,
+    int history_size) {
+  OrbitalGradientEvaluator evaluator;
+  const Eigen::MatrixXd no_initial_eigenvectors;
+  std::vector<PackedSecantPair> history;
+  history.reserve(history_size);
+  Eigen::VectorXd previous_parameters;
+  Eigen::VectorXd previous_gradient;
+  std::uint64_t previous_rank_signature = 0;
+  int previous_reduced_size = -1;
+  bool have_previous = false;
+  for (const auto& step_path : sorted_trace_step_directories(steps_path)) {
+    VbScfInput point = input;
+    load_orbitals(
+        (step_path / "orbital_value_table_f64.bin").string(),
+        &point.orbital_preparation_input);
+    const auto evaluated =
+        evaluator.evaluate_without_reference_energy_gradient(
+            point, {0}, {1.0}, nuclear_repulsion_energy,
+            eigensolver, accuracy, no_initial_eigenvectors);
+    auto chart = build_chart(point, layout, evaluated);
+    const Eigen::VectorXd parameters =
+        layout.pack(point.orbital_preparation_input);
+    const Eigen::VectorXd gradient = layout.gather_from_full(
+        evaluated.sparse_orbital_energy_gradient);
+    if (have_previous) {
+      const bool rank_changed =
+          chart->rank_signature() != previous_rank_signature ||
+          chart->reduced_size() != previous_reduced_size;
+      if (rank_changed) {
+        history.clear();
+      } else {
+        append_projected_secant_pair(
+            *chart,
+            parameters - previous_parameters,
+            gradient - previous_gradient,
+            history_size,
+            &history);
+      }
+    }
+    previous_parameters = parameters;
+    previous_gradient = gradient;
+    previous_rank_signature = chart->rank_signature();
+    previous_reduced_size = chart->reduced_size();
+    have_previous = true;
+  }
+  return history;
 }
 
 void load_orbitals(
@@ -210,7 +300,48 @@ void run_audit(const Options& options) {
       *chart, layout, input.orbital_preparation_input);
   AcceptedPointHvp hvp(accepted, input, layout, *chart);
 
+  std::vector<PackedSecantPair> packed_secant_history;
+  std::unique_ptr<TransportedReducedLbfgsPreconditioner>
+      lbfgs_preconditioner;
+  Eigen::VectorXd lbfgs_baseline_step;
+  Eigen::VectorXd lbfgs_baseline_hessian_step;
+  double lbfgs_baseline_kkt_relative =
+      std::numeric_limits<double>::quiet_NaN();
+  double correction_step_norm =
+      std::numeric_limits<double>::quiet_NaN();
+  if (!options.lbfgs_history_steps_path.empty()) {
+    constexpr int kHistorySize = 100;
+    packed_secant_history = rebuild_lbfgs_history(
+        options.lbfgs_history_steps_path,
+        input,
+        layout,
+        loaded.nuclear_repulsion_energy,
+        options.eigensolver,
+        accuracy,
+        kHistorySize);
+    lbfgs_preconditioner =
+        std::make_unique<TransportedReducedLbfgsPreconditioner>(
+            build_transported_reduced_lbfgs_preconditioner(
+                *chart,
+                packed_secant_history,
+                kHistorySize));
+  }
+
   const auto solve_start = std::chrono::steady_clock::now();
+  if (lbfgs_preconditioner != nullptr) {
+    lbfgs_baseline_step = -lbfgs_preconditioner->apply(
+        projected.reduced_gradient);
+    if (!lbfgs_baseline_step.allFinite() ||
+        projected.reduced_gradient.dot(lbfgs_baseline_step) >= 0.0) {
+      throw std::runtime_error(
+          "reconstructed L-BFGS history produced no descent direction");
+    }
+    lbfgs_baseline_hessian_step = hvp.apply(lbfgs_baseline_step);
+    lbfgs_baseline_kkt_relative = relative_norm(
+        projected.reduced_gradient + lbfgs_baseline_hessian_step,
+        projected.reduced_gradient);
+  }
+
   const double target_kkt_relative_residual =
       options.target_kkt_explicit
       ? options.target_kkt_relative_residual
@@ -224,13 +355,50 @@ void run_audit(const Options& options) {
   // subproblem before that requested residual has been reached.
   const double audit_gradient_tolerance =
       options.target_kkt_explicit ? 0.0 : accuracy.gradient_tolerance;
-  auto step = solve_nonredundant_truncated_newton_step(
-      metric, *chart, projected, options.trust_radius,
-      accuracy.energy_tolerance, audit_gradient_tolerance,
-      target_kkt_relative_residual,
-      options.subspace_dimension, &hvp, nullptr);
-  clamp_nonredundant_step_result_to_retract_tangent_radius(
-      projected, options.trust_radius, metric, &step);
+  TruncatedNewtonStepResult step;
+  if (lbfgs_preconditioner == nullptr) {
+    step = solve_nonredundant_truncated_newton_step(
+        metric, *chart, projected, options.trust_radius,
+        accuracy.energy_tolerance, audit_gradient_tolerance,
+        target_kkt_relative_residual,
+        options.subspace_dimension, &hvp, nullptr);
+    clamp_nonredundant_step_result_to_retract_tangent_radius(
+        projected, options.trust_radius, metric, &step);
+  } else {
+    // Apply exact curvature as a residual correction to the complete L-BFGS
+    // proposal.  Solving H delta = -(g + H p_B) makes p_B + delta an exact
+    // Newton step without blending two independently scaled directions.
+    OrbitalChart::ProjectionResult correction_projection;
+    correction_projection.reduced_gradient =
+        projected.reduced_gradient + lbfgs_baseline_hessian_step;
+    auto correction = solve_nonredundant_truncated_newton_step(
+        metric, *chart, correction_projection, options.trust_radius,
+        accuracy.energy_tolerance, audit_gradient_tolerance,
+        target_kkt_relative_residual,
+        options.subspace_dimension, &hvp, lbfgs_preconditioner.get());
+    if (!truncated_newton_step_is_usable(
+            correction, correction_projection.reduced_gradient) ||
+        correction.trust_region_shift != 0.0 ||
+        correction.reached_boundary) {
+      throw std::runtime_error(
+          "L-BFGS residual correction did not produce an interior Newton step");
+    }
+    correction_step_norm = metric.norm(correction.reduced_step);
+    step = std::move(correction);
+    step.reduced_step += lbfgs_baseline_step;
+    step.reduced_hessian_times_step += lbfgs_baseline_hessian_step;
+    step.reduced_metric_times_step = metric.apply(step.reduced_step);
+    step.retract_tangent_norm = metric.norm(step.reduced_step);
+    step.predicted_decrease =
+        -projected.reduced_gradient.dot(step.reduced_step) -
+        0.5 * step.reduced_step.dot(step.reduced_hessian_times_step);
+    refresh_truncated_newton_step_certificate(
+        projected.reduced_gradient, &step);
+    if (step.retract_tangent_norm > options.trust_radius) {
+      throw std::runtime_error(
+          "combined L-BFGS/Newton step lies outside the audit trust radius");
+    }
+  }
   const double solve_seconds = std::chrono::duration<double>(
       std::chrono::steady_clock::now() - solve_start).count();
   if (!truncated_newton_step_is_usable(
@@ -330,6 +498,24 @@ void run_audit(const Options& options) {
 
   std::cout << std::setprecision(15)
             << "eigensolver = " << structure_eigensolver_name(options.eigensolver) << '\n'
+            << "step_model = "
+            << (lbfgs_preconditioner == nullptr
+                    ? "direct_newton"
+                    : "lbfgs_plus_exact_residual_correction") << '\n'
+            << "lbfgs_history_pairs = "
+            << packed_secant_history.size() << '\n'
+            << "lbfgs_accepted_pairs = "
+            << (lbfgs_preconditioner == nullptr
+                    ? 0
+                    : lbfgs_preconditioner->size()) << '\n'
+            << "lbfgs_baseline_step_norm = "
+            << (lbfgs_preconditioner == nullptr
+                    ? std::numeric_limits<double>::quiet_NaN()
+                    : metric.norm(lbfgs_baseline_step)) << '\n'
+            << "lbfgs_baseline_kkt_relative = "
+            << lbfgs_baseline_kkt_relative << '\n'
+            << "newton_correction_step_norm = "
+            << correction_step_norm << '\n'
             << "reduced_dimension = " << chart->reduced_size() << '\n'
             << "subspace_budget = " << options.subspace_dimension << '\n'
             << "subspace_dimension = " << step.subspace_dimension << '\n'
