@@ -1148,6 +1148,80 @@ without introducing a molecule-specific tolerance or forcing every HVP to
 machine precision. The true bordered-equation residual is checked explicitly;
 a recursive Krylov residual estimate alone is not accepted.
 
+Equation 56a applies when the structure response is eliminated internally to
+form one Schur-complement HVP. It must not be reused as the stopping tolerance
+for an augmented orbital--structure Newton solve in which the response is an
+explicit optimization variable. In the latter formulation, define
+
+$$
+\mathbf K_k=
+\begin{pmatrix}
+\mathbf A_k+\lambda_k\mathbf G_k & \mathbf B_k^{\mathrm T}\\
+\mathbf B_k & \mathbf C_k
+\end{pmatrix},
+\qquad
+\mathbf d_k=
+\begin{pmatrix}
+\mathbf p_k\\
+\mathbf q_k
+\end{pmatrix},
+\qquad
+\mathbf f_k=
+\begin{pmatrix}
+\mathbf g_k\\
+\mathbf r_k^{(s)}
+\end{pmatrix}.
+\tag{56b}
+$$
+
+An inexact Newton step is certified by the residual of this complete system,
+
+$$
+\mathbf e_k=\mathbf f_k+\mathbf K_k\mathbf d_k,
+\qquad
+\|\mathbf e_k\|_2\leq\eta_k\|\mathbf f_k\|_2,
+\tag{56c}
+$$
+
+where the forcing sequence satisfies $0\leq\eta_k<1$ and tightens with outer
+progress. The accepted eigensolver accuracy controls the accuracy of the data
+in $\mathbf C_k$; it does not require the augmented linear system to be solved
+more accurately than eq 56c. Applying
+$\min(\eta_k,\tau_{\mathrm{resp}})$ to the response block would therefore
+oversolve every early Newton equation whenever
+$\tau_{\mathrm{resp}}\ll\eta_k$.
+
+With the orthogonal product norm of the orbital and response coordinate blocks,
+
+$$
+\|\mathbf e_k\|_2^2
+=
+\|\mathbf e_k^{(x)}\|_2^2
++
+\|\mathbf e_k^{(s)}\|_2^2.
+\tag{56d}
+$$
+
+Consequently, an equal block allocation gives the parameter-free sufficient
+condition
+
+$$
+\|\mathbf e_k^{(x)}\|_2
+\leq
+\frac{\eta_k}{\sqrt{2}}\,\|\mathbf f_k\|_2,
+\qquad
+\|\mathbf e_k^{(s)}\|_2
+\leq
+\frac{\eta_k}{\sqrt{2}}\,\|\mathbf f_k\|_2.
+\tag{56e}
+$$
+
+The production implementation uses the corresponding blockwise backward-error
+normalizations. This allocation is deliberately conservative: it prevents two
+individually admissible block residuals from exceeding the full forcing target
+by a factor of $\sqrt{2}$, while avoiding any molecule-dependent response
+tolerance.
+
 ## 9. Reduced pullback gradient and Hessian
 
 At a fixed accepted point, let $\mathbf U$ be the quotient basis from Section 4 and define the local raw sparse chart
