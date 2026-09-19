@@ -219,9 +219,14 @@ void run_audit(const Options& options) {
             projected.reduced_gradient.lpNorm<Eigen::Infinity>(),
             projected.reduced_gradient.stableNorm(),
             accuracy.gradient_tolerance);
+  // An explicitly requested KKT target defines an algebraic oracle audit.
+  // Do not let the production outer energy/gradient tolerances terminate the
+  // subproblem before that requested residual has been reached.
+  const double audit_gradient_tolerance =
+      options.target_kkt_explicit ? 0.0 : accuracy.gradient_tolerance;
   auto step = solve_nonredundant_truncated_newton_step(
       metric, *chart, projected, options.trust_radius,
-      accuracy.energy_tolerance, accuracy.gradient_tolerance,
+      accuracy.energy_tolerance, audit_gradient_tolerance,
       target_kkt_relative_residual,
       options.subspace_dimension, &hvp, nullptr);
   clamp_nonredundant_step_result_to_retract_tangent_radius(
