@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "vbscf/optimization/globalization/line_search.hpp"
+#include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/optimization/coupled/workspace.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/optimization/driver/session.hpp"
@@ -245,9 +246,23 @@ BackendRunResult run_truncated_newton_backend(
               std::move(apply_inverse_orbital_preconditioner));
     }
 
+    const AcceptedPointContext& accepted_context =
+        *objective->second_order_context();
+    double selected_energy_scale = 0.0;
+    for (const double selected_energy :
+         accepted_context.selected_state_energies) {
+      selected_energy_scale = std::max(
+          selected_energy_scale,
+          std::abs(selected_energy));
+    }
+    const double response_backward_error_tolerance =
+        accepted_context.structure_solve_accuracy
+            .response_backward_error_tolerance(selected_energy_scale);
     const CoupledKktTolerances coupled_tolerances{
         newton_forcing_term,
-        newton_forcing_term};
+        std::min(
+            newton_forcing_term,
+            response_backward_error_tolerance)};
     CoupledWorkspaceResult coupled_result =
         accepted_point_coupled_workspace->solve(
             trust_radius,
@@ -282,8 +297,10 @@ BackendRunResult run_truncated_newton_backend(
         ProjectedTrustStatus::InteriorGlobal;
     const bool encountered_negative_curvature =
         coupled_step.projected.orbital_solution.minimum_ritz_value < 0.0;
-    if (coupled_step.orbital_backward_error > newton_forcing_term ||
-        coupled_step.response_backward_error > newton_forcing_term) {
+    if (coupled_step.orbital_backward_error >
+            coupled_tolerances.orbital ||
+        coupled_step.response_backward_error >
+            coupled_tolerances.response) {
       throw std::logic_error(
           "coupled Newton workspace returned an uncertified step");
     }

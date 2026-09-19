@@ -3734,8 +3734,7 @@ accepted trial destroys the workspace and every callback referring to the old
 chart before committing the new orbital point.  This lifetime ordering is
 required because the matrix-free block actions are accepted-point operators.
 
-Both full-space backward errors are compared with the same local inexact-Newton
-forcing value,
+The orbital equation is compared with the local inexact-Newton forcing value,
 
 $$
 \eta_k
@@ -3746,13 +3745,36 @@ $$
 \right),
 $$
 
-and a step is returned only if
+The selected-state response also supplies curvature to a second-order energy
+model. Its accuracy contract is therefore
+
+$$
+\tau_{\mathrm{resp}}
+=
+\min\!\left[
+\tau_g,
+\sqrt{
+\frac{\tau_E}
+{\max\!\left(1,\max_i|E_i|\right)}
+}
+\right],
+$$
+
+where $\tau_E$ and $\tau_g$ are the requested outer energy and gradient
+accuracies. The square root is the first-order accuracy associated with a
+second-order energy target. A step is returned only if
 
 $$
 \eta_p\leq\eta_k,
 \qquad
-\eta_q\leq\eta_k.
+\eta_q\leq\min\!\left(\eta_k,\tau_{\mathrm{resp}}\right).
 $$
+
+The separate response condition is essential when the accepted structure
+state is already stationary, because then the response block of the original
+coupled right-hand side is nearly zero. Applying the loose orbital forcing
+value independently to a termwise response backward error can terminate the
+Schur elimination after only a few directions and destroy Newton convergence.
 
 There is no default iteration or subspace cap.  The only intrinsic upper bound
 is algebraic completion of the orbital and response coordinate spaces.  An

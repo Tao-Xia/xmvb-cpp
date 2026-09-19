@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -30,6 +31,32 @@ struct StructureSolveAccuracy {
       throw std::invalid_argument(
           "structure solve accuracy tolerances must be positive");
     }
+  }
+
+  /**
+   * @brief Backward-error tolerance for a first-order state response.
+   *
+   * A first-order eigensystem response enters a second-order orbital model.
+   * Its residual is therefore limited by both the requested gradient accuracy
+   * and the square root of the relative Ritz-energy accuracy.  The latter is
+   * the first-order accuracy associated with a second-order energy target.
+   *
+   * @param selected_energy_scale Maximum magnitude of the selected Ritz
+   *        values. Values below one do not tighten the relative energy scale.
+   */
+  double response_backward_error_tolerance(
+      double selected_energy_scale) const {
+    validate();
+    if (!std::isfinite(selected_energy_scale) ||
+        selected_energy_scale < 0.0) {
+      throw std::invalid_argument(
+          "selected-state energy scale must be finite and nonnegative");
+    }
+    const double relative_energy_accuracy =
+        energy_tolerance / std::max(1.0, selected_energy_scale);
+    return std::min(
+        gradient_tolerance,
+        std::sqrt(relative_energy_accuracy));
   }
 };
 
