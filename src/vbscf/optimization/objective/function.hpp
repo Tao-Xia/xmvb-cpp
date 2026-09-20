@@ -85,6 +85,9 @@ class VbScfObjective {
   /** @brief Populates the reference-energy gradient at the accepted point. */
   void ensure_reference_gradient();
 
+  /** @brief Materializes exact structure norms once for final reporting. */
+  void ensure_exact_structure_overlap_diagonal();
+
   const std::vector<double>& energy_history() const { return energy_history_; }
   const std::vector<double>& gradient_inf_norm_history() const {
     return gradient_inf_norm_history_;

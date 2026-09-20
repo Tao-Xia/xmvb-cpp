@@ -34,6 +34,7 @@ struct ActiveSpaceGradientForwardContext {
   StructureAccumulationResult structure_matrices;
   xmvb::core::GeneralizedEigenResult eigen_result;
   Eigen::VectorXd structure_overlap_diagonal;
+  bool structure_overlap_diagonal_exact = false;
   Eigen::MatrixXd overlap_eigenvectors;
   std::optional<DavidsonDiagnostics> davidson_diagnostics;
   Eigen::MatrixXd selected_state_eigenvectors;
@@ -330,6 +331,7 @@ void solve_structure_problem(
           context->structure_matrices.overlap_matrix[
               static_cast<std::size_t>(structure) * n_structures + structure];
     }
+    context->structure_overlap_diagonal_exact = true;
     stage_start_time = std::chrono::steady_clock::now();
     if (structure_eigensolver == StructureEigensolver::Dense) {
       context->eigen_result = generalized_eigensolver.solve_dense(
@@ -382,15 +384,6 @@ void solve_structure_problem(
               prepared.active_space_two_electron_result,
               n_structures,
               context->same_spin_pair_cache);
-      context->structure_overlap_diagonal =
-          structure_builder.build_exact_overlap_diagonal(
-              input.structure_data.alpha_det,
-              input.structure_data.beta_det,
-              input.structure_data.determinant_to_structure_terms,
-              prepared.orbital_result.active_orbital_overlap_matrix,
-              input.orbital_preparation_input.n_active_orbitals,
-              n_structures,
-              context->same_spin_pair_cache);
     }
     context->structure_action.emplace(
         input.structure_data.determinant_to_structure_terms,
@@ -409,6 +402,8 @@ void solve_structure_problem(
     if (context->structure_overlap_diagonal.size() == 0) {
       context->structure_overlap_diagonal =
           structure_action.preconditioner_diagonal().overlap;
+      context->structure_overlap_diagonal_exact =
+          context->same_spin_pair_cache.enabled();
     }
     context->average_structure_overlap =
         context->structure_overlap_diagonal.mean();
@@ -660,6 +655,8 @@ void populate_scf_result(
       forward_context.structure_overlap_diagonal.data(),
       forward_context.structure_overlap_diagonal.data() +
           forward_context.structure_overlap_diagonal.size());
+  scf_result->structure_overlap_diagonal_exact =
+      forward_context.structure_overlap_diagonal_exact;
   scf_result->overlap_eigenvector_matrix.clear();
   if (forward_context.overlap_eigenvectors.size() != 0) {
     scf_result->overlap_eigenvector_matrix.assign(

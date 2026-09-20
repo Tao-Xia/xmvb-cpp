@@ -103,6 +103,9 @@ struct VbScfResult {
    */
   std::vector<double> structure_overlap_diagonal;
 
+  /** Whether `structure_overlap_diagonal` contains exact projected norms. */
+  bool structure_overlap_diagonal_exact = false;
+
   /**
    * @brief Column-major products `S C` aligned with available Davidson roots.
    *

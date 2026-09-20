@@ -9,6 +9,7 @@
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -70,6 +71,33 @@ void VbScfObjective::ensure_reference_gradient() {
   gradient_evaluator_->populate_reference_energy_gradient(
       input_,
       &gradient_result_);
+}
+
+void VbScfObjective::ensure_exact_structure_overlap_diagonal() {
+  VbScfResult& scf_result = gradient_result_.scf_result;
+  if (scf_result.structure_overlap_diagonal_exact) {
+    return;
+  }
+  const std::shared_ptr<AcceptedPointContext>& accepted =
+      gradient_result_.second_order_context;
+  if (accepted == nullptr) {
+    throw std::runtime_error(
+        "final structure normalization requires an accepted-point context");
+  }
+  const auto& prepared = accepted->prepared_active_space;
+  const FullDeterminantStructureHamiltonianOverlapBuilder builder;
+  const Eigen::VectorXd exact_diagonal = builder.build_exact_overlap_diagonal(
+      input_.structure_data.alpha_det,
+      input_.structure_data.beta_det,
+      input_.structure_data.determinant_to_structure_terms,
+      prepared.orbital_result.active_orbital_overlap_matrix,
+      input_.orbital_preparation_input.n_active_orbitals,
+      input_.structure_data.n_structures,
+      accepted->same_spin_pair_cache);
+  scf_result.structure_overlap_diagonal.assign(
+      exact_diagonal.data(), exact_diagonal.data() + exact_diagonal.size());
+  scf_result.average_structure_overlap = exact_diagonal.mean();
+  scf_result.structure_overlap_diagonal_exact = true;
 }
 
 VbScfObjective::TrialEvaluation

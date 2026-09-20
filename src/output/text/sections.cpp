@@ -296,10 +296,11 @@ NormalizedStructureState normalize_structure_state(
       raw_overlap.rows() == n_str && raw_hamiltonian.rows() == n_str;
   if (raw_coefficients.size() != n_str ||
       (!has_full_matrices &&
-       result.structure_overlap_diagonal.size() !=
-           static_cast<std::size_t>(n_str))) {
+       (result.structure_overlap_diagonal.size() !=
+            static_cast<std::size_t>(n_str) ||
+        !result.structure_overlap_diagonal_exact))) {
     throw std::invalid_argument(
-        "final structure state has inconsistent matrix or coefficient dimensions");
+        "final structure state requires exact norms and consistent dimensions");
   }
 
   Eigen::VectorXd structure_norms(n_str);

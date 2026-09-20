@@ -236,6 +236,8 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     result.final_projected_gradient_l2_norm =
         final_projection.reduced_gradient.norm();
   }
+  objective.ensure_exact_structure_overlap_diagonal();
+  sync_result_from_objective(objective, &result);
   result.one_particle_density_matrix = build_one_particle_density_matrix(
       objective.gradient_result(),
       objective.input().orbital_preparation_input);
