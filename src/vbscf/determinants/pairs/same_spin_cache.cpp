@@ -641,6 +641,49 @@ std::size_t estimate_same_spin_pair_cache_bytes(
        per_pair_int_count * sizeof(int));
 }
 
+SameSpinPairCacheContext build_same_spin_pair_topology(
+    const std::vector<std::vector<int>>& alpha_det,
+    const std::vector<std::vector<int>>& beta_det,
+    int n_orbitals) {
+  if (alpha_det.size() != beta_det.size()) {
+    throw std::invalid_argument("alpha_det and beta_det must have the same size");
+  }
+
+  SameSpinPairCacheContext context;
+  context.alpha_reuse_table = build_spin_determinant_reuse_table(alpha_det);
+  context.close_shell_diagonal_reuses_same_spin_pair_cache =
+      can_reuse_close_shell_same_spin_pair_cache(alpha_det, beta_det);
+  context.beta_reuses_alpha_pair_cache =
+      context.close_shell_diagonal_reuses_same_spin_pair_cache ||
+      try_build_reuse_table_in_reference_basis(
+          beta_det,
+          context.alpha_reuse_table,
+          &context.beta_reuse_table);
+  if (context.close_shell_diagonal_reuses_same_spin_pair_cache) {
+    context.beta_reuse_table = context.alpha_reuse_table;
+  } else if (!context.beta_reuses_alpha_pair_cache) {
+    context.beta_reuse_table = build_spin_determinant_reuse_table(beta_det);
+  }
+
+  const std::size_t n_alpha =
+      context.alpha_reuse_table.unique_determinants.size();
+  const std::size_t n_beta =
+      context.beta_reuse_table.unique_determinants.size();
+  context.cached_same_spin_evaluation_count = n_alpha * n_alpha;
+  context.estimated_cache_bytes = estimate_same_spin_pair_cache_bytes(
+      context.alpha_reuse_table.unique_determinants,
+      n_orbitals);
+  if (!context.beta_reuses_alpha_pair_cache) {
+    context.cached_same_spin_evaluation_count += n_beta * n_beta;
+    context.estimated_cache_bytes += estimate_same_spin_pair_cache_bytes(
+        context.beta_reuse_table.unique_determinants,
+        n_orbitals);
+  }
+  context.n_unique_alpha = static_cast<int>(n_alpha);
+  context.n_unique_beta = static_cast<int>(n_beta);
+  return context;
+}
+
 SameSpinPairCacheContext build_same_spin_pair_cache_context(
     const std::vector<std::vector<int>>& alpha_det,
     const std::vector<std::vector<int>>& beta_det,
@@ -669,59 +712,13 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     int n_orbitals,
     const std::vector<double>& eri_act,
     SameSpinPairCacheBuildOptions build_options) {
-  if (alpha_det.size() != beta_det.size()) {
-    throw std::invalid_argument("alpha_det and beta_det must have the same size");
-  }
-
-  SameSpinPairCacheContext cache_context;
-  cache_context.alpha_reuse_table = build_spin_determinant_reuse_table(alpha_det);
-  cache_context.close_shell_diagonal_reuses_same_spin_pair_cache =
-      can_reuse_close_shell_same_spin_pair_cache(alpha_det, beta_det);
-  cache_context.beta_reuses_alpha_pair_cache =
-      cache_context.close_shell_diagonal_reuses_same_spin_pair_cache ||
-      try_build_reuse_table_in_reference_basis(
-          beta_det,
-          cache_context.alpha_reuse_table,
-          &cache_context.beta_reuse_table);
-  // In determinant-wise close-shell cases the shared unique basis is diagonal.
-  // More generally, singlet expansions may still span the same unique alpha
-  // and beta occupied strings with a different determinant pairing. Those
-  // cases can share the ordered same-spin cache even though later structure
-  // coefficient blocks remain non-diagonal.
-  if (cache_context.close_shell_diagonal_reuses_same_spin_pair_cache) {
-    cache_context.beta_reuse_table =
-        cache_context.alpha_reuse_table;
-  } else if (!cache_context.beta_reuses_alpha_pair_cache) {
-    cache_context.beta_reuse_table =
-        build_spin_determinant_reuse_table(beta_det);
-  }
-
-  const int n_determinants = static_cast<int>(alpha_det.size());
-
-  cache_context.cached_same_spin_evaluation_count =
-      cache_context.alpha_reuse_table.unique_determinants.size() *
-          cache_context.alpha_reuse_table.unique_determinants.size();
-  if (!cache_context.beta_reuses_alpha_pair_cache) {
-    cache_context.cached_same_spin_evaluation_count +=
-        cache_context.beta_reuse_table.unique_determinants.size() *
-        cache_context.beta_reuse_table.unique_determinants.size();
-  }
-
-  cache_context.estimated_cache_bytes =
-      estimate_same_spin_pair_cache_bytes(
-          cache_context.alpha_reuse_table.unique_determinants,
-          n_orbitals);
-  if (!cache_context.beta_reuses_alpha_pair_cache) {
-    cache_context.estimated_cache_bytes +=
-        estimate_same_spin_pair_cache_bytes(
-            cache_context.beta_reuse_table.unique_determinants,
-            n_orbitals);
-  }
+  SameSpinPairCacheContext cache_context = build_same_spin_pair_topology(
+      alpha_det, beta_det, n_orbitals);
   // Production policy: always materialize the ordered same-spin determinant
   // kernels. Callers may still opt out of the dense opposite-spin projected
   // images when a streamed matrix-form path can rebuild only the touched
   // packed-pair rows on demand.
-  cache_context.use_same_spin_pair_cache = (n_determinants > 0);
+  cache_context.use_same_spin_pair_cache = !alpha_det.empty();
 
   const PairProjectionPolicy projection_policy =
       resolve_pair_projection_policy(
@@ -758,9 +755,6 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     cache_context.beta_pair_cache.clear();
   }
 
-  cache_context.n_unique_alpha = static_cast<int>(cache_context.alpha_reuse_table.unique_determinants.size());
-  cache_context.n_unique_beta = static_cast<int>(cache_context.beta_reuse_table.unique_determinants.size());
-
   return cache_context;
 }
 
@@ -792,55 +786,13 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     int n_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     SameSpinPairCacheBuildOptions build_options) {
-  if (alpha_det.size() != beta_det.size()) {
-    throw std::invalid_argument("alpha_det and beta_det must have the same size");
-  }
-
-  SameSpinPairCacheContext cache_context;
-  cache_context.alpha_reuse_table = build_spin_determinant_reuse_table(alpha_det);
-  cache_context.close_shell_diagonal_reuses_same_spin_pair_cache =
-      can_reuse_close_shell_same_spin_pair_cache(alpha_det, beta_det);
-  cache_context.beta_reuses_alpha_pair_cache =
-      cache_context.close_shell_diagonal_reuses_same_spin_pair_cache ||
-      try_build_reuse_table_in_reference_basis(
-          beta_det,
-          cache_context.alpha_reuse_table,
-          &cache_context.beta_reuse_table);
-  // Reuse the alpha ordered same-spin table whenever the beta occupied
-  // strings span the same unique determinant space. Determinant-wise diagonal
-  // close-shell is just the strongest special case of this reuse.
-  if (cache_context.close_shell_diagonal_reuses_same_spin_pair_cache) {
-    cache_context.beta_reuse_table =
-        cache_context.alpha_reuse_table;
-  } else if (!cache_context.beta_reuses_alpha_pair_cache) {
-    cache_context.beta_reuse_table =
-        build_spin_determinant_reuse_table(beta_det);
-  }
-
-  const int n_determinants = static_cast<int>(alpha_det.size());
-  cache_context.cached_same_spin_evaluation_count =
-      cache_context.alpha_reuse_table.unique_determinants.size() *
-          cache_context.alpha_reuse_table.unique_determinants.size();
-  if (!cache_context.beta_reuses_alpha_pair_cache) {
-    cache_context.cached_same_spin_evaluation_count +=
-        cache_context.beta_reuse_table.unique_determinants.size() *
-        cache_context.beta_reuse_table.unique_determinants.size();
-  }
-  cache_context.estimated_cache_bytes =
-      estimate_same_spin_pair_cache_bytes(
-          cache_context.alpha_reuse_table.unique_determinants,
-          n_orbitals);
-  if (!cache_context.beta_reuses_alpha_pair_cache) {
-    cache_context.estimated_cache_bytes +=
-        estimate_same_spin_pair_cache_bytes(
-            cache_context.beta_reuse_table.unique_determinants,
-            n_orbitals);
-  }
+  SameSpinPairCacheContext cache_context = build_same_spin_pair_topology(
+      alpha_det, beta_det, n_orbitals);
   // Production policy: always materialize the ordered same-spin determinant
   // kernels. Callers may still opt out of the dense opposite-spin projected
   // images when a streamed matrix-form path can rebuild only the touched
   // packed-pair rows on demand.
-  cache_context.use_same_spin_pair_cache = (n_determinants > 0);
+  cache_context.use_same_spin_pair_cache = !alpha_det.empty();
   const PairProjectionPolicy projection_policy =
       resolve_pair_projection_policy(
           build_options.pair_projection_cache,
@@ -931,9 +883,6 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
       cache_context.beta_pair_cache.clear();
     }
   }
-
-  cache_context.n_unique_alpha = static_cast<int>(cache_context.alpha_reuse_table.unique_determinants.size());
-  cache_context.n_unique_beta = static_cast<int>(cache_context.beta_reuse_table.unique_determinants.size());
 
   return cache_context;
 }

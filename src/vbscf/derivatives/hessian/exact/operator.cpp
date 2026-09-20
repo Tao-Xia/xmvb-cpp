@@ -215,9 +215,13 @@ ExactHvpOperator::State::State(
 
 const AcceptedOuterResponseContext&
 ExactHvpOperator::State::outer_response_context() const {
-  if (!accepted_point_context_->same_spin_pair_cache.enabled()) {
+  const bool has_direct_ci_action =
+      accepted_point_context_->structure_action.has_value() &&
+      accepted_point_context_->structure_action->supports_integral_direction();
+  if (!accepted_point_context_->same_spin_pair_cache.enabled() &&
+      !has_direct_ci_action) {
     throw std::logic_error(
-        "outer response requires the accepted same-spin pair cache");
+        "outer response requires a pair cache or direct-CI action");
   }
   if (accepted_outer_response_context_ == nullptr) {
     if (!accepted_point_context_->structure_action.has_value()) {

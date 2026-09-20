@@ -13,8 +13,10 @@
 #include "vbscf/structures/orthogonal_ci/planner.hpp"
 #include "vbscf/structures/orthogonal_ci/sigma.hpp"
 #include "vbscf/determinants/pairs/evaluator.hpp"
+#include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
+#include "vbscf/structures/assembly/action.hpp"
 
 namespace {
 
@@ -1022,6 +1024,65 @@ void check_sigma_action() {
       (direct_three_structure_overlap -
        reference_three_structure_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
       "direct-CI overlap is inexact on an arbitrary three-structure subspace");
+
+  std::vector<std::vector<int>> product_alpha;
+  std::vector<std::vector<int>> product_beta;
+  std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>
+      determinant_to_structure_terms(product_dimension);
+  product_alpha.reserve(product_dimension);
+  product_beta.reserve(product_dimension);
+  for (int alpha_index = 0;
+       alpha_index < static_cast<int>(alpha.size());
+       ++alpha_index) {
+    for (int beta_index = 0;
+         beta_index < static_cast<int>(beta.size());
+         ++beta_index) {
+      const int product =
+          alpha_index * static_cast<int>(beta.size()) + beta_index;
+      product_alpha.push_back(alpha[alpha_index]);
+      product_beta.push_back(beta[beta_index]);
+      for (int structure = 0; structure < n_test_structures; ++structure) {
+        const double coefficient = structure_expansion(product, structure);
+        if (coefficient != 0.0) {
+          determinant_to_structure_terms[product].push_back(
+              xmvb::vb::StructureExpansionTerm{structure, coefficient});
+        }
+      }
+    }
+  }
+  const auto topology = xmvb::vb::build_same_spin_pair_topology(
+      product_alpha, product_beta, n_orbitals);
+  require(!topology.enabled(), "topology-only context materialized pair data");
+  require(topology.alpha_pair_cache.empty() && topology.beta_pair_cache.empty(),
+          "topology-only context retained ordered pair arrays");
+
+  xmvb::vb::StructureDiagonal exact_diagonal;
+  exact_diagonal.hamiltonian =
+      (structure_expansion.transpose() * dense_hamiltonian *
+       structure_expansion).diagonal();
+  exact_diagonal.overlap =
+      (structure_expansion.transpose() * dense_overlap *
+       structure_expansion).diagonal();
+  xmvb::vb::StructureAction topology_action(
+      determinant_to_structure_terms,
+      n_test_structures,
+      topology,
+      packed_overlap,
+      one_electron,
+      two_electron,
+      n_orbitals,
+      &exact_diagonal);
+  const auto topology_images = topology_action.apply(structure_vectors);
+  require(topology_action.supports_integral_direction(),
+          "topology-only complete space did not select direct CI");
+  require(
+      (topology_images.hamiltonian -
+       reference_three_structure_hamiltonian).cwiseAbs().maxCoeff() < 2.0e-10,
+      "topology-only direct-CI Hamiltonian differs from the dense reference");
+  require(
+      (topology_images.overlap -
+       reference_three_structure_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
+      "topology-only direct-CI overlap differs from the dense reference");
 }
 
 }  // namespace

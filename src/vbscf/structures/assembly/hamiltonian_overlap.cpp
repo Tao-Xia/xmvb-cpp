@@ -1261,10 +1261,12 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
           n_orbitals,
           eri_act,
           pair_evaluator,
-          (same_spin_pair_cache != nullptr)
+          (same_spin_pair_cache != nullptr &&
+           same_spin_pair_cache->enabled())
               ? &same_spin_pair_cache->alpha_pair_cache_ref()
               : nullptr,
-          (same_spin_pair_cache != nullptr)
+          (same_spin_pair_cache != nullptr &&
+           same_spin_pair_cache->enabled())
               ? &same_spin_pair_cache->beta_pair_cache_ref()
               : nullptr);
 
@@ -1359,10 +1361,12 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_impl(
           n_orbitals,
           active_space_two_electron_result,
           pair_evaluator,
-          (same_spin_pair_cache != nullptr)
+          (same_spin_pair_cache != nullptr &&
+           same_spin_pair_cache->enabled())
               ? &same_spin_pair_cache->alpha_pair_cache_ref()
               : nullptr,
-          (same_spin_pair_cache != nullptr)
+          (same_spin_pair_cache != nullptr &&
+           same_spin_pair_cache->enabled())
               ? &same_spin_pair_cache->beta_pair_cache_ref()
               : nullptr);
 

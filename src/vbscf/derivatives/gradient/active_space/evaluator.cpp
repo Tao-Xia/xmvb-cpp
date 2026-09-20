@@ -135,6 +135,22 @@ bool materialized_structure_operator_uses_less_storage(
   return matrix_values <= minimum_factor_values;
 }
 
+bool can_stream_pairs_into_direct_ci(
+    const VbScfInput& input,
+    StructureEigensolver structure_eigensolver,
+    int block_width,
+    const SameSpinPairCacheContext& topology) {
+  const DirectCiActionPlan plan = plan_orthogonal_direct_ci_action(
+      topology.alpha_reuse_table.unique_determinants,
+      topology.beta_reuse_table.unique_determinants,
+      input.orbital_preparation_input.n_active_orbitals,
+      block_width);
+  return plan.favors_direct_ci() &&
+      (structure_eigensolver == StructureEigensolver::Dense ||
+       materialized_structure_operator_uses_less_storage(
+           topology, input.structure_data.n_structures));
+}
+
 bool retain_direct_ci_action_if_available(
     const VbScfInput& input,
     int block_width,
@@ -152,6 +168,31 @@ bool retain_direct_ci_action_if_available(
   }
   const auto& prepared =
       context->timed_active_space_context.prepared_active_space;
+  std::optional<StructureDiagonal> precomputed_diagonal;
+  const std::size_t expected_matrix_size =
+      static_cast<std::size_t>(input.structure_data.n_structures) *
+      input.structure_data.n_structures;
+  if (context->structure_matrices.hamiltonian_matrix.size() ==
+          expected_matrix_size &&
+      context->structure_matrices.overlap_matrix.size() ==
+          expected_matrix_size) {
+    precomputed_diagonal.emplace();
+    precomputed_diagonal->hamiltonian.resize(
+        input.structure_data.n_structures);
+    precomputed_diagonal->overlap.resize(input.structure_data.n_structures);
+    for (int structure = 0;
+         structure < input.structure_data.n_structures;
+         ++structure) {
+      const std::size_t diagonal_index =
+          static_cast<std::size_t>(structure) *
+              input.structure_data.n_structures +
+          structure;
+      precomputed_diagonal->hamiltonian[structure] =
+          context->structure_matrices.hamiltonian_matrix[diagonal_index];
+      precomputed_diagonal->overlap[structure] =
+          context->structure_matrices.overlap_matrix[diagonal_index];
+    }
+  }
   context->structure_action.emplace(
       input.structure_data.determinant_to_structure_terms,
       input.structure_data.n_structures,
@@ -159,7 +200,8 @@ bool retain_direct_ci_action_if_available(
       prepared.orbital_result.active_orbital_overlap_matrix,
       prepared.active_space_one_electron_result.h1e_act,
       prepared.active_space_two_electron_result,
-      input.orbital_preparation_input.n_active_orbitals);
+      input.orbital_preparation_input.n_active_orbitals,
+      precomputed_diagonal ? &*precomputed_diagonal : nullptr);
   return context->structure_action->supports_integral_direction();
 }
 
@@ -317,7 +359,8 @@ void solve_structure_problem(
               generalized_eigensolver),
           context);
     }
-    if (structure_eigensolver == StructureEigensolver::Davidson) {
+    if (structure_eigensolver == StructureEigensolver::Davidson ||
+        !context->same_spin_pair_cache.enabled()) {
       retain_direct_ci_action_if_available(input, n_roots, context);
     }
   } else {
@@ -393,17 +436,29 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
   // The active-space objective and adjoint touch the same ordered alpha/beta
   // determinant-pair reuse pattern. Build that cache once here so the forward
   // structure matrices and the later backward sweep share the same payload.
-  context.same_spin_pair_cache = build_same_spin_pair_cache_context(
+  auto topology = build_same_spin_pair_topology(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
-      cache_builder,
-      prepared_active_space.orbital_result.active_orbital_overlap_matrix,
-      prepared_active_space.active_space_one_electron_result.h1e_act,
-      input.orbital_preparation_input.n_active_orbitals,
-      prepared_active_space.active_space_two_electron_result,
-      SameSpinPairCacheBuildOptions{
-          PairProjectionCache::Both,
-          false});
+      input.orbital_preparation_input.n_active_orbitals);
+  if (can_stream_pairs_into_direct_ci(
+          input,
+          structure_eigensolver,
+          required_root_count(selected_state_indices),
+          topology)) {
+    context.same_spin_pair_cache = std::move(topology);
+  } else {
+    context.same_spin_pair_cache = build_same_spin_pair_cache_context(
+        input.structure_data.alpha_det,
+        input.structure_data.beta_det,
+        cache_builder,
+        prepared_active_space.orbital_result.active_orbital_overlap_matrix,
+        prepared_active_space.active_space_one_electron_result.h1e_act,
+        input.orbital_preparation_input.n_active_orbitals,
+        prepared_active_space.active_space_two_electron_result,
+        SameSpinPairCacheBuildOptions{
+            PairProjectionCache::Both,
+            false});
+  }
   solve_structure_problem(
       input,
       selected_state_indices,
@@ -435,14 +490,26 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
   // Reuse the accepted orbital/integral layer but rebuild the
   // determinant-topology-dependent same-spin cache and structure matrices for
   // the requested structure space.
-  context.same_spin_pair_cache = build_same_spin_pair_cache_context(
+  auto topology = build_same_spin_pair_topology(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
-      cache_builder,
-      prepared_active_space.orbital_result.active_orbital_overlap_matrix,
-      prepared_active_space.active_space_one_electron_result.h1e_act,
-      input.orbital_preparation_input.n_active_orbitals,
-      prepared_active_space.active_space_two_electron_result);
+      input.orbital_preparation_input.n_active_orbitals);
+  if (can_stream_pairs_into_direct_ci(
+          input,
+          structure_eigensolver,
+          required_root_count(selected_state_indices),
+          topology)) {
+    context.same_spin_pair_cache = std::move(topology);
+  } else {
+    context.same_spin_pair_cache = build_same_spin_pair_cache_context(
+        input.structure_data.alpha_det,
+        input.structure_data.beta_det,
+        cache_builder,
+        prepared_active_space.orbital_result.active_orbital_overlap_matrix,
+        prepared_active_space.active_space_one_electron_result.h1e_act,
+        input.orbital_preparation_input.n_active_orbitals,
+        prepared_active_space.active_space_two_electron_result);
+  }
   if (context.same_spin_pair_cache.enabled()) {
     populate_same_spin_phi_cache(
         &context.same_spin_pair_cache,
@@ -696,10 +763,6 @@ void accumulate_active_space_gradient(
   const int n_active_orbitals = input.orbital_preparation_input.n_active_orbitals;
   const auto stage_start_time = std::chrono::steady_clock::now();
   const auto& same_spin_pair_cache = forward_context.same_spin_pair_cache;
-  if (!same_spin_pair_cache.enabled()) {
-    throw std::runtime_error(
-        "active-space gradient requires the matrix-form same-spin cache");
-  }
 
   const SelectedStateDeterminantMatrices selected_state_matrices =
       build_selected_state_determinant_matrices_from_selected_columns(
@@ -725,6 +788,10 @@ void accumulate_active_space_gradient(
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - stage_start_time).count();
     return;
+  }
+  if (!same_spin_pair_cache.enabled()) {
+    throw std::runtime_error(
+        "active-space gradient requires a pair cache or direct-CI action");
   }
   const SameSpinMatrixBackwardContribution same_spin_contribution =
       build_same_spin_matrix_backward_contribution(

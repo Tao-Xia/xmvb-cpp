@@ -268,10 +268,6 @@ build_selected_structure_direction(
   const auto& input = *accepted.input;
   const auto& accepted_point = *accepted.accepted_point_context;
   const auto& same_spin = accepted_point.same_spin_pair_cache;
-  if (!same_spin.enabled()) {
-    throw std::invalid_argument(
-        "factorized structure direction requires the same-spin cache");
-  }
 
   const int n_active_orbitals =
       input.orbital_preparation_input.n_active_orbitals;
@@ -311,6 +307,10 @@ build_selected_structure_direction(
         direct_direction.hamiltonian,
         direct_direction.overlap,
         std::move(direct_ci_direction)};
+  }
+  if (!same_spin.enabled()) {
+    throw std::invalid_argument(
+        "factorized structure direction requires the same-spin cache");
   }
   if (accepted.structure_factors == nullptr) {
     throw std::invalid_argument(

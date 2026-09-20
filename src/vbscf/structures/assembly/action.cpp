@@ -519,7 +519,8 @@ StructureAction::StructureAction(
     const std::vector<double>& active_overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    int n_active_orbitals)
+    int n_active_orbitals,
+    const StructureDiagonal* precomputed_diagonal)
     : n_determinants_(
           static_cast<int>(determinant_to_structure_terms.size())),
       n_structures_(n_structures),
@@ -530,10 +531,6 @@ StructureAction::StructureAction(
   if (n_determinants_ <= 0 || n_structures_ <= 0) {
     throw std::invalid_argument(
         "matrix-free structure action requires positive dimensions");
-  }
-  if (!same_spin_pair_cache.enabled()) {
-    throw std::invalid_argument(
-        "matrix-free structure action requires a same-spin pair cache");
   }
   if (n_unique_alpha_ <= 0 || n_unique_beta_ <= 0) {
     throw std::invalid_argument(
@@ -547,6 +544,23 @@ StructureAction::StructureAction(
               .determinant_to_unique_id.size()) != n_determinants_) {
     throw std::invalid_argument(
         "same-spin pair cache does not match determinant expansion");
+  }
+
+  const DirectCiActionPlan direct_ci_plan =
+      plan_orthogonal_direct_ci_action(
+          same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+          same_spin_pair_cache.beta_reuse_table.unique_determinants,
+          n_active_orbitals,
+          1);
+  const bool use_direct_ci = direct_ci_plan.favors_direct_ci() ||
+      (!same_spin_pair_cache.enabled() && direct_ci_plan.complete());
+  if (!same_spin_pair_cache.enabled() && !use_direct_ci) {
+    throw std::invalid_argument(
+        "factorized structure action requires a same-spin pair cache");
+  }
+  if (!same_spin_pair_cache.enabled() && precomputed_diagonal == nullptr) {
+    throw std::invalid_argument(
+        "topology-only direct-CI action requires an exact structure diagonal");
   }
 
   const int n_packed_pairs = packed_active_pair_count(n_active_orbitals);
@@ -585,28 +599,24 @@ StructureAction::StructureAction(
       }
     }
   };
-  validate_pair_cache(
-      same_spin_pair_cache.alpha_pair_cache_ref(),
-      static_cast<int>(
-          same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()));
-  if (!same_spin_pair_cache.shares_same_spin_pair_cache_between_spins()) {
+  if (same_spin_pair_cache.enabled()) {
     validate_pair_cache(
-        same_spin_pair_cache.beta_pair_cache_ref(),
+        same_spin_pair_cache.alpha_pair_cache_ref(),
         static_cast<int>(
-            same_spin_pair_cache.beta_reuse_table.unique_determinants.size()));
+            same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()));
+    if (!same_spin_pair_cache.shares_same_spin_pair_cache_between_spins()) {
+      validate_pair_cache(
+          same_spin_pair_cache.beta_pair_cache_ref(),
+          static_cast<int>(
+              same_spin_pair_cache.beta_reuse_table.unique_determinants.size()));
+    }
   }
 
   const auto& alpha_pair_cache =
       same_spin_pair_cache.alpha_pair_cache_ref();
   const auto& beta_pair_cache =
       same_spin_pair_cache.beta_pair_cache_ref();
-  const DirectCiActionPlan direct_ci_plan =
-      plan_orthogonal_direct_ci_action(
-          same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-          same_spin_pair_cache.beta_reuse_table.unique_determinants,
-          n_active_orbitals,
-          1);
-  if (direct_ci_plan.favors_direct_ci()) {
+  if (use_direct_ci) {
     direct_ci_ = std::make_unique<OrthogonalDirectCiData>(
         same_spin_pair_cache.alpha_reuse_table.unique_determinants,
         same_spin_pair_cache.beta_reuse_table.unique_determinants,
@@ -627,9 +637,16 @@ StructureAction::StructureAction(
         alpha_pair_cache, beta_pair_cache, n_packed_pairs);
   }
 
-  const int n_spin_products = n_unique_alpha_ * n_unique_beta_;
-  std::vector<std::vector<StructureTerm>> terms_by_spin_product(
-      n_spin_products);
+  struct PendingSpinTerm {
+    int spin_product = 0;
+    StructureTerm term;
+  };
+  std::vector<PendingSpinTerm> pending_terms;
+  std::size_t n_expansion_terms = 0;
+  for (const auto& determinant_terms : determinant_to_structure_terms) {
+    n_expansion_terms += determinant_terms.size();
+  }
+  pending_terms.reserve(n_expansion_terms);
   for (int determinant = 0;
        determinant < n_determinants_;
        ++determinant) {
@@ -644,37 +661,45 @@ StructureAction::StructureAction(
         throw std::out_of_range(
             "determinant expansion structure index is out of range");
       }
-      terms_by_spin_product[spin_product].push_back(
-          StructureTerm{term.structure_index, term.coefficient});
+      pending_terms.push_back(PendingSpinTerm{
+          spin_product,
+          StructureTerm{term.structure_index, term.coefficient}});
     }
   }
 
-  spin_term_offsets_.reserve(static_cast<std::size_t>(n_spin_products) + 1);
+  std::sort(
+      pending_terms.begin(),
+      pending_terms.end(),
+      [](const PendingSpinTerm& left, const PendingSpinTerm& right) {
+        if (left.spin_product != right.spin_product) {
+          return left.spin_product < right.spin_product;
+        }
+        return left.term.structure < right.term.structure;
+      });
+  spin_products_.reserve(std::min(
+      pending_terms.size(),
+      static_cast<std::size_t>(n_determinants_)));
+  spin_terms_.reserve(pending_terms.size());
+  spin_term_offsets_.reserve(spin_products_.capacity() + 1);
   spin_term_offsets_.push_back(0);
-  for (auto& terms : terms_by_spin_product) {
-    std::sort(
-        terms.begin(),
-        terms.end(),
-        [](const StructureTerm& left, const StructureTerm& right) {
-          return left.structure < right.structure;
-        });
-    const std::size_t first = spin_terms_.size();
-    for (const StructureTerm& term : terms) {
-      if (spin_terms_.size() > first &&
-          spin_terms_.back().structure == term.structure) {
-        spin_terms_.back().coefficient += term.coefficient;
-      } else {
-        spin_terms_.push_back(term);
+  std::size_t pending = 0;
+  while (pending < pending_terms.size()) {
+    const int spin_product = pending_terms[pending].spin_product;
+    spin_products_.push_back(spin_product);
+    while (pending < pending_terms.size() &&
+           pending_terms[pending].spin_product == spin_product) {
+      const int structure = pending_terms[pending].term.structure;
+      double coefficient = 0.0;
+      while (pending < pending_terms.size() &&
+             pending_terms[pending].spin_product == spin_product &&
+             pending_terms[pending].term.structure == structure) {
+        coefficient += pending_terms[pending].term.coefficient;
+        ++pending;
+      }
+      if (coefficient != 0.0) {
+        spin_terms_.push_back(StructureTerm{structure, coefficient});
       }
     }
-    spin_terms_.erase(
-        std::remove_if(
-            spin_terms_.begin() + first,
-            spin_terms_.end(),
-            [](const StructureTerm& term) {
-              return term.coefficient == 0.0;
-            }),
-        spin_terms_.end());
     spin_term_offsets_.push_back(spin_terms_.size());
   }
 
@@ -684,16 +709,25 @@ StructureAction::StructureAction(
   };
   std::vector<std::vector<StructureSpinTerm>> terms_by_structure(
       n_structures_);
-  for (int spin_product = 0;
-       spin_product < n_spin_products;
-       ++spin_product) {
-    for (std::size_t term_index = spin_term_offsets_[spin_product];
-         term_index < spin_term_offsets_[spin_product + 1];
+  for (std::size_t group = 0; group < spin_products_.size(); ++group) {
+    const int spin_product = spin_products_[group];
+    for (std::size_t term_index = spin_term_offsets_[group];
+         term_index < spin_term_offsets_[group + 1];
          ++term_index) {
       const StructureTerm& term = spin_terms_[term_index];
       terms_by_structure[term.structure].push_back(
           StructureSpinTerm{spin_product, term.coefficient});
     }
+  }
+
+  if (precomputed_diagonal != nullptr) {
+    if (precomputed_diagonal->hamiltonian.size() != n_structures_ ||
+        precomputed_diagonal->overlap.size() != n_structures_) {
+      throw std::invalid_argument(
+          "precomputed structure diagonal has incompatible dimensions");
+    }
+    diagonal_ = *precomputed_diagonal;
+    return;
   }
 
   diagonal_.hamiltonian = Eigen::VectorXd::Zero(n_structures_);
@@ -703,7 +737,6 @@ StructureAction::StructureAction(
   const int n_threads = std::max(
       1,
       std::min(xmvb::effective_openmp_thread_count(), n_structures_));
-
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int structure = 0; structure < n_structures_; ++structure) {
     double hamiltonian = 0.0;
@@ -1135,14 +1168,12 @@ Eigen::MatrixXd StructureAction::contract_spin_product_block(
       static_cast<int>(spin_images.cols()) / n_unique_beta_;
   Eigen::MatrixXd result =
       Eigen::MatrixXd::Zero(n_structures_, block_width);
-  const int n_spin_products = n_unique_alpha_ * n_unique_beta_;
-  for (int spin_product = 0;
-       spin_product < n_spin_products;
-       ++spin_product) {
+  for (std::size_t group = 0; group < spin_products_.size(); ++group) {
+    const int spin_product = spin_products_[group];
     const int alpha = spin_product / n_unique_beta_;
     const int beta = spin_product % n_unique_beta_;
-    for (std::size_t term_index = spin_term_offsets_[spin_product];
-         term_index < spin_term_offsets_[spin_product + 1];
+    for (std::size_t term_index = spin_term_offsets_[group];
+         term_index < spin_term_offsets_[group + 1];
          ++term_index) {
       const StructureTerm& term = spin_terms_[term_index];
       for (int vector = 0; vector < block_width; ++vector) {
@@ -1165,14 +1196,12 @@ Eigen::MatrixXd StructureAction::expand_structure_block(
   const int block_width = static_cast<int>(vectors.cols());
   Eigen::MatrixXd spin_vectors = Eigen::MatrixXd::Zero(
       n_unique_alpha_, block_width * n_unique_beta_);
-  const int n_spin_products = n_unique_alpha_ * n_unique_beta_;
-  for (int spin_product = 0;
-       spin_product < n_spin_products;
-       ++spin_product) {
+  for (std::size_t group = 0; group < spin_products_.size(); ++group) {
+    const int spin_product = spin_products_[group];
     const int alpha = spin_product / n_unique_beta_;
     const int beta = spin_product % n_unique_beta_;
-    for (std::size_t term_index = spin_term_offsets_[spin_product];
-         term_index < spin_term_offsets_[spin_product + 1];
+    for (std::size_t term_index = spin_term_offsets_[group];
+         term_index < spin_term_offsets_[group + 1];
          ++term_index) {
       const StructureTerm& term = spin_terms_[term_index];
       for (int vector = 0; vector < block_width; ++vector) {
@@ -1853,6 +1882,7 @@ StructureActionStorage StructureAction::storage() const noexcept {
   result.channel_nonzeros = channel_nonzeros_;
   result.channel_dense_values = channel_dense_values_;
   result.expansion_bytes =
+      spin_products_.size() * sizeof(int) +
       spin_term_offsets_.size() * sizeof(std::size_t) +
       spin_terms_.size() * sizeof(StructureTerm);
   result.diagonal_bytes =

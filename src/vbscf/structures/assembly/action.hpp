@@ -108,7 +108,8 @@ public:
       const std::vector<double>& active_overlap,
       const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-      int n_active_orbitals);
+      int n_active_orbitals,
+      const StructureDiagonal* precomputed_diagonal = nullptr);
 
   ~StructureAction();
   StructureAction(StructureAction&&) noexcept;
@@ -285,6 +286,7 @@ private:
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
       Eigen::MatrixXd* spin_hamiltonian) const;
 
+  std::vector<int> spin_products_;
   std::vector<std::size_t> spin_term_offsets_;
   std::vector<StructureTerm> spin_terms_;
   StructureDiagonal diagonal_;
