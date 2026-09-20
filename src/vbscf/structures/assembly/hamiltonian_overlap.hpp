@@ -110,6 +110,24 @@ public:
       const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
   /**
+   * @brief Builds only the exact structure H/S diagonals by streamed pairs.
+   *
+   * This is the setup path for a matrix-free Davidson solve. Its work scales
+   * with the number of structures rather than the number of structure pairs,
+   * and it never allocates full structure matrices or ordered spin-pair arrays.
+   */
+  StructureDiagonal build_diagonal(
+      const std::vector<std::vector<int>>& alpha_det,
+      const std::vector<std::vector<int>>& beta_det,
+      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+      const std::vector<double>& ovlp_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+      int n_orbitals,
+      const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+      int n_structures,
+      const SameSpinPairCacheContext& same_spin_pair_cache) const;
+
+  /**
    * @brief Builds structure matrices while reusing a same-spin cache and RI data.
    */
   StructureAccumulationResult build(

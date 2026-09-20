@@ -17,6 +17,7 @@
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/structures/assembly/action.hpp"
+#include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
 
 namespace {
 
@@ -1063,6 +1064,28 @@ void check_sigma_action() {
   exact_diagonal.overlap =
       (structure_expansion.transpose() * dense_overlap *
        structure_expansion).diagonal();
+  const xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder builder;
+  const xmvb::vb::StructureDiagonal streamed_diagonal =
+      builder.build_diagonal(
+          product_alpha,
+          product_beta,
+          determinant_to_structure_terms,
+          packed_overlap,
+          one_electron,
+          n_orbitals,
+          two_electron,
+          n_test_structures,
+          topology);
+  require(
+      (streamed_diagonal.hamiltonian - exact_diagonal.hamiltonian)
+              .cwiseAbs()
+              .maxCoeff() < 2.0e-10,
+      "streamed structure Hamiltonian diagonal is inexact");
+  require(
+      (streamed_diagonal.overlap - exact_diagonal.overlap)
+              .cwiseAbs()
+              .maxCoeff() < 2.0e-10,
+      "streamed structure overlap diagonal is inexact");
   xmvb::vb::StructureAction topology_action(
       determinant_to_structure_terms,
       n_test_structures,

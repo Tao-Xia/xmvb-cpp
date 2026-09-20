@@ -25,14 +25,6 @@ struct StructureActionResult {
   Eigen::MatrixXd overlap;
 };
 
-/**
- * @brief Exact diagonals used by a matrix-free generalized eigensolver.
- */
-struct StructureDiagonal {
-  Eigen::VectorXd hamiltonian;
-  Eigen::VectorXd overlap;
-};
-
 /** @brief Active-integral adjoint of selected structure-space states. */
 struct StructureActiveIntegralAdjoint {
   Eigen::MatrixXd overlap;

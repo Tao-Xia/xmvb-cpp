@@ -3,6 +3,8 @@
 #include <cstddef>
 #include <vector>
 
+#include <Eigen/Core>
+
 namespace xmvb::vb {
 
 /**
@@ -55,6 +57,17 @@ struct StructureAccumulationResult {
    * determinant index.
    */
   std::vector<double> determinant_overlap_cache;
+};
+
+/**
+ * @brief Exact structure-space Hamiltonian and overlap diagonals.
+ *
+ * Matrix-free eigensolvers retain these vectors for preconditioning without
+ * materializing either full structure matrix.
+ */
+struct StructureDiagonal {
+  Eigen::VectorXd hamiltonian;
+  Eigen::VectorXd overlap;
 };
 
 struct HamiltonianOverlapMatrices {

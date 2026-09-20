@@ -798,6 +798,140 @@ double contract_local_opposite_spin_block(
   return contraction;
 }
 
+struct ForwardStructurePairWorkspace {
+  Eigen::MatrixXd alpha_overlap;
+  Eigen::MatrixXd alpha_hamiltonian;
+  Eigen::MatrixXd beta_overlap;
+  Eigen::MatrixXd beta_hamiltonian;
+  Eigen::MatrixXd projected_channel;
+  Eigen::MatrixXd beta_push;
+  Eigen::MatrixXd image;
+  LocalSpinProjectionBlock alpha_projection;
+  LocalSpinProjectionBlock beta_projection;
+};
+
+struct ForwardStructurePairResult {
+  double hamiltonian = 0.0;
+  double overlap = 0.0;
+};
+
+template <typename TwoElectronInput>
+ForwardStructurePairResult contract_forward_structure_pair(
+    const StructureCoefficientBlock& left,
+    const StructureCoefficientBlock& right,
+    bool close_shell_same_spin,
+    bool shared_same_spin_pair_kernels,
+    ForwardSpinPairTileProvider<TwoElectronInput>* alpha_provider,
+    ForwardSpinPairTileProvider<TwoElectronInput>* beta_provider,
+    const ActiveSpaceTwoElectronView& two_electron_view,
+    int n_orbitals,
+    ForwardStructurePairWorkspace* workspace) {
+  if (alpha_provider == nullptr || beta_provider == nullptr ||
+      workspace == nullptr) {
+    throw std::invalid_argument(
+        "forward structure-pair contraction requires non-null workspace");
+  }
+  if (left.local_coefficients.size() == 0 ||
+      right.local_coefficients.size() == 0) {
+    return {};
+  }
+
+  gather_forward_spin_block(
+      alpha_provider,
+      left.alpha_support,
+      right.alpha_support,
+      &workspace->alpha_overlap,
+      &workspace->alpha_hamiltonian,
+      &workspace->alpha_projection);
+
+  const bool close_shell_diagonal =
+      close_shell_same_spin && left.close_shell_diagonal &&
+      right.close_shell_diagonal;
+  if (close_shell_diagonal) {
+    workspace->beta_overlap = workspace->alpha_overlap;
+    workspace->beta_hamiltonian = workspace->alpha_hamiltonian;
+    workspace->beta_projection = workspace->alpha_projection;
+  } else {
+    gather_forward_spin_block(
+        shared_same_spin_pair_kernels ? alpha_provider : beta_provider,
+        left.beta_support,
+        right.beta_support,
+        &workspace->beta_overlap,
+        &workspace->beta_hamiltonian,
+        &workspace->beta_projection);
+  }
+
+  ForwardStructurePairResult result;
+  if (close_shell_diagonal) {
+    result.overlap = contract_diagonal_structure_pair_kernel(
+        left.local_diagonal_coefficients,
+        right.local_diagonal_coefficients,
+        workspace->alpha_overlap,
+        workspace->alpha_overlap);
+    result.hamiltonian = 2.0 * contract_diagonal_structure_pair_kernel(
+        left.local_diagonal_coefficients,
+        right.local_diagonal_coefficients,
+        workspace->alpha_hamiltonian,
+        workspace->alpha_overlap);
+  } else {
+    result.overlap = contract_dense_structure_pair_kernel(
+        left.local_coefficients,
+        right.local_coefficients,
+        workspace->alpha_overlap,
+        workspace->beta_overlap,
+        &workspace->beta_push,
+        &workspace->image);
+    result.hamiltonian = contract_dense_structure_pair_kernel(
+        left.local_coefficients,
+        right.local_coefficients,
+        workspace->alpha_hamiltonian,
+        workspace->beta_overlap,
+        &workspace->beta_push,
+        &workspace->image) +
+        contract_dense_structure_pair_kernel(
+            left.local_coefficients,
+            right.local_coefficients,
+            workspace->alpha_overlap,
+            workspace->beta_hamiltonian,
+            &workspace->beta_push,
+            &workspace->image);
+  }
+
+  if (close_shell_diagonal) {
+    const LocalOppositeSpinChannelFamily channels =
+        build_local_channel_family(
+            workspace->alpha_projection,
+            packed_active_pair_count(n_orbitals));
+    for (std::size_t channel = 0;
+         channel < channels.packed_pair_indices.size();
+         ++channel) {
+      build_local_projected_channel(
+          workspace->alpha_projection,
+          channels.packed_pair_indices[channel],
+          two_electron_view,
+          n_orbitals,
+          &workspace->projected_channel);
+      result.hamiltonian += contract_diagonal_structure_pair_kernel(
+          left.local_diagonal_coefficients,
+          right.local_diagonal_coefficients,
+          channels.alpha_channel_matrices[channel],
+          workspace->projected_channel);
+    }
+  } else {
+    result.hamiltonian += contract_local_opposite_spin_block(
+        left.local_coefficients,
+        right.local_coefficients,
+        workspace->alpha_projection,
+        workspace->beta_projection,
+        two_electron_view,
+        n_orbitals,
+        &workspace->projected_channel,
+        &workspace->beta_push,
+        &workspace->image);
+  }
+  return result;
+}
+
 template <typename TwoElectronInput>
 StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
     const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
@@ -921,15 +1055,7 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
         two_electron_input,
         tile_size,
         max_cached_tiles);
-    Eigen::MatrixXd alpha_overlap_subblock;
-    Eigen::MatrixXd alpha_total_subblock;
-    Eigen::MatrixXd beta_overlap_subblock;
-    Eigen::MatrixXd beta_total_subblock;
-    Eigen::MatrixXd beta_projected_channel_block;
-    Eigen::MatrixXd beta_push;
-    Eigen::MatrixXd image;
-    LocalSpinProjectionBlock alpha_projection_block;
-    LocalSpinProjectionBlock beta_projection_block;
+    ForwardStructurePairWorkspace workspace;
 
 #pragma omp for schedule(dynamic, 1)
     for (int right_structure = 0;
@@ -948,130 +1074,106 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
                 right_structure,
                 n_structures);
 
-        if (left_block.local_coefficients.size() == 0 ||
-            right_block.local_coefficients.size() == 0) {
-          result.overlap_matrix[linear_index] = 0.0;
-          result.hamiltonian_matrix[linear_index] = 0.0;
-          continue;
-        }
-
-        gather_forward_spin_block(
-            &thread_alpha_provider,
-            left_block.alpha_support,
-            right_block.alpha_support,
-            &alpha_overlap_subblock,
-            &alpha_total_subblock,
-            &alpha_projection_block);
-
-        const bool structure_pair_close_shell_diagonal =
-            close_shell_same_spin &&
-            left_block.close_shell_diagonal &&
-            right_block.close_shell_diagonal;
-        if (structure_pair_close_shell_diagonal) {
-          beta_overlap_subblock = alpha_overlap_subblock;
-          beta_total_subblock = alpha_total_subblock;
-          beta_projection_block = alpha_projection_block;
-        } else {
-          gather_forward_spin_block(
-              shared_same_spin_pair_kernels
-                  ? &thread_alpha_provider
-                  : &thread_beta_provider,
-              left_block.beta_support,
-              right_block.beta_support,
-              &beta_overlap_subblock,
-              &beta_total_subblock,
-              &beta_projection_block);
-        }
-
-        double overlap_value = 0.0;
-        double total_hamiltonian_value = 0.0;
-        if (structure_pair_close_shell_diagonal) {
-          overlap_value =
-              contract_diagonal_structure_pair_kernel(
-                  left_block.local_diagonal_coefficients,
-                  right_block.local_diagonal_coefficients,
-                  alpha_overlap_subblock,
-                  alpha_overlap_subblock);
-          total_hamiltonian_value =
-              2.0 *
-              contract_diagonal_structure_pair_kernel(
-                  left_block.local_diagonal_coefficients,
-                  right_block.local_diagonal_coefficients,
-                  alpha_total_subblock,
-                  alpha_overlap_subblock);
-        } else {
-          overlap_value =
-              contract_dense_structure_pair_kernel(
-                  left_block.local_coefficients,
-                  right_block.local_coefficients,
-                  alpha_overlap_subblock,
-                  beta_overlap_subblock,
-                  &beta_push,
-                  &image);
-          total_hamiltonian_value =
-              contract_dense_structure_pair_kernel(
-                  left_block.local_coefficients,
-                  right_block.local_coefficients,
-                  alpha_total_subblock,
-                  beta_overlap_subblock,
-                  &beta_push,
-                  &image) +
-              contract_dense_structure_pair_kernel(
-                  left_block.local_coefficients,
-                  right_block.local_coefficients,
-                  alpha_overlap_subblock,
-                  beta_total_subblock,
-                  &beta_push,
-                  &image);
-        }
-        total_hamiltonian_value +=
-            structure_pair_close_shell_diagonal
-                ? [&]() {
-                    const int n_packed_active_pairs =
-                        packed_active_pair_count(n_orbitals);
-                    const LocalOppositeSpinChannelFamily alpha_channels =
-                        build_local_channel_family(
-                            alpha_projection_block,
-                            n_packed_active_pairs);
-                    double contraction = 0.0;
-                    for (std::size_t channel_index = 0;
-                         channel_index < alpha_channels.packed_pair_indices.size();
-                         ++channel_index) {
-                      build_local_projected_channel(
-                          alpha_projection_block,
-                          alpha_channels.packed_pair_indices[channel_index],
-                          two_electron_view,
-                          n_orbitals,
-                          &beta_projected_channel_block);
-                      contraction +=
-                          contract_diagonal_structure_pair_kernel(
-                              left_block.local_diagonal_coefficients,
-                              right_block.local_diagonal_coefficients,
-                              alpha_channels.alpha_channel_matrices[channel_index],
-                              beta_projected_channel_block);
-                    }
-                    return contraction;
-                  }()
-                : contract_local_opposite_spin_block(
-                      left_block.local_coefficients,
-                      right_block.local_coefficients,
-                      alpha_projection_block,
-                      beta_projection_block,
-                      two_electron_view,
-                      n_orbitals,
-                      &beta_projected_channel_block,
-                      &beta_push,
-                      &image);
-
-        result.overlap_matrix[linear_index] = overlap_value;
-        result.hamiltonian_matrix[linear_index] =
-            total_hamiltonian_value;
+        const ForwardStructurePairResult pair =
+            contract_forward_structure_pair(
+                left_block,
+                right_block,
+                close_shell_same_spin,
+                shared_same_spin_pair_kernels,
+                &thread_alpha_provider,
+                &thread_beta_provider,
+                two_electron_view,
+                n_orbitals,
+                &workspace);
+        result.overlap_matrix[linear_index] = pair.overlap;
+        result.hamiltonian_matrix[linear_index] = pair.hamiltonian;
       }
     }
   }
 
   symmetrize_structure_matrices(result);
   return result;
+}
+
+template <typename TwoElectronInput>
+StructureDiagonal build_tiled_structure_diagonal(
+    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    int n_structures,
+    const SpinDeterminantReuseTable& alpha_reuse_table,
+    const SpinDeterminantReuseTable& beta_reuse_table,
+    const std::vector<double>& ovlp_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_orbitals,
+    const TwoElectronInput& two_electron_input,
+    const DeterminantPairEvaluator& pair_evaluator,
+    const std::vector<SpinDeterminantPairEvaluation>* alpha_pair_cache,
+    const std::vector<SpinDeterminantPairEvaluation>* beta_pair_cache) {
+  const bool close_shell_same_spin =
+      alpha_reuse_table.unique_determinants ==
+          beta_reuse_table.unique_determinants &&
+      alpha_reuse_table.determinant_to_unique_id ==
+          beta_reuse_table.determinant_to_unique_id;
+  const bool shared_same_spin_pair_kernels =
+      alpha_reuse_table.unique_determinants ==
+      beta_reuse_table.unique_determinants;
+  const auto coefficient_blocks = build_structure_coefficient_blocks(
+      determinant_to_structure_terms,
+      n_structures,
+      alpha_reuse_table,
+      beta_reuse_table,
+      true);
+  const ActiveSpaceTwoElectronView two_electron_view =
+      make_active_space_two_electron_view(two_electron_input);
+  const int tile_size = structure_matrix_tile_size();
+  const int max_cached_tiles = structure_matrix_tile_cache_tiles();
+  const int n_threads = forward_structure_matrix_thread_count(n_structures);
+
+  StructureDiagonal diagonal;
+  diagonal.hamiltonian = Eigen::VectorXd::Zero(n_structures);
+  diagonal.overlap = Eigen::VectorXd::Zero(n_structures);
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+    const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
+    ForwardSpinPairTileProvider<TwoElectronInput> alpha_provider(
+        alpha_reuse_table.unique_determinants,
+        alpha_pair_cache,
+        thread_pair_evaluator,
+        ovlp_act,
+        h1e_act,
+        n_orbitals,
+        two_electron_input,
+        tile_size,
+        max_cached_tiles);
+    ForwardSpinPairTileProvider<TwoElectronInput> beta_provider(
+        beta_reuse_table.unique_determinants,
+        beta_pair_cache,
+        thread_pair_evaluator,
+        ovlp_act,
+        h1e_act,
+        n_orbitals,
+        two_electron_input,
+        tile_size,
+        max_cached_tiles);
+    ForwardStructurePairWorkspace workspace;
+
+#pragma omp for schedule(dynamic, 1)
+    for (int structure = 0; structure < n_structures; ++structure) {
+      const auto& block = coefficient_blocks[structure];
+      const ForwardStructurePairResult pair = contract_forward_structure_pair(
+          block,
+          block,
+          close_shell_same_spin,
+          shared_same_spin_pair_kernels,
+          &alpha_provider,
+          &beta_provider,
+          two_electron_view,
+          n_orbitals,
+          &workspace);
+      diagonal.hamiltonian[structure] = pair.hamiltonian;
+      diagonal.overlap[structure] = pair.overlap;
+    }
+  }
+  return diagonal;
 }
 
 }  // namespace
@@ -1195,6 +1297,48 @@ StructureAccumulationResult FullDeterminantStructureHamiltonianOverlapBuilder::b
       &same_spin_pair_cache,
       false)
       .structure_matrices;
+}
+
+StructureDiagonal
+FullDeterminantStructureHamiltonianOverlapBuilder::build_diagonal(
+    const std::vector<std::vector<int>>& alpha_det,
+    const std::vector<std::vector<int>>& beta_det,
+    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    const std::vector<double>& ovlp_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    int n_structures,
+    const SameSpinPairCacheContext& same_spin_pair_cache) const {
+  validate_full_determinant_input(
+      alpha_det,
+      beta_det,
+      determinant_to_structure_terms,
+      n_orbitals,
+      n_structures);
+  if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
+          alpha_det.size() ||
+      same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() !=
+          beta_det.size()) {
+    throw std::invalid_argument(
+        "same-spin topology does not match the determinant expansion");
+  }
+  return build_tiled_structure_diagonal(
+      determinant_to_structure_terms,
+      n_structures,
+      same_spin_pair_cache.alpha_reuse_table,
+      same_spin_pair_cache.beta_reuse_table,
+      ovlp_act,
+      h1e_act,
+      n_orbitals,
+      active_space_two_electron_result,
+      make_pair_evaluator(),
+      same_spin_pair_cache.enabled()
+          ? &same_spin_pair_cache.alpha_pair_cache_ref()
+          : nullptr,
+      same_spin_pair_cache.enabled()
+          ? &same_spin_pair_cache.beta_pair_cache_ref()
+          : nullptr);
 }
 
 DeterminantPairEvaluator

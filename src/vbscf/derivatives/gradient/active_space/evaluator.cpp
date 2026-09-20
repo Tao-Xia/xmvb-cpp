@@ -135,9 +135,8 @@ bool materialized_structure_operator_uses_less_storage(
   return matrix_values <= minimum_factor_values;
 }
 
-bool can_stream_pairs_into_direct_ci(
+bool can_use_topology_only_direct_ci(
     const VbScfInput& input,
-    StructureEigensolver structure_eigensolver,
     int block_width,
     const SameSpinPairCacheContext& topology) {
   const DirectCiActionPlan plan = plan_orthogonal_direct_ci_action(
@@ -145,10 +144,7 @@ bool can_stream_pairs_into_direct_ci(
       topology.beta_reuse_table.unique_determinants,
       input.orbital_preparation_input.n_active_orbitals,
       block_width);
-  return plan.favors_direct_ci() &&
-      (structure_eigensolver == StructureEigensolver::Dense ||
-       materialized_structure_operator_uses_less_storage(
-           topology, input.structure_data.n_structures));
+  return plan.favors_direct_ci();
 }
 
 bool retain_direct_ci_action_if_available(
@@ -295,11 +291,20 @@ void solve_structure_problem(
   const int n_structures = input.structure_data.n_structures;
   const int n_roots = required_root_count(selected_state_indices);
   auto stage_start_time = std::chrono::steady_clock::now();
+  const DirectCiActionPlan direct_ci_plan = plan_orthogonal_direct_ci_action(
+      context->same_spin_pair_cache.alpha_reuse_table.unique_determinants,
+      context->same_spin_pair_cache.beta_reuse_table.unique_determinants,
+      input.orbital_preparation_input.n_active_orbitals,
+      n_roots);
+  const bool use_direct_ci_action =
+      structure_eigensolver == StructureEigensolver::Davidson &&
+      direct_ci_plan.favors_direct_ci();
   const bool use_materialized_operator =
       structure_eigensolver == StructureEigensolver::Dense ||
-      materialized_structure_operator_uses_less_storage(
-          context->same_spin_pair_cache,
-          n_structures);
+      (!use_direct_ci_action &&
+       materialized_structure_operator_uses_less_storage(
+           context->same_spin_pair_cache,
+           n_structures));
 
   if (use_materialized_operator) {
     context->structure_matrices = structure_builder.build(
@@ -364,6 +369,19 @@ void solve_structure_problem(
       retain_direct_ci_action_if_available(input, n_roots, context);
     }
   } else {
+    std::optional<StructureDiagonal> streamed_diagonal;
+    if (!context->same_spin_pair_cache.enabled()) {
+      streamed_diagonal = structure_builder.build_diagonal(
+          input.structure_data.alpha_det,
+          input.structure_data.beta_det,
+          input.structure_data.determinant_to_structure_terms,
+          prepared.orbital_result.active_orbital_overlap_matrix,
+          prepared.active_space_one_electron_result.h1e_act,
+          input.orbital_preparation_input.n_active_orbitals,
+          prepared.active_space_two_electron_result,
+          n_structures,
+          context->same_spin_pair_cache);
+    }
     context->structure_action.emplace(
         input.structure_data.determinant_to_structure_terms,
         n_structures,
@@ -371,7 +389,8 @@ void solve_structure_problem(
         prepared.orbital_result.active_orbital_overlap_matrix,
         prepared.active_space_one_electron_result.h1e_act,
         prepared.active_space_two_electron_result,
-        input.orbital_preparation_input.n_active_orbitals);
+        input.orbital_preparation_input.n_active_orbitals,
+        streamed_diagonal ? &*streamed_diagonal : nullptr);
     context->structure_matrix_wall_time_seconds =
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - stage_start_time)
@@ -440,9 +459,8 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
       input.orbital_preparation_input.n_active_orbitals);
-  if (can_stream_pairs_into_direct_ci(
+  if (can_use_topology_only_direct_ci(
           input,
-          structure_eigensolver,
           required_root_count(selected_state_indices),
           topology)) {
     context.same_spin_pair_cache = std::move(topology);
@@ -494,9 +512,8 @@ ActiveSpaceGradientForwardContext build_active_space_gradient_forward_context(
       input.structure_data.alpha_det,
       input.structure_data.beta_det,
       input.orbital_preparation_input.n_active_orbitals);
-  if (can_stream_pairs_into_direct_ci(
+  if (can_use_topology_only_direct_ci(
           input,
-          structure_eigensolver,
           required_root_count(selected_state_indices),
           topology)) {
     context.same_spin_pair_cache = std::move(topology);
