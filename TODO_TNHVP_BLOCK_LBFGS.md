@@ -25,9 +25,14 @@ The next implementation sequence is:
    nine-system Hanhai25 job 246984 passed. Both modes use the same L-BFGS
    backend, and the default remains scalar initialization. Numerical results
    are recorded in the consistency audit.
-2. [ ] Reproduce a failing accepted point and log curvature skew, response
+2. [x] Reproduce a failing accepted point and log curvature skew, response
    residuals, additivity, column-order sensitivity, and the independent
    directional HVP defect. Identify which error source explains the skew.
+   Job 246988 isolates the skew to structure response at the captured 241
+   point; dense replay of identical directions is symmetric to roundoff.
+   Cold/warm and block-segmentation dependence confirm that the current
+   inexact response action is not one fixed linear operator. See audit
+   Section 10; this diagnoses the defect, not a production repair.
 3. [ ] Give predictor and curvature steps consistent quadratic decrease
    estimates; keep rejected-Newton and accepted-predictor records separate.
    A linear-only Armijo result must not redefine the quadratic trust radius.

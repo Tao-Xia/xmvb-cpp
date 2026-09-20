@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -41,7 +42,15 @@ struct Options {
       std::numeric_limits<double>::quiet_NaN();
   double finite_difference_step = 0.0;
   bool target_kkt_explicit = false;
+  bool audit_operator = false;
+  bool audit_dense_reference = false;
 };
+
+bool parse_bool(const std::string& value) {
+  if (value == "true" || value == "1") return true;
+  if (value == "false" || value == "0") return false;
+  throw std::invalid_argument("invalid boolean value: " + value);
+}
 
 Options parse_options(int argc, char** argv) {
   if (argc < 2 || (argc - 2) % 2 != 0) {
@@ -51,7 +60,8 @@ Options parse_options(int argc, char** argv) {
         "[--target-kkt-relative value] [--orbital-value-table-bin path] "
         "[--lbfgs-history-steps-dir path] "
         "[--dump-trial-orbitals-bin path] [--finite-difference-step value] "
-        "[--eigensolver davidson|dense]");
+        "[--eigensolver davidson|dense] [--audit-operator true|false] "
+        "[--audit-dense-reference true|false]");
   }
   Options options;
   options.input_path = argv[1];
@@ -79,6 +89,10 @@ Options parse_options(int argc, char** argv) {
       } else {
         throw std::invalid_argument("unsupported structure eigensolver");
       }
+    } else if (name == "--audit-operator") {
+      options.audit_operator = parse_bool(value);
+    } else if (name == "--audit-dense-reference") {
+      options.audit_dense_reference = parse_bool(value);
     } else {
       throw std::invalid_argument("unknown option: " + name);
     }
@@ -90,7 +104,8 @@ Options parse_options(int argc, char** argv) {
         !(options.target_kkt_relative_residual >= 0.0 &&
           options.target_kkt_relative_residual < 1.0))) ||
       (!std::isfinite(options.finite_difference_step) ||
-       options.finite_difference_step < 0.0)) {
+       options.finite_difference_step < 0.0) ||
+      (options.audit_dense_reference && !options.audit_operator)) {
     throw std::invalid_argument("invalid accepted-point audit options");
   }
   return options;
@@ -219,33 +234,379 @@ std::unique_ptr<OrbitalChart> build_chart(
 
 class AcceptedPointHvp final : public ReducedHvp {
 public:
+  struct RecordedBlock {
+    Eigen::MatrixXd directions;
+    Eigen::MatrixXd images;
+  };
+
   AcceptedPointHvp(
       const OrbitalGradientResult& gradient,
       const VbScfInput& input,
       const SparseParameterLayout& layout,
-      const OrbitalChart& chart)
-      : operator_(gradient.second_order_context, &input, layout, &chart) {
+      const OrbitalChart& chart,
+      bool record_actions = false)
+      : operator_(gradient.second_order_context, &input, layout, &chart),
+        record_actions_(record_actions) {
     if (gradient.second_order_context == nullptr) {
       throw std::runtime_error("accepted point lacks a second-order context");
     }
   }
 
   Eigen::VectorXd apply(const Eigen::VectorXd& direction) override {
-    return operator_.apply_reduced(direction);
+    Eigen::VectorXd image = operator_.apply_reduced(direction);
+    if (record_actions_) {
+      RecordedBlock block;
+      block.directions = direction;
+      block.images = image;
+      recorded_blocks_.push_back(std::move(block));
+    }
+    return image;
   }
 
   Eigen::MatrixXd apply_batch(
       const Eigen::Ref<const Eigen::MatrixXd>& directions) override {
-    return operator_.apply_reduced_batch(directions);
+    Eigen::MatrixXd images = operator_.apply_reduced_batch(directions);
+    if (record_actions_) {
+      recorded_blocks_.push_back(
+          RecordedBlock{directions, images});
+    }
+    return images;
   }
 
   ExactHvpOperator::Diagnostics diagnostics() const {
     return operator_.diagnostics();
   }
 
+  void clear_recorded_blocks() { recorded_blocks_.clear(); }
+
+  const std::vector<RecordedBlock>& recorded_blocks() const noexcept {
+    return recorded_blocks_;
+  }
+
 private:
   ExactHvpOperator operator_;
+  bool record_actions_ = false;
+  std::vector<RecordedBlock> recorded_blocks_;
 };
+
+struct HvpAuditApplication {
+  Eigen::MatrixXd images;
+  ExactHvpOperator::Diagnostics diagnostics;
+};
+
+double relative_matrix_error(
+    const Eigen::Ref<const Eigen::MatrixXd>& difference,
+    const Eigen::Ref<const Eigen::MatrixXd>& reference) {
+  return difference.stableNorm() /
+      std::max(reference.stableNorm(), std::numeric_limits<double>::min());
+}
+
+void print_projected_skew(
+    const std::string& label,
+    const Eigen::Ref<const Eigen::MatrixXd>& directions,
+    const Eigen::Ref<const Eigen::MatrixXd>& images) {
+  if (directions.rows() != images.rows() ||
+      directions.cols() != images.cols() || directions.cols() == 0) {
+    throw std::invalid_argument("invalid HVP block in operator audit");
+  }
+  const Eigen::MatrixXd curvature = directions.transpose() * images;
+  const Eigen::MatrixXd skew = curvature - curvature.transpose();
+  Eigen::Index max_row = 0;
+  Eigen::Index max_column = 0;
+  const double max_abs_skew = skew.cwiseAbs().maxCoeff(
+      &max_row, &max_column);
+  std::cout << label << "_rank = " << directions.cols() << '\n'
+            << label << "_curvature_frobenius = "
+            << curvature.stableNorm() << '\n'
+            << label << "_skew_frobenius = " << skew.stableNorm() << '\n'
+            << label << "_relative_skew = "
+            << relative_matrix_error(skew, curvature) << '\n'
+            << label << "_max_abs_skew = " << max_abs_skew << '\n'
+            << label << "_max_skew_row = " << max_row << '\n'
+            << label << "_max_skew_column = " << max_column << '\n';
+}
+
+std::pair<Eigen::MatrixXd, Eigen::MatrixXd> concatenate_recorded_blocks(
+    const std::vector<AcceptedPointHvp::RecordedBlock>& blocks) {
+  if (blocks.empty()) return {};
+  const Eigen::Index dimension = blocks.front().directions.rows();
+  Eigen::Index width = 0;
+  for (const auto& block : blocks) {
+    if (block.directions.rows() != dimension ||
+        block.images.rows() != dimension ||
+        block.directions.cols() != block.images.cols() ||
+        !block.directions.allFinite() || !block.images.allFinite()) {
+      throw std::runtime_error("recorded HVP block is inconsistent");
+    }
+    width += block.directions.cols();
+  }
+  Eigen::MatrixXd directions(dimension, width);
+  Eigen::MatrixXd images(dimension, width);
+  Eigen::Index first = 0;
+  for (const auto& block : blocks) {
+    directions.middleCols(first, block.directions.cols()) = block.directions;
+    images.middleCols(first, block.images.cols()) = block.images;
+    first += block.directions.cols();
+  }
+  return {std::move(directions), std::move(images)};
+}
+
+HvpAuditApplication apply_fresh_block(
+    const OrbitalGradientResult& accepted,
+    const VbScfInput& input,
+    const SparseParameterLayout& layout,
+    const OrbitalChart& chart,
+    const Eigen::Ref<const Eigen::MatrixXd>& directions,
+    HvpComponents components = {}) {
+  ExactHvpOperator operation(
+      accepted.second_order_context, &input, layout, &chart);
+  HvpAuditApplication result;
+  result.images = operation.apply_reduced_batch(directions, components);
+  result.diagnostics = operation.diagnostics();
+  return result;
+}
+
+void print_response_diagnostics(
+    const std::string& label,
+    const ExactHvpOperator::Diagnostics& diagnostics) {
+  std::cout << label << "_response_block_actions = "
+            << diagnostics.structure_response_block_actions << '\n'
+            << label << "_response_max_iterations = "
+            << diagnostics.max_structure_response_iterations << '\n'
+            << label << "_response_max_relative_residual = "
+            << diagnostics.max_structure_response_relative_residual << '\n';
+}
+
+void run_operator_audit(
+    const Options& options,
+    const AcceptedPointHvp& recorded_hvp,
+    const OrbitalGradientResult& accepted,
+    const VbScfInput& input,
+    const SparseParameterLayout& layout,
+    const OrbitalChart& chart,
+    double nuclear_repulsion_energy,
+    const StructureSolveAccuracy& accuracy) {
+  const auto& blocks = recorded_hvp.recorded_blocks();
+  std::cout << std::setprecision(17)
+            << "operator_audit_recorded_block_count = "
+            << blocks.size() << '\n';
+  if (blocks.empty()) {
+    std::cout << "operator_audit_recorded_direction_count = 0\n";
+    return;
+  }
+  const auto [directions, recorded_images] =
+      concatenate_recorded_blocks(blocks);
+  std::cout << "operator_audit_recorded_direction_count = "
+            << directions.cols() << '\n';
+  print_projected_skew(
+      "operator_audit_recorded", directions, recorded_images);
+  for (std::size_t index = 0; index < blocks.size(); ++index) {
+    print_projected_skew(
+        "operator_audit_recorded_block_" + std::to_string(index),
+        blocks[index].directions,
+        blocks[index].images);
+  }
+
+  ExactHvpOperator replay_operator(
+      accepted.second_order_context, &input, layout, &chart);
+  Eigen::MatrixXd replay_images(
+      directions.rows(), directions.cols());
+  Eigen::Index first = 0;
+  for (const auto& block : blocks) {
+    replay_images.middleCols(first, block.directions.cols()) =
+        replay_operator.apply_reduced_batch(block.directions);
+    first += block.directions.cols();
+  }
+  const auto replay_first_diagnostics = replay_operator.diagnostics();
+  Eigen::MatrixXd warm_replay_images(
+      directions.rows(), directions.cols());
+  first = 0;
+  for (const auto& block : blocks) {
+    warm_replay_images.middleCols(first, block.directions.cols()) =
+        replay_operator.apply_reduced_batch(block.directions);
+    first += block.directions.cols();
+  }
+  std::cout << "operator_audit_recorded_vs_cold_replay_relative = "
+            << relative_matrix_error(
+                   recorded_images - replay_images, replay_images) << '\n'
+            << "operator_audit_cold_vs_warm_replay_relative = "
+            << relative_matrix_error(
+                   warm_replay_images - replay_images, replay_images) << '\n';
+  print_projected_skew(
+      "operator_audit_cold_replay", directions, replay_images);
+  print_projected_skew(
+      "operator_audit_warm_replay", directions, warm_replay_images);
+  print_response_diagnostics(
+      "operator_audit_cold_replay", replay_first_diagnostics);
+  print_response_diagnostics(
+      "operator_audit_warm_replay", replay_operator.diagnostics());
+
+  const HvpAuditApplication forward = apply_fresh_block(
+      accepted, input, layout, chart, directions);
+  Eigen::MatrixXd reversed_directions = directions.rowwise().reverse();
+  HvpAuditApplication reversed = apply_fresh_block(
+      accepted, input, layout, chart, reversed_directions);
+  Eigen::MatrixXd reversed_images = reversed.images.rowwise().reverse();
+  std::cout << "operator_audit_replay_vs_single_block_relative = "
+            << relative_matrix_error(
+                   forward.images - replay_images, replay_images) << '\n';
+  std::cout << "operator_audit_forward_vs_reversed_relative = "
+            << relative_matrix_error(
+                   reversed_images - forward.images, forward.images) << '\n';
+  print_projected_skew(
+      "operator_audit_forward", directions, forward.images);
+  print_response_diagnostics(
+      "operator_audit_forward", forward.diagnostics);
+  print_projected_skew(
+      "operator_audit_reversed", directions, reversed_images);
+  print_response_diagnostics(
+      "operator_audit_reversed", reversed.diagnostics);
+
+  HvpComponents no_structure_components;
+  no_structure_components.structure_response = false;
+  const HvpAuditApplication no_structure = apply_fresh_block(
+      accepted,
+      input,
+      layout,
+      chart,
+      directions,
+      no_structure_components);
+  const Eigen::MatrixXd structure_images =
+      forward.images - no_structure.images;
+  print_projected_skew(
+      "operator_audit_no_structure", directions, no_structure.images);
+  print_projected_skew(
+      "operator_audit_structure_difference", directions, structure_images);
+
+  if (options.audit_dense_reference) {
+    OrbitalGradientEvaluator evaluator;
+    const Eigen::MatrixXd no_initial_eigenvectors;
+    const OrbitalGradientResult dense_accepted =
+        evaluator.evaluate_without_reference_energy_gradient(
+            input,
+            {0},
+            {1.0},
+            nuclear_repulsion_energy,
+            StructureEigensolver::Dense,
+            accuracy,
+            no_initial_eigenvectors);
+    const HvpAuditApplication dense_full = apply_fresh_block(
+        dense_accepted, input, layout, chart, directions);
+    const HvpAuditApplication dense_no_structure = apply_fresh_block(
+        dense_accepted,
+        input,
+        layout,
+        chart,
+        directions,
+        no_structure_components);
+    const Eigen::MatrixXd dense_structure =
+        dense_full.images - dense_no_structure.images;
+    std::cout << "operator_audit_primary_vs_dense_full_relative = "
+              << relative_matrix_error(
+                     forward.images - dense_full.images,
+                     dense_full.images)
+              << '\n'
+              << "operator_audit_primary_vs_dense_no_structure_relative = "
+              << relative_matrix_error(
+                     no_structure.images - dense_no_structure.images,
+                     dense_no_structure.images)
+              << '\n'
+              << "operator_audit_primary_vs_dense_structure_relative = "
+              << relative_matrix_error(
+                     structure_images - dense_structure,
+                     dense_structure)
+              << '\n';
+    print_projected_skew(
+        "operator_audit_dense_full", directions, dense_full.images);
+    print_projected_skew(
+        "operator_audit_dense_no_structure",
+        directions,
+        dense_no_structure.images);
+    print_projected_skew(
+        "operator_audit_dense_structure_difference",
+        directions,
+        dense_structure);
+    print_response_diagnostics(
+        "operator_audit_dense_full", dense_full.diagnostics);
+  }
+
+  Eigen::VectorXd x = directions.col(0);
+  Eigen::VectorXd y;
+  if (directions.cols() >= 2) {
+    y = directions.col(1);
+  } else {
+    y.resize(directions.rows());
+    for (Eigen::Index row = 0; row < y.size(); ++row) {
+      const double index = static_cast<double>(row + 1);
+      y[row] = std::sin(std::sqrt(2.0) * index) +
+          std::cos(std::sqrt(3.0) * index);
+    }
+    y.noalias() -= x.dot(y) / x.squaredNorm() * x;
+    if (!(y.norm() > std::sqrt(std::numeric_limits<double>::epsilon()))) {
+      throw std::runtime_error(
+          "operator audit could not construct an additive probe");
+    }
+    y.normalize();
+  }
+  Eigen::MatrixXd x_block(x.size(), 1);
+  Eigen::MatrixXd y_block(y.size(), 1);
+  Eigen::MatrixXd sum_block(x.size(), 1);
+  x_block.col(0) = x;
+  y_block.col(0) = y;
+  sum_block.col(0) = x + y;
+  const Eigen::VectorXd hx = apply_fresh_block(
+      accepted, input, layout, chart, x_block).images.col(0);
+  const Eigen::VectorXd hy = apply_fresh_block(
+      accepted, input, layout, chart, y_block).images.col(0);
+  const Eigen::VectorXd hsum = apply_fresh_block(
+      accepted, input, layout, chart, sum_block).images.col(0);
+  std::cout << "operator_audit_cold_additivity_relative = "
+            << (hsum - hx - hy).stableNorm() /
+                   std::max(
+                       (hx + hy).stableNorm(),
+                       std::numeric_limits<double>::min())
+            << '\n';
+
+  if (options.finite_difference_step > 0.0) {
+    Eigen::VectorXd probe = x + std::sqrt(2.0) * y;
+    probe.normalize();
+    Eigen::MatrixXd probe_block(probe.size(), 1);
+    probe_block.col(0) = probe;
+    const Eigen::VectorXd analytic = apply_fresh_block(
+        accepted, input, layout, chart, probe_block).images.col(0);
+    const auto evaluate_displaced_gradient = [&](double displacement) {
+      VbScfInput point = input;
+      point.orbital_preparation_input = chart.retract_step(
+          input.orbital_preparation_input, probe, displacement);
+      OrbitalGradientEvaluator evaluator;
+      const Eigen::MatrixXd no_initial_eigenvectors;
+      const auto evaluated =
+          evaluator.evaluate_without_reference_energy_gradient(
+              point,
+              {0},
+              {1.0},
+              nuclear_repulsion_energy,
+              options.eigensolver,
+              accuracy,
+              no_initial_eigenvectors);
+      return chart.project_reduced_gradient(
+          layout.gather_from_full(
+              evaluated.sparse_orbital_energy_gradient));
+    };
+    const double h = options.finite_difference_step;
+    const Eigen::VectorXd finite_difference =
+        (evaluate_displaced_gradient(h) -
+         evaluate_displaced_gradient(-h)) /
+        (2.0 * h);
+    std::cout << "operator_audit_probe_fd_relative = "
+              << (analytic - finite_difference).stableNorm() /
+                     std::max(
+                         finite_difference.stableNorm(),
+                         std::numeric_limits<double>::min())
+              << '\n';
+  }
+  std::cout.flush();
+}
 
 const char* stop_reason_name(TruncatedNewtonStopReason reason) {
   switch (reason) {
@@ -293,7 +654,8 @@ void run_audit(const Options& options) {
   const auto projected = chart->project_gradient(packed_gradient);
   const NonredundantRetractionMetric metric(
       *chart, layout, input.orbital_preparation_input);
-  AcceptedPointHvp hvp(accepted, input, layout, *chart);
+  AcceptedPointHvp hvp(
+      accepted, input, layout, *chart, options.audit_operator);
 
   std::vector<PackedSecantPair> packed_secant_history;
   std::unique_ptr<TransportedReducedLbfgsPreconditioner>
@@ -352,49 +714,75 @@ void run_audit(const Options& options) {
   const double audit_gradient_tolerance =
       options.target_kkt_explicit ? 0.0 : accuracy.gradient_tolerance;
   TruncatedNewtonStepResult step;
-  if (lbfgs_preconditioner == nullptr) {
-    step = solve_nonredundant_truncated_newton_step(
-        metric, *chart, projected, options.trust_radius,
-        accuracy.energy_tolerance, audit_gradient_tolerance,
-        target_kkt_relative_residual, &hvp, nullptr);
-    clamp_nonredundant_step_result_to_retract_tangent_radius(
-        projected, options.trust_radius, metric, &step);
-  } else {
-    // Apply exact curvature as a residual correction to the complete L-BFGS
-    // proposal.  Solving H delta = -(g + H p_B) makes p_B + delta an exact
-    // Newton step without blending two independently scaled directions.
-    OrbitalChart::ProjectionResult correction_projection;
-    correction_projection.reduced_gradient =
-        projected.reduced_gradient + lbfgs_baseline_hessian_step;
-    auto correction = solve_nonredundant_truncated_newton_step(
-        metric, *chart, correction_projection, options.trust_radius,
-        accuracy.energy_tolerance, audit_gradient_tolerance,
-        target_kkt_relative_residual, &hvp, lbfgs_preconditioner.get());
-    if (!truncated_newton_step_is_usable(
-            correction, correction_projection.reduced_gradient) ||
-        correction.trust_region_shift != 0.0 ||
-        correction.reached_boundary) {
-      throw std::runtime_error(
-          "L-BFGS residual correction did not produce an interior Newton step");
+  if (options.audit_operator) hvp.clear_recorded_blocks();
+  std::exception_ptr solve_error;
+  try {
+    if (lbfgs_preconditioner == nullptr) {
+      step = solve_nonredundant_truncated_newton_step(
+          metric, *chart, projected, options.trust_radius,
+          accuracy.energy_tolerance, audit_gradient_tolerance,
+          target_kkt_relative_residual, &hvp, nullptr);
+      clamp_nonredundant_step_result_to_retract_tangent_radius(
+          projected, options.trust_radius, metric, &step);
+    } else {
+      // Apply exact curvature as a residual correction to the complete L-BFGS
+      // proposal.  Solving H delta = -(g + H p_B) makes p_B + delta an exact
+      // Newton step without blending two independently scaled directions.
+      OrbitalChart::ProjectionResult correction_projection;
+      correction_projection.reduced_gradient =
+          projected.reduced_gradient + lbfgs_baseline_hessian_step;
+      auto correction = solve_nonredundant_truncated_newton_step(
+          metric, *chart, correction_projection, options.trust_radius,
+          accuracy.energy_tolerance, audit_gradient_tolerance,
+          target_kkt_relative_residual, &hvp, lbfgs_preconditioner.get());
+      if (!truncated_newton_step_is_usable(
+              correction, correction_projection.reduced_gradient) ||
+          correction.trust_region_shift != 0.0 ||
+          correction.reached_boundary) {
+        throw std::runtime_error(
+            "L-BFGS residual correction did not produce an interior Newton step");
+      }
+      correction_step_norm = metric.norm(correction.reduced_step);
+      step = std::move(correction);
+      step.reduced_step += lbfgs_baseline_step;
+      step.reduced_hessian_times_step += lbfgs_baseline_hessian_step;
+      step.reduced_metric_times_step = metric.apply(step.reduced_step);
+      step.retract_tangent_norm = metric.norm(step.reduced_step);
+      step.predicted_decrease =
+          -projected.reduced_gradient.dot(step.reduced_step) -
+          0.5 * step.reduced_step.dot(step.reduced_hessian_times_step);
+      refresh_truncated_newton_step_certificate(
+          projected.reduced_gradient, &step);
+      if (step.retract_tangent_norm > options.trust_radius) {
+        throw std::runtime_error(
+            "combined L-BFGS/Newton step lies outside the audit trust radius");
+      }
     }
-    correction_step_norm = metric.norm(correction.reduced_step);
-    step = std::move(correction);
-    step.reduced_step += lbfgs_baseline_step;
-    step.reduced_hessian_times_step += lbfgs_baseline_hessian_step;
-    step.reduced_metric_times_step = metric.apply(step.reduced_step);
-    step.retract_tangent_norm = metric.norm(step.reduced_step);
-    step.predicted_decrease =
-        -projected.reduced_gradient.dot(step.reduced_step) -
-        0.5 * step.reduced_step.dot(step.reduced_hessian_times_step);
-    refresh_truncated_newton_step_certificate(
-        projected.reduced_gradient, &step);
-    if (step.retract_tangent_norm > options.trust_radius) {
-      throw std::runtime_error(
-          "combined L-BFGS/Newton step lies outside the audit trust radius");
-    }
+  } catch (...) {
+    solve_error = std::current_exception();
   }
   const double solve_seconds = std::chrono::duration<double>(
       std::chrono::steady_clock::now() - solve_start).count();
+  if (options.audit_operator) {
+    if (solve_error != nullptr) {
+      try {
+        std::rethrow_exception(solve_error);
+      } catch (const std::exception& error) {
+        std::cout << "operator_audit_subproblem_error = "
+                  << error.what() << '\n';
+      }
+    }
+    run_operator_audit(
+        options,
+        hvp,
+        accepted,
+        input,
+        layout,
+        *chart,
+        loaded.nuclear_repulsion_energy,
+        accuracy);
+  }
+  if (solve_error != nullptr) std::rethrow_exception(solve_error);
   if (!truncated_newton_step_is_usable(
           step, projected.reduced_gradient)) {
     throw std::runtime_error("subproblem produced no usable descent step");

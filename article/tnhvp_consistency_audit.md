@@ -347,6 +347,64 @@ Section 8. Logs reside under
 `build/diagnostics/consistency-3460c35/ablation/`; remote provenance is
 `/home/guqqgroup/taoxia/xmvb-runs/consistency-3460c35/`.
 
+## 10. Fixed-point response diagnosis
+
+The unmodified optimizer was reproduced in Hanhai25 job `246977`: Davidson
+failed after 3 accepted steps for 241 and after 4 for 7975, whereas dense
+converged in 9 and 6 steps, respectively. Orbital snapshots from the Davidson
+trajectories were then held fixed in job `246988`.
+
+The diagnostic `audit_newton_step --audit-operator true` records each HVP
+block even if the subproblem subsequently rejects its block secants. It
+replays the same directions cold/warm, in one block, and in reverse order;
+tests additivity; and isolates the structure-response contribution.
+`--audit-dense-reference true` explicitly opts into an additional dense
+calculation at the **same orbitals and on the same reduced directions and
+chart**. This is a diagnostic, never a production dense fallback. Failed
+subproblem exits remain nonzero after printing the diagnostics.
+
+At the captured 241 point, the audit generated three directions. Its raw
+block was rejected with skew norm $1.07370\times10^{-6}$ versus the actual
+test limit $4.72808\times10^{-7}$. The following are direct observations:
+
+| Quantity | Measured value |
+|---|---:|
+| Cold replay relative projected skew | $1.01517\times10^{-7}$ |
+| Cold/warm HVP relative difference | $2.27261\times10^{-7}$ |
+| Warm replay relative projected skew | $1.22963\times10^{-15}$ |
+| Original block segmentation vs. one-block HVP difference | $6.42291\times10^{-7}$ |
+| One-block full projected skew norm | $6.45785\times10^{-7}$ |
+| Same block, structure response disabled, skew norm | $7.56146\times10^{-14}$ |
+| Isolated structure-response skew norm | $6.45786\times10^{-7}$ |
+| Dense full response on identical directions, skew norm | $1.99896\times10^{-14}$ |
+| Cold additivity defect, relative | $4.14958\times10^{-6}$ |
+| Davidson directional finite-difference HVP defect, relative | $3.94505\times10^{-6}$ |
+| Dense directional finite-difference HVP defect, relative | $6.08507\times10^{-9}$ |
+
+Finite differences used a step of $10^{-4}$ in the recorded reduced chart.
+The cold response's maximum relative equation residual was
+$5.39777\times10^{-6}$. That scalar is **not** an HVP error bound; the
+response-to-orbital error amplification in Section 3 still applies. The
+warm diagnostic's residual maximum is cumulative and must not be described
+as the final warm block's residual. Reversing the single block gave no
+measurable difference in this experiment: history and block segmentation,
+not column order, are the demonstrated dependencies.
+
+The 7975 fixed-point audit stopped with a one-direction subspace, so its
+zero projected skew cannot test symmetry. It nevertheless showed a cold
+additivity defect of $4.39676\times10^{-7}$ and a Davidson finite-difference
+defect of $3.22842\times10^{-7}$, versus $1.18208\times10^{-9}$ in the
+separate dense audit. Do not describe that audit as reproducing the exact
+7975 production secant failure: it used the same accepted point but not
+the full production secant history/forcing sequence.
+
+These observations isolate the 241 incompatibility to the inexact structure
+response, rather than showing an intrinsic asymmetry of the orbital
+derivatives. They support the common symmetric response-model construction
+in Section 4, not loosening the strict block-BFGS check or claiming universal
+derivative correctness from two probes. Logs are under
+`build/diagnostics/consistency-3460c35/audit/`.
+
 ## References
 
 1. Conn, A. R.; Gould, N. I. M.; Toint, P. L. *Trust Region Methods*,

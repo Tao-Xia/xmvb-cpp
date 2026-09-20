@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -31,10 +32,16 @@ BlockInverseBfgs::BlockInverseBfgs(
       std::sqrt(std::numeric_limits<double>::epsilon()) *
       static_cast<double>(std::max<Eigen::Index>(1, raw_curvature.rows())) *
       curvature_scale;
-  if ((raw_curvature - raw_curvature.transpose()).stableNorm() >
-      symmetry_tolerance) {
-    throw std::invalid_argument(
-        "block inverse-BFGS curvature is not symmetric");
+  const double symmetry_defect =
+      (raw_curvature - raw_curvature.transpose()).stableNorm();
+  if (symmetry_defect > symmetry_tolerance) {
+    std::ostringstream message;
+    message.precision(17);
+    message << "block inverse-BFGS curvature is not symmetric: rank="
+            << directions_.cols() << ", skew=" << symmetry_defect
+            << ", scale=" << curvature_scale
+            << ", tolerance=" << symmetry_tolerance;
+    throw std::invalid_argument(message.str());
   }
   curvature_ =
       0.5 * (raw_curvature + raw_curvature.transpose()).eval();

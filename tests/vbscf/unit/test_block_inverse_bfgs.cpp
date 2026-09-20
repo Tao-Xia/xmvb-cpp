@@ -2,6 +2,7 @@
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
@@ -158,6 +159,23 @@ int main() {
     }
     require(rejected_negative,
             "nonpositive curvature entered the inverse-BFGS update");
+
+    bool rejected_asymmetric = false;
+    try {
+      Eigen::MatrixXd asymmetric_images = images;
+      asymmetric_images.col(0) += directions.col(1);
+      const xmvb::vb::BlockInverseBfgs invalid(
+          directions, asymmetric_images);
+      static_cast<void>(invalid);
+    } catch (const std::invalid_argument& error) {
+      const std::string message = error.what();
+      rejected_asymmetric = message.find("rank=2") != std::string::npos &&
+          message.find("skew=") != std::string::npos &&
+          message.find("scale=") != std::string::npos &&
+          message.find("tolerance=") != std::string::npos;
+    }
+    require(rejected_asymmetric,
+            "asymmetric secants must report the measured curvature defect");
 
     std::cout << "Matrix-free block inverse-BFGS algebra: passed\n";
     return 0;
