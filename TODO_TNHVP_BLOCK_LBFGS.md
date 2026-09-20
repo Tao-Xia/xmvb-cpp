@@ -329,7 +329,9 @@ Newton/KKT certification must always use current-point HVPs.
       coordinate covariant, while only the small projected trust metric is
       whitened. A nonorthogonal coordinate-change regression verifies the
       generalized trust-region solution.
-- [ ] Add a block inverse-BFGS update operating on matrix-free inverse actions.
+- [x] Add a block inverse-BFGS update operating on matrix-free inverse actions.
+      The standalone component supports vector and block actions without an
+      ambient inverse matrix and rejects nonpositive sampled curvature.
 - [ ] Add algebraic tests for symmetry, positive definiteness, block secant
       exactness, and invariance under a change of basis within $\operatorname{span}(S)$.
 - [ ] Replace the fixed four-dimensional production correction with

@@ -6,6 +6,7 @@
 
 set(_xmvb_vbscf_unit_targets
   test_active_two_electron_sparse
+  test_block_inverse_bfgs
   test_cofactor_differential
   test_coupled_newton_cauchy
   test_coupled_newton_model_reduction
@@ -48,6 +49,9 @@ endforeach()
 
 if (BUILD_TESTING)
   add_test(NAME active_two_electron_sparse COMMAND test_active_two_electron_sparse)
+  add_test(NAME block_inverse_bfgs COMMAND test_block_inverse_bfgs)
+  set_tests_properties(block_inverse_bfgs PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME orbital_block_partition COMMAND test_orbital_block_partition)
   add_test(NAME curvature_decomposition COMMAND test_curvature_decomposition)
   add_test(NAME oeo_normalization_pullback COMMAND test_oeo_normalization_pullback)
