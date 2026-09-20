@@ -191,6 +191,23 @@ Clean-branch `fabs` executable SHA-256:
 The CPP binary is the production code qualified at `a5ff975`, with SHA-256
 `99474663e121912118f74b60762aa55d4e660c3dba8b6db7438eaa7b91e40186`.
 
+### Benzene 241 reference
+
+Slurm job `247333` runs the clean-branch `fabs` executable on 32 cores with the
+archived XMVB `test/241.xmi` input (SHA-256
+`94c46de61c63fae9e00bf7740926933a5247a0126024364e815aba62144e54f0`).
+This is the vendor `ISCF=5` L-BFGS calculation with 120 Cartesian AO functions,
+24 VB orbitals, 175 structures, and 480 orbital variables. XMVB 4.0 does not
+implement XMVB-CPP's `ISCF=7` TNHVP or Davidson input controls.
+
+The calculation converges in 75 iterations to `-230.720589590294 Eh`. Its last
+step has `DE=-8.84e-8 Eh` and `GNORM=0.0016569158`, satisfying the vendor's
+explicit energy and gradient thresholds. `/usr/bin/time -v` reports 9.33 s wall
+time, 220.64 CPU s, and 998564 KiB maximum RSS; Slurm reports 10 s elapsed and
+1036944 KiB maximum batch RSS. The historical archived-worktree output stopped
+at iteration 73 and `-230.720589381201 Eh` because of the integer-`abs` defect.
+The repaired result is lower by `2.09093e-7 Eh`.
+
 ## Source map for subsequent audits
 
 Paths below are relative to the vendor source root, not to XMVB-CPP `src/`.
