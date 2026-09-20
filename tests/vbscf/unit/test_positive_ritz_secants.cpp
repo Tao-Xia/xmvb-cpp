@@ -3,6 +3,7 @@
 #include <stdexcept>
 
 #include "vbscf/optimization/krylov/positive_ritz_secants.hpp"
+#include "vbscf/optimization/preconditioners/block_inverse_bfgs.hpp"
 
 namespace {
 void require(bool condition, const char* message) {
@@ -34,6 +35,28 @@ int main() {
     }
     require(std::abs(pairs.back().direction.dot(pairs.back().image) - 0.2) < 1e-13,
             "softest mode must be newest in FIFO history");
+    Eigen::MatrixXd positive_directions(5, pairs.size());
+    Eigen::MatrixXd positive_images(5, pairs.size());
+    for (std::size_t column = 0; column < pairs.size(); ++column) {
+      positive_directions.col(static_cast<Eigen::Index>(column)) =
+          pairs[column].direction;
+      positive_images.col(static_cast<Eigen::Index>(column)) =
+          pairs[column].image;
+    }
+    const xmvb::vb::BlockInverseBfgs positive_update(
+        positive_directions,
+        positive_images);
+    const Eigen::VectorXd negative_mode = Eigen::VectorXd::Unit(5, 0);
+    const Eigen::VectorXd updated_negative = positive_update.apply(
+        negative_mode,
+        [](const Eigen::VectorXd& vector) { return vector; });
+    require((updated_negative - negative_mode).norm() < 1.0e-13,
+            "negative curvature leaked into the positive inverse update");
+    require((positive_update.apply_block(
+                 positive_images,
+                 [](const Eigen::MatrixXd& block) { return block; }) -
+             positive_directions).norm() < 1.0e-13,
+            "selected positive Ritz modes lost their exact secants");
     Eigen::MatrixXd rotation = Eigen::MatrixXd::Identity(4, 4);
     rotation(0, 0) = rotation(2, 2) = std::cos(0.43);
     rotation(0, 2) = -std::sin(0.43);

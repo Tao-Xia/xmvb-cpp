@@ -342,8 +342,10 @@ Newton/KKT certification must always use current-point HVPs.
       reduced dimension, while the solver stops as soon as the certified KKT
       forcing condition is met. Positive exact Ritz curvature enriches the
       block-LBFGS inverse used to precondition each unresolved defect.
-- [ ] Separate positive-curvature enrichment from explicit negative-curvature
-      trust-region handling.
+- [x] Separate positive-curvature enrichment from explicit negative-curvature
+      trust-region handling. Positive Ritz pairs alone enter block inverse-BFGS;
+      the complete HVP basis, including negative modes, remains in the spectral
+      projected trust-region solve.
 - [ ] Return and retain $(S,H_kS)$ from the step solver.
 - [ ] Reuse orbital HVP samples across trust-radius retries at the same accepted
       point.
