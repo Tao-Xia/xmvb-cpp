@@ -1217,8 +1217,25 @@ Eigen::MatrixXd StructureAction::expand_structure_block(
 
 StructureActionResult StructureAction::apply(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
-  Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
   const int block_width = static_cast<int>(vectors.cols());
+  if (direct_ci_ && block_width > 1) {
+    // The direct-CI kernel has no cross-vector arithmetic.  Streaming block
+    // columns therefore preserves the exact action while bounding all
+    // determinant-product workspaces by one FCI vector instead of the
+    // Davidson block width.
+    StructureActionResult images{
+        Eigen::MatrixXd(n_structures_, block_width),
+        Eigen::MatrixXd(n_structures_, block_width)};
+    for (int column = 0; column < block_width; ++column) {
+      StructureActionResult column_images =
+          apply(vectors.middleCols(column, 1));
+      images.hamiltonian.col(column) = column_images.hamiltonian;
+      images.overlap.col(column) = column_images.overlap;
+    }
+    return images;
+  }
+
+  Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
   if (direct_ci_) {
     direct_ci_->alpha_transform.apply_left(&spin_vectors);
     for (int block = 0; block < block_width; ++block) {

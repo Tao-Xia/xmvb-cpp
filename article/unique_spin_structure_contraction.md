@@ -2006,6 +2006,28 @@ fixed-spin product matrix before each forward or adjoint transform.  The
 sigma traversal follows the column-major alpha-fast layout, providing
 contiguous output writes while preserving the exact Slater--Condon action.
 
+For a Davidson block of width $b$, the direct-CI columns are independent:
+
+$$
+\mathcal A[X_1,\ldots,X_b]
+=
+[\mathcal A X_1,\ldots,\mathcal A X_b].
+$$
+
+They are therefore streamed one at a time through the exterior transforms and
+sigma action.  The arithmetic count remains unchanged, but the peak storage
+of determinant-product workspaces is reduced from
+
+$$
+\mathcal O\!\left(bN_{\mathrm{FCI}}\right)
+\quad\text{to}\quad
+\mathcal O\!\left(N_{\mathrm{FCI}}\right).
+$$
+
+Only the much smaller structure-space input and output blocks retain their
+width $b$.  This scheduling identity is exact and does not change the
+Davidson subspace, Ritz pairs, or convergence criterion.
+
 ---
 
 ## 15. Short Conclusion
