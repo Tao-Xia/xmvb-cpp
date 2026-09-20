@@ -1928,9 +1928,9 @@ All repeated entries with the same determinant and structure index are first
 combined.  A determinant-diagonal projection then defines
 
 $$
-D_{H,I}=\sum_d T_{dI}^{,2}H_{dd},
+D_{H,I}=\sum_d T_{dI}^{2}H_{dd},
 \qquad
-D_{S,I}=\sum_d T_{dI}^{,2}S_{dd},
+D_{S,I}=\sum_d T_{dI}^{2}S_{dd},
 $$
 
 where both self elements are evaluated in that same nonorthogonal determinant
@@ -1946,7 +1946,7 @@ required.  Equivalently,
 $$
 \epsilon_d=\frac{H_{dd}}{S_{dd}},
 \qquad
-w_{dI}=T_{dI}^{,2}S_{dd},
+w_{dI}=T_{dI}^{2}S_{dd},
 \qquad
 \frac{D_{H,I}}{D_{S,I}}
 =\frac{\sum_d w_{dI}\epsilon_d}{\sum_d w_{dI}}.
