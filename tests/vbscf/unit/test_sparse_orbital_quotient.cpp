@@ -21,7 +21,6 @@ using namespace xmvb::vb;
 void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
-
 constexpr double kFixtureForcing = 5.0e-2;
 
 void check_accuracy_aware_forcing() {
@@ -501,50 +500,38 @@ void check_truncated_newton_certificates() {
           "observed outer contraction did not enforce the Newton target");
 }
 
-void check_subspace_work_limit(const OrbitalPreparationInput& input) {
+void check_residual_driven_subspace(
+    const OrbitalPreparationInput& input) {
   const SparseParameterLayout view(input);
   const Eigen::MatrixXd c = dense(input);
   const OrbitalChart space(input, view, c, c, nullptr, true);
   const NonredundantRetractionMetric metric(space, view, input);
   const int dimension = space.reduced_size();
-  require(dimension > 4, "interior work fixture is too small");
+  require(dimension > 4, "residual-driven fixture is too small");
   Eigen::MatrixXd hessian = Eigen::MatrixXd::Zero(dimension, dimension);
   for (int i = 0; i < dimension; ++i) hessian(i, i) = 1.0 + i;
   const Eigen::VectorXd gradient =
       Eigen::VectorXd::LinSpaced(dimension, 1.0e-3, 2.0e-3);
   OrbitalChart::ProjectionResult projection;
   projection.reduced_gradient = gradient;
-  DenseTestHvp hvp(hessian);
-  const auto step = solve_nonredundant_truncated_newton_step(
-      metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
-      kFixtureForcing, 2,
-      &hvp, nullptr);
-  require(step.subspace_dimension <= 2 && hvp.applies <= 2 &&
-              step.trust_region_shift == 0.0 && !step.reached_boundary,
-          "Newton subspace exceeded its declared work bound");
-  require(step.stop_reason == TruncatedNewtonStopReason::SubspaceLimit &&
-              !step.newton_forcing_converged,
-          "unresolved Newton model did not report its subspace limit");
-
-  DenseTestHvp resumed_hvp(hessian);
-  const auto resumed = solve_nonredundant_truncated_newton_step(
-      metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
-      kFixtureForcing, 4,
-      &resumed_hvp, nullptr, nullptr, &step.subspace);
-  require(resumed.subspace_dimension <= 4 && resumed_hvp.applies <= 2,
-          "same-point Newton restart recomputed cached exact HVP samples");
 
   DenseTestHvp unrestricted_hvp(hessian);
   const auto unrestricted = solve_nonredundant_truncated_newton_step(
       metric, space, projection, 10.0, 1.0e-12, 1.0e-8,
-      1.0e-12, dimension,
-      &unrestricted_hvp, nullptr);
+      1.0e-12, &unrestricted_hvp, nullptr);
   require(unrestricted.subspace_dimension > 4 &&
               unrestricted.subspace_dimension <= dimension &&
               unrestricted.stop_reason ==
                   TruncatedNewtonStopReason::ModelKktConverged &&
               unrestricted.newton_forcing_converged,
-          "residual-driven Newton solve retained an internal four-vector cap");
+          "residual-driven Newton solve stopped before its certificate");
+
+  DenseTestHvp reused_hvp(hessian);
+  const auto reused = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 10.0, 1.0e-12, 1.0e-8,
+      1.0e-12, &reused_hvp, nullptr, nullptr, &unrestricted.subspace);
+  require(reused.model_kkt_converged && reused_hvp.applies == 0,
+          "certified same-point subspace recomputed exact HVP samples");
 
   Eigen::MatrixXd clustered = Eigen::MatrixXd::Zero(dimension, dimension);
   for (int i = 0; i < dimension; ++i) {
@@ -553,34 +540,31 @@ void check_subspace_work_limit(const OrbitalPreparationInput& input) {
   DenseTestHvp clustered_hvp(clustered);
   const auto certified = solve_nonredundant_truncated_newton_step(
       metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
-      kFixtureForcing, 4,
-      &clustered_hvp, nullptr);
+      kFixtureForcing, &clustered_hvp, nullptr);
   require(certified.subspace_dimension <= 4 &&
               clustered_hvp.applies <= 4 &&
-              certified.stop_reason == TruncatedNewtonStopReason::ModelKktConverged &&
+              certified.stop_reason ==
+                  TruncatedNewtonStopReason::ModelKktConverged &&
               certified.newton_forcing_converged &&
-              certified.model_kkt_relative_residual <
-                  kFixtureForcing,
+              certified.model_kkt_relative_residual < kFixtureForcing,
           "clustered Newton subspace did not certify the full-space model");
 
   hessian(0, 0) = -10.0;
   DenseTestHvp indefinite(hessian);
   const auto boundary = solve_nonredundant_truncated_newton_step(
       metric, space, projection, 1.0e-3, 1.0e-7, 1.0e-3,
-      kFixtureForcing, 2,
-      &indefinite, nullptr);
-  require(boundary.reached_boundary && boundary.subspace_dimension <= 2 &&
-              indefinite.applies <= 2 &&
+      kFixtureForcing, &indefinite, nullptr);
+  require(boundary.reached_boundary &&
+              boundary.encountered_negative_curvature &&
               !boundary.newton_forcing_converged,
-          "negative-curvature boundary step exceeded the initial work limit");
+          "negative curvature did not produce a certified boundary model");
 
   const Eigen::VectorXd exact_predictor =
       -clustered.ldlt().solve(gradient);
   DenseTestHvp certified_predictor_hvp(clustered);
   const auto certified_predictor = solve_nonredundant_truncated_newton_step(
       metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
-      kFixtureForcing, 4, &certified_predictor_hvp, nullptr,
-      &exact_predictor);
+      kFixtureForcing, &certified_predictor_hvp, nullptr, &exact_predictor);
   require(certified_predictor_hvp.applies == 1 &&
               certified_predictor.subspace_dimension == 1 &&
               certified_predictor.newton_forcing_converged,
@@ -595,12 +579,12 @@ void check_subspace_work_limit(const OrbitalPreparationInput& input) {
   DenseTestHvp defect_hvp(two_cluster);
   const auto corrected_predictor = solve_nonredundant_truncated_newton_step(
       metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
-      kFixtureForcing, 2, &defect_hvp, nullptr, &identity_predictor);
+      kFixtureForcing, &defect_hvp, nullptr, &identity_predictor);
   require(defect_hvp.applies == 2 &&
               corrected_predictor.subspace_dimension == 2 &&
               corrected_predictor.newton_forcing_converged,
           "predictor Newton defect was not resolved in its correction space");
-  std::cout << "Newton subspace work limit: passed\n";
+  std::cout << "residual-driven Newton subspace: passed\n";
 }
 }  // namespace
 
@@ -624,7 +608,7 @@ int main() {
                                {0,1,2,3,4,5}, {0,1,2,3,4,5}}, 2);
     check("full support", full, 14);
     check_truncated_newton_certificates();
-    check_subspace_work_limit(full);
+    check_residual_driven_subspace(full);
     Eigen::MatrixXd rotated = c;
     Eigen::Matrix2d a;
     a << 1, 0.3, -0.2, 1.1;

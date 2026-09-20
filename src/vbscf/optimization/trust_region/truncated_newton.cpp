@@ -683,7 +683,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     double energy_tolerance,
     double gradient_tolerance,
     double target_kkt_relative_residual,
-    int max_subspace_dimension,
     ReducedHvp* hvp,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd* initial_reduced_step,
@@ -702,8 +701,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
           current_projection,
           trust_radius,
           transported_preconditioner);
-  if (current_projection.reduced_gradient.size() == 0 ||
-      max_subspace_dimension <= 0) {
+  if (current_projection.reduced_gradient.size() == 0) {
     result.reduced_step = preconditioned_gradient_step;
     result.reduced_hessian_times_step.resize(0);
     result.stop_reason = TruncatedNewtonStopReason::PreconditionedGradient;
@@ -714,10 +712,9 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   if (hvp == nullptr) {
     throw std::invalid_argument("Newton correction requires an HVP operator");
   }
-  const int natural_limit = static_cast<int>(rhs.size());
-  int work_limit = std::min(max_subspace_dimension, natural_limit);
+  const int work_limit = static_cast<int>(rhs.size());
   TruncatedNewtonStopReason loop_stop_reason =
-      TruncatedNewtonStopReason::SubspaceLimit;
+      TruncatedNewtonStopReason::CompleteSpace;
   // The inexact-Newton forcing term is an outer-iteration condition:
   // ||H s + g|| <= eta_k ||g||. A cached same-point trial changes the
   // initial residual but must not redefine the requested Newton accuracy.
@@ -730,9 +727,9 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   std::vector<Eigen::VectorXd> basis;
   std::vector<Eigen::VectorXd> tangent_basis;
   std::vector<Eigen::VectorXd> hessian_basis;
-  basis.reserve(max_subspace_dimension);
-  tangent_basis.reserve(max_subspace_dimension);
-  hessian_basis.reserve(max_subspace_dimension);
+  basis.reserve(work_limit);
+  tangent_basis.reserve(work_limit);
+  hessian_basis.reserve(work_limit);
 
   const bool reuse_initial_subspace =
       initial_subspace != nullptr &&
@@ -741,7 +738,6 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   if (reuse_initial_subspace) {
     const Eigen::Index initial_dimension =
         initial_subspace->orthonormal_basis.cols();
-    work_limit = std::max(work_limit, static_cast<int>(initial_dimension));
     for (Eigen::Index column = 0; column < initial_dimension; ++column) {
       basis.push_back(initial_subspace->orthonormal_basis.col(column));
       tangent_basis.push_back(initial_subspace->tangent_basis.col(column));

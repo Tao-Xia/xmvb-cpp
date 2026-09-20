@@ -55,8 +55,7 @@ int main() {
     require(indefinite.residual_norm <= indefinite.residual_target,
             "MINRES convergence was not explicitly certified");
 
-    // The packed action is the intended coupled Newton layout. Only the
-    // orbital block receives lambda M; the structure response is unshifted.
+    // A symmetric block action may shift only its leading block.
     Eigen::Matrix2d a;
     a << 2.0, 0.3, 0.3, 1.4;
     Eigen::Matrix2d metric;
@@ -70,14 +69,14 @@ int main() {
          0.1, 0.8, -0.2,
          0.0, -0.2, -0.6;
     constexpr double lambda = 0.7;
-    Eigen::MatrixXd coupled(5, 5);
-    coupled.topLeftCorner<2, 2>() = a + lambda * metric;
-    coupled.topRightCorner<2, 3>() = b.transpose();
-    coupled.bottomLeftCorner<3, 2>() = b;
-    coupled.bottomRightCorner<3, 3>() = c;
-    const Eigen::VectorXd coupled_rhs =
+    Eigen::MatrixXd block_matrix(5, 5);
+    block_matrix.topLeftCorner<2, 2>() = a + lambda * metric;
+    block_matrix.topRightCorner<2, 3>() = b.transpose();
+    block_matrix.bottomLeftCorner<3, 2>() = b;
+    block_matrix.bottomRightCorner<3, 3>() = c;
+    const Eigen::VectorXd block_rhs =
         (Eigen::VectorXd(5) << -1.0, 0.7, 0.0, 0.0, 0.0).finished();
-    const auto coupled_result = solve_symmetric_minres(
+    const auto block_result = solve_symmetric_minres(
         [&](const Eigen::VectorXd& vector) {
           Eigen::VectorXd image(5);
           const Eigen::Vector2d p = vector.head<2>();
@@ -86,15 +85,15 @@ int main() {
           image.tail<3>() = b * p + c * z;
           return image;
         },
-        coupled_rhs,
+        block_rhs,
         strict);
-    require(coupled_result.converged(),
-            "coupled orbital-structure MINRES did not converge");
+    require(block_result.converged(),
+            "symmetric block MINRES did not converge");
     require_close(
-        coupled_result.solution,
-        coupled.fullPivLu().solve(coupled_rhs),
+        block_result.solution,
+        block_matrix.fullPivLu().solve(block_rhs),
         1.0e-11,
-        "coupled orbital-structure MINRES solution is inaccurate");
+        "symmetric block MINRES solution is inaccurate");
 
     // A positive inverse preconditioner is valid even though A is indefinite.
     const Eigen::VectorXd inverse_diagonal =
@@ -123,7 +122,7 @@ int main() {
     require_close(incomplete.residual, rhs - h * incomplete.solution, 1.0e-15,
                   "work-limited MINRES residual is not explicit");
 
-    std::cout << "symmetric MINRES: passed (indefinite, coupled, preconditioned)\n";
+    std::cout << "symmetric MINRES: passed (indefinite, block, preconditioned)\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

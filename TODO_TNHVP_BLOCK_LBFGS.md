@@ -369,8 +369,13 @@ Newton/KKT certification must always use current-point HVPs.
       wide AO-H1E exchange sweep was measured, found to add
       $O(t b N_{\mathrm{bf}}^2)$ memory without steady-state benefit, and
       deleted rather than retained as a fallback.
-- [ ] Remove the obsolete fixed-cap and unused correction/recycling code once the
-      replacement is validated; do not retain a fallback implementation.
+- [x] Remove the obsolete fixed-cap and unused correction/recycling code once the
+      replacement is validated; do not retain a fallback implementation. The
+      production Newton solve now expands to the natural reduced dimension
+      until its KKT certificate is met; the old explicit orbital--structure
+      coupled workspace, its independent fixed-budget/recycling machinery, and
+      the diagnostic-only public HVP blocks used solely by that prototype have
+      been deleted.
 - [ ] Update the theory article with the final accepted formulation and measured
       complexity.
 

@@ -358,7 +358,6 @@ BackendRunResult run_truncated_newton_backend(
           options.energy_tolerance,
           options.gradient_tolerance,
           newton_forcing_term,
-          static_cast<int>(reduced_size),
           &reduced_hvp,
           accepted_point_preconditioner.get(),
           &baseline_reduced_direction,

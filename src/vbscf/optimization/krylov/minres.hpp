@@ -65,11 +65,9 @@ struct MinresResult {
  * recurrence underestimates that residual, MINRES restarts from the explicitly
  * evaluated residual while preserving the accumulated solution.
  *
- * A coupled orbital--structure Newton operator can include the orbital-only
- * trust-region shift in `apply_operator`,
- * `A_lambda(p,z) = ((A + lambda M)p + B^T z, Bp + Cz)`. This keeps MINRES
- * independent of the physical block layout and leaves `lambda` under the
- * globalization algorithm's control.
+ * A symmetric block operator may shift only its leading block,
+ * `A_lambda(p,z) = ((A + lambda M)p + B^T z, Bp + Cz)`. MINRES remains
+ * independent of the block interpretation and leaves `lambda` to the caller.
  */
 MinresResult solve_symmetric_minres(
     const SymmetricOperatorAction& apply_operator,

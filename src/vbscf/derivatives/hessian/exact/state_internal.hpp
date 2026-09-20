@@ -42,22 +42,6 @@ struct ExactHvpOperator::State {
       const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
       HvpComponents components) const;
 
-  Eigen::VectorXd apply_structure_response_adjoint(
-      const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
-      const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const;
-
-  SelectedStructureDirection apply_selected_structure_direction(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  std::vector<SelectedStructureResponse>
-  apply_selected_structure_response_batch(
-      const std::vector<SelectedStructureResponse>& responses) const;
-
-  const std::vector<double>& selected_state_weights() const noexcept;
-  int n_structures() const noexcept;
-  bool represents_accepted_point(
-      const AcceptedPointContext& accepted_point) const noexcept;
-
   bool supports_analytic_core_model() const noexcept;
   Diagnostics diagnostics() const;
 

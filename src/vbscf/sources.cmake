@@ -74,7 +74,6 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/gradient/orbital/evaluator.cpp
   vbscf/derivatives/hessian/exact/apply.cpp
   vbscf/derivatives/hessian/exact/batch.cpp
-  vbscf/derivatives/hessian/exact/coupling.cpp
   vbscf/derivatives/hessian/exact/direction.cpp
   vbscf/derivatives/hessian/exact/ao_one_electron.cpp
   vbscf/derivatives/hessian/exact/operator.cpp
@@ -107,19 +106,6 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/backends/lbfgs.cpp
   vbscf/optimization/backends/projected_gradient.cpp
   vbscf/optimization/backends/truncated_newton.cpp
-  vbscf/optimization/coupled/accepted_point.cpp
-  vbscf/optimization/coupled/cauchy.cpp
-  vbscf/optimization/coupled/defect.cpp
-  vbscf/optimization/coupled/forcing.cpp
-  vbscf/optimization/coupled/model_reduction.cpp
-  vbscf/optimization/coupled/operator.cpp
-  vbscf/optimization/coupled/preconditioner.cpp
-  vbscf/optimization/coupled/projection_cache.cpp
-  vbscf/optimization/coupled/projected_model.cpp
-  vbscf/optimization/coupled/projected_trust.cpp
-  vbscf/optimization/coupled/spectral.cpp
-  vbscf/optimization/coupled/solver.cpp
-  vbscf/optimization/coupled/workspace.cpp
   vbscf/optimization/krylov/minres.cpp
   vbscf/optimization/globalization/line_search.cpp
   vbscf/optimization/driver/session.cpp

@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <memory>
-#include <vector>
 
 #include <Eigen/Core>
 
@@ -27,27 +26,6 @@ struct HvpComponents {
   bool structure_response = true;
   /** Requested inexact structure-response tolerance; zero keeps final accuracy. */
   double response_relative_residual_tolerance = 0.0;
-};
-
-/**
- * @brief Directional selected-state images produced before eigensystem response.
- *
- * The matrices are @f$(\delta H)C@f$ and @f$(\delta S)C@f$ in the structure
- * basis. Columns follow the accepted selected-state order. They are the
- * physical orbital-to-structure coupling data used to assemble @f$Bp@f$;
- * no structure response equation is solved by this operation.
- */
-struct SelectedStructureDirection {
-  Eigen::MatrixXd delta_hamiltonian_selected;
-  Eigen::MatrixXd delta_overlap_selected;
-};
-
-/** @brief One physical selected-subspace response and its KKT image. */
-struct SelectedStructureResponse {
-  /** Structure coefficient tangent @f$Z@f$ or its residual image. */
-  Eigen::MatrixXd coefficients;
-  /** Full selected-state multiplier @f$M@f$ or horizontal-gauge image. */
-  Eigen::MatrixXd multipliers;
 };
 
 /**
@@ -139,78 +117,6 @@ public:
   Eigen::MatrixXd apply_reduced_batch(
       const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
       HvpComponents components = {}) const;
-
-  /**
-   * @brief Applies the unrelaxed orbital block @f$A@f$ of coupled Newton.
-   *
-   * This action contains every orbital derivative at fixed selected-state
-   * eigenvectors: direct integral/orbital curvature, the fixed-upstream
-   * pullback, and the local active-space response.  It excludes only the
-   * generalized-eigenvector/selected-subspace response represented explicitly
-   * by the coupled Newton response coordinates.  Consequently it never solves
-   * a structure-response equation.
-   */
-  Eigen::VectorXd apply_unrelaxed_orbital_hessian(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /** @brief Applies the coupled-Newton orbital block to a direction block. */
-  Eigen::MatrixXd apply_unrelaxed_orbital_hessian_batch(
-      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const;
-
-  /**
-   * @brief Applies @f$B^T@f$ from a physical selected-subspace response.
-   *
-   * `coefficient_response` is the unscaled structure coefficient block
-   * @f$Z@f$ in accepted selected-state order. `state_multipliers` is the full
-   * multiplier matrix @f$M@f$ in the same order; off-diagonal entries must not
-   * be discarded for an equal-weight multistate cluster.  The result is in the
-   * accepted nonredundant orbital coordinates.
-   */
-  Eigen::VectorXd apply_structure_response_adjoint(
-      const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
-      const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const;
-
-  /**
-   * @brief Applies the orbital-to-structure coupling before response elimination.
-   *
-   * This reuses the accepted-point orbital/integral directional kernels and
-   * selected-state H/S image builder. It deliberately stops before solving a
-   * generalized-eigen response, allowing a coupled Newton solver to carry the
-   * structure response as an explicit Krylov variable.
-   */
-  SelectedStructureDirection apply_selected_structure_direction(
-      const Eigen::VectorXd& reduced_direction) const;
-
-  /** @brief Applies the uneliminated coupling to a block of orbital directions. */
-  std::vector<SelectedStructureDirection>
-  apply_selected_structure_direction_batch(
-      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const;
-
-  /**
-   * @brief Applies the accepted selected-subspace response Hessian.
-   *
-   * For each physical response @f$(Z,M)@f$, this computes
-   *
-   * @f[
-   * \left(HZ-SZ\Lambda+SCM,\;C^TSZ\right)
-   * @f]
-   *
-   * with one matrix-free H/S block action for the complete batch. No dense
-   * structure matrix or generalized-eigen response solve is formed.
-   */
-  std::vector<SelectedStructureResponse>
-  apply_selected_structure_response_batch(
-      const std::vector<SelectedStructureResponse>& responses) const;
-
-  /** @brief Accepted normalized weights in selected-state column order. */
-  const std::vector<double>& selected_state_weights() const noexcept;
-
-  /** @brief Number of structures at the accepted orbital point. */
-  int n_structures() const noexcept;
-
-  /** @brief Whether this operator owns the specified accepted-point context. */
-  bool represents_accepted_point(
-      const AcceptedPointContext& accepted_point) const noexcept;
 
   bool supports_analytic_core_model() const noexcept;
 

@@ -8,18 +8,6 @@ set(_xmvb_vbscf_unit_targets
   test_active_two_electron_sparse
   test_block_inverse_bfgs
   test_cofactor_differential
-  test_coupled_newton_cauchy
-  test_coupled_newton_model_reduction
-  test_coupled_newton_operator
-  test_coupled_newton_preconditioner
-  test_coupled_projection_cache
-  test_coupled_projected_model
-  test_coupled_projected_trust
-  test_coupled_subspace_solver
-  test_coupled_workspace
-  test_curvature_enhancement
-  test_coupled_newton_defect
-  test_coupled_newton_spectral
   test_curvature_decomposition
   test_davidson
   test_eigen_response
@@ -58,46 +46,6 @@ if (BUILD_TESTING)
   add_test(NAME opposite_spin_pair_graph COMMAND test_opposite_spin_pair_graph)
   add_test(NAME orthogonal_direct_ci COMMAND test_orthogonal_direct_ci)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
-  add_test(NAME coupled_newton_cauchy COMMAND test_coupled_newton_cauchy)
-  set_tests_properties(coupled_newton_cauchy PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(
-    NAME coupled_newton_model_reduction
-    COMMAND test_coupled_newton_model_reduction)
-  set_tests_properties(coupled_newton_model_reduction PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_newton_operator COMMAND test_coupled_newton_operator)
-  set_tests_properties(coupled_newton_operator PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(
-    NAME coupled_newton_preconditioner
-    COMMAND test_coupled_newton_preconditioner)
-  set_tests_properties(coupled_newton_preconditioner PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_projection_cache COMMAND test_coupled_projection_cache)
-  set_tests_properties(coupled_projection_cache PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_projected_model COMMAND test_coupled_projected_model)
-  set_tests_properties(coupled_projected_model PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_projected_trust COMMAND test_coupled_projected_trust)
-  set_tests_properties(coupled_projected_trust PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_subspace_solver COMMAND test_coupled_subspace_solver)
-  set_tests_properties(coupled_subspace_solver PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_workspace COMMAND test_coupled_workspace)
-  set_tests_properties(coupled_workspace PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME curvature_enhancement COMMAND test_curvature_enhancement)
-  set_tests_properties(curvature_enhancement PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_newton_defect COMMAND test_coupled_newton_defect)
-  set_tests_properties(coupled_newton_defect PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME coupled_newton_spectral COMMAND test_coupled_newton_spectral)
-  set_tests_properties(coupled_newton_spectral PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME davidson COMMAND test_davidson)
   add_test(NAME eigen_response COMMAND test_eigen_response)
   add_test(NAME minres COMMAND test_minres)
@@ -120,7 +68,7 @@ if (BUILD_TESTING)
 
   add_test(NAME audit_newton_step_f2 COMMAND audit_newton_step
     ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
-    --subspace-dimension 4 --trust-radius 0.1
+    --trust-radius 0.1
     --finite-difference-step 1e-5 --eigensolver davidson)
   set_tests_properties(audit_newton_step_f2 PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
@@ -227,27 +175,6 @@ if (BUILD_TESTING)
       WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
       ENVIRONMENT
         "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
-
-  foreach(coupled_case IN ITEMS
-      "coupled_projection_f2_dense|F2.xmi|dense"
-      "coupled_projection_f2_state_average_dense|F2_SA2.xmi|dense"
-      "coupled_projection_f2_state_average_davidson|F2_SA2.xmi|davidson")
-    string(REPLACE "|" ";" coupled_fields "${coupled_case}")
-    list(GET coupled_fields 0 coupled_test_name)
-    list(GET coupled_fields 1 coupled_input_name)
-    list(GET coupled_fields 2 coupled_eigensolver)
-    add_test(
-      NAME ${coupled_test_name}
-      COMMAND
-        check_exact_ctx_hvp
-        ${CMAKE_SOURCE_DIR}/testdata/vbscf/${coupled_input_name}
-        --eigensolver ${coupled_eigensolver}
-        --coupled-projection-audit 1)
-    set_tests_properties(${coupled_test_name} PROPERTIES
-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-      ENVIRONMENT
-        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1")
-  endforeach()
 
   foreach(ri_case IN ITEMS
       "ri_ctx_hvp_f2_finite_difference|F2.xmi|dense"

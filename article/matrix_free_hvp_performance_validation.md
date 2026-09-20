@@ -748,10 +748,10 @@ integral approximation.
 
 ## 9. Reproducibility
 
-The configured test suite contains 59 tests, including independent polynomial
+The configured test suite contains 44 tests, including independent polynomial
 cofactor derivatives, complete exact-integral HAO/OEO HVP finite differences,
 factor-native RI response tests, and RI HAO/OEO/state-averaged HVP finite
-differences. All 59 pass after the performance changes. The block-basis tests
+differences. All 44 pass after the performance changes. The block-basis tests
 validate assembly at the utility and molecular-integration levels; the
 orthonormal-basis test also verifies single-call block admission. The benchmark
 logs used in this note are kept

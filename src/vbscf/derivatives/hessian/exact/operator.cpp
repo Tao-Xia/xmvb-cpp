@@ -16,18 +16,6 @@
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 
 namespace xmvb::vb {
-namespace {
-
-constexpr HvpComponents unrelaxed_orbital_hessian_components() {
-  return {
-      .direct_core_response = true,
-      .fixed_upstream_pullback = true,
-      .local_active_response = true,
-      .structure_response = false};
-}
-
-}  // namespace
-
 ExactHvpOperator::ExactHvpOperator(
     std::shared_ptr<const AcceptedPointContext> accepted_point_context,
     const VbScfInput* current_input,
@@ -41,39 +29,12 @@ ExactHvpOperator::ExactHvpOperator(
 
 ExactHvpOperator::~ExactHvpOperator() = default;
 
-Eigen::VectorXd ExactHvpOperator::apply_unrelaxed_orbital_hessian(
-    const Eigen::VectorXd& reduced_direction) const {
-  return apply_reduced(
-      reduced_direction,
-      unrelaxed_orbital_hessian_components());
-}
-
-Eigen::MatrixXd ExactHvpOperator::apply_unrelaxed_orbital_hessian_batch(
-    const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const {
-  return apply_reduced_batch(
-      reduced_directions,
-      unrelaxed_orbital_hessian_components());
-}
-
 bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
   return state_->supports_analytic_core_model();
 }
 
 ExactHvpOperator::Diagnostics ExactHvpOperator::diagnostics() const {
   return state_->diagnostics();
-}
-
-bool ExactHvpOperator::represents_accepted_point(
-    const AcceptedPointContext& accepted_point) const noexcept {
-  return state_->represents_accepted_point(accepted_point);
-}
-
-Eigen::VectorXd ExactHvpOperator::apply_structure_response_adjoint(
-    const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
-    const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const {
-  return state_->apply_structure_response_adjoint(
-      coefficient_response,
-      state_multipliers);
 }
 
 ExactHvpOperator::State::State(

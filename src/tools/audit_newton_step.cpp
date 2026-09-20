@@ -36,7 +36,6 @@ struct Options {
   std::string lbfgs_history_steps_path;
   std::string dump_trial_orbitals_path;
   StructureEigensolver eigensolver = StructureEigensolver::Davidson;
-  int subspace_dimension = 0;
   double trust_radius = 0.0;
   double target_kkt_relative_residual =
       std::numeric_limits<double>::quiet_NaN();
@@ -48,7 +47,7 @@ Options parse_options(int argc, char** argv) {
   if (argc < 2 || (argc - 2) % 2 != 0) {
     throw std::invalid_argument(
         "usage: audit_newton_step input.xmi "
-        "--subspace-dimension count --trust-radius value "
+        "--trust-radius value "
         "[--target-kkt-relative value] [--orbital-value-table-bin path] "
         "[--lbfgs-history-steps-dir path] "
         "[--dump-trial-orbitals-bin path] [--finite-difference-step value] "
@@ -65,8 +64,6 @@ Options parse_options(int argc, char** argv) {
       options.lbfgs_history_steps_path = value;
     } else if (name == "--dump-trial-orbitals-bin") {
       options.dump_trial_orbitals_path = value;
-    } else if (name == "--subspace-dimension") {
-      options.subspace_dimension = std::stoi(value);
     } else if (name == "--trust-radius") {
       options.trust_radius = std::stod(value);
     } else if (name == "--target-kkt-relative") {
@@ -86,8 +83,7 @@ Options parse_options(int argc, char** argv) {
       throw std::invalid_argument("unknown option: " + name);
     }
   }
-  if (options.subspace_dimension <= 0 ||
-      !(options.trust_radius > 0.0) ||
+  if (!(options.trust_radius > 0.0) ||
       !std::isfinite(options.trust_radius) ||
       (options.target_kkt_explicit &&
        (!std::isfinite(options.target_kkt_relative_residual) ||
@@ -256,7 +252,7 @@ const char* stop_reason_name(TruncatedNewtonStopReason reason) {
     case TruncatedNewtonStopReason::None: return "none";
     case TruncatedNewtonStopReason::ModelKktConverged: return "model_kkt";
     case TruncatedNewtonStopReason::BelowOuterAccuracy: return "below_outer_accuracy";
-    case TruncatedNewtonStopReason::SubspaceLimit: return "subspace_limit";
+    case TruncatedNewtonStopReason::CompleteSpace: return "complete_space";
     case TruncatedNewtonStopReason::DependentDirections: return "dependent_directions";
     case TruncatedNewtonStopReason::InvalidProjectedStep: return "invalid_projected_step";
     case TruncatedNewtonStopReason::RadiusAdjusted: return "radius_adjusted";
@@ -360,8 +356,7 @@ void run_audit(const Options& options) {
     step = solve_nonredundant_truncated_newton_step(
         metric, *chart, projected, options.trust_radius,
         accuracy.energy_tolerance, audit_gradient_tolerance,
-        target_kkt_relative_residual,
-        options.subspace_dimension, &hvp, nullptr);
+        target_kkt_relative_residual, &hvp, nullptr);
     clamp_nonredundant_step_result_to_retract_tangent_radius(
         projected, options.trust_radius, metric, &step);
   } else {
@@ -374,8 +369,7 @@ void run_audit(const Options& options) {
     auto correction = solve_nonredundant_truncated_newton_step(
         metric, *chart, correction_projection, options.trust_radius,
         accuracy.energy_tolerance, audit_gradient_tolerance,
-        target_kkt_relative_residual,
-        options.subspace_dimension, &hvp, lbfgs_preconditioner.get());
+        target_kkt_relative_residual, &hvp, lbfgs_preconditioner.get());
     if (!truncated_newton_step_is_usable(
             correction, correction_projection.reduced_gradient) ||
         correction.trust_region_shift != 0.0 ||
@@ -517,7 +511,6 @@ void run_audit(const Options& options) {
             << "newton_correction_step_norm = "
             << correction_step_norm << '\n'
             << "reduced_dimension = " << chart->reduced_size() << '\n'
-            << "subspace_budget = " << options.subspace_dimension << '\n'
             << "subspace_dimension = " << step.subspace_dimension << '\n'
             << "target_kkt_relative = " << target_kkt_relative_residual << '\n'
             << "stop_reason = " << stop_reason_name(step.stop_reason) << '\n'
