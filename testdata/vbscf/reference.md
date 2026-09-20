@@ -232,6 +232,42 @@ and `8.01e-7 Eh`, respectively. This is not by itself an energy-kernel
 disagreement: the common initial energy agrees, while vendor L-BFGS uses its
 hard-coded `GNORM < 2e-3` test and CPP uses projected infinity norm `< 1e-3`.
 
+### System 240 reference
+
+Slurm array job `247347` applies the same three-way protocol to `240_vb.xmi`
+(SHA-256 `61d1035fd059c52a7361d6ed8f49f00a125286c644c155127bf6f8ee865eba48`)
+on 32 cores. For the vendor run, only `ISCF=5` is selected and unsupported CPP
+output/eigensolver controls are removed; geometry, structures, orbitals, basis,
+and `$GUS` coefficients are unchanged. The transformed vendor input has SHA-256
+`a6855af9f852ef4e07c7f0d076768e9792e99829eb9c4a364f9b976d4a88d9ff`.
+XMVB reports 1764 structures and 630 raw orbital variables; XMVB-CPP's final
+nonredundant dimension is 558.
+
+| 240 calculation | Iterations | Total energy / Eh | Wall time / s | Maximum RSS / KiB |
+|---|---:|---:|---:|---:|
+| Clean XMVB 4.0 `fabs`, L-BFGS | 81 | -343.446300145301 | 571.75 | 3742084 |
+| XMVB-CPP block-L-BFGS | 10 | -343.446302350844 | 3.77 | 1832448 |
+| XMVB-CPP TNHVP | 6 | -343.446302352489 | 27.49 | 1829744 |
+
+The vendor and CPP iteration-zero energies are `-343.0756452079 Eh` and
+`-343.075645212602 Eh`, respectively, differing by only `4.7e-9 Eh` at the
+reported precision. The CPP stationary energies agree within `1.65e-9 Eh`.
+Their approximately `2.21e-6 Eh` lowering relative to the vendor result is not
+evidence of a fixed-point energy discrepancy: the initial point agrees, while
+the vendor stops at `DE=-9.42e-8 Eh`, `GNORM=0.0012693892`, under its looser and
+non-equivalent gradient criterion.
+
+End-to-end block-L-BFGS is 152 times faster than vendor XMVB and requires 10
+rather than 81 iterations. TNHVP requires only 6 iterations and is 20.8 times
+faster than vendor XMVB, but is 7.29 times slower than CPP block-LBFGS. Of its
+27.39 s internal end-to-end time, exact HVP accounts for 24.67 s and
+outer-response for 22.80 s. Thus outer-response dominates this TNHVP case even
+though its second-order iteration count is excellent. Vendor XMVB averages only
+496% CPU utilization across the 32-core allocation and emits an 88 MiB output
+while assembling/printing dense 1764-structure matrices; CPP reaches 2370% and
+2676% utilization for block-LBFGS and TNHVP and omits full matrices in its
+matrix-free Davidson path.
+
 ## Source map for subsequent audits
 
 Paths below are relative to the vendor source root, not to XMVB-CPP `src/`.
