@@ -1,6 +1,7 @@
 #pragma once
 
 #include <limits>
+#include <optional>
 
 #include <Eigen/Core>
 
@@ -65,6 +66,7 @@ void refresh_truncated_newton_step_certificate(
     const Eigen::VectorXd& reduced_gradient,
     TruncatedNewtonStepResult* step);
 
+/** @brief Objective observation of a measured quadratic trial model. */
 struct TruncatedNewtonTrialEvaluation {
   double actual_decrease = 0.0;
   double predicted_decrease = 0.0;
@@ -83,10 +85,9 @@ enum class TruncatedNewtonModelFidelity {
 /**
  * @brief Accuracy-aware forcing for a sequence of inexact Newton solves.
  *
- * The progress ratio makes the forcing @f$O(\|g_k\|)@f$ relative to the
- * fixed initial scale, which preserves local quadratic convergence.  The
- * accuracy floor stops tightening once the predicted quadratic residual
- * reaches the outer gradient requirement.  When one maximum admissible
+ * The unfloored progress ratio is @f$O(\|g_k\|)@f$ relative to the fixed
+ * initial scale. The finite outer-accuracy floor stops further tightening;
+ * it does not certify asymptotic quadratic convergence. When one admissible
  * contraction can meet the componentwise outer threshold, the forcing is
  * additionally bounded by @f$\epsilon_g/\|g_k\|_2@f$.
  */
@@ -171,10 +172,11 @@ Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
     double trust_radius,
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner);
 
+/** @brief Updates only from a quadratic observation; absence preserves radius. */
 double update_nonredundant_truncated_newton_trust_radius(
     double trust_radius,
     double minimum_step_size,
-    const TruncatedNewtonTrialEvaluation& trial,
+    const std::optional<TruncatedNewtonTrialEvaluation>& observation,
     const TruncatedNewtonStepResult& model_step,
     TruncatedNewtonModelFidelity model_fidelity,
     bool accepted);

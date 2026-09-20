@@ -17,9 +17,9 @@ namespace xmvb::vb {
  * @brief Solver diagnostics for one accepted TNHVP outer iteration.
  *
  * Counts include every trust-region attempt made from the same accepted
- * source point, while model quantities describe the step that was ultimately
- * accepted. This distinction makes rejected-radius retries visible without
- * confusing them with additional outer iterations.
+ * source point. Accepted-step decreases are distinct from the last attempted
+ * Newton trial; solver residuals and spectra describe that Newton model even
+ * when the Armijo predictor is accepted instead.
  */
 struct TnhvpIterationRecord {
   int accepted_iteration_index = 0;
@@ -44,17 +44,26 @@ struct TnhvpIterationRecord {
   double max_structure_response_relative_residual = 0.0;
 
   double initial_trust_radius = 0.0;
+  /** @brief Zero for an Armijo step, which is not trust-radius constrained. */
   double accepted_trial_radius = 0.0;
   double next_trust_radius = 0.0;
   double step_norm = 0.0;
 
   double linear_decrease = 0.0;
+  /** @brief Quadratic prediction, zero when only an Armijo model was used. */
   double predicted_decrease = 0.0;
   double actual_decrease = 0.0;
   double trust_ratio = 0.0;
   double minimum_ritz_value = 0.0;
   double minimum_shifted_ritz_value = 0.0;
   double trust_region_shift = 0.0;
+
+  /** @brief Last evaluated Newton trial, retained even when it was rejected. */
+  double newton_trial_actual_decrease = 0.0;
+  double newton_trial_predicted_decrease = 0.0;
+  double newton_trial_step_norm = 0.0;
+  bool newton_trial_evaluated = false;
+  bool accepted_newton_step = false;
 
   bool reached_boundary = false;
   bool encountered_negative_curvature = false;

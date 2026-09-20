@@ -44,7 +44,10 @@ void write_tnhvp_trace(
       << "\tactual_decrease\ttrust_ratio"
       << "\tminimum_ritz_value\tminimum_shifted_ritz_value"
       << "\ttrust_region_shift\treached_boundary"
-      << "\tnegative_curvature\tchart_changed\n";
+      << "\tnegative_curvature\tchart_changed"
+      << "\tnewton_trial_evaluated\taccepted_newton_step"
+      << "\tnewton_trial_actual_decrease\tnewton_trial_predicted_decrease"
+      << "\tnewton_trial_step_norm\n";
   stream << std::setprecision(17);
   for (const auto& step : result.tnhvp_iteration_trace) {
     stream
@@ -79,7 +82,12 @@ void write_tnhvp_trace(
         << step.trust_region_shift << '\t'
         << (step.reached_boundary ? 1 : 0) << '\t'
         << (step.encountered_negative_curvature ? 1 : 0) << '\t'
-        << (step.chart_changed ? 1 : 0) << '\n';
+        << (step.chart_changed ? 1 : 0) << '\t'
+        << (step.newton_trial_evaluated ? 1 : 0) << '\t'
+        << (step.accepted_newton_step ? 1 : 0) << '\t'
+        << step.newton_trial_actual_decrease << '\t'
+        << step.newton_trial_predicted_decrease << '\t'
+        << step.newton_trial_step_norm << '\n';
   }
   if (!stream) {
     throw std::runtime_error(

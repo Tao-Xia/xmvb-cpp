@@ -5,6 +5,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -25,6 +26,12 @@
 
 namespace xmvb::vb::optimizer_detail {
 namespace {
+
+/** @brief Linear decrease data from the independent Armijo predictor. */
+struct ArmijoTrialEvaluation {
+  double actual_decrease = 0.0;
+  double linear_decrease = 0.0;
+};
 
 class AcceptedPointReducedHvp final : public ReducedHvp {
 public:
@@ -87,6 +94,7 @@ BackendRunResult run_truncated_newton_backend(
   double accepted_point_setup_wall_time_seconds = 0.0;
   double trial_objective_wall_time_seconds = 0.0;
   bool curvature_correction_required = false;
+  bool baseline_attempted_at_current_point = false;
   auto accepted_point_start_time = std::chrono::steady_clock::now();
   
   while (run_result.n_iterations < options.max_iterations) {
@@ -185,13 +193,11 @@ BackendRunResult run_truncated_newton_backend(
             double candidate_predicted_decrease,
             double candidate_linear_decrease,
             bool accept_model_inaccurate_monotone,
-            TruncatedNewtonTrialEvaluation* trial_evaluation,
+            std::optional<TruncatedNewtonTrialEvaluation>* observation,
             VbScfObjective::TrialEvaluation* accepted_trial_evaluation,
             Eigen::VectorXd* accepted_trial_parameters,
             double* accepted_trial_energy) -> bool {
-          if (trial_evaluation != nullptr) {
-            *trial_evaluation = TruncatedNewtonTrialEvaluation();
-          }
+          observation->reset();
           if (!std::isfinite(candidate_predicted_decrease) ||
               candidate_predicted_decrease <= 0.0) {
             return false;
@@ -211,18 +217,6 @@ BackendRunResult run_truncated_newton_backend(
             return false;
           }
   
-          const double effective_predicted_decrease =
-              candidate_predicted_decrease;
-          if (!std::isfinite(effective_predicted_decrease) ||
-              effective_predicted_decrease <= 0.0) {
-            return false;
-          }
-          if (trial_evaluation != nullptr) {
-            trial_evaluation->predicted_decrease =
-                effective_predicted_decrease;
-            trial_evaluation->linear_decrease = candidate_linear_decrease;
-          }
-  
           VbScfObjective::TrialEvaluation candidate_trial_evaluation =
               objective->evaluate_trial_energy(
                   candidate_trial_parameters,
@@ -234,16 +228,14 @@ BackendRunResult run_truncated_newton_backend(
           const double actual_decrease =
               energy - candidate_trial_energy;
           const double candidate_trust_ratio =
-              actual_decrease / effective_predicted_decrease;
-          if (trial_evaluation != nullptr) {
-            trial_evaluation->actual_decrease = actual_decrease;
-          }
+              actual_decrease / candidate_predicted_decrease;
+          *observation = TruncatedNewtonTrialEvaluation{
+              actual_decrease, candidate_predicted_decrease,
+              candidate_linear_decrease};
           if (!std::isfinite(candidate_trial_energy) ||
               !std::isfinite(candidate_trust_ratio) ||
               !truncated_newton_trial_is_acceptable(
-                  TruncatedNewtonTrialEvaluation{
-                      actual_decrease,
-                      effective_predicted_decrease},
+                  **observation,
                   accept_model_inaccurate_monotone)) {
             return false;
           }
@@ -257,7 +249,7 @@ BackendRunResult run_truncated_newton_backend(
         };
     auto try_baseline_trial_step =
         [&](const Eigen::VectorXd& baseline_direction,
-            TruncatedNewtonTrialEvaluation* trial_evaluation,
+            ArmijoTrialEvaluation* trial_evaluation,
             VbScfObjective::TrialEvaluation* accepted_trial_evaluation,
             Eigen::VectorXd* accepted_trial_parameters,
             double* accepted_trial_energy,
@@ -307,10 +299,7 @@ BackendRunResult run_truncated_newton_backend(
               *accepted_trial_evaluation =
                   std::move(candidate_trial_evaluation);
               *accepted_reduced_step = candidate_reduced_step;
-              *trial_evaluation = TruncatedNewtonTrialEvaluation{
-                  actual_decrease,
-                  linear_decrease,
-                  linear_decrease};
+              *trial_evaluation = {actual_decrease, linear_decrease};
               return true;
             }
             scale *= 0.5;
@@ -319,7 +308,8 @@ BackendRunResult run_truncated_newton_backend(
         };
     const Eigen::Index reduced_size =
         current_projection.reduced_gradient.size();
-    TruncatedNewtonTrialEvaluation trial_evaluation_cache;
+    std::optional<TruncatedNewtonTrialEvaluation> newton_observation;
+    ArmijoTrialEvaluation baseline_observation;
     // Certify the block-L-BFGS predictor with its exact Hessian image, then
     // expand only along the resulting Newton defect.  The forcing condition,
     // rather than a fixed amount of secant history, decides whether curvature
@@ -385,8 +375,6 @@ BackendRunResult run_truncated_newton_backend(
     const double model_linear_decrease = newton_candidate_available
         ? -current_projection.reduced_gradient.dot(reduced_step)
         : 0.0;
-    TruncatedNewtonStepResult trial_step_for_current_trial =
-        trust_region_step;
   
     VbScfObjective::TrialEvaluation accepted_trial_evaluation;
     Eigen::VectorXd trial_parameters(current_parameters.size());
@@ -397,51 +385,63 @@ BackendRunResult run_truncated_newton_backend(
             predicted_decrease,
             model_linear_decrease,
             false,
-            &trial_evaluation_cache,
+            &newton_observation,
             &accepted_trial_evaluation,
             &trial_parameters,
             &trial_energy);
+    // Preserve the Newton observation even if the independent predictor wins.
+    const double next_trust_radius =
+        update_nonredundant_truncated_newton_trust_radius(
+            trust_radius,
+            options.minimum_step_size,
+            newton_observation,
+            trust_region_step,
+            TruncatedNewtonModelFidelity::DirectionallyExact,
+            accepted_newton_trial);
     bool accepted_baseline_trial = false;
     if (!accepted_newton_trial) {
-      if (curvature_correction_required) {
+      if (newton_observation.has_value()) {
         ++rejected_trial_step_count_for_current_point;
       }
       Eigen::VectorXd accepted_baseline_reduced_step;
-      accepted_baseline_trial = try_baseline_trial_step(
-          baseline_reduced_direction,
-          &trial_evaluation_cache,
-          &accepted_trial_evaluation,
-          &trial_parameters,
-          &trial_energy,
-          &accepted_baseline_reduced_step);
+      if (!baseline_attempted_at_current_point) {
+        baseline_attempted_at_current_point = true;
+        accepted_baseline_trial = try_baseline_trial_step(
+            baseline_reduced_direction,
+            &baseline_observation,
+            &accepted_trial_evaluation,
+            &trial_parameters,
+            &trial_energy,
+            &accepted_baseline_reduced_step);
+      }
       if (!accepted_baseline_trial) {
-        const double next_trust_radius =
-            update_nonredundant_truncated_newton_trust_radius(
-                trust_radius,
-                options.minimum_step_size,
-                trial_evaluation_cache,
-                trial_step_for_current_trial,
-                TruncatedNewtonModelFidelity::DirectionallyExact,
-                false);
-        trust_radius = next_trust_radius;
-        if (trust_radius <= options.minimum_step_size) {
+        // Retrying the radius-independent predictor would repeat identical
+        // work. If it was the only candidate, admit curvature at this point.
+        if (!curvature_correction_required) {
+          curvature_correction_required = true;
+          continue;
+        }
+        if (!newton_observation.has_value() ||
+            !(next_trust_radius < trust_radius)) {
+          result->termination_reason =
+              "nonredundant_truncated_newton_no_usable_step";
+          run_result.final_gradient_l2_norm =
+              current_projection.reduced_gradient.norm();
+          break;
+        }
+        if (next_trust_radius <= options.minimum_step_size) {
           result->termination_reason =
               "nonredundant_truncated_newton_trust_radius_exhausted";
           run_result.final_gradient_l2_norm =
               current_projection.reduced_gradient.norm();
           break;
         }
+        trust_radius = next_trust_radius;
         continue;
       }
       reduced_step = std::move(accepted_baseline_reduced_step);
-      trial_step_for_current_trial.retract_tangent_norm =
-          retraction_metric.norm(reduced_step);
-      trial_step_for_current_trial.reached_boundary =
-          trial_step_for_current_trial.retract_tangent_norm >=
-          (1.0 - std::sqrt(std::numeric_limits<double>::epsilon())) *
-              trust_radius;
-      trial_step_for_current_trial.encountered_negative_curvature = false;
     }
+    const double accepted_step_norm = retraction_metric.norm(reduced_step);
     const double energy_only_wall_time_seconds =
         accepted_trial_evaluation.wall_time_seconds;
     objective->complete_trial(&accepted_trial_evaluation);
@@ -500,16 +500,6 @@ BackendRunResult run_truncated_newton_backend(
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - accepted_point_start_time)
             .count();
-    const double next_trust_radius =
-        update_nonredundant_truncated_newton_trust_radius(
-            trust_radius,
-            options.minimum_step_size,
-            trial_evaluation_cache,
-            trial_step_for_current_trial,
-            accepted_baseline_trial
-                ? TruncatedNewtonModelFidelity::CoreApproximate
-                : TruncatedNewtonModelFidelity::DirectionallyExact,
-            true);
     TnhvpIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations;
     iteration_record.reduced_dimension = static_cast<int>(reduced_size);
@@ -551,15 +541,28 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.forcing_term = newton_forcing_term;
     iteration_record.initial_trust_radius =
         initial_trust_radius_for_current_point;
-    iteration_record.accepted_trial_radius = trust_radius;
+    iteration_record.accepted_newton_step = accepted_newton_trial;
+    iteration_record.newton_trial_evaluated = newton_observation.has_value();
+    if (newton_observation.has_value()) {
+      iteration_record.newton_trial_actual_decrease =
+          newton_observation->actual_decrease;
+      iteration_record.newton_trial_predicted_decrease =
+          newton_observation->predicted_decrease;
+      iteration_record.newton_trial_step_norm =
+          trust_region_step.retract_tangent_norm;
+    }
+    iteration_record.accepted_trial_radius =
+        accepted_newton_trial ? trust_radius : 0.0;
     iteration_record.next_trust_radius = next_trust_radius;
-    iteration_record.step_norm =
-        trial_step_for_current_trial.retract_tangent_norm;
+    iteration_record.step_norm = accepted_step_norm;
     iteration_record.linear_decrease =
-        trial_evaluation_cache.linear_decrease;
+        accepted_newton_trial ? newton_observation->linear_decrease
+                              : baseline_observation.linear_decrease;
     iteration_record.predicted_decrease =
-        trial_evaluation_cache.predicted_decrease;
-    iteration_record.actual_decrease = trial_evaluation_cache.actual_decrease;
+        accepted_newton_trial ? newton_observation->predicted_decrease : 0.0;
+    iteration_record.actual_decrease =
+        accepted_newton_trial ? newton_observation->actual_decrease
+                              : baseline_observation.actual_decrease;
     if (iteration_record.predicted_decrease > 0.0 &&
         std::isfinite(iteration_record.predicted_decrease)) {
       iteration_record.trust_ratio =
@@ -576,7 +579,7 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.trust_region_shift =
         trust_region_step.trust_region_shift;
     iteration_record.reached_boundary =
-        trial_step_for_current_trial.reached_boundary;
+        accepted_newton_trial && trust_region_step.reached_boundary;
     iteration_record.encountered_negative_curvature =
         !accepted_baseline_trial &&
         trust_region_step.encountered_negative_curvature;
@@ -591,6 +594,7 @@ BackendRunResult run_truncated_newton_backend(
         &next_projection.reduced_gradient);
     trust_radius = next_trust_radius;
     rejected_trial_step_count_for_current_point = 0;
+    baseline_attempted_at_current_point = false;
     initial_trust_radius_for_current_point = trust_radius;
     accepted_point_setup_wall_time_seconds = 0.0;
     trial_objective_wall_time_seconds = 0.0;

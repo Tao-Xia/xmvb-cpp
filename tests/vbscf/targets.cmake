@@ -74,6 +74,16 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
     PASS_REGULAR_EXPRESSION "directional_hvp_fd_relative =")
 
+  add_test(NAME tnhvp_model_observations_f2 COMMAND
+    ${CMAKE_COMMAND}
+    -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>
+    -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+    -DXMVB_BASIS=${CMAKE_SOURCE_DIR}/basis
+    -DRUN_DIR=${CMAKE_BINARY_DIR}/tests/tnhvp_model_observations
+    -P ${CMAKE_SOURCE_DIR}/tests/vbscf/check_model_observations.cmake)
+  set_tests_properties(tnhvp_model_observations_f2 PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+
   add_test(NAME dense_reduced_hessian_f2 COMMAND benchmark_exact_ctx_hvp
     ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
     --repeats 1 --dense-reference-block-width 4)

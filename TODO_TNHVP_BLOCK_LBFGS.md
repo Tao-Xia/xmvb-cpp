@@ -36,6 +36,12 @@ The next implementation sequence is:
 3. [ ] Give predictor and curvature steps consistent quadratic decrease
    estimates; keep rejected-Newton and accepted-predictor records separate.
    A linear-only Armijo result must not redefine the quadratic trust radius.
+   Implemented separate Armijo/quadratic observations and no-observation
+   radius preservation. A rejected Newton trial retains its own radius
+   decision even when Armijo succeeds; a failed predictor is not repeated
+   during same-point radius retries. Focused quadratic tests pass; molecular
+   comparison is pending. The predictor is deliberately not assigned an
+   unmeasured quadratic prediction.
 4. [ ] Define a symmetric inexact response model and its error budget before
    feeding its images into block inverse-BFGS. Freeze the shared response
    space within an orbital block; refresh old images when that model changes.

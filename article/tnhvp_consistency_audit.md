@@ -405,6 +405,50 @@ in Section 4, not loosening the strict block-BFGS check or claiming universal
 derivative correctness from two probes. Logs are under
 `build/diagnostics/consistency-3460c35/audit/`.
 
+## 11. Separating line-search acceptance from quadratic model trust
+
+The predictor line search observes the actual decrease
+$a_B=f(x)-f(R_x(\alpha p_B))$ and the linear decrease
+$\ell_B=-\alpha g^T p_B$. Armijo requires $a_B\ge c_1\ell_B$.
+Neither that inequality nor the value of $\ell_B$ supplies the unmeasured
+quadratic curvature $p_B^THp_B$.
+
+The implementation now represents these observations separately. Only a
+Newton trial with measured prediction
+
+$$
+q_N=-g^Tp_N-\frac12p_N^THp_N
+$$
+
+can update the quadratic trust radius. If no such trial was evaluated,
+$\Delta_{k+1}=\Delta_k$. If a Newton trial is rejected and the predictor
+is subsequently accepted, the radius decision still uses the **rejected
+Newton trial's** actual decrease and prediction. The predictor never
+overwrites those data. A failed Armijo search is attempted only once per
+accepted point, because changing the Newton radius cannot change its
+radius-independent search direction or backtracking sequence.
+
+For $f(x)=50x^2$ at $x=0.01$, a backtracked predictor step $p=-1/64$
+satisfies Armijo with $a_B=0.00341796875$ and $\ell_B=0.015625$.
+Mislabeling $\ell_B$ as the quadratic prediction falsely contracts the
+radius despite the objective being an exact quadratic. The new regression
+preserves the radius when this is the only observation. It also checks
+that the exact Newton step $p_N=-0.01$ has $a_N=q_N=0.005$, not a
+quadratic trust ratio of one half, and that predictor acceptance cannot
+erase a preceding Newton rejection.
+
+Trace fields now distinguish `accepted_newton_step`, `newton_trial_evaluated`,
+and the last Newton trial's actual/predicted decreases and norm. For an
+accepted Armijo-only step, the accepted `predicted_decrease`, `trust_ratio`,
+and `accepted_trial_radius` are zero (unavailable/not applicable), rather
+than inventing a quadratic prediction or boundary classification. Krylov
+residuals and spectral fields describe the last attempted Newton model,
+not necessarily the accepted predictor.
+
+This repair does not alter the forcing rule, response tolerances, curvature
+admission gate, or strict block-secant symmetry check. In particular, the
+structure-response defect established in Section 10 remains to be repaired.
+
 ## References
 
 1. Conn, A. R.; Gould, N. I. M.; Toint, P. L. *Trust Region Methods*,

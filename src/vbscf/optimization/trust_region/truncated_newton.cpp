@@ -548,10 +548,14 @@ Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
 double update_nonredundant_truncated_newton_trust_radius(
     double trust_radius,
     double minimum_step_size,
-    const TruncatedNewtonTrialEvaluation& trial,
+    const std::optional<TruncatedNewtonTrialEvaluation>& observation,
     const TruncatedNewtonStepResult& model_step,
     TruncatedNewtonModelFidelity model_fidelity,
     bool accepted) {
+  // A line-search predictor without an HVP supplies no quadratic-model
+  // observation. Its Armijo decrease cannot determine the Newton radius.
+  if (!observation.has_value()) return trust_radius;
+  const auto& trial = *observation;
   // If B omits a finite Hessian contribution, the leading discrepancy is
   // 1/2 s^T(H-B)s = O(||s||^2).  A directionally exact Hessian instead leaves
   // the O(||s||^3) Taylor remainder.  Radius extrapolation must use the order

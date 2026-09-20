@@ -108,7 +108,7 @@ void check_rejected_trial_interpolation() {
       xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
           0.5,
           1.0e-12,
-          {-9.0, 1.0, 1.0},
+          xmvb::vb::TruncatedNewtonTrialEvaluation{-9.0, 1.0, 1.0},
           boundary_step,
           TruncatedNewtonModelFidelity::CoreApproximate,
           false);
@@ -120,7 +120,7 @@ void check_rejected_trial_interpolation() {
       xmvb::vb::update_nonredundant_truncated_newton_trust_radius(
           0.5,
           1.0e-12,
-          {0.2, 1.0, 1.0},
+          xmvb::vb::TruncatedNewtonTrialEvaluation{0.2, 1.0, 1.0},
           boundary_step,
           TruncatedNewtonModelFidelity::DirectionallyExact,
           false);
@@ -148,6 +148,54 @@ void check_monotone_model_error_contraction() {
   require(
       std::abs(approximate_radius - 0.25) <= 1.0e-14,
       "accepted approximate-model error did not contract the next radius");
+}
+
+void check_predictor_and_quadratic_observations_are_separate() {
+  using namespace xmvb::vb;
+  constexpr double radius = 1.0;
+  constexpr double minimum_step = 1e-12;
+  constexpr auto fidelity = TruncatedNewtonModelFidelity::DirectionallyExact;
+
+  // f(x)=50*x^2, x=0.01: Armijo accepts alpha=1/64 along -g.
+  // Its linear decrease is not the exact quadratic predicted decrease.
+  const double x = 0.01;
+  const double g = 100.0 * x;
+  const double predictor = -g / 64.0;
+  const double actual = 50.0 * (x * x - (x + predictor) * (x + predictor));
+  const double linear = -g * predictor;
+  require(actual >= 1e-4 * linear, "quadratic predictor did not pass Armijo");
+  TruncatedNewtonStepResult predictor_step;
+  predictor_step.retract_tangent_norm = std::abs(predictor);
+  const double false_radius = update_nonredundant_truncated_newton_trust_radius(
+      radius, minimum_step, TruncatedNewtonTrialEvaluation{actual, linear, linear},
+      predictor_step, TruncatedNewtonModelFidelity::CoreApproximate, true);
+  require(false_radius < 0.1 * radius,
+          "test must reproduce the old false radius contraction");
+  const double unchanged = update_nonredundant_truncated_newton_trust_radius(
+      radius, minimum_step, std::nullopt, predictor_step, fidelity, true);
+  require(unchanged == radius,
+          "Armijo-only observation changed the quadratic trust radius");
+
+  TruncatedNewtonStepResult newton_step;
+  newton_step.retract_tangent_norm = 0.01;
+  const TruncatedNewtonTrialEvaluation exact_trial{0.005, 0.005, 0.01};
+  require(exact_trial.actual_decrease / exact_trial.predicted_decrease == 1.0,
+          "exact Newton trial must have quadratic trust ratio one");
+  require(update_nonredundant_truncated_newton_trust_radius(
+              radius, minimum_step, exact_trial, newton_step, fidelity, true)
+              == radius,
+          "exact interior quadratic Newton trial shrank its radius");
+
+  newton_step.retract_tangent_norm = 0.5;
+  newton_step.reached_boundary = true;
+  const TruncatedNewtonTrialEvaluation rejected{0.25, 1.0, 1.0};
+  const double contracted = update_nonredundant_truncated_newton_trust_radius(
+      radius, minimum_step, rejected, newton_step, fidelity, false);
+  require(contracted < radius, "rejected quadratic trial did not contract");
+  const double after_predictor = update_nonredundant_truncated_newton_trust_radius(
+      contracted, minimum_step, std::nullopt, predictor_step, fidelity, true);
+  require(after_predictor == contracted,
+          "accepted predictor overwrote the rejected Newton radius decision");
 }
 }  // namespace
 
@@ -189,6 +237,7 @@ int main() {
     check_model_fidelity_radius_scaling();
     check_rejected_trial_interpolation();
     check_monotone_model_error_contraction();
+    check_predictor_and_quadratic_observations_are_separate();
     check("positive definite interior", V(2, 4), V(1, 2), 2, false);
     check("positive definite boundary", V(2, 4), V(1, 2), 0.1, true);
     check("zero-multiplier boundary", V(2, 4), V(2, 0), 1, true);
