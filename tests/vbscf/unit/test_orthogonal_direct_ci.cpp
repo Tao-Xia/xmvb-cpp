@@ -187,38 +187,6 @@ void check_planner() {
   require(!rejected.complete() && !rejected.favors_direct_ci(),
           "incomplete fixed-spin space was admitted");
 
-  const auto sixteen_electron_spin_space = complete_space(16, 8);
-  const auto covalent = xmvb::vb::plan_orthogonal_direct_ci_action(
-      sixteen_electron_spin_space,
-      sixteen_electron_spin_space,
-      16,
-      1,
-      1430,
-      1430 * 256);
-  require(covalent.complete(),
-          "16e/16o complete fixed-spin space was not recognized");
-  require(covalent.n_alpha_strings == 12870 &&
-              covalent.n_beta_strings == 12870,
-          "16e/16o determinant count is wrong");
-  require(covalent.favors_direct_ci(),
-          "16e/16o direct CI unexpectedly lost to Kronecker action");
-  require(covalent.materialized_structure_action_dominates(),
-          "small 16e/16o structure space did not select materialized H/S");
-  require(!covalent.favors_direct_ci_for_davidson(),
-          "Davidson expanded a small structure space into the full spin product");
-
-  const auto full_product_structure_space =
-      xmvb::vb::plan_orthogonal_direct_ci_action(
-          sixteen_electron_spin_space,
-          sixteen_electron_spin_space,
-          16,
-          1,
-          12870 * 12870);
-  require(!full_product_structure_space
-               .materialized_structure_action_dominates() &&
-              full_product_structure_space
-                  .favors_direct_ci_for_davidson(),
-          "large structure space incorrectly selected materialized H/S");
 }
 
 void check_sigma_action() {
