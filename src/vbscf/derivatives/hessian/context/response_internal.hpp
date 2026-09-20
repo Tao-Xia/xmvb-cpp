@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -41,6 +42,8 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   Eigen::VectorXd selected_eigenvalues;
   Eigen::MatrixXd selected_eigenvectors;
   Eigen::MatrixXd overlap_selected;
+  /** @brief Accepted Ritz residuals H C - S C E, retained without extra actions. */
+  Eigen::MatrixXd selected_residuals;
   const std::vector<double>* full_eigenvalues = nullptr;
   const Eigen::MatrixXd* full_eigenvectors = nullptr;
   std::vector<int> selected_root_indices;
@@ -51,20 +54,27 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   mutable std::vector<xmvb::core::EigenResponseRecycleSpace>
       response_recycle_spaces;
 
+  /** @brief Revision of the common accepted-point response spaces. */
+  std::uint64_t revision() const noexcept;
+
   SelectedStateGeneralizedEigenDirectionalResponse apply(
       const SelectedStateDirectionalStructureImages& directional_images,
-      double requested_relative_residual_tolerance = 0.0) const;
+      double requested_relative_residual_tolerance = 0.0,
+      bool frozen = false) const;
 
   /**
    * @brief Solves several directional responses as one state/direction block.
    *
-   * Columns are ordered by direction, with all selected states contiguous
-   * inside each direction.
+   * Enrich all directional right-hand sides before evaluating their common
+   * Galerkin model. Frozen applications never modify that model; their true
+   * residual is reported, not used to silently change the operator.
+   * Columns are ordered by direction, with selected states contiguous.
    */
   SelectedStateGeneralizedEigenDirectionalResponse apply_direction_block(
       const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
       const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
-      double requested_relative_residual_tolerance = 0.0) const;
+      double requested_relative_residual_tolerance = 0.0,
+      bool frozen = false) const;
 };
 
 /**

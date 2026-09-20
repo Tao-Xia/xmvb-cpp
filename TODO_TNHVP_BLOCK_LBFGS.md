@@ -18,7 +18,39 @@ Validation: Hanhai25 Slurm job `247066` passed all 46 tests. The F2 integration
 test converges both default `ISCF=5` and explicit orbital-block L-BFGS and
 requires byte-identical final orbital tables. API/CLI defaults and explicit
 scalar selection are also checked. This qualifies default selection, not the
-unresolved TNHVP response model.
+TNHVP response model; its subsequent repair is recorded below.
+
+## Response-model consistency repair, 2026-09-20
+
+The requested correctness repair now separates response-space enrichment from
+an unconditional frozen Galerkin action. All retained Newton HVP images are
+refreshed when the response-model revision changes, including cached
+trust-radius retries. Independent finite-tolerance response solutions are no
+longer mixed as columns of one Hessian. The symmetry guard remains active;
+there is no dense fallback or omitted physical response term.
+
+Hanhai25 Slurm job `247101` passed all 48 tests, including fixed-point 241 and
+7975 regressions for symmetry, linearity, batching, ordering, and cached-step
+consistency. From the original guesses, Davidson and dense both converge in
+9 steps for 241 and 6 steps for 7975, with final energies agreeing within
+$3\times10^{-12}\ E_h$. This validates those cases, not universal performance
+or an exact-Hessian error bound. Expanded array `247105` exposed a second
+CERRAS defect: a correctable residual between the projected and bordered
+targets was misclassified as breakdown (confirmed by diagnostic `247124`).
+The response equations also required finite-Ritz gauge/multiplier corrections.
+These and the matching gauge-stabilized preconditioner now pass all 48 tests
+in job `247155`, including direct bordered references for both isolated and
+equal-weight cold/recycled/frozen response. Final Davidson/dense energy
+differences are at most $5\times10^{-12}\ E_h$ on 241 and 7975. Array
+`247148` also converges 240, FeCl2, 7963, YAMSAI, and CERRAS. CERRAS takes
+8 accepted steps but 767.94 s in SCF, with 588.34 s spent on step 7; this is
+not a performance acceptance. MnF2 and LOFLEA are still running.
+After deleting the unused gated-guess interface, job `247173` repeats all
+48 tests and both Davidson/dense convergence comparisons. Final job `247174`
+again passes all 48 tests, now comparing the genuine scalar HVP entry point
+against the block entry point; both molecular scalar/block defects are zero.
+See consistency audit Section 10 for the
+formulation, limits, and measurements.
 
 ## Acceptance reopened: multi-system audit, 2026-09-20
 
@@ -70,11 +102,30 @@ The next implementation sequence is:
 4. [ ] Define a symmetric inexact response model and its error budget before
    feeding its images into block inverse-BFGS. Freeze the shared response
    space within an orbital block; refresh old images when that model changes.
+   - [x] Shared frozen Galerkin response, unconditional linear application,
+     revisioned HVP refresh, and true residual checks for incoming blocks.
+     Finite-Ritz gauge/multiplier terms and corresponding preconditioning are
+     also corrected. Final job `247174` passes all 48 tests; job `247173`
+     repeats both molecular Davidson/dense convergence checks. No dense fallback or relaxed full
+     bordered tolerance is introduced.
+   - [ ] Propagate response residuals into an orbital-HVP error bound and the
+     Newton forcing condition. Refreshing an older image preserves model
+     consistency, not necessarily its former residual tolerance. Do not mark
+     this complete merely because the symmetry regression passes.
 5. [ ] Separate global sufficient-decrease steps from locally certified Newton
    steps. Account for HVP error, use covector norms, and include the trust
    shift in correction preconditioning. Do not reinstate fixed HVP budgets.
 6. [ ] Remove repeated full Gram/spectral rebuilds and record solver-only time,
    stopping reason, actual minimum Ritz value, and fresh-certificate cost.
+   The consistency repair currently replays every retained full HVP after a
+   response-space revision. With bounded-width expansion to $m$ orbital
+   directions, this can require $O(m^2)$ full-HVP work, including unchanged
+   core terms. The frozen Galerkin factorization is also rebuilt for each RHS.
+   Cache the factorization by model revision and update only the changing
+   response contribution; do not restore inconsistent old images. Include
+   scalar replay in work counters: `exact_hvp_block_actions` alone omits it.
+   CERRAS step 7 reaches 77 retained directions and spends 545.39 s in outer
+   response; eliminate repeated work before claiming this repair faster.
 7. [ ] Rerun the nine-system panel with isolated output directories, inspect
    stationary-point/energy differences, and then collect repeated timings and
    peak RSS. Accept algorithm changes only after these gates pass.

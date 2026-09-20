@@ -10,7 +10,7 @@ execute_process(
 
 if (NOT xmvb_status EQUAL 0)
   message(FATAL_ERROR
-    "F2 state-average run failed with status ${xmvb_status}:\n${xmvb_errors}")
+    "F2 state-average run failed with status ${xmvb_status}:\n${xmvb_errors}\n${xmvb_report}")
 endif()
 
 foreach(pattern IN ITEMS

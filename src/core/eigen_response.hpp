@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <vector>
 
 #include <Eigen/Core>
@@ -16,10 +17,11 @@ struct EigenResponseOptions {
   double relative_residual_tolerance;
 };
 
-struct EigenResponseRecycleGuess {
+/** @brief Unconditional Galerkin action of one frozen recycle space. */
+struct EigenResponseRecycleApplication {
   Eigen::VectorXd solution;
   Eigen::VectorXd operator_image;
-  bool used = false;
+  bool available = false;
 };
 
 /**
@@ -33,9 +35,17 @@ class EigenResponseRecycleSpace {
 public:
   int dimension() const noexcept;
   int size() const noexcept;
+  std::uint64_t revision() const noexcept;
   void clear();
 
-  EigenResponseRecycleGuess guess(
+  /**
+   * @brief Applies the frozen symmetric Galerkin inverse to any finite RHS.
+   *
+   * This operation is linear in the right-hand side and never rejects a
+   * result based on residual improvement. Small projected spectral
+   * modes are removed with one RHS-independent numerical-rank cutoff.
+   */
+  EigenResponseRecycleApplication galerkin_apply(
       const Eigen::Ref<const Eigen::VectorXd>& right_hand_side) const;
 
   bool append(
@@ -45,6 +55,7 @@ public:
 private:
   Eigen::MatrixXd basis_;
   Eigen::MatrixXd operator_images_;
+  std::uint64_t revision_ = 0;
 };
 
 /**
@@ -84,13 +95,15 @@ struct EigenSubspaceResponseResult {
  * @brief Solves selected generalized-eigenpair response without a full spectrum.
  *
  * For each accepted pair `H c = E S c`, the solver applies preconditioned
- * MINRES to `H - E S` on the Euclidean complement of each known Ritz vector.
- * Removing the selected-root null mode before iteration keeps the metric gauge
- * out of the Krylov recurrence. The response along that root is recovered from
- * `c^T S dc = -0.5 c^T dS c`; the original symmetric bordered equation then
- * certifies the true residual, including Davidson Ritz-vector drift. All
- * selected roots advance together through one block H/S action per iteration.
- * The caller supplies accepted-point `S C`, reused by every direction.
+ * MINRES to `H - E S` on the Euclidean complement of each constraint image
+ * `S c`. Removing this bordered constraint direction keeps the metric gauge
+ * out of the Krylov recurrence. The response along `c` is fixed by
+ * `c^T S dc = -0.5 c^T dS c`, while the Ritz residual `(H - E S)c` is retained
+ * in both the projected forcing and the eigenvalue response. The original
+ * symmetric bordered equation then certifies the true residual even for a
+ * finite-accuracy Davidson root. All selected roots advance together through
+ * one block H/S action per iteration. The caller supplies accepted-point
+ * `S C`; an optional accepted-point Ritz-residual cache avoids another action.
  *
  * The returned residual measures this linear equation at the supplied Ritz
  * root, not the error of that Ritz root relative to an exact eigenpair.
@@ -105,7 +118,26 @@ EigenResponseResult solve_generalized_eigen_response(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
     const EigenResponseOptions& options,
-    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces = {});
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces = {},
+    const Eigen::MatrixXd* selected_residuals = nullptr);
+
+/**
+ * @brief Evaluates isolated-root response in fixed common Galerkin spaces.
+ *
+ * The spaces are not enriched and no iterative refinement is performed. The
+ * returned bordered residual is an accuracy diagnostic, not an acceptance
+ * test; any finite residual is returned to the caller for an explicit
+ * enrich-and-retry decision.
+ */
+EigenResponseResult evaluate_frozen_generalized_eigen_response(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    const std::vector<const EigenResponseRecycleSpace*>& recycle_spaces,
+    const Eigen::MatrixXd* selected_residuals = nullptr);
 
 /**
  * @brief Applies the complete generalized eigenspectrum to selected responses.
@@ -149,7 +181,27 @@ solve_equal_weight_generalized_eigen_subspace_response(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
     const EigenResponseOptions& options,
-    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces = {});
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces = {},
+    const Eigen::MatrixXd* selected_residuals = nullptr);
+
+/**
+ * @brief Evaluates equal-weight subspace response in fixed Galerkin spaces.
+ *
+ * The complete selected metric image is projected out. The symmetric metric
+ * gauge, its finite-Ritz forcing, and the full selected-space matrix response
+ * are restored before the true residual is evaluated. Poor finite residuals
+ * are reported without mutating or refining the supplied spaces.
+ */
+EigenSubspaceResponseResult
+evaluate_frozen_equal_weight_generalized_eigen_subspace_response(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    const std::vector<const EigenResponseRecycleSpace*>& recycle_spaces,
+    const Eigen::MatrixXd* selected_residuals = nullptr);
 
 /**
  * @brief Full-spectrum reference for equal-weight invariant-subspace response.

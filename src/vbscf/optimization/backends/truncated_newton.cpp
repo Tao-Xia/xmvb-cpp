@@ -51,6 +51,24 @@ public:
     return exact_operator_->apply_reduced_batch(directions);
   }
 
+  Eigen::MatrixXd apply_frozen_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& directions) override {
+    HvpComponents components;
+    components.freeze_structure_response = true;
+    Eigen::MatrixXd images(directions.rows(), directions.cols());
+    // Cache refresh can contain the entire orbital Krylov basis. Stream it
+    // rather than allocating AO-matrix intermediates for every stored column.
+    for (Eigen::Index column = 0; column < directions.cols(); ++column) {
+      images.col(column) =
+          exact_operator_->apply_reduced(directions.col(column), components);
+    }
+    return images;
+  }
+
+  std::uint64_t model_revision() const noexcept override {
+    return exact_operator_->response_model_revision();
+  }
+
 private:
   const ExactHvpOperator* exact_operator_;
 };

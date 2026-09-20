@@ -33,6 +33,17 @@ bool ExactHvpOperator::supports_analytic_core_model() const noexcept {
   return state_->supports_analytic_core_model();
 }
 
+std::uint64_t ExactHvpOperator::response_model_revision() const noexcept {
+  return state_->response_model_revision();
+}
+
+std::uint64_t ExactHvpOperator::State::response_model_revision() const noexcept {
+  return accepted_outer_response_context_ != nullptr
+      ? accepted_outer_response_context_->selected_state_eigen_response_operator
+            .revision()
+      : 0;
+}
+
 ExactHvpOperator::Diagnostics ExactHvpOperator::diagnostics() const {
   return state_->diagnostics();
 }

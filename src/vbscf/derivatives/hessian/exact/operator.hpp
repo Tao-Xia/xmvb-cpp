@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 #include <Eigen/Core>
@@ -26,6 +27,8 @@ struct HvpComponents {
   bool structure_response = true;
   /** Requested inexact structure-response tolerance; zero keeps final accuracy. */
   double response_relative_residual_tolerance = 0.0;
+  /** Apply the current common response space without enriching it. */
+  bool freeze_structure_response = false;
 };
 
 /**
@@ -119,6 +122,9 @@ public:
       HvpComponents components = {}) const;
 
   bool supports_analytic_core_model() const noexcept;
+
+  /** @brief Revision invalidating previously sampled relaxed HVP images. */
+  std::uint64_t response_model_revision() const noexcept;
 
   Diagnostics diagnostics() const;
 

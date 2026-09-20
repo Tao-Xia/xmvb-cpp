@@ -2,6 +2,11 @@
 
 namespace xmvb::vb {
 
+Eigen::MatrixXd ReducedHvp::apply_frozen_batch(
+    const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) {
+  return apply_batch(reduced_directions);
+}
+
 Eigen::MatrixXd ReducedHvp::apply_batch(
     const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) {
   Eigen::MatrixXd responses(

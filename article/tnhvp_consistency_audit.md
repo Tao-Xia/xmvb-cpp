@@ -510,6 +510,394 @@ Current run logs are under `build/diagnostics/consistency-3460c35/trust/`
 and `.../endpoints/FeCl2/`. The tested executable SHA-256 is
 `fb162f9696ed88335c3279ed708e563d8d3feaea0e88e9fcfe41edb2c6fcf05a`.
 
+## 10. Common response model and versioned Hessian samples
+
+The consistency repair separates **enrichment** from **frozen application**.
+On the gauge-fixed response domain of Section 3, let $W$ contain the retained
+orthonormal response vectors and let $DW$ contain their operator images. Define
+
+$$
+K_W=W^TDW,\qquad R_W=W K_W^{\dagger}W^T,\qquad
+H_W=A-B^TR_WB.
+$$
+
+The symmetric spectral inverse retains the signs of resolved eigenvalues;
+negative eigenvalues are not removed. Its numerical-rank threshold depends on
+the frozen projected operator, not on the current right-hand side. Consequently
+$R_W^T=R_W$ and $H_W^T=H_W$, assuming consistent component adjoints. The
+normalization/overlap derivatives and selected-space multipliers remain part of
+the response and pullback; they are not discarded when changing its solver.
+
+The old recycled `guess` was only a warm-start policy: it discarded a Galerkin
+solution unless the Euclidean residual improved relative to a zero guess. Such
+a right-hand-side-dependent decision is not a linear inverse action, including
+for positive-definite response matrices. The new unconditional
+`galerkin_apply` replaces the removed `guess` interface. Only the enrichment
+solver may choose whether to use its output as an initial guess, after
+screening against the full bordered residual. That warm-start decision is
+not part of the frozen inverse action.
+
+For an incoming orbital block, independent MINRES solves first enrich the
+accepted-point response spaces. All columns are then evaluated in the final
+common space, including equal-weight directions previously processed earlier
+in the block. The common responses must meet the requested **true bordered**
+residual before they are published as new samples. Further enrichment is
+driven by that residual and actual space growth, not a fixed retry count.
+An explicit positive response tolerance now overrides the default in either
+direction; zero retains the default. The previous `max(default, requested)`
+incorrectly prevented a caller from requesting tighter accuracy.
+
+Each accepted independent enrichment advances the response-model revision.
+For retained orbital directions $Q=[q_1,\ldots,q_m]$, the solver must store
+
+$$
+Y=H_WQ
+$$
+
+at **one revision** before building the projected Hessian, positive Ritz
+secants, inverse-BFGS update, predicted decrease, or KKT certificate. On model
+change all retained images are refreshed. Same-point trust-radius retries
+reuse them only when the revisions match. A failed solve after enrichment
+cannot return a step certified against the previous revision. The affine
+L-BFGS/Newton diagnostic also rebuilds its baseline image and right-hand side
+if its response model changes during the correction solve.
+
+The first production repair replays the complete frozen HVP for retained
+directions so that no gauge, multiplier, or orbital pullback term is omitted.
+This replay streams one direction at a time: it does not allocate AO-matrix
+intermediates for the entire orbital Krylov basis. It introduces no full
+structure H/S or orbital Hessian assembly. Replacing this replay with a proven
+low-rank update is a separate performance task, not a condition hidden behind
+the correctness repair.
+
+Frozen application reports its true residual without changing the model. In
+particular, enrichment can change the residual of an earlier right-hand side;
+the old sample is refreshed consistently, not claimed to retain its previous
+residual certificate. This repair establishes a coherent model, **not** a
+bound on the difference between that model and the exact relaxed Hessian.
+Residual-transfer estimates and error-aware Newton forcing remain separate
+open work. Section 10.2 corrects the finite-Ritz gauge forcing and multiplier
+recovery; it does not replace those missing orbital-HVP error estimates.
+
+Validation includes indefinite projected inverses, gauge-preserving isolated
+and equal-weight responses, changing-model Newton sample refresh, stale
+trust-radius retry invalidation, and molecular frozen-model identities at the
+captured 241 and 7975 points. Molecular fixtures are portable decimal orbital
+tables under `tests/vbscf/fixtures/response/`; their provenance is recorded
+there. Fixed-model linearity, symmetry, segmentation, column permutation and
+repeatability are asserted numerically. Equality between different enriched
+models is deliberately not an invariant.
+
+### 10.1 First shared-model qualification at the captured failure points
+
+Before the finite-Ritz corrections below, Hanhai25 Slurm job `247101` passed
+all 48 tests, including the original
+exact/RI and isolated-root/equal-weight finite-difference tests. The new
+fixed-point checks use three independent orbital probes even when the Newton
+solver would stop with a one-dimensional subspace. The measured absolute
+Frobenius-norm defects of the frozen models are:
+
+| Quantity | 241 | 7975 |
+|---|---:|---:|
+| Projected curvature skew | $6.45\times10^{-15}$ | $3.95\times10^{-15}$ |
+| HVP linear-combination defect | $1.12\times10^{-13}$ | $1.20\times10^{-13}$ |
+| Cached Newton-step image versus frozen direct application | $8.16\times10^{-14}$ | $2.01\times10^{-16}$ |
+| Scalar/block, segmentation, permutation, repeat, and zero defects | 0 | 0 |
+
+Adding the third training direction changes the first two images by
+$8.48\times10^{-7}$ for 241 and $1.93\times10^{-6}$ for 7975. Thus the
+revision/refresh check is not vacuous: the same-model identities pass after
+actual changes to previously stored samples. The production curvature guard
+has not been loosened.
+
+The same job ran both structure eigensolvers from the original input guesses
+with 32 CPU threads, exact integrals, TNHVP, and common outer thresholds
+$\tau_g=10^{-3}$ and $\tau_E=10^{-7}\ E_h$. The outer limit was 2000,
+not 30 steps. All four runs converged:
+
+| System | Eigensolver | Accepted steps | Final total energy / $E_h$ | SCF wall time / s | Peak RSS / KiB |
+|---|---|---:|---:|---:|---:|
+| 241 | Davidson | 9 | $-230.720590391790$ | 9.618 | 991312 |
+| 241 | dense | 9 | $-230.720590391792$ | 2.827 | 998516 |
+| 7975 | Davidson | 6 | $-285.733616934240$ | 3.680 | 1548364 |
+| 7975 | dense | 6 | $-285.733616934243$ | 1.480 | 1659544 |
+
+These single-run timings establish successful execution, not a speedup:
+Davidson remains slower here. The replay overhead and repeated projected
+factorizations remain explicit optimization opportunities. Convergence on
+these two cases also does not establish that TNHVP outperforms orbital-block
+L-BFGS or that its inexact-Hessian error budget is complete.
+
+Local logs are under `build/diagnostics/response-model-20260920/`; remote logs
+are under `/home/guqqgroup/taoxia/xmvb-runs/response-model-20260920/`.
+The tested executable SHA-256 is
+`7f07ea08f33890918ada3e97f6aeb1f426ab562dcb2676fa14281f340d5834c2`.
+The remaining seven-system Davidson panel ran as array `247105`. It exposed
+an additional bordered-response failure in CERRAS after four accepted steps;
+the first shared-model qualification alone therefore does not close the repair.
+240, FeCl2, 7963, and YAMSAI converged. MnF2 and LOFLEA were cancelled while
+still running to replace this incomplete patch with the full repair; they are
+not counted as convergence successes or failures.
+
+### 10.2 Finite-Ritz response and the normalization constraint
+
+An approximate selected root has a nonzero Ritz residual. For one state define
+
+$$
+A=H-ES,\qquad l=Sc,\qquad n=c^TSc,\qquad r=Ac,
+$$
+
+$$
+f=(\delta H-E\delta S)c,\qquad q=-\frac12c^T\delta S c.
+$$
+
+The symmetric bordered response equation is
+
+$$
+\begin{pmatrix} A&l\\l^T&0\end{pmatrix}
+\begin{pmatrix}\delta c\\-\delta E\end{pmatrix}
+=\begin{pmatrix}-f\\q\end{pmatrix}.
+$$
+
+Multiplication of its first row by $c^T$ gives
+
+$$
+\delta E=\frac{c^Tf+r^T\delta c}{n}.
+$$
+
+The previous isolated-root solver fixed $\delta E=c^Tf/n$, which discards the
+second term. It cannot generally satisfy the full bordered equation when
+$r\ne0$, even after an arbitrarily accurate projected solve.
+
+Use the Euclidean projector onto the normalization tangent,
+
+$$
+P_l=I-\frac{ll^T}{l^Tl},\qquad
+\delta c=\frac{q}{n}c+z,\qquad l^Tz=0.
+$$
+
+The correct projected system is
+
+$$
+P_l A P_l z=-P_l\left(f+\frac{q}{n}r\right).
+$$
+
+For a frozen $W$ with $W^Tl=0$, its Galerkin solution is
+
+$$
+z=-W(W^TAW)^{\dagger}W^T\left(f+\frac{q}{n}r\right).
+$$
+
+Thus the projector, gauge forcing, and recovered multiplier must change
+together. This is a restriction of the original symmetric bordered matrix,
+not an empirical correction to its residual threshold. In particular, with
+$s=c/n$, $K=W^TAW$, $k=W^TAs$, and $d=s^TAs$, the restricted matrix is
+
+$$
+\begin{pmatrix}
+K&k&0\\k^T&d&1\\0&1&0
+\end{pmatrix}.
+$$
+
+It is symmetric without the assumption $r=0$. The corresponding structure
+contribution for two orbital directions has the reciprocal bilinear form
+$2f_u^T\delta c_v+2q_u\delta E_v$. Omitting either the gauge forcing or the
+multiplier correction destroys that reciprocity at finite Ritz residual.
+
+For an equal-weight selected cluster, define $L=SC$, $M=C^TSC$,
+$Q=-\tfrac12 C^T\delta S C$, and $R=HC-SC\mathcal E$. The particular gauge
+response is $X_0=CM^{-1}Q$. The existing $L^\perp$ projected equations also
+require the forcing correction $P_L R M^{-1}Q$, while their full
+selected-space multiplier recovery is retained. The accepted-point residual
+$R$ can be obtained from the already computed selected H/S images; no extra
+accepted-point H/S action or dense assembly is required.
+
+A separate stopping-rule issue must not be confused with finite Ritz drift:
+a projected tolerance can be larger than the requested full bordered
+tolerance. Passing the former while missing the latter does not establish
+an uncorrectable residual. Qualification must report both residual components
+and both targets rather than misclassifying that situation as breakdown.
+Moreover, with the recovered multiplier the full top residual is an oblique
+reconstruction of the projected residual $e\in l^\perp$:
+
+$$
+e_{\mathrm{full}}=\left(I-\frac{lc^T}{n}\right)e,\qquad
+\|e_{\mathrm{full}}\|_2\le\gamma\|e\|_2,\qquad
+\gamma=\frac{\|l\|_2\|c\|_2}{n}.
+$$
+
+This factor is the exact norm on $l^\perp$ (for a nonempty complement).
+Consequently, a sufficient projected target is the requested bordered target
+divided by $\gamma$, followed by the actual full-residual check. For a cluster,
+the corresponding factor is $\gamma_C=1/\sigma_{\min}(Q_L^TQ_C)$, where
+$Q_L,Q_C$ are thin orthonormal bases of $SC,C$. It requires only a
+selected-state-sized singular-value decomposition. This is a norm conversion,
+not a fitted convergence parameter or a relaxation of the bordered tolerance.
+The independent target relative to the *projected* right-hand side is removed:
+projection may nearly cancel that vector while the original bordered equation
+still has a finite accuracy scale. Imposing both relative tolerances would
+introduce an unrelated overprecision requirement. The isolated-root solver
+accepts a candidate as soon as its true full residual passes; the sufficient
+bound is not a necessary acceptance condition. The cluster solver still uses
+the conservative projected bound before its final full check, leaving a
+possible efficiency improvement without weakening the certified equation.
+
+For CERRAS, diagnostic job `247124` measured a full residual of
+$6.65046\times10^{-5}$, projected residual of $6.65045\times10^{-5}$,
+projected target $6.71277\times10^{-5}$, and bordered target
+$6.57759\times10^{-5}$. The selected-root residual component was only
+$-3.14591\times10^{-8}$. Hence that specific failure is demonstrably a
+misclassified, still-correctable residual, **not** the independently identified
+finite-Ritz obstruction. In job `247139`, the finite-Ritz isolated and
+equal-weight cold, recycled, and frozen responses agree with their explicit
+bordered references to at most $1.44\times10^{-17}$. That intermediate job
+still fails the gauge-induced conditioning fixture discussed below, so it is
+not final qualification of the full repair.
+
+### 10.3 Gauge-stabilized response preconditioning
+
+Changing the eliminated direction from $c$ to $Sc$ also changes which entries
+are represented in the projected equation. The former raw diagonal inverse
+can assign an artificial $1/\epsilon_{\mathrm{mach}}$ weight to an entry
+whose shifted diagonal vanishes only because of the selected-root gauge.
+For example, with $c=e_1$, $Sc=(1,0.9,0)^T$, and
+
+$$
+A=\begin{pmatrix}0&0&0\\0&1&0.4\\0&0.4&3\end{pmatrix},
+$$
+
+the new tangent is not the coordinate plane that discards the first entry.
+A raw reciprocal of $A_{11}=0$ makes an otherwise solvable two-dimensional
+projected problem artificially ill-conditioned.
+
+Let $Q_L$ be the orthonormal normal basis and $P_L=I-Q_LQ_L^T$. A gauge lift
+satisfies
+
+$$
+P_L(A+\sigma Q_LQ_L^T)P_L=P_LAP_L.
+$$
+
+The positive Jacobi surrogate uses
+
+$$
+d_i=|A_{ii}|+\sigma (Q_LQ_L^T)_{ii},\qquad
+\sigma=\max_i|A_{ii}|.
+$$
+
+It adds magnitudes, rather than taking the magnitude after addition, to avoid
+sign cancellation for indefinite shifts. The remaining reciprocal floor is
+only the floating-point scale. No H/S action or dense matrix is needed to
+form the projector diagonal. The scale is determined by the current operator,
+not fitted to a molecule. This changes the preconditioner, not the response
+equation, frozen inverse, or accepted residual tolerance; genuine physical
+ill-conditioning can still remain.
+
+A cold or recycled initial response must also be checked against the original
+bordered equation before entering MINRES. Near cancellation, that initial
+response can already be accurate enough even when a relative comparison to
+the small projected right-hand side would reject it. Conversely, an inexact
+response seed does not guarantee that its later Galerkin projection meets the
+same Euclidean tolerance without refinement. Regression tests must certify
+the equation and reference solution rather than hard-code a particular
+iteration trajectory.
+
+### 10.4 Final shared-model and finite-Ritz qualification
+
+Job `247155` passes all 48 tests after the complete repair, including the
+noncommuting-RHS recycling fixture, the gauge-conditioned repeated-root
+problem, isolated/equal-weight finite-Ritz cold/recycled/frozen responses,
+and exact/RI molecular finite differences. The repeated-root problem now
+converges in two iterations per column with a bordered relative residual of
+$1.93\times10^{-16}$, instead of stopping with a residual near 0.126 after
+four iterations under the unstabilized preconditioner.
+
+At the stored molecular failure points, the final frozen-model skew is
+$7.49\times10^{-15}$ for 241 and $5.41\times10^{-15}$ for 7975. Their
+linearity defects are respectively $1.13\times10^{-13}$ and
+$1.19\times10^{-13}$; cached-step image defects are $1.12\times10^{-13}$
+and $2.20\times10^{-16}$. The new response direction changes previously
+stored images by $2.29\times10^{-6}$ and $5.48\times10^{-6}$, so these
+tests exercise actual model enrichment and image refresh.
+
+The 32-thread convergence reruns retain the same exact integrals and outer
+thresholds as Section 10.1. The four completed reference comparisons are:
+
+| System | Eigensolver | Accepted steps | Final total energy / $E_h$ | SCF wall time / s | Peak RSS / KiB |
+|---|---|---:|---:|---:|---:|
+| 241 | Davidson | 9 | $-230.720590391789$ | 9.264 | 996140 |
+| 241 | dense | 9 | $-230.720590391792$ | 2.688 | 981404 |
+| 7975 | Davidson | 6 | $-285.733616934238$ | 3.560 | 1638352 |
+| 7975 | dense | 6 | $-285.733616934243$ | 1.376 | 1627540 |
+
+The matching executable in array `247148` also converges 240 (6 steps),
+FeCl2 (3), 7963 (6), YAMSAI (6), and CERRAS (8). CERRAS reaches
+$-397.093434952605\ E_h$ with projected gradient infinity norm
+$1.4834\times10^{-4}$ and last energy change $-3.05\times10^{-8}\ E_h$.
+Its SCF wall time is 767.943 s and process peak RSS is 2066556 KiB.
+MnF2 and LOFLEA remain pending. No uncompleted calculation is counted as converged.
+Timings are single runs on allocated cluster CPUs, not repeated performance
+measurements; the full frozen-HVP replay remains a known cost.
+
+The executable SHA-256 for job `247155` and array `247148` is
+`c1f75db276a0d483c8e9506a4c895bfe0d5590b414e7e2d93ce14e3953562ce9`.
+After removing the unused residual-gated `guess` API, job `247173` again passes
+all 48 tests and repeats the four Davidson/dense convergence comparisons with
+identical accepted-step counts and reported final energies. The production
+executable SHA-256 after that cleanup is
+`99474663e121912118f74b60762aa55d4e660c3dba8b6db7438eaa7b91e40186`.
+Job `247174` additionally reruns all 48 tests after strengthening the molecular
+audit to compare the actual scalar `apply_reduced` entry point with the block
+entry point. Both scalar/block defects are zero. All other recorded frozen-model
+defects are unchanged. The audit executable SHA-256 is
+`b4f8fbfad723ad4f82da021f9c325524175b46df653eeb4772a363b9c0613a1f`.
+Local logs are under
+`build/diagnostics/response-model-20260920/runs/qualified/` and
+`.../qualified-fixed/`, with cleanup reruns under `.../runs/final/`
+and final frozen-model diagnostics under `.../final-fixed/`.
+Remote run logs are under
+`/home/guqqgroup/taoxia/xmvb-runs/response-model-20260920/qualified/`
+and its sibling `final/`.
+The separate response-residual-to-orbital-HVP error budget and global/local
+Newton stopping contract remain open; successful consistency qualification
+does not establish overall TNHVP performance acceptance.
+
+### 10.5 Cost limitation of the correctness-first refresh
+
+The production refresh currently reevaluates the complete HVP for every retained
+orbital direction after each response-model revision. This recomputes unchanged
+direct-core, fixed-upstream, and local-active terms as well as the changed
+structure response. If the orbital subspace grows in blocks of width $b$ to
+dimension $m$, and each block changes the response model, the cumulative replay
+count is
+
+$$
+\sum_{j=1}^{m/b} jb = O(m^2/b),
+$$
+
+in addition to the $m$ new sampled directions. For dimensions $1,3,\ldots,63$,
+the expansions after the first direction replay 1023 full HVPs. This is a
+confirmed implementation cost, not a measured attribution of every second in
+the long molecular runs.
+
+Likewise, each frozen Galerkin application currently rebuilds $W^TDW$ and its
+spectral inverse, even when the model revision has not changed. With response
+rank $r$, these repeated operations cost $O(n_{\mathrm{str}}r^2+r^3)$ per RHS.
+The next implementation should cache this factorization by revision and update
+only the response-dependent HVP contribution, while preserving the shared-model
+identities. This repair intentionally does not claim that optimization complete.
+
+The current trace field `exact_hvp_block_actions` counts batched calls, not the
+scalar frozen replay calls. Total HVP/response timings include the replay, but
+that field alone is not a complete work counter. Dedicated replay/rank counters
+are needed before quantitatively attributing the observed slowdown.
+
+The completed CERRAS trace gives a concrete warning: step 7 retains 77 orbital
+directions and consumes 588.34 s, including 581.11 s in HVPs and 545.39 s in
+outer response. These are nested times, not additive categories. Its 39
+reported batched HVP calls exclude scalar replay; the 3383 reported response
+actions do not isolate projected factorization time. Thus CERRAS convergence
+qualifies the repaired equations on that case, not acceptable performance.
+
 ## References
 
 1. Conn, A. R.; Gould, N. I. M.; Toint, P. L. *Trust Region Methods*,

@@ -34,6 +34,7 @@ namespace fs = std::filesystem;
 struct Options {
   std::string input_path;
   std::string orbitals_path;
+  std::string orbitals_text_path;
   std::string lbfgs_history_steps_path;
   std::string dump_trial_orbitals_path;
   StructureEigensolver eigensolver = StructureEigensolver::Davidson;
@@ -58,6 +59,7 @@ Options parse_options(int argc, char** argv) {
         "usage: audit_newton_step input.xmi "
         "--trust-radius value "
         "[--target-kkt-relative value] [--orbital-value-table-bin path] "
+        "[--orbital-value-table-text path] "
         "[--lbfgs-history-steps-dir path] "
         "[--dump-trial-orbitals-bin path] [--finite-difference-step value] "
         "[--eigensolver davidson|dense] [--audit-operator true|false] "
@@ -70,6 +72,8 @@ Options parse_options(int argc, char** argv) {
     const std::string value = argv[index + 1];
     if (name == "--orbital-value-table-bin") {
       options.orbitals_path = value;
+    } else if (name == "--orbital-value-table-text") {
+      options.orbitals_text_path = value;
     } else if (name == "--lbfgs-history-steps-dir") {
       options.lbfgs_history_steps_path = value;
     } else if (name == "--dump-trial-orbitals-bin") {
@@ -105,6 +109,7 @@ Options parse_options(int argc, char** argv) {
           options.target_kkt_relative_residual < 1.0))) ||
       (!std::isfinite(options.finite_difference_step) ||
        options.finite_difference_step < 0.0) ||
+      (!options.orbitals_path.empty() && !options.orbitals_text_path.empty()) ||
       (options.audit_dense_reference && !options.audit_operator)) {
     throw std::invalid_argument("invalid accepted-point audit options");
   }
@@ -135,6 +140,29 @@ std::vector<fs::path> sorted_trace_step_directories(
     throw std::runtime_error("L-BFGS trace contains no accepted steps");
   }
   return paths;
+}
+
+/** @brief Reads a portable accepted-point fixture in Eigen storage order. */
+void load_text_orbitals(
+    const std::string& path,
+    OrbitalPreparationInput* input) {
+  if (input == nullptr) throw std::invalid_argument("null orbital input");
+  std::ifstream file(path);
+  Eigen::Index count = 0;
+  if (!(file >> count) || count != input->orbital_value_table.size()) {
+    throw std::runtime_error("text orbital table does not match the input chart");
+  }
+  for (Eigen::Index index = 0; index < count; ++index) {
+    double value = 0.0;
+    if (!(file >> value) || !std::isfinite(value)) {
+      throw std::runtime_error("invalid accepted-point text orbital table");
+    }
+    input->orbital_value_table.data()[index] = value;
+  }
+  std::string extra;
+  if (file >> extra) {
+    throw std::runtime_error("unexpected data after the text orbital table");
+  }
 }
 
 std::vector<PackedSecantPair> rebuild_lbfgs_history(
@@ -237,6 +265,7 @@ public:
   struct RecordedBlock {
     Eigen::MatrixXd directions;
     Eigen::MatrixXd images;
+    std::uint64_t model_revision = 0;
   };
 
   AcceptedPointHvp(
@@ -258,6 +287,7 @@ public:
       RecordedBlock block;
       block.directions = direction;
       block.images = image;
+      block.model_revision = model_revision();
       recorded_blocks_.push_back(std::move(block));
     }
     return image;
@@ -268,9 +298,20 @@ public:
     Eigen::MatrixXd images = operator_.apply_reduced_batch(directions);
     if (record_actions_) {
       recorded_blocks_.push_back(
-          RecordedBlock{directions, images});
+          RecordedBlock{directions, images, model_revision()});
     }
     return images;
+  }
+
+  std::uint64_t model_revision() const noexcept override {
+    return operator_.response_model_revision();
+  }
+
+  Eigen::MatrixXd apply_frozen_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& directions) override {
+    HvpComponents components;
+    components.freeze_structure_response = true;
+    return operator_.apply_reduced_batch(directions, components);
   }
 
   ExactHvpOperator::Diagnostics diagnostics() const {
@@ -377,6 +418,124 @@ void print_response_diagnostics(
             << diagnostics.max_structure_response_relative_residual << '\n';
 }
 
+/** @brief Rejects a same-model identity defect above scaled roundoff. */
+void require_model_identity(
+    const std::string& label,
+    const Eigen::MatrixXd& actual,
+    const Eigen::MatrixXd& expected) {
+  if (actual.rows() != expected.rows() || actual.cols() != expected.cols() ||
+      !actual.allFinite() || !expected.allFinite()) {
+    throw std::runtime_error("invalid frozen response identity: " + label);
+  }
+  const double scale = std::max(
+      {1.0, actual.stableNorm(), expected.stableNorm()});
+  const double tolerance = 1024.0 * std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max<Eigen::Index>(
+          1, std::max(actual.rows(), actual.cols()))) * scale;
+  const double error = (actual - expected).stableNorm();
+  std::cout << label << "_error = " << error << '\n'
+            << label << "_limit = " << tolerance << '\n';
+  if (!(error <= tolerance)) {
+    throw std::runtime_error("frozen response identity failed: " + label);
+  }
+}
+
+/** @brief Builds three independent probes even when Newton stops at rank one. */
+Eigen::MatrixXd response_audit_probes(Eigen::Index dimension) {
+  if (dimension < 3) {
+    throw std::runtime_error("response audit needs three reduced directions");
+  }
+  Eigen::MatrixXd probes(dimension, 3);
+  for (Eigen::Index column = 0; column < probes.cols(); ++column) {
+    for (Eigen::Index row = 0; row < dimension; ++row) {
+      const double x = static_cast<double>(row + 1);
+      const double k = static_cast<double>(column + 1);
+      probes(row, column) = std::sin(std::sqrt(2.0) * x * k) +
+          std::cos(std::sqrt(3.0) * x * (k + 1.0));
+    }
+    for (int pass = 0; pass < 2; ++pass) {
+      for (Eigen::Index previous = 0; previous < column; ++previous) {
+        probes.col(column) -= probes.col(previous).dot(probes.col(column)) *
+            probes.col(previous);
+      }
+    }
+    const double norm = probes.col(column).stableNorm();
+    if (!(norm > std::sqrt(std::numeric_limits<double>::epsilon()))) {
+      throw std::runtime_error("dependent frozen-response audit directions");
+    }
+    probes.col(column) /= norm;
+  }
+  return probes;
+}
+
+/** @brief Certifies action identities within one frozen response model version. */
+void run_frozen_response_audit(
+    const OrbitalGradientResult& accepted,
+    const VbScfInput& input,
+    const SparseParameterLayout& layout,
+    const OrbitalChart& chart) {
+  ExactHvpOperator operation(
+      accepted.second_order_context, &input, layout, &chart);
+  const Eigen::MatrixXd probes = response_audit_probes(chart.reduced_size());
+  const Eigen::MatrixXd seed_images = operation.apply_reduced_batch(
+      probes.leftCols(2));
+  const std::uint64_t seed_revision = operation.response_model_revision();
+  HvpComponents frozen;
+  frozen.freeze_structure_response = true;
+  require_model_identity("response_model_seed_replay", seed_images,
+      operation.apply_reduced_batch(probes.leftCols(2), frozen));
+  if (operation.response_model_revision() != seed_revision) {
+    throw std::runtime_error("frozen seed action changed the response model");
+  }
+
+  // Enrichment changes the model legitimately. Refresh every old column before
+  // assembling secants; never demand equality with the smaller seed model.
+  const Eigen::MatrixXd added_image = operation.apply_reduced_batch(
+      probes.rightCols(1));
+  const std::uint64_t revision = operation.response_model_revision();
+  const Eigen::MatrixXd images = operation.apply_reduced_batch(probes, frozen);
+  std::cout << "response_model_seed_revision = " << seed_revision << '\n'
+            << "response_model_enriched_revision = " << revision << '\n'
+            << "response_model_probe_count = " << probes.cols() << '\n'
+            << "response_model_enrichment_old_images_change = "
+            << (images.leftCols(2) - seed_images).stableNorm() << '\n';
+  require_model_identity("response_model_new_column", images.rightCols(1),
+      added_image);
+  const Eigen::MatrixXd curvature = probes.transpose() * images;
+  require_model_identity("response_model_symmetry", curvature,
+      curvature.transpose());
+
+  Eigen::MatrixXd scalar_images(images.rows(), images.cols());
+  for (Eigen::Index column = 0; column < probes.cols(); ++column) {
+    scalar_images.col(column) = operation.apply_reduced(probes.col(column), frozen);
+  }
+  require_model_identity("response_model_scalar_block", scalar_images, images);
+  Eigen::MatrixXd segmented(images.rows(), images.cols());
+  segmented.leftCols(1) = operation.apply_reduced_batch(probes.leftCols(1), frozen);
+  segmented.rightCols(2) = operation.apply_reduced_batch(probes.rightCols(2), frozen);
+  require_model_identity("response_model_segmentation", segmented, images);
+  const Eigen::MatrixXd reversed_probes = probes.rowwise().reverse();
+  const Eigen::MatrixXd reversed_images = operation.apply_reduced_batch(
+      reversed_probes, frozen);
+  require_model_identity("response_model_permutation",
+      reversed_images.rowwise().reverse(), images);
+
+  const Eigen::Vector3d coefficients(0.7, -1.3, 0.2);
+  const Eigen::MatrixXd combination = probes * coefficients;
+  require_model_identity("response_model_linearity",
+      operation.apply_reduced_batch(combination, frozen), images * coefficients);
+  require_model_identity("response_model_repeat", images,
+      operation.apply_reduced_batch(probes, frozen));
+  require_model_identity("response_model_zero",
+      operation.apply_reduced_batch(
+          Eigen::MatrixXd::Zero(probes.rows(), 1), frozen),
+      Eigen::MatrixXd::Zero(probes.rows(), 1));
+  if (operation.response_model_revision() != revision) {
+    throw std::runtime_error("frozen response action changed the model revision");
+  }
+  std::cout << "response_model_invariants = PASS\n";
+}
+
 void run_operator_audit(
     const Options& options,
     const AcceptedPointHvp& recorded_hvp,
@@ -386,8 +545,11 @@ void run_operator_audit(
     const OrbitalChart& chart,
     double nuclear_repulsion_energy,
     const StructureSolveAccuracy& accuracy) {
+  std::cout << std::setprecision(17);
+  run_frozen_response_audit(accepted, input, layout, chart);
   const auto& blocks = recorded_hvp.recorded_blocks();
   std::cout << std::setprecision(17)
+            << "operator_audit_history_comparison = adaptive_models_not_identity_checks\n"
             << "operator_audit_recorded_block_count = "
             << blocks.size() << '\n';
   if (blocks.empty()) {
@@ -400,7 +562,11 @@ void run_operator_audit(
             << directions.cols() << '\n';
   print_projected_skew(
       "operator_audit_recorded", directions, recorded_images);
+  // These are historical samples, possibly from different response models.
+  // Their differences are diagnostic, not frozen-model regression failures.
   for (std::size_t index = 0; index < blocks.size(); ++index) {
+    std::cout << "operator_audit_recorded_block_" << index
+              << "_model_revision = " << blocks[index].model_revision << '\n';
     print_projected_skew(
         "operator_audit_recorded_block_" + std::to_string(index),
         blocks[index].directions,
@@ -639,6 +805,9 @@ void run_audit(const Options& options) {
   VbScfInput input = std::move(loaded.input);
   if (!options.orbitals_path.empty()) {
     load_orbitals(options.orbitals_path, &input.orbital_preparation_input);
+  } else if (!options.orbitals_text_path.empty()) {
+    load_text_orbitals(
+        options.orbitals_text_path, &input.orbital_preparation_input);
   }
 
   OrbitalGradientEvaluator evaluator;
@@ -666,6 +835,7 @@ void run_audit(const Options& options) {
       std::numeric_limits<double>::quiet_NaN();
   double correction_step_norm =
       std::numeric_limits<double>::quiet_NaN();
+  std::size_t correction_model_restarts = 0;
   if (!options.lbfgs_history_steps_path.empty()) {
     constexpr int kHistorySize = 100;
     packed_secant_history = rebuild_lbfgs_history(
@@ -729,12 +899,36 @@ void run_audit(const Options& options) {
       // proposal.  Solving H delta = -(g + H p_B) makes p_B + delta an exact
       // Newton step without blending two independently scaled directions.
       OrbitalChart::ProjectionResult correction_projection;
-      correction_projection.reduced_gradient =
-          projected.reduced_gradient + lbfgs_baseline_hessian_step;
-      auto correction = solve_nonredundant_truncated_newton_step(
-          metric, *chart, correction_projection, options.trust_radius,
-          accuracy.energy_tolerance, audit_gradient_tolerance,
-          target_kkt_relative_residual, &hvp, lbfgs_preconditioner.get());
+      TruncatedNewtonStepResult correction;
+      for (;;) {
+        const std::uint64_t rhs_revision = hvp.model_revision();
+        lbfgs_baseline_hessian_step =
+            hvp.apply_frozen_batch(lbfgs_baseline_step).col(0);
+        if (hvp.model_revision() != rhs_revision) {
+          throw std::runtime_error(
+              "baseline replay changed the response model");
+        }
+        correction_projection.reduced_gradient =
+            projected.reduced_gradient + lbfgs_baseline_hessian_step;
+        lbfgs_baseline_kkt_relative = relative_norm(
+            correction_projection.reduced_gradient,
+            projected.reduced_gradient);
+        correction = solve_nonredundant_truncated_newton_step(
+            metric, *chart, correction_projection, options.trust_radius,
+            accuracy.energy_tolerance, audit_gradient_tolerance,
+            target_kkt_relative_residual, &hvp, lbfgs_preconditioner.get());
+        const std::uint64_t final_revision = hvp.model_revision();
+        if (final_revision == rhs_revision) break;
+        if (final_revision < rhs_revision) {
+          throw std::runtime_error(
+              "response model revision regressed during residual correction");
+        }
+        // A richer H changes both the correction matrix and g + H p_B.
+        // Restart with the refreshed RHS rather than accepting a solve of the
+        // old affine model. Revisions increase only on finite-space enrichment;
+        // no empirical restart cap or frozen-old-model downgrade is needed.
+        ++correction_model_restarts;
+      }
       if (!truncated_newton_step_is_usable(
               correction, correction_projection.reduced_gradient) ||
           correction.trust_region_shift != 0.0 ||
@@ -746,6 +940,16 @@ void run_audit(const Options& options) {
       step = std::move(correction);
       step.reduced_step += lbfgs_baseline_step;
       step.reduced_hessian_times_step += lbfgs_baseline_hessian_step;
+      const std::uint64_t combined_revision = hvp.model_revision();
+      const Eigen::VectorXd combined_image =
+          hvp.apply_frozen_batch(step.reduced_step).col(0);
+      if (hvp.model_revision() != combined_revision) {
+        throw std::runtime_error(
+            "combined residual correction changed the response model");
+      }
+      require_model_identity("response_model_combined_correction",
+          step.reduced_hessian_times_step, combined_image);
+      step.reduced_hessian_times_step = combined_image;
       step.reduced_metric_times_step = metric.apply(step.reduced_step);
       step.retract_tangent_norm = metric.norm(step.reduced_step);
       step.predicted_decrease =
@@ -789,7 +993,15 @@ void run_audit(const Options& options) {
   }
 
   const Eigen::VectorXd cached_hs = step.reduced_hessian_times_step;
-  const Eigen::VectorXd fresh_hs = hvp.apply(step.reduced_step);
+  const std::uint64_t step_revision = hvp.model_revision();
+  const Eigen::VectorXd fresh_hs =
+      hvp.apply_frozen_batch(step.reduced_step).col(0);
+  if (options.audit_operator) {
+    require_model_identity("response_model_cached_step", cached_hs, fresh_hs);
+    if (hvp.model_revision() != step_revision) {
+      throw std::runtime_error("step certificate changed the response model");
+    }
+  }
   const Eigen::VectorXd fresh_ms = metric.apply(step.reduced_step);
   const Eigen::VectorXd fresh_residual = projected.reduced_gradient +
       fresh_hs + step.trust_region_shift * fresh_ms;
@@ -896,6 +1108,8 @@ void run_audit(const Options& options) {
                     : metric.norm(lbfgs_baseline_step)) << '\n'
             << "lbfgs_baseline_kkt_relative = "
             << lbfgs_baseline_kkt_relative << '\n'
+            << "correction_model_restarts = "
+            << correction_model_restarts << '\n'
             << "newton_correction_step_norm = "
             << correction_step_norm << '\n'
             << "reduced_dimension = " << chart->reduced_size() << '\n'

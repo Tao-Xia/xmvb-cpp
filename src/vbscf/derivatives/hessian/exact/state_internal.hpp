@@ -43,6 +43,7 @@ struct ExactHvpOperator::State {
       HvpComponents components) const;
 
   bool supports_analytic_core_model() const noexcept;
+  std::uint64_t response_model_revision() const noexcept;
   Diagnostics diagnostics() const;
 
 private:

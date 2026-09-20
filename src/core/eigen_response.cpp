@@ -9,23 +9,20 @@
 #include <Eigen/QR>
 #include <Eigen/LU>
 #include <Eigen/Eigenvalues>
+#include <Eigen/SVD>
 
 namespace xmvb::core {
 namespace {
 
-void validate_inputs(
-    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+void validate_response_columns(
     const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
-    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
-    const EigenResponseOptions& options) {
-  const Eigen::Index n = hamiltonian_diagonal.size();
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected) {
+  const Eigen::Index n = selected_eigenvectors.rows();
   const Eigen::Index n_selected = selected_eigenvalues.size();
-  if (n <= 0 || n_selected <= 0 || overlap_diagonal.size() != n ||
-      selected_eigenvectors.rows() != n ||
+  if (n <= 0 || n_selected <= 0 ||
       selected_eigenvectors.cols() != n_selected ||
       overlap_selected.rows() != n ||
       overlap_selected.cols() != n_selected ||
@@ -36,13 +33,35 @@ void validate_inputs(
     throw std::invalid_argument(
         "generalized-eigen response dimensions are inconsistent");
   }
-  if (!hamiltonian_diagonal.allFinite() ||
-      !overlap_diagonal.allFinite() ||
-      !selected_eigenvalues.allFinite() ||
+  if (!selected_eigenvalues.allFinite() ||
       !selected_eigenvectors.allFinite() ||
       !overlap_selected.allFinite() ||
       !delta_hamiltonian_selected.allFinite() ||
-      !delta_overlap_selected.allFinite() ||
+      !delta_overlap_selected.allFinite()) {
+    throw std::invalid_argument(
+        "generalized-eigen response inputs must be finite");
+  }
+}
+
+void validate_inputs(
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    const EigenResponseOptions& options) {
+  validate_response_columns(
+      selected_eigenvalues, selected_eigenvectors, overlap_selected,
+      delta_hamiltonian_selected, delta_overlap_selected);
+  const Eigen::Index n = hamiltonian_diagonal.size();
+  if (n != selected_eigenvectors.rows() || overlap_diagonal.size() != n) {
+    throw std::invalid_argument(
+        "generalized-eigen response dimensions are inconsistent");
+  }
+  if (!hamiltonian_diagonal.allFinite() ||
+      !overlap_diagonal.allFinite() ||
       (overlap_diagonal.array() <= 0.0).any()) {
     throw std::invalid_argument(
         "generalized-eigen response inputs must be finite with a positive overlap diagonal");
@@ -101,19 +120,33 @@ Eigen::MatrixXd apply_bordered_operators(
 Eigen::MatrixXd build_inverse_preconditioner(
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues) {
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& normal_projector_diagonal) {
   const Eigen::Index n = hamiltonian_diagonal.size();
   const Eigen::Index n_selected = selected_eigenvalues.size();
+  if (normal_projector_diagonal.rows() != n ||
+      normal_projector_diagonal.cols() != n_selected ||
+      !normal_projector_diagonal.allFinite() ||
+      (normal_projector_diagonal.array() < 0.0).any()) {
+    throw std::invalid_argument(
+        "generalized-eigen response normal-projector diagonal is invalid");
+  }
   Eigen::MatrixXd inverse(n, n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const Eigen::ArrayXd shifted_diagonal =
         hamiltonian_diagonal.array() -
         selected_eigenvalues[state] * overlap_diagonal.array();
-    const double scale = std::max(1.0, shifted_diagonal.abs().maxCoeff());
+    const double sigma = shifted_diagonal.abs().maxCoeff();
+    // Adding sigma Q Q^T changes only the Jacobi model: P Q=0 implies
+    // P(A+sigma Q Q^T)P=PAP. Its positive diagonal lift prevents the known
+    // gauge null direction from producing an inverse-epsilon preconditioner.
+    const Eigen::ArrayXd lifted_diagonal = shifted_diagonal.abs() +
+        sigma * normal_projector_diagonal.col(state).array();
+    const double scale = std::max(1.0, sigma);
     const double numerical_floor =
         std::numeric_limits<double>::epsilon() * scale;
     inverse.col(state) =
-        shifted_diagonal.abs().max(numerical_floor).inverse().matrix();
+        lifted_diagonal.max(numerical_floor).inverse().matrix();
   }
   return inverse;
 }
@@ -146,6 +179,27 @@ Eigen::MatrixXd apply_projected_operators(
   return result;
 }
 
+Eigen::MatrixXd selected_ritz_residuals(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::MatrixXd* cached_residuals,
+    int* block_actions) {
+  if (cached_residuals != nullptr) {
+    if (cached_residuals->rows() != selected_eigenvectors.rows() ||
+        cached_residuals->cols() != selected_eigenvectors.cols() ||
+        !cached_residuals->allFinite()) {
+      throw std::invalid_argument(
+          "selected generalized-eigen residual cache is invalid");
+    }
+    return *cached_residuals;
+  }
+  const GeneralizedEigenActionResult images = apply_checked(
+      action, selected_eigenvectors, block_actions);
+  return images.hamiltonian -
+      images.overlap * selected_eigenvalues.asDiagonal();
+}
+
 }  // namespace
 
 int EigenResponseRecycleSpace::dimension() const noexcept {
@@ -156,18 +210,23 @@ int EigenResponseRecycleSpace::size() const noexcept {
   return static_cast<int>(basis_.cols());
 }
 
+std::uint64_t EigenResponseRecycleSpace::revision() const noexcept {
+  return revision_;
+}
+
 void EigenResponseRecycleSpace::clear() {
   basis_.resize(0, 0);
   operator_images_.resize(0, 0);
+  ++revision_;
 }
 
-EigenResponseRecycleGuess EigenResponseRecycleSpace::guess(
+EigenResponseRecycleApplication EigenResponseRecycleSpace::galerkin_apply(
     const Eigen::Ref<const Eigen::VectorXd>& right_hand_side) const {
   if (!right_hand_side.allFinite()) {
     throw std::invalid_argument(
         "response recycle right-hand side must be finite");
   }
-  EigenResponseRecycleGuess result;
+  EigenResponseRecycleApplication result;
   result.solution = Eigen::VectorXd::Zero(right_hand_side.size());
   result.operator_image = Eigen::VectorXd::Zero(right_hand_side.size());
   if (basis_.cols() == 0) return result;
@@ -178,9 +237,20 @@ EigenResponseRecycleGuess EigenResponseRecycleSpace::guess(
         "response recycle space dimension does not match the right-hand side");
   }
 
+  const Eigen::MatrixXd raw_projected_operator =
+      basis_.transpose() * operator_images_;
+  const double symmetry_error =
+      (raw_projected_operator - raw_projected_operator.transpose()).norm();
+  const double symmetry_tolerance =
+      std::sqrt(std::numeric_limits<double>::epsilon()) *
+      std::max(1.0, raw_projected_operator.norm());
+  if (!std::isfinite(symmetry_error) ||
+      symmetry_error > symmetry_tolerance) {
+    throw std::runtime_error(
+        "response recycle projected operator is not symmetric");
+  }
   const Eigen::MatrixXd projected_operator = 0.5 *
-      (basis_.transpose() * operator_images_ +
-       operator_images_.transpose() * basis_);
+      (raw_projected_operator + raw_projected_operator.transpose());
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(
       projected_operator);
   if (eigensolver.info() != Eigen::Success) {
@@ -205,14 +275,11 @@ EigenResponseRecycleGuess EigenResponseRecycleSpace::guess(
       basis_.transpose() * right_hand_side;
   result.solution.noalias() = basis_ * coefficients;
   result.operator_image.noalias() = operator_images_ * coefficients;
-  result.used = result.solution.allFinite() &&
-      result.operator_image.allFinite() &&
-      (right_hand_side - result.operator_image).norm() <
-          right_hand_side.norm();
-  if (!result.used) {
-    result.solution.setZero();
-    result.operator_image.setZero();
+  if (!result.solution.allFinite() || !result.operator_image.allFinite()) {
+    throw std::runtime_error(
+        "response recycle Galerkin application is not finite");
   }
+  result.available = true;
   return result;
 }
 
@@ -255,6 +322,7 @@ bool EigenResponseRecycleSpace::append(
   operator_images_.conservativeResize(Eigen::NoChange, old_size + 1);
   basis_.col(old_size) = direction;
   operator_images_.col(old_size) = image;
+  ++revision_;
   return true;
 }
 
@@ -374,7 +442,8 @@ EigenResponseResult solve_generalized_eigen_response(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
     const EigenResponseOptions& options,
-    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces) {
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces,
+    const Eigen::MatrixXd* selected_residuals) {
   validate_inputs(
       hamiltonian_diagonal,
       overlap_diagonal,
@@ -394,10 +463,14 @@ EigenResponseResult solve_generalized_eigen_response(
   }
   EigenResponseResult result;
   result.eigenvalue_response.resize(n_selected);
+  const Eigen::MatrixXd ritz_residuals = selected_ritz_residuals(
+      action, selected_eigenvalues, selected_eigenvectors,
+      selected_residuals, &result.block_actions);
 
   Eigen::MatrixXd full_rhs(n + 1, n_selected);
   Eigen::MatrixXd rhs(n, n_selected);
   Eigen::MatrixXd root_units(n, n_selected);
+  Eigen::MatrixXd particular_solution(n, n_selected);
   Eigen::VectorXd root_metric_norms(n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const Eigen::VectorXd forcing =
@@ -418,18 +491,23 @@ EigenResponseResult solve_generalized_eigen_response(
     full_rhs.col(state).head(n) = -forcing;
     full_rhs(n, state) = -0.5 * selected_eigenvectors.col(state).dot(
         delta_overlap_selected.col(state));
-    const double root_norm = selected_eigenvectors.col(state).norm();
-    if (!(root_norm > 0.0) || !std::isfinite(root_norm)) {
-      throw std::invalid_argument("selected generalized-eigen root is zero");
+    const double constraint_norm = overlap_selected.col(state).norm();
+    if (!(constraint_norm > 0.0) || !std::isfinite(constraint_norm)) {
+      throw std::invalid_argument(
+          "selected generalized-eigen overlap image is zero");
     }
-    root_units.col(state) = selected_eigenvectors.col(state) / root_norm;
-    rhs.col(state) = -forcing +
-        result.eigenvalue_response[state] * overlap_selected.col(state);
+    root_units.col(state) =
+        overlap_selected.col(state) / constraint_norm;
+    particular_solution.col(state) = selected_eigenvectors.col(state) *
+        (full_rhs(n, state) / root_metric_norms[state]);
+    rhs.col(state) = -forcing - ritz_residuals.col(state) *
+        (full_rhs(n, state) / root_metric_norms[state]);
   }
   project_selected_roots(&rhs, root_units);
 
   const Eigen::MatrixXd inverse_preconditioner = build_inverse_preconditioner(
-      hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues);
+      hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues,
+      root_units.array().square().matrix());
   Eigen::MatrixXd solution = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd v_old = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n, n_selected);
@@ -442,7 +520,8 @@ EigenResponseResult solve_generalized_eigen_response(
 
   Eigen::VectorXd rhs_norms(n_selected);
   Eigen::VectorXd original_rhs_norms(n_selected);
-  Eigen::VectorXd projected_absolute_targets(n_selected);
+  Eigen::VectorXd bordered_absolute_targets(n_selected);
+  Eigen::VectorXd correctable_absolute_targets(n_selected);
   Eigen::VectorXd preconditioned_absolute_targets(n_selected);
   Eigen::VectorXd residual_norms(n_selected);
   Eigen::VectorXd beta_new(n_selected);
@@ -469,78 +548,89 @@ EigenResponseResult solve_generalized_eigen_response(
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     rhs_norms[state] = rhs.col(state).norm();
     original_rhs_norms[state] = full_rhs.col(state).norm();
-    const double arithmetic_scale = std::max({
-        rhs_norms[state], original_rhs_norms[state],
-        std::abs(result.eigenvalue_response[state]) *
-            overlap_selected.col(state).norm()});
-    const double arithmetic_floor =
-        static_cast<double>(n + 1) *
-        std::numeric_limits<double>::epsilon() * arithmetic_scale;
-    projected_absolute_targets[state] = std::max(
-        options.relative_residual_tolerance * rhs_norms[state],
-        arithmetic_floor);
+    bordered_absolute_targets[state] =
+        options.relative_residual_tolerance * original_rhs_norms[state];
+    // The multiplier recovered from c^T maps a complement residual e through
+    // the oblique projector I - (S c)c^T/(c^T S c).  On (S c)^perp its exact
+    // Euclidean norm is ||S c|| ||c||/(c^T S c), so certify the requested
+    // bordered tolerance before treating the projected equation as solved.
+    const double bordered_amplification =
+        overlap_selected.col(state).norm() *
+        selected_eigenvectors.col(state).norm() /
+        root_metric_norms[state];
+    correctable_absolute_targets[state] =
+        bordered_absolute_targets[state] / bordered_amplification;
     // MINRES estimates ||r||_{P}, while the candidate contract is Euclidean.
     // Since ||r||_2 <= ||r||_{P}/sqrt(min_i P_ii), this sufficient trigger
     // cannot claim a Euclidean tolerance before a true-residual check.
-    preconditioned_absolute_targets[state] = std::min(
-        projected_absolute_targets[state],
-        options.relative_residual_tolerance * original_rhs_norms[state]) *
+    preconditioned_absolute_targets[state] =
+        correctable_absolute_targets[state] *
         std::sqrt(inverse_preconditioner.col(state).minCoeff());
   }
 
-  std::vector<Eigen::Index> recycled_states;
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     EigenResponseRecycleSpace* recycle = recycle_spaces.empty()
         ? nullptr
         : recycle_spaces[static_cast<std::size_t>(state)];
-    if (recycle == nullptr || recycle->size() == 0) continue;
-    const EigenResponseRecycleGuess guess = recycle->guess(rhs.col(state));
-    if (!guess.used) continue;
-    solution.col(state) = guess.solution;
-    v_new.col(state) = rhs.col(state) - guess.operator_image;
-    recycled_states.push_back(state);
-  }
-
-  if (!recycled_states.empty()) {
-    const Eigen::Index count =
-        static_cast<Eigen::Index>(recycled_states.size());
-    Eigen::VectorXd recycled_eigenvalues(count);
-    Eigen::MatrixXd recycled_overlap_selected(n, count);
-    Eigen::MatrixXd recycled_solutions(n + 1, count);
-    for (Eigen::Index column = 0; column < count; ++column) {
-      const Eigen::Index state =
-          recycled_states[static_cast<std::size_t>(column)];
-      const double gauge =
-          (full_rhs(n, state) - overlap_selected.col(state).dot(
-               solution.col(state))) / root_metric_norms[state];
-      recycled_eigenvalues[column] = selected_eigenvalues[state];
-      recycled_overlap_selected.col(column) = overlap_selected.col(state);
-      recycled_solutions.col(column).head(n) = solution.col(state) +
-          gauge * selected_eigenvectors.col(state);
-      recycled_solutions(n, column) = -result.eigenvalue_response[state];
+    bool has_recycled_candidate = false;
+    if (recycle != nullptr && recycle->size() > 0) {
+      const EigenResponseRecycleApplication application =
+          recycle->galerkin_apply(rhs.col(state));
+      if (application.available) {
+        solution.col(state) = application.solution;
+        v_new.col(state) = rhs.col(state) - application.operator_image;
+        has_recycled_candidate = true;
+      }
     }
-    const Eigen::MatrixXd recycled_images = apply_bordered_operators(
-        action, recycled_eigenvalues, recycled_overlap_selected,
-        recycled_solutions, &result.block_actions);
-    for (Eigen::Index column = 0; column < count; ++column) {
-      const Eigen::Index state =
-          recycled_states[static_cast<std::size_t>(column)];
-      const Eigen::VectorXd bordered_residual =
-          full_rhs.col(state) - recycled_images.col(column);
-      v_new.col(state) = bordered_residual.head(n) -
-          root_units.col(state) *
-              root_units.col(state).dot(bordered_residual.head(n));
-      if (bordered_residual.norm() <=
-              options.relative_residual_tolerance *
-                  original_rhs_norms[state] &&
-          v_new.col(state).norm() <= projected_absolute_targets[state]) {
+
+    // Reconstruct the initial bordered residual from its complement component.
+    // With the finite-Ritz multiplier, the top residual is exactly
+    // [I-(S c)c^T/(c^T S c)] e for e in (S c)^perp; the metric gauge is
+    // already satisfied by x0 and the projected recycle basis. This screens a
+    // cold zero correction and every unconditional Galerkin candidate before
+    // MINRES without another H/S action. The independently evaluated final
+    // bordered residual remains the authoritative certificate because recycle
+    // images carry finite orthogonalization error.
+    Eigen::VectorXd bordered_top_residual = v_new.col(state) -
+        overlap_selected.col(state) *
+            (selected_eigenvectors.col(state).dot(v_new.col(state)) /
+             root_metric_norms[state]);
+    double gauge_residual = full_rhs(n, state) -
+        overlap_selected.col(state).dot(
+            solution.col(state) + particular_solution.col(state));
+    double bordered_residual_norm = std::hypot(
+        bordered_top_residual.norm(), gauge_residual);
+    if (bordered_residual_norm <= bordered_absolute_targets[state]) {
+      converged[static_cast<std::size_t>(state)] = true;
+      v_new.col(state).setZero();
+      continue;
+    }
+    if (has_recycled_candidate &&
+        v_new.col(state).norm() >= rhs.col(state).norm()) {
+      solution.col(state).setZero();
+      v_new.col(state) = rhs.col(state);
+      bordered_top_residual = v_new.col(state) -
+          overlap_selected.col(state) *
+              (selected_eigenvectors.col(state).dot(v_new.col(state)) /
+               root_metric_norms[state]);
+      gauge_residual = full_rhs(n, state) -
+          overlap_selected.col(state).dot(particular_solution.col(state));
+      bordered_residual_norm = std::hypot(
+          bordered_top_residual.norm(), gauge_residual);
+      if (bordered_residual_norm <= bordered_absolute_targets[state]) {
         converged[static_cast<std::size_t>(state)] = true;
         v_new.col(state).setZero();
-      } else if (v_new.col(state).norm() <=
-                 projected_absolute_targets[state]) {
-        throw std::runtime_error(
-            "recycled selected-root response has an uncorrectable bordered residual");
+        continue;
       }
+    }
+    if (v_new.col(state).norm() == 0.0) {
+      std::ostringstream message;
+      message << "initial selected-root response has a nonzero bordered residual but zero complement: state="
+              << state << " full_residual=" << bordered_residual_norm
+              << " full_target=" << bordered_absolute_targets[state]
+              << " projected_target=" << correctable_absolute_targets[state]
+              << " ritz_residual=" << ritz_residuals.col(state).norm();
+      throw std::runtime_error(message.str());
     }
   }
 
@@ -682,14 +772,19 @@ EigenResponseResult solve_generalized_eigen_response(
            ++candidate) {
         const Eigen::Index state =
             estimated_converged_states[static_cast<std::size_t>(candidate)];
+        const Eigen::VectorXd forcing =
+            delta_hamiltonian_selected.col(state) -
+            selected_eigenvalues[state] * delta_overlap_selected.col(state);
+        const Eigen::VectorXd response =
+            solution.col(state) + particular_solution.col(state);
+        result.eigenvalue_response[state] =
+            (selected_eigenvectors.col(state).dot(forcing) +
+             ritz_residuals.col(state).dot(response)) /
+            root_metric_norms[state];
         candidate_eigenvalues[candidate] = selected_eigenvalues[state];
         candidate_overlap_selected.col(candidate) =
             overlap_selected.col(state);
-        const double gauge =
-            (full_rhs(n, state) - overlap_selected.col(state).dot(
-                 solution.col(state))) / root_metric_norms[state];
-        candidate_solutions.col(candidate).head(n) = solution.col(state) +
-            gauge * selected_eigenvectors.col(state);
+        candidate_solutions.col(candidate).head(n) = response;
         candidate_solutions(n, candidate) =
             -result.eigenvalue_response[state];
       }
@@ -716,29 +811,28 @@ EigenResponseResult solve_generalized_eigen_response(
         least_candidate_bordered_residual[state] = std::min(
             least_candidate_bordered_residual[state],
             last_candidate_bordered_residual[state]);
-        if (true_residual.norm() <=
-                options.relative_residual_tolerance *
-                    original_rhs_norms[state] &&
-            correctable_residual.norm() <=
-                projected_absolute_targets[state]) {
+        if (true_residual.norm() <= bordered_absolute_targets[state]) {
           continue;
         }
-        if (correctable_residual.norm() <=
-            projected_absolute_targets[state]) {
+        if (correctable_residual.norm() == 0.0) {
           std::ostringstream message;
-          message << "selected-root response has an uncorrectable bordered "
-                     "residual after projected convergence: state=" << state
-                  << " bordered_residual=" << true_residual.norm()
-                  << " correctable_residual="
-                  << correctable_residual.norm();
+          message << "selected-root response has a nonzero bordered residual "
+                     "but zero complement: state=" << state
+                  << " full_residual=" << true_residual.norm()
+                  << " full_target=" << bordered_absolute_targets[state]
+                  << " projected_residual=" << correctable_residual.norm()
+                  << " projected_target="
+                  << correctable_absolute_targets[state]
+                  << " ritz_residual=" << ritz_residuals.col(state).norm()
+                  << " ritz_response_coupling="
+                  << ritz_residuals.col(state).dot(
+                         candidate_solutions.col(candidate).head(n));
           throw std::runtime_error(message.str());
         }
 
-        // The projected equation has a different RHS scale and omits the Ritz
-        // root-drift term. Only the original bordered residual can certify a
-        // response. Restart its correctable component without another H/S
-        // action; do not freeze a column merely because MINRES estimated the
-        // smaller projected residual as converged.
+        // Only the original bordered residual certifies a response. Restart
+        // its complement component without another H/S action; do not freeze
+        // a column merely because MINRES estimated convergence.
         converged[static_cast<std::size_t>(state)] = false;
         ++reliable_restarts[static_cast<std::size_t>(state)];
         v_old.col(state).setZero();
@@ -780,14 +874,17 @@ EigenResponseResult solve_generalized_eigen_response(
 
   result.eigenvector_response.resize(n, n_selected);
   Eigen::MatrixXd bordered_solution(n + 1, n_selected);
-  Eigen::VectorXd gauge_coefficients(n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
-    const double gauge =
-        (full_rhs(n, state) - overlap_selected.col(state).dot(
-             solution.col(state))) / root_metric_norms[state];
-    gauge_coefficients[state] = gauge;
-    result.eigenvector_response.col(state) = solution.col(state) +
-        gauge * selected_eigenvectors.col(state);
+    const Eigen::VectorXd forcing =
+        delta_hamiltonian_selected.col(state) -
+        selected_eigenvalues[state] * delta_overlap_selected.col(state);
+    result.eigenvector_response.col(state) =
+        solution.col(state) + particular_solution.col(state);
+    result.eigenvalue_response[state] =
+        (selected_eigenvectors.col(state).dot(forcing) +
+         ritz_residuals.col(state).dot(
+             result.eigenvector_response.col(state))) /
+        root_metric_norms[state];
     bordered_solution.col(state).head(n) =
         result.eigenvector_response.col(state);
     bordered_solution(n, state) = -result.eigenvalue_response[state];
@@ -804,45 +901,33 @@ EigenResponseResult solve_generalized_eigen_response(
         bordered_residual.head(n) - root_units.col(state) *
             root_units.col(state).dot(bordered_residual.head(n));
     result.relative_residual_norms[state] = original_rhs_norm == 0.0
-        ? 0.0
+        ? bordered_residual.norm()
         : bordered_residual.norm() / original_rhs_norm;
     if (!std::isfinite(result.relative_residual_norms[state]) ||
-        result.relative_residual_norms[state] >
-            options.relative_residual_tolerance ||
-        projected_residual.norm() >
-            projected_absolute_targets[state]) {
+        bordered_residual.norm() > bordered_absolute_targets[state]) {
       const double root_component = std::abs(
           root_units.col(state).dot(bordered_residual.head(n)));
-      const Eigen::MatrixXd root_column =
-          selected_eigenvectors.middleCols(state, 1);
-      const GeneralizedEigenActionResult root_images = apply_checked(
-          action, root_column, &result.block_actions);
-      const double ritz_residual =
-          (root_images.hamiltonian.col(0) - selected_eigenvalues[state] *
-           root_images.overlap.col(0)).norm();
-      const double overlap_image_mismatch =
-          (root_images.overlap.col(0) -
-           overlap_selected.col(state)).norm();
       std::ostringstream message;
       message << "projected generalized-eigen response MINRES did not reach the requested bordered residual: state="
               << state << " residual="
               << result.relative_residual_norms[state] << " iterations="
               << result.iterations[static_cast<std::size_t>(state)]
+              << " full_residual=" << bordered_residual.norm()
+              << " full_target=" << bordered_absolute_targets[state]
               << " projected_component=" << projected_residual.norm()
+              << " projected_target="
+              << correctable_absolute_targets[state]
               << " selected_root_component=" << root_component
-              << " gauge_norm=" << std::abs(gauge_coefficients[state]) *
-                     selected_eigenvectors.col(state).norm()
               << " response_norm=" <<
                      result.eigenvector_response.col(state).norm()
-              << " ritz_residual=" << ritz_residual
-              << " gauge_times_ritz=" <<
-                     std::abs(gauge_coefficients[state]) * ritz_residual
-              << " accepted_overlap_image_mismatch=" <<
-                     overlap_image_mismatch
+              << " ritz_residual=" << ritz_residuals.col(state).norm()
+              << " ritz_response_coupling=" <<
+                     ritz_residuals.col(state).dot(
+                         result.eigenvector_response.col(state))
               << " projected_rhs_norm=" << rhs_norms[state]
               << " original_rhs_norm=" << original_rhs_norms[state]
               << " projected_absolute_target=" <<
-                     projected_absolute_targets[state]
+                     correctable_absolute_targets[state]
               << " candidate_checks=" <<
                      candidate_checks[static_cast<std::size_t>(state)]
               << " reliable_restarts=" <<
@@ -892,6 +977,106 @@ EigenResponseResult solve_generalized_eigen_response(
           new_recycle_states[static_cast<std::size_t>(column)];
       recycle_spaces[static_cast<std::size_t>(state)]->append(
           recycle_solutions.col(column), recycle_images.col(column));
+    }
+  }
+  return result;
+}
+
+EigenResponseResult evaluate_frozen_generalized_eigen_response(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    const std::vector<const EigenResponseRecycleSpace*>& recycle_spaces,
+    const Eigen::MatrixXd* selected_residuals) {
+  validate_response_columns(
+      selected_eigenvalues, selected_eigenvectors, overlap_selected,
+      delta_hamiltonian_selected, delta_overlap_selected);
+  const Eigen::Index n = selected_eigenvectors.rows();
+  const Eigen::Index n_selected = selected_eigenvalues.size();
+  if (recycle_spaces.size() != static_cast<std::size_t>(n_selected)) {
+    throw std::invalid_argument(
+        "frozen generalized-eigen response recycle-space count is inconsistent");
+  }
+
+  EigenResponseResult result;
+  result.eigenvector_response = Eigen::MatrixXd::Zero(n, n_selected);
+  result.eigenvalue_response.resize(n_selected);
+  result.relative_residual_norms.resize(n_selected);
+  result.iterations.assign(static_cast<std::size_t>(n_selected), 0);
+  const Eigen::MatrixXd ritz_residuals = selected_ritz_residuals(
+      action, selected_eigenvalues, selected_eigenvectors,
+      selected_residuals, &result.block_actions);
+  Eigen::MatrixXd full_rhs(n + 1, n_selected);
+  Eigen::MatrixXd bordered_solution(n + 1, n_selected);
+  Eigen::VectorXd root_metric_norms(n_selected);
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    const Eigen::VectorXd forcing =
+        delta_hamiltonian_selected.col(state) -
+        selected_eigenvalues[state] * delta_overlap_selected.col(state);
+    root_metric_norms[state] = selected_eigenvectors.col(state).dot(
+        overlap_selected.col(state));
+    if (!(root_metric_norms[state] > 0.0) ||
+        !std::isfinite(root_metric_norms[state])) {
+      throw std::invalid_argument(
+          "selected generalized-eigen root has no positive overlap norm");
+    }
+    const double constraint_norm = overlap_selected.col(state).norm();
+    if (!(constraint_norm > 0.0) || !std::isfinite(constraint_norm)) {
+      throw std::invalid_argument(
+          "selected generalized-eigen overlap image is zero");
+    }
+    const Eigen::VectorXd constraint_unit =
+        overlap_selected.col(state) / constraint_norm;
+    full_rhs.col(state).head(n) = -forcing;
+    full_rhs(n, state) = -0.5 * selected_eigenvectors.col(state).dot(
+        delta_overlap_selected.col(state));
+    const Eigen::VectorXd particular_solution =
+        selected_eigenvectors.col(state) *
+        (full_rhs(n, state) / root_metric_norms[state]);
+    Eigen::VectorXd projected_rhs = -forcing -
+        ritz_residuals.col(state) *
+            (full_rhs(n, state) / root_metric_norms[state]);
+    projected_rhs.noalias() -=
+        constraint_unit * constraint_unit.dot(projected_rhs);
+
+    Eigen::VectorXd external_response = Eigen::VectorXd::Zero(n);
+    const EigenResponseRecycleSpace* recycle =
+        recycle_spaces[static_cast<std::size_t>(state)];
+    if (recycle != nullptr) {
+      const EigenResponseRecycleApplication application =
+          recycle->galerkin_apply(projected_rhs);
+      if (application.available) {
+        external_response = application.solution;
+      }
+    }
+    result.eigenvector_response.col(state) =
+        external_response + particular_solution;
+    result.eigenvalue_response[state] =
+        (selected_eigenvectors.col(state).dot(forcing) +
+         ritz_residuals.col(state).dot(
+             result.eigenvector_response.col(state))) /
+        root_metric_norms[state];
+    bordered_solution.col(state).head(n) =
+        result.eigenvector_response.col(state);
+    bordered_solution(n, state) = -result.eigenvalue_response[state];
+  }
+
+  const Eigen::MatrixXd images = apply_bordered_operators(
+      action, selected_eigenvalues, overlap_selected, bordered_solution,
+      &result.block_actions);
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    const double rhs_norm = full_rhs.col(state).norm();
+    const double residual_norm =
+        (full_rhs.col(state) - images.col(state)).norm();
+    result.relative_residual_norms[state] = rhs_norm == 0.0
+        ? residual_norm
+        : residual_norm / rhs_norm;
+    if (!std::isfinite(result.relative_residual_norms[state])) {
+      throw std::runtime_error(
+          "frozen generalized-eigen response residual is not finite");
     }
   }
   return result;
@@ -968,6 +1153,22 @@ Eigen::MatrixXd selected_span_units(
       selected_eigenvectors.rows(), selected_eigenvectors.cols());
 }
 
+double selected_oblique_amplification(
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& metric_image_units) {
+  const Eigen::MatrixXd root_units =
+      selected_span_units(selected_eigenvectors);
+  const Eigen::MatrixXd cross =
+      metric_image_units.transpose() * root_units;
+  const Eigen::JacobiSVD<Eigen::MatrixXd> svd(cross);
+  const double sigma_min = svd.singularValues().minCoeff();
+  if (!(sigma_min > 0.0) || !std::isfinite(sigma_min)) {
+    throw std::invalid_argument(
+        "equal-weight response selected and metric-image spans are orthogonal");
+  }
+  return 1.0 / sigma_min;
+}
+
 void project_selected_span(
     Eigen::MatrixXd* vectors,
     const Eigen::Ref<const Eigen::MatrixXd>& selected_units) {
@@ -1003,6 +1204,7 @@ EigenSubspaceResponseResult finish_equal_weight_response(
     const Eigen::Ref<const Eigen::MatrixXd>& gauge_target,
     const Eigen::Ref<const Eigen::MatrixXd>& external_response,
     double relative_residual_tolerance,
+    bool enforce_residual_tolerance,
     std::vector<int> iterations,
     int block_actions,
     const std::vector<EigenResponseRecycleSpace*>& recycle_spaces = {}) {
@@ -1058,9 +1260,12 @@ EigenSubspaceResponseResult finish_equal_weight_response(
     result.relative_residual_norms[state] = rhs_norm == 0.0
         ? residual_norm
         : residual_norm / rhs_norm;
-    if (!std::isfinite(result.relative_residual_norms[state]) ||
-        result.relative_residual_norms[state] >
-            relative_residual_tolerance) {
+    if (!std::isfinite(result.relative_residual_norms[state])) {
+      throw std::runtime_error(
+          "equal-weight generalized-eigen subspace response residual is not finite");
+    }
+    if (enforce_residual_tolerance &&
+        result.relative_residual_norms[state] > relative_residual_tolerance) {
       std::ostringstream message;
       message << "equal-weight generalized-eigen subspace response did not reach the requested residual: state="
               << state << " relative_residual="
@@ -1156,7 +1361,7 @@ solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
   return finish_equal_weight_response(
       action, selected_eigenvalues, selected_eigenvectors,
       overlap_selected, data.forcing, data.gauge_target,
-      external_response, relative_residual_tolerance,
+      external_response, relative_residual_tolerance, true,
       std::vector<int>(static_cast<std::size_t>(n_selected), 0), 0);
 }
 
@@ -1171,7 +1376,8 @@ solve_equal_weight_generalized_eigen_subspace_response(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
     const EigenResponseOptions& options,
-    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces) {
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces,
+    const Eigen::MatrixXd* selected_residuals) {
   const EqualWeightResponseData data = prepare_equal_weight_response(
       hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues,
       selected_eigenvectors, overlap_selected,
@@ -1185,25 +1391,78 @@ solve_equal_weight_generalized_eigen_subspace_response(
   }
   const Eigen::MatrixXd selected_units =
       selected_span_units(overlap_selected);
+  const double bordered_amplification = selected_oblique_amplification(
+      selected_eigenvectors, selected_units);
 
-  Eigen::MatrixXd rhs = -data.forcing;
+  int block_actions = 0;
+  const Eigen::MatrixXd ritz_residuals = selected_ritz_residuals(
+      action, selected_eigenvalues, selected_eigenvectors,
+      selected_residuals, &block_actions);
+  const Eigen::MatrixXd internal_particular =
+      data.metric.partialPivLu().solve(data.gauge_target);
+  Eigen::MatrixXd rhs =
+      -data.forcing - ritz_residuals * internal_particular;
   project_selected_span(&rhs, selected_units);
+  const Eigen::VectorXd selected_projector_diagonal =
+      selected_units.array().square().rowwise().sum().matrix();
   const Eigen::MatrixXd inverse_preconditioner = build_inverse_preconditioner(
-      hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues);
+      hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues,
+      selected_projector_diagonal.replicate(1, n_selected));
   Eigen::MatrixXd solution = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd v_old = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd v_new = rhs;
   Eigen::MatrixXd w = Eigen::MatrixXd::Zero(n, n_selected);
+  std::vector<bool> initial_converged(
+      static_cast<std::size_t>(n_selected), false);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     EigenResponseRecycleSpace* recycle = recycle_spaces.empty()
         ? nullptr
         : recycle_spaces[static_cast<std::size_t>(state)];
-    if (recycle == nullptr || recycle->size() == 0) continue;
-    const EigenResponseRecycleGuess guess = recycle->guess(rhs.col(state));
-    if (!guess.used) continue;
-    solution.col(state) = guess.solution;
-    v_new.col(state) = rhs.col(state) - guess.operator_image;
+    bool has_recycled_candidate = false;
+    if (recycle != nullptr && recycle->size() > 0) {
+      const EigenResponseRecycleApplication application =
+          recycle->galerkin_apply(rhs.col(state));
+      if (application.available) {
+        solution.col(state) = application.solution;
+        v_new.col(state) = rhs.col(state) - application.operator_image;
+        has_recycled_candidate = true;
+      }
+    }
+    // This fixed-space reconstruction is an initial scheduling check. The
+    // fresh bordered residual evaluated by finish_equal_weight_response is the
+    // authoritative certificate.
+    auto full_residual_norm = [&]() {
+      const Eigen::VectorXd multiplier_component =
+          data.metric.partialPivLu().solve(
+              selected_eigenvectors.transpose() * v_new.col(state));
+      return (v_new.col(state) -
+              overlap_selected * multiplier_component).norm();
+    };
+    const double full_rhs_norm = std::hypot(
+        data.forcing.col(state).norm(),
+        data.gauge_target.col(state).norm());
+    const double full_target =
+        options.relative_residual_tolerance * full_rhs_norm;
+    if (full_residual_norm() <= full_target) {
+      initial_converged[static_cast<std::size_t>(state)] = true;
+      v_new.col(state).setZero();
+      continue;
+    }
+    if (has_recycled_candidate &&
+        v_new.col(state).norm() >= rhs.col(state).norm()) {
+      solution.col(state).setZero();
+      v_new.col(state) = rhs.col(state);
+      if (full_residual_norm() <= full_target) {
+        initial_converged[static_cast<std::size_t>(state)] = true;
+        v_new.col(state).setZero();
+        continue;
+      }
+    }
+    if (v_new.col(state).norm() == 0.0) {
+      throw std::runtime_error(
+          "initial equal-weight response has a nonzero bordered residual but zero external complement");
+    }
   }
   Eigen::MatrixXd w_new = inverse_preconditioner.array() * v_new.array();
   project_selected_span(&w_new, selected_units);
@@ -1223,13 +1482,16 @@ solve_equal_weight_generalized_eigen_subspace_response(
   Eigen::VectorXd old_sine = Eigen::VectorXd::Zero(n_selected);
   Eigen::VectorXd eta = Eigen::VectorXd::Ones(n_selected);
   std::vector<int> iterations(static_cast<std::size_t>(n_selected), 0);
-  std::vector<bool> converged(static_cast<std::size_t>(n_selected), false);
+  std::vector<bool> converged = std::move(initial_converged);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const double full_rhs_norm = std::hypot(
         data.forcing.col(state).norm(),
         data.gauge_target.col(state).norm());
-    absolute_targets[state] = options.relative_residual_tolerance *
-        std::max(full_rhs_norm, rhs_norms[state]);
+    const double full_target =
+        options.relative_residual_tolerance * full_rhs_norm;
+    // The contract is relative to the original bordered RHS. Cancellation
+    // under projection must not impose a second, arbitrarily tighter target.
+    absolute_targets[state] = full_target / bordered_amplification;
     estimated_targets[state] = absolute_targets[state] *
         std::sqrt(inverse_preconditioner.col(state).minCoeff());
     if (rhs_norms[state] == 0.0) {
@@ -1255,7 +1517,6 @@ solve_equal_weight_generalized_eigen_subspace_response(
     residual_norms[state] = beta_first[state];
   }
 
-  int block_actions = 0;
   for (int iteration = 0;
        iteration < options.max_iterations &&
        !std::all_of(converged.begin(), converged.end(),
@@ -1372,8 +1633,13 @@ solve_equal_weight_generalized_eigen_subspace_response(
         p.col(state).setZero();
         const double beta_squared = v_new.col(state).dot(w_new.col(state));
         if (!(beta_squared > 0.0) || !std::isfinite(beta_squared)) {
-          throw std::runtime_error(
-              "equal-weight response reliable restart failed");
+          std::ostringstream message;
+          message << "equal-weight response reliable restart failed: state="
+                  << state << " projected_residual=" << true_residual.norm()
+                  << " projected_target=" << absolute_targets[state]
+                  << " projected_rhs_norm=" << rhs_norms[state]
+                  << " preconditioned_norm_squared=" << beta_squared;
+          throw std::runtime_error(message.str());
         }
         beta_new[state] = std::sqrt(beta_squared);
         beta_first[state] = beta_new[state];
@@ -1402,8 +1668,63 @@ solve_equal_weight_generalized_eigen_subspace_response(
   return finish_equal_weight_response(
       action, selected_eigenvalues, selected_eigenvectors,
       overlap_selected, data.forcing, data.gauge_target, solution,
-      options.relative_residual_tolerance, std::move(iterations),
+      options.relative_residual_tolerance, true, std::move(iterations),
       block_actions, recycle_spaces);
+}
+
+EigenSubspaceResponseResult
+evaluate_frozen_equal_weight_generalized_eigen_subspace_response(
+    const GeneralizedEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
+    const std::vector<const EigenResponseRecycleSpace*>& recycle_spaces,
+    const Eigen::MatrixXd* selected_residuals) {
+  validate_response_columns(
+      selected_eigenvalues, selected_eigenvectors, overlap_selected,
+      delta_hamiltonian_selected, delta_overlap_selected);
+  const Eigen::Index n = selected_eigenvectors.rows();
+  const Eigen::Index n_selected = selected_eigenvalues.size();
+  if (recycle_spaces.size() != static_cast<std::size_t>(n_selected)) {
+    throw std::invalid_argument(
+        "frozen equal-weight response recycle-space count is inconsistent");
+  }
+  const EigenResponseOptions validation_options{1, 1.0};
+  const EqualWeightResponseData data = prepare_equal_weight_response(
+      Eigen::VectorXd::Ones(n), Eigen::VectorXd::Ones(n),
+      selected_eigenvalues, selected_eigenvectors, overlap_selected,
+      delta_hamiltonian_selected, delta_overlap_selected,
+      validation_options);
+  const Eigen::MatrixXd selected_units =
+      selected_span_units(overlap_selected);
+  int block_actions = 0;
+  const Eigen::MatrixXd ritz_residuals = selected_ritz_residuals(
+      action, selected_eigenvalues, selected_eigenvectors,
+      selected_residuals, &block_actions);
+  const Eigen::MatrixXd internal_particular =
+      data.metric.partialPivLu().solve(data.gauge_target);
+  Eigen::MatrixXd rhs =
+      -data.forcing - ritz_residuals * internal_particular;
+  project_selected_span(&rhs, selected_units);
+  Eigen::MatrixXd external_response = Eigen::MatrixXd::Zero(n, n_selected);
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    const EigenResponseRecycleSpace* recycle =
+        recycle_spaces[static_cast<std::size_t>(state)];
+    if (recycle == nullptr) continue;
+    const EigenResponseRecycleApplication application =
+        recycle->galerkin_apply(rhs.col(state));
+    if (application.available) {
+      external_response.col(state) = application.solution;
+    }
+  }
+  return finish_equal_weight_response(
+      action, selected_eigenvalues, selected_eigenvectors,
+      overlap_selected, data.forcing, data.gauge_target,
+      external_response, 1.0, false,
+      std::vector<int>(static_cast<std::size_t>(n_selected), 0),
+      block_actions);
 }
 
 }  // namespace xmvb::core

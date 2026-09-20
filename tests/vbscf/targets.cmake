@@ -74,6 +74,27 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1"
     PASS_REGULAR_EXPRESSION "directional_hvp_fd_relative =")
 
+  foreach(case IN ITEMS 241 7975)
+    if(case STREQUAL "241")
+      set(input_name 241_VBSCF)
+      set(trust_radius 0.397717925496941)
+    else()
+      set(input_name 7975_vb)
+      set(trust_radius 0.00498924840619093)
+    endif()
+    add_test(NAME response_model_${case} COMMAND
+      ${CMAKE_COMMAND}
+      -DAUDIT_EXECUTABLE=$<TARGET_FILE:audit_newton_step>
+      -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/${input_name}.xmi
+      -DXMVB_BASIS=${CMAKE_SOURCE_DIR}/basis
+      -DORBITAL_FIXTURE=${CMAKE_SOURCE_DIR}/tests/vbscf/fixtures/response/${case}_orbitals.txt
+      -DTRUST_RADIUS=${trust_radius}
+      -DRUN_DIR=${CMAKE_BINARY_DIR}/tests/response_model_${case}
+      -P ${CMAKE_SOURCE_DIR}/tests/vbscf/check_response_model.cmake)
+  endforeach()
+  set_tests_properties(response_model_241 response_model_7975 PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+
   add_test(NAME tnhvp_model_observations_f2 COMMAND
     ${CMAKE_COMMAND}
     -DXMVB_EXECUTABLE=$<TARGET_FILE:xmvb>

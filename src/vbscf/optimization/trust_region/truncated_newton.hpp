@@ -12,6 +12,8 @@
 namespace xmvb::vb {
 
 struct TruncatedNewtonSubspace {
+  /** @brief Response-model revision shared by every cached Hessian image. */
+  std::uint64_t model_revision = 0;
   Eigen::MatrixXd orthonormal_basis;
   Eigen::MatrixXd tangent_basis;
   Eigen::MatrixXd hessian_basis;

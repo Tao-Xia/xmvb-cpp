@@ -735,6 +735,27 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   tangent_basis.reserve(work_limit);
   hessian_basis.reserve(work_limit);
 
+  std::uint64_t image_revision = hvp->model_revision();
+  const auto refresh_images = [&]() {
+    Eigen::MatrixXd directions(rhs.size(), basis.size());
+    for (std::size_t column = 0; column < basis.size(); ++column) {
+      directions.col(static_cast<Eigen::Index>(column)) = basis[column];
+    }
+    // New directions have already enriched the response space. Freeze that
+    // model while refreshing old images, before any Ritz/BFGS/KKT operation.
+    const std::uint64_t revision = hvp->model_revision();
+    const Eigen::MatrixXd images = hvp->apply_frozen_batch(directions);
+    if (images.rows() != directions.rows() ||
+        images.cols() != directions.cols() || !images.allFinite() ||
+        hvp->model_revision() != revision) {
+      throw std::runtime_error("invalid refreshed Newton Hessian images");
+    }
+    for (std::size_t column = 0; column < basis.size(); ++column) {
+      hessian_basis[column] = images.col(static_cast<Eigen::Index>(column));
+    }
+    image_revision = hvp->model_revision();
+  };
+
   const bool reuse_initial_subspace =
       initial_subspace != nullptr &&
       truncated_newton_subspace_is_usable(*initial_subspace, rhs.size()) &&
@@ -748,11 +769,20 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       hessian_basis.push_back(initial_subspace->hessian_basis.col(column));
     }
 
+    TruncatedNewtonSubspace current_subspace = *initial_subspace;
+    image_revision = current_subspace.model_revision;
+    if (image_revision != hvp->model_revision()) {
+      refresh_images();
+      current_subspace = build_truncated_newton_subspace(
+          current_projection.reduced_gradient, retraction_metric,
+          basis, tangent_basis, hessian_basis);
+      current_subspace.model_revision = image_revision;
+    }
     result = solve_trust_region_in_subspace(
         current_projection,
         trust_radius,
         retraction_metric,
-        *initial_subspace,
+        current_subspace,
         target_kkt_relative_residual);
     if (truncated_newton_step_is_usable(
             result,
@@ -795,14 +825,16 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         &basis,
         &hessian_basis);
     if (admitted > 0) {
+      image_revision = hvp->model_revision();
       tangent_basis.push_back(retraction_metric.tangent(basis.back()));
-      const TruncatedNewtonSubspace predictor_subspace =
+      TruncatedNewtonSubspace predictor_subspace =
           build_truncated_newton_subspace(
               current_projection.reduced_gradient,
               retraction_metric,
               basis,
               tangent_basis,
               hessian_basis);
+      predictor_subspace.model_revision = image_revision;
       TruncatedNewtonStepResult predictor_step =
           solve_trust_region_in_subspace(
               current_projection,
@@ -884,19 +916,27 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       loop_stop_reason = TruncatedNewtonStopReason::DependentDirections;
       break;
     }
+    if (image_revision != hvp->model_revision()) {
+      refresh_images();
+      // A failed solve of the revised projection must not return the previous
+      // model's step, Hessian image, or convergence certificate.
+      result = TruncatedNewtonStepResult();
+      result.target_kkt_relative_residual = target_kkt_relative_residual;
+    }
     for (std::size_t column = previous_basis_size;
          column < basis.size();
          ++column) {
       tangent_basis.push_back(retraction_metric.tangent(basis[column]));
     }
 
-    const TruncatedNewtonSubspace subspace =
+    TruncatedNewtonSubspace subspace =
         build_truncated_newton_subspace(
             current_projection.reduced_gradient,
             retraction_metric,
             basis,
             tangent_basis,
             hessian_basis);
+    subspace.model_revision = image_revision;
     TruncatedNewtonStepResult candidate_step =
         solve_trust_region_in_subspace(
             current_projection,

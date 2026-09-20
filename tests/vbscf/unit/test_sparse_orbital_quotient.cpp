@@ -1,4 +1,6 @@
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -445,6 +447,102 @@ class DenseTestHvp final : public ReducedHvp {
   Eigen::MatrixXd hessian_;
 };
 
+/** @brief Two response-space enrichments followed by a fixed symmetric model. */
+class ChangingModelHvp final : public ReducedHvp {
+ public:
+  ChangingModelHvp(Eigen::MatrixXd initial, Eigen::MatrixXd enriched)
+      : hessian_(std::move(initial)), enriched_(std::move(enriched)) {}
+
+  Eigen::VectorXd apply(const Eigen::VectorXd& direction) override {
+    const Eigen::MatrixXd block = direction;
+    return apply_batch(block).col(0);
+  }
+
+  Eigen::MatrixXd apply_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& directions) override {
+    ++batch_applies;
+    if (batch_applies == 1) {
+      ++revision_;
+    } else if (batch_applies == 2) {
+      hessian_ = enriched_;
+      ++revision_;
+    }
+    prepared_directions.emplace_back(directions);
+    return hessian_ * directions;
+  }
+
+  Eigen::MatrixXd apply_frozen_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& directions) override {
+    ++frozen_applies;
+    frozen_directions.emplace_back(directions);
+    return hessian_ * directions;
+  }
+
+  std::uint64_t model_revision() const noexcept override { return revision_; }
+
+  /** @brief Simulates response enrichment outside a retained radius trial. */
+  void replace_model(Eigen::MatrixXd hessian) {
+    hessian_ = std::move(hessian);
+    ++revision_;
+  }
+
+  const Eigen::MatrixXd& hessian() const noexcept { return hessian_; }
+
+  int batch_applies = 0;
+  int frozen_applies = 0;
+  std::vector<Eigen::MatrixXd> prepared_directions;
+  std::vector<Eigen::MatrixXd> frozen_directions;
+
+ private:
+  Eigen::MatrixXd hessian_;
+  Eigen::MatrixXd enriched_;
+  std::uint64_t revision_ = 0;
+};
+
+/** @brief Checks cached Newton data against an independently applied model. */
+void check_cached_newton_model(
+    const TruncatedNewtonStepResult& step,
+    const ChangingModelHvp& hvp,
+    const Eigen::VectorXd& gradient,
+    const NonredundantRetractionMetric& metric) {
+  const auto& subspace = step.subspace;
+  require(subspace.model_revision == hvp.model_revision(),
+          "Newton subspace retained an obsolete response-model revision");
+  const Eigen::MatrixXd expected_images =
+      hvp.hessian() * subspace.orthonormal_basis;
+  require((subspace.hessian_basis - expected_images).norm() <
+              1.0e-11 * std::max(1.0, expected_images.norm()),
+          "Newton subspace mixed Hessian images from different models");
+  const Eigen::MatrixXd expected_projection =
+      subspace.orthonormal_basis.transpose() * expected_images;
+  require((subspace.reduced_hessian - expected_projection).norm() <
+              1.0e-11 * std::max(1.0, expected_projection.norm()),
+          "projected Newton Hessian was not rebuilt after response enrichment");
+  require((expected_projection - expected_projection.transpose()).norm() <
+              1.0e-11 * std::max(1.0, expected_projection.norm()),
+          "changing-model fixture lost symmetric curvature");
+
+  const Eigen::VectorXd expected_hvp = hvp.hessian() * step.reduced_step;
+  const Eigen::VectorXd expected_metric = metric.apply(step.reduced_step);
+  require((step.reduced_hessian_times_step - expected_hvp).norm() <
+              1.0e-11 * std::max(1.0, expected_hvp.norm()),
+          "Newton step retained a stale Hessian image");
+  require((step.reduced_metric_times_step - expected_metric).norm() <
+              1.0e-11 * std::max(1.0, expected_metric.norm()),
+          "Newton step lost the physical metric image");
+  const double expected_prediction =
+      -gradient.dot(step.reduced_step) -
+      0.5 * step.reduced_step.dot(expected_hvp);
+  require(std::abs(step.predicted_decrease - expected_prediction) <
+              1.0e-12 * std::max(1.0, std::abs(expected_prediction)),
+          "Newton predicted decrease refers to an obsolete response model");
+  const double expected_kkt =
+      (gradient + expected_hvp +
+       step.trust_region_shift * expected_metric).norm() / gradient.norm();
+  require(std::abs(step.model_kkt_relative_residual - expected_kkt) < 1.0e-10,
+          "Newton KKT certificate refers to an obsolete response model");
+}
+
 void check_truncated_newton_certificates() {
   Eigen::VectorXd gradient(2);
   gradient << 1.0, 2.0;
@@ -586,6 +684,70 @@ void check_residual_driven_subspace(
           "predictor Newton defect was not resolved in its correction space");
   std::cout << "residual-driven Newton subspace: passed\n";
 }
+
+void check_response_model_refresh(const OrbitalPreparationInput& input) {
+  const SparseParameterLayout view(input);
+  const Eigen::MatrixXd c = dense(input);
+  const OrbitalChart space(input, view, c, c, nullptr, true);
+  const NonredundantRetractionMetric metric(space, view, input);
+  const int dimension = space.reduced_size();
+  require(dimension > 4, "response-model refresh fixture is too small");
+  Eigen::MatrixXd initial = Eigen::MatrixXd::Zero(dimension, dimension);
+  for (int i = 0; i < dimension; ++i) initial(i, i) = 1.0 + i;
+  const Eigen::VectorXd coupling =
+      Eigen::VectorXd::LinSpaced(dimension, 0.25, 1.0).normalized();
+  const Eigen::MatrixXd enriched =
+      1.3 * initial + 0.2 * coupling * coupling.transpose();
+  ChangingModelHvp hvp(initial, enriched);
+  const Eigen::VectorXd gradient =
+      Eigen::VectorXd::LinSpaced(dimension, 1.0e-3, 2.0e-3);
+  OrbitalChart::ProjectionResult projection;
+  projection.reduced_gradient = gradient;
+  constexpr double forcing = 1.0e-10;
+
+  const auto step = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 10.0, 1.0e-16, 1.0e-12,
+      forcing, &hvp, nullptr);
+  require(hvp.model_revision() == 2 && hvp.batch_applies >= 2 &&
+              hvp.frozen_applies > 0 && step.newton_forcing_converged,
+          "Newton solve did not refresh its evolving response model");
+  require(hvp.prepared_directions.front().cols() == 1 &&
+              hvp.frozen_directions.front().cols() > 1 &&
+              (hvp.frozen_directions.front().col(0) -
+               hvp.prepared_directions.front().col(0)).norm() < 1.0e-14,
+          "response enrichment did not refresh old and new directions together");
+  require(((enriched - initial) *
+           hvp.prepared_directions.front().col(0)).norm() > 1.0e-2,
+          "refresh fixture did not change the original Hessian sample");
+  check_cached_newton_model(step, hvp, gradient, metric);
+
+  const int prepared_before_reuse = hvp.batch_applies;
+  const int frozen_before_reuse = hvp.frozen_applies;
+  const auto reused = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 5.0, 1.0e-16, 1.0e-12,
+      forcing, &hvp, nullptr, nullptr, &step.subspace);
+  require(reused.newton_forcing_converged &&
+              hvp.batch_applies == prepared_before_reuse &&
+              hvp.frozen_applies == frozen_before_reuse,
+          "unchanged response-model reuse unnecessarily recomputed HVPs");
+  check_cached_newton_model(reused, hvp, gradient, metric);
+
+  hvp.replace_model(enriched +
+                    2.0 * Eigen::MatrixXd::Identity(dimension, dimension));
+  const Eigen::VectorXd exact_retry_step =
+      -hvp.hessian().ldlt().solve(gradient);
+  const double retry_radius = 0.4 * metric.norm(exact_retry_step);
+  const auto retry = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, retry_radius, 1.0e-16, 1.0e-12,
+      forcing, &hvp, nullptr, nullptr, &step.subspace);
+  require(hvp.frozen_applies > frozen_before_reuse &&
+              retry.reached_boundary && retry.trust_region_shift > 0.0,
+          "radius retry did not invalidate a stale response-model cache");
+  check_cached_newton_model(retry, hvp, gradient, metric);
+  require(metric.norm(retry.reduced_step) <= retry_radius * (1.0 + 1.0e-8),
+          "refreshed Newton step exceeded its revised trust radius");
+  std::cout << "response-model image refresh and radius reuse: passed\n";
+}
 }  // namespace
 
 int main() {
@@ -609,6 +771,7 @@ int main() {
     check("full support", full, 14);
     check_truncated_newton_certificates();
     check_residual_driven_subspace(full);
+    check_response_model_refresh(full);
     Eigen::MatrixXd rotated = c;
     Eigen::Matrix2d a;
     a << 1, 0.3, -0.2, 1.1;
@@ -636,4 +799,3 @@ int main() {
     return 1;
   }
 }
-#include <algorithm>
