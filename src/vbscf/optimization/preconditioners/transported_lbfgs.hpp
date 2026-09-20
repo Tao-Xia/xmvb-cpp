@@ -33,6 +33,12 @@ public:
       Eigen::VectorXd reduced_gradient_change);
   bool empty() const noexcept;
   int size() const noexcept;
+  /**
+   * @brief Maps a reduced gradient covector to a reduced tangent vector.
+   *
+   * Secant contractions use the natural vector-covector pairing. They do not
+   * require the coupled physical trust metric to be assembled or whitened.
+   */
   Eigen::VectorXd apply(const Eigen::VectorXd& reduced_vector) const;
 
 private:

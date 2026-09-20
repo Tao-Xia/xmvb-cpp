@@ -131,6 +131,43 @@ int main() {
         boundary,
         ProjectedTrustStatus::BoundaryGlobal);
 
+    // The reduced chart is not globally whitened. Verify covariance under a
+    // nonorthogonal coordinate change s = A z: vectors transform with A,
+    // while the gradient, Hessian, and physical metric transform by pullback.
+    Eigen::Matrix2d coordinate_map;
+    coordinate_map << 1.3, -0.2,
+                      0.4,  0.9;
+    const Eigen::Matrix2d transformed_hessian =
+        coordinate_map.transpose() * spd_hessian * coordinate_map;
+    const Eigen::Matrix2d transformed_metric =
+        coordinate_map.transpose() * metric * coordinate_map;
+    const Eigen::Vector2d transformed_gradient =
+        coordinate_map.transpose() * gradient;
+    const auto transformed_boundary =
+        solve_projected_generalized_trust_region(
+            transformed_hessian,
+            transformed_metric,
+            transformed_gradient,
+            small_radius);
+    certify(
+        transformed_hessian,
+        transformed_metric,
+        transformed_gradient,
+        small_radius,
+        transformed_boundary,
+        ProjectedTrustStatus::BoundaryGlobal);
+    require_close(
+        coordinate_map * transformed_boundary.coordinates,
+        boundary.coordinates,
+        2.0e-12,
+        "generalized trust step changed under a nonorthogonal coordinate map");
+    require(std::abs(transformed_boundary.shift - boundary.shift) <=
+                2.0e-12 * std::max(1.0, std::abs(boundary.shift)),
+            "trust-region multiplier changed under a coordinate map");
+    require(std::abs(transformed_boundary.predicted_decrease -
+                     boundary.predicted_decrease) <= 2.0e-13,
+            "predicted decrease changed under a coordinate map");
+
     Eigen::Matrix2d indefinite_hessian;
     indefinite_hessian << -2.0, 0.0,
                            0.0, 3.0;

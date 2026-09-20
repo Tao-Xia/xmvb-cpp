@@ -129,23 +129,55 @@ duplication:
 
 ### Metric-consistent coordinates
 
-All quasi-Newton and exact-curvature algebra must be performed in the same
-nonredundant horizontal tangent space and with the same trust-region metric used
-by the retraction. The safest implementation is to whiten the metric first.
-
-For tangent-space metric $G_k$, define
+The accepted-point reduced coordinates are locally prewhitened for independent
+orbital normalization, but they are not globally Euclidean in the coupled
+inactive-subspace/active-ray metric. The full reduced metric is
 
 $$
-\widetilde p=G_k^{1/2}p,
-\qquad
-\widetilde g=G_k^{-1/2}g,
-\qquad
-\widetilde H=G_k^{-1/2}H_kG_k^{-1/2}.
+G_k=U_k^TM_{\mathrm{phys},k}U_k\neq I
 $$
 
-The update formulas below are Euclidean formulas in the whitened coordinates.
-An equivalent implementation using $G_k$-adjoints is acceptable, but mixing
-Euclidean and metric adjoints is not.
+in general. It must not be assembled or factorized merely to implement a
+quasi-Newton update.
+
+Instead, preserve the distinction between tangent vectors and gradient
+covectors. Under an invertible coordinate change $p=A\widehat p$,
+
+$$
+\widehat g=A^Tg,
+\qquad
+\widehat H=A^THA,
+\qquad
+\widehat G=A^TGA,
+\qquad
+\widehat M=A^{-1}MA^{-T}.
+$$
+
+Here $H$ and $G$ map tangent vectors to covectors, whereas the inverse model
+$M$ maps covectors to tangent vectors. The contractions $s^Ty$, $g^Tp$, and
+$p^THp$ are the natural vector-covector pairings and are coordinate invariant.
+Consequently, BFGS and block inverse-BFGS require no full-space metric
+whitening when their arguments retain these types.
+
+The physical metric enters the trust constraint and shifted KKT equation:
+
+$$
+p^TG_kp\leq\Delta_k^2,
+\qquad
+g_k+H_kp+\lambda G_kp=0.
+$$
+
+For a sampled basis $Q$, assemble only
+
+$$
+G_Q=Q^TG_kQ,
+$$
+
+and whiten this small matrix by Cholesky factorization in the projected
+trust-region solve. This is already the production trust-region strategy and
+retains matrix-free memory scaling. Euclidean orthogonalization may choose a
+numerically convenient basis for the same sampled span; it must never replace
+$G_Q$ by the identity in the trust-region model.
 
 ### Baseline inverse model
 
@@ -155,8 +187,8 @@ $$
 M_k\approx H_k^{-1}
 $$
 
-be the transported block-LBFGS inverse model in the whitened nonredundant
-coordinates. Start from
+be the transported block-LBFGS inverse model from reduced gradient covectors to
+reduced tangent vectors. Start from
 
 $$
 p_0=-M_kg_k.
@@ -183,11 +215,11 @@ $$
 For a trust-region boundary step, use the shifted KKT residual
 
 $$
-r(p,\lambda)=g_k+H_kp+\lambda p
+r(p,\lambda)=g_k+H_kp+\lambda G_kp
 $$
 
-in whitened coordinates, together with primal feasibility and complementarity.
-In unwhitened coordinates, the shift is $\lambda G_kp$.
+together with primal feasibility and complementarity. Only after projected
+metric whitening does this shift become $\lambda p$.
 
 ### Positive-curvature block enrichment
 
@@ -292,8 +324,11 @@ Newton/KKT certification must always use current-point HVPs.
 
 ## Implementation sequence
 
-- [ ] Add metric-whitened algebra utilities or prove that the existing reduced
-      coordinates are already Euclidean with respect to the trust-region metric.
+- [x] Establish metric-consistent reduced algebra. The coordinates are not
+      globally Euclidean; vector-covector quasi-Newton algebra remains
+      coordinate covariant, while only the small projected trust metric is
+      whitened. A nonorthogonal coordinate-change regression verifies the
+      generalized trust-region solution.
 - [ ] Add a block inverse-BFGS update operating on matrix-free inverse actions.
 - [ ] Add algebraic tests for symmetry, positive definiteness, block secant
       exactness, and invariance under a change of basis within $\operatorname{span}(S)$.
