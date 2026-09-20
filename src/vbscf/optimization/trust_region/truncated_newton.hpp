@@ -167,6 +167,25 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
     const TruncatedNewtonSubspace& subspace,
     double target_kkt_relative_residual);
 
+/**
+ * @brief Corrects a fixed baseline step in an affine HVP subspace.
+ *
+ * The returned step is @f$p=p_B+Qz@f$.  `baseline_hessian_step` and
+ * `baseline_metric_step` are the current-point images @f$H p_B@f$ and
+ * @f$G p_B@f$.  Consequently the projected linear term is the exact Newton
+ * defect @f$Q^T(g+H p_B)@f$ rather than the original gradient, and the trust
+ * constraint is imposed on the complete corrected step.
+ */
+TruncatedNewtonStepResult solve_affine_trust_region_in_subspace(
+    const OrbitalChart::ProjectionResult& current_projection,
+    double trust_radius,
+    const NonredundantRetractionMetric& metric,
+    const TruncatedNewtonSubspace& correction_subspace,
+    const Eigen::VectorXd& baseline_step,
+    const Eigen::VectorXd& baseline_hessian_step,
+    const Eigen::VectorXd& baseline_metric_step,
+    double target_kkt_relative_residual);
+
 Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
     const NonredundantRetractionMetric& retraction_metric,
     const OrbitalChart& space,

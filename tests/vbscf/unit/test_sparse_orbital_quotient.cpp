@@ -297,6 +297,39 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
                   name + ": generalized interior Newton step mismatch");
         }
       }
+
+      const double affine_radius = 2.0 * exact_norm;
+      const Eigen::VectorXd baseline_step = 0.35 * exact_step;
+      const auto affine_step = solve_affine_trust_region_in_subspace(
+          projection,
+          affine_radius,
+          metric,
+          subspace,
+          baseline_step,
+          model_hessian * baseline_step,
+          physical_gram * baseline_step,
+          kFixtureForcing);
+      require(affine_step.predicted_decrease > 0.0 &&
+                  (affine_step.reduced_step - exact_step).norm() < 1.0e-8,
+              name + ": affine correction did not recover the Newton step");
+      require((gradient + affine_step.reduced_hessian_times_step +
+               affine_step.trust_region_shift *
+                   affine_step.reduced_metric_times_step)
+                  .norm() < 1.0e-7 * gradient.norm(),
+              name + ": affine correction KKT mismatch");
+
+      const auto zero_defect_step = solve_affine_trust_region_in_subspace(
+          projection,
+          affine_radius,
+          metric,
+          subspace,
+          exact_step,
+          model_hessian * exact_step,
+          physical_gram * exact_step,
+          kFixtureForcing);
+      require(zero_defect_step.predicted_decrease > 0.0 &&
+                  (zero_defect_step.reduced_step - exact_step).norm() < 1.0e-8,
+              name + ": affine solver changed an exact baseline step");
     }
   }
   require((audit.packed_gauge_basis.transpose() * u).norm() < 1e-11,
@@ -664,7 +697,7 @@ void check_residual_driven_subspace(
       metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
       kFixtureForcing, &certified_predictor_hvp, nullptr, &exact_predictor);
   require(certified_predictor_hvp.applies == 1 &&
-              certified_predictor.subspace_dimension == 1 &&
+              certified_predictor.subspace_dimension == 0 &&
               certified_predictor.newton_forcing_converged,
           "exact block-L-BFGS predictor was not certified by one HVP");
 
@@ -678,7 +711,7 @@ void check_residual_driven_subspace(
   const auto corrected_predictor = solve_nonredundant_truncated_newton_step(
       metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
       kFixtureForcing, &defect_hvp, nullptr, &identity_predictor);
-  require(defect_hvp.applies == 2 &&
+  require(defect_hvp.applies == 3 &&
               corrected_predictor.subspace_dimension == 2 &&
               corrected_predictor.newton_forcing_converged,
           "predictor Newton defect was not resolved in its correction space");

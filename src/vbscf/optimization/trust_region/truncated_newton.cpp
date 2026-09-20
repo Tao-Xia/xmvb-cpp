@@ -402,11 +402,14 @@ static std::unique_ptr<BlockInverseBfgs> build_exact_positive_curvature_update(
       std::move(positive_images));
 }
 
-TruncatedNewtonStepResult solve_trust_region_in_subspace(
+TruncatedNewtonStepResult solve_affine_trust_region_in_subspace(
     const OrbitalChart::ProjectionResult& current_projection,
     double trust_radius,
     const NonredundantRetractionMetric& metric,
     const TruncatedNewtonSubspace& subspace,
+    const Eigen::VectorXd& baseline_step,
+    const Eigen::VectorXd& baseline_hessian_step,
+    const Eigen::VectorXd& baseline_metric_step,
     double target_kkt_relative_residual) {
   TruncatedNewtonStepResult result;
   result.target_kkt_relative_residual = target_kkt_relative_residual;
@@ -420,7 +423,13 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
       !std::isfinite(trust_radius) ||
       !truncated_newton_subspace_is_usable(
           subspace,
-          current_projection.reduced_gradient.size())) {
+          current_projection.reduced_gradient.size()) ||
+      baseline_step.size() != current_projection.reduced_gradient.size() ||
+      baseline_hessian_step.size() != baseline_step.size() ||
+      baseline_metric_step.size() != baseline_step.size() ||
+      !baseline_step.allFinite() ||
+      !baseline_hessian_step.allFinite() ||
+      !baseline_metric_step.allFinite()) {
     return result;
   }
 
@@ -434,6 +443,38 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
   if (metric_factor.info() != Eigen::Success) {
     throw std::runtime_error("projected orbital metric is not positive definite");
   }
+  const double baseline_metric_norm_squared =
+      baseline_step.dot(baseline_metric_step);
+  if (!std::isfinite(baseline_metric_norm_squared) ||
+      baseline_metric_norm_squared < 0.0) {
+    return result;
+  }
+  const Eigen::VectorXd projected_metric_baseline =
+      subspace.orthonormal_basis.transpose() * baseline_metric_step;
+  const Eigen::VectorXd metric_center =
+      metric_factor.solve(projected_metric_baseline);
+  if (!projected_metric_baseline.allFinite() ||
+      !metric_center.allFinite()) {
+    return result;
+  }
+  // Complete the square in
+  //   ||p_B + Q z||_G^2 = z^T M z + 2 c^T z + ||p_B||_G^2.
+  // With u=z+M^{-1}c the affine trust region is a centered M-ball.
+  const double affine_origin_norm_squared =
+      baseline_metric_norm_squared -
+      projected_metric_baseline.dot(metric_center);
+  const double radius_roundoff =
+      64.0 * std::numeric_limits<double>::epsilon() *
+      std::max(1.0, trust_radius * trust_radius);
+  const double effective_radius_squared =
+      trust_radius * trust_radius - affine_origin_norm_squared;
+  if (!std::isfinite(affine_origin_norm_squared) ||
+      !std::isfinite(effective_radius_squared) ||
+      effective_radius_squared <= radius_roundoff) {
+    return result;
+  }
+  const double effective_radius =
+      std::sqrt(std::max(0.0, effective_radius_squared));
   const Eigen::MatrixXd upper = metric_factor.matrixU();
   const Eigen::MatrixXd inverse_upper =
       upper.triangularView<Eigen::Upper>().solve(
@@ -442,8 +483,13 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
       (inverse_upper.transpose() * reduced_hessian * inverse_upper +
        inverse_upper.transpose() * reduced_hessian.transpose() *
            inverse_upper).eval();
+  const Eigen::VectorXd affine_projected_gradient =
+      subspace.projected_gradient +
+      subspace.orthonormal_basis.transpose() * baseline_hessian_step;
+  const Eigen::VectorXd centered_projected_gradient =
+      affine_projected_gradient - reduced_hessian * metric_center;
   const Eigen::VectorXd whitened_gradient =
-      inverse_upper.transpose() * subspace.projected_gradient;
+      inverse_upper.transpose() * centered_projected_gradient;
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(whitened_hessian);
   if (eigensolver.info() != Eigen::Success) {
     return result;
@@ -463,7 +509,7 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
   }
 
   const auto spectral_solution = solve_spectral_trust_region(
-      eigenvalues, projected_gradient_in_eigenbasis, trust_radius);
+      eigenvalues, projected_gradient_in_eigenbasis, effective_radius);
   const Eigen::VectorXd& eigen_coordinates = spectral_solution.step;
   const double trust_region_shift = spectral_solution.shift;
   const double minimum_eigenvalue = eigenvalues.minCoeff();
@@ -471,9 +517,12 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
   constexpr double kShiftToleranceFactor =
       64.0 * std::numeric_limits<double>::epsilon();
 
-  Eigen::VectorXd subspace_coordinates =
+  const Eigen::VectorXd centered_coordinates =
       inverse_upper * eigenvectors * eigen_coordinates;
+  Eigen::VectorXd subspace_coordinates =
+      centered_coordinates - metric_center;
   Eigen::VectorXd reduced_step =
+      baseline_step +
       subspace.orthonormal_basis * subspace_coordinates;
   double step_metric_norm = metric.norm(reduced_step);
   if (!(step_metric_norm > 0.0) || !std::isfinite(step_metric_norm)) {
@@ -481,14 +530,13 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
   }
   if (step_metric_norm >
       trust_radius * (1.0 + 1.0e-8)) {
-    const double scale = trust_radius / step_metric_norm;
-    subspace_coordinates *= scale;
-    reduced_step *= scale;
-    step_metric_norm = metric.norm(reduced_step);
+    return result;
   }
   const Eigen::VectorXd reduced_hessian_times_step =
+      baseline_hessian_step +
       subspace.hessian_basis * subspace_coordinates;
   const Eigen::VectorXd reduced_metric_times_step =
+      baseline_metric_step +
       subspace.metric_basis * subspace_coordinates;
   if (reduced_hessian_times_step.size() !=
       current_projection.reduced_gradient.size() ||
@@ -497,11 +545,9 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
     return result;
   }
 
-  const Eigen::VectorXd reduced_model_hessian_step =
-      reduced_hessian * subspace_coordinates;
   const double predicted_decrease =
-      -subspace.projected_gradient.dot(subspace_coordinates) -
-      0.5 * subspace_coordinates.dot(reduced_model_hessian_step);
+      -current_projection.reduced_gradient.dot(reduced_step) -
+      0.5 * reduced_step.dot(reduced_hessian_times_step);
   if (!std::isfinite(predicted_decrease) ||
       predicted_decrease <= 0.0 ||
       current_projection.reduced_gradient.dot(reduced_step) > 0.0) {
@@ -527,6 +573,25 @@ TruncatedNewtonStepResult solve_trust_region_in_subspace(
   refresh_truncated_newton_step_certificate(
       current_projection.reduced_gradient, &result);
   return result;
+}
+
+TruncatedNewtonStepResult solve_trust_region_in_subspace(
+    const OrbitalChart::ProjectionResult& current_projection,
+    double trust_radius,
+    const NonredundantRetractionMetric& metric,
+    const TruncatedNewtonSubspace& subspace,
+    double target_kkt_relative_residual) {
+  const Eigen::Index reduced_size =
+      current_projection.reduced_gradient.size();
+  return solve_affine_trust_region_in_subspace(
+      current_projection,
+      trust_radius,
+      metric,
+      subspace,
+      Eigen::VectorXd::Zero(reduced_size),
+      Eigen::VectorXd::Zero(reduced_size),
+      Eigen::VectorXd::Zero(reduced_size),
+      target_kkt_relative_residual);
 }
 
 Eigen::VectorXd build_nonredundant_preconditioned_reduced_gradient_step(
@@ -735,14 +800,55 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   tangent_basis.reserve(work_limit);
   hessian_basis.reserve(work_limit);
 
+  // The strong block-L-BFGS predictor is the fixed origin of the affine
+  // correction model. Exact curvature is used only to solve its Newton defect;
+  // the projected trust solve must not re-optimize the predictor coefficient.
+  Eigen::VectorXd baseline_step = preconditioned_gradient_step;
+  if (initial_reduced_step != nullptr &&
+      initial_reduced_step->size() == rhs.size() &&
+      initial_reduced_step->allFinite() &&
+      retraction_metric.norm(*initial_reduced_step) > 0.0) {
+    baseline_step = retraction_metric.clip_to_radius(
+        *initial_reduced_step, trust_radius);
+  }
+  const bool reuse_initial_subspace =
+      initial_subspace != nullptr &&
+      truncated_newton_subspace_is_usable(*initial_subspace, rhs.size()) &&
+      initial_subspace->orthonormal_basis.cols() <= work_limit;
+  Eigen::VectorXd baseline_hessian_step;
+  if (reuse_initial_subspace &&
+      initial_subspace->model_revision == hvp->model_revision()) {
+    const Eigen::VectorXd coordinates =
+        initial_subspace->orthonormal_basis.transpose() * baseline_step;
+    const Eigen::VectorXd represented =
+        initial_subspace->orthonormal_basis * coordinates;
+    const double representation_tolerance =
+        256.0 * std::numeric_limits<double>::epsilon() *
+        std::max(1.0, baseline_step.norm());
+    if ((represented - baseline_step).norm() <= representation_tolerance) {
+      baseline_hessian_step = initial_subspace->hessian_basis * coordinates;
+    }
+  }
+  if (baseline_hessian_step.size() == 0) {
+    baseline_hessian_step = hvp->apply(baseline_step);
+  }
+  Eigen::VectorXd baseline_metric_step =
+      retraction_metric.apply(baseline_step);
+  if (!baseline_step.allFinite() ||
+      !baseline_hessian_step.allFinite() ||
+      !baseline_metric_step.allFinite()) {
+    throw std::runtime_error("invalid affine Newton baseline images");
+  }
   std::uint64_t image_revision = hvp->model_revision();
   const auto refresh_images = [&]() {
-    Eigen::MatrixXd directions(rhs.size(), basis.size());
+    Eigen::MatrixXd directions(rhs.size(), basis.size() + 1);
+    directions.col(0) = baseline_step;
     for (std::size_t column = 0; column < basis.size(); ++column) {
-      directions.col(static_cast<Eigen::Index>(column)) = basis[column];
+      directions.col(static_cast<Eigen::Index>(column + 1)) = basis[column];
     }
     // New directions have already enriched the response space. Freeze that
-    // model while refreshing old images, before any Ritz/BFGS/KKT operation.
+    // model while refreshing the baseline and old correction images before
+    // any Ritz/BFGS/KKT operation.
     const std::uint64_t revision = hvp->model_revision();
     const Eigen::MatrixXd images = hvp->apply_frozen_batch(directions);
     if (images.rows() != directions.rows() ||
@@ -750,16 +856,41 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         hvp->model_revision() != revision) {
       throw std::runtime_error("invalid refreshed Newton Hessian images");
     }
+    baseline_hessian_step = images.col(0);
     for (std::size_t column = 0; column < basis.size(); ++column) {
-      hessian_basis[column] = images.col(static_cast<Eigen::Index>(column));
+      hessian_basis[column] =
+          images.col(static_cast<Eigen::Index>(column + 1));
     }
     image_revision = hvp->model_revision();
   };
 
-  const bool reuse_initial_subspace =
-      initial_subspace != nullptr &&
-      truncated_newton_subspace_is_usable(*initial_subspace, rhs.size()) &&
-      initial_subspace->orthonormal_basis.cols() <= work_limit;
+  result.reduced_step = baseline_step;
+  result.reduced_hessian_times_step = baseline_hessian_step;
+  result.reduced_metric_times_step = baseline_metric_step;
+  result.retract_tangent_norm = retraction_metric.norm(baseline_step);
+  result.reached_boundary =
+      result.retract_tangent_norm >= (1.0 - 1.0e-8) * trust_radius;
+  result.predicted_decrease =
+      -current_projection.reduced_gradient.dot(baseline_step) -
+      0.5 * baseline_step.dot(baseline_hessian_step);
+  refresh_truncated_newton_step_certificate(
+      current_projection.reduced_gradient, &result);
+  if (truncated_newton_step_is_usable(
+          result, current_projection.reduced_gradient)) {
+    if (result.model_kkt_converged) {
+      result.stop_reason = TruncatedNewtonStopReason::ModelKktConverged;
+      return result;
+    }
+    if (truncated_newton_model_is_below_outer_accuracy(
+            gradient_infinity_norm(current_projection.reduced_gradient),
+            result.predicted_decrease,
+            gradient_tolerance,
+            energy_tolerance)) {
+      result.stop_reason = TruncatedNewtonStopReason::BelowOuterAccuracy;
+      return result;
+    }
+  }
+
   if (reuse_initial_subspace) {
     const Eigen::Index initial_dimension =
         initial_subspace->orthonormal_basis.cols();
@@ -778,11 +909,14 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
           basis, tangent_basis, hessian_basis);
       current_subspace.model_revision = image_revision;
     }
-    result = solve_trust_region_in_subspace(
+    result = solve_affine_trust_region_in_subspace(
         current_projection,
         trust_radius,
         retraction_metric,
         current_subspace,
+        baseline_step,
+        baseline_hessian_step,
+        baseline_metric_step,
         target_kkt_relative_residual);
     if (truncated_newton_step_is_usable(
             result,
@@ -802,80 +936,13 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     }
   }
 
-  // Apply the exact Hessian first to the block-L-BFGS predictor. Solving the
-  // one-dimensional trust problem also gives the optimal scaling on that ray.
-  // If its full-space KKT residual meets the forcing condition, this single HVP
-  // certifies the predictor and no correction subspace is needed.
-  if (!reuse_initial_subspace && basis.empty()) {
-    Eigen::VectorXd predictor = preconditioned_gradient_step;
-    if (initial_reduced_step != nullptr &&
-        initial_reduced_step->size() == rhs.size() &&
-        initial_reduced_step->allFinite() &&
-        retraction_metric.norm(*initial_reduced_step) > 0.0) {
-      predictor = retraction_metric.clip_to_radius(
-          *initial_reduced_step, trust_radius);
-    }
-    Eigen::MatrixXd predictor_block(rhs.size(), 1);
-    predictor_block.col(0) = predictor;
-    const int admitted = append_orthonormal_hvp_block(
-        predictor_block,
-        [&](const Eigen::Ref<const Eigen::MatrixXd>& directions) {
-          return hvp->apply_batch(directions);
-        },
-        &basis,
-        &hessian_basis);
-    if (admitted > 0) {
-      image_revision = hvp->model_revision();
-      tangent_basis.push_back(retraction_metric.tangent(basis.back()));
-      TruncatedNewtonSubspace predictor_subspace =
-          build_truncated_newton_subspace(
-              current_projection.reduced_gradient,
-              retraction_metric,
-              basis,
-              tangent_basis,
-              hessian_basis);
-      predictor_subspace.model_revision = image_revision;
-      TruncatedNewtonStepResult predictor_step =
-          solve_trust_region_in_subspace(
-              current_projection,
-              trust_radius,
-              retraction_metric,
-              predictor_subspace,
-              target_kkt_relative_residual);
-      if (truncated_newton_step_is_usable(
-              predictor_step,
-              current_projection.reduced_gradient)) {
-        predictor_step.subspace_dimension = static_cast<int>(basis.size());
-        result = std::move(predictor_step);
-        if (result.model_kkt_converged) {
-          result.stop_reason = TruncatedNewtonStopReason::ModelKktConverged;
-          return result;
-        }
-        if (truncated_newton_model_is_below_outer_accuracy(
-                gradient_infinity_norm(current_projection.reduced_gradient),
-                result.predicted_decrease,
-                gradient_tolerance,
-                energy_tolerance)) {
-          result.stop_reason = TruncatedNewtonStopReason::BelowOuterAccuracy;
-          return result;
-        }
-      }
-    }
-  }
-
   // Residual-driven block Davidson/GLTR correction. Negative curvature belongs
   // in the projected Hessian and must not terminate subspace construction. The
   // raw Newton defect and its positive preconditioned image expose complementary
   // missing-curvature directions in one fused block-HVP call.
-  Eigen::VectorXd correction_rhs = rhs;
-  if (truncated_newton_step_is_usable(
-          result,
-          current_projection.reduced_gradient)) {
-    correction_rhs = -(
-        current_projection.reduced_gradient +
-        result.reduced_hessian_times_step +
-        result.trust_region_shift * result.reduced_metric_times_step);
-  }
+  Eigen::VectorXd correction_rhs = -(
+      current_projection.reduced_gradient +
+      baseline_hessian_step);
   while (static_cast<int>(basis.size()) < work_limit) {
     const auto base_inverse =
         [&](const Eigen::VectorXd& vector) {
@@ -884,8 +951,19 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
               transported_preconditioner,
               vector);
         };
+    std::vector<Eigen::VectorXd> sampled_directions;
+    std::vector<Eigen::VectorXd> sampled_images;
+    sampled_directions.reserve(basis.size() + 1);
+    sampled_images.reserve(hessian_basis.size() + 1);
+    sampled_directions.push_back(baseline_step);
+    sampled_images.push_back(baseline_hessian_step);
+    sampled_directions.insert(
+        sampled_directions.end(), basis.begin(), basis.end());
+    sampled_images.insert(
+        sampled_images.end(), hessian_basis.begin(), hessian_basis.end());
     const std::unique_ptr<BlockInverseBfgs> curvature_update =
-        build_exact_positive_curvature_update(basis, hessian_basis);
+        build_exact_positive_curvature_update(
+            sampled_directions, sampled_images);
     const Eigen::VectorXd preconditioned_correction =
         curvature_update != nullptr
             ? curvature_update->apply(correction_rhs, base_inverse)
@@ -938,11 +1016,14 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
             hessian_basis);
     subspace.model_revision = image_revision;
     TruncatedNewtonStepResult candidate_step =
-        solve_trust_region_in_subspace(
+        solve_affine_trust_region_in_subspace(
             current_projection,
             trust_radius,
             retraction_metric,
             subspace,
+            baseline_step,
+            baseline_hessian_step,
+            baseline_metric_step,
             target_kkt_relative_residual);
     if (!truncated_newton_step_is_usable(
             candidate_step,

@@ -154,13 +154,12 @@ If $q_{k-1}\leq\eta_{k-1}$, the inexpensive predictor has already delivered
 the contraction requested of the inexact Newton solve, and the next step
 remains on the cheap block-L-BFGS path. If $q_{k-1}>\eta_{k-1}$, TNHVP applies
 the current-point exact relaxed Hessian first to $\mathbf p_k^{\mathrm B}$.
-The one-dimensional trust problem supplies the optimal step on this ray and
-the shifted KKT defect
+The predictor is retained as a fixed affine origin; its coefficient is not
+reoptimized by the exact-curvature solver.  Its initial Newton defect is
 
 $$
 \mathbf r_k^{\mathrm B}=
-\mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}
-+\lambda_k\mathbf G_k\mathbf p_k^{\mathrm B}.
+\mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}.
 $$
 
 If
@@ -180,8 +179,38 @@ $$
 $$
 
 Every admitted basis vector receives a current-point exact relaxed HVP,
-including the structure response. The final step minimizes the quadratic model
-in this correction space subject to the physical-metric trust radius. Positive
+including the structure response. With correction basis $\mathbf Q_k$, the
+final step is restricted to the affine space
+
+$$
+\mathbf p_k=\mathbf p_k^{\mathrm B}+\mathbf Q_k\mathbf z_k,
+$$
+
+and minimizes
+
+$$
+m_k(\mathbf p_k)=
+\mathbf g_k^{\mathrm T}\mathbf p_k+
+\frac{1}{2}\mathbf p_k^{\mathrm T}\mathbf H_k\mathbf p_k
+$$
+
+subject to
+
+$$
+\mathbf p_k^{\mathrm T}\mathbf G_k\mathbf p_k\leq\Delta_k^2.
+$$
+
+Thus the projected linear term is
+
+$$
+\mathbf Q_k^{\mathrm T}
+\left(\mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}\right),
+$$
+
+not $\mathbf Q_k^{\mathrm T}\mathbf g_k$. Exact HVP information therefore
+corrects the Newton defect of block-LBFGS instead of re-solving the whole
+quadratic model in a linear space that happens to contain the predictor.
+Positive
 Ritz curvature enriches the inverse preconditioner through an exact block
 secant update, while nonpositive Ritz modes remain explicit in the projected
 trust model.

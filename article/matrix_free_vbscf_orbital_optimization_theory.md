@@ -1917,13 +1917,12 @@ $$
 When $q_{k-1}\leq\eta_{k-1}$, the cheap predictor has already achieved the
 contraction requested by the inexact-Newton forcing sequence, so no HVP is
 required at point $k$. Otherwise the exact relaxed Hessian is first applied to
-$\mathbf p_k^{\mathrm B}$. After minimizing the quadratic model on that ray,
-the shifted full-space defect is
+$\mathbf p_k^{\mathrm B}$. The block-LBFGS predictor is then held fixed, and
+the unshifted Newton defect is
 
 $$
 \mathbf r_k^{\mathrm B}=
-\mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}
-+\lambda_k\mathbf M_k\mathbf p_k^{\mathrm B}.
+\mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}.
 $$
 
 The predictor is certified by one HVP when
@@ -1942,7 +1941,34 @@ $$
 -\mathbf B_k\mathbf r_k^{\mathrm B},
 $$
 
-and the physical-metric trust problem is resolved in the augmented subspace.
+and the physical-metric trust problem is solved in the affine space
+
+$$
+\mathbf p_k=\mathbf p_k^{\mathrm B}+\mathbf Q_j\mathbf z.
+$$
+
+The projected correction model is
+
+$$
+m_k(\mathbf p_k^{\mathrm B}+\mathbf Q_j\mathbf z)
+=m_k(\mathbf p_k^{\mathrm B})
++\mathbf z^{\mathrm T}\mathbf Q_j^{\mathrm T}
+\left(\mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}\right)
++\frac{1}{2}\mathbf z^{\mathrm T}
+\mathbf Q_j^{\mathrm T}\mathbf H_k\mathbf Q_j\mathbf z,
+$$
+
+subject to
+
+$$
+\left(\mathbf p_k^{\mathrm B}+\mathbf Q_j\mathbf z\right)^{\mathrm T}
+\mathbf M_k
+\left(\mathbf p_k^{\mathrm B}+\mathbf Q_j\mathbf z\right)
+\leq\Delta_k^2.
+$$
+
+The predictor is therefore the affine origin, not another free Krylov
+coordinate. The exact-curvature solve changes only the unresolved defect.
 Thus HVPs estimate only curvature missing from the structured quasi-Newton
 predictor. As the forcing sequence vanishes, either the cheap predictor itself
 delivers the required contraction or exact defect correction is activated.
@@ -3138,7 +3164,14 @@ $$
 
 Once activated, the predictor is evaluated by one current-point relaxed HVP
 and is either certified immediately or enlarged by the raw and preconditioned
-residual block of Section 10.3. The natural reduced dimension is the only
+residual block of Section 10.3. The correction is solved in the affine space
+
+$$
+\mathbf p_k^{\mathrm B}+\operatorname{span}(\mathbf Q_j),
+$$
+
+so exact curvature cannot rescale the block-LBFGS predictor merely because it
+was inserted as the first basis vector. The natural reduced dimension is the only
 algebraic completion bound. A failed KKT
 certificate is never converted into convergence because an iteration count
 was exhausted.

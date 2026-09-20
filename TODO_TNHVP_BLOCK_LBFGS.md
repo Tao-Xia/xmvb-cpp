@@ -355,6 +355,29 @@ $$
 together with primal feasibility and complementarity. Only after projected
 metric whitening does this shift become $\lambda p$.
 
+The production correction must keep $p_0$ fixed and solve only in the affine
+space
+
+$$
+p=p_0+Qz.
+$$
+
+For the quadratic model, the correction gradient is therefore
+
+$$
+Q^T(g_k+H_kp_0),
+$$
+
+and the trust constraint is imposed on the complete step,
+
+$$
+(p_0+Qz)^TG_k(p_0+Qz)\leq\Delta_k^2.
+$$
+
+Do not insert $p_0$ as a free column of a linear Krylov space and re-solve its
+coefficient. That construction replaces the block-LBFGS baseline instead of
+adding the curvature information that it lacks.
+
 ### Positive-curvature block enrichment
 
 Collect linearly independent exact samples
