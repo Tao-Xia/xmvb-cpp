@@ -32,16 +32,20 @@ The next implementation sequence is:
    point; dense replay of identical directions is symmetric to roundoff.
    Cold/warm and block-segmentation dependence confirm that the current
    inexact response action is not one fixed linear operator. See audit
-   Section 10; this diagnoses the defect, not a production repair.
+   Section 8; this diagnoses the defect, not a production repair.
 3. [ ] Give predictor and curvature steps consistent quadratic decrease
    estimates; keep rejected-Newton and accepted-predictor records separate.
    A linear-only Armijo result must not redefine the quadratic trust radius.
    Implemented separate Armijo/quadratic observations and no-observation
    radius preservation. A rejected Newton trial retains its own radius
    decision even when Armijo succeeds; a failed predictor is not repeated
-   during same-point radius retries. Focused quadratic tests pass; molecular
-   comparison is pending. The predictor is deliberately not assigned an
-   unmeasured quadratic prediction.
+   during same-point radius retries. All 46 tests pass on Hanhai25 (247009).
+   Eight panel cases have finished; LOFLEA and the FeCl2 equal-accuracy
+   comparison (247010) are pending. MnF2 remains 18 steps with SCF time
+   reduced from 86.23 to 58.02 s, still slower than block L-BFGS. LOFLEA's
+   expensive fifth step prevents declaring general performance acceptance.
+   The predictor is deliberately not assigned an unmeasured quadratic
+   prediction. See consistency audit Section 9.
 4. [ ] Define a symmetric inexact response model and its error budget before
    feeding its images into block inverse-BFGS. Freeze the shared response
    space within an orbital block; refresh old images when that model changes.
@@ -55,7 +59,8 @@ The next implementation sequence is:
    peak RSS. Accept algorithm changes only after these gates pass.
 
 Items 2--5 are mathematical prerequisites for renewed performance claims.
-This audit changes documentation only; the remedies have not been implemented.
+The original audit changed documentation only. The checked items above record
+subsequent implementation/validation; unchecked prerequisites remain open.
 
 ## Primary objective
 

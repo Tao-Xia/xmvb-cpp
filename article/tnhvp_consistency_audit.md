@@ -2,8 +2,9 @@
 
 Date: 2026-09-20. Audited source: `1664152`.
 
-This is an evidence-backed design review, not a claim that the proposed repairs
-have been implemented. The intended method remains matrix-free orbital Newton
+Sections 1--6 record the original design review. Sections 7 onward record
+subsequent implementation and validation; uncompleted repairs remain explicit.
+The intended method remains matrix-free orbital Newton
 correction of an orbital-block-preconditioned L-BFGS predictor, with variational
 structure coefficients eliminated through their response equations.
 
@@ -315,7 +316,7 @@ a curvature candidate cannot prove fewer total outer iterations, since the
 subsequent paths and secant histories diverge. No universal speedup or a fixed
 ten-step convergence claim is justified.
 
-## 9. Orbital-block baseline qualification
+## 7. Orbital-block baseline qualification
 
 Commit `4e118d0` exposes `--lbfgs-initial-inverse orbital-block` without
 duplicating the L-BFGS backend or changing its default scalar initialization.
@@ -343,11 +344,11 @@ convergence. These are single-run SCF timings, not publication benchmarks.
 The comparison is now correctly defined, but TNHVP acceptance remains open.
 In particular, its step savings alone do not establish a wall-time benefit
 over this stronger baseline. Endpoint agreement still requires the checks in
-Section 8. Logs reside under
+Section 6. Logs reside under
 `build/diagnostics/consistency-3460c35/ablation/`; remote provenance is
 `/home/guqqgroup/taoxia/xmvb-runs/consistency-3460c35/`.
 
-## 10. Fixed-point response diagnosis
+## 8. Fixed-point response diagnosis
 
 The unmodified optimizer was reproduced in Hanhai25 job `246977`: Davidson
 failed after 3 accepted steps for 241 and after 4 for 7975, whereas dense
@@ -401,11 +402,11 @@ the full production secant history/forcing sequence.
 These observations isolate the 241 incompatibility to the inexact structure
 response, rather than showing an intrinsic asymmetry of the orbital
 derivatives. They support the common symmetric response-model construction
-in Section 4, not loosening the strict block-BFGS check or claiming universal
+in Section 3, not loosening the strict block-BFGS check or claiming universal
 derivative correctness from two probes. Logs are under
 `build/diagnostics/consistency-3460c35/audit/`.
 
-## 11. Separating line-search acceptance from quadratic model trust
+## 9. Separating line-search acceptance from quadratic model trust
 
 The predictor line search observes the actual decrease
 $a_B=f(x)-f(R_x(\alpha p_B))$ and the linear decrease
@@ -447,7 +448,67 @@ not necessarily the accepted predictor.
 
 This repair does not alter the forcing rule, response tolerances, curvature
 admission gate, or strict block-secant symmetry check. In particular, the
-structure-response defect established in Section 10 remains to be repaired.
+structure-response defect established in Section 8 remains to be repaired.
+
+### Initial qualification of the trust-observation repair
+
+Commit `d023aba` passed all **46/46** tests on Hanhai25 in job `247009`,
+including the new end-to-end F2 trace regression. The preceding setup job
+`247002` did not build excluded developer targets, so those tests were
+reported **Not Run**; it is not counted as a passing suite. Building the
+explicit `xmvb_dev_tools` target resolved that test setup issue.
+
+The same 32-thread, exact-integral Davidson panel has the following completed
+results. Timings are single-run SCF measurements. The table is deliberately
+partial while the remaining calculation runs.
+
+| System | Previous TNHVP steps / s | Repaired TNHVP steps / s |
+|---|---:|---:|
+| 240 | 6 / 9.565958 | 6 / 9.471276 |
+| 241 | failed after 3 / 0.371610 | failed after 3 / 0.370574 |
+| MnF2 | 18 / 86.225576 | 18 / 58.018364 |
+| FeCl2 | 5 / 15.469963 | 3 / 1.718220 |
+| 7963 | 6 / 1.793981 | 6 / 1.776911 |
+| 7975 | failed after 4 / 0.864279 | failed after 4 / 0.865893 |
+| YAMSAI | 6 / 1.220511 | 6 / 1.212238 |
+| CERRAS | failed after 4 / 25.383004 | failed after 4 / 24.842835 |
+| LOFLEA | failed after 6 / 539.819579 | running, 5 accepted steps |
+
+The three completed failures remain strict block-curvature symmetry failures,
+not numerical exceptions suppressed by this repair. Recorded trace checks
+confirmed that every no-Newton-observation step preserved its source radius
+and that every accepted Armijo predictor had no fabricated quadratic ratio.
+MnF2 exercised five rejected-Newton/accepted-predictor transitions, so this
+separation was also exercised outside the synthetic tests.
+
+For MnF2, HVP block actions decreased from 779 to 592, structure-response
+actions from 21905 to 17942, and cumulative HVP time from 54.02 to 39.81 s.
+Its final energy changed from $-1348.893353187962$ to
+$-1348.893353223406\ E_h$. Nevertheless, the repaired 58.02 s remains much
+slower than orbital-block L-BFGS's 6.86 s. This is not overall algorithm
+acceptance.
+
+FeCl2 needs an explicit accuracy caveat: the repaired endpoint is
+$-2181.617635688955\ E_h$, versus the previous
+$-2181.617645274734\ E_h$. Its projected gradient infinity norm is
+$4.63601\times10^{-4}$ instead of $7.06846\times10^{-5}$. Both satisfy the
+requested outer thresholds, but their energy difference is
+$9.58578\times10^{-6}\ E_h$. Thus the apparent time improvement must not
+be advertised as an equal-endpoint-accuracy speedup. Job `247010` repeats
+old TNHVP, repaired TNHVP, and orbital-block L-BFGS with a common diagnostic
+$\tau_g=10^{-4}$, $\tau_E=10^{-9}\ E_h$; production defaults are unchanged.
+That diagnostic is still running. Both jobs have 20-minute scheduler limits
+and a 2000-step outer limit, not a 30-step convergence cutoff.
+
+LOFLEA's fifth repaired iteration is already more expensive than its earlier
+counterpart. Preserving a mathematically meaningful trust radius alone does
+not repair the global subproblem stopping rule. No improvement is claimed
+for LOFLEA before the calculation completes. Next gates remain the symmetric
+response model and distinct global/local subproblem accuracy contracts.
+
+Current run logs are under `build/diagnostics/consistency-3460c35/trust/`
+and `.../endpoints/FeCl2/`. The tested executable SHA-256 is
+`fb162f9696ed88335c3279ed708e563d8d3feaea0e88e9fcfe41edb2c6fcf05a`.
 
 ## References
 
