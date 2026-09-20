@@ -1,5 +1,47 @@
 # TODO: Exact-Curvature Enrichment of Block-LBFGS
 
+## Acceptance reopened: multi-system audit, 2026-09-20
+
+The implementation checklist below records completed engineering steps, **not
+algorithm acceptance**. The nine-system test at `1664152` exposes unresolved
+model/accuracy interfaces. See [the evidence and derivation](article/tnhvp_consistency_audit.md).
+
+- Standard L-BFGS uses a scalar initial inverse; TNHVP uses an orbital-block
+  inverse. The reported step reductions do not isolate the benefit of HVPs.
+- TNHVP terminates on block-curvature asymmetry for 241, 7975, CERRAS, and
+  LOFLEA. The amount and source of skew at the failing block were not logged.
+- MnF2 converges in 18 steps but spends 86.23 s in SCF; scalar-initialized
+  L-BFGS takes 479 steps and 25.28 s. Most expensive TNHVP steps satisfy the
+  implemented residual target: non-attainment is not the demonstrated cause.
+- LOFLEA terminates after six accepted steps and 539.82 s; standard L-BFGS
+  converges in 60 steps and 228.78 s. No success claim is justified for TNHVP.
+
+The next implementation sequence is:
+
+1. [ ] Establish the missing orbital-block L-BFGS ablation using the same
+   initial inverse, chart, input, and physical settings as TNHVP. Keep the
+   standard scalar-initialized method explicitly identified in results.
+2. [ ] Reproduce a failing accepted point and log curvature skew, response
+   residuals, additivity, column-order sensitivity, and the independent
+   directional HVP defect. Identify which error source explains the skew.
+3. [ ] Give predictor and curvature steps consistent quadratic decrease
+   estimates; keep rejected-Newton and accepted-predictor records separate.
+   A linear-only Armijo result must not redefine the quadratic trust radius.
+4. [ ] Define a symmetric inexact response model and its error budget before
+   feeding its images into block inverse-BFGS. Freeze the shared response
+   space within an orbital block; refresh old images when that model changes.
+5. [ ] Separate global sufficient-decrease steps from locally certified Newton
+   steps. Account for HVP error, use covector norms, and include the trust
+   shift in correction preconditioning. Do not reinstate fixed HVP budgets.
+6. [ ] Remove repeated full Gram/spectral rebuilds and record solver-only time,
+   stopping reason, actual minimum Ritz value, and fresh-certificate cost.
+7. [ ] Rerun the nine-system panel with isolated output directories, inspect
+   stationary-point/energy differences, and then collect repeated timings and
+   peak RSS. Accept algorithm changes only after these gates pass.
+
+Items 2--5 are mathematical prerequisites for renewed performance claims.
+This audit changes documentation only; the remedies have not been implemented.
+
 ## Primary objective
 
 The production TNHVP optimizer must be redesigned as a genuine curvature-enriched
@@ -35,9 +77,9 @@ Do not start a later item while an earlier item is mathematically unresolved or
 failing its tests. Benchmark-only work may run concurrently, but it must not
 change the production algorithm out of sequence.
 
-## Confirmed state of the current implementation
+## Historical starting state of this checklist
 
-The current production path does the following:
+Before the implementation sequence below, the production path did the following:
 
 1. Construct an inverse L-BFGS model $M_k$ with an orbital-block initial inverse.
 2. Form the baseline step

@@ -3111,8 +3111,12 @@ $$
 \tag{74}
 $$
 
-This gives a vanishing inexact-Newton target on the fixed initial scale while
-avoiding inner accuracy that cannot change the requested outer decision.
+At fixed requested outer tolerance, this implemented rule retains a positive
+forcing floor and does not establish a vanishing-forcing or quadratic-convergence
+guarantee. The 2026-09-20 multi-system audit also identifies unresolved
+response-action error and globalization contracts; see
+[the consistency audit](tnhvp_consistency_audit.md). Equations 72--74 describe
+the implementation under audit, not a validated final control law.
 
 Every accepted point first constructs the transported block-LBFGS predictor
 
