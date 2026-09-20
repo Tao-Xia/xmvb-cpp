@@ -118,7 +118,7 @@ void apply_standard_two_electron_mode_argument(
 void print_usage() {
   std::cerr << "usage: xmvb-cpp.exe <input.xmi> "
                "[--optimizer-backend lbfgs|nonredundant_projected_gradient|nonredundant_truncated_newton]"
-               " [--lbfgs-initial-inverse scalar|orbital-block]"
+               " [--lbfgs-initial-inverse orbital-block|scalar]"
                " [--max-iterations <count>]"
                " [--eigensolver davidson|dense]"
                " [--verbose true|false]"
@@ -131,7 +131,7 @@ void print_usage() {
                " [--dump-trace-dir <dataset_root>]"
                " [--tnhvp-trace <path.tsv>]"
                " [--dump-final-orbital-value-table-bin <path>]\n"
-               "input optimizer: ISCF=5 selects L-BFGS; ISCF=7 selects TNHVP\n"
+               "input optimizer: ISCF=5 selects L-BFGS (default orbital-block inverse); ISCF=7 selects TNHVP\n"
                "input eigensolver: EIGENSOLVER=DAVIDSON|DENSE (default DAVIDSON)\n";
 }
 

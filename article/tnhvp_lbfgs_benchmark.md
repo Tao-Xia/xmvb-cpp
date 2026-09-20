@@ -116,8 +116,8 @@ measured optimization value.
 Future tables must distinguish the following methods explicitly:
 
 1. standard nonredundant L-BFGS with $H_k^{(0)}=\gamma_k I$;
-2. orbital-block-preconditioned L-BFGS, if retained as an additional strong
-   quasi-Newton reference; and
+2. orbital-block-preconditioned L-BFGS, now the default `ISCF=5` optimizer and
+   the primary quasi-Newton reference; and
 3. TNHVP with the orbital-block inverse, transported secants, and exact
    matrix-free curvature correction.
 

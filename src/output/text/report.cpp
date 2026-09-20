@@ -42,10 +42,13 @@ const char* gradient_tolerance_metric_name(
   throw std::invalid_argument("invalid VBSCF optimizer backend");
 }
 
-const char* optimizer_report_name(xmvb::vb::VbScfOptimizerBackend backend) {
-  switch (backend) {
+const char* optimizer_report_name(
+    const xmvb::vb::VbScfOptimizerOptions& options) {
+  switch (options.backend) {
     case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
-      return "L-BFGS";
+      return options.lbfgs_initial_inverse == xmvb::vb::LbfgsInitialInverse::OrbitalBlock
+          ? "L-BFGS (orbital-block initial inverse)"
+          : "L-BFGS (scalar initial inverse)";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
       return "nonredundant projected gradient";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
@@ -206,7 +209,7 @@ void print_header(
       std::cout,
       input_path,
       load_result,
-      optimizer_report_name(options.backend),
+      optimizer_report_name(options),
       options.max_iterations);
 }
 

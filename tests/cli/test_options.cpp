@@ -33,12 +33,21 @@ std::optional<xmvb::cli::Options> parse(
 }  // namespace
 
 int main() {
+  const xmvb::vb::VbScfOptimizerOptions api_defaults;
+  require(
+      api_defaults.backend == xmvb::vb::VbScfOptimizerBackend::Lbfgs &&
+          api_defaults.lbfgs_initial_inverse ==
+              xmvb::vb::LbfgsInitialInverse::OrbitalBlock,
+      "optimizer API must default to orbital-block L-BFGS");
   const auto defaults = parse({"xmvb-cpp.exe", "unused.xmi"});
   require(defaults.has_value(), "default CLI options must parse");
   require(
+      defaults->optimizer.backend == xmvb::vb::VbScfOptimizerBackend::Lbfgs,
+      "CLI must default to the L-BFGS backend");
+  require(
       defaults->optimizer.lbfgs_initial_inverse ==
-          xmvb::vb::LbfgsInitialInverse::ScaledIdentity,
-      "standalone L-BFGS must retain the scalar default");
+          xmvb::vb::LbfgsInitialInverse::OrbitalBlock,
+      "standalone L-BFGS must default to the orbital-block inverse");
 
   const auto orbital_block = parse({
       "xmvb-cpp.exe",
@@ -49,7 +58,7 @@ int main() {
   require(
       orbital_block->optimizer.lbfgs_initial_inverse ==
           xmvb::vb::LbfgsInitialInverse::OrbitalBlock,
-      "orbital-block option must select the TNHVP ablation inverse");
+      "orbital-block option must explicitly select the default inverse");
 
   const auto scalar = parse({
       "xmvb-cpp.exe",
@@ -60,7 +69,7 @@ int main() {
   require(
       scalar->optimizer.lbfgs_initial_inverse ==
           xmvb::vb::LbfgsInitialInverse::ScaledIdentity,
-      "scalar option must explicitly select the production default");
+      "scalar option must explicitly select conventional L-BFGS scaling");
 
   const auto invalid = parse({
       "xmvb-cpp.exe",

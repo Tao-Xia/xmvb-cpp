@@ -130,10 +130,8 @@ BackendRunResult run_truncated_newton_backend(
       break;
     }
   
-    // Use the same secant memory as standalone L-BFGS, but initialize its
-    // inverse action with the positive orbital-curvature block. This is part
-    // of the TNHVP preconditioner; standalone L-BFGS uses the conventional
-    // scalar initialization so it remains an honest first-order baseline.
+    // Share the positive orbital-block initial inverse and transported secant
+    // memory with default L-BFGS; TNHVP additionally samples exact HVPs.
     const int transport_history_size = options.history_size;
     if (accepted_point_preconditioner == nullptr) {
       const auto setup_start = std::chrono::steady_clock::now();
@@ -161,8 +159,8 @@ BackendRunResult run_truncated_newton_backend(
     }
     const NonredundantRetractionMetric& retraction_metric =
         *accepted_point_metric;
-    // Build the primary L-BFGS direction before the coupled
-    // workspace captures its inverse action.  If transported secants lose
+    // Build the primary L-BFGS direction before the reduced Newton solver
+    // uses its inverse action. If transported secants lose
     // descent through roundoff, discard them for both candidates so the
     // baseline and curvature model use one positive-definite preconditioner.
     Eigen::VectorXd baseline_reduced_direction =

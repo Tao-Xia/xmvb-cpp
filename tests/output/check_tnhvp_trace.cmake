@@ -31,12 +31,13 @@ file(READ "${XMVB_INPUT}" iscf5_input_text)
 string(REPLACE "ISCF=7" "ISCF=5" iscf5_input_text "${iscf5_input_text}")
 set(iscf5_input "${XMVB_TRACE_ROOT}/F2_iscf5.xmi")
 file(WRITE "${iscf5_input}" "${iscf5_input_text}")
+set(default_orbitals "${XMVB_TRACE_ROOT}/F2_lbfgs_default.bin")
 execute_process(
   COMMAND
     "${XMVB_EXECUTABLE}"
     "${iscf5_input}"
-    --gradient-tolerance 1e20
     --verbose false
+    --dump-final-orbital-value-table-bin "${default_orbitals}"
   RESULT_VARIABLE iscf5_status
   OUTPUT_VARIABLE iscf5_report
   ERROR_VARIABLE iscf5_errors)
@@ -44,8 +45,48 @@ if (NOT iscf5_status EQUAL 0)
   message(FATAL_ERROR
     "ISCF=5 selection run failed with status ${iscf5_status}:\n${iscf5_errors}")
 endif()
-if (NOT iscf5_report MATCHES "VBSCF algorithm: L-BFGS")
-  message(FATAL_ERROR "ISCF=5 did not select L-BFGS")
+if (NOT iscf5_report MATCHES
+    "VBSCF algorithm: L-BFGS [(]orbital-block initial inverse[)]")
+  message(FATAL_ERROR "ISCF=5 did not select default orbital-block L-BFGS")
+endif()
+
+# Compare an actual converged optimization, not just the initial report.
+set(explicit_orbitals "${XMVB_TRACE_ROOT}/F2_lbfgs_explicit.bin")
+execute_process(
+  COMMAND
+    "${XMVB_EXECUTABLE}"
+    "${iscf5_input}"
+    --lbfgs-initial-inverse orbital-block
+    --verbose false
+    --dump-final-orbital-value-table-bin "${explicit_orbitals}"
+  RESULT_VARIABLE explicit_status
+  OUTPUT_VARIABLE explicit_report
+  ERROR_VARIABLE explicit_errors)
+if (NOT explicit_status EQUAL 0)
+  message(FATAL_ERROR
+    "Explicit orbital-block L-BFGS failed: ${explicit_errors}")
+endif()
+file(SHA256 "${default_orbitals}" default_orbital_hash)
+file(SHA256 "${explicit_orbitals}" explicit_orbital_hash)
+if (NOT default_orbital_hash STREQUAL explicit_orbital_hash)
+  message(FATAL_ERROR
+    "Default and explicit orbital-block L-BFGS converged to different orbitals")
+endif()
+
+execute_process(
+  COMMAND
+    "${XMVB_EXECUTABLE}"
+    "${iscf5_input}"
+    --lbfgs-initial-inverse scalar
+    --gradient-tolerance 1e20
+    --verbose false
+  RESULT_VARIABLE scalar_status
+  OUTPUT_VARIABLE scalar_report
+  ERROR_VARIABLE scalar_errors)
+if (NOT scalar_status EQUAL 0 OR NOT scalar_report MATCHES
+    "VBSCF algorithm: L-BFGS [(]scalar initial inverse[)]")
+  message(FATAL_ERROR
+    "Explicit scalar L-BFGS selection/report failed: ${scalar_errors}")
 endif()
 
 string(

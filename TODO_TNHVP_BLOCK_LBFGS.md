@@ -1,13 +1,34 @@
 # TODO: Exact-Curvature Enrichment of Block-LBFGS
 
+## Current optimizer defaults, 2026-09-20
+
+`ISCF=5` and inputs without `ISCF` now select orbital-block-preconditioned
+L-BFGS. Conventional scalar initialization remains an explicit comparison via
+`--lbfgs-initial-inverse scalar`; historical scalar-baseline measurements below
+are unchanged. `ISCF=7` remains matrix-free truncated Newton.
+
+The current TNHVP path includes orbital--structure coupling through the reduced
+Hessian/structure-response Schur action. It does not jointly solve independent
+orbital and structure increments: commit `a1b05ae` removed that earlier coupled
+prototype. A possible AH/NEO formulation concerns step construction and
+globalization, not discovery of previously absent physical coupling. No AH/NEO
+replacement is implemented or accepted by this default-selection change.
+
+Validation: Hanhai25 Slurm job `247066` passed all 46 tests. The F2 integration
+test converges both default `ISCF=5` and explicit orbital-block L-BFGS and
+requires byte-identical final orbital tables. API/CLI defaults and explicit
+scalar selection are also checked. This qualifies default selection, not the
+unresolved TNHVP response model.
+
 ## Acceptance reopened: multi-system audit, 2026-09-20
 
 The implementation checklist below records completed engineering steps, **not
 algorithm acceptance**. The nine-system test at `1664152` exposes unresolved
 model/accuracy interfaces. See [the evidence and derivation](article/tnhvp_consistency_audit.md).
 
-- Standard L-BFGS uses a scalar initial inverse; TNHVP uses an orbital-block
-  inverse. The reported step reductions do not isolate the benefit of HVPs.
+- In that test, standard L-BFGS used a scalar initial inverse; TNHVP used an
+  orbital-block inverse. The reported step reductions do not isolate the
+  benefit of HVPs.
 - TNHVP terminates on block-curvature asymmetry for 241, 7975, CERRAS, and
   LOFLEA. The amount and source of skew at the failing block were not logged.
 - MnF2 converges in 18 steps but spends 86.23 s in SCF; scalar-initialized
@@ -23,8 +44,8 @@ The next implementation sequence is:
    standard scalar-initialized method explicitly identified in results.
    Implemented as `--lbfgs-initial-inverse orbital-block`; CLI tests and the
    nine-system Hanhai25 job 246984 passed. Both modes use the same L-BFGS
-   backend, and the default remains scalar initialization. Numerical results
-   are recorded in the consistency audit.
+   backend; the default at that commit was scalar initialization. Numerical
+   results are recorded in the consistency audit.
 2. [x] Reproduce a failing accepted point and log curvature skew, response
    residuals, additivity, column-order sensitivity, and the independent
    directional HVP defect. Identify which error source explains the skew.

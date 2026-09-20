@@ -66,17 +66,20 @@ OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi>
 
 Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
 regression decks and `testdata/vbscf/F2.xmi` for the compact HAO smoke case.
-Within `$CTRL`, `ISCF=5` selects L-BFGS and `ISCF=7` selects
-TNHVP. `EIGENSOLVER=DAVIDSON` selects the default matrix-free structure solver,
+Within `$CTRL`, `ISCF=5` selects orbital-block-preconditioned L-BFGS (also the
+default when `ISCF` is omitted), and `ISCF=7` selects TNHVP.
+`EIGENSOLVER=DAVIDSON` selects the default matrix-free structure solver,
 while `EIGENSOLVER=DENSE` selects the explicit dense reference solver. An
 explicit `--optimizer-backend` or `--eigensolver` command-line option overrides
 the corresponding input keyword.
 
-Standalone L-BFGS defaults to a scalar initial inverse Hessian. For an
-orbital-block ablation, use `--optimizer-backend lbfgs
---lbfgs-initial-inverse orbital-block`. This selects the same local inverse
-and transported secant recursion used by the TNHVP predictor, without HVP
-correction. `--lbfgs-initial-inverse scalar` explicitly selects the default.
+Default L-BFGS uses the same local orbital-block initial inverse and transported
+secant recursion as the TNHVP predictor, without exact HVP correction. This is
+the project's block-LBFGS first-order/quasi-Newton optimizer, not conventional
+scalar-initialized L-BFGS or a multi-vector block secant update. For the
+conventional comparison mode, explicitly use `--lbfgs-initial-inverse scalar`.
+Reports identify the selected initial inverse; `--lbfgs-initial-inverse
+orbital-block` explicitly selects the default.
 
 `NSTATE=n` selects an equal-weight average over the consecutive lowest `n`
 VB states. Omitting it is equivalent to `NSTATE=1`. The optimizer uses the
