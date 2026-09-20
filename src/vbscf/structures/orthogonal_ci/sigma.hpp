@@ -91,18 +91,28 @@ private:
     int n_pair_terms = 0;
   };
 
-  struct DensityConnection {
-    int source = 0;
-    int pair = 0;
-    double sign = 1.0;
-    int created_orbital = 0;
-    int annihilated_orbital = 0;
+  struct DensityConnections {
+    std::vector<int> sources;
+    std::vector<int> pairs;
+    std::vector<double> signs;
+    std::vector<int> created_orbitals;
+    std::vector<int> annihilated_orbitals;
+
+    std::size_t size() const noexcept { return sources.size(); }
+    void reserve(std::size_t capacity);
+    void append(
+        int source,
+        int pair,
+        double sign,
+        int created_orbital,
+        int annihilated_orbital);
+    std::size_t dynamic_bytes() const noexcept;
   };
 
   struct SpinConnections {
     std::vector<double> diagonal;
     std::vector<std::vector<HamiltonianConnection>> off_diagonal;
-    std::vector<std::vector<DensityConnection>> singles;
+    std::vector<DensityConnections> singles;
     std::vector<std::vector<int>> occupied;
   };
 

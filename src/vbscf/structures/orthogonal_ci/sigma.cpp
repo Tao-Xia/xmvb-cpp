@@ -91,6 +91,36 @@ void add_symmetric_entry(
 
 }  // namespace
 
+void DirectCiSigmaAction::DensityConnections::reserve(std::size_t capacity) {
+  sources.reserve(capacity);
+  pairs.reserve(capacity);
+  signs.reserve(capacity);
+  created_orbitals.reserve(capacity);
+  annihilated_orbitals.reserve(capacity);
+}
+
+void DirectCiSigmaAction::DensityConnections::append(
+    int source,
+    int pair,
+    double sign,
+    int created_orbital,
+    int annihilated_orbital) {
+  sources.push_back(source);
+  pairs.push_back(pair);
+  signs.push_back(sign);
+  created_orbitals.push_back(created_orbital);
+  annihilated_orbitals.push_back(annihilated_orbital);
+}
+
+std::size_t
+DirectCiSigmaAction::DensityConnections::dynamic_bytes() const noexcept {
+  return sources.capacity() * sizeof(int) +
+      pairs.capacity() * sizeof(int) +
+      signs.capacity() * sizeof(double) +
+      created_orbitals.capacity() * sizeof(int) +
+      annihilated_orbitals.capacity() * sizeof(int);
+}
+
 DirectCiSigmaAction::DirectCiSigmaAction(
     const std::vector<std::vector<int>>& alpha_determinants,
     const std::vector<std::vector<int>>& beta_determinants,
@@ -218,12 +248,12 @@ DirectCiSigmaAction::build_spin_connections(
         connection.one_electron_row = removed;
         connection.one_electron_column = inserted;
         connection.one_electron_sign = cofactor_sign;
-        singles.push_back(DensityConnection{
+        singles.append(
             source,
             connection.density_pair,
             connection.density_sign,
             inserted,
-            removed});
+            removed);
       } else if (changed_orbitals == 4) {
         if (inserted.size() != 2 || removed.size() != 2) {
           throw std::logic_error(
@@ -376,16 +406,23 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
           alpha,
           block * n_beta_ + connection.source);
     }
-    for (const DensityConnection& alpha_connection :
-         alpha_.singles[alpha]) {
-      for (const DensityConnection& beta_connection :
-           beta_graph.singles[beta]) {
+    const DensityConnections& alpha_singles = alpha_.singles[alpha];
+    const DensityConnections& beta_singles = beta_graph.singles[beta];
+    for (std::size_t alpha_single = 0;
+         alpha_single < alpha_singles.size();
+         ++alpha_single) {
+      const int alpha_source = alpha_singles.sources[alpha_single];
+      const int alpha_pair = alpha_singles.pairs[alpha_single];
+      const double alpha_sign = alpha_singles.signs[alpha_single];
+      for (std::size_t beta_single = 0;
+           beta_single < beta_singles.size();
+           ++beta_single) {
         value +=
-            alpha_connection.sign * beta_connection.sign *
-            pair_kernel_(alpha_connection.pair, beta_connection.pair) *
+            alpha_sign * beta_singles.signs[beta_single] *
+            pair_kernel_(alpha_pair, beta_singles.pairs[beta_single]) *
             coefficients(
-                alpha_connection.source,
-                block * n_beta_ + beta_connection.source);
+                alpha_source,
+                block * n_beta_ + beta_singles.sources[beta_single]);
       }
     }
     sigma(alpha, column) = value;
@@ -427,21 +464,23 @@ Eigen::MatrixXd DirectCiSigmaAction::apply_one_body_generator(
     for (const int orbital : beta_graph.occupied[beta]) {
       value += generator(orbital, orbital) * coefficients(alpha, column);
     }
-    for (const DensityConnection& connection : alpha_.singles[alpha]) {
-      value += connection.sign *
+    const DensityConnections& alpha_singles = alpha_.singles[alpha];
+    for (std::size_t single = 0; single < alpha_singles.size(); ++single) {
+      value += alpha_singles.signs[single] *
           generator(
-              connection.created_orbital,
-              connection.annihilated_orbital) *
-          coefficients(connection.source, column);
+              alpha_singles.created_orbitals[single],
+              alpha_singles.annihilated_orbitals[single]) *
+          coefficients(alpha_singles.sources[single], column);
     }
-    for (const DensityConnection& connection : beta_graph.singles[beta]) {
-      value += connection.sign *
+    const DensityConnections& beta_singles = beta_graph.singles[beta];
+    for (std::size_t single = 0; single < beta_singles.size(); ++single) {
+      value += beta_singles.signs[single] *
           generator(
-              connection.created_orbital,
-              connection.annihilated_orbital) *
+              beta_singles.created_orbitals[single],
+              beta_singles.annihilated_orbitals[single]) *
           coefficients(
               alpha,
-              block * n_beta_ + connection.source);
+              block * n_beta_ + beta_singles.sources[single]);
     }
     result(alpha, column) = value;
   }
@@ -612,18 +651,23 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
           }
         }
       }
-      for (const DensityConnection& alpha_connection :
-           alpha_.singles[alpha]) {
-        for (const DensityConnection& beta_connection :
-             beta_graph.singles[beta]) {
+      const DensityConnections& alpha_singles = alpha_.singles[alpha];
+      const DensityConnections& beta_singles = beta_graph.singles[beta];
+      for (std::size_t alpha_single = 0;
+           alpha_single < alpha_singles.size();
+           ++alpha_single) {
+        for (std::size_t beta_single = 0;
+             beta_single < beta_singles.size();
+             ++beta_single) {
           const double weight = left_value * right(
-              alpha_connection.source,
-              block * n_beta_ + beta_connection.source);
+              alpha_singles.sources[alpha_single],
+              block * n_beta_ + beta_singles.sources[beta_single]);
           add_symmetric_entry(
               &pair,
-              alpha_connection.pair,
-              beta_connection.pair,
-              weight * alpha_connection.sign * beta_connection.sign);
+              alpha_singles.pairs[alpha_single],
+              beta_singles.pairs[beta_single],
+              weight * alpha_singles.signs[alpha_single] *
+                  beta_singles.signs[beta_single]);
         }
       }
     }
@@ -728,13 +772,13 @@ std::size_t DirectCiSigmaAction::dynamic_bytes() const noexcept {
         spin.diagonal.capacity() * sizeof(double) +
         spin.off_diagonal.capacity() *
             sizeof(std::vector<HamiltonianConnection>) +
-        spin.singles.capacity() * sizeof(std::vector<DensityConnection>) +
+        spin.singles.capacity() * sizeof(DensityConnections) +
         spin.occupied.capacity() * sizeof(std::vector<int>);
     for (const auto& connections : spin.off_diagonal) {
       bytes += connections.capacity() * sizeof(HamiltonianConnection);
     }
-    for (const auto& connections : spin.singles) {
-      bytes += connections.capacity() * sizeof(DensityConnection);
+    for (const DensityConnections& connections : spin.singles) {
+      bytes += connections.dynamic_bytes();
     }
     for (const auto& occupied : spin.occupied) {
       bytes += occupied.capacity() * sizeof(int);

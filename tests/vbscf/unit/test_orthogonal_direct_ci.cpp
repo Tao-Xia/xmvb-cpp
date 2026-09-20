@@ -1183,6 +1183,120 @@ void check_sigma_action() {
       "topology-only direct-CI overlap differs from the dense reference");
 }
 
+void check_distinct_spin_sigma_action() {
+  constexpr int n_orbitals = 4;
+  constexpr int block_width = 2;
+  const auto alpha = complete_space(n_orbitals, 1);
+  const auto beta = complete_space(n_orbitals, 2);
+
+  Eigen::MatrixXd overlap = Eigen::MatrixXd::Identity(
+      n_orbitals, n_orbitals);
+  std::vector<double> packed_overlap(
+      overlap.data(), overlap.data() + overlap.size());
+  Eigen::MatrixXd one_electron(n_orbitals, n_orbitals);
+  for (int column = 0; column < n_orbitals; ++column) {
+    for (int row = 0; row <= column; ++row) {
+      const double value =
+          0.11 * std::cos(0.3 * static_cast<double>((row + 1) * (column + 2)));
+      one_electron(row, column) = value;
+      one_electron(column, row) = value;
+    }
+  }
+  const int n_pairs = xmvb::vb::packed_active_pair_count(n_orbitals);
+  Eigen::MatrixXd factor(6, n_pairs);
+  for (int column = 0; column < n_pairs; ++column) {
+    for (int row = 0; row < factor.rows(); ++row) {
+      factor(row, column) =
+          0.09 * std::sin(0.17 * static_cast<double>((row + 2) * (column + 1)));
+    }
+  }
+  const Eigen::MatrixXd pair_kernel = factor.transpose() * factor;
+  const auto pack_kernel = [n_orbitals](
+      const Eigen::MatrixXd& kernel) {
+    xmvb::vb::ActiveSpaceTwoElectronResult result;
+    result.packed_active_two_electron_integrals.resize(
+        xmvb::vb::packed_active_two_electron_integral_count(n_orbitals));
+    for (int column = 0; column < kernel.cols(); ++column) {
+      for (int row = 0; row <= column; ++row) {
+        result.packed_active_two_electron_integrals[
+            xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+                row, column)] = kernel(row, column);
+      }
+    }
+    return result;
+  };
+  const xmvb::vb::ActiveSpaceTwoElectronResult two_electron =
+      pack_kernel(pair_kernel);
+  const xmvb::vb::OrthogonalActiveIntegrals integrals{
+      Eigen::MatrixXd::Identity(n_orbitals, n_orbitals),
+      one_electron,
+      pair_kernel,
+      two_electron};
+  const xmvb::vb::DirectCiSigmaAction action(alpha, beta, integrals);
+
+  Eigen::MatrixXd coefficients(
+      static_cast<int>(alpha.size()),
+      block_width * static_cast<int>(beta.size()));
+  for (int column = 0; column < coefficients.cols(); ++column) {
+    for (int row = 0; row < coefficients.rows(); ++row) {
+      coefficients(row, column) =
+          std::sin(0.21 * static_cast<double>((row + 2) * (column + 1)));
+    }
+  }
+  const int n_beta = static_cast<int>(beta.size());
+  const int product_dimension = static_cast<int>(alpha.size()) * n_beta;
+  Eigen::MatrixXd dense_hamiltonian(product_dimension, product_dimension);
+  const xmvb::vb::DeterminantPairEvaluator evaluator;
+  for (int target_alpha = 0;
+       target_alpha < static_cast<int>(alpha.size());
+       ++target_alpha) {
+    for (int target_beta = 0; target_beta < n_beta; ++target_beta) {
+      const int target = target_alpha * n_beta + target_beta;
+      for (int source_alpha = 0;
+           source_alpha < static_cast<int>(alpha.size());
+           ++source_alpha) {
+        for (int source_beta = 0; source_beta < n_beta; ++source_beta) {
+          const int source = source_alpha * n_beta + source_beta;
+          dense_hamiltonian(target, source) = evaluator.evaluate(
+              alpha[target_alpha],
+              alpha[source_alpha],
+              beta[target_beta],
+              beta[source_beta],
+              packed_overlap,
+              one_electron,
+              n_orbitals,
+              two_electron,
+              false).total_hamiltonian;
+        }
+      }
+    }
+  }
+  const Eigen::MatrixXd sigma = action.apply(coefficients);
+  for (int block = 0; block < block_width; ++block) {
+    Eigen::VectorXd packed_coefficients(product_dimension);
+    for (int alpha_index = 0;
+         alpha_index < static_cast<int>(alpha.size());
+         ++alpha_index) {
+      for (int beta_index = 0; beta_index < n_beta; ++beta_index) {
+        packed_coefficients[alpha_index * n_beta + beta_index] =
+            coefficients(alpha_index, block * n_beta + beta_index);
+      }
+    }
+    const Eigen::VectorXd expected = dense_hamiltonian * packed_coefficients;
+    for (int alpha_index = 0;
+         alpha_index < static_cast<int>(alpha.size());
+         ++alpha_index) {
+      for (int beta_index = 0; beta_index < n_beta; ++beta_index) {
+        require(
+            std::abs(
+                sigma(alpha_index, block * n_beta + beta_index) -
+                expected[alpha_index * n_beta + beta_index]) < 2.0e-12,
+            "distinct-spin direct-CI sigma differs from dense assembly");
+      }
+    }
+  }
+}
+
 void check_demand_driven_structure_diagonal() {
   // Put one demanded pair in the first cell of a unique-spin space larger
   // than the forward matrix tile. A tile-backed diagonal lookup would evaluate
@@ -1347,6 +1461,7 @@ int main() {
     check_exterior_transform();
     check_planner();
     check_sigma_action();
+    check_distinct_spin_sigma_action();
     check_demand_driven_structure_diagonal();
     std::cout << "orthogonal direct-CI planner and exterior transform: passed\n";
     return 0;
