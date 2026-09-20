@@ -1913,7 +1913,102 @@ orbital-pullback costs outside the structure representation.
 
 ---
 
-## 14. Short Conclusion
+## 14. Support-Scaled Davidson Diagonal Model
+
+The exact matrix-free action does not require the exact structure-space
+diagonal to obtain the converged generalized eigenpairs.  Only the Davidson
+correction equation uses a diagonal model.  Let the selected VB structures be
+expanded in the original nonorthogonal determinant basis as
+
+$$
+|\Phi_I\rangle=\sum_d T_{dI}|d\rangle .
+$$
+
+All repeated entries with the same determinant and structure index are first
+combined.  A determinant-diagonal projection then defines
+
+$$
+D_{H,I}=\sum_d T_{dI}^{,2}H_{dd},
+\qquad
+D_{S,I}=\sum_d T_{dI}^{,2}S_{dd},
+$$
+
+where both self elements are evaluated in that same nonorthogonal determinant
+representation.  The generalized Davidson correction uses
+
+$$
+t_I\simeq-\frac{r_I}{D_{H,I}-\theta D_{S,I}}.
+$$
+
+No additional division of each determinant contribution by its norm is
+required.  Equivalently,
+
+$$
+\epsilon_d=\frac{H_{dd}}{S_{dd}},
+\qquad
+w_{dI}=T_{dI}^{,2}S_{dd},
+\qquad
+\frac{D_{H,I}}{D_{S,I}}
+=\frac{\sum_d w_{dI}\epsilon_d}{\sum_d w_{dI}}.
+$$
+
+The exact Hamiltonian and overlap actions, the Ritz residuals, and the
+overlap-metric orthogonalization are unchanged.  Consequently, this
+replacement changes only the convergence of the iterative eigensolver and not
+its limiting eigenpairs.  A nonfinite or nonpositive value of $D_{S,I}$ is
+treated as an invalid zero-norm structure rather than hidden by an empirical
+floor.
+
+If $K$ determinant products occur in the selected structure expansion, $U$
+is the number of unique spin strings, $p$ is the number of packed active
+orbital pairs, and $q$ bounds the nonzero self-density pairs, the construction
+cost is
+
+$$
+\mathcal O(Upq+Kq),
+$$
+
+with storage
+
+$$
+\mathcal O\!\left(U(p+q)+n_{\mathrm{str}}\right).
+$$
+
+Empty determinant-product rows are skipped before any self element is
+evaluated.  Duplicate coefficients are accumulated in reusable flat scratch
+storage, so the implementation performs no per-determinant hash allocation.
+This replaces the previous exact structure-diagonal contraction, whose work
+contains cross-determinant pairs within every structure.
+
+The exact structure norms required for reported normalized VB coefficients
+remain separate.  They are evaluated through an overlap-only contraction,
+
+$$
+S_{II}=\sum_{d,e}T_{dI}T_{eI}
+S^{\alpha}_{d_\alpha e_\alpha}
+S^{\beta}_{d_\beta e_\beta},
+$$
+
+which omits all one-electron, two-electron, and projected-density work.  For
+structure support sizes $k_I$, this final exact diagnostic costs
+
+$$
+\mathcal O\!\left(\sum_I k_I^2\right)
+$$
+
+determinant-overlap products and uses support-local caches.  Thus the Davidson
+preconditioner cannot silently alter structure normalization or reported
+weights.
+
+The complete-space direct-CI implementation also applies the beta exterior
+transforms directly to mutable matrix blocks.  It no longer copies a complete
+fixed-spin product matrix before each forward or adjoint transform.  The
+sigma traversal follows the column-major alpha-fast layout, providing
+contiguous output writes while preserving the exact Slater--Condon action.
+
+---
+
+## 15. Short Conclusion
 
 The key conclusion is:
 
