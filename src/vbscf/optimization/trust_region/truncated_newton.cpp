@@ -255,29 +255,6 @@ bool minimize_truncated_newton_step_on_ray(
   return true;
 }
 
-bool RejectedTruncatedNewtonStepCache::has_cached_step(
-    Eigen::Index expected_size) const {
-  return finite_nonzero_vector_matches_size(cached_step, expected_size);
-}
-
-void RejectedTruncatedNewtonStepCache::clear() {
-  cached_step.resize(0);
-}
-
-void RejectedTruncatedNewtonStepCache::update(
-    const TruncatedNewtonStepResult& model_step,
-    Eigen::Index expected_size,
-    double trust_radius,
-    const NonredundantRetractionMetric& metric) {
-  cached_step =
-      finite_nonzero_vector_matches_size(model_step.reduced_step, expected_size)
-          ? shrink_reduced_step_inside_trust_radius(
-                model_step.reduced_step,
-                trust_radius,
-                metric)
-          : Eigen::VectorXd();
-}
-
 bool truncated_newton_subspace_is_usable(
     const TruncatedNewtonSubspace& subspace,
     Eigen::Index reduced_size) {

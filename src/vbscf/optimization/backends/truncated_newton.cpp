@@ -82,6 +82,7 @@ BackendRunResult run_truncated_newton_backend(
   std::unique_ptr<TransportedReducedLbfgsPreconditioner>
       accepted_point_preconditioner;
   std::unique_ptr<NonredundantRetractionMetric> accepted_point_metric;
+  TruncatedNewtonSubspace accepted_point_curvature_subspace;
   double initial_trust_radius_for_current_point = trust_radius;
   double accepted_point_setup_wall_time_seconds = 0.0;
   double trial_objective_wall_time_seconds = 0.0;
@@ -343,6 +344,12 @@ BackendRunResult run_truncated_newton_backend(
             "TNHVP requires the analytic orbital Hessian action");
       }
       AcceptedPointReducedHvp reduced_hvp(&exact_operator);
+      const TruncatedNewtonSubspace* reusable_subspace =
+          truncated_newton_subspace_is_usable(
+              accepted_point_curvature_subspace,
+              reduced_size)
+              ? &accepted_point_curvature_subspace
+              : nullptr;
       trust_region_step = solve_nonredundant_truncated_newton_step(
           retraction_metric,
           current_space,
@@ -354,7 +361,13 @@ BackendRunResult run_truncated_newton_backend(
           static_cast<int>(reduced_size),
           &reduced_hvp,
           accepted_point_preconditioner.get(),
-          &baseline_reduced_direction);
+          &baseline_reduced_direction,
+          reusable_subspace);
+      if (truncated_newton_subspace_is_usable(
+              trust_region_step.subspace,
+              reduced_size)) {
+        accepted_point_curvature_subspace = trust_region_step.subspace;
+      }
       clamp_nonredundant_step_result_to_retract_tangent_radius(
           current_projection,
           trust_radius,
@@ -454,6 +467,7 @@ BackendRunResult run_truncated_newton_backend(
     accepted_point_operator.reset();
     accepted_point_preconditioner.reset();
     accepted_point_metric.reset();
+    accepted_point_curvature_subspace = TruncatedNewtonSubspace();
     objective->commit(std::move(accepted_trial_evaluation));
     current_parameters = trial_parameters;
     current_gradient = std::move(trial_gradient);

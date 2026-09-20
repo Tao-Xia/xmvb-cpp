@@ -346,9 +346,11 @@ Newton/KKT certification must always use current-point HVPs.
       trust-region handling. Positive Ritz pairs alone enter block inverse-BFGS;
       the complete HVP basis, including negative modes, remains in the spectral
       projected trust-region solve.
-- [ ] Return and retain $(S,H_kS)$ from the step solver.
-- [ ] Reuse orbital HVP samples across trust-radius retries at the same accepted
-      point.
+- [x] Return and retain $(S,H_kS)$ from the step solver. The accepted-point
+      backend owns the returned curvature subspace until the orbitals move.
+- [x] Reuse orbital HVP samples across trust-radius retries at the same accepted
+      point. A retry first re-solves the cached projected trust problem and
+      computes HVPs only for newly admitted residual directions.
 - [ ] Add same-point generalized-eigen response-space recycling.
 - [ ] Batch the remaining columnwise RI HVP work where mathematically shared
       intermediates exist.

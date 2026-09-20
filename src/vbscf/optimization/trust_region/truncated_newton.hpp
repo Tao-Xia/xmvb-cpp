@@ -80,18 +80,6 @@ enum class TruncatedNewtonModelFidelity {
   DirectionallyExact,
 };
 
-struct RejectedTruncatedNewtonStepCache {
-  Eigen::VectorXd cached_step;
-
-  bool has_cached_step(Eigen::Index expected_size) const;
-  void clear();
-  void update(
-      const TruncatedNewtonStepResult& model_step,
-      Eigen::Index expected_size,
-      double trust_radius,
-      const NonredundantRetractionMetric& metric);
-};
-
 /**
  * @brief Accuracy-aware forcing for a sequence of inexact Newton solves.
  *

@@ -526,6 +526,14 @@ void check_subspace_work_limit(const OrbitalPreparationInput& input) {
               !step.newton_forcing_converged,
           "unresolved Newton model did not report its subspace limit");
 
+  DenseTestHvp resumed_hvp(hessian);
+  const auto resumed = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 10.0, 1.0e-7, 1.0e-3,
+      kFixtureForcing, 4,
+      &resumed_hvp, nullptr, nullptr, &step.subspace);
+  require(resumed.subspace_dimension <= 4 && resumed_hvp.applies <= 2,
+          "same-point Newton restart recomputed cached exact HVP samples");
+
   DenseTestHvp unrestricted_hvp(hessian);
   const auto unrestricted = solve_nonredundant_truncated_newton_step(
       metric, space, projection, 10.0, 1.0e-12, 1.0e-8,
