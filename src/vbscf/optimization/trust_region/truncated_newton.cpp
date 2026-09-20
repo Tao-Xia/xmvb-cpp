@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -11,6 +12,8 @@
 #include <Eigen/Cholesky>
 
 #include "vbscf/optimization/krylov/orthonormal_basis.hpp"
+#include "vbscf/optimization/krylov/positive_ritz_secants.hpp"
+#include "vbscf/optimization/preconditioners/block_inverse_bfgs.hpp"
 #include "vbscf/optimization/trust_region/spectral.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 
@@ -380,6 +383,46 @@ static TruncatedNewtonSubspace build_truncated_newton_subspace(
     return TruncatedNewtonSubspace();
   }
   return subspace;
+}
+
+static std::unique_ptr<BlockInverseBfgs> build_exact_positive_curvature_update(
+    const std::vector<Eigen::VectorXd>& basis,
+    const std::vector<Eigen::VectorXd>& hessian_basis) {
+  if (basis.empty() || basis.size() != hessian_basis.size()) return nullptr;
+  const Eigen::Index dimension = basis.front().size();
+  const Eigen::Index rank = static_cast<Eigen::Index>(basis.size());
+  Eigen::MatrixXd directions(dimension, rank);
+  Eigen::MatrixXd images(dimension, rank);
+  for (Eigen::Index column = 0; column < rank; ++column) {
+    if (basis[column].size() != dimension ||
+        hessian_basis[column].size() != dimension) {
+      throw std::invalid_argument(
+          "inconsistent exact-curvature basis dimensions");
+    }
+    directions.col(column) = basis[column];
+    images.col(column) = hessian_basis[column];
+  }
+  const Eigen::MatrixXd projected = 0.5 *
+      (directions.transpose() * images +
+       images.transpose() * directions).eval();
+  const std::vector<RitzSecant> positive = positive_ritz_secants(
+      directions,
+      images,
+      projected,
+      static_cast<int>(rank));
+  if (positive.empty()) return nullptr;
+
+  Eigen::MatrixXd positive_directions(dimension, positive.size());
+  Eigen::MatrixXd positive_images(dimension, positive.size());
+  for (std::size_t column = 0; column < positive.size(); ++column) {
+    positive_directions.col(static_cast<Eigen::Index>(column)) =
+        positive[column].direction;
+    positive_images.col(static_cast<Eigen::Index>(column)) =
+        positive[column].image;
+  }
+  return std::make_unique<BlockInverseBfgs>(
+      std::move(positive_directions),
+      std::move(positive_images));
 }
 
 TruncatedNewtonStepResult solve_trust_region_in_subspace(
@@ -825,11 +868,19 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
         result.trust_region_shift * result.reduced_metric_times_step);
   }
   while (static_cast<int>(basis.size()) < work_limit) {
+    const auto base_inverse =
+        [&](const Eigen::VectorXd& vector) {
+          return apply_nonredundant_truncated_newton_preconditioner(
+              current_space,
+              transported_preconditioner,
+              vector);
+        };
+    const std::unique_ptr<BlockInverseBfgs> curvature_update =
+        build_exact_positive_curvature_update(basis, hessian_basis);
     const Eigen::VectorXd preconditioned_correction =
-        apply_nonredundant_truncated_newton_preconditioner(
-            current_space,
-            transported_preconditioner,
-            correction_rhs);
+        curvature_update != nullptr
+            ? curvature_update->apply(correction_rhs, base_inverse)
+            : base_inverse(correction_rhs);
 
     std::vector<Eigen::VectorXd> candidates;
     candidates.reserve(2);
@@ -910,8 +961,10 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
 
     // A boundary solution of the current projected model is not a full-space
     // trust-region convergence certificate. Continue expanding until the
-    // shifted KKT residual meets the forcing condition or the subspace work
-    // limit is reached.
+    // shifted KKT residual meets the forcing condition or an explicit caller
+    // resource guard is reached. Positive exact curvature enriches the
+    // block-L-BFGS inverse used for the next defect direction; nonpositive
+    // curvature remains explicit in the projected trust-region model.
     correction_rhs = -kkt_residual;
   }
 

@@ -26,11 +26,6 @@
 namespace xmvb::vb::optimizer_detail {
 namespace {
 
-constexpr int kCurvatureBlockWidth = 2;
-constexpr int kCurvatureExpansionCount = 2;
-constexpr int kCurvatureModelDimension =
-    kCurvatureBlockWidth * kCurvatureExpansionCount;
-
 class AcceptedPointReducedHvp final : public ReducedHvp {
 public:
   explicit AcceptedPointReducedHvp(const ExactHvpOperator* exact_operator)
@@ -356,7 +351,7 @@ BackendRunResult run_truncated_newton_backend(
           options.energy_tolerance,
           options.gradient_tolerance,
           newton_forcing_term,
-          std::min<int>(reduced_size, kCurvatureModelDimension),
+          static_cast<int>(reduced_size),
           &reduced_hvp,
           accepted_point_preconditioner.get(),
           &baseline_reduced_direction);

@@ -526,6 +526,18 @@ void check_subspace_work_limit(const OrbitalPreparationInput& input) {
               !step.newton_forcing_converged,
           "unresolved Newton model did not report its subspace limit");
 
+  DenseTestHvp unrestricted_hvp(hessian);
+  const auto unrestricted = solve_nonredundant_truncated_newton_step(
+      metric, space, projection, 10.0, 1.0e-12, 1.0e-8,
+      1.0e-12, dimension,
+      &unrestricted_hvp, nullptr);
+  require(unrestricted.subspace_dimension > 4 &&
+              unrestricted.subspace_dimension <= dimension &&
+              unrestricted.stop_reason ==
+                  TruncatedNewtonStopReason::ModelKktConverged &&
+              unrestricted.newton_forcing_converged,
+          "residual-driven Newton solve retained an internal four-vector cap");
+
   Eigen::MatrixXd clustered = Eigen::MatrixXd::Zero(dimension, dimension);
   for (int i = 0; i < dimension; ++i) {
     clustered(i, i) = (i % 3 == 0) ? 1.0 : (i % 3 == 1 ? 4.0 : 16.0);

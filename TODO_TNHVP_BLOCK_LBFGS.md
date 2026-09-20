@@ -337,8 +337,11 @@ Newton/KKT certification must always use current-point HVPs.
       The tests also cover general vector-covector coordinate covariance,
       complete-space inverse recovery, vector/block action agreement, and
       rejection of nonpositive curvature.
-- [ ] Replace the fixed four-dimensional production correction with
-      residual-driven enrichment.
+- [x] Replace the fixed four-dimensional production correction with
+      residual-driven enrichment. The backend now permits the full natural
+      reduced dimension, while the solver stops as soon as the certified KKT
+      forcing condition is met. Positive exact Ritz curvature enriches the
+      block-LBFGS inverse used to precondition each unresolved defect.
 - [ ] Separate positive-curvature enrichment from explicit negative-curvature
       trust-region handling.
 - [ ] Return and retain $(S,H_kS)$ from the step solver.
