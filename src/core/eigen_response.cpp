@@ -8,6 +8,7 @@
 
 #include <Eigen/QR>
 #include <Eigen/LU>
+#include <Eigen/Eigenvalues>
 
 namespace xmvb::core {
 namespace {
@@ -147,6 +148,116 @@ Eigen::MatrixXd apply_projected_operators(
 
 }  // namespace
 
+int EigenResponseRecycleSpace::dimension() const noexcept {
+  return static_cast<int>(basis_.rows());
+}
+
+int EigenResponseRecycleSpace::size() const noexcept {
+  return static_cast<int>(basis_.cols());
+}
+
+void EigenResponseRecycleSpace::clear() {
+  basis_.resize(0, 0);
+  operator_images_.resize(0, 0);
+}
+
+EigenResponseRecycleGuess EigenResponseRecycleSpace::guess(
+    const Eigen::Ref<const Eigen::VectorXd>& right_hand_side) const {
+  if (!right_hand_side.allFinite()) {
+    throw std::invalid_argument(
+        "response recycle right-hand side must be finite");
+  }
+  EigenResponseRecycleGuess result;
+  result.solution = Eigen::VectorXd::Zero(right_hand_side.size());
+  result.operator_image = Eigen::VectorXd::Zero(right_hand_side.size());
+  if (basis_.cols() == 0) return result;
+  if (basis_.rows() != right_hand_side.size() ||
+      operator_images_.rows() != right_hand_side.size() ||
+      operator_images_.cols() != basis_.cols()) {
+    throw std::invalid_argument(
+        "response recycle space dimension does not match the right-hand side");
+  }
+
+  const Eigen::MatrixXd projected_operator = 0.5 *
+      (basis_.transpose() * operator_images_ +
+       operator_images_.transpose() * basis_);
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(
+      projected_operator);
+  if (eigensolver.info() != Eigen::Success) {
+    throw std::runtime_error(
+        "response recycle projected operator diagonalization failed");
+  }
+  const Eigen::VectorXd eigenvalues = eigensolver.eigenvalues();
+  const double spectral_scale = std::max(1.0, eigenvalues.cwiseAbs().maxCoeff());
+  const double threshold = std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max<Eigen::Index>(1, basis_.cols())) *
+      spectral_scale;
+  Eigen::VectorXd inverse_eigenvalues = Eigen::VectorXd::Zero(
+      eigenvalues.size());
+  for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
+    if (std::abs(eigenvalues[index]) > threshold) {
+      inverse_eigenvalues[index] = 1.0 / eigenvalues[index];
+    }
+  }
+  const Eigen::VectorXd coefficients = eigensolver.eigenvectors() *
+      inverse_eigenvalues.asDiagonal() *
+      eigensolver.eigenvectors().transpose() *
+      basis_.transpose() * right_hand_side;
+  result.solution.noalias() = basis_ * coefficients;
+  result.operator_image.noalias() = operator_images_ * coefficients;
+  result.used = result.solution.allFinite() &&
+      result.operator_image.allFinite() &&
+      (right_hand_side - result.operator_image).norm() <
+          right_hand_side.norm();
+  if (!result.used) {
+    result.solution.setZero();
+    result.operator_image.setZero();
+  }
+  return result;
+}
+
+bool EigenResponseRecycleSpace::append(
+    const Eigen::Ref<const Eigen::VectorXd>& solution,
+    const Eigen::Ref<const Eigen::VectorXd>& operator_image) {
+  if (solution.size() <= 0 || operator_image.size() != solution.size() ||
+      !solution.allFinite() || !operator_image.allFinite()) {
+    throw std::invalid_argument(
+        "response recycle pair dimensions or values are invalid");
+  }
+  if (basis_.cols() == 0) {
+    basis_.resize(solution.size(), 0);
+    operator_images_.resize(solution.size(), 0);
+  } else if (basis_.rows() != solution.size() ||
+             operator_images_.rows() != solution.size() ||
+             operator_images_.cols() != basis_.cols()) {
+    throw std::invalid_argument(
+        "response recycle pair dimension does not match the stored space");
+  }
+
+  Eigen::VectorXd direction = solution;
+  Eigen::VectorXd image = operator_image;
+  for (int pass = 0; pass < 2; ++pass) {
+    const Eigen::VectorXd coefficients = basis_.transpose() * direction;
+    direction.noalias() -= basis_ * coefficients;
+    image.noalias() -= operator_images_ * coefficients;
+  }
+  const double original_norm = solution.norm();
+  const double direction_norm = direction.norm();
+  const double dependence_threshold =
+      std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max<Eigen::Index>(1, solution.size())) *
+      original_norm;
+  if (!(direction_norm > dependence_threshold)) return false;
+  direction /= direction_norm;
+  image /= direction_norm;
+  const Eigen::Index old_size = basis_.cols();
+  basis_.conservativeResize(Eigen::NoChange, old_size + 1);
+  operator_images_.conservativeResize(Eigen::NoChange, old_size + 1);
+  basis_.col(old_size) = direction;
+  operator_images_.col(old_size) = image;
+  return true;
+}
+
 EigenResponseResult solve_generalized_eigen_response_from_full_spectrum(
     const GeneralizedEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& full_eigenvalues,
@@ -262,7 +373,8 @@ EigenResponseResult solve_generalized_eigen_response(
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
-    const EigenResponseOptions& options) {
+    const EigenResponseOptions& options,
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces) {
   validate_inputs(
       hamiltonian_diagonal,
       overlap_diagonal,
@@ -275,6 +387,11 @@ EigenResponseResult solve_generalized_eigen_response(
 
   const Eigen::Index n = hamiltonian_diagonal.size();
   const Eigen::Index n_selected = selected_eigenvalues.size();
+  if (!recycle_spaces.empty() &&
+      recycle_spaces.size() != static_cast<std::size_t>(n_selected)) {
+    throw std::invalid_argument(
+        "generalized-eigen response recycle-space count is inconsistent");
+  }
   EigenResponseResult result;
   result.eigenvalue_response.resize(n_selected);
 
@@ -318,8 +435,7 @@ EigenResponseResult solve_generalized_eigen_response(
   Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd v_new = rhs;
   Eigen::MatrixXd w = Eigen::MatrixXd::Zero(n, n_selected);
-  Eigen::MatrixXd w_new = inverse_preconditioner.array() * v_new.array();
-  project_selected_roots(&w_new, root_units);
+  Eigen::MatrixXd w_new = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd p_older = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd p_old = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd p = Eigen::MatrixXd::Zero(n, n_selected);
@@ -370,10 +486,77 @@ EigenResponseResult solve_generalized_eigen_response(
         projected_absolute_targets[state],
         options.relative_residual_tolerance * original_rhs_norms[state]) *
         std::sqrt(inverse_preconditioner.col(state).minCoeff());
+  }
+
+  std::vector<Eigen::Index> recycled_states;
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    EigenResponseRecycleSpace* recycle = recycle_spaces.empty()
+        ? nullptr
+        : recycle_spaces[static_cast<std::size_t>(state)];
+    if (recycle == nullptr || recycle->size() == 0) continue;
+    const EigenResponseRecycleGuess guess = recycle->guess(rhs.col(state));
+    if (!guess.used) continue;
+    solution.col(state) = guess.solution;
+    v_new.col(state) = rhs.col(state) - guess.operator_image;
+    recycled_states.push_back(state);
+  }
+
+  if (!recycled_states.empty()) {
+    const Eigen::Index count =
+        static_cast<Eigen::Index>(recycled_states.size());
+    Eigen::VectorXd recycled_eigenvalues(count);
+    Eigen::MatrixXd recycled_overlap_selected(n, count);
+    Eigen::MatrixXd recycled_solutions(n + 1, count);
+    for (Eigen::Index column = 0; column < count; ++column) {
+      const Eigen::Index state =
+          recycled_states[static_cast<std::size_t>(column)];
+      const double gauge =
+          (full_rhs(n, state) - overlap_selected.col(state).dot(
+               solution.col(state))) / root_metric_norms[state];
+      recycled_eigenvalues[column] = selected_eigenvalues[state];
+      recycled_overlap_selected.col(column) = overlap_selected.col(state);
+      recycled_solutions.col(column).head(n) = solution.col(state) +
+          gauge * selected_eigenvectors.col(state);
+      recycled_solutions(n, column) = -result.eigenvalue_response[state];
+    }
+    const Eigen::MatrixXd recycled_images = apply_bordered_operators(
+        action, recycled_eigenvalues, recycled_overlap_selected,
+        recycled_solutions, &result.block_actions);
+    for (Eigen::Index column = 0; column < count; ++column) {
+      const Eigen::Index state =
+          recycled_states[static_cast<std::size_t>(column)];
+      const Eigen::VectorXd bordered_residual =
+          full_rhs.col(state) - recycled_images.col(column);
+      v_new.col(state) = bordered_residual.head(n) -
+          root_units.col(state) *
+              root_units.col(state).dot(bordered_residual.head(n));
+      if (bordered_residual.norm() <=
+              options.relative_residual_tolerance *
+                  original_rhs_norms[state] &&
+          v_new.col(state).norm() <= projected_absolute_targets[state]) {
+        converged[static_cast<std::size_t>(state)] = true;
+        v_new.col(state).setZero();
+      } else if (v_new.col(state).norm() <=
+                 projected_absolute_targets[state]) {
+        throw std::runtime_error(
+            "recycled selected-root response has an uncorrectable bordered residual");
+      }
+    }
+  }
+
+  w_new = inverse_preconditioner.array() * v_new.array();
+  project_selected_roots(&w_new, root_units);
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
     if (rhs_norms[state] == 0.0) {
       converged[static_cast<std::size_t>(state)] = true;
       beta_new[state] = 0.0;
       beta_first[state] = 0.0;
+      continue;
+    }
+    if (converged[static_cast<std::size_t>(state)]) {
+      beta_new[state] = 0.0;
+      beta_first[state] = 0.0;
+      residual_norms[state] = 0.0;
       continue;
     }
     const double beta_squared = v_new.col(state).dot(w_new.col(state));
@@ -388,7 +571,11 @@ EigenResponseResult solve_generalized_eigen_response(
     residual_norms[state] = beta_first[state];
   }
 
-  for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+  for (int iteration = 0;
+       iteration < options.max_iterations &&
+       !std::all_of(converged.begin(), converged.end(),
+                    [](bool value) { return value; });
+       ++iteration) {
     for (Eigen::Index state = 0; state < n_selected; ++state) {
       if (converged[static_cast<std::size_t>(state)]) {
         w_new.col(state).setZero();
@@ -672,6 +859,41 @@ EigenResponseResult solve_generalized_eigen_response(
           message.str());
     }
   }
+
+  std::vector<Eigen::Index> new_recycle_states;
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    EigenResponseRecycleSpace* recycle = recycle_spaces.empty()
+        ? nullptr
+        : recycle_spaces[static_cast<std::size_t>(state)];
+    if (recycle != nullptr && solution.col(state).norm() > 0.0 &&
+        (recycle->size() == 0 ||
+         result.iterations[static_cast<std::size_t>(state)] > 0)) {
+      new_recycle_states.push_back(state);
+    }
+  }
+  if (!new_recycle_states.empty()) {
+    const Eigen::Index count =
+        static_cast<Eigen::Index>(new_recycle_states.size());
+    Eigen::VectorXd recycle_eigenvalues(count);
+    Eigen::MatrixXd recycle_root_units(n, count);
+    Eigen::MatrixXd recycle_solutions(n, count);
+    for (Eigen::Index column = 0; column < count; ++column) {
+      const Eigen::Index state =
+          new_recycle_states[static_cast<std::size_t>(column)];
+      recycle_eigenvalues[column] = selected_eigenvalues[state];
+      recycle_root_units.col(column) = root_units.col(state);
+      recycle_solutions.col(column) = solution.col(state);
+    }
+    const Eigen::MatrixXd recycle_images = apply_projected_operators(
+        action, recycle_eigenvalues, recycle_root_units,
+        recycle_solutions, &result.block_actions);
+    for (Eigen::Index column = 0; column < count; ++column) {
+      const Eigen::Index state =
+          new_recycle_states[static_cast<std::size_t>(column)];
+      recycle_spaces[static_cast<std::size_t>(state)]->append(
+          recycle_solutions.col(column), recycle_images.col(column));
+    }
+  }
   return result;
 }
 
@@ -782,9 +1004,25 @@ EigenSubspaceResponseResult finish_equal_weight_response(
     const Eigen::Ref<const Eigen::MatrixXd>& external_response,
     double relative_residual_tolerance,
     std::vector<int> iterations,
-    int block_actions) {
+    int block_actions,
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces = {}) {
   const GeneralizedEigenActionResult external_images = apply_checked(
       action, external_response, &block_actions);
+  if (!recycle_spaces.empty()) {
+    Eigen::MatrixXd projected_images = external_images.hamiltonian -
+        external_images.overlap * selected_eigenvalues.asDiagonal();
+    const Eigen::MatrixXd selected_units =
+        selected_span_units(overlap_selected);
+    project_selected_span(&projected_images, selected_units);
+    for (Eigen::Index state = 0;
+         state < selected_eigenvalues.size(); ++state) {
+      if (recycle_spaces[static_cast<std::size_t>(state)] != nullptr &&
+          external_response.col(state).norm() > 0.0) {
+        recycle_spaces[static_cast<std::size_t>(state)]->append(
+            external_response.col(state), projected_images.col(state));
+      }
+    }
+  }
   const Eigen::MatrixXd metric =
       selected_eigenvectors.transpose() * overlap_selected;
   const Eigen::MatrixXd internal_coefficients = metric.partialPivLu().solve(
@@ -932,13 +1170,19 @@ solve_equal_weight_generalized_eigen_subspace_response(
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
-    const EigenResponseOptions& options) {
+    const EigenResponseOptions& options,
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces) {
   const EqualWeightResponseData data = prepare_equal_weight_response(
       hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues,
       selected_eigenvectors, overlap_selected,
       delta_hamiltonian_selected, delta_overlap_selected, options);
   const Eigen::Index n = hamiltonian_diagonal.size();
   const Eigen::Index n_selected = selected_eigenvalues.size();
+  if (!recycle_spaces.empty() &&
+      recycle_spaces.size() != static_cast<std::size_t>(n_selected)) {
+    throw std::invalid_argument(
+        "equal-weight response recycle-space count is inconsistent");
+  }
   const Eigen::MatrixXd selected_units =
       selected_span_units(overlap_selected);
 
@@ -951,6 +1195,16 @@ solve_equal_weight_generalized_eigen_subspace_response(
   Eigen::MatrixXd v = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd v_new = rhs;
   Eigen::MatrixXd w = Eigen::MatrixXd::Zero(n, n_selected);
+  for (Eigen::Index state = 0; state < n_selected; ++state) {
+    EigenResponseRecycleSpace* recycle = recycle_spaces.empty()
+        ? nullptr
+        : recycle_spaces[static_cast<std::size_t>(state)];
+    if (recycle == nullptr || recycle->size() == 0) continue;
+    const EigenResponseRecycleGuess guess = recycle->guess(rhs.col(state));
+    if (!guess.used) continue;
+    solution.col(state) = guess.solution;
+    v_new.col(state) = rhs.col(state) - guess.operator_image;
+  }
   Eigen::MatrixXd w_new = inverse_preconditioner.array() * v_new.array();
   project_selected_span(&w_new, selected_units);
   Eigen::MatrixXd p_older = Eigen::MatrixXd::Zero(n, n_selected);
@@ -984,6 +1238,13 @@ solve_equal_weight_generalized_eigen_subspace_response(
       beta_first[state] = 0.0;
       continue;
     }
+    if (v_new.col(state).norm() <= absolute_targets[state]) {
+      converged[static_cast<std::size_t>(state)] = true;
+      beta_new[state] = 0.0;
+      beta_first[state] = 0.0;
+      residual_norms[state] = 0.0;
+      continue;
+    }
     const double beta_squared = v_new.col(state).dot(w_new.col(state));
     if (!(beta_squared > 0.0) || !std::isfinite(beta_squared)) {
       throw std::runtime_error(
@@ -995,7 +1256,11 @@ solve_equal_weight_generalized_eigen_subspace_response(
   }
 
   int block_actions = 0;
-  for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+  for (int iteration = 0;
+       iteration < options.max_iterations &&
+       !std::all_of(converged.begin(), converged.end(),
+                    [](bool value) { return value; });
+       ++iteration) {
     for (Eigen::Index state = 0; state < n_selected; ++state) {
       if (converged[static_cast<std::size_t>(state)]) {
         w.col(state).setZero();
@@ -1133,11 +1398,12 @@ solve_equal_weight_generalized_eigen_subspace_response(
     throw std::runtime_error(
         "equal-weight generalized-eigen subspace response exhausted its iteration budget");
   }
+
   return finish_equal_weight_response(
       action, selected_eigenvalues, selected_eigenvectors,
       overlap_selected, data.forcing, data.gauge_target, solution,
       options.relative_residual_tolerance, std::move(iterations),
-      block_actions);
+      block_actions, recycle_spaces);
 }
 
 }  // namespace xmvb::core

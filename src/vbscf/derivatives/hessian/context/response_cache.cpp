@@ -107,6 +107,7 @@ build_accepted_selected_state_generalized_eigen_response_operator(
           .overlap;
   response_operator.use_equal_weight_subspace_response = weights_are_equal(
       accepted_point_context.normalized_state_weights);
+  response_operator.response_recycle_spaces.resize(selected_state_count);
   if (!accepted_point_context.full_structure_eigenvalues.empty()) {
     if (accepted_point_context.full_structure_eigenvalues.size() !=
             static_cast<std::size_t>(n_structures) ||
@@ -246,6 +247,12 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
     result.delta_selected_eigenvector_matrix.resize(n_structures, n_rhs);
     result.selected_matrix_responses.reserve(n_directions);
     result.linear_iterations.reserve(n_rhs);
+    std::vector<xmvb::core::EigenResponseRecycleSpace*> recycle_spaces(
+        static_cast<std::size_t>(n_selected_states));
+    for (std::size_t state = 0;
+         state < static_cast<std::size_t>(n_selected_states); ++state) {
+      recycle_spaces[state] = &response_recycle_spaces[state];
+    }
     for (int direction = 0; direction < n_directions; ++direction) {
       const int first = direction * n_selected_states;
       const auto delta_hamiltonian =
@@ -278,7 +285,8 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
                 delta_overlap,
                 xmvb::core::EigenResponseOptions{
                     n_structures + 1,
-                    effective_relative_residual_tolerance});
+                    effective_relative_residual_tolerance},
+                recycle_spaces);
       result.delta_selected_eigenvector_matrix.middleCols(
           first, n_selected_states) = response.eigenvector_response;
       result.selected_matrix_responses.push_back(
@@ -301,6 +309,15 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
         n_selected_states,
         "equal-weight outer-response directional selected matrices");
     return result;
+  }
+  std::vector<xmvb::core::EigenResponseRecycleSpace*> block_recycle_spaces(
+      static_cast<std::size_t>(n_rhs));
+  for (int direction = 0; direction < n_directions; ++direction) {
+    const int first = direction * n_selected_states;
+    for (int state = 0; state < n_selected_states; ++state) {
+      block_recycle_spaces[static_cast<std::size_t>(first + state)] =
+          &response_recycle_spaces[static_cast<std::size_t>(state)];
+    }
   }
   const xmvb::core::EigenResponseResult response =
       !block_root_indices.empty()
@@ -327,7 +344,8 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
           delta_overlap_selected,
           xmvb::core::EigenResponseOptions{
               n_structures + 1,
-              effective_relative_residual_tolerance});
+              effective_relative_residual_tolerance},
+          block_recycle_spaces);
 
   SelectedStateGeneralizedEigenDirectionalResponse result;
   result.delta_selected_eigenvector_matrix = response.eigenvector_response;

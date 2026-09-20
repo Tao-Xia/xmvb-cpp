@@ -351,7 +351,15 @@ Newton/KKT certification must always use current-point HVPs.
 - [x] Reuse orbital HVP samples across trust-radius retries at the same accepted
       point. A retry first re-solves the cached projected trust problem and
       computes HVPs only for newly admitted residual directions.
-- [ ] Add same-point generalized-eigen response-space recycling.
+- [x] Add same-point generalized-eigen response-space recycling. Each selected
+      root owns an accepted-point Galerkin space of orthonormal external
+      responses and their exact projected operator images. New right-hand
+      sides start from the small projected solve; isolated-root guesses are
+      accepted only after a true bordered-residual check. Both isolated and
+      equal-weight response tests reduce an identical repeated solve to two
+      certification actions and require zero new MINRES iterations. The cache is
+      destroyed with the accepted-point context, so it cannot cross an orbital
+      update.
 - [ ] Batch the remaining columnwise RI HVP work where mathematically shared
       intermediates exist.
 - [ ] Remove the obsolete fixed-cap and unused correction/recycling code once the

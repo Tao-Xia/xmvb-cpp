@@ -411,12 +411,21 @@ bool test_equal_weight_subspace_response() {
       };
   const xmvb::core::EigenResponseOptions options{n + 1, 1.0e-9};
   try {
+    std::vector<xmvb::core::EigenResponseRecycleSpace> recycle_storage(2);
+    std::vector<xmvb::core::EigenResponseRecycleSpace*> recycle_spaces{
+        &recycle_storage[0], &recycle_storage[1]};
     const auto response =
         xmvb::core::solve_equal_weight_generalized_eigen_subspace_response(
             action, hamiltonian.diagonal(), overlap.diagonal(),
             selected_energies, selected_vectors,
             overlap * selected_vectors, delta_hamiltonian_selected,
-            delta_overlap_selected, options);
+            delta_overlap_selected, options, recycle_spaces);
+    const auto recycled_response =
+        xmvb::core::solve_equal_weight_generalized_eigen_subspace_response(
+            action, hamiltonian.diagonal(), overlap.diagonal(),
+            selected_energies, selected_vectors,
+            overlap * selected_vectors, delta_hamiltonian_selected,
+            delta_overlap_selected, options, recycle_spaces);
     const auto spectral =
         xmvb::core::
             solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
@@ -537,6 +546,10 @@ bool test_equal_weight_subspace_response() {
               << " projector_fd_error=" << projector_fd_error
               << " curvature_error=" << curvature_error
               << " degeneracy_error=" << degeneracy_error
+              << " recycled_actions=" << recycled_response.block_actions
+              << " recycled_iterations="
+              << recycled_response.iterations[0] << ','
+              << recycled_response.iterations[1]
               << " isolated_norm=" << isolated.eigenvector_response.norm()
               << " subspace_norm=" << response.eigenvector_response.norm()
               << '\n';
@@ -544,6 +557,13 @@ bool test_equal_weight_subspace_response() {
         spectral_error <= 1.0e-8 && cancellation_error <= 1.0e-8 &&
         gauge_error <= 1.0e-10 && projector_fd_error <= 1.0e-6 &&
         curvature_error <= 1.0e-5 && degeneracy_error <= 1.0e-8 &&
+        recycled_response.block_actions == 2 &&
+        std::all_of(
+            recycled_response.iterations.begin(),
+            recycled_response.iterations.end(),
+            [](int iterations) { return iterations == 0; }) &&
+        (recycled_response.eigenvector_response -
+         response.eigenvector_response).norm() <= 1.0e-10 &&
         degenerate_response.relative_residual_norms.maxCoeff() <= 1.0e-9 &&
         isolated.eigenvector_response.norm() >
             1.0e2 * response.eigenvector_response.norm();
@@ -608,6 +628,19 @@ int main(int argc, char** argv) {
       delta_hamiltonian_selected,
       delta_overlap_selected,
       options);
+  std::vector<xmvb::core::EigenResponseRecycleSpace> recycle_storage(
+      roots.size());
+  std::vector<xmvb::core::EigenResponseRecycleSpace*> recycle_spaces;
+  recycle_spaces.reserve(roots.size());
+  for (auto& space : recycle_storage) recycle_spaces.push_back(&space);
+  const auto cache_seed = xmvb::core::solve_generalized_eigen_response(
+      action, hamiltonian.diagonal(), overlap.diagonal(), eigenvalues,
+      eigenvectors, overlap * eigenvectors, delta_hamiltonian_selected,
+      delta_overlap_selected, options, recycle_spaces);
+  const auto recycled_response = xmvb::core::solve_generalized_eigen_response(
+      action, hamiltonian.diagonal(), overlap.diagonal(), eigenvalues,
+      eigenvectors, overlap * eigenvectors, delta_hamiltonian_selected,
+      delta_overlap_selected, options, recycle_spaces);
   const auto spectral_response =
       xmvb::core::solve_generalized_eigen_response_from_full_spectrum(
           action,
@@ -673,6 +706,21 @@ int main(int argc, char** argv) {
       spectral_response.relative_residual_norms.maxCoeff() <=
           options.relative_residual_tolerance &&
       spectral_difference <= 1.0e-8;
+  const bool recycling_passed =
+      std::all_of(
+          recycle_storage.begin(), recycle_storage.end(),
+          [n](const auto& space) {
+            return space.dimension() == n && space.size() == 1;
+          }) &&
+      std::all_of(
+          recycled_response.iterations.begin(),
+          recycled_response.iterations.end(),
+          [](int iterations) { return iterations == 0; }) &&
+      recycled_response.block_actions == 2 &&
+      (cache_seed.eigenvector_response -
+       recycled_response.eigenvector_response).norm() <= 1.0e-10 &&
+      recycled_response.relative_residual_norms.maxCoeff() <=
+          options.relative_residual_tolerance;
   std::cout << "block_width=" << widest_action
             << " actions=" << response.block_actions
             << " vector_error=" << max_vector_error
@@ -680,14 +728,21 @@ int main(int argc, char** argv) {
             << " gauge_error=" << max_gauge_error
             << " residual=" << max_residual
             << " full_spectrum_difference=" << spectral_difference
-            << (passed && spectral_passed ? " PASS\n" : " FAIL\n");
+            << " recycled_actions=" << recycled_response.block_actions
+            << " recycled_iterations="
+            << recycled_response.iterations[0] << ','
+            << recycled_response.iterations[1] << ','
+            << recycled_response.iterations[2]
+            << (passed && spectral_passed && recycling_passed
+                    ? " PASS\n" : " FAIL\n");
   const bool minres_scale_passed = test_preconditioned_minres_residual_scale();
   const bool solvable_ill_passed = test_solvable_ill_conditioned_overlap();
   const bool inexact_ritz_passed = test_inexact_ritz_root();
   const bool repeated_root_passed = test_repeated_root_bordered_candidate();
   const bool equal_weight_subspace_passed =
       test_equal_weight_subspace_response();
-  return passed && spectral_passed && solvable_ill_passed &&
+  return passed && spectral_passed && recycling_passed &&
+      solvable_ill_passed &&
       minres_scale_passed &&
       inexact_ritz_passed && repeated_root_passed &&
       equal_weight_subspace_passed ? 0 : 1;

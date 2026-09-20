@@ -16,6 +16,37 @@ struct EigenResponseOptions {
   double relative_residual_tolerance;
 };
 
+struct EigenResponseRecycleGuess {
+  Eigen::VectorXd solution;
+  Eigen::VectorXd operator_image;
+  bool used = false;
+};
+
+/**
+ * @brief Same-operator Galerkin space recycled across response right-hand sides.
+ *
+ * The stored columns are Euclidean-orthonormal projected response vectors and
+ * their exact projected operator images. The space is owned by one accepted
+ * orbital point and one selected root; it must not survive an operator change.
+ */
+class EigenResponseRecycleSpace {
+public:
+  int dimension() const noexcept;
+  int size() const noexcept;
+  void clear();
+
+  EigenResponseRecycleGuess guess(
+      const Eigen::Ref<const Eigen::VectorXd>& right_hand_side) const;
+
+  bool append(
+      const Eigen::Ref<const Eigen::VectorXd>& solution,
+      const Eigen::Ref<const Eigen::VectorXd>& operator_image);
+
+private:
+  Eigen::MatrixXd basis_;
+  Eigen::MatrixXd operator_images_;
+};
+
 /**
  * @brief Selected-root response and numerical diagnostics.
  */
@@ -73,7 +104,8 @@ EigenResponseResult solve_generalized_eigen_response(
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
-    const EigenResponseOptions& options);
+    const EigenResponseOptions& options,
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces = {});
 
 /**
  * @brief Applies the complete generalized eigenspectrum to selected responses.
@@ -116,7 +148,8 @@ solve_equal_weight_generalized_eigen_subspace_response(
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
-    const EigenResponseOptions& options);
+    const EigenResponseOptions& options,
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces = {});
 
 /**
  * @brief Full-spectrum reference for equal-weight invariant-subspace response.

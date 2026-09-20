@@ -6,6 +6,7 @@
 
 #include <Eigen/Core>
 
+#include "core/eigen_response.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 
@@ -46,6 +47,9 @@ struct AcceptedSelectedStateGeneralizedEigenResponseOperator {
   /** Whether all selected states form one equal-weight invariant cluster. */
   bool use_equal_weight_subspace_response = false;
   double relative_residual_tolerance = 0.0;
+  /** Same accepted-point response spaces, one for each selected root. */
+  mutable std::vector<xmvb::core::EigenResponseRecycleSpace>
+      response_recycle_spaces;
 
   SelectedStateGeneralizedEigenDirectionalResponse apply(
       const SelectedStateDirectionalStructureImages& directional_images,
