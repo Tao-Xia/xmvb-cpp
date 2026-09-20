@@ -29,3 +29,8 @@ For reproducible optimizer comparisons, use the
 the BLAS/OpenMP thread counts explicitly. Historical numerical and performance
 results are recorded under `article/` and `docs/`; this directory is the
 canonical location for the corresponding inputs.
+
+The user-supplied XMVB source is built separately on Hanhai25 for independent
+numerical checks. See [reference.md](reference.md) for its provenance, installed
+executables, build requirements, small-case qualification, and the isolated
+L-BFGS stopping-condition repair. Vendor sources are not stored in this tree.
