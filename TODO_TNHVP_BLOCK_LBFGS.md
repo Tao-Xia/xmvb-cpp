@@ -332,8 +332,11 @@ Newton/KKT certification must always use current-point HVPs.
 - [x] Add a block inverse-BFGS update operating on matrix-free inverse actions.
       The standalone component supports vector and block actions without an
       ambient inverse matrix and rejects nonpositive sampled curvature.
-- [ ] Add algebraic tests for symmetry, positive definiteness, block secant
+- [x] Add algebraic tests for symmetry, positive definiteness, block secant
       exactness, and invariance under a change of basis within $\operatorname{span}(S)$.
+      The tests also cover general vector-covector coordinate covariance,
+      complete-space inverse recovery, vector/block action agreement, and
+      rejection of nonpositive curvature.
 - [ ] Replace the fixed four-dimensional production correction with
       residual-driven enrichment.
 - [ ] Separate positive-curvature enrichment from explicit negative-curvature
