@@ -101,6 +101,20 @@ int main() {
         rejected_unequal_weights,
         "unequal WSTATE weights must be rejected by the equal-weight implementation");
 
+    const auto shifted_state_average_path =
+        root / "shifted-state-average.xmi";
+    write_deck(shifted_state_average_path, "wstate(2)=1,1");
+    bool rejected_shifted_state_range = false;
+    try {
+      (void)xmvb::vb::parse_input_deck_model(
+          shifted_state_average_path.string());
+    } catch (const std::invalid_argument&) {
+      rejected_shifted_state_range = true;
+    }
+    require(
+        rejected_shifted_state_range,
+        "WSTATE ranges not starting at the lowest state must be rejected");
+
     const auto invalid_state_average_path = root / "invalid-state-average.xmi";
     write_deck(invalid_state_average_path, "nstate=0");
     bool rejected_invalid_state_count = false;

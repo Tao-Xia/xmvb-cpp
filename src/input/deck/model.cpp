@@ -195,6 +195,10 @@ void apply_ctrl_assignment(
     if (first_state <= 0) {
       throw std::invalid_argument("WSTATE indices must be positive");
     }
+    if (first_state != 1) {
+      throw std::invalid_argument(
+          "equal-weight state averaging supports only WSTATE(1)");
+    }
     std::vector<double> weights;
     std::size_t begin = 0;
     while (begin <= raw_value.size()) {
@@ -229,7 +233,7 @@ void apply_ctrl_assignment(
     }
     metadata->state_average_count = std::max(
         metadata->state_average_count,
-        first_state - 1 + static_cast<int>(weights.size()));
+        static_cast<int>(weights.size()));
     return;
   }
   if (key == "ISCF") {
