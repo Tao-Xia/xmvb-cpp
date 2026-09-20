@@ -18,12 +18,13 @@ model/accuracy interfaces. See [the evidence and derivation](article/tnhvp_consi
 
 The next implementation sequence is:
 
-1. [ ] Establish the missing orbital-block L-BFGS ablation using the same
+1. [x] Establish the missing orbital-block L-BFGS ablation using the same
    initial inverse, chart, input, and physical settings as TNHVP. Keep the
    standard scalar-initialized method explicitly identified in results.
-   Implementation and CLI tests are complete (`--lbfgs-initial-inverse
-   orbital-block`); molecular qualification is pending. Both modes use the
-   same L-BFGS backend, and the default remains scalar initialization.
+   Implemented as `--lbfgs-initial-inverse orbital-block`; CLI tests and the
+   nine-system Hanhai25 job 246984 passed. Both modes use the same L-BFGS
+   backend, and the default remains scalar initialization. Numerical results
+   are recorded in the consistency audit.
 2. [ ] Reproduce a failing accepted point and log curvature skew, response
    residuals, additivity, column-order sensitivity, and the independent
    directional HVP defect. Identify which error source explains the skew.

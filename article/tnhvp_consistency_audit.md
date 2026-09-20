@@ -315,6 +315,38 @@ a curvature candidate cannot prove fewer total outer iterations, since the
 subsequent paths and secant histories diverge. No universal speedup or a fixed
 ten-step convergence claim is justified.
 
+## 9. Orbital-block baseline qualification
+
+Commit `4e118d0` exposes `--lbfgs-initial-inverse orbital-block` without
+duplicating the L-BFGS backend or changing its default scalar initialization.
+The ablation and TNHVP predictor use the same inverse-action enum, local
+orbital blocks, and transported secants. The ablation performs no HVPs.
+
+Hanhai25 Slurm job `246984` used 32 OpenMP threads, one BLAS thread,
+Davidson, exact integrals, and the same outer thresholds as Section 1.
+Each case had an isolated input/output directory and an explicit 2000-step
+limit. All nine process exits were zero and all reported dual-tolerance
+convergence. These are single-run SCF timings, not publication benchmarks.
+
+| System | Accepted steps | SCF time / s | Final energy / $E_h$ |
+|---|---:|---:|---:|
+| 240 | 10 | 2.970417 | -343.446302350844 |
+| 241 | 24 | 1.346254 | -230.720590368221 |
+| MnF2 | 102 | 6.861466 | -1348.893352807651 |
+| FeCl2 | 7 | 3.119502 | -2181.617634827448 |
+| 7963 | 15 | 1.139692 | -285.731743343953 |
+| 7975 | 9 | 0.639360 | -285.733616926419 |
+| YAMSAI | 11 | 0.593832 | -305.561919466566 |
+| CERRAS | 26 | 33.716539 | -397.093434999630 |
+| LOFLEA | 24 | 72.605682 | -399.106646148841 |
+
+The comparison is now correctly defined, but TNHVP acceptance remains open.
+In particular, its step savings alone do not establish a wall-time benefit
+over this stronger baseline. Endpoint agreement still requires the checks in
+Section 8. Logs reside under
+`build/diagnostics/consistency-3460c35/ablation/`; remote provenance is
+`/home/guqqgroup/taoxia/xmvb-runs/consistency-3460c35/`.
+
 ## References
 
 1. Conn, A. R.; Gould, N. I. M.; Toint, P. L. *Trust Region Methods*,
