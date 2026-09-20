@@ -208,6 +208,30 @@ time, 220.64 CPU s, and 998564 KiB maximum RSS; Slurm reports 10 s elapsed and
 at iteration 73 and `-230.720589381201 Eh` because of the integer-`abs` defect.
 The repaired result is lower by `2.09093e-7 Eh`.
 
+Slurm array job `247342` compares the corresponding XMVB-CPP input on the same
+32-core partition, using the qualified production binary with SHA-256
+`99474663e121912118f74b60762aa55d4e660c3dba8b6db7438eaa7b91e40186`.
+Both CPP optimizers reproduce the vendor iteration-zero energy exactly at the
+printed precision (`-230.4744717289 Eh`), confirming that the imported starting
+orbitals and fixed-point energy agree for this case. CPP uses its matrix-free
+Davidson structure solver; the vendor calculation uses dense diagonalization.
+
+| 241 calculation | Iterations | Total energy / Eh | Wall time / s | Maximum RSS / KiB |
+|---|---:|---:|---:|---:|
+| Clean XMVB 4.0 `fabs`, L-BFGS | 75 | -230.720589590294 | 9.33 | 998564 |
+| XMVB-CPP block-L-BFGS | 24 | -230.720590368221 | 2.05 | 946548 |
+| XMVB-CPP TNHVP | 9 | -230.720590391789 | 9.64 | 987584 |
+
+Block-L-BFGS is 4.55 times faster in wall time than clean XMVB and requires 24
+rather than 75 iterations. TNHVP requires 9 iterations rather than 75 for clean
+XMVB or 24 for block-LBFGS, but its curvature work makes its total
+wall time 4.70 times that of block-LBFGS and 1.03 times that of clean XMVB for
+this small active space. The two CPP stationary energies agree within
+`2.36e-8 Eh`. Their lower energies relative to vendor XMVB are `7.78e-7 Eh`
+and `8.01e-7 Eh`, respectively. This is not by itself an energy-kernel
+disagreement: the common initial energy agrees, while vendor L-BFGS uses its
+hard-coded `GNORM < 2e-3` test and CPP uses projected infinity norm `< 1e-3`.
+
 ## Source map for subsequent audits
 
 Paths below are relative to the vendor source root, not to XMVB-CPP `src/`.
