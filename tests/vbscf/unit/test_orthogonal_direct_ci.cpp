@@ -186,6 +186,39 @@ void check_planner() {
       1);
   require(!rejected.complete() && !rejected.favors_direct_ci(),
           "incomplete fixed-spin space was admitted");
+
+  const auto sixteen_electron_spin_space = complete_space(16, 8);
+  const auto covalent = xmvb::vb::plan_orthogonal_direct_ci_action(
+      sixteen_electron_spin_space,
+      sixteen_electron_spin_space,
+      16,
+      1,
+      1430,
+      1430 * 256);
+  require(covalent.complete(),
+          "16e/16o complete fixed-spin space was not recognized");
+  require(covalent.n_alpha_strings == 12870 &&
+              covalent.n_beta_strings == 12870,
+          "16e/16o determinant count is wrong");
+  require(covalent.favors_direct_ci(),
+          "16e/16o direct CI unexpectedly lost to Kronecker action");
+  require(covalent.materialized_structure_action_dominates(),
+          "small 16e/16o structure space did not select materialized H/S");
+  require(!covalent.favors_direct_ci_for_davidson(),
+          "Davidson expanded a small structure space into the full spin product");
+
+  const auto full_product_structure_space =
+      xmvb::vb::plan_orthogonal_direct_ci_action(
+          sixteen_electron_spin_space,
+          sixteen_electron_spin_space,
+          16,
+          1,
+          12870 * 12870);
+  require(!full_product_structure_space
+               .materialized_structure_action_dominates() &&
+              full_product_structure_space
+                  .favors_direct_ci_for_davidson(),
+          "large structure space incorrectly selected materialized H/S");
 }
 
 void check_sigma_action() {
@@ -1108,6 +1141,93 @@ void check_sigma_action() {
       "topology-only direct-CI overlap differs from the dense reference");
 }
 
+void check_demand_driven_structure_diagonal() {
+  // Put one demanded pair in the first cell of a unique-spin space larger
+  // than the forward matrix tile. A tile-backed diagonal lookup would evaluate
+  // the entire 256x256 tile even though all other determinants have zero
+  // structure coefficient.
+  constexpr int n_orbitals = 11;
+  constexpr int n_unique_alpha = 257;
+  auto alpha = complete_space(n_orbitals, 5);
+  alpha.resize(n_unique_alpha);
+  std::vector<std::vector<int>> beta(n_unique_alpha, std::vector<int>{0});
+  std::vector<std::vector<xmvb::vb::StructureExpansionTerm>> expansion(
+      n_unique_alpha);
+  expansion.front().push_back({0, 1.0});
+
+  const Eigen::MatrixXd overlap =
+      Eigen::MatrixXd::Identity(n_orbitals, n_orbitals);
+  const std::vector<double> packed_overlap(
+      overlap.data(),
+      overlap.data() + overlap.size());
+  Eigen::MatrixXd one_electron(n_orbitals, n_orbitals);
+  for (int column = 0; column < n_orbitals; ++column) {
+    for (int row = 0; row <= column; ++row) {
+      const double value =
+          0.03 * std::cos(static_cast<double>((row + 1) * (column + 2)));
+      one_electron(row, column) = value;
+      one_electron(column, row) = value;
+    }
+  }
+  xmvb::vb::ActiveSpaceTwoElectronResult two_electron;
+  two_electron.packed_active_two_electron_integrals.assign(
+      xmvb::vb::packed_active_two_electron_integral_count(n_orbitals),
+      0.0);
+
+  const auto large_topology = xmvb::vb::build_same_spin_pair_topology(
+      alpha,
+      beta,
+      n_orbitals);
+  require(!large_topology.enabled(),
+          "demand-driven diagonal regression unexpectedly built pair caches");
+  require(large_topology.alpha_reuse_table.unique_determinants.size() ==
+              n_unique_alpha,
+          "demand-driven diagonal regression did not span multiple tiles");
+
+  const xmvb::vb::FullDeterminantStructureHamiltonianOverlapBuilder builder;
+  const xmvb::vb::StructureDiagonal large_diagonal = builder.build_diagonal(
+      alpha,
+      beta,
+      expansion,
+      packed_overlap,
+      one_electron,
+      n_orbitals,
+      two_electron,
+      1,
+      large_topology);
+
+  const std::vector<std::vector<int>> reference_alpha{alpha.front()};
+  const std::vector<std::vector<int>> reference_beta{beta.front()};
+  const std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>
+      reference_expansion{{{0, 1.0}}};
+  const auto reference_topology = xmvb::vb::build_same_spin_pair_topology(
+      reference_alpha,
+      reference_beta,
+      n_orbitals);
+  const xmvb::vb::StructureDiagonal reference_diagonal =
+      builder.build_diagonal(
+          reference_alpha,
+          reference_beta,
+          reference_expansion,
+          packed_overlap,
+          one_electron,
+          n_orbitals,
+          two_electron,
+          1,
+          reference_topology);
+
+  require(
+      std::abs(
+          large_diagonal.hamiltonian[0] -
+          reference_diagonal.hamiltonian[0]) < 2.0e-12,
+      "unused unique determinants changed the demand-driven Hamiltonian diagonal");
+  require(
+      std::abs(
+          large_diagonal.overlap[0] -
+          reference_diagonal.overlap[0]) < 2.0e-12,
+      "unused unique determinants changed the demand-driven overlap diagonal");
+}
+
 }  // namespace
 
 int main() {
@@ -1115,6 +1235,7 @@ int main() {
     check_exterior_transform();
     check_planner();
     check_sigma_action();
+    check_demand_driven_structure_diagonal();
     std::cout << "orthogonal direct-CI planner and exterior transform: passed\n";
     return 0;
   } catch (const std::exception& error) {

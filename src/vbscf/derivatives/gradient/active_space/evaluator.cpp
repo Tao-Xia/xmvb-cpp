@@ -114,6 +114,15 @@ int required_root_count(const std::vector<int>& selected_state_indices) {
       1;
 }
 
+std::size_t structure_expansion_term_count(
+    const std::vector<std::vector<StructureExpansionTerm>>& expansions) {
+  std::size_t count = 0;
+  for (const auto& expansion : expansions) {
+    count += expansion.size();
+  }
+  return count;
+}
+
 bool materialized_structure_operator_uses_less_storage(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     int n_structures) {
@@ -295,12 +304,16 @@ void solve_structure_problem(
       context->same_spin_pair_cache.alpha_reuse_table.unique_determinants,
       context->same_spin_pair_cache.beta_reuse_table.unique_determinants,
       input.orbital_preparation_input.n_active_orbitals,
-      n_roots);
+      n_roots,
+      n_structures,
+      structure_expansion_term_count(
+          input.structure_data.determinant_to_structure_terms));
   const bool use_direct_ci_action =
       structure_eigensolver == StructureEigensolver::Davidson &&
-      direct_ci_plan.favors_direct_ci();
+      direct_ci_plan.favors_direct_ci_for_davidson();
   const bool use_materialized_operator =
       structure_eigensolver == StructureEigensolver::Dense ||
+      direct_ci_plan.materialized_structure_action_dominates() ||
       (!use_direct_ci_action &&
        materialized_structure_operator_uses_less_storage(
            context->same_spin_pair_cache,

@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <list>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -88,6 +89,22 @@ struct ForwardSpinPairTile {
   }
 };
 
+enum class ForwardSpinPairCacheMode {
+  Tiles,
+  Entries,
+};
+
+struct ForwardSpinPairCacheOptions {
+  ForwardSpinPairCacheMode mode = ForwardSpinPairCacheMode::Tiles;
+  int tile_size = 0;
+  int capacity = 0;
+};
+
+struct ForwardSpinPairCachedEntry {
+  std::uint64_t key = 0;
+  ForwardSpinPairEntry value;
+};
+
 std::size_t square_storage_size(int dimension) {
   return (dimension) * (dimension);
 }
@@ -105,6 +122,14 @@ int structure_matrix_tile_size() {
 
 int structure_matrix_tile_cache_tiles() {
   return 4;
+}
+
+int structure_diagonal_pair_cache_entries() {
+  // Reuse the matrix builder's tuning scales, but cache individual pairs. A
+  // diagonal structure contraction generally touches a sparse and scattered
+  // set of unique-spin pairs, so filling whole 2-D tiles turns one requested
+  // pair into as many as tile_size^2 evaluations.
+  return structure_matrix_tile_size() * structure_matrix_tile_cache_tiles();
 }
 
 int forward_structure_matrix_thread_count(int n_structures) {
@@ -216,9 +241,9 @@ ForwardSpinPairEntry evaluate_forward_spin_pair_entry(
 }
 
 template <typename TwoElectronInput>
-class ForwardSpinPairTileProvider {
+class ForwardSpinPairProvider {
 public:
-  ForwardSpinPairTileProvider(
+  ForwardSpinPairProvider(
       const std::vector<std::vector<int>>& unique_spin_determinants,
       const std::vector<SpinDeterminantPairEvaluation>* ordered_spin_pair_cache,
       DeterminantPairEvaluator pair_evaluator,
@@ -226,8 +251,7 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const TwoElectronInput& two_electron_input,
-      int tile_size,
-      int max_cached_tiles)
+      ForwardSpinPairCacheOptions cache_options)
       : unique_spin_determinants_(unique_spin_determinants),
         ordered_spin_pair_cache_(ordered_spin_pair_cache),
         pair_evaluator_(std::move(pair_evaluator)),
@@ -235,13 +259,13 @@ public:
         h1e_act_(h1e_act),
         n_orbitals_(n_orbitals),
         two_electron_input_(two_electron_input),
-        tile_size_(tile_size),
-        max_cached_tiles_(max_cached_tiles) {
-    if (tile_size_ <= 0) {
-      throw std::invalid_argument("tile_size must be positive");
+        cache_options_(cache_options) {
+    if (cache_options_.capacity <= 0) {
+      throw std::invalid_argument("spin-pair cache capacity must be positive");
     }
-    if (max_cached_tiles_ <= 0) {
-      throw std::invalid_argument("max_cached_tiles must be positive");
+    if (cache_options_.mode == ForwardSpinPairCacheMode::Tiles &&
+        cache_options_.tile_size <= 0) {
+      throw std::invalid_argument("tile_size must be positive");
     }
     if (ordered_spin_pair_cache_ != nullptr) {
       const std::size_t expected_cache_entries =
@@ -251,7 +275,11 @@ public:
             "ordered same-spin pair cache size does not match unique determinant count");
       }
     }
-    cached_tiles_.reserve(max_cached_tiles_);
+    if (cache_options_.mode == ForwardSpinPairCacheMode::Tiles) {
+      cached_tiles_.reserve(cache_options_.capacity);
+    } else {
+      cached_entry_lookup_.reserve(cache_options_.capacity);
+    }
   }
 
   const ForwardSpinPairEntry& entry(
@@ -261,11 +289,15 @@ public:
         left_unique_index >= static_cast<int>(unique_spin_determinants_.size()) ||
         right_unique_index < 0 ||
         right_unique_index >= static_cast<int>(unique_spin_determinants_.size())) {
-      throw std::out_of_range("unique spin tile lookup index out of range");
+      throw std::out_of_range("unique spin pair lookup index out of range");
     }
 
-    const int row_tile = left_unique_index / tile_size_;
-    const int column_tile = right_unique_index / tile_size_;
+    if (cache_options_.mode == ForwardSpinPairCacheMode::Entries) {
+      return find_or_build_entry(left_unique_index, right_unique_index);
+    }
+
+    const int row_tile = left_unique_index / cache_options_.tile_size;
+    const int column_tile = right_unique_index / cache_options_.tile_size;
     ForwardSpinPairTile* tile = find_or_build_tile(row_tile, column_tile);
     tile->last_access_stamp = ++access_stamp_;
     return tile->entry(left_unique_index, right_unique_index);
@@ -295,6 +327,50 @@ public:
   }
 
 private:
+  static std::uint64_t entry_key(
+      int left_unique_index,
+      int right_unique_index) {
+    return
+        (static_cast<std::uint64_t>(
+             static_cast<std::uint32_t>(left_unique_index)) << 32u) |
+        static_cast<std::uint32_t>(right_unique_index);
+  }
+
+  const ForwardSpinPairEntry& find_or_build_entry(
+      int left_unique_index,
+      int right_unique_index) {
+    const std::uint64_t key =
+        entry_key(left_unique_index, right_unique_index);
+    const auto cached = cached_entry_lookup_.find(key);
+    if (cached != cached_entry_lookup_.end()) {
+      cached_entries_.splice(
+          cached_entries_.begin(),
+          cached_entries_,
+          cached->second);
+      return cached->second->value;
+    }
+
+    ForwardSpinPairCachedEntry built_entry;
+    built_entry.key = key;
+    built_entry.value = evaluate_forward_spin_pair_entry(
+        unique_spin_determinants_[left_unique_index],
+        unique_spin_determinants_[right_unique_index],
+        pair_evaluator_,
+        ovlp_act_,
+        h1e_act_,
+        n_orbitals_,
+        two_electron_input_);
+
+    if (static_cast<int>(cached_entries_.size()) ==
+        cache_options_.capacity) {
+      cached_entry_lookup_.erase(cached_entries_.back().key);
+      cached_entries_.pop_back();
+    }
+    cached_entries_.push_front(std::move(built_entry));
+    cached_entry_lookup_.emplace(key, cached_entries_.begin());
+    return cached_entries_.front().value;
+  }
+
   ForwardSpinPairTile* find_or_build_tile(
       int row_tile,
       int column_tile) {
@@ -304,13 +380,13 @@ private:
       }
     }
 
-    const int row_begin = row_tile * tile_size_;
-    const int column_begin = column_tile * tile_size_;
+    const int row_begin = row_tile * cache_options_.tile_size;
+    const int column_begin = column_tile * cache_options_.tile_size;
     const int row_end = std::min(
-        row_begin + tile_size_,
+        row_begin + cache_options_.tile_size,
         static_cast<int>(unique_spin_determinants_.size()));
     const int column_end = std::min(
-        column_begin + tile_size_,
+        column_begin + cache_options_.tile_size,
         static_cast<int>(unique_spin_determinants_.size()));
 
     ForwardSpinPairTile built_tile;
@@ -347,7 +423,7 @@ private:
       }
     }
 
-    if (static_cast<int>(cached_tiles_.size()) == max_cached_tiles_) {
+    if (static_cast<int>(cached_tiles_.size()) == cache_options_.capacity) {
       auto victim_iterator = cached_tiles_.begin();
       for (auto iterator = cached_tiles_.begin();
            iterator != cached_tiles_.end();
@@ -372,10 +448,14 @@ private:
   const Eigen::Ref<const Eigen::MatrixXd> h1e_act_;
   int n_orbitals_ = 0;
   const TwoElectronInput& two_electron_input_;
-  int tile_size_ = 0;
-  int max_cached_tiles_ = 0;
+  ForwardSpinPairCacheOptions cache_options_;
   std::uint64_t access_stamp_ = 0;
   std::vector<ForwardSpinPairTile> cached_tiles_;
+  std::list<ForwardSpinPairCachedEntry> cached_entries_;
+  std::unordered_map<
+      std::uint64_t,
+      std::list<ForwardSpinPairCachedEntry>::iterator>
+      cached_entry_lookup_;
 };
 
 void validate_full_determinant_input(
@@ -821,8 +901,8 @@ ForwardStructurePairResult contract_forward_structure_pair(
     const StructureCoefficientBlock& right,
     bool close_shell_same_spin,
     bool shared_same_spin_pair_kernels,
-    ForwardSpinPairTileProvider<TwoElectronInput>* alpha_provider,
-    ForwardSpinPairTileProvider<TwoElectronInput>* beta_provider,
+    ForwardSpinPairProvider<TwoElectronInput>* alpha_provider,
+    ForwardSpinPairProvider<TwoElectronInput>* beta_provider,
     const ActiveSpaceTwoElectronView& two_electron_view,
     int n_orbitals,
     ForwardStructurePairWorkspace* workspace) {
@@ -978,7 +1058,12 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
       n_determinants,
       0.0);
 
-  ForwardSpinPairTileProvider<TwoElectronInput> alpha_provider(
+  const ForwardSpinPairCacheOptions tile_cache_options{
+      .mode = ForwardSpinPairCacheMode::Tiles,
+      .tile_size = tile_size,
+      .capacity = max_cached_tiles,
+  };
+  ForwardSpinPairProvider<TwoElectronInput> alpha_provider(
       alpha_reuse_table.unique_determinants,
       alpha_pair_cache,
       pair_evaluator,
@@ -986,9 +1071,8 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
       h1e_act,
       n_orbitals,
       two_electron_input,
-      tile_size,
-      max_cached_tiles);
-  ForwardSpinPairTileProvider<TwoElectronInput> beta_provider(
+      tile_cache_options);
+  ForwardSpinPairProvider<TwoElectronInput> beta_provider(
       beta_reuse_table.unique_determinants,
       beta_pair_cache,
       pair_evaluator,
@@ -996,8 +1080,7 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
       h1e_act,
       n_orbitals,
       two_electron_input,
-      tile_size,
-      max_cached_tiles);
+      tile_cache_options);
   for (int determinant_index = 0;
        determinant_index < n_determinants;
        ++determinant_index) {
@@ -1035,7 +1118,7 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
 #pragma omp parallel if(n_threads > 1) num_threads(n_threads)
   {
     const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
-    ForwardSpinPairTileProvider<TwoElectronInput> thread_alpha_provider(
+    ForwardSpinPairProvider<TwoElectronInput> thread_alpha_provider(
         alpha_reuse_table.unique_determinants,
         alpha_pair_cache,
         thread_pair_evaluator,
@@ -1043,9 +1126,8 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
         h1e_act,
         n_orbitals,
         two_electron_input,
-        tile_size,
-        max_cached_tiles);
-    ForwardSpinPairTileProvider<TwoElectronInput> thread_beta_provider(
+        tile_cache_options);
+    ForwardSpinPairProvider<TwoElectronInput> thread_beta_provider(
         beta_reuse_table.unique_determinants,
         beta_pair_cache,
         thread_pair_evaluator,
@@ -1053,8 +1135,7 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
         h1e_act,
         n_orbitals,
         two_electron_input,
-        tile_size,
-        max_cached_tiles);
+        tile_cache_options);
     ForwardStructurePairWorkspace workspace;
 
 #pragma omp for schedule(dynamic, 1)
@@ -1096,7 +1177,7 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
 }
 
 template <typename TwoElectronInput>
-StructureDiagonal build_tiled_structure_diagonal(
+StructureDiagonal build_demand_driven_structure_diagonal(
     const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
     int n_structures,
     const SpinDeterminantReuseTable& alpha_reuse_table,
@@ -1124,8 +1205,11 @@ StructureDiagonal build_tiled_structure_diagonal(
       true);
   const ActiveSpaceTwoElectronView two_electron_view =
       make_active_space_two_electron_view(two_electron_input);
-  const int tile_size = structure_matrix_tile_size();
-  const int max_cached_tiles = structure_matrix_tile_cache_tiles();
+  const ForwardSpinPairCacheOptions entry_cache_options{
+      .mode = ForwardSpinPairCacheMode::Entries,
+      .tile_size = 0,
+      .capacity = structure_diagonal_pair_cache_entries(),
+  };
   const int n_threads = forward_structure_matrix_thread_count(n_structures);
 
   StructureDiagonal diagonal;
@@ -1134,7 +1218,7 @@ StructureDiagonal build_tiled_structure_diagonal(
 #pragma omp parallel if(n_threads > 1) num_threads(n_threads)
   {
     const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
-    ForwardSpinPairTileProvider<TwoElectronInput> alpha_provider(
+    ForwardSpinPairProvider<TwoElectronInput> alpha_provider(
         alpha_reuse_table.unique_determinants,
         alpha_pair_cache,
         thread_pair_evaluator,
@@ -1142,9 +1226,8 @@ StructureDiagonal build_tiled_structure_diagonal(
         h1e_act,
         n_orbitals,
         two_electron_input,
-        tile_size,
-        max_cached_tiles);
-    ForwardSpinPairTileProvider<TwoElectronInput> beta_provider(
+        entry_cache_options);
+    ForwardSpinPairProvider<TwoElectronInput> beta_provider(
         beta_reuse_table.unique_determinants,
         beta_pair_cache,
         thread_pair_evaluator,
@@ -1152,8 +1235,7 @@ StructureDiagonal build_tiled_structure_diagonal(
         h1e_act,
         n_orbitals,
         two_electron_input,
-        tile_size,
-        max_cached_tiles);
+        entry_cache_options);
     ForwardStructurePairWorkspace workspace;
 
 #pragma omp for schedule(dynamic, 1)
@@ -1323,7 +1405,7 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_diagonal(
     throw std::invalid_argument(
         "same-spin topology does not match the determinant expansion");
   }
-  return build_tiled_structure_diagonal(
+  return build_demand_driven_structure_diagonal(
       determinant_to_structure_terms,
       n_structures,
       same_spin_pair_cache.alpha_reuse_table,

@@ -107,10 +107,13 @@ DirectCiActionPlan plan_orthogonal_direct_ci_action(
     const std::vector<std::vector<int>>& alpha_strings,
     const std::vector<std::vector<int>>& beta_strings,
     int n_active_orbitals,
-    int block_width) {
-  if (n_active_orbitals <= 0 || block_width <= 0) {
+    int block_width,
+    int n_structures,
+    std::size_t n_structure_expansion_terms) {
+  if (n_active_orbitals <= 0 || block_width <= 0 || n_structures < 0) {
     throw std::invalid_argument(
-        "direct-CI planner requires positive orbital and block dimensions");
+        "direct-CI planner requires valid orbital, block, and structure "
+        "dimensions");
   }
   const SpinSpaceAnalysis alpha =
       analyze_spin_space(alpha_strings, n_active_orbitals);
@@ -125,6 +128,8 @@ DirectCiActionPlan plan_orthogonal_direct_ci_action(
   plan.n_beta_electrons = beta.n_electrons;
   plan.n_alpha_strings = alpha_strings.size();
   plan.n_beta_strings = beta_strings.size();
+  plan.n_structures = static_cast<std::size_t>(n_structures);
+  plan.n_structure_expansion_terms = n_structure_expansion_terms;
   if (!plan.complete()) {
     return plan;
   }
@@ -166,6 +171,34 @@ DirectCiActionPlan plan_orthogonal_direct_ci_action(
           beta.dimension,
           alpha.dimension,
           block_width);
+
+  if (n_structures > 0) {
+    const long double n_product = n_alpha * n_beta;
+    const long double n_structure =
+        static_cast<long double>(n_structures);
+    const long double expansion_terms =
+        static_cast<long double>(n_structure_expansion_terms);
+
+    // One structure-to-product scatter and two product-to-structure gathers.
+    // Each sparse coefficient application is one multiply-add.
+    plan.structure_scatter_gather_flops =
+        6.0L * expansion_terms * width;
+
+    // Applying materialized H and S consists of two dense matrix-block
+    // products. The live-value model includes both retained matrices and both
+    // output blocks. The direct-CI lower bound includes the simultaneous
+    // coefficient/Hamiltonian product blocks and the two structure outputs;
+    // persistent connection graphs can only strengthen materialization's
+    // memory advantage.
+    plan.materialized_action_flops =
+        4.0L * n_structure * n_structure * width;
+    plan.materialized_action_live_values =
+        2.0L * n_structure * n_structure +
+        2.0L * n_structure * width;
+    plan.direct_ci_action_live_values =
+        2.0L * n_product * width +
+        2.0L * n_structure * width;
+  }
   return plan;
 }
 
