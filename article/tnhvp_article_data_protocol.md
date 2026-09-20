@@ -32,17 +32,18 @@ where the accepted-point basis is prewhitened in the inexpensive local
 pullback metric of the per-orbital normalization maps,
 
 $$
-\mathbf U_k^{\mathrm T}\mathbf M_k\mathbf U_k=\mathbf I,
+\mathbf U_k^{\mathrm T}\mathbf M_k^{\mathrm{loc}}\mathbf U_k=\mathbf I,
 \qquad
-\mathbf M_k
+\mathbf M_k^{\mathrm{loc}}
 =
 \bigoplus_p
 \mathbf J_{N,p}^{\mathrm T}\mathbf S_p\mathbf J_{N,p}.
 $$
 
-This local prewhitening is not the trust-region metric. The optimizer uses
-the coupled inactive-subspace/projected-active-ray metric of eq 31 in the
-theory note through matrix-free metric-vector actions. Only its projection
+This local prewhitening is not the trust-region metric. Denote by
+$\mathbf G_k$ the physical inactive-subspace/projected-active-ray metric of
+eq 31 in the theory note. The optimizer applies $\mathbf G_k$ through
+matrix-free metric-vector actions. Only its projection
 onto the current Newton subspace is factored; no full orbital Hessian or full
 reduced physical metric is assembled. The trial retraction remains additive
 on the immutable sparse supports, and the trust radius bounds the physical
@@ -65,14 +66,15 @@ m_k(\mathbf s)
 =E_k+\mathbf g_k^{\mathrm T}\mathbf s
 +\frac{1}{2}\mathbf s^{\mathrm T}\mathbf H_k\mathbf s,
 \qquad
-\lVert\mathbf s\rVert\leq\Delta_k.
+\mathbf s^{\mathrm T}\mathbf G_k\mathbf s\leq\Delta_k^2.
 $$
 
 An inner solution is certified with the shifted KKT residual
 
 $$
 \mathbf r_k
-=\mathbf g_k+\mathbf H_k\mathbf s_k+\lambda_k\mathbf s_k,
+=\mathbf g_k+\mathbf H_k\mathbf s_k+
+\lambda_k\mathbf G_k\mathbf s_k,
 \qquad
 \frac{\lVert\mathbf r_k\rVert_2}{\lVert\mathbf g_k\rVert_2}
 \leq\eta_k.
@@ -90,21 +92,25 @@ The implementation at the start of the article campaign contains:
 2. an analytic exact-context Hessian-vector product;
 3. a trust-region subproblem solved in a reorthogonalized inner subspace;
 4. a positive local orbital-curvature block preconditioner;
-5. transported accepted-step and positive Ritz secants used only as
-   preconditioning information;
-6. exact objective evaluation before every accepted outer step; and
-7. per-accepted-step records of HVP work, KKT residual, model agreement,
+5. transported accepted-step L-BFGS secants and current-point exact block
+   inverse-BFGS enrichment used only as preconditioning information;
+6. residual-driven block-HVP expansion without a default iteration or
+   subspace cap;
+7. accepted-point curvature and generalized-eigen response recycling;
+8. exact objective evaluation before every accepted outer step; and
+9. per-accepted-step records of HVP work, KKT residual, model agreement,
    spectrum, trust radius, and curvature events.
 
 The finite-difference HVP mode is diagnostic code and must not appear in timing
 or convergence comparisons. An explicitly assembled reduced Hessian is allowed
 only as a small-system reference oracle.
 
-## 4. Baseline state before the final solver revision
+## 4. Historical baseline before the final solver revision
 
 The following single-run results were regenerated with four OpenMP threads and
-one BLAS thread on `node45`. They verify the current numerical state but are not
-publication-quality timing statistics.
+one BLAS thread on `node45` before the residual-driven uncapped solver was
+completed. They are retained only as historical diagnostics and must not be
+used as current or publication-quality timing statistics.
 
 | System | Orbital chart | Outer steps | HVP directions | Final projected gradient 2-norm | SCF time / s |
 |---|---|---:|---:|---:|---:|
@@ -113,15 +119,11 @@ publication-quality timing statistics.
 | MnF2 | strict sparse HAO | 15 | 183 | 4.15456e-5 | 37.74 |
 | FeCl2 | full-AO OEO | 6 | 192 | 2.62862e-4 | 52.99 |
 
-The accepted-step trace identifies the present limiting behavior more clearly
-than aggregate counts. The final three MnF2 steps each consume the full
-32-direction safety budget. Their actual-to-predicted decrease ratios remain
-close to unity, but their KKT residuals do not satisfy the requested inner
-accuracy. All six FeCl2 steps also consume 32 HVPs; their model ratios are close
-to unity, with no rejection and no negative-curvature event, while their KKT
-relative residuals remain between approximately 0.31 and 0.98. Increasing the
-fixed work limit would therefore attack the symptom rather than the spectral
-conditioning problem.
+The historical traces showed why a fixed 32-direction budget was not a valid
+convergence rule: several steps exhausted it while retaining unresolved KKT
+residuals. That budget has been removed. Current runs terminate the inner solve
+from the shifted KKT certificate, outer-accuracy condition, numerical
+dependence, or algebraic completion.
 
 FeCl2 starts only 1.34e-5 hartree above the final energy. It is a useful OEO
 derivative, memory, and endpoint-conditioning test, but it is not by itself a
@@ -158,7 +160,7 @@ the shifted KKT defect
 $$
 \mathbf r_k^{\mathrm B}=
 \mathbf g_k+\mathbf H_k\mathbf p_k^{\mathrm B}
-+\lambda_k\mathbf M_k\mathbf p_k^{\mathrm B}.
++\lambda_k\mathbf G_k\mathbf p_k^{\mathrm B}.
 $$
 
 If
@@ -179,17 +181,18 @@ $$
 
 Every admitted basis vector receives a current-point exact relaxed HVP,
 including the structure response. The final step minimizes the quadratic model
-in this correction space subject to the physical-metric trust radius. Thus the
-four-dimensional limit defines a low-rank curvature correction to L-BFGS; it
-must not be described as a fully converged Newton equation.
+in this correction space subject to the physical-metric trust radius. Positive
+Ritz curvature enriches the inverse preconditioner through an exact block
+secant update, while nonpositive Ritz modes remain explicit in the projected
+trust model.
 
 The admission condition contains no molecule name, basis-size threshold,
 orbital-type branch, outer-iteration index, or required number of secants. It
 asks whether the measured nonlinear contraction met the same forcing target
-used to certify the inner Newton equation. The current four-dimensional safety
-limit still defines a low-rank correction model; failure to meet the residual
-target at that limit is reported rather than labelled as a converged Newton
-solve.
+used to certify the inner Newton equation. There is no default correction-rank
+limit; the reduced coordinate dimension is the finite algebraic completion
+bound, and failure to meet the residual target is never labelled as a
+converged Newton solve.
 
 ## 6. Validation hierarchy
 

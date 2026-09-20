@@ -1946,146 +1946,141 @@ and the physical-metric trust problem is resolved in the augmented subspace.
 Thus HVPs estimate only curvature missing from the structured quasi-Newton
 predictor. As the forcing sequence vanishes, either the cheap predictor itself
 delivers the required contraction or exact defect correction is activated.
-The present implementation retains a four-dimensional correction safety limit;
-reaching this limit is not a Newton convergence certificate.
+The correction space has no empirical dimension cap: expansion ends at the
+shifted KKT certificate, an outer-accuracy stop, numerical dependence, or
+algebraic completion of the reduced orbital space.
 
-### 10.3 Stable inner conjugate directions
+### 10.3 Residual-driven block trust solve
 
-The sparse quotient chart is locally prewhitened by eq 27f, whereas the
-trust-region norm and shifted KKT equation now use the coupled metric of eq
-31 through eq 32a.  The production forcing function uses the dimensionless
-ratio $\lVert\mathbf g_k\rVert_2/\lVert\mathbf g_0\rVert_2$ together with the
-outer accuracy ratio
-$\sqrt{\tau_g/\lVert\mathbf g_0\rVert_2}$ derived in Section 11.7.  The
-orbital KKT residual is checked in the same local coordinate norm.  This is a
-coordinate-consistent inexact-Newton test, but not yet the fully coupled dual
-norm.  The outer stopping criterion uses the corresponding reduced-gradient
-infinity norm.
-
-The three-term preconditioned-CG recurrence can lose conjugacy in finite
-precision even when its Euclidean HVP cache remains consistent. Let
-$\mathbf M^{-1}$ be the fixed positive preconditioner for one inner solve,
-$\mathbf r_j=-\mathbf g_k-\mathbf H_k\mathbf s_j$, and
-$\mathbf z_j=\mathbf M^{-1}\mathbf r_j$. For previously admitted positive-
-curvature directions, restore conjugacy by two passes of
+The production inner iteration is a block subspace method, not a
+three-term conjugate-gradient recurrence. Let the admitted reduced-coordinate
+basis and its exact current-point Hessian images be
 
 $$
-\mathbf p_j\leftarrow\mathbf z_j,
+\mathbf Q_j^{\mathrm T}\mathbf Q_j=\mathbf I,
 \qquad
-\mathbf p_j\leftarrow\mathbf p_j-
-\sum_{i<j}\mathbf p_i
-\frac{(\mathbf H_k\mathbf p_i)^{\mathrm T}\mathbf p_j}
-     {\mathbf p_i^{\mathrm T}\mathbf H_k\mathbf p_i}.
-\tag{66d}
+\mathbf Y_j=\mathbf H_k\mathbf Q_j.
 $$
 
-The summands are applied sequentially within each pass. In exact arithmetic,
-mutual conjugacy and positive curvature make these projections well-defined.
-The line-minimizing update is
+The physical trust metric is projected only after the basis has been built,
 
 $$
-\alpha_j=
-\frac{\mathbf r_j^{\mathrm T}\mathbf p_j}
-     {\mathbf p_j^{\mathrm T}\mathbf H_k\mathbf p_j},
+\mathbf G_j=\mathbf Q_j^{\mathrm T}\mathbf M_k\mathbf Q_j,
 \qquad
-\mathbf s_{j+1}=\mathbf s_j+\alpha_j\mathbf p_j,
-\qquad
-\mathbf r_{j+1}=-\mathbf g_k-\mathbf H_k\mathbf s_{j+1}.
-\tag{66e}
+\mathbf T_j=\frac{1}{2}
+\left(
+\mathbf Q_j^{\mathrm T}\mathbf Y_j+
+\mathbf Y_j^{\mathrm T}\mathbf Q_j
+\right).
 $$
 
-The implementation reconstructs the residual from the accumulated step image
-instead of subtracting successive residual updates. Reorthogonalization uses
-already cached images and introduces no additional HVPs. Direction and image
-storage is linear in the reduced dimension times the inner subspace dimension;
-no dense orbital Hessian is assembled. Positive-definite quadratic tests verify
-conjugacy, a fresh residual, and one HVP per admitted direction at condition
-numbers $10^2$ and $10^6$. These tests do not assert stability for arbitrarily
-ill-conditioned models. Negative-curvature and boundary exits continue to use
-the spectral trust-region solver; reaching the inner work limit still does not
-certify the final-step residual target.
-
-### 10.4 Recycling evaluated curvature into the preconditioner
-
-Discarding the inner HVP subspace after each accepted step loses information
-that can be useful without being treated as a new-point Hessian. Diagonalize
-the small projected matrix from eq 65 and retain its soft positive modes:
+The small generalized trust-region problem is solved spectrally, including its
+indefinite hard case. Its lifted step $\mathbf s_j$ is tested with the
+full-space shifted residual
 
 $$
-\mathbf T\mathbf z_i=\theta_i\mathbf z_i,
-\qquad
-\mathbf s_i=\mathbf Q\mathbf z_i,
-\qquad
-\mathbf y_i=\mathbf Y\mathbf z_i=\mathbf H_k\mathbf s_i,
-\qquad \theta_i>0.
-\tag{66f}
+\mathbf r_j
+=
+\mathbf g_k+\mathbf H_k\mathbf s_j+
+\lambda_j\mathbf M_k\mathbf s_j.
 $$
 
-The **full images** $\mathbf Y\mathbf z_i$ must be used. Replacing them by
-$\theta_i\mathbf s_i$ discards the component outside the sampled subspace.
-In the fixed chart, these pairs satisfy
-$\mathbf s_i^{\mathrm T}\mathbf y_j=\theta_i\delta_{ij}$. For a positive
-inverse preconditioner $\mathbf B$, the inverse-BFGS update is
+If the forcing condition is not met, the next block contains the unresolved
+defect and its positive inverse-model image,
 
 $$
-\mathbf B^+
-=\left(\mathbf I-\frac{\mathbf s_i\mathbf y_i^{\mathrm T}}
-                              {\mathbf s_i^{\mathrm T}\mathbf y_i}\right)
- \mathbf B
- \left(\mathbf I-\frac{\mathbf y_i\mathbf s_i^{\mathrm T}}
-                              {\mathbf s_i^{\mathrm T}\mathbf y_i}\right)
- +\frac{\mathbf s_i\mathbf s_i^{\mathrm T}}
-             {\mathbf s_i^{\mathrm T}\mathbf y_i}.
-\tag{66g}
+\mathbf P_j
+=
+\left[
+-\mathbf r_j,
+-\mathcal B_j\mathbf r_j
+\right].
 $$
 
-Positive curvature preserves positive definiteness. Mutual conjugacy preserves
-previous secant equations within this set, so a complete positive-definite
-quadratic model recovers its inverse after all independent pairs have been
-applied. This identity is tested on a small synthetic model; production uses
-the limited-memory two-loop action, not an assembled inverse matrix.
+Two-pass orthogonalization removes components already represented by
+$\mathbf Q_j$, and all surviving columns are evaluated in one block-HVP
+call. The raw defect prevents a poor positive preconditioner from hiding an
+indefinite direction; the preconditioned defect accelerates the regular
+positive-curvature case.
 
-The current implementation stores accepted secants and sampled positive Ritz
-pairs in the common packed strict-sparse coefficient embedding. Let
-$\mathcal P_k^{\mathrm v}$ and $\mathcal P_k^{\ast}$ denote, respectively, the
-current-chart vector and covector projections defined by the local quotient
-basis and its raw-tangent Gram matrix. A packed historical pair
-$(\overline{\mathbf s}_i,\overline{\mathbf y}_i)$ is reused at point $k$ as
+Negative Ritz modes remain in $\mathbf T_j$ and therefore participate in
+the projected trust-region solution. They never enter a positive inverse
+update. Reaching the boundary is not by itself a full-space certificate, so
+the subspace continues to expand until the shifted full-space residual meets
+the forcing target. There
+is no default HVP-count or subspace-dimension limit. In exact arithmetic the
+reduced dimension is the finite completion bound; numerical dependence or an
+invalid projected solve is reported explicitly rather than relabelled as
+Newton convergence.
+
+### 10.4 Exact block secants and accepted-point recycling
+
+Let $\mathbf S_j$ contain the positive Ritz directions extracted from the
+current exact pair $(\mathbf Q_j,\mathbf Y_j)$, let
+$\mathbf Z_j=\mathbf H_k\mathbf S_j$, and define
 
 $$
-\mathbf s_i^{(k)}
-=\mathcal P_k^{\mathrm v}\overline{\mathbf s}_i,
-\qquad
-\mathbf y_i^{(k)}
-=\mathcal P_k^{\ast}\overline{\mathbf y}_i.
-\tag{66h}
+\mathbf K_j=\mathbf S_j^{\mathrm T}\mathbf Z_j\succ\mathbf 0.
 $$
 
-For an accepted step, the packed pair is the actual displacement between the
-two canonical representatives and their packed gradient difference. For a
-Ritz pair, the old-chart reduced direction and its **full** HVP image are first
-expanded into the same packed embedding. Equation 66h is an extrinsic
-projection transport used only to construct a positive approximate inverse
-preconditioner. It is not used as a current-point HVP, and every new-point
-quadratic model continues to use fresh exact Hessian actions. Pairs whose
-current-chart projected curvature is not positive are rejected. If the
-quotient rank signature changes, the history is cleared.
+For the transported block-LBFGS inverse action $\mathcal B_k$, the exact
+block inverse-BFGS enrichment is
 
-This construction avoids the incorrect dense occupied-orbital transform
-followed by off-support truncation: no coefficient outside the declared sparse
-support is ever introduced. It is a first-order vector transport in the
-embedded representation, not an exact parallel transport for the quotient
-connection. Its role is therefore restricted to preconditioning; convergence
-and acceptance never depend on a transported secant being exact.
+$$
+\begin{aligned}
+\mathcal B_j^+
+={}&
+\left(
+\mathbf I-\mathbf S_j\mathbf K_j^{-1}\mathbf Z_j^{\mathrm T}
+\right)
+\mathcal B_k
+\left(
+\mathbf I-\mathbf Z_j\mathbf K_j^{-1}\mathbf S_j^{\mathrm T}
+\right)
+\\
+&+
+\mathbf S_j\mathbf K_j^{-1}\mathbf S_j^{\mathrm T}.
+\end{aligned}
+$$
 
-The existing history capacity is unchanged. At most one fewer than that
-capacity is filled with positive Ritz pairs, reserving space for the actual
-accepted-step secant when it is admissible. Soft modes are appended last;
-negative and numerically zero Ritz values are excluded only from the positive
-preconditioner, not from the Newton model. This recycling performs no additional
-HVP evaluations. Its benefit depends on curvature persistence between points;
-neither recycling nor the unchanged inner work cap guarantees quadratic
-convergence.
+The implementation applies this expression as an operator and factors only
+the small symmetric matrix $\mathbf K_j$. It satisfies
+
+$$
+\mathcal B_j^+\mathbf Z_j=\mathbf S_j,
+$$
+
+so sampled exact positive curvature replaces the base inverse action on the
+sampled subspace; it is not added on top of the same curvature. The projected
+quadratic model still uses the exact images $\mathbf Y_j$, so the inverse
+update affects only the choice of the next unresolved direction. Nonpositive
+modes remain explicit in the trust subspace.
+
+At one accepted orbital point, $\mathbf Q_j$ and $\mathbf Y_j$ are
+retained across rejected trials and trust-radius changes. A new radius therefore
+requires only a new small projected solve unless its lifted KKT residual admits
+a genuinely new direction. The generalized-eigen response solver independently
+retains, for each selected root, an orthonormal response basis $\mathbf W$
+and the exact image $\mathcal D_k\mathbf W$. A new response right-hand side
+first receives the Galerkin guess
+
+$$
+\mathbf z_0
+=
+\mathbf W
+\left(
+\mathbf W^{\mathrm T}\mathcal D_k\mathbf W
+\right)^{\dagger}
+\mathbf W^{\mathrm T}\mathbf b,
+$$
+
+which is accepted only after evaluating the true bordered residual.
+
+All exact orbital and response images are accepted-point quantities. They are
+destroyed when the orbitals, chart, state selection, or response operator
+changes. Across accepted points only the ordinary step/gradient L-BFGS pairs
+are transported as approximate preconditioning history; no transported pair
+is used as a current-point HVP or Newton certificate.
 
 ### 10.5 Inactive-projected local surrogate
 
@@ -2833,9 +2828,10 @@ a relative error of $3.06\times10^{-8}$, localizing the remaining discrepancy
 to the iteratively solved structure response rather than to the quotient
 coordinates or orbital-gradient pullback.
 
-The residual-driven block subspace of eq 65f retains negative Ritz directions
-and solves the projected indefinite trust-region problem. For the
-1764-structure diagnostic, a 30-step, 32-thread run lowers the energy from
+In a historical fixed-budget revision, the residual-driven block subspace of
+eq 65f retained negative Ritz directions and solved the projected indefinite
+trust-region problem. For the 1764-structure diagnostic, a 30-step, 32-thread
+run lowered the energy from
 $-298.2403673953$ to $-343.4463014459$ hartree and the projected-gradient
 infinity norm to $6.28\times10^{-4}$. The final actual-to-predicted decrease
 ratio is 0.99997, demonstrating an accurate local quadratic model. The energy
@@ -2876,8 +2872,8 @@ of the 558-dimensional reduced Hessian gives eigenvalue bounds
 $-0.48566$ and $90.3696\ E_{\mathrm h}$. At the distinct tenth point of the
 transported trajectory, a deterministic matrix-free spectral probe first
 detects negative curvature at dimension 24 and reaches a lowest Ritz value of
-$-0.41990\ E_{\mathrm h}$ at dimension 32. The ordinary four-dimensional
-gradient-residual subspace at that point does not contain this weakly coupled
+$-0.41990\ E_{\mathrm h}$ at dimension 32. The then-used four-direction
+gradient-residual subspace at that point did not contain this weakly coupled
 mode. However, augmenting the local model with the 32-direction spectral
 subspace at the existing radius predicts a decrease of $0.97590\ E_{\mathrm h}$
 but produces an actual increase of $0.43479\ E_{\mathrm h}$. Its trust ratio is
@@ -2888,11 +2884,11 @@ The approximately 30 accepted steps measure a nonconvex globalization phase
 followed by local Newton convergence; they cannot be interpreted as 30 local
 Newton steps.
 
-At the common production tolerances of $10^{-3}$ for the projected-gradient
-infinity norm and $10^{-7}$ hartree for the accepted energy change, the
-current implementation gives the following complete 32-thread runs. Times
-are end-to-end wall times on the same workstation and are intended as
-regression data rather than machine-independent benchmarks.
+At the common tolerances of $10^{-3}$ for the projected-gradient infinity norm
+and $10^{-7}$ hartree for the accepted energy change, that revision gave the
+following complete 32-thread runs. Times are end-to-end wall times on the same
+workstation and are retained as historical regression data rather than
+current, machine-independent, or publication benchmarks.
 
 | Input | Reduced dimension | Iterations | HVP directions | Final energy / hartree | Final projected gradient infinity norm | Wall time / s | Peak RSS / MiB |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -2941,1234 +2937,337 @@ earlier coordinate audits, and additional limitations are recorded in
 and
 [Matrix-free curvature decomposition diagnostics](matrix_free_curvature_decomposition_diagnostics.md).
 
-### 11.3 State-averaged response cancellation in the 524-structure case
+### 11.3 Historical state-averaged response study
 
-The difficult 524-structure, two-state-average OEO/RI case was used to test
-whether the transported sequential PSB correction was itself responsible for
-the large sampled curvature and slow outer convergence.  A rank-revealing
-simultaneous block multisecant prototype formed the transported displacement
-and missing-curvature blocks
+A 524-structure, two-state-average OEO/RI calculation was used during
+development to separate errors in the outer response from errors in the orbital
+subproblem. The study found strong cancellation between the single-state
+structure responses. Consequently, admitting or rejecting outer response from
+the sum of per-state norms is not invariant to state averaging. The relevant
+quantity is the norm and residual of the weighted state-averaged action itself.
 
-$$
-\mathbf S=[\mathbf s_1,\ldots,\mathbf s_m],
-\qquad
-\mathbf Z=[\mathbf y_1-\mathbf H_k^{\mathrm c}\mathbf s_1,
-            \ldots,
-            \mathbf y_m-\mathbf H_k^{\mathrm c}\mathbf s_m],
-$$
-
-and used the thin singular-value decomposition
-
-$$
-\mathbf S=\mathbf Q\boldsymbol\Sigma\mathbf V^{\mathrm T},
-\qquad
-\mathbf T=\mathbf Z\mathbf V\boldsymbol\Sigma^{-1}.
-$$
-
-With
-
-$$
-\mathbf A=\operatorname{sym}(\mathbf Q^{\mathrm T}\mathbf T),
-\qquad
-\mathbf T_\perp=(\mathbf I-\mathbf Q\mathbf Q^{\mathrm T})\mathbf T,
-$$
-
-the simultaneous symmetric correction was
-
-$$
-\mathbf B
-=\mathbf Q\mathbf A\mathbf Q^{\mathrm T}
-+\mathbf T_\perp\mathbf Q^{\mathrm T}
-+\mathbf Q\mathbf T_\perp^{\mathrm T}.
-$$
-
-Numerical rank was determined from the floating-point backward-error scale,
-not from a molecular threshold.  The prototype preserved the important third
-accepted-step decrease, and all 42 regression tests passed.  It nevertheless
-gave a worse ten-step trajectory: the final energy was
-$-457.097610990672\ E_{\mathrm h}$ and the projected-gradient infinity norm
-was $4.53\times10^{-3}$, compared with $-457.097664804657\ E_{\mathrm h}$ and
-$3.63\times10^{-3}$ for sequential PSB.  Wall time decreased from 498.6 to
-434.9 s because the altered trajectory requested only three rather than six
-outer-response directions; the lower cost did not compensate for the lost
-outer progress.  Sampled spectral radii of approximately
-$1.2$--$1.6\times10^4$ remained at accepted steps 4, 6, and 9.  At step 4 the
-relative block compatibility defect was only 0.0124, excluding accumulated
-sequential incompatibility as the primary origin of that spectral scale.  The
-prototype was therefore removed rather than retained as an alternative path.
-
-A separate fixed-point audit then exposed the physical source of the difficult
-geometry.  The audit tool previously hard-coded a single selected state even
-for a state-averaged input; it was corrected to use the consecutive selected
-roots and equal weights parsed from `WSTATE`.  The corrected initial-point
-audit has projected-gradient two-norm 0.1686088, identical to the production
-trajectory.  The complete and core HVPs are symmetric on the six-direction
-sampled space to relative errors $2.83\times10^{-12}$ and
-$2.96\times10^{-13}$, respectively.  The soft-direction HVP linearity error is
-$3.56\times10^{-8}$.  Thus neither a nonlinear HVP action nor a large
-antisymmetric implementation defect explains this trajectory.
-
-For a unit direction $\mathbf v$, decompose the complete action as
-
-$$
-\mathbf H\mathbf v
-=\mathbf D\mathbf v
-+(\mathbf H^{\mathrm c}-\mathbf D)\mathbf v
-+\mathbf H^{\mathrm o}\mathbf v,
-$$
-
-where $\mathbf D$ is the target-orbital block diagonal of the computational
-core, the second term is cross-target core coupling, and
-$\mathbf H^{\mathrm o}$ is outer response.  The measured signed Rayleigh
-contributions are
-
-| Direction | Diagonal core | Cross-target core | Outer response | Complete |
-|---|---:|---:|---:|---:|
-| projected gradient | 12.5911 | 5.63026 | -0.0166605 | 18.2047 |
-| six-direction minimum-residual step | 0.0118130 | 0.00363556 | -0.00982474 | 0.00562386 |
-| softest sampled Ritz direction | 0.00593426 | 0.0108592 | -0.0159734 | 0.000820048 |
-
-Outer response is small on the gradient direction, with norm only 0.0207 times
-the complete HVP norm.  It is not small on the directions that determine a
-Newton step: the corresponding norm ratios are 2.00 for the sampled Newton
-step and 6.95 for the softest Ritz direction.  In the latter direction two
-positive core contributions are almost cancelled by negative relaxation
-curvature.  A six-direction complete minimum-residual solve reaches relative
-residual 0.207, whereas the core solve reaches 0.675 and its step has complete
-residual 0.660.  A gradient-direction response test therefore systematically
-misses the important physics.
-
-The outer action was further separated into the fixed-selected-state
-active-gradient derivative and the structure-state derivative,
-
-$$
-\mathbf H^{\mathrm o}\mathbf v
-=\mathbf H^{\mathrm{loc}}\mathbf v
-+\mathbf H^{\mathrm{str}}\mathbf v.
-$$
-
-On the same six-direction subspace, the relative skew norms of
-$\mathbf H^{\mathrm{loc}}$ and $\mathbf H^{\mathrm{str}}$ are
-$1.04\times10^{-13}$ and $2.11\times10^{-11}$, respectively, and the
-projected additivity defect is $1.18\times10^{-14}$.  Thus both components are
-linear and self-adjoint to numerical precision.  Nevertheless, on the softest
-sampled direction,
-
-$$
-\frac{\lVert\mathbf H^{\mathrm{loc}}\mathbf v\rVert}
-     {\lVert\mathbf H\mathbf v\rVert}=17.91,
-\qquad
-\frac{\lVert\mathbf H^{\mathrm{str}}\mathbf v\rVert}
-     {\lVert\mathbf H\mathbf v\rVert}=18.27,
-$$
-
-while their signed Rayleigh contributions are
-
-$$
-\mathbf v^{\mathrm T}\mathbf H^{\mathrm{loc}}\mathbf v
-=-1.59338\times10^{-2},
-\qquad
-\mathbf v^{\mathrm T}\mathbf H^{\mathrm{str}}\mathbf v
-=-3.96054\times10^{-5}.
-$$
-
-The small structure Rayleigh quotient therefore does not imply a negligible
-structure action: two large response vectors cancel in components orthogonal
-to $\mathbf v$.  Any approximation that retains only one response component
-destroys this vector cancellation even if it reproduces the scalar curvature
-along one direction.
-
-Single-direction timings on 32 CPU cores quantify the associated trade-off.
-The computational core, a fused core plus local-active action, and the complete
-HVP require 2.19, 3.38, and 3.83 s, respectively.  Replacing the core operator
-by the fused core plus local-active action is therefore only 12% cheaper than
-the complete HVP and 54% more expensive than the core.  More importantly, its
-first three accepted steps leave the projected-gradient infinity norm at
-$2.15\times10^{-2}$ after 3 min 42 s, essentially reproducing the initial
-core-only stagnation.  This experimental path was removed.  The result rules
-out component deletion as a useful response approximation.
-
-A complementary forced-complete-HVP experiment separates the outer optimizer
-from the fidelity policy.  The first exact subproblem uses six HVP directions
-in three width-two calls.  Its relative KKT residual is 0.316, below the
-inexact-Newton forcing term 0.411, and the trial is accepted without rejection
-with trust ratio 0.956.  In one outer step the energy decreases by
-$1.25703\times10^{-3}\ E_{\mathrm h}$ and the projected-gradient infinity
-norm decreases from $2.17\times10^{-2}$ to $5.08\times10^{-3}$.  A second
-complete-HVP step reaches $2.00\times10^{-3}$.  The core-only production path,
-by contrast, remains at $3.63\times10^{-3}$ after ten accepted steps.  This
-establishes that the trust-region/Krylov framework can generate the required
-near-Newton direction when the complete response curvature is present.
-
-The direct complete-HVP route is not yet competitive in wall time.  Two steps
-use 28 HVP directions in 14 width-two calls, 324.6 s of HVP time, 289.5 s of
-outer-response time, and 370.1 s end to end; peak RSS is 2.22 GiB.  The first
-step alone costs 71.9 s in HVP actions, of which 63.9 s is outer response.
-For this RI input the current block interface evaluates its columns through
-the scalar factor-native path.  A same-direction width-two check is exact to
-reported precision and gives only a 1.21-fold wall-time speedup, from 4.04 s
-per scalar action to 3.34 s per direction in the block.  The substantially
-higher average cost on residual Krylov directions must therefore be profiled
-separately; it cannot be attributed to a numerical block-action discrepancy.
-
-The apparent direction dependence was traced to a diagnostic mismatch rather
-than to the orbital direction.  The fixed-point benchmark initially called an
-evaluator overload that defaulted to dense structure diagonalization and
-therefore retained the complete eigenspectrum.  It ignored the input keyword
-`eigensolver=davidson`.  After the benchmark was corrected to propagate the
-requested eigensolver, one Davidson complete HVP costs 13.05 s, including
-9.22 s in the eigensystem response.  The shifted response equation takes 84
-linear iterations and 87 H/S block actions to reach relative residual
-$6.76\times10^{-6}$.  The corresponding dense/full-spectrum response takes
-approximately 0.11 s and no iterative response solve.  Thus Davidson is not
-intrinsically slower for the ground-state eigenproblem; the expensive stage is
-the repeatedly overconverged directional shifted solve used inside the HVP.
-
-The former nested-HVP implementation used one accuracy hierarchy.  Let
-$\eta_k$ be the inexact-Newton forcing term at accepted orbital point $k$, and
-let $\tau_{\mathrm{final}}$ denote the response tolerance implied by the final
-structure energy and gradient requirements.  Its response target was
+The same study tested a directional response tolerance of the form
 
 $$
 \tau_{\mathrm{resp},k}
-=\max\!\left(\tau_{\mathrm{final}},\eta_k^2\right).
-$$
-
-Because the forcing sequence used in that implementation satisfied
-$\eta_k=O(\sqrt{\lVert\mathbf g_k\rVert})$ away from its numerical bounds,
-the directional structure solve has error
-$O(\lVert\mathbf g_k\rVert)$ far from convergence and automatically tightens
-to the requested final accuracy near stationarity.  No molecular dimension,
-element identity, or iteration number enters this rule.  Strict response
-accuracy is retained for isolated candidate-certification probes; the relaxed
-tolerance is used only inside an inexact complete-HVP Krylov solve.
-
-On the 524-structure case the first-step requested tolerance is 0.1686.  The
-HVP time decreases from 69.6 to 26.3 s, eigensystem-response time from 53.5 to
-10.5 s, outer-response time from 61.1 to 17.8 s, and end-to-end time from
-104.7 to 58.5 s.  The accepted energy decrease changes only from
-$1.25703\times10^{-3}$ to $1.25613\times10^{-3}\ E_{\mathrm h}$, and the
-projected-gradient infinity norm changes from $5.08\times10^{-3}$ to
-$5.12\times10^{-3}$.  After two steps the tolerance has automatically
-tightened to 0.0541; wall time is 184.9 s rather than 370.1 s, while the
-projected-gradient infinity norm is $1.94\times10^{-3}$ rather than
-$2.00\times10^{-3}$.  The relaxed nested solve therefore preserves the outer
-trajectory while approximately halving the complete-HVP time over the first
-two accepted steps.
-
-The five-step forced-complete trajectory clarifies the remaining limitation.
-At step 3 the projected-gradient infinity norm reaches
-$7.28\times10^{-4}$ and the energy is $-457.0979184159\ E_{\mathrm h}$, but
-the energy change is still $5.65\times10^{-5}\ E_{\mathrm h}$.  Subsequent
-steps lower the energy further to $-457.0980471425\ E_{\mathrm h}$, far below
-the ten-step core value $-457.0976648047\ E_{\mathrm h}$, while the fifth-step
-gradient is $1.12\times10^{-3}$.  The run is therefore exploring a materially
-lower valley rather than merely polishing the old core trajectory.
-
-Steps 3 and 4 both use 34 directions, including the two-direction interior
-pilot beyond the nominal 32-direction work tranche.  Their KKT relative
-residuals are 0.399 and 0.916, compared with forcing terms 0.135 and 0.0936;
-both stop by the subspace work budget.  They consume 198 and 224 s of HVP time,
-respectively.  Hence the remaining loss of local Newton behavior is no longer
-caused by the accuracy of an individual Davidson response solve.  It is caused
-by an orbital Krylov space that becomes too large before resolving the coupled
-Newton residual.  Simply removing the work limit would improve the formal
-subproblem residual but would not be a competitive algorithm: the five-step
-run already costs 1068 s.  The next optimization target is therefore a
-response-aware preconditioner or coupled orbital--structure block solve that
-reduces the required subspace dimension, not a larger fixed Krylov budget.
-
-An auxiliary three-root Davidson solve places the unselected boundary root
-approximately $0.205\ E_{\mathrm h}$ above the second selected root at the
-initial point.  The cancellation is consequently not attributable to a
-second/third-root near degeneracy or simple root flipping.  It is a collective
-orbital--structure relaxation effect: fixed-structure core curvature makes the
-mode appear hard, while response makes the complete mode soft.  A core-only
-Krylov space followed by one exact action on its final candidate can certify
-that the candidate is inadequate, but it cannot generate a direction that is
-soft only after response is included.  Cross-point PSB learns such curvature
-only after accepted motion and becomes progressively less transferable as the
-response-softened subspace rotates.
-
-The resulting algorithmic target is therefore a same-point,
-response-informed Krylov enrichment, not a more aggressive cross-point secant
-fit.  Exact outer actions must be selected by the unresolved complete Newton
-residual and used to create new search directions.  A practical method must
-bound this enrichment by measured wall time and reuse block structure-response
-work; simply applying the complete HVP to every Krylov vector remains too
-expensive for the large-active-space regime.
-
-Equivalently, let $\mathbf p$ denote the orbital step and $\mathbf z$ the
-combined tangent response of the selected structure states.  The coupled
-Newton equation has the schematic saddle-point form
-
-$$
-\begin{bmatrix}
-\mathbf A & \mathbf B^{\mathrm T}\\
-\mathbf B & \mathbf C
-\end{bmatrix}
-\begin{bmatrix}
-\mathbf p\\
-\mathbf z
-\end{bmatrix}
-=-
-\begin{bmatrix}
-\mathbf g\\
-\mathbf 0
-\end{bmatrix},
-$$
-
-where $\mathbf A$ contains the fixed-state orbital curvature, $\mathbf B$ is
-the orbital--structure coupling, and $\mathbf C$ is the projected
-structure-state Hessian.  Explicit elimination gives the relaxed orbital
-operator
-
-$$
-\mathbf H_{\mathrm{rel}}
-=\mathbf A-\mathbf B^{\mathrm T}\mathbf C^{\dagger}\mathbf B.
-$$
-
-The present complete HVP realizes this Schur-complement physics through a new
-directional response calculation for every orbital Krylov vector.  A coupled
-matrix-free block solve is the principled route to retain the cancellation
-without repeatedly converging an eliminated response problem.  It must be
-constructed in the normalized structure tangent space, preserve the
-state-average weights, and use direct H/S actions so that neither a dense
-structure Hessian nor a dense orbital Hessian is formed.
-
-### 11.4 Matrix-free coupled orbital--structure Newton equation
-
-For an equal-weight cluster containing $m$ selected structure states, collect
-the accepted generalized eigenvectors in
-$\mathbf C\in\mathbb R^{n_s\times m}$ and their energies in the diagonal
-matrix $\boldsymbol\Lambda$.  They satisfy
-
-$$
-\mathbf H\mathbf C=\mathbf S\mathbf C\boldsymbol\Lambda,
-\qquad
-\mathbf C^{\mathrm T}\mathbf S\mathbf C=\mathbf I.
-$$
-
-An orbital direction $\mathbf p$ induces the structure-matrix images
-
-$$
-\mathbf F(\mathbf p)
-=D\mathbf H[\mathbf p]\mathbf C
--D\mathbf S[\mathbf p]\mathbf C\boldsymbol\Lambda,
-\qquad
-\mathbf N(\mathbf p)
-=\frac{1}{2}\mathbf C^{\mathrm T}
-D\mathbf S[\mathbf p]\mathbf C.
-$$
-
-The selected-state tangent $\mathbf Z$ is defined in the symmetric horizontal
-gauge
-
-$$
-\mathbf C^{\mathrm T}\mathbf S\mathbf Z
-=-\frac{1}{2}\mathbf C^{\mathrm T}
-D\mathbf S[\mathbf p]\mathbf C.
-$$
-
-Consequently, a full matrix $\mathbf M\in\mathbb R^{m\times m}$ is required
-as the multiplier of the horizontal constraint.  Replacing $\mathbf M$ by one
-scalar per state is valid only for isolated one-state clusters; for a
-multistate cluster it reintroduces selected--selected inverse gaps that are
-pure gauge for an equal-weight average.  Define the matrix-free response block
-
-$$
-\mathcal C
-\begin{bmatrix}\mathbf Z\\\mathbf M\end{bmatrix}
 =
-\begin{bmatrix}
-\mathbf H\mathbf Z
--\mathbf S\mathbf Z\boldsymbol\Lambda
-+\mathbf S\mathbf C\mathbf M\\
-\mathbf C^{\mathrm T}\mathbf S\mathbf Z
-\end{bmatrix}.
-$$
-
-For a matrix-free projected solution, both the horizontal constraint and the
-multiplier image select the Euclidean complement of
-$\operatorname{range}(\mathbf S\mathbf C)$.  If
-$\mathbf Q_{SC}$ is an orthonormal basis for this range, the symmetric
-projector is
-
-$$
-\mathbf P_{SC}
-=
-\mathbf I-\mathbf Q_{SC}\mathbf Q_{SC}^{\mathrm T},
-$$
-
-and the external response for column $i$ is obtained from
-
-$$
-\mathbf P_{SC}
-(\mathbf H-E_i\mathbf S)
-\mathbf P_{SC}\mathbf z_i
-=
--\mathbf P_{SC}\mathbf f_i.
-$$
-
-Projecting against $\operatorname{range}(\mathbf C)$ instead is incorrect in
-a nonorthogonal structure basis: the residual is then left in
-$\operatorname{range}(\mathbf C)$, whereas the multiplier can absorb only an
-$\mathbf S\mathbf C$ component.  The two spaces coincide only in special
-commuting or orthogonal cases.  The $\mathbf P_{SC}$ construction preserves a
-symmetric projected operator and enforces
-$\mathbf C^{\mathrm T}\mathbf S\mathbf Z_{\mathrm{ext}}=\mathbf 0$ directly.
-
-For a per-state weight $w$, the symmetric coupled coordinates are
-$\mathbf q=\sqrt{2w}\,\operatorname{vec}(\mathbf Z,\mathbf M)$.  The same
-factor multiplies the orbital-to-response forcing
-$\operatorname{vec}(\mathbf F,\mathbf N)$.  This scaling makes the two mixed
-actions exact Euclidean adjoints; it is not a numerical tuning parameter.
-Different state weights define different clusters, because rotations between
-states of unequal weight are physical rather than gauge degrees of freedom.
-
-At a trust-region shift $\lambda$, the coupled Newton equation is
-
-$$
-\begin{bmatrix}
-\mathbf A+\lambda\mathbf G & \mathbf B^{\mathrm T}\\
-\mathbf B & \mathbf C
-\end{bmatrix}
-\begin{bmatrix}\mathbf p\\\mathbf q\end{bmatrix}
-=-
-\begin{bmatrix}\mathbf g\\\mathbf 0\end{bmatrix},
-\qquad
-\|\mathbf p\|_{\mathbf G}\leq\Delta.
-$$
-
-An iterative structure eigensolver generally leaves a small accepted-point
-KKT defect.  In the same symmetric response coordinates it is
-
-$$
-\mathbf r_s
-=
-\sqrt{2w}\,\operatorname{vec}
-\left(
-\mathbf H\mathbf C-
-\mathbf S\mathbf C\boldsymbol\Lambda,
-\frac{1}{2}
-\left(
-\mathbf C^{\mathrm T}\mathbf S\mathbf C-\mathbf I
-\right)
-\right).
-$$
-
-The exact coupled right-hand side is therefore
-$-(\mathbf g,\mathbf r_s)^{\mathrm T}$, rather than
-$-(\mathbf g,\mathbf 0)^{\mathrm T}$.  It is useful to remove this defect once
-per accepted orbital point by solving
-
-$$
-\mathcal C\mathbf q_0=-\mathbf r_s,
-\qquad
-\overline{\mathbf g}
-=
-\mathbf g+\mathbf B^{\mathrm T}\mathbf q_0.
-$$
-
-Writing the total response as $\mathbf q=\mathbf q_0+\mathbf z$ then restores
-the standard homogeneous response equation with orbital right-hand side
-$-\overline{\mathbf g}$.  This correction does not justify a loose Davidson
-solve: the preconditioned norm of $\mathbf r_s$ and its estimated energy
-correction must remain subordinate to the outer inexact-Newton and energy
-accuracy requirements.
-
-For a finite matrix-free defect solve, define the remaining response residual
-
-$$
-\mathbf e_0
-=
-\mathbf r_s+\mathbf C\mathbf q_0.
-$$
-
-The exact change of the coupled quadratic model at fixed orbitals is
-
-$$
-\delta_0
-=
-\mathbf r_s^{\mathrm T}\mathbf q_0
-+
-\frac{1}{2}\mathbf q_0^{\mathrm T}\mathbf C\mathbf q_0
-=
-\frac{1}{2}\mathbf r_s^{\mathrm T}\mathbf q_0
-+
-\frac{1}{2}\mathbf q_0^{\mathrm T}\mathbf e_0.
-$$
-
-Thus $\frac{1}{2}\mathbf r_s^{\mathrm T}\mathbf q_0$ is only the stationary
-limit.  A finite residual must not be omitted from predicted-reduction
-bookkeeping, and $\overline{\mathbf g}$ may enter the orbital Newton equation
-only after the defect solve satisfies its explicit residual certificate.
-
-Here $\mathbf G$ is the nonredundant orbital metric.  The shift and the trust
-constraint act only on $\mathbf p$: the structure tangent is an induced
-first-order response, not an independently bounded physical displacement.
-Eliminating $\mathbf q$ gives
-
-$$
-\left(
-\mathbf A-\mathbf B^{\mathrm T}\mathbf C^{-1}\mathbf B
-+\lambda\mathbf G
-\right)\mathbf p=-\overline{\mathbf g},
-$$
-
-which is exactly the relaxed matrix-free orbital Newton equation.  The coupled
-form therefore changes the linear-algebra realization, not the energy model.
-Its advantage is that MINRES can reduce the joint residual using inexpensive
-H/S block actions without converging a separate structure-response problem for
-every orbital Krylov vector.
-
-A symmetric positive-definite MINRES preconditioner can be constructed without
-inverting the indefinite response KKT block.  For selected state $i$, define
-
-$$
-\mathbf D_i
-=
-\operatorname{diag}
-\left[
 \max\left(
-|H_{aa}-E_iS_{aa}|,
-\epsilon_i
-\right)
-\right],
-$$
-
-where $\epsilon_i$ is only the floating-point roundoff floor at the diagonal
-scale.  With $\mathbf N=\mathbf S\mathbf C$ for the corresponding equal-weight
-cluster, set
-
-$$
-\mathbf R_i
-=
-\mathbf N^{\mathrm T}\mathbf D_i^{-1}\mathbf N,
-\qquad
-\mathbf L_i
-=
-\begin{bmatrix}
-\mathbf I&\mathbf 0\\
-\mathbf N^{\mathrm T}\mathbf D_i^{-1}&\mathbf I
-\end{bmatrix},
-$$
-
-and use the sign-flipped bordered factor
-
-$$
-\mathbf P_i
-=
-\mathbf L_i
-\begin{bmatrix}
-\mathbf D_i&\mathbf 0\\
-\mathbf 0&\mathbf R_i
-\end{bmatrix}
-\mathbf L_i^{\mathrm T}.
-$$
-
-This matrix is SPD, while retaining the coefficient--normalization coupling of
-the response KKT system.  The small $\mathbf R_i$ inverse needs only
-roundoff-scale numerical-rank protection.  Combining these response factors
-with the positive orbital preconditioner gives an SPD block preconditioner for
-the complete coupled MINRES iteration; no molecular threshold is introduced.
-
-#### 11.4.1 Spectral target for the structure-response preconditioner
-
-Positive definiteness is a necessary MINRES contract, but it does not by
-itself imply an effective preconditioner.  For one selected state, write the
-bordered structure-response operator as
-
-$$
-\mathcal C_i=
-\begin{bmatrix}
-\mathbf K_i&\mathbf N\\
-\mathbf N^{\mathrm T}&\mathbf 0
-\end{bmatrix},
-\qquad
-\mathbf K_i=\mathbf H-E_i\mathbf S,
-\qquad
-\mathbf N=\mathbf S\mathbf C_{\mathrm{cluster}}.
-$$
-
-For any nonsingular real symmetric matrix $\mathcal C_i=\mathbf U
-\boldsymbol\Gamma\mathbf U^{\mathrm T}$, the ideal SPD preconditioner is its
-matrix absolute value,
-
-$$
-\mathbf P_{\star,i}=|\mathcal C_i|
-=\mathbf U|\boldsymbol\Gamma|\mathbf U^{\mathrm T}.
-$$
-
-It gives
-
-$$
-\mathbf P_{\star,i}^{-1/2}\mathcal C_i
-\mathbf P_{\star,i}^{-1/2}
-=\mathbf U\operatorname{sign}(\boldsymbol\Gamma)\mathbf U^{\mathrm T},
-$$
-
-whose spectrum is contained in $\{-1,+1\}$.  Consequently, exact-arithmetic
-MINRES terminates after a polynomial of degree at most two.  This is the
-parameter-free spectral reference against which an approximate response
-preconditioner must be judged.  A candidate is not accepted merely because it
-is SPD or reduces wall time in one molecule; it must compress the absolute
-preconditioned spectrum and reduce H/S actions at the same residual
-certificate.
-
-The structure eigenproblem provides a corresponding coefficient-space
-reference.  Let
-
-$$
-\mathbf H\mathbf X=\mathbf S\mathbf X\boldsymbol\Lambda,
-\qquad
-\mathbf X^{\mathrm T}\mathbf S\mathbf X=\mathbf I.
-$$
-
-After removing the selected equal-weight cluster, denote the external
-eigenvectors and energy gaps by $\mathbf X_e$ and
-$\boldsymbol\Delta_i=\boldsymbol\Lambda_e-E_i\mathbf I$.  Then
-
-$$
-\mathbf B_{\star,i}
-=\mathbf X_e|\boldsymbol\Delta_i|^{-1}\mathbf X_e^{\mathrm T}
-$$
-
-is the exact absolute inverse on the external response space, because
-
-$$
-\mathbf B_{\star,i}\mathbf K_i\mathbf X_e
-=\mathbf X_e\operatorname{sign}(\boldsymbol\Delta_i).
-$$
-
-The selected-space null directions are not inverted by this expression; they
-are handled by the bordered normalization block.  For any SPD coefficient
-inverse $\mathbf B_i$, define
-
-$$
-\mathbf R_i=\mathbf N^{\mathrm T}\mathbf B_i\mathbf N.
-$$
-
-The inverse of the associated SPD bordered factor acts on a residual
-$(\mathbf r_c,\mathbf r_m)$ as
-
-$$
-\begin{aligned}
-\mathbf d&=\mathbf B_i\mathbf r_c,\\
-\boldsymbol\mu&=\mathbf R_i^{-1}
-\left(\mathbf r_m-\mathbf N^{\mathrm T}\mathbf d\right),\\
-\mathbf z&=\mathbf d-\mathbf B_i\mathbf N\boldsymbol\mu.
-\end{aligned}
-$$
-
-Thus the existing bordered construction remains valid if the diagonal
-coefficient inverse is replaced by a demonstrably better SPD spectral
-approximation.
-
-#### 11.4.2 Why the Newton response basis is not new preconditioning information
-
-Let $\mathbf W$ be the current response trial basis and let $\mathbf r$ be the
-Galerkin residual.  By construction,
-
-$$
-\mathbf W^{\mathrm T}\mathbf r=\mathbf 0.
-$$
-
-Every additive coarse inverse whose domain and range are both contained in
-$\operatorname{range}(\mathbf W)$ therefore gives
-
-$$
-\mathbf W\mathbf T\mathbf W^{\mathrm T}\mathbf r=\mathbf 0
-$$
-
-for any matrix $\mathbf T$.  Such a correction cannot change the next Krylov
-expansion direction.  A secant update assembled only from
-$\mathbf W$ and $\mathcal C_i\mathbf W$ can create components outside
-$\mathbf W$ through its base inverse, but it contains no independent spectral
-observation; it only reorganizes operator images already used by the Galerkin
-solve.  It therefore has no general condition-number improvement guarantee.
-
-An independent accepted-point Davidson subspace does provide new information.
-Let $\mathbf Q$ be a block of S-orthonormal projected Ritz vectors that is
-orthogonal to the selected cluster, and define
-
-$$
-\boldsymbol\Theta=\mathbf Q^{\mathrm T}\mathbf H\mathbf Q,
-\qquad
-\boldsymbol\Delta_i=\boldsymbol\Theta-E_i\mathbf I,
-$$
-
-where the Ritz basis diagonalizes $\boldsymbol\Theta$.  With
-
-$$
-\mathbf Y_i=
-(\mathbf H-E_i\mathbf S)\mathbf Q
-\operatorname{sign}(\boldsymbol\Delta_i),
-$$
-
-one has the exact projected identity
-
-$$
-\mathbf Q^{\mathrm T}\mathbf Y_i=|\boldsymbol\Delta_i|\succ\mathbf0
-$$
-
-for every retained nonzero Ritz gap, irrespective of the off-subspace Ritz
-residual.  Starting from an SPD inverse $\mathbf B_{0,i}$, the block inverse-DFP
-update
-
-$$
-\begin{aligned}
-\mathbf B_i={}&\mathbf B_{0,i}
--\mathbf B_{0,i}\mathbf Y_i
-(\mathbf Y_i^{\mathrm T}\mathbf B_{0,i}\mathbf Y_i)^{-1}
-\mathbf Y_i^{\mathrm T}\mathbf B_{0,i}\\
-&+\mathbf Q(\mathbf Q^{\mathrm T}\mathbf Y_i)^{-1}\mathbf Q^{\mathrm T}
-\end{aligned}
-$$
-
-is SPD and satisfies the block secant equation
-
-$$
-\mathbf B_i\mathbf Y_i=\mathbf Q.
-$$
-
-No molecular gap cutoff is required for this algebraic guarantee.  Modes may
-be omitted only because of a stated memory budget or because their projected
-gap is below the floating-point numerical-rank floor; those are resource and
-arithmetic constraints, not fitted physical parameters.  The Davidson basis,
-its H image, and its S image are already generated during the accepted-point
-eigensolve, so this construction requires no additional H/S action.  Retaining
-$m$ Ritz modes costs $3n_sm$ floating-point values if all three blocks are
-stored.
-
-This construction is admitted to the production solver only after two
-separate tests.  First, dense reference systems must show that it reduces the
-absolute spectral spread
-
-$$
-\kappa_{|\lambda|}
-=\frac{\max_j|\lambda_j|}{\min_j|\lambda_j|},
-\qquad
-\mathcal C_i\mathbf v_j
-=\lambda_j\mathbf P_i\mathbf v_j,
-$$
-
-relative to the diagonal bordered factor.  Second, complete VBSCF runs must
-show fewer response H/S actions at the same coupled residual and outer energy
-and gradient tolerances.  Failure of either test rejects the update; timings
-alone are not used to tune a mode count or a molecular threshold.
-
-The spectrum relevant to orbital globalization is not the spectrum of the
-indefinite coupled KKT matrix.  It is the generalized spectrum of the relaxed
-Schur operator
-
-$$
-\mathbf H_R
-=
-\mathbf A-
-\mathbf B^{\mathrm T}\mathbf C^{-1}\mathbf B,
-\qquad
-\mathbf H_R\mathbf v
-=
-\theta\mathbf G\mathbf v.
-$$
-
-For an orbital trial basis $\mathbf V$, response-stationary lifts are obtained
-without constructing $\mathbf H_R$:
-
-$$
-\mathbf C\mathbf Q=-\mathbf B\mathbf V.
-$$
-
-The projected pencil is then
-
-$$
-\mathbf V^{\mathrm T}
-\left(
-\mathbf A\mathbf V+
-\mathbf B^{\mathrm T}\mathbf Q
-\right)\mathbf y
-=
-\theta
-\mathbf V^{\mathrm T}\mathbf G\mathbf V\mathbf y.
-$$
-
-When $\mathbf V$ does not span the full orbital coordinate space, its smallest
-Ritz value is an upper bound to the global smallest generalized eigenvalue,
-not a lower bound.  For an inexact response lift with residual
-$\mathbf r=\mathbf B\mathbf v+\mathbf C\mathbf q$, the evaluated coupled-ray
-curvature and the exact Schur curvature differ by
-
-$$
-\kappa_{\mathrm{ray}}
-=
-\mathbf v^{\mathrm T}\mathbf H_R\mathbf v
-+\mathbf r^{\mathrm T}\mathbf C^{-1}\mathbf r.
-$$
-
-Because the response KKT block $\mathbf C$ is indefinite, a small residual by
-itself does not determine the sign of the correction.  A strict negative
-Schur-curvature certificate requires, for example, a proven bound
-$\gamma\geq\|\mathbf C^{-1}\|_2$ and
-
-$$
-\kappa_{\mathrm{ray}}+\gamma\|\mathbf r\|_2^2<0.
-$$
-
-Without such a bound the ray curvature is only a diagnostic.  Likewise, a
-positive projected Ritz value does not certify global positive
-semidefiniteness.  The full residual of the lifted Ritz pair provides a
-deterministic expansion direction; the status must remain ``explored
-subspace'' until full-space coverage or an independent analytic global bound
-is available.
-
-Before such a global certificate is available, every accepted projected
-Newton step should be compared with a matrix-free relaxed Cauchy incumbent.
-Using the defect-corrected gradient, define
-
-$$
-\mathbf d=-\mathbf G^{-1}\overline{\mathbf g},
-\qquad
-\mathbf C\mathbf y=-\mathbf B\mathbf d,
-\qquad
-\alpha_{\max}
-=
-\frac{\Delta}{\|\mathbf d\|_{\mathbf G}}.
-$$
-
-For a finite response solve let
-
-$$
-\mathbf e=\mathbf B\mathbf d+\mathbf C\mathbf y.
-$$
-
-If the preceding structure-defect correction leaves
-$\mathbf e_0=\mathbf r_s+\mathbf C\mathbf q_0$, the exact linear coefficient
-of this coupled ray is
-
-$$
-\ell
-=
-\overline{\mathbf g}^{\mathrm T}\mathbf d
-+\mathbf e_0^{\mathrm T}\mathbf y.
-$$
-
-The exact curvature of the returned coupled ray is
-
-$$
-\kappa
-=
-\begin{bmatrix}\mathbf d\\\mathbf y\end{bmatrix}^{\mathrm T}
-\begin{bmatrix}
-\mathbf A&\mathbf B^{\mathrm T}\\
-\mathbf B&\mathbf C
-\end{bmatrix}
-\begin{bmatrix}\mathbf d\\\mathbf y\end{bmatrix}
-=
-\mathbf d^{\mathrm T}
-\left(
-\mathbf A\mathbf d+\mathbf B^{\mathrm T}\mathbf y
-\right)
-+
-\mathbf y^{\mathrm T}\mathbf e.
-$$
-
-Consequently,
-
-$$
-\alpha_C
-=
-\begin{cases}
-\alpha_{\max}, & \kappa\leq 0,\\
-\min\left(
-\alpha_{\max},
--\ell/\kappa
-\right), & \kappa>0,
-\end{cases}
-$$
-
-gives a feasible positive-decrease incumbent whenever the response solve and
-the computed model decrease are explicitly certified.  This is a
-sufficient-decrease guarantee, not a claim of global trust-region optimality.
-
-A trust-region multiplier is globally certified only when the explicit
-coupled KKT residual satisfies the inexact-Newton forcing condition, the
-shifted relaxed operator is positive semidefinite on the complete orbital
-tangent space, and either $\lambda=0$ with an interior orbital step or
-
-$$
-\|\mathbf p\|_{\mathbf G}=\Delta,
-\qquad \lambda>0.
-$$
-
-A norm match alone is not a sufficient trust-region certificate.  In
-particular, ordinary coupled-KKT Ritz values cannot supply this condition,
-because the response KKT block is itself indefinite.  Until a complete
-relaxed-spectrum certificate and the classical hard-case completion are
-available, the algorithm should report projected convergence and retain the
-Cauchy decrease guarantee rather than label the step a global solution.
-
-### 11.6 Two-space coupled Newton--Krylov projection
-
-Solving one complete response equation for every new orbital Krylov vector
-would reproduce the Schur action, but it would also make structure response
-the compulsory inner loop.  A more efficient matrix-free construction grows
-the orbital and response spaces independently.  Let
-
-$$
-\mathbf V^{\mathrm T}\mathbf G\mathbf V=\mathbf I,
-\qquad
-\mathbf W^{\mathrm T}\mathbf W=\mathbf I,
-$$
-
-and cache only the block images
-
-$$
-\mathbf A\mathbf V,
-\quad
-\mathbf B\mathbf V,
-\quad
-\mathbf G\mathbf V,
-\quad
-\mathbf B^{\mathrm T}\mathbf W,
-\quad
-\mathbf C\mathbf W.
-$$
-
-The small coupled blocks are then
-
-$$
-\mathbf A_V=\mathbf V^{\mathrm T}\mathbf A\mathbf V,
-\qquad
-\mathbf M_V=\mathbf V^{\mathrm T}\mathbf G\mathbf V,
-$$
-
-$$
-\mathbf C_W=\mathbf W^{\mathrm T}\mathbf C\mathbf W,
-\qquad
-\mathbf D=\mathbf W^{\mathrm T}\mathbf B\mathbf V.
-$$
-
-For projected gradients
-
-$$
-\mathbf g_V=\mathbf V^{\mathrm T}\mathbf g,
-\qquad
-\mathbf r_W=\mathbf W^{\mathrm T}\mathbf r_s,
-$$
-
-the response coordinates satisfy
-
-$$
-\mathbf C_W\mathbf u_0=-\mathbf r_W,
-\qquad
-\mathbf C_W\mathbf U_y=-\mathbf D.
-$$
-
-Thus
-
-$$
-\overline{\mathbf g}_V
-=
-\mathbf g_V+\mathbf D^{\mathrm T}\mathbf u_0,
-$$
-
-$$
-\overline{\mathbf H}_V
-=
-\mathbf A_V+\mathbf D^{\mathrm T}\mathbf U_y,
-$$
-
-and the small orbital trust-region problem is
-
-$$
-\min_{\mathbf y}
-\left(
-\overline{\mathbf g}_V^{\mathrm T}\mathbf y
-+\frac12\mathbf y^{\mathrm T}
-\overline{\mathbf H}_V\mathbf y
+\tau_{\mathrm{final}},
+\eta_k^2
 \right),
-\qquad
-\mathbf y^{\mathrm T}\mathbf M_V\mathbf y\leq\Delta^2.
+\tag{66al}
 $$
 
-The physical trial is reconstructed as
+which reduced the cost of early HVPs while tightening automatically near
+stationarity. These runs established that oversolving each nested response can
+dominate wall time, but also that a loose response solve cannot replace the
+outer shifted-KKT certificate.
+
+The fixed 32-direction orbital budget used in those experiments frequently
+terminated before that certificate. Those trajectories are therefore
+development diagnostics, not evidence for the convergence order of the final
+method. They motivated the current design: uncapped residual-driven orbital
+expansion, exact block-secant enrichment, block RI contractions, and
+accepted-point response recycling. Publication measurements must be regenerated
+with the final implementation and the protocol of Section 11.6.
+
+### 11.4 Final relaxed Hessian realization
+
+At an accepted orbital point, let $\mathbf p$ denote a nonredundant orbital
+tangent and let $\mathbf z$ collect the external generalized-eigenvector
+response, including the normalization multipliers required for an equal-weight
+state cluster. The second variation of the stationary VBSCF Lagrangian has the
+block form
 
 $$
-\mathbf p=\mathbf V\mathbf y,
-\qquad
-\mathbf q=\mathbf W
+\delta^2\mathcal L
+=
+\mathbf g^{\mathrm T}\mathbf p
++
+\frac{1}{2}\mathbf p^{\mathrm T}\mathbf A\mathbf p
++
+\mathbf p^{\mathrm T}\mathbf B^{\mathrm T}\mathbf z
++
+\frac{1}{2}\mathbf z^{\mathrm T}\mathbf C\mathbf z.
+\tag{67}
+$$
+
+Here $\mathbf A$ is the fixed-structure orbital block,
+$\mathbf B$ is the orbital--structure coupling, and $\mathbf C$ is the
+bordered structure-response operator on the physical external response space.
+Stationarity with respect to the response variables gives
+
+$$
+\mathbf C\mathbf z(\mathbf p)=-\mathbf B\mathbf p.
+\tag{68}
+$$
+
+The relaxed orbital Hessian action is therefore
+
+$$
+\mathbf H_R\mathbf p
+=
+\mathbf A\mathbf p+
+\mathbf B^{\mathrm T}\mathbf z(\mathbf p)
+=
 \left(
-\mathbf u_0+\mathbf U_y\mathbf y
-\right).
+\mathbf A-
+\mathbf B^{\mathrm T}\mathbf C^{\dagger}\mathbf B
+\right)\mathbf p,
+\tag{69}
 $$
 
-Changing only $\Delta$ therefore requires another small projected solve and
-no new application of $\mathbf A$, $\mathbf B$, $\mathbf B^{\mathrm T}$,
-$\mathbf C$, or $\mathbf G$.  A newly accepted orbital point invalidates all
-five image caches; a rejected trial or a radius-only change does not.
+where the pseudoinverse notation refers only to the physical projected
+response space. Equation 69 is a mathematical Schur complement; neither
+$\mathbf H_R$, $\mathbf C$, nor $\mathbf C^{\dagger}$ is assembled
+in production.
 
-The projected equations alone are not a stopping certificate.  The complete
-shifted KKT residual must be reconstructed from cached full-space images:
+For each HVP direction, the implementation differentiates the accepted
+orbital-preparation and integral maps, forms the selected-state Hamiltonian and
+overlap forcing, solves eq 68 with the matrix-free generalized-eigen response
+operator, and pulls the response adjoint back to the orbital quotient. Dense
+and Davidson structure eigensolvers therefore define the same relaxed
+derivative; they differ only in how the accepted state and the matrix-free
+H/S action are obtained. Equal-weight state averaging enters $\mathbf A$,
+$\mathbf B$, and $\mathbf C$ through the normalized state weights, so
+the final action is the weighted Hessian of the state-averaged energy.
+
+If an iterative response has residual
 
 $$
-\mathbf r_p
+\mathbf e(\mathbf p)
 =
-\mathbf g+\mathbf A\mathbf p
-+\mathbf B^{\mathrm T}\mathbf q
-+\lambda\mathbf G\mathbf p,
+\mathbf B\mathbf p+
+\mathbf C\widetilde{\mathbf z}(\mathbf p),
+\tag{70}
 $$
 
+its orbital-action error is
+
 $$
-\mathbf r_q
+\widetilde{\mathbf H}_R\mathbf p-
+\mathbf H_R\mathbf p
 =
-\mathbf r_s+\mathbf B\mathbf p+\mathbf C\mathbf q.
+\mathbf B^{\mathrm T}\mathbf C^{\dagger}\mathbf e(\mathbf p).
+\tag{71}
 $$
 
-Scale-free backward errors are, for example,
+Thus response accuracy is part of the HVP backward error and must be subordinate
+to the outer Newton forcing requirement. The accepted-point response recycle
+of Section 10.4 changes only the initial guess for eq 68; every returned
+response is certified by its true bordered residual.
+
+The earlier explicit two-space orbital--structure workspace implemented the
+same Schur model with $\mathbf z$ as an optimization variable. It is not
+part of the final method: it duplicated stopping logic and fixed-rank
+recycling without changing eq 69, and has been removed from the production
+code.
+
+### 11.5 Final TNHVP control law
+
+Let $g_k=\lVert\mathbf g_k\rVert_2$,
+$g_0=\lVert\mathbf g_0\rVert_2$, and let $\tau_g$ be the requested
+outer projected-gradient tolerance. The progress forcing is
 
 $$
-\eta_p
+\eta_k^{\mathrm{prog}}
 =
-\frac{
-\|\mathbf r_p\|_2
-}{
-\|\mathbf g\|_2+\|\mathbf A\mathbf p\|_2
-+\|\mathbf B^{\mathrm T}\mathbf q\|_2
-+|\lambda|\|\mathbf G\mathbf p\|_2
-},
-$$
-
-$$
-\eta_q
-=
-\frac{
-\|\mathbf r_q\|_2
-}{
-\|\mathbf r_s\|_2+\|\mathbf B\mathbf p\|_2
-+\|\mathbf C\mathbf q\|_2
-}.
-$$
-
-No dimensionful constant is added to either denominator.  If every term in
-one equation vanishes, its backward error is defined as zero only when the
-corresponding residual also vanishes; otherwise it is infinite.  This
-convention is invariant to a common scaling of an equation and prevents an
-implicit one-hartree scale from weakening the structure or orbital
-certificate.
-
-If only $\eta_p$ fails, the orbital space is expanded with a suitably
-preconditioned orbital residual.  If only $\eta_q$ fails, the response space
-is expanded.  If both fail, the two independent blocks may be expanded in one
-outer subproblem iteration.  This replaces a fixed inner-iteration ceiling by
-the actual Newton-equation certificate.  Algebraic space dimensions may limit
-storage or establish completeness, but they are not physical convergence
-parameters.
-
-At a newly accepted point, the first orbital direction is the preconditioned
-gradient direction.  The response space is seeded by the preconditioned
-accepted structure residual, when nonzero, and by the already cached
-$\mathbf B\mathbf V$ images.  Conversely, cached
-$\mathbf B^{\mathrm T}\mathbf W$ images can seed additional orbital
-directions.  Subsequent additions are generated exclusively from unresolved
-full-space KKT residuals.  Each successful addition increases the numerical
-rank of $\mathbf V$ or $\mathbf W$; hence the coordinate dimensions provide a
-finite algebraic completion bound without imposing an empirical iteration
-count.
-
-The response residual is preconditioned directly in response coordinates.
-For state $i$, the accepted-point diagonal model and selected-overlap columns
-define
-
-$$
-\mathbf D_i
-=
-\operatorname{diag}
-\left[
+\min\left[
+\frac{1}{2},
 \max\left(
-|H_{aa}-E_iS_{aa}|,
-\epsilon_i
-\right)
-\right],
-$$
-
-$$
-\mathbf R_i
-=
-\mathbf N^{\mathrm T}\mathbf D_i^{-1}\mathbf N,
-\qquad
-\mathbf N=(\mathbf S\mathbf C)_{\mathrm{cluster}},
-$$
-
-and the SPD inverse of the bordered factor in Section 11.5 is applied without
-introducing an artificial orbital block.  Both $\epsilon_i$ and the numerical
-rank floor used for $\mathbf R_i$ are determined solely by floating-point
-roundoff at the corresponding matrix scale.  The accepted-point model owns
-this response inverse action, so the projected solver and its residual
-expansion cannot accidentally use inconsistent response metrics.
-
-A $\mathbf q=\mathbf 0$ orbital ray is not a valid relaxed-objective Cauchy
-incumbent.  The structure variables are stationary KKT response variables,
-not independently bounded minimization variables, and the unrelaxed orbital
-ray can predict a larger decrease than the response-stationary reduced model.
-A sufficient-decrease incumbent must therefore use the certified stationary
-lift in Section 11.5, or an algebraically equivalent certified construction.
-Until such an incumbent is supplied, the two-space workspace requires a
-positive exact coupled-model prediction but performs no unrelaxed Cauchy
-comparison.  This avoids converting an invalid heuristic into a convergence
-or rejection condition.
-
-An optional external work limit may cap the admitted numerical ranks of
-$\mathbf V$ and $\mathbf W$.  Reaching such a limit is reported explicitly as
-a work-limit result with its unresolved residuals; it is never treated as
-Newton convergence.  In the absence of an explicit limit, the solver proceeds
-until the KKT certificate, an algebraic completion, or a numerical breakdown.
-Repeated solves at new trust radii reuse all five cached image blocks and
-therefore require zero additional matrix-free actions unless the new solution
-itself exposes an unresolved full-space residual.
-
-### 11.7 Production coupled solve and numerical certificates
-
-The production `iscf=7` path now applies the two-space construction of
-Section 11.6 directly.  It does not first solve an orbital-only Krylov problem,
-does not admit or defer an outer-response correction, and does not switch to a
-core-only fallback.  The accepted-point objects are ordered as
-
-$$
-\text{orbital metric}
-\longrightarrow
-\text{orbital preconditioner}
-\longrightarrow
-\text{exact block operator}
-\longrightarrow
-\text{coupled workspace}.
-$$
-
-A rejected trial changes only the trust radius and retains this workspace.  An
-accepted trial destroys the workspace and every callback referring to the old
-chart before committing the new orbital point.  This lifetime ordering is
-required because the matrix-free block actions are accepted-point operators.
-
-Let $\mathbf g_0$ be the projected gradient at the beginning of the orbital
-optimization and let $\tau_g$ be the requested outer gradient accuracy.  The
-global progress forcing is
-
-$$
-\eta_k^{(\mathrm{prog})}
-=
-\min\!\left[
-\frac12,
-\max\!\left(
-\frac{\|\mathbf g_k\|_2}{\|\mathbf g_0\|_2},
-\sqrt{\frac{\tau_g}{\|\mathbf g_0\|_2}}
+\frac{g_k}{g_0},
+\sqrt{\frac{\tau_g}{g_0}}
 \right)
 \right].
+\tag{72}
 $$
 
-Above the requested accuracy floor, the first ratio gives
-$\eta_k^{(\mathrm{prog})}=O(\|\mathbf g_k\|_2)$ on the fixed initial gradient scale and hence
-retains the standard local quadratic inexact-Newton condition.  The two terms
-cross when the predicted quadratic residual
-$\|\mathbf g_k\|_2^2/\|\mathbf g_0\|_2$ reaches $\tau_g$; below that point the
-second term stops further tightening.  The contraction limit $1/2$ keeps an
-unresolved Newton equation away from the unit-residual boundary; it is not a
-molecular tuning parameter.
-
-This global rule alone is too loose when the initial point is already close
-to the requested componentwise gradient accuracy. Define the one-contraction
-region by
+When one maximum admissible contraction can enter the componentwise outer
+accuracy region, the additional accuracy forcing is
 
 $$
-\frac12\|\mathbf g_k\|_\infty\leq\tau_g.
-$$
-
-Inside this region, even the largest admissible inexact-Newton residual should
-be capable of reaching the outer threshold in one local contraction. The
-corresponding accuracy forcing is
-
-$$
-\eta_k^{(\mathrm{acc})}
+\eta_k^{\mathrm{acc}}
 =
-\frac{\tau_g}
-{\max\!\left(\tau_g,\|\mathbf g_k\|_2\right)}.
+\frac{\tau_g}{\max(\tau_g,g_k)}.
+\tag{73}
 $$
 
-The production forcing is therefore
+The implemented forcing is
 
 $$
 \eta_k=
 \begin{cases}
-\min\!\left(\eta_k^{(\mathrm{prog})},
-             \eta_k^{(\mathrm{acc})}\right),
-& \frac12\|\mathbf g_k\|_\infty\leq\tau_g,\\
-\eta_k^{(\mathrm{prog})},
-& \text{otherwise}.
+\min\left(
+\eta_k^{\mathrm{prog}},
+\eta_k^{\mathrm{acc}}
+\right),
+&
+\frac{1}{2}\lVert\mathbf g_k\rVert_\infty\leq\tau_g,
+\\
+\eta_k^{\mathrm{prog}},
+&
+\text{otherwise}.
 \end{cases}
+\tag{74}
 $$
 
-No molecular size, identity, or empirical iteration budget enters this
-switch: it follows directly from the outer gradient contract and the maximum
-allowed inner contraction. The orbital and structure blocks receive the
-equal product-norm allocation from eq 56e,
+This gives a vanishing inexact-Newton target on the fixed initial scale while
+avoiding inner accuracy that cannot change the requested outer decision.
+
+Every accepted point first constructs the transported block-LBFGS predictor
 
 $$
-\eta_p=\eta_q=\frac{\eta_k}{\sqrt{2}}.
+\mathbf p_k^{\mathrm B}=-\mathcal B_k\mathbf g_k.
+\tag{75}
 $$
 
-The response coordinates remain in the same structure basis at consecutive
-accepted orbital points.  Consequently, the preceding certified response
-step can be admitted as a recycled direction without transporting an orbital
-chart or changing the Newton equation.  If $\mathbf q_{k-1}$ is the preceding
-accepted response step, the initial response space is
+The exact-HVP enrichment is activated when the preceding accepted nonlinear
+contraction did not meet its forcing target,
 
 $$
-\mathcal W_k^{(0)}
+\frac{\lVert\mathbf g_k\rVert_2}
+     {\lVert\mathbf g_{k-1}\rVert_2}
+>
+\eta_{k-1}.
+\tag{76}
+$$
+
+Once activated, the predictor is evaluated by one current-point relaxed HVP
+and is either certified immediately or enlarged by the raw and preconditioned
+residual block of Section 10.3. The natural reduced dimension is the only
+algebraic completion bound. A failed KKT
+certificate is never converted into convergence because an iteration count
+was exhausted.
+
+The projected step solves the physical-metric trust problem and retains all
+sampled nonpositive curvature explicitly. A trial is accepted only after
+evaluation of the complete VBSCF energy. If a directionally exact trial is not
+acceptable, the positive block-LBFGS direction is globalized by its Armijo
+line search; this is the first-order incumbent of the hybrid method, not an
+alternative Hessian implementation. At a newly accepted point all exact HVP,
+response, and projected-curvature caches are invalidated. Only transported
+accepted-step L-BFGS pairs remain as approximate inverse information.
+
+Outer convergence requires both
+
+$$
+\lVert\mathbf g_k\rVert_\infty\leq\tau_g
+\tag{77}
+$$
+
+and
+
+$$
+\left|E_k-E_{k-1}\right|\leq\tau_E.
+\tag{78}
+$$
+
+The standard production values are
+$\tau_g=10^{-3}$ and
+$\tau_E=10^{-7}\ E_{\mathrm h}$. Tighter inner work is justified only
+when required by eq 74 or by the shifted trust-region KKT certificate.
+
+### 11.6 Matrix-free storage and measured implementation status
+
+Let $n_q$ be the nonredundant orbital dimension and $m$ the number of
+admitted current-point curvature directions. An explicit reduced Hessian
+requires
+
+$$
+O(n_q^2)
+$$
+
+storage. TNHVP stores the basis, Hessian images, and metric images,
+
+$$
+\mathbf Q_m,
+\qquad
+\mathbf H_R\mathbf Q_m,
+\qquad
+\mathbf M\mathbf Q_m,
+$$
+
+with
+
+$$
+O(n_qm)
+$$
+
+large-vector storage and $O(m^2)$ projected algebra. Since
+$m\leq n_q$, algebraic completion can reproduce the explicit trust-region
+Newton step, while the usual case remains matrix-free and low rank.
+
+For a structure space of dimension $n_s$ and a recycled response rank
+$r_i$ for selected root $i$, accepted-point response recycling stores
+
+$$
+O\left(
+n_s\sum_i r_i
+\right)
+$$
+
+values for the response bases and the same order for their operator images.
+It stores neither a dense $n_s\times n_s$ response inverse nor an
+orbital--structure product-space basis. The Davidson/direct-CI path likewise
+applies H/S without materializing dense structure matrices; dense
+diagonalization remains a small-system reference path.
+
+For RI active-space two-electron response and a block of $b$ HVP
+directions, the packed pair maps are contracted as
+
+$$
+\Delta\mathbf B
 =
-\operatorname{orth}
-\left\{
-\mathbf q_{k-1},
--\mathbf P_{q,k}^{-1}\mathbf r_{s,k},
--\mathbf P_{q,k}^{-1}\mathbf B_k\mathcal V_k^{(0)}
-\right\}.
+\mathbf L
+\left[
+Q'(\mathbf C)[\mathbf D_1]
+\;\cdots\;
+Q'(\mathbf C)[\mathbf D_b]
+\right],
+\tag{79}
 $$
 
-Only the direction is reused; every image under $\mathbf C_k$ and
-$\mathbf B_k^{\mathrm T}$ is recomputed at the new accepted point.  Thus the
-recycled vector changes neither the current-point projected operator nor the
-full-space KKT certificate.  A coordinate-dimension change discards it, and
-numerical orthogonalization removes it automatically when it carries no new
-rank.  This one-vector recycle has no history-length parameter and prevents
-the response Krylov process from relearning the dominant solution direction
-after every accepted orbital update.
-
-There is no default iteration or subspace cap.  The only intrinsic upper bound
-is algebraic completion of the orbital and response coordinate spaces.  An
-optional external work limit, if supplied by a future resource policy, must
-terminate with an unresolved-work status and cannot authorize a trial step.
-
-This Newton certificate is distinct from the numerical certificate of the
-small projected solve.  Schur elimination, metric whitening, and the symmetric
-eigensolve compose several backward-stable transformations.  Consequently,
-requiring their recomputed stationarity residual to be of the order of a
-single dot-product roundoff can reject a valid solution.  For projected
-orbital dimension `m_V`, the implementation uses the numerical resolution
+and all one-sided Gram responses are formed by
 
 $$
-\tau_{\mathrm{proj}}
+\left[
+\mathbf B^{\mathrm T}\delta\mathbf B_1
+\;\cdots\;
+\mathbf B^{\mathrm T}\delta\mathbf B_b
+\right]
 =
-m_V\sqrt{\epsilon_{\mathrm{mach}}}
+\mathbf B^{\mathrm T}\Delta\mathbf B.
+\tag{80}
 $$
 
-only to distinguish a finite projected solution from numerical failure.  It
-does not replace or relax the two full-space Newton tests above.  This
-distinction is important for full-AO OEO coordinates: a recomputed projected
-backward error of approximately `1e-12` is numerically resolved and far more
-accurate than the outer forcing requirement, even though it need not reach the
-single-operation roundoff scale.
+These wide products preserve the scalar arithmetic order while reducing
+repeated factor reads and BLAS launches. In the direct-transform route the
+accepted $L_A\mathbf C$ transform is shared across the complete block.
+
+The current regression suite contains 44 tests and covers HAO and OEO
+finite-difference HVPs, exact and RI integrals, single-state and equal-weight
+state-average objectives, dense and Davidson accepted states, streamed exact
+pair products, metric-consistent trust solves, block inverse-BFGS identities,
+negative curvature, and accepted-point response recycling. All 44 pass for
+the final formulation. For a three-direction F$_2$ RI block, block and scalar
+actions agree to relative errors of
+$2.29\times10^{-14}$ for one state and
+$2.68\times10^{-12}$ for a two-state equal average. Twenty repeated compact
+calls give block speedups of 1.03 and 1.09, respectively. These measurements
+validate exactness and scheduling; they are not claims of large-system
+asymptotic speedup.
+
+The complete timing and memory protocol, including the requirement to report
+accepted outer iterations, exact HVP directions, response actions, wall time,
+and peak RSS on the same executable and hardware, is given in
+[the performance validation record](matrix_free_hvp_performance_validation.md).
+The trajectory table in Section 11.2 predates the final uncapped
+residual-driven/block-recycling revision and must be regenerated before it is
+used as publication data.
 
 ## 12. Verification requirements
 
-A revised implementation should satisfy the following system-independent tests.
+The final implementation must satisfy the following system-independent tests.
 
 ### 12.1 Gauge annihilation
 
@@ -4176,7 +3275,7 @@ For every computed gauge direction $\mathbf g_j$,
 
 $$
 D\Phi(\mathbf x)[\mathbf g_j]=\mathbf 0
-\tag{67}
+\tag{81}
 $$
 
 to numerical precision. Equivalently, directional changes in $\mathbf P_{\mathrm I}$ and in every projected active ray must vanish.
@@ -4190,7 +3289,7 @@ $$
 \qquad
 \operatorname{range}(\mathbf G)\cap
 \operatorname{range}(\mathbf U)=\{\mathbf 0\}.
-\tag{68}
+\tag{82}
 $$
 
 ### 12.3 Gradient gauge invariance
@@ -4199,10 +3298,10 @@ The packed orbital gradient must annihilate all gauge directions:
 
 $$
 \mathbf G^{\mathrm T}\mathbf g_{\mathbf x}=\mathbf 0.
-\tag{69}
+\tag{83}
 $$
 
-Failure of eq 69 indicates either an incorrect gauge model or an inconsistency in the orbital-gradient pullback.
+Failure of eq 83 indicates either an incorrect gauge model or an inconsistency in the orbital-gradient pullback.
 
 ### 12.4 Hessian gauge behavior
 
@@ -4210,7 +3309,7 @@ At a stationary point, the unreduced Hessian must map gauge directions to zero u
 
 $$
 \mathbf H_{\mathbf x}\mathbf G\approx\mathbf 0.
-\tag{70}
+\tag{84}
 $$
 
 Away from stationarity, chart-curvature and gradient terms must be accounted for before interpreting this test.
@@ -4227,7 +3326,7 @@ $$
 -
 \mathbf g_{\mathrm{red}}(-\epsilon\mathbf v)
 }{2\epsilon}.
-\tag{71}
+\tag{85}
 $$
 
 The comparison must use a common accepted-point quotient chart. Rebuilding unrelated bases at the two displaced points introduces coordinate-transport terms and does not test eq 59.
@@ -4248,7 +3347,7 @@ $$
 +
 \text{adaptive block Newton solve}
 }
-\tag{72}
+\tag{86}
 $$
 
 An explicit Hessian and a matrix-free Hessian differ only in representation. If the quotient geometry, structure response, and directional integral transformations are exact, the matrix-free method can reproduce the local convergence of an explicit Newton method while avoiding quadratic Hessian storage and unnecessary Hessian construction.

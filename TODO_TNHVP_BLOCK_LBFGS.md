@@ -376,8 +376,14 @@ Newton/KKT certification must always use current-point HVPs.
       coupled workspace, its independent fixed-budget/recycling machinery, and
       the diagnostic-only public HVP blocks used solely by that prototype have
       been deleted.
-- [ ] Update the theory article with the final accepted formulation and measured
-      complexity.
+- [x] Update the theory article with the final accepted formulation and measured
+      complexity. The article now states the eliminated structure-response
+      Schur action, residual-driven physical-metric trust solve, exact block
+      inverse-BFGS secant replacement, negative-curvature treatment,
+      accepted-point recycling lifetimes, uncapped KKT stopping rule, and the
+      $O(n_qm)$ orbital plus $O(n_s\sum_i r_i)$ response storage. The data
+      protocol labels fixed-budget results as historical and requires new
+      publication measurements from the frozen implementation.
 
 ## Required correctness tests
 
