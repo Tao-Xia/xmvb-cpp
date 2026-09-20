@@ -226,6 +226,17 @@ add_dependencies(xmvb xmvb_assets)
 
 if (BUILD_TESTING)
   add_executable(
+    test_cli_options
+    cli/options.cpp
+    ${CMAKE_SOURCE_DIR}/tests/cli/test_options.cpp)
+  target_include_directories(
+    test_cli_options
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${EIGEN3_INCLUDE_DIR})
+  add_test(NAME cli_options COMMAND test_cli_options)
+
+  add_executable(
     test_input_auxiliary_basis
     ${CMAKE_SOURCE_DIR}/tests/input/test_auxiliary_basis.cpp)
   target_link_libraries(test_input_auxiliary_basis PRIVATE xmvb_input_deck)

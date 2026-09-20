@@ -27,6 +27,7 @@ BackendRunResult run_lbfgs_backend(
     VbScfOptimizerResult* result) {
   BackendRunResult run_result;
   const int history_size = options.history_size;
+  const LbfgsInitialInverse initial_inverse = options.lbfgs_initial_inverse;
   std::vector<PackedSecantPair> packed_secant_history;
   packed_secant_history.reserve(std::max(0, history_size));
 
@@ -56,17 +57,26 @@ BackendRunResult run_lbfgs_backend(
       break;
     }
 
-    auto inverse_hessian = build_transported_reduced_lbfgs_preconditioner(
-        current_space,
-        packed_secant_history,
-        history_size,
-        LbfgsInitialInverse::ScaledIdentity);
+    const auto build_reduced_search_direction = [&]() -> Eigen::VectorXd {
+      const auto inverse_hessian =
+          build_transported_reduced_lbfgs_preconditioner(
+              current_space,
+              packed_secant_history,
+              history_size,
+              initial_inverse);
+      return -inverse_hessian.apply(current_projection.reduced_gradient);
+    };
+    const auto is_descent_direction = [&](const Eigen::VectorXd& direction) {
+      return direction.allFinite() &&
+          current_projection.reduced_gradient.dot(direction) < 0.0;
+    };
     Eigen::VectorXd reduced_search_direction =
-        -inverse_hessian.apply(current_projection.reduced_gradient);
-    if (!reduced_search_direction.allFinite() ||
-        current_projection.reduced_gradient.dot(reduced_search_direction) >=
-            0.0) {
+        build_reduced_search_direction();
+    if (!is_descent_direction(reduced_search_direction)) {
       packed_secant_history.clear();
+      reduced_search_direction = build_reduced_search_direction();
+    }
+    if (!is_descent_direction(reduced_search_direction)) {
       reduced_search_direction = -current_projection.reduced_gradient;
     }
     const OrbitalPreparationInput previous_orbital_input =
@@ -81,7 +91,10 @@ BackendRunResult run_lbfgs_backend(
         directional_derivative >= 0.0 ||
         is_effectively_zero_step(search_direction, current_parameters)) {
       packed_secant_history.clear();
-      reduced_search_direction = -current_projection.reduced_gradient;
+      reduced_search_direction = build_reduced_search_direction();
+      if (!is_descent_direction(reduced_search_direction)) {
+        reduced_search_direction = -current_projection.reduced_gradient;
+      }
       search_direction = gather_nonredundant_retract_tangent(
           previous_orbital_input,
           current_space,

@@ -4,6 +4,7 @@
 
 #include <Eigen/Core>
 
+#include "vbscf/optimization/driver/options.hpp"
 #include "vbscf/optimization/driver/types.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 
@@ -12,14 +13,6 @@ namespace xmvb::vb {
 struct TransportedReducedSecantPair {
   Eigen::VectorXd step;
   Eigen::VectorXd gradient_change;
-};
-
-/** @brief Initial inverse action used inside the L-BFGS two-loop recursion. */
-enum class LbfgsInitialInverse {
-  /** Conventional secant scaling, H0 = (s^T y / y^T y) I. */
-  ScaledIdentity,
-  /** Positive local orbital-curvature inverse used as a TNHVP preconditioner. */
-  OrbitalBlock,
 };
 
 class TransportedReducedLbfgsPreconditioner {

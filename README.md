@@ -72,6 +72,12 @@ while `EIGENSOLVER=DENSE` selects the explicit dense reference solver. An
 explicit `--optimizer-backend` or `--eigensolver` command-line option overrides
 the corresponding input keyword.
 
+Standalone L-BFGS defaults to a scalar initial inverse Hessian. For an
+orbital-block ablation, use `--optimizer-backend lbfgs
+--lbfgs-initial-inverse orbital-block`. This selects the same local inverse
+and transported secant recursion used by the TNHVP predictor, without HVP
+correction. `--lbfgs-initial-inverse scalar` explicitly selects the default.
+
 `NSTATE=n` selects an equal-weight average over the consecutive lowest `n`
 VB states. Omitting it is equivalent to `NSTATE=1`. The optimizer uses the
 same normalized weight `1/n` for the energy, analytic gradient, and TNHVP

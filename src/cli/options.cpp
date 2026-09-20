@@ -30,6 +30,26 @@ void apply_optimizer_backend_argument(
   throw std::invalid_argument("invalid optimizer backend: " + backend_name);
 }
 
+void apply_lbfgs_initial_inverse_argument(
+    const std::string& inverse_name,
+    xmvb::vb::VbScfOptimizerOptions* options) {
+  if (options == nullptr) {
+    throw std::invalid_argument("optimizer options must not be null");
+  }
+  if (inverse_name == "scalar") {
+    options->lbfgs_initial_inverse =
+        xmvb::vb::LbfgsInitialInverse::ScaledIdentity;
+    return;
+  }
+  if (inverse_name == "orbital-block") {
+    options->lbfgs_initial_inverse =
+        xmvb::vb::LbfgsInitialInverse::OrbitalBlock;
+    return;
+  }
+  throw std::invalid_argument(
+      "invalid L-BFGS initial inverse: " + inverse_name);
+}
+
 void apply_structure_eigensolver_argument(
     const std::string& solver_name,
     xmvb::vb::VbScfOptimizerOptions* options) {
@@ -98,6 +118,7 @@ void apply_standard_two_electron_mode_argument(
 void print_usage() {
   std::cerr << "usage: xmvb-cpp.exe <input.xmi> "
                "[--optimizer-backend lbfgs|nonredundant_projected_gradient|nonredundant_truncated_newton]"
+               " [--lbfgs-initial-inverse scalar|orbital-block]"
                " [--max-iterations <count>]"
                " [--eigensolver davidson|dense]"
                " [--verbose true|false]"
@@ -153,6 +174,8 @@ std::optional<Options> parse_options(int argc, char** argv) {
       if (argument_name == "--optimizer-backend") {
         apply_optimizer_backend_argument(argument_value, &options);
         user_specified_optimizer_backend = true;
+      } else if (argument_name == "--lbfgs-initial-inverse") {
+        apply_lbfgs_initial_inverse_argument(argument_value, &options);
       } else if (argument_name == "--eigensolver") {
         apply_structure_eigensolver_argument(argument_value, &options);
         user_specified_structure_eigensolver = true;

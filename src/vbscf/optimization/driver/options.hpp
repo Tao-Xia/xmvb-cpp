@@ -8,6 +8,14 @@
 
 namespace xmvb::vb {
 
+/** @brief Initial inverse Hessian used by transported L-BFGS recursion. */
+enum class LbfgsInitialInverse {
+  /** Conventional secant scaling, \f$H_0=\gamma I\f$. */
+  ScaledIdentity,
+  /** Positive orbital-block inverse used by TNHVP and its L-BFGS ablation. */
+  OrbitalBlock,
+};
+
 /**
  * @brief Options controlling the VBSCF orbital optimization loop.
  */
@@ -63,6 +71,16 @@ struct VbScfOptimizerOptions {
    * @brief Number of L-BFGS correction vectors.
    */
   int history_size = 100;
+
+  /**
+   * @brief Initial inverse Hessian used by the standalone L-BFGS backend.
+   *
+   * The conventional scaled identity remains the production default. The
+   * orbital-block mode is an explicit ablation that shares TNHVP's local
+   * inverse action while retaining the L-BFGS line search and secant update.
+   */
+  LbfgsInitialInverse lbfgs_initial_inverse =
+      LbfgsInitialInverse::ScaledIdentity;
 
   /**
    * @brief Whether to print per-iteration optimizer diagnostics.
