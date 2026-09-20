@@ -55,7 +55,7 @@ struct StructureActionStorage {
   std::size_t factor_bytes = 0;
   /** Unique-string-pair/structure expansion in contiguous CSR form. */
   std::size_t expansion_bytes = 0;
-  /** Exact Hamiltonian and overlap diagonals retained by Davidson. */
+  /** Hamiltonian and overlap diagonal model retained by Davidson. */
   std::size_t diagonal_bytes = 0;
   /** Opposite-spin channels whose raw side is stored densely. */
   int dense_channels = 0;
@@ -101,7 +101,7 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
       int n_active_orbitals,
-      const StructureDiagonal* precomputed_diagonal = nullptr);
+      const StructureDiagonal* precomputed_preconditioner = nullptr);
 
   ~StructureAction();
   StructureAction(StructureAction&&) noexcept;
@@ -196,10 +196,8 @@ public:
   Eigen::MatrixXd contract_spin_product_block(
       const Eigen::Ref<const Eigen::MatrixXd>& spin_images) const;
 
-  /**
-   * @brief Returns the cached exact H/S diagonals without full matrices.
-   */
-  const StructureDiagonal& diagonal() const noexcept;
+  /** @brief Returns the H/S diagonal model used only for preconditioning. */
+  const StructureDiagonal& preconditioner_diagonal() const noexcept;
 
   int n_determinants() const noexcept;
   int n_structures() const noexcept;
@@ -281,7 +279,7 @@ private:
   std::vector<int> spin_products_;
   std::vector<std::size_t> spin_term_offsets_;
   std::vector<StructureTerm> spin_terms_;
-  StructureDiagonal diagonal_;
+  StructureDiagonal preconditioner_diagonal_;
   Eigen::MatrixXd alpha_overlap_;
   Eigen::MatrixXd alpha_hamiltonian_;
   Eigen::MatrixXd beta_overlap_;

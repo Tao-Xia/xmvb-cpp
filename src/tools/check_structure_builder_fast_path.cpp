@@ -225,7 +225,8 @@ int main(int argc, char** argv) {
     const auto action_start = std::chrono::high_resolution_clock::now();
     const auto action_result = structure_action.apply(trial_vectors);
     const auto action_end = std::chrono::high_resolution_clock::now();
-    const auto action_diagonal = structure_action.diagonal();
+    const auto action_diagonal =
+        structure_action.preconditioner_diagonal();
     const Eigen::Map<const Eigen::MatrixXd> dense_hamiltonian(
         fast_result.hamiltonian_matrix.data(), n_structures, n_structures);
     const Eigen::Map<const Eigen::MatrixXd> dense_overlap(
@@ -316,7 +317,8 @@ int main(int argc, char** argv) {
       compact_action_result = compact_structure_action.apply(trial_vectors);
     }
     const auto compact_action_end = std::chrono::high_resolution_clock::now();
-    const auto compact_diagonal = compact_structure_action.diagonal();
+    const auto compact_diagonal =
+        compact_structure_action.preconditioner_diagonal();
     xmvb::core::GeneralizedEigensolver eigensolver;
     const auto dense_eigensolve_start = std::chrono::high_resolution_clock::now();
     const auto dense_eigenpairs = eigensolver.solve_dense(

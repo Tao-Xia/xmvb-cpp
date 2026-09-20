@@ -129,12 +129,30 @@ void check_exterior_transform() {
               .maxCoeff() < 2.0e-13,
       "right exterior action differs from explicit compound matrix");
 
+  Eigen::MatrixXd block_storage = Eigen::MatrixXd::Zero(
+      original_right.rows(), original_right.cols() + 4);
+  block_storage.middleCols(2, original_right.cols()) = original_right;
+  auto right_block =
+      block_storage.middleCols(2, original_right.cols());
+  transform.apply_right_block(right_block);
+  require(
+      (right_block - right).cwiseAbs().maxCoeff() < 2.0e-13 &&
+          block_storage.leftCols(2).isZero(0.0) &&
+          block_storage.rightCols(2).isZero(0.0),
+      "right exterior block action differs from the owning-matrix path");
+
   transform.apply_adjoint_right(&right);
   require(
       (right - original_right * exterior.transpose() * exterior)
               .cwiseAbs()
               .maxCoeff() < 4.0e-13,
       "right exterior adjoint is inconsistent");
+  transform.apply_adjoint_right_block(right_block);
+  require(
+      (right_block - right).cwiseAbs().maxCoeff() < 4.0e-13 &&
+          block_storage.leftCols(2).isZero(0.0) &&
+          block_storage.rightCols(2).isZero(0.0),
+      "right exterior block adjoint differs from the owning-matrix path");
 
   Eigen::MatrixXd adjoint = coefficients;
   transform.apply_adjoint_left(&adjoint);
@@ -1087,6 +1105,62 @@ void check_sigma_action() {
               .cwiseAbs()
               .maxCoeff() < 2.0e-10,
       "streamed structure overlap diagonal is inexact");
+  const Eigen::VectorXd overlap_only_diagonal =
+      builder.build_exact_overlap_diagonal(
+          product_alpha,
+          product_beta,
+          determinant_to_structure_terms,
+          packed_overlap,
+          n_orbitals,
+          n_test_structures,
+          topology);
+  require(
+      (overlap_only_diagonal - exact_diagonal.overlap)
+              .cwiseAbs()
+              .maxCoeff() < 2.0e-10,
+      "overlap-only structure diagonal is inexact");
+
+  xmvb::vb::StructureDiagonal expected_jacobi;
+  expected_jacobi.hamiltonian =
+      Eigen::VectorXd::Zero(n_test_structures);
+  expected_jacobi.overlap = Eigen::VectorXd::Zero(n_test_structures);
+  for (int determinant = 0; determinant < product_dimension; ++determinant) {
+    for (int structure = 0; structure < n_test_structures; ++structure) {
+      const double coefficient =
+          structure_expansion(determinant, structure);
+      expected_jacobi.hamiltonian[structure] +=
+          coefficient * coefficient *
+          dense_hamiltonian(determinant, determinant);
+      expected_jacobi.overlap[structure] +=
+          coefficient * coefficient * dense_overlap(determinant, determinant);
+    }
+  }
+  const xmvb::vb::StructureDiagonal jacobi =
+      builder.build_davidson_jacobi_preconditioner(
+          product_alpha,
+          product_beta,
+          determinant_to_structure_terms,
+          packed_overlap,
+          one_electron,
+          n_orbitals,
+          two_electron,
+          n_test_structures,
+          topology);
+  require(
+      (jacobi.hamiltonian - expected_jacobi.hamiltonian)
+              .cwiseAbs()
+              .maxCoeff() < 2.0e-10,
+      "determinant-diagonal Hamiltonian Jacobi model is inexact");
+  require(
+      (jacobi.overlap - expected_jacobi.overlap)
+              .cwiseAbs()
+              .maxCoeff() < 2.0e-10,
+      "determinant-diagonal overlap Jacobi model is inexact");
+  require(
+      (jacobi.hamiltonian - exact_diagonal.hamiltonian)
+              .cwiseAbs()
+              .maxCoeff() > 1.0e-8,
+      "Jacobi model unexpectedly retained determinant cross terms");
   xmvb::vb::StructureAction topology_action(
       determinant_to_structure_terms,
       n_test_structures,
@@ -1194,6 +1268,76 @@ void check_demand_driven_structure_diagonal() {
           large_diagonal.overlap[0] -
           reference_diagonal.overlap[0]) < 2.0e-12,
       "unused unique determinants changed the demand-driven overlap diagonal");
+
+  std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>
+      jacobi_expansion(n_unique_alpha);
+  double expected_jacobi_hamiltonian = 0.0;
+  double expected_jacobi_overlap = 0.0;
+  const xmvb::vb::DeterminantPairEvaluator evaluator;
+  for (int determinant = 0; determinant < n_unique_alpha; ++determinant) {
+    const double coefficient =
+        std::sin(0.013 * static_cast<double>(determinant + 1));
+    if (determinant == 0) {
+      // Duplicate determinant/structure terms must be combined before the
+      // coefficient is squared.
+      jacobi_expansion[determinant].push_back({0, 0.4 * coefficient});
+      jacobi_expansion[determinant].push_back({0, 0.6 * coefficient});
+    } else {
+      jacobi_expansion[determinant].push_back({0, coefficient});
+    }
+    const auto self_pair = evaluator.evaluate(
+        alpha[determinant],
+        alpha[determinant],
+        beta[determinant],
+        beta[determinant],
+        packed_overlap,
+        one_electron,
+        n_orbitals,
+        two_electron,
+        false);
+    expected_jacobi_hamiltonian +=
+        coefficient * coefficient * self_pair.total_hamiltonian;
+    expected_jacobi_overlap +=
+        coefficient * coefficient * self_pair.overlap_determinant;
+  }
+  const xmvb::vb::StructureDiagonal jacobi =
+      builder.build_davidson_jacobi_preconditioner(
+          alpha,
+          beta,
+          jacobi_expansion,
+          packed_overlap,
+          one_electron,
+          n_orbitals,
+          two_electron,
+          1,
+          large_topology);
+  require(
+      std::abs(jacobi.hamiltonian[0] - expected_jacobi_hamiltonian) < 2.0e-10,
+      "large determinant-diagonal Hamiltonian Jacobi model is inexact");
+  require(
+      std::abs(jacobi.overlap[0] - expected_jacobi_overlap) < 2.0e-10,
+      "large determinant-diagonal overlap Jacobi model is inexact");
+
+  const std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>
+      cancelling_expansion{{{0, 1.0}, {0, -1.0}}};
+  bool rejected_zero_overlap = false;
+  try {
+    static_cast<void>(builder.build_davidson_jacobi_preconditioner(
+        reference_alpha,
+        reference_beta,
+        cancelling_expansion,
+        packed_overlap,
+        one_electron,
+        n_orbitals,
+        two_electron,
+        1,
+        reference_topology));
+  } catch (const std::domain_error&) {
+    rejected_zero_overlap = true;
+  }
+  require(
+      rejected_zero_overlap,
+      "zero Davidson Jacobi overlap was not rejected explicitly");
 }
 
 }  // namespace

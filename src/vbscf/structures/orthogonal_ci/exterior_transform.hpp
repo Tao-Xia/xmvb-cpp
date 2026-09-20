@@ -30,10 +30,15 @@ public:
   void apply_left(Eigen::MatrixXd* coefficients) const;
   /** @brief Applies the exterior transform to matrix columns in place. */
   void apply_right(Eigen::MatrixXd* coefficients) const;
+  /** @brief Applies the exterior transform to a mutable matrix block in place. */
+  void apply_right_block(Eigen::Ref<Eigen::MatrixXd> coefficients) const;
   /** @brief Applies the transpose exterior transform to matrix rows. */
   void apply_adjoint_left(Eigen::MatrixXd* coefficients) const;
   /** @brief Applies the transpose exterior transform to matrix columns. */
   void apply_adjoint_right(Eigen::MatrixXd* coefficients) const;
+  /** @brief Applies the transpose transform to a mutable matrix block in place. */
+  void apply_adjoint_right_block(
+      Eigen::Ref<Eigen::MatrixXd> coefficients) const;
 
   /** @brief Linearizes the exterior transform for an upper-triangular `delta R`. */
   ExteriorTransformDirection direction(

@@ -223,7 +223,8 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
           block_root_indices.begin() + first);
     }
   }
-  const StructureDiagonal& diagonal = structure_action->diagonal();
+  const StructureDiagonal& diagonal =
+      structure_action->preconditioner_diagonal();
   const xmvb::core::GeneralizedEigenAction action =
       [this](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
         StructureActionResult images = structure_action->apply(vectors);

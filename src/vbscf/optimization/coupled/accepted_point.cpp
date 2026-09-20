@@ -144,7 +144,8 @@ AcceptedStructureSnapshot build_structure_snapshot(
   }
   const StructureAction& structure_action =
       *accepted_point.structure_action;
-  const StructureDiagonal& diagonal = structure_action.diagonal();
+  const StructureDiagonal& diagonal =
+      structure_action.preconditioner_diagonal();
   StructureActionResult selected_action = structure_action.apply(
       accepted_point.selected_state_eigenvectors);
   const int n_selected = static_cast<int>(

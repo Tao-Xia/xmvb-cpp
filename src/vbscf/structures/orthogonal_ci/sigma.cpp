@@ -338,10 +338,14 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
 
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int work = 0; work < work_items; ++work) {
-    const int beta = work % n_beta_;
-    const int alpha = (work / n_beta_) % n_alpha_;
-    const int block = work / (n_alpha_ * n_beta_);
-    const int column = block * n_beta_ + beta;
+    // Eigen stores the alpha index contiguously. Mapping the flattened work
+    // index to that storage order gives every OpenMP chunk contiguous output
+    // writes and keeps all fixed-beta coefficient reads in one column.
+    const int alpha = work % n_alpha_;
+    const int packed_column = work / n_alpha_;
+    const int beta = packed_column % n_beta_;
+    const int block = packed_column / n_beta_;
+    const int column = packed_column;
     double value =
         (alpha_.diagonal[alpha] + beta_graph.diagonal[beta]) *
         coefficients(alpha, column);
@@ -411,10 +415,11 @@ Eigen::MatrixXd DirectCiSigmaAction::apply_one_body_generator(
 
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int work = 0; work < work_items; ++work) {
-    const int beta = work % n_beta_;
-    const int alpha = (work / n_beta_) % n_alpha_;
-    const int block = work / (n_alpha_ * n_beta_);
-    const int column = block * n_beta_ + beta;
+    const int alpha = work % n_alpha_;
+    const int packed_column = work / n_alpha_;
+    const int beta = packed_column % n_beta_;
+    const int block = packed_column / n_beta_;
+    const int column = packed_column;
     double value = 0.0;
     for (const int orbital : alpha_.occupied[alpha]) {
       value += generator(orbital, orbital) * coefficients(alpha, column);

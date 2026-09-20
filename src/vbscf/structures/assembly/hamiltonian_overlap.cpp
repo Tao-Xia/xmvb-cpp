@@ -3,10 +3,12 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <limits>
 #include <list>
 #include <stdexcept>
 #include <string>
@@ -221,7 +223,8 @@ ForwardSpinPairEntry evaluate_forward_spin_pair_entry(
           ovlp_act,
           h1e_act,
           n_orbitals,
-          two_electron_input);
+          two_electron_input,
+          false);
 
   ForwardSpinPairEntry entry;
   entry.overlap_determinant =
@@ -1177,6 +1180,422 @@ StructureAccumulationResult build_tiled_matrix_form_structure_matrices(
 }
 
 template <typename TwoElectronInput>
+std::vector<ForwardSpinPairEntry> build_unique_spin_self_entries(
+    const std::vector<std::vector<int>>& unique_spin_determinants,
+    const std::vector<double>& ovlp_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_orbitals,
+    const TwoElectronInput& two_electron_input,
+    const DeterminantPairEvaluator& pair_evaluator,
+    bool retain_projected_pair_values) {
+  std::vector<ForwardSpinPairEntry> entries(
+      unique_spin_determinants.size());
+  if (entries.empty()) {
+    return entries;
+  }
+
+  const ActiveSpaceTwoElectronView two_electron_view =
+      make_active_space_two_electron_view(two_electron_input);
+  int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(),
+      static_cast<int>(entries.size()));
+  n_threads = std::max(1, n_threads);
+  std::atomic<bool> failed(false);
+  std::exception_ptr first_exception;
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+    const DeterminantPairEvaluator thread_pair_evaluator = pair_evaluator;
+#pragma omp for schedule(static)
+    for (int unique_index = 0;
+         unique_index < static_cast<int>(entries.size());
+         ++unique_index) {
+      if (failed.load(std::memory_order_relaxed)) {
+        continue;
+      }
+      try {
+        const auto& determinant = unique_spin_determinants[unique_index];
+        ForwardSpinPairEntry entry = evaluate_forward_spin_pair_entry(
+            determinant,
+            determinant,
+            thread_pair_evaluator,
+            ovlp_act,
+            h1e_act,
+            n_orbitals,
+            two_electron_input);
+        if (retain_projected_pair_values &&
+            !entry.first_order_projection.packed_pair_indices.empty()) {
+          entry.first_order_projection.projected_pair_values =
+              apply_active_space_two_electron_kernel_to_sparse_projection(
+                  two_electron_view,
+                  n_orbitals,
+                  entry.first_order_projection.packed_pair_indices,
+                  entry.first_order_projection.packed_pair_values);
+        }
+        entries[unique_index] = std::move(entry);
+      } catch (...) {
+#pragma omp critical
+        {
+          if (!failed.load(std::memory_order_relaxed)) {
+            first_exception = std::current_exception();
+            failed.store(true, std::memory_order_relaxed);
+          }
+        }
+      }
+    }
+  }
+  if (first_exception) {
+    std::rethrow_exception(first_exception);
+  }
+  return entries;
+}
+
+double contract_self_opposite_spin_projection(
+    const OppositeSpinPackedPairProjection& sparse_projection,
+    const OppositeSpinPackedPairProjection& projected_projection) {
+  if (sparse_projection.packed_pair_indices.empty() ||
+      projected_projection.packed_pair_indices.empty()) {
+    return 0.0;
+  }
+  if (sparse_projection.packed_pair_indices.size() !=
+      sparse_projection.packed_pair_values.size()) {
+    throw std::invalid_argument(
+        "self opposite-spin sparse projection is inconsistent");
+  }
+  if (projected_projection.projected_pair_values.empty()) {
+    throw std::invalid_argument(
+        "self opposite-spin projected values are unavailable");
+  }
+
+  double coupling = 0.0;
+  for (std::size_t entry = 0;
+       entry < sparse_projection.packed_pair_indices.size();
+       ++entry) {
+    const int packed_pair = sparse_projection.packed_pair_indices[entry];
+    if (packed_pair < 0 ||
+        packed_pair >= static_cast<int>(
+            projected_projection.projected_pair_values.size())) {
+      throw std::out_of_range(
+          "self opposite-spin packed pair is out of range");
+    }
+    coupling += sparse_projection.packed_pair_values[entry] *
+        projected_projection.projected_pair_values[packed_pair];
+  }
+  return coupling;
+}
+
+struct StructureSupportTerm {
+  int determinant = 0;
+  double coefficient = 0.0;
+};
+
+std::uint64_t symmetric_pair_key(int left, int right) {
+  const std::uint32_t low = static_cast<std::uint32_t>(
+      std::min(left, right));
+  const std::uint32_t high = static_cast<std::uint32_t>(
+      std::max(left, right));
+  return (static_cast<std::uint64_t>(high) << 32u) | low;
+}
+
+double exact_spin_overlap(
+    const std::vector<std::vector<int>>& unique_determinants,
+    int left,
+    int right,
+    const std::vector<double>& active_overlap,
+    int n_orbitals,
+    const DeterminantOverlapResolver& overlap_resolver,
+    std::unordered_map<std::uint64_t, double>* cache) {
+  const std::uint64_t key = symmetric_pair_key(left, right);
+  const auto cached = cache->find(key);
+  if (cached != cache->end()) {
+    return cached->second;
+  }
+  const auto& left_occupations = unique_determinants[left];
+  const auto& right_occupations = unique_determinants[right];
+  double overlap = 1.0;
+  if (!left_occupations.empty()) {
+    overlap = overlap_resolver.resolve_matrix(
+        build_overlap_submatrix(
+            left_occupations,
+            right_occupations,
+            active_overlap,
+            n_orbitals)).overlap_determinant;
+  }
+  cache->emplace(key, overlap);
+  return overlap;
+}
+
+Eigen::VectorXd build_exact_structure_overlap_diagonal(
+    const std::vector<std::vector<StructureExpansionTerm>>&
+        determinant_to_structure_terms,
+    int n_structures,
+    const SpinDeterminantReuseTable& alpha_reuse_table,
+    const SpinDeterminantReuseTable& beta_reuse_table,
+    const std::vector<double>& active_overlap,
+    int n_orbitals,
+    const DeterminantOverlapResolver& overlap_resolver) {
+  std::vector<std::vector<StructureSupportTerm>> structure_supports(
+      n_structures);
+  for (std::size_t determinant = 0;
+       determinant < determinant_to_structure_terms.size();
+       ++determinant) {
+    for (const StructureExpansionTerm& term :
+         determinant_to_structure_terms[determinant]) {
+      if (term.structure_index < 0 ||
+          term.structure_index >= n_structures) {
+        throw std::out_of_range(
+            "exact overlap diagonal structure index is out of range");
+      }
+      auto& support = structure_supports[term.structure_index];
+      if (!support.empty() &&
+          support.back().determinant == static_cast<int>(determinant)) {
+        support.back().coefficient += term.coefficient;
+      } else {
+        support.push_back(StructureSupportTerm{
+            static_cast<int>(determinant), term.coefficient});
+      }
+    }
+  }
+
+  Eigen::VectorXd diagonal = Eigen::VectorXd::Zero(n_structures);
+  const bool shared_spin_space =
+      alpha_reuse_table.unique_determinants ==
+      beta_reuse_table.unique_determinants;
+  int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(), n_structures);
+  n_threads = std::max(1, n_threads);
+  std::atomic<bool> failed(false);
+  std::exception_ptr first_exception;
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+    std::unordered_map<std::uint64_t, double> alpha_overlap_cache;
+    std::unordered_map<std::uint64_t, double> beta_overlap_cache;
+#pragma omp for schedule(dynamic, 1)
+    for (int structure = 0; structure < n_structures; ++structure) {
+      if (failed.load(std::memory_order_relaxed)) {
+        continue;
+      }
+      try {
+        alpha_overlap_cache.clear();
+        beta_overlap_cache.clear();
+        const auto& support = structure_supports[structure];
+        double squared_norm = 0.0;
+        for (std::size_t right_offset = 0;
+             right_offset < support.size();
+             ++right_offset) {
+          const int right_determinant = support[right_offset].determinant;
+          const int right_alpha =
+              alpha_reuse_table.determinant_to_unique_id[right_determinant];
+          const int right_beta =
+              beta_reuse_table.determinant_to_unique_id[right_determinant];
+          for (std::size_t left_offset = 0;
+               left_offset <= right_offset;
+               ++left_offset) {
+            const int left_determinant = support[left_offset].determinant;
+            const int left_alpha =
+                alpha_reuse_table.determinant_to_unique_id[left_determinant];
+            const int left_beta =
+                beta_reuse_table.determinant_to_unique_id[left_determinant];
+            const double alpha_overlap = exact_spin_overlap(
+                alpha_reuse_table.unique_determinants,
+                left_alpha,
+                right_alpha,
+                active_overlap,
+                n_orbitals,
+                overlap_resolver,
+                &alpha_overlap_cache);
+            double beta_overlap = 0.0;
+            if (shared_spin_space) {
+              beta_overlap = exact_spin_overlap(
+                  alpha_reuse_table.unique_determinants,
+                  left_beta,
+                  right_beta,
+                  active_overlap,
+                  n_orbitals,
+                  overlap_resolver,
+                  &alpha_overlap_cache);
+            } else {
+              beta_overlap = exact_spin_overlap(
+                  beta_reuse_table.unique_determinants,
+                  left_beta,
+                  right_beta,
+                  active_overlap,
+                  n_orbitals,
+                  overlap_resolver,
+                  &beta_overlap_cache);
+            }
+            const double pair_weight =
+                support[left_offset].coefficient *
+                support[right_offset].coefficient;
+            squared_norm += (left_offset == right_offset ? 1.0 : 2.0) *
+                pair_weight * alpha_overlap * beta_overlap;
+          }
+        }
+        if (!std::isfinite(squared_norm) || !(squared_norm > 0.0)) {
+          throw std::domain_error(
+              "exact structure overlap must be finite and strictly positive "
+              "for structure " + std::to_string(structure));
+        }
+        diagonal[structure] = squared_norm;
+      } catch (...) {
+#pragma omp critical
+        {
+          if (!failed.load(std::memory_order_relaxed)) {
+            first_exception = std::current_exception();
+            failed.store(true, std::memory_order_relaxed);
+          }
+        }
+      }
+    }
+  }
+  if (first_exception) {
+    std::rethrow_exception(first_exception);
+  }
+  return diagonal;
+}
+
+template <typename TwoElectronInput>
+StructureDiagonal build_determinant_diagonal_jacobi_preconditioner(
+    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    int n_structures,
+    const SpinDeterminantReuseTable& alpha_reuse_table,
+    const SpinDeterminantReuseTable& beta_reuse_table,
+    const std::vector<double>& ovlp_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_orbitals,
+    const TwoElectronInput& two_electron_input,
+    const DeterminantPairEvaluator& pair_evaluator) {
+  const bool shared_spin_entries =
+      alpha_reuse_table.unique_determinants ==
+      beta_reuse_table.unique_determinants;
+  const bool project_alpha = shared_spin_entries ||
+      alpha_reuse_table.unique_determinants.size() <=
+          beta_reuse_table.unique_determinants.size();
+  std::vector<ForwardSpinPairEntry> alpha_entries =
+      build_unique_spin_self_entries(
+          alpha_reuse_table.unique_determinants,
+          ovlp_act,
+          h1e_act,
+          n_orbitals,
+          two_electron_input,
+          pair_evaluator,
+          project_alpha);
+  std::vector<ForwardSpinPairEntry> beta_entries;
+  if (!shared_spin_entries) {
+    beta_entries = build_unique_spin_self_entries(
+        beta_reuse_table.unique_determinants,
+        ovlp_act,
+        h1e_act,
+        n_orbitals,
+        two_electron_input,
+        pair_evaluator,
+        !project_alpha);
+  }
+  const std::vector<ForwardSpinPairEntry>& beta_entries_ref =
+      shared_spin_entries ? alpha_entries : beta_entries;
+
+  if (alpha_reuse_table.determinant_to_unique_id.size() !=
+          determinant_to_structure_terms.size() ||
+      beta_reuse_table.determinant_to_unique_id.size() !=
+          determinant_to_structure_terms.size()) {
+    throw std::invalid_argument(
+        "determinant self-preconditioner topology is inconsistent");
+  }
+
+  StructureDiagonal diagonal;
+  diagonal.hamiltonian = Eigen::VectorXd::Zero(n_structures);
+  diagonal.overlap = Eigen::VectorXd::Zero(n_structures);
+  // Most rows of a complete spin-product space do not occur in the selected
+  // structure expansion.  Visit only supported rows, and reuse flat scratch
+  // storage instead of allocating unordered-map nodes for every determinant.
+  std::vector<double> combined_structure_coefficients(n_structures, 0.0);
+  std::vector<int> coefficient_generation(n_structures, -1);
+  std::vector<int> touched_structures;
+  touched_structures.reserve(n_structures);
+  int generation = 0;
+  for (std::size_t determinant = 0;
+       determinant < determinant_to_structure_terms.size();
+       ++determinant) {
+    const auto& expansion_terms =
+        determinant_to_structure_terms[determinant];
+    if (expansion_terms.empty()) {
+      continue;
+    }
+    if (generation == std::numeric_limits<int>::max()) {
+      std::fill(
+          coefficient_generation.begin(), coefficient_generation.end(), -1);
+      generation = 0;
+    }
+    ++generation;
+    touched_structures.clear();
+    for (const StructureExpansionTerm& term : expansion_terms) {
+      if (term.structure_index < 0 ||
+          term.structure_index >= n_structures) {
+        throw std::out_of_range(
+            "determinant self-preconditioner structure index is out of range");
+      }
+      if (coefficient_generation[term.structure_index] != generation) {
+        coefficient_generation[term.structure_index] = generation;
+        combined_structure_coefficients[term.structure_index] = 0.0;
+        touched_structures.push_back(term.structure_index);
+      }
+      combined_structure_coefficients[term.structure_index] +=
+          term.coefficient;
+    }
+
+    const int alpha_id =
+        alpha_reuse_table.determinant_to_unique_id[determinant];
+    const int beta_id =
+        beta_reuse_table.determinant_to_unique_id[determinant];
+    if (alpha_id < 0 ||
+        alpha_id >= static_cast<int>(alpha_entries.size()) ||
+        beta_id < 0 ||
+        beta_id >= static_cast<int>(beta_entries_ref.size())) {
+      throw std::out_of_range(
+          "determinant self-preconditioner unique-spin id is out of range");
+    }
+    const ForwardSpinPairEntry& alpha = alpha_entries[alpha_id];
+    const ForwardSpinPairEntry& beta = beta_entries_ref[beta_id];
+    const double determinant_overlap =
+        alpha.overlap_determinant * beta.overlap_determinant;
+    const double opposite_spin = project_alpha
+        ? contract_self_opposite_spin_projection(
+              beta.first_order_projection,
+              alpha.first_order_projection)
+        : contract_self_opposite_spin_projection(
+              alpha.first_order_projection,
+              beta.first_order_projection);
+    const double determinant_hamiltonian =
+        alpha.total_hamiltonian * beta.overlap_determinant +
+        beta.total_hamiltonian * alpha.overlap_determinant +
+        opposite_spin;
+
+    for (const int structure : touched_structures) {
+      const double coefficient =
+          combined_structure_coefficients[structure];
+      const double squared_coefficient = coefficient * coefficient;
+      diagonal.hamiltonian[structure] +=
+          squared_coefficient * determinant_hamiltonian;
+      diagonal.overlap[structure] +=
+          squared_coefficient * determinant_overlap;
+    }
+  }
+  for (int structure = 0; structure < n_structures; ++structure) {
+    if (!std::isfinite(diagonal.hamiltonian[structure])) {
+      throw std::domain_error(
+          "Davidson Jacobi Hamiltonian is non-finite for structure " +
+          std::to_string(structure));
+    }
+    if (!std::isfinite(diagonal.overlap[structure]) ||
+        !(diagonal.overlap[structure] > 0.0)) {
+      throw std::domain_error(
+          "Davidson Jacobi overlap must be finite and strictly positive for "
+          "structure " + std::to_string(structure));
+    }
+  }
+  return diagonal;
+}
+
+template <typename TwoElectronInput>
 StructureDiagonal build_demand_driven_structure_diagonal(
     const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
     int n_structures,
@@ -1421,6 +1840,77 @@ FullDeterminantStructureHamiltonianOverlapBuilder::build_diagonal(
       same_spin_pair_cache.enabled()
           ? &same_spin_pair_cache.beta_pair_cache_ref()
           : nullptr);
+}
+
+StructureDiagonal
+FullDeterminantStructureHamiltonianOverlapBuilder::
+build_davidson_jacobi_preconditioner(
+    const std::vector<std::vector<int>>& alpha_det,
+    const std::vector<std::vector<int>>& beta_det,
+    const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+    const std::vector<double>& ovlp_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    int n_structures,
+    const SameSpinPairCacheContext& same_spin_pair_cache) const {
+  validate_full_determinant_input(
+      alpha_det,
+      beta_det,
+      determinant_to_structure_terms,
+      n_orbitals,
+      n_structures);
+  if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
+          alpha_det.size() ||
+      same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() !=
+          beta_det.size()) {
+    throw std::invalid_argument(
+        "same-spin topology does not match the determinant expansion");
+  }
+  return build_determinant_diagonal_jacobi_preconditioner(
+      determinant_to_structure_terms,
+      n_structures,
+      same_spin_pair_cache.alpha_reuse_table,
+      same_spin_pair_cache.beta_reuse_table,
+      ovlp_act,
+      h1e_act,
+      n_orbitals,
+      active_space_two_electron_result,
+      make_pair_evaluator());
+}
+
+Eigen::VectorXd
+FullDeterminantStructureHamiltonianOverlapBuilder::
+build_exact_overlap_diagonal(
+    const std::vector<std::vector<int>>& alpha_det,
+    const std::vector<std::vector<int>>& beta_det,
+    const std::vector<std::vector<StructureExpansionTerm>>&
+        determinant_to_structure_terms,
+    const std::vector<double>& active_overlap,
+    int n_orbitals,
+    int n_structures,
+    const SameSpinPairCacheContext& same_spin_pair_cache) const {
+  validate_full_determinant_input(
+      alpha_det,
+      beta_det,
+      determinant_to_structure_terms,
+      n_orbitals,
+      n_structures);
+  if (same_spin_pair_cache.alpha_reuse_table.determinant_to_unique_id.size() !=
+          alpha_det.size() ||
+      same_spin_pair_cache.beta_reuse_table.determinant_to_unique_id.size() !=
+          beta_det.size()) {
+    throw std::invalid_argument(
+        "same-spin topology does not match the determinant expansion");
+  }
+  return build_exact_structure_overlap_diagonal(
+      determinant_to_structure_terms,
+      n_structures,
+      same_spin_pair_cache.alpha_reuse_table,
+      same_spin_pair_cache.beta_reuse_table,
+      active_overlap,
+      n_orbitals,
+      determinant_overlap_resolver_);
 }
 
 DeterminantPairEvaluator

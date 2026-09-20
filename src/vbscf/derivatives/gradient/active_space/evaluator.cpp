@@ -369,18 +369,28 @@ void solve_structure_problem(
       retain_direct_ci_action_if_available(input, n_roots, context);
     }
   } else {
-    std::optional<StructureDiagonal> streamed_diagonal;
+    std::optional<StructureDiagonal> jacobi_diagonal;
     if (!context->same_spin_pair_cache.enabled()) {
-      streamed_diagonal = structure_builder.build_diagonal(
-          input.structure_data.alpha_det,
-          input.structure_data.beta_det,
-          input.structure_data.determinant_to_structure_terms,
-          prepared.orbital_result.active_orbital_overlap_matrix,
-          prepared.active_space_one_electron_result.h1e_act,
-          input.orbital_preparation_input.n_active_orbitals,
-          prepared.active_space_two_electron_result,
-          n_structures,
-          context->same_spin_pair_cache);
+      jacobi_diagonal =
+          structure_builder.build_davidson_jacobi_preconditioner(
+              input.structure_data.alpha_det,
+              input.structure_data.beta_det,
+              input.structure_data.determinant_to_structure_terms,
+              prepared.orbital_result.active_orbital_overlap_matrix,
+              prepared.active_space_one_electron_result.h1e_act,
+              input.orbital_preparation_input.n_active_orbitals,
+              prepared.active_space_two_electron_result,
+              n_structures,
+              context->same_spin_pair_cache);
+      context->structure_overlap_diagonal =
+          structure_builder.build_exact_overlap_diagonal(
+              input.structure_data.alpha_det,
+              input.structure_data.beta_det,
+              input.structure_data.determinant_to_structure_terms,
+              prepared.orbital_result.active_orbital_overlap_matrix,
+              input.orbital_preparation_input.n_active_orbitals,
+              n_structures,
+              context->same_spin_pair_cache);
     }
     context->structure_action.emplace(
         input.structure_data.determinant_to_structure_terms,
@@ -390,16 +400,18 @@ void solve_structure_problem(
         prepared.active_space_one_electron_result.h1e_act,
         prepared.active_space_two_electron_result,
         input.orbital_preparation_input.n_active_orbitals,
-        streamed_diagonal ? &*streamed_diagonal : nullptr);
+        jacobi_diagonal ? &*jacobi_diagonal : nullptr);
     context->structure_matrix_wall_time_seconds =
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - stage_start_time)
             .count();
     const StructureAction& structure_action = *context->structure_action;
+    if (context->structure_overlap_diagonal.size() == 0) {
+      context->structure_overlap_diagonal =
+          structure_action.preconditioner_diagonal().overlap;
+    }
     context->average_structure_overlap =
-        structure_action.diagonal().overlap.mean();
-    context->structure_overlap_diagonal =
-        structure_action.diagonal().overlap;
+        context->structure_overlap_diagonal.mean();
     const xmvb::core::GeneralizedEigenAction action =
         [&structure_action](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
           StructureActionResult images = structure_action.apply(vectors);
@@ -411,8 +423,8 @@ void solve_structure_problem(
     retain_davidson_result(
         solve_selected_structure_roots(
             action,
-            structure_action.diagonal().hamiltonian,
-            structure_action.diagonal().overlap,
+            structure_action.preconditioner_diagonal().hamiltonian,
+            structure_action.preconditioner_diagonal().overlap,
             n_structures,
             n_roots,
             structure_solve_accuracy,

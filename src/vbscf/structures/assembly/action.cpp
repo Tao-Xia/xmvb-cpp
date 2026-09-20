@@ -520,7 +520,7 @@ StructureAction::StructureAction(
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     int n_active_orbitals,
-    const StructureDiagonal* precomputed_diagonal)
+    const StructureDiagonal* precomputed_preconditioner)
     : n_determinants_(
           static_cast<int>(determinant_to_structure_terms.size())),
       n_structures_(n_structures),
@@ -558,9 +558,10 @@ StructureAction::StructureAction(
     throw std::invalid_argument(
         "factorized structure action requires a same-spin pair cache");
   }
-  if (!same_spin_pair_cache.enabled() && precomputed_diagonal == nullptr) {
+  if (!same_spin_pair_cache.enabled() &&
+      precomputed_preconditioner == nullptr) {
     throw std::invalid_argument(
-        "topology-only direct-CI action requires an exact structure diagonal");
+        "topology-only direct-CI action requires a diagonal preconditioner");
   }
 
   const int n_packed_pairs = packed_active_pair_count(n_active_orbitals);
@@ -720,18 +721,19 @@ StructureAction::StructureAction(
     }
   }
 
-  if (precomputed_diagonal != nullptr) {
-    if (precomputed_diagonal->hamiltonian.size() != n_structures_ ||
-        precomputed_diagonal->overlap.size() != n_structures_) {
+  if (precomputed_preconditioner != nullptr) {
+    if (precomputed_preconditioner->hamiltonian.size() != n_structures_ ||
+        precomputed_preconditioner->overlap.size() != n_structures_) {
       throw std::invalid_argument(
-          "precomputed structure diagonal has incompatible dimensions");
+          "precomputed diagonal preconditioner has incompatible dimensions");
     }
-    diagonal_ = *precomputed_diagonal;
+    preconditioner_diagonal_ = *precomputed_preconditioner;
     return;
   }
 
-  diagonal_.hamiltonian = Eigen::VectorXd::Zero(n_structures_);
-  diagonal_.overlap = Eigen::VectorXd::Zero(n_structures_);
+  preconditioner_diagonal_.hamiltonian =
+      Eigen::VectorXd::Zero(n_structures_);
+  preconditioner_diagonal_.overlap = Eigen::VectorXd::Zero(n_structures_);
   const ActiveSpaceTwoElectronView two_electron_view =
       make_active_space_two_electron_view(active_space_two_electron_result);
   const int n_threads = std::max(
@@ -756,8 +758,8 @@ StructureAction::StructureAction(
         overlap += coefficient * pair.overlap;
       }
     }
-    diagonal_.hamiltonian[structure] = hamiltonian;
-    diagonal_.overlap[structure] = overlap;
+    preconditioner_diagonal_.hamiltonian[structure] = hamiltonian;
+    preconditioner_diagonal_.overlap[structure] = overlap;
   }
 }
 
@@ -1220,26 +1222,21 @@ StructureActionResult StructureAction::apply(
   if (direct_ci_) {
     direct_ci_->alpha_transform.apply_left(&spin_vectors);
     for (int block = 0; block < block_width; ++block) {
-      Eigen::MatrixXd coefficient_block = spin_vectors.middleCols(
+      auto coefficient_block = spin_vectors.middleCols(
           block * n_unique_beta_, n_unique_beta_);
-      direct_ci_->beta_transform().apply_right(&coefficient_block);
-      spin_vectors.middleCols(
-          block * n_unique_beta_, n_unique_beta_) = coefficient_block;
+      direct_ci_->beta_transform().apply_right_block(coefficient_block);
     }
 
     Eigen::MatrixXd spin_hamiltonians = direct_ci_->sigma.apply(spin_vectors);
     Eigen::MatrixXd spin_overlaps = std::move(spin_vectors);
     for (int block = 0; block < block_width; ++block) {
-      Eigen::MatrixXd hamiltonian_block = spin_hamiltonians.middleCols(
+      auto hamiltonian_block = spin_hamiltonians.middleCols(
           block * n_unique_beta_, n_unique_beta_);
-      Eigen::MatrixXd overlap_block = spin_overlaps.middleCols(
+      auto overlap_block = spin_overlaps.middleCols(
           block * n_unique_beta_, n_unique_beta_);
-      direct_ci_->beta_transform().apply_adjoint_right(&hamiltonian_block);
-      direct_ci_->beta_transform().apply_adjoint_right(&overlap_block);
-      spin_hamiltonians.middleCols(
-          block * n_unique_beta_, n_unique_beta_) = hamiltonian_block;
-      spin_overlaps.middleCols(
-          block * n_unique_beta_, n_unique_beta_) = overlap_block;
+      direct_ci_->beta_transform().apply_adjoint_right_block(
+          hamiltonian_block);
+      direct_ci_->beta_transform().apply_adjoint_right_block(overlap_block);
     }
     direct_ci_->alpha_transform.apply_adjoint_left(&spin_hamiltonians);
     direct_ci_->alpha_transform.apply_adjoint_left(&spin_overlaps);
@@ -1861,8 +1858,9 @@ StructureAction::active_integral_response_adjoint(
       std::move(result.pair_kernel)};
 }
 
-const StructureDiagonal& StructureAction::diagonal() const noexcept {
-  return diagonal_;
+const StructureDiagonal&
+StructureAction::preconditioner_diagonal() const noexcept {
+  return preconditioner_diagonal_;
 }
 
 int StructureAction::n_determinants() const noexcept {
@@ -1887,7 +1885,8 @@ StructureActionStorage StructureAction::storage() const noexcept {
       spin_terms_.size() * sizeof(StructureTerm);
   result.diagonal_bytes =
       static_cast<std::size_t>(
-          diagonal_.hamiltonian.size() + diagonal_.overlap.size()) *
+          preconditioner_diagonal_.hamiltonian.size() +
+          preconditioner_diagonal_.overlap.size()) *
       sizeof(double);
   result.factor_bytes =
       static_cast<std::size_t>(

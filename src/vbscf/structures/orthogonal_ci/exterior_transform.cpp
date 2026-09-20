@@ -195,12 +195,20 @@ void ExteriorOrbitalTransform::apply_right(
   if (coefficients == nullptr) {
     throw std::invalid_argument("right exterior transform output is null");
   }
-  validate_right(*coefficients);
-  coefficients->array().rowwise() *= determinant_scales_.transpose().array();
+  apply_right_block(*coefficients);
+}
+
+void ExteriorOrbitalTransform::apply_right_block(
+    Eigen::Ref<Eigen::MatrixXd> coefficients) const {
+  if (coefficients.cols() != dimension()) {
+    throw std::invalid_argument(
+        "right exterior transform determinant dimension mismatch");
+  }
+  coefficients.array().rowwise() *= determinant_scales_.transpose().array();
   for (const Shear& shear : shears_) {
     for (const DeterminantPair& pair : shear.pairs) {
-      coefficients->col(pair.target) +=
-          (shear.coefficient * pair.sign) * coefficients->col(pair.source);
+      coefficients.col(pair.target) +=
+          (shear.coefficient * pair.sign) * coefficients.col(pair.source);
     }
   }
 }
@@ -225,14 +233,22 @@ void ExteriorOrbitalTransform::apply_adjoint_right(
   if (coefficients == nullptr) {
     throw std::invalid_argument("right exterior adjoint output is null");
   }
-  validate_right(*coefficients);
+  apply_adjoint_right_block(*coefficients);
+}
+
+void ExteriorOrbitalTransform::apply_adjoint_right_block(
+    Eigen::Ref<Eigen::MatrixXd> coefficients) const {
+  if (coefficients.cols() != dimension()) {
+    throw std::invalid_argument(
+        "right exterior transform determinant dimension mismatch");
+  }
   for (auto shear = shears_.rbegin(); shear != shears_.rend(); ++shear) {
     for (const DeterminantPair& pair : shear->pairs) {
-      coefficients->col(pair.source) +=
-          (shear->coefficient * pair.sign) * coefficients->col(pair.target);
+      coefficients.col(pair.source) +=
+          (shear->coefficient * pair.sign) * coefficients.col(pair.target);
     }
   }
-  coefficients->array().rowwise() *= determinant_scales_.transpose().array();
+  coefficients.array().rowwise() *= determinant_scales_.transpose().array();
 }
 
 ExteriorTransformDirection ExteriorOrbitalTransform::direction(

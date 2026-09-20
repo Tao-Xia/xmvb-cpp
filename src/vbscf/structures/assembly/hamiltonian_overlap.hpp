@@ -130,6 +130,44 @@ public:
       const SameSpinPairCacheContext& same_spin_pair_cache) const;
 
   /**
+   * @brief Builds a determinant-diagonal Jacobi model for Davidson.
+   *
+   * Each full determinant self element is evaluated exactly, including its
+   * opposite-spin Coulomb density contraction. The structure-space model keeps
+   * only those determinant-diagonal contributions,
+   * `D_X(I) = sum_d T(d,I)^2 X(d,d)`, for `X = H,S`. It is a preconditioner,
+   * not the exact diagonal of the projected structure matrices; the Davidson
+   * H/S action remains exact.
+   */
+  StructureDiagonal build_davidson_jacobi_preconditioner(
+      const std::vector<std::vector<int>>& alpha_det,
+      const std::vector<std::vector<int>>& beta_det,
+      const std::vector<std::vector<StructureExpansionTerm>>& determinant_to_structure_terms,
+      const std::vector<double>& ovlp_act,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+      int n_orbitals,
+      const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+      int n_structures,
+      const SameSpinPairCacheContext& same_spin_pair_cache) const;
+
+  /**
+   * @brief Builds exact structure norms without Hamiltonian contractions.
+   *
+   * This overlap-only path is intended for structure normalization and output.
+   * It contracts each selected structure support exactly while avoiding all
+   * one- and two-electron Hamiltonian work.
+   */
+  Eigen::VectorXd build_exact_overlap_diagonal(
+      const std::vector<std::vector<int>>& alpha_det,
+      const std::vector<std::vector<int>>& beta_det,
+      const std::vector<std::vector<StructureExpansionTerm>>&
+          determinant_to_structure_terms,
+      const std::vector<double>& active_overlap,
+      int n_orbitals,
+      int n_structures,
+      const SameSpinPairCacheContext& same_spin_pair_cache) const;
+
+  /**
    * @brief Builds structure matrices while reusing a same-spin cache and RI data.
    */
   StructureAccumulationResult build(
