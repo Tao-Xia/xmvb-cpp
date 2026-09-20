@@ -13,7 +13,9 @@
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 #include "vbscf/derivatives/hessian/responses/structure/directional.hpp"
 #include "vbscf/integrals/active/two_electron/response/directional.hpp"
+#include "vbscf/integrals/active/two_electron/response/ri.hpp"
 #include "vbscf/integrals/ao/one_electron/direct_operator.hpp"
+#include "vbscf/integrals/ao/one_electron/ri_operator.hpp"
 
 namespace xmvb::vb {
 
@@ -43,20 +45,6 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
     throw std::runtime_error(
         "exact_ctx analytic core HVP is unavailable for the current accepted point");
   }
-  // The RI scalar path is fully factor-native and is the canonical reference
-  // implementation.  Keep block semantics exact by applying it column-wise;
-  // a wide auxiliary-factor GEMM can replace this loop without changing the
-  // public HVP contract.
-  if (accepted_ri_two_electron_cache_.has_value()) {
-    for (Eigen::Index column = 0;
-         column < reduced_directions.cols();
-         ++column) {
-      responses.col(column) =
-          apply_reduced(reduced_directions.col(column), components);
-    }
-    return responses;
-  }
-
   const int n_basis_functions =
       current_input_->orbital_preparation_input.n_basis_functions;
   const int n_active_orbitals =
@@ -95,20 +83,46 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
   const auto batch_h1e_start_time = std::chrono::steady_clock::now();
   Eigen::MatrixXd delta_h1e_columns;
   Eigen::MatrixXd inactive_density_gradient_columns;
-  apply_ao_h1e_fused_batch(
-      inactive_density_columns,
-      symmetrized_pullback_columns,
-      current_input_->ao_integral_input,
-      detail::choose_exact_ao_h1e_thread_count(
-          current_input_->orbital_preparation_input),
-      &delta_h1e_columns,
-      &inactive_density_gradient_columns);
-  for (Eigen::Index column = 0; column < n_directions; ++column) {
-    Eigen::Map<Eigen::MatrixXd> delta_h1e(
-        delta_h1e_columns.col(column).data(),
-        n_basis_functions,
-        n_basis_functions);
-    detail::symmetrize_exact_ao_h1e_forward(delta_h1e);
+  if (accepted_ri_factorization_ != nullptr) {
+    delta_h1e_columns.resize(ao_matrix_size, n_directions);
+    inactive_density_gradient_columns.resize(
+        ao_matrix_size, n_directions);
+    for (Eigen::Index column = 0; column < n_directions; ++column) {
+      const Eigen::Map<const Eigen::MatrixXd> source(
+          inactive_density_columns.col(column).data(),
+          n_basis_functions, n_basis_functions);
+      const Eigen::Map<const Eigen::MatrixXd> adjoint(
+          symmetrized_pullback_columns.col(column).data(),
+          n_basis_functions, n_basis_functions);
+      apply_ao_effective_one_electron_ri_operator_adaptive(
+          source, adjoint, *accepted_ri_factorization_,
+          &ri_ao_h1e_fused_workspace_, &ri_ao_h1e_strategy_,
+          &ri_ao_h1e_forward_workspace_, &ri_ao_h1e_adjoint_workspace_);
+      delta_h1e_columns.col(column) = Eigen::Map<const Eigen::VectorXd>(
+          ri_ao_h1e_forward_workspace_.data(), ao_matrix_size);
+      std::vector<double> encoded_adjoint;
+      detail::encode_symmetric_ao_gradient(
+          ri_ao_h1e_adjoint_workspace_, &encoded_adjoint);
+      inactive_density_gradient_columns.col(column) =
+          Eigen::Map<const Eigen::VectorXd>(
+              encoded_adjoint.data(), ao_matrix_size);
+    }
+  } else {
+    apply_ao_h1e_fused_batch(
+        inactive_density_columns,
+        symmetrized_pullback_columns,
+        current_input_->ao_integral_input,
+        detail::choose_exact_ao_h1e_thread_count(
+            current_input_->orbital_preparation_input),
+        &delta_h1e_columns,
+        &inactive_density_gradient_columns);
+    for (Eigen::Index column = 0; column < n_directions; ++column) {
+      Eigen::Map<Eigen::MatrixXd> delta_h1e(
+          delta_h1e_columns.col(column).data(),
+          n_basis_functions,
+          n_basis_functions);
+      detail::symmetrize_exact_ao_h1e_forward(delta_h1e);
+    }
   }
   const double batch_h1e_seconds =
       detail::exact_hvp_elapsed_seconds(batch_h1e_start_time);
@@ -119,7 +133,29 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
   Eigen::MatrixXd delta_packed_active_two_electron_columns;
   std::vector<ExactCtxPairMatrix> directional_pair_products;
   std::vector<Eigen::MatrixXd> two_electron_fixed_adjoint_directions;
-  if ((components.local_active_response || components.structure_response)) {
+  std::vector<Eigen::MatrixXd> ri_active_pair_factor_directions;
+  const bool compute_outer_response =
+      components.local_active_response || components.structure_response;
+  if (accepted_ri_two_electron_cache_.has_value() &&
+      (compute_outer_response || components.direct_core_response)) {
+    const auto batch_active_two_electron_start_time =
+        std::chrono::steady_clock::now();
+    ri_active_pair_factor_directions =
+        compute_ri_active_pair_factor_directional_derivative_batch(
+            *accepted_ri_two_electron_cache_, dense_active_directions);
+    if (compute_outer_response) {
+      delta_packed_active_two_electron_columns =
+          compute_ri_packed_active_two_electron_integral_directional_derivative_batch(
+              *accepted_ri_two_electron_cache_,
+              ri_active_pair_factor_directions);
+    }
+    const double batch_active_two_electron_seconds =
+        detail::exact_hvp_elapsed_seconds(batch_active_two_electron_start_time);
+    apply_timing_totals_.active_two_electron_wall_time_seconds +=
+        batch_active_two_electron_seconds;
+    apply_timing_totals_.total_apply_wall_time_seconds +=
+        batch_active_two_electron_seconds;
+  } else if (compute_outer_response) {
     const auto batch_active_two_electron_start_time =
         std::chrono::steady_clock::now();
     delta_packed_active_two_electron_columns =
@@ -144,7 +180,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
         batch_active_two_electron_seconds;
   }
 
-  if ((components.local_active_response || components.structure_response)) {
+  if (compute_outer_response) {
     const auto outer_batch_start = std::chrono::steady_clock::now();
     const int n_selected_states = static_cast<int>(
         accepted_point_context_->selected_state_indices.size());
@@ -266,10 +302,10 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
     const Eigen::VectorXd inactive_density_gradient =
         inactive_density_gradient_columns.col(column);
     const Eigen::VectorXd delta_packed_active_two_electron =
-        (components.local_active_response || components.structure_response)
+        compute_outer_response
             ? delta_packed_active_two_electron_columns.col(column)
             : Eigen::VectorXd();
-    if ((components.local_active_response || components.structure_response)) {
+    if (compute_outer_response) {
       auto& packed = precomputed_directions[column]
                          .outer_response
                          ->integral_direction
@@ -287,20 +323,25 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
         (components.local_active_response || components.structure_response)
             ? &delta_packed_active_two_electron
             : nullptr,
+        accepted_ri_two_electron_cache_.has_value() &&
+                (compute_outer_response || components.direct_core_response)
+            ? &ri_active_pair_factor_directions[
+                  static_cast<std::size_t>(column)]
+            : nullptr,
         components.direct_core_response &&
-                (components.local_active_response ||
-                 components.structure_response)
+                compute_outer_response &&
+                !accepted_ri_two_electron_cache_.has_value()
             ? &directional_pair_products[column]
             : nullptr,
         components.direct_core_response &&
-                (components.local_active_response ||
-                 components.structure_response) &&
+                compute_outer_response &&
+                !accepted_ri_two_electron_cache_.has_value() &&
                 two_electron_fixed_adjoint_directions[column].size() != 0
             ? &two_electron_fixed_adjoint_directions[column]
             : nullptr,
         &precomputed_directions[column]);
     responses.col(column) = response;
-    if ((components.local_active_response || components.structure_response)) {
+    if (compute_outer_response) {
       precomputed_directions[column]
           .outer_response
           ->integral_direction

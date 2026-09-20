@@ -54,6 +54,18 @@ Eigen::MatrixXd compute_ri_active_pair_factor_directional_derivative(
     const Eigen::Ref<const Eigen::MatrixXd>& dense_active_direction);
 
 /**
+ * @brief Forms several active-pair factor directions in one RI transform.
+ *
+ * The packed-map path evaluates `L [delta T_1 ... delta T_b]` as one wide
+ * matrix product. The direct-transform path shares the accepted `L_A C`
+ * transform across all directions.
+ */
+std::vector<Eigen::MatrixXd>
+compute_ri_active_pair_factor_directional_derivative_batch(
+    const RiActiveTwoElectronResponseCache& accepted_cache,
+    const std::vector<Eigen::MatrixXd>& dense_active_directions);
+
+/**
  * @brief Forms packed `delta G = B^T delta B + delta B^T B`.
  *
  * @param accepted_cache Accepted-point cache containing `B`.
@@ -65,6 +77,14 @@ compute_ri_packed_active_two_electron_integral_directional_derivative(
     const RiActiveTwoElectronResponseCache& accepted_cache,
     const Eigen::Ref<const Eigen::MatrixXd>&
         directional_active_pair_factors);
+
+/**
+ * @brief Forms packed `delta G` columns for a block of factor directions.
+ */
+Eigen::MatrixXd
+compute_ri_packed_active_two_electron_integral_directional_derivative_batch(
+    const RiActiveTwoElectronResponseCache& accepted_cache,
+    const std::vector<Eigen::MatrixXd>& directional_active_pair_factors);
 
 /**
  * @brief Pulls an arbitrary packed active-2e adjoint back to active orbitals.

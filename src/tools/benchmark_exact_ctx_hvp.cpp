@@ -981,14 +981,18 @@ BlockBenchmarkMeasurement run_full_block_benchmark(
     scalar_reference.col(column) =
         scalar_reference_operator.apply_reduced(directions.col(column));
   }
+  const auto scalar_reference_diagnostics =
+      scalar_reference_operator.diagnostics();
   measurement.scalar_reference_relative_error =
       (response - scalar_reference).norm() /
       std::max(1.0, scalar_reference.norm());
-  // Block GEMM and independent matrix-vector products associate floating-point
-  // sums differently. Permit a small multiple of the natural sqrt(epsilon)
-  // reproducibility scale while reporting the measured error unchanged.
-  const double block_reproducibility_tolerance =
-      8.0 * std::sqrt(std::numeric_limits<double>::epsilon());
+  // Recycled and simultaneous response solves can terminate at different
+  // points inside the same certified inexact-response ball. Their HVPs need
+  // agree to that declared backward error, not to a tighter hidden threshold.
+  const double block_reproducibility_tolerance = std::max({
+      8.0 * std::sqrt(std::numeric_limits<double>::epsilon()),
+      measurement.diagnostics.max_structure_response_relative_residual,
+      scalar_reference_diagnostics.max_structure_response_relative_residual});
   if (measurement.scalar_reference_relative_error >
       block_reproducibility_tolerance) {
     std::ostringstream message;

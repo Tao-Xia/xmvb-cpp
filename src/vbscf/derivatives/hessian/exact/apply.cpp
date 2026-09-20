@@ -56,24 +56,6 @@ void throw_if_nonfinite(
       std::string(label) + " contains non-finite values");
 }
 
-void encode_symmetric_ao_gradient(
-    const Eigen::Ref<const Eigen::MatrixXd>& symmetric_gradient,
-    std::vector<double>* encoded_gradient) {
-  if (encoded_gradient == nullptr ||
-      symmetric_gradient.rows() != symmetric_gradient.cols()) {
-    throw std::invalid_argument("invalid symmetric AO-gradient output");
-  }
-  const int n_bf = static_cast<int>(symmetric_gradient.rows());
-  encoded_gradient->assign(
-      static_cast<std::size_t>(n_bf) * n_bf,
-      0.0);
-  Eigen::Map<Eigen::MatrixXd> encoded(
-      encoded_gradient->data(), n_bf, n_bf);
-  encoded.triangularView<Eigen::Lower>() =
-      symmetric_gradient.triangularView<Eigen::Lower>();
-  encoded.diagonal() *= 0.5;
-}
-
 void throw_if_nonfinite(
     const Eigen::MatrixXd& values,
     const char* label) {
@@ -147,6 +129,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced(
       nullptr,
       nullptr,
       nullptr,
+      nullptr,
       nullptr);
 }
 
@@ -156,6 +139,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const Eigen::VectorXd* precomputed_delta_ao_effective_h1e,
     const Eigen::VectorXd* precomputed_inactive_density_gradient,
     const Eigen::VectorXd* precomputed_delta_packed_active_two_electron,
+    const Eigen::MatrixXd* precomputed_ri_active_pair_factor_direction,
     const ExactCtxPairMatrix* precomputed_directional_pair_products,
     const Eigen::MatrixXd* precomputed_two_electron_fixed_adjoint,
     const PrecomputedDirection* precomputed_direction) const {
@@ -279,7 +263,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
           ri_ao_h1e_forward_workspace_.data(),
           ri_ao_h1e_forward_workspace_.data() +
               ri_ao_h1e_forward_workspace_.size());
-      encode_symmetric_ao_gradient(
+      detail::encode_symmetric_ao_gradient(
           ri_ao_h1e_adjoint_workspace_,
           &ao_h1e_inactive_density_gradient_workspace_);
     } else {
@@ -310,10 +294,24 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
   Eigen::VectorXd ri_delta_packed_active_two_electron;
   if (accepted_ri_two_electron_cache_.has_value() &&
       (compute_outer_response || components.direct_core_response)) {
-    ri_directional_active_pair_factors.emplace(
-        compute_ri_active_pair_factor_directional_derivative(
-            *accepted_ri_two_electron_cache_,
-            delta_dense_active_coefficients));
+    if (precomputed_ri_active_pair_factor_direction != nullptr) {
+      if (precomputed_ri_active_pair_factor_direction->rows() !=
+              accepted_ri_two_electron_cache_->n_auxiliary_functions ||
+          precomputed_ri_active_pair_factor_direction->cols() !=
+              static_cast<Eigen::Index>(
+                  accepted_ri_two_electron_cache_
+                      ->active_pair_first_indices.size())) {
+        throw std::invalid_argument(
+            "precomputed RI active-pair factor direction has inconsistent dimensions");
+      }
+      ri_directional_active_pair_factors =
+          *precomputed_ri_active_pair_factor_direction;
+    } else {
+      ri_directional_active_pair_factors.emplace(
+          compute_ri_active_pair_factor_directional_derivative(
+              *accepted_ri_two_electron_cache_,
+              delta_dense_active_coefficients));
+    }
     if (compute_outer_response) {
       const std::vector<double> packed_direction =
           compute_ri_packed_active_two_electron_integral_directional_derivative(

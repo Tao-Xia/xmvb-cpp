@@ -360,8 +360,15 @@ Newton/KKT certification must always use current-point HVPs.
       certification actions and require zero new MINRES iterations. The cache is
       destroyed with the accepted-point context, so it cannot cross an orbital
       update.
-- [ ] Batch the remaining columnwise RI HVP work where mathematically shared
-      intermediates exist.
+- [x] Batch the remaining columnwise RI HVP work where mathematically shared
+      intermediates exist. Packed active-pair directions now use one wide
+      $L[Q'_1\;\cdots\;Q'_b]$ product, the direct-transform route shares
+      $L_A C$ across the block, and all $B^T\delta B_d$ contractions use one
+      wide GEMM. RI directions now enter the existing block structure-response
+      solve instead of falling back to complete scalar HVPs. The attempted
+      wide AO-H1E exchange sweep was measured, found to add
+      $O(t b N_{\mathrm{bf}}^2)$ memory without steady-state benefit, and
+      deleted rather than retained as a fallback.
 - [ ] Remove the obsolete fixed-cap and unused correction/recycling code once the
       replacement is validated; do not retain a fallback implementation.
 - [ ] Update the theory article with the final accepted formulation and measured

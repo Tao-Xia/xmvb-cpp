@@ -2,6 +2,8 @@
 
 #include <chrono>
 #include <optional>
+#include <stdexcept>
+#include <vector>
 
 #include <Eigen/Core>
 
@@ -29,6 +31,23 @@ struct ExactHvpOperator::State::PrecomputedDirection {
 };
 
 namespace detail {
+
+inline void encode_symmetric_ao_gradient(
+    const Eigen::Ref<const Eigen::MatrixXd>& symmetric_gradient,
+    std::vector<double>* encoded_gradient) {
+  if (encoded_gradient == nullptr ||
+      symmetric_gradient.rows() != symmetric_gradient.cols()) {
+    throw std::invalid_argument("invalid symmetric AO-gradient output");
+  }
+  const int n_bf = static_cast<int>(symmetric_gradient.rows());
+  encoded_gradient->assign(
+      static_cast<std::size_t>(n_bf) * n_bf, 0.0);
+  Eigen::Map<Eigen::MatrixXd> encoded(
+      encoded_gradient->data(), n_bf, n_bf);
+  encoded.triangularView<Eigen::Lower>() =
+      symmetric_gradient.triangularView<Eigen::Lower>();
+  encoded.diagonal() *= 0.5;
+}
 
 inline double exact_hvp_elapsed_seconds(
     const std::chrono::steady_clock::time_point& start_time) {

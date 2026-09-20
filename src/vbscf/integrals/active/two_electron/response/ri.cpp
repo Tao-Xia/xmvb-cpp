@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <Eigen/Core>
 
@@ -108,11 +109,9 @@ bool direct_pair_factor_direction_has_lower_flop_count(
       n_active * (n_active + 1.0L);
   const long double direct_cost =
       4.0L * n_bf * n_active * (n_bf + n_active);
-  // The packed path is one large GEMM, whereas the direct path is a batch of
-  // AO-slice GEMMs plus two final contractions.  Admit the direct algorithm
-  // only after its arithmetic count is at least twofold smaller, leaving the
-  // near-crossover regime to the more efficient single-GEMM kernel.
-  return 2.0L * direct_cost < packed_cost;
+  // Select solely from the leading arithmetic counts. Runtime calibration is
+  // intentionally not embedded in the mathematical response path.
+  return direct_cost < packed_cost;
 }
 
 Eigen::MatrixXd compute_direct_active_pair_factor_direction(
@@ -184,6 +183,89 @@ Eigen::MatrixXd compute_direct_active_pair_factor_direction(
     }
   }
   return result;
+}
+
+std::vector<Eigen::MatrixXd>
+compute_direct_active_pair_factor_direction_batch(
+    const RiActiveTwoElectronResponseCache& cache,
+    const std::vector<Eigen::MatrixXd>& active_directions) {
+  const int n_bf = cache.n_basis_functions;
+  const int n_active = cache.n_active_orbitals;
+  const int n_auxiliary = cache.n_auxiliary_functions;
+  const Eigen::Index n_directions =
+      static_cast<Eigen::Index>(active_directions.size());
+  const auto& ao_factors = *cache.metric_whitened_ao_pair_factors;
+  const auto& active_coefficients = *cache.accepted_active_coefficients;
+
+  Eigen::MatrixXd combined_coefficients(
+      n_bf, (n_directions + 1) * n_active);
+  combined_coefficients.leftCols(n_active) = active_coefficients;
+  for (Eigen::Index direction = 0;
+       direction < n_directions; ++direction) {
+    combined_coefficients.middleCols(
+        (direction + 1) * n_active, n_active) =
+        active_directions[static_cast<std::size_t>(direction)];
+  }
+
+  const Eigen::Index channel_rows =
+      static_cast<Eigen::Index>(n_auxiliary) * n_active;
+  Eigen::MatrixXd transformed(
+      (n_directions + 1) * channel_rows, n_bf);
+  const int n_threads = std::min(
+      xmvb::effective_openmp_thread_count(), n_bf);
+#pragma omp parallel num_threads(n_threads)
+  {
+    Eigen::MatrixXd ao_slice(n_auxiliary, n_bf);
+#pragma omp for schedule(static)
+    for (int first_basis = 0; first_basis < n_bf; ++first_basis) {
+      for (int second_basis = 0; second_basis < n_bf; ++second_basis) {
+        const int larger = std::max(first_basis, second_basis);
+        const int smaller = std::min(first_basis, second_basis);
+        const Eigen::Index packed_pair =
+            static_cast<Eigen::Index>(larger) * (larger + 1) / 2 + smaller;
+        ao_slice.col(second_basis) = ao_factors.col(packed_pair);
+      }
+      Eigen::Map<Eigen::MatrixXd> transformed_slice(
+          transformed.col(first_basis).data(),
+          n_auxiliary,
+          (n_directions + 1) * n_active);
+      transformed_slice.noalias() = ao_slice * combined_coefficients;
+    }
+  }
+
+  const auto accepted_transformed = transformed.topRows(channel_rows);
+  std::vector<Eigen::MatrixXd> results;
+  results.reserve(static_cast<std::size_t>(n_directions));
+  for (Eigen::Index direction = 0;
+       direction < n_directions; ++direction) {
+    const auto directional_transformed = transformed.middleRows(
+        (direction + 1) * channel_rows, channel_rows);
+    const Eigen::MatrixXd accepted_times_direction =
+        accepted_transformed *
+        active_directions[static_cast<std::size_t>(direction)];
+    const Eigen::MatrixXd direction_times_accepted =
+        directional_transformed * active_coefficients;
+    Eigen::MatrixXd result(
+        n_auxiliary,
+        static_cast<Eigen::Index>(packed_pair_count(n_active)));
+    Eigen::Index active_pair = 0;
+    for (int first_active = 0;
+         first_active < n_active; ++first_active) {
+      for (int second_active = 0;
+           second_active <= first_active;
+           ++second_active, ++active_pair) {
+        result.col(active_pair) =
+            accepted_times_direction.middleRows(
+                static_cast<Eigen::Index>(second_active) * n_auxiliary,
+                n_auxiliary).col(first_active) +
+            direction_times_accepted.middleRows(
+                static_cast<Eigen::Index>(second_active) * n_auxiliary,
+                n_auxiliary).col(first_active);
+      }
+    }
+    results.push_back(std::move(result));
+  }
+  return results;
 }
 
 }  // namespace
@@ -286,6 +368,58 @@ Eigen::MatrixXd compute_ri_active_pair_factor_directional_derivative(
       mixed_pair_coefficients;
 }
 
+std::vector<Eigen::MatrixXd>
+compute_ri_active_pair_factor_directional_derivative_batch(
+    const RiActiveTwoElectronResponseCache& accepted_cache,
+    const std::vector<Eigen::MatrixXd>& dense_active_directions) {
+  validate_cache(accepted_cache, "RI active-pair factor direction block");
+  if (dense_active_directions.empty()) return {};
+  for (const auto& direction : dense_active_directions) {
+    if (direction.rows() != accepted_cache.n_basis_functions ||
+        direction.cols() != accepted_cache.n_active_orbitals ||
+        !direction.allFinite()) {
+      throw std::invalid_argument(
+          "RI active-pair factor direction block has an invalid shape or value");
+    }
+  }
+  if (direct_pair_factor_direction_has_lower_flop_count(
+          accepted_cache.n_basis_functions,
+          accepted_cache.n_active_orbitals)) {
+    return compute_direct_active_pair_factor_direction_batch(
+        accepted_cache, dense_active_directions);
+  }
+
+  const Eigen::Index n_ao_pairs = static_cast<Eigen::Index>(
+      accepted_cache.ao_pair_first_indices.size());
+  const Eigen::Index n_active_pairs = static_cast<Eigen::Index>(
+      accepted_cache.active_pair_first_indices.size());
+  const Eigen::Index n_directions = static_cast<Eigen::Index>(
+      dense_active_directions.size());
+  Eigen::MatrixXd pair_direction_block(
+      n_ao_pairs, n_directions * n_active_pairs);
+  for (Eigen::Index direction = 0;
+       direction < n_directions; ++direction) {
+    PackedOrbitalPairMapMatrix pair_direction;
+    build_packed_orbital_pair_map_directional_derivative(
+        *accepted_cache.accepted_active_coefficients,
+        dense_active_directions[static_cast<std::size_t>(direction)],
+        &pair_direction);
+    pair_direction_block.middleCols(
+        direction * n_active_pairs, n_active_pairs) = pair_direction;
+  }
+  const Eigen::MatrixXd factor_direction_block =
+      *accepted_cache.metric_whitened_ao_pair_factors *
+      pair_direction_block;
+  std::vector<Eigen::MatrixXd> results;
+  results.reserve(static_cast<std::size_t>(n_directions));
+  for (Eigen::Index direction = 0;
+       direction < n_directions; ++direction) {
+    results.emplace_back(factor_direction_block.middleCols(
+        direction * n_active_pairs, n_active_pairs));
+  }
+  return results;
+}
+
 std::vector<double>
 compute_ri_packed_active_two_electron_integral_directional_derivative(
     const RiActiveTwoElectronResponseCache& accepted_cache,
@@ -319,6 +453,54 @@ compute_ri_packed_active_two_electron_integral_directional_derivative(
     }
   }
   return packed_direction;
+}
+
+Eigen::MatrixXd
+compute_ri_packed_active_two_electron_integral_directional_derivative_batch(
+    const RiActiveTwoElectronResponseCache& accepted_cache,
+    const std::vector<Eigen::MatrixXd>& directional_active_pair_factors) {
+  validate_cache(accepted_cache, "RI packed active-2e direction block");
+  if (directional_active_pair_factors.empty()) return {};
+  const Eigen::MatrixXd& accepted_factors =
+      *accepted_cache.accepted_active_pair_factors;
+  const Eigen::Index n_active_pairs = accepted_factors.cols();
+  const Eigen::Index n_directions = static_cast<Eigen::Index>(
+      directional_active_pair_factors.size());
+  Eigen::MatrixXd factor_direction_block(
+      accepted_factors.rows(), n_directions * n_active_pairs);
+  for (Eigen::Index direction = 0;
+       direction < n_directions; ++direction) {
+    const auto& factor_direction =
+        directional_active_pair_factors[static_cast<std::size_t>(direction)];
+    if (factor_direction.rows() != accepted_factors.rows() ||
+        factor_direction.cols() != n_active_pairs ||
+        !factor_direction.allFinite()) {
+      throw std::invalid_argument(
+          "RI active-pair factor direction block has an invalid shape or value");
+    }
+    factor_direction_block.middleCols(
+        direction * n_active_pairs, n_active_pairs) = factor_direction;
+  }
+  const Eigen::MatrixXd one_sided_block =
+      accepted_factors.transpose() * factor_direction_block;
+  const Eigen::Index n_packed_integrals =
+      n_active_pairs * (n_active_pairs + 1) / 2;
+  Eigen::MatrixXd packed_directions(n_packed_integrals, n_directions);
+  for (Eigen::Index direction = 0;
+       direction < n_directions; ++direction) {
+    const auto one_sided = one_sided_block.middleCols(
+        direction * n_active_pairs, n_active_pairs);
+    for (Eigen::Index first = 0; first < n_active_pairs; ++first) {
+      for (Eigen::Index second = 0; second <= first; ++second) {
+        const int packed_index =
+            TwoElectronIndexer::packed_pair_of_pairs_index(
+                static_cast<int>(first), static_cast<int>(second));
+        packed_directions(packed_index, direction) =
+            one_sided(first, second) + one_sided(second, first);
+      }
+    }
+  }
+  return packed_directions;
 }
 
 Eigen::MatrixXd backpropagate_ri_packed_active_two_electron_gradient(

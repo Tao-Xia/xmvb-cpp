@@ -144,6 +144,20 @@ void check_direct_factor_direction() {
   require(
       is_close(actual, expected, 2.0e-13),
       "direct RI active-pair factor direction changed the packed result");
+  const Eigen::MatrixXd second_direction =
+      -0.37 * direction + 0.11 * coefficients;
+  const auto batch =
+      xmvb::vb::compute_ri_active_pair_factor_directional_derivative_batch(
+          cache, {direction, second_direction});
+  require(batch.size() == 2 && is_close(batch[0], actual, 2.0e-13),
+          "direct RI active-pair batch changed its first direction");
+  require(
+      is_close(
+          batch[1],
+          xmvb::vb::compute_ri_active_pair_factor_directional_derivative(
+              cache, second_direction),
+          2.0e-13),
+      "direct RI active-pair batch changed its second direction");
 }
 
 }  // namespace
@@ -197,6 +211,20 @@ int main() {
       xmvb::vb::compute_ri_active_pair_factor_directional_derivative(
           cache,
           direction);
+  const Eigen::MatrixXd second_direction =
+      0.43 * direction - 0.08 * coefficients;
+  const auto factor_direction_batch =
+      xmvb::vb::compute_ri_active_pair_factor_directional_derivative_batch(
+          cache, {direction, second_direction});
+  require(
+      factor_direction_batch.size() == 2 &&
+          is_close(factor_direction_batch[0], factor_direction, 1.0e-13) &&
+          is_close(
+              factor_direction_batch[1],
+              xmvb::vb::compute_ri_active_pair_factor_directional_derivative(
+                  cache, second_direction),
+              1.0e-13),
+      "packed RI active-pair factor block disagrees with scalar actions");
 
   constexpr double step = 1.0e-6;
   const auto plus_result =
@@ -216,6 +244,31 @@ int main() {
           compute_ri_packed_active_two_electron_integral_directional_derivative(
               cache,
               factor_direction);
+  const Eigen::MatrixXd packed_integral_direction_batch =
+      xmvb::vb::
+          compute_ri_packed_active_two_electron_integral_directional_derivative_batch(
+              cache, factor_direction_batch);
+  const std::vector<double> second_packed_integral_direction =
+      xmvb::vb::
+          compute_ri_packed_active_two_electron_integral_directional_derivative(
+              cache, factor_direction_batch[1]);
+  require(
+      packed_integral_direction_batch.rows() ==
+              static_cast<Eigen::Index>(packed_integral_direction.size()) &&
+          packed_integral_direction_batch.cols() == 2,
+      "RI packed active-2e direction block has the wrong shape");
+  for (Eigen::Index index = 0;
+       index < packed_integral_direction_batch.rows(); ++index) {
+    require(
+        std::abs(packed_integral_direction_batch(index, 0) -
+                 packed_integral_direction[static_cast<std::size_t>(index)]) <=
+                1.0e-13 &&
+            std::abs(
+                packed_integral_direction_batch(index, 1) -
+                second_packed_integral_direction[
+                    static_cast<std::size_t>(index)]) <= 1.0e-13,
+        "RI packed active-2e direction block disagrees with scalar actions");
+  }
   const std::vector<double> plus_integrals =
       pack_gram(plus_result.ri_active_pair_factors);
   const std::vector<double> minus_integrals =

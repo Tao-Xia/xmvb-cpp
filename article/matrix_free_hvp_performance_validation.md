@@ -661,13 +661,69 @@ N_{\mathrm{aux}}N_{\mathrm{AO-pair}}N_{\mathrm{active-pair}}
 \right).
 $$
 
-The single packed-GEMM path remains faster near the crossover because it has
-greater arithmetic intensity.  The implementation therefore selects the
-direct transformation only when its dimension-derived floating-point count is
-at least a factor of two smaller.  This rule depends only on the actual AO and
-active dimensions and is not tied to a molecule, orbital type, or input-file
-keyword.  A synthetic test in the admitted regime compares every transformed
-factor against the original packed-pair contraction.
+The implementation compares the two leading floating-point counts directly
+and selects the lower-count contraction. The admission rule therefore depends
+only on the AO and active dimensions; it contains no molecule, orbital-type,
+or fitted crossover parameter. A synthetic test in the admitted regime
+compares every transformed factor against the packed-pair contraction.
+
+For a block of $b$ HVP directions, define
+
+$$
+\Delta\mathbf Q
+=
+\left[
+Q'(C)[D_1]\;\cdots\;Q'(C)[D_b]
+\right].
+$$
+
+The packed path now evaluates
+
+$$
+\Delta\mathbf B=L\Delta\mathbf Q
+$$
+
+as one wide matrix product. It then contracts all integral responses through
+
+$$
+\left[
+B^{\mathrm T}\delta B_1\;\cdots\;B^{\mathrm T}\delta B_b
+\right]
+=B^{\mathrm T}\Delta B,
+$$
+
+followed by the exact symmetric completion
+$\delta G_d=B^{\mathrm T}\delta B_d+\delta B_d^{\mathrm T}B$. This preserves
+the scalar leading-order work but removes repeated RI-factor reads and BLAS
+launches.
+
+In the direct-transform path, the accepted $L_A C$ transform is shared across
+the complete block. The leading work changes from
+
+$$
+4bN_{\mathrm{aux}}N_{\mathrm{bf}}N_{\mathrm{act}}
+\left(N_{\mathrm{bf}}+N_{\mathrm{act}}\right)
+$$
+
+for $b$ independent scalar actions to
+
+$$
+2(b+1)N_{\mathrm{aux}}N_{\mathrm{bf}}^2N_{\mathrm{act}}
++4bN_{\mathrm{aux}}N_{\mathrm{bf}}N_{\mathrm{act}}^2.
+$$
+
+The block schedule also admits all directional structure responses to one
+block generalized-eigen action instead of routing RI HVPs through the scalar
+driver. For a three-direction F$_2$ block on four CPU threads, the block result
+agrees with three independent RI HVPs to relative errors of
+$2.29\times10^{-14}$ (single state) and $2.68\times10^{-12}$ (two-state equal
+average). Over 20 repeated block calls, the corresponding measured speedups
+are $1.03$ and $1.09$, respectively. These compact tests are correctness and
+scheduling checks, not large-system scaling claims. A prototype that widened
+the AO one-electron RI exchange sweep was removed: it duplicated
+$O(t b N_{\mathrm{bf}}^2)$ thread-local storage while sharing only one of the
+two exchange multiplications, and did not improve the steady-state compact
+benchmark.
 
 The RI path also uses the same factor representation during closed-shell RHF
 initialization.  For the spinless occupied-orbital projector
@@ -692,10 +748,10 @@ integral approximation.
 
 ## 9. Reproducibility
 
-The configured test suite contains 42 tests, including independent polynomial
+The configured test suite contains 59 tests, including independent polynomial
 cofactor derivatives, complete exact-integral HAO/OEO HVP finite differences,
 factor-native RI response tests, and RI HAO/OEO/state-averaged HVP finite
-differences. All 42 pass after the performance changes. The block-basis tests
+differences. All 59 pass after the performance changes. The block-basis tests
 validate assembly at the utility and molecular-integration levels; the
 orthonormal-basis test also verifies single-call block admission. The benchmark
 logs used in this note are kept
@@ -713,7 +769,7 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
 
 OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
   ./build/src/benchmark_exact_ctx_hvp testdata/vbscf/F2_OEO.xmi \
-  --repeats 1 --nonredundant-adapt true \
+  --repeats 1 \
   --dense-reference-block-width 8
 ```
 
