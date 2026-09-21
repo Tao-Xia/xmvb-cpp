@@ -24,6 +24,10 @@ void accumulate_projected_channels(
     throw std::invalid_argument(
         "opposite-spin projected-channel target has inconsistent dimensions");
   }
+  // The directional dense image is delta(G*x) = delta(G)*x + G*delta(x).
+  // It can therefore be nonzero even when the sparse delta(x) is empty.  An
+  // absent dense image represents zero only when the underlying sparse
+  // projection is also empty.
   if (projection.projected_pair_values.empty()) {
     if (projection.packed_pair_indices.empty()) {
       return;
