@@ -1894,6 +1894,92 @@ The surrogate omits the variation of the effective one-electron matrix and
 many-electron response, and is not a physical-metric whitening or a proof of
 invariance under arbitrary inactive-orbital mixing.
 
+#### 10.1.1 Secants across rebuilt quotient charts
+
+The quotient basis is rebuilt after every accepted step, whereas the exact
+HVP in eq 60e is the Hessian of a fixed-basis affine pullback.  Secant history
+must preserve this distinction.  Let an accepted raw-coefficient displacement
+and its ambient gradient change be
+
+$$
+\Delta\mathbf x_k=\mathbf x_{k+1}-\mathbf x_k,
+\qquad
+\Delta\mathbf g_k=
+\nabla E(\mathbf x_{k+1})-\nabla E(\mathbf x_k).
+\tag{66d}
+$$
+
+At a target accepted point with quotient lift $\mathbf U_+$, vector
+coordinates and covectors use different pullbacks:
+
+$$
+\mathbf P_+^{\mathrm v}
+=
+(\mathbf U_+^{\mathrm T}\mathbf U_+)^{-1}\mathbf U_+^{\mathrm T},
+\qquad
+\mathbf P_+^{\mathrm c}=\mathbf U_+^{\mathrm T}.
+\tag{66e}
+$$
+
+The transported finite secant used by block-LBFGS is therefore
+
+$$
+\mathbf s_{k\rightarrow +}
+=\mathbf P_+^{\mathrm v}\Delta\mathbf x_k,
+\qquad
+\mathbf y_{k\rightarrow +}
+=\mathbf P_+^{\mathrm c}\Delta\mathbf g_k.
+\tag{66f}
+$$
+
+To verify consistency, write
+
+$$
+\Delta\mathbf x_k=h\mathbf U_k\mathbf d,
+\qquad
+\mathbf U_{k+1}=\mathbf U_k+\mathcal O(h).
+$$
+
+Smoothness and eq 59 then give
+
+$$
+\begin{aligned}
+\mathbf s_{k\rightarrow k+1}
+&=h\mathbf d+\mathcal O(h^2),\\
+\mathbf y_{k\rightarrow k+1}
+&=h\mathbf U_k^{\mathrm T}
+  \nabla_{\mathbf x}^2E(\mathbf x_k)
+  \mathbf U_k\mathbf d+\mathcal O(h^2)
+ =h\mathbf H_k\mathbf d+\mathcal O(h^2).
+\end{aligned}
+\tag{66g}
+$$
+
+Thus eq 66f is a first-order secant for the same affine pullback Hessian used
+by the exact HVP, including normalization, inactive-projector, integral, and
+relaxed-structure curvature inside the ambient gradient difference.  In
+contrast, directly subtracting reduced gradients from two rebuilt charts
+produces
+
+$$
+\mathbf U_{k+1}^{\mathrm T}\mathbf g_{k+1}
+-\mathbf U_k^{\mathrm T}\mathbf g_k
+=
+\mathbf U_{k+1}^{\mathrm T}(\mathbf g_{k+1}-\mathbf g_k)
++(\mathbf U_{k+1}-\mathbf U_k)^{\mathrm T}\mathbf g_k.
+\tag{66h}
+$$
+
+The last term is first order in the accepted step and is nonzero away from a
+stationary point.  It is chart drift, not physical Hessian curvature.  A
+formally dual vector/covector transport cancels this term to first order, but
+differs from eq 66f only by second-order finite-step terms and requires an
+additional chart-transition solve.  Storing the common packed displacement
+and ambient covector difference is both simpler and exactly aligned with the
+production affine-pullback HVP.  Historical pairs remain quasi-Newton
+information rather than current-point HVP certificates; rank changes discard
+them, and the positive-curvature test protects the inverse update.
+
 ### 10.2 Forcing-driven predictor--defect correction
 
 Let $\mathbf B_k$ denote the positive transported inverse model obtained from

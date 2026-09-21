@@ -16,10 +16,11 @@ namespace xmvb::vb {
 
 // One curvature pair in the common packed sparse-coefficient embedding.  The
 // step is the accepted finite retraction displacement and the gradient change
-// is the full ambient covector difference.  Projecting both into the target
-// chart retains the pullback-curvature contribution from normalization and
-// gauge motion; replacing the covector difference by a transported projected
-// gradient would discard that contribution.
+// is the full ambient covector difference. Projecting both into a target chart
+// gives the first-order secant of the fixed-basis affine pullback used by the
+// exact HVP. In particular, do not subtract reduced gradients expressed in two
+// independently rebuilt charts: their basis drift is an O(step) false secant.
+// See eqs 66d--66h of the orbital-optimization theory document.
 struct PackedSecantPair {
   Eigen::VectorXd packed_step;
   Eigen::VectorXd packed_gradient_change;

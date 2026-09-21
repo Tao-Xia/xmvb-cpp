@@ -475,6 +475,105 @@ void check_occupation_curvature() {
   std::cout << "Inactive occupation and active unit-model production blocks: passed\n";
 }
 
+Eigen::VectorXd normalized_rayleigh_gradient(
+    const Eigen::VectorXd& coefficients,
+    const Eigen::MatrixXd& overlap,
+    const Eigen::MatrixXd& one_electron) {
+  const double norm_squared = coefficients.dot(overlap * coefficients);
+  const double energy =
+      coefficients.dot(one_electron * coefficients) / norm_squared;
+  return 2.0 * (one_electron * coefficients -
+                energy * overlap * coefficients) /
+         norm_squared;
+}
+
+void check_pullback_secant_transport() {
+  Eigen::MatrixXd coefficients(3, 1);
+  coefficients << 0.8, -0.35, 0.55;
+  auto input = make_input(coefficients, {{0, 1, 2}}, 0);
+  Eigen::Matrix3d overlap;
+  overlap << 1.2, 0.08, -0.03,
+             0.08, 0.9, 0.04,
+             -0.03, 0.04, 1.1;
+  input.ao_overlap_matrix = overlap;
+  Eigen::Matrix3d one_electron;
+  one_electron << -1.4, 0.22, -0.17,
+                   0.22, 0.6, 0.31,
+                  -0.17, 0.31, 1.3;
+
+  const SparseParameterLayout view(input);
+  const OrbitalChart old_space(
+      input, view, dense(input), dense(input), nullptr, true);
+  require(old_space.reduced_size() == 2,
+          "Rayleigh pullback fixture has the wrong quotient dimension");
+  const Eigen::Vector2d direction =
+      Eigen::Vector2d(0.7, -0.4).normalized();
+  const Eigen::VectorXd packed_direction = old_space.expand_step(direction);
+  const Eigen::VectorXd x0 = view.pack(input);
+  const Eigen::VectorXd gradient0 = normalized_rayleigh_gradient(
+      dense(input).col(0), overlap, one_electron);
+
+  constexpr double finite_difference_step = 1.0e-6;
+  auto plus = input;
+  auto minus = input;
+  view.unpack(x0 + finite_difference_step * packed_direction, &plus);
+  view.unpack(x0 - finite_difference_step * packed_direction, &minus);
+  const Eigen::VectorXd reference_action =
+      old_space.project_reduced_gradient(
+          normalized_rayleigh_gradient(
+              dense(plus).col(0), overlap, one_electron) -
+          normalized_rayleigh_gradient(
+              dense(minus).col(0), overlap, one_electron)) /
+      (2.0 * finite_difference_step);
+
+  constexpr double accepted_step = 2.0e-6;
+  const auto next_input =
+      old_space.retract_step(input, direction, accepted_step);
+  const OrbitalChart next_space(
+      next_input, view, dense(next_input), dense(next_input), nullptr, true);
+  const Eigen::VectorXd gradient1 = normalized_rayleigh_gradient(
+      dense(next_input).col(0), overlap, one_electron);
+  const Eigen::VectorXd packed_secant =
+      next_space.project_reduced_gradient(gradient1 - gradient0) /
+      accepted_step;
+
+  Eigen::Matrix2d vector_transport;
+  for (int column = 0; column < 2; ++column) {
+    vector_transport.col(column) =
+        next_space
+            .project_vector(old_space.expand_step(
+                Eigen::Vector2d::Unit(column)))
+            .reduced_gradient;
+  }
+  const Eigen::VectorXd transported_old_gradient =
+      vector_transport.transpose().colPivHouseholderQr().solve(
+          old_space.project_reduced_gradient(gradient0));
+  const Eigen::VectorXd transported_gradient_secant =
+      (next_space.project_reduced_gradient(gradient1) -
+       transported_old_gradient) /
+      accepted_step;
+  const Eigen::VectorXd untransported_gradient_secant =
+      (next_space.project_reduced_gradient(gradient1) -
+       old_space.project_reduced_gradient(gradient0)) /
+      accepted_step;
+
+  const double packed_error = (packed_secant - reference_action).norm();
+  const double transported_gradient_error =
+      (transported_gradient_secant - reference_action).norm();
+  const double untransported_gradient_error =
+      (untransported_gradient_secant - reference_action).norm();
+  require(packed_error < 2.0e-4 * std::max(1.0, reference_action.norm()),
+          "ambient gradient-difference secant lost the affine pullback Hessian");
+  require(transported_gradient_error <
+              5.0e-4 * std::max(1.0, reference_action.norm()),
+          "dual chart transport is not first-order consistent");
+  require(untransported_gradient_error > 1000.0 * packed_error,
+          "fixture did not expose the untransported chart-drift term");
+  std::cout << "affine pullback secant transport: passed (packed error "
+            << packed_error << ", untransported error "
+            << untransported_gradient_error << ")\n";
+}
+
 void check_ill_conditioned_representative(
     const OrbitalPreparationInput& input,
     int expected_dimension) {
@@ -822,6 +921,7 @@ int main() {
     check_response_spectrum_summary();
     check_accuracy_aware_forcing();
     check_occupation_curvature();
+    check_pullback_secant_transport();
     Eigen::MatrixXd c(6, 4);
     c << 1, 0, 0.3, 0,
          0, 1, 0.4, 0,

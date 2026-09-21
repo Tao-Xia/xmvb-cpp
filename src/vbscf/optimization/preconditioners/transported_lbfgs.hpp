@@ -65,7 +65,13 @@ Eigen::VectorXd apply_nonredundant_truncated_newton_preconditioner(
     const TransportedReducedLbfgsPreconditioner* transported_preconditioner,
     const Eigen::VectorXd& reduced_vector);
 
-/** @brief Appends an embedding secant with positive target-chart curvature. */
+/**
+ * @brief Appends a packed affine-pullback secant with positive curvature.
+ *
+ * Both packed quantities are projected into the same target chart. The
+ * gradient change must be an ambient covector difference, not a difference of
+ * reduced gradients formed in independently rebuilt charts.
+ */
 void append_projected_secant_pair(
     const OrbitalChart& current_space,
     Eigen::VectorXd packed_step,
