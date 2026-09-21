@@ -2,13 +2,17 @@
 
 #include "vbscf/derivatives/hessian/exact/state_internal.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <numeric>
 #include <stdexcept>
 #include <utility>
 #include <vector>
 
+#include <Eigen/Eigenvalues>
 #include <Eigen/LU>
+#include <Eigen/QR>
 
 namespace xmvb::vb {
 
@@ -32,6 +36,84 @@ Eigen::MatrixXd ResponseLowRankModel::apply(
   return -orbital_couplings *
       (projected_inverse *
        (orbital_couplings.transpose() * orbital_directions));
+}
+
+ResponseSpectrumSummary summarize_response_spectrum(
+    const ResponseLowRankModel& model) {
+  ResponseSpectrumSummary summary;
+  const Eigen::Index rank = model.orbital_couplings.cols();
+  summary.model_rank = static_cast<int>(rank);
+  if (rank == 0) return summary;
+  if (model.projected_inverse.rows() != rank ||
+      model.projected_inverse.cols() != rank) {
+    throw std::logic_error("response Schur diagnostic dimensions differ");
+  }
+
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> inverse_eigensolver(
+      0.5 * (model.projected_inverse + model.projected_inverse.transpose()),
+      Eigen::ComputeEigenvectors);
+  if (inverse_eigensolver.info() != Eigen::Success) {
+    throw std::runtime_error(
+        "response Schur projected inverse eigensolve failed");
+  }
+  const Eigen::ArrayXd inverse_eigenvalues =
+      inverse_eigensolver.eigenvalues().array();
+  const Eigen::MatrixXd schur_factors = model.orbital_couplings *
+      inverse_eigensolver.eigenvectors() *
+      inverse_eigenvalues.abs().sqrt().matrix().asDiagonal();
+  const Eigen::VectorXd signs = inverse_eigenvalues.sign().matrix();
+  Eigen::MatrixXd compact_schur;
+  if (schur_factors.rows() >= rank) {
+    Eigen::HouseholderQR<Eigen::MatrixXd> qr(schur_factors);
+    const Eigen::MatrixXd triangular =
+        qr.matrixQR().topRows(rank).template triangularView<Eigen::Upper>();
+    compact_schur = triangular * signs.asDiagonal() * triangular.transpose();
+  } else {
+    compact_schur =
+        schur_factors * signs.asDiagonal() * schur_factors.transpose();
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> schur_eigensolver(
+      0.5 * (compact_schur + compact_schur.transpose()),
+      Eigen::EigenvaluesOnly);
+  if (schur_eigensolver.info() != Eigen::Success) {
+    throw std::runtime_error("response Schur eigensolve failed");
+  }
+  std::vector<double> weights(
+      static_cast<std::size_t>(schur_eigensolver.eigenvalues().size()), 0.0);
+  for (Eigen::Index mode = 0;
+       mode < schur_eigensolver.eigenvalues().size(); ++mode) {
+    weights[static_cast<std::size_t>(mode)] =
+        std::abs(schur_eigensolver.eigenvalues()[mode]);
+  }
+  std::sort(weights.begin(), weights.end(), std::greater<double>());
+  const double total = std::accumulate(weights.begin(), weights.end(), 0.0);
+  double square_sum = 0.0;
+  for (const double weight : weights) square_sum += weight * weight;
+  if (!(total > 0.0) || !std::isfinite(total) || !(square_sum > 0.0) ||
+      !std::isfinite(square_sum)) {
+    return summary;
+  }
+
+  summary.effective_rank = total * total / square_sum;
+  summary.top_mode_fraction = weights.front() / total;
+  double cumulative = 0.0;
+  const int spectrum_size = static_cast<int>(weights.size());
+  for (int mode = 0; mode < spectrum_size; ++mode) {
+    cumulative += weights[static_cast<std::size_t>(mode)];
+    if (mode == std::min(4, spectrum_size - 1)) {
+      summary.top_5_fraction = cumulative / total;
+    }
+    if (mode == std::min(9, spectrum_size - 1)) {
+      summary.top_10_fraction = cumulative / total;
+    }
+    if (summary.rank_90 == 0 && cumulative >= 0.9 * total) {
+      summary.rank_90 = mode + 1;
+    }
+    if (summary.rank_99 == 0 && cumulative >= 0.99 * total) {
+      summary.rank_99 = mode + 1;
+    }
+  }
+  return summary;
 }
 
 ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {

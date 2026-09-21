@@ -96,6 +96,11 @@ public:
     return exact_operator_->response_model_revision();
   }
 
+  const ResponseLowRankModel& current_response_model() {
+    capture_current_response_model();
+    return response_model_;
+  }
+
 private:
   void capture_current_response_model() {
     const std::uint64_t revision = exact_operator_->response_model_revision();
@@ -369,6 +374,7 @@ BackendRunResult run_truncated_newton_backend(
     // rather than a fixed amount of secant history, decides whether curvature
     // correction is required at this accepted point.
     TruncatedNewtonStepResult trust_region_step;
+    ResponseSpectrumSummary response_spectrum;
     bool newton_candidate_available = false;
     if (curvature_correction_required) {
       if (accepted_point_operator == nullptr) {
@@ -406,6 +412,8 @@ BackendRunResult run_truncated_newton_backend(
           accepted_point_preconditioner.get(),
           &baseline_reduced_direction,
           reusable_subspace);
+      response_spectrum = summarize_response_spectrum(
+          reduced_hvp.current_response_model());
       if (truncated_newton_subspace_is_usable(
               trust_region_step.subspace,
               reduced_size)) {
@@ -566,6 +574,20 @@ BackendRunResult run_truncated_newton_backend(
             accepted_hvp_diagnostics.structure_response_block_actions);
     iteration_record.response_low_rank_new_columns =
         accepted_hvp_diagnostics.response_low_rank_new_columns;
+    iteration_record.response_low_rank_model_rank =
+        response_spectrum.model_rank;
+    iteration_record.response_low_rank_rank_90 =
+        response_spectrum.rank_90;
+    iteration_record.response_low_rank_rank_99 =
+        response_spectrum.rank_99;
+    iteration_record.response_low_rank_effective_rank =
+        response_spectrum.effective_rank;
+    iteration_record.response_low_rank_top_mode_fraction =
+        response_spectrum.top_mode_fraction;
+    iteration_record.response_low_rank_top_5_fraction =
+        response_spectrum.top_5_fraction;
+    iteration_record.response_low_rank_top_10_fraction =
+        response_spectrum.top_10_fraction;
     iteration_record.preconditioner_history_size =
         accepted_preconditioner_history_size;
     iteration_record.rejected_trial_count =

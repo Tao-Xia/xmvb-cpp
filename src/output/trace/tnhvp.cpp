@@ -30,6 +30,13 @@ void write_tnhvp_trace(
       << "\texact_hvp_block_actions"
       << "\tstructure_response_block_actions"
       << "\tresponse_low_rank_new_columns"
+      << "\tresponse_low_rank_model_rank"
+      << "\tresponse_low_rank_effective_rank"
+      << "\tresponse_low_rank_rank_90"
+      << "\tresponse_low_rank_rank_99"
+      << "\tresponse_low_rank_top_mode_fraction"
+      << "\tresponse_low_rank_top_5_fraction"
+      << "\tresponse_low_rank_top_10_fraction"
       << "\tpreconditioner_history_size\trejected_trials"
       << "\touter_iteration_seconds"
       << "\taccepted_point_setup_seconds"
@@ -61,6 +68,13 @@ void write_tnhvp_trace(
         << step.exact_hvp_block_actions << '\t'
         << step.structure_response_block_actions << '\t'
         << step.response_low_rank_new_columns << '\t'
+        << step.response_low_rank_model_rank << '\t'
+        << step.response_low_rank_effective_rank << '\t'
+        << step.response_low_rank_rank_90 << '\t'
+        << step.response_low_rank_rank_99 << '\t'
+        << step.response_low_rank_top_mode_fraction << '\t'
+        << step.response_low_rank_top_5_fraction << '\t'
+        << step.response_low_rank_top_10_fraction << '\t'
         << step.preconditioner_history_size << '\t'
         << step.rejected_trial_count << '\t'
         << step.outer_iteration_wall_time_seconds << '\t'

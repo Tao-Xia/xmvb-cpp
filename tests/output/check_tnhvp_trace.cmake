@@ -140,6 +140,11 @@ set(required_tnhvp_patterns
   "\"curvature_subspace_dimension\": [0-9]+"
   "\"exact_hvp_block_actions\": [0-9]+"
   "\"structure_response_block_actions\": [0-9]+"
+  "\"response_low_rank_model_rank\": [0-9]+"
+  "\"response_low_rank_effective_rank\": [0-9]"
+  "\"response_low_rank_rank_90\": [0-9]+"
+  "\"response_low_rank_rank_99\": [0-9]+"
+  "\"response_low_rank_top_10_fraction\": [0-9]"
   "\"preconditioner_history_size\": [0-9]+"
   "\"outer_iteration_wall_time_seconds\": [0-9]"
   "\"source_gradient_l2_norm\""
@@ -192,6 +197,8 @@ if (NOT tnhvp_table MATCHES "^iteration" OR
     NOT tnhvp_table MATCHES "curvature_subspace_dimension" OR
     NOT tnhvp_table MATCHES "exact_hvp_block_actions" OR
     NOT tnhvp_table MATCHES "structure_response_block_actions" OR
+    NOT tnhvp_table MATCHES "response_low_rank_effective_rank" OR
+    NOT tnhvp_table MATCHES "response_low_rank_top_10_fraction" OR
     NOT tnhvp_table MATCHES "accepted_point_setup_seconds" OR
     NOT tnhvp_table MATCHES "exact_hvp_seconds" OR
     NOT tnhvp_table MATCHES "outer_response_seconds" OR

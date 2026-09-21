@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <Eigen/Cholesky>
+#include <Eigen/Geometry>
 #include <Eigen/SVD>
 
 #include "vbscf/orbitals/charts/chart.hpp"
@@ -16,6 +17,7 @@
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/optimization/trust_region/truncated_newton.hpp"
 #include "vbscf/diagnostics/orbitals/chart_audit.hpp"
+#include "vbscf/derivatives/hessian/exact/operator.hpp"
 
 namespace {
 using namespace xmvb::vb;
@@ -24,6 +26,38 @@ void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
 }
 constexpr double kFixtureForcing = 5.0e-2;
+
+void check_response_spectrum_summary() {
+  ResponseLowRankModel model;
+  model.orbital_couplings = Eigen::Matrix3d::Identity();
+  model.projected_inverse =
+      (Eigen::Vector3d() << 4.0, -1.0, 0.25).finished().asDiagonal();
+  const ResponseSpectrumSummary reference =
+      summarize_response_spectrum(model);
+  require(reference.model_rank == 3 && reference.rank_90 == 2 &&
+              reference.rank_99 == 3,
+          "response spectrum summary returned incorrect capture ranks");
+  require(std::abs(reference.top_mode_fraction - 4.0 / 5.25) < 1.0e-14 &&
+              std::abs(reference.effective_rank -
+                       (5.25 * 5.25) / (16.0 + 1.0 + 0.0625)) < 1.0e-14,
+          "response spectrum summary returned incorrect weights");
+
+  Eigen::Matrix3d rotation =
+      Eigen::AngleAxisd(0.37, Eigen::Vector3d(1.0, 2.0, -1.0).normalized())
+          .toRotationMatrix();
+  model.orbital_couplings = rotation;
+  model.projected_inverse =
+      rotation.transpose() *
+      (Eigen::Vector3d() << 4.0, -1.0, 0.25).finished().asDiagonal() *
+      rotation;
+  const ResponseSpectrumSummary rotated =
+      summarize_response_spectrum(model);
+  require(rotated.rank_90 == reference.rank_90 &&
+              rotated.rank_99 == reference.rank_99 &&
+              std::abs(rotated.effective_rank - reference.effective_rank) <
+                  1.0e-13,
+          "response spectrum summary depends on response-basis rotation");
+}
 
 void check_accuracy_aware_forcing() {
   constexpr double initial_norm = 4.0;
@@ -785,6 +819,7 @@ void check_response_model_refresh(const OrbitalPreparationInput& input) {
 
 int main() {
   try {
+    check_response_spectrum_summary();
     check_accuracy_aware_forcing();
     check_occupation_curvature();
     Eigen::MatrixXd c(6, 4);

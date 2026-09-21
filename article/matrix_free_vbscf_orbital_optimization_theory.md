@@ -2706,6 +2706,94 @@ force repeated expensive enrichment.  Direct interpolation of isolated
 vectors $\mathbf R_k\mathbf s$ without the Schur factorization and an
 independent exact certificate is therefore excluded.
 
+#### 10.8.1 Coupling-weighted Schur spectrum diagnostic
+
+The dimension of the sampled response space is not the relevant numerical
+rank.  Let the frozen Galerkin--Schur operator of eq 66ab have the compact
+eigendecomposition
+
+$$
+\widehat{\mathbf R}_k
+=\mathbf V_k\operatorname{diag}(\rho_1,\ldots,\rho_r)\mathbf V_k^{\mathrm T}.
+\tag{66ae1}
+$$
+
+The signed eigenvalues are retained by the trust-region model.  To diagnose
+compression independently of their signs, define the absolute spectral
+weights and participation rank
+
+$$
+\omega_i=\frac{|\rho_i|}{\sum_j|\rho_j|},
+\qquad
+r_{\mathrm{eff}}
+=\frac{\left(\sum_j|\rho_j|\right)^2}
+       {\sum_j|\rho_j|^2},
+\tag{66ae2}
+$$
+
+and let $r_f$ be the minimum number of eigenmodes, ordered by decreasing
+$|\rho_i|$, whose cumulative weight reaches $f$.  These are diagnostics, not
+truncation thresholds.
+
+The spectrum is evaluated without assembling an orbital Hessian.  With
+
+$$
+\mathbf K_k^\dagger
+=\mathbf U\operatorname{diag}(\boldsymbol\mu)\mathbf U^{\mathrm T},
+\qquad
+\mathbf L
+=\mathbf J\mathbf U\operatorname{diag}(\sqrt{|\boldsymbol\mu|}),
+\tag{66ae3}
+$$
+
+one has
+
+$$
+-\mathbf J\mathbf K_k^\dagger\mathbf J^{\mathrm T}
+=-\mathbf L\operatorname{diag}(\operatorname{sign}\boldsymbol\mu)
+ \mathbf L^{\mathrm T}.
+\tag{66ae4}
+$$
+
+A thin QR factorization of $\mathbf L$ reduces eq 66ae4 to a symmetric matrix
+whose dimension is no greater than the sampled response rank.  The resulting
+spectrum is invariant to rotations within the Galerkin response basis, unlike
+weights assigned separately to individual projected Ritz vectors.
+
+Hanhai25 Slurm job `247819` evaluated this diagnostic without changing any
+HVP, trust-region, or acceptance decision.  CERRAS converged in the same eight
+accepted iterations.  The response-active accepted points gave:
+
+| Accepted step | Sampled response rank | $r_{\mathrm{eff}}$ | Largest mode | First 5 modes | First 10 modes | $r_{0.90}$ | $r_{0.99}$ |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 3 | 5 | 1.304 | 87.22% | 100.00% | 100.00% | 2 | 4 |
+| 5 | 61 | 2.019 | 68.66% | 93.49% | 98.43% | 4 | 12 |
+| 6 | 17 | 1.854 | 71.78% | 96.42% | 99.35% | 3 | 9 |
+| 7 | 148 | 2.055 | 67.98% | 93.02% | 98.09% | 4 | 13 |
+| 8 | 3 | 1.023 | 98.87% | 100.00% | 100.00% | 1 | 2 |
+
+Thus the expensive seventh-step Galerkin space contains 148 response vectors,
+but its orbital Schur action is strongly concentrated: four modes carry 90%
+of the absolute spectrum and thirteen carry 99%.  This is direct evidence for
+a coupling-weighted response representation, rather than evidence that the
+structure-response operator itself has rank thirteen.
+
+The converged renormalized VB structure weights show a related but distinct
+concentration.  For CERRAS, five of 462 structures carry 90.08% and 23 carry
+99%, with participation rank 3.22.  For LOFLEA, five of 132 structures carry
+93.83% and 12 carry 99%, with participation rank 3.07.  In contrast, 7975
+requires 48 of 175 structures for 90% and 94 for 99%, with participation rank
+11.92.  Raw coefficients are not used for this comparison because the VB
+structure basis is nonorthogonal.
+
+These measurements establish a promising hypothesis, not an approximation
+certificate.  Equation 66ae1 describes the response space already discovered
+by the exact solves; an unvisited component of
+$\operatorname{range}(\mathbf A_k^\dagger\mathbf B_k)$ may still contain an
+important mode.  Before spectral truncation is admitted to production, the
+leading compact modes must reconstruct held-out exact Schur actions and the
+discarded action error must fit inside the Newton residual budget of eq 66ad.
+
 ### 10.9 Exact pair-domain decomposition of one response probe
 
 Low-rank Schur compression reduces the number of exact response probes, whereas

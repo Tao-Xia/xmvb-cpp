@@ -47,6 +47,26 @@ struct ResponseLowRankModel {
       const Eigen::Ref<const Eigen::MatrixXd>& orbital_directions) const;
 };
 
+/** @brief Basis-invariant absolute-spectrum summary of a Schur model. */
+struct ResponseSpectrumSummary {
+  int model_rank = 0;
+  int rank_90 = 0;
+  int rank_99 = 0;
+  double effective_rank = 0.0;
+  double top_mode_fraction = 0.0;
+  double top_5_fraction = 0.0;
+  double top_10_fraction = 0.0;
+};
+
+/**
+ * @brief Diagonalizes the compact nonzero spectrum of @f$-J K^\dagger J^T@f$.
+ *
+ * The diagnostic never assembles an orbital-space Hessian and does not alter
+ * or truncate the supplied response model.
+ */
+ResponseSpectrumSummary summarize_response_spectrum(
+    const ResponseLowRankModel& model);
+
 /**
  * @brief Accepted-point matrix-free orbital second-order operator.
  *
