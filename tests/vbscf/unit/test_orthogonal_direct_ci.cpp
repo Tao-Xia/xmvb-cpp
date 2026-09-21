@@ -351,6 +351,20 @@ void check_sigma_action() {
           std::sin(0.19 * static_cast<double>((row + 1) * (column + 2)));
     }
   }
+  const Eigen::MatrixXd block_sigma = sigma_action.apply(coefficients);
+  for (int block = 0; block < block_width; ++block) {
+    const Eigen::MatrixXd scalar_sigma = sigma_action.apply(
+        coefficients.middleCols(
+            block * static_cast<int>(beta.size()),
+            static_cast<int>(beta.size())));
+    require(
+        (block_sigma.middleCols(
+             block * static_cast<int>(beta.size()),
+             static_cast<int>(beta.size())) - scalar_sigma)
+                .cwiseAbs()
+                .maxCoeff() < 2.0e-13,
+        "direct-CI block sigma differs from independent scalar actions");
+  }
 
   Eigen::MatrixXd left_coefficients(coefficients.rows(), coefficients.cols());
   for (int column = 0; column < left_coefficients.cols(); ++column) {
