@@ -4,6 +4,7 @@
 
 #include "vbscf/optimization/driver/backend.hpp"
 #include "vbscf/optimization/driver/result.hpp"
+#include "vbscf/optimization/preconditioners/type.hpp"
 #include "vbscf/core/contracts/eigensolver.hpp"
 
 namespace xmvb::vb {
@@ -20,6 +21,10 @@ struct VbScfOptimizerOptions {
 
   /** @brief Structure-space eigensolver used by objective evaluations. */
   StructureEigensolver structure_eigensolver = StructureEigensolver::Davidson;
+
+  /** @brief Orbital preconditioner used by the NEO matrix-free solve. */
+  OrbitalPreconditioner orbital_preconditioner =
+      OrbitalPreconditioner::Automatic;
 
   /**
    * @brief Maximum number of accepted optimization iterations.

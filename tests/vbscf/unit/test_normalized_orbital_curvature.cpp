@@ -4,7 +4,7 @@
 
 #include <Eigen/QR>
 
-#include "vbscf/orbitals/charts/curvature.hpp"
+#include "vbscf/optimization/preconditioners/one_electron.hpp"
 
 namespace {
 void require(bool condition, const char* message) {

@@ -202,10 +202,13 @@ Eigen::MatrixXd build_active_pair_gradient_matrix(
 }
 
 std::vector<double> multiply_pair_coefficients_by_gradient_matrix(
-    const std::vector<double>& ao_pair_to_active_pair_coefficients,
+    const double* ao_pair_to_active_pair_coefficients,
     const Eigen::Ref<const Eigen::MatrixXd>& active_pair_gradient_matrix,
     std::size_t n_ao_pairs,
     std::size_t n_active_pairs) {
+  if (ao_pair_to_active_pair_coefficients == nullptr) {
+    throw std::invalid_argument("active-pair coefficient view must not be null");
+  }
   std::vector<double> transformed_pair_coefficients(
       n_ao_pairs * n_active_pairs,
       0.0);
@@ -220,7 +223,7 @@ std::vector<double> multiply_pair_coefficients_by_gradient_matrix(
        ++ao_pair_offset) {
     const std::size_t ao_pair_index = ao_pair_offset;
     const Eigen::Map<const Eigen::VectorXd> pair_coefficient_row(
-        ao_pair_to_active_pair_coefficients.data() +
+        ao_pair_to_active_pair_coefficients +
             ao_pair_index * n_active_pairs,
         static_cast<Eigen::Index>(n_active_pairs));
     Eigen::Map<Eigen::VectorXd> transformed_pair_coefficient_row(
@@ -412,7 +415,8 @@ ActiveSpaceTwoElectronBackpropagationResult backpropagate_packed_active_two_elec
     const std::vector<double>& packed_active_two_electron_gradient,
     const AoPairGraph& pair_graph,
     const std::vector<double>& dense_active_coefficients,
-    const std::vector<double>* cached_dense_ao_pair_products,
+    const double* cached_dense_ao_pair_products,
+    std::size_t cached_dense_ao_pair_product_count,
     int n_basis_functions,
     int n_inactive_doubly_occupied_orbitals,
     int n_active_orbitals) {
@@ -426,15 +430,14 @@ ActiveSpaceTwoElectronBackpropagationResult backpropagate_packed_active_two_elec
           packed_active_two_electron_gradient,
           active_pairs);
   std::vector<double> pair_gradients;
-  if (cached_dense_ao_pair_products != nullptr &&
-      !cached_dense_ao_pair_products->empty()) {
+  if (cached_dense_ao_pair_products != nullptr) {
     const std::size_t expected_cache_size = n_ao_pairs * n_active_pairs;
-    if (cached_dense_ao_pair_products->size() != expected_cache_size) {
+    if (cached_dense_ao_pair_product_count != expected_cache_size) {
       throw std::runtime_error("dense AO pair product cache size mismatch");
     }
     pair_gradients =
         multiply_pair_coefficients_by_gradient_matrix(
-            *cached_dense_ao_pair_products,
+            cached_dense_ao_pair_products,
             active_pair_gradient_matrix,
             n_ao_pairs,
             n_active_pairs);
@@ -447,7 +450,7 @@ ActiveSpaceTwoElectronBackpropagationResult backpropagate_packed_active_two_elec
             active_pairs);
     const auto transformed_pair_coefficients =
         multiply_pair_coefficients_by_gradient_matrix(
-            ao_pair_to_active_pair_coefficients,
+            ao_pair_to_active_pair_coefficients.data(),
             active_pair_gradient_matrix,
             n_ao_pairs,
             n_active_pairs);
@@ -617,6 +620,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
       pair_graph,
       dense_active_coefficients,
       nullptr,
+      0,
       n_basis_functions,
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
@@ -648,19 +652,20 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
   const std::vector<double> dense_active_coefficients =
       copy_matrix_to_row_major_buffer(
           active_space_two_electron_result.dense_active_coefficients);
-  const std::vector<double>* cached_dense_ao_pair_products = nullptr;
-  std::vector<double> cached_dense_ao_pair_products_storage;
+  const double* cached_dense_ao_pair_products = nullptr;
+  std::size_t cached_dense_ao_pair_product_count = 0;
   if (active_space_two_electron_result.dense_ao_pair_products.size() != 0) {
-    cached_dense_ao_pair_products_storage =
-        copy_matrix_to_row_major_buffer(
-            active_space_two_electron_result.dense_ao_pair_products);
-    cached_dense_ao_pair_products = &cached_dense_ao_pair_products_storage;
+    cached_dense_ao_pair_products =
+        active_space_two_electron_result.dense_ao_pair_products.data();
+    cached_dense_ao_pair_product_count = static_cast<std::size_t>(
+        active_space_two_electron_result.dense_ao_pair_products.size());
   }
   return backpropagate_packed_active_two_electron_integrals(
       packed_active_two_electron_gradient,
       pair_graph,
       dense_active_coefficients,
       cached_dense_ao_pair_products,
+      cached_dense_ao_pair_product_count,
       n_basis_functions,
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);
@@ -695,6 +700,7 @@ ActiveSpaceTwoElectronBackpropagator::backpropagate(
       pair_graph,
       dense_active_coefficients,
       nullptr,
+      0,
       n_basis_functions,
       n_inactive_doubly_occupied_orbitals,
       n_active_orbitals);

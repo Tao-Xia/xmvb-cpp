@@ -15,8 +15,7 @@
 #include <Eigen/SVD>
 #include "vbscf/orbitals/charts/partition.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
-#include "vbscf/orbitals/charts/curvature.hpp"
-#include "vbscf/orbitals/charts/surrogate.hpp"
+#include "vbscf/optimization/preconditioners/one_electron.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
 #include "vbscf/optimization/preconditioners/casscf_diagonal.hpp"
 

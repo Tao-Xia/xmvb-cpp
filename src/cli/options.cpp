@@ -57,6 +57,25 @@ void apply_structure_eigensolver_argument(
   throw std::invalid_argument("invalid structure eigensolver: " + solver_name);
 }
 
+void apply_orbital_preconditioner_argument(
+    const std::string& name,
+    xmvb::vb::VbScfOptimizerOptions* options) {
+  if (name == "auto") {
+    options->orbital_preconditioner =
+        xmvb::vb::OrbitalPreconditioner::Automatic;
+  } else if (name == "identity") {
+    options->orbital_preconditioner = xmvb::vb::OrbitalPreconditioner::Identity;
+  } else if (name == "one-electron") {
+    options->orbital_preconditioner =
+        xmvb::vb::OrbitalPreconditioner::OneElectron;
+  } else if (name == "casscf-diagonal") {
+    options->orbital_preconditioner =
+        xmvb::vb::OrbitalPreconditioner::CasscfDiagonal;
+  } else {
+    throw std::invalid_argument("invalid orbital preconditioner: " + name);
+  }
+}
+
 bool parse_bool_argument(const std::string& value) {
   if (value == "true" || value == "1" || value == "yes") {
     return true;
@@ -108,6 +127,7 @@ void print_usage() {
                "[--optimizer-backend lbfgs|block_lbfgs|neo|nonredundant_projected_gradient|nonredundant_truncated_newton]"
                " [--max-iterations <count>]"
                " [--eigensolver davidson|dense]"
+               " [--orbital-preconditioner auto|identity|one-electron|casscf-diagonal]"
                " [--verbose true|false]"
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"
@@ -166,6 +186,8 @@ std::optional<Options> parse_options(int argc, char** argv) {
       } else if (argument_name == "--eigensolver") {
         apply_structure_eigensolver_argument(argument_value, &options);
         user_specified_structure_eigensolver = true;
+      } else if (argument_name == "--orbital-preconditioner") {
+        apply_orbital_preconditioner_argument(argument_value, &options);
       } else if (argument_name == "--max-iterations") {
         user_specified_max_iterations = true;
         options.max_iterations = std::stoi(argument_value);

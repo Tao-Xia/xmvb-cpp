@@ -18,9 +18,22 @@
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
 
 namespace xmvb::vb::optimizer_detail {
 namespace {
+
+OrbitalPreconditioner resolve_neo_preconditioner(
+    const VbScfObjective& objective,
+    OrbitalPreconditioner requested) {
+  if (requested != OrbitalPreconditioner::Automatic) return requested;
+  const auto& input = objective.input();
+  if (input.complete_active_space &&
+      input.orbital_preparation_input.orbital_type == kOrbitalTypeOeo) {
+    return OrbitalPreconditioner::CasscfDiagonal;
+  }
+  return OrbitalPreconditioner::OneElectron;
+}
 
 double neo_forcing_term(
     double gradient_norm,
@@ -224,11 +237,17 @@ BackendRunResult run_neo_backend(
   double previous_energy = initial_energy;
   double trust_radius =
       std::max(options.minimum_step_size, options.initial_step_size);
-  OrbitalChart chart = build_orbital_chart(*objective, parameter_view, true);
+  const OrbitalPreconditioner preconditioner =
+      resolve_neo_preconditioner(*objective, options.orbital_preconditioner);
+  OrbitalChart chart = build_orbital_chart(
+      *objective, parameter_view, OrbitalPreconditioner::Identity);
   auto projected = chart.project_gradient(gradient);
   double final_gradient_inf =
       gradient_infinity_norm(projected.reduced_gradient);
   double final_gradient_l2 = projected.reduced_gradient.norm();
+  if (final_gradient_inf >= options.gradient_tolerance) {
+    chart = build_orbital_chart(*objective, parameter_view, preconditioner);
+  }
 
   while (run_result.n_iterations < options.max_iterations) {
     if (chart.reduced_size() == 0) {
@@ -292,14 +311,14 @@ BackendRunResult run_neo_backend(
       ++iteration_record.keyframes;
       macro_accepted = true;
 
-      OrbitalChart next_chart = build_orbital_chart(*objective, parameter_view, true);
-      auto next_projected = next_chart.project_gradient(gradient);
+      // Stationarity depends only on the quotient geometry. Do not build an
+      // integral-dependent preconditioner until another NEO solve is needed.
+      OrbitalChart next_geometry = build_orbital_chart(
+          *objective, parameter_view, OrbitalPreconditioner::Identity);
+      auto next_projected = next_geometry.project_gradient(gradient);
       final_gradient_inf =
           gradient_infinity_norm(next_projected.reduced_gradient);
       final_gradient_l2 = next_projected.reduced_gradient.norm();
-      chart = std::move(next_chart);
-      projected = std::move(next_projected);
-
       const double energy_change = energy - previous_energy;
       previous_energy = energy;
       if (std::abs(energy_change) < options.energy_tolerance &&
@@ -313,8 +332,23 @@ BackendRunResult run_neo_backend(
       // confirmation instead of hiding it inside the current reported step.
       if (!result->converged &&
           final_gradient_inf < options.gradient_tolerance) {
+        chart = build_orbital_chart(*objective, parameter_view, preconditioner);
+        projected = std::move(next_projected);
         break;
       }
+      if (!result->converged) {
+        OrbitalChart next_chart =
+            build_orbital_chart(*objective, parameter_view, preconditioner);
+        if (next_chart.reduced_size() != next_geometry.reduced_size() ||
+            next_chart.rank_signature() != next_geometry.rank_signature()) {
+          throw std::runtime_error(
+              "preconditioner changed the nonredundant orbital geometry");
+        }
+        chart = std::move(next_chart);
+      } else {
+        chart = std::move(next_geometry);
+      }
+      projected = std::move(next_projected);
     }
 
     if (macro_accepted) {

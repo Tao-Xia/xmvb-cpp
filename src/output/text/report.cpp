@@ -203,6 +203,21 @@ void print_tnhvp_summary(
       physical_chart_name(orbital_input));
 }
 
+const char* orbital_preconditioner_name(
+    xmvb::vb::OrbitalPreconditioner preconditioner) {
+  switch (preconditioner) {
+    case xmvb::vb::OrbitalPreconditioner::Automatic:
+      return "automatic (CASSCF diagonal for complete OEO)";
+    case xmvb::vb::OrbitalPreconditioner::Identity:
+      return "identity";
+    case xmvb::vb::OrbitalPreconditioner::OneElectron:
+      return "one-electron block";
+    case xmvb::vb::OrbitalPreconditioner::CasscfDiagonal:
+      return "CASSCF Hessian diagonal";
+  }
+  throw std::invalid_argument("invalid orbital preconditioner");
+}
+
 void print_header(
     const std::string& input_path,
     const xmvb::vb::VbScfOptimizerOptions& options,
@@ -219,6 +234,11 @@ void print_header(
       load_result,
       optimizer_report_name(options),
       options.max_iterations);
+  if (options.backend == xmvb::vb::VbScfOptimizerBackend::Neo) {
+    print_log_field(
+        "Orbital preconditioner",
+        orbital_preconditioner_name(options.orbital_preconditioner));
+  }
 }
 
 std::function<void(const xmvb::vb::VbScfAcceptedIterationSnapshot&)>

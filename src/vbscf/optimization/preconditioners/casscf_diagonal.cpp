@@ -103,6 +103,36 @@ ExactCtxPairMatrix build_mixed_pair_map(
   return result;
 }
 
+Eigen::MatrixXd build_pair_transform(
+    const Eigen::Ref<const Eigen::MatrixXd>& orbital_transform) {
+  const int n = static_cast<int>(orbital_transform.rows());
+  if (n <= 0 || orbital_transform.cols() != n) {
+    throw std::invalid_argument("orbital pair transform must be square");
+  }
+  const int n_pairs = n * (n + 1) / 2;
+  Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n_pairs, n_pairs);
+  for (int new_p = 0; new_p < n; ++new_p) {
+    for (int new_q = 0; new_q <= new_p; ++new_q) {
+      const int new_pair = TwoElectronIndexer::packed_pair_index(new_p, new_q);
+      for (int old_p = 0; old_p < n; ++old_p) {
+        for (int old_q = 0; old_q <= old_p; ++old_q) {
+          const int old_pair = TwoElectronIndexer::packed_pair_index(old_p, old_q);
+          double value =
+              orbital_transform(old_p, new_p) *
+              orbital_transform(old_q, new_q);
+          if (old_p != old_q) {
+            value +=
+                orbital_transform(old_q, new_p) *
+                orbital_transform(old_p, new_q);
+          }
+          result(old_pair, new_pair) = value;
+        }
+      }
+    }
+  }
+  return result;
+}
+
 ExactCtxPairMatrix apply_ao_pair_operator(
     const VbScfInput& input,
     const Eigen::Ref<const ExactCtxPairMatrix>& coefficients) {
@@ -419,11 +449,33 @@ OeoCasscfPreconditioner build_oeo_casscf_preconditioner(
   x.v_core = mo.transpose() *
       prepared.ao_effective_one_electron_result.ao_coulomb_exchange_matrix * mo;
 
-  ExactCtxPairMatrix active_pair_map;
-  build_packed_orbital_pair_map(
-      mo.middleCols(n_core, n_active), &active_pair_map);
-  const ExactCtxPairMatrix active_pair_products =
-      apply_ao_pair_operator(input, active_pair_map);
+  const auto& active_two_electron = prepared.active_space_two_electron_result;
+  const Eigen::MatrixXd active_pair_transform =
+      build_pair_transform(inverse_active_transform);
+  ExactCtxPairMatrix active_pair_products;
+  if (active_two_electron.representation ==
+      ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity) {
+    if (active_two_electron.ri_active_pair_factors.size() == 0 ||
+        !input.ri_factorization) {
+      throw std::invalid_argument(
+          "RI CASSCF diagonal requires accepted active-pair factors");
+    }
+    const Eigen::MatrixXd orthogonal_active_factors =
+        active_two_electron.ri_active_pair_factors * active_pair_transform;
+    active_pair_products.noalias() =
+        input.ri_factorization->metric_whitened_ao_pair_factors.transpose() *
+        orthogonal_active_factors;
+  } else if (active_two_electron.dense_ao_pair_products.size() != 0) {
+    active_pair_products.noalias() =
+        active_two_electron.dense_ao_pair_products * active_pair_transform;
+  } else {
+    // The memory-bounded exact forward path deliberately does not retain
+    // G*Q_active. Rebuild only that absent accepted tensor from the AO graph.
+    ExactCtxPairMatrix active_pair_map;
+    build_packed_orbital_pair_map(
+        mo.middleCols(n_core, n_active), &active_pair_map);
+    active_pair_products = apply_ao_pair_operator(input, active_pair_map);
+  }
   const int n_mo_pairs = n_bf * (n_bf + 1) / 2;
   const int n_active_pairs = n_active * (n_active + 1) / 2;
   Eigen::MatrixXd ppaa_pairs = Eigen::MatrixXd::Zero(

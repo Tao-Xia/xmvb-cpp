@@ -69,6 +69,18 @@ int main() {
           neo->optimizer.backend)) == "neo",
       "NEO backend must have the canonical name neo");
 
+  const auto casscf_preconditioner = parse({
+      "xmvb-cpp.exe",
+      "unused.xmi",
+      "--orbital-preconditioner",
+      "casscf-diagonal"});
+  require(casscf_preconditioner.has_value(),
+          "CASSCF diagonal preconditioner option must parse");
+  require(
+      casscf_preconditioner->optimizer.orbital_preconditioner ==
+          xmvb::vb::OrbitalPreconditioner::CasscfDiagonal,
+      "CASSCF diagonal preconditioner option selected the wrong model");
+
   const auto neo_trace = parse({
       "xmvb-cpp.exe",
       "unused.xmi",
@@ -99,4 +111,12 @@ int main() {
       "--optimizer-backend",
       "unknown"});
   require(!invalid.has_value(), "invalid optimizer backend must be rejected");
+
+  const auto invalid_preconditioner = parse({
+      "xmvb-cpp.exe",
+      "unused.xmi",
+      "--orbital-preconditioner",
+      "unknown"});
+  require(!invalid_preconditioner.has_value(),
+          "invalid orbital preconditioner must be rejected");
 }

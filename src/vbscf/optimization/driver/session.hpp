@@ -4,6 +4,7 @@
 
 #include "vbscf/optimization/driver/options.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/optimization/preconditioners/type.hpp"
 
 namespace xmvb::vb {
 
@@ -17,7 +18,7 @@ namespace optimizer_detail {
 OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
     const SparseParameterLayout& parameter_view,
-    bool use_casscf_preconditioner = false);
+    OrbitalPreconditioner preconditioner = OrbitalPreconditioner::OneElectron);
 
 void sync_result_from_objective(
     const VbScfObjective& objective,
