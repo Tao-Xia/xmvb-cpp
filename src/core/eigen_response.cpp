@@ -217,25 +217,12 @@ std::uint64_t EigenResponseRecycleSpace::revision() const noexcept {
 void EigenResponseRecycleSpace::clear() {
   basis_.resize(0, 0);
   operator_images_.resize(0, 0);
+  projected_inverse_.resize(0, 0);
   ++revision_;
 }
 
-EigenResponseRecycleApplication EigenResponseRecycleSpace::galerkin_apply(
-    const Eigen::Ref<const Eigen::VectorXd>& right_hand_side) const {
-  if (!right_hand_side.allFinite()) {
-    throw std::invalid_argument(
-        "response recycle right-hand side must be finite");
-  }
-  EigenResponseRecycleApplication result;
-  result.solution = Eigen::VectorXd::Zero(right_hand_side.size());
-  result.operator_image = Eigen::VectorXd::Zero(right_hand_side.size());
-  if (basis_.cols() == 0) return result;
-  if (basis_.rows() != right_hand_side.size() ||
-      operator_images_.rows() != right_hand_side.size() ||
-      operator_images_.cols() != basis_.cols()) {
-    throw std::invalid_argument(
-        "response recycle space dimension does not match the right-hand side");
-  }
+void EigenResponseRecycleSpace::prepare_projected_inverse() const {
+  if (projected_inverse_revision_ == revision_) return;
 
   const Eigen::MatrixXd raw_projected_operator =
       basis_.transpose() * operator_images_;
@@ -258,7 +245,8 @@ EigenResponseRecycleApplication EigenResponseRecycleSpace::galerkin_apply(
         "response recycle projected operator diagonalization failed");
   }
   const Eigen::VectorXd eigenvalues = eigensolver.eigenvalues();
-  const double spectral_scale = std::max(1.0, eigenvalues.cwiseAbs().maxCoeff());
+  const double spectral_scale = std::max(
+      1.0, eigenvalues.cwiseAbs().maxCoeff());
   const double threshold = std::numeric_limits<double>::epsilon() *
       static_cast<double>(std::max<Eigen::Index>(1, basis_.cols())) *
       spectral_scale;
@@ -269,10 +257,32 @@ EigenResponseRecycleApplication EigenResponseRecycleSpace::galerkin_apply(
       inverse_eigenvalues[index] = 1.0 / eigenvalues[index];
     }
   }
-  const Eigen::VectorXd coefficients = eigensolver.eigenvectors() *
+  projected_inverse_.noalias() = eigensolver.eigenvectors() *
       inverse_eigenvalues.asDiagonal() *
-      eigensolver.eigenvectors().transpose() *
-      basis_.transpose() * right_hand_side;
+      eigensolver.eigenvectors().transpose();
+  projected_inverse_revision_ = revision_;
+}
+
+EigenResponseRecycleApplication EigenResponseRecycleSpace::galerkin_apply(
+    const Eigen::Ref<const Eigen::VectorXd>& right_hand_side) const {
+  if (!right_hand_side.allFinite()) {
+    throw std::invalid_argument(
+        "response recycle right-hand side must be finite");
+  }
+  EigenResponseRecycleApplication result;
+  result.solution = Eigen::VectorXd::Zero(right_hand_side.size());
+  result.operator_image = Eigen::VectorXd::Zero(right_hand_side.size());
+  if (basis_.cols() == 0) return result;
+  if (basis_.rows() != right_hand_side.size() ||
+      operator_images_.rows() != right_hand_side.size() ||
+      operator_images_.cols() != basis_.cols()) {
+    throw std::invalid_argument(
+        "response recycle space dimension does not match the right-hand side");
+  }
+
+  prepare_projected_inverse();
+  const Eigen::VectorXd coefficients =
+      projected_inverse_ * (basis_.transpose() * right_hand_side);
   result.solution.noalias() = basis_ * coefficients;
   result.operator_image.noalias() = operator_images_ * coefficients;
   if (!result.solution.allFinite() || !result.operator_image.allFinite()) {

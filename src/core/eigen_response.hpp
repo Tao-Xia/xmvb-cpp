@@ -53,9 +53,14 @@ public:
       const Eigen::Ref<const Eigen::VectorXd>& operator_image);
 
 private:
+  void prepare_projected_inverse() const;
+
   Eigen::MatrixXd basis_;
   Eigen::MatrixXd operator_images_;
   std::uint64_t revision_ = 0;
+  mutable Eigen::MatrixXd projected_inverse_;
+  mutable std::uint64_t projected_inverse_revision_ =
+      static_cast<std::uint64_t>(-1);
 };
 
 /**
