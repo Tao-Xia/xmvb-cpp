@@ -918,6 +918,32 @@ frozen-HVP reevaluation at the existing numerical-identity tolerance. This
 repair removes the quadratic replay count above; it does not by itself claim
 that the complete TNHVP optimizer is performance-optimal.
 
+The first 32-core Hanhai25 comparison used commits `f3113eb` and `9331873`
+with identical Davidson, convergence, and outer-iteration settings. Both
+versions followed the same number of accepted outer iterations and reached
+energies agreeing to better than $1.3\times10^{-11}$ hartree.
+
+| Case | Quantity | Full replay | Low-rank update | Speedup |
+|---|---:|---:|---:|---:|
+| 241 | End-to-end wall time | 9.52 s | 3.60 s | 2.64 |
+| 241 | Accumulated HVP time | 8.47 s | 2.08 s | 4.08 |
+| 241 | Maximum-step HVP time | 2.79 s | 0.56 s | 4.97 |
+| CERRAS | End-to-end wall time | 1248.15 s | 322.87 s | 3.87 |
+| CERRAS | Accumulated HVP time | 1214.70 s | 253.38 s | 4.79 |
+| CERRAS | Iteration-7 HVP time | 964.97 s | 147.49 s | 6.54 |
+
+Peak RSS changed from 994756 to 991452 KiB for 241 and from 2063544 to
+2073188 KiB for CERRAS. The latter increase is 9644 KiB, or about 0.47%, and
+is consistent with retaining the small orbital coupling factors.
+
+The remaining CERRAS bottleneck is now exposed rather than hidden by replay:
+iteration 7 still spends 145.25 s in outer response. Newly admitted response
+basis columns currently pass through scalar structure-to-orbital adjoint
+contractions. A fused block adjoint is therefore the next performance target.
+The present trace also does not separately charge low-rank model construction
+to the HVP timer, so dedicated rank, adjoint-column, and construction-time
+counters are required before the next benchmark.
+
 The current trace field `exact_hvp_block_actions` counts batched calls, not the
 scalar frozen replay calls. Total HVP/response timings include the replay, but
 that field alone is not a complete work counter. Dedicated replay/rank counters

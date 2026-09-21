@@ -121,8 +121,12 @@ The next implementation sequence is:
    orbital images are updated with the exact low-rank Schur-model difference.
    Newly admitted response columns alone require structure-to-orbital adjoint
    contractions. A 241 regression matches complete frozen replay. Dedicated
-   counters and the large-system timing/RSS panel remain required before this
-   item can be closed.
+   Initial 32-core measurements give 2.64x end-to-end speedup for 241 and
+   3.87x for CERRAS, with energies agreeing within $1.3\times10^{-11}$ hartree.
+   CERRAS iteration 7 HVP time falls from 964.97 to 147.49 s. Next, fuse the
+   still-scalar structure-to-orbital adjoints for newly admitted response
+   columns and add dedicated low-rank construction counters; the current HVP
+   timer does not include all of that work.
 7. [ ] Rerun the nine-system panel with isolated output directories, inspect
    stationary-point/energy differences, and then collect repeated timings and
    peak RSS. Accept algorithm changes only after these gates pass.
