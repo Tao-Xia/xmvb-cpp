@@ -258,7 +258,11 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
           ? requested_relative_residual_tolerance
           : relative_residual_tolerance;
   const auto evaluate = [&](bool frozen_model) {
-    if (use_equal_weight_subspace_response) {
+    // A one-root "equal-weight subspace" is exactly the ordinary bordered
+    // generalized-eigen response. Route it through the block solver below so
+    // all orbital HVP directions share one H/S action. The cluster-specific
+    // loop is required only when selected-selected rotations actually exist.
+    if (use_equal_weight_subspace_response && n_selected_states > 1) {
       SelectedStateGeneralizedEigenDirectionalResponse result;
       result.delta_selected_eigenvector_matrix.resize(n_structures, n_rhs);
       result.selected_matrix_responses.reserve(n_directions);
