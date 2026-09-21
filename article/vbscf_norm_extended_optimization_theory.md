@@ -1009,6 +1009,13 @@ initial-subspace construction.  The converged NEO step must be defined by the
 current-point operators and residuals in this note.  No compatibility branch,
 system-specific fallback, or duplicated optimizer model is required.
 
+Within one nonlinear macroiteration, the accepted Davidson direction from one
+exact-gradient keyframe may initialize the next keyframe subspace after vector
+transport into the new orbital chart.  This is an initial-subspace choice only:
+the new accepted-point Hessian images and residual certificate are recomputed.
+The direction is discarded at the next macroiteration, so no secant curvature
+or stale Hessian action enters the NEO model.
+
 ## 15. References
 
 1. H. J. Aa. Jensen and P. Jørgensen, “A direct approach to second-order

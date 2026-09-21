@@ -42,11 +42,11 @@ foreach (line IN LISTS trace_lines)
   math(EXPR orbital_hvp_actions
     "${orbital_hvp_actions} + ${orbital_actions}")
 endforeach()
-if (total_actions GREATER 40)
+if (total_actions GREATER 32)
   message(FATAL_ERROR
-    "matched-seed F2 NEO used ${total_actions} coupled actions; expected at most 40")
+    "matched-seed F2 NEO used ${total_actions} coupled actions; expected at most 32")
 endif()
-if (orbital_hvp_actions GREATER 32)
+if (orbital_hvp_actions GREATER 24)
   message(FATAL_ERROR
-    "matched-seed F2 NEO used ${orbital_hvp_actions} orbital HVPs; expected at most 32")
+    "matched-seed F2 NEO used ${orbital_hvp_actions} orbital HVPs; expected at most 24")
 endif()

@@ -157,7 +157,7 @@ ResponseNeoProblem::ResponseNeoProblem(
     ResponseNeoBlockAction apply_structure_coupling,
     NeoAction apply_orbital_metric,
     NeoAction apply_orbital_preconditioner,
-    Eigen::VectorXd initial_curvature_probe,
+    Eigen::VectorXd initial_orbital_guess,
     double operator_relative_accuracy)
     : orbital_gradient_(std::move(orbital_gradient)),
       structure_size_(structure_size),
@@ -165,7 +165,7 @@ ResponseNeoProblem::ResponseNeoProblem(
       apply_structure_coupling_(std::move(apply_structure_coupling)),
       apply_orbital_metric_(std::move(apply_orbital_metric)),
       apply_orbital_preconditioner_(std::move(apply_orbital_preconditioner)),
-      initial_curvature_probe_(std::move(initial_curvature_probe)),
+      initial_orbital_guess_(std::move(initial_orbital_guess)),
       operator_relative_accuracy_(operator_relative_accuracy) {
   if (orbital_gradient_.size() == 0 || !orbital_gradient_.allFinite() ||
       structure_size_ < 0) {
@@ -175,11 +175,11 @@ ResponseNeoProblem::ResponseNeoProblem(
       !apply_orbital_metric_) {
     throw std::invalid_argument("response NEO requires coupling and metric actions");
   }
-  if (initial_curvature_probe_.size() != 0 &&
-      (initial_curvature_probe_.size() != orbital_size() ||
-       !initial_curvature_probe_.allFinite())) {
+  if (initial_orbital_guess_.size() != 0 &&
+      (initial_orbital_guess_.size() != orbital_size() ||
+       !initial_orbital_guess_.allFinite())) {
     throw std::invalid_argument(
-        "response NEO initial curvature probe is invalid");
+        "response NEO initial orbital guess is invalid");
   }
   if (!std::isfinite(operator_relative_accuracy_) ||
       operator_relative_accuracy_ < 0.0) {
@@ -308,8 +308,10 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
   result.minimum_curvature_orbital = result.step.orbital;
 
   if (orbital_basis_.empty()) {
-    Eigen::VectorXd first = preconditioned_orbital(
-        problem_, -problem_.orbital_gradient());
+    Eigen::VectorXd first =
+        problem_.initial_orbital_guess().size() == problem_.orbital_size()
+            ? problem_.initial_orbital_guess()
+            : preconditioned_orbital(problem_, -problem_.orbital_gradient());
     if (!append_orbital(
             std::move(first), &result.coupled_actions,
             &result.orbital_actions)) {
@@ -325,9 +327,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       orbital_basis_.size() == 1 && maximum_dimension > 1 &&
       problem_.orbital_size() > 1) {
     append_orbital(
-        problem_.initial_curvature_probe().size() == problem_.orbital_size()
-            ? problem_.initial_curvature_probe()
-            : generic_probe(problem_.orbital_size()),
+        generic_probe(problem_.orbital_size()),
         &result.coupled_actions,
         &result.orbital_actions);
   }

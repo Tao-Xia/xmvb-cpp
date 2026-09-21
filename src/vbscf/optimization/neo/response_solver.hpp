@@ -35,7 +35,7 @@ public:
       ResponseNeoBlockAction apply_structure_coupling,
       NeoAction apply_orbital_metric,
       NeoAction apply_orbital_preconditioner = {},
-      Eigen::VectorXd initial_curvature_probe = {},
+      Eigen::VectorXd initial_orbital_guess = {},
       double operator_relative_accuracy = 0.0);
 
   Eigen::Index orbital_size() const noexcept {
@@ -57,8 +57,9 @@ public:
   }
   Eigen::VectorXd apply_orbital_preconditioner(
       const Eigen::VectorXd& covector) const;
-  const Eigen::VectorXd& initial_curvature_probe() const noexcept {
-    return initial_curvature_probe_;
+  /** @brief Initial Davidson direction recycled within one nonlinear macro. */
+  const Eigen::VectorXd& initial_orbital_guess() const noexcept {
+    return initial_orbital_guess_;
   }
   double operator_relative_accuracy() const noexcept {
     return operator_relative_accuracy_;
@@ -81,7 +82,7 @@ private:
   const ResponseNeoBlockAction apply_structure_coupling_;
   const NeoAction apply_orbital_metric_;
   const NeoAction apply_orbital_preconditioner_;
-  const Eigen::VectorXd initial_curvature_probe_;
+  const Eigen::VectorXd initial_orbital_guess_;
   const double operator_relative_accuracy_;
 };
 

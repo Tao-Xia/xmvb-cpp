@@ -255,6 +255,33 @@ void check_workspace_reuses_actions_after_radius_change() {
                 "reused NEO response differs from a fresh solve");
 }
 
+void check_recycled_orbital_guess_starts_subspace() {
+  Eigen::VectorXd first_direction;
+  const Eigen::Vector2d guess(0.0, 2.0);
+  const ResponseNeoProblem problem(
+      Eigen::Vector2d(1.0, 0.3),
+      0,
+      [&first_direction](const Eigen::VectorXd& p) {
+        if (first_direction.size() == 0) first_direction = p;
+        return ResponseNeoDirection{p, Eigen::VectorXd::Zero(0)};
+      },
+      [](const Eigen::VectorXd&) {
+        return ResponseNeoDirection{
+            Eigen::VectorXd::Zero(2), Eigen::VectorXd::Zero(0)};
+      },
+      [](const Eigen::VectorXd& p) { return p; },
+      {},
+      guess);
+  NeoOptions options;
+  options.trust_radius = 0.5;
+  options.relative_residual_tolerance = 1.0e-12;
+  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
+      problem, options);
+  require(result.converged(), "recycled-guess NEO solve did not converge");
+  require_close(first_direction, guess.normalized(), 1.0e-14,
+                "recycled orbital guess did not start the Davidson space");
+}
+
 }  // namespace
 
 int main() {
@@ -264,6 +291,7 @@ int main() {
     check_budget_reports_subspace_limit();
     check_structure_contracts();
     check_workspace_reuses_actions_after_radius_change();
+    check_recycled_orbital_guess_starts_subspace();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {

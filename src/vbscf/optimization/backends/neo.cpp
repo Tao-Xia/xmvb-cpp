@@ -40,7 +40,7 @@ double neo_forcing_term(
 struct AcceptedNeoKeyframe {
   VbScfObjective::TrialEvaluation trial;
   Eigen::VectorXd parameters;
-  Eigen::VectorXd curvature_probe_packed;
+  Eigen::VectorXd next_orbital_guess_packed;
 };
 
 bool build_accepted_neo_keyframe(
@@ -50,7 +50,7 @@ bool build_accepted_neo_keyframe(
     const OrbitalChart& chart,
     const Eigen::VectorXd& reduced_gradient,
     const Eigen::VectorXd& current_parameters,
-    const Eigen::VectorXd& curvature_probe_packed,
+    const Eigen::VectorXd& orbital_guess_packed,
     double gradient_l2,
     double energy,
     double* trust_radius,
@@ -77,11 +77,11 @@ bool build_accepted_neo_keyframe(
       record->model_dimension,
       static_cast<int>(
           chart.reduced_size() + structure_hessian.tangent_size()));
-  Eigen::VectorXd curvature_probe;
-  if (curvature_probe_packed.size() ==
+  Eigen::VectorXd orbital_guess;
+  if (orbital_guess_packed.size() ==
       static_cast<Eigen::Index>(parameter_view.size())) {
-    curvature_probe =
-        chart.project_vector(curvature_probe_packed).reduced_gradient;
+    orbital_guess =
+        chart.project_vector(orbital_guess_packed).reduced_gradient;
   }
   double selected_energy_scale = 0.0;
   for (const double selected_energy :
@@ -121,7 +121,7 @@ bool build_accepted_neo_keyframe(
       [&chart](const Eigen::VectorXd& residual) {
         return chart.apply_inverse_reduced_block_preconditioner(residual);
       },
-      std::move(curvature_probe),
+      std::move(orbital_guess),
       operator_relative_accuracy);
   ResponseNeoWorkspace workspace(problem);
 
@@ -199,8 +199,8 @@ bool build_accepted_neo_keyframe(
 
     accepted->parameters =
         parameter_view.pack(trial.orbital_preparation_input);
-    accepted->curvature_probe_packed =
-        chart.expand_step(step.minimum_curvature_orbital);
+    accepted->next_orbital_guess_packed =
+        chart.expand_step(step.step.orbital);
     accepted->trial = std::move(trial);
     return true;
   }
@@ -223,8 +223,6 @@ BackendRunResult run_neo_backend(
   double previous_energy = initial_energy;
   double trust_radius =
       std::max(options.minimum_step_size, options.initial_step_size);
-  Eigen::VectorXd curvature_probe_packed;
-
   OrbitalChart chart = build_orbital_chart(*objective, parameter_view);
   auto projected = chart.project_gradient(gradient);
   double final_gradient_inf =
@@ -254,6 +252,7 @@ BackendRunResult run_neo_backend(
         final_gradient_l2, chart.reduced_size()) * final_gradient_l2;
     bool macro_accepted = false;
     bool backend_failed = false;
+    Eigen::VectorXd keyframe_orbital_guess_packed;
 
     // A macro step may contain several exact-gradient keyframes.  Each
     // keyframe discards the old quadratic model and rebuilds H, B, and C at
@@ -269,7 +268,7 @@ BackendRunResult run_neo_backend(
               chart,
               projected.reduced_gradient,
               parameters,
-              curvature_probe_packed,
+              keyframe_orbital_guess_packed,
               final_gradient_l2,
               energy,
               &trust_radius,
@@ -287,8 +286,8 @@ BackendRunResult run_neo_backend(
       energy = accepted.trial.energy;
       objective->commit(std::move(accepted.trial));
       parameters = std::move(accepted.parameters);
-      curvature_probe_packed =
-          std::move(accepted.curvature_probe_packed);
+      keyframe_orbital_guess_packed =
+          std::move(accepted.next_orbital_guess_packed);
       ++iteration_record.keyframes;
       macro_accepted = true;
 
