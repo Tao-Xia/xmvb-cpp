@@ -4,6 +4,7 @@
 #include <cmath>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
@@ -15,6 +16,7 @@
 #include "vbscf/optimization/driver/session.hpp"
 #include "vbscf/optimization/globalization/line_search.hpp"
 #include "vbscf/optimization/neo/globalization.hpp"
+#include "vbscf/optimization/neo/keyframe_policy.hpp"
 #include "vbscf/optimization/neo/response_solver.hpp"
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/preconditioners/structure_response_woodbury.hpp"
@@ -52,6 +54,37 @@ struct AcceptedNeoKeyframe {
   Eigen::VectorXd parameters;
   Eigen::VectorXd next_orbital_guess_packed;
 };
+
+struct AcceptedNeoModelScalars {
+  double trial_radius = 0.0;
+  double gradient_dot_step = 0.0;
+  double step_dot_hessian_step = 0.0;
+  NeoGlobalizationResult globalization;
+  double kkt_residual_norm = 0.0;
+  double kkt_residual_target = 0.0;
+  double curvature_residual_norm = 0.0;
+  double curvature_residual_target = 0.0;
+  bool global_curvature_certified = false;
+  bool reached_boundary = false;
+};
+
+void accept_neo_keyframe_record(
+    const AcceptedNeoModelScalars& model,
+    NeoIterationRecord* record) {
+  record->kkt_residual_norm = model.kkt_residual_norm;
+  record->kkt_residual_target = model.kkt_residual_target;
+  record->curvature_residual_norm = model.curvature_residual_norm;
+  record->curvature_residual_target = model.curvature_residual_target;
+  record->global_curvature_certified = model.global_curvature_certified;
+  record->accepted_trial_radius = model.trial_radius;
+  record->next_trust_radius = model.globalization.next_radius;
+  record->gradient_dot_step += model.gradient_dot_step;
+  record->step_dot_hessian_step += model.step_dot_hessian_step;
+  record->predicted_reduction += model.globalization.predicted_reduction;
+  record->actual_reduction += model.globalization.actual_reduction;
+  record->reached_boundary =
+      record->reached_boundary || model.reached_boundary;
+}
 
 /**
  * @brief Shift-local inverse of the recycled relaxed orbital model.
@@ -228,6 +261,18 @@ bool build_accepted_neo_keyframe(
       std::move(orbital_guess),
       operator_relative_accuracy);
   ResponseNeoWorkspace workspace(problem);
+  NeoKeyframePolicy keyframe_policy;
+  std::optional<AcceptedNeoKeyframe> last_accepted;
+  std::optional<AcceptedNeoModelScalars> last_accepted_model;
+
+  const auto finish_last_accepted = [&]() {
+    if (!last_accepted.has_value() || !last_accepted_model.has_value()) {
+      return false;
+    }
+    accept_neo_keyframe_record(*last_accepted_model, record);
+    *accepted = std::move(*last_accepted);
+    return true;
+  };
 
   while (true) {
     const double trial_radius = *trust_radius;
@@ -246,6 +291,7 @@ bool build_accepted_neo_keyframe(
     record->orbital_hvp_actions += step.orbital_actions;
     record->structure_response_actions += step.structure_actions;
     if (!step.converged()) {
+      if (finish_last_accepted()) return true;
       result->termination_reason = "neo_microproblem_not_converged";
       return false;
     }
@@ -259,6 +305,7 @@ bool build_accepted_neo_keyframe(
     if (is_effectively_zero_step(
             candidate_parameters - current_parameters,
             current_parameters)) {
+      if (finish_last_accepted()) return true;
       result->termination_reason = "neo_zero_orbital_step";
       return false;
     }
@@ -279,34 +326,55 @@ bool build_accepted_neo_keyframe(
         options.minimum_step_size);
     if (!globalization.accepted) {
       ++record->rejected_trial_count;
-      if (!(globalization.next_radius < *trust_radius)) {
+      const bool radius_contracts =
+          globalization.next_radius < *trust_radius;
+      *trust_radius = globalization.next_radius;
+      // A farther frozen-model candidate may fail even though the previous
+      // radius produced a valid keyframe. Retain that last energy-accepted
+      // point and refresh its exact gradient instead of discarding it.
+      if (last_accepted_model.has_value()) {
+        last_accepted_model->globalization.next_radius = *trust_radius;
+      }
+      if (finish_last_accepted()) return true;
+      if (!radius_contracts) {
         result->termination_reason = "neo_trust_radius_exhausted";
         return false;
       }
-      *trust_radius = globalization.next_radius;
       continue;
     }
 
-    record->kkt_residual_norm = step.residual_norm;
-    record->kkt_residual_target = step.residual_target;
-    record->curvature_residual_norm = step.curvature_residual_norm;
-    record->curvature_residual_target = step.curvature_residual_target;
-    record->global_curvature_certified = step.global_curvature_certified;
-    record->accepted_trial_radius = trial_radius;
-    record->next_trust_radius = globalization.next_radius;
-    record->gradient_dot_step += gradient_dot_step;
-    record->step_dot_hessian_step += step_dot_hessian_step;
-    record->predicted_reduction += globalization.predicted_reduction;
-    record->actual_reduction += globalization.actual_reduction;
-    record->reached_boundary = record->reached_boundary || step.boundary;
     *trust_radius = globalization.next_radius;
 
-    accepted->parameters =
+    AcceptedNeoKeyframe candidate;
+    candidate.parameters =
         parameter_view.pack(trial.orbital_preparation_input);
-    accepted->next_orbital_guess_packed =
+    candidate.next_orbital_guess_packed =
         chart.expand_step(step.step.orbital);
-    accepted->trial = std::move(trial);
-    return true;
+    candidate.trial = std::move(trial);
+    last_accepted = std::move(candidate);
+    last_accepted_model = AcceptedNeoModelScalars{
+        trial_radius,
+        gradient_dot_step,
+        step_dot_hessian_step,
+        globalization,
+        step.residual_norm,
+        step.residual_target,
+        step.curvature_residual_norm,
+        step.curvature_residual_target,
+        step.global_curvature_certified,
+        step.boundary};
+
+    const double estimated_gradient_norm =
+        (problem.orbital_gradient() + step.hessian_step.orbital).norm();
+    if (keyframe_policy.observe(
+            {problem.orbital_gradient().norm(),
+             estimated_gradient_norm,
+             globalization.rho,
+             trial_radius,
+             globalization.next_radius,
+             step.boundary}) == NeoKeyframePolicy::Decision::Refresh) {
+      return finish_last_accepted();
+    }
   }
 }
 
