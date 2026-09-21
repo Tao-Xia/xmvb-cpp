@@ -800,6 +800,89 @@ orbital--structure retraction and its joint trust norm.  Naming the two
 formulations explicitly prevents an unshifted relaxed response from being
 combined with the shift-dependent coupled equations in eqs 38--39.
 
+### 9.5 Recycled response and Woodbury orbital preconditioning
+
+Let the columns of $\mathbf W$ be the accepted-point horizontal structure
+response space and retain their exact operator images $\mathbf C\mathbf W$.
+The projected structure operator and orbital coupling are
+
+$$
+\mathbf K=\mathbf W^{\mathrm T}\mathbf C\mathbf W,
+\qquad
+\mathbf J=\mathbf B^{\mathrm T}\mathbf W.
+\tag{45a}
+$$
+
+For an orbital block $\mathbf Q$, the response is obtained from the common
+recycled space and is accepted only if the residual of the original structure
+equation satisfies
+
+$$
+\mathbf R_s=\mathbf B\mathbf Q+\mathbf C\mathbf Z,
+\qquad
+\|\mathbf R_s\|_F
+\leq
+\epsilon_{\mathrm{abs}}+\eta\|\mathbf B\mathbf Q\|_F.
+\tag{45b}
+$$
+
+Thus neither a small projected residual nor an unchanged Ritz space is by
+itself a certificate.  When enrichment changes $\mathbf W$, every retained
+orbital column is refreshed in the new response-space revision.  The relaxed
+projected orbital operator is then
+
+$$
+\mathbf H_{\mathrm{rel}}^{(W)}
+=
+\mathbf A-\mathbf J\mathbf K^{\dagger}\mathbf J^{\mathrm T}.
+\tag{45c}
+$$
+
+Let $\mathbf P_\lambda$ denote the workspace-local one-electron block
+approximation to $(\mathbf A+\lambda\mathbf M_o)^{-1}$.  Applying the matrix
+inversion lemma to eq 45c gives the response-aware orbital preconditioner
+
+$$
+\widetilde{\mathbf P}_\lambda
+=
+\mathbf P_\lambda
++
+\mathbf P_\lambda\mathbf J
+\left(
+\mathbf K-\mathbf J^{\mathrm T}\mathbf P_\lambda\mathbf J
+\right)^{\dagger}
+\mathbf J^{\mathrm T}\mathbf P_\lambda.
+\tag{45d}
+$$
+
+Only the small symmetric matrix in parentheses is diagonalized.  Its
+pseudoinverse must satisfy its Moore--Penrose reconstruction residual before
+eq 45d is used.  This update changes only the orbital residual direction used
+to expand the NEO workspace; the true HVP, structure residual in eq 45b, and
+the final NEO KKT certificate remain unchanged.
+
+For block orbital coupling and block structure actions, let $m_{\mathrm{col}}$
+be a conservative upper bound on temporary bytes per direction and let
+$M_{\mathrm{work}}$ be the workspace budget.  The executed block width is
+
+$$
+b
+=
+\max\!\left[
+1,
+\min\!\left(
+b_{\mathrm{requested}},
+\left\lfloor\frac{M_{\mathrm{work}}}{m_{\mathrm{col}}}\right\rfloor
+\right)
+\right].
+\tag{45e}
+$$
+
+This preserves the algebra of a full block action while bounding temporary
+storage independently of the Davidson or NEO request width.  Direct-CI sigma
+actions use $b=1$ because each column already owns the determinant-product
+workspace; factorized unique-string actions use eq 45e.
+
 ## 10. Residual and model certificates
 
 For a computed generalized eigenpair $\widehat\mu$, $\widehat\beta$,
