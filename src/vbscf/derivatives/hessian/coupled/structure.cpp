@@ -73,7 +73,18 @@ StructureTangentOperator::StructureTangentOperator(
   }
 
   selected_ = accepted_point_->selected_state_eigenvectors;
-  const StructureActionResult selected_images = action_->apply(selected_);
+  if (!accepted_point_->selected_state_structure_images.has_value()) {
+    throw std::invalid_argument(
+        "coupled structure operator requires cached selected-state structure images");
+  }
+  const StructureActionResult& selected_images =
+      accepted_point_->selected_state_structure_images.value();
+  if (selected_images.hamiltonian.rows() != n_structures_ ||
+      selected_images.hamiltonian.cols() != n_states_ ||
+      !selected_images.hamiltonian.allFinite()) {
+    throw std::runtime_error(
+        "coupled structure operator received invalid selected Hamiltonian images");
+  }
   if (selected_images.overlap.rows() != n_structures_ ||
       selected_images.overlap.cols() != n_states_ ||
       !selected_images.overlap.allFinite()) {
@@ -160,6 +171,17 @@ Eigen::VectorXd StructureTangentOperator::coordinates(
       independent.data(), independent.size());
 }
 
+Eigen::VectorXd StructureTangentOperator::project_coordinates(
+    const Eigen::Ref<const Eigen::MatrixXd>& scaled_coefficients) const {
+  validate_shape(scaled_coefficients);
+  const Eigen::MatrixXd transformed =
+      constraint_qr_.householderQ().adjoint() * scaled_coefficients;
+  const Eigen::MatrixXd independent =
+      transformed.bottomRows(n_structures_ - n_states_);
+  return Eigen::Map<const Eigen::VectorXd>(
+      independent.data(), independent.size());
+}
+
 StructureTangent StructureTangentOperator::expand(
     const Eigen::VectorXd& coordinates) const {
   if (coordinates.size() != tangent_size() || !coordinates.allFinite()) {
@@ -209,8 +231,20 @@ StructureTangent StructureTangentOperator::apply_hessian(
 
 StructureCouplingAction StructureTangentOperator::apply_coupling(
     const StructureTangent& tangent) const {
-  StructureTangent horizontal = project(tangent.scaled_coefficients);
-  Eigen::MatrixXd raw = horizontal.scaled_coefficients;
+  const Eigen::VectorXd tangent_coordinates = coordinates(tangent);
+  StructureCoordinateCouplingAction coordinate_action =
+      apply_coupling_coordinates(tangent_coordinates);
+  return StructureCouplingAction{
+      expand(coordinate_action.hessian_coordinates),
+      std::move(coordinate_action.coefficient_response),
+      std::move(coordinate_action.adjoint_multipliers)};
+}
+
+StructureCoordinateCouplingAction
+StructureTangentOperator::apply_coupling_coordinates(
+    const Eigen::VectorXd& coordinates) const {
+  StructureTangent horizontal = expand(coordinates);
+  Eigen::MatrixXd raw = std::move(horizontal.scaled_coefficients);
   for (int state = 0; state < n_states_; ++state) {
     raw.col(state) /= coordinate_scales_[state];
   }
@@ -220,7 +254,7 @@ StructureCouplingAction StructureTangentOperator::apply_coupling(
   Eigen::MatrixXd shifted = images.hamiltonian;
   shifted.noalias() -= images.overlap * energies_.asDiagonal();
 
-  StructureCouplingAction result;
+  StructureCoordinateCouplingAction result;
   result.coefficient_response = std::move(raw);
   result.adjoint_multipliers =
       -selected_metric_inverse_ * (selected_.transpose() * shifted);
@@ -228,7 +262,7 @@ StructureCouplingAction StructureTangentOperator::apply_coupling(
   for (int state = 0; state < n_states_; ++state) {
     scaled_shifted.col(state) *= coordinate_scales_[state];
   }
-  result.hessian = project(scaled_shifted);
+  result.hessian_coordinates = project_coordinates(scaled_shifted);
   return result;
 }
 

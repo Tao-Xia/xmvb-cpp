@@ -102,11 +102,25 @@ build_accepted_selected_state_generalized_eigen_response_operator(
       n_selected_states);
   response_operator.selected_eigenvectors =
       accepted_point_context.selected_state_eigenvectors;
-  StructureActionResult selected_images = response_operator.structure_action
-      ->apply(response_operator.selected_eigenvectors);
+  if (!accepted_point_context.selected_state_structure_images.has_value()) {
+    accepted_point_context.selected_state_structure_images =
+        response_operator.structure_action->apply(
+            response_operator.selected_eigenvectors);
+  }
+  const StructureActionResult& selected_images =
+      accepted_point_context.selected_state_structure_images.value();
+  if (selected_images.hamiltonian.rows() != n_structures ||
+      selected_images.hamiltonian.cols() != n_selected_states ||
+      selected_images.overlap.rows() != n_structures ||
+      selected_images.overlap.cols() != n_selected_states ||
+      !selected_images.hamiltonian.allFinite() ||
+      !selected_images.overlap.allFinite()) {
+    throw std::runtime_error(
+        "accepted selected-state structure images are invalid");
+  }
   response_operator.selected_residuals = selected_images.hamiltonian -
       selected_images.overlap * response_operator.selected_eigenvalues.asDiagonal();
-  response_operator.overlap_selected = std::move(selected_images.overlap);
+  response_operator.overlap_selected = selected_images.overlap;
   response_operator.use_equal_weight_subspace_response = weights_are_equal(
       accepted_point_context.normalized_state_weights);
   response_operator.response_recycle_spaces.resize(selected_state_count);

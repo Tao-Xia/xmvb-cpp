@@ -778,27 +778,30 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
   }
 
   if (components.fixed_upstream_pullback &&
-      accepted_total_active_auxiliary_gradient_.rows() == n_basis_functions &&
-      accepted_total_active_auxiliary_gradient_.cols() == n_active_orbitals &&
-      accepted_total_inactive_density_gradient_.size() == ao_matrix_size) {
-      const auto fixed_upstream_pullback_start_time =
-          std::chrono::steady_clock::now();
-      const std::vector<double> fixed_upstream_orbital_value_gradient =
-              apply_fixed_upstream_orbital_pullback_direction(
-                  current_input_->orbital_preparation_input,
-                  dense_orbital_tangent_context,
-                  accepted_total_active_auxiliary_gradient_,
-                  orbital_preparation_directional_result
-                      .basis_overlap_times_delta_active_orbitals,
-                  accepted_total_inactive_density_gradient_,
-                  input_retract_tangent,
-                  *orbital_preparation_cache);
-      add_orbital_value_gradient_in_place(
-          &combined_core_orbital_value_gradient,
-          fixed_upstream_orbital_value_gradient,
-          "fixed-upstream");
-      apply_timing_totals_.fixed_upstream_pullback_wall_time_seconds +=
-          detail::exact_hvp_elapsed_seconds(fixed_upstream_pullback_start_time);
+      accepted_point_context_->total_active_auxiliary_gradient.rows() ==
+          n_basis_functions &&
+      accepted_point_context_->total_active_auxiliary_gradient.cols() ==
+          n_active_orbitals &&
+      accepted_point_context_->total_inactive_density_gradient.size() ==
+          ao_matrix_size) {
+    const auto fixed_upstream_pullback_start_time =
+        std::chrono::steady_clock::now();
+    const std::vector<double> fixed_upstream_orbital_value_gradient =
+        apply_fixed_upstream_orbital_pullback_direction(
+            current_input_->orbital_preparation_input,
+            dense_orbital_tangent_context,
+            accepted_point_context_->total_active_auxiliary_gradient,
+            orbital_preparation_directional_result
+                .basis_overlap_times_delta_active_orbitals,
+            accepted_point_context_->total_inactive_density_gradient,
+            input_retract_tangent,
+            *orbital_preparation_cache);
+    add_orbital_value_gradient_in_place(
+        &combined_core_orbital_value_gradient,
+        fixed_upstream_orbital_value_gradient,
+        "fixed-upstream");
+    apply_timing_totals_.fixed_upstream_pullback_wall_time_seconds +=
+        detail::exact_hvp_elapsed_seconds(fixed_upstream_pullback_start_time);
   }
 
   if (!combined_core_orbital_value_gradient.empty()) {

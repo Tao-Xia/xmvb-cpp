@@ -124,6 +124,10 @@ std::shared_ptr<xmvb::vb::AcceptedPointContext> accepted_point(
   accepted->normalized_state_weights = std::move(weights);
   accepted->selected_state_eigenvectors =
       fixture.eigenvectors.leftCols(n_states);
+  accepted->selected_state_structure_images =
+      xmvb::vb::StructureActionResult{
+          fixture.hamiltonian * accepted->selected_state_eigenvectors,
+          fixture.overlap * accepted->selected_state_eigenvectors};
   return accepted;
 }
 
@@ -207,12 +211,27 @@ void check_equal_weight_multistate(const StructureFixture& fixture) {
        -0.1,  0.6;
   const auto horizontal_x = structure.project(x);
   const auto horizontal_y = structure.project(y);
+  require((structure.project_coordinates(x) -
+           structure.coordinates(horizontal_x)).norm() < 3.0e-13,
+          "direct projected structure coordinates are inconsistent");
   require((accepted->selected_state_eigenvectors.transpose() *
            fixture.overlap * horizontal_x.scaled_coefficients).norm() < 3.0e-13,
           "multistate tangent retains a selected-subspace component");
 
   const auto hx = structure.apply_hessian(horizontal_x);
   const auto hy = structure.apply_hessian(horizontal_y);
+  const auto coordinate_action = structure.apply_coupling_coordinates(
+      structure.coordinates(horizontal_x));
+  require((coordinate_action.hessian_coordinates -
+           structure.coordinates(hx)).norm() < 3.0e-13,
+          "coordinate-space structure Hessian action is inconsistent");
+  const auto ambient_action = structure.apply_coupling(horizontal_x);
+  require((coordinate_action.coefficient_response -
+           ambient_action.coefficient_response).norm() < 3.0e-13,
+          "coordinate-space coefficient response is inconsistent");
+  require((coordinate_action.adjoint_multipliers -
+           ambient_action.adjoint_multipliers).norm() < 3.0e-13,
+          "coordinate-space structure multipliers are inconsistent");
   const double h_xy = block_dot(horizontal_x.scaled_coefficients,
                                 hy.scaled_coefficients);
   const double h_yx = block_dot(hx.scaled_coefficients,

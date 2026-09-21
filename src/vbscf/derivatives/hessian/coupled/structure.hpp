@@ -30,6 +30,13 @@ struct StructureCouplingAction {
   Eigen::MatrixXd adjoint_multipliers;
 };
 
+/** @brief Coordinate-space structure action and orbital-adjoint inputs. */
+struct StructureCoordinateCouplingAction {
+  Eigen::VectorXd hessian_coordinates;
+  Eigen::MatrixXd coefficient_response;
+  Eigen::MatrixXd adjoint_multipliers;
+};
+
 /**
  * @brief Matrix-free structure-space block of the coupled VBSCF Hessian.
  *
@@ -61,6 +68,16 @@ public:
   /** @brief Packs a horizontal tangent into independent coordinates. */
   Eigen::VectorXd coordinates(const StructureTangent& tangent) const;
 
+  /**
+   * @brief Projects ambient scaled coefficients directly into coordinates.
+   *
+   * This is the coordinate representation of the horizontal projection. It
+   * avoids materializing the projected ambient block when only its independent
+   * coordinates are needed.
+   */
+  Eigen::VectorXd project_coordinates(
+      const Eigen::Ref<const Eigen::MatrixXd>& scaled_coefficients) const;
+
   /** @brief Expands independent coordinates into a horizontal tangent. */
   StructureTangent expand(const Eigen::VectorXd& coordinates) const;
 
@@ -90,6 +107,15 @@ public:
    */
   StructureCouplingAction apply_coupling(
       const StructureTangent& tangent) const;
+
+  /**
+   * @brief Applies the structure block directly to horizontal coordinates.
+   *
+   * The input is horizontal by construction. The result remains in independent
+   * coordinates, so no redundant ambient projection is performed.
+   */
+  StructureCoordinateCouplingAction apply_coupling_coordinates(
+      const Eigen::VectorXd& coordinates) const;
 
   /** @brief Applies the structure trust-region metric @f$PSP@f$. */
   StructureTangent apply_metric(const StructureTangent& tangent) const;

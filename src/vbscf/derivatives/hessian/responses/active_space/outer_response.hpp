@@ -82,16 +82,4 @@ bool has_active_matrix_gradient(
     const AcceptedPointContext& context,
     int n_active_orbitals);
 
-struct AcceptedOrbitalBackpropInputs {
-  Eigen::MatrixXd total_active_auxiliary_gradient;
-  std::vector<double> total_inactive_density_gradient;
-};
-
-AcceptedOrbitalBackpropInputs build_accepted_orbital_backprop_inputs(
-    const AcceptedPointContext& context,
-    const VbScfInput& input,
-    const ExactPackedActiveTwoElectronAdjointCache* exact_two_electron_cache,
-    const RiActiveTwoElectronResponseCache* ri_two_electron_cache,
-    const RiAoFactorization* ri_factorization);
-
 }  // namespace xmvb::vb

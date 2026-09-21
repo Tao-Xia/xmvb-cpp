@@ -43,6 +43,15 @@ struct AcceptedPointContext {
    */
   mutable std::optional<StructureAction> structure_action;
 
+  /**
+   * @brief Accepted Hamiltonian and overlap images of the selected states.
+   *
+   * The generalized-eigen response and coupled structure operator share these
+   * images. They are populated together with the canonical structure action so
+   * neither consumer repeats the same selected-state block action.
+   */
+  mutable std::optional<StructureActionResult> selected_state_structure_images;
+
   /** @brief Direction-independent direct-CI data reused by every exact HVP. */
   mutable std::optional<StructureAdjointState> structure_adjoint_state;
 
@@ -64,6 +73,25 @@ struct AcceptedPointContext {
    * @brief Accepted-point active-space adjoint with respect to packed `GGO`.
    */
   std::vector<double> packed_active_two_electron_gradient;
+
+  /**
+   * @brief Accepted total adjoint of the active auxiliary orbitals.
+   *
+   * The complete orbital-gradient sweep has already accumulated the active
+   * overlap, one-electron, and two-electron contributions into this matrix.
+   * Exact HVP construction reuses it for the fixed-upstream pullback instead
+   * of repeating those accepted-point reverse sweeps.
+   */
+  Eigen::MatrixXd total_active_auxiliary_gradient;
+
+  /**
+   * @brief Accepted total adjoint of the inactive density matrix.
+   *
+   * Stored in column-major AO-matrix order. This includes the reference,
+   * active-space, and AO effective-one-electron contributions accumulated by
+   * the complete orbital-gradient evaluation.
+   */
+  std::vector<double> total_inactive_density_gradient;
 
   /**
    * @brief Selected states carried by this context.

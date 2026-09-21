@@ -177,29 +177,22 @@ ExactHvpOperator::State::State(
               accepted_two_electron_result);
     }
 
-    const auto accepted_orbital_backprop_inputs =
-        build_accepted_orbital_backprop_inputs(
-            *accepted_point_context_,
-            *current_input_,
-            accepted_ri_two_electron_cache_.has_value()
-                ? nullptr
-                : &accepted_exact_two_electron_cache_,
-            accepted_ri_two_electron_cache_.has_value()
-                ? &*accepted_ri_two_electron_cache_
-                : nullptr,
-            accepted_ri_factorization_);
-    accepted_total_active_auxiliary_gradient_ =
-        accepted_orbital_backprop_inputs.total_active_auxiliary_gradient;
-    accepted_total_inactive_density_gradient_ =
-        accepted_orbital_backprop_inputs.total_inactive_density_gradient;
+    if (accepted_point_context_->total_active_auxiliary_gradient.rows() !=
+            n_basis_functions ||
+        accepted_point_context_->total_active_auxiliary_gradient.cols() !=
+            n_active_orbitals ||
+        accepted_point_context_->total_inactive_density_gradient.size() !=
+            ao_matrix_size) {
+      throw std::invalid_argument(
+          "accepted-point exact HVP is missing complete orbital-gradient adjoints");
+    }
 
     accepted_orbital_preparation_cache_ =
         std::make_unique<AcceptedOrbitalPreparationCache>(
             build_accepted_orbital_preparation_cache(
                 current_input_->orbital_preparation_input,
-                accepted_total_active_auxiliary_gradient_,
-                accepted_total_inactive_density_gradient_));
-
+                accepted_point_context_->total_active_auxiliary_gradient,
+                accepted_point_context_->total_inactive_density_gradient));
   }
 }
 

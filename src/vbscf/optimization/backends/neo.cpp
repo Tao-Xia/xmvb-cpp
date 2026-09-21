@@ -109,18 +109,17 @@ bool build_accepted_neo_keyframe(
             orbital_hessian.apply_orbital_coupling(vector);
         return ResponseNeoDirection{
             image.orbital_hessian,
-            structure_hessian.coordinates(
-                structure_hessian.project(image.scaled_structure_forcing))};
+            structure_hessian.project_coordinates(
+                image.scaled_structure_forcing)};
       },
       [&orbital_hessian, &structure_hessian](
           const Eigen::VectorXd& vector) {
-        const StructureCouplingAction image =
-            structure_hessian.apply_coupling(
-                structure_hessian.expand(vector));
+        const StructureCoordinateCouplingAction image =
+            structure_hessian.apply_coupling_coordinates(vector);
         return ResponseNeoDirection{
             orbital_hessian.apply_structure_coupling_adjoint(
                 image.coefficient_response, image.adjoint_multipliers),
-            structure_hessian.coordinates(image.hessian)};
+            image.hessian_coordinates};
       },
       [&orbital_metric](const Eigen::VectorXd& vector) {
         return orbital_metric.apply(vector);

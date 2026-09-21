@@ -140,8 +140,6 @@ private:
   mutable Eigen::MatrixXd ri_ao_h1e_adjoint_workspace_;
   mutable AoEffectiveOneElectronRiStrategy ri_ao_h1e_strategy_ =
       AoEffectiveOneElectronRiStrategy::Uncalibrated;
-  Eigen::MatrixXd accepted_total_active_auxiliary_gradient_;
-  std::vector<double> accepted_total_inactive_density_gradient_;
   Eigen::MatrixXd zero_core_hamiltonian_;
   mutable std::vector<double> ao_h1e_delta_h1e_workspace_;
   mutable std::vector<double> ao_h1e_inactive_density_gradient_workspace_;

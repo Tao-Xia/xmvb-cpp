@@ -526,6 +526,13 @@ OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradi
       orbital_backpropagation_result.orbital_value_gradient;
   result.differentiable_parameter_indices = collect_differentiable_parameter_indices(
       input.orbital_preparation_input);
+  if (active_space_gradient_result.second_order_context != nullptr) {
+    auto& accepted = *active_space_gradient_result.second_order_context;
+    accepted.total_active_auxiliary_gradient =
+        std::move(total_active_auxiliary_gradient);
+    accepted.total_inactive_density_gradient =
+        std::move(total_inactive_density_gradient);
+  }
   result.second_order_context = std::move(active_space_gradient_result.second_order_context);
   result.total_wall_time_seconds =
       std::chrono::duration<double>(std::chrono::steady_clock::now() - total_start_time).count();
