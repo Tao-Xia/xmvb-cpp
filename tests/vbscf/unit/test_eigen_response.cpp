@@ -600,6 +600,12 @@ bool test_unconditional_indefinite_galerkin_application() {
   }
   const Eigen::Vector2d rhs(1.0, 0.0);
   const auto application = space.galerkin_apply(rhs);
+  const Eigen::Vector2d jacobi_inverse(2.0, 3.0);
+  const Eigen::Vector2d preconditioned =
+      space.apply_absolute_spectral_preconditioner(rhs, jacobi_inverse);
+  const Eigen::Vector2d probe(-0.4, 0.7);
+  const Eigen::Vector2d preconditioned_probe =
+      space.apply_absolute_spectral_preconditioner(probe, jacobi_inverse);
   const bool linear_application_passed =
       application.available &&
       (application.solution - Eigen::Vector2d(-10.0, 0.0)).norm() <=
@@ -607,10 +613,16 @@ bool test_unconditional_indefinite_galerkin_application() {
       (application.operator_image - Eigen::Vector2d(1.0, -100.0)).norm() <=
           1.0e-12 &&
       (rhs - application.operator_image).norm() > rhs.norm();
+  const bool spectral_preconditioner_passed =
+      (preconditioned - Eigen::Vector2d(10.0, 0.0)).norm() <= 1.0e-12 &&
+      rhs.dot(preconditioned) > 0.0 && probe.dot(preconditioned_probe) > 0.0 &&
+      std::abs(rhs.dot(preconditioned_probe) -
+               probe.dot(preconditioned)) <= 1.0e-12;
   const bool dependent_append = space.append(direction, image);
   const std::uint64_t revision_before_clear = space.revision();
   space.clear();
-  return linear_application_passed && !dependent_append &&
+  return linear_application_passed && spectral_preconditioner_passed &&
+      !dependent_append &&
       revision_before_clear == 1 && space.revision() == 2 &&
       space.size() == 0;
 }

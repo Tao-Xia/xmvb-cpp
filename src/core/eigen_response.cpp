@@ -151,6 +151,38 @@ Eigen::MatrixXd build_inverse_preconditioner(
   return inverse;
 }
 
+Eigen::VectorXd apply_response_preconditioner_column(
+    const Eigen::Ref<const Eigen::VectorXd>& residual,
+    const Eigen::Ref<const Eigen::VectorXd>& jacobi_inverse,
+    EigenResponseRecycleSpace* recycle) {
+  return recycle != nullptr && recycle->size() > 0
+      ? recycle->apply_absolute_spectral_preconditioner(
+            residual, jacobi_inverse)
+      : (jacobi_inverse.array() * residual.array()).matrix();
+}
+
+Eigen::MatrixXd apply_response_preconditioner(
+    const Eigen::Ref<const Eigen::MatrixXd>& residuals,
+    const Eigen::Ref<const Eigen::MatrixXd>& jacobi_inverse,
+    const std::vector<EigenResponseRecycleSpace*>& recycle_spaces) {
+  if (residuals.rows() != jacobi_inverse.rows() ||
+      residuals.cols() != jacobi_inverse.cols() ||
+      (!recycle_spaces.empty() &&
+       recycle_spaces.size() != static_cast<std::size_t>(residuals.cols()))) {
+    throw std::invalid_argument(
+        "response preconditioner dimensions are inconsistent");
+  }
+  Eigen::MatrixXd result(residuals.rows(), residuals.cols());
+  for (Eigen::Index state = 0; state < residuals.cols(); ++state) {
+    EigenResponseRecycleSpace* recycle = recycle_spaces.empty()
+        ? nullptr
+        : recycle_spaces[static_cast<std::size_t>(state)];
+    result.col(state) = apply_response_preconditioner_column(
+        residuals.col(state), jacobi_inverse.col(state), recycle);
+  }
+  return result;
+}
+
 void project_selected_roots(
     Eigen::MatrixXd* vectors,
     const Eigen::Ref<const Eigen::MatrixXd>& root_units) {
@@ -228,10 +260,43 @@ const Eigen::MatrixXd& EigenResponseRecycleSpace::projected_inverse() const {
   return projected_inverse_;
 }
 
+Eigen::VectorXd
+EigenResponseRecycleSpace::apply_absolute_spectral_preconditioner(
+    const Eigen::Ref<const Eigen::VectorXd>& right_hand_side,
+    const Eigen::Ref<const Eigen::VectorXd>& jacobi_inverse) const {
+  if (right_hand_side.size() != dimension() ||
+      jacobi_inverse.size() != dimension() ||
+      !right_hand_side.allFinite() || !jacobi_inverse.allFinite() ||
+      (jacobi_inverse.array() <= 0.0).any()) {
+    throw std::invalid_argument(
+        "response spectral preconditioner inputs are invalid");
+  }
+  if (size() == 0) {
+    return jacobi_inverse.array() * right_hand_side.array();
+  }
+  prepare_projected_inverse();
+  if (spectral_preconditioner_basis_.cols() == 0) {
+    return jacobi_inverse.array() * right_hand_side.array();
+  }
+  const Eigen::VectorXd spectral_coordinates =
+      spectral_preconditioner_basis_.transpose() * right_hand_side;
+  Eigen::VectorXd complement = right_hand_side -
+      spectral_preconditioner_basis_ * spectral_coordinates;
+  Eigen::VectorXd result = jacobi_inverse.array() * complement.array();
+  result.noalias() -= spectral_preconditioner_basis_ *
+      (spectral_preconditioner_basis_.transpose() * result);
+  result.noalias() += spectral_preconditioner_basis_ *
+      (spectral_preconditioner_inverse_eigenvalues_.array() *
+       spectral_coordinates.array()).matrix();
+  return result;
+}
+
 void EigenResponseRecycleSpace::clear() {
   basis_.resize(0, 0);
   operator_images_.resize(0, 0);
   projected_inverse_.resize(0, 0);
+  spectral_preconditioner_basis_.resize(0, 0);
+  spectral_preconditioner_inverse_eigenvalues_.resize(0);
   ++revision_;
 }
 
@@ -266,14 +331,27 @@ void EigenResponseRecycleSpace::prepare_projected_inverse() const {
       spectral_scale;
   Eigen::VectorXd inverse_eigenvalues = Eigen::VectorXd::Zero(
       eigenvalues.size());
+  int numerical_rank = 0;
   for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
     if (std::abs(eigenvalues[index]) > threshold) {
       inverse_eigenvalues[index] = 1.0 / eigenvalues[index];
+      ++numerical_rank;
     }
   }
   projected_inverse_.noalias() = eigensolver.eigenvectors() *
       inverse_eigenvalues.asDiagonal() *
       eigensolver.eigenvectors().transpose();
+  spectral_preconditioner_basis_.resize(dimension(), numerical_rank);
+  spectral_preconditioner_inverse_eigenvalues_.resize(numerical_rank);
+  int retained = 0;
+  for (Eigen::Index index = 0; index < eigenvalues.size(); ++index) {
+    if (inverse_eigenvalues[index] == 0.0) continue;
+    spectral_preconditioner_basis_.col(retained).noalias() =
+        basis_ * eigensolver.eigenvectors().col(index);
+    spectral_preconditioner_inverse_eigenvalues_[retained] =
+        std::abs(inverse_eigenvalues[index]);
+    ++retained;
+  }
   projected_inverse_revision_ = revision_;
 }
 
@@ -658,7 +736,8 @@ EigenResponseResult solve_generalized_eigen_response(
     }
   }
 
-  w_new = inverse_preconditioner.array() * v_new.array();
+  w_new = apply_response_preconditioner(
+      v_new, inverse_preconditioner, recycle_spaces);
   project_selected_roots(&w_new, root_units);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     if (rhs_norms[state] == 0.0) {
@@ -723,9 +802,11 @@ EigenResponseResult solve_generalized_eigen_response(
       v_new.col(state).noalias() -= alpha * v.col(state);
       v_new.col(state).noalias() -= root_units.col(state) *
           root_units.col(state).dot(v_new.col(state));
-      w_new.col(state) =
-          inverse_preconditioner.col(state).array() *
-          v_new.col(state).array();
+      w_new.col(state) = apply_response_preconditioner_column(
+          v_new.col(state), inverse_preconditioner.col(state),
+          recycle_spaces.empty()
+              ? nullptr
+              : recycle_spaces[static_cast<std::size_t>(state)]);
       w_new.col(state).noalias() -= root_units.col(state) *
           root_units.col(state).dot(w_new.col(state));
       const double beta_squared = v_new.col(state).dot(w_new.col(state));
@@ -866,9 +947,11 @@ EigenResponseResult solve_generalized_eigen_response(
           throw std::runtime_error(
               "accepted selected-root response residual has no correctable complement component");
         }
-        w_new.col(state) =
-            inverse_preconditioner.col(state).array() *
-            v_new.col(state).array();
+        w_new.col(state) = apply_response_preconditioner_column(
+            v_new.col(state), inverse_preconditioner.col(state),
+            recycle_spaces.empty()
+                ? nullptr
+                : recycle_spaces[static_cast<std::size_t>(state)]);
         w_new.col(state).noalias() -= root_units.col(state) *
             root_units.col(state).dot(w_new.col(state));
         p_older.col(state).setZero();
@@ -1488,7 +1571,8 @@ solve_equal_weight_generalized_eigen_subspace_response(
           "initial equal-weight response has a nonzero bordered residual but zero external complement");
     }
   }
-  Eigen::MatrixXd w_new = inverse_preconditioner.array() * v_new.array();
+  Eigen::MatrixXd w_new = apply_response_preconditioner(
+      v_new, inverse_preconditioner, recycle_spaces);
   project_selected_span(&w_new, selected_units);
   Eigen::MatrixXd p_older = Eigen::MatrixXd::Zero(n, n_selected);
   Eigen::MatrixXd p_old = Eigen::MatrixXd::Zero(n, n_selected);
@@ -1573,8 +1657,11 @@ solve_equal_weight_generalized_eigen_subspace_response(
       const double alpha = v_new.col(state).dot(w_new.col(state));
       v_new.col(state).noalias() -= alpha * v.col(state);
       project_selected_span(&v_new, selected_units);
-      w_new.col(state) = inverse_preconditioner.col(state).array() *
-          v_new.col(state).array();
+      w_new.col(state) = apply_response_preconditioner_column(
+          v_new.col(state), inverse_preconditioner.col(state),
+          recycle_spaces.empty()
+              ? nullptr
+              : recycle_spaces[static_cast<std::size_t>(state)]);
       Eigen::MatrixXd projected_preconditioned = w_new.middleCols(state, 1);
       project_selected_span(&projected_preconditioned, selected_units);
       w_new.col(state) = projected_preconditioned.col(0);
@@ -1646,8 +1733,11 @@ solve_equal_weight_generalized_eigen_subspace_response(
         v_old.col(state).setZero();
         v.col(state).setZero();
         v_new.col(state) = true_residual;
-        w_new.col(state) = inverse_preconditioner.col(state).array() *
-            true_residual.array();
+        w_new.col(state) = apply_response_preconditioner_column(
+            true_residual, inverse_preconditioner.col(state),
+            recycle_spaces.empty()
+                ? nullptr
+                : recycle_spaces[static_cast<std::size_t>(state)]);
         Eigen::MatrixXd projected_preconditioned =
             w_new.middleCols(state, 1);
         project_selected_span(&projected_preconditioned, selected_units);

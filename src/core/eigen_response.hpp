@@ -45,6 +45,17 @@ public:
   const Eigen::MatrixXd& projected_inverse() const;
 
   /**
+   * @brief Applies an SPD spectral/Jacobi preconditioner.
+   *
+   * Numerically resolved recycle Ritz modes use the inverse absolute
+   * projected eigenvalues. The Euclidean complement uses the supplied
+   * positive Jacobi inverse, projected on both sides to preserve symmetry.
+   */
+  Eigen::VectorXd apply_absolute_spectral_preconditioner(
+      const Eigen::Ref<const Eigen::VectorXd>& right_hand_side,
+      const Eigen::Ref<const Eigen::VectorXd>& jacobi_inverse) const;
+
+  /**
    * @brief Applies the frozen symmetric Galerkin inverse to any finite RHS.
    *
    * This operation is linear in the right-hand side and never rejects a
@@ -65,6 +76,8 @@ private:
   Eigen::MatrixXd operator_images_;
   std::uint64_t revision_ = 0;
   mutable Eigen::MatrixXd projected_inverse_;
+  mutable Eigen::MatrixXd spectral_preconditioner_basis_;
+  mutable Eigen::VectorXd spectral_preconditioner_inverse_eigenvalues_;
   mutable std::uint64_t projected_inverse_revision_ =
       static_cast<std::uint64_t>(-1);
 };
