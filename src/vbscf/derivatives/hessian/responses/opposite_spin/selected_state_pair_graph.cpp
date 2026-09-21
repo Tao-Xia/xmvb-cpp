@@ -14,19 +14,6 @@ void accumulate_projected_channels(
     double coefficient,
     const std::vector<int>& target_channels,
     std::vector<double>* target_values) {
-  if (projection.packed_pair_indices.empty()) {
-    if (!projection.packed_pair_values.empty()) {
-      throw std::logic_error(
-          "empty opposite-spin projection has inconsistent cached values");
-    }
-    for (const double value : projection.projected_pair_values) {
-      if (value != 0.0) {
-        throw std::logic_error(
-            "zero opposite-spin projection has a nonzero dense kernel image");
-      }
-    }
-    return;
-  }
   if (projection.packed_pair_indices.size() !=
       projection.packed_pair_values.size()) {
     throw std::logic_error(
@@ -36,6 +23,13 @@ void accumulate_projected_channels(
       target_values->size() != target_channels.size()) {
     throw std::invalid_argument(
         "opposite-spin projected-channel target has inconsistent dimensions");
+  }
+  if (projection.projected_pair_values.empty()) {
+    if (projection.packed_pair_indices.empty()) {
+      return;
+    }
+    throw std::logic_error(
+        "nonzero opposite-spin projection is missing its dense kernel image");
   }
   for (std::size_t target = 0; target < target_channels.size(); ++target) {
     const int channel = target_channels[target];
