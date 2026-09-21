@@ -361,27 +361,29 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
   const Eigen::MatrixXd& beta_coulomb = beta_coulomb_diagonal();
   Eigen::MatrixXd sigma = Eigen::MatrixXd::Zero(
       n_alpha_, coefficients.cols());
-  const int work_items = n_alpha_ * n_beta_;
+  const int work_items = block_width * n_alpha_ * n_beta_;
   const int n_threads = std::max(
       1,
       std::min(effective_openmp_thread_count(), work_items));
 
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int work = 0; work < work_items; ++work) {
-    // Eigen stores alpha contiguously. One determinant-product work item walks
-    // its connection graph once and updates every block vector, amortizing all
-    // coefficient-independent Slater--Condon matrix-element construction.
+    // Eigen stores the alpha index contiguously. Mapping the flattened work
+    // index to that storage order gives every OpenMP chunk contiguous output
+    // writes and keeps all fixed-beta coefficient reads in one column.
     const int alpha = work % n_alpha_;
-    const int beta = work / n_alpha_;
-    double diagonal = alpha_.diagonal[alpha] + beta_graph.diagonal[beta];
+    const int packed_column = work / n_alpha_;
+    const int beta = packed_column % n_beta_;
+    const int block = packed_column / n_beta_;
+    const int column = packed_column;
+    double value =
+        (alpha_.diagonal[alpha] + beta_graph.diagonal[beta]) *
+        coefficients(alpha, column);
     for (const int occupied : alpha_.occupied[alpha]) {
       const int pair = TwoElectronIndexer::packed_pair_index(
           occupied, occupied);
-      diagonal += beta_coulomb(beta, pair);
-    }
-    for (int block = 0; block < block_width; ++block) {
-      const int column = block * n_beta_ + beta;
-      sigma(alpha, column) = diagonal * coefficients(alpha, column);
+      value += beta_coulomb(beta, pair) *
+          coefficients(alpha, column);
     }
 
     for (const HamiltonianConnection& connection :
@@ -391,11 +393,7 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
         matrix_element += connection.density_sign *
             beta_coulomb(beta, connection.density_pair);
       }
-      for (int block = 0; block < block_width; ++block) {
-        const int column = block * n_beta_ + beta;
-        sigma(alpha, column) +=
-            matrix_element * coefficients(connection.source, column);
-      }
+      value += matrix_element * coefficients(connection.source, column);
     }
     for (const HamiltonianConnection& connection :
          beta_graph.off_diagonal[beta]) {
@@ -404,12 +402,9 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
         matrix_element += connection.density_sign *
             alpha_coulomb_diagonal_(alpha, connection.density_pair);
       }
-      for (int block = 0; block < block_width; ++block) {
-        sigma(alpha, block * n_beta_ + beta) +=
-            matrix_element * coefficients(
-                alpha,
-                block * n_beta_ + connection.source);
-      }
+      value += matrix_element * coefficients(
+          alpha,
+          block * n_beta_ + connection.source);
     }
     const DensityConnections& alpha_singles = alpha_.singles[alpha];
     const DensityConnections& beta_singles = beta_graph.singles[beta];
@@ -422,17 +417,15 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
       for (std::size_t beta_single = 0;
            beta_single < beta_singles.size();
            ++beta_single) {
-        const double matrix_element =
+        value +=
             alpha_sign * beta_singles.signs[beta_single] *
-            pair_kernel_(alpha_pair, beta_singles.pairs[beta_single]);
-        for (int block = 0; block < block_width; ++block) {
-          sigma(alpha, block * n_beta_ + beta) +=
-              matrix_element * coefficients(
-                  alpha_source,
-                  block * n_beta_ + beta_singles.sources[beta_single]);
-        }
+            pair_kernel_(alpha_pair, beta_singles.pairs[beta_single]) *
+            coefficients(
+                alpha_source,
+                block * n_beta_ + beta_singles.sources[beta_single]);
       }
     }
+    sigma(alpha, column) = value;
   }
   return sigma;
 }
