@@ -10,6 +10,7 @@ namespace xmvb::vb {
 
 class OrbitalChart;
 class SparseParameterLayout;
+class StructureAction;
 struct AcceptedPointContext;
 struct VbScfInput;
 
@@ -56,6 +57,12 @@ struct ResponseSpectrumSummary {
   double top_mode_fraction = 0.0;
   double top_5_fraction = 0.0;
   double top_10_fraction = 0.0;
+};
+
+/** @brief Orbital block and orbital-to-structure coupling from one forward pass. */
+struct OrbitalCouplingAction {
+  Eigen::VectorXd orbital_hessian;
+  Eigen::MatrixXd scaled_structure_forcing;
 };
 
 /**
@@ -161,6 +168,23 @@ public:
   Eigen::MatrixXd apply_reduced_batch(
       const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
       HvpComponents components = {}) const;
+
+  /**
+   * @brief Applies @f$\bar A p@f$ and @f$Bp@f$ without solving a response.
+   *
+   * The structure forcing columns use @f$z_s=\sqrt{2w_s}q_s@f$ coordinates.
+   * The accepted-point forward/integral direction is evaluated only once.
+   */
+  OrbitalCouplingAction apply_orbital_coupling(
+      const Eigen::VectorXd& reduced_direction) const;
+
+  /** @brief Applies @f$B^Tz@f$ through the existing selected-state adjoint. */
+  Eigen::VectorXd apply_structure_coupling_adjoint(
+      const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+      const Eigen::Ref<const Eigen::MatrixXd>& adjoint_multipliers) const;
+
+  /** @brief Returns the canonical lazy accepted-point structure action. */
+  const StructureAction& structure_action() const;
 
   bool supports_analytic_core_model() const noexcept;
 

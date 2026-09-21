@@ -10,10 +10,12 @@
 #include <utility>
 
 #include <Eigen/Core>
+#include <Eigen/Eigenvalues>
 
 #include "input/loading/loader.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
+#include "vbscf/derivatives/hessian/coupled/structure.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
@@ -115,6 +117,149 @@ Options parse_arguments(int argc, char** argv) {
 
 double infinity_norm(const Eigen::Ref<const Eigen::VectorXd>& values) {
   return values.size() == 0 ? 0.0 : values.cwiseAbs().maxCoeff();
+}
+
+struct CoupledReferenceAudit {
+  double adjoint_relative_error = 0.0;
+  double relaxed_relative_error = 0.0;
+  int structure_coordinate_dimension = 0;
+  int structure_response_rank = 0;
+};
+
+Eigen::VectorXd flatten_structure_tangent(
+    const xmvb::vb::StructureTangent& tangent) {
+  return Eigen::Map<const Eigen::VectorXd>(
+      tangent.scaled_coefficients.data(),
+      tangent.scaled_coefficients.size());
+}
+
+xmvb::vb::StructureTangent unflatten_structure_tangent(
+    const Eigen::Ref<const Eigen::VectorXd>& coefficients,
+    int n_structures,
+    int n_states) {
+  if (coefficients.size() != n_structures * n_states) {
+    throw std::invalid_argument(
+        "coupled reference tangent has inconsistent dimensions");
+  }
+  return xmvb::vb::StructureTangent{
+      Eigen::Map<const Eigen::MatrixXd>(
+          coefficients.data(), n_structures, n_states)};
+}
+
+/** @brief Independently eliminates the small structure block of coupled NEO. */
+CoupledReferenceAudit audit_coupled_structure_elimination(
+    const xmvb::vb::ExactHvpOperator& exact_hvp,
+    const std::shared_ptr<const xmvb::vb::AcceptedPointContext>& accepted,
+    const Eigen::Ref<const Eigen::VectorXd>& orbital_direction,
+    const Eigen::Ref<const Eigen::VectorXd>& relaxed_hvp) {
+  const xmvb::vb::StructureTangentOperator structure(
+      accepted, exact_hvp.structure_action());
+  const int n_structures = structure.n_structures();
+  const int n_states = structure.n_states();
+  const int dimension = n_structures * n_states;
+  constexpr int kMaximumDenseReferenceDimension = 4096;
+  if (dimension <= 0 || dimension > kMaximumDenseReferenceDimension) {
+    throw std::runtime_error(
+        "coupled dense reference dimension is outside the diagnostic limit");
+  }
+  const xmvb::vb::OrbitalCouplingAction orbital =
+      exact_hvp.apply_orbital_coupling(orbital_direction);
+  const xmvb::vb::StructureTangent forcing = structure.project(
+      orbital.scaled_structure_forcing);
+  const Eigen::VectorXd flat_forcing = flatten_structure_tangent(forcing);
+
+  Eigen::MatrixXd structure_hessian(dimension, dimension);
+  for (int coordinate = 0; coordinate < dimension; ++coordinate) {
+    Eigen::VectorXd canonical = Eigen::VectorXd::Zero(dimension);
+    canonical[coordinate] = 1.0;
+    const auto tangent = structure.project(
+        unflatten_structure_tangent(
+            canonical, n_structures, n_states).scaled_coefficients);
+    structure_hessian.col(coordinate) = flatten_structure_tangent(
+        structure.apply_hessian(tangent));
+  }
+  const double structure_scale = std::max(1.0, structure_hessian.norm());
+  const double symmetry_error =
+      (structure_hessian - structure_hessian.transpose()).norm() /
+      structure_scale;
+  if (symmetry_error > 2.0e-10) {
+    throw std::runtime_error(
+        "coupled reference structure Hessian is not symmetric");
+  }
+  structure_hessian =
+      0.5 * (structure_hessian + structure_hessian.transpose()).eval();
+
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> spectrum(structure_hessian);
+  if (spectrum.info() != Eigen::Success) {
+    throw std::runtime_error(
+        "coupled reference structure Hessian eigensolve failed");
+  }
+  const double eigenvalue_scale = std::max(
+      1.0, spectrum.eigenvalues().cwiseAbs().maxCoeff());
+  const double rank_tolerance = 1.0e3 *
+      std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max(1, dimension)) * eigenvalue_scale;
+  Eigen::VectorXd inverse_eigenvalues = Eigen::VectorXd::Zero(dimension);
+  int response_rank = 0;
+  for (int mode = 0; mode < dimension; ++mode) {
+    const double eigenvalue = spectrum.eigenvalues()[mode];
+    if (std::abs(eigenvalue) <= rank_tolerance) continue;
+    inverse_eigenvalues[mode] = 1.0 / eigenvalue;
+    ++response_rank;
+  }
+  const Eigen::VectorXd flat_response =
+      -spectrum.eigenvectors() *
+      (inverse_eigenvalues.asDiagonal() *
+       (spectrum.eigenvectors().transpose() * flat_forcing));
+  const xmvb::vb::StructureTangent response = structure.project(
+      unflatten_structure_tangent(
+          flat_response, n_structures, n_states).scaled_coefficients);
+  const xmvb::vb::StructureCouplingAction response_action =
+      structure.apply_coupling(response);
+  const Eigen::VectorXd response_adjoint =
+      exact_hvp.apply_structure_coupling_adjoint(
+          response_action.coefficient_response,
+          response_action.adjoint_multipliers);
+  const Eigen::VectorXd eliminated_hvp =
+      orbital.orbital_hessian + response_adjoint;
+
+  Eigen::VectorXd probe_values(dimension);
+  for (int coordinate = 0; coordinate < dimension; ++coordinate) {
+    probe_values[coordinate] = std::sin(
+        0.37 * static_cast<double>(coordinate + 1));
+  }
+  const xmvb::vb::StructureTangent probe = structure.project(
+      unflatten_structure_tangent(
+          probe_values, n_structures, n_states).scaled_coefficients);
+  const xmvb::vb::StructureCouplingAction probe_action =
+      structure.apply_coupling(probe);
+  const Eigen::VectorXd probe_adjoint =
+      exact_hvp.apply_structure_coupling_adjoint(
+          probe_action.coefficient_response,
+          probe_action.adjoint_multipliers);
+  const double forward_bilinear =
+      flatten_structure_tangent(probe).dot(flat_forcing);
+  const double adjoint_bilinear = orbital_direction.dot(probe_adjoint);
+
+  CoupledReferenceAudit audit;
+  audit.adjoint_relative_error =
+      std::abs(forward_bilinear - adjoint_bilinear) /
+      std::max({1.0, std::abs(forward_bilinear),
+                std::abs(adjoint_bilinear)});
+  audit.relaxed_relative_error =
+      infinity_norm(eliminated_hvp - relaxed_hvp) /
+      std::max(1.0, infinity_norm(relaxed_hvp));
+  audit.structure_coordinate_dimension = dimension;
+  audit.structure_response_rank = response_rank;
+  if (audit.adjoint_relative_error > 2.0e-9) {
+    throw std::runtime_error(
+        "coupled orbital-structure actions violate the bilinear adjoint identity");
+  }
+  if (audit.relaxed_relative_error > 2.0e-8) {
+    throw std::runtime_error(
+        "coupled Schur elimination does not reproduce the relaxed HVP");
+  }
+  return audit;
 }
 
 /** @brief Loads an exact accepted-point orbital table for derivative checks. */
@@ -236,6 +381,12 @@ int main(int argc, char** argv) {
         layout,
         &chart);
     const Eigen::VectorXd analytic = exact_hvp.apply_reduced(direction);
+    const CoupledReferenceAudit coupled_audit =
+        audit_coupled_structure_elimination(
+            exact_hvp,
+            accepted.second_order_context,
+            direction,
+            analytic);
     const Eigen::VectorXd analytic_core = exact_hvp.apply_reduced(
         direction,
         {.direct_core_response = true,
@@ -411,6 +562,14 @@ int main(int argc, char** argv) {
               << state_hvp_average_error << '\n'
               << "component_decomposition_error = "
               << component_decomposition_error << '\n'
+              << "coupled_structure_coordinate_dimension = "
+              << coupled_audit.structure_coordinate_dimension << '\n'
+              << "coupled_structure_response_rank = "
+              << coupled_audit.structure_response_rank << '\n'
+              << "coupled_adjoint_relative_error = "
+              << coupled_audit.adjoint_relative_error << '\n'
+              << "coupled_relaxed_hvp_relative_error = "
+              << coupled_audit.relaxed_relative_error << '\n'
               << "accepted_gradient_vs_dense_midpoint_inf = "
               << accepted_gradient_vs_dense_midpoint_inf << '\n'
               << "structure_response_iterations = "

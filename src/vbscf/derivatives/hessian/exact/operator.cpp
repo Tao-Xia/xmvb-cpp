@@ -41,6 +41,20 @@ ResponseLowRankModel ExactHvpOperator::response_low_rank_model() const {
   return state_->response_low_rank_model();
 }
 
+const StructureAction& ExactHvpOperator::structure_action() const {
+  return state_->structure_action();
+}
+
+const StructureAction& ExactHvpOperator::State::structure_action() const {
+  const StructureAction* action = outer_response_context()
+      .selected_state_eigen_response_operator.structure_action;
+  if (action == nullptr) {
+    throw std::logic_error(
+        "accepted-point canonical structure action is unavailable");
+  }
+  return *action;
+}
+
 std::uint64_t ExactHvpOperator::State::response_model_revision() const noexcept {
   return accepted_outer_response_context_ != nullptr
       ? accepted_outer_response_context_->selected_state_eigen_response_operator

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <Eigen/QR>
+#include <Eigen/LU>
 
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/structures/assembly/action.hpp"
@@ -71,9 +72,8 @@ StructureTangentOperator::StructureTangentOperator(
     coordinate_scales_[state] = std::sqrt(2.0 * weight);
   }
 
-  const Eigen::MatrixXd& selected =
-      accepted_point_->selected_state_eigenvectors;
-  const StructureActionResult selected_images = action_->apply(selected);
+  selected_ = accepted_point_->selected_state_eigenvectors;
+  const StructureActionResult selected_images = action_->apply(selected_);
   if (selected_images.overlap.rows() != n_structures_ ||
       selected_images.overlap.cols() != n_states_ ||
       !selected_images.overlap.allFinite()) {
@@ -81,7 +81,7 @@ StructureTangentOperator::StructureTangentOperator(
         "coupled structure operator received invalid selected overlap images");
   }
   const Eigen::MatrixXd selected_metric =
-      selected.transpose() * selected_images.overlap;
+      selected_.transpose() * selected_images.overlap;
   const double metric_error =
       (selected_metric - Eigen::MatrixXd::Identity(n_states_, n_states_)).norm();
   const double metric_tolerance = 1.0e3 *
@@ -90,6 +90,11 @@ StructureTangentOperator::StructureTangentOperator(
   if (!std::isfinite(metric_error) || metric_error > metric_tolerance) {
     throw std::invalid_argument(
         "coupled structure operator requires S-orthonormal selected states");
+  }
+  selected_metric_inverse_ = selected_metric.inverse();
+  if (!selected_metric_inverse_.allFinite()) {
+    throw std::runtime_error(
+        "coupled structure selected metric inverse is not finite");
   }
 
   Eigen::ColPivHouseholderQR<Eigen::MatrixXd> factor(selected_images.overlap);
@@ -160,14 +165,32 @@ Eigen::MatrixXd StructureTangentOperator::coefficient_response(
 
 StructureTangent StructureTangentOperator::apply_hessian(
     const StructureTangent& tangent) const {
+  return apply_coupling(tangent).hessian;
+}
+
+StructureCouplingAction StructureTangentOperator::apply_coupling(
+    const StructureTangent& tangent) const {
   StructureTangent horizontal = project(tangent.scaled_coefficients);
-  const StructureActionResult images =
-      action_->apply(horizontal.scaled_coefficients);
+  Eigen::MatrixXd raw = horizontal.scaled_coefficients;
+  for (int state = 0; state < n_states_; ++state) {
+    raw.col(state) /= coordinate_scales_[state];
+  }
+  const StructureActionResult images = action_->apply(raw);
   validate_shape(images.hamiltonian);
   validate_shape(images.overlap);
-  Eigen::MatrixXd result = images.hamiltonian;
-  result.noalias() -= images.overlap * energies_.asDiagonal();
-  return project(result);
+  Eigen::MatrixXd shifted = images.hamiltonian;
+  shifted.noalias() -= images.overlap * energies_.asDiagonal();
+
+  StructureCouplingAction result;
+  result.coefficient_response = std::move(raw);
+  result.adjoint_multipliers =
+      -selected_metric_inverse_ * (selected_.transpose() * shifted);
+  Eigen::MatrixXd scaled_shifted = std::move(shifted);
+  for (int state = 0; state < n_states_; ++state) {
+    scaled_shifted.col(state) *= coordinate_scales_[state];
+  }
+  result.hessian = project(scaled_shifted);
+  return result;
 }
 
 StructureTangent StructureTangentOperator::apply_metric(

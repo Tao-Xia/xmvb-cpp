@@ -73,6 +73,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/gradient/active_space/evaluator.cpp
   vbscf/derivatives/gradient/orbital/evaluator.cpp
   vbscf/derivatives/hessian/coupled/coupling.cpp
+  vbscf/derivatives/hessian/coupled/operator.cpp
   vbscf/derivatives/hessian/coupled/structure.cpp
   vbscf/derivatives/hessian/exact/apply.cpp
   vbscf/derivatives/hessian/exact/batch.cpp

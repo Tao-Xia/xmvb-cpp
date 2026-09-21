@@ -22,6 +22,13 @@ struct StructureTangent {
   Eigen::MatrixXd scaled_coefficients;
 };
 
+/** @brief Structure Hessian image and inputs for the orbital coupling adjoint. */
+struct StructureCouplingAction {
+  StructureTangent hessian;
+  Eigen::MatrixXd coefficient_response;
+  Eigen::MatrixXd adjoint_multipliers;
+};
+
 /**
  * @brief Matrix-free structure-space block of the coupled VBSCF Hessian.
  *
@@ -64,6 +71,16 @@ public:
   /** @brief Applies @f$P(H-E_sS)P@f$ independently to every selected state. */
   StructureTangent apply_hessian(const StructureTangent& tangent) const;
 
+  /**
+   * @brief Applies the structure block and prepares @f$B^Tz@f$ inputs.
+   *
+   * One H/S block action produces both the scaled horizontal Hessian image and
+   * the raw response @f$q_s=z_s/\sqrt{2w_s}@f$. The returned multiplier uses
+   * the sign expected by the selected-state orbital adjoint.
+   */
+  StructureCouplingAction apply_coupling(
+      const StructureTangent& tangent) const;
+
   /** @brief Applies the structure trust-region metric @f$PSP@f$. */
   StructureTangent apply_metric(const StructureTangent& tangent) const;
 
@@ -78,6 +95,8 @@ private:
   const StructureAction* action_ = nullptr;
   Eigen::VectorXd energies_;
   Eigen::VectorXd coordinate_scales_;
+  Eigen::MatrixXd selected_;
+  Eigen::MatrixXd selected_metric_inverse_;
   Eigen::MatrixXd constraint_units_;
   int n_structures_ = 0;
   int n_states_ = 0;

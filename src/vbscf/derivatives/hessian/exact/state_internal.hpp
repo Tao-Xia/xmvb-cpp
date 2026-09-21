@@ -42,6 +42,15 @@ struct ExactHvpOperator::State {
       const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
       HvpComponents components) const;
 
+  OrbitalCouplingAction apply_orbital_coupling(
+      const Eigen::VectorXd& reduced_direction) const;
+
+  Eigen::VectorXd apply_structure_coupling_adjoint(
+      const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+      const Eigen::Ref<const Eigen::MatrixXd>& adjoint_multipliers) const;
+
+  const StructureAction& structure_action() const;
+
   bool supports_analytic_core_model() const noexcept;
   std::uint64_t response_model_revision() const noexcept;
   ResponseLowRankModel response_low_rank_model() const;
@@ -69,7 +78,8 @@ private:
       const Eigen::MatrixXd* precomputed_ri_active_pair_factor_direction,
       const ExactCtxPairMatrix* precomputed_directional_pair_products,
       const Eigen::MatrixXd* precomputed_two_electron_fixed_adjoint,
-      const PrecomputedDirection* precomputed_direction) const;
+      const PrecomputedDirection* precomputed_direction,
+      OrbitalCouplingAction* coupling_output) const;
 
   Eigen::VectorXd apply_structure_response_adjoint(
       const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,

@@ -340,7 +340,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch(
                 two_electron_fixed_adjoint_directions[column].size() != 0
             ? &two_electron_fixed_adjoint_directions[column]
             : nullptr,
-        &precomputed_directions[column]);
+        &precomputed_directions[column],
+        nullptr);
     responses.col(column) = response;
     if (compute_outer_response) {
       precomputed_directions[column]

@@ -15,6 +15,8 @@
 
 #include <Eigen/Core>
 
+#include "core/eigen_response.hpp"
+#include "vbscf/derivatives/hessian/coupled/coupling.hpp"
 #include "vbscf/integrals/active/two_electron/response/adjoint.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
@@ -130,7 +132,41 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced(
       nullptr,
       nullptr,
       nullptr,
+      nullptr,
       nullptr);
+}
+
+OrbitalCouplingAction ExactHvpOperator::apply_orbital_coupling(
+    const Eigen::VectorXd& reduced_direction) const {
+  return state_->apply_orbital_coupling(reduced_direction);
+}
+
+OrbitalCouplingAction ExactHvpOperator::State::apply_orbital_coupling(
+    const Eigen::VectorXd& reduced_direction) const {
+  OrbitalCouplingAction result;
+  result.orbital_hessian = apply_reduced_impl(
+      reduced_direction,
+      {.direct_core_response = true,
+       .fixed_upstream_pullback = true,
+       .local_active_response = true,
+       .structure_response = false},
+      nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+      &result);
+  return result;
+}
+
+Eigen::VectorXd ExactHvpOperator::apply_structure_coupling_adjoint(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+    const Eigen::Ref<const Eigen::MatrixXd>& adjoint_multipliers) const {
+  return state_->apply_structure_coupling_adjoint(
+      coefficient_response, adjoint_multipliers);
+}
+
+Eigen::VectorXd ExactHvpOperator::State::apply_structure_coupling_adjoint(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+    const Eigen::Ref<const Eigen::MatrixXd>& adjoint_multipliers) const {
+  return apply_structure_response_adjoint(
+      coefficient_response, adjoint_multipliers);
 }
 
 Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
@@ -142,7 +178,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const Eigen::MatrixXd* precomputed_ri_active_pair_factor_direction,
     const ExactCtxPairMatrix* precomputed_directional_pair_products,
     const Eigen::MatrixXd* precomputed_two_electron_fixed_adjoint,
-    const PrecomputedDirection* precomputed_direction) const {
+    const PrecomputedDirection* precomputed_direction,
+    OrbitalCouplingAction* coupling_output) const {
   const auto apply_start_time = std::chrono::steady_clock::now();
   auto record_apply_wall_time = [&]() {
     ++apply_timing_totals_.apply_count;
@@ -163,6 +200,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       current_input_->orbital_preparation_input.n_active_orbitals;
   const std::size_t ao_matrix_size =
       n_basis_functions * n_basis_functions;
+  if (coupling_output != nullptr && components.structure_response) {
+    throw std::invalid_argument(
+        "coupled orbital action cannot solve the structure response");
+  }
+  if (coupling_output != nullptr) {
+    coupling_output->scaled_structure_forcing = Eigen::MatrixXd::Zero(
+        accepted_point_context_->n_structures,
+        static_cast<int>(accepted_point_context_->selected_state_indices.size()));
+  }
 
   const auto core_setup_start_time = std::chrono::steady_clock::now();
   const Eigen::VectorXd local_packed_direction =
@@ -288,8 +334,9 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       n_basis_functions,
       n_basis_functions);
 
-  const bool compute_outer_response =
-      components.local_active_response || components.structure_response;
+  const bool build_orbital_coupling = coupling_output != nullptr;
+  const bool compute_outer_response = components.local_active_response ||
+      components.structure_response || build_orbital_coupling;
   std::optional<Eigen::MatrixXd> ri_directional_active_pair_factors;
   Eigen::VectorXd ri_delta_packed_active_two_electron;
   if (accepted_ri_two_electron_cache_.has_value() &&
@@ -380,7 +427,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         accepted_structure_action->supports_integral_direction();
     const bool pair_cache_required =
         !direct_active_gradient &&
-        (components.local_active_response || components.structure_response);
+        (components.local_active_response || components.structure_response ||
+         build_orbital_coupling);
     if (precomputed_outer_response == nullptr && pair_cache_required) {
       local_directional_pair_cache = build_same_spin_directional_pair_cache(
           accepted_point_context_->same_spin_pair_cache,
@@ -396,8 +444,13 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     SelectedStateGeneralizedEigenDirectionalResponse
         local_directional_selected_state_response;
     std::optional<StructureIntegralDirection> local_direct_ci_direction;
-    if (components.structure_response) {
+    std::optional<ScaledStructureCoupling> gauge_coupling;
+    if (components.structure_response || build_orbital_coupling) {
       if (precomputed_outer_response != nullptr) {
+        if (build_orbital_coupling) {
+          throw std::logic_error(
+              "coupled orbital action does not accept a precomputed response");
+        }
         directional_selected_state_response =
             &precomputed_outer_response->selected_state_response;
       } else {
@@ -411,35 +464,54 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             .outer_response_structure_matrices_wall_time_seconds +=
             detail::exact_hvp_elapsed_seconds(structure_matrices_start_time);
 
-        const auto eigensystem_start_time =
-            std::chrono::steady_clock::now();
-        local_directional_selected_state_response =
-            outer_response_context()
-                .selected_state_eigen_response_operator.apply(
-                    images,
-                    components.response_relative_residual_tolerance,
-                    components.freeze_structure_response);
-        apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
-            detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
-        directional_selected_state_response =
-            &local_directional_selected_state_response;
+        if (build_orbital_coupling) {
+          const auto& eigen = outer_response_context()
+              .selected_state_eigen_response_operator;
+          const xmvb::core::EqualWeightEigenCoupling coupling =
+              xmvb::core::prepare_equal_weight_generalized_eigen_coupling(
+                  eigen.selected_eigenvalues,
+                  eigen.selected_eigenvectors,
+                  eigen.overlap_selected,
+                  eigen.selected_residuals,
+                  images.delta_hamiltonian_selected,
+                  images.delta_overlap_selected);
+          gauge_coupling = scale_equal_weight_structure_coupling(
+              coupling, accepted_point_context_->normalized_state_weights);
+          coupling_output->scaled_structure_forcing =
+              gauge_coupling->horizontal_forcing.scaled_coefficients;
+        } else {
+          const auto eigensystem_start_time =
+              std::chrono::steady_clock::now();
+          local_directional_selected_state_response =
+              outer_response_context()
+                  .selected_state_eigen_response_operator.apply(
+                      images,
+                      components.response_relative_residual_tolerance,
+                      components.freeze_structure_response);
+          apply_timing_totals_.outer_response_eigensystem_wall_time_seconds +=
+              detail::exact_hvp_elapsed_seconds(eigensystem_start_time);
+          directional_selected_state_response =
+              &local_directional_selected_state_response;
+        }
       }
-      apply_timing_totals_.structure_response_block_actions +=
-          directional_selected_state_response->block_actions;
-      if (!directional_selected_state_response->linear_iterations.empty()) {
-        apply_timing_totals_.max_structure_response_iterations = std::max(
-            apply_timing_totals_.max_structure_response_iterations,
-            *std::max_element(
-                directional_selected_state_response->linear_iterations.begin(),
-                directional_selected_state_response->linear_iterations.end()));
-      }
-      apply_timing_totals_.max_structure_response_relative_residual = std::max(
-          apply_timing_totals_.max_structure_response_relative_residual,
-          directional_selected_state_response->max_relative_residual);
-      if (directional_selected_state_response
-              ->selected_matrix_responses.size() != 1) {
-        throw std::logic_error(
-            "one HVP direction must produce one selected-space response matrix");
+      if (directional_selected_state_response != nullptr) {
+        apply_timing_totals_.structure_response_block_actions +=
+            directional_selected_state_response->block_actions;
+        if (!directional_selected_state_response->linear_iterations.empty()) {
+          apply_timing_totals_.max_structure_response_iterations = std::max(
+              apply_timing_totals_.max_structure_response_iterations,
+              *std::max_element(
+                  directional_selected_state_response->linear_iterations.begin(),
+                  directional_selected_state_response->linear_iterations.end()));
+        }
+        apply_timing_totals_.max_structure_response_relative_residual = std::max(
+            apply_timing_totals_.max_structure_response_relative_residual,
+            directional_selected_state_response->max_relative_residual);
+        if (directional_selected_state_response
+                ->selected_matrix_responses.size() != 1) {
+          throw std::logic_error(
+              "one HVP direction must produce one selected-space response matrix");
+        }
       }
     }
 
@@ -448,6 +520,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       state_multipliers =
           -directional_selected_state_response
                ->selected_matrix_responses.front();
+    } else if (gauge_coupling.has_value()) {
+      state_multipliers = gauge_coupling->gauge_adjoint_multipliers;
     }
 
     std::optional<SelectedStateDeterminantMatrices>
@@ -460,6 +534,19 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
               current_input_->structure_data,
               directional_selected_state_response
                   ->delta_selected_eigenvector_matrix,
+              accepted_point_context_->selected_state_indices,
+              accepted_point_context_->normalized_state_weights,
+              accepted_point_context_->same_spin_pair_cache));
+      apply_timing_totals_
+          .outer_response_selected_state_rebuild_wall_time_seconds +=
+          detail::exact_hvp_elapsed_seconds(selected_state_rebuild_start_time);
+    } else if (gauge_coupling.has_value()) {
+      const auto selected_state_rebuild_start_time =
+          std::chrono::steady_clock::now();
+      directional_selected_states.emplace(
+          build_selected_state_determinant_matrices_from_selected_columns(
+              current_input_->structure_data,
+              gauge_coupling->gauge_coefficient_response,
               accepted_point_context_->selected_state_indices,
               accepted_point_context_->normalized_state_weights,
               accepted_point_context_->same_spin_pair_cache));
@@ -491,9 +578,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
               directional_selected_states
                   ? &directional_selected_states.value()
                   : nullptr,
-              directional_selected_state_response != nullptr
-                  ? &state_multipliers
-                  : nullptr,
+              directional_selected_states ? &state_multipliers : nullptr,
               active_space_integral_direction.overlap,
               active_space_integral_direction.one_electron,
               active_space_integral_direction.packed_two_electron,
