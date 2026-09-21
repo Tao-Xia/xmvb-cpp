@@ -1219,40 +1219,20 @@ StructureActionResult StructureAction::apply(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
   const int block_width = static_cast<int>(vectors.cols());
   if (direct_ci_ && block_width > 1) {
-    // Direct CI supports true block actions, but retaining an unrestricted
-    // Davidson block would make temporary determinant-product storage grow
-    // with the subspace width. Choose the largest tile whose two principal
-    // FCI work matrices plus structure images do not exceed the already
-    // resident direct-CI operator. This preserves O(operator storage) peak
-    // memory while allowing small response/Davidson blocks to share expansion,
-    // exterior transforms, sigma traversal, and contraction.
-    const std::size_t resident_bytes = direct_ci_->dynamic_bytes();
-    const std::size_t elements_per_vector =
-        2 * static_cast<std::size_t>(n_unique_alpha_) * n_unique_beta_ +
-        2 * static_cast<std::size_t>(n_structures_);
-    const std::size_t bytes_per_vector =
-        elements_per_vector * sizeof(double);
-    const int tile_width = static_cast<int>(std::max<std::size_t>(
-        1,
-        std::min<std::size_t>(
-            static_cast<std::size_t>(block_width),
-            resident_bytes / std::max<std::size_t>(1, bytes_per_vector))));
-    if (tile_width >= block_width) {
-      // The complete block obeys the storage bound and is handled below.
-    } else {
-      StructureActionResult images{
-          Eigen::MatrixXd(n_structures_, block_width),
-          Eigen::MatrixXd(n_structures_, block_width)};
-      for (int first = 0; first < block_width; first += tile_width) {
-        const int width = std::min(tile_width, block_width - first);
-        StructureActionResult tile_images =
-            apply(vectors.middleCols(first, width));
-        images.hamiltonian.middleCols(first, width) =
-            tile_images.hamiltonian;
-        images.overlap.middleCols(first, width) = tile_images.overlap;
-      }
-      return images;
+    // The direct-CI kernel has no cross-vector arithmetic.  Streaming block
+    // columns therefore preserves the exact action while bounding all
+    // determinant-product workspaces by one FCI vector instead of the
+    // Davidson block width.
+    StructureActionResult images{
+        Eigen::MatrixXd(n_structures_, block_width),
+        Eigen::MatrixXd(n_structures_, block_width)};
+    for (int column = 0; column < block_width; ++column) {
+      StructureActionResult column_images =
+          apply(vectors.middleCols(column, 1));
+      images.hamiltonian.col(column) = column_images.hamiltonian;
+      images.overlap.col(column) = column_images.overlap;
     }
+    return images;
   }
 
   Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
