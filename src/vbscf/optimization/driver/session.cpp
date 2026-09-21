@@ -2,12 +2,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <stdexcept>
 
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 
 namespace xmvb::vb::optimizer_detail {
 
@@ -35,9 +37,15 @@ OrbitalChart build_orbital_chart(
     throw std::invalid_argument(
         "orbital-chart construction requires a resolved preconditioner");
   }
+  std::optional<AnalyticOrbitalDiagonal> hessian_diagonal;
   if (preconditioner == OrbitalPreconditioner::HessianDiagonal) {
-    throw std::invalid_argument(
-        "Hessian diagonal must be installed from the accepted-point HVP");
+    const auto& context = objective.second_order_context();
+    if (!context) {
+      throw std::invalid_argument(
+          "analytic Hessian diagonal requires an accepted-point context");
+    }
+    hessian_diagonal = build_analytic_orbital_diagonal(
+        objective.input(), *context);
   }
   const Eigen::MatrixXd* one_electron =
       preconditioner == OrbitalPreconditioner::OneElectron
@@ -51,7 +59,8 @@ OrbitalChart build_orbital_chart(
       normalized_orbital_matrix,
       one_electron,
       false,
-      objective.input().complete_active_space);
+      objective.input().complete_active_space,
+      hessian_diagonal ? &*hessian_diagonal : nullptr);
 }
 
 void sync_result_from_objective(

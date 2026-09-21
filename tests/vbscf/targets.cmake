@@ -219,25 +219,41 @@ if (BUILD_TESTING)
       set(_xmvb_hessian_diagonal_input
         ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_OEO_PYSCF_LOW.xmi)
     endif()
-    add_test(
-      NAME neo_hessian_diagonal_f2_${_xmvb_orbital_type}
-      COMMAND
-        xmvb
-        ${_xmvb_hessian_diagonal_input}
-        --optimizer-backend neo
-        --orbital-preconditioner hessian-diagonal
-        --eigensolver davidson
-        --max-iterations 10
-        --gradient-tolerance 1e-3
-        --energy-tolerance 1e-7)
-    set_tests_properties(
-      neo_hessian_diagonal_f2_${_xmvb_orbital_type} PROPERTIES
-      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-      ENVIRONMENT
-        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
-      PASS_REGULAR_EXPRESSION "neo_dual_tolerance")
+    foreach(_xmvb_integral_mode IN ITEMS exact ri)
+      if (_xmvb_integral_mode STREQUAL "ri")
+        set(_xmvb_hessian_diagonal_test
+          neo_hessian_diagonal_ri_f2_${_xmvb_orbital_type})
+        set(_xmvb_hessian_diagonal_mode_args
+          --standard-two-electron-mode ri)
+      else()
+        set(_xmvb_hessian_diagonal_test
+          neo_hessian_diagonal_f2_${_xmvb_orbital_type})
+        set(_xmvb_hessian_diagonal_mode_args)
+      endif()
+      add_test(
+        NAME ${_xmvb_hessian_diagonal_test}
+        COMMAND
+          xmvb
+          ${_xmvb_hessian_diagonal_input}
+          --optimizer-backend neo
+          --orbital-preconditioner hessian-diagonal
+          ${_xmvb_hessian_diagonal_mode_args}
+          --eigensolver davidson
+          --max-iterations 10
+          --gradient-tolerance 1e-3
+          --energy-tolerance 1e-7)
+      set_tests_properties(
+        ${_xmvb_hessian_diagonal_test} PROPERTIES
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        ENVIRONMENT
+          "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
+        PASS_REGULAR_EXPRESSION "neo_dual_tolerance")
+    endforeach()
   endforeach()
   unset(_xmvb_hessian_diagonal_input)
+  unset(_xmvb_hessian_diagonal_mode_args)
+  unset(_xmvb_hessian_diagonal_test)
+  unset(_xmvb_integral_mode)
   unset(_xmvb_orbital_type)
 
   add_test(

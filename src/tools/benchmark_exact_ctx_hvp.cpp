@@ -916,32 +916,6 @@ BenchmarkMeasurement run_component_benchmark(
             context.reduced_direction);
   }
   const auto stop_time = std::chrono::steady_clock::now();
-  const xmvb::vb::HvpComponents orbital_block{
-      .direct_core_response = true,
-      .fixed_upstream_pullback = true,
-      .local_active_response = true,
-      .structure_response = false};
-  const auto orbital_reference = xmvb::vb::assemble_reduced_hessian_reference(
-      dimension,
-      block_width,
-      [&](const Eigen::Ref<const Eigen::MatrixXd>& directions) {
-        return exact_operator.apply_reduced_batch(directions, orbital_block);
-      });
-  const Eigen::VectorXd orbital_diagonal =
-      xmvb::vb::build_reduced_hessian_diagonal(
-          exact_operator, *context.nonredundant_space);
-  const double diagonal_error =
-      (orbital_diagonal - orbital_reference.raw_hessian.diagonal())
-          .cwiseAbs()
-          .maxCoeff();
-  const double diagonal_scale = std::max(
-      1.0, orbital_reference.raw_hessian.diagonal().cwiseAbs().maxCoeff());
-  if (diagonal_error >
-      16.0 * std::numeric_limits<double>::epsilon() * diagonal_scale) {
-    throw std::runtime_error(
-        "matrix-free Hessian diagonal differs from the orbital-block reference");
-  }
-
   BenchmarkMeasurement measurement;
   measurement.component = component;
   measurement.external_wall_time_seconds =

@@ -1039,92 +1039,97 @@ or stale Hessian action enters the NEO model.
 
 ## 15. Unified VBSCF Hessian-diagonal preconditioner
 
-Both HAO and OEO orbitals are nonorthogonal.  They differ in their AO support:
+Both HAO and OEO orbitals are nonorthogonal.  They differ only in AO support:
 HAO orbitals are strictly sparse, whereas OEO orbitals have full AO support.
-Consequently, an orthogonal-CASSCF rotation diagonal is not a general VBSCF
-preconditioner and must not be substituted for the curvature of either raw
-coefficient representation.
+The diagonal is therefore constructed in an accepted AO-metric orthonormal
+frame and pulled back into the actual quotient chart.  The stored OEO
+coefficients are never treated as orthogonal.
 
-Let $U$ be the accepted-point nonredundant horizontal lift defined in section
-7.  The coupled NEO equation contains the orbital block
+The coupled NEO orbital block is
 
 $$
 A
 =
 H_{\mathrm{direct}}
 +H_{\mathrm{fixed\ pullback}}
-+H_{\mathrm{local\ active}},
++H_{\mathrm{local\ active}}.
 \tag{57}
 $$
 
-together with the explicit orbital--structure coupling $B$ and structure
-block $C$.  The unified Hessian diagonal is defined in the same reduced
-coordinates as the NEO step:
+Let $\Psi$ be an orthonormal completion of the accepted inactive and active
+spans,
 
 $$
-d_i
-=
-e_i^{\mathrm T}Ae_i
-=
-\left[U^{\mathrm T}H_{CC}U\right]_{ii}.
+\Psi^{\mathrm T}S_{\mathrm{AO}}\Psi=I.
 \tag{58}
 $$
 
-The relaxed Schur term $-BC^{\dagger}B^{\mathrm T}$ is deliberately absent
-from eq 58.  Structure amplitudes are independent variables in the coupled
-NEO equation; including their eliminated response in $d_i$ would count the
-same coupling twice.
-
-Equation 58 is evaluated from the production analytic block-HVP rather than
-from a separately derived CASSCF expression.  For the natural reduced block
-$I_p$ belonging to orbital $p$, define the coordinate selector
+The accepted active one- and two-particle density tensors are transformed
+covariantly into this frame.  For the elementary antisymmetric rotation
+$K_{pq}=e_pe_q^{\mathrm T}-e_qe_p^{\mathrm T}$, define
 
 $$
-E_p
+D_{pq}
 =
-\begin{bmatrix}
-e_{i_1}&e_{i_2}&\cdots&e_{i_{m_p}}
-\end{bmatrix},
-\qquad i_k\in I_p.
+\left.
+\frac{\mathrm d^2}{\mathrm d\theta^2}
+E\!\left(\Psi e^{\theta K_{pq}},c\right)
+\right|_{\theta=0}.
 \tag{59}
 $$
 
-One fused matrix-free action produces
+The structure amplitudes $c$ are fixed in eq 59.  $D_{pq}$ is assembled
+analytically from $h_{pq}$, $(pq|uv)$, $(pu|qv)$, the inactive
+Coulomb--exchange potential, and the accepted active one- and two-particle
+density tensors.  Only the partial transforms $ppaa$, $papa$, $J_{pc}$, and
+$K_{pc}$ are required.  Neither a full MO ERI tensor nor coordinate HVPs are
+formed.
+
+For reduced chart direction $u_i$, let $\delta\phi(u_i)$ denote the exact
+first differential of normalization and inactive projection.  Its
+orthogonal-frame rotation amplitudes are
 
 $$
-Y_p=AE_p,
-\qquad
-d_{i_k}=(Y_p)_{i_k k}.
+\kappa_{pq,i}
+=
+\psi_p^{\mathrm T}S_{\mathrm{AO}}\,\delta\phi_q(u_i).
 \tag{60}
 $$
 
-Only the entries in eq 60 are retained.  The full reduced Hessian is never
-assembled or stored.  Grouping directions by their physical orbital block
-removes any empirical batch-width parameter and bounds the working memory by
-the largest local HAO/OEO quotient block rather than by the full reduced
-dimension.
-
-The exact diagonal can be indefinite.  A positive absolute-curvature model is
-used only for preconditioning:
+The unified analytic model in the actual HAO/OEO coordinates is
 
 $$
-\widetilde d_i
+P_{ij}
 =
-\max\!\left(
-|d_i|,
-\sqrt{\epsilon_{\mathrm{mach}}}\max_j|d_j|
-\right),
-\qquad
-z_i=\frac{r_i}{\widetilde d_i+\lambda}.
+\sum_{p>q}D_{pq}\,\kappa_{pq,i}\kappa_{pq,j}.
 \tag{61}
 $$
 
-This replacement does not alter $A$, its negative curvature, the NEO Ritz
-values, or the KKT certificate.  It changes only the metric used to solve the
-shifted iterative subproblem.  Because eqs 58--60 use the actual VBSCF HVP and
-the actual accepted-point chart, the same implementation applies without a
-coordinate reinterpretation to strict-sparse HAO, full-AO OEO, complete
-structure spaces, and selected structure subspaces.
+Equation 61 is evaluated independently in each natural strict-sparse orbital
+block.  HAO retains support-admissible active--active directions; complete OEO
+removes them through the active-subspace gauge in $U_p$.  Thus both orbital
+types share one contraction and differ only in support and quotient basis.
+
+The relaxed Schur term $-BC^{\dagger}B^{\mathrm T}$ is deliberately absent.
+Structure amplitudes are explicit variables in coupled NEO; including
+structure response in $P$ would count the same coupling twice.
+
+Because $P$ can be indefinite, its local absolute-curvature block is used only
+as a residual preconditioner.  If $P_p=V_p\Lambda_pV_p^{\mathrm T}$,
+
+$$
+\widetilde P_p
+=
+V_p\,\max\!\left(
+|\Lambda_p|,
+\sqrt{\epsilon_{\mathrm{mach}}}\max_j|\Lambda_{p,j}|
+\right)V_p^{\mathrm T}.
+\tag{62}
+$$
+
+This does not alter $A$, its negative curvature, the NEO Ritz values, or the
+KKT certificate.  The HVP is used only as a small-system regression oracle and
+never to construct the production preconditioner.
 
 ## 16. References
 

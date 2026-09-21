@@ -213,7 +213,7 @@ const char* orbital_preconditioner_name(
     case xmvb::vb::OrbitalPreconditioner::OneElectron:
       return "one-electron block";
     case xmvb::vb::OrbitalPreconditioner::HessianDiagonal:
-      return "VBSCF reduced Hessian diagonal";
+      return "analytic VBSCF Hessian diagonal";
   }
   throw std::invalid_argument("invalid orbital preconditioner");
 }
