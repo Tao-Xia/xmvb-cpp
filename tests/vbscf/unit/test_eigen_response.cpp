@@ -591,6 +591,17 @@ bool test_equal_weight_subspace_response() {
 }
 
 bool test_unconditional_indefinite_galerkin_application() {
+  xmvb::core::EigenResponseRecycleSpace inconsistent_space;
+  const Eigen::Vector2d first_direction(1.0, 0.0);
+  const Eigen::Vector2d first_image(-0.1, 10.0);
+  const Eigen::Vector2d second_direction(0.0, 1.0);
+  const Eigen::Vector2d inconsistent_image(11.0, 2.0);
+  if (!inconsistent_space.append(first_direction, first_image) ||
+      inconsistent_space.append(second_direction, inconsistent_image) ||
+      inconsistent_space.size() != 1) {
+    return false;
+  }
+
   xmvb::core::EigenResponseRecycleSpace space;
   const Eigen::Vector2d direction(1.0, 0.0);
   const Eigen::Vector2d image(-0.1, 10.0);

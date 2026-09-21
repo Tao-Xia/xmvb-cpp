@@ -499,6 +499,25 @@ bool EigenResponseRecycleSpace::append_impl(
     s_image /= direction_norm;
   }
   const Eigen::Index old_size = basis_.cols();
+  if (old_size > 0) {
+    Eigen::MatrixXd proposed(old_size + 1, old_size + 1);
+    proposed.topLeftCorner(old_size, old_size).noalias() =
+        basis_.transpose() * operator_images_;
+    proposed.topRightCorner(old_size, 1).noalias() =
+        basis_.transpose() * image;
+    proposed.bottomLeftCorner(1, old_size).noalias() =
+        direction.transpose() * operator_images_;
+    proposed(old_size, old_size) = direction.dot(image);
+    const double symmetry_error =
+        (proposed - proposed.transpose()).norm();
+    const double symmetry_tolerance =
+        std::sqrt(std::numeric_limits<double>::epsilon()) *
+        std::max(1.0, proposed.norm());
+    if (!std::isfinite(symmetry_error) ||
+        symmetry_error > symmetry_tolerance) {
+      return false;
+    }
+  }
   basis_.conservativeResize(Eigen::NoChange, old_size + 1);
   operator_images_.conservativeResize(Eigen::NoChange, old_size + 1);
   if (has_generalized_images) {
