@@ -840,12 +840,16 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     throw std::runtime_error("invalid affine Newton baseline images");
   }
   std::uint64_t image_revision = hvp->model_revision();
-  const auto refresh_images = [&]() {
-    Eigen::MatrixXd directions(rhs.size(), basis.size() + 1);
-    Eigen::MatrixXd images(rhs.size(), basis.size() + 1);
+  const auto refresh_images = [&](std::size_t stale_basis_size) {
+    if (stale_basis_size > basis.size()) {
+      throw std::logic_error(
+          "response refresh stale-basis size exceeds the retained basis");
+    }
+    Eigen::MatrixXd directions(rhs.size(), stale_basis_size + 1);
+    Eigen::MatrixXd images(rhs.size(), stale_basis_size + 1);
     directions.col(0) = baseline_step;
     images.col(0) = baseline_hessian_step;
-    for (std::size_t column = 0; column < basis.size(); ++column) {
+    for (std::size_t column = 0; column < stale_basis_size; ++column) {
       directions.col(static_cast<Eigen::Index>(column + 1)) = basis[column];
       images.col(static_cast<Eigen::Index>(column + 1)) =
           hessian_basis[column];
@@ -863,7 +867,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       throw std::runtime_error("invalid refreshed Newton Hessian images");
     }
     baseline_hessian_step = images.col(0);
-    for (std::size_t column = 0; column < basis.size(); ++column) {
+    for (std::size_t column = 0; column < stale_basis_size; ++column) {
       hessian_basis[column] =
           images.col(static_cast<Eigen::Index>(column + 1));
     }
@@ -909,7 +913,7 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
     TruncatedNewtonSubspace current_subspace = *initial_subspace;
     image_revision = current_subspace.model_revision;
     if (image_revision != hvp->model_revision()) {
-      refresh_images();
+      refresh_images(basis.size());
       current_subspace = build_truncated_newton_subspace(
           current_projection.reduced_gradient, retraction_metric,
           basis, tangent_basis, hessian_basis);
@@ -1001,7 +1005,9 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
       break;
     }
     if (image_revision != hvp->model_revision()) {
-      refresh_images();
+      // The admitted suffix was evaluated in the new model already. Update
+      // only the baseline and the prefix sampled before this enrichment.
+      refresh_images(previous_basis_size);
       // A failed solve of the revised projection must not return the previous
       // model's step, Hessian image, or convergence certificate.
       result = TruncatedNewtonStepResult();

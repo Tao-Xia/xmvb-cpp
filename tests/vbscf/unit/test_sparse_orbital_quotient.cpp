@@ -745,10 +745,10 @@ void check_response_model_refresh(const OrbitalPreparationInput& input) {
               hvp.frozen_applies > 0 && step.newton_forcing_converged,
           "Newton solve did not refresh its evolving response model");
   require(hvp.prepared_directions.front().cols() == 1 &&
-              hvp.frozen_directions.front().cols() > 1 &&
+              hvp.frozen_directions.front().cols() == 1 &&
               (hvp.frozen_directions.front().col(0) -
                hvp.prepared_directions.front().col(0)).norm() < 1.0e-14,
-          "response enrichment did not refresh old and new directions together");
+          "response enrichment did not refresh the stale baseline image");
   require(((enriched - initial) *
            hvp.prepared_directions.front().col(0)).norm() > 1.0e-2,
           "refresh fixture did not change the original Hessian sample");
