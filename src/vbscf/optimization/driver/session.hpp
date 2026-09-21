@@ -16,7 +16,8 @@ namespace optimizer_detail {
 
 OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
-    const SparseParameterLayout& parameter_view);
+    const SparseParameterLayout& parameter_view,
+    bool use_casscf_preconditioner = false);
 
 void sync_result_from_objective(
     const VbScfObjective& objective,

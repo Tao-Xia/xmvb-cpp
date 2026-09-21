@@ -2,18 +2,22 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <stdexcept>
 
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
+#include "vbscf/optimization/preconditioners/casscf_diagonal.hpp"
 
 namespace xmvb::vb::optimizer_detail {
 
 OrbitalChart build_orbital_chart(
     const VbScfObjective& objective,
-    const SparseParameterLayout& parameter_view) {
+    const SparseParameterLayout& parameter_view,
+    bool use_casscf_preconditioner) {
   const auto& orbital_preparation_input =
       objective.input().orbital_preparation_input;
   const auto& orbital_preparation_result =
@@ -30,6 +34,13 @@ OrbitalChart build_orbital_chart(
   const int n_occupied_orbitals =
       n_inactive_doubly_occupied_orbitals +
       orbital_preparation_input.n_active_orbitals;
+  std::optional<OeoCasscfPreconditioner> casscf_preconditioner;
+  if (use_casscf_preconditioner && objective.input().complete_active_space &&
+      orbital_preparation_input.orbital_type == kOrbitalTypeOeo &&
+      objective.second_order_context()) {
+    casscf_preconditioner = build_oeo_casscf_preconditioner(
+        objective.input(), *objective.second_order_context());
+  }
   return OrbitalChart(
       orbital_preparation_input,
       parameter_view,
@@ -37,7 +48,8 @@ OrbitalChart build_orbital_chart(
       normalized_orbital_matrix,
       &objective.gradient_result().ao_effective_one_electron_result.ao_effective_h1e,
       false,
-      objective.input().complete_active_space);
+      objective.input().complete_active_space,
+      casscf_preconditioner ? &*casscf_preconditioner : nullptr);
 }
 
 void sync_result_from_objective(

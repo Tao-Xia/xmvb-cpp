@@ -10,6 +10,8 @@
 
 namespace xmvb::vb {
 
+struct OeoCasscfPreconditioner;
+
 /**
  * @brief Accepted-point quotient chart for VBSCF orbital optimization.
  *
@@ -49,7 +51,8 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& physical_orbital_matrix,
       const Eigen::MatrixXd* ao_effective_h1e = nullptr,
       bool collect_structural_diagnostics = false,
-      bool complete_active_space = false);
+      bool complete_active_space = false,
+      const OeoCasscfPreconditioner* casscf_preconditioner = nullptr);
 
   int reduced_size() const noexcept {
     return reduced_size_;

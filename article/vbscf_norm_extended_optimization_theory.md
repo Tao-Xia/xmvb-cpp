@@ -1037,7 +1037,108 @@ the new accepted-point Hessian images and residual certificate are recomputed.
 The direction is discarded at the next macroiteration, so no secant curvature
 or stale Hessian action enters the NEO model.
 
-## 15. References
+## 15. Complete CASSCF orbital-diagonal preconditioner
+
+For a complete full-AO OEO space, the accepted nonorthogonal active orbitals
+are first mapped to an AO-metric orthonormal CASSCF frame.  With
+
+$$
+S_a=R_a^{\mathrm T}R_a,
+\qquad
+C_a^{\perp}=C_aR_a^{-1},
+\tag{57}
+$$
+
+the active reduced-density adjoints transform covariantly as
+
+$$
+\gamma^{\perp}=R_a\gamma R_a^{\mathrm T},
+\qquad
+\Gamma^{\perp}_{pqrs}
+=
+\sum_{abcd}
+(R_a)_{pa}(R_a)_{qb}(R_a)_{rc}(R_a)_{sd}\Gamma_{abcd}.
+\tag{58}
+$$
+
+The packed two-electron adjoint determines the fully ERI-symmetric part of the
+spin-free two-particle density matrix uniquely.  If $g_{(pq),(rs)}$ denotes
+the derivative with respect to one eight-fold packed integral and
+$m_{pqrs}$ is the number of distinct ERI permutations, then
+
+$$
+\Gamma^{\mathrm{sym}}_{pqrs}
+=\frac{2g_{(pq),(rs)}}{m_{pqrs}}.
+\tag{59}
+$$
+
+This replacement loses no orbital-curvature information because both the
+integrals and all orbital derivatives of the integrals possess the same
+eight-fold symmetry.
+
+The diagonal is evaluated from the partial MO transformations
+
+$$
+(pq|ab),\qquad (pa|qb),\qquad (pp|cc),\qquad (pc|pc),
+\tag{60}
+$$
+
+where $c$, $a$, and $p$ denote core, active, and arbitrary MO indices,
+respectively.  Thus the full $O(n_{\mathrm{MO}}^4)$ MO integral tensor is not
+formed.  Exact AO-pair and RI factorizations feed the same contractions.
+
+The implemented diagonal is the complete Newton--CASSCF orbital diagonal: it
+contains the one-electron contribution, core Coulomb and exchange, active
+one-particle density contractions, active two-particle cumulant contractions,
+core--active exchange terms, and the orbital-gradient diagonal correction.
+In compact notation it is
+
+$$
+d_{pi}
+=
+\left.
+\frac{\partial^2 E\!\left(Ce^{\kappa}\right)}
+{\partial\kappa_{pi}^2}
+\right|_{\kappa=0},
+\qquad
+i\in\mathcal C\cup\mathcal A,
+\quad
+p\notin\text{the redundant block of }i.
+\tag{61}
+$$
+
+It is pulled back to the sparse quotient chart through the exact tangent
+Jacobian $J_i$ of each localized occupied orbital.  The local block-Jacobi
+preconditioner is
+
+$$
+P_i=J_i^{\mathrm T}\operatorname{diag}(d)J_i,
+\qquad
+z_i=(P_i+\lambda I)^{-1}r_i.
+\tag{62}
+$$
+
+Equation 62 changes only the iterative eigensolver metric.  The NEO model,
+HVP, KKT residual, and accepted step remain defined by the exact current-point
+operators.  Negative entries of eq 61 are retained in the physical model;
+positive spectral regularization is applied only when inverting $P_i$ as a
+preconditioner.
+
+The analytic diagonal is validated independently of the optimizer by rotating
+the full test Hamiltonian and checking
+
+$$
+d_{pi}
+=
+\frac{E(+h)-2E(0)+E(-h)}{h^2}+O(h^2).
+\tag{63}
+$$
+
+The present regression gives a maximum absolute discrepancy of
+$5.99\times10^{-8}$ hartree for all nonredundant core--active,
+core--virtual, and active--virtual rotations in the synthetic test.
+
+## 16. References
 
 1. H. J. Aa. Jensen and P. Jørgensen, “A direct approach to second-order
    MCSCF calculations using a norm extended optimization scheme,” *J. Chem.

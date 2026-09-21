@@ -224,7 +224,7 @@ BackendRunResult run_neo_backend(
   double previous_energy = initial_energy;
   double trust_radius =
       std::max(options.minimum_step_size, options.initial_step_size);
-  OrbitalChart chart = build_orbital_chart(*objective, parameter_view);
+  OrbitalChart chart = build_orbital_chart(*objective, parameter_view, true);
   auto projected = chart.project_gradient(gradient);
   double final_gradient_inf =
       gradient_infinity_norm(projected.reduced_gradient);
@@ -292,7 +292,7 @@ BackendRunResult run_neo_backend(
       ++iteration_record.keyframes;
       macro_accepted = true;
 
-      OrbitalChart next_chart = build_orbital_chart(*objective, parameter_view);
+      OrbitalChart next_chart = build_orbital_chart(*objective, parameter_view, true);
       auto next_projected = next_chart.project_gradient(gradient);
       final_gradient_inf =
           gradient_infinity_norm(next_projected.reduced_gradient);
