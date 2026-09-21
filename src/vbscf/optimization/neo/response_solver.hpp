@@ -18,6 +18,8 @@ struct ResponseNeoDirection {
 /** @brief One block column of the coupled orbital--structure Hessian. */
 using ResponseNeoBlockAction =
     std::function<ResponseNeoDirection(const Eigen::VectorXd&)>;
+using ResponseNeoPreconditioner =
+    std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)>;
 
 /**
  * @brief Quadratic model for orbital-trust NEO with projected response.
@@ -34,7 +36,7 @@ public:
       ResponseNeoBlockAction apply_orbital_coupling,
       ResponseNeoBlockAction apply_structure_coupling,
       NeoAction apply_orbital_metric,
-      NeoAction apply_orbital_preconditioner = {},
+      ResponseNeoPreconditioner apply_orbital_preconditioner = {},
       Eigen::VectorXd initial_orbital_guess = {},
       double operator_relative_accuracy = 0.0);
 
@@ -56,7 +58,8 @@ public:
     return static_cast<bool>(apply_orbital_preconditioner_);
   }
   Eigen::VectorXd apply_orbital_preconditioner(
-      const Eigen::VectorXd& covector) const;
+      const Eigen::VectorXd& covector,
+      double shift) const;
   /** @brief Initial Davidson direction recycled within one nonlinear macro. */
   const Eigen::VectorXd& initial_orbital_guess() const noexcept {
     return initial_orbital_guess_;
@@ -81,7 +84,7 @@ private:
   const ResponseNeoBlockAction apply_orbital_coupling_;
   const ResponseNeoBlockAction apply_structure_coupling_;
   const NeoAction apply_orbital_metric_;
-  const NeoAction apply_orbital_preconditioner_;
+  const ResponseNeoPreconditioner apply_orbital_preconditioner_;
   const Eigen::VectorXd initial_orbital_guess_;
   const double operator_relative_accuracy_;
 };

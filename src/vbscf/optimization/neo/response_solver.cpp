@@ -142,9 +142,10 @@ StructureInverse symmetric_pseudoinverse(const Eigen::MatrixXd& matrix) {
 
 Eigen::VectorXd preconditioned_orbital(
     const ResponseNeoProblem& problem,
-    const Eigen::VectorXd& residual) {
+    const Eigen::VectorXd& residual,
+    double shift = 0.0) {
   return problem.has_orbital_preconditioner()
-      ? problem.apply_orbital_preconditioner(residual)
+      ? problem.apply_orbital_preconditioner(residual, shift)
       : residual;
 }
 
@@ -156,7 +157,7 @@ ResponseNeoProblem::ResponseNeoProblem(
     ResponseNeoBlockAction apply_orbital_coupling,
     ResponseNeoBlockAction apply_structure_coupling,
     NeoAction apply_orbital_metric,
-    NeoAction apply_orbital_preconditioner,
+    ResponseNeoPreconditioner apply_orbital_preconditioner,
     Eigen::VectorXd initial_orbital_guess,
     double operator_relative_accuracy)
     : orbital_gradient_(std::move(orbital_gradient)),
@@ -238,13 +239,25 @@ Eigen::VectorXd ResponseNeoProblem::apply_orbital_metric(
 }
 
 Eigen::VectorXd ResponseNeoProblem::apply_orbital_preconditioner(
-    const Eigen::VectorXd& covector) const {
+    const Eigen::VectorXd& covector,
+    double shift) const {
   if (!apply_orbital_preconditioner_) {
     throw std::logic_error("response NEO has no orbital preconditioner");
   }
-  return apply_orbital_checked(
-      apply_orbital_preconditioner_, covector,
-      "response NEO orbital preconditioner returned an invalid vector");
+  if (!(shift >= 0.0) || !std::isfinite(shift)) {
+    throw std::invalid_argument(
+        "response NEO preconditioner shift must be finite and nonnegative");
+  }
+  if (covector.size() != orbital_size() || !covector.allFinite()) {
+    throw std::invalid_argument(
+        "invalid vector passed to response NEO preconditioner");
+  }
+  Eigen::VectorXd result = apply_orbital_preconditioner_(covector, shift);
+  if (result.size() != orbital_size() || !result.allFinite()) {
+    throw std::runtime_error(
+        "response NEO orbital preconditioner returned an invalid vector");
+  }
+  return result;
 }
 
 bool ResponseNeoWorkspace::append_orbital(
@@ -601,7 +614,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     if (!expanded && result.kkt_residual.orbital.stableNorm() >
         orbital_residual_target) {
       expanded = append_orbital(
-          preconditioned_orbital(problem_, -result.kkt_residual.orbital),
+          preconditioned_orbital(
+              problem_, -result.kkt_residual.orbital, result.shift),
           &result.coupled_actions,
           &result.orbital_actions);
     }

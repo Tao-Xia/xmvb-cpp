@@ -852,6 +852,27 @@ together with the norm equation and a lowest-root check.  A hard cap on HVP
 count is only a resource safeguard; it is not evidence that the Newton
 microproblem has been solved.
 
+The residual preconditioner must approximate the shifted KKT operator rather
+than the unshifted Hessian alone.  In the present local orbital blocks, the
+quotient bases are whitened in their normalized-orbital metrics, so the
+shift-aware block preconditioner is
+
+$$
+\mathbf P_\lambda^{-1}
+=
+\operatorname{blockdiag}_i
+\left(\mathbf P_i+\lambda\mathbf I_i\right)^{-1}.
+\tag{48a}
+$$
+
+For an interior Newton step, $\lambda=0$ and eq 48a reduces exactly to the
+existing orbital-block inverse.  For a boundary or negative-curvature step,
+including the same NEO shift used in the KKT residual prevents the
+preconditioner from amplifying directions that the shifted equation has
+regularized.  This changes only Davidson subspace generation; the converged
+step and its residual certificate remain defined by the exact matrix-free
+operator.
+
 For a trial step, the quadratic predicted reduction is
 
 $$

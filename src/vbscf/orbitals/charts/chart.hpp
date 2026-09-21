@@ -91,6 +91,11 @@ public:
   Eigen::VectorXd apply_inverse_reduced_block_preconditioner(
       const Eigen::VectorXd& reduced_vector) const;
 
+  /** @brief Applies the local block inverse of @f$P+\lambda I@f$. */
+  Eigen::VectorXd apply_inverse_reduced_shifted_block_preconditioner(
+      const Eigen::VectorXd& reduced_vector,
+      double shift) const;
+
   Eigen::VectorXd expand_step(
       const Eigen::VectorXd& reduced_step) const;
 

@@ -500,12 +500,15 @@ void check_occupation_curvature() {
     const SparseParameterLayout view(input);
     const OrbitalChart space(input, view, c, c, &f);
     Eigen::MatrixXd u(3, space.reduced_size()), action(2, 2), inverse(2, 2);
+    Eigen::MatrixXd shifted_inverse(2, 2);
     require(space.reduced_size() == 2, "invalid occupation fixture rank");
     for (int j = 0; j < 2; ++j) {
       const Eigen::VectorXd unit = Eigen::VectorXd::Unit(2, j);
       u.col(j) = space.expand_step(unit);
       action.col(j) = space.apply_reduced_curvature(unit);
       inverse.col(j) = space.apply_inverse_reduced_block_preconditioner(unit);
+      shifted_inverse.col(j) =
+          space.apply_inverse_reduced_shifted_block_preconditioner(unit, 0.4);
     }
     // Independent diagonal one-electron gap formula at a stationary ray.
     const double occupation = inactive_count == 1 ? 2.0 : 1.0;
@@ -515,6 +518,10 @@ void check_occupation_curvature() {
             "production block lost inactive double occupancy or changed active unit model");
     require((inverse * expected - Eigen::MatrixXd::Identity(2, 2)).norm() < 1e-12,
             "inverse occupation curvature is inconsistent");
+    require((shifted_inverse *
+                 (expected + 0.4 * Eigen::Matrix2d::Identity()) -
+             Eigen::Matrix2d::Identity()).norm() < 1e-12,
+            "shifted inverse occupation curvature is inconsistent");
     const std::vector<PackedSecantPair> empty_history;
     const auto standard_lbfgs = build_transported_reduced_lbfgs_preconditioner(
         space, empty_history, 1, LbfgsInitialInverse::ScaledIdentity);

@@ -849,10 +849,22 @@ Eigen::VectorXd OrbitalChart::apply_inverse_reduced_curvature(
 Eigen::VectorXd
 OrbitalChart::apply_inverse_reduced_block_preconditioner(
     const Eigen::VectorXd& reduced_vector) const {
+  return apply_inverse_reduced_shifted_block_preconditioner(
+      reduced_vector, 0.0);
+}
+
+Eigen::VectorXd
+OrbitalChart::apply_inverse_reduced_shifted_block_preconditioner(
+    const Eigen::VectorXd& reduced_vector,
+    double shift) const {
   require_finite_vector_size(
       reduced_vector,
       static_cast<Eigen::Index>(reduced_size_),
       "orbital-chart block inverse-curvature input");
+  if (!(shift >= 0.0) || !std::isfinite(shift)) {
+    throw std::invalid_argument(
+        "orbital-chart preconditioner shift must be finite and nonnegative");
+  }
   if (!has_reduced_curvature_diagonal_) return reduced_vector;
 
   Eigen::VectorXd out = reduced_vector;
@@ -861,15 +873,28 @@ OrbitalChart::apply_inverse_reduced_block_preconditioner(
       if (p.local_reduced_size <= 0) continue;
       if (p.inverse_curvature_block.rows() != p.local_reduced_size ||
           p.inverse_curvature_block.cols() != p.local_reduced_size ||
+          p.curvature_block.rows() != p.local_reduced_size ||
+          p.curvature_block.cols() != p.local_reduced_size ||
+          !p.curvature_block.allFinite() ||
           !p.inverse_curvature_block.allFinite()) {
         throw std::runtime_error(
             "orbital-chart inverse-curvature block is inconsistent");
       }
-      const Eigen::VectorXd solved =
-          p.inverse_curvature_block *
-          reduced_vector.segment(
-              p.local_reduced_offset,
-              p.local_reduced_size);
+      Eigen::VectorXd solved;
+      const auto local_vector = reduced_vector.segment(
+          p.local_reduced_offset, p.local_reduced_size);
+      if (shift == 0.0) {
+        solved.noalias() = p.inverse_curvature_block * local_vector;
+      } else {
+        Eigen::MatrixXd shifted = p.curvature_block;
+        shifted.diagonal().array() += shift;
+        Eigen::LDLT<Eigen::MatrixXd> factor(shifted);
+        if (factor.info() != Eigen::Success || !factor.isPositive()) {
+          throw std::runtime_error(
+              "failed to factor shifted orbital curvature block");
+        }
+        solved = factor.solve(local_vector);
+      }
       if (!solved.allFinite()) {
         throw std::runtime_error(
             "orbital-chart block preconditioner returned non-finite values");

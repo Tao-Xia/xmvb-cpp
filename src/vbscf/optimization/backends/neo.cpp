@@ -118,8 +118,9 @@ bool build_accepted_neo_keyframe(
       [&orbital_metric](const Eigen::VectorXd& vector) {
         return orbital_metric.apply(vector);
       },
-      [&chart](const Eigen::VectorXd& residual) {
-        return chart.apply_inverse_reduced_block_preconditioner(residual);
+      [&chart](const Eigen::VectorXd& residual, double shift) {
+        return chart.apply_inverse_reduced_shifted_block_preconditioner(
+            residual, shift);
       },
       std::move(orbital_guess),
       operator_relative_accuracy);

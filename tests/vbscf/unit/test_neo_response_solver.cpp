@@ -282,6 +282,40 @@ void check_recycled_orbital_guess_starts_subspace() {
                 "recycled orbital guess did not start the Davidson space");
 }
 
+void check_boundary_residual_uses_shifted_preconditioner() {
+  double largest_shift = 0.0;
+  Eigen::Matrix3d hessian;
+  hessian << -1.2, 0.2, 0.1,
+              0.2, 0.8, 0.3,
+              0.1, 0.3, 1.7;
+  const ResponseNeoProblem problem(
+      Eigen::Vector3d(0.4, -0.7, 0.2),
+      0,
+      [hessian](const Eigen::VectorXd& p) {
+        return ResponseNeoDirection{
+            hessian * p, Eigen::VectorXd::Zero(0)};
+      },
+      [](const Eigen::VectorXd&) {
+        return ResponseNeoDirection{
+            Eigen::VectorXd::Zero(3), Eigen::VectorXd::Zero(0)};
+      },
+      [](const Eigen::VectorXd& p) { return p; },
+      [&largest_shift](const Eigen::VectorXd& residual, double shift) {
+        largest_shift = std::max(largest_shift, shift);
+        return residual / (2.0 + shift);
+      });
+  NeoOptions options;
+  options.trust_radius = 0.2;
+  options.relative_residual_tolerance = 1.0e-12;
+  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
+      problem, options);
+  require(result.converged(), "shift-aware response NEO did not converge");
+  require(result.boundary && result.shift > 0.0,
+          "shift-aware response NEO fixture did not reach the boundary");
+  require(largest_shift > 0.0,
+          "boundary KKT residual did not pass its shift to the preconditioner");
+}
+
 }  // namespace
 
 int main() {
@@ -292,6 +326,7 @@ int main() {
     check_structure_contracts();
     check_workspace_reuses_actions_after_radius_change();
     check_recycled_orbital_guess_starts_subspace();
+    check_boundary_residual_uses_shifted_preconditioner();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {
