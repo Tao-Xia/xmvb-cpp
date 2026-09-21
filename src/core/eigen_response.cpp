@@ -1191,62 +1191,6 @@ EigenResponseResult evaluate_frozen_generalized_eigen_response(
 
 namespace {
 
-struct EqualWeightResponseData {
-  Eigen::MatrixXd metric;
-  Eigen::MatrixXd forcing;
-  Eigen::MatrixXd gauge_target;
-};
-
-EqualWeightResponseData prepare_equal_weight_response(
-    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
-    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
-    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
-    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
-    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected,
-    const EigenResponseOptions& options) {
-  validate_inputs(
-      hamiltonian_diagonal,
-      overlap_diagonal,
-      selected_eigenvalues,
-      selected_eigenvectors,
-      overlap_selected,
-      delta_hamiltonian_selected,
-      delta_overlap_selected,
-      options);
-  EqualWeightResponseData data;
-  data.metric = selected_eigenvectors.transpose() * overlap_selected;
-  const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
-      data.metric.rows(), data.metric.cols());
-  const double metric_error = (data.metric - identity).norm();
-  const double metric_tolerance = 1.0e3 *
-      std::numeric_limits<double>::epsilon() *
-      std::max(1.0, static_cast<double>(selected_eigenvectors.rows()));
-  if (metric_error > metric_tolerance) {
-    std::ostringstream message;
-    message << "equal-weight response requires S-orthonormal selected roots: error="
-            << metric_error;
-    throw std::invalid_argument(message.str());
-  }
-
-  data.forcing = delta_hamiltonian_selected -
-      delta_overlap_selected * selected_eigenvalues.asDiagonal();
-  Eigen::MatrixXd metric_derivative =
-      selected_eigenvectors.transpose() * delta_overlap_selected;
-  const double antisymmetric_error =
-      (metric_derivative - metric_derivative.transpose()).norm();
-  const double derivative_scale = std::max(1.0, metric_derivative.norm());
-  if (antisymmetric_error > 1.0e-10 * derivative_scale) {
-    throw std::invalid_argument(
-        "equal-weight response requires one symmetric overlap derivative for the complete selected cluster");
-  }
-  metric_derivative =
-      0.5 * (metric_derivative + metric_derivative.transpose()).eval();
-  data.gauge_target = -0.5 * metric_derivative;
-  return data;
-}
-
 Eigen::MatrixXd selected_span_units(
     const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors) {
   Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(selected_eigenvectors);
@@ -1385,6 +1329,88 @@ EigenSubspaceResponseResult finish_equal_weight_response(
 
 }  // namespace
 
+EqualWeightEigenCoupling prepare_equal_weight_generalized_eigen_coupling(
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_residuals,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected) {
+  validate_response_columns(
+      selected_eigenvalues, selected_eigenvectors, overlap_selected,
+      delta_hamiltonian_selected, delta_overlap_selected);
+  if (selected_residuals.rows() != selected_eigenvectors.rows() ||
+      selected_residuals.cols() != selected_eigenvectors.cols() ||
+      !selected_residuals.allFinite()) {
+    throw std::invalid_argument(
+        "equal-weight coupling Ritz residuals are inconsistent");
+  }
+
+  EqualWeightEigenCoupling data;
+  data.metric = selected_eigenvectors.transpose() * overlap_selected;
+  const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
+      data.metric.rows(), data.metric.cols());
+  const double metric_error = (data.metric - identity).norm();
+  const double metric_tolerance = 1.0e3 *
+      std::numeric_limits<double>::epsilon() *
+      std::max(1.0, static_cast<double>(selected_eigenvectors.rows()));
+  if (!std::isfinite(metric_error) || metric_error > metric_tolerance) {
+    std::ostringstream message;
+    message << "equal-weight coupling requires S-orthonormal selected roots: error="
+            << metric_error;
+    throw std::invalid_argument(message.str());
+  }
+
+  data.forcing = delta_hamiltonian_selected -
+      delta_overlap_selected * selected_eigenvalues.asDiagonal();
+  Eigen::MatrixXd metric_derivative =
+      selected_eigenvectors.transpose() * delta_overlap_selected;
+  const double antisymmetric_error =
+      (metric_derivative - metric_derivative.transpose()).norm();
+  const double derivative_scale = std::max(1.0, metric_derivative.norm());
+  if (!std::isfinite(antisymmetric_error) ||
+      antisymmetric_error > 1.0e-10 * derivative_scale) {
+    throw std::invalid_argument(
+        "equal-weight coupling requires a symmetric selected overlap derivative");
+  }
+  metric_derivative =
+      0.5 * (metric_derivative + metric_derivative.transpose()).eval();
+  data.gauge_target = -0.5 * metric_derivative;
+
+  const Eigen::MatrixXd internal_coefficients =
+      data.metric.partialPivLu().solve(data.gauge_target);
+  if (!internal_coefficients.allFinite()) {
+    throw std::runtime_error(
+        "equal-weight coupling gauge coefficients are not finite");
+  }
+  data.gauge_coefficient_response =
+      selected_eigenvectors * internal_coefficients;
+
+  const Eigen::MatrixXd energy_commutator =
+      selected_eigenvalues.asDiagonal() * internal_coefficients -
+      internal_coefficients * selected_eigenvalues.asDiagonal();
+  const Eigen::MatrixXd gauge_shifted_image =
+      overlap_selected * energy_commutator +
+      selected_residuals * internal_coefficients;
+  const Eigen::MatrixXd gauge_adjusted_forcing =
+      data.forcing + gauge_shifted_image;
+  data.gauge_selected_matrix_response = data.metric.partialPivLu().solve(
+      selected_eigenvectors.transpose() * gauge_adjusted_forcing);
+  if (!data.gauge_selected_matrix_response.allFinite()) {
+    throw std::runtime_error(
+        "equal-weight coupling gauge multiplier is not finite");
+  }
+
+  data.horizontal_forcing = gauge_adjusted_forcing;
+  const Eigen::MatrixXd selected_units = selected_span_units(overlap_selected);
+  project_selected_span(&data.horizontal_forcing, selected_units);
+  if (!data.horizontal_forcing.allFinite()) {
+    throw std::runtime_error(
+        "equal-weight coupling horizontal forcing is not finite");
+  }
+  return data;
+}
+
 EigenSubspaceResponseResult
 solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
     const GeneralizedEigenAction& action,
@@ -1423,13 +1449,16 @@ solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
         "complete equal-weight subspace response inputs are inconsistent");
   }
 
-  const EigenResponseOptions validation_options{
-      1, relative_residual_tolerance};
-  const EqualWeightResponseData data = prepare_equal_weight_response(
-      Eigen::VectorXd::Ones(n), Eigen::VectorXd::Ones(n),
-      selected_eigenvalues, selected_eigenvectors, overlap_selected,
-      delta_hamiltonian_selected, delta_overlap_selected,
-      validation_options);
+  // The supplied complete eigensystem is authoritative. Preserve the direct
+  // spectral path: do not spend an additional H/S action to reconstruct a
+  // finite-Ritz correction that is zero for these exact eigenvectors.
+  const Eigen::MatrixXd ritz_residuals = Eigen::MatrixXd::Zero(
+      n, n_selected);
+  const EqualWeightEigenCoupling data =
+      prepare_equal_weight_generalized_eigen_coupling(
+          selected_eigenvalues, selected_eigenvectors, overlap_selected,
+          ritz_residuals, delta_hamiltonian_selected,
+          delta_overlap_selected);
 
   std::vector<bool> selected(static_cast<std::size_t>(n), false);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
@@ -1443,7 +1472,7 @@ solve_equal_weight_generalized_eigen_subspace_response_from_full_spectrum(
   }
 
   Eigen::MatrixXd coefficients =
-      full_eigenvectors.transpose() * data.forcing;
+      full_eigenvectors.transpose() * data.horizontal_forcing;
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     for (Eigen::Index other = 0; other < n; ++other) {
       if (selected[static_cast<std::size_t>(other)]) {
@@ -1485,7 +1514,7 @@ solve_equal_weight_generalized_eigen_subspace_response(
     const EigenResponseOptions& options,
     const std::vector<EigenResponseRecycleSpace*>& recycle_spaces,
     const Eigen::MatrixXd* selected_residuals) {
-  const EqualWeightResponseData data = prepare_equal_weight_response(
+  validate_inputs(
       hamiltonian_diagonal, overlap_diagonal, selected_eigenvalues,
       selected_eigenvectors, overlap_selected,
       delta_hamiltonian_selected, delta_overlap_selected, options);
@@ -1505,11 +1534,12 @@ solve_equal_weight_generalized_eigen_subspace_response(
   const Eigen::MatrixXd ritz_residuals = selected_ritz_residuals(
       action, selected_eigenvalues, selected_eigenvectors,
       selected_residuals, &block_actions);
-  const Eigen::MatrixXd internal_particular =
-      data.metric.partialPivLu().solve(data.gauge_target);
-  Eigen::MatrixXd rhs =
-      -data.forcing - ritz_residuals * internal_particular;
-  project_selected_span(&rhs, selected_units);
+  const EqualWeightEigenCoupling data =
+      prepare_equal_weight_generalized_eigen_coupling(
+          selected_eigenvalues, selected_eigenvectors, overlap_selected,
+          ritz_residuals, delta_hamiltonian_selected,
+          delta_overlap_selected);
+  const Eigen::MatrixXd rhs = -data.horizontal_forcing;
   const Eigen::VectorXd selected_projector_diagonal =
       selected_units.array().square().rowwise().sum().matrix();
   const Eigen::MatrixXd inverse_preconditioner = build_inverse_preconditioner(
@@ -1805,23 +1835,18 @@ evaluate_frozen_equal_weight_generalized_eigen_subspace_response(
     throw std::invalid_argument(
         "frozen equal-weight response recycle-space count is inconsistent");
   }
-  const EigenResponseOptions validation_options{1, 1.0};
-  const EqualWeightResponseData data = prepare_equal_weight_response(
-      Eigen::VectorXd::Ones(n), Eigen::VectorXd::Ones(n),
-      selected_eigenvalues, selected_eigenvectors, overlap_selected,
-      delta_hamiltonian_selected, delta_overlap_selected,
-      validation_options);
   const Eigen::MatrixXd selected_units =
       selected_span_units(overlap_selected);
   int block_actions = 0;
   const Eigen::MatrixXd ritz_residuals = selected_ritz_residuals(
       action, selected_eigenvalues, selected_eigenvectors,
       selected_residuals, &block_actions);
-  const Eigen::MatrixXd internal_particular =
-      data.metric.partialPivLu().solve(data.gauge_target);
-  Eigen::MatrixXd rhs =
-      -data.forcing - ritz_residuals * internal_particular;
-  project_selected_span(&rhs, selected_units);
+  const EqualWeightEigenCoupling data =
+      prepare_equal_weight_generalized_eigen_coupling(
+          selected_eigenvalues, selected_eigenvectors, overlap_selected,
+          ritz_residuals, delta_hamiltonian_selected,
+          delta_overlap_selected);
+  const Eigen::MatrixXd rhs = -data.horizontal_forcing;
   Eigen::MatrixXd external_response = Eigen::MatrixXd::Zero(n, n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const EigenResponseRecycleSpace* recycle =

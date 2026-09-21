@@ -116,6 +116,40 @@ struct EigenSubspaceResponseResult {
 };
 
 /**
+ * @brief Solve-free coupling data for an equally weighted selected subspace.
+ *
+ * `forcing` is @f$\delta H C-\delta S C E@f$. The gauge response satisfies
+ * @f$C^T S\,\delta C_g=-\tfrac12 C^T\delta S C@f$. `horizontal_forcing`
+ * is the Euclidean projection of the forcing, including the accepted Ritz-
+ * residual image of that gauge response, away from the span of @f$SC@f$.
+ * `gauge_selected_matrix_response` is the multiplier @f$M_g@f$ in
+ * @f$F+(H\delta C_g-S\delta C_gE)-SCM_g@f$.
+ */
+struct EqualWeightEigenCoupling {
+  Eigen::MatrixXd metric;
+  Eigen::MatrixXd forcing;
+  Eigen::MatrixXd gauge_target;
+  Eigen::MatrixXd gauge_coefficient_response;
+  Eigen::MatrixXd gauge_selected_matrix_response;
+  Eigen::MatrixXd horizontal_forcing;
+};
+
+/**
+ * @brief Prepares equal-weight orbital--structure coupling without a solve.
+ *
+ * This function performs no generalized-eigen response iteration and mutates no
+ * recycle space. `selected_residuals` is the accepted Ritz residual
+ * @f$HC-SCE@f$ and may be zero for an exact accepted eigensystem.
+ */
+EqualWeightEigenCoupling prepare_equal_weight_generalized_eigen_coupling(
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_residuals,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_hamiltonian_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_selected);
+
+/**
  * @brief Solves selected generalized-eigenpair response without a full spectrum.
  *
  * For each accepted pair `H c = E S c`, the solver applies preconditioned

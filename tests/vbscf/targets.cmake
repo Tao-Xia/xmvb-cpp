@@ -8,6 +8,7 @@ set(_xmvb_vbscf_unit_targets
   test_active_two_electron_sparse
   test_block_inverse_bfgs
   test_cofactor_differential
+  test_coupled_structure
   test_curvature_decomposition
   test_davidson
   test_eigen_response
@@ -47,6 +48,9 @@ if (BUILD_TESTING)
   add_test(NAME opposite_spin_pair_graph COMMAND test_opposite_spin_pair_graph)
   add_test(NAME orthogonal_direct_ci COMMAND test_orthogonal_direct_ci)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
+  add_test(NAME coupled_structure COMMAND test_coupled_structure)
+  set_tests_properties(coupled_structure PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME davidson COMMAND test_davidson)
   add_test(NAME eigen_response COMMAND test_eigen_response)
   add_test(NAME minres COMMAND test_minres)
