@@ -90,6 +90,8 @@ struct TnhvpIterationRecord {
  */
 struct NeoIterationRecord {
   int accepted_iteration_index = 0;
+  /** Exact-gradient keyframes accepted inside this nonlinear macro step. */
+  int keyframes = 0;
   int model_dimension = 0;
   int micro_iterations = 0;
   int coupled_block_actions = 0;

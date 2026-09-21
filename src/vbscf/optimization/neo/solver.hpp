@@ -26,6 +26,15 @@ struct NeoOptions {
    * dimension; a positive smaller value is an explicit caller work budget.
    */
   int maximum_subspace_dimension = 0;
+  /**
+   * Require convergence of the lowest-curvature Ritz residual in addition
+   * to the Newton KKT residual.  This is useful for spectral diagnostics and
+   * hard-case certification.  Keyframe CIAH steps may disable it: their
+   * nonlinear gradient refresh is the acceptance certificate, so resolving
+   * an unrelated extremal eigenvector after the Newton equation has already
+   * converged only oversolves a stale quadratic model.
+   */
+  bool require_curvature_certificate = true;
 };
 
 /** @brief Step and explicit optimality certificate returned by NEO. */

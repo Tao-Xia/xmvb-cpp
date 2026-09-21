@@ -552,7 +552,12 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         static_cast<std::size_t>(problem_.orbital_size());
     result.global_curvature_certified =
         orbital_complete && curvature_converged;
-    if (stationary && curvature_converged && shifted_positive) {
+    const bool need_curvature_certificate =
+        options.require_curvature_certificate || result.boundary ||
+        result.hard_case;
+    const bool required_curvature_converged =
+        !need_curvature_certificate || curvature_converged;
+    if (stationary && required_curvature_converged && shifted_positive) {
       result.stop_reason = NeoStopReason::Converged;
       return result;
     }
@@ -573,7 +578,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       expanded = append_structure(
           -result.kkt_residual.structure, &result.coupled_actions);
     }
-    if (!expanded && curvature_structure.stableNorm() >
+    if (!expanded && need_curvature_certificate &&
+        curvature_structure.stableNorm() >
         curvature_structure_target) {
       expanded = append_structure(
           -curvature_structure, &result.coupled_actions);
@@ -584,7 +590,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
           preconditioned_orbital(problem_, -result.kkt_residual.orbital),
           &result.coupled_actions);
     }
-    if (!expanded && curvature_orbital.stableNorm() >
+    if (!expanded && need_curvature_certificate &&
+        curvature_orbital.stableNorm() >
         curvature_orbital_target) {
       expanded = append_orbital(
           preconditioned_orbital(problem_, -curvature_orbital),

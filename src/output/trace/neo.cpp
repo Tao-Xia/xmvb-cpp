@@ -25,7 +25,8 @@ void write_neo_trace(
         "failed to open NEO trace: " + output_path.string());
   }
   stream
-      << "iteration\tmodel_dimension\tmicro_iterations\tcoupled_block_actions"
+      << "iteration\tkeyframes\tmodel_dimension\tmicro_iterations"
+      << "\tcoupled_block_actions"
       << "\trejected_trials"
       << "\tkkt_residual_norm\tkkt_residual_target"
       << "\tcurvature_residual_norm\tcurvature_residual_target"
@@ -38,6 +39,7 @@ void write_neo_trace(
   for (const auto& step : result.neo_iteration_trace) {
     stream
         << step.accepted_iteration_index << '\t'
+        << step.keyframes << '\t'
         << step.model_dimension << '\t'
         << step.micro_iterations << '\t'
         << step.coupled_block_actions << '\t'

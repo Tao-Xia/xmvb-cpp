@@ -210,6 +210,17 @@ if (BUILD_TESTING)
     PASS_REGULAR_EXPRESSION "neo_dual_tolerance")
 
   add_test(
+    NAME neo_pyscf_reference_f2
+    COMMAND
+      ${CMAKE_COMMAND}
+      -DXMVB_EXE=$<TARGET_FILE:xmvb>
+      -DXMVB_INPUT=${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_OEO_PYSCF_LOW.xmi
+      -DTRACE_FILE=${CMAKE_CURRENT_BINARY_DIR}/neo_pyscf_reference_f2.tsv
+      -P ${CMAKE_SOURCE_DIR}/tests/vbscf/check_neo_pyscf_reference.cmake)
+  set_tests_properties(neo_pyscf_reference_f2 PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+  add_test(
     NAME exact_ctx_hvp_f2_finite_difference
     COMMAND
       check_exact_ctx_hvp
