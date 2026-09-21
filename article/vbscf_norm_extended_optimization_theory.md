@@ -883,6 +883,112 @@ storage independently of the Davidson or NEO request width.  Direct-CI sigma
 actions use $b=1$ because each column already owns the determinant-product
 workspace; factorized unique-string actions use eq 45e.
 
+### 9.6 Tiered response accuracy and incremental Davidson recycling
+
+Solving every retained response column to the final Newton tolerance is
+unnecessary.  Let $\eta_{\mathrm f}$ be the relative tolerance required for
+the accepted Newton direction.  The projected model is first built with
+
+$$
+\eta_{\mathrm m}
+=
+\min\!\left[
+\frac{1}{2},
+\max\!\left(
+\eta_{\mathrm f},
+\min\!\left(10^{-2},\sqrt{\eta_{\mathrm f}}\right)
+\right)
+\right].
+\tag{45f}
+$$
+
+This square-root tier is an inexact-Newton forcing rule: model accuracy still
+tightens as stationarity is approached, but an exploratory Davidson column is
+not solved at final accuracy.  For the current projected orbital step
+$\mathbf p=\mathbf Q\mathbf c$, only the combined structure equation is then
+certified,
+
+$$
+\mathbf f=\mathbf B\mathbf p,
+\qquad
+\mathbf C\mathbf z_*=-\mathbf f,
+\qquad
+\|\mathbf f+\mathbf C\mathbf z_*\|
+\leq
+\epsilon_{\mathrm{abs}}+
+\eta_{\mathrm f}\|\mathbf g\|.
+\tag{45g}
+$$
+
+If the coarse linear combination fails eq 45g, one narrow response solve is
+performed for $\mathbf f$; the unrelated retained columns are not refined.
+The same rule is applied to a minimum-curvature combination only when a
+boundary, hard case, or explicit curvature certificate requires it.  The
+certified orbital-image defect
+
+$$
+\delta\mathbf h
+=
+\mathbf B^{\mathrm T}\mathbf z_*
+-
+\mathbf B^{\mathrm T}\mathbf Z\mathbf c
+\tag{45h}
+$$
+
+is projected into the orbital Davidson space and accumulated in a symmetric
+multi-secant correction to the reduced Schur model.  Consequently, the final
+step is always tested with the original coupled KKT residual; the coarse tier
+is never treated as a convergence certificate.
+
+The generalized-eigen response recycle space stores, for each orthonormal
+column $\mathbf w_j$, the projected response image and the full images
+$\mathbf H\mathbf w_j$ and $\mathbf S\mathbf w_j$.  After the response space
+is enlarged, an old right-hand side has the Galerkin approximation
+
+$$
+\mathbf x_W=\mathbf W\mathbf K_W^{-1}\mathbf W^{\mathrm T}\mathbf b,
+\qquad
+\mathbf H\mathbf x_W=(\mathbf H\mathbf W)\mathbf y,
+\qquad
+\mathbf S\mathbf x_W=(\mathbf S\mathbf W)\mathbf y,
+\tag{45i}
+$$
+
+where $\mathbf y=\mathbf K_W^{-1}\mathbf W^{\mathrm T}\mathbf b$.  Its full
+bordered residual, including the finite-Ritz and gauge terms, is therefore
+reconstructed without another Hamiltonian/overlap action.  Only a right-hand
+side that fails this residual certificate re-enters MINRES.  The added memory
+remains $O(n_{\mathrm{str}}r)$ for response rank $r$; storing the two full
+images increases its constant factor in exchange for eliminating repeated
+$H/S$ actions.
+
+### 9.7 Frozen-model keyframes
+
+The PySCF keyframe idea is adapted to trust-region NEO without changing the
+accepted-point equations.  At a keyframe, the derivative model and
+`ResponseNeoWorkspace` are frozen.  Radius-dependent candidates are total
+tangent vectors from that same keyframe, rather than sums of independently
+retracted steps.  Every candidate is checked by its true VBSCF energy and
+
+$$
+\rho
+=
+\frac{E(\mathbf x_k)-E(R_{\mathbf x_k}(\mathbf p))}
+{-\mathbf g_k^{\mathrm T}\mathbf p
+-\tfrac12\mathbf p^{\mathrm T}\mathbf H_k\mathbf p}.
+\tag{45j}
+$$
+
+The frozen model is reused only after an accepted boundary candidate with
+$\rho\geq0.75$ whose trust radius is enlarged.  An exact-gradient keyframe is
+forced after four accepted frozen candidates, when the model predicts a
+threefold gradient reduction, or whenever the boundary/model-reliability
+conditions fail.  These first-pass values follow the PySCF scheduling scale;
+they are centralized in one policy rather than distributed through the
+solver.  A rejected farther candidate does not discard the latest
+energy-accepted candidate: that point becomes the next exact-gradient
+keyframe.
+
 ## 10. Residual and model certificates
 
 For a computed generalized eigenpair $\widehat\mu$, $\widehat\beta$,
