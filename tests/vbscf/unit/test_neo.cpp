@@ -1,0 +1,268 @@
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+
+#include <Eigen/Cholesky>
+#include <Eigen/Core>
+#include <Eigen/Eigenvalues>
+#include <Eigen/LU>
+
+#include "vbscf/optimization/neo/problem.hpp"
+#include "vbscf/optimization/neo/solver.hpp"
+
+namespace {
+
+using xmvb::vb::NeoOptions;
+using xmvb::vb::NeoProblem;
+using xmvb::vb::NeoResult;
+
+void require(bool condition, const std::string& message) {
+  if (!condition) throw std::runtime_error(message);
+}
+
+void require_close(
+    double actual,
+    double reference,
+    double tolerance,
+    const std::string& message) {
+  const double scale = std::max({1.0, std::abs(actual), std::abs(reference)});
+  require(std::abs(actual - reference) <= tolerance * scale, message);
+}
+
+void require_close(
+    const Eigen::VectorXd& actual,
+    const Eigen::VectorXd& reference,
+    double tolerance,
+    const std::string& message) {
+  const double scale = std::max(1.0, reference.stableNorm());
+  require((actual - reference).stableNorm() <= tolerance * scale, message);
+}
+
+NeoProblem dense_problem(
+    const Eigen::MatrixXd& hessian,
+    const Eigen::MatrixXd& metric,
+    const Eigen::VectorXd& gradient) {
+  Eigen::LDLT<Eigen::MatrixXd> metric_factor(metric);
+  require(metric_factor.info() == Eigen::Success,
+          "reference metric factorization failed");
+  const Eigen::MatrixXd inverse_metric = metric_factor.solve(
+      Eigen::MatrixXd::Identity(metric.rows(), metric.cols()));
+  return NeoProblem(
+      gradient,
+      [hessian](const Eigen::VectorXd& vector) {
+        return hessian * vector;
+      },
+      [metric](const Eigen::VectorXd& vector) { return metric * vector; },
+      [inverse_metric](const Eigen::VectorXd& vector) {
+        return inverse_metric * vector;
+      });
+}
+
+double inverse_metric_norm(
+    const Eigen::VectorXd& vector,
+    const Eigen::MatrixXd& metric) {
+  return std::sqrt(std::max(
+      0.0, vector.dot(metric.ldlt().solve(vector))));
+}
+
+void verify_kkt(
+    const std::string& name,
+    const Eigen::MatrixXd& hessian,
+    const Eigen::MatrixXd& metric,
+    const Eigen::VectorXd& gradient,
+    double radius,
+    const NeoResult& result) {
+  require(result.converged(), name + ": solver did not converge");
+  require(result.step.allFinite(), name + ": non-finite step");
+  require(result.shift >= 0.0 && std::isfinite(result.shift),
+          name + ": invalid trust-region shift");
+
+  const Eigen::VectorXd hessian_step = hessian * result.step;
+  const Eigen::VectorXd metric_step = metric * result.step;
+  const Eigen::VectorXd residual =
+      gradient + hessian_step + result.shift * metric_step;
+  const double step_norm = std::sqrt(result.step.dot(metric_step));
+  const double residual_norm = inverse_metric_norm(residual, metric);
+  const double residual_scale = std::max(
+      1.0,
+      inverse_metric_norm(gradient, metric) +
+          inverse_metric_norm(hessian_step, metric) +
+          result.shift * step_norm);
+
+  require(step_norm <= radius * (1.0 + 2.0e-10),
+          name + ": step violates the physical trust region");
+  require(residual_norm <= 2.0e-9 * residual_scale,
+          name + ": KKT stationarity is not certified");
+  require_close(result.hessian_step, hessian_step, 2.0e-10,
+                name + ": returned Hessian image is inconsistent");
+  require_close(result.metric_step, metric_step, 2.0e-10,
+                name + ": returned metric image is inconsistent");
+  require_close(result.kkt_residual, residual, 2.0e-10,
+                name + ": returned KKT residual is inconsistent");
+  require_close(result.step_norm, step_norm, 2.0e-10,
+                name + ": returned physical norm is inconsistent");
+  require_close(result.residual_norm, residual_norm, 2.0e-9,
+                name + ": returned residual norm is inconsistent");
+
+  const double predicted =
+      -gradient.dot(result.step) - 0.5 * result.step.dot(hessian_step);
+  require_close(result.predicted_reduction, predicted, 2.0e-10,
+                name + ": predicted reduction is inconsistent");
+  require(predicted >= -2.0e-12 * residual_scale,
+          name + ": NEO step increases its quadratic model");
+
+  Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::MatrixXd> shifted_spectrum(
+      hessian + result.shift * metric, metric);
+  require(shifted_spectrum.info() == Eigen::Success,
+          name + ": shifted generalized eigensystem failed");
+  const double spectral_scale = std::max(
+      1.0, shifted_spectrum.eigenvalues().cwiseAbs().maxCoeff());
+  require(shifted_spectrum.eigenvalues().minCoeff() >=
+              -2.0e-10 * spectral_scale,
+          name + ": shifted Hessian is not positive semidefinite");
+
+  if (result.shift > 2.0e-10 * spectral_scale) {
+    require(std::abs(step_norm - radius) <= 2.0e-9 * radius,
+            name + ": complementarity fails on a shifted step");
+    require(result.boundary, name + ": boundary step was not classified");
+  }
+}
+
+void check_positive_definite_newton_limit() {
+  Eigen::Matrix2d hessian;
+  hessian << 2.0, 0.5,
+             0.5, 4.0;
+  const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+  const Eigen::Vector2d gradient(1.0, -2.0);
+  constexpr double radius = 2.0;
+
+  NeoOptions options;
+  options.trust_radius = radius;
+  options.relative_residual_tolerance = 1.0e-12;
+  const NeoResult result = solve_neo(
+      dense_problem(hessian, metric, gradient), options);
+  verify_kkt("positive-definite Newton limit", hessian, metric, gradient,
+             radius, result);
+
+  const Eigen::Vector2d newton = -hessian.ldlt().solve(gradient);
+  require_close(result.step, newton, 2.0e-10,
+                "interior NEO step differs from the Newton step");
+  require(result.shift <= 2.0e-10,
+          "interior positive-definite problem has a nonzero shift");
+  require(!result.boundary,
+          "interior positive-definite step was classified as a boundary step");
+}
+
+void check_generalized_metric_boundary() {
+  Eigen::Matrix2d hessian;
+  hessian << 3.5, 0.7,
+             0.7, 2.0;
+  Eigen::Matrix2d metric;
+  metric << 2.0, 0.35,
+            0.35, 0.8;
+  const Eigen::Vector2d gradient(1.2, -0.9);
+  constexpr double radius = 0.18;
+
+  NeoOptions options;
+  options.trust_radius = radius;
+  options.relative_residual_tolerance = 1.0e-12;
+  const NeoResult result = solve_neo(
+      dense_problem(hessian, metric, gradient), options);
+  verify_kkt("generalized-metric boundary", hessian, metric, gradient,
+             radius, result);
+  require(result.shift > 0.0,
+          "small generalized trust region did not produce a shift");
+
+  // At the returned gradient scale, the NEO step must come from the lowest
+  // root of the explicit augmented generalized eigenproblem.
+  require(result.gradient_scale > 0.0,
+          "boundary NEO result has no positive gradient scale");
+  Eigen::Matrix3d augmented = Eigen::Matrix3d::Zero();
+  augmented.block<1, 2>(0, 1) =
+      result.gradient_scale * gradient.transpose();
+  augmented.block<2, 1>(1, 0) = result.gradient_scale * gradient;
+  augmented.bottomRightCorner<2, 2>() = hessian;
+  Eigen::Matrix3d augmented_metric = Eigen::Matrix3d::Zero();
+  augmented_metric(0, 0) = 1.0;
+  augmented_metric.bottomRightCorner<2, 2>() = metric;
+  Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::Matrix3d> eigensolver(
+      augmented, augmented_metric);
+  require(eigensolver.info() == Eigen::Success,
+          "explicit augmented eigensystem failed");
+  require_close(result.augmented_eigenvalue,
+                eigensolver.eigenvalues().minCoeff(), 2.0e-9,
+                "NEO did not select the lowest augmented root");
+  require_close(result.augmented_eigenvalue, -result.shift, 2.0e-9,
+                "augmented root and KKT shift have inconsistent signs");
+
+  Eigen::Vector3d reconstructed;
+  reconstructed[0] = 1.0;
+  reconstructed.tail<2>() = result.gradient_scale * result.step;
+  const Eigen::Vector3d augmented_residual =
+      augmented * reconstructed -
+      result.augmented_eigenvalue * augmented_metric * reconstructed;
+  require(augmented_residual.stableNorm() <=
+              2.0e-9 * std::max(1.0, augmented.norm()),
+          "returned step does not satisfy the augmented eigenproblem");
+}
+
+void check_indefinite_regular_boundary() {
+  Eigen::Matrix2d hessian;
+  hessian << -1.4, 0.25,
+              0.25, 2.2;
+  const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+  const Eigen::Vector2d gradient(0.8, -0.45);
+  constexpr double radius = 0.6;
+
+  NeoOptions options;
+  options.trust_radius = radius;
+  options.relative_residual_tolerance = 1.0e-12;
+  const NeoResult result = solve_neo(
+      dense_problem(hessian, metric, gradient), options);
+  verify_kkt("indefinite regular boundary", hessian, metric, gradient,
+             radius, result);
+  require(result.shift > 0.0,
+          "indefinite problem did not stabilize its Hessian");
+  require(!result.hard_case,
+          "regular indefinite problem was classified as a hard case");
+}
+
+void check_hard_case() {
+  Eigen::Matrix2d hessian;
+  hessian << -2.0, 0.0,
+              0.0, 3.0;
+  const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+  const Eigen::Vector2d gradient(0.0, 1.0);
+  constexpr double radius = 1.0;
+
+  NeoOptions options;
+  options.trust_radius = radius;
+  options.relative_residual_tolerance = 1.0e-12;
+  const NeoResult result = solve_neo(
+      dense_problem(hessian, metric, gradient), options);
+  verify_kkt("hard case", hessian, metric, gradient, radius, result);
+  require(result.hard_case, "hard case was not detected");
+  require_close(result.shift, 2.0, 2.0e-10,
+                "hard case has the wrong spectral shift");
+  require_close(result.step[1], -0.2, 2.0e-10,
+                "hard-case pseudoinverse component is wrong");
+  require_close(std::abs(result.step[0]), std::sqrt(0.96), 2.0e-10,
+                "hard-case minimum-mode component is wrong");
+}
+
+}  // namespace
+
+int main() {
+  try {
+    check_positive_definite_newton_limit();
+    check_generalized_metric_boundary();
+    check_indefinite_regular_boundary();
+    check_hard_case();
+    return 0;
+  } catch (const std::exception& error) {
+    std::cerr << error.what() << '\n';
+    return 1;
+  }
+}

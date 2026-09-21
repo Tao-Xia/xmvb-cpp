@@ -110,6 +110,8 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/krylov/minres.cpp
   vbscf/optimization/globalization/line_search.cpp
   vbscf/optimization/driver/session.cpp
+  vbscf/optimization/neo/problem.cpp
+  vbscf/optimization/neo/solver.cpp
   vbscf/optimization/preconditioners/block_inverse_bfgs.cpp
   vbscf/optimization/preconditioners/transported_lbfgs.cpp
   vbscf/optimization/objective/reduced_hvp.cpp

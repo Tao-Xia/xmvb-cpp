@@ -13,6 +13,7 @@ set(_xmvb_vbscf_unit_targets
   test_eigen_response
   test_localized_representative_selector
   test_minres
+  test_neo
   test_normalized_orbital_curvature
   test_oeo_normalization_pullback
   test_opposite_spin_pair_graph
@@ -50,6 +51,9 @@ if (BUILD_TESTING)
   add_test(NAME eigen_response COMMAND test_eigen_response)
   add_test(NAME minres COMMAND test_minres)
   set_tests_properties(minres PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME neo COMMAND test_neo)
+  set_tests_properties(neo PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(
     NAME localized_representative_selector
