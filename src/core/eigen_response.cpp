@@ -214,6 +214,20 @@ std::uint64_t EigenResponseRecycleSpace::revision() const noexcept {
   return revision_;
 }
 
+const Eigen::MatrixXd& EigenResponseRecycleSpace::basis() const noexcept {
+  return basis_;
+}
+
+const Eigen::MatrixXd& EigenResponseRecycleSpace::projected_inverse() const {
+  if (basis_.cols() == 0) {
+    projected_inverse_.resize(0, 0);
+    projected_inverse_revision_ = revision_;
+  } else {
+    prepare_projected_inverse();
+  }
+  return projected_inverse_;
+}
+
 void EigenResponseRecycleSpace::clear() {
   basis_.resize(0, 0);
   operator_images_.resize(0, 0);

@@ -32,6 +32,22 @@ struct HvpComponents {
 };
 
 /**
+ * @brief Accepted-point low-rank structure-response Schur model.
+ *
+ * With orbital coupling columns @f$J=B^T W@f$ and projected response
+ * inverse @f$K^\dagger=(W^T C W)^\dagger@f$, the response-dependent orbital
+ * Hessian is @f$-J K^\dagger J^T@f$.
+ */
+struct ResponseLowRankModel {
+  std::uint64_t revision = 0;
+  Eigen::MatrixXd orbital_couplings;
+  Eigen::MatrixXd projected_inverse;
+
+  Eigen::MatrixXd apply(
+      const Eigen::Ref<const Eigen::MatrixXd>& orbital_directions) const;
+};
+
+/**
  * @brief Accepted-point matrix-free orbital second-order operator.
  *
  * This module is the home for exact direct-action orbital Hessian contributions
@@ -125,6 +141,9 @@ public:
 
   /** @brief Revision invalidating previously sampled relaxed HVP images. */
   std::uint64_t response_model_revision() const noexcept;
+
+  /** @brief Builds the current exact low-rank response Schur model. */
+  ResponseLowRankModel response_low_rank_model() const;
 
   Diagnostics diagnostics() const;
 

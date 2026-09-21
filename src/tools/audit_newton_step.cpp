@@ -480,6 +480,8 @@ void run_frozen_response_audit(
   const Eigen::MatrixXd seed_images = operation.apply_reduced_batch(
       probes.leftCols(2));
   const std::uint64_t seed_revision = operation.response_model_revision();
+  const ResponseLowRankModel seed_model =
+      operation.response_low_rank_model();
   HvpComponents frozen;
   frozen.freeze_structure_response = true;
   require_model_identity("response_model_seed_replay", seed_images,
@@ -493,12 +495,29 @@ void run_frozen_response_audit(
   const Eigen::MatrixXd added_image = operation.apply_reduced_batch(
       probes.rightCols(1));
   const std::uint64_t revision = operation.response_model_revision();
+  const ResponseLowRankModel enriched_model =
+      operation.response_low_rank_model();
   const Eigen::MatrixXd images = operation.apply_reduced_batch(probes, frozen);
+  const Eigen::MatrixXd low_rank_refresh = seed_images +
+      enriched_model.apply(probes.leftCols(2)) -
+      seed_model.apply(probes.leftCols(2));
   std::cout << "response_model_seed_revision = " << seed_revision << '\n'
             << "response_model_enriched_revision = " << revision << '\n'
             << "response_model_probe_count = " << probes.cols() << '\n'
             << "response_model_enrichment_old_images_change = "
-            << (images.leftCols(2) - seed_images).stableNorm() << '\n';
+            << (images.leftCols(2) - seed_images).stableNorm() << '\n'
+            << "response_model_low_rank_refresh_relative = "
+            << relative_matrix_error(
+                   low_rank_refresh - images.leftCols(2),
+                   images.leftCols(2)) << '\n';
+  std::cout << "response_model_seed_low_rank = "
+            << seed_model.orbital_couplings.cols() << '\n'
+            << "response_model_enriched_low_rank = "
+            << enriched_model.orbital_couplings.cols() << '\n';
+  require_model_identity(
+      "response_model_low_rank_refresh",
+      low_rank_refresh,
+      images.leftCols(2));
   require_model_identity("response_model_new_column", images.rightCols(1),
       added_image);
   const Eigen::MatrixXd curvature = probes.transpose() * images;

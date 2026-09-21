@@ -2,6 +2,13 @@
 
 namespace xmvb::vb {
 
+bool ReducedHvp::update_images(
+    std::uint64_t,
+    const Eigen::Ref<const Eigen::MatrixXd>&,
+    Eigen::MatrixXd*) {
+  return false;
+}
+
 Eigen::MatrixXd ReducedHvp::apply_frozen_batch(
     const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) {
   return apply_batch(reduced_directions);

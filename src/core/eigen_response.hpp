@@ -38,6 +38,12 @@ public:
   std::uint64_t revision() const noexcept;
   void clear();
 
+  /** @brief Orthonormal columns spanning the frozen response model. */
+  const Eigen::MatrixXd& basis() const noexcept;
+
+  /** @brief Pseudoinverse of the symmetric projected response operator. */
+  const Eigen::MatrixXd& projected_inverse() const;
+
   /**
    * @brief Applies the frozen symmetric Galerkin inverse to any finite RHS.
    *

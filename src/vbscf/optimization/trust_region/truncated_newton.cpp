@@ -842,15 +842,21 @@ TruncatedNewtonStepResult solve_nonredundant_truncated_newton_step(
   std::uint64_t image_revision = hvp->model_revision();
   const auto refresh_images = [&]() {
     Eigen::MatrixXd directions(rhs.size(), basis.size() + 1);
+    Eigen::MatrixXd images(rhs.size(), basis.size() + 1);
     directions.col(0) = baseline_step;
+    images.col(0) = baseline_hessian_step;
     for (std::size_t column = 0; column < basis.size(); ++column) {
       directions.col(static_cast<Eigen::Index>(column + 1)) = basis[column];
+      images.col(static_cast<Eigen::Index>(column + 1)) =
+          hessian_basis[column];
     }
     // New directions have already enriched the response space. Freeze that
     // model while refreshing the baseline and old correction images before
     // any Ritz/BFGS/KKT operation.
     const std::uint64_t revision = hvp->model_revision();
-    const Eigen::MatrixXd images = hvp->apply_frozen_batch(directions);
+    if (!hvp->update_images(image_revision, directions, &images)) {
+      images = hvp->apply_frozen_batch(directions);
+    }
     if (images.rows() != directions.rows() ||
         images.cols() != directions.cols() || !images.allFinite() ||
         hvp->model_revision() != revision) {

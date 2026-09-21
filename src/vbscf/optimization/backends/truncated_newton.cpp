@@ -40,15 +40,42 @@ public:
     if (exact_operator_ == nullptr) {
       throw std::invalid_argument("exact HVP operator must not be null");
     }
+    response_model_ = exact_operator_->response_low_rank_model();
   }
 
   Eigen::VectorXd apply(const Eigen::VectorXd& direction) override {
+    capture_current_response_model();
     return exact_operator_->apply_reduced(direction);
   }
 
   Eigen::MatrixXd apply_batch(
       const Eigen::Ref<const Eigen::MatrixXd>& directions) override {
+    capture_current_response_model();
     return exact_operator_->apply_reduced_batch(directions);
+  }
+
+  bool update_images(
+      std::uint64_t previous_revision,
+      const Eigen::Ref<const Eigen::MatrixXd>& directions,
+      Eigen::MatrixXd* images) override {
+    if (images == nullptr || images->rows() != directions.rows() ||
+        images->cols() != directions.cols() || !images->allFinite() ||
+        response_model_.revision != previous_revision) {
+      return false;
+    }
+    ResponseLowRankModel revised =
+        exact_operator_->response_low_rank_model();
+    if (revised.revision != exact_operator_->response_model_revision()) {
+      throw std::runtime_error(
+          "response low-rank model changed while updating Hessian images");
+    }
+    *images += revised.apply(directions) - response_model_.apply(directions);
+    if (!images->allFinite()) {
+      throw std::runtime_error(
+          "response low-rank Hessian image update is not finite");
+    }
+    response_model_ = std::move(revised);
+    return true;
   }
 
   Eigen::MatrixXd apply_frozen_batch(
@@ -70,7 +97,18 @@ public:
   }
 
 private:
+  void capture_current_response_model() {
+    const std::uint64_t revision = exact_operator_->response_model_revision();
+    if (response_model_.revision == revision) return;
+    response_model_ = exact_operator_->response_low_rank_model();
+    if (response_model_.revision != revision) {
+      throw std::runtime_error(
+          "response low-rank model revision is inconsistent");
+    }
+  }
+
   const ExactHvpOperator* exact_operator_;
+  ResponseLowRankModel response_model_;
 };
 
 }  // namespace

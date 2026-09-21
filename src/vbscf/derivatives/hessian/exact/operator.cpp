@@ -37,6 +37,10 @@ std::uint64_t ExactHvpOperator::response_model_revision() const noexcept {
   return state_->response_model_revision();
 }
 
+ResponseLowRankModel ExactHvpOperator::response_low_rank_model() const {
+  return state_->response_low_rank_model();
+}
+
 std::uint64_t ExactHvpOperator::State::response_model_revision() const noexcept {
   return accepted_outer_response_context_ != nullptr
       ? accepted_outer_response_context_->selected_state_eigen_response_operator

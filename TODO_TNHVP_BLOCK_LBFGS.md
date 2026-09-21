@@ -115,17 +115,14 @@ The next implementation sequence is:
 5. [ ] Separate global sufficient-decrease steps from locally certified Newton
    steps. Account for HVP error, use covector norms, and include the trust
    shift in correction preconditioning. Do not reinstate fixed HVP budgets.
-6. [ ] Remove repeated full Gram/spectral rebuilds and record solver-only time,
-   stopping reason, actual minimum Ritz value, and fresh-certificate cost.
-   The consistency repair currently replays every retained full HVP after a
-   response-space revision. With bounded-width expansion to $m$ orbital
-   directions, this can require $O(m^2)$ full-HVP work, including unchanged
-   core terms. The frozen Galerkin factorization is also rebuilt for each RHS.
-   Cache the factorization by model revision and update only the changing
-   response contribution; do not restore inconsistent old images. Include
-   scalar replay in work counters: `exact_hvp_block_actions` alone omits it.
-   CERRAS step 7 reaches 77 retained directions and spends 545.39 s in outer
-   response; eliminate repeated work before claiming this repair faster.
+6. [ ] Record solver-only time, stopping reason, actual minimum Ritz value, and
+   fresh-certificate cost. The repeated full-HVP refresh itself is removed:
+   the frozen projected response inverse is cached by revision and retained
+   orbital images are updated with the exact low-rank Schur-model difference.
+   Newly admitted response columns alone require structure-to-orbital adjoint
+   contractions. A 241 regression matches complete frozen replay. Dedicated
+   counters and the large-system timing/RSS panel remain required before this
+   item can be closed.
 7. [ ] Rerun the nine-system panel with isolated output directories, inspect
    stationary-point/energy differences, and then collect repeated timings and
    peak RSS. Accept algorithm changes only after these gates pass.

@@ -738,4 +738,93 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
   return response;
 }
 
+Eigen::VectorXd ExactHvpOperator::State::apply_structure_response_adjoint(
+    const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+    const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const {
+  const int n_structures = accepted_point_context_->n_structures;
+  const int n_states = static_cast<int>(
+      accepted_point_context_->selected_state_indices.size());
+  if (coefficient_response.rows() != n_structures ||
+      coefficient_response.cols() != n_states ||
+      state_multipliers.rows() != n_states ||
+      state_multipliers.cols() != n_states ||
+      !coefficient_response.allFinite() ||
+      !state_multipliers.allFinite()) {
+    throw std::invalid_argument(
+        "structure-response adjoint has incompatible dimensions or values");
+  }
+  if (accepted_point_context_->normalized_state_weights.size() !=
+      static_cast<std::size_t>(n_states)) {
+    throw std::logic_error(
+        "structure-response adjoint is missing selected-state weights");
+  }
+  if (!supports_analytic_core_model() ||
+      accepted_orbital_preparation_cache_ == nullptr) {
+    throw std::logic_error(
+        "structure-response adjoint requires the analytic orbital pullback");
+  }
+
+  const int n_active =
+      current_input_->orbital_preparation_input.n_active_orbitals;
+  const SelectedStateDeterminantMatrices directional_selected_states =
+      build_selected_state_determinant_matrices_from_selected_columns(
+          current_input_->structure_data,
+          coefficient_response,
+          accepted_point_context_->selected_state_indices,
+          accepted_point_context_->normalized_state_weights,
+          accepted_point_context_->same_spin_pair_cache);
+
+  const StructureAction* structure_action =
+      outer_response_context()
+          .selected_state_eigen_response_operator.structure_action;
+  if (structure_action == nullptr) {
+    throw std::logic_error(
+        "structure-response adjoint requires a structure action");
+  }
+
+  ActiveSpaceGradientDirection active_gradient;
+  if (structure_action->supports_integral_direction()) {
+    if (!accepted_point_context_->structure_adjoint_state.has_value()) {
+      accepted_point_context_->structure_adjoint_state =
+          structure_action->prepare_active_adjoint(
+              accepted_point_context_->selected_state_matrices,
+              accepted_point_context_->selected_state_energies);
+    }
+    active_gradient = make_active_gradient_direction(
+        structure_action->active_integral_response_adjoint(
+            *accepted_point_context_->structure_adjoint_state,
+            directional_selected_states,
+            state_multipliers),
+        n_active);
+  } else {
+    active_gradient = make_zero_active_space_gradient_direction(n_active);
+    add_selected_subspace_response_to_active_space_gradient(
+        *current_input_,
+        *accepted_point_context_,
+        directional_selected_states,
+        state_multipliers,
+        &active_gradient);
+  }
+  validate_outer_response_active_gradient(active_gradient);
+
+  const std::vector<double> orbital_value_gradient =
+      build_orbital_value_gradient_from_active_space_gradient_direction(
+          *current_input_,
+          *accepted_point_context_,
+          active_gradient,
+          *accepted_orbital_preparation_cache_,
+          accepted_ri_two_electron_cache_.has_value()
+              ? nullptr
+              : &accepted_exact_two_electron_cache_,
+          accepted_ri_two_electron_cache_.has_value()
+              ? &*accepted_ri_two_electron_cache_
+              : nullptr,
+          accepted_ri_factorization_,
+          &outer_response_symmetric_active_overlap_gradient_workspace_,
+          &outer_response_symmetric_active_one_electron_gradient_workspace_);
+  const Eigen::VectorXd packed =
+      parameter_view_.gather_from_full(orbital_value_gradient);
+  return nonredundant_space_->project_reduced_gradient(packed);
+}
+
 }  // namespace xmvb::vb

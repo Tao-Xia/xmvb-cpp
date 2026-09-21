@@ -44,6 +44,7 @@ struct ExactHvpOperator::State {
 
   bool supports_analytic_core_model() const noexcept;
   std::uint64_t response_model_revision() const noexcept;
+  ResponseLowRankModel response_low_rank_model() const;
   Diagnostics diagnostics() const;
 
 private:
@@ -69,6 +70,10 @@ private:
       const ExactCtxPairMatrix* precomputed_directional_pair_products,
       const Eigen::MatrixXd* precomputed_two_electron_fixed_adjoint,
       const PrecomputedDirection* precomputed_direction) const;
+
+  Eigen::VectorXd apply_structure_response_adjoint(
+      const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
+      const Eigen::Ref<const Eigen::MatrixXd>& state_multipliers) const;
 
   struct ApplyTimingTotals {
     std::size_t apply_count = 0;
@@ -140,6 +145,8 @@ private:
   std::unique_ptr<AcceptedOrbitalPreparationCache> accepted_orbital_preparation_cache_;
   mutable std::unique_ptr<AcceptedOuterResponseContext>
       accepted_outer_response_context_;
+  mutable std::vector<Eigen::MatrixXd>
+      response_orbital_couplings_by_state_;
   mutable ApplyTimingTotals apply_timing_totals_;
 };
 

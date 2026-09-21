@@ -861,14 +861,14 @@ The separate response-residual-to-orbital-HVP error budget and global/local
 Newton stopping contract remain open; successful consistency qualification
 does not establish overall TNHVP performance acceptance.
 
-### 10.5 Cost limitation of the correctness-first refresh
+### 10.5 Incremental low-rank replacement of the correctness-first refresh
 
-The production refresh currently reevaluates the complete HVP for every retained
-orbital direction after each response-model revision. This recomputes unchanged
-direct-core, fixed-upstream, and local-active terms as well as the changed
-structure response. If the orbital subspace grows in blocks of width $b$ to
-dimension $m$, and each block changes the response model, the cumulative replay
-count is
+The original correctness-first refresh reevaluated the complete HVP for every
+retained orbital direction after each response-model revision. This recomputed
+unchanged direct-core, fixed-upstream, and local-active terms as well as the
+changed structure response. If the orbital subspace grows in blocks of width
+$b$ to dimension $m$, and each block changes the response model, the cumulative
+replay count was
 
 $$
 \sum_{j=1}^{m/b} jb = O(m^2/b),
@@ -882,9 +882,41 @@ the long molecular runs.
 Likewise, each frozen Galerkin application currently rebuilds $W^TDW$ and its
 spectral inverse, even when the model revision has not changed. With response
 rank $r$, these repeated operations cost $O(n_{\mathrm{str}}r^2+r^3)$ per RHS.
-The next implementation should cache this factorization by revision and update
-only the response-dependent HVP contribution, while preserving the shared-model
-identities. This repair intentionally does not claim that optimization complete.
+The projected inverse is now cached once per response-space revision. Let
+$W$ contain the orthonormal recycled structure-response vectors, let
+$C$ be the projected structure KKT operator, and define
+
+$$
+K=W^T C W,
+\qquad
+J=B^T W.
+$$
+
+The frozen response contribution in orbital coordinates is
+
+$$
+R_W=-J K^\dagger J^T.
+$$
+
+The physical selected-state response coordinates use the metric scale
+$\sqrt{2w_I}$ for a state of normalized weight $w_I$; consequently each
+physical adjoint column is divided by this scale before it enters $J$. This is
+required by the coupled orbital--structure Hessian metric and is not an
+empirical damping factor.
+
+For an old model $W_o$ and an enriched model $W_n$, retained orbital directions
+$Q$ are updated exactly within the two frozen Galerkin models by
+
+$$
+(H_nQ)=(H_oQ)+(R_{W_n}-R_{W_o})Q.
+$$
+
+Only newly admitted response basis columns require new structure-to-orbital
+adjoint contractions. The unchanged complete HVP is no longer replayed. A
+241 Davidson regression verifies this incremental image against a complete
+frozen-HVP reevaluation at the existing numerical-identity tolerance. This
+repair removes the quadratic replay count above; it does not by itself claim
+that the complete TNHVP optimizer is performance-optimal.
 
 The current trace field `exact_hvp_block_actions` counts batched calls, not the
 scalar frozen replay calls. Total HVP/response timings include the replay, but
