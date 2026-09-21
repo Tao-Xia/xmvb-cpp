@@ -953,41 +953,19 @@ single-thread contractions competing for memory bandwidth, and was slower on
 the same 32-core node.  No such path is retained.  The optimization target is
 instead the repeated response action itself.
 
-The direct-CI action already accepts multiple vectors, but the structure layer
-previously forced every block through scalar recursion.  The revised action
-uses a storage-derived tile width
-
-$$
-b_{\mathrm{tile}}
-=\max\left(1,
-\min\left[b,
-\left\lfloor\frac{M_{\mathrm{operator}}}
-{M_{\mathrm{vector}}}\right\rfloor\right]
-\right),
-$$
-
-where $M_{\mathrm{vector}}$ includes the two determinant-product work matrices
-and the two structure images for one vector.  Thus the temporary block remains
-$O(M_{\mathrm{operator}})$ while small Davidson and response blocks share the
-structure expansion, exterior transforms, sigma traversal, and contraction.
-Within each retained tile, the direct-CI sigma kernel traverses every
-determinant-product connection graph once and applies each
-coefficient-independent Slater--Condon matrix element to all block vectors.
-The tiling and graph reuse are exact; neither changes the response tolerance
-or introduces a molecular parameter.
+True direct-CI block tiling and a connection-major sigma traversal were also
+tested and rejected.  Tiling alone completed CERRAS in 257.59 s versus
+254.05 s for the retained scalar-streamed action, while peak RSS increased
+from 2061824 to 2113656 KiB.  Reusing each connection across block vectors was
+slower still because the resulting noncontiguous block writes lost more cache
+locality than the graph traversal saved.  Both experimental paths were
+deleted; the production code retains the faster scalar-streamed action.
 
 The trace now records newly admitted response rank, low-rank construction wall
 time, its structure-action component, and its adjoint component.  Low-rank
 construction is charged to both the exact-HVP and outer-response totals even
 though it occurs between matrix-vector products; accepted-point accounting
 therefore covers the complete second-order model.
-
-The completed CERRAS trace gives a concrete warning: step 7 retains 77 orbital
-directions and consumes 588.34 s, including 581.11 s in HVPs and 545.39 s in
-outer response. These are nested times, not additive categories. Its 39
-reported batched HVP calls exclude scalar replay; the 3383 reported response
-actions do not isolate projected factorization time. Thus CERRAS convergence
-qualifies the repaired equations on that case, not acceptable performance.
 
 ## References
 
