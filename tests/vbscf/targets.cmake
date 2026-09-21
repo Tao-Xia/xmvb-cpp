@@ -15,6 +15,7 @@ set(_xmvb_vbscf_unit_targets
   test_localized_representative_selector
   test_minres
   test_neo
+  test_neo_globalization
   test_normalized_orbital_curvature
   test_oeo_normalization_pullback
   test_opposite_spin_pair_graph
@@ -58,6 +59,9 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME neo COMMAND test_neo)
   set_tests_properties(neo PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME neo_globalization COMMAND test_neo_globalization)
+  set_tests_properties(neo_globalization PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(
     NAME localized_representative_selector

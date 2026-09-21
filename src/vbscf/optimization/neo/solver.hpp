@@ -43,12 +43,22 @@ struct NeoResult {
   double residual_norm = 0.0;
   /** Scale-aware Euclidean accuracy requested for `residual_norm`. */
   double residual_target = 0.0;
+  /** Full-space residual of the lowest generalized-Hessian Ritz pair. */
+  double curvature_residual_norm = 0.0;
+  /** Requested accuracy for `curvature_residual_norm`. */
+  double curvature_residual_target = 0.0;
   double augmented_eigenvalue = 0.0;
   double gradient_scale = 0.0;
   int iterations = 0;
   int hessian_actions = 0;
   bool boundary = false;
   bool hard_case = false;
+  /**
+   * Whether shifted-Hessian positivity has a rigorous global certificate.
+   * Otherwise it uses the standard iterative-eigensolver assumption that the
+   * generic starting probe overlaps the lowest eigenspace.
+   */
+  bool global_curvature_certified = false;
   /** Whether the augmented vector represents the complete NEO step. */
   bool augmented_certificate_valid = false;
   NeoStopReason stop_reason = NeoStopReason::SubspaceLimit;
@@ -65,8 +75,12 @@ struct NeoResult {
  * The method builds a Euclidean-orthonormal action subspace, whitens its small
  * projected physical metric, solves the projected norm-constrained quadratic
  * problem, and expands with the KKT or lowest-curvature Ritz residual. A
- * successful return is certified by
- * an explicit full-space KKT residual in a scale-aware Euclidean norm. The
+ * successful return requires an explicit full-space KKT residual and a
+ * converged full-space residual of the lowest generalized-Hessian Ritz pair.
+ * As in matrix-free Davidson/Lanczos, lowest-root identification assumes that
+ * the generic starting probe overlaps the lowest eigenspace. A complete basis
+ * or a caller-supplied spectral lower bound supplies the stronger rigorous
+ * global certificate reported in `NeoResult`. The
  * physical metric enters only through the trust-region norm and projected
  * generalized eigenproblem; an optional preconditioner only proposes new
  * subspace directions.

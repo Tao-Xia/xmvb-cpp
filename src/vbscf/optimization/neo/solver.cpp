@@ -1,6 +1,7 @@
 #include "vbscf/optimization/neo/solver.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -68,11 +69,19 @@ Eigen::MatrixXd columns(const std::vector<Eigen::VectorXd>& vectors) {
   return matrix;
 }
 
-Eigen::VectorXd deterministic_probe(Eigen::Index size) {
+std::uint64_t splitmix64(std::uint64_t value) {
+  value += 0x9e3779b97f4a7c15ULL;
+  value = (value ^ (value >> 30U)) * 0xbf58476d1ce4e5b9ULL;
+  value = (value ^ (value >> 27U)) * 0x94d049bb133111ebULL;
+  return value ^ (value >> 31U);
+}
+
+Eigen::VectorXd generic_probe(Eigen::Index size) {
   Eigen::VectorXd probe(size);
   for (Eigen::Index j = 0; j < size; ++j) {
-    probe[j] = (j % 2 == 0 ? 1.0 : -1.0) *
-        (1.0 + static_cast<double>(j) / static_cast<double>(size));
+    const std::uint64_t bits = splitmix64(static_cast<std::uint64_t>(j));
+    const double unit = static_cast<double>(bits >> 11U) * 0x1.0p-53;
+    probe[j] = 2.0 * unit - 1.0;
   }
   return probe;
 }
@@ -134,18 +143,18 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
   if (!append_direction(
           problem, std::move(first), &basis, &result.hessian_actions)) {
     append_direction(
-        problem, deterministic_probe(problem.size()), &basis,
+        problem, generic_probe(problem.size()), &basis,
         &result.hessian_actions);
   }
   if (basis.vectors.empty()) {
     throw std::runtime_error("NEO could not construct a metric basis");
   }
 
-  // A second, gradient-independent seed exposes negative curvature in exact
-  // hard cases where the gradient Krylov sequence cannot reach that subspace.
+  // A reproducible generic seed supplies the nonzero-overlap assumption used
+  // by matrix-free lowest-root Davidson/Lanczos methods.
   if (maximum_dimension > 1) {
     append_direction(
-        problem, deterministic_probe(problem.size()), &basis,
+        problem, generic_probe(problem.size()), &basis,
         &result.hessian_actions);
   }
 
@@ -229,8 +238,8 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
     const Eigen::VectorXd curvature_residual =
         minimum_hessian_image -
         spectrum.eigenvalues()[0] * minimum_metric_image;
-    const double curvature_residual_norm = curvature_residual.norm();
-    const double curvature_target =
+    result.curvature_residual_norm = curvature_residual.norm();
+    result.curvature_residual_target =
         options.relative_residual_tolerance * std::max({
             1.0,
             minimum_hessian_image.norm(),
@@ -243,7 +252,7 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
 
     const bool stationary = result.residual_norm <= result.residual_target;
     const bool curvature_converged =
-        curvature_residual_norm <= curvature_target;
+        result.curvature_residual_norm <= result.curvature_residual_target;
     const bool shifted_positive =
         spectrum.eigenvalues()[0] + result.shift >= -positivity_tolerance;
     const bool complete_basis =
@@ -251,10 +260,11 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
     const bool lower_bound_certifies = problem.hessian_lower_bound() &&
         *problem.hessian_lower_bound() + result.shift >=
             -positivity_tolerance;
-    const bool global_curvature_certified =
+    result.global_curvature_certified =
         complete_basis || lower_bound_certifies;
     if (stationary && curvature_converged && shifted_positive &&
-        global_curvature_certified) {
+        (result.global_curvature_certified ||
+         !problem.hessian_lower_bound())) {
       result.stop_reason = NeoStopReason::Converged;
       set_augmented_certificate(problem, minimum_ritz_vector, &result);
       return result;
@@ -289,7 +299,9 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
     }
     if (!expanded) {
       result.stop_reason = stationary && curvature_converged &&
-              shifted_positive && global_curvature_certified
+              shifted_positive &&
+              (result.global_curvature_certified ||
+               !problem.hessian_lower_bound())
           ? NeoStopReason::Converged
           : NeoStopReason::NumericalFailure;
       set_augmented_certificate(problem, minimum_ritz_vector, &result);

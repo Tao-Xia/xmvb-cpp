@@ -105,8 +105,7 @@ StructureTangentOperator::StructureTangentOperator(
     throw std::invalid_argument(
         "selected-state metric images are linearly dependent");
   }
-  constraint_units_ = factor.householderQ() *
-      Eigen::MatrixXd::Identity(n_structures_, n_states_);
+  constraint_qr_.compute(selected_images.overlap);
 }
 
 int StructureTangentOperator::n_structures() const noexcept {
@@ -115,6 +114,10 @@ int StructureTangentOperator::n_structures() const noexcept {
 
 int StructureTangentOperator::n_states() const noexcept {
   return n_states_;
+}
+
+int StructureTangentOperator::tangent_size() const noexcept {
+  return (n_structures_ - n_states_) * n_states_;
 }
 
 void StructureTangentOperator::validate_shape(
@@ -133,8 +136,44 @@ void StructureTangentOperator::project_in_place(
     throw std::invalid_argument("structure tangent output must not be null");
   }
   validate_shape(*coefficients);
-  coefficients->noalias() -= constraint_units_ *
-      (constraint_units_.transpose() * (*coefficients));
+  Eigen::MatrixXd transformed =
+      constraint_qr_.householderQ().adjoint() * (*coefficients);
+  transformed.topRows(n_states_).setZero();
+  *coefficients = constraint_qr_.householderQ() * transformed;
+}
+
+Eigen::VectorXd StructureTangentOperator::coordinates(
+    const StructureTangent& tangent) const {
+  validate_shape(tangent.scaled_coefficients);
+  const Eigen::MatrixXd transformed =
+      constraint_qr_.householderQ().adjoint() *
+      tangent.scaled_coefficients;
+  const double tolerance = 1024.0 * std::numeric_limits<double>::epsilon() *
+      std::max(1, n_structures_ * n_states_) *
+      std::max(1.0, tangent.scaled_coefficients.norm());
+  if (transformed.topRows(n_states_).norm() > tolerance) {
+    throw std::invalid_argument("structure tangent is not horizontal");
+  }
+  const Eigen::MatrixXd independent = transformed.bottomRows(
+      n_structures_ - n_states_);
+  return Eigen::Map<const Eigen::VectorXd>(
+      independent.data(), independent.size());
+}
+
+StructureTangent StructureTangentOperator::expand(
+    const Eigen::VectorXd& coordinates) const {
+  if (coordinates.size() != tangent_size() || !coordinates.allFinite()) {
+    throw std::invalid_argument(
+        "structure coordinates have incompatible dimensions or values");
+  }
+  Eigen::MatrixXd transformed =
+      Eigen::MatrixXd::Zero(n_structures_, n_states_);
+  const Eigen::Index horizontal_rows = n_structures_ - n_states_;
+  const Eigen::Map<const Eigen::MatrixXd> independent(
+      coordinates.data(), horizontal_rows, n_states_);
+  transformed.bottomRows(horizontal_rows) = independent;
+  return StructureTangent{
+      constraint_qr_.householderQ() * transformed};
 }
 
 StructureTangent StructureTangentOperator::project(

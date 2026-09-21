@@ -3,6 +3,7 @@
 #include <memory>
 
 #include <Eigen/Core>
+#include <Eigen/QR>
 
 namespace xmvb::vb {
 
@@ -54,6 +55,15 @@ public:
   int n_structures() const noexcept;
   int n_states() const noexcept;
 
+  /** @brief Number of independent horizontal structure coordinates. */
+  int tangent_size() const noexcept;
+
+  /** @brief Packs a horizontal tangent into independent coordinates. */
+  Eigen::VectorXd coordinates(const StructureTangent& tangent) const;
+
+  /** @brief Expands independent coordinates into a horizontal tangent. */
+  StructureTangent expand(const Eigen::VectorXd& coordinates) const;
+
   /** @brief Projects scaled coefficient columns onto the horizontal tangent. */
   StructureTangent project(
       const Eigen::Ref<const Eigen::MatrixXd>& scaled_coefficients) const;
@@ -97,7 +107,7 @@ private:
   Eigen::VectorXd coordinate_scales_;
   Eigen::MatrixXd selected_;
   Eigen::MatrixXd selected_metric_inverse_;
-  Eigen::MatrixXd constraint_units_;
+  Eigen::HouseholderQR<Eigen::MatrixXd> constraint_qr_;
   int n_structures_ = 0;
   int n_states_ = 0;
 };

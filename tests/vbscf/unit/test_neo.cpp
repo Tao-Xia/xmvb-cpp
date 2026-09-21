@@ -85,6 +85,9 @@ void verify_kkt(
           name + ": step violates the physical trust region");
   require(residual_norm <= 2.0e-9 * residual_scale,
           name + ": KKT stationarity is not certified");
+  require(result.curvature_residual_norm <=
+              2.0 * result.curvature_residual_target,
+          name + ": lowest-root Ritz residual is not converged");
   require_close(result.hessian_step, hessian_step, 2.0e-10,
                 name + ": returned Hessian image is inconsistent");
   require_close(result.metric_step, metric_step, 2.0e-10,
@@ -294,6 +297,8 @@ void check_hidden_negative_curvature() {
                 "hidden negative curvature has the wrong shift");
   require(complete.hard_case,
           "gradient-orthogonal hidden curvature was not a hard case");
+  require(complete.global_curvature_certified,
+          "a complete basis lacks its global curvature certificate");
 }
 
 void check_certified_lower_bounds() {
@@ -304,13 +309,13 @@ void check_certified_lower_bounds() {
   NeoOptions options;
   options.trust_radius = 1.0 / 102.0;
   options.relative_residual_tolerance = 1.0e-12;
-  options.maximum_subspace_dimension = 2;
+  options.maximum_subspace_dimension = 1;
 
   const NeoResult tight = solve_neo(
       dense_problem(hessian, metric, gradient, -100.0), options);
   verify_kkt("tight certified lower bound", hessian, metric, gradient,
              options.trust_radius, tight);
-  require(tight.hessian_actions == 2,
+  require(tight.hessian_actions == 1,
           "a tight certified bound did not avoid the hidden-mode action");
   require_close(tight.shift, 100.0, 2.0e-10,
                 "tight lower-bound solve has the wrong shift");
@@ -321,6 +326,31 @@ void check_certified_lower_bounds() {
           "an insufficient lower bound falsely certified global curvature");
   require(!conservative.converged(),
           "an insufficient lower bound reported convergence");
+}
+
+void check_scalable_lowest_root_convergence() {
+  constexpr int dimension = 40;
+  Eigen::MatrixXd hessian = Eigen::MatrixXd::Identity(dimension, dimension);
+  hessian.diagonal().head(20).array() = 2.0;
+  hessian.diagonal().tail(19).array() = 4.0;
+  hessian(dimension - 1, dimension - 1) = -3.0;
+  const Eigen::MatrixXd metric = Eigen::MatrixXd::Identity(
+      dimension, dimension);
+  Eigen::VectorXd gradient = Eigen::VectorXd::Zero(dimension);
+  gradient.head(20).setOnes();
+
+  NeoOptions options;
+  options.trust_radius = 0.25;
+  options.relative_residual_tolerance = 1.0e-11;
+  options.maximum_subspace_dimension = 4;
+  const NeoResult result = solve_neo(
+      dense_problem(hessian, metric, gradient), options);
+  verify_kkt("scalable lowest-root convergence", hessian, metric, gradient,
+             options.trust_radius, result);
+  require(result.hessian_actions < dimension,
+          "lowest-root convergence unnecessarily built the full space");
+  require(!result.global_curvature_certified,
+          "an incomplete Davidson space claimed a rigorous global certificate");
 }
 
 void check_nonsymmetric_hessian_rejected() {
@@ -351,6 +381,7 @@ int main() {
     check_hard_case();
     check_hidden_negative_curvature();
     check_certified_lower_bounds();
+    check_scalable_lowest_root_convergence();
     check_nonsymmetric_hessian_rejected();
     return 0;
   } catch (const std::exception& error) {

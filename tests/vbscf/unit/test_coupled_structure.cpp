@@ -14,6 +14,10 @@
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
+#include "vbscf/optimization/neo/coordinates.hpp"
+#include "vbscf/optimization/trust_region/retraction.hpp"
+#include "vbscf/orbitals/charts/chart.hpp"
+#include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/structures/assembly/action.hpp"
 
 namespace {
@@ -129,6 +133,26 @@ double block_dot(
   return (left.array() * right.array()).sum();
 }
 
+xmvb::vb::OrbitalPreparationInput make_orbital_input() {
+  xmvb::vb::OrbitalPreparationInput input;
+  input.n_basis_functions = 2;
+  input.n_orbitals = 1;
+  input.n_active_orbitals = 1;
+  input.n_active_electrons = 1;
+  input.n_total_electrons = 1;
+  input.orbital_type = 1;
+  input.ao_overlap_matrix.resize(2, 2);
+  input.ao_overlap_matrix << 1.0, 0.12,
+                             0.12, 1.18;
+  Eigen::Vector2d orbital(1.0, 0.28);
+  orbital /= std::sqrt(
+      orbital.dot(input.ao_overlap_matrix * orbital));
+  input.orbital_basis_counts = {2};
+  input.orbital_value_table = {orbital[0], orbital[1]};
+  input.orbital_basis_index_table = {1, 2};
+  return input;
+}
+
 void check_single_state(const StructureFixture& fixture) {
   const auto accepted = accepted_point(fixture, 1, {1.0});
   const xmvb::vb::StructureTangentOperator structure(
@@ -224,6 +248,83 @@ void check_unequal_weights_rejected(const StructureFixture& fixture) {
   require(rejected, "unequal multistate structure tangent was accepted");
 }
 
+void check_coupled_neo_coordinates(const StructureFixture& fixture) {
+  const auto accepted = accepted_point(fixture, 2, {0.5, 0.5});
+  const xmvb::vb::StructureTangentOperator structure(
+      accepted, fixture.action);
+
+  const xmvb::vb::OrbitalPreparationInput input = make_orbital_input();
+  const xmvb::vb::SparseParameterLayout layout(input);
+  Eigen::Matrix<double, 2, 1> orbitals;
+  orbitals << input.orbital_value_table[0], input.orbital_value_table[1];
+  const xmvb::vb::OrbitalChart chart(
+      input, layout, orbitals, orbitals);
+  const xmvb::vb::NonredundantRetractionMetric orbital_metric(
+      chart, layout, input);
+  const xmvb::vb::CoupledNeoCoordinates coordinates(
+      chart, orbital_metric, structure);
+
+  require(coordinates.orbital_size() == chart.reduced_size(),
+          "coupled NEO orbital coordinate dimension is wrong");
+  require(coordinates.structure_size() == 4,
+          "coupled NEO retained ambient structure null coordinates");
+
+  Eigen::Matrix<double, 4, 2> ambient;
+  ambient << 0.2, -0.5,
+             0.7,  0.1,
+            -0.3,  0.8,
+             0.6, -0.2;
+  xmvb::vb::CoupledDirection direction;
+  direction.orbital = Eigen::VectorXd::LinSpaced(
+      chart.reduced_size(), 0.31, 0.31);
+  direction.structure = structure.project(ambient);
+  const Eigen::VectorXd packed = coordinates.flatten(direction);
+  const xmvb::vb::CoupledDirection restored = coordinates.unflatten(packed);
+  require((restored.orbital - direction.orbital).norm() < 2.0e-14,
+          "coupled NEO orbital coordinates do not round trip");
+  require((restored.structure.scaled_coefficients -
+           direction.structure.scaled_coefficients).norm() < 3.0e-13,
+          "coupled NEO structure coordinates do not round trip");
+
+  const Eigen::VectorXd metric_image = coordinates.apply_metric(packed);
+  xmvb::vb::CoupledDirection expected_metric;
+  expected_metric.orbital = orbital_metric.apply(direction.orbital);
+  expected_metric.structure = structure.apply_metric(direction.structure);
+  require((metric_image - coordinates.flatten(expected_metric)).norm() < 3.0e-13,
+          "coupled NEO physical metric action is inconsistent");
+  require(coordinates.squared_norm(packed) > 0.0,
+          "coupled NEO physical metric is not positive");
+
+  const Eigen::VectorXd other =
+      Eigen::VectorXd::LinSpaced(coordinates.size(), -0.4, 0.7);
+  const double xy = packed.dot(coordinates.apply_metric(other));
+  const double yx = coordinates.apply_metric(packed).dot(other);
+  require(std::abs(xy - yx) <
+              3.0e-12 * std::max({1.0, std::abs(xy), std::abs(yx)}),
+          "coupled NEO physical metric is not symmetric");
+
+  bool rejected = false;
+  try {
+    xmvb::vb::CoupledDirection nonhorizontal = direction;
+    nonhorizontal.structure.scaled_coefficients.col(0) +=
+        fixture.overlap * accepted->selected_state_eigenvectors.col(0);
+    (void)coordinates.flatten(nonhorizontal);
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected,
+          "coupled NEO accepted an ambient selected-state gauge direction");
+
+  rejected = false;
+  try {
+    (void)coordinates.unflatten(
+        Eigen::VectorXd::Zero(coordinates.size() + 1));
+  } catch (const std::invalid_argument&) {
+    rejected = true;
+  }
+  require(rejected, "coupled NEO accepted an invalid coordinate dimension");
+}
+
 }  // namespace
 
 int main() {
@@ -232,6 +333,7 @@ int main() {
     check_single_state(fixture);
     check_equal_weight_multistate(fixture);
     check_unequal_weights_rejected(fixture);
+    check_coupled_neo_coordinates(fixture);
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
