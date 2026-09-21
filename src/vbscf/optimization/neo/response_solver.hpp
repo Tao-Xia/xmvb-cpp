@@ -176,6 +176,22 @@ private:
   void refresh_structure_response(
       double relative_tolerance,
       int* structure_actions);
+  /**
+   * @brief Re-solves one combined forcing to an explicit residual target.
+   *
+   * Retained response columns are deliberately only model-accurate.  This
+   * routine is used for the current Newton or curvature combination when its
+   * actual bordered-equation residual is too large for certification.
+   */
+  ResponseNeoStructureResponse refine_structure_direction(
+      const Eigen::VectorXd& forcing,
+      double residual_target,
+      int* structure_actions) const;
+  /** @brief Adds a certified combined response as a symmetric secant sample. */
+  bool update_response_model(
+      const Eigen::VectorXd& coefficients,
+      const Eigen::VectorXd& refined_orbital_image,
+      const Eigen::VectorXd& model_orbital_image);
   bool rebuild_projected_model();
   bool append_orbital(
       Eigen::VectorXd direction,
@@ -190,6 +206,9 @@ private:
   Eigen::MatrixXd structure_response_coordinates_;
   Eigen::MatrixXd structure_response_orbital_images_;
   Eigen::MatrixXd structure_response_residuals_;
+  Eigen::MatrixXd response_model_correction_;
+  Eigen::MatrixXd response_sample_coefficients_;
+  Eigen::MatrixXd response_sample_orbital_defects_;
   Eigen::MatrixXd projected_orbital_hessian_;
   Eigen::MatrixXd projected_orbital_metric_;
   Eigen::Index orbital_basis_size_ = 0;

@@ -371,6 +371,70 @@ void check_boundary_residual_uses_shifted_preconditioner() {
           "boundary KKT residual did not pass its shift to the preconditioner");
 }
 
+void check_structure_response_uses_tiered_accuracy() {
+  Eigen::Matrix3d a;
+  a << 2.0, 0.2, -0.1,
+       0.2, 1.6, 0.1,
+      -0.1, 0.1, 1.2;
+  Eigen::RowVector3d b;
+  b << 0.7, -0.4, 0.3;
+  const Eigen::Vector3d gradient(0.8, -0.5, 0.4);
+  std::vector<double> requested_tolerances;
+  std::vector<Eigen::Index> requested_widths;
+  const ResponseNeoProblem problem(
+      gradient,
+      1,
+      [a, b](const Eigen::VectorXd& p) {
+        return ResponseNeoDirection{a * p, b * p};
+      },
+      [&requested_tolerances, &requested_widths, b](
+          const Eigen::Ref<const Eigen::MatrixXd>& forcing,
+          double relative_tolerance) {
+        requested_tolerances.push_back(relative_tolerance);
+        requested_widths.push_back(forcing.cols());
+        const Eigen::MatrixXd response =
+            -(1.0 - relative_tolerance) * forcing;
+        const Eigen::MatrixXd residual = forcing + response;
+        return ResponseNeoStructureResponse{
+            response, b.transpose() * response, residual, 17,
+            static_cast<int>(forcing.cols()),
+            residual.stableNorm() /
+                std::max(1.0, forcing.stableNorm())};
+      },
+      [](const Eigen::VectorXd& p) { return p; });
+
+  NeoOptions options;
+  options.trust_radius = 10.0;
+  options.relative_residual_tolerance = 1.0e-10;
+  options.absolute_residual_tolerance = 1.0e-12;
+  options.require_curvature_certificate = false;
+  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
+      problem, options);
+  Eigen::Matrix<double, 1, 1> c;
+  c << 1.0;
+  verify_coupled_residual(
+      a, b, c, Eigen::Matrix3d::Identity(), gradient,
+      options.trust_radius, result);
+
+  const double coarse_tolerance =
+      std::sqrt(options.relative_residual_tolerance);
+  int coarse_calls = 0;
+  int refinement_calls = 0;
+  for (std::size_t call = 0; call < requested_tolerances.size(); ++call) {
+    if (requested_tolerances[call] >= 0.5 * coarse_tolerance) {
+      ++coarse_calls;
+    } else {
+      ++refinement_calls;
+      require(requested_widths[call] == 1,
+              "final response refinement did not use one combined direction");
+    }
+  }
+  require(coarse_calls > 0,
+          "ordinary response columns were not solved at coarse accuracy");
+  require(refinement_calls == result.iterations,
+          "interior solve performed an unrelated curvature refinement");
+}
+
 }  // namespace
 
 int main() {
@@ -383,6 +447,7 @@ int main() {
     check_structure_response_refreshes_one_common_revision();
     check_recycled_orbital_guess_starts_subspace();
     check_boundary_residual_uses_shifted_preconditioner();
+    check_structure_response_uses_tiered_accuracy();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {

@@ -11,6 +11,7 @@
 
 #include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
+#include <Eigen/QR>
 
 #include "vbscf/optimization/trust_region/spectral.hpp"
 
@@ -76,6 +77,17 @@ Eigen::VectorXd preconditioned_orbital(
   return problem.has_orbital_preconditioner()
       ? problem.apply_orbital_preconditioner(residual, shift)
       : residual;
+}
+
+double coarse_response_tolerance(double final_relative_tolerance) {
+  // The square-root forcing is the conventional inexact-Newton first tier:
+  // it is accurate enough to propose a useful projected step without paying
+  // final-stationarity cost for every retained Davidson column.
+  return std::min(
+      0.5,
+      std::max(
+          final_relative_tolerance,
+          std::min(1.0e-2, std::sqrt(final_relative_tolerance))));
 }
 
 }  // namespace
@@ -224,6 +236,9 @@ ResponseNeoWorkspace::ResponseNeoWorkspace(
       structure_response_coordinates_(problem.structure_size(), 0),
       structure_response_orbital_images_(problem.orbital_size(), 0),
       structure_response_residuals_(problem.structure_size(), 0),
+      response_model_correction_(0, 0),
+      response_sample_coefficients_(0, 0),
+      response_sample_orbital_defects_(problem.orbital_size(), 0),
       projected_orbital_hessian_(0, 0),
       projected_orbital_metric_(0, 0) {}
 
@@ -254,6 +269,12 @@ bool ResponseNeoWorkspace::append_orbital(
 
   projected_orbital_hessian_.conservativeResize(new_size, new_size);
   projected_orbital_metric_.conservativeResize(new_size, new_size);
+  response_model_correction_.conservativeResize(new_size, new_size);
+  response_model_correction_.row(old_size).setZero();
+  response_model_correction_.col(old_size).setZero();
+  response_sample_coefficients_.conservativeResize(
+      new_size, Eigen::NoChange);
+  response_sample_coefficients_.row(old_size).setZero();
   if (old_size > 0) {
     projected_orbital_hessian_.block(0, old_size, old_size, 1).noalias() =
         orbital_basis_.leftCols(old_size).transpose() * hessian_image.orbital;
@@ -325,6 +346,67 @@ void ResponseNeoWorkspace::refresh_structure_response(
   ++revision_;
 }
 
+ResponseNeoStructureResponse
+ResponseNeoWorkspace::refine_structure_direction(
+    const Eigen::VectorXd& forcing,
+    double residual_target,
+    int* structure_actions) const {
+  if (forcing.size() != problem_.structure_size() || !forcing.allFinite() ||
+      !(residual_target > 0.0) || !std::isfinite(residual_target)) {
+    throw std::invalid_argument(
+        "invalid NEO structure-response refinement target");
+  }
+  Eigen::MatrixXd forcing_block(forcing.size(), 1);
+  forcing_block.col(0) = forcing;
+  const double relative_tolerance = std::min(
+      0.5, 0.5 * residual_target / std::max(1.0, forcing.stableNorm()));
+  ResponseNeoStructureResponse refined =
+      problem_.solve_structure_response(forcing_block, relative_tolerance);
+  *structure_actions += refined.block_actions;
+  const double residual_norm = refined.equation_residuals.col(0).stableNorm();
+  if (residual_norm > residual_target) {
+    std::ostringstream message;
+    message.precision(17);
+    message << "refined structure response failed full Bp+Cz certification: "
+            << residual_norm << " > " << residual_target;
+    throw std::runtime_error(message.str());
+  }
+  return refined;
+}
+
+bool ResponseNeoWorkspace::update_response_model(
+    const Eigen::VectorXd& coefficients,
+    const Eigen::VectorXd& refined_orbital_image,
+    const Eigen::VectorXd& model_orbital_image) {
+  const double norm_squared = coefficients.squaredNorm();
+  if (!(norm_squared > 0.0)) return false;
+  const Eigen::Index sample = response_sample_coefficients_.cols();
+  response_sample_coefficients_.conservativeResize(
+      Eigen::NoChange, sample + 1);
+  response_sample_orbital_defects_.conservativeResize(
+      Eigen::NoChange, sample + 1);
+  response_sample_coefficients_.col(sample) = coefficients;
+  response_sample_orbital_defects_.col(sample) =
+      refined_orbital_image - model_orbital_image;
+  const auto basis = orbital_basis_.leftCols(orbital_basis_size_);
+  const Eigen::MatrixXd projected_defects =
+      basis.transpose() * response_sample_orbital_defects_;
+  const Eigen::MatrixXd fitted =
+      response_sample_coefficients_.transpose()
+          .completeOrthogonalDecomposition()
+          .solve(projected_defects.transpose())
+          .transpose();
+  const Eigen::MatrixXd corrected = 0.5 * (fitted + fitted.transpose());
+  const double change =
+      (corrected - response_model_correction_).stableNorm();
+  const double threshold = 64.0 * std::numeric_limits<double>::epsilon() *
+      std::max(1.0, response_model_correction_.stableNorm());
+  response_model_correction_ = corrected;
+  if (!(change > threshold)) return false;
+  ++revision_;
+  return true;
+}
+
 bool ResponseNeoWorkspace::rebuild_projected_model() {
   const Eigen::Index no = orbital_basis_size_;
   const auto qo = orbital_basis_.leftCols(no);
@@ -346,9 +428,10 @@ bool ResponseNeoWorkspace::rebuild_projected_model() {
 
   projected_model_.response_closure_scale = bo.stableNorm();
   projected_model_.response_closure_norm = response_residual.stableNorm();
-  const Eigen::MatrixXd relaxed_images = ao + btz;
+  const Eigen::MatrixXd relaxed_images =
+      ao + btz + qo * response_model_correction_;
   const Eigen::MatrixXd relaxed = symmetric_part(
-      qo.transpose() * relaxed_images,
+      qo.transpose() * (ao + btz) + response_model_correction_,
       "response NEO relaxed orbital block is not symmetric",
       problem_.operator_relative_accuracy());
   const Eigen::MatrixXd whitened =
@@ -406,6 +489,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
   const double curvature_relative_tolerance = std::min(
       options.relative_residual_tolerance,
       numerical_curvature_tolerance);
+  const double model_response_tolerance = coarse_response_tolerance(
+      options.relative_residual_tolerance);
 
   ResponseNeoResult result;
   result.step.orbital = Eigen::VectorXd::Zero(problem_.orbital_size());
@@ -443,7 +528,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     ++result.iterations;
     if (structure_response_columns_ != orbital_basis_size_) {
       refresh_structure_response(
-          curvature_relative_tolerance,
+          model_response_tolerance,
           &result.structure_actions);
     }
     const auto qo = orbital_basis_.leftCols(orbital_basis_size_);
@@ -464,19 +549,6 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         return result;
       }
     }
-    const double response_closure_target =
-        options.absolute_residual_tolerance +
-        curvature_relative_tolerance *
-            projected_model_.response_closure_scale;
-    if (projected_model_.response_closure_norm > response_closure_target) {
-      std::ostringstream message;
-      message.precision(17);
-      message << "accepted-point structure response failed full Bp+Cz certification: "
-              << projected_model_.response_closure_norm << " > "
-              << response_closure_target;
-      throw std::runtime_error(message.str());
-    }
-
     const SpectralTrustRegionSolution projected = solve_spectral_trust_region(
         projected_model_.eigenvalues,
         projected_model_.eigenvectors.transpose() *
@@ -487,22 +559,16 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     result.step.orbital.noalias() = qo * p_coefficients;
     result.step.structure.noalias() = z * p_coefficients;
     const Eigen::VectorXd orbital_a = ao * p_coefficients;
-    const Eigen::VectorXd orbital_bt = btz * p_coefficients;
+    Eigen::VectorXd orbital_bt = btz * p_coefficients;
     const Eigen::VectorXd structure_b = bo * p_coefficients;
-    const Eigen::VectorXd structure_c =
+    Eigen::VectorXd structure_c =
         -structure_b + response_residual * p_coefficients;
-    result.hessian_step.orbital = orbital_a + orbital_bt;
-    result.hessian_step.structure = structure_b + structure_c;
-    result.orbital_metric_step.noalias() = mo * p_coefficients;
     result.shift = projected.shift;
     result.boundary = projected.boundary;
     result.hard_case = projected.hard_case;
+    result.orbital_metric_step.noalias() = mo * p_coefficients;
     result.step_norm = std::sqrt(std::max(
         0.0, result.step.orbital.dot(result.orbital_metric_step)));
-    result.kkt_residual.orbital = problem_.orbital_gradient() +
-        result.hessian_step.orbital +
-        result.shift * result.orbital_metric_step;
-    result.kkt_residual.structure = result.hessian_step.structure;
     // Inexact Newton convergence is controlled relative to the current
     // gradient, not to the much larger cancelling Hessian terms.  Scaling by
     // those terms would permit an O(||g||) residual and destroy the local
@@ -512,6 +578,23 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         options.relative_residual_tolerance * gradient_norm;
     const double orbital_residual_target = component_residual_target;
     const double structure_residual_target = component_residual_target;
+    if ((structure_b + structure_c).stableNorm() >
+        structure_residual_target) {
+      ResponseNeoStructureResponse refined = refine_structure_direction(
+          structure_b, structure_residual_target,
+          &result.structure_actions);
+      result.step.structure = refined.coordinates.col(0);
+      update_response_model(
+          p_coefficients, refined.orbital_images.col(0), orbital_bt);
+      orbital_bt = refined.orbital_images.col(0);
+      structure_c = -structure_b + refined.equation_residuals.col(0);
+    }
+    result.hessian_step.orbital = orbital_a + orbital_bt;
+    result.hessian_step.structure = structure_b + structure_c;
+    result.kkt_residual.orbital = problem_.orbital_gradient() +
+        result.hessian_step.orbital +
+        result.shift * result.orbital_metric_step;
+    result.kkt_residual.structure = result.hessian_step.structure;
     const double certified_structure_residual =
         result.kkt_residual.structure.stableNorm();
     result.residual_norm = std::hypot(
@@ -526,15 +609,6 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
 
     result.minimum_curvature_orbital =
         projected_model_.minimum_curvature_orbital;
-    const Eigen::VectorXd& curvature_orbital =
-        projected_model_.curvature_orbital_residual;
-    const Eigen::VectorXd& curvature_structure =
-        projected_model_.curvature_structure_residual;
-    const double certified_curvature_structure_residual =
-        curvature_structure.stableNorm();
-    result.curvature_residual_norm = std::hypot(
-        curvature_orbital.stableNorm(),
-        certified_curvature_structure_residual);
     const double curvature_orbital_target =
         options.absolute_residual_tolerance +
         curvature_relative_tolerance *
@@ -543,9 +617,6 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         options.absolute_residual_tolerance +
         curvature_relative_tolerance *
             projected_model_.curvature_structure_scale;
-    result.curvature_residual_target = std::hypot(
-        curvature_orbital_target, curvature_structure_target);
-
     const double positivity_tolerance =
         curvature_relative_tolerance * std::max({
             1.0,
@@ -554,6 +625,37 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     const bool stationary =
         result.kkt_residual.orbital.stableNorm() <= orbital_residual_target &&
         certified_structure_residual <= structure_residual_target;
+    const bool need_curvature_certificate =
+        options.require_curvature_certificate || result.boundary ||
+        result.hard_case;
+    Eigen::VectorXd curvature_orbital =
+        projected_model_.curvature_orbital_residual;
+    Eigen::VectorXd curvature_structure =
+        projected_model_.curvature_structure_residual;
+    if (need_curvature_certificate &&
+        curvature_structure.stableNorm() > curvature_structure_target) {
+      const Eigen::VectorXd minimum_coefficients =
+          projected_model_.whitening *
+          projected_model_.eigenvectors.col(0);
+      const Eigen::VectorXd curvature_forcing = bo * minimum_coefficients;
+      ResponseNeoStructureResponse refined = refine_structure_direction(
+          curvature_forcing, curvature_structure_target,
+          &result.structure_actions);
+      update_response_model(
+          minimum_coefficients, refined.orbital_images.col(0),
+          btz * minimum_coefficients);
+      curvature_orbital = ao * minimum_coefficients +
+          refined.orbital_images.col(0) -
+          projected_model_.eigenvalues[0] * mo * minimum_coefficients;
+      curvature_structure = refined.equation_residuals.col(0);
+    }
+    const double certified_curvature_structure_residual =
+        curvature_structure.stableNorm();
+    result.curvature_residual_norm = std::hypot(
+        curvature_orbital.stableNorm(),
+        certified_curvature_structure_residual);
+    result.curvature_residual_target = std::hypot(
+        curvature_orbital_target, curvature_structure_target);
     const bool curvature_converged =
         curvature_orbital.stableNorm() <= curvature_orbital_target &&
         certified_curvature_structure_residual <=
@@ -565,9 +667,6 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         orbital_basis_size_ == problem_.orbital_size();
     result.global_curvature_certified =
         orbital_complete && curvature_converged;
-    const bool need_curvature_certificate =
-        options.require_curvature_certificate || result.boundary ||
-        result.hard_case;
     const bool required_curvature_converged =
         !need_curvature_certificate || curvature_converged;
     if (stationary && required_curvature_converged && shifted_positive) {
@@ -577,6 +676,11 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
 
     const int basis_size = static_cast<int>(orbital_basis_size_);
     if (basis_size >= maximum_dimension) {
+      // A certified combined response supplies a new small-space secant even
+      // when no further orbital direction can be appended.  Re-solve that
+      // updated projected model before declaring the explicit work budget
+      // exhausted.
+      if (projected_model_.revision != revision_) continue;
       result.stop_reason = NeoStopReason::SubspaceLimit;
       return result;
     }
