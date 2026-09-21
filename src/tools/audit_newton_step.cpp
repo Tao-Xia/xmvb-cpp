@@ -16,6 +16,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Eigenvalues>
+#include <Eigen/QR>
 
 #include "input/loading/loader.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
@@ -45,6 +46,7 @@ struct Options {
   bool target_kkt_explicit = false;
   bool audit_operator = false;
   bool audit_dense_reference = false;
+  bool audit_response_heldout = false;
 };
 
 bool parse_bool(const std::string& value) {
@@ -63,7 +65,8 @@ Options parse_options(int argc, char** argv) {
         "[--lbfgs-history-steps-dir path] "
         "[--dump-trial-orbitals-bin path] [--finite-difference-step value] "
         "[--eigensolver davidson|dense] [--audit-operator true|false] "
-        "[--audit-dense-reference true|false]");
+        "[--audit-dense-reference true|false] "
+        "[--audit-response-heldout true|false]");
   }
   Options options;
   options.input_path = argv[1];
@@ -97,6 +100,8 @@ Options parse_options(int argc, char** argv) {
       options.audit_operator = parse_bool(value);
     } else if (name == "--audit-dense-reference") {
       options.audit_dense_reference = parse_bool(value);
+    } else if (name == "--audit-response-heldout") {
+      options.audit_response_heldout = parse_bool(value);
     } else {
       throw std::invalid_argument("unknown option: " + name);
     }
@@ -318,6 +323,10 @@ public:
     return operator_.diagnostics();
   }
 
+  ResponseLowRankModel response_model() const {
+    return operator_.response_low_rank_model();
+  }
+
   void clear_recorded_blocks() { recorded_blocks_.clear(); }
 
   const std::vector<RecordedBlock>& recorded_blocks() const noexcept {
@@ -466,6 +475,120 @@ Eigen::MatrixXd response_audit_probes(Eigen::Index dimension) {
     probes.col(column) /= norm;
   }
   return probes;
+}
+
+/** @brief Builds deterministic probes outside every sampled orbital direction. */
+Eigen::MatrixXd heldout_response_probes(
+    Eigen::Index dimension,
+    const Eigen::Ref<const Eigen::MatrixXd>& sampled_directions,
+    Eigen::Index count = 3) {
+  if (dimension <= count || sampled_directions.rows() != dimension) {
+    throw std::invalid_argument("invalid held-out response probe dimensions");
+  }
+  Eigen::ColPivHouseholderQR<Eigen::MatrixXd> sampled_qr(sampled_directions);
+  sampled_qr.setThreshold(
+      std::sqrt(std::numeric_limits<double>::epsilon()));
+  const Eigen::Index sampled_rank = sampled_qr.rank();
+  if (sampled_rank + count > dimension) {
+    throw std::runtime_error("sampled HVP directions span the orbital space");
+  }
+  const Eigen::MatrixXd sampled_basis = sampled_qr.householderQ() *
+      Eigen::MatrixXd::Identity(dimension, sampled_rank);
+  Eigen::MatrixXd probes = response_audit_probes(dimension).leftCols(count);
+  for (Eigen::Index column = 0; column < count; ++column) {
+    for (int pass = 0; pass < 2; ++pass) {
+      probes.col(column).noalias() -= sampled_basis *
+          (sampled_basis.transpose() * probes.col(column));
+      for (Eigen::Index previous = 0; previous < column; ++previous) {
+        probes.col(column) -= probes.col(previous).dot(probes.col(column)) *
+            probes.col(previous);
+      }
+    }
+    const double norm = probes.col(column).stableNorm();
+    if (!(norm > std::sqrt(std::numeric_limits<double>::epsilon()))) {
+      throw std::runtime_error("dependent held-out response probe");
+    }
+    probes.col(column) /= norm;
+  }
+  std::cout << "response_heldout_sampled_rank = " << sampled_rank << '\n'
+            << "response_heldout_probe_rank = " << count << '\n'
+            << "response_heldout_sample_overlap = "
+            << (sampled_basis.transpose() * probes).stableNorm() << '\n';
+  return probes;
+}
+
+/** @brief Compares learned Schur modes with fresh response-only HVPs. */
+void run_heldout_response_audit(
+    const OrbitalGradientResult& accepted,
+    const VbScfInput& input,
+    const SparseParameterLayout& layout,
+    const OrbitalChart& chart,
+    const AcceptedPointHvp& learned_hvp,
+    const Eigen::VectorXd& baseline_direction) {
+  const auto [recorded_directions, recorded_images] =
+      concatenate_recorded_blocks(learned_hvp.recorded_blocks());
+  (void)recorded_images;
+  const Eigen::Index baseline_width =
+      baseline_direction.size() == chart.reduced_size() ? 1 : 0;
+  Eigen::MatrixXd sampled(
+      chart.reduced_size(), recorded_directions.cols() + baseline_width);
+  sampled.leftCols(recorded_directions.cols()) = recorded_directions;
+  if (baseline_width != 0) sampled.rightCols(1) = baseline_direction;
+  const Eigen::MatrixXd probes = heldout_response_probes(
+      chart.reduced_size(), sampled);
+
+  HvpComponents no_structure;
+  no_structure.structure_response = false;
+  const Eigen::MatrixXd full = apply_fresh_block(
+      accepted, input, layout, chart, probes).images;
+  const Eigen::MatrixXd fixed = apply_fresh_block(
+      accepted, input, layout, chart, probes, no_structure).images;
+  const Eigen::MatrixXd reference = full - fixed;
+  const ResponseLowRankModel model = learned_hvp.response_model();
+  const Eigen::MatrixXd learned = model.apply(probes);
+  std::cout << "response_heldout_model_rank = "
+            << model.orbital_couplings.cols() << '\n'
+            << "response_heldout_reference_norm = "
+            << reference.stableNorm() << '\n'
+            << "response_heldout_full_model_relative_error = "
+            << relative_matrix_error(learned - reference, reference) << '\n';
+
+  const Eigen::MatrixXd schur = model.apply(
+      Eigen::MatrixXd::Identity(chart.reduced_size(), chart.reduced_size()));
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(
+      0.5 * (schur + schur.transpose()));
+  if (solver.info() != Eigen::Success) {
+    throw std::runtime_error("held-out Schur eigensolve failed");
+  }
+  std::vector<Eigen::Index> order(
+      static_cast<std::size_t>(solver.eigenvalues().size()));
+  for (Eigen::Index index = 0; index < solver.eigenvalues().size(); ++index) {
+    order[static_cast<std::size_t>(index)] = index;
+  }
+  std::sort(order.begin(), order.end(), [&](Eigen::Index left, Eigen::Index right) {
+    return std::abs(solver.eigenvalues()[left]) >
+        std::abs(solver.eigenvalues()[right]);
+  });
+  const std::vector<int> requested_ranks = {1, 2, 5, 10, 20};
+  Eigen::MatrixXd truncated = Eigen::MatrixXd::Zero(
+      chart.reduced_size(), probes.cols());
+  int next = 0;
+  for (int mode = 0;
+       mode < static_cast<int>(order.size()) &&
+       next < static_cast<int>(requested_ranks.size());
+       ++mode) {
+    const Eigen::Index index = order[static_cast<std::size_t>(mode)];
+    const Eigen::VectorXd vector = solver.eigenvectors().col(index);
+    truncated.noalias() += solver.eigenvalues()[index] * vector *
+        (vector.transpose() * probes);
+    if (mode + 1 != requested_ranks[static_cast<std::size_t>(next)]) continue;
+    std::cout << "response_heldout_rank_" << mode + 1
+              << "_relative_error = "
+              << relative_matrix_error(truncated - reference, reference)
+              << '\n';
+    ++next;
+  }
+  std::cout.flush();
 }
 
 /** @brief Certifies action identities within one frozen response model version. */
@@ -843,7 +966,11 @@ void run_audit(const Options& options) {
   const NonredundantRetractionMetric metric(
       *chart, layout, input.orbital_preparation_input);
   AcceptedPointHvp hvp(
-      accepted, input, layout, *chart, options.audit_operator);
+      accepted,
+      input,
+      layout,
+      *chart,
+      options.audit_operator || options.audit_response_heldout);
 
   std::vector<PackedSecantPair> packed_secant_history;
   std::unique_ptr<TransportedReducedLbfgsPreconditioner>
@@ -903,7 +1030,9 @@ void run_audit(const Options& options) {
   const double audit_gradient_tolerance =
       options.target_kkt_explicit ? 0.0 : accuracy.gradient_tolerance;
   TruncatedNewtonStepResult step;
-  if (options.audit_operator) hvp.clear_recorded_blocks();
+  if (options.audit_operator || options.audit_response_heldout) {
+    hvp.clear_recorded_blocks();
+  }
   std::exception_ptr solve_error;
   try {
     if (lbfgs_preconditioner == nullptr) {
@@ -1006,6 +1135,15 @@ void run_audit(const Options& options) {
         accuracy);
   }
   if (solve_error != nullptr) std::rethrow_exception(solve_error);
+  if (options.audit_response_heldout) {
+    run_heldout_response_audit(
+        accepted,
+        input,
+        layout,
+        *chart,
+        hvp,
+        lbfgs_baseline_step);
+  }
   if (!truncated_newton_step_is_usable(
           step, projected.reduced_gradient)) {
     throw std::runtime_error("subproblem produced no usable descent step");
