@@ -12,6 +12,16 @@ void overwrite_sparse_orbitals_from_dense_physical_frame(
     const Eigen::MatrixXd& dense_orbitals,
     OrbitalPreparationInput* orbital_preparation_input);
 
+/**
+ * @brief Selects an AO-metric orthonormal representative of a complete OEO CAS.
+ *
+ * Active orbitals are projected out of the inactive span and symmetrically
+ * orthonormalized. Both operations are exact gauge transformations only for a
+ * complete active-space wavefunction, so callers must enforce that condition.
+ */
+bool canonicalize_complete_oeo_active_subspace(
+    OrbitalPreparationInput* orbital_preparation_input);
+
 Eigen::MatrixXd build_self_adjoint_matrix_power(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix,
     double exponent,

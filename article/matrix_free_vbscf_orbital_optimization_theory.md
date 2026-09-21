@@ -728,6 +728,41 @@ degrees of freedom. All optimization backends use the same accepted-point
 chart, so this distinction depends only on the wavefunction space and never
 on the choice of TNHVP, NEO, or L-BFGS solver.
 
+The quotient projection alone is insufficient for finite optimization steps:
+an additive lift can accumulate inactive--active and active--active gauge
+components even when its first derivative is horizontal. For complete-CAS
+OEO, every evaluated trial is therefore returned to the same stable section.
+With inactive and active blocks $\mathbf C_{\rm I}$ and $\mathbf C_{\rm A}$,
+define
+
+$$
+\mathbf B
+=
+\left[
+\mathbf I-
+\mathbf C_{\rm I}
+(\mathbf C_{\rm I}^{\rm T}\mathbf S\mathbf C_{\rm I})^{-1}
+\mathbf C_{\rm I}^{\rm T}\mathbf S
+\right]\mathbf C_{\rm A},
+\tag{27o}
+$$
+
+and select the symmetric AO-metric orthonormal representative
+
+$$
+\mathbf C_{\rm A}^{+}
+=
+\mathbf B(\mathbf B^{\rm T}\mathbf S\mathbf B)^{-1/2}.
+\tag{27p}
+$$
+
+Equations 27o--27p preserve the inactive space and the complete active
+subspace exactly. They are consequently a pure gauge transformation of a
+complete CAS, but not of an arbitrary truncated VB structure expansion. This
+finite section makes the horizontal lift, trust-region metric, and retraction
+consistent and prevents the active overlap from becoming singular along an
+otherwise energy-invariant gauge trajectory.
+
 ## 5. A natural quotient metric
 
 Euclidean distances between raw sparse coefficients are not invariant to AO scaling or to the choice of orbital representatives. A physically meaningful trust-region norm should instead measure changes in the inactive subspace and projected active rays.

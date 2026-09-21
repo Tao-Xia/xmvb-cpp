@@ -13,6 +13,7 @@
 
 #include "input/deck/keywords.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
 
 namespace {
@@ -191,6 +192,55 @@ void check_active_sparse_gauge_balance() {
           "per-orbital balancing was applied to the OEO subspace");
 }
 
+void check_complete_oeo_active_subspace_canonicalization() {
+  OrbitalPreparationInput input;
+  input.n_basis_functions = 4;
+  input.n_orbitals = 3;
+  input.n_active_orbitals = 2;
+  input.n_total_electrons = 4;
+  input.n_active_electrons = 2;
+  input.orbital_type = xmvb::vb::kOrbitalTypeOeo;
+  input.ao_overlap_matrix = Eigen::MatrixXd::Identity(4, 4);
+  input.orbital_basis_counts = {4, 4, 4};
+  input.orbital_basis_index_table = {
+      1, 2, 3, 4,
+      1, 2, 3, 4,
+      1, 2, 3, 4};
+  input.orbital_value_table = {
+      1.0, 0.0, 0.0, 0.0,
+      3.0, 1.0, 0.2, 0.0,
+     -2.0, 0.4, 1.0, 0.3};
+
+  Eigen::Matrix<double, 4, 2> projected_before;
+  projected_before << 0.0, 0.0,
+                      1.0, 0.4,
+                      0.2, 1.0,
+                      0.0, 0.3;
+  const Eigen::MatrixXd projector_before =
+      projected_before *
+      (projected_before.transpose() * projected_before).inverse() *
+      projected_before.transpose();
+
+  require(
+      xmvb::vb::canonicalize_complete_oeo_active_subspace(&input),
+      "complete-CAS OEO representative was not canonicalized");
+  Eigen::Matrix<double, 4, 2> active;
+  for (int column = 0; column < 2; ++column) {
+    for (int row = 0; row < 4; ++row) {
+      active(row, column) = input.orbital_value_table[(column + 1) * 4 + row];
+    }
+  }
+  require(active.row(0).norm() < 1.0e-13,
+          "complete-CAS OEO active orbitals retained inactive gauge");
+  require((active.transpose() * active - Eigen::Matrix2d::Identity()).norm() <
+              1.0e-12,
+          "complete-CAS OEO active representative is not orthonormal");
+  require((active * active.transpose() - projector_before).norm() < 1.0e-12,
+          "complete-CAS OEO canonicalization changed the active subspace");
+  require(!xmvb::vb::canonicalize_complete_oeo_active_subspace(&input),
+          "complete-CAS OEO canonicalization is not idempotent");
+}
+
 void check_nonorthogonal_active_ray() {
   OrbitalPreparationInput input = make_active_gauge_input();
   input.ao_overlap_matrix(0, 2) = 0.2;
@@ -228,6 +278,7 @@ int main() {
     check_ill_conditioned_sparse_gauge();
     check_well_conditioned_gauge_is_unchanged();
     check_active_sparse_gauge_balance();
+    check_complete_oeo_active_subspace_canonicalization();
     check_nonorthogonal_active_ray();
     return 0;
   } catch (const std::exception& error) {

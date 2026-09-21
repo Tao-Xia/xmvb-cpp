@@ -7,6 +7,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/orbitals/gauge/support_preserving.hpp"
+#include "vbscf/orbitals/charts/canonicalization.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/structures/assembly/hamiltonian_overlap.hpp"
@@ -123,6 +124,11 @@ VbScfObjective::evaluate_trial_energy(
     chart_changed =
         apply_support_preserving_inactive_gauge(&trial_orbitals);
     chart_changed = balance_active_gauge(&trial_orbitals) || chart_changed;
+    if (input_.complete_active_space) {
+      chart_changed =
+          canonicalize_complete_oeo_active_subspace(&trial_orbitals) ||
+          chart_changed;
+    }
   }
   ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
 

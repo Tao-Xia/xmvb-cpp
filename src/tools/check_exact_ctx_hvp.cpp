@@ -347,7 +347,9 @@ int main(int argc, char** argv) {
         accepted.orbital_preparation_result.auxiliary_orbital_matrix.leftCols(
             n_occupied),
         normalized_orbitals,
-        &accepted.ao_effective_one_electron_result.ao_effective_h1e);
+        &accepted.ao_effective_one_electron_result.ao_effective_h1e,
+        false,
+        input.complete_active_space);
     const Eigen::VectorXd packed_gradient =
         layout.gather_from_full(accepted.sparse_orbital_energy_gradient);
     const Eigen::VectorXd accepted_reduced_gradient =

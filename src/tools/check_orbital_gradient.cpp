@@ -751,7 +751,9 @@ int main(int argc, char** argv) {
           gradient_result.orbital_preparation_result
               .physical_orbital_frame
               .normalized_orbital_matrix,
-          &gradient_result.ao_effective_one_electron_result.ao_effective_h1e);
+          &gradient_result.ao_effective_one_electron_result.ao_effective_h1e,
+          false,
+          diagnostic_input.complete_active_space);
       const auto projection = nonredundant_space.project_gradient(packed_gradient);
       if (projection.reduced_gradient.size() == 0) {
         throw std::runtime_error("reduced nonredundant space is empty");

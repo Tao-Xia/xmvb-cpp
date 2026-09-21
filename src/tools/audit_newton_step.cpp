@@ -262,7 +262,9 @@ std::unique_ptr<OrbitalChart> build_chart(
           .leftCols(n_occupied),
       gradient.orbital_preparation_result.physical_orbital_frame
           .normalized_orbital_matrix,
-      &gradient.ao_effective_one_electron_result.ao_effective_h1e);
+      &gradient.ao_effective_one_electron_result.ao_effective_h1e,
+      false,
+      input.complete_active_space);
 }
 
 class AcceptedPointHvp final : public ReducedHvp {

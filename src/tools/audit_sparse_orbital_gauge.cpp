@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
         orbital.n_active_orbitals;
     const xmvb::vb::OrbitalChart space(
         orbital, parameter_view, coefficients.leftCols(occupied_count),
-        coefficients, nullptr, true);
+        coefficients, nullptr, true, input.complete_active_space);
     Eigen::MatrixXd basis(parameter_view.size(), space.reduced_size());
     for (int j = 0; j < basis.cols(); ++j) {
       basis.col(j) = space.expand_step(Eigen::VectorXd::Unit(basis.cols(), j));

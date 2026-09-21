@@ -555,15 +555,32 @@ pairs converge to distinct CASSCF stationary points:
 | PySCF CASSCF, local initial active pair | -198.689800047006 |
 | xmvb-cpp TNHVP, 5 iterations | -198.689799876580 |
 | PySCF CASSCF, lower stationary point | -198.761111550672 |
-| xmvb-cpp NEO, 19 iterations | -198.761111540576 |
+| xmvb-cpp NEO, 6 iterations | -198.761111541670 |
 
 Thus TNHVP and NEO agree with the corresponding independently converged
 CASSCF solutions to $1.70\times10^{-7}\ E_{\mathrm h}$ and
-$1.01\times10^{-8}\ E_{\mathrm h}$, respectively. The lower NEO energy is
+$9.00\times10^{-9}\ E_{\mathrm h}$, respectively. The lower NEO energy is
 not a violation of the CASSCF variational space: NEO crosses out of the local
 active-space basin reached by the supplied initial orbitals. A symmetry-locked
 PySCF calculation remains on the higher stationary branch and is therefore
 not a valid test of the lower solution.
+
+Before finite active-subspace canonicalization, the NEO trajectory reached the
+same energy only after 19 iterations. The smallest eigenvalue of the projected
+active overlap fell from 1 to approximately $4.5\times10^{-7}$, while its
+condition number grew to approximately $2.2\times10^6$. This was gauge drift,
+not physical ill-conditioning. Applying eqs 27o--27p after every trial keeps a
+stable complete-CAS representative. The final three projected gradient
+infinity norms are
+
+$$
+5.23\times10^{-3},\qquad
+1.78\times10^{-5},\qquad
+1.81\times10^{-10},
+$$
+
+which exhibits the expected local quadratic contraction. No trust-radius or
+Krylov tolerance was changed.
 
 Representative reproduction commands, executed from the repository root:
 

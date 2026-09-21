@@ -474,7 +474,8 @@ AcceptedPointBenchmarkContext build_benchmark_context(
           normalized_orbital_matrix,
           &context.gradient_result->ao_effective_one_electron_result
                .ao_effective_h1e,
-          true);
+          true,
+          context.input.complete_active_space);
   context.reduced_gradient =
       context.nonredundant_space->project_reduced_gradient(packed_gradient);
   context.reduced_direction = context.reduced_gradient;
