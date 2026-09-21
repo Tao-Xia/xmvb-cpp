@@ -1134,7 +1134,6 @@ void run_audit(const Options& options) {
         loaded.nuclear_repulsion_energy,
         accuracy);
   }
-  if (solve_error != nullptr) std::rethrow_exception(solve_error);
   if (options.audit_response_heldout) {
     run_heldout_response_audit(
         accepted,
@@ -1144,6 +1143,7 @@ void run_audit(const Options& options) {
         hvp,
         lbfgs_baseline_step);
   }
+  if (solve_error != nullptr) std::rethrow_exception(solve_error);
   if (!truncated_newton_step_is_usable(
           step, projected.reduced_gradient)) {
     throw std::runtime_error("subproblem produced no usable descent step");
