@@ -1237,7 +1237,9 @@ StructureActionResult StructureAction::apply(
         std::min<std::size_t>(
             static_cast<std::size_t>(block_width),
             resident_bytes / std::max<std::size_t>(1, bytes_per_vector))));
-    if (tile_width < block_width) {
+    if (tile_width >= block_width) {
+      // The complete block obeys the storage bound and is handled below.
+    } else {
       StructureActionResult images{
           Eigen::MatrixXd(n_structures_, block_width),
           Eigen::MatrixXd(n_structures_, block_width)};
@@ -1251,7 +1253,6 @@ StructureActionResult StructureAction::apply(
       }
       return images;
     }
-    // The complete block obeys the storage bound and is handled below.
   }
 
   Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
