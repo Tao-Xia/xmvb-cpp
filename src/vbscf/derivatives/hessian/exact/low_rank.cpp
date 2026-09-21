@@ -2,6 +2,7 @@
 
 #include "vbscf/derivatives/hessian/exact/state_internal.hpp"
 
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -34,6 +35,8 @@ Eigen::MatrixXd ResponseLowRankModel::apply(
 }
 
 ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
+  const auto build_start = std::chrono::steady_clock::now();
+  ++apply_timing_totals_.response_low_rank_build_count;
   const auto& response =
       outer_response_context().selected_state_eigen_response_operator;
   const int n_states = static_cast<int>(response.selected_eigenvalues.size());
@@ -97,8 +100,14 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
   }
 
   if (new_columns > 0) {
+    apply_timing_totals_.response_low_rank_new_columns +=
+        static_cast<std::size_t>(new_columns);
+    const auto action_start = std::chrono::steady_clock::now();
     const StructureActionResult action =
         response.structure_action->apply(response_vectors);
+    apply_timing_totals_.response_low_rank_structure_action_wall_time_seconds +=
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - action_start).count();
     if (action.hamiltonian.rows() != n_structures ||
         action.hamiltonian.cols() != new_columns ||
         action.overlap.rows() != n_structures ||
@@ -115,6 +124,7 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
           "selected-state response metric is singular");
     }
 
+    const auto adjoint_start = std::chrono::steady_clock::now();
     for (int column = 0; column < new_columns; ++column) {
       const int state = additions[static_cast<std::size_t>(column)].state;
       Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(
@@ -146,6 +156,9 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
       cached.conservativeResize(Eigen::NoChange, old_size + 1);
       cached.col(old_size) = coupling / coordinate_scale;
     }
+    apply_timing_totals_.response_low_rank_adjoint_wall_time_seconds +=
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - adjoint_start).count();
   }
 
   int rank = 0;
@@ -171,6 +184,15 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
         space.projected_inverse();
     offset += width;
   }
+  const double build_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - build_start).count();
+  apply_timing_totals_.response_low_rank_wall_time_seconds += build_seconds;
+  // Low-rank Schur construction is part of the exact response operator even
+  // though it is requested between matrix-vector products. Include it in the
+  // accepted-point HVP and response totals so production traces account for
+  // the complete second-order model cost.
+  apply_timing_totals_.outer_response_wall_time_seconds += build_seconds;
+  apply_timing_totals_.total_apply_wall_time_seconds += build_seconds;
   return model;
 }
 

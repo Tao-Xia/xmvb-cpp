@@ -766,6 +766,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_structure_response_adjoint(
 
   const int n_active =
       current_input_->orbital_preparation_input.n_active_orbitals;
+  const auto selected_state_start = std::chrono::steady_clock::now();
   const SelectedStateDeterminantMatrices directional_selected_states =
       build_selected_state_determinant_matrices_from_selected_columns(
           current_input_->structure_data,
@@ -773,6 +774,10 @@ Eigen::VectorXd ExactHvpOperator::State::apply_structure_response_adjoint(
           accepted_point_context_->selected_state_indices,
           accepted_point_context_->normalized_state_weights,
           accepted_point_context_->same_spin_pair_cache);
+  apply_timing_totals_
+      .outer_response_selected_state_rebuild_wall_time_seconds +=
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - selected_state_start).count();
 
   const StructureAction* structure_action =
       outer_response_context()
@@ -782,6 +787,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_structure_response_adjoint(
         "structure-response adjoint requires a structure action");
   }
 
+  const auto active_gradient_start = std::chrono::steady_clock::now();
   ActiveSpaceGradientDirection active_gradient;
   if (structure_action->supports_integral_direction()) {
     if (!accepted_point_context_->structure_adjoint_state.has_value()) {
@@ -806,7 +812,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_structure_response_adjoint(
         &active_gradient);
   }
   validate_outer_response_active_gradient(active_gradient);
+  const double active_gradient_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - active_gradient_start).count();
+  apply_timing_totals_.outer_response_active_gradient_wall_time_seconds +=
+      active_gradient_seconds;
+  apply_timing_totals_
+      .outer_response_structure_active_gradient_wall_time_seconds +=
+      active_gradient_seconds;
 
+  const auto orbital_pullback_start = std::chrono::steady_clock::now();
   const std::vector<double> orbital_value_gradient =
       build_orbital_value_gradient_from_active_space_gradient_direction(
           *current_input_,
@@ -822,6 +836,9 @@ Eigen::VectorXd ExactHvpOperator::State::apply_structure_response_adjoint(
           accepted_ri_factorization_,
           &outer_response_symmetric_active_overlap_gradient_workspace_,
           &outer_response_symmetric_active_one_electron_gradient_workspace_);
+  apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds +=
+      std::chrono::duration<double>(
+          std::chrono::steady_clock::now() - orbital_pullback_start).count();
   const Eigen::VectorXd packed =
       parameter_view_.gather_from_full(orbital_value_gradient);
   return nonredundant_space_->project_reduced_gradient(packed);

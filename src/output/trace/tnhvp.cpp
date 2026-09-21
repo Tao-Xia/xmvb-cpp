@@ -29,11 +29,15 @@ void write_tnhvp_trace(
       << "\tcurvature_subspace_dimension"
       << "\texact_hvp_block_actions"
       << "\tstructure_response_block_actions"
+      << "\tresponse_low_rank_new_columns"
       << "\tpreconditioner_history_size\trejected_trials"
       << "\touter_iteration_seconds"
       << "\taccepted_point_setup_seconds"
       << "\texact_hvp_seconds"
       << "\touter_response_seconds"
+      << "\tresponse_low_rank_seconds"
+      << "\tresponse_low_rank_structure_action_seconds"
+      << "\tresponse_low_rank_adjoint_seconds"
       << "\ttrial_objective_seconds"
       << "\tgradient_log_progress_per_second"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
@@ -56,12 +60,16 @@ void write_tnhvp_trace(
         << step.curvature_subspace_dimension << '\t'
         << step.exact_hvp_block_actions << '\t'
         << step.structure_response_block_actions << '\t'
+        << step.response_low_rank_new_columns << '\t'
         << step.preconditioner_history_size << '\t'
         << step.rejected_trial_count << '\t'
         << step.outer_iteration_wall_time_seconds << '\t'
         << step.accepted_point_setup_wall_time_seconds << '\t'
         << step.exact_hvp_wall_time_seconds << '\t'
         << step.outer_response_wall_time_seconds << '\t'
+        << step.response_low_rank_wall_time_seconds << '\t'
+        << step.response_low_rank_structure_action_wall_time_seconds << '\t'
+        << step.response_low_rank_adjoint_wall_time_seconds << '\t'
         << step.trial_objective_wall_time_seconds << '\t'
         << step.gradient_log_progress_per_second << '\t'
         << step.source_gradient_l2_norm << '\t'

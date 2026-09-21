@@ -79,6 +79,8 @@ private:
     std::size_t apply_count = 0;
     std::size_t batch_apply_count = 0;
     std::size_t structure_response_block_actions = 0;
+    std::size_t response_low_rank_build_count = 0;
+    std::size_t response_low_rank_new_columns = 0;
     int max_structure_response_iterations = 0;
     double max_structure_response_relative_residual = 0.0;
     double total_apply_wall_time_seconds = 0.0;
@@ -104,6 +106,9 @@ private:
     double outer_response_opposite_spin_alpha_overlap_wall_time_seconds = 0.0;
     double outer_response_opposite_spin_beta_overlap_wall_time_seconds = 0.0;
     double outer_response_orbital_pullback_wall_time_seconds = 0.0;
+    double response_low_rank_wall_time_seconds = 0.0;
+    double response_low_rank_structure_action_wall_time_seconds = 0.0;
+    double response_low_rank_adjoint_wall_time_seconds = 0.0;
   };
 
   std::shared_ptr<const AcceptedPointContext> accepted_point_context_;

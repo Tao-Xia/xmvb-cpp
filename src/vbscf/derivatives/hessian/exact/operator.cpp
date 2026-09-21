@@ -277,6 +277,10 @@ ExactHvpOperator::State::diagnostics() const {
   info.batch_apply_count = apply_timing_totals_.batch_apply_count;
   info.structure_response_block_actions =
       apply_timing_totals_.structure_response_block_actions;
+  info.response_low_rank_build_count =
+      apply_timing_totals_.response_low_rank_build_count;
+  info.response_low_rank_new_columns =
+      apply_timing_totals_.response_low_rank_new_columns;
   info.max_structure_response_iterations =
       apply_timing_totals_.max_structure_response_iterations;
   info.max_structure_response_relative_residual =
@@ -335,6 +339,13 @@ ExactHvpOperator::State::diagnostics() const {
           .outer_response_opposite_spin_beta_overlap_wall_time_seconds;
   info.outer_response_orbital_pullback_wall_time_seconds =
       apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds;
+  info.response_low_rank_wall_time_seconds =
+      apply_timing_totals_.response_low_rank_wall_time_seconds;
+  info.response_low_rank_structure_action_wall_time_seconds =
+      apply_timing_totals_
+          .response_low_rank_structure_action_wall_time_seconds;
+  info.response_low_rank_adjoint_wall_time_seconds =
+      apply_timing_totals_.response_low_rank_adjoint_wall_time_seconds;
   return info;
 }
 

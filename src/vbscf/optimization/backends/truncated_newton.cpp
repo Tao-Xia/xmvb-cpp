@@ -564,6 +564,8 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.structure_response_block_actions =
         static_cast<int>(
             accepted_hvp_diagnostics.structure_response_block_actions);
+    iteration_record.response_low_rank_new_columns =
+        accepted_hvp_diagnostics.response_low_rank_new_columns;
     iteration_record.preconditioner_history_size =
         accepted_preconditioner_history_size;
     iteration_record.rejected_trial_count =
@@ -576,6 +578,13 @@ BackendRunResult run_truncated_newton_backend(
         accepted_hvp_diagnostics.total_apply_wall_time_seconds;
     iteration_record.outer_response_wall_time_seconds =
         accepted_hvp_diagnostics.outer_response_wall_time_seconds;
+    iteration_record.response_low_rank_wall_time_seconds =
+        accepted_hvp_diagnostics.response_low_rank_wall_time_seconds;
+    iteration_record.response_low_rank_structure_action_wall_time_seconds =
+        accepted_hvp_diagnostics
+            .response_low_rank_structure_action_wall_time_seconds;
+    iteration_record.response_low_rank_adjoint_wall_time_seconds =
+        accepted_hvp_diagnostics.response_low_rank_adjoint_wall_time_seconds;
     iteration_record.trial_objective_wall_time_seconds =
         trial_objective_wall_time_seconds;
     iteration_record.source_gradient_l2_norm = source_gradient_l2_norm;
