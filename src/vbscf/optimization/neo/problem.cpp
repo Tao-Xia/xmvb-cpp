@@ -10,17 +10,17 @@ NeoProblem::NeoProblem(
     Eigen::VectorXd gradient,
     NeoAction apply_hessian,
     NeoAction apply_metric,
-    NeoAction apply_inverse_metric,
+    NeoAction apply_preconditioner,
     std::optional<double> hessian_lower_bound)
     : gradient_(std::move(gradient)),
       apply_hessian_(std::move(apply_hessian)),
       apply_metric_(std::move(apply_metric)),
-      apply_inverse_metric_(std::move(apply_inverse_metric)),
+      apply_preconditioner_(std::move(apply_preconditioner)),
       hessian_lower_bound_(hessian_lower_bound) {
   if (gradient_.size() == 0 || !gradient_.allFinite()) {
     throw std::invalid_argument("NEO requires a finite nonempty gradient");
   }
-  if (!apply_hessian_ || !apply_metric_ || !apply_inverse_metric_) {
+  if (!apply_hessian_ || !apply_metric_) {
     throw std::invalid_argument("NEO requires Hessian and metric actions");
   }
   if (hessian_lower_bound_ && !std::isfinite(*hessian_lower_bound_)) {
@@ -54,11 +54,14 @@ Eigen::VectorXd NeoProblem::apply_metric(
       apply_metric_, direction, "NEO metric action returned an invalid vector");
 }
 
-Eigen::VectorXd NeoProblem::apply_inverse_metric(
+Eigen::VectorXd NeoProblem::apply_preconditioner(
     const Eigen::VectorXd& covector) const {
+  if (!apply_preconditioner_) {
+    throw std::logic_error("NEO problem has no residual preconditioner");
+  }
   return apply_checked(
-      apply_inverse_metric_, covector,
-      "NEO inverse-metric action returned an invalid vector");
+      apply_preconditioner_, covector,
+      "NEO preconditioner returned an invalid vector");
 }
 
 }  // namespace xmvb::vb

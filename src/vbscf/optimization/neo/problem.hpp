@@ -14,8 +14,8 @@ using NeoAction = std::function<Eigen::VectorXd(const Eigen::VectorXd&)>;
  * @brief Immutable quadratic model used by norm-extended optimization.
  *
  * The Hessian maps a coordinate increment to a gradient covector. The metric
- * and inverse metric map between coordinate vectors and covectors. Both metric
- * actions must represent the same symmetric positive-definite operator.
+ * defines the physical trust-region norm. An optional SPD preconditioner may
+ * accelerate subspace growth, but it is not part of the NEO equations.
  */
 class NeoProblem {
 public:
@@ -25,7 +25,7 @@ public:
    * @param gradient Gradient covector at the accepted point.
    * @param apply_hessian Symmetric Hessian action.
    * @param apply_metric Symmetric positive-definite metric action.
-   * @param apply_inverse_metric Inverse of `apply_metric`.
+   * @param apply_preconditioner Optional SPD residual preconditioner.
    * @param hessian_lower_bound Optional certified lower bound on every
    * generalized Hessian eigenvalue. An estimate is not sufficient.
    */
@@ -33,7 +33,7 @@ public:
       Eigen::VectorXd gradient,
       NeoAction apply_hessian,
       NeoAction apply_metric,
-      NeoAction apply_inverse_metric,
+      NeoAction apply_preconditioner = {},
       std::optional<double> hessian_lower_bound = std::nullopt);
 
   /** @brief Number of optimization coordinates. */
@@ -48,8 +48,13 @@ public:
   /** @brief Applies the coordinate metric and validates its result. */
   Eigen::VectorXd apply_metric(const Eigen::VectorXd& direction) const;
 
-  /** @brief Applies the inverse coordinate metric and validates its result. */
-  Eigen::VectorXd apply_inverse_metric(const Eigen::VectorXd& covector) const;
+  /** @brief Whether a residual preconditioner was supplied. */
+  bool has_preconditioner() const noexcept {
+    return static_cast<bool>(apply_preconditioner_);
+  }
+
+  /** @brief Applies the optional residual preconditioner. */
+  Eigen::VectorXd apply_preconditioner(const Eigen::VectorXd& covector) const;
 
   /** @brief Certified lower bound on the generalized Hessian spectrum. */
   const std::optional<double>& hessian_lower_bound() const noexcept {
@@ -65,7 +70,7 @@ private:
   const Eigen::VectorXd gradient_;
   const NeoAction apply_hessian_;
   const NeoAction apply_metric_;
-  const NeoAction apply_inverse_metric_;
+  const NeoAction apply_preconditioner_;
   const std::optional<double> hessian_lower_bound_;
 };
 

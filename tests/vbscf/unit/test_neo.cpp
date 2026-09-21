@@ -47,28 +47,14 @@ NeoProblem dense_problem(
     const Eigen::MatrixXd& metric,
     const Eigen::VectorXd& gradient,
     std::optional<double> hessian_lower_bound = std::nullopt) {
-  Eigen::LDLT<Eigen::MatrixXd> metric_factor(metric);
-  require(metric_factor.info() == Eigen::Success,
-          "reference metric factorization failed");
-  const Eigen::MatrixXd inverse_metric = metric_factor.solve(
-      Eigen::MatrixXd::Identity(metric.rows(), metric.cols()));
   return NeoProblem(
       gradient,
       [hessian](const Eigen::VectorXd& vector) {
         return hessian * vector;
       },
       [metric](const Eigen::VectorXd& vector) { return metric * vector; },
-      [inverse_metric](const Eigen::VectorXd& vector) {
-        return inverse_metric * vector;
-      },
+      {},
       hessian_lower_bound);
-}
-
-double inverse_metric_norm(
-    const Eigen::VectorXd& vector,
-    const Eigen::MatrixXd& metric) {
-  return std::sqrt(std::max(
-      0.0, vector.dot(metric.ldlt().solve(vector))));
 }
 
 void verify_kkt(
@@ -88,12 +74,12 @@ void verify_kkt(
   const Eigen::VectorXd residual =
       gradient + hessian_step + result.shift * metric_step;
   const double step_norm = std::sqrt(result.step.dot(metric_step));
-  const double residual_norm = inverse_metric_norm(residual, metric);
-  const double residual_scale = std::max(
+  const double residual_norm = residual.stableNorm();
+  const double residual_scale = std::max({
       1.0,
-      inverse_metric_norm(gradient, metric) +
-          inverse_metric_norm(hessian_step, metric) +
-          result.shift * step_norm);
+      gradient.stableNorm(),
+      hessian_step.stableNorm(),
+      result.shift * metric_step.stableNorm()});
 
   require(step_norm <= radius * (1.0 + 2.0e-10),
           name + ": step violates the physical trust region");
@@ -145,8 +131,10 @@ void check_positive_definite_newton_limit() {
   NeoOptions options;
   options.trust_radius = radius;
   options.relative_residual_tolerance = 1.0e-12;
-  const NeoResult result = solve_neo(
-      dense_problem(hessian, metric, gradient), options);
+  const NeoProblem problem = dense_problem(hessian, metric, gradient);
+  require(!problem.has_preconditioner(),
+          "dense reference unexpectedly installed a preconditioner");
+  const NeoResult result = solve_neo(problem, options);
   verify_kkt("positive-definite Newton limit", hessian, metric, gradient,
              radius, result);
 
@@ -174,8 +162,10 @@ void check_generalized_metric_boundary() {
   NeoOptions options;
   options.trust_radius = radius;
   options.relative_residual_tolerance = 1.0e-12;
-  const NeoResult result = solve_neo(
-      dense_problem(hessian, metric, gradient), options);
+  const NeoProblem problem = dense_problem(hessian, metric, gradient);
+  require(!problem.has_preconditioner(),
+          "generalized-metric reference unexpectedly requires a preconditioner");
+  const NeoResult result = solve_neo(problem, options);
   verify_kkt("generalized-metric boundary", hessian, metric, gradient,
              radius, result);
   require(result.shift > 0.0,

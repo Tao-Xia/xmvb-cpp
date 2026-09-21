@@ -17,7 +17,7 @@ enum class NeoStopReason {
 struct NeoOptions {
   /** Radius measured in the physical coordinate metric. */
   double trust_radius = 1.0;
-  /** Relative tolerance for the explicit KKT residual. */
+  /** Relative tolerance for the scale-aware Euclidean KKT residual. */
   double relative_residual_tolerance = 1.0e-8;
   /** Absolute tolerance for the explicit KKT residual. */
   double absolute_residual_tolerance = 0.0;
@@ -39,7 +39,9 @@ struct NeoResult {
   double shift = 0.0;
   double predicted_reduction = 0.0;
   double step_norm = 0.0;
+  /** Euclidean norm of `gradient + H * step + shift * M * step`. */
   double residual_norm = 0.0;
+  /** Scale-aware Euclidean accuracy requested for `residual_norm`. */
   double residual_target = 0.0;
   double augmented_eigenvalue = 0.0;
   double gradient_scale = 0.0;
@@ -60,10 +62,14 @@ struct NeoResult {
 /**
  * @brief Solves a generalized-metric NEO trust-region microproblem.
  *
- * The method builds an M-orthonormal matrix-free subspace, solves the exact
- * projected norm-constrained quadratic problem, and expands with the mapped
- * KKT or lowest-curvature Ritz residual. A successful return is certified by
- * an explicit full-space KKT residual in the inverse-metric norm.
+ * The method builds a Euclidean-orthonormal action subspace, whitens its small
+ * projected physical metric, solves the projected norm-constrained quadratic
+ * problem, and expands with the KKT or lowest-curvature Ritz residual. A
+ * successful return is certified by
+ * an explicit full-space KKT residual in a scale-aware Euclidean norm. The
+ * physical metric enters only through the trust-region norm and projected
+ * generalized eigenproblem; an optional preconditioner only proposes new
+ * subspace directions.
  */
 NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options);
 
