@@ -15,10 +15,15 @@ void accumulate_projected_channels(
     const std::vector<int>& target_channels,
     std::vector<double>* target_values) {
   if (projection.packed_pair_indices.empty()) {
-    if (!projection.packed_pair_values.empty() ||
-        !projection.projected_pair_values.empty()) {
+    if (!projection.packed_pair_values.empty()) {
       throw std::logic_error(
           "empty opposite-spin projection has inconsistent cached values");
+    }
+    for (const double value : projection.projected_pair_values) {
+      if (value != 0.0) {
+        throw std::logic_error(
+            "zero opposite-spin projection has a nonzero dense kernel image");
+      }
     }
     return;
   }
