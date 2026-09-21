@@ -112,14 +112,44 @@ bool build_accepted_neo_keyframe(
             structure_hessian.project_coordinates(
                 image.scaled_structure_forcing)};
       },
-      [&orbital_hessian, &structure_hessian](
-          const Eigen::VectorXd& vector) {
-        const StructureCoordinateCouplingAction image =
-            structure_hessian.apply_coupling_coordinates(vector);
-        return ResponseNeoDirection{
-            orbital_hessian.apply_structure_coupling_adjoint(
-                image.coefficient_response, image.adjoint_multipliers),
-            image.hessian_coordinates};
+      [&orbital_hessian, &structure_hessian, &reduced_gradient](
+          const Eigen::Ref<const Eigen::MatrixXd>& forcing,
+          double relative_tolerance) {
+        std::vector<Eigen::MatrixXd> ambient_forcing;
+        ambient_forcing.reserve(static_cast<std::size_t>(forcing.cols()));
+        for (Eigen::Index column = 0; column < forcing.cols(); ++column) {
+          ambient_forcing.push_back(
+              structure_hessian.expand(forcing.col(column))
+                  .scaled_coefficients);
+        }
+        const StructureResponseBlock response =
+            orbital_hessian.solve_structure_response_block(
+                ambient_forcing, relative_tolerance);
+        Eigen::MatrixXd coordinates(
+            structure_hessian.tangent_size(), forcing.cols());
+        Eigen::MatrixXd orbital_images(
+            reduced_gradient.size(), forcing.cols());
+        Eigen::MatrixXd equation_residuals(
+            structure_hessian.tangent_size(), forcing.cols());
+        for (Eigen::Index column = 0; column < forcing.cols(); ++column) {
+          coordinates.col(column) = structure_hessian.project_coordinates(
+              response.scaled_coefficients[static_cast<std::size_t>(column)]);
+          orbital_images.col(column) =
+              orbital_hessian.apply_structure_coupling_adjoint(
+                  response.coefficient_responses[
+                      static_cast<std::size_t>(column)],
+                  response.adjoint_multipliers[
+                      static_cast<std::size_t>(column)]);
+          equation_residuals.col(column) =
+              structure_hessian.project_coordinates(
+                  response.scaled_equation_residuals[
+                      static_cast<std::size_t>(column)]);
+        }
+        return ResponseNeoStructureResponse{
+            std::move(coordinates), std::move(orbital_images),
+            std::move(equation_residuals), response.revision,
+            response.block_actions,
+            response.max_relative_residual};
       },
       [&orbital_metric](const Eigen::VectorXd& vector) {
         return orbital_metric.apply(vector);

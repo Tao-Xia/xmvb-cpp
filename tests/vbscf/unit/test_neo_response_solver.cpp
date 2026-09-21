@@ -18,6 +18,7 @@ using xmvb::vb::NeoStopReason;
 using xmvb::vb::ResponseNeoDirection;
 using xmvb::vb::ResponseNeoProblem;
 using xmvb::vb::ResponseNeoResult;
+using xmvb::vb::ResponseNeoStructureResponse;
 using xmvb::vb::ResponseNeoWorkspace;
 
 void require(bool condition, const std::string& message) {
@@ -46,8 +47,14 @@ ResponseNeoProblem dense_problem(
       [a, b](const Eigen::VectorXd& p) {
         return ResponseNeoDirection{a * p, b * p};
       },
-      [b, c](const Eigen::VectorXd& q) {
-        return ResponseNeoDirection{b.transpose() * q, c * q};
+      [b, c](const Eigen::Ref<const Eigen::MatrixXd>& forcing, double) {
+        const Eigen::MatrixXd response =
+            -c.completeOrthogonalDecomposition().solve(forcing);
+        return ResponseNeoStructureResponse{
+            response, b.transpose() * response,
+            forcing + c * response, 1, 0,
+            (forcing + c * response).stableNorm() /
+                std::max(1.0, forcing.stableNorm())};
       },
       [metric](const Eigen::VectorXd& p) { return metric * p; });
 }
@@ -261,6 +268,54 @@ void check_workspace_reuses_actions_after_radius_change() {
                 "reused NEO response differs from a fresh solve");
 }
 
+void check_structure_response_refreshes_one_common_revision() {
+  const Eigen::Matrix3d a =
+      (Eigen::Vector3d(1.0, 2.0, 3.0)).asDiagonal();
+  Eigen::Matrix<double, 2, 3> b;
+  b << 0.4, -0.2, 0.3,
+       0.1, 0.5, -0.4;
+  Eigen::Matrix2d c;
+  c << 1.7, 0.2,
+       0.2, 1.1;
+  std::vector<Eigen::Index> block_widths;
+  std::uint64_t revision = 0;
+  const ResponseNeoProblem problem(
+      Eigen::Vector3d(0.8, -0.7, 0.6),
+      c.rows(),
+      [a, b](const Eigen::VectorXd& p) {
+        return ResponseNeoDirection{a * p, b * p};
+      },
+      [&block_widths, &revision, b, c](
+          const Eigen::Ref<const Eigen::MatrixXd>& forcing, double) {
+        block_widths.push_back(forcing.cols());
+        ++revision;
+        const Eigen::MatrixXd response = -c.ldlt().solve(forcing);
+        return ResponseNeoStructureResponse{
+            response, b.transpose() * response,
+            forcing + c * response, revision, 0, 0.0};
+      },
+      [](const Eigen::VectorXd& p) { return p; });
+  ResponseNeoWorkspace workspace(problem);
+  NeoOptions options;
+  options.trust_radius = 0.3;
+  options.relative_residual_tolerance = 1.0e-12;
+  const ResponseNeoResult result = workspace.solve(options);
+  require(result.converged(), "common-revision NEO solve did not converge");
+  require(block_widths.size() > 1,
+          "common-revision fixture did not enrich its orbital basis");
+  require(block_widths.back() == workspace.orbital_basis_size(),
+          "final response block does not cover the retained orbital basis");
+  require(workspace.structure_response_revision() == revision,
+          "workspace retained a stale structure-response revision");
+
+  const std::size_t calls_before_retry = block_widths.size();
+  options.trust_radius = 0.2;
+  require(workspace.solve(options).converged(),
+          "common-revision radius retry did not converge");
+  require(block_widths.size() == calls_before_retry,
+          "radius-only retry rebuilt the frozen response block");
+}
+
 void check_recycled_orbital_guess_starts_subspace() {
   Eigen::VectorXd first_direction;
   const Eigen::Vector2d guess(0.0, 2.0);
@@ -271,10 +326,7 @@ void check_recycled_orbital_guess_starts_subspace() {
         if (first_direction.size() == 0) first_direction = p;
         return ResponseNeoDirection{p, Eigen::VectorXd::Zero(0)};
       },
-      [](const Eigen::VectorXd&) {
-        return ResponseNeoDirection{
-            Eigen::VectorXd::Zero(2), Eigen::VectorXd::Zero(0)};
-      },
+      {},
       [](const Eigen::VectorXd& p) { return p; },
       {},
       guess);
@@ -301,10 +353,7 @@ void check_boundary_residual_uses_shifted_preconditioner() {
         return ResponseNeoDirection{
             hessian * p, Eigen::VectorXd::Zero(0)};
       },
-      [](const Eigen::VectorXd&) {
-        return ResponseNeoDirection{
-            Eigen::VectorXd::Zero(3), Eigen::VectorXd::Zero(0)};
-      },
+      {},
       [](const Eigen::VectorXd& p) { return p; },
       [&largest_shift](const Eigen::VectorXd& residual, double shift) {
         largest_shift = std::max(largest_shift, shift);
@@ -331,6 +380,7 @@ int main() {
     check_budget_reports_subspace_limit();
     check_structure_contracts();
     check_workspace_reuses_actions_after_radius_change();
+    check_structure_response_refreshes_one_common_revision();
     check_recycled_orbital_guess_starts_subspace();
     check_boundary_residual_uses_shifted_preconditioner();
     std::cout << "response NEO solver tests passed\n";

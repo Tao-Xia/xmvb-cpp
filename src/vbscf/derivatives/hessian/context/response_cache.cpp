@@ -276,6 +276,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
       SelectedStateGeneralizedEigenDirectionalResponse result;
       result.delta_selected_eigenvector_matrix.resize(n_structures, n_rhs);
       result.selected_matrix_responses.reserve(n_directions);
+      result.equation_residuals.reserve(n_directions);
       result.linear_iterations.reserve(n_rhs);
       std::vector<xmvb::core::EigenResponseRecycleSpace*> recycle_spaces(
           static_cast<std::size_t>(n_selected_states));
@@ -332,6 +333,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
             first, n_selected_states) = response.eigenvector_response;
         result.selected_matrix_responses.push_back(
             response.selected_matrix_response);
+        result.equation_residuals.push_back(response.equation_residual);
         result.linear_iterations.insert(
             result.linear_iterations.end(),
             response.iterations.begin(),
@@ -401,11 +403,16 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
     SelectedStateGeneralizedEigenDirectionalResponse result;
     result.delta_selected_eigenvector_matrix = response.eigenvector_response;
     result.selected_matrix_responses.reserve(n_directions);
+    result.equation_residuals.reserve(n_directions);
     for (int direction = 0; direction < n_directions; ++direction) {
       result.selected_matrix_responses.push_back(
           response.eigenvalue_response
               .segment(direction * n_selected_states, n_selected_states)
               .asDiagonal());
+      result.equation_residuals.push_back(
+          response.bordered_residuals
+              .block(0, direction * n_selected_states,
+                     n_structures, n_selected_states));
     }
     result.linear_iterations = response.iterations;
     result.block_actions = response.block_actions;

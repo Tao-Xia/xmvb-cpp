@@ -119,6 +119,22 @@ double infinity_norm(const Eigen::Ref<const Eigen::VectorXd>& values) {
   return values.size() == 0 ? 0.0 : values.cwiseAbs().maxCoeff();
 }
 
+double relative_matrix_error(
+    const Eigen::Ref<const Eigen::MatrixXd>& actual,
+    const Eigen::Ref<const Eigen::MatrixXd>& reference) {
+  if (actual.rows() != reference.rows() ||
+      actual.cols() != reference.cols()) {
+    return std::numeric_limits<double>::infinity();
+  }
+  const double error = actual.size() == 0
+      ? 0.0
+      : (actual - reference).cwiseAbs().maxCoeff();
+  const double scale = reference.size() == 0
+      ? 1.0
+      : std::max(1.0, reference.cwiseAbs().maxCoeff());
+  return error / scale;
+}
+
 struct CoupledReferenceAudit {
   double adjoint_relative_error = 0.0;
   double relaxed_relative_error = 0.0;
@@ -383,6 +399,47 @@ int main(int argc, char** argv) {
         layout,
         &chart);
     const Eigen::VectorXd analytic = exact_hvp.apply_reduced(direction);
+
+    Eigen::MatrixXd coupling_directions(direction.size(), 2);
+    coupling_directions.col(0) = direction;
+    Eigen::VectorXd second_direction = Eigen::VectorXd::LinSpaced(
+        direction.size(), 1.0, static_cast<double>(direction.size()));
+    second_direction.noalias() -=
+        direction.dot(second_direction) * direction;
+    if (second_direction.norm() <=
+        std::sqrt(std::numeric_limits<double>::epsilon())) {
+      second_direction = -0.375 * direction;
+    } else {
+      second_direction.normalize();
+    }
+    coupling_directions.col(1) = second_direction;
+    const xmvb::vb::OrbitalCouplingBlockAction block_coupling =
+        exact_hvp.apply_orbital_coupling_batch(coupling_directions);
+    Eigen::MatrixXd scalar_orbital_coupling(direction.size(), 2);
+    std::vector<Eigen::MatrixXd> scalar_structure_forcing(2);
+    for (Eigen::Index column = 0; column < 2; ++column) {
+      xmvb::vb::OrbitalCouplingAction scalar_coupling =
+          exact_hvp.apply_orbital_coupling(coupling_directions.col(column));
+      scalar_orbital_coupling.col(column) = scalar_coupling.orbital_hessian;
+      scalar_structure_forcing[static_cast<std::size_t>(column)] =
+          std::move(scalar_coupling.scaled_structure_forcing);
+    }
+    const double coupling_batch_orbital_error = relative_matrix_error(
+        block_coupling.orbital_hessian, scalar_orbital_coupling);
+    double coupling_batch_structure_error = 0.0;
+    for (Eigen::Index column = 0; column < 2; ++column) {
+      coupling_batch_structure_error = std::max(
+          coupling_batch_structure_error,
+          relative_matrix_error(
+              block_coupling.scaled_structure_forcing[
+                  static_cast<std::size_t>(column)],
+              scalar_structure_forcing[static_cast<std::size_t>(column)]));
+    }
+    if (coupling_batch_orbital_error > 1.0e-10 ||
+        coupling_batch_structure_error > 1.0e-10) {
+      throw std::runtime_error(
+          "orbital coupling block disagrees with scalar actions");
+    }
     const CoupledReferenceAudit coupled_audit =
         audit_coupled_structure_elimination(
             exact_hvp,
@@ -417,6 +474,13 @@ int main(int argc, char** argv) {
           "exact HVP component decomposition is inconsistent");
     }
     const auto hvp_diagnostics = exact_hvp.diagnostics();
+    if (hvp_diagnostics.orbital_coupling_batch_count != 1 ||
+        hvp_diagnostics.orbital_coupling_batch_chunk_count < 1 ||
+        hvp_diagnostics.max_orbital_coupling_batch_width < 1 ||
+        hvp_diagnostics.max_orbital_coupling_batch_width > 2) {
+      throw std::runtime_error(
+          "orbital coupling block diagnostics are inconsistent");
+    }
 
     double state_energy_average_error = 0.0;
     double state_gradient_average_error = 0.0;
@@ -564,6 +628,14 @@ int main(int argc, char** argv) {
               << state_hvp_average_error << '\n'
               << "component_decomposition_error = "
               << component_decomposition_error << '\n'
+              << "coupling_batch_orbital_error = "
+              << coupling_batch_orbital_error << '\n'
+              << "coupling_batch_structure_error = "
+              << coupling_batch_structure_error << '\n'
+              << "coupling_batch_chunks = "
+              << hvp_diagnostics.orbital_coupling_batch_chunk_count << '\n'
+              << "coupling_batch_max_width = "
+              << hvp_diagnostics.max_orbital_coupling_batch_width << '\n'
               << "coupled_structure_coordinate_dimension = "
               << coupled_audit.structure_coordinate_dimension << '\n'
               << "coupled_structure_response_rank = "

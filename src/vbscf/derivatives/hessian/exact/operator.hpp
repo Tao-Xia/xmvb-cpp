@@ -65,6 +65,26 @@ struct OrbitalCouplingAction {
   Eigen::MatrixXd scaled_structure_forcing;
 };
 
+/** @brief Batched orbital block and one structure-forcing matrix per direction. */
+struct OrbitalCouplingBlockAction {
+  /** @brief Columns are the orbital Hessian images @f$\bar A P@f$. */
+  Eigen::MatrixXd orbital_hessian;
+  /** @brief Scaled @f$BP@f$ forcing matrices aligned with the input columns. */
+  std::vector<Eigen::MatrixXd> scaled_structure_forcing;
+};
+
+/** @brief Common-revision solutions of the horizontal structure equations. */
+struct StructureResponseBlock {
+  /** @brief Physical scaled responses aligned with the forcing block. */
+  std::vector<Eigen::MatrixXd> scaled_coefficients;
+  std::vector<Eigen::MatrixXd> coefficient_responses;
+  std::vector<Eigen::MatrixXd> adjoint_multipliers;
+  std::vector<Eigen::MatrixXd> scaled_equation_residuals;
+  std::uint64_t revision = 0;
+  int block_actions = 0;
+  double max_relative_residual = 0.0;
+};
+
 /**
  * @brief Diagonalizes the compact nonzero spectrum of @f$-J K^\dagger J^T@f$.
  *
@@ -105,6 +125,9 @@ public:
     std::size_t exact_pair_tile_rows = 0;
     std::size_t apply_count = 0;
     std::size_t batch_apply_count = 0;
+    std::size_t orbital_coupling_batch_count = 0;
+    std::size_t orbital_coupling_batch_chunk_count = 0;
+    std::size_t max_orbital_coupling_batch_width = 0;
     std::size_t structure_response_block_actions = 0;
     std::size_t structure_response_schur_build_count = 0;
     std::size_t structure_response_schur_new_columns = 0;
@@ -177,6 +200,21 @@ public:
    */
   OrbitalCouplingAction apply_orbital_coupling(
       const Eigen::VectorXd& reduced_direction) const;
+
+  /**
+   * @brief Applies @f$\bar A P@f$ and @f$BP@f$ to a bounded direction block.
+   *
+   * AO one-electron and active two-electron directional transformations are
+   * shared inside each memory-bounded chunk. Caller blocks wider than the
+   * workspace budget are split without changing column order.
+   */
+  OrbitalCouplingBlockAction apply_orbital_coupling_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const;
+
+  /** @brief Solves @f$Cz=-F@f$ for a forcing block in one common revision. */
+  StructureResponseBlock solve_structure_response_block(
+      const std::vector<Eigen::MatrixXd>& scaled_structure_forcing,
+      double relative_residual_tolerance) const;
 
   /** @brief Applies @f$B^Tz@f$ through the existing selected-state adjoint. */
   Eigen::VectorXd apply_structure_coupling_adjoint(

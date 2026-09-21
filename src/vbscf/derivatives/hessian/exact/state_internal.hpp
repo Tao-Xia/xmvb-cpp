@@ -45,6 +45,13 @@ struct ExactHvpOperator::State {
   OrbitalCouplingAction apply_orbital_coupling(
       const Eigen::VectorXd& reduced_direction) const;
 
+  OrbitalCouplingBlockAction apply_orbital_coupling_batch(
+      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions) const;
+
+  StructureResponseBlock solve_structure_response_block(
+      const std::vector<Eigen::MatrixXd>& scaled_structure_forcing,
+      double relative_residual_tolerance) const;
+
   Eigen::VectorXd apply_structure_coupling_adjoint(
       const Eigen::Ref<const Eigen::MatrixXd>& coefficient_response,
       const Eigen::Ref<const Eigen::MatrixXd>& adjoint_multipliers) const;
@@ -57,6 +64,11 @@ struct ExactHvpOperator::State {
   Diagnostics diagnostics() const;
 
 private:
+  Eigen::MatrixXd apply_reduced_batch_impl(
+      const Eigen::Ref<const Eigen::MatrixXd>& reduced_directions,
+      HvpComponents components,
+      OrbitalCouplingBlockAction* coupling_output) const;
+
   const AcceptedOuterResponseContext& outer_response_context() const;
 
   PrecomputedDirection prepare_direction(
@@ -88,6 +100,9 @@ private:
   struct ApplyTimingTotals {
     std::size_t apply_count = 0;
     std::size_t batch_apply_count = 0;
+    std::size_t orbital_coupling_batch_count = 0;
+    std::size_t orbital_coupling_batch_chunk_count = 0;
+    std::size_t max_orbital_coupling_batch_width = 0;
     std::size_t structure_response_block_actions = 0;
     std::size_t structure_response_schur_build_count = 0;
     std::size_t structure_response_schur_new_columns = 0;

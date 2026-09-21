@@ -9,6 +9,7 @@
 
 #include "vbscf/derivatives/hessian/exact/state_internal.hpp"
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
+#include "vbscf/derivatives/hessian/coupled/coupling.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
@@ -21,6 +22,7 @@ struct PrecomputedOuterResponse {
   SameSpinDirectionalPairCache pair_cache;
   std::optional<StructureIntegralDirection> direct_ci_direction;
   SelectedStateGeneralizedEigenDirectionalResponse selected_state_response;
+  std::optional<ScaledStructureCoupling> gauge_coupling;
 };
 
 struct ExactHvpOperator::State::PrecomputedDirection {

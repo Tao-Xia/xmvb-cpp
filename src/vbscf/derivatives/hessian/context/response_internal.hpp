@@ -32,6 +32,8 @@ struct SelectedStateGeneralizedEigenDirectionalResponse {
   Eigen::MatrixXd delta_selected_eigenvector_matrix;
   /** Full selected-space response for each orbital direction. */
   std::vector<Eigen::MatrixXd> selected_matrix_responses;
+  /** Top-block bordered residual for each direction. */
+  std::vector<Eigen::MatrixXd> equation_residuals;
   std::vector<int> linear_iterations;
   int block_actions = 0;
   double max_relative_residual = 0.0;

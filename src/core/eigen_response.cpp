@@ -515,6 +515,7 @@ EigenResponseResult solve_generalized_eigen_response_from_full_spectrum(
       overlap_selected,
       solution,
       &result.block_actions);
+  result.bordered_residuals = images - rhs;
   result.relative_residual_norms.resize(n_rhs);
   for (Eigen::Index column = 0; column < n_rhs; ++column) {
     const double rhs_norm = rhs.col(column).norm();
@@ -999,6 +1000,7 @@ EigenResponseResult solve_generalized_eigen_response(
   const Eigen::MatrixXd final_images = apply_bordered_operators(
       action, selected_eigenvalues, overlap_selected, bordered_solution,
       &result.block_actions);
+  result.bordered_residuals = final_images - full_rhs;
   result.relative_residual_norms.resize(n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const double original_rhs_norm = full_rhs.col(state).norm();
@@ -1174,6 +1176,7 @@ EigenResponseResult evaluate_frozen_generalized_eigen_response(
   const Eigen::MatrixXd images = apply_bordered_operators(
       action, selected_eigenvalues, overlap_selected, bordered_solution,
       &result.block_actions);
+  result.bordered_residuals = images - full_rhs;
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const double rhs_norm = full_rhs.col(state).norm();
     const double residual_norm =
@@ -1294,6 +1297,7 @@ EigenSubspaceResponseResult finish_equal_weight_response(
 
   const Eigen::MatrixXd equation_residual = forcing + shifted_response -
       overlap_selected * result.selected_matrix_response;
+  result.equation_residual = equation_residual;
   const Eigen::MatrixXd gauge_residual =
       selected_eigenvectors.transpose() * response_images.overlap -
       gauge_target;

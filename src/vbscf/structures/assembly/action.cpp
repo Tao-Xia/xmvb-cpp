@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <optional>
 #include <stdexcept>
 
@@ -14,6 +15,38 @@
 
 namespace xmvb::vb {
 namespace {
+
+constexpr std::size_t kStructureActionWorkspaceBytes =
+    256ULL * 1024ULL * 1024ULL;
+constexpr int kMaximumStructureActionBatchColumns = 8;
+
+int bounded_structure_action_width(
+    int requested,
+    int n_unique_alpha,
+    int n_unique_beta,
+    bool direct_ci) {
+  // A direct-CI column owns determinant-product sigma and exterior-transform
+  // workspaces. Keeping its width at one prevents the FCI workspace from being
+  // multiplied by the Davidson block width. The factorized action can batch,
+  // but bounds its simultaneous spin-product matrices by the same byte budget.
+  if (direct_ci) {
+    return 1;
+  }
+  const std::size_t spin_products =
+      static_cast<std::size_t>(n_unique_alpha) *
+      static_cast<std::size_t>(n_unique_beta);
+  constexpr std::size_t kSimultaneousSpinProductMatrices = 8;
+  const std::size_t bytes_per_column = std::max<std::size_t>(
+      sizeof(double),
+      kSimultaneousSpinProductMatrices * spin_products * sizeof(double));
+  const int budget_width = static_cast<int>(std::max<std::size_t>(
+      1ULL, kStructureActionWorkspaceBytes / bytes_per_column));
+  return std::max(
+      1,
+      std::min({requested,
+                kMaximumStructureActionBatchColumns,
+                budget_width}));
+}
 
 double contract_opposite_spin(
     const OppositeSpinPackedPairProjection& alpha,
@@ -1217,20 +1250,23 @@ Eigen::MatrixXd StructureAction::expand_structure_block(
 
 StructureActionResult StructureAction::apply(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
+  if (vectors.rows() != n_structures_ || vectors.cols() <= 0) {
+    throw std::invalid_argument(
+        "structure vector block has incompatible dimensions");
+  }
   const int block_width = static_cast<int>(vectors.cols());
-  if (direct_ci_ && block_width > 1) {
-    // The direct-CI kernel has no cross-vector arithmetic.  Streaming block
-    // columns therefore preserves the exact action while bounding all
-    // determinant-product workspaces by one FCI vector instead of the
-    // Davidson block width.
+  const int bounded_width = bounded_structure_action_width(
+      block_width, n_unique_alpha_, n_unique_beta_, direct_ci_ != nullptr);
+  if (block_width > bounded_width) {
     StructureActionResult images{
         Eigen::MatrixXd(n_structures_, block_width),
         Eigen::MatrixXd(n_structures_, block_width)};
-    for (int column = 0; column < block_width; ++column) {
-      StructureActionResult column_images =
-          apply(vectors.middleCols(column, 1));
-      images.hamiltonian.col(column) = column_images.hamiltonian;
-      images.overlap.col(column) = column_images.overlap;
+    for (int first = 0; first < block_width; first += bounded_width) {
+      const int width = std::min(bounded_width, block_width - first);
+      StructureActionResult chunk =
+          apply(vectors.middleCols(first, width));
+      images.hamiltonian.middleCols(first, width) = chunk.hamiltonian;
+      images.overlap.middleCols(first, width) = chunk.overlap;
     }
     return images;
   }

@@ -282,6 +282,12 @@ ExactHvpOperator::State::diagnostics() const {
             accepted_exact_two_electron_cache_.n_basis_functions);
   info.apply_count = apply_timing_totals_.apply_count;
   info.batch_apply_count = apply_timing_totals_.batch_apply_count;
+  info.orbital_coupling_batch_count =
+      apply_timing_totals_.orbital_coupling_batch_count;
+  info.orbital_coupling_batch_chunk_count =
+      apply_timing_totals_.orbital_coupling_batch_chunk_count;
+  info.max_orbital_coupling_batch_width =
+      apply_timing_totals_.max_orbital_coupling_batch_width;
   info.structure_response_block_actions =
       apply_timing_totals_.structure_response_block_actions;
   info.structure_response_schur_build_count =

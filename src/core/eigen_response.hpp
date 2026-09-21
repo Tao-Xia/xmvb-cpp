@@ -88,6 +88,8 @@ private:
 struct EigenResponseResult {
   Eigen::MatrixXd eigenvector_response;
   Eigen::VectorXd eigenvalue_response;
+  /** @brief Residual of the complete bordered response equations. */
+  Eigen::MatrixXd bordered_residuals;
   Eigen::VectorXd relative_residual_norms;
   std::vector<int> iterations;
   int block_actions = 0;
@@ -110,6 +112,8 @@ struct EigenResponseResult {
 struct EigenSubspaceResponseResult {
   Eigen::MatrixXd eigenvector_response;
   Eigen::MatrixXd selected_matrix_response;
+  /** @brief Top-block residual of the bordered response equation. */
+  Eigen::MatrixXd equation_residual;
   Eigen::VectorXd relative_residual_norms;
   std::vector<int> iterations;
   int block_actions = 0;

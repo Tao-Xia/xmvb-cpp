@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/LU>
 
 #include "core/eigen_response.hpp"
 #include "vbscf/derivatives/hessian/coupled/coupling.hpp"
@@ -152,6 +153,115 @@ OrbitalCouplingAction ExactHvpOperator::State::apply_orbital_coupling(
        .structure_response = false},
       nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
       &result);
+  return result;
+}
+
+StructureResponseBlock ExactHvpOperator::solve_structure_response_block(
+    const std::vector<Eigen::MatrixXd>& scaled_structure_forcing,
+    double relative_residual_tolerance) const {
+  return state_->solve_structure_response_block(
+      scaled_structure_forcing, relative_residual_tolerance);
+}
+
+StructureResponseBlock ExactHvpOperator::State::solve_structure_response_block(
+    const std::vector<Eigen::MatrixXd>& scaled_structure_forcing,
+    double relative_residual_tolerance) const {
+  if (scaled_structure_forcing.empty() ||
+      !(relative_residual_tolerance > 0.0) ||
+      relative_residual_tolerance >= 1.0 ||
+      !std::isfinite(relative_residual_tolerance)) {
+    throw std::invalid_argument("invalid structure-response forcing block");
+  }
+  const int n_structures = accepted_point_context_->n_structures;
+  const int n_states = static_cast<int>(
+      accepted_point_context_->selected_state_indices.size());
+  const int n_directions =
+      static_cast<int>(scaled_structure_forcing.size());
+  Eigen::MatrixXd raw_forcing(n_structures, n_states * n_directions);
+  for (int direction = 0; direction < n_directions; ++direction) {
+    const Eigen::MatrixXd& forcing =
+        scaled_structure_forcing[static_cast<std::size_t>(direction)];
+    if (forcing.rows() != n_structures || forcing.cols() != n_states ||
+        !forcing.allFinite()) {
+      throw std::invalid_argument(
+          "structure-response forcing has inconsistent dimensions");
+    }
+    for (int state = 0; state < n_states; ++state) {
+      const double weight = accepted_point_context_->normalized_state_weights[
+          static_cast<std::size_t>(state)];
+      if (!(weight > 0.0) || !std::isfinite(weight)) {
+        throw std::runtime_error(
+            "structure-response coordinate weight is invalid");
+      }
+      raw_forcing.col(direction * n_states + state) =
+          forcing.col(state) / std::sqrt(2.0 * weight);
+    }
+  }
+
+  const auto& response_operator =
+      outer_response_context().selected_state_eigen_response_operator;
+  const SelectedStateGeneralizedEigenDirectionalResponse response =
+      response_operator.apply_direction_block(
+          raw_forcing,
+          Eigen::MatrixXd::Zero(n_structures, n_states * n_directions),
+          relative_residual_tolerance,
+          false);
+  apply_timing_totals_.structure_response_block_actions +=
+      response.block_actions;
+  if (!response.linear_iterations.empty()) {
+    apply_timing_totals_.max_structure_response_iterations = std::max(
+        apply_timing_totals_.max_structure_response_iterations,
+        *std::max_element(
+            response.linear_iterations.begin(),
+            response.linear_iterations.end()));
+  }
+  apply_timing_totals_.max_structure_response_relative_residual = std::max(
+      apply_timing_totals_.max_structure_response_relative_residual,
+      response.max_relative_residual);
+
+  StructureResponseBlock result;
+  if (response.equation_residuals.size() !=
+      scaled_structure_forcing.size()) {
+    throw std::runtime_error(
+        "structure response lacks bordered residual certificates: got " +
+        std::to_string(response.equation_residuals.size()) + ", expected " +
+        std::to_string(scaled_structure_forcing.size()));
+  }
+  result.scaled_coefficients.reserve(scaled_structure_forcing.size());
+  result.coefficient_responses.reserve(scaled_structure_forcing.size());
+  result.adjoint_multipliers.reserve(scaled_structure_forcing.size());
+  result.scaled_equation_residuals.reserve(
+      scaled_structure_forcing.size());
+  const Eigen::MatrixXd selected_metric =
+      response_operator.selected_eigenvectors.transpose() *
+      response_operator.overlap_selected;
+  for (int direction = 0; direction < n_directions; ++direction) {
+    Eigen::MatrixXd raw =
+        response.delta_selected_eigenvector_matrix.middleCols(
+            direction * n_states, n_states);
+    Eigen::MatrixXd scaled = raw;
+    Eigen::MatrixXd scaled_residual = response.equation_residuals[
+        static_cast<std::size_t>(direction)];
+    for (int state = 0; state < n_states; ++state) {
+      const double weight = accepted_point_context_->normalized_state_weights[
+          static_cast<std::size_t>(state)];
+      scaled.col(state) *= std::sqrt(2.0 * weight);
+      scaled_residual.col(state) *= std::sqrt(2.0 * weight);
+    }
+    result.scaled_coefficients.push_back(std::move(scaled));
+    result.coefficient_responses.push_back(std::move(raw));
+    result.adjoint_multipliers.push_back(
+        -response.selected_matrix_responses[
+            static_cast<std::size_t>(direction)] +
+        selected_metric.partialPivLu().solve(
+            response_operator.selected_eigenvectors.transpose() *
+            raw_forcing.middleCols(direction * n_states, n_states)));
+    result.scaled_equation_residuals.push_back(
+        std::move(scaled_residual));
+  }
+  result.revision = response_operator.revision();
+  result.block_actions = response.block_actions;
+  result.max_relative_residual = response.max_relative_residual;
   return result;
 }
 
@@ -444,15 +554,22 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     SelectedStateGeneralizedEigenDirectionalResponse
         local_directional_selected_state_response;
     std::optional<StructureIntegralDirection> local_direct_ci_direction;
-    std::optional<ScaledStructureCoupling> gauge_coupling;
+    std::optional<ScaledStructureCoupling> local_gauge_coupling;
+    const ScaledStructureCoupling* gauge_coupling = nullptr;
     if (components.structure_response || build_orbital_coupling) {
       if (precomputed_outer_response != nullptr) {
         if (build_orbital_coupling) {
-          throw std::logic_error(
-              "coupled orbital action does not accept a precomputed response");
+          if (!precomputed_outer_response->gauge_coupling.has_value()) {
+            throw std::logic_error(
+                "precomputed coupled orbital action is missing its gauge coupling");
+          }
+          gauge_coupling = &*precomputed_outer_response->gauge_coupling;
+          coupling_output->scaled_structure_forcing =
+              gauge_coupling->horizontal_forcing.scaled_coefficients;
+        } else {
+          directional_selected_state_response =
+              &precomputed_outer_response->selected_state_response;
         }
-        directional_selected_state_response =
-            &precomputed_outer_response->selected_state_response;
       } else {
         SelectedStateDirectionalStructureImages images =
             build_selected_structure_direction(
@@ -475,8 +592,9 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                   eigen.selected_residuals,
                   images.delta_hamiltonian_selected,
                   images.delta_overlap_selected);
-          gauge_coupling = scale_equal_weight_structure_coupling(
+          local_gauge_coupling = scale_equal_weight_structure_coupling(
               coupling, accepted_point_context_->normalized_state_weights);
+          gauge_coupling = &*local_gauge_coupling;
           coupling_output->scaled_structure_forcing =
               gauge_coupling->horizontal_forcing.scaled_coefficients;
         } else {
@@ -520,7 +638,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       state_multipliers =
           -directional_selected_state_response
                ->selected_matrix_responses.front();
-    } else if (gauge_coupling.has_value()) {
+    } else if (gauge_coupling != nullptr) {
       state_multipliers = gauge_coupling->gauge_adjoint_multipliers;
     }
 
@@ -540,7 +658,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       apply_timing_totals_
           .outer_response_selected_state_rebuild_wall_time_seconds +=
           detail::exact_hvp_elapsed_seconds(selected_state_rebuild_start_time);
-    } else if (gauge_coupling.has_value()) {
+    } else if (gauge_coupling != nullptr) {
       const auto selected_state_rebuild_start_time =
           std::chrono::steady_clock::now();
       directional_selected_states.emplace(
