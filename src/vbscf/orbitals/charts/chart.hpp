@@ -10,8 +10,6 @@
 
 namespace xmvb::vb {
 
-struct OeoCasscfPreconditioner;
-
 /**
  * @brief Accepted-point quotient chart for VBSCF orbital optimization.
  *
@@ -44,6 +42,11 @@ public:
     Eigen::VectorXd packed_projected_gradient;
   };
 
+  struct ReducedBlock {
+    int offset = 0;
+    int size = 0;
+  };
+
   OrbitalChart(
       const OrbitalPreparationInput& orbital_preparation_input,
       const SparseParameterLayout& parameter_view,
@@ -51,8 +54,7 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& physical_orbital_matrix,
       const Eigen::MatrixXd* ao_effective_h1e = nullptr,
       bool collect_structural_diagnostics = false,
-      bool complete_active_space = false,
-      const OeoCasscfPreconditioner* casscf_preconditioner = nullptr);
+      bool complete_active_space = false);
 
   int reduced_size() const noexcept {
     return reduced_size_;
@@ -80,6 +82,13 @@ public:
   std::uint64_t rank_signature() const noexcept {
     return rank_signature_;
   }
+
+  /** @brief Returns the natural per-orbital blocks of the reduced chart. */
+  std::vector<ReducedBlock> reduced_blocks() const;
+
+  /** @brief Installs an SPD absolute-diagonal matrix-free preconditioner. */
+  void set_reduced_hessian_diagonal(
+      const Eigen::Ref<const Eigen::VectorXd>& diagonal);
 
   // Reduced-space algebra expects vectors in the accepted-point orbital-chart chart:
   // packed vectors have `packed_parameter_size_` entries and reduced vectors
@@ -142,6 +151,7 @@ private:
     // immutable, so factoring it again in every Krylov iteration is wasted
     // cubic work.
     Eigen::MatrixXd inverse_curvature_block;
+    bool curvature_is_diagonal = false;
     int local_parameter_size = 0;
     int local_gauge_rank = 0;
     int local_combined_rank = 0;

@@ -2,15 +2,12 @@
 
 #include <algorithm>
 #include <cmath>
-#include <optional>
 #include <stdexcept>
 
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
-#include "vbscf/core/contracts/orbital_type.hpp"
-#include "vbscf/optimization/preconditioners/casscf_diagonal.hpp"
 
 namespace xmvb::vb::optimizer_detail {
 
@@ -34,23 +31,13 @@ OrbitalChart build_orbital_chart(
   const int n_occupied_orbitals =
       n_inactive_doubly_occupied_orbitals +
       orbital_preparation_input.n_active_orbitals;
-  std::optional<OeoCasscfPreconditioner> casscf_preconditioner;
   if (preconditioner == OrbitalPreconditioner::Automatic) {
     throw std::invalid_argument(
         "orbital-chart construction requires a resolved preconditioner");
   }
-  const bool casscf_available = objective.input().complete_active_space &&
-      orbital_preparation_input.orbital_type == kOrbitalTypeOeo &&
-      objective.second_order_context();
-  if (preconditioner == OrbitalPreconditioner::CasscfDiagonal &&
-      !casscf_available) {
+  if (preconditioner == OrbitalPreconditioner::HessianDiagonal) {
     throw std::invalid_argument(
-        "CASSCF diagonal preconditioning requires complete OEO and a "
-        "second-order context");
-  }
-  if (preconditioner == OrbitalPreconditioner::CasscfDiagonal) {
-    casscf_preconditioner = build_oeo_casscf_preconditioner(
-        objective.input(), *objective.second_order_context());
+        "Hessian diagonal must be installed from the accepted-point HVP");
   }
   const Eigen::MatrixXd* one_electron =
       preconditioner == OrbitalPreconditioner::OneElectron
@@ -64,8 +51,7 @@ OrbitalChart build_orbital_chart(
       normalized_orbital_matrix,
       one_electron,
       false,
-      objective.input().complete_active_space,
-      casscf_preconditioner ? &*casscf_preconditioner : nullptr);
+      objective.input().complete_active_space);
 }
 
 void sync_result_from_objective(

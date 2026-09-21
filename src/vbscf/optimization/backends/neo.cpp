@@ -16,9 +16,9 @@
 #include "vbscf/optimization/neo/globalization.hpp"
 #include "vbscf/optimization/neo/response_solver.hpp"
 #include "vbscf/optimization/objective/function.hpp"
+#include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
-#include "vbscf/core/contracts/orbital_type.hpp"
 
 namespace xmvb::vb::optimizer_detail {
 namespace {
@@ -27,11 +27,7 @@ OrbitalPreconditioner resolve_neo_preconditioner(
     const VbScfObjective& objective,
     OrbitalPreconditioner requested) {
   if (requested != OrbitalPreconditioner::Automatic) return requested;
-  const auto& input = objective.input();
-  if (input.complete_active_space &&
-      input.orbital_preparation_input.orbital_type == kOrbitalTypeOeo) {
-    return OrbitalPreconditioner::CasscfDiagonal;
-  }
+  static_cast<void>(objective);
   return OrbitalPreconditioner::OneElectron;
 }
 
@@ -60,7 +56,8 @@ bool build_accepted_neo_keyframe(
     VbScfObjective* objective,
     const SparseParameterLayout& parameter_view,
     const VbScfOptimizerOptions& options,
-    const OrbitalChart& chart,
+    OrbitalPreconditioner preconditioner,
+    OrbitalChart* chart,
     const Eigen::VectorXd& reduced_gradient,
     const Eigen::VectorXd& current_parameters,
     const Eigen::VectorXd& orbital_guess_packed,
@@ -70,18 +67,26 @@ bool build_accepted_neo_keyframe(
     NeoIterationRecord* record,
     VbScfOptimizerResult* result,
     AcceptedNeoKeyframe* accepted) {
+  if (chart == nullptr) {
+    throw std::invalid_argument("NEO orbital chart must not be null");
+  }
   const OrbitalPreparationInput accepted_orbitals =
       objective->input().orbital_preparation_input;
   NonredundantRetractionMetric orbital_metric(
-      chart, parameter_view, accepted_orbitals);
+      *chart, parameter_view, accepted_orbitals);
   ExactHvpOperator orbital_hessian(
       objective->second_order_context(),
       &objective->input(),
       parameter_view,
-      &chart);
+      chart);
   if (!orbital_hessian.supports_analytic_core_model()) {
     result->termination_reason = "neo_analytic_hessian_unavailable";
     return false;
+  }
+  if (preconditioner == OrbitalPreconditioner::HessianDiagonal &&
+      !chart->has_reduced_curvature_diagonal()) {
+    chart->set_reduced_hessian_diagonal(
+        build_reduced_hessian_diagonal(orbital_hessian, *chart));
   }
 
   StructureTangentOperator structure_hessian(
@@ -89,12 +94,12 @@ bool build_accepted_neo_keyframe(
   record->model_dimension = std::max(
       record->model_dimension,
       static_cast<int>(
-          chart.reduced_size() + structure_hessian.tangent_size()));
+          chart->reduced_size() + structure_hessian.tangent_size()));
   Eigen::VectorXd orbital_guess;
   if (orbital_guess_packed.size() ==
       static_cast<Eigen::Index>(parameter_view.size())) {
     orbital_guess =
-        chart.project_vector(orbital_guess_packed).reduced_gradient;
+        chart->project_vector(orbital_guess_packed).reduced_gradient;
   }
   double selected_energy_scale = 0.0;
   for (const double selected_energy :
@@ -131,8 +136,8 @@ bool build_accepted_neo_keyframe(
       [&orbital_metric](const Eigen::VectorXd& vector) {
         return orbital_metric.apply(vector);
       },
-      [&chart](const Eigen::VectorXd& residual, double shift) {
-        return chart.apply_inverse_reduced_shifted_block_preconditioner(
+      [chart](const Eigen::VectorXd& residual, double shift) {
+        return chart->apply_inverse_reduced_shifted_block_preconditioner(
             residual, shift);
       },
       std::move(orbital_guess),
@@ -144,7 +149,7 @@ bool build_accepted_neo_keyframe(
     NeoOptions neo_options;
     neo_options.trust_radius = trial_radius;
     neo_options.relative_residual_tolerance = neo_forcing_term(
-        gradient_l2, chart.reduced_size());
+        gradient_l2, chart->reduced_size());
     // A linear solve below the requested nonlinear stationarity is unusable
     // accuracy, especially for the final energy-confirmation keyframe.
     neo_options.absolute_residual_tolerance = options.gradient_tolerance;
@@ -163,7 +168,7 @@ bool build_accepted_neo_keyframe(
     const Eigen::VectorXd candidate_parameters =
         build_nonredundant_lifted_trial_parameters(
             accepted_orbitals,
-            chart,
+            *chart,
             parameter_view,
             step.step.orbital);
     if (is_effectively_zero_step(
@@ -214,7 +219,7 @@ bool build_accepted_neo_keyframe(
     accepted->parameters =
         parameter_view.pack(trial.orbital_preparation_input);
     accepted->next_orbital_guess_packed =
-        chart.expand_step(step.step.orbital);
+        chart->expand_step(step.step.orbital);
     accepted->trial = std::move(trial);
     return true;
   }
@@ -239,6 +244,10 @@ BackendRunResult run_neo_backend(
       std::max(options.minimum_step_size, options.initial_step_size);
   const OrbitalPreconditioner preconditioner =
       resolve_neo_preconditioner(*objective, options.orbital_preconditioner);
+  const OrbitalPreconditioner chart_preconditioner =
+      preconditioner == OrbitalPreconditioner::HessianDiagonal
+          ? OrbitalPreconditioner::Identity
+          : preconditioner;
   OrbitalChart chart = build_orbital_chart(
       *objective, parameter_view, OrbitalPreconditioner::Identity);
   auto projected = chart.project_gradient(gradient);
@@ -246,7 +255,8 @@ BackendRunResult run_neo_backend(
       gradient_infinity_norm(projected.reduced_gradient);
   double final_gradient_l2 = projected.reduced_gradient.norm();
   if (final_gradient_inf >= options.gradient_tolerance) {
-    chart = build_orbital_chart(*objective, parameter_view, preconditioner);
+    chart = build_orbital_chart(
+        *objective, parameter_view, chart_preconditioner);
   }
 
   while (run_result.n_iterations < options.max_iterations) {
@@ -285,7 +295,8 @@ BackendRunResult run_neo_backend(
               objective,
               parameter_view,
               options,
-              chart,
+              preconditioner,
+              &chart,
               projected.reduced_gradient,
               parameters,
               keyframe_orbital_guess_packed,
@@ -332,13 +343,15 @@ BackendRunResult run_neo_backend(
       // confirmation instead of hiding it inside the current reported step.
       if (!result->converged &&
           final_gradient_inf < options.gradient_tolerance) {
-        chart = build_orbital_chart(*objective, parameter_view, preconditioner);
+        chart = build_orbital_chart(
+            *objective, parameter_view, chart_preconditioner);
         projected = std::move(next_projected);
         break;
       }
       if (!result->converged) {
         OrbitalChart next_chart =
-            build_orbital_chart(*objective, parameter_view, preconditioner);
+            build_orbital_chart(
+                *objective, parameter_view, chart_preconditioner);
         if (next_chart.reduced_size() != next_geometry.reduced_size() ||
             next_chart.rank_signature() != next_geometry.rank_signature()) {
           throw std::runtime_error(

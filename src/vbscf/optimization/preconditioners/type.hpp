@@ -7,7 +7,7 @@ enum class OrbitalPreconditioner {
   Automatic,
   Identity,
   OneElectron,
-  CasscfDiagonal,
+  HessianDiagonal,
 };
 
 }  // namespace xmvb::vb

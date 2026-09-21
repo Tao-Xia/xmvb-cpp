@@ -1037,106 +1037,94 @@ the new accepted-point Hessian images and residual certificate are recomputed.
 The direction is discarded at the next macroiteration, so no secant curvature
 or stale Hessian action enters the NEO model.
 
-## 15. Complete CASSCF orbital-diagonal preconditioner
+## 15. Unified VBSCF Hessian-diagonal preconditioner
 
-For a complete full-AO OEO space, the accepted nonorthogonal active orbitals
-are first mapped to an AO-metric orthonormal CASSCF frame.  With
+Both HAO and OEO orbitals are nonorthogonal.  They differ in their AO support:
+HAO orbitals are strictly sparse, whereas OEO orbitals have full AO support.
+Consequently, an orthogonal-CASSCF rotation diagonal is not a general VBSCF
+preconditioner and must not be substituted for the curvature of either raw
+coefficient representation.
+
+Let $U$ be the accepted-point nonredundant horizontal lift defined in section
+7.  The coupled NEO equation contains the orbital block
 
 $$
-S_a=R_a^{\mathrm T}R_a,
-\qquad
-C_a^{\perp}=C_aR_a^{-1},
+A
+=
+H_{\mathrm{direct}}
++H_{\mathrm{fixed\ pullback}}
++H_{\mathrm{local\ active}},
 \tag{57}
 $$
 
-the active reduced-density adjoints transform covariantly as
+together with the explicit orbital--structure coupling $B$ and structure
+block $C$.  The unified Hessian diagonal is defined in the same reduced
+coordinates as the NEO step:
 
 $$
-\gamma^{\perp}=R_a\gamma R_a^{\mathrm T},
-\qquad
-\Gamma^{\perp}_{pqrs}
+d_i
 =
-\sum_{abcd}
-(R_a)_{pa}(R_a)_{qb}(R_a)_{rc}(R_a)_{sd}\Gamma_{abcd}.
+e_i^{\mathrm T}Ae_i
+=
+\left[U^{\mathrm T}H_{CC}U\right]_{ii}.
 \tag{58}
 $$
 
-The packed two-electron adjoint determines the fully ERI-symmetric part of the
-spin-free two-particle density matrix uniquely.  If $g_{(pq),(rs)}$ denotes
-the derivative with respect to one eight-fold packed integral and
-$m_{pqrs}$ is the number of distinct ERI permutations, then
+The relaxed Schur term $-BC^{\dagger}B^{\mathrm T}$ is deliberately absent
+from eq 58.  Structure amplitudes are independent variables in the coupled
+NEO equation; including their eliminated response in $d_i$ would count the
+same coupling twice.
+
+Equation 58 is evaluated from the production analytic block-HVP rather than
+from a separately derived CASSCF expression.  For the natural reduced block
+$I_p$ belonging to orbital $p$, define the coordinate selector
 
 $$
-\Gamma^{\mathrm{sym}}_{pqrs}
-=\frac{2g_{(pq),(rs)}}{m_{pqrs}}.
+E_p
+=
+\begin{bmatrix}
+e_{i_1}&e_{i_2}&\cdots&e_{i_{m_p}}
+\end{bmatrix},
+\qquad i_k\in I_p.
 \tag{59}
 $$
 
-This replacement loses no orbital-curvature information because both the
-integrals and all orbital derivatives of the integrals possess the same
-eight-fold symmetry.
-
-The diagonal is evaluated from the partial MO transformations
+One fused matrix-free action produces
 
 $$
-(pq|ab),\qquad (pa|qb),\qquad (pp|cc),\qquad (pc|pc),
+Y_p=AE_p,
+\qquad
+d_{i_k}=(Y_p)_{i_k k}.
 \tag{60}
 $$
 
-where $c$, $a$, and $p$ denote core, active, and arbitrary MO indices,
-respectively.  Thus the full $O(n_{\mathrm{MO}}^4)$ MO integral tensor is not
-formed.  Exact AO-pair and RI factorizations feed the same contractions.
+Only the entries in eq 60 are retained.  The full reduced Hessian is never
+assembled or stored.  Grouping directions by their physical orbital block
+removes any empirical batch-width parameter and bounds the working memory by
+the largest local HAO/OEO quotient block rather than by the full reduced
+dimension.
 
-The implemented diagonal is the complete Newton--CASSCF orbital diagonal: it
-contains the one-electron contribution, core Coulomb and exchange, active
-one-particle density contractions, active two-particle cumulant contractions,
-core--active exchange terms, and the orbital-gradient diagonal correction.
-In compact notation it is
+The exact diagonal can be indefinite.  A positive absolute-curvature model is
+used only for preconditioning:
 
 $$
-d_{pi}
+\widetilde d_i
 =
-\left.
-\frac{\partial^2 E\!\left(Ce^{\kappa}\right)}
-{\partial\kappa_{pi}^2}
-\right|_{\kappa=0},
+\max\!\left(
+|d_i|,
+\sqrt{\epsilon_{\mathrm{mach}}}\max_j|d_j|
+\right),
 \qquad
-i\in\mathcal C\cup\mathcal A,
-\quad
-p\notin\text{the redundant block of }i.
+z_i=\frac{r_i}{\widetilde d_i+\lambda}.
 \tag{61}
 $$
 
-It is pulled back to the sparse quotient chart through the exact tangent
-Jacobian $J_i$ of each localized occupied orbital.  The local block-Jacobi
-preconditioner is
-
-$$
-P_i=J_i^{\mathrm T}\operatorname{diag}(d)J_i,
-\qquad
-z_i=(P_i+\lambda I)^{-1}r_i.
-\tag{62}
-$$
-
-Equation 62 changes only the iterative eigensolver metric.  The NEO model,
-HVP, KKT residual, and accepted step remain defined by the exact current-point
-operators.  Negative entries of eq 61 are retained in the physical model;
-positive spectral regularization is applied only when inverting $P_i$ as a
-preconditioner.
-
-The analytic diagonal is validated independently of the optimizer by rotating
-the full test Hamiltonian and checking
-
-$$
-d_{pi}
-=
-\frac{E(+h)-2E(0)+E(-h)}{h^2}+O(h^2).
-\tag{63}
-$$
-
-The present regression gives a maximum absolute discrepancy of
-$5.99\times10^{-8}$ hartree for all nonredundant core--active,
-core--virtual, and active--virtual rotations in the synthetic test.
+This replacement does not alter $A$, its negative curvature, the NEO Ritz
+values, or the KKT certificate.  It changes only the metric used to solve the
+shifted iterative subproblem.  Because eqs 58--60 use the actual VBSCF HVP and
+the actual accepted-point chart, the same implementation applies without a
+coordinate reinterpretation to strict-sparse HAO, full-AO OEO, complete
+structure spaces, and selected structure subspaces.
 
 ## 16. References
 

@@ -68,9 +68,9 @@ void apply_orbital_preconditioner_argument(
   } else if (name == "one-electron") {
     options->orbital_preconditioner =
         xmvb::vb::OrbitalPreconditioner::OneElectron;
-  } else if (name == "casscf-diagonal") {
+  } else if (name == "hessian-diagonal") {
     options->orbital_preconditioner =
-        xmvb::vb::OrbitalPreconditioner::CasscfDiagonal;
+        xmvb::vb::OrbitalPreconditioner::HessianDiagonal;
   } else {
     throw std::invalid_argument("invalid orbital preconditioner: " + name);
   }
@@ -127,7 +127,7 @@ void print_usage() {
                "[--optimizer-backend lbfgs|block_lbfgs|neo|nonredundant_projected_gradient|nonredundant_truncated_newton]"
                " [--max-iterations <count>]"
                " [--eigensolver davidson|dense]"
-               " [--orbital-preconditioner auto|identity|one-electron|casscf-diagonal]"
+               " [--orbital-preconditioner auto|identity|one-electron|hessian-diagonal]"
                " [--verbose true|false]"
                " [--gradient-tolerance <value>]"
                " [--energy-tolerance <value>]"

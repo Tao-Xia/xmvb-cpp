@@ -17,7 +17,6 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/optimization/preconditioners/one_electron.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
-#include "vbscf/optimization/preconditioners/casscf_diagonal.hpp"
 
 namespace xmvb::vb {
 
@@ -441,20 +440,12 @@ OrbitalChart::OrbitalChart(
     const Eigen::Ref<const Eigen::MatrixXd>& phys_orbital_matrix,
     const Eigen::MatrixXd* ao_effective_h1e,
     bool collect_structural_diagnostics,
-    bool complete_active_space,
-    const OeoCasscfPreconditioner* casscf_preconditioner)
+    bool complete_active_space)
     : packed_parameter_size_(parameter_view.size()) {
   if (ao_effective_h1e != nullptr &&
       (ao_effective_h1e->rows() != input.n_basis_functions ||
        ao_effective_h1e->cols() != input.n_basis_functions)) {
     throw std::invalid_argument("AO effective one-electron matrix shape mismatch");
-  }
-  if (casscf_preconditioner != nullptr &&
-      (casscf_preconditioner->mo_coefficients.rows() != input.n_basis_functions ||
-       casscf_preconditioner->mo_coefficients.cols() != input.n_basis_functions ||
-       casscf_preconditioner->rotation_diagonal.rows() != input.n_basis_functions ||
-       casscf_preconditioner->rotation_diagonal.cols() != input.n_basis_functions)) {
-    throw std::invalid_argument("CASSCF chart preconditioner shape mismatch");
   }
 
   const int n_inactive =
@@ -663,85 +654,7 @@ OrbitalChart::OrbitalChart(
       // into the same additive sparse chart as the exact HVP. Other inactive
       // orbitals remain fixed for an inactive target; all are removed for an
       // active target. Frozen coefficients contribute but have zero tangent.
-      if (casscf_preconditioner != nullptr && proj.local_reduced_size > 0) {
-        const int target = m.orbital_index;
-        const int local_active = target - n_inactive;
-        Eigen::MatrixXd raw_direction = Eigen::MatrixXd::Zero(
-            input.n_basis_functions, proj.local_reduced_size);
-        for (Eigen::Index row = 0; row < local_size; ++row) {
-          const int ao = bf_indices[proj.block_rows[row]];
-          raw_direction.row(ao) = proj.tangent_basis.row(row);
-        }
-        Eigen::VectorXd raw_orbital = Eigen::VectorXd::Zero(
-            input.n_basis_functions);
-        for (int row = 0; row < stored_count; ++row) {
-          const int ao = input.orbital_basis_index_table[
-              target * input.n_basis_functions + row] - 1;
-          raw_orbital[ao] = input.orbital_value_table[
-              target * input.n_basis_functions + row];
-        }
-        const double norm = std::sqrt(raw_orbital.dot(ao_overlap * raw_orbital));
-        if (!(norm > 0.0)) {
-          throw std::runtime_error("nonpositive OEO orbital norm");
-        }
-        const Eigen::VectorXd normalized = raw_orbital / norm;
-        const Eigen::RowVectorXd norm_direction =
-            normalized.transpose() * ao_overlap * raw_direction / norm;
-        Eigen::MatrixXd physical_direction = raw_direction / norm;
-        physical_direction.noalias() -= normalized * norm_direction;
-
-        Eigen::MatrixXd block_curv = Eigen::MatrixXd::Zero(
-            proj.local_reduced_size, proj.local_reduced_size);
-        const auto& mo = casscf_preconditioner->mo_coefficients;
-        const auto& diagonal = casscf_preconditioner->rotation_diagonal;
-        if (target < n_inactive) {
-          const auto& inverse =
-              casscf_preconditioner->inactive_inverse_transform;
-          if (inverse.rows() != n_inactive || inverse.cols() != n_inactive) {
-            throw std::invalid_argument("inactive CASSCF transform shape mismatch");
-          }
-          for (int p = n_inactive; p < input.n_basis_functions; ++p) {
-            const Eigen::VectorXd component =
-                physical_direction.transpose() * ao_overlap * mo.col(p);
-            for (int core = 0; core < n_inactive; ++core) {
-              block_curv.noalias() +=
-                  diagonal(p, core) * inverse(target, core) *
-                  inverse(target, core) *
-                  (component * component.transpose());
-            }
-          }
-        } else {
-          const auto& inverse = casscf_preconditioner->active_inverse_transform;
-          if (local_active < 0 || local_active >= input.n_active_orbitals ||
-              inverse.rows() != input.n_active_orbitals ||
-              inverse.cols() != input.n_active_orbitals) {
-            throw std::invalid_argument("active CASSCF transform shape mismatch");
-          }
-          if (n_inactive > 0) {
-            const auto core = mo.leftCols(n_inactive);
-            physical_direction.noalias() -=
-                core * (core.transpose() * ao_overlap * physical_direction);
-          }
-          for (int p = n_occupied; p < input.n_basis_functions; ++p) {
-            const Eigen::VectorXd component =
-                physical_direction.transpose() * ao_overlap * mo.col(p);
-            for (int active = 0; active < input.n_active_orbitals; ++active) {
-              block_curv.noalias() +=
-                  diagonal(p, n_inactive + active) *
-                  inverse(local_active, active) *
-                  inverse(local_active, active) *
-                  (component * component.transpose());
-            }
-          }
-        }
-        proj.curvature_diagonal =
-            normalize_curvature_diagonal(block_curv.diagonal());
-        PositiveCurvatureBlock positive_block =
-            build_positive_curvature_block(block_curv);
-        proj.curvature_block = std::move(positive_block.matrix);
-        proj.inverse_curvature_block = std::move(positive_block.inverse);
-        has_reduced_curvature_diagonal_ = true;
-      } else if (ao_effective_h1e != nullptr && proj.local_reduced_size > 0) {
+      if (ao_effective_h1e != nullptr && proj.local_reduced_size > 0) {
         const auto& stored_rows = m.block_row_for_slot;
         const bool inactive_target = m.orbital_index < n_inactive;
         Eigen::MatrixXd fixed_inactive(input.n_basis_functions,
@@ -829,6 +742,48 @@ OrbitalChart::structural_diagnostics() const noexcept {
     diagnostics.minimum_relative_scaling_residual = 0.0;
   }
   return diagnostics;
+}
+
+std::vector<OrbitalChart::ReducedBlock> OrbitalChart::reduced_blocks() const {
+  std::vector<ReducedBlock> result;
+  for (const auto& block_basis : block_bases_) {
+    for (const auto& projector : block_basis.orbitals) {
+      if (projector.local_reduced_size > 0) {
+        result.push_back({
+            projector.local_reduced_offset,
+            projector.local_reduced_size});
+      }
+    }
+  }
+  return result;
+}
+
+void OrbitalChart::set_reduced_hessian_diagonal(
+    const Eigen::Ref<const Eigen::VectorXd>& diagonal) {
+  if (diagonal.size() != reduced_size_ || !diagonal.allFinite()) {
+    throw std::invalid_argument(
+        "reduced Hessian diagonal is non-finite or has the wrong dimension");
+  }
+  if (reduced_size_ == 0) {
+    has_reduced_curvature_diagonal_ = false;
+    return;
+  }
+  const Eigen::VectorXd positive_diagonal =
+      normalize_curvature_diagonal(diagonal);
+  for (auto& block_basis : block_bases_) {
+    for (auto& projector : block_basis.orbitals) {
+      const int size = projector.local_reduced_size;
+      if (size <= 0) continue;
+      projector.curvature_diagonal = positive_diagonal.segment(
+          projector.local_reduced_offset, size);
+      projector.curvature_block =
+          projector.curvature_diagonal.asDiagonal();
+      projector.inverse_curvature_block =
+          projector.curvature_diagonal.cwiseInverse().asDiagonal();
+      projector.curvature_is_diagonal = true;
+    }
+  }
+  has_reduced_curvature_diagonal_ = true;
 }
 
 OrbitalChart::ProjectionResult
@@ -969,7 +924,10 @@ OrbitalChart::apply_inverse_reduced_shifted_block_preconditioner(
       Eigen::VectorXd solved;
       const auto local_vector = reduced_vector.segment(
           p.local_reduced_offset, p.local_reduced_size);
-      if (shift == 0.0) {
+      if (p.curvature_is_diagonal) {
+        solved = local_vector.array() /
+            (p.curvature_diagonal.array() + shift);
+      } else if (shift == 0.0) {
         solved.noalias() = p.inverse_curvature_block * local_vector;
       } else {
         Eigen::MatrixXd shifted = p.curvature_block;

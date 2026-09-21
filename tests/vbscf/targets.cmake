@@ -7,7 +7,7 @@
 set(_xmvb_vbscf_unit_targets
   test_active_two_electron_sparse
   test_block_inverse_bfgs
-  test_casscf_diagonal
+  test_hessian_diagonal
   test_cofactor_differential
   test_coupled_structure
   test_curvature_decomposition
@@ -43,7 +43,7 @@ endforeach()
 if (BUILD_TESTING)
   add_test(NAME active_two_electron_sparse COMMAND test_active_two_electron_sparse)
   add_test(NAME block_inverse_bfgs COMMAND test_block_inverse_bfgs)
-  add_test(NAME casscf_diagonal COMMAND test_casscf_diagonal)
+  add_test(NAME hessian_diagonal COMMAND test_hessian_diagonal)
   set_tests_properties(block_inverse_bfgs PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME orbital_block_partition COMMAND test_orbital_block_partition)
@@ -210,6 +210,35 @@ if (BUILD_TESTING)
     ENVIRONMENT
       "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
     PASS_REGULAR_EXPRESSION "neo_dual_tolerance")
+
+  foreach(_xmvb_orbital_type IN ITEMS hao oeo)
+    if (_xmvb_orbital_type STREQUAL "hao")
+      set(_xmvb_hessian_diagonal_input
+        ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi)
+    else()
+      set(_xmvb_hessian_diagonal_input
+        ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2_OEO_PYSCF_LOW.xmi)
+    endif()
+    add_test(
+      NAME neo_hessian_diagonal_f2_${_xmvb_orbital_type}
+      COMMAND
+        xmvb
+        ${_xmvb_hessian_diagonal_input}
+        --optimizer-backend neo
+        --orbital-preconditioner hessian-diagonal
+        --eigensolver davidson
+        --max-iterations 10
+        --gradient-tolerance 1e-3
+        --energy-tolerance 1e-7)
+    set_tests_properties(
+      neo_hessian_diagonal_f2_${_xmvb_orbital_type} PROPERTIES
+      WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+      ENVIRONMENT
+        "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
+      PASS_REGULAR_EXPRESSION "neo_dual_tolerance")
+  endforeach()
+  unset(_xmvb_hessian_diagonal_input)
+  unset(_xmvb_orbital_type)
 
   add_test(
     NAME neo_pyscf_reference_f2

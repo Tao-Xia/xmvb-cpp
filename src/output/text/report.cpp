@@ -207,13 +207,13 @@ const char* orbital_preconditioner_name(
     xmvb::vb::OrbitalPreconditioner preconditioner) {
   switch (preconditioner) {
     case xmvb::vb::OrbitalPreconditioner::Automatic:
-      return "automatic (CASSCF diagonal for complete OEO)";
+      return "automatic (one-electron block)";
     case xmvb::vb::OrbitalPreconditioner::Identity:
       return "identity";
     case xmvb::vb::OrbitalPreconditioner::OneElectron:
       return "one-electron block";
-    case xmvb::vb::OrbitalPreconditioner::CasscfDiagonal:
-      return "CASSCF Hessian diagonal";
+    case xmvb::vb::OrbitalPreconditioner::HessianDiagonal:
+      return "VBSCF reduced Hessian diagonal";
   }
   throw std::invalid_argument("invalid orbital preconditioner");
 }
