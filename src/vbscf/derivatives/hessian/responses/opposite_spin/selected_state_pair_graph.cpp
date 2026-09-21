@@ -1,10 +1,50 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/selected_state_pair_graph_internal.hpp"
 
 #include <cstddef>
+#include <stdexcept>
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 
 namespace xmvb::vb::detail {
+
+namespace {
+
+void accumulate_projected_channels(
+    const OppositeSpinPackedPairProjection& projection,
+    double coefficient,
+    const std::vector<int>& target_channels,
+    std::vector<double>* target_values) {
+  if (projection.packed_pair_indices.empty()) {
+    if (!projection.packed_pair_values.empty() ||
+        !projection.projected_pair_values.empty()) {
+      throw std::logic_error(
+          "empty opposite-spin projection has inconsistent cached values");
+    }
+    return;
+  }
+  if (projection.packed_pair_indices.size() !=
+      projection.packed_pair_values.size()) {
+    throw std::logic_error(
+        "opposite-spin sparse projection has inconsistent dimensions");
+  }
+  if (target_values == nullptr ||
+      target_values->size() != target_channels.size()) {
+    throw std::invalid_argument(
+        "opposite-spin projected-channel target has inconsistent dimensions");
+  }
+  for (std::size_t target = 0; target < target_channels.size(); ++target) {
+    const int channel = target_channels[target];
+    if (channel < 0 ||
+        channel >= static_cast<int>(projection.projected_pair_values.size())) {
+      throw std::logic_error(
+          "nonzero opposite-spin projection is missing its dense kernel image");
+    }
+    (*target_values)[target] +=
+        coefficient * projection.projected_pair_values[channel];
+  }
+}
+
+}  // namespace
 
 SelectedStatePairGraph::SelectedStatePairGraph(
     const SelectedStateDeterminantMatrices& selected_states,
@@ -201,16 +241,17 @@ void SelectedStatePairGraph::accumulate_partner_projected_values(
       primary_left,
       primary_right,
       [&](int partner_left, int partner_right, double coefficient) {
-        const auto& values = partner_pair_cache[ordered_spin_pair_storage_index(
-            partner_left,
-            partner_right,
-            n_unique_partner)]
-            .opposite_spin_pair_cache.first_order_cofactor_projection
-            .projected_pair_values;
-        for (std::size_t target = 0; target < target_channels.size(); ++target) {
-          (*target_values)[target] +=
-              coefficient * values[target_channels[target]];
-        }
+        const auto& projection =
+            partner_pair_cache[ordered_spin_pair_storage_index(
+                partner_left,
+                partner_right,
+                n_unique_partner)]
+                .opposite_spin_pair_cache.first_order_cofactor_projection;
+        accumulate_projected_channels(
+            projection,
+            coefficient,
+            target_channels,
+            target_values);
       });
 }
 
@@ -225,15 +266,17 @@ void SelectedStatePairGraph::accumulate_partner_projected_values(
       primary_left,
       primary_right,
       [&](int partner_left, int partner_right, double coefficient) {
-        const auto& values = partner_pair_data[ordered_spin_pair_storage_index(
-            partner_left,
-            partner_right,
-            n_unique_partner)]
-            .delta_first_order_cofactor_projection.projected_pair_values;
-        for (std::size_t target = 0; target < target_channels.size(); ++target) {
-          (*target_values)[target] +=
-              coefficient * values[target_channels[target]];
-        }
+        const auto& projection =
+            partner_pair_data[ordered_spin_pair_storage_index(
+                partner_left,
+                partner_right,
+                n_unique_partner)]
+                .delta_first_order_cofactor_projection;
+        accumulate_projected_channels(
+            projection,
+            coefficient,
+            target_channels,
+            target_values);
       });
 }
 
