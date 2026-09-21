@@ -101,6 +101,8 @@ struct ResponseNeoResult {
   double curvature_residual_target = 0.0;
   int iterations = 0;
   int coupled_actions = 0;
+  int orbital_actions = 0;
+  int structure_actions = 0;
   bool boundary = false;
   bool hard_case = false;
   bool global_curvature_certified = false;
@@ -136,8 +138,14 @@ public:
   }
 
 private:
-  bool append_orbital(Eigen::VectorXd direction, int* actions);
-  bool append_structure(Eigen::VectorXd direction, int* actions);
+  bool append_orbital(
+      Eigen::VectorXd direction,
+      int* actions,
+      int* orbital_actions);
+  bool append_structure(
+      Eigen::VectorXd direction,
+      int* actions,
+      int* structure_actions);
 
   const ResponseNeoProblem& problem_;
   std::vector<Eigen::VectorXd> orbital_basis_;

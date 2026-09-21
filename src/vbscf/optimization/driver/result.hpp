@@ -95,6 +95,8 @@ struct NeoIterationRecord {
   int model_dimension = 0;
   int micro_iterations = 0;
   int coupled_block_actions = 0;
+  int orbital_hvp_actions = 0;
+  int structure_response_actions = 0;
   int rejected_trial_count = 0;
 
   double kkt_residual_norm = 0.0;

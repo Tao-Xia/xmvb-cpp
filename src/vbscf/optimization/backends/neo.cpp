@@ -139,6 +139,8 @@ bool build_accepted_neo_keyframe(
     const ResponseNeoResult step = workspace.solve(neo_options);
     record->micro_iterations += step.iterations;
     record->coupled_block_actions += step.coupled_actions;
+    record->orbital_hvp_actions += step.orbital_actions;
+    record->structure_response_actions += step.structure_actions;
     if (!step.converged()) {
       result->termination_reason = "neo_microproblem_not_converged";
       return false;

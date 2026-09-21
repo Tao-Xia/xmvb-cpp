@@ -249,7 +249,8 @@ Eigen::VectorXd ResponseNeoProblem::apply_orbital_preconditioner(
 
 bool ResponseNeoWorkspace::append_orbital(
     Eigen::VectorXd direction,
-    int* actions) {
+    int* actions,
+    int* orbital_actions) {
   if (!orthonormalize(&direction, orbital_basis_)) return false;
   orbital_basis_.push_back(direction);
   orbital_metric_images_.push_back(
@@ -257,17 +258,20 @@ bool ResponseNeoWorkspace::append_orbital(
   orbital_hessian_images_.push_back(
       problem_.apply_orbital_coupling(direction));
   ++*actions;
+  ++*orbital_actions;
   return true;
 }
 
 bool ResponseNeoWorkspace::append_structure(
     Eigen::VectorXd direction,
-    int* actions) {
+    int* actions,
+    int* structure_actions) {
   if (!orthonormalize(&direction, structure_basis_)) return false;
   structure_basis_.push_back(direction);
   structure_hessian_images_.push_back(
       problem_.apply_structure_coupling(direction));
   ++*actions;
+  ++*structure_actions;
   return true;
 }
 
@@ -306,21 +310,26 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
   if (orbital_basis_.empty()) {
     Eigen::VectorXd first = preconditioned_orbital(
         problem_, -problem_.orbital_gradient());
-    if (!append_orbital(std::move(first), &result.coupled_actions)) {
+    if (!append_orbital(
+            std::move(first), &result.coupled_actions,
+            &result.orbital_actions)) {
       append_orbital(
-          generic_probe(problem_.orbital_size()), &result.coupled_actions);
+          generic_probe(problem_.orbital_size()), &result.coupled_actions,
+          &result.orbital_actions);
     }
   }
   if (orbital_basis_.empty()) {
     throw std::runtime_error("response NEO could not construct an orbital basis");
   }
-  if (orbital_basis_.size() == 1 && maximum_dimension > 1 &&
+  if (options.require_curvature_certificate &&
+      orbital_basis_.size() == 1 && maximum_dimension > 1 &&
       problem_.orbital_size() > 1) {
     append_orbital(
         problem_.initial_curvature_probe().size() == problem_.orbital_size()
             ? problem_.initial_curvature_probe()
             : generic_probe(problem_.orbital_size()),
-        &result.coupled_actions);
+        &result.coupled_actions,
+        &result.orbital_actions);
   }
   for (std::size_t j = structure_basis_.empty() ? 0 :
            orbital_hessian_images_.size();
@@ -330,7 +339,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       break;
     }
     append_structure(
-        orbital_hessian_images_[j].structure, &result.coupled_actions);
+        orbital_hessian_images_[j].structure, &result.coupled_actions,
+        &result.structure_actions);
   }
   while (true) {
     ++result.iterations;
@@ -413,7 +423,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
           }
           if (append_structure(
                   cs * inverse.null_vectors.col(unresolved),
-                  &result.coupled_actions)) {
+                  &result.coupled_actions,
+                  &result.structure_actions)) {
             continue;
           }
           throw std::runtime_error(
@@ -441,7 +452,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       }
       if (!append_structure(
               -response_closure.col(unresolved),
-              &result.coupled_actions)) {
+              &result.coupled_actions,
+              &result.structure_actions)) {
         result.stop_reason = NeoStopReason::NumericalFailure;
         return result;
       }
@@ -576,40 +588,46 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     if (result.kkt_residual.structure.stableNorm() >
         structure_residual_target) {
       expanded = append_structure(
-          -result.kkt_residual.structure, &result.coupled_actions);
+          -result.kkt_residual.structure, &result.coupled_actions,
+          &result.structure_actions);
     }
     if (!expanded && need_curvature_certificate &&
         curvature_structure.stableNorm() >
         curvature_structure_target) {
       expanded = append_structure(
-          -curvature_structure, &result.coupled_actions);
+          -curvature_structure, &result.coupled_actions,
+          &result.structure_actions);
     }
     if (!expanded && result.kkt_residual.orbital.stableNorm() >
         orbital_residual_target) {
       expanded = append_orbital(
           preconditioned_orbital(problem_, -result.kkt_residual.orbital),
-          &result.coupled_actions);
+          &result.coupled_actions,
+          &result.orbital_actions);
     }
     if (!expanded && need_curvature_certificate &&
         curvature_orbital.stableNorm() >
         curvature_orbital_target) {
       expanded = append_orbital(
           preconditioned_orbital(problem_, -curvature_orbital),
-          &result.coupled_actions);
+          &result.coupled_actions,
+          &result.orbital_actions);
     }
     while (!expanded && orbital_canonical_ < problem_.orbital_size()) {
       Eigen::VectorXd direction =
           Eigen::VectorXd::Zero(problem_.orbital_size());
       direction[orbital_canonical_++] = 1.0;
       expanded = append_orbital(
-          std::move(direction), &result.coupled_actions);
+          std::move(direction), &result.coupled_actions,
+          &result.orbital_actions);
     }
     while (!expanded && structure_canonical_ < problem_.structure_size()) {
       Eigen::VectorXd direction =
           Eigen::VectorXd::Zero(problem_.structure_size());
       direction[structure_canonical_++] = 1.0;
       expanded = append_structure(
-          std::move(direction), &result.coupled_actions);
+          std::move(direction), &result.coupled_actions,
+          &result.structure_actions);
     }
     if (!expanded) {
       result.stop_reason = NeoStopReason::NumericalFailure;

@@ -33,13 +33,20 @@ endif()
 file(STRINGS "${TRACE_FILE}" trace_lines)
 list(POP_FRONT trace_lines trace_header)
 set(total_actions 0)
+set(orbital_hvp_actions 0)
 foreach (line IN LISTS trace_lines)
   string(REPLACE "\t" ";" fields "${line}")
   list(GET fields 4 actions)
+  list(GET fields 5 orbital_actions)
   math(EXPR total_actions "${total_actions} + ${actions}")
+  math(EXPR orbital_hvp_actions
+    "${orbital_hvp_actions} + ${orbital_actions}")
 endforeach()
-if (total_actions GREATER 60)
+if (total_actions GREATER 40)
   message(FATAL_ERROR
-    "matched-seed F2 NEO used ${total_actions} coupled actions; expected at most 60")
+    "matched-seed F2 NEO used ${total_actions} coupled actions; expected at most 40")
 endif()
-
+if (orbital_hvp_actions GREATER 32)
+  message(FATAL_ERROR
+    "matched-seed F2 NEO used ${orbital_hvp_actions} orbital HVPs; expected at most 32")
+endif()
