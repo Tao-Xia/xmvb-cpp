@@ -970,11 +970,11 @@ where $M_{\mathrm{vector}}$ includes the two determinant-product work matrices
 and the two structure images for one vector.  Thus the temporary block remains
 $O(M_{\mathrm{operator}})$ while small Davidson and response blocks share the
 structure expansion, exterior transforms, sigma traversal, and contraction.
-For a single selected state, the equal-weight subspace equation is identical
-to the ordinary one-root bordered response equation.  Such calculations now
-use the block response solver directly instead of splitting orbital HVP block
-directions into independent scalar solves.  Both transformations are exact;
-neither changes the response tolerance or introduces a molecular parameter.
+Within each retained tile, the direct-CI sigma kernel traverses every
+determinant-product connection graph once and applies each
+coefficient-independent Slater--Condon matrix element to all block vectors.
+The tiling and graph reuse are exact; neither changes the response tolerance
+or introduces a molecular parameter.
 
 The trace now records newly admitted response rank, low-rank construction wall
 time, its structure-action component, and its adjoint component.  Low-rank
