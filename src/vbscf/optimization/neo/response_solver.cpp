@@ -324,6 +324,7 @@ void ResponseNeoWorkspace::refresh_structure_response(
   if (old_columns > 0 && solved.revision != structure_response_revision_) {
     solved = problem_.solve_structure_response(forcing, relative_tolerance);
     *structure_actions += solved.block_actions;
+    invalidate_response_model(solved.revision);
     structure_response_coordinates_ = std::move(solved.coordinates);
     structure_response_orbital_images_ = std::move(solved.orbital_images);
     structure_response_residuals_ = std::move(solved.equation_residuals);
@@ -343,6 +344,19 @@ void ResponseNeoWorkspace::refresh_structure_response(
   }
   structure_response_columns_ = orbital_basis_size_;
   structure_response_revision_ = solved.revision;
+  response_model_invalidated_ = false;
+  ++revision_;
+}
+
+void ResponseNeoWorkspace::invalidate_response_model(
+    std::uint64_t revision) {
+  structure_response_columns_ = 0;
+  structure_response_revision_ = revision;
+  response_model_correction_.setZero(
+      orbital_basis_size_, orbital_basis_size_);
+  response_sample_coefficients_.resize(orbital_basis_size_, 0);
+  response_sample_orbital_defects_.resize(problem_.orbital_size(), 0);
+  response_model_invalidated_ = true;
   ++revision_;
 }
 
@@ -350,7 +364,7 @@ ResponseNeoStructureResponse
 ResponseNeoWorkspace::refine_structure_direction(
     const Eigen::VectorXd& forcing,
     double residual_target,
-    int* structure_actions) const {
+    int* structure_actions) {
   if (forcing.size() != problem_.structure_size() || !forcing.allFinite() ||
       !(residual_target > 0.0) || !std::isfinite(residual_target)) {
     throw std::invalid_argument(
@@ -363,6 +377,9 @@ ResponseNeoWorkspace::refine_structure_direction(
   ResponseNeoStructureResponse refined =
       problem_.solve_structure_response(forcing_block, relative_tolerance);
   *structure_actions += refined.block_actions;
+  if (refined.revision != structure_response_revision_) {
+    invalidate_response_model(refined.revision);
+  }
   const double residual_norm = refined.equation_residuals.col(0).stableNorm();
   if (residual_norm > residual_target) {
     std::ostringstream message;
@@ -378,6 +395,7 @@ bool ResponseNeoWorkspace::update_response_model(
     const Eigen::VectorXd& coefficients,
     const Eigen::VectorXd& refined_orbital_image,
     const Eigen::VectorXd& model_orbital_image) {
+  if (response_model_invalidated_) return false;
   const double norm_squared = coefficients.squaredNorm();
   if (!(norm_squared > 0.0)) return false;
   const Eigen::Index sample = response_sample_coefficients_.cols();
@@ -430,15 +448,10 @@ bool ResponseNeoWorkspace::rebuild_projected_model() {
   projected_model_.response_closure_norm = response_residual.stableNorm();
   const Eigen::MatrixXd relaxed_images =
       ao + btz + qo * response_model_correction_;
-  const Eigen::MatrixXd projected_relaxed =
-      qo.transpose() * (ao + btz) + response_model_correction_;
-  // Match the one-sided Galerkin construction used by augmented-Hessian
-  // Davidson solvers: every pair is defined by one stored action and copied to
-  // its transpose.  Independent inexact structure responses otherwise produce
-  // two different estimates of the same Hessian element and can drive a false
-  // demand for near-machine-precision response solves.
-  const Eigen::MatrixXd relaxed =
-      projected_relaxed.selfadjointView<Eigen::Lower>();
+  const Eigen::MatrixXd relaxed = symmetric_part(
+      qo.transpose() * (ao + btz) + response_model_correction_,
+      "response NEO relaxed orbital block is not symmetric",
+      problem_.operator_relative_accuracy());
   const Eigen::MatrixXd whitened =
       projected_model_.whitening.transpose() * relaxed *
       projected_model_.whitening;
@@ -593,6 +606,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
           p_coefficients, refined.orbital_images.col(0), orbital_bt);
       orbital_bt = refined.orbital_images.col(0);
       structure_c = -structure_b + refined.equation_residuals.col(0);
+      if (response_model_invalidated_) continue;
     }
     result.hessian_step.orbital = orbital_a + orbital_bt;
     result.hessian_step.structure = structure_b + structure_c;
@@ -649,6 +663,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       update_response_model(
           minimum_coefficients, refined.orbital_images.col(0),
           btz * minimum_coefficients);
+      if (response_model_invalidated_) continue;
       curvature_orbital = ao * minimum_coefficients +
           refined.orbital_images.col(0) -
           projected_model_.eigenvalues[0] * mo * minimum_coefficients;

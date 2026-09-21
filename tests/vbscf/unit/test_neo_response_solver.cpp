@@ -435,6 +435,64 @@ void check_structure_response_uses_tiered_accuracy() {
           "interior solve performed an unrelated curvature refinement");
 }
 
+void check_response_revision_invalidates_every_retained_column() {
+  Eigen::Matrix3d a;
+  a << 2.0, 0.2, -0.1,
+       0.2, 1.6, 0.1,
+      -0.1, 0.1, 1.2;
+  Eigen::RowVector3d b;
+  b << 0.7, -0.4, 0.3;
+  std::vector<double> tolerances;
+  std::vector<Eigen::Index> widths;
+  std::uint64_t revision = 1;
+  const ResponseNeoProblem problem(
+      Eigen::Vector3d(0.8, -0.5, 0.4),
+      1,
+      [a, b](const Eigen::VectorXd& p) {
+        return ResponseNeoDirection{a * p, b * p};
+      },
+      [&tolerances, &widths, &revision, b](
+          const Eigen::Ref<const Eigen::MatrixXd>& forcing,
+          double relative_tolerance) {
+        tolerances.push_back(relative_tolerance);
+        widths.push_back(forcing.cols());
+        if (relative_tolerance < 1.0e-7) revision = 2;
+        const Eigen::MatrixXd response =
+            -(1.0 - relative_tolerance) * forcing;
+        const Eigen::MatrixXd residual = forcing + response;
+        return ResponseNeoStructureResponse{
+            response, b.transpose() * response, residual, revision,
+            static_cast<int>(forcing.cols()),
+            residual.stableNorm() /
+                std::max(1.0, forcing.stableNorm())};
+      },
+      [](const Eigen::VectorXd& p) { return p; });
+
+  NeoOptions options;
+  options.trust_radius = 0.4;
+  options.relative_residual_tolerance = 1.0e-10;
+  options.absolute_residual_tolerance = 1.0e-12;
+  options.require_curvature_certificate = true;
+  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
+      problem, options);
+  require(result.stop_reason != NeoStopReason::NumericalFailure,
+          "response-revision replay produced a numerical failure");
+
+  bool revision_changed = false;
+  bool replayed_retained_block = false;
+  for (std::size_t call = 0; call < tolerances.size(); ++call) {
+    if (tolerances[call] < 1.0e-7) revision_changed = true;
+    if (revision_changed && widths[call] >= 2 &&
+        tolerances[call] >= 1.0e-7) {
+      replayed_retained_block = true;
+    }
+  }
+  require(revision_changed,
+          "response-revision fixture never enriched its response model");
+  require(replayed_retained_block,
+          "response revision did not replay all retained orbital columns");
+}
+
 }  // namespace
 
 int main() {
@@ -448,6 +506,7 @@ int main() {
     check_recycled_orbital_guess_starts_subspace();
     check_boundary_residual_uses_shifted_preconditioner();
     check_structure_response_uses_tiered_accuracy();
+    check_response_revision_invalidates_every_retained_column();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {

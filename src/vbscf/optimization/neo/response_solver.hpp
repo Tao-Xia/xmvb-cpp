@@ -176,6 +176,8 @@ private:
   void refresh_structure_response(
       double relative_tolerance,
       int* structure_actions);
+  /** @brief Discards every sample tied to an older response-space revision. */
+  void invalidate_response_model(std::uint64_t revision);
   /**
    * @brief Re-solves one combined forcing to an explicit residual target.
    *
@@ -186,7 +188,7 @@ private:
   ResponseNeoStructureResponse refine_structure_direction(
       const Eigen::VectorXd& forcing,
       double residual_target,
-      int* structure_actions) const;
+      int* structure_actions);
   /** @brief Adds a certified combined response as a symmetric secant sample. */
   bool update_response_model(
       const Eigen::VectorXd& coefficients,
@@ -215,6 +217,7 @@ private:
   Eigen::Index orbital_canonical_ = 0;
   Eigen::Index structure_response_columns_ = 0;
   std::uint64_t structure_response_revision_ = 0;
+  bool response_model_invalidated_ = false;
   std::size_t revision_ = 0;
   ProjectedModel projected_model_;
 };
