@@ -432,6 +432,16 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
 
   if (frozen || !block_root_indices.empty()) return evaluate(true);
 
+  // A retained or already represented RHS can be updated in the enriched
+  // Galerkin space from cached basis H/S images alone. Its complete bordered
+  // residual is still evaluated exactly, so only an unresolved RHS proceeds
+  // to an iterative enrichment.
+  auto projected = evaluate(true);
+  if (projected.max_relative_residual <=
+      effective_relative_residual_tolerance) {
+    return projected;
+  }
+
   // Independently stopped MINRES solutions train a shared space; they are not
   // returned as mutually compatible Hessian samples. Reproject every RHS in
   // the final space, and certify that approximation before publishing it.
@@ -445,7 +455,7 @@ AcceptedSelectedStateGeneralizedEigenResponseOperator::apply_direction_block(
       iterations[static_cast<std::size_t>(rhs)] +=
           trained.linear_iterations[static_cast<std::size_t>(rhs)];
     }
-    auto projected = evaluate(true);
+    projected = evaluate(true);
     block_actions += projected.block_actions;
     if (projected.max_relative_residual <= effective_relative_residual_tolerance) {
       projected.block_actions = block_actions;

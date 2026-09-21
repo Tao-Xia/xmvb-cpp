@@ -304,6 +304,8 @@ EigenResponseRecycleSpace::apply_absolute_spectral_preconditioner(
 void EigenResponseRecycleSpace::clear() {
   basis_.resize(0, 0);
   operator_images_.resize(0, 0);
+  hamiltonian_images_.resize(0, 0);
+  overlap_images_.resize(0, 0);
   projected_inverse_.resize(0, 0);
   projected_operator_.resize(0, 0);
   spectral_preconditioner_basis_.resize(0, 0);
@@ -375,6 +377,8 @@ EigenResponseRecycleApplication EigenResponseRecycleSpace::galerkin_apply(
   EigenResponseRecycleApplication result;
   result.solution = Eigen::VectorXd::Zero(right_hand_side.size());
   result.operator_image = Eigen::VectorXd::Zero(right_hand_side.size());
+  result.hamiltonian_image = Eigen::VectorXd::Zero(right_hand_side.size());
+  result.overlap_image = Eigen::VectorXd::Zero(right_hand_side.size());
   if (basis_.cols() == 0) return result;
   if (basis_.rows() != right_hand_side.size() ||
       operator_images_.rows() != right_hand_side.size() ||
@@ -388,6 +392,14 @@ EigenResponseRecycleApplication EigenResponseRecycleSpace::galerkin_apply(
       projected_inverse_ * (basis_.transpose() * right_hand_side);
   result.solution.noalias() = basis_ * coefficients;
   result.operator_image.noalias() = operator_images_ * coefficients;
+  if (hamiltonian_images_.rows() == basis_.rows() &&
+      overlap_images_.rows() == basis_.rows() &&
+      hamiltonian_images_.cols() == basis_.cols() &&
+      overlap_images_.cols() == basis_.cols()) {
+    result.hamiltonian_image.noalias() = hamiltonian_images_ * coefficients;
+    result.overlap_image.noalias() = overlap_images_ * coefficients;
+    result.has_generalized_images = true;
+  }
   if (!result.solution.allFinite() || !result.operator_image.allFinite()) {
     throw std::runtime_error(
         "response recycle Galerkin application is not finite");
@@ -399,14 +411,50 @@ EigenResponseRecycleApplication EigenResponseRecycleSpace::galerkin_apply(
 bool EigenResponseRecycleSpace::append(
     const Eigen::Ref<const Eigen::VectorXd>& solution,
     const Eigen::Ref<const Eigen::VectorXd>& operator_image) {
+  return append_impl(solution, operator_image, nullptr, nullptr);
+}
+
+bool EigenResponseRecycleSpace::append_generalized(
+    const Eigen::Ref<const Eigen::VectorXd>& solution,
+    const Eigen::Ref<const Eigen::VectorXd>& operator_image,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_image,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_image) {
+  const Eigen::VectorXd h_image = hamiltonian_image;
+  const Eigen::VectorXd s_image = overlap_image;
+  return append_impl(solution, operator_image, &h_image, &s_image);
+}
+
+bool EigenResponseRecycleSpace::append_impl(
+    const Eigen::Ref<const Eigen::VectorXd>& solution,
+    const Eigen::Ref<const Eigen::VectorXd>& operator_image,
+    const Eigen::VectorXd* hamiltonian_image,
+    const Eigen::VectorXd* overlap_image) {
   if (solution.size() <= 0 || operator_image.size() != solution.size() ||
       !solution.allFinite() || !operator_image.allFinite()) {
     throw std::invalid_argument(
         "response recycle pair dimensions or values are invalid");
   }
+  const bool has_generalized_images =
+      hamiltonian_image != nullptr && overlap_image != nullptr;
+  if (!has_generalized_images &&
+      (hamiltonian_images_.cols() != 0 || overlap_images_.cols() != 0)) {
+    throw std::logic_error(
+        "response recycle space mixes incompatible image representations");
+  }
+  if (has_generalized_images &&
+      (hamiltonian_image->size() != solution.size() ||
+       overlap_image->size() != solution.size() ||
+       !hamiltonian_image->allFinite() || !overlap_image->allFinite())) {
+    throw std::invalid_argument(
+        "response recycle generalized images are invalid");
+  }
   if (basis_.cols() == 0) {
     basis_.resize(solution.size(), 0);
     operator_images_.resize(solution.size(), 0);
+    if (has_generalized_images) {
+      hamiltonian_images_.resize(solution.size(), 0);
+      overlap_images_.resize(solution.size(), 0);
+    }
   } else if (basis_.rows() != solution.size() ||
              operator_images_.rows() != solution.size() ||
              operator_images_.cols() != basis_.cols()) {
@@ -416,10 +464,24 @@ bool EigenResponseRecycleSpace::append(
 
   Eigen::VectorXd direction = solution;
   Eigen::VectorXd image = operator_image;
+  Eigen::VectorXd h_image = has_generalized_images
+      ? *hamiltonian_image : Eigen::VectorXd();
+  Eigen::VectorXd s_image = has_generalized_images
+      ? *overlap_image : Eigen::VectorXd();
+  if (has_generalized_images &&
+      (hamiltonian_images_.cols() != basis_.cols() ||
+       overlap_images_.cols() != basis_.cols())) {
+    throw std::logic_error(
+        "response recycle space mixes incompatible image representations");
+  }
   for (int pass = 0; pass < 2; ++pass) {
     const Eigen::VectorXd coefficients = basis_.transpose() * direction;
     direction.noalias() -= basis_ * coefficients;
     image.noalias() -= operator_images_ * coefficients;
+    if (has_generalized_images) {
+      h_image.noalias() -= hamiltonian_images_ * coefficients;
+      s_image.noalias() -= overlap_images_ * coefficients;
+    }
   }
   const double original_norm = solution.norm();
   const double direction_norm = direction.norm();
@@ -430,11 +492,23 @@ bool EigenResponseRecycleSpace::append(
   if (!(direction_norm > dependence_threshold)) return false;
   direction /= direction_norm;
   image /= direction_norm;
+  if (has_generalized_images) {
+    h_image /= direction_norm;
+    s_image /= direction_norm;
+  }
   const Eigen::Index old_size = basis_.cols();
   basis_.conservativeResize(Eigen::NoChange, old_size + 1);
   operator_images_.conservativeResize(Eigen::NoChange, old_size + 1);
+  if (has_generalized_images) {
+    hamiltonian_images_.conservativeResize(Eigen::NoChange, old_size + 1);
+    overlap_images_.conservativeResize(Eigen::NoChange, old_size + 1);
+  }
   basis_.col(old_size) = direction;
   operator_images_.col(old_size) = image;
+  if (has_generalized_images) {
+    hamiltonian_images_.col(old_size) = h_image;
+    overlap_images_.col(old_size) = s_image;
+  }
   ++revision_;
   return true;
 }
@@ -1089,14 +1163,18 @@ EigenResponseResult solve_generalized_eigen_response(
       recycle_root_units.col(column) = root_units.col(state);
       recycle_solutions.col(column) = solution.col(state);
     }
-    const Eigen::MatrixXd recycle_images = apply_projected_operators(
-        action, recycle_eigenvalues, recycle_root_units,
-        recycle_solutions, &result.block_actions);
+    const GeneralizedEigenActionResult recycle_full_images = apply_checked(
+        action, recycle_solutions, &result.block_actions);
+    Eigen::MatrixXd recycle_images = recycle_full_images.hamiltonian -
+        recycle_full_images.overlap * recycle_eigenvalues.asDiagonal();
+    project_selected_roots(&recycle_images, recycle_root_units);
     for (Eigen::Index column = 0; column < count; ++column) {
       const Eigen::Index state =
           new_recycle_states[static_cast<std::size_t>(column)];
-      recycle_spaces[static_cast<std::size_t>(state)]->append(
-          recycle_solutions.col(column), recycle_images.col(column));
+      recycle_spaces[static_cast<std::size_t>(state)]->append_generalized(
+          recycle_solutions.col(column), recycle_images.col(column),
+          recycle_full_images.hamiltonian.col(column),
+          recycle_full_images.overlap.col(column));
     }
   }
   return result;
@@ -1130,7 +1208,7 @@ EigenResponseResult evaluate_frozen_generalized_eigen_response(
       action, selected_eigenvalues, selected_eigenvectors,
       selected_residuals, &result.block_actions);
   Eigen::MatrixXd full_rhs(n + 1, n_selected);
-  Eigen::MatrixXd bordered_solution(n + 1, n_selected);
+  result.bordered_residuals.resize(n + 1, n_selected);
   Eigen::VectorXd root_metric_norms(n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const Eigen::VectorXd forcing =
@@ -1163,13 +1241,21 @@ EigenResponseResult evaluate_frozen_generalized_eigen_response(
         constraint_unit * constraint_unit.dot(projected_rhs);
 
     Eigen::VectorXd external_response = Eigen::VectorXd::Zero(n);
+    Eigen::VectorXd external_hamiltonian = Eigen::VectorXd::Zero(n);
+    Eigen::VectorXd external_overlap = Eigen::VectorXd::Zero(n);
     const EigenResponseRecycleSpace* recycle =
         recycle_spaces[static_cast<std::size_t>(state)];
     if (recycle != nullptr) {
       const EigenResponseRecycleApplication application =
           recycle->galerkin_apply(projected_rhs);
       if (application.available) {
+        if (!application.has_generalized_images) {
+          throw std::logic_error(
+              "isolated-root recycle space lacks generalized operator images");
+        }
         external_response = application.solution;
+        external_hamiltonian = application.hamiltonian_image;
+        external_overlap = application.overlap_image;
       }
     }
     result.eigenvector_response.col(state) =
@@ -1179,19 +1265,26 @@ EigenResponseResult evaluate_frozen_generalized_eigen_response(
          ritz_residuals.col(state).dot(
              result.eigenvector_response.col(state))) /
         root_metric_norms[state];
-    bordered_solution.col(state).head(n) =
-        result.eigenvector_response.col(state);
-    bordered_solution(n, state) = -result.eigenvalue_response[state];
+    const double particular_coefficient =
+        full_rhs(n, state) / root_metric_norms[state];
+    const Eigen::VectorXd response_overlap = external_overlap +
+        overlap_selected.col(state) * particular_coefficient;
+    const Eigen::VectorXd response_hamiltonian = external_hamiltonian +
+        (ritz_residuals.col(state) +
+         selected_eigenvalues[state] * overlap_selected.col(state)) *
+            particular_coefficient;
+    result.bordered_residuals.col(state).head(n) =
+        response_hamiltonian -
+        selected_eigenvalues[state] * response_overlap -
+        overlap_selected.col(state) * result.eigenvalue_response[state] +
+        forcing;
+    result.bordered_residuals(n, state) =
+        overlap_selected.col(state).dot(
+            result.eigenvector_response.col(state)) - full_rhs(n, state);
   }
-
-  const Eigen::MatrixXd images = apply_bordered_operators(
-      action, selected_eigenvalues, overlap_selected, bordered_solution,
-      &result.block_actions);
-  result.bordered_residuals = images - full_rhs;
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const double rhs_norm = full_rhs.col(state).norm();
-    const double residual_norm =
-        (full_rhs.col(state) - images.col(state)).norm();
+    const double residual_norm = result.bordered_residuals.col(state).norm();
     result.relative_residual_norms[state] = rhs_norm == 0.0
         ? residual_norm
         : residual_norm / rhs_norm;
@@ -1285,8 +1378,10 @@ EigenSubspaceResponseResult finish_equal_weight_response(
          state < selected_eigenvalues.size(); ++state) {
       if (recycle_spaces[static_cast<std::size_t>(state)] != nullptr &&
           external_response.col(state).norm() > 0.0) {
-        recycle_spaces[static_cast<std::size_t>(state)]->append(
-            external_response.col(state), projected_images.col(state));
+        recycle_spaces[static_cast<std::size_t>(state)]->append_generalized(
+            external_response.col(state), projected_images.col(state),
+            external_images.hamiltonian.col(state),
+            external_images.overlap.col(state));
       }
     }
   }
@@ -1337,6 +1432,62 @@ EigenSubspaceResponseResult finish_equal_weight_response(
               << state << " relative_residual="
               << result.relative_residual_norms[state];
       throw std::runtime_error(message.str());
+    }
+  }
+  return result;
+}
+
+EigenSubspaceResponseResult finish_cached_equal_weight_response(
+    const Eigen::Ref<const Eigen::VectorXd>& selected_eigenvalues,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_eigenvectors,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_selected,
+    const Eigen::Ref<const Eigen::MatrixXd>& ritz_residuals,
+    const Eigen::Ref<const Eigen::MatrixXd>& forcing,
+    const Eigen::Ref<const Eigen::MatrixXd>& gauge_target,
+    const Eigen::Ref<const Eigen::MatrixXd>& external_response,
+    const Eigen::Ref<const Eigen::MatrixXd>& external_hamiltonian_images,
+    const Eigen::Ref<const Eigen::MatrixXd>& external_overlap_images,
+    int block_actions) {
+  const Eigen::MatrixXd metric =
+      selected_eigenvectors.transpose() * overlap_selected;
+  const Eigen::MatrixXd internal_coefficients = metric.partialPivLu().solve(
+      gauge_target -
+      selected_eigenvectors.transpose() * external_overlap_images);
+  const Eigen::MatrixXd selected_hamiltonian = ritz_residuals +
+      overlap_selected * selected_eigenvalues.asDiagonal();
+
+  EigenSubspaceResponseResult result;
+  result.eigenvector_response = external_response +
+      selected_eigenvectors * internal_coefficients;
+  const Eigen::MatrixXd response_hamiltonian =
+      external_hamiltonian_images +
+      selected_hamiltonian * internal_coefficients;
+  const Eigen::MatrixXd response_overlap = external_overlap_images +
+      overlap_selected * internal_coefficients;
+  const Eigen::MatrixXd shifted_response = response_hamiltonian -
+      response_overlap * selected_eigenvalues.asDiagonal();
+  result.selected_matrix_response = metric.partialPivLu().solve(
+      selected_eigenvectors.transpose() * (forcing + shifted_response));
+  result.equation_residual = forcing + shifted_response -
+      overlap_selected * result.selected_matrix_response;
+  const Eigen::MatrixXd gauge_residual =
+      selected_eigenvectors.transpose() * response_overlap - gauge_target;
+  result.relative_residual_norms.resize(selected_eigenvalues.size());
+  result.iterations.assign(
+      static_cast<std::size_t>(selected_eigenvalues.size()), 0);
+  result.block_actions = block_actions;
+  for (Eigen::Index state = 0;
+       state < selected_eigenvalues.size(); ++state) {
+    const double rhs_norm = std::hypot(
+        forcing.col(state).norm(), gauge_target.col(state).norm());
+    const double residual_norm = std::hypot(
+        result.equation_residual.col(state).norm(),
+        gauge_residual.col(state).norm());
+    result.relative_residual_norms[state] = rhs_norm == 0.0
+        ? residual_norm : residual_norm / rhs_norm;
+    if (!std::isfinite(result.relative_residual_norms[state])) {
+      throw std::runtime_error(
+          "cached equal-weight response residual is not finite");
     }
   }
   return result;
@@ -1863,6 +2014,10 @@ evaluate_frozen_equal_weight_generalized_eigen_subspace_response(
           delta_overlap_selected);
   const Eigen::MatrixXd rhs = -data.horizontal_forcing;
   Eigen::MatrixXd external_response = Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd external_hamiltonian_images =
+      Eigen::MatrixXd::Zero(n, n_selected);
+  Eigen::MatrixXd external_overlap_images =
+      Eigen::MatrixXd::Zero(n, n_selected);
   for (Eigen::Index state = 0; state < n_selected; ++state) {
     const EigenResponseRecycleSpace* recycle =
         recycle_spaces[static_cast<std::size_t>(state)];
@@ -1870,15 +2025,21 @@ evaluate_frozen_equal_weight_generalized_eigen_subspace_response(
     const EigenResponseRecycleApplication application =
         recycle->galerkin_apply(rhs.col(state));
     if (application.available) {
+      if (!application.has_generalized_images) {
+        throw std::logic_error(
+            "equal-weight recycle space lacks generalized operator images");
+      }
       external_response.col(state) = application.solution;
+      external_hamiltonian_images.col(state) =
+          application.hamiltonian_image;
+      external_overlap_images.col(state) = application.overlap_image;
     }
   }
-  return finish_equal_weight_response(
-      action, selected_eigenvalues, selected_eigenvectors,
-      overlap_selected, data.forcing, data.gauge_target,
-      external_response, 1.0, false,
-      std::vector<int>(static_cast<std::size_t>(n_selected), 0),
-      block_actions);
+  return finish_cached_equal_weight_response(
+      selected_eigenvalues, selected_eigenvectors, overlap_selected,
+      ritz_residuals, data.forcing, data.gauge_target,
+      external_response, external_hamiltonian_images,
+      external_overlap_images, block_actions);
 }
 
 }  // namespace xmvb::core

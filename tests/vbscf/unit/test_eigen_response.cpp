@@ -689,7 +689,9 @@ bool test_finite_ritz_frozen_isolated_response() {
         root * gauge[direction];  // c^T S c = 1.
     const Eigen::Vector4d external =
         reference_dc[direction] - particular;
-    if (!space.append(external, projector * shifted * external)) {
+    if (!space.append_generalized(
+            external, projector * shifted * external,
+            hamiltonian * external, overlap * external)) {
       return false;
     }
   }
@@ -738,8 +740,9 @@ bool test_finite_ritz_frozen_isolated_response() {
   const Eigen::Vector4d first_particular = root * gauge[0];
   const Eigen::Vector4d first_external =
       reference_dc[0] - first_particular;
-  if (!incomplete_space.append(
-          first_external, projector * shifted * first_external)) {
+  if (!incomplete_space.append_generalized(
+          first_external, projector * shifted * first_external,
+          hamiltonian * first_external, overlap * first_external)) {
     return false;
   }
   const std::vector<const xmvb::core::EigenResponseRecycleSpace*>
@@ -801,7 +804,7 @@ bool test_finite_ritz_frozen_isolated_response() {
             << ',' << iterative_recycled.iterations[1] << ','
             << iterative_recycled.iterations[2] << '\n';
   return ritz_residual.norm() > 1.0e-3 &&
-      old_bordered_residual > 1.0e-6 && response.block_actions == 1 &&
+      old_bordered_residual > 1.0e-6 && response.block_actions == 0 &&
       response.relative_residual_norms.maxCoeff() <= 1.0e-11 &&
       iterative.relative_residual_norms.maxCoeff() <= 1.0e-11 &&
       iterative_recycled.relative_residual_norms.maxCoeff() <= 1.0e-11 &&
@@ -840,7 +843,11 @@ bool test_frozen_isolated_root_response() {
   xmvb::core::EigenResponseRecycleSpace space;
   Eigen::Vector3d external_response(0.0, -0.2, 0.05);
   Eigen::Vector3d projected_rhs(0.0, -0.4, 0.2);
-  if (!space.append(external_response, projected_rhs)) return false;
+  if (!space.append_generalized(
+          external_response, projected_rhs,
+          hamiltonian * external_response, overlap * external_response)) {
+    return false;
+  }
   const std::uint64_t frozen_revision = space.revision();
   const std::vector<const xmvb::core::EigenResponseRecycleSpace*> spaces{
       &space};
@@ -861,7 +868,7 @@ bool test_frozen_isolated_root_response() {
           delta_hamiltonian_selected, delta_overlap_selected, empty_spaces,
           &selected_residuals);
   return space.revision() == frozen_revision &&
-      response.block_actions == 1 && response.iterations[0] == 0 &&
+      response.block_actions == 0 && response.iterations[0] == 0 &&
       (response.eigenvector_response.col(0) - reference).norm() <= 1.0e-12 &&
       std::abs(response.eigenvalue_response[0] - 0.5) <= 1.0e-12 &&
       response.relative_residual_norms[0] <= 1.0e-12 &&
@@ -903,8 +910,10 @@ bool test_frozen_equal_weight_response() {
   Eigen::Vector4d rhs0(0.0, 0.0, -0.2, 0.1);
   Eigen::Vector4d response1(0.0, 0.0, 0.1, -0.1);
   Eigen::Vector4d rhs1(0.0, 0.0, 0.15, -0.25);
-  if (!storage[0].append(response0, rhs0) ||
-      !storage[1].append(response1, rhs1)) {
+  if (!storage[0].append_generalized(
+          response0, rhs0, hamiltonian * response0, overlap * response0) ||
+      !storage[1].append_generalized(
+          response1, rhs1, hamiltonian * response1, overlap * response1)) {
     return false;
   }
   const std::vector<const xmvb::core::EigenResponseRecycleSpace*> spaces{
@@ -929,7 +938,7 @@ bool test_frozen_equal_weight_response() {
           action, energies, roots, overlap * roots,
           delta_hamiltonian_selected, delta_overlap_selected, empty_spaces,
           &selected_residuals);
-  return response.block_actions == 2 &&
+  return response.block_actions == 0 &&
       response.iterations == std::vector<int>({0, 0}) &&
       response.relative_residual_norms.maxCoeff() <= 1.0e-12 &&
       gauge_error <= 1.0e-12 &&
@@ -1019,7 +1028,9 @@ bool test_finite_ritz_frozen_equal_weight_response() {
           roots * internal.col(state);
       const Eigen::VectorXd image = projector *
           (hamiltonian - energies[state] * overlap) * external;
-      if (!storage[state].append(external, image)) return false;
+      if (!storage[state].append_generalized(
+              external, image, hamiltonian * external,
+              overlap * external)) return false;
     }
   }
   const std::vector<const xmvb::core::EigenResponseRecycleSpace*> spaces{
@@ -1088,7 +1099,7 @@ bool test_finite_ritz_frozen_equal_weight_response() {
             << " recycled_iterations=" << iterative_recycled.iterations[0]
             << ',' << iterative_recycled.iterations[1] << '\n';
   return ritz_residuals.norm() > 1.0e-3 &&
-      response[0].block_actions == 2 && response[1].block_actions == 2 &&
+      response[0].block_actions == 0 && response[1].block_actions == 0 &&
       response[0].relative_residual_norms.maxCoeff() <= 1.0e-11 &&
       response[1].relative_residual_norms.maxCoeff() <= 1.0e-11 &&
       iterative.relative_residual_norms.maxCoeff() <= 1.0e-11 &&

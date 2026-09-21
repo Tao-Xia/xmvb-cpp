@@ -21,15 +21,20 @@ struct EigenResponseOptions {
 struct EigenResponseRecycleApplication {
   Eigen::VectorXd solution;
   Eigen::VectorXd operator_image;
+  Eigen::VectorXd hamiltonian_image;
+  Eigen::VectorXd overlap_image;
   bool available = false;
+  bool has_generalized_images = false;
 };
 
 /**
  * @brief Same-operator Galerkin space recycled across response right-hand sides.
  *
- * The stored columns are Euclidean-orthonormal projected response vectors and
- * their exact projected operator images. The space is owned by one accepted
- * orbital point and one selected root; it must not survive an operator change.
+ * The stored columns are Euclidean-orthonormal projected response vectors,
+ * their exact projected operator images, and—when supplied—the corresponding
+ * full H/S images. The latter permit action-free reconstruction and bordered
+ * residual certification after the Galerkin space is enriched. The space is
+ * owned by one accepted orbital point and one selected root.
  */
 class EigenResponseRecycleSpace {
 public:
@@ -72,11 +77,24 @@ public:
       const Eigen::Ref<const Eigen::VectorXd>& solution,
       const Eigen::Ref<const Eigen::VectorXd>& operator_image);
 
+  bool append_generalized(
+      const Eigen::Ref<const Eigen::VectorXd>& solution,
+      const Eigen::Ref<const Eigen::VectorXd>& operator_image,
+      const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_image,
+      const Eigen::Ref<const Eigen::VectorXd>& overlap_image);
+
 private:
+  bool append_impl(
+      const Eigen::Ref<const Eigen::VectorXd>& solution,
+      const Eigen::Ref<const Eigen::VectorXd>& operator_image,
+      const Eigen::VectorXd* hamiltonian_image,
+      const Eigen::VectorXd* overlap_image);
   void prepare_projected_inverse() const;
 
   Eigen::MatrixXd basis_;
   Eigen::MatrixXd operator_images_;
+  Eigen::MatrixXd hamiltonian_images_;
+  Eigen::MatrixXd overlap_images_;
   std::uint64_t revision_ = 0;
   mutable Eigen::MatrixXd projected_inverse_;
   mutable Eigen::MatrixXd projected_operator_;
