@@ -70,6 +70,11 @@ Eigen::MatrixXd symmetric_part(
   return 0.5 * (matrix + matrix.transpose());
 }
 
+double relative_symmetry_defect(const Eigen::Ref<const Eigen::MatrixXd>& matrix) {
+  return (matrix - matrix.transpose()).stableNorm() /
+      std::max(1.0, matrix.stableNorm());
+}
+
 Eigen::VectorXd preconditioned_orbital(
     const ResponseNeoProblem& problem,
     const Eigen::VectorXd& residual,
@@ -304,6 +309,7 @@ bool ResponseNeoWorkspace::append_orbital(
 
 void ResponseNeoWorkspace::refresh_structure_response(
     double relative_tolerance,
+    bool refresh_all,
     int* structure_actions) {
   if (problem_.structure_size() == 0) {
     structure_response_coordinates_.resize(0, orbital_basis_size_);
@@ -317,6 +323,18 @@ void ResponseNeoWorkspace::refresh_structure_response(
   const auto forcing =
       orbital_structure_images_.leftCols(orbital_basis_size_);
   const Eigen::Index old_columns = structure_response_columns_;
+  if (refresh_all) {
+    ResponseNeoStructureResponse solved = problem_.solve_structure_response(
+        forcing, relative_tolerance);
+    *structure_actions += solved.block_actions;
+    structure_response_coordinates_ = std::move(solved.coordinates);
+    structure_response_orbital_images_ = std::move(solved.orbital_images);
+    structure_response_residuals_ = std::move(solved.equation_residuals);
+    structure_response_columns_ = orbital_basis_size_;
+    structure_response_revision_ = solved.revision;
+    ++revision_;
+    return;
+  }
   ResponseNeoStructureResponse solved = problem_.solve_structure_response(
       forcing.rightCols(orbital_basis_size_ - old_columns),
       relative_tolerance);
@@ -344,6 +362,41 @@ void ResponseNeoWorkspace::refresh_structure_response(
   structure_response_columns_ = orbital_basis_size_;
   structure_response_revision_ = solved.revision;
   ++revision_;
+}
+
+double ResponseNeoWorkspace::projected_relaxed_symmetry_defect() const {
+  const Eigen::Index no = orbital_basis_size_;
+  const auto qo = orbital_basis_.leftCols(no);
+  const auto ao = orbital_hessian_images_.leftCols(no);
+  const auto btz = structure_response_orbital_images_.leftCols(no);
+  return relative_symmetry_defect(
+      qo.transpose() * (ao + btz) + response_model_correction_);
+}
+
+void ResponseNeoWorkspace::certify_projected_reciprocity(
+    double relative_tolerance,
+    int* structure_actions) {
+  if (problem_.structure_size() == 0 || orbital_basis_size_ < 2) return;
+  const double allowed = std::max(
+      2048.0 * std::numeric_limits<double>::epsilon() *
+          static_cast<double>(orbital_basis_size_),
+      problem_.operator_relative_accuracy());
+  double defect = projected_relaxed_symmetry_defect();
+  const double floor = 64.0 * std::numeric_limits<double>::epsilon() *
+      static_cast<double>(std::max<Eigen::Index>(
+          1, problem_.structure_size()));
+  double tolerance = relative_tolerance;
+  while (defect > allowed && tolerance > floor) {
+    // If response error is locally linear in its solve tolerance, this choice
+    // targets half the admissible skew.  The factor-of-two cap also guarantees
+    // progress when the local estimate is optimistic.
+    const double next = std::max(
+        floor, tolerance * std::min(0.5, 0.5 * allowed / defect));
+    if (!(next < tolerance)) break;
+    refresh_structure_response(next, true, structure_actions);
+    tolerance = next;
+    defect = projected_relaxed_symmetry_defect();
+  }
 }
 
 ResponseNeoStructureResponse
@@ -430,8 +483,29 @@ bool ResponseNeoWorkspace::rebuild_projected_model() {
   projected_model_.response_closure_norm = response_residual.stableNorm();
   const Eigen::MatrixXd relaxed_images =
       ao + btz + qo * response_model_correction_;
+  const Eigen::MatrixXd projected_orbital = qo.transpose() * ao;
+  const Eigen::MatrixXd projected_response = qo.transpose() * btz;
+  const Eigen::MatrixXd projected_relaxed =
+      projected_orbital + projected_response + response_model_correction_;
+  const double relaxed_defect = relative_symmetry_defect(projected_relaxed);
+  const double allowed_defect = std::max(
+      2048.0 * std::numeric_limits<double>::epsilon() *
+          static_cast<double>(std::max<Eigen::Index>(1, projected_relaxed.rows())),
+      problem_.operator_relative_accuracy());
+  if (relaxed_defect > allowed_defect) {
+    std::ostringstream detail;
+    detail.precision(17);
+    detail << "response NEO relaxed orbital block is not symmetric: relative defect="
+           << relaxed_defect
+           << ", orbital defect="
+           << relative_symmetry_defect(projected_orbital)
+           << ", response defect="
+           << relative_symmetry_defect(projected_response)
+           << ", allowed defect=" << allowed_defect;
+    throw std::runtime_error(detail.str());
+  }
   const Eigen::MatrixXd relaxed = symmetric_part(
-      qo.transpose() * (ao + btz) + response_model_correction_,
+      projected_relaxed,
       "response NEO relaxed orbital block is not symmetric",
       problem_.operator_relative_accuracy());
   const Eigen::MatrixXd whitened =
@@ -529,8 +603,11 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     if (structure_response_columns_ != orbital_basis_size_) {
       refresh_structure_response(
           model_response_tolerance,
+          false,
           &result.structure_actions);
     }
+    certify_projected_reciprocity(
+        model_response_tolerance, &result.structure_actions);
     const auto qo = orbital_basis_.leftCols(orbital_basis_size_);
     const auto mo = orbital_metric_images_.leftCols(orbital_basis_size_);
     const auto ao = orbital_hessian_images_.leftCols(orbital_basis_size_);

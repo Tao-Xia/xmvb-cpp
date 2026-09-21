@@ -435,6 +435,66 @@ void check_structure_response_uses_tiered_accuracy() {
           "interior solve performed an unrelated curvature refinement");
 }
 
+void check_coarse_response_is_refined_to_restore_reciprocity() {
+  Eigen::Matrix3d a;
+  a << 2.0, 0.2, -0.1,
+       0.2, 1.6, 0.1,
+      -0.1, 0.1, 1.2;
+  Eigen::Matrix<double, 2, 3> b;
+  b << 0.7, -0.4, 0.3,
+       0.2, 0.6, -0.5;
+  Eigen::Matrix2d c;
+  c << 1.8, 0.2,
+       0.2, 1.3;
+  Eigen::Matrix2d response_error;
+  response_error << 0.0, 1.0,
+                   -0.3, 0.0;
+  std::vector<double> tolerances;
+  std::vector<Eigen::Index> widths;
+  const ResponseNeoProblem problem(
+      Eigen::Vector3d(0.8, -0.5, 0.4),
+      c.rows(),
+      [a, b](const Eigen::VectorXd& p) {
+        return ResponseNeoDirection{a * p, b * p};
+      },
+      [&tolerances, &widths, b, c, response_error](
+          const Eigen::Ref<const Eigen::MatrixXd>& forcing,
+          double relative_tolerance) {
+        tolerances.push_back(relative_tolerance);
+        widths.push_back(forcing.cols());
+        const Eigen::MatrixXd exact = -c.ldlt().solve(forcing);
+        const Eigen::MatrixXd response =
+            exact + relative_tolerance * response_error * forcing;
+        const Eigen::MatrixXd residual = forcing + c * response;
+        return ResponseNeoStructureResponse{
+            response, b.transpose() * response, residual, 23,
+            static_cast<int>(forcing.cols()),
+            residual.stableNorm() /
+                std::max(1.0, forcing.stableNorm())};
+      },
+      [](const Eigen::VectorXd& p) { return p; },
+      {}, {}, 1.0e-8);
+
+  NeoOptions options;
+  options.trust_radius = 0.4;
+  options.relative_residual_tolerance = 1.0e-10;
+  options.absolute_residual_tolerance = 1.0e-12;
+  options.require_curvature_certificate = true;
+  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
+      problem, options);
+  require(result.stop_reason != NeoStopReason::NumericalFailure,
+          "reciprocity refinement produced a numerical failure");
+
+  const double coarse = std::sqrt(options.relative_residual_tolerance);
+  bool refined_block = false;
+  for (std::size_t call = 0; call < tolerances.size(); ++call) {
+    refined_block = refined_block ||
+        (widths[call] > 1 && tolerances[call] < 0.5 * coarse);
+  }
+  require(refined_block,
+          "coarse nonsymmetric responses were not refined as one block");
+}
+
 }  // namespace
 
 int main() {
@@ -448,6 +508,7 @@ int main() {
     check_recycled_orbital_guess_starts_subspace();
     check_boundary_residual_uses_shifted_preconditioner();
     check_structure_response_uses_tiered_accuracy();
+    check_coarse_response_is_refined_to_restore_reciprocity();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {

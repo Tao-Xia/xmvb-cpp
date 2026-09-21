@@ -175,7 +175,20 @@ private:
   void reserve_orbital_column();
   void refresh_structure_response(
       double relative_tolerance,
+      bool refresh_all,
       int* structure_actions);
+  /**
+   * @brief Refines the retained response block until Schur reciprocity holds.
+   *
+   * Independent inexact solves need not preserve the cancellation that makes
+   * the exact relaxed orbital Hessian symmetric.  The measured skew part is
+   * therefore used as an a posteriori error estimator for the whole retained
+   * response block before its projected spectrum is formed.
+   */
+  void certify_projected_reciprocity(
+      double relative_tolerance,
+      int* structure_actions);
+  double projected_relaxed_symmetry_defect() const;
   /**
    * @brief Re-solves one combined forcing to an explicit residual target.
    *
