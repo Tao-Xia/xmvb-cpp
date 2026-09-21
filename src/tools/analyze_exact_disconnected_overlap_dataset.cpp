@@ -364,7 +364,7 @@ ActiveOverlapSelectionResult select_active_overlap_matrix(
   // graph-disconnected special case survives on the same orbitals used in a real
   // SCF trajectory.
   xmvb::vb::VbScfOptimizerOptions optimizer_options;
-  optimizer_options.backend = xmvb::vb::VbScfOptimizerBackend::Lbfgs;
+  optimizer_options.backend = xmvb::vb::VbScfOptimizerBackend::BlockLbfgs;
   optimizer_options.max_iterations = options.optimizer_max_iterations;
   optimizer_options.gradient_tolerance = options.optimizer_gradient_tolerance;
   optimizer_options.energy_tolerance = options.optimizer_energy_tolerance;

@@ -159,7 +159,23 @@ if (BUILD_TESTING)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     ENVIRONMENT
       "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
-    PASS_REGULAR_EXPRESSION "lbfgs_dual_tolerance")
+    PASS_REGULAR_EXPRESSION "xmvb_lbfgs_dual_tolerance")
+
+  add_test(
+    NAME block_lbfgs_f2
+    COMMAND
+      xmvb
+      ${CMAKE_SOURCE_DIR}/testdata/vbscf/F2.xmi
+      --optimizer-backend block_lbfgs
+      --eigensolver davidson
+      --max-iterations 40
+      --gradient-tolerance 1e-3
+      --energy-tolerance 1e-7)
+  set_tests_properties(block_lbfgs_f2 PROPERTIES
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    ENVIRONMENT
+      "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
+    PASS_REGULAR_EXPRESSION "block_lbfgs_dual_tolerance")
 
   add_test(
     NAME exact_ctx_hvp_f2_finite_difference

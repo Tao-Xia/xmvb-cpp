@@ -173,7 +173,21 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
 
       case VbScfOptimizerBackend::Lbfgs: {
         const auto backend_result =
-            optimizer_detail::run_lbfgs_backend(
+            optimizer_detail::run_xmvb_lbfgs_backend(
+                &objective,
+                options_,
+                parameter_vector,
+                gradient,
+                energy,
+                &result);
+        n_iterations = backend_result.n_iterations;
+        final_gradient_l2_norm = backend_result.final_gradient_l2_norm;
+        break;
+      }
+
+      case VbScfOptimizerBackend::BlockLbfgs: {
+        const auto backend_result =
+            optimizer_detail::run_block_lbfgs_backend(
                 &objective,
                 parameter_view,
                 options_,

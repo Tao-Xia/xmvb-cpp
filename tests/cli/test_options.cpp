@@ -35,46 +35,41 @@ std::optional<xmvb::cli::Options> parse(
 int main() {
   const xmvb::vb::VbScfOptimizerOptions api_defaults;
   require(
-      api_defaults.backend == xmvb::vb::VbScfOptimizerBackend::Lbfgs &&
-          api_defaults.lbfgs_initial_inverse ==
-              xmvb::vb::LbfgsInitialInverse::OrbitalBlock,
-      "optimizer API must default to orbital-block L-BFGS");
+      api_defaults.backend == xmvb::vb::VbScfOptimizerBackend::BlockLbfgs,
+      "optimizer API must default to block-LBFGS");
   const auto defaults = parse({"xmvb-cpp.exe", "unused.xmi"});
   require(defaults.has_value(), "default CLI options must parse");
   require(
-      defaults->optimizer.backend == xmvb::vb::VbScfOptimizerBackend::Lbfgs,
-      "CLI must default to the L-BFGS backend");
-  require(
-      defaults->optimizer.lbfgs_initial_inverse ==
-          xmvb::vb::LbfgsInitialInverse::OrbitalBlock,
-      "standalone L-BFGS must default to the orbital-block inverse");
+      defaults->optimizer.backend ==
+          xmvb::vb::VbScfOptimizerBackend::BlockLbfgs,
+      "CLI must default to block-LBFGS");
 
-  const auto orbital_block = parse({
+  const auto block = parse({
       "xmvb-cpp.exe",
       "unused.xmi",
-      "--lbfgs-initial-inverse",
-      "orbital-block"});
-  require(orbital_block.has_value(), "orbital-block option must parse");
+      "--optimizer-backend",
+      "block_lbfgs"});
+  require(block.has_value(), "block-LBFGS option must parse");
   require(
-      orbital_block->optimizer.lbfgs_initial_inverse ==
-          xmvb::vb::LbfgsInitialInverse::OrbitalBlock,
-      "orbital-block option must explicitly select the default inverse");
+      block->optimizer.backend ==
+          xmvb::vb::VbScfOptimizerBackend::BlockLbfgs,
+      "block-LBFGS option selected the wrong backend");
 
-  const auto scalar = parse({
+  const auto xmvb_lbfgs = parse({
       "xmvb-cpp.exe",
       "unused.xmi",
-      "--lbfgs-initial-inverse",
-      "scalar"});
-  require(scalar.has_value(), "scalar option must parse");
+      "--optimizer-backend",
+      "lbfgs"});
+  require(xmvb_lbfgs.has_value(), "XMVB L-BFGS option must parse");
   require(
-      scalar->optimizer.lbfgs_initial_inverse ==
-          xmvb::vb::LbfgsInitialInverse::ScaledIdentity,
-      "scalar option must explicitly select conventional L-BFGS scaling");
+      xmvb_lbfgs->optimizer.backend ==
+          xmvb::vb::VbScfOptimizerBackend::Lbfgs,
+      "XMVB L-BFGS option selected the wrong backend");
 
   const auto invalid = parse({
       "xmvb-cpp.exe",
       "unused.xmi",
-      "--lbfgs-initial-inverse",
+      "--optimizer-backend",
       "unknown"});
-  require(!invalid.has_value(), "invalid initial inverse must be rejected");
+  require(!invalid.has_value(), "invalid optimizer backend must be rejected");
 }

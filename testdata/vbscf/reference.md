@@ -154,10 +154,11 @@ The canonical CPP deck differs only in optimizer/eigensolver controls.
 The clean branch contains no bundled F2 deck, so jobs `247306` and `247310` use
 the archive's unchanged `test/F2.xmi`, identified by SHA-256
 `0fc25c69084521e04d5d8bfd1ef0aeeb5acc31c45cfcfec0321ba78a433a2bbc`.
-XMVB-CPP uses dense structure diagonalization, its default block-LBFGS
-for `ISCF=5`, projected-gradient tolerance `1e-3`, and energy tolerance `1e-7 Eh`.
-Vendor `ISCF=5` defaults to `gpg=2e-3` and `epg=1e-7`; these gradient norms and
-termination conditions are not equivalent to the CPP settings.
+At the time of jobs `247293`--`247310`, XMVB-CPP mapped `ISCF=5` to
+block-LBFGS. That historical result is retained below. The current mapping is
+`ISCF=5` for the XMVB-compatible raw-coordinate L-BFGS, `ISCF=7` for TNHVP,
+and `ISCF=8` for block-LBFGS. Vendor `ISCF=5` defaults to `gpg=2e-3` and
+`epg=1e-7`; the current CPP regression uses `1e-3` and `1e-7 Eh`, respectively.
 
 | Calculation | Reported iterations | Total energy / Eh |
 |---|---:|---:|
@@ -167,6 +168,7 @@ termination conditions are not equivalent to the CPP settings.
 | Archived `DeepVBH` worktree, job 247293 | 25 | -198.751155635768 |
 | Archived worktree with `fabs`, job 247299 | 27 | -198.751155753415 |
 | XMVB-CPP, same input, job 247293 | 8 | -198.751155821808 |
+| XMVB-CPP XMVB-compatible L-BFGS, current regression | 24 accepted steps | -198.751155706790 |
 
 The clean and archived-worktree results differ by `2.8720e-8 Eh`; the latter
 was built with its uncommitted `-ffast-math`. This association is direct build

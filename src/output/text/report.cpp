@@ -24,6 +24,8 @@ bool core_backend_reports_projected_gradient(
     xmvb::vb::VbScfOptimizerBackend backend) {
   switch (backend) {
     case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
+      return false;
+    case xmvb::vb::VbScfOptimizerBackend::BlockLbfgs:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return true;
@@ -35,6 +37,8 @@ const char* gradient_tolerance_metric_name(
     xmvb::vb::VbScfOptimizerBackend backend) {
   switch (backend) {
     case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
+      return "raw |g|_2";
+    case xmvb::vb::VbScfOptimizerBackend::BlockLbfgs:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return "projected |g|_inf";
@@ -46,9 +50,9 @@ const char* optimizer_report_name(
     const xmvb::vb::VbScfOptimizerOptions& options) {
   switch (options.backend) {
     case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
-      return options.lbfgs_initial_inverse == xmvb::vb::LbfgsInitialInverse::OrbitalBlock
-          ? "L-BFGS (orbital-block initial inverse)"
-          : "L-BFGS (scalar initial inverse)";
+      return "L-BFGS (XMVB-compatible raw-coordinate method)";
+    case xmvb::vb::VbScfOptimizerBackend::BlockLbfgs:
+      return "block-LBFGS (nonredundant orbital-block inverse)";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
       return "nonredundant projected gradient";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:

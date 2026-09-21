@@ -192,7 +192,7 @@ BackendRunResult run_truncated_newton_backend(
     }
   
     // Share the positive orbital-block initial inverse and transported secant
-    // memory with default L-BFGS; TNHVP additionally samples exact HVPs.
+    // memory with block-LBFGS; TNHVP additionally samples exact HVPs.
     const int transport_history_size = options.history_size;
     if (accepted_point_preconditioner == nullptr) {
       const auto setup_start = std::chrono::steady_clock::now();

@@ -31,13 +31,12 @@ file(READ "${XMVB_INPUT}" iscf5_input_text)
 string(REPLACE "ISCF=7" "ISCF=5" iscf5_input_text "${iscf5_input_text}")
 set(iscf5_input "${XMVB_TRACE_ROOT}/F2_iscf5.xmi")
 file(WRITE "${iscf5_input}" "${iscf5_input_text}")
-set(default_orbitals "${XMVB_TRACE_ROOT}/F2_lbfgs_default.bin")
 execute_process(
   COMMAND
     "${XMVB_EXECUTABLE}"
     "${iscf5_input}"
     --verbose false
-    --dump-final-orbital-value-table-bin "${default_orbitals}"
+    --gradient-tolerance 1e20
   RESULT_VARIABLE iscf5_status
   OUTPUT_VARIABLE iscf5_report
   ERROR_VARIABLE iscf5_errors)
@@ -46,47 +45,31 @@ if (NOT iscf5_status EQUAL 0)
     "ISCF=5 selection run failed with status ${iscf5_status}:\n${iscf5_errors}")
 endif()
 if (NOT iscf5_report MATCHES
-    "VBSCF algorithm: L-BFGS [(]orbital-block initial inverse[)]")
-  message(FATAL_ERROR "ISCF=5 did not select default orbital-block L-BFGS")
+    "VBSCF algorithm: L-BFGS [(]XMVB-compatible raw-coordinate method[)]")
+  message(FATAL_ERROR "ISCF=5 did not select XMVB-compatible L-BFGS")
 endif()
 
-# Compare an actual converged optimization, not just the initial report.
-set(explicit_orbitals "${XMVB_TRACE_ROOT}/F2_lbfgs_explicit.bin")
+string(REPLACE "ISCF=7" "ISCF=8" iscf8_input_text "${iscf5_input_text}")
+# The preceding replacement starts from an ISCF=5 deck.
+string(REPLACE "ISCF=5" "ISCF=8" iscf8_input_text "${iscf8_input_text}")
+set(iscf8_input "${XMVB_TRACE_ROOT}/F2_iscf8.xmi")
+file(WRITE "${iscf8_input}" "${iscf8_input_text}")
 execute_process(
   COMMAND
     "${XMVB_EXECUTABLE}"
-    "${iscf5_input}"
-    --lbfgs-initial-inverse orbital-block
-    --verbose false
-    --dump-final-orbital-value-table-bin "${explicit_orbitals}"
-  RESULT_VARIABLE explicit_status
-  OUTPUT_VARIABLE explicit_report
-  ERROR_VARIABLE explicit_errors)
-if (NOT explicit_status EQUAL 0)
-  message(FATAL_ERROR
-    "Explicit orbital-block L-BFGS failed: ${explicit_errors}")
-endif()
-file(SHA256 "${default_orbitals}" default_orbital_hash)
-file(SHA256 "${explicit_orbitals}" explicit_orbital_hash)
-if (NOT default_orbital_hash STREQUAL explicit_orbital_hash)
-  message(FATAL_ERROR
-    "Default and explicit orbital-block L-BFGS converged to different orbitals")
-endif()
-
-execute_process(
-  COMMAND
-    "${XMVB_EXECUTABLE}"
-    "${iscf5_input}"
-    --lbfgs-initial-inverse scalar
+    "${iscf8_input}"
     --gradient-tolerance 1e20
     --verbose false
-  RESULT_VARIABLE scalar_status
-  OUTPUT_VARIABLE scalar_report
-  ERROR_VARIABLE scalar_errors)
-if (NOT scalar_status EQUAL 0 OR NOT scalar_report MATCHES
-    "VBSCF algorithm: L-BFGS [(]scalar initial inverse[)]")
+  RESULT_VARIABLE iscf8_status
+  OUTPUT_VARIABLE iscf8_report
+  ERROR_VARIABLE iscf8_errors)
+if (NOT iscf8_status EQUAL 0)
   message(FATAL_ERROR
-    "Explicit scalar L-BFGS selection/report failed: ${scalar_errors}")
+    "ISCF=8 selection run failed with status ${iscf8_status}:\n${iscf8_errors}")
+endif()
+if (NOT iscf8_report MATCHES
+    "VBSCF algorithm: block-LBFGS [(]nonredundant orbital-block inverse[)]")
+  message(FATAL_ERROR "ISCF=8 did not select block-LBFGS")
 endif()
 
 string(

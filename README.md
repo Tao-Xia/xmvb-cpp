@@ -66,20 +66,20 @@ OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi>
 
 Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
 regression decks and `testdata/vbscf/F2.xmi` for the compact HAO smoke case.
-Within `$CTRL`, `ISCF=5` selects orbital-block-preconditioned L-BFGS (also the
-default when `ISCF` is omitted), and `ISCF=7` selects TNHVP.
+Within `$CTRL`, `ISCF=5` selects the XMVB-compatible raw-coordinate L-BFGS,
+`ISCF=7` selects TNHVP, and `ISCF=8` selects nonredundant block-LBFGS. The
+project default when `ISCF` is omitted is block-LBFGS.
 `EIGENSOLVER=DAVIDSON` selects the default matrix-free structure solver,
 while `EIGENSOLVER=DENSE` selects the explicit dense reference solver. An
 explicit `--optimizer-backend` or `--eigensolver` command-line option overrides
 the corresponding input keyword.
 
-Default L-BFGS uses the same local orbital-block initial inverse and transported
-secant recursion as the TNHVP predictor, without exact HVP correction. This is
-the project's block-LBFGS first-order/quasi-Newton optimizer, not conventional
-scalar-initialized L-BFGS or a multi-vector block secant update. For the
-conventional comparison mode, explicitly use `--lbfgs-initial-inverse scalar`.
-Reports identify the selected initial inverse; `--lbfgs-initial-inverse
-orbital-block` explicitly selects the default.
+Block-LBFGS uses the same local orbital-block initial inverse and transported
+secant recursion as the TNHVP predictor, without exact HVP correction. The
+`ISCF=5` baseline instead follows XMVB 4.0: standard L-BFGS in the stored raw
+orbital coefficients, 100 correction pairs, an initial step of 0.2, and a
+Moré--Thuente strong-Wolfe line search. The corresponding command-line names
+are `--optimizer-backend lbfgs` and `--optimizer-backend block_lbfgs`.
 
 `NSTATE=n` selects an equal-weight average over the consecutive lowest `n`
 VB states. Omitting it is equivalent to `NSTATE=1`. The optimizer uses the

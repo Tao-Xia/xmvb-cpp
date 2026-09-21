@@ -10,6 +10,12 @@
 
 namespace xmvb::vb {
 
+/** @brief Base inverse used internally by the transported two-loop recursion. */
+enum class LbfgsInitialInverse {
+  ScaledIdentity,
+  OrbitalBlock,
+};
+
 struct TransportedReducedSecantPair {
   Eigen::VectorXd step;
   Eigen::VectorXd gradient_change;

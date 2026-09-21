@@ -1,11 +1,13 @@
 # TODO: Exact-Curvature Enrichment of Block-LBFGS
 
-## Current optimizer defaults, 2026-09-20
+## Current optimizer mapping, 2026-09-21
 
-`ISCF=5` and inputs without `ISCF` now select orbital-block-preconditioned
-L-BFGS. Conventional scalar initialization remains an explicit comparison via
-`--lbfgs-initial-inverse scalar`; historical scalar-baseline measurements below
-are unchanged. `ISCF=7` remains matrix-free truncated Newton.
+`ISCF=5` selects the XMVB-compatible raw-coordinate L-BFGS baseline,
+`ISCF=7` selects matrix-free truncated Newton, and `ISCF=8` selects the
+nonredundant block-LBFGS method. Inputs without `ISCF` default to block-LBFGS.
+The former initial-inverse command-line switch was removed because it mixed two
+different algorithms under one backend name. Historical measurements below
+retain the optimizer definitions used when they were recorded.
 
 The current TNHVP path includes orbital--structure coupling through the reduced
 Hessian/structure-response Schur action. It does not jointly solve independent
@@ -14,11 +16,10 @@ prototype. A possible AH/NEO formulation concerns step construction and
 globalization, not discovery of previously absent physical coupling. No AH/NEO
 replacement is implemented or accepted by this default-selection change.
 
-Validation: Hanhai25 Slurm job `247066` passed all 46 tests. The F2 integration
-test converges both default `ISCF=5` and explicit orbital-block L-BFGS and
-requires byte-identical final orbital tables. API/CLI defaults and explicit
-scalar selection are also checked. This qualifies default selection, not the
-TNHVP response model; its subsequent repair is recorded below.
+The XMVB-compatible backend follows the published XMVB 4.0 source: 100 raw
+coefficient-space correction pairs, identity initial inverse, latest-secant
+scalar initialization thereafter, first trial step 0.2, subsequent trial step
+1, and Moré--Thuente strong-Wolfe globalization with the XMVB constants.
 
 ## Response-model consistency repair, 2026-09-20
 
@@ -74,7 +75,7 @@ The next implementation sequence is:
 1. [x] Establish the missing orbital-block L-BFGS ablation using the same
    initial inverse, chart, input, and physical settings as TNHVP. Keep the
    standard scalar-initialized method explicitly identified in results.
-   Implemented as `--lbfgs-initial-inverse orbital-block`; CLI tests and the
+   Now selected as `ISCF=8` or `--optimizer-backend block_lbfgs`; CLI tests and the
    nine-system Hanhai25 job 246984 passed. Both modes use the same L-BFGS
    backend; the default at that commit was scalar initialization. Numerical
    results are recorded in the consistency audit.

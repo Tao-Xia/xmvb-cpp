@@ -17,7 +17,122 @@
 
 namespace xmvb::vb::optimizer_detail {
 
-BackendRunResult run_lbfgs_backend(
+namespace {
+
+struct RawSecantPair {
+  Eigen::VectorXd step;
+  Eigen::VectorXd gradient_change;
+  double inverse_curvature = 0.0;
+};
+
+Eigen::VectorXd apply_raw_lbfgs_inverse(
+    const Eigen::VectorXd& gradient,
+    const std::vector<RawSecantPair>& history) {
+  if (history.empty()) return gradient;
+  Eigen::VectorXd q = gradient;
+  std::vector<double> alpha(history.size(), 0.0);
+  for (std::size_t index = history.size(); index-- > 0;) {
+    alpha[index] =
+        history[index].inverse_curvature * history[index].step.dot(q);
+    q.noalias() -= alpha[index] * history[index].gradient_change;
+  }
+  const RawSecantPair& latest = history.back();
+  const double scale =
+      latest.step.dot(latest.gradient_change) /
+      latest.gradient_change.squaredNorm();
+  Eigen::VectorXd result = scale * q;
+  for (std::size_t index = 0; index < history.size(); ++index) {
+    const double beta = history[index].inverse_curvature *
+        history[index].gradient_change.dot(result);
+    result.noalias() += history[index].step * (alpha[index] - beta);
+  }
+  return result;
+}
+
+}  // namespace
+
+BackendRunResult run_xmvb_lbfgs_backend(
+    VbScfObjective* objective,
+    const VbScfOptimizerOptions& options,
+    const Eigen::VectorXd& initial_parameters,
+    const Eigen::VectorXd& initial_gradient,
+    double initial_energy,
+    VbScfOptimizerResult* result) {
+  constexpr int history_size = 100;
+  constexpr double first_step = 0.2;
+  BackendRunResult run_result;
+  std::vector<RawSecantPair> history;
+  history.reserve(history_size);
+
+  Eigen::VectorXd parameters = initial_parameters;
+  Eigen::VectorXd gradient = initial_gradient;
+  double energy = initial_energy;
+  double previous_energy = initial_energy;
+  if (gradient.norm() < options.gradient_tolerance) {
+    result->converged = true;
+    result->termination_reason = "xmvb_lbfgs_initial_tolerance";
+    run_result.final_gradient_l2_norm = gradient.norm();
+    return run_result;
+  }
+
+  for (int iteration = 0; iteration < options.max_iterations; ++iteration) {
+    Eigen::VectorXd direction =
+        -apply_raw_lbfgs_inverse(gradient, history);
+    if (!direction.allFinite() || gradient.dot(direction) >= 0.0) {
+      result->termination_reason = "xmvb_lbfgs_non_descent_direction";
+      run_result.final_gradient_l2_norm = gradient.norm();
+      break;
+    }
+
+    MoreThuenteResult accepted;
+    if (!try_xmvb_more_thuente_line_search(
+            objective,
+            parameters,
+            energy,
+            gradient,
+            direction,
+            iteration == 0 ? first_step : 1.0,
+            &accepted)) {
+      result->termination_reason = "xmvb_lbfgs_line_search_failed";
+      run_result.final_gradient_l2_norm = gradient.norm();
+      break;
+    }
+
+    Eigen::VectorXd step = accepted.parameters - parameters;
+    Eigen::VectorXd gradient_change = accepted.gradient - gradient;
+    const double secant_curvature = step.dot(gradient_change);
+    if (!(secant_curvature > 0.0) || !std::isfinite(secant_curvature)) {
+      result->termination_reason = "xmvb_lbfgs_invalid_secant";
+      run_result.final_gradient_l2_norm = gradient.norm();
+      break;
+    }
+    history.push_back(RawSecantPair{
+        std::move(step),
+        std::move(gradient_change),
+        1.0 / secant_curvature});
+    if (history.size() > history_size) history.erase(history.begin());
+
+    parameters = std::move(accepted.parameters);
+    gradient = std::move(accepted.gradient);
+    energy = accepted.energy;
+    ++run_result.n_iterations;
+    sync_result_from_objective(*objective, result);
+    record_accepted_iteration_snapshot(
+        objective, run_result.n_iterations, options, result);
+    run_result.final_gradient_l2_norm = gradient.norm();
+    const double energy_change = energy - previous_energy;
+    previous_energy = energy;
+    if (std::abs(energy_change) < options.energy_tolerance &&
+        run_result.final_gradient_l2_norm < options.gradient_tolerance) {
+      result->converged = true;
+      result->termination_reason = "xmvb_lbfgs_dual_tolerance";
+      break;
+    }
+  }
+  return run_result;
+}
+
+BackendRunResult run_block_lbfgs_backend(
     VbScfObjective* objective,
     const SparseParameterLayout& parameter_view,
     const VbScfOptimizerOptions& options,
@@ -27,7 +142,8 @@ BackendRunResult run_lbfgs_backend(
     VbScfOptimizerResult* result) {
   BackendRunResult run_result;
   const int history_size = options.history_size;
-  const LbfgsInitialInverse initial_inverse = options.lbfgs_initial_inverse;
+  constexpr LbfgsInitialInverse initial_inverse =
+      LbfgsInitialInverse::OrbitalBlock;
   std::vector<PackedSecantPair> packed_secant_history;
   packed_secant_history.reserve(std::max(0, history_size));
 
@@ -51,7 +167,7 @@ BackendRunResult run_lbfgs_backend(
     if (iteration == 0 &&
         reduced_gradient_inf_norm < options.gradient_tolerance) {
       result->converged = true;
-      result->termination_reason = "lbfgs_initial_tolerance";
+      result->termination_reason = "block_lbfgs_initial_tolerance";
       run_result.final_gradient_l2_norm =
           current_projection.reduced_gradient.norm();
       break;
@@ -105,7 +221,7 @@ BackendRunResult run_lbfgs_backend(
     if (!std::isfinite(directional_derivative) ||
         directional_derivative >= 0.0) {
       result->termination_reason =
-          "lbfgs_non_descent_direction";
+          "block_lbfgs_non_descent_direction";
       run_result.final_gradient_l2_norm =
           current_projection.reduced_gradient.norm();
       break;
@@ -135,7 +251,7 @@ BackendRunResult run_lbfgs_backend(
             &accepted_parameters,
             &accepted_gradient,
             &accepted_energy)) {
-      result->termination_reason = "lbfgs_line_search_failed";
+      result->termination_reason = "block_lbfgs_line_search_failed";
       run_result.final_gradient_l2_norm =
           current_projection.reduced_gradient.norm();
       break;
@@ -192,7 +308,7 @@ BackendRunResult run_lbfgs_backend(
         sync_result_from_objective(*objective, result);
         run_result.final_gradient_l2_norm = current_gradient.norm();
         result->termination_reason =
-            "lbfgs_line_search_stalled";
+            "block_lbfgs_line_search_stalled";
         break;
       }
       next_space = build_orbital_chart(*objective, parameter_view);
@@ -218,7 +334,7 @@ BackendRunResult run_lbfgs_backend(
     if (std::abs(energy_change) < options.energy_tolerance &&
         next_reduced_gradient_inf_norm < options.gradient_tolerance) {
       result->converged = true;
-      result->termination_reason = "lbfgs_dual_tolerance";
+      result->termination_reason = "block_lbfgs_dual_tolerance";
       run_result.final_gradient_l2_norm = next_projection.reduced_gradient.norm();
       break;
     }

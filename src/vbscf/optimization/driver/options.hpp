@@ -8,14 +8,6 @@
 
 namespace xmvb::vb {
 
-/** @brief Initial inverse Hessian used by transported L-BFGS recursion. */
-enum class LbfgsInitialInverse {
-  /** Conventional secant scaling, \f$H_0=\gamma I\f$. */
-  ScaledIdentity,
-  /** Positive orbital-block inverse shared by default L-BFGS and TNHVP. */
-  OrbitalBlock,
-};
-
 /**
  * @brief Options controlling the VBSCF orbital optimization loop.
  */
@@ -24,7 +16,7 @@ struct VbScfOptimizerOptions {
    * @brief Optimization backend implementation.
    */
   VbScfOptimizerBackend backend =
-      VbScfOptimizerBackend::Lbfgs;
+      VbScfOptimizerBackend::BlockLbfgs;
 
   /** @brief Structure-space eigensolver used by objective evaluations. */
   StructureEigensolver structure_eigensolver = StructureEigensolver::Davidson;
@@ -71,16 +63,6 @@ struct VbScfOptimizerOptions {
    * @brief Number of L-BFGS correction vectors.
    */
   int history_size = 100;
-
-  /**
-   * @brief Initial inverse Hessian used by the standalone L-BFGS backend.
-   *
-   * The default orbital-block inverse shares TNHVP's local inverse action,
-   * retaining the L-BFGS line search and secant update without exact HVPs.
-   * ScaledIdentity is an explicit conventional L-BFGS comparison mode.
-   */
-  LbfgsInitialInverse lbfgs_initial_inverse =
-      LbfgsInitialInverse::OrbitalBlock;
 
   /**
    * @brief Whether to print per-iteration optimizer diagnostics.

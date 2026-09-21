@@ -45,6 +45,9 @@ int run(Options command_line) {
         options.backend =
             xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton;
         break;
+      case xmvb::vb::InputScfOptimizer::BlockLbfgs:
+        options.backend = xmvb::vb::VbScfOptimizerBackend::BlockLbfgs;
+        break;
       case xmvb::vb::InputScfOptimizer::Unspecified:
         break;
     }
