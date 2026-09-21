@@ -48,7 +48,8 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& occupied_orbital_basis_matrix,
       const Eigen::Ref<const Eigen::MatrixXd>& physical_orbital_matrix,
       const Eigen::MatrixXd* ao_effective_h1e = nullptr,
-      bool collect_structural_diagnostics = false);
+      bool collect_structural_diagnostics = false,
+      bool complete_active_space = false);
 
   int reduced_size() const noexcept {
     return reduced_size_;

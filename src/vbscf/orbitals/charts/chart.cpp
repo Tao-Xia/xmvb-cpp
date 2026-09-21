@@ -17,6 +17,7 @@
 #include "vbscf/orbitals/charts/layout.hpp"
 #include "vbscf/orbitals/charts/curvature.hpp"
 #include "vbscf/orbitals/charts/surrogate.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
 
 namespace xmvb::vb {
 
@@ -165,10 +166,14 @@ Eigen::MatrixXd build_exact_local_sparse_quotient_basis(
     const Eigen::Ref<const Eigen::MatrixXd>& inactive_span_basis,
     const Eigen::Ref<const Eigen::MatrixXd>& physical_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& ao_overlap,
-    const std::vector<int>& local_basis_indices) {
+    const std::vector<int>& local_basis_indices,
+    bool use_active_subspace_gauge) {
   const int local_size = static_cast<int>(local_basis_indices.size());
   const bool is_active = orbital_index >= n_inactive;
-  const int source_count = n_inactive + (is_active ? 1 : 0);
+  const int n_active = static_cast<int>(input.n_active_orbitals);
+  const int active_gauge_count =
+      is_active ? (use_active_subspace_gauge ? n_active : 1) : 0;
+  const int source_count = n_inactive + active_gauge_count;
   if (local_size == 0) return Eigen::MatrixXd::Zero(0, 0);
   if (source_count == 0) {
     return Eigen::MatrixXd::Identity(local_size, local_size);
@@ -180,34 +185,39 @@ Eigen::MatrixXd build_exact_local_sparse_quotient_basis(
     gauge_sources.leftCols(n_inactive) = inactive_span_basis;
   }
   if (is_active) {
-    Eigen::VectorXd active_residual = physical_orbitals.col(orbital_index);
+    const int first_active = n_inactive;
+    Eigen::MatrixXd active_residuals = use_active_subspace_gauge
+        ? physical_orbitals.middleCols(first_active, n_active).eval()
+        : physical_orbitals.middleCols(orbital_index, 1).eval();
     if (n_inactive > 0) {
-      const Eigen::MatrixXd inactive_metric =
-          inactive_span_basis.transpose() * ao_overlap * inactive_span_basis;
-      Eigen::LDLT<Eigen::MatrixXd> inactive_factor(inactive_metric);
-      if (inactive_factor.info() != Eigen::Success ||
-          !inactive_factor.isPositive()) {
-        throw std::runtime_error(
-            "stable inactive gauge basis has a singular AO metric");
-      }
-      active_residual.noalias() -=
+      active_residuals.noalias() -=
           inactive_span_basis *
-          inactive_factor.solve(
-              inactive_span_basis.transpose() * ao_overlap * active_residual);
+          (inactive_span_basis.transpose() * ao_overlap * active_residuals);
     }
-    const double active_norm_squared =
-        active_residual.dot(ao_overlap * active_residual);
-    const double active_norm_floor =
+    const Eigen::MatrixXd active_metric =
+        0.5 * (active_residuals.transpose() * ao_overlap * active_residuals +
+               active_residuals.transpose() * ao_overlap.transpose() *
+                   active_residuals)
+                  .eval();
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> active_solver(active_metric);
+    const double active_scale = active_solver.info() == Eigen::Success
+        ? active_solver.eigenvalues().maxCoeff()
+        : 0.0;
+    const double active_floor =
         std::numeric_limits<double>::epsilon() *
-        static_cast<double>(
-            std::max<std::size_t>(1, input.n_basis_functions));
-    if (!(active_norm_squared > active_norm_floor) ||
-        !std::isfinite(active_norm_squared)) {
+        static_cast<double>(std::max(1, active_gauge_count)) * active_scale;
+    if (active_solver.info() != Eigen::Success ||
+        !(active_scale > 0.0) ||
+        active_solver.eigenvalues().minCoeff() <= active_floor) {
       throw std::runtime_error(
-          "active orbital is numerically contained in the inactive span");
+          "active orbital subspace is rank deficient outside the inactive span");
     }
-    gauge_sources.col(n_inactive) =
-        active_residual / std::sqrt(active_norm_squared);
+    const Eigen::MatrixXd active_inverse_square_root =
+        active_solver.eigenvectors() *
+        active_solver.eigenvalues().cwiseSqrt().cwiseInverse().asDiagonal() *
+        active_solver.eigenvectors().transpose();
+    gauge_sources.rightCols(active_gauge_count) =
+        active_residuals * active_inverse_square_root;
   }
   require_finite_matrix(gauge_sources, "orbital-chart global gauge sources");
 
@@ -430,7 +440,8 @@ OrbitalChart::OrbitalChart(
     const Eigen::Ref<const Eigen::MatrixXd>& occ_basis_matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& phys_orbital_matrix,
     const Eigen::MatrixXd* ao_effective_h1e,
-    bool collect_structural_diagnostics)
+    bool collect_structural_diagnostics,
+    bool complete_active_space)
     : packed_parameter_size_(parameter_view.size()) {
   if (ao_effective_h1e != nullptr &&
       (ao_effective_h1e->rows() != input.n_basis_functions ||
@@ -467,6 +478,8 @@ OrbitalChart::OrbitalChart(
   }
   const Eigen::MatrixXd stable_inactive_span_basis =
       build_stable_inactive_span_basis(global_inactive_orbitals, ao_overlap);
+  const bool use_active_subspace_gauge =
+      complete_active_space && input.orbital_type == kOrbitalTypeOeo;
   const auto blocks = detect_orbital_blocks(input);
 
   int block_index = 0;
@@ -551,7 +564,8 @@ OrbitalChart::OrbitalChart(
           stable_inactive_span_basis,
           phys_orbital_matrix,
           ao_overlap,
-          local_basis_indices);
+          local_basis_indices,
+          use_active_subspace_gauge);
       proj.local_gauge_rank = static_cast<int>(local_size - U_p.cols());
       proj.local_combined_rank = static_cast<int>(local_size);
       proj.expected_quotient_dimension = static_cast<int>(U_p.cols());

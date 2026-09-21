@@ -13,6 +13,7 @@
 
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/physical_metric.hpp"
+#include "vbscf/core/contracts/orbital_type.hpp"
 #include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/optimization/trust_region/truncated_newton.hpp"
@@ -452,6 +453,40 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
   }
   std::cout << name << ": passed (" << view.size() << " -> "
             << space.reduced_size() << ")\n";
+}
+
+void check_complete_oeo_active_subspace_gauge() {
+  Eigen::MatrixXd coefficients = Eigen::MatrixXd::Zero(5, 3);
+  coefficients(0, 0) = 1.0;
+  coefficients(1, 1) = 1.0;
+  coefficients(2, 2) = 1.0;
+  coefficients(3, 1) = 0.2;
+  coefficients(4, 2) = -0.3;
+  OrbitalPreparationInput input = make_input(
+      coefficients,
+      {{0, 1, 2, 3, 4}, {0, 1, 2, 3, 4}, {0, 1, 2, 3, 4}},
+      1);
+  input.orbital_type = kOrbitalTypeOeo;
+  const SparseParameterLayout view(input);
+  const Eigen::MatrixXd orbitals = dense(input);
+
+  const OrbitalChart structure_subset_chart(
+      input, view, orbitals, orbitals, nullptr, false, false);
+  require(structure_subset_chart.reduced_size() == 10,
+          "OEO structure subset did not retain independent active rays");
+
+  const OrbitalChart complete_cas_chart(
+      input, view, orbitals, orbitals, nullptr, false, true);
+  require(complete_cas_chart.reduced_size() == 8,
+          "complete-CAS OEO chart did not remove active--active gauge");
+
+  Eigen::VectorXd active_mixing = Eigen::VectorXd::Zero(view.size());
+  for (int slot = 0; slot < 5; ++slot) {
+    active_mixing[view.packed_index(1, slot)] = coefficients(slot, 2);
+  }
+  require(complete_cas_chart.project_vector(active_mixing)
+              .reduced_gradient.norm() < 1.0e-12,
+          "complete-CAS OEO chart retained an active--active gauge direction");
 }
 
 void check_occupation_curvature() {
@@ -958,6 +993,7 @@ int main() {
     auto full = make_input(c, {{0,1,2,3,4,5}, {0,1,2,3,4,5},
                                {0,1,2,3,4,5}, {0,1,2,3,4,5}}, 2);
     check("full support", full, 14);
+    check_complete_oeo_active_subspace_gauge();
     check_truncated_newton_certificates();
     check_residual_driven_subspace(full);
     check_response_model_refresh(full);

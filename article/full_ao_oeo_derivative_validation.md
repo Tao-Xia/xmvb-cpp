@@ -530,6 +530,41 @@ The later optimized production results superseding the timing rows in this
 correctness note are reported in
 `article/matrix_free_hvp_performance_validation.md`.
 
+### Complete-CAS OEO quotient and independent CASSCF comparison
+
+For a complete-CAS full-AO OEO wavefunction, nonsingular active--active
+transformations are gauge transformations. The accepted-point chart therefore
+removes the entire occupied span from every active-orbital tangent. For the
+F2 CASSCF(2,2) regression with 30 Cartesian cc-pVDZ functions, eight inactive
+orbitals, and two active orbitals, the orbital dimension changes from 218 to
+
+$$
+8(30-8)+2(30-8-2)=216.
+$$
+
+The same chart builder is used by TNHVP, NEO, and L-BFGS. A truncated VB
+structure subspace retains its active--active variables because it is not, in
+general, invariant under active-orbital transformations.
+
+An independent PySCF 2.11.0 calculation used Cartesian cc-pVDZ functions,
+no point-group constraint, and CASSCF(2,2). Different initial active-orbital
+pairs converge to distinct CASSCF stationary points:
+
+| Method and stationary point | Total energy / $E_{\mathrm h}$ |
+|---|---:|
+| PySCF CASSCF, local initial active pair | -198.689800047006 |
+| xmvb-cpp TNHVP, 5 iterations | -198.689799876580 |
+| PySCF CASSCF, lower stationary point | -198.761111550672 |
+| xmvb-cpp NEO, 19 iterations | -198.761111540576 |
+
+Thus TNHVP and NEO agree with the corresponding independently converged
+CASSCF solutions to $1.70\times10^{-7}\ E_{\mathrm h}$ and
+$1.01\times10^{-8}\ E_{\mathrm h}$, respectively. The lower NEO energy is
+not a violation of the CASSCF variational space: NEO crosses out of the local
+active-space basin reached by the supplied initial orbitals. A symmetry-locked
+PySCF calculation remains on the higher stationary branch and is therefore
+not a valid test of the lower solution.
+
 Representative reproduction commands, executed from the repository root:
 
 ```sh

@@ -730,6 +730,14 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
           std::chrono::steady_clock::now() - raw_structure_selection_start_time)
           .count();
 
+  result.complete_active_space =
+      load_result.raw_structure_source ==
+          RawStructureSource::GeneratedFromStructureClass &&
+      input_deck_metadata.structure_class_keyword.find("FULL") !=
+          std::string::npos &&
+      static_cast<int>(selected_raw_structure_indices.size()) ==
+          source_raw_structure_count;
+
   VbScfStaticMoleculeMetadata static_molecule_metadata;
   static_molecule_metadata.n_atoms = resolved_n_atoms;
   static_molecule_metadata.n_shells = static_topology.n_shells;

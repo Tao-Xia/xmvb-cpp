@@ -29,6 +29,17 @@ enum class PfTwoElectronMode {
  */
 struct VbScfInput {
   /**
+   * @brief Whether the selected structures span the complete active space.
+   *
+   * A complete active space is invariant under nonsingular transformations
+   * among the active orbitals. Full-AO OEO optimization uses this invariant to
+   * remove active--active gauge directions. Structure subsets must leave this
+   * flag false because those transformations generally change their
+   * variational space.
+   */
+  bool complete_active_space = false;
+
+  /**
    * @brief Expanded determinant/structure data derived from the raw VB structures.
    */
   FullDeterminantStructureData structure_data;

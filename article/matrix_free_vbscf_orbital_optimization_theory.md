@@ -708,8 +708,25 @@ support and the inactive subspace. Such a loss is diagnosed by the smallest
 nonzero singular value of
 $\mathbf O_{\mathrm I}\vert_{\mathcal S_p}$ in the AO metric, not by the
 dimension of the algebraic quotient. A complete-CAS full-AO OEO orbital space
-has additional active--active gauge and requires an active-subspace, rather
-than per-orbital-ray, representative construction.
+has additional active--active gauge. For an active target orbital, the gauge
+source is therefore the entire occupied space rather than the inactive space
+plus the target ray. If $n_{\rm I}$, $n_{\rm A}$, and $n_{\rm V}$ denote the
+inactive, active, and external dimensions, respectively, the implemented
+quotient has dimension
+
+$$
+n_{\rm I}(n_{\rm A}+n_{\rm V})+n_{\rm A}n_{\rm V},
+\tag{27n}
+$$
+
+which is the conventional nonredundant CASSCF orbital-rotation dimension.
+The full active-subspace quotient is enabled only when the selected VB
+structures span the complete active space. For a truncated structure list,
+active--active transformations generally change the variational subspace and
+remain physical variables; applying eq 27n in that case would remove valid
+degrees of freedom. All optimization backends use the same accepted-point
+chart, so this distinction depends only on the wavefunction space and never
+on the choice of TNHVP, NEO, or L-BFGS solver.
 
 ## 5. A natural quotient metric
 

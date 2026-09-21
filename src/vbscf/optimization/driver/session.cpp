@@ -35,7 +35,9 @@ OrbitalChart build_orbital_chart(
       parameter_view,
       orbital_preparation_result.auxiliary_orbital_matrix.leftCols(n_occupied_orbitals),
       normalized_orbital_matrix,
-      &objective.gradient_result().ao_effective_one_electron_result.ao_effective_h1e);
+      &objective.gradient_result().ao_effective_one_electron_result.ao_effective_h1e,
+      false,
+      objective.input().complete_active_space);
 }
 
 void sync_result_from_objective(
