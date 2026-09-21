@@ -1,0 +1,126 @@
+#pragma once
+
+#include <functional>
+
+#include <Eigen/Core>
+
+#include "vbscf/optimization/neo/solver.hpp"
+
+namespace xmvb::vb {
+
+/** @brief Vector in separated orbital and horizontal-structure coordinates. */
+struct ResponseNeoDirection {
+  Eigen::VectorXd orbital;
+  Eigen::VectorXd structure;
+};
+
+/** @brief One block column of the coupled orbital--structure Hessian. */
+using ResponseNeoBlockAction =
+    std::function<ResponseNeoDirection(const Eigen::VectorXd&)>;
+
+/**
+ * @brief Quadratic model for orbital-trust NEO with projected response.
+ *
+ * The coupled action represents
+ * @f$[\bar A p+B^Tz,\;Bp+Cz]@f$.  Only the orbital metric defines the
+ * trust region.  The optional preconditioner acts only on orbital covectors.
+ */
+class ResponseNeoProblem {
+public:
+  ResponseNeoProblem(
+      Eigen::VectorXd orbital_gradient,
+      Eigen::Index structure_size,
+      ResponseNeoBlockAction apply_orbital_coupling,
+      ResponseNeoBlockAction apply_structure_coupling,
+      NeoAction apply_orbital_metric,
+      NeoAction apply_orbital_preconditioner = {},
+      Eigen::VectorXd initial_curvature_probe = {},
+      double operator_relative_accuracy = 0.0);
+
+  Eigen::Index orbital_size() const noexcept {
+    return orbital_gradient_.size();
+  }
+  Eigen::Index structure_size() const noexcept { return structure_size_; }
+  const Eigen::VectorXd& orbital_gradient() const noexcept {
+    return orbital_gradient_;
+  }
+
+  ResponseNeoDirection apply_orbital_coupling(
+      const Eigen::VectorXd& direction) const;
+  ResponseNeoDirection apply_structure_coupling(
+      const Eigen::VectorXd& direction) const;
+  Eigen::VectorXd apply_orbital_metric(
+      const Eigen::VectorXd& direction) const;
+  bool has_orbital_preconditioner() const noexcept {
+    return static_cast<bool>(apply_orbital_preconditioner_);
+  }
+  Eigen::VectorXd apply_orbital_preconditioner(
+      const Eigen::VectorXd& covector) const;
+  const Eigen::VectorXd& initial_curvature_probe() const noexcept {
+    return initial_curvature_probe_;
+  }
+  double operator_relative_accuracy() const noexcept {
+    return operator_relative_accuracy_;
+  }
+
+private:
+  Eigen::VectorXd apply_orbital_checked(
+      const NeoAction& action,
+      const Eigen::VectorXd& vector,
+      const char* message) const;
+
+  const Eigen::VectorXd orbital_gradient_;
+  const Eigen::Index structure_size_;
+  ResponseNeoDirection apply_block_checked(
+      const ResponseNeoBlockAction& action,
+      const Eigen::VectorXd& vector,
+      Eigen::Index expected_size) const;
+
+  const ResponseNeoBlockAction apply_orbital_coupling_;
+  const ResponseNeoBlockAction apply_structure_coupling_;
+  const NeoAction apply_orbital_metric_;
+  const NeoAction apply_orbital_preconditioner_;
+  const Eigen::VectorXd initial_curvature_probe_;
+  const double operator_relative_accuracy_;
+};
+
+/** @brief Step and explicit residuals of projected-response NEO. */
+struct ResponseNeoResult {
+  ResponseNeoDirection step;
+  ResponseNeoDirection hessian_step;
+  Eigen::VectorXd orbital_metric_step;
+  ResponseNeoDirection kkt_residual;
+  Eigen::VectorXd minimum_curvature_orbital;
+  double shift = 0.0;
+  double predicted_reduction = 0.0;
+  double step_norm = 0.0;
+  double residual_norm = 0.0;
+  double residual_target = 0.0;
+  double curvature_residual_norm = 0.0;
+  double curvature_residual_target = 0.0;
+  int iterations = 0;
+  int coupled_actions = 0;
+  bool boundary = false;
+  bool hard_case = false;
+  bool global_curvature_certified = false;
+  NeoStopReason stop_reason = NeoStopReason::SubspaceLimit;
+
+  bool converged() const noexcept {
+    return stop_reason == NeoStopReason::Converged;
+  }
+};
+
+/**
+ * @brief Solves the coupled model after projected structure-response removal.
+ *
+ * Independent orbital and structure bases project @f$\bar A,B,C@f$.  Each
+ * projected model eliminates the structure block with its symmetric spectral
+ * pseudoinverse, then solves the orbital trust-region problem for
+ * @f$\bar A-B^TC^\dagger B@f$.  Convergence requires explicit residuals of
+ * both coupled KKT equations and of the lowest relaxed-curvature Ritz pair.
+ */
+ResponseNeoResult solve_response_neo(
+    const ResponseNeoProblem& problem,
+    const NeoOptions& options);
+
+}  // namespace xmvb::vb

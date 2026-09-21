@@ -55,6 +55,33 @@ int main() {
           xmvb::vb::VbScfOptimizerBackend::BlockLbfgs,
       "block-LBFGS option selected the wrong backend");
 
+  const auto neo = parse({
+      "xmvb-cpp.exe",
+      "unused.xmi",
+      "--optimizer-backend",
+      "neo"});
+  require(neo.has_value(), "NEO option must parse");
+  require(
+      neo->optimizer.backend == xmvb::vb::VbScfOptimizerBackend::Neo,
+      "NEO option selected the wrong backend");
+  require(
+      std::string(xmvb::vb::vbscf_optimizer_backend_name(
+          neo->optimizer.backend)) == "neo",
+      "NEO backend must have the canonical name neo");
+
+  const auto neo_trace = parse({
+      "xmvb-cpp.exe",
+      "unused.xmi",
+      "--neo-trace",
+      "neo.tsv"});
+  require(neo_trace.has_value(), "NEO trace option must parse");
+  require(
+      neo_trace->neo_trace_path == "neo.tsv",
+      "NEO trace option selected the wrong path");
+  require(
+      neo_trace->tnhvp_trace_path.empty(),
+      "NEO trace option must not set the TNHVP trace path");
+
   const auto xmvb_lbfgs = parse({
       "xmvb-cpp.exe",
       "unused.xmi",

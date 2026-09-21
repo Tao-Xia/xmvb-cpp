@@ -108,6 +108,7 @@ set(XMVB_VBSCF_DIAGNOSTIC_SOURCES
 
 set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/backends/lbfgs.cpp
+  vbscf/optimization/backends/neo.cpp
   vbscf/optimization/backends/projected_gradient.cpp
   vbscf/optimization/backends/truncated_newton.cpp
   vbscf/optimization/krylov/minres.cpp
@@ -116,6 +117,7 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/neo/coordinates.cpp
   vbscf/optimization/neo/globalization.cpp
   vbscf/optimization/neo/problem.cpp
+  vbscf/optimization/neo/response_solver.cpp
   vbscf/optimization/neo/solver.cpp
   vbscf/optimization/preconditioners/block_inverse_bfgs.cpp
   vbscf/optimization/preconditioners/transported_lbfgs.cpp

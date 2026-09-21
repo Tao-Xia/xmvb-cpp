@@ -26,6 +26,7 @@ bool core_backend_reports_projected_gradient(
     case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
       return false;
     case xmvb::vb::VbScfOptimizerBackend::BlockLbfgs:
+    case xmvb::vb::VbScfOptimizerBackend::Neo:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return true;
@@ -39,6 +40,7 @@ const char* gradient_tolerance_metric_name(
     case xmvb::vb::VbScfOptimizerBackend::Lbfgs:
       return "raw |g|_2";
     case xmvb::vb::VbScfOptimizerBackend::BlockLbfgs:
+    case xmvb::vb::VbScfOptimizerBackend::Neo:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:
       return "projected |g|_inf";
@@ -53,6 +55,8 @@ const char* optimizer_report_name(
       return "L-BFGS (XMVB-compatible raw-coordinate method)";
     case xmvb::vb::VbScfOptimizerBackend::BlockLbfgs:
       return "block-LBFGS (nonredundant orbital-block inverse)";
+    case xmvb::vb::VbScfOptimizerBackend::Neo:
+      return "NEO (matrix-free projected structure response)";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantProjectedGradient:
       return "nonredundant projected gradient";
     case xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton:

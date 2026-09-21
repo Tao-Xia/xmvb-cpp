@@ -82,6 +82,38 @@ struct TnhvpIterationRecord {
 };
 
 /**
+ * @brief Solver diagnostics for one accepted NEO outer iteration.
+ *
+ * Microiteration and coupled-block-action counts include every trust-region
+ * trial solved from the same accepted-point quadratic model. Residuals and
+ * model scalars describe the trial that produced the accepted step.
+ */
+struct NeoIterationRecord {
+  int accepted_iteration_index = 0;
+  int model_dimension = 0;
+  int micro_iterations = 0;
+  int coupled_block_actions = 0;
+  int rejected_trial_count = 0;
+
+  double kkt_residual_norm = 0.0;
+  double kkt_residual_target = 0.0;
+  double curvature_residual_norm = 0.0;
+  double curvature_residual_target = 0.0;
+
+  double initial_trust_radius = 0.0;
+  double accepted_trial_radius = 0.0;
+  double next_trust_radius = 0.0;
+  double gradient_dot_step = 0.0;
+  double step_dot_hessian_step = 0.0;
+  double predicted_reduction = 0.0;
+  double actual_reduction = 0.0;
+  double trust_ratio = 0.0;
+
+  bool global_curvature_certified = false;
+  bool reached_boundary = false;
+};
+
+/**
  * @brief Accepted optimizer iterate with the quantities needed for DeepVBSCF tracing.
  *
  * The trace stores the initial point at index 0 and then each accepted outer
@@ -263,6 +295,9 @@ struct VbScfOptimizerResult {
 
   /** Lightweight per-accepted-step diagnostics for the TNHVP backend. */
   std::vector<TnhvpIterationRecord> tnhvp_iteration_trace;
+
+  /** Lightweight per-accepted-step diagnostics for the NEO backend. */
+  std::vector<NeoIterationRecord> neo_iteration_trace;
 
   /**
    * @brief Explicitly requested accepted-iterate trace.

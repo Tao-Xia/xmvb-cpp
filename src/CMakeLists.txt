@@ -63,6 +63,7 @@ set(XMVB_OUTPUT_SOURCES
   output/text/report.cpp
   output/text/sections.cpp
   output/trace/accepted_iteration.cpp
+  output/trace/neo.cpp
   output/trace/tnhvp.cpp
 )
 

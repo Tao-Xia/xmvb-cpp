@@ -13,6 +13,7 @@
 #include "output/trace/binary.hpp"
 #include "output/molden/writer.hpp"
 #include "output/trace/accepted_iteration.hpp"
+#include "output/trace/neo.hpp"
 #include "output/trace/tnhvp.hpp"
 #include "input/loading/loader.hpp"
 #include "vbscf/optimization/driver/optimizer.hpp"
@@ -27,6 +28,7 @@ int run(Options command_line) {
   auto& options = command_line.optimizer;
   const std::string& dump_trace_dir = command_line.trace_directory;
   const std::string& tnhvp_trace_path = command_line.tnhvp_trace_path;
+  const std::string& neo_trace_path = command_line.neo_trace_path;
   const std::string& dump_final_orbital_value_table_bin =
       command_line.final_orbitals_path;
   const bool user_specified_max_iterations =
@@ -104,6 +106,9 @@ int run(Options command_line) {
           load_result.nuclear_repulsion_energy);
   if (!tnhvp_trace_path.empty()) {
     xmvb::output::write_tnhvp_trace(tnhvp_trace_path, result);
+  }
+  if (!neo_trace_path.empty()) {
+    xmvb::output::write_neo_trace(neo_trace_path, result);
   }
   if (trace_writer != nullptr) {
     trace_writer->finalize(result);

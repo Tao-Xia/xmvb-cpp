@@ -684,25 +684,121 @@ step is eliminated.  Away from that limit, one formulation must be selected
 and used consistently from the operator through the norm, residual, predicted
 reduction, and acceptance test.
 
-### 9.3 Recommended mathematical definition
+### 9.3 Projected response without a relaxed-HVP oracle
 
-The term **VBSCF-NEO** should denote the coupled generalized eigenproblem in
-eqs 23--34, because this is the direct norm-extended analogue of a fully
-second-order MCSCF optimization.  The term **relaxed-orbital NEO** should be
-reserved for eqs 35--37.  This naming prevents an unshifted relaxed HVP from
-being silently combined with a joint orbital--structure trust norm.
+The current macroiteration retracts only the orbital step and solves the
+structure eigenproblem again at every trial point.  Its finite trial path is
+therefore the relaxed orbital energy in eq 35.  Consequently, the production
+trust norm must contain only $\mathbf p^{\mathrm T}\mathbf M_o\mathbf p$.
+The structure response remains an internal variable satisfying the unshifted
+stationarity equation in eq 19; the trust-region multiplier must not be added
+to $\mathbf C$.
 
-The preferred implementation can be decided by measured operator cost:
+The action of $\mathbf H_{\mathrm{rel}}$ need not be evaluated by solving a
+full structure-response equation after every orbital HVP.  Let
+$\mathbf Q_o$ and $\mathbf Q_s$ be independently expanded orthonormal bases
+for the orbital and horizontal structure spaces.  Define
 
-- relaxed-orbital NEO reuses the existing exact relaxed HVP, but every new
-  orbital direction requires a certified structure-response solve;
-- coupled NEO avoids forming $\mathbf C^{-1}\mathbf B\mathbf p$ inside each
-  HVP, but enlarges the iterative space and requires direct actions in the
-  structure tangent.
+$$
+\begin{aligned}
+\mathbf A_r&=\mathbf Q_o^{\mathrm T}\mathbf A\mathbf Q_o,
+&\mathbf B_r&=\mathbf Q_s^{\mathrm T}\mathbf B\mathbf Q_o,\\
+\mathbf C_r&=\mathbf Q_s^{\mathrm T}\mathbf C\mathbf Q_s,
+&\mathbf G_r&=\mathbf Q_o^{\mathrm T}\mathbf M_o\mathbf Q_o,\\
+\mathbf g_r&=\mathbf Q_o^{\mathrm T}\mathbf g_o.
+\end{aligned}
+\tag{40}
+$$
 
-Neither formulation reduces the asymptotic cost merely by changing the
-outer optimizer.  Low-rank or selected structure response is a separate
-operator approximation and requires its own residual or error certificate.
+For an orbital coefficient vector $\mathbf x$, static condensation inside the
+projected structure space gives
+
+$$
+\mathbf y=-\mathbf C_r^{\dagger}\mathbf B_r\mathbf x,
+\qquad
+\mathbf H_{\mathrm{rel},r}
+=\mathbf A_r-\mathbf B_r^{\mathrm T}\mathbf C_r^{\dagger}\mathbf B_r.
+\tag{41}
+$$
+
+The reduced NEO problem is then
+
+$$
+\min_{\mathbf x}
+\left[
+\mathbf g_r^{\mathrm T}\mathbf x
++\frac12\mathbf x^{\mathrm T}
+\mathbf H_{\mathrm{rel},r}\mathbf x
+\right]
+\quad\text{subject to}\quad
+\mathbf x^{\mathrm T}\mathbf G_r\mathbf x\leq\Delta_o^2.
+\tag{42}
+$$
+
+After reconstruction,
+
+$$
+\mathbf p=\mathbf Q_o\mathbf x,
+\qquad
+\mathbf q=\mathbf Q_s\mathbf y,
+\tag{43}
+$$
+
+the two independent full-space residuals are
+
+$$
+\mathbf r_o
+=\mathbf g_o+\mathbf A\mathbf p
++\mathbf B^{\mathrm T}\mathbf q
++\lambda\mathbf M_o\mathbf p,
+\qquad
+\mathbf r_s=\mathbf B\mathbf p+\mathbf C\mathbf q.
+\tag{44}
+$$
+
+$\mathbf r_o$ expands $\mathbf Q_o$ and $\mathbf r_s$ expands $\mathbf Q_s$.
+Thus the response rank is selected by the equations themselves rather than by
+a coefficient-magnitude threshold.  The projected operator is fixed during
+each micro-solve, symmetric by construction, and uses only the direct block
+actions $\mathbf A\mathbf p$, $\mathbf B\mathbf p$,
+$\mathbf B^{\mathrm T}\mathbf q$, and $\mathbf C\mathbf q$.
+
+Static condensation is well posed for an isolated stationary state or state
+cluster when
+
+$$
+\mathbf C=\mathbf C^{\mathrm T},
+\qquad
+\operatorname{Null}(\mathbf C)
+\subseteq\operatorname{Null}(\mathbf B^{\mathrm T}),
+\tag{45}
+$$
+
+on the horizontal response space.  Equivalently,
+$\operatorname{Range}(\mathbf B)\subseteq
+\operatorname{Range}(\mathbf C)$.  The structure equation is a stationarity
+condition obtained by differentiating the selected eigenpair, not a separate
+minimization over $\mathbf q$.  Therefore $\mathbf C$ may be indefinite for a
+root-followed excited state; its nonzero eigenvalues retain their signs in
+$\mathbf C^{\dagger}$.  For the lowest root, or an equally weighted cluster of
+the lowest consecutive roots projected outside the complete selected span,
+$\mathbf C$ is positive semidefinite as a special case.  A true null direction
+coupled to the orbitals makes the response and Schur complement undefined and
+must not be hidden by a level shift or empirical pseudoinverse cutoff.
+
+### 9.4 Recommended mathematical definition
+
+In the present code, **VBSCF-NEO** denotes the relaxed-orbital trust problem in
+eqs 35--37 evaluated through the residual-controlled projected response
+construction in eqs 40--45.  This definition matches the actual finite trial:
+only the orbital component is retracted and the structure problem is then
+solved to stationarity.
+
+The fully coupled problem in eqs 21--34 remains a distinct, mathematically
+valid formulation.  It should be used only with a simultaneous finite
+orbital--structure retraction and its joint trust norm.  Naming the two
+formulations explicitly prevents an unshifted relaxed response from being
+combined with the shift-dependent coupled equations in eqs 38--39.
 
 ## 10. Residual and model certificates
 
@@ -723,7 +819,7 @@ $$
 \widehat\beta\\
 \widehat{\mathbf y}
 \end{pmatrix}.
-\tag{40}
+\tag{46}
 $$
 
 The lower block, divided by $\alpha\widehat\beta$, is the trust-region Newton
@@ -737,7 +833,7 @@ $$
 \widehat{\mathbf z},
 \qquad
 \widehat\lambda=-\widehat\mu.
-\tag{41}
+\tag{47}
 $$
 
 Thus the NEO microiteration should stop from a residual forcing condition such
@@ -749,7 +845,7 @@ $$
 \eta_k\|\mathbf g\|_{\mathbf M^{-1}},
 \qquad
 0\leq\eta_k<1,
-\tag{42}
+\tag{48}
 $$
 
 together with the norm equation and a lowest-root check.  A hard cap on HVP
@@ -763,7 +859,7 @@ $$
 =
 -\mathbf g^{\mathrm T}\mathbf z
 -\frac12\mathbf z^{\mathrm T}\mathbf K\mathbf z.
-\tag{43}
+\tag{49}
 $$
 
 The agreement ratio is
@@ -776,11 +872,11 @@ $$
 }{
 \Delta m_k
 }.
-\tag{44}
+\tag{50}
 $$
 
 The accepted-point structure problem must be solved consistently before the
-numerator of eq 44 is evaluated.  The trust radius is then adjusted from
+numerator of eq 50 is evaluated.  The trust radius is then adjusted from
 $\rho_k$ and whether the boundary was active.  Molecule-specific iteration
 budgets or energy heuristics are not part of the mathematical method.
 
@@ -792,7 +888,7 @@ $$
 \mathbf x_{k+1}^{\mathrm{trial}}
 =
 \mathbf x_k+\mathbf U_k\mathbf p.
-\tag{45}
+\tag{51}
 $$
 
 Orbital normalization and inactive projection occur downstream and are part
@@ -841,7 +937,7 @@ $$
 }{2h}
 =
 \mathbf g_o^{\mathrm T}\mathbf v+O(h^2).
-\tag{46}
+\tag{52}
 $$
 
 2. **Relaxed HVP test**
@@ -853,7 +949,7 @@ $$
 }{2h}
 =
 \mathbf H_{\mathrm{rel}}\mathbf v+O(h^2).
-\tag{47}
+\tag{53}
 $$
 
 3. **Hessian symmetry**
@@ -862,7 +958,7 @@ $$
 \mathbf u^{\mathrm T}\mathbf H_{\mathrm{rel}}\mathbf v
 =
 \mathbf v^{\mathrm T}\mathbf H_{\mathrm{rel}}\mathbf u.
-\tag{48}
+\tag{54}
 $$
 
 4. **Coupling adjointness**
@@ -871,7 +967,7 @@ $$
 \mathbf q^{\mathrm T}\mathbf B\mathbf p
 =
 \mathbf p^{\mathrm T}\mathbf B^{\mathrm T}\mathbf q.
-\tag{49}
+\tag{55}
 $$
 
 5. **Coupled/reduced Newton equivalence** at $\lambda=0$
@@ -880,13 +976,14 @@ $$
 \mathbf p_{\mathrm{coupled}}
 =
 \mathbf p_{\mathrm{relaxed}}
-\tag{50}
+\tag{56}
 $$
 
 to the requested linear-solve accuracy, with $\mathbf q$ satisfying eq 19.
 
 6. **NEO/KKT equivalence**: the step reconstructed from eq 25 must satisfy
-eqs 22 and 41 using $\lambda=-\mu$.
+the appropriate form of eq 22 and the explicit residual in eq 47 using
+$\lambda=-\mu$.
 
 7. **Representation invariance**: allowed inactive-basis changes and active
 orbital rescalings must not change the physical step or predicted reduction.
@@ -904,8 +1001,8 @@ graph:
 - a norm-extended operator that implements only eq 33;
 - a lowest generalized-eigenpair solver;
 - an $\alpha$ controller for eq 32;
-- a step certificate implementing eqs 40--44; and
-- an outer driver that performs eq 45 and the accepted-point structure solve.
+- a step certificate implementing eqs 46--50; and
+- an outer driver that performs eq 51 and the accepted-point structure solve.
 
 L-BFGS data, if retained, belongs only to eigensolver preconditioning and
 initial-subspace construction.  The converged NEO step must be defined by the

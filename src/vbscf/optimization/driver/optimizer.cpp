@@ -16,6 +16,7 @@
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/backends/lbfgs.hpp"
+#include "vbscf/optimization/backends/neo.hpp"
 #include "vbscf/optimization/backends/projected_gradient.hpp"
 #include "vbscf/optimization/backends/truncated_newton.hpp"
 #include "vbscf/optimization/driver/session.hpp"
@@ -197,6 +198,23 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
                 &result);
         n_iterations = backend_result.n_iterations;
         final_gradient_l2_norm = backend_result.final_gradient_l2_norm;
+        break;
+      }
+
+      case VbScfOptimizerBackend::Neo: {
+        const auto backend_result =
+            optimizer_detail::run_neo_backend(
+                &objective,
+                parameter_view,
+                options_,
+                parameter_vector,
+                gradient,
+                energy,
+                &result);
+        n_iterations = backend_result.n_iterations;
+        final_gradient_l2_norm = backend_result.final_gradient_l2_norm;
+        final_projected_gradient_ready =
+            backend_result.final_projected_gradient_ready;
         break;
       }
 
