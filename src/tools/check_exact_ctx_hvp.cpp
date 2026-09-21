@@ -440,6 +440,21 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "orbital coupling block disagrees with scalar actions");
     }
+    Eigen::MatrixXd relaxed_images(direction.size(), 2);
+    relaxed_images.col(0) = analytic;
+    relaxed_images.col(1) = exact_hvp.apply_reduced(second_direction);
+    const Eigen::Matrix2d projected_orbital =
+        coupling_directions.transpose() * scalar_orbital_coupling;
+    const Eigen::Matrix2d projected_relaxed =
+        coupling_directions.transpose() * relaxed_images;
+    const auto relative_symmetry_error = [](const Eigen::Matrix2d& matrix) {
+      return (matrix - matrix.transpose()).norm() /
+          std::max(1.0, matrix.norm());
+    };
+    const double orbital_symmetry_error =
+        relative_symmetry_error(projected_orbital);
+    const double relaxed_symmetry_error =
+        relative_symmetry_error(projected_relaxed);
     const CoupledReferenceAudit coupled_audit =
         audit_coupled_structure_elimination(
             exact_hvp,
@@ -632,6 +647,10 @@ int main(int argc, char** argv) {
               << coupling_batch_orbital_error << '\n'
               << "coupling_batch_structure_error = "
               << coupling_batch_structure_error << '\n'
+              << "orbital_coupling_symmetry_error = "
+              << orbital_symmetry_error << '\n'
+              << "relaxed_hvp_symmetry_error = "
+              << relaxed_symmetry_error << '\n'
               << "coupling_batch_chunks = "
               << hvp_diagnostics.orbital_coupling_batch_chunk_count << '\n'
               << "coupling_batch_max_width = "
