@@ -37,8 +37,8 @@ std::uint64_t ExactHvpOperator::response_model_revision() const noexcept {
   return state_->response_model_revision();
 }
 
-ResponseLowRankModel ExactHvpOperator::response_low_rank_model() const {
-  return state_->response_low_rank_model();
+StructureResponseSchurModel ExactHvpOperator::structure_response_schur_model() const {
+  return state_->structure_response_schur_model();
 }
 
 const StructureAction& ExactHvpOperator::structure_action() const {
@@ -291,10 +291,10 @@ ExactHvpOperator::State::diagnostics() const {
   info.batch_apply_count = apply_timing_totals_.batch_apply_count;
   info.structure_response_block_actions =
       apply_timing_totals_.structure_response_block_actions;
-  info.response_low_rank_build_count =
-      apply_timing_totals_.response_low_rank_build_count;
-  info.response_low_rank_new_columns =
-      apply_timing_totals_.response_low_rank_new_columns;
+  info.structure_response_schur_build_count =
+      apply_timing_totals_.structure_response_schur_build_count;
+  info.structure_response_schur_new_columns =
+      apply_timing_totals_.structure_response_schur_new_columns;
   info.max_structure_response_iterations =
       apply_timing_totals_.max_structure_response_iterations;
   info.max_structure_response_relative_residual =
@@ -353,13 +353,13 @@ ExactHvpOperator::State::diagnostics() const {
           .outer_response_opposite_spin_beta_overlap_wall_time_seconds;
   info.outer_response_orbital_pullback_wall_time_seconds =
       apply_timing_totals_.outer_response_orbital_pullback_wall_time_seconds;
-  info.response_low_rank_wall_time_seconds =
-      apply_timing_totals_.response_low_rank_wall_time_seconds;
-  info.response_low_rank_structure_action_wall_time_seconds =
+  info.structure_response_schur_wall_time_seconds =
+      apply_timing_totals_.structure_response_schur_wall_time_seconds;
+  info.structure_response_schur_structure_action_wall_time_seconds =
       apply_timing_totals_
-          .response_low_rank_structure_action_wall_time_seconds;
-  info.response_low_rank_adjoint_wall_time_seconds =
-      apply_timing_totals_.response_low_rank_adjoint_wall_time_seconds;
+          .structure_response_schur_structure_action_wall_time_seconds;
+  info.structure_response_schur_adjoint_wall_time_seconds =
+      apply_timing_totals_.structure_response_schur_adjoint_wall_time_seconds;
   return info;
 }
 

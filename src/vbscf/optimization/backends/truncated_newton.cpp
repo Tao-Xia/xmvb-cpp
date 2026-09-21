@@ -40,7 +40,7 @@ public:
     if (exact_operator_ == nullptr) {
       throw std::invalid_argument("exact HVP operator must not be null");
     }
-    response_model_ = exact_operator_->response_low_rank_model();
+    response_model_ = exact_operator_->structure_response_schur_model();
   }
 
   Eigen::VectorXd apply(const Eigen::VectorXd& direction) override {
@@ -63,11 +63,11 @@ public:
         response_model_.revision != previous_revision) {
       return false;
     }
-    ResponseLowRankModel revised =
-        exact_operator_->response_low_rank_model();
+    StructureResponseSchurModel revised =
+        exact_operator_->structure_response_schur_model();
     if (revised.revision != exact_operator_->response_model_revision()) {
       throw std::runtime_error(
-          "response low-rank model changed while updating Hessian images");
+          "structure-response Schur model changed while updating Hessian images");
     }
     *images += revised.apply(directions) - response_model_.apply(directions);
     if (!images->allFinite()) {
@@ -96,7 +96,7 @@ public:
     return exact_operator_->response_model_revision();
   }
 
-  const ResponseLowRankModel& current_response_model() {
+  const StructureResponseSchurModel& current_response_model() {
     capture_current_response_model();
     return response_model_;
   }
@@ -105,15 +105,15 @@ private:
   void capture_current_response_model() {
     const std::uint64_t revision = exact_operator_->response_model_revision();
     if (response_model_.revision == revision) return;
-    response_model_ = exact_operator_->response_low_rank_model();
+    response_model_ = exact_operator_->structure_response_schur_model();
     if (response_model_.revision != revision) {
       throw std::runtime_error(
-          "response low-rank model revision is inconsistent");
+          "structure-response Schur model revision is inconsistent");
     }
   }
 
   const ExactHvpOperator* exact_operator_;
-  ResponseLowRankModel response_model_;
+  StructureResponseSchurModel response_model_;
 };
 
 }  // namespace
@@ -572,21 +572,21 @@ BackendRunResult run_truncated_newton_backend(
     iteration_record.structure_response_block_actions =
         static_cast<int>(
             accepted_hvp_diagnostics.structure_response_block_actions);
-    iteration_record.response_low_rank_new_columns =
-        accepted_hvp_diagnostics.response_low_rank_new_columns;
-    iteration_record.response_low_rank_model_rank =
+    iteration_record.structure_response_schur_new_columns =
+        accepted_hvp_diagnostics.structure_response_schur_new_columns;
+    iteration_record.structure_response_schur_model_rank =
         response_spectrum.model_rank;
-    iteration_record.response_low_rank_rank_90 =
+    iteration_record.structure_response_schur_rank_90 =
         response_spectrum.rank_90;
-    iteration_record.response_low_rank_rank_99 =
+    iteration_record.structure_response_schur_rank_99 =
         response_spectrum.rank_99;
-    iteration_record.response_low_rank_effective_rank =
+    iteration_record.structure_response_schur_effective_rank =
         response_spectrum.effective_rank;
-    iteration_record.response_low_rank_top_mode_fraction =
+    iteration_record.structure_response_schur_top_mode_fraction =
         response_spectrum.top_mode_fraction;
-    iteration_record.response_low_rank_top_5_fraction =
+    iteration_record.structure_response_schur_top_5_fraction =
         response_spectrum.top_5_fraction;
-    iteration_record.response_low_rank_top_10_fraction =
+    iteration_record.structure_response_schur_top_10_fraction =
         response_spectrum.top_10_fraction;
     iteration_record.preconditioner_history_size =
         accepted_preconditioner_history_size;
@@ -600,13 +600,13 @@ BackendRunResult run_truncated_newton_backend(
         accepted_hvp_diagnostics.total_apply_wall_time_seconds;
     iteration_record.outer_response_wall_time_seconds =
         accepted_hvp_diagnostics.outer_response_wall_time_seconds;
-    iteration_record.response_low_rank_wall_time_seconds =
-        accepted_hvp_diagnostics.response_low_rank_wall_time_seconds;
-    iteration_record.response_low_rank_structure_action_wall_time_seconds =
+    iteration_record.structure_response_schur_wall_time_seconds =
+        accepted_hvp_diagnostics.structure_response_schur_wall_time_seconds;
+    iteration_record.structure_response_schur_structure_action_wall_time_seconds =
         accepted_hvp_diagnostics
-            .response_low_rank_structure_action_wall_time_seconds;
-    iteration_record.response_low_rank_adjoint_wall_time_seconds =
-        accepted_hvp_diagnostics.response_low_rank_adjoint_wall_time_seconds;
+            .structure_response_schur_structure_action_wall_time_seconds;
+    iteration_record.structure_response_schur_adjoint_wall_time_seconds =
+        accepted_hvp_diagnostics.structure_response_schur_adjoint_wall_time_seconds;
     iteration_record.trial_objective_wall_time_seconds =
         trial_objective_wall_time_seconds;
     iteration_record.source_gradient_l2_norm = source_gradient_l2_norm;

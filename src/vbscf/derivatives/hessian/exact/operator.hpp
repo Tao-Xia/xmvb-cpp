@@ -33,13 +33,13 @@ struct HvpComponents {
 };
 
 /**
- * @brief Accepted-point low-rank structure-response Schur model.
+ * @brief Accepted-point structure-response Schur model.
  *
  * With orbital coupling columns @f$J=B^T W@f$ and projected response
  * inverse @f$K^\dagger=(W^T C W)^\dagger@f$, the response-dependent orbital
  * Hessian is @f$-J K^\dagger J^T@f$.
  */
-struct ResponseLowRankModel {
+struct StructureResponseSchurModel {
   std::uint64_t revision = 0;
   Eigen::MatrixXd orbital_couplings;
   Eigen::MatrixXd projected_inverse;
@@ -72,7 +72,7 @@ struct OrbitalCouplingAction {
  * or truncate the supplied response model.
  */
 ResponseSpectrumSummary summarize_response_spectrum(
-    const ResponseLowRankModel& model);
+    const StructureResponseSchurModel& model);
 
 /**
  * @brief Accepted-point matrix-free orbital second-order operator.
@@ -106,8 +106,8 @@ public:
     std::size_t apply_count = 0;
     std::size_t batch_apply_count = 0;
     std::size_t structure_response_block_actions = 0;
-    std::size_t response_low_rank_build_count = 0;
-    std::size_t response_low_rank_new_columns = 0;
+    std::size_t structure_response_schur_build_count = 0;
+    std::size_t structure_response_schur_new_columns = 0;
     int max_structure_response_iterations = 0;
     double max_structure_response_relative_residual = 0.0;
     double total_apply_wall_time_seconds = 0.0;
@@ -134,9 +134,9 @@ public:
     double outer_response_opposite_spin_alpha_overlap_wall_time_seconds = 0.0;
     double outer_response_opposite_spin_beta_overlap_wall_time_seconds = 0.0;
     double outer_response_orbital_pullback_wall_time_seconds = 0.0;
-    double response_low_rank_wall_time_seconds = 0.0;
-    double response_low_rank_structure_action_wall_time_seconds = 0.0;
-    double response_low_rank_adjoint_wall_time_seconds = 0.0;
+    double structure_response_schur_wall_time_seconds = 0.0;
+    double structure_response_schur_structure_action_wall_time_seconds = 0.0;
+    double structure_response_schur_adjoint_wall_time_seconds = 0.0;
   };
 
   ExactHvpOperator(
@@ -192,7 +192,7 @@ public:
   std::uint64_t response_model_revision() const noexcept;
 
   /** @brief Builds the current exact low-rank response Schur model. */
-  ResponseLowRankModel response_low_rank_model() const;
+  StructureResponseSchurModel structure_response_schur_model() const;
 
   Diagnostics diagnostics() const;
 

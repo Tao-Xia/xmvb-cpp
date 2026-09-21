@@ -2609,7 +2609,7 @@ eq 66t determines whether a candidate possesses a complete Newton
 certificate. Fixed response counts and system-specific activation thresholds
 are excluded from the production algorithm. The bounded-response production
 path does not claim asymptotically quadratic convergence when eq 66t fails;
-that stronger property is the target of the certified low-rank Schur model
+that stronger property is the target of the certified structure-response Schur model
 below.
 
 #### 10.6.1 Transported accepted-step correction of the core Hessian
@@ -2709,7 +2709,7 @@ admitted exact response action.  Under the usual Dennis--Mor\'e secant
 condition, however, the correction can recover superlinear local behavior
 without paying the unique-string response cost on every HVP direction.
 
-### 10.8 Residual-certified low-rank Schur response
+### 10.8 Residual-certified structure-response Schur model
 
 Cost-aware scheduling cannot change the asymptotic cost of one exact relaxed
 response.  In a large active space, the structure dimension, the number of

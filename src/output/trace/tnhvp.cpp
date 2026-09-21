@@ -29,22 +29,22 @@ void write_tnhvp_trace(
       << "\tcurvature_subspace_dimension"
       << "\texact_hvp_block_actions"
       << "\tstructure_response_block_actions"
-      << "\tresponse_low_rank_new_columns"
-      << "\tresponse_low_rank_model_rank"
-      << "\tresponse_low_rank_effective_rank"
-      << "\tresponse_low_rank_rank_90"
-      << "\tresponse_low_rank_rank_99"
-      << "\tresponse_low_rank_top_mode_fraction"
-      << "\tresponse_low_rank_top_5_fraction"
-      << "\tresponse_low_rank_top_10_fraction"
+      << "\tstructure_response_schur_new_columns"
+      << "\tstructure_response_schur_model_rank"
+      << "\tstructure_response_schur_effective_rank"
+      << "\tstructure_response_schur_rank_90"
+      << "\tstructure_response_schur_rank_99"
+      << "\tstructure_response_schur_top_mode_fraction"
+      << "\tstructure_response_schur_top_5_fraction"
+      << "\tstructure_response_schur_top_10_fraction"
       << "\tpreconditioner_history_size\trejected_trials"
       << "\touter_iteration_seconds"
       << "\taccepted_point_setup_seconds"
       << "\texact_hvp_seconds"
       << "\touter_response_seconds"
-      << "\tresponse_low_rank_seconds"
-      << "\tresponse_low_rank_structure_action_seconds"
-      << "\tresponse_low_rank_adjoint_seconds"
+      << "\tstructure_response_schur_seconds"
+      << "\tstructure_response_schur_structure_action_seconds"
+      << "\tstructure_response_schur_adjoint_seconds"
       << "\ttrial_objective_seconds"
       << "\tgradient_log_progress_per_second"
       << "\tsource_gradient_l2\taccepted_gradient_l2\tforcing_term"
@@ -67,23 +67,23 @@ void write_tnhvp_trace(
         << step.curvature_subspace_dimension << '\t'
         << step.exact_hvp_block_actions << '\t'
         << step.structure_response_block_actions << '\t'
-        << step.response_low_rank_new_columns << '\t'
-        << step.response_low_rank_model_rank << '\t'
-        << step.response_low_rank_effective_rank << '\t'
-        << step.response_low_rank_rank_90 << '\t'
-        << step.response_low_rank_rank_99 << '\t'
-        << step.response_low_rank_top_mode_fraction << '\t'
-        << step.response_low_rank_top_5_fraction << '\t'
-        << step.response_low_rank_top_10_fraction << '\t'
+        << step.structure_response_schur_new_columns << '\t'
+        << step.structure_response_schur_model_rank << '\t'
+        << step.structure_response_schur_effective_rank << '\t'
+        << step.structure_response_schur_rank_90 << '\t'
+        << step.structure_response_schur_rank_99 << '\t'
+        << step.structure_response_schur_top_mode_fraction << '\t'
+        << step.structure_response_schur_top_5_fraction << '\t'
+        << step.structure_response_schur_top_10_fraction << '\t'
         << step.preconditioner_history_size << '\t'
         << step.rejected_trial_count << '\t'
         << step.outer_iteration_wall_time_seconds << '\t'
         << step.accepted_point_setup_wall_time_seconds << '\t'
         << step.exact_hvp_wall_time_seconds << '\t'
         << step.outer_response_wall_time_seconds << '\t'
-        << step.response_low_rank_wall_time_seconds << '\t'
-        << step.response_low_rank_structure_action_wall_time_seconds << '\t'
-        << step.response_low_rank_adjoint_wall_time_seconds << '\t'
+        << step.structure_response_schur_wall_time_seconds << '\t'
+        << step.structure_response_schur_structure_action_wall_time_seconds << '\t'
+        << step.structure_response_schur_adjoint_wall_time_seconds << '\t'
         << step.trial_objective_wall_time_seconds << '\t'
         << step.gradient_log_progress_per_second << '\t'
         << step.source_gradient_l2_norm << '\t'

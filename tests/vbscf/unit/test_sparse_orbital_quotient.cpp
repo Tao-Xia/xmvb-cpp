@@ -29,7 +29,7 @@ void require(bool condition, const std::string& message) {
 constexpr double kFixtureForcing = 5.0e-2;
 
 void check_response_spectrum_summary() {
-  ResponseLowRankModel model;
+  StructureResponseSchurModel model;
   model.orbital_couplings = Eigen::Matrix3d::Identity();
   model.projected_inverse =
       (Eigen::Vector3d() << 4.0, -1.0, 0.25).finished().asDiagonal();

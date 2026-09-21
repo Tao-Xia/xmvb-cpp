@@ -27,10 +27,10 @@ struct TnhvpIterationRecord {
   int curvature_subspace_dimension = 0;
   std::size_t exact_hvp_block_actions = 0;
   std::size_t structure_response_block_actions = 0;
-  std::size_t response_low_rank_new_columns = 0;
-  int response_low_rank_model_rank = 0;
-  int response_low_rank_rank_90 = 0;
-  int response_low_rank_rank_99 = 0;
+  std::size_t structure_response_schur_new_columns = 0;
+  int structure_response_schur_model_rank = 0;
+  int structure_response_schur_rank_90 = 0;
+  int structure_response_schur_rank_99 = 0;
   int preconditioner_history_size = 0;
   int rejected_trial_count = 0;
 
@@ -38,13 +38,13 @@ struct TnhvpIterationRecord {
   double accepted_point_setup_wall_time_seconds = 0.0;
   double exact_hvp_wall_time_seconds = 0.0;
   double outer_response_wall_time_seconds = 0.0;
-  double response_low_rank_wall_time_seconds = 0.0;
-  double response_low_rank_structure_action_wall_time_seconds = 0.0;
-  double response_low_rank_adjoint_wall_time_seconds = 0.0;
-  double response_low_rank_effective_rank = 0.0;
-  double response_low_rank_top_mode_fraction = 0.0;
-  double response_low_rank_top_5_fraction = 0.0;
-  double response_low_rank_top_10_fraction = 0.0;
+  double structure_response_schur_wall_time_seconds = 0.0;
+  double structure_response_schur_structure_action_wall_time_seconds = 0.0;
+  double structure_response_schur_adjoint_wall_time_seconds = 0.0;
+  double structure_response_schur_effective_rank = 0.0;
+  double structure_response_schur_top_mode_fraction = 0.0;
+  double structure_response_schur_top_5_fraction = 0.0;
+  double structure_response_schur_top_10_fraction = 0.0;
   double trial_objective_wall_time_seconds = 0.0;
   double gradient_log_progress_per_second = 0.0;
 

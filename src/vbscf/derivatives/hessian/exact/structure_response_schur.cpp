@@ -16,7 +16,7 @@
 
 namespace xmvb::vb {
 
-Eigen::MatrixXd ResponseLowRankModel::apply(
+Eigen::MatrixXd StructureResponseSchurModel::apply(
     const Eigen::Ref<const Eigen::MatrixXd>& orbital_directions) const {
   if (!orbital_directions.allFinite() ||
       orbital_couplings.rows() != orbital_directions.rows() ||
@@ -24,7 +24,7 @@ Eigen::MatrixXd ResponseLowRankModel::apply(
       projected_inverse.cols() != orbital_couplings.cols() ||
       !orbital_couplings.allFinite() || !projected_inverse.allFinite()) {
     throw std::invalid_argument(
-        "response low-rank model dimensions or values are invalid");
+        "structure-response Schur model dimensions or values are invalid");
   }
   if (orbital_couplings.cols() == 0) {
     return Eigen::MatrixXd::Zero(
@@ -39,7 +39,7 @@ Eigen::MatrixXd ResponseLowRankModel::apply(
 }
 
 ResponseSpectrumSummary summarize_response_spectrum(
-    const ResponseLowRankModel& model) {
+    const StructureResponseSchurModel& model) {
   ResponseSpectrumSummary summary;
   const Eigen::Index rank = model.orbital_couplings.cols();
   summary.model_rank = static_cast<int>(rank);
@@ -116,9 +116,9 @@ ResponseSpectrumSummary summarize_response_spectrum(
   return summary;
 }
 
-ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
+StructureResponseSchurModel ExactHvpOperator::State::structure_response_schur_model() const {
   const auto build_start = std::chrono::steady_clock::now();
-  ++apply_timing_totals_.response_low_rank_build_count;
+  ++apply_timing_totals_.structure_response_schur_build_count;
   const auto& response =
       outer_response_context().selected_state_eigen_response_operator;
   const int n_states = static_cast<int>(response.selected_eigenvalues.size());
@@ -182,12 +182,12 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
   }
 
   if (new_columns > 0) {
-    apply_timing_totals_.response_low_rank_new_columns +=
+    apply_timing_totals_.structure_response_schur_new_columns +=
         static_cast<std::size_t>(new_columns);
     const auto action_start = std::chrono::steady_clock::now();
     const StructureActionResult action =
         response.structure_action->apply(response_vectors);
-    apply_timing_totals_.response_low_rank_structure_action_wall_time_seconds +=
+    apply_timing_totals_.structure_response_schur_structure_action_wall_time_seconds +=
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - action_start).count();
     if (action.hamiltonian.rows() != n_structures ||
@@ -196,7 +196,7 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
         action.overlap.cols() != new_columns ||
         !action.hamiltonian.allFinite() || !action.overlap.allFinite()) {
       throw std::runtime_error(
-          "response low-rank basis action returned invalid images");
+          "structure-response Schur basis action returned invalid images");
     }
     const Eigen::MatrixXd metric =
         response.selected_eigenvectors.transpose() * response.overlap_selected;
@@ -230,7 +230,7 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
           2.0 * accepted_point_context_->normalized_state_weights[state]);
       if (!(coordinate_scale > 0.0) || !std::isfinite(coordinate_scale)) {
         throw std::logic_error(
-            "response low-rank coordinate scale is invalid");
+            "structure-response Schur coordinate scale is invalid");
       }
       Eigen::MatrixXd& cached =
           response_orbital_couplings_by_state_[state];
@@ -238,7 +238,7 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
       cached.conservativeResize(Eigen::NoChange, old_size + 1);
       cached.col(old_size) = coupling / coordinate_scale;
     }
-    apply_timing_totals_.response_low_rank_adjoint_wall_time_seconds +=
+    apply_timing_totals_.structure_response_schur_adjoint_wall_time_seconds +=
         std::chrono::duration<double>(
             std::chrono::steady_clock::now() - adjoint_start).count();
   }
@@ -247,7 +247,7 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
   for (const auto& space : response.response_recycle_spaces) {
     rank += space.size();
   }
-  ResponseLowRankModel model;
+  StructureResponseSchurModel model;
   model.revision = response.revision();
   model.orbital_couplings.resize(n_orbital, rank);
   model.projected_inverse = Eigen::MatrixXd::Zero(rank, rank);
@@ -257,7 +257,7 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
     const int width = space.size();
     if (response_orbital_couplings_by_state_[state].cols() != width) {
       throw std::logic_error(
-          "response low-rank coupling cache is incomplete");
+          "structure-response Schur coupling cache is incomplete");
     }
     if (width == 0) continue;
     model.orbital_couplings.middleCols(offset, width) =
@@ -268,7 +268,7 @@ ResponseLowRankModel ExactHvpOperator::State::response_low_rank_model() const {
   }
   const double build_seconds = std::chrono::duration<double>(
       std::chrono::steady_clock::now() - build_start).count();
-  apply_timing_totals_.response_low_rank_wall_time_seconds += build_seconds;
+  apply_timing_totals_.structure_response_schur_wall_time_seconds += build_seconds;
   // Low-rank Schur construction is part of the exact response operator even
   // though it is requested between matrix-vector products. Include it in the
   // accepted-point HVP and response totals so production traces account for

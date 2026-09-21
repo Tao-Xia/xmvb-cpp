@@ -467,15 +467,15 @@ void print_summary(
               final_step.max_structure_response_relative_residual, 4));
       print_log_field(
           "Final response model rank",
-          std::to_string(final_step.response_low_rank_model_rank));
+          std::to_string(final_step.structure_response_schur_model_rank));
       print_log_field(
           "Final response effective rank",
           format_scientific_double(
-              final_step.response_low_rank_effective_rank, 4));
+              final_step.structure_response_schur_effective_rank, 4));
       print_log_field(
           "Final response 90% / 99% ranks",
-          std::to_string(final_step.response_low_rank_rank_90) + " / " +
-              std::to_string(final_step.response_low_rank_rank_99));
+          std::to_string(final_step.structure_response_schur_rank_90) + " / " +
+              std::to_string(final_step.structure_response_schur_rank_99));
       print_log_field(
           "TNHVP outer iteration wall",
           format_seconds(outer_iteration_seconds));

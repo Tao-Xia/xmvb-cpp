@@ -325,8 +325,8 @@ public:
     return operator_.diagnostics();
   }
 
-  ResponseLowRankModel response_model() const {
-    return operator_.response_low_rank_model();
+  StructureResponseSchurModel response_model() const {
+    return operator_.structure_response_schur_model();
   }
 
   void clear_recorded_blocks() { recorded_blocks_.clear(); }
@@ -546,7 +546,7 @@ void run_heldout_response_audit(
   const Eigen::MatrixXd fixed = apply_fresh_block(
       accepted, input, layout, chart, probes, no_structure).images;
   const Eigen::MatrixXd reference = full - fixed;
-  const ResponseLowRankModel model = learned_hvp.response_model();
+  const StructureResponseSchurModel model = learned_hvp.response_model();
   const Eigen::MatrixXd learned = model.apply(probes);
   std::cout << "response_heldout_model_rank = "
             << model.orbital_couplings.cols() << '\n'
@@ -605,8 +605,8 @@ void run_frozen_response_audit(
   const Eigen::MatrixXd seed_images = operation.apply_reduced_batch(
       probes.leftCols(2));
   const std::uint64_t seed_revision = operation.response_model_revision();
-  const ResponseLowRankModel seed_model =
-      operation.response_low_rank_model();
+  const StructureResponseSchurModel seed_model =
+      operation.structure_response_schur_model();
   HvpComponents frozen;
   frozen.freeze_structure_response = true;
   require_model_identity("response_model_seed_replay", seed_images,
@@ -620,8 +620,8 @@ void run_frozen_response_audit(
   const Eigen::MatrixXd added_image = operation.apply_reduced_batch(
       probes.rightCols(1));
   const std::uint64_t revision = operation.response_model_revision();
-  const ResponseLowRankModel enriched_model =
-      operation.response_low_rank_model();
+  const StructureResponseSchurModel enriched_model =
+      operation.structure_response_schur_model();
   const Eigen::MatrixXd images = operation.apply_reduced_batch(probes, frozen);
   const Eigen::MatrixXd low_rank_refresh = seed_images +
       enriched_model.apply(probes.leftCols(2)) -

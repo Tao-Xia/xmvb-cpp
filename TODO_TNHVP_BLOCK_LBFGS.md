@@ -119,7 +119,7 @@ The next implementation sequence is:
 6. [ ] Record solver-only time, stopping reason, actual minimum Ritz value, and
    fresh-certificate cost. The repeated full-HVP refresh itself is removed:
    the frozen projected response inverse is cached by revision and retained
-   orbital images are updated with the exact low-rank Schur-model difference.
+   orbital images are updated with the exact structure-response Schur-model difference.
    Newly admitted response columns alone require structure-to-orbital adjoint
    contractions. A 241 regression matches complete frozen replay. Dedicated
    Initial 32-core measurements give 2.64x end-to-end speedup for 241 and

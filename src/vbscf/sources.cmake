@@ -78,7 +78,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/hessian/exact/apply.cpp
   vbscf/derivatives/hessian/exact/batch.cpp
   vbscf/derivatives/hessian/exact/direction.cpp
-  vbscf/derivatives/hessian/exact/low_rank.cpp
+  vbscf/derivatives/hessian/exact/structure_response_schur.cpp
   vbscf/derivatives/hessian/exact/ao_one_electron.cpp
   vbscf/derivatives/hessian/exact/operator.cpp
   vbscf/derivatives/hessian/context/response_cache.cpp
