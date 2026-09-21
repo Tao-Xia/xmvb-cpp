@@ -1,5 +1,6 @@
 #include "vbscf/optimization/neo/problem.hpp"
 
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -9,16 +10,21 @@ NeoProblem::NeoProblem(
     Eigen::VectorXd gradient,
     NeoAction apply_hessian,
     NeoAction apply_metric,
-    NeoAction apply_inverse_metric)
+    NeoAction apply_inverse_metric,
+    std::optional<double> hessian_lower_bound)
     : gradient_(std::move(gradient)),
       apply_hessian_(std::move(apply_hessian)),
       apply_metric_(std::move(apply_metric)),
-      apply_inverse_metric_(std::move(apply_inverse_metric)) {
+      apply_inverse_metric_(std::move(apply_inverse_metric)),
+      hessian_lower_bound_(hessian_lower_bound) {
   if (gradient_.size() == 0 || !gradient_.allFinite()) {
     throw std::invalid_argument("NEO requires a finite nonempty gradient");
   }
   if (!apply_hessian_ || !apply_metric_ || !apply_inverse_metric_) {
     throw std::invalid_argument("NEO requires Hessian and metric actions");
+  }
+  if (hessian_lower_bound_ && !std::isfinite(*hessian_lower_bound_)) {
+    throw std::invalid_argument("NEO Hessian lower bound must be finite");
   }
 }
 

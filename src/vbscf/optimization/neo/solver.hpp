@@ -47,6 +47,8 @@ struct NeoResult {
   int hessian_actions = 0;
   bool boundary = false;
   bool hard_case = false;
+  /** Whether the augmented vector represents the complete NEO step. */
+  bool augmented_certificate_valid = false;
   NeoStopReason stop_reason = NeoStopReason::SubspaceLimit;
 
   /** @brief Whether the explicitly evaluated KKT residual is certified. */

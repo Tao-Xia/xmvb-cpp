@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -17,6 +18,7 @@ namespace {
 using xmvb::vb::NeoOptions;
 using xmvb::vb::NeoProblem;
 using xmvb::vb::NeoResult;
+using xmvb::vb::NeoStopReason;
 
 void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
@@ -43,7 +45,8 @@ void require_close(
 NeoProblem dense_problem(
     const Eigen::MatrixXd& hessian,
     const Eigen::MatrixXd& metric,
-    const Eigen::VectorXd& gradient) {
+    const Eigen::VectorXd& gradient,
+    std::optional<double> hessian_lower_bound = std::nullopt) {
   Eigen::LDLT<Eigen::MatrixXd> metric_factor(metric);
   require(metric_factor.info() == Eigen::Success,
           "reference metric factorization failed");
@@ -57,7 +60,8 @@ NeoProblem dense_problem(
       [metric](const Eigen::VectorXd& vector) { return metric * vector; },
       [inverse_metric](const Eigen::VectorXd& vector) {
         return inverse_metric * vector;
-      });
+      },
+      hessian_lower_bound);
 }
 
 double inverse_metric_norm(
@@ -153,6 +157,8 @@ void check_positive_definite_newton_limit() {
           "interior positive-definite problem has a nonzero shift");
   require(!result.boundary,
           "interior positive-definite step was classified as a boundary step");
+  require(!result.augmented_certificate_valid,
+          "interior Newton limit was reported as a finite-alpha certificate");
 }
 
 void check_generalized_metric_boundary() {
@@ -174,6 +180,8 @@ void check_generalized_metric_boundary() {
              radius, result);
   require(result.shift > 0.0,
           "small generalized trust region did not produce a shift");
+  require(result.augmented_certificate_valid,
+          "regular boundary step lacks its augmented certificate");
 
   // At the returned gradient scale, the NEO step must come from the lowest
   // root of the explicit augmented generalized eigenproblem.
@@ -227,6 +235,8 @@ void check_indefinite_regular_boundary() {
           "indefinite problem did not stabilize its Hessian");
   require(!result.hard_case,
           "regular indefinite problem was classified as a hard case");
+  require(result.augmented_certificate_valid,
+          "regular indefinite boundary lacks its augmented certificate");
 }
 
 void check_hard_case() {
@@ -244,12 +254,101 @@ void check_hard_case() {
       dense_problem(hessian, metric, gradient), options);
   verify_kkt("hard case", hessian, metric, gradient, radius, result);
   require(result.hard_case, "hard case was not detected");
+  require(!result.augmented_certificate_valid,
+          "hard-case curvature vector was reported as a complete NEO step");
   require_close(result.shift, 2.0, 2.0e-10,
                 "hard case has the wrong spectral shift");
   require_close(result.step[1], -0.2, 2.0e-10,
                 "hard-case pseudoinverse component is wrong");
   require_close(std::abs(result.step[0]), std::sqrt(0.96), 2.0e-10,
                 "hard-case minimum-mode component is wrong");
+}
+
+Eigen::Matrix3d hidden_curvature_hessian() {
+  const Eigen::Vector3d visible(0.0, -4.0 / 3.0, 5.0 / 3.0);
+  const Eigen::Vector3d hidden(0.0, 5.0 / 3.0, 4.0 / 3.0);
+  Eigen::Vector3d gradient_mode = Eigen::Vector3d::Zero();
+  gradient_mode[0] = 1.0;
+  return 2.0 * gradient_mode * gradient_mode.transpose() +
+      3.0 * visible * visible.transpose() / visible.squaredNorm() -
+      100.0 * hidden * hidden.transpose() / hidden.squaredNorm();
+}
+
+void check_hidden_negative_curvature() {
+  const Eigen::Matrix3d hessian = hidden_curvature_hessian();
+  const Eigen::Matrix3d metric = Eigen::Matrix3d::Identity();
+  const Eigen::Vector3d gradient(1.0, 0.0, 0.0);
+
+  NeoOptions budgeted_options;
+  budgeted_options.trust_radius = 1.0;
+  budgeted_options.relative_residual_tolerance = 1.0e-12;
+  budgeted_options.maximum_subspace_dimension = 2;
+  const NeoResult budgeted = solve_neo(
+      dense_problem(hessian, metric, gradient), budgeted_options);
+  require(budgeted.stop_reason == NeoStopReason::SubspaceLimit,
+          "an incomplete subspace falsely certified hidden curvature");
+  require(!budgeted.converged(),
+          "a work-limited hidden-curvature solve reported convergence");
+  require(budgeted.hessian_actions == 2,
+          "the explicit subspace budget used the wrong number of actions");
+
+  NeoOptions complete_options = budgeted_options;
+  complete_options.maximum_subspace_dimension = 0;
+  const NeoResult complete = solve_neo(
+      dense_problem(hessian, metric, gradient), complete_options);
+  verify_kkt("hidden negative curvature", hessian, metric, gradient, 1.0,
+             complete);
+  require(complete.hessian_actions == 3,
+          "the full solve did not expose the third curvature mode");
+  require_close(complete.shift, 100.0, 2.0e-10,
+                "hidden negative curvature has the wrong shift");
+  require(complete.hard_case,
+          "gradient-orthogonal hidden curvature was not a hard case");
+}
+
+void check_certified_lower_bounds() {
+  const Eigen::Matrix3d hessian = hidden_curvature_hessian();
+  const Eigen::Matrix3d metric = Eigen::Matrix3d::Identity();
+  const Eigen::Vector3d gradient(1.0, 0.0, 0.0);
+
+  NeoOptions options;
+  options.trust_radius = 1.0 / 102.0;
+  options.relative_residual_tolerance = 1.0e-12;
+  options.maximum_subspace_dimension = 2;
+
+  const NeoResult tight = solve_neo(
+      dense_problem(hessian, metric, gradient, -100.0), options);
+  verify_kkt("tight certified lower bound", hessian, metric, gradient,
+             options.trust_radius, tight);
+  require(tight.hessian_actions == 2,
+          "a tight certified bound did not avoid the hidden-mode action");
+  require_close(tight.shift, 100.0, 2.0e-10,
+                "tight lower-bound solve has the wrong shift");
+
+  const NeoResult conservative = solve_neo(
+      dense_problem(hessian, metric, gradient, -101.0), options);
+  require(conservative.stop_reason == NeoStopReason::SubspaceLimit,
+          "an insufficient lower bound falsely certified global curvature");
+  require(!conservative.converged(),
+          "an insufficient lower bound reported convergence");
+}
+
+void check_nonsymmetric_hessian_rejected() {
+  Eigen::Matrix2d hessian;
+  hessian << 2.0, 1.0,
+             0.0, 3.0;
+  const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+  const Eigen::Vector2d gradient(1.0, -0.5);
+  NeoOptions options;
+  options.relative_residual_tolerance = 1.0e-12;
+
+  bool rejected = false;
+  try {
+    (void)solve_neo(dense_problem(hessian, metric, gradient), options);
+  } catch (const std::runtime_error&) {
+    rejected = true;
+  }
+  require(rejected, "materially nonsymmetric Hessian action was accepted");
 }
 
 }  // namespace
@@ -260,6 +359,9 @@ int main() {
     check_generalized_metric_boundary();
     check_indefinite_regular_boundary();
     check_hard_case();
+    check_hidden_negative_curvature();
+    check_certified_lower_bounds();
+    check_nonsymmetric_hessian_rejected();
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';
