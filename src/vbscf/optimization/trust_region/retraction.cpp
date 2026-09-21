@@ -1,6 +1,8 @@
 #include "vbscf/optimization/trust_region/retraction.hpp"
 
 #include <cmath>
+#include <limits>
+#include <stdexcept>
 
 namespace xmvb::vb {
 
@@ -44,6 +46,71 @@ Eigen::VectorXd NonredundantRetractionMetric::apply(
   return space_.project_reduced_gradient(
       physical_metric_.apply(
           parameter_view_, space_.expand_step(reduced_step)));
+}
+
+Eigen::VectorXd NonredundantRetractionMetric::solve(
+    const Eigen::VectorXd& covector) const {
+  const Eigen::Index dimension = space_.reduced_size();
+  if (covector.size() != dimension) {
+    throw std::runtime_error(
+        "retraction metric solve received an incompatible covector");
+  }
+  if (!covector.allFinite()) {
+    throw std::runtime_error(
+        "retraction metric solve received a non-finite covector");
+  }
+  if (dimension == 0 || covector.isZero()) {
+    return Eigen::VectorXd::Zero(dimension);
+  }
+
+  const double right_hand_side_norm = covector.norm();
+  const double relative_tolerance =
+      std::sqrt(std::numeric_limits<double>::epsilon());
+  const double residual_tolerance =
+      relative_tolerance * right_hand_side_norm;
+
+  Eigen::VectorXd solution = Eigen::VectorXd::Zero(dimension);
+  Eigen::VectorXd direction = covector;
+  double residual_squared = covector.squaredNorm();
+  for (Eigen::Index iteration = 0; iteration < dimension; ++iteration) {
+    const Eigen::VectorXd metric_direction = apply(direction);
+    const double curvature = direction.dot(metric_direction);
+    if (!(curvature > 0.0) || !std::isfinite(curvature)) {
+      throw std::runtime_error(
+          "retraction metric is not positive definite in reduced space");
+    }
+
+    const double step = residual_squared / curvature;
+    if (!std::isfinite(step)) {
+      throw std::runtime_error(
+          "retraction metric solve produced a non-finite CG step");
+    }
+    solution.noalias() += step * direction;
+
+    // Recompute the true residual: recursively updated CG residuals can hide
+    // loss of accuracy for an ill-conditioned pullback metric.
+    const Eigen::VectorXd next_residual = covector - apply(solution);
+    const double next_residual_norm = next_residual.norm();
+    if (!std::isfinite(next_residual_norm)) {
+      throw std::runtime_error(
+          "retraction metric solve produced a non-finite residual");
+    }
+    if (next_residual_norm <= residual_tolerance) {
+      return solution;
+    }
+
+    const double next_residual_squared = next_residual.squaredNorm();
+    const double beta = next_residual_squared / residual_squared;
+    if (!std::isfinite(beta)) {
+      throw std::runtime_error(
+          "retraction metric solve produced a non-finite CG recurrence");
+    }
+    direction = next_residual + beta * direction;
+    residual_squared = next_residual_squared;
+  }
+
+  throw std::runtime_error(
+      "retraction metric CG did not reach its roundoff tolerance");
 }
 
 double NonredundantRetractionMetric::norm(

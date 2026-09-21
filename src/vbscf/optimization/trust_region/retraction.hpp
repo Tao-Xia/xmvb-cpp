@@ -35,6 +35,16 @@ public:
 
   Eigen::VectorXd tangent(const Eigen::VectorXd& reduced_step) const;
   Eigen::VectorXd apply(const Eigen::VectorXd& reduced_step) const;
+
+  /**
+   * @brief Applies the inverse Riesz map without assembling the metric.
+   *
+   * Solves @f$M y=b@f$ by conjugate gradients using matrix-free metric
+   * actions. Failure to reach the roundoff-derived residual tolerance in at
+   * most the reduced-space dimension is reported explicitly.
+   */
+  Eigen::VectorXd solve(const Eigen::VectorXd& covector) const;
+
   double norm(const Eigen::VectorXd& reduced_step) const;
   Eigen::VectorXd clip_to_radius(
       const Eigen::VectorXd& reduced_step,

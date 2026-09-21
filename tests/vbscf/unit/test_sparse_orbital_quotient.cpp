@@ -297,6 +297,27 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
             name + ": matrix-free metric action disagrees with polarization");
     if (u.cols() <= 14) {
       const NonredundantRetractionMetric metric(space, view, input);
+      const Eigen::VectorXd covector =
+          Eigen::VectorXd::LinSpaced(u.cols(), -0.8, 1.3);
+      const Eigen::VectorXd riesz_vector = metric.solve(covector);
+      const Eigen::VectorXd dense_riesz_vector =
+          physical_gram.ldlt().solve(covector);
+      require((riesz_vector - dense_riesz_vector).norm() <
+                  5.0e-8 * std::max(1.0, dense_riesz_vector.norm()),
+              name + ": matrix-free Riesz solve differs from dense metric");
+      require((metric.apply(riesz_vector) - covector).norm() <
+                  2.0e-8 * covector.norm(),
+              name + ": matrix-free Riesz solve has a large true residual");
+      const Eigen::VectorXd test_vector =
+          Eigen::VectorXd::LinSpaced(u.cols(), 0.9, -0.4);
+      require((metric.solve(metric.apply(test_vector)) - test_vector).norm() <
+                  5.0e-8 * std::max(1.0, test_vector.norm()),
+              name + ": Riesz solve does not recover reduced coordinates");
+      require(std::abs(riesz_vector.dot(metric.apply(test_vector)) -
+                       covector.dot(test_vector)) <
+                  2.0e-8 * std::max(1.0, std::abs(covector.dot(test_vector))),
+              name + ": Riesz solve violates metric-covector duality");
+
       const Eigen::MatrixXd model_hessian = physical_gram +
           Eigen::MatrixXd::Identity(u.cols(), u.cols());
       const Eigen::VectorXd gradient =
