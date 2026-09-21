@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <vector>
 
 #include <Eigen/Core>
 
@@ -108,6 +109,44 @@ struct ResponseNeoResult {
   bool converged() const noexcept {
     return stop_reason == NeoStopReason::Converged;
   }
+};
+
+/**
+ * @brief Reusable projected-response NEO subspace at one accepted point.
+ *
+ * The workspace owns the independent orbital and structure bases together
+ * with every metric and Hessian image used to form the projected model.
+ * Changing only the trust radius therefore requires no repeated large-space
+ * action.  A solve may enrich the bases when its residual certificates need
+ * more information, but it never removes an accepted image.
+ */
+class ResponseNeoWorkspace {
+public:
+  explicit ResponseNeoWorkspace(const ResponseNeoProblem& problem)
+      : problem_(problem) {}
+
+  /** @brief Solves one trust-region subproblem using the cached subspace. */
+  ResponseNeoResult solve(const NeoOptions& options);
+
+  Eigen::Index orbital_basis_size() const noexcept {
+    return static_cast<Eigen::Index>(orbital_basis_.size());
+  }
+  Eigen::Index structure_basis_size() const noexcept {
+    return static_cast<Eigen::Index>(structure_basis_.size());
+  }
+
+private:
+  bool append_orbital(Eigen::VectorXd direction, int* actions);
+  bool append_structure(Eigen::VectorXd direction, int* actions);
+
+  const ResponseNeoProblem& problem_;
+  std::vector<Eigen::VectorXd> orbital_basis_;
+  std::vector<Eigen::VectorXd> orbital_metric_images_;
+  std::vector<ResponseNeoDirection> orbital_hessian_images_;
+  std::vector<Eigen::VectorXd> structure_basis_;
+  std::vector<ResponseNeoDirection> structure_hessian_images_;
+  Eigen::Index orbital_canonical_ = 0;
+  Eigen::Index structure_canonical_ = 0;
 };
 
 /**

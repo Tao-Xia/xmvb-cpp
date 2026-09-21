@@ -130,7 +130,8 @@ BackendRunResult run_neo_backend(
             return ResponseNeoDirection{
                 image.orbital_hessian,
                 structure_hessian.coordinates(
-                    StructureTangent{image.scaled_structure_forcing})};
+                    structure_hessian.project(
+                        image.scaled_structure_forcing))};
           },
           [&orbital_hessian, &structure_hessian](
               const Eigen::VectorXd& vector) {
@@ -151,6 +152,7 @@ BackendRunResult run_neo_backend(
           },
           std::move(curvature_probe),
           operator_relative_accuracy);
+      ResponseNeoWorkspace workspace(problem);
 
       while (!accepted) {
         const double trial_radius = trust_radius;
@@ -159,7 +161,7 @@ BackendRunResult run_neo_backend(
         neo_options.relative_residual_tolerance = neo_forcing_term(
             final_gradient_l2, chart.reduced_size());
         neo_options.maximum_subspace_dimension = 0;
-        const ResponseNeoResult step = solve_response_neo(problem, neo_options);
+        const ResponseNeoResult step = workspace.solve(neo_options);
         iteration_record.micro_iterations += step.iterations;
         iteration_record.coupled_block_actions += step.coupled_actions;
         if (!step.converged()) {

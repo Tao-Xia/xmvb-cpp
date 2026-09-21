@@ -18,6 +18,7 @@ using xmvb::vb::NeoStopReason;
 using xmvb::vb::ResponseNeoDirection;
 using xmvb::vb::ResponseNeoProblem;
 using xmvb::vb::ResponseNeoResult;
+using xmvb::vb::ResponseNeoWorkspace;
 
 void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
@@ -213,6 +214,47 @@ void check_structure_contracts() {
   require(rejected_range, "coupling outside Range(C) was accepted");
 }
 
+void check_workspace_reuses_actions_after_radius_change() {
+  Eigen::Matrix3d a;
+  a << 2.0, 0.2, -0.1,
+       0.2, 1.4, 0.3,
+      -0.1, 0.3, 0.8;
+  Eigen::Matrix<double, 2, 3> b;
+  b << 0.4, -0.3, 0.2,
+       0.1, 0.5, -0.2;
+  Eigen::Matrix2d c;
+  c << 1.8, 0.2,
+       0.2, 1.1;
+  const Eigen::Matrix3d metric = Eigen::Matrix3d::Identity();
+  const Eigen::Vector3d gradient(0.7, -0.8, 0.5);
+  const ResponseNeoProblem problem =
+      dense_problem(a, b, c, metric, gradient);
+  ResponseNeoWorkspace workspace(problem);
+
+  NeoOptions options;
+  options.trust_radius = 0.5;
+  options.relative_residual_tolerance = 1.0e-12;
+  const ResponseNeoResult first = workspace.solve(options);
+  require(first.converged(), "initial reusable NEO solve did not converge");
+  require(first.coupled_actions > 0,
+          "initial reusable NEO solve performed no actions");
+
+  options.trust_radius = 0.2;
+  const ResponseNeoResult reused = workspace.solve(options);
+  const ResponseNeoResult fresh = xmvb::vb::solve_response_neo(
+      problem, options);
+  require(reused.converged(), "reused NEO solve did not converge");
+  require(fresh.converged(), "fresh comparison NEO solve did not converge");
+  require(reused.coupled_actions == 0,
+          "radius-only retry repeated cached coupled actions");
+  require(reused.coupled_actions < fresh.coupled_actions,
+          "reused NEO solve did not reduce coupled actions");
+  require_close(reused.step.orbital, fresh.step.orbital, 2.0e-10,
+                "reused NEO orbital step differs from a fresh solve");
+  require_close(reused.step.structure, fresh.step.structure, 2.0e-10,
+                "reused NEO response differs from a fresh solve");
+}
+
 }  // namespace
 
 int main() {
@@ -221,6 +263,7 @@ int main() {
     check_negative_relaxed_curvature();
     check_budget_reports_subspace_limit();
     check_structure_contracts();
+    check_workspace_reuses_actions_after_radius_change();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {

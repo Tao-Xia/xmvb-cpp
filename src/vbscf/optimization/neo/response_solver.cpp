@@ -18,17 +18,6 @@
 namespace xmvb::vb {
 namespace {
 
-struct OrbitalBasis {
-  std::vector<Eigen::VectorXd> vectors;
-  std::vector<Eigen::VectorXd> metric_images;
-  std::vector<ResponseNeoDirection> hessian_images;
-};
-
-struct StructureBasis {
-  std::vector<Eigen::VectorXd> vectors;
-  std::vector<ResponseNeoDirection> hessian_images;
-};
-
 Eigen::MatrixXd columns(const std::vector<Eigen::VectorXd>& vectors,
                         Eigen::Index rows) {
   Eigen::MatrixXd result(rows, vectors.size());
@@ -73,31 +62,6 @@ bool orthonormalize(
       initial_norm;
   if (!(norm > threshold) || !std::isfinite(norm)) return false;
   *direction /= norm;
-  return true;
-}
-
-bool append_orbital(
-    const ResponseNeoProblem& problem,
-    Eigen::VectorXd direction,
-    OrbitalBasis* basis,
-    int* actions) {
-  if (!orthonormalize(&direction, basis->vectors)) return false;
-  basis->vectors.push_back(direction);
-  basis->metric_images.push_back(problem.apply_orbital_metric(direction));
-  basis->hessian_images.push_back(problem.apply_orbital_coupling(direction));
-  ++*actions;
-  return true;
-}
-
-bool append_structure(
-    const ResponseNeoProblem& problem,
-    Eigen::VectorXd direction,
-    StructureBasis* basis,
-    int* actions) {
-  if (!orthonormalize(&direction, basis->vectors)) return false;
-  basis->vectors.push_back(direction);
-  basis->hessian_images.push_back(problem.apply_structure_coupling(direction));
-  ++*actions;
   return true;
 }
 
@@ -283,9 +247,31 @@ Eigen::VectorXd ResponseNeoProblem::apply_orbital_preconditioner(
       "response NEO orbital preconditioner returned an invalid vector");
 }
 
-ResponseNeoResult solve_response_neo(
-    const ResponseNeoProblem& problem,
-    const NeoOptions& options) {
+bool ResponseNeoWorkspace::append_orbital(
+    Eigen::VectorXd direction,
+    int* actions) {
+  if (!orthonormalize(&direction, orbital_basis_)) return false;
+  orbital_basis_.push_back(direction);
+  orbital_metric_images_.push_back(
+      problem_.apply_orbital_metric(direction));
+  orbital_hessian_images_.push_back(
+      problem_.apply_orbital_coupling(direction));
+  ++*actions;
+  return true;
+}
+
+bool ResponseNeoWorkspace::append_structure(
+    Eigen::VectorXd direction,
+    int* actions) {
+  if (!orthonormalize(&direction, structure_basis_)) return false;
+  structure_basis_.push_back(direction);
+  structure_hessian_images_.push_back(
+      problem_.apply_structure_coupling(direction));
+  ++*actions;
+  return true;
+}
+
+ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
   if (!(options.trust_radius > 0.0) ||
       !std::isfinite(options.trust_radius) ||
       !(options.relative_residual_tolerance > 0.0) ||
@@ -297,11 +283,11 @@ ResponseNeoResult solve_response_neo(
   }
 
   const int full_dimension = static_cast<int>(
-      problem.orbital_size() + problem.structure_size());
+      problem_.orbital_size() + problem_.structure_size());
   const int maximum_dimension = options.maximum_subspace_dimension == 0
       ? full_dimension
       : std::min(full_dimension, options.maximum_subspace_dimension);
-  const double gradient_norm = problem.orbital_gradient().stableNorm();
+  const double gradient_norm = problem_.orbital_gradient().stableNorm();
   const double numerical_curvature_tolerance =
       std::sqrt(std::numeric_limits<double>::epsilon()) *
       static_cast<double>(std::max(1, full_dimension));
@@ -310,67 +296,62 @@ ResponseNeoResult solve_response_neo(
       numerical_curvature_tolerance);
 
   ResponseNeoResult result;
-  result.step.orbital = Eigen::VectorXd::Zero(problem.orbital_size());
-  result.step.structure = Eigen::VectorXd::Zero(problem.structure_size());
+  result.step.orbital = Eigen::VectorXd::Zero(problem_.orbital_size());
+  result.step.structure = Eigen::VectorXd::Zero(problem_.structure_size());
   result.hessian_step = result.step;
   result.orbital_metric_step = result.step.orbital;
   result.kkt_residual = result.step;
   result.minimum_curvature_orbital = result.step.orbital;
 
-  OrbitalBasis orbital_basis;
-  StructureBasis structure_basis;
-  Eigen::VectorXd first = preconditioned_orbital(
-      problem, -problem.orbital_gradient());
-  if (!append_orbital(
-          problem, std::move(first), &orbital_basis,
-          &result.coupled_actions)) {
-    append_orbital(
-        problem, generic_probe(problem.orbital_size()), &orbital_basis,
-        &result.coupled_actions);
+  if (orbital_basis_.empty()) {
+    Eigen::VectorXd first = preconditioned_orbital(
+        problem_, -problem_.orbital_gradient());
+    if (!append_orbital(std::move(first), &result.coupled_actions)) {
+      append_orbital(
+          generic_probe(problem_.orbital_size()), &result.coupled_actions);
+    }
   }
-  if (orbital_basis.vectors.empty()) {
+  if (orbital_basis_.empty()) {
     throw std::runtime_error("response NEO could not construct an orbital basis");
   }
-  if (maximum_dimension > 1 && problem.orbital_size() > 1) {
+  if (orbital_basis_.size() == 1 && maximum_dimension > 1 &&
+      problem_.orbital_size() > 1) {
     append_orbital(
-        problem,
-        problem.initial_curvature_probe().size() == problem.orbital_size()
-            ? problem.initial_curvature_probe()
-            : generic_probe(problem.orbital_size()),
-        &orbital_basis,
+        problem_.initial_curvature_probe().size() == problem_.orbital_size()
+            ? problem_.initial_curvature_probe()
+            : generic_probe(problem_.orbital_size()),
         &result.coupled_actions);
   }
-  for (const ResponseNeoDirection& image : orbital_basis.hessian_images) {
-    if (static_cast<int>(orbital_basis.vectors.size() +
-                         structure_basis.vectors.size()) >= maximum_dimension) {
+  for (std::size_t j = structure_basis_.empty() ? 0 :
+           orbital_hessian_images_.size();
+       j < orbital_hessian_images_.size(); ++j) {
+    if (static_cast<int>(orbital_basis_.size() +
+                         structure_basis_.size()) >= maximum_dimension) {
       break;
     }
     append_structure(
-        problem, image.structure, &structure_basis, &result.coupled_actions);
+        orbital_hessian_images_[j].structure, &result.coupled_actions);
   }
-
-  Eigen::Index orbital_canonical = 0;
-  Eigen::Index structure_canonical = 0;
   while (true) {
     ++result.iterations;
     const Eigen::MatrixXd qo = columns(
-        orbital_basis.vectors, problem.orbital_size());
+        orbital_basis_, problem_.orbital_size());
     const Eigen::MatrixXd mo = columns(
-        orbital_basis.metric_images, problem.orbital_size());
+        orbital_metric_images_, problem_.orbital_size());
     const Eigen::MatrixXd ao = orbital_images(
-        orbital_basis.hessian_images, problem.orbital_size());
+        orbital_hessian_images_, problem_.orbital_size());
     const Eigen::MatrixXd bo = structure_images(
-        orbital_basis.hessian_images, problem.structure_size());
+        orbital_hessian_images_, problem_.structure_size());
     const Eigen::MatrixXd qs = columns(
-        structure_basis.vectors, problem.structure_size());
+        structure_basis_, problem_.structure_size());
     const Eigen::MatrixXd bt = orbital_images(
-        structure_basis.hessian_images, problem.orbital_size());
+        structure_hessian_images_, problem_.orbital_size());
     const Eigen::MatrixXd cs = structure_images(
-        structure_basis.hessian_images, problem.structure_size());
+        structure_hessian_images_, problem_.structure_size());
 
     const Eigen::MatrixXd a = symmetric_part(
         qo.transpose() * ao, "response NEO orbital block is not symmetric",
-        problem.operator_relative_accuracy());
+        problem_.operator_relative_accuracy());
     const Eigen::MatrixXd metric = symmetric_part(
         qo.transpose() * mo, "response NEO orbital metric is not symmetric");
     Eigen::LLT<Eigen::MatrixXd> metric_factor(metric);
@@ -395,7 +376,7 @@ ResponseNeoResult solve_response_neo(
       const double adjoint_tolerance = std::max(
           256.0 * std::numeric_limits<double>::epsilon() *
               static_cast<double>(std::max(b.rows(), b.cols())),
-          problem.operator_relative_accuracy());
+          problem_.operator_relative_accuracy());
       if ((b.transpose() - projected_adjoint).stableNorm() >
           adjoint_tolerance * adjoint_scale) {
         throw std::runtime_error("response NEO coupling blocks are not adjoints");
@@ -404,7 +385,7 @@ ResponseNeoResult solve_response_neo(
       c = symmetric_part(
           qs.transpose() * cs,
           "response NEO structure block is not symmetric",
-          problem.operator_relative_accuracy());
+          problem_.operator_relative_accuracy());
       const StructureInverse inverse = symmetric_pseudoinverse(c);
       c_inverse = inverse.value;
       if (inverse.null_vectors.cols() != 0) {
@@ -414,25 +395,25 @@ ResponseNeoResult solve_response_neo(
         const double range_tolerance = std::max(
             256.0 * std::numeric_limits<double>::epsilon() *
                 static_cast<double>(std::max(c.rows(), b.cols())),
-            problem.operator_relative_accuracy()) *
+            problem_.operator_relative_accuracy()) *
             std::max(1.0, b.stableNorm());
         if (range_error > range_tolerance) {
           Eigen::Index unresolved = 0;
           range_defect.rowwise().squaredNorm().maxCoeff(&unresolved);
-          if (structure_basis.vectors.size() ==
-              static_cast<std::size_t>(problem.structure_size())) {
+          if (structure_basis_.size() ==
+              static_cast<std::size_t>(problem_.structure_size())) {
             throw std::runtime_error(
                 "response NEO coupling is outside the range of C");
           }
           const int basis_size = static_cast<int>(
-              orbital_basis.vectors.size() + structure_basis.vectors.size());
+              orbital_basis_.size() + structure_basis_.size());
           if (basis_size >= maximum_dimension) {
             result.stop_reason = NeoStopReason::SubspaceLimit;
             return result;
           }
           if (append_structure(
-                  problem, cs * inverse.null_vectors.col(unresolved),
-                  &structure_basis, &result.coupled_actions)) {
+                  cs * inverse.null_vectors.col(unresolved),
+                  &result.coupled_actions)) {
             continue;
           }
           throw std::runtime_error(
@@ -453,14 +434,14 @@ ResponseNeoResult solve_response_neo(
       Eigen::Index unresolved = 0;
       response_closure.colwise().squaredNorm().maxCoeff(&unresolved);
       const int basis_size = static_cast<int>(
-          orbital_basis.vectors.size() + structure_basis.vectors.size());
+          orbital_basis_.size() + structure_basis_.size());
       if (basis_size >= maximum_dimension) {
         result.stop_reason = NeoStopReason::SubspaceLimit;
         return result;
       }
       if (!append_structure(
-              problem, -response_closure.col(unresolved),
-              &structure_basis, &result.coupled_actions)) {
+              -response_closure.col(unresolved),
+              &result.coupled_actions)) {
         result.stop_reason = NeoStopReason::NumericalFailure;
         return result;
       }
@@ -476,7 +457,7 @@ ResponseNeoResult solve_response_neo(
       return result;
     }
     const Eigen::VectorXd gradient =
-        qo.transpose() * problem.orbital_gradient();
+        qo.transpose() * problem_.orbital_gradient();
     const Eigen::VectorXd white_gradient = whitening.transpose() * gradient;
     const SpectralTrustRegionSolution projected = solve_spectral_trust_region(
         spectrum.eigenvalues(),
@@ -501,7 +482,7 @@ ResponseNeoResult solve_response_neo(
     result.hard_case = projected.hard_case;
     result.step_norm = std::sqrt(std::max(
         0.0, result.step.orbital.dot(result.orbital_metric_step)));
-    result.kkt_residual.orbital = problem.orbital_gradient() +
+    result.kkt_residual.orbital = problem_.orbital_gradient() +
         result.hessian_step.orbital +
         result.shift * result.orbital_metric_step;
     result.kkt_residual.structure = result.hessian_step.structure;
@@ -520,7 +501,7 @@ ResponseNeoResult solve_response_neo(
     result.residual_target = std::hypot(
         orbital_residual_target, structure_residual_target);
     result.predicted_reduction =
-        -problem.orbital_gradient().dot(result.step.orbital) -
+        -problem_.orbital_gradient().dot(result.step.orbital) -
         0.5 * (result.step.orbital.dot(result.hessian_step.orbital) +
                result.step.structure.dot(result.hessian_step.structure));
 
@@ -567,8 +548,8 @@ ResponseNeoResult solve_response_neo(
     const bool shifted_positive =
         spectrum.eigenvalues()[0] + result.shift >= -positivity_tolerance;
     const bool orbital_complete =
-        orbital_basis.vectors.size() ==
-        static_cast<std::size_t>(problem.orbital_size());
+        orbital_basis_.size() ==
+        static_cast<std::size_t>(problem_.orbital_size());
     result.global_curvature_certified =
         orbital_complete && curvature_converged;
     if (stationary && curvature_converged && shifted_positive) {
@@ -577,7 +558,7 @@ ResponseNeoResult solve_response_neo(
     }
 
     const int basis_size = static_cast<int>(
-        orbital_basis.vectors.size() + structure_basis.vectors.size());
+        orbital_basis_.size() + structure_basis_.size());
     if (basis_size >= maximum_dimension) {
       result.stop_reason = NeoStopReason::SubspaceLimit;
       return result;
@@ -590,48 +571,51 @@ ResponseNeoResult solve_response_neo(
     if (result.kkt_residual.structure.stableNorm() >
         structure_residual_target) {
       expanded = append_structure(
-          problem, -result.kkt_residual.structure,
-          &structure_basis, &result.coupled_actions);
+          -result.kkt_residual.structure, &result.coupled_actions);
     }
     if (!expanded && curvature_structure.stableNorm() >
         curvature_structure_target) {
       expanded = append_structure(
-          problem, -curvature_structure,
-          &structure_basis, &result.coupled_actions);
+          -curvature_structure, &result.coupled_actions);
     }
     if (!expanded && result.kkt_residual.orbital.stableNorm() >
         orbital_residual_target) {
       expanded = append_orbital(
-          problem,
-          preconditioned_orbital(problem, -result.kkt_residual.orbital),
-          &orbital_basis, &result.coupled_actions);
+          preconditioned_orbital(problem_, -result.kkt_residual.orbital),
+          &result.coupled_actions);
     }
     if (!expanded && curvature_orbital.stableNorm() >
         curvature_orbital_target) {
       expanded = append_orbital(
-          problem, preconditioned_orbital(problem, -curvature_orbital),
-          &orbital_basis, &result.coupled_actions);
-    }
-    while (!expanded && orbital_canonical < problem.orbital_size()) {
-      Eigen::VectorXd direction = Eigen::VectorXd::Zero(problem.orbital_size());
-      direction[orbital_canonical++] = 1.0;
-      expanded = append_orbital(
-          problem, std::move(direction), &orbital_basis,
+          preconditioned_orbital(problem_, -curvature_orbital),
           &result.coupled_actions);
     }
-    while (!expanded && structure_canonical < problem.structure_size()) {
+    while (!expanded && orbital_canonical_ < problem_.orbital_size()) {
       Eigen::VectorXd direction =
-          Eigen::VectorXd::Zero(problem.structure_size());
-      direction[structure_canonical++] = 1.0;
+          Eigen::VectorXd::Zero(problem_.orbital_size());
+      direction[orbital_canonical_++] = 1.0;
+      expanded = append_orbital(
+          std::move(direction), &result.coupled_actions);
+    }
+    while (!expanded && structure_canonical_ < problem_.structure_size()) {
+      Eigen::VectorXd direction =
+          Eigen::VectorXd::Zero(problem_.structure_size());
+      direction[structure_canonical_++] = 1.0;
       expanded = append_structure(
-          problem, std::move(direction), &structure_basis,
-          &result.coupled_actions);
+          std::move(direction), &result.coupled_actions);
     }
     if (!expanded) {
       result.stop_reason = NeoStopReason::NumericalFailure;
       return result;
     }
   }
+}
+
+ResponseNeoResult solve_response_neo(
+    const ResponseNeoProblem& problem,
+    const NeoOptions& options) {
+  ResponseNeoWorkspace workspace(problem);
+  return workspace.solve(options);
 }
 
 }  // namespace xmvb::vb
