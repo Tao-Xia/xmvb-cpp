@@ -44,6 +44,9 @@ public:
   /** @brief Pseudoinverse of the symmetric projected response operator. */
   const Eigen::MatrixXd& projected_inverse() const;
 
+  /** @brief Symmetric projected response operator @f$W^T C W@f$. */
+  const Eigen::MatrixXd& projected_operator() const;
+
   /**
    * @brief Applies an SPD spectral/Jacobi preconditioner.
    *
@@ -76,6 +79,7 @@ private:
   Eigen::MatrixXd operator_images_;
   std::uint64_t revision_ = 0;
   mutable Eigen::MatrixXd projected_inverse_;
+  mutable Eigen::MatrixXd projected_operator_;
   mutable Eigen::MatrixXd spectral_preconditioner_basis_;
   mutable Eigen::VectorXd spectral_preconditioner_inverse_eigenvalues_;
   mutable std::uint64_t projected_inverse_revision_ =

@@ -42,6 +42,7 @@ struct HvpComponents {
 struct StructureResponseSchurModel {
   std::uint64_t revision = 0;
   Eigen::MatrixXd orbital_couplings;
+  Eigen::MatrixXd projected_operator;
   Eigen::MatrixXd projected_inverse;
 
   Eigen::MatrixXd apply(
@@ -229,7 +230,7 @@ public:
   /** @brief Revision invalidating previously sampled relaxed HVP images. */
   std::uint64_t response_model_revision() const noexcept;
 
-  /** @brief Builds the current exact low-rank response Schur model. */
+  /** @brief Builds the current exact recycled response Schur model. */
   StructureResponseSchurModel structure_response_schur_model() const;
 
   Diagnostics diagnostics() const;

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <utility>
 
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
@@ -16,6 +17,7 @@
 #include "vbscf/optimization/neo/globalization.hpp"
 #include "vbscf/optimization/neo/response_solver.hpp"
 #include "vbscf/optimization/objective/function.hpp"
+#include "vbscf/optimization/preconditioners/structure_response_woodbury.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -49,6 +51,69 @@ struct AcceptedNeoKeyframe {
   VbScfObjective::TrialEvaluation trial;
   Eigen::VectorXd parameters;
   Eigen::VectorXd next_orbital_guess_packed;
+};
+
+/**
+ * @brief Shift-local inverse of the recycled relaxed orbital model.
+ *
+ * The response revision identifies @f$J@f$ and @f$K@f$; the NEO shift
+ * identifies the base inverse @f$P_\lambda@f$.  The small Woodbury factor is
+ * rebuilt only when either quantity changes.
+ */
+class NeoWoodburyOrbitalPreconditioner {
+public:
+  NeoWoodburyOrbitalPreconditioner(
+      const ExactHvpOperator& orbital_hessian,
+      const OrbitalChart& chart)
+      : orbital_hessian_(orbital_hessian), chart_(chart) {}
+
+  Eigen::VectorXd apply(
+      const Eigen::VectorXd& covector,
+      double shift) const {
+    const std::uint64_t revision =
+        orbital_hessian_.response_model_revision();
+    if (revision != revision_ || shift != shift_) rebuild(revision, shift);
+    if (!woodbury_) {
+      return chart_.apply_inverse_reduced_shifted_block_preconditioner(
+          covector, shift);
+    }
+    return woodbury_->apply(covector);
+  }
+
+private:
+  void rebuild(std::uint64_t revision, double shift) const {
+    const StructureResponseSchurModel model =
+        orbital_hessian_.structure_response_schur_model();
+    revision_ = revision;
+    shift_ = shift;
+    woodbury_.reset();
+    if (model.orbital_couplings.cols() == 0) return;
+    woodbury_ = std::make_unique<
+        StructureResponseWoodburyPreconditioner>(
+        model.orbital_couplings,
+        model.projected_operator,
+        [this, shift](const Eigen::MatrixXd& covectors) {
+          Eigen::MatrixXd result(covectors.rows(), covectors.cols());
+          for (Eigen::Index column = 0; column < covectors.cols(); ++column) {
+            result.col(column) =
+                chart_.apply_inverse_reduced_shifted_block_preconditioner(
+                    covectors.col(column), shift);
+          }
+          return result;
+        });
+    if (!woodbury_->available()) {
+      throw std::runtime_error(
+          "NEO Woodbury orbital preconditioner is unavailable: " +
+          woodbury_->unavailability_reason());
+    }
+  }
+
+  const ExactHvpOperator& orbital_hessian_;
+  const OrbitalChart& chart_;
+  mutable std::uint64_t revision_ =
+      std::numeric_limits<std::uint64_t>::max();
+  mutable double shift_ = std::numeric_limits<double>::quiet_NaN();
+  mutable std::unique_ptr<StructureResponseWoodburyPreconditioner> woodbury_;
 };
 
 bool build_accepted_neo_keyframe(
@@ -100,6 +165,8 @@ bool build_accepted_neo_keyframe(
       objective->second_order_context()
           ->structure_solve_accuracy
           .response_backward_error_tolerance(selected_energy_scale);
+  NeoWoodburyOrbitalPreconditioner orbital_preconditioner(
+      orbital_hessian, chart);
   ResponseNeoProblem problem(
       reduced_gradient,
       structure_hessian.tangent_size(),
@@ -154,9 +221,9 @@ bool build_accepted_neo_keyframe(
       [&orbital_metric](const Eigen::VectorXd& vector) {
         return orbital_metric.apply(vector);
       },
-      [&chart](const Eigen::VectorXd& residual, double shift) {
-        return chart.apply_inverse_reduced_shifted_block_preconditioner(
-            residual, shift);
+      [&orbital_preconditioner](
+          const Eigen::VectorXd& residual, double shift) {
+        return orbital_preconditioner.apply(residual, shift);
       },
       std::move(orbital_guess),
       operator_relative_accuracy);

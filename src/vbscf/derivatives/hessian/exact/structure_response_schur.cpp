@@ -250,6 +250,7 @@ StructureResponseSchurModel ExactHvpOperator::State::structure_response_schur_mo
   StructureResponseSchurModel model;
   model.revision = response.revision();
   model.orbital_couplings.resize(n_orbital, rank);
+  model.projected_operator = Eigen::MatrixXd::Zero(rank, rank);
   model.projected_inverse = Eigen::MatrixXd::Zero(rank, rank);
   int offset = 0;
   for (int state = 0; state < n_states; ++state) {
@@ -262,6 +263,8 @@ StructureResponseSchurModel ExactHvpOperator::State::structure_response_schur_mo
     if (width == 0) continue;
     model.orbital_couplings.middleCols(offset, width) =
         response_orbital_couplings_by_state_[state];
+    model.projected_operator.block(offset, offset, width, width) =
+        space.projected_operator();
     model.projected_inverse.block(offset, offset, width, width) =
         space.projected_inverse();
     offset += width;

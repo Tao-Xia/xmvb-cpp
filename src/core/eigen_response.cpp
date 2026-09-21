@@ -260,6 +260,16 @@ const Eigen::MatrixXd& EigenResponseRecycleSpace::projected_inverse() const {
   return projected_inverse_;
 }
 
+const Eigen::MatrixXd& EigenResponseRecycleSpace::projected_operator() const {
+  if (basis_.cols() == 0) {
+    projected_operator_.resize(0, 0);
+    projected_inverse_revision_ = revision_;
+  } else {
+    prepare_projected_inverse();
+  }
+  return projected_operator_;
+}
+
 Eigen::VectorXd
 EigenResponseRecycleSpace::apply_absolute_spectral_preconditioner(
     const Eigen::Ref<const Eigen::VectorXd>& right_hand_side,
@@ -295,6 +305,7 @@ void EigenResponseRecycleSpace::clear() {
   basis_.resize(0, 0);
   operator_images_.resize(0, 0);
   projected_inverse_.resize(0, 0);
+  projected_operator_.resize(0, 0);
   spectral_preconditioner_basis_.resize(0, 0);
   spectral_preconditioner_inverse_eigenvalues_.resize(0);
   ++revision_;
@@ -315,10 +326,10 @@ void EigenResponseRecycleSpace::prepare_projected_inverse() const {
     throw std::runtime_error(
         "response recycle projected operator is not symmetric");
   }
-  const Eigen::MatrixXd projected_operator = 0.5 *
+  projected_operator_ = 0.5 *
       (raw_projected_operator + raw_projected_operator.transpose());
   Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensolver(
-      projected_operator);
+      projected_operator_);
   if (eigensolver.info() != Eigen::Success) {
     throw std::runtime_error(
         "response recycle projected operator diagonalization failed");
