@@ -485,10 +485,12 @@ bool EigenResponseRecycleSpace::append_impl(
   }
   const double original_norm = solution.norm();
   const double direction_norm = direction.norm();
+  // A residual direction smaller than sqrt(epsilon) of its source cannot
+  // retain a projected operator image accurate to the same tolerance after
+  // cancellation and normalization.  Rejecting it keeps W^T C W reciprocal
+  // instead of amplifying roundoff from repeated response solves.
   const double dependence_threshold =
-      std::numeric_limits<double>::epsilon() *
-      static_cast<double>(std::max<Eigen::Index>(1, solution.size())) *
-      original_norm;
+      std::sqrt(std::numeric_limits<double>::epsilon()) * original_norm;
   if (!(direction_norm > dependence_threshold)) return false;
   direction /= direction_norm;
   image /= direction_norm;

@@ -618,11 +618,16 @@ bool test_unconditional_indefinite_galerkin_application() {
       rhs.dot(preconditioned) > 0.0 && probe.dot(preconditioned_probe) > 0.0 &&
       std::abs(rhs.dot(preconditioned_probe) -
                probe.dot(preconditioned)) <= 1.0e-12;
+  const Eigen::Vector2d near_direction(1.0, 1.0e-10);
+  const Eigen::Vector2d near_image =
+      image + 1.0e-10 * Eigen::Vector2d(10.0, 2.0);
+  const bool near_dependent_append =
+      space.append(near_direction, near_image);
   const bool dependent_append = space.append(direction, image);
   const std::uint64_t revision_before_clear = space.revision();
   space.clear();
   return linear_application_passed && spectral_preconditioner_passed &&
-      !dependent_append &&
+      !near_dependent_append && !dependent_append &&
       revision_before_clear == 1 && space.revision() == 2 &&
       space.size() == 0;
 }
