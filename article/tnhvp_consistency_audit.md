@@ -961,6 +961,40 @@ slower still because the resulting noncontiguous block writes lost more cache
 locality than the graph traversal saved.  Both experimental paths were
 deleted; the production code retains the faster scalar-streamed action.
 
+The retained response acceleration instead augments the Jacobi MINRES
+preconditioner with the spectrum already learned by the recycle space.  Let
+
+$$
+K=Q^T A Q=U\Lambda U^T
+$$
+
+be the symmetric projected response operator, and retain only its numerically
+resolved modes.  With $Z=QU_r$ and positive diagonal Jacobi inverse $D^{-1}$,
+the recycled preconditioner is
+
+$$
+P^{-1}
+=Z|\Lambda_r|^{-1}Z^T
+ +(I-ZZ^T)D^{-1}(I-ZZ^T).
+$$
+
+The absolute projected eigenvalues make $P^{-1}$ symmetric positive definite;
+MINRES, rather than the preconditioner, continues to represent the signs of
+the indefinite response operator.  The two-sided complement projection avoids
+double counting between the learned spectral modes and the Jacobi model.  No
+response equation or stopping tolerance changes, and the original bordered
+residual remains the final certificate.
+
+On the same 32-core CERRAS setup, the spectral recycle preconditioner reduced
+end-to-end time from 254.05 to 240.47 s and iteration-7 wall time from 142.02
+to 131.10 s.  Accumulated exact-HVP time fell from 225.66 to 213.26 s and
+outer-response time from 222.50 to 210.39 s.  The response-action count changed
+only from 3285 to 3261, but newly admitted low-rank columns decreased from 262
+to 234, showing that the main saving is fewer repeated recycle refinements and
+adjoint reconstructions.  Peak RSS changed from 2061824 to 2074736 KiB.  Both
+runs converged in eight accepted iterations, and their final energies differ
+by less than $9\times10^{-14}$ hartree.
+
 The trace now records newly admitted response rank, low-rank construction wall
 time, its structure-action component, and its adjoint component.  Low-rank
 construction is charged to both the exact-HVP and outer-response totals even
