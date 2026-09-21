@@ -238,6 +238,8 @@ void check_workspace_reuses_actions_after_radius_change() {
   require(first.converged(), "initial reusable NEO solve did not converge");
   require(first.coupled_actions > 0,
           "initial reusable NEO solve performed no actions");
+  require(first.projected_model_builds > 0,
+          "initial reusable NEO solve built no projected model");
 
   options.trust_radius = 0.2;
   const ResponseNeoResult reused = workspace.solve(options);
@@ -249,6 +251,10 @@ void check_workspace_reuses_actions_after_radius_change() {
           "radius-only retry repeated cached coupled actions");
   require(reused.coupled_actions < fresh.coupled_actions,
           "reused NEO solve did not reduce coupled actions");
+  require(reused.projected_model_builds == 0,
+          "radius-only retry rebuilt the cached projected spectrum");
+  require(fresh.projected_model_builds > 0,
+          "fresh comparison solve built no projected spectrum");
   require_close(reused.step.orbital, fresh.step.orbital, 2.0e-10,
                 "reused NEO orbital step differs from a fresh solve");
   require_close(reused.step.structure, fresh.step.structure, 2.0e-10,

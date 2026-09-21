@@ -1,7 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
-#include <vector>
+#include <limits>
 
 #include <Eigen/Core>
 
@@ -107,6 +108,7 @@ struct ResponseNeoResult {
   int coupled_actions = 0;
   int orbital_actions = 0;
   int structure_actions = 0;
+  int projected_model_builds = 0;
   bool boundary = false;
   bool hard_case = false;
   bool global_curvature_certified = false;
@@ -128,20 +130,44 @@ struct ResponseNeoResult {
  */
 class ResponseNeoWorkspace {
 public:
-  explicit ResponseNeoWorkspace(const ResponseNeoProblem& problem)
-      : problem_(problem) {}
+  explicit ResponseNeoWorkspace(const ResponseNeoProblem& problem);
 
   /** @brief Solves one trust-region subproblem using the cached subspace. */
   ResponseNeoResult solve(const NeoOptions& options);
 
   Eigen::Index orbital_basis_size() const noexcept {
-    return static_cast<Eigen::Index>(orbital_basis_.size());
+    return orbital_basis_size_;
   }
   Eigen::Index structure_basis_size() const noexcept {
-    return static_cast<Eigen::Index>(structure_basis_.size());
+    return structure_basis_size_;
   }
 
 private:
+  struct ProjectedModel {
+    std::size_t revision = std::numeric_limits<std::size_t>::max();
+    Eigen::MatrixXd metric;
+    Eigen::MatrixXd coupling;
+    Eigen::MatrixXd response_coefficients;
+    Eigen::MatrixXd whitening;
+    Eigen::MatrixXd eigenvectors;
+    Eigen::VectorXd eigenvalues;
+    Eigen::VectorXd white_gradient;
+    Eigen::VectorXd range_expansion;
+    Eigen::VectorXd response_expansion;
+    Eigen::VectorXd minimum_curvature_orbital;
+    Eigen::VectorXd curvature_orbital_residual;
+    Eigen::VectorXd curvature_structure_residual;
+    double range_error = 0.0;
+    double range_scale = 1.0;
+    double response_closure_norm = 0.0;
+    double response_closure_scale = 0.0;
+    double curvature_orbital_scale = 0.0;
+    double curvature_structure_scale = 0.0;
+  };
+
+  void reserve_orbital_column();
+  void reserve_structure_column();
+  bool rebuild_projected_model();
   bool append_orbital(
       Eigen::VectorXd direction,
       int* actions,
@@ -152,13 +178,25 @@ private:
       int* structure_actions);
 
   const ResponseNeoProblem& problem_;
-  std::vector<Eigen::VectorXd> orbital_basis_;
-  std::vector<Eigen::VectorXd> orbital_metric_images_;
-  std::vector<ResponseNeoDirection> orbital_hessian_images_;
-  std::vector<Eigen::VectorXd> structure_basis_;
-  std::vector<ResponseNeoDirection> structure_hessian_images_;
+  Eigen::MatrixXd orbital_basis_;
+  Eigen::MatrixXd orbital_metric_images_;
+  Eigen::MatrixXd orbital_hessian_images_;
+  Eigen::MatrixXd orbital_structure_images_;
+  Eigen::MatrixXd structure_basis_;
+  Eigen::MatrixXd structure_orbital_images_;
+  Eigen::MatrixXd structure_hessian_images_;
+  Eigen::MatrixXd projected_orbital_hessian_;
+  Eigen::MatrixXd projected_orbital_metric_;
+  Eigen::MatrixXd projected_coupling_;
+  Eigen::MatrixXd projected_coupling_adjoint_;
+  Eigen::MatrixXd projected_structure_hessian_;
+  Eigen::Index orbital_basis_size_ = 0;
+  Eigen::Index structure_basis_size_ = 0;
+  Eigen::Index seeded_orbital_columns_ = 0;
   Eigen::Index orbital_canonical_ = 0;
   Eigen::Index structure_canonical_ = 0;
+  std::size_t revision_ = 0;
+  ProjectedModel projected_model_;
 };
 
 /**
