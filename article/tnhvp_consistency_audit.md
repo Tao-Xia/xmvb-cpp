@@ -936,18 +936,51 @@ Peak RSS changed from 994756 to 991452 KiB for 241 and from 2063544 to
 2073188 KiB for CERRAS. The latter increase is 9644 KiB, or about 0.47%, and
 is consistent with retaining the small orbital coupling factors.
 
-The remaining CERRAS bottleneck is now exposed rather than hidden by replay:
-iteration 7 still spends 145.25 s in outer response. Newly admitted response
-basis columns currently pass through scalar structure-to-orbital adjoint
-contractions. A fused block adjoint is therefore the next performance target.
-The present trace also does not separately charge low-rank model construction
-to the HVP timer, so dedicated rank, adjoint-column, and construction-time
-counters are required before the next benchmark.
+Dedicated low-rank counters at commit `db7283f` separate this construction
+from the iterative response solve.  On a 32-core CERRAS run, the complete
+eight-step calculation took 254.05 s; 26.95 s formed 262 new low-rank coupling
+columns.  Of this construction cost, 6.52 s was the block structure action and
+20.30 s was the scalar structure-to-orbital adjoint.  Iteration 7 spent
+132.64 s in outer response, but only 18.37 s in low-rank construction
+(4.45 s structure action and 13.90 s adjoint).  The remaining 114.27 s was
+therefore dominated by the 1890 iterative structure-response block actions.
+This attribution disproves the earlier assumption that the scalar adjoint was
+the primary remaining bottleneck.
 
-The current trace field `exact_hvp_block_actions` counts batched calls, not the
-scalar frozen replay calls. Total HVP/response timings include the replay, but
-that field alone is not a complete work counter. Dedicated replay/rank counters
-are needed before quantitatively attributing the observed slowdown.
+Parallelizing independent adjoint columns was tested and rejected: it replaced
+the efficient internally parallel direct-CI contraction by many concurrent
+single-thread contractions competing for memory bandwidth, and was slower on
+the same 32-core node.  No such path is retained.  The optimization target is
+instead the repeated response action itself.
+
+The direct-CI action already accepts multiple vectors, but the structure layer
+previously forced every block through scalar recursion.  The revised action
+uses a storage-derived tile width
+
+$$
+b_{\mathrm{tile}}
+=\max\left(1,
+\min\left[b,
+\left\lfloor\frac{M_{\mathrm{operator}}}
+{M_{\mathrm{vector}}}\right\rfloor\right]
+\right),
+$$
+
+where $M_{\mathrm{vector}}$ includes the two determinant-product work matrices
+and the two structure images for one vector.  Thus the temporary block remains
+$O(M_{\mathrm{operator}})$ while small Davidson and response blocks share the
+structure expansion, exterior transforms, sigma traversal, and contraction.
+For a single selected state, the equal-weight subspace equation is identical
+to the ordinary one-root bordered response equation.  Such calculations now
+use the block response solver directly instead of splitting orbital HVP block
+directions into independent scalar solves.  Both transformations are exact;
+neither changes the response tolerance or introduces a molecular parameter.
+
+The trace now records newly admitted response rank, low-rank construction wall
+time, its structure-action component, and its adjoint component.  Low-rank
+construction is charged to both the exact-HVP and outer-response totals even
+though it occurs between matrix-vector products; accepted-point accounting
+therefore covers the complete second-order model.
 
 The completed CERRAS trace gives a concrete warning: step 7 retains 77 orbital
 directions and consumes 588.34 s, including 581.11 s in HVPs and 545.39 s in
