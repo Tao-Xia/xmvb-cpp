@@ -794,15 +794,15 @@ $$
 (\mathbf H+\lambda\mathbf M)\mathbf p=-\mathbf g.
 $$
 
-The previous local inverse shifted its block model by \(\lambda\mathbf I\),
-although the accepted-point retraction metric \(\mathbf M\) is generally not
-the identity. Production now applies \((\mathbf D+\lambda\mathbf M)^{-1}\)
+The previous local inverse shifted its block model by $\lambda\mathbf I$,
+although the accepted-point retraction metric $\mathbf M$ is generally not
+the identity. Production now applies $(\mathbf D+\lambda\mathbf M)^{-1}$
 by matrix-free preconditioned CG using only inexpensive local-model and metric
 actions. A roundoff-certified unit test with a nondiagonal metric distinguishes
-this equation from \((\mathbf D+\lambda\mathbf I)^{-1}\). Hanhai25 job
+this equation from $(\mathbf D+\lambda\mathbf I)^{-1}$. Hanhai25 job
 `250412` reproduced the reference MnF2 result with 11 outer steps, 199 orbital
 actions, 26 structure actions, and 8.79 s wall time. The two expensive tail
-solves have \(\lambda=0\), so this geometric correction correctly leaves them
+solves have $\lambda=0$, so this geometric correction correctly leaves them
 unchanged; it is a correctness fix for shifted solves, not a claimed MnF2
 speedup.
 
@@ -826,7 +826,7 @@ nor unqualified cross-point secant transport solves it.
 The configured test suite contains 61 tests, including independent polynomial
 cofactor derivatives, complete exact-integral HAO/OEO HVP finite differences,
 factor-native RI response tests, and RI HAO/OEO/state-averaged HVP finite
-differences. All 44 pass after the performance changes. The block-basis tests
+differences. All 61 pass after the performance changes. The block-basis tests
 validate assembly at the utility and molecular-integration levels; the
 orthonormal-basis test also verifies single-call block admission. The benchmark
 logs used in this note are kept
