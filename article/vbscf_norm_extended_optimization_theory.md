@@ -800,7 +800,7 @@ orbital--structure retraction and its joint trust norm.  Naming the two
 formulations explicitly prevents an unshifted relaxed response from being
 combined with the shift-dependent coupled equations in eqs 38--39.
 
-#### 9.4.1 Cost-aware structure-response admission
+#### 9.4.1 Residual-controlled structure-response admission
 
 The relaxed orbital Hessian is the Schur complement
 
@@ -811,26 +811,54 @@ $$
 $$
 
 where \(\mathbf A\) is the fixed-structure orbital block and \(\mathbf C\)
-acts in the horizontal structure tangent space. Applying the second term to
-every orbital Davidson vector is not asymptotically sensible when the
-structure tangent dimension \(n_s\) exceeds the orbital tangent dimension
-\(n_o\): the inner response problem is then larger than the outer problem it
-is intended to accelerate.
-
-The implementation therefore admits the full projected response only when
+acts in the horizontal structure tangent space.  Applying the second term to
+every orbital Davidson vector is unnecessary.  If a projected model produces
+the candidate \(\mathbf p=\mathbf Q_o\mathbf y\), only the response
 
 $$
-n_s \leq n_o.
+\mathbf C\mathbf q=-\mathbf B\mathbf p
+\tag{44a}
 $$
 
-For \(n_s>n_o\), the NEO microproblem uses \(\mathbf A\). This is an
-inexact-Newton model rather than an approximation to the final VBSCF
-objective: every proposed step is still accepted using the exact energy, and
-every keyframe and termination decision uses the exact projected gradient.
-The rule contains no system label or fitted numerical threshold; it follows
-from the relative algebraic sizes of the two coupled tangent spaces. A future
-low-rank response correction may augment \(\mathbf A\) without restoring a
-full \(\mathbf C^{\dagger}\) solve for every orbital direction.
+enters that candidate.  Solving
+\(\mathbf C\mathbf Z=-\mathbf B\mathbf Q_o\) closes responses for orbital
+basis combinations that need not enter the accepted step.  The implementation
+therefore starts from the retained response space, constructs \(\mathbf p\),
+and enriches the structure space only from the direction-local defect
+
+$$
+\mathbf r_s=\mathbf B\mathbf p+\mathbf C\mathbf q.
+\tag{44b}
+$$
+
+The full coupled residual is
+
+$$
+\mathbf r_o=\mathbf g+\mathbf A\mathbf p+
+\mathbf B^{\mathrm T}\mathbf q+\lambda\mathbf M_o\mathbf p,
+\qquad
+\mathbf r_{\mathrm{KKT}}=
+\begin{pmatrix}\mathbf r_o\\\mathbf r_s\end{pmatrix}.
+\tag{44c}
+$$
+
+Structure response is admitted exactly when its contribution prevents the
+same inexact-Newton certificate used for the orbital equation,
+
+$$
+\lVert\mathbf r_{\mathrm{KKT}}\rVert_2
+\leq
+\epsilon_{\mathrm{abs}}+\eta_k\lVert\mathbf g_k\rVert_2.
+\tag{44d}
+$$
+
+Consequently a weakly coupled candidate remains core-only even in a large
+structure space, whereas a physically important response is retained even
+when \(n_s>n_o\).  This replaces the former dimension switch by an equation-
+based rule without molecule-specific thresholds.  If \(r\) candidate or
+hard-case directions require response while the orbital subspace has size
+\(k_o\), the large-space response work changes from approximately
+\(O(k_oT_C)\) to \(O(rT_C)\), with \(r\ll k_o\) in the regular case.
 
 ### 9.5 Recycled response and Woodbury orbital preconditioning
 
@@ -845,23 +873,24 @@ $$
 \tag{45a}
 $$
 
-For an orbital block $\mathbf Q$, the response is obtained from the common
-recycled space and is accepted only if the residual of the original structure
-equation satisfies
+For the current orbital candidate $\mathbf p$, the response is obtained from
+the common recycled space and is accepted only if the residual of the original
+structure equation satisfies
 
 $$
-\mathbf R_s=\mathbf B\mathbf Q+\mathbf C\mathbf Z,
+\mathbf r_s=\mathbf B\mathbf p+\mathbf C\mathbf q,
 \qquad
-\|\mathbf R_s\|_F
+\|\mathbf r_s\|_2
 \leq
-\epsilon_{\mathrm{abs}}+\eta\|\mathbf B\mathbf Q\|_F.
+\epsilon_{\mathrm{abs}}+\eta\|\mathbf g\|_2.
 \tag{45b}
 $$
 
 Thus neither a small projected residual nor an unchanged Ritz space is by
-itself a certificate.  When enrichment changes $\mathbf W$, every retained
-orbital column is refreshed in the new response-space revision.  The relaxed
-projected orbital operator is then
+itself a certificate.  When enrichment changes $\mathbf W$, the projected
+blocks are updated by only the new rows and columns.  Responses for unrelated
+orbital basis vectors are not refreshed.  The relaxed projected orbital
+operator is then
 
 $$
 \mathbf H_{\mathrm{rel}}^{(W)}
@@ -911,9 +940,11 @@ b_{\mathrm{requested}},
 $$
 
 This preserves the algebra of a full block action while bounding temporary
-storage independently of the Davidson or NEO request width.  Direct-CI sigma
-actions use $b=1$ because each column already owns the determinant-product
-workspace; factorized unique-string actions use eq 45e.
+storage independently of the Davidson or NEO request width.  A rank-revealing
+orthogonalization removes dependent residual columns before the block is
+submitted.  The structure H/S and direct-CI kernels then process all retained
+right-hand sides in one bounded call, so their existing threaded contractions
+operate on a larger work unit without nested solver-level parallel regions.
 
 ### 9.6 Tiered response accuracy and incremental subspace recycling
 
