@@ -491,16 +491,16 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     // gradient, not to the much larger cancelling Hessian terms.  Scaling by
     // those terms would permit an O(||g||) residual and destroy the local
     // Newton rate in ill-conditioned coordinates.
-    const double component_residual_target =
+    const double kkt_residual_target =
         options.absolute_residual_tolerance +
         options.relative_residual_tolerance * gradient_norm;
-    const double orbital_residual_target = component_residual_target;
-    const double structure_residual_target = component_residual_target;
+    const double orbital_residual_norm =
+        result.kkt_residual.orbital.stableNorm();
+    const double structure_residual_norm =
+        result.kkt_residual.structure.stableNorm();
     result.residual_norm = std::hypot(
-        result.kkt_residual.orbital.stableNorm(),
-        result.kkt_residual.structure.stableNorm());
-    result.residual_target = std::hypot(
-        orbital_residual_target, structure_residual_target);
+        orbital_residual_norm, structure_residual_norm);
+    result.residual_target = kkt_residual_target;
     result.predicted_reduction =
         -problem_.orbital_gradient().dot(result.step.orbital) -
         0.5 * (result.step.orbital.dot(result.hessian_step.orbital) +
@@ -539,10 +539,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     const double positivity_tolerance =
         curvature_relative_tolerance * std::max({
             1.0, result.shift, std::abs(spectrum.eigenvalues()[0])});
-    const bool stationary =
-        result.kkt_residual.orbital.stableNorm() <= orbital_residual_target &&
-        result.kkt_residual.structure.stableNorm() <=
-            structure_residual_target;
+    const bool stationary = result.residual_norm <= kkt_residual_target;
     const bool curvature_converged =
         curvature_orbital.stableNorm() <= curvature_orbital_target &&
         curvature_structure.stableNorm() <= curvature_structure_target;
@@ -578,8 +575,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     // residual below certifies the direction-local response without that
     // basis-wide work.
     bool expanded = false;
-    if (result.kkt_residual.structure.stableNorm() >
-        structure_residual_target) {
+    if (!stationary && structure_residual_norm >= orbital_residual_norm) {
       expanded = append_structure(
           -result.kkt_residual.structure, &result.coupled_actions,
           &result.structure_actions);
@@ -591,13 +587,17 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
           -curvature_structure, &result.coupled_actions,
           &result.structure_actions);
     }
-    if (!expanded && result.kkt_residual.orbital.stableNorm() >
-        orbital_residual_target) {
+    if (!expanded && !stationary) {
       expanded = append_orbital(
           preconditioned_orbital(
               problem_, -result.kkt_residual.orbital, result.shift),
           &result.coupled_actions,
           &result.orbital_actions);
+    }
+    if (!expanded && !stationary && structure_residual_norm > 0.0) {
+      expanded = append_structure(
+          -result.kkt_residual.structure, &result.coupled_actions,
+          &result.structure_actions);
     }
     if (!expanded && need_curvature_certificate &&
         curvature_orbital.stableNorm() >

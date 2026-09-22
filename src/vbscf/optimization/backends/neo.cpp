@@ -83,7 +83,7 @@ bool build_accepted_neo_keyframe(
   StructureTangentOperator structure_hessian(
       objective->second_order_context(), orbital_hessian.structure_action());
   const bool use_structure_response =
-      structure_hessian.tangent_size() <= chart.reduced_size();
+      structure_hessian.tangent_size() != 0;
   record->model_dimension = std::max(
       record->model_dimension,
       static_cast<int>(
