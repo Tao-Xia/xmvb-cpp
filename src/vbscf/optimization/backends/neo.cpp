@@ -2,7 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
+#include <memory>
 #include <utility>
 
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
@@ -80,10 +82,13 @@ bool build_accepted_neo_keyframe(
   }
   StructureTangentOperator structure_hessian(
       objective->second_order_context(), orbital_hessian.structure_action());
+  const bool use_structure_response =
+      structure_hessian.tangent_size() <= chart.reduced_size();
   record->model_dimension = std::max(
       record->model_dimension,
       static_cast<int>(
-          chart.reduced_size() + structure_hessian.tangent_size()));
+          chart.reduced_size() +
+          (use_structure_response ? structure_hessian.tangent_size() : 0)));
   Eigen::VectorXd orbital_guess;
   if (orbital_guess_packed.size() ==
       static_cast<Eigen::Index>(parameter_view.size())) {
@@ -100,38 +105,91 @@ bool build_accepted_neo_keyframe(
       objective->second_order_context()
           ->structure_solve_accuracy
           .response_backward_error_tolerance(selected_energy_scale);
-  ResponseNeoProblem problem(
-      reduced_gradient,
-      structure_hessian.tangent_size(),
-      [&orbital_hessian, &structure_hessian](
-          const Eigen::VectorXd& vector) {
-        const OrbitalCouplingAction image =
-            orbital_hessian.apply_orbital_coupling(vector);
-        return ResponseNeoDirection{
-            image.orbital_hessian,
-            structure_hessian.coordinates(
-                structure_hessian.project(image.scaled_structure_forcing))};
-      },
-      [&orbital_hessian, &structure_hessian](
-          const Eigen::VectorXd& vector) {
-        const StructureCouplingAction image =
-            structure_hessian.apply_coupling(
-                structure_hessian.expand(vector));
-        return ResponseNeoDirection{
-            orbital_hessian.apply_structure_coupling_adjoint(
-                image.coefficient_response, image.adjoint_multipliers),
-            structure_hessian.coordinates(image.hessian)};
-      },
-      [&orbital_metric](const Eigen::VectorXd& vector) {
-        return orbital_metric.apply(vector);
-      },
-      [&chart](const Eigen::VectorXd& residual, double shift) {
-        return chart.apply_inverse_reduced_shifted_block_preconditioner(
-            residual, shift);
-      },
-      std::move(orbital_guess),
-      operator_relative_accuracy);
-  ResponseNeoWorkspace workspace(problem);
+  std::function<ResponseNeoResult(const NeoOptions&)> solve_step;
+  if (use_structure_response) {
+    auto problem = std::make_shared<ResponseNeoProblem>(
+        reduced_gradient,
+        structure_hessian.tangent_size(),
+        [&orbital_hessian, &structure_hessian](
+            const Eigen::VectorXd& vector) {
+          const OrbitalCouplingAction image =
+              orbital_hessian.apply_orbital_coupling(vector);
+          return ResponseNeoDirection{
+              image.orbital_hessian,
+              structure_hessian.coordinates(
+                  structure_hessian.project(image.scaled_structure_forcing))};
+        },
+        [&orbital_hessian, &structure_hessian](
+            const Eigen::VectorXd& vector) {
+          const StructureCouplingAction image =
+              structure_hessian.apply_coupling(
+                  structure_hessian.expand(vector));
+          return ResponseNeoDirection{
+              orbital_hessian.apply_structure_coupling_adjoint(
+                  image.coefficient_response, image.adjoint_multipliers),
+              structure_hessian.coordinates(image.hessian)};
+        },
+        [&orbital_metric](const Eigen::VectorXd& vector) {
+          return orbital_metric.apply(vector);
+        },
+        [&chart](const Eigen::VectorXd& residual, double shift) {
+          return chart.apply_inverse_reduced_shifted_block_preconditioner(
+              residual, shift);
+        },
+        std::move(orbital_guess),
+        operator_relative_accuracy);
+    auto workspace = std::make_shared<ResponseNeoWorkspace>(*problem);
+    solve_step = [problem = std::move(problem),
+                  workspace = std::move(workspace)](
+                     const NeoOptions& neo_options) {
+      // The workspace stores a reference; retain its immutable problem here.
+      static_cast<void>(problem);
+      return workspace->solve(neo_options);
+    };
+  } else {
+    HvpComponents core_components;
+    core_components.local_active_response = false;
+    core_components.structure_response = false;
+    auto problem = std::make_shared<NeoProblem>(
+        reduced_gradient,
+        [&orbital_hessian, core_components](
+            const Eigen::VectorXd& vector) {
+          return orbital_hessian.apply_reduced(vector, core_components);
+        },
+        [&orbital_metric](const Eigen::VectorXd& vector) {
+          return orbital_metric.apply(vector);
+        },
+        [&chart](const Eigen::VectorXd& residual) {
+          return chart.apply_inverse_reduced_block_preconditioner(residual);
+        });
+    solve_step = [problem = std::move(problem)](
+                     const NeoOptions& neo_options) {
+      const NeoResult core = solve_neo(*problem, neo_options);
+      ResponseNeoResult result;
+      result.step = {core.step, Eigen::VectorXd{}};
+      result.hessian_step = {core.hessian_step, Eigen::VectorXd{}};
+      result.orbital_metric_step = core.metric_step;
+      result.kkt_residual = {core.kkt_residual, Eigen::VectorXd{}};
+      result.minimum_curvature_orbital =
+          Eigen::VectorXd::Zero(problem->size());
+      result.shift = core.shift;
+      result.predicted_reduction = core.predicted_reduction;
+      result.step_norm = core.step_norm;
+      result.residual_norm = core.residual_norm;
+      result.residual_target = core.residual_target;
+      result.curvature_residual_norm = core.curvature_residual_norm;
+      result.curvature_residual_target = core.curvature_residual_target;
+      result.iterations = core.iterations;
+      result.coupled_actions = core.hessian_actions;
+      result.orbital_actions = core.hessian_actions;
+      result.boundary = core.boundary;
+      result.hard_case = core.hard_case;
+      result.global_curvature_certified =
+          core.global_curvature_certified;
+      result.stop_reason = core.stop_reason;
+      return result;
+    };
+  }
 
   while (true) {
     const double trial_radius = *trust_radius;
@@ -144,7 +202,7 @@ bool build_accepted_neo_keyframe(
     neo_options.absolute_residual_tolerance = options.gradient_tolerance;
     neo_options.maximum_subspace_dimension = 0;
     neo_options.require_curvature_certificate = false;
-    const ResponseNeoResult step = workspace.solve(neo_options);
+    const ResponseNeoResult step = solve_step(neo_options);
     record->micro_iterations += step.iterations;
     record->coupled_block_actions += step.coupled_actions;
     record->orbital_hvp_actions += step.orbital_actions;
@@ -169,7 +227,7 @@ bool build_accepted_neo_keyframe(
 
     auto trial = objective->evaluate_trial_energy(candidate_parameters, true);
     const double gradient_dot_step =
-        problem.orbital_gradient().dot(step.step.orbital);
+        reduced_gradient.dot(step.step.orbital);
     const double step_dot_hessian_step =
         step.step.orbital.dot(step.hessian_step.orbital) +
         step.step.structure.dot(step.hessian_step.structure);

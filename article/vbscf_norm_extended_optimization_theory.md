@@ -800,6 +800,38 @@ orbital--structure retraction and its joint trust norm.  Naming the two
 formulations explicitly prevents an unshifted relaxed response from being
 combined with the shift-dependent coupled equations in eqs 38--39.
 
+#### 9.4.1 Cost-aware structure-response admission
+
+The relaxed orbital Hessian is the Schur complement
+
+$$
+\mathbf H_{\mathrm{rel}}
+=
+\mathbf A-\mathbf B^{\mathrm T}\mathbf C^{\dagger}\mathbf B.
+$$
+
+where \(\mathbf A\) is the fixed-structure orbital block and \(\mathbf C\)
+acts in the horizontal structure tangent space. Applying the second term to
+every orbital Davidson vector is not asymptotically sensible when the
+structure tangent dimension \(n_s\) exceeds the orbital tangent dimension
+\(n_o\): the inner response problem is then larger than the outer problem it
+is intended to accelerate.
+
+The implementation therefore admits the full projected response only when
+
+$$
+n_s \leq n_o.
+$$
+
+For \(n_s>n_o\), the NEO microproblem uses \(\mathbf A\). This is an
+inexact-Newton model rather than an approximation to the final VBSCF
+objective: every proposed step is still accepted using the exact energy, and
+every keyframe and termination decision uses the exact projected gradient.
+The rule contains no system label or fitted numerical threshold; it follows
+from the relative algebraic sizes of the two coupled tangent spaces. A future
+low-rank response correction may augment \(\mathbf A\) without restoring a
+full \(\mathbf C^{\dagger}\) solve for every orbital direction.
+
 ### 9.5 Recycled response and Woodbury orbital preconditioning
 
 Let the columns of $\mathbf W$ be the accepted-point horizontal structure
