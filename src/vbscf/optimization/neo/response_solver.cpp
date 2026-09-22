@@ -137,11 +137,14 @@ ResponseNeoProblem::ResponseNeoProblem(
     NeoAction apply_orbital_metric,
     ResponseNeoPreconditioner apply_orbital_preconditioner,
     Eigen::VectorXd initial_orbital_guess,
-    double operator_relative_accuracy)
+    double operator_relative_accuracy,
+    ResponseNeoMatrixAction apply_structure_coupling_block)
     : orbital_gradient_(std::move(orbital_gradient)),
       structure_size_(structure_size),
       apply_orbital_coupling_(std::move(apply_orbital_coupling)),
       apply_structure_coupling_(std::move(apply_structure_coupling)),
+      apply_structure_coupling_block_(
+          std::move(apply_structure_coupling_block)),
       apply_orbital_metric_(std::move(apply_orbital_metric)),
       apply_orbital_preconditioner_(std::move(apply_orbital_preconditioner)),
       initial_orbital_guess_(std::move(initial_orbital_guess)),
@@ -193,6 +196,37 @@ ResponseNeoDirection ResponseNeoProblem::apply_structure_coupling(
     const Eigen::VectorXd& direction) const {
   return apply_block_checked(
       apply_structure_coupling_, direction, structure_size());
+}
+
+ResponseNeoDirectionBlock ResponseNeoProblem::apply_structure_coupling_block(
+    const Eigen::MatrixXd& directions) const {
+  if (directions.rows() != structure_size() || directions.cols() == 0 ||
+      !directions.allFinite()) {
+    throw std::invalid_argument(
+        "invalid matrix passed to NEO structure block action");
+  }
+  ResponseNeoDirectionBlock result;
+  if (apply_structure_coupling_block_) {
+    result = apply_structure_coupling_block_(directions);
+  } else {
+    result.orbital.resize(orbital_size(), directions.cols());
+    result.structure.resize(structure_size(), directions.cols());
+    for (Eigen::Index column = 0; column < directions.cols(); ++column) {
+      const ResponseNeoDirection image =
+          apply_structure_coupling(directions.col(column));
+      result.orbital.col(column) = image.orbital;
+      result.structure.col(column) = image.structure;
+    }
+  }
+  if (result.orbital.rows() != orbital_size() ||
+      result.structure.rows() != structure_size() ||
+      result.orbital.cols() != directions.cols() ||
+      result.structure.cols() != directions.cols() ||
+      !result.orbital.allFinite() || !result.structure.allFinite()) {
+    throw std::runtime_error(
+        "coupled NEO block action returned an invalid matrix");
+  }
+  return result;
 }
 
 Eigen::VectorXd ResponseNeoProblem::apply_orbital_checked(
@@ -281,9 +315,15 @@ bool ResponseNeoWorkspace::append_structure(
     Eigen::VectorXd direction,
     int* actions,
     int* structure_actions) {
-  if (!orthonormalize(&direction, structure_basis_)) return false;
-  const ResponseNeoDirection image =
-      problem_.apply_structure_coupling(direction);
+  Eigen::MatrixXd directions(direction.size(), 1);
+  directions.col(0) = std::move(direction);
+  return append_structure_block(
+      std::move(directions), actions, structure_actions);
+}
+
+void ResponseNeoWorkspace::store_structure(
+    const Eigen::VectorXd& direction,
+    const ResponseNeoDirection& image) {
   append_column(&structure_basis_, direction);
   append_column(&structure_orbital_images_, image.orbital);
   append_column(&structure_structure_images_, image.structure);
@@ -304,8 +344,32 @@ bool ResponseNeoWorkspace::append_structure(
       structure_basis_.transpose() * image.structure;
   projected_structure_.row(n_structure - 1).noalias() =
       direction.transpose() * structure_structure_images_;
-  ++*actions;
-  ++*structure_actions;
+}
+
+bool ResponseNeoWorkspace::append_structure_block(
+    Eigen::MatrixXd directions,
+    int* actions,
+    int* structure_actions) {
+  Eigen::MatrixXd accepted(problem_.structure_size(), 0);
+  for (Eigen::Index column = 0; column < directions.cols(); ++column) {
+    Eigen::VectorXd direction = directions.col(column);
+    if (!orthonormalize(&direction, structure_basis_) ||
+        !orthonormalize(&direction, accepted)) {
+      continue;
+    }
+    append_column(&accepted, direction);
+  }
+  if (accepted.cols() == 0) return false;
+  const ResponseNeoDirectionBlock images =
+      problem_.apply_structure_coupling_block(accepted);
+  for (Eigen::Index column = 0; column < accepted.cols(); ++column) {
+    store_structure(
+        accepted.col(column),
+        ResponseNeoDirection{
+            images.orbital.col(column), images.structure.col(column)});
+  }
+  *actions += static_cast<int>(accepted.cols());
+  *structure_actions += static_cast<int>(accepted.cols());
   return true;
 }
 
@@ -576,8 +640,14 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     // basis-wide work.
     bool expanded = false;
     if (!stationary && structure_residual_norm >= orbital_residual_norm) {
-      expanded = append_structure(
-          -result.kkt_residual.structure, &result.coupled_actions,
+      const bool add_curvature = need_curvature_certificate &&
+          curvature_structure.stableNorm() > curvature_structure_target;
+      Eigen::MatrixXd directions(
+          problem_.structure_size(), add_curvature ? 2 : 1);
+      directions.col(0) = -result.kkt_residual.structure;
+      if (add_curvature) directions.col(1) = -curvature_structure;
+      expanded = append_structure_block(
+          std::move(directions), &result.coupled_actions,
           &result.structure_actions);
     }
     if (!expanded && need_curvature_certificate &&

@@ -137,7 +137,23 @@ bool build_accepted_neo_keyframe(
               residual, shift);
         },
         std::move(orbital_guess),
-        operator_relative_accuracy);
+        operator_relative_accuracy,
+        [&orbital_hessian, &structure_hessian, &chart](
+            const Eigen::MatrixXd& vectors) {
+          const StructureCoordinateCouplingBlock images =
+              structure_hessian.apply_coupling_coordinate_block(vectors);
+          ResponseNeoDirectionBlock result;
+          result.orbital.resize(
+              chart.reduced_size(), vectors.cols());
+          result.structure = images.hessian_coordinates;
+          for (Eigen::Index column = 0; column < vectors.cols(); ++column) {
+            result.orbital.col(column) =
+                orbital_hessian.apply_structure_coupling_adjoint(
+                    images.coefficient_responses[column],
+                    images.adjoint_multipliers[column]);
+          }
+          return result;
+        });
     auto workspace = std::make_shared<ResponseNeoWorkspace>(*problem);
     solve_step = [problem = std::move(problem),
                   workspace = std::move(workspace)](

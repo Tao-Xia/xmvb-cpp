@@ -222,6 +222,28 @@ void check_equal_weight_multistate(const StructureFixture& fixture) {
   const auto hy = structure.apply_hessian(horizontal_y);
   const auto coordinate_action = structure.apply_coupling_coordinates(
       structure.coordinates(horizontal_x));
+  const auto coordinate_y = structure.apply_coupling_coordinates(
+      structure.coordinates(horizontal_y));
+  Eigen::MatrixXd coordinate_block(structure.tangent_size(), 2);
+  coordinate_block.col(0) = structure.coordinates(horizontal_x);
+  coordinate_block.col(1) = structure.coordinates(horizontal_y);
+  const auto block_action =
+      structure.apply_coupling_coordinate_block(coordinate_block);
+  require((block_action.hessian_coordinates.col(0) -
+           coordinate_action.hessian_coordinates).norm() < 3.0e-13 &&
+          (block_action.hessian_coordinates.col(1) -
+           coordinate_y.hessian_coordinates).norm() < 3.0e-13,
+          "block structure Hessian differs from scalar actions");
+  require((block_action.metric_coordinates.col(0) -
+           coordinate_action.metric_coordinates).norm() < 3.0e-13 &&
+          (block_action.metric_coordinates.col(1) -
+           coordinate_y.metric_coordinates).norm() < 3.0e-13,
+          "block structure metric differs from scalar actions");
+  require((block_action.coefficient_responses[0] -
+           coordinate_action.coefficient_response).norm() < 3.0e-13 &&
+          (block_action.adjoint_multipliers[1] -
+           coordinate_y.adjoint_multipliers).norm() < 3.0e-13,
+          "block structure adjoint data differ from scalar actions");
   require((coordinate_action.hessian_coordinates -
            structure.coordinates(hx)).norm() < 3.0e-13,
           "coordinate-space structure Hessian action is inconsistent");

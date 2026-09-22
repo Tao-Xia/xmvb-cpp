@@ -13,9 +13,17 @@ struct ResponseNeoDirection {
   Eigen::VectorXd structure;
 };
 
+/** @brief Coupled Hessian images for a block of directions. */
+struct ResponseNeoDirectionBlock {
+  Eigen::MatrixXd orbital;
+  Eigen::MatrixXd structure;
+};
+
 /** @brief One block column of the coupled orbital--structure Hessian. */
 using ResponseNeoBlockAction =
     std::function<ResponseNeoDirection(const Eigen::VectorXd&)>;
+using ResponseNeoMatrixAction =
+    std::function<ResponseNeoDirectionBlock(const Eigen::MatrixXd&)>;
 using ResponseNeoPreconditioner =
     std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)>;
 
@@ -36,7 +44,8 @@ public:
       NeoAction apply_orbital_metric,
       ResponseNeoPreconditioner apply_orbital_preconditioner = {},
       Eigen::VectorXd initial_orbital_guess = {},
-      double operator_relative_accuracy = 0.0);
+      double operator_relative_accuracy = 0.0,
+      ResponseNeoMatrixAction apply_structure_coupling_block = {});
 
   Eigen::Index orbital_size() const noexcept {
     return orbital_gradient_.size();
@@ -50,6 +59,8 @@ public:
       const Eigen::VectorXd& direction) const;
   ResponseNeoDirection apply_structure_coupling(
       const Eigen::VectorXd& direction) const;
+  ResponseNeoDirectionBlock apply_structure_coupling_block(
+      const Eigen::MatrixXd& directions) const;
   Eigen::VectorXd apply_orbital_metric(
       const Eigen::VectorXd& direction) const;
   bool has_orbital_preconditioner() const noexcept {
@@ -81,6 +92,7 @@ private:
 
   const ResponseNeoBlockAction apply_orbital_coupling_;
   const ResponseNeoBlockAction apply_structure_coupling_;
+  const ResponseNeoMatrixAction apply_structure_coupling_block_;
   const NeoAction apply_orbital_metric_;
   const ResponseNeoPreconditioner apply_orbital_preconditioner_;
   const Eigen::VectorXd initial_orbital_guess_;
@@ -155,6 +167,13 @@ private:
       Eigen::VectorXd direction,
       int* actions,
       int* structure_actions);
+  bool append_structure_block(
+      Eigen::MatrixXd directions,
+      int* actions,
+      int* structure_actions);
+  void store_structure(
+      const Eigen::VectorXd& direction,
+      const ResponseNeoDirection& image);
 
   const ResponseNeoProblem& problem_;
   Eigen::MatrixXd orbital_basis_;

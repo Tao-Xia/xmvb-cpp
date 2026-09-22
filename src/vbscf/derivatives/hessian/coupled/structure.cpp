@@ -304,29 +304,89 @@ StructureCouplingAction StructureTangentOperator::apply_coupling(
 StructureCoordinateCouplingAction
 StructureTangentOperator::apply_coupling_coordinates(
     const Eigen::VectorXd& coordinates) const {
-  StructureTangent horizontal = expand(coordinates);
-  Eigen::MatrixXd raw = std::move(horizontal.scaled_coefficients);
-  for (int state = 0; state < n_states_; ++state) {
-    raw.col(state) /= coordinate_scales_[state];
-  }
-  const StructureActionResult images = action_->apply(raw);
-  validate_shape(images.hamiltonian);
-  validate_shape(images.overlap);
-  Eigen::MatrixXd shifted = images.hamiltonian;
-  shifted.noalias() -= images.overlap * energies_.asDiagonal();
+  const StructureCoordinateCouplingBlock block =
+      apply_coupling_coordinate_block(coordinates);
+  return StructureCoordinateCouplingAction{
+      block.hessian_coordinates.col(0),
+      block.metric_coordinates.col(0),
+      block.coefficient_responses.front(),
+      block.adjoint_multipliers.front()};
+}
 
-  StructureCoordinateCouplingAction result;
-  result.coefficient_response = std::move(raw);
-  result.adjoint_multipliers =
-      -selected_metric_inverse_ * (selected_.transpose() * shifted);
+StructureCoordinateCouplingBlock
+StructureTangentOperator::apply_coupling_coordinate_block(
+    const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const {
+  if (coordinates.rows() != tangent_size() || coordinates.cols() == 0 ||
+      !coordinates.allFinite()) {
+    throw std::invalid_argument(
+        "structure coordinate block has incompatible dimensions or values");
+  }
+  const Eigen::Index width = coordinates.cols();
+  const Eigen::Index horizontal_rows = n_structures_ - n_states_;
+  Eigen::MatrixXd transformed = Eigen::MatrixXd::Zero(
+      n_structures_, n_states_ * width);
+  for (Eigen::Index block = 0; block < width; ++block) {
+    const Eigen::Map<const Eigen::MatrixXd> independent(
+        coordinates.col(block).data(), horizontal_rows, n_states_);
+    transformed.middleCols(block * n_states_, n_states_)
+        .bottomRows(horizontal_rows) = independent;
+  }
+  Eigen::MatrixXd raw = constraint_qr_.householderQ() * transformed;
+  for (Eigen::Index block = 0; block < width; ++block) {
+    for (int state = 0; state < n_states_; ++state) {
+      raw.col(block * n_states_ + state) /= coordinate_scales_[state];
+    }
+  }
+
+  const StructureActionResult images = action_->apply(raw);
+  Eigen::MatrixXd shifted = images.hamiltonian;
+  for (Eigen::Index block = 0; block < width; ++block) {
+    for (int state = 0; state < n_states_; ++state) {
+      const Eigen::Index column = block * n_states_ + state;
+      shifted.col(column).noalias() -=
+          energies_[state] * images.overlap.col(column);
+    }
+  }
+
+  StructureCoordinateCouplingBlock result;
+  result.coefficient_responses.reserve(width);
+  result.adjoint_multipliers.reserve(width);
+  for (Eigen::Index block = 0; block < width; ++block) {
+    result.coefficient_responses.push_back(
+        raw.middleCols(block * n_states_, n_states_));
+    result.adjoint_multipliers.push_back(
+        -selected_metric_inverse_ *
+        (selected_.transpose() *
+         shifted.middleCols(block * n_states_, n_states_)));
+  }
+
   Eigen::MatrixXd scaled_shifted = std::move(shifted);
   Eigen::MatrixXd scaled_overlap = images.overlap;
-  for (int state = 0; state < n_states_; ++state) {
-    scaled_shifted.col(state) *= coordinate_scales_[state];
-    scaled_overlap.col(state) *= coordinate_scales_[state];
+  for (Eigen::Index block = 0; block < width; ++block) {
+    for (int state = 0; state < n_states_; ++state) {
+      const Eigen::Index column = block * n_states_ + state;
+      scaled_shifted.col(column) *= coordinate_scales_[state];
+      scaled_overlap.col(column) *= coordinate_scales_[state];
+    }
   }
-  result.hessian_coordinates = project_coordinates(scaled_shifted);
-  result.metric_coordinates = project_coordinates(scaled_overlap);
+  const Eigen::MatrixXd hessian_transformed =
+      constraint_qr_.householderQ().adjoint() * scaled_shifted;
+  const Eigen::MatrixXd metric_transformed =
+      constraint_qr_.householderQ().adjoint() * scaled_overlap;
+  result.hessian_coordinates.resize(tangent_size(), width);
+  result.metric_coordinates.resize(tangent_size(), width);
+  for (Eigen::Index block = 0; block < width; ++block) {
+    const Eigen::MatrixXd hessian_independent =
+        hessian_transformed.middleCols(block * n_states_, n_states_)
+            .bottomRows(horizontal_rows);
+    const Eigen::MatrixXd metric_independent =
+        metric_transformed.middleCols(block * n_states_, n_states_)
+            .bottomRows(horizontal_rows);
+    result.hessian_coordinates.col(block) = Eigen::Map<const Eigen::VectorXd>(
+        hessian_independent.data(), hessian_independent.size());
+    result.metric_coordinates.col(block) = Eigen::Map<const Eigen::VectorXd>(
+        metric_independent.data(), metric_independent.size());
+  }
   return result;
 }
 

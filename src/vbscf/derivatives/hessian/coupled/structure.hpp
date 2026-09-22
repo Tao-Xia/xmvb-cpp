@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <vector>
 
 #include <Eigen/Core>
 #include <Eigen/QR>
@@ -37,6 +38,14 @@ struct StructureCoordinateCouplingAction {
   Eigen::VectorXd metric_coordinates;
   Eigen::MatrixXd coefficient_response;
   Eigen::MatrixXd adjoint_multipliers;
+};
+
+/** @brief Coordinate-space images for a block of independent responses. */
+struct StructureCoordinateCouplingBlock {
+  Eigen::MatrixXd hessian_coordinates;
+  Eigen::MatrixXd metric_coordinates;
+  std::vector<Eigen::MatrixXd> coefficient_responses;
+  std::vector<Eigen::MatrixXd> adjoint_multipliers;
 };
 
 /**
@@ -141,6 +150,10 @@ public:
    */
   StructureCoordinateCouplingAction apply_coupling_coordinates(
       const Eigen::VectorXd& coordinates) const;
+
+  /** @brief Applies several coordinate directions in one H/S block action. */
+  StructureCoordinateCouplingBlock apply_coupling_coordinate_block(
+      const Eigen::Ref<const Eigen::MatrixXd>& coordinates) const;
 
   /** @brief Applies the structure trust-region metric @f$PSP@f$. */
   StructureTangent apply_metric(const StructureTangent& tangent) const;
