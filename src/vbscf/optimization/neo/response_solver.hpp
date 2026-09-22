@@ -1,8 +1,6 @@
 #pragma once
 
 #include <functional>
-#include <vector>
-
 #include <Eigen/Core>
 
 #include "vbscf/optimization/neo/solver.hpp"
@@ -129,16 +127,23 @@ struct ResponseNeoResult {
 class ResponseNeoWorkspace {
 public:
   explicit ResponseNeoWorkspace(const ResponseNeoProblem& problem)
-      : problem_(problem) {}
+      : problem_(problem),
+        orbital_basis_(problem.orbital_size(), 0),
+        orbital_metric_images_(problem.orbital_size(), 0),
+        orbital_orbital_images_(problem.orbital_size(), 0),
+        orbital_structure_images_(problem.structure_size(), 0),
+        structure_basis_(problem.structure_size(), 0),
+        structure_orbital_images_(problem.orbital_size(), 0),
+        structure_structure_images_(problem.structure_size(), 0) {}
 
   /** @brief Solves one trust-region subproblem using the cached subspace. */
   ResponseNeoResult solve(const NeoOptions& options);
 
   Eigen::Index orbital_basis_size() const noexcept {
-    return static_cast<Eigen::Index>(orbital_basis_.size());
+    return orbital_basis_.cols();
   }
   Eigen::Index structure_basis_size() const noexcept {
-    return static_cast<Eigen::Index>(structure_basis_.size());
+    return structure_basis_.cols();
   }
 
 private:
@@ -152,11 +157,13 @@ private:
       int* structure_actions);
 
   const ResponseNeoProblem& problem_;
-  std::vector<Eigen::VectorXd> orbital_basis_;
-  std::vector<Eigen::VectorXd> orbital_metric_images_;
-  std::vector<ResponseNeoDirection> orbital_hessian_images_;
-  std::vector<Eigen::VectorXd> structure_basis_;
-  std::vector<ResponseNeoDirection> structure_hessian_images_;
+  Eigen::MatrixXd orbital_basis_;
+  Eigen::MatrixXd orbital_metric_images_;
+  Eigen::MatrixXd orbital_orbital_images_;
+  Eigen::MatrixXd orbital_structure_images_;
+  Eigen::MatrixXd structure_basis_;
+  Eigen::MatrixXd structure_orbital_images_;
+  Eigen::MatrixXd structure_structure_images_;
   Eigen::Index orbital_canonical_ = 0;
   Eigen::Index structure_canonical_ = 0;
 };
