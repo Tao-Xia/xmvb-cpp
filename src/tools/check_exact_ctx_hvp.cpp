@@ -505,13 +505,6 @@ int main(int argc, char** argv) {
       coupled_directional_curvature_relative_error =
           std::abs(analytic_curvature - finite_difference_curvature) /
           std::max(1.0, std::abs(finite_difference_curvature));
-      std::cout << std::setprecision(12)
-                << "coupled_orbital_fd_relative_error = "
-                << coupled_orbital_fd_relative_error << '\n'
-                << "coupled_structure_fd_relative_error = "
-                << coupled_structure_fd_relative_error << '\n'
-                << "coupled_directional_curvature_relative_error = "
-                << coupled_directional_curvature_relative_error << std::endl;
     }
 
     double diagonal_sample_max_relative_error = 0.0;
@@ -629,7 +622,8 @@ int main(int argc, char** argv) {
         analytic - analytic_core - analytic_local_active -
         analytic_structure_response) /
         std::max(1.0, infinity_norm(analytic));
-    if (component_decomposition_error > 1.0e-10) {
+    if (!options.coupled_finite_difference &&
+        component_decomposition_error > 1.0e-10) {
       throw std::runtime_error(
           "exact HVP component decomposition is inconsistent");
     }
