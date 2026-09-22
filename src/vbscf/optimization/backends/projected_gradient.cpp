@@ -39,13 +39,8 @@ BackendRunResult run_projected_gradient_backend(
 
     const double reduced_gradient_inf_norm =
         gradient_infinity_norm(current_projection.reduced_gradient);
-    const NonredundantRetractionMetric current_metric(
-        current_space,
-        parameter_view,
-        objective->input().orbital_preparation_input);
     if (iteration == 0 &&
-        current_metric.dual_norm(current_projection.reduced_gradient) <
-            options.gradient_tolerance) {
+        reduced_gradient_inf_norm < options.gradient_tolerance) {
       result->converged = true;
       result->termination_reason =
           "nonredundant_projected_gradient_initial_tolerance";
@@ -109,10 +104,8 @@ BackendRunResult run_projected_gradient_backend(
     sync_result_from_objective(*objective, result);
     OrbitalChart next_space = build_orbital_chart(*objective, parameter_view);
     auto next_projection = next_space.project_gradient(current_gradient);
-    const NonredundantRetractionMetric next_metric(
-        next_space,
-        parameter_view,
-        objective->input().orbital_preparation_input);
+    const double next_reduced_gradient_inf_norm =
+        gradient_infinity_norm(next_projection.reduced_gradient);
     record_accepted_iteration_snapshot(
         objective,
         run_result.n_iterations,
@@ -124,11 +117,11 @@ BackendRunResult run_projected_gradient_backend(
     const double energy_change = energy - previous_energy;
     previous_energy = energy;
     if (std::abs(energy_change) < options.energy_tolerance &&
-        next_metric.dual_norm(next_projection.reduced_gradient) <
+        next_reduced_gradient_inf_norm <
             options.gradient_tolerance) {
       result->converged = true;
       result->termination_reason =
-          "nonredundant_projected_gradient_dual_tolerance";
+          "nonredundant_projected_gradient_tolerance";
       run_result.final_gradient_l2_norm = next_projection.reduced_gradient.norm();
       break;
     }

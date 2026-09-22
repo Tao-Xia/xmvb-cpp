@@ -164,14 +164,8 @@ BackendRunResult run_block_lbfgs_backend(
 
     const double reduced_gradient_inf_norm =
         gradient_infinity_norm(current_projection.reduced_gradient);
-    const NonredundantRetractionMetric current_metric(
-        current_space,
-        parameter_view,
-        objective->input().orbital_preparation_input);
-    const double physical_gradient_norm =
-        current_metric.dual_norm(current_projection.reduced_gradient);
     if (iteration == 0 &&
-        physical_gradient_norm < options.gradient_tolerance) {
+        reduced_gradient_inf_norm < options.gradient_tolerance) {
       result->converged = true;
       result->termination_reason = "block_lbfgs_initial_tolerance";
       run_result.final_gradient_l2_norm =
@@ -282,7 +276,7 @@ BackendRunResult run_block_lbfgs_backend(
             next_reduced_gradient_inf_norm,
             options.gradient_tolerance);
     if (stalled_line_search &&
-        physical_gradient_norm >= options.gradient_tolerance) {
+        reduced_gradient_inf_norm >= options.gradient_tolerance) {
       const double steepest_descent_initial_step =
           std::max(
               options.minimum_step_size,
@@ -325,11 +319,6 @@ BackendRunResult run_block_lbfgs_backend(
       packed_secant_history.clear();
     }
 
-    const NonredundantRetractionMetric next_metric(
-        next_space,
-        parameter_view,
-        objective->input().orbital_preparation_input);
-
     ++run_result.n_iterations;
     sync_result_from_objective(*objective, result);
     record_accepted_iteration_snapshot(
@@ -343,10 +332,11 @@ BackendRunResult run_block_lbfgs_backend(
     const double energy_change = energy - previous_energy;
     previous_energy = energy;
     if (std::abs(energy_change) < options.energy_tolerance &&
-        next_metric.dual_norm(next_projection.reduced_gradient) <
+        next_reduced_gradient_inf_norm <
             options.gradient_tolerance) {
       result->converged = true;
-      result->termination_reason = "block_lbfgs_dual_tolerance";
+      result->termination_reason =
+          "block_lbfgs_projected_gradient_tolerance";
       run_result.final_gradient_l2_norm = next_projection.reduced_gradient.norm();
       break;
     }

@@ -377,7 +377,7 @@ BackendRunResult run_neo_backend(
       if (std::abs(energy_change) < options.energy_tolerance &&
           final_gradient_inf < options.gradient_tolerance) {
         result->converged = true;
-        result->termination_reason = "neo_dual_tolerance";
+        result->termination_reason = "neo_projected_gradient_tolerance";
       }
       // Once external first-order stationarity is reached, expose this
       // keyframe as the end of the macro step.  If its energy change is still

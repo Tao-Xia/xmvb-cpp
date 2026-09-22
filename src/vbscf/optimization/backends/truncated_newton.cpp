@@ -183,10 +183,8 @@ BackendRunResult run_truncated_newton_backend(
     final_projected_gradient_inf_norm = reduced_gradient_inf_norm;
     final_projected_gradient_l2_norm =
         current_projection.reduced_gradient.norm();
-    const double physical_gradient_norm =
-        retraction_metric.dual_norm(current_projection.reduced_gradient);
     if (run_result.n_iterations == 0 &&
-        physical_gradient_norm < options.gradient_tolerance) {
+        reduced_gradient_inf_norm < options.gradient_tolerance) {
       result->converged = true;
       result->termination_reason =
           "nonredundant_truncated_newton_initial_tolerance";
@@ -703,11 +701,11 @@ BackendRunResult run_truncated_newton_backend(
           &packed_secant_history);
     }
     if (std::abs(de) < options.energy_tolerance &&
-        next_metric.dual_norm(next_projection.reduced_gradient) <
+        final_projected_gradient_inf_norm <
             options.gradient_tolerance) {
       result->converged = true;
       result->termination_reason =
-          "nonredundant_truncated_newton_dual_tolerance";
+          "nonredundant_truncated_newton_projected_gradient_tolerance";
       run_result.final_gradient_l2_norm = next_projection.reduced_gradient.norm();
       break;
     }

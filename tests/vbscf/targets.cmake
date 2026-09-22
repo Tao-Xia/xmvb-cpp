@@ -199,7 +199,7 @@ if (BUILD_TESTING)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     ENVIRONMENT
       "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
-    PASS_REGULAR_EXPRESSION "block_lbfgs_dual_tolerance")
+    PASS_REGULAR_EXPRESSION "block_lbfgs_projected_gradient_tolerance")
 
   add_test(
     NAME neo_f2
@@ -215,7 +215,7 @@ if (BUILD_TESTING)
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     ENVIRONMENT
       "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
-    PASS_REGULAR_EXPRESSION "neo_dual_tolerance")
+    PASS_REGULAR_EXPRESSION "neo_projected_gradient_tolerance")
 
   foreach(_xmvb_orbital_type IN ITEMS hao oeo)
     if (_xmvb_orbital_type STREQUAL "hao")
@@ -253,7 +253,7 @@ if (BUILD_TESTING)
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         ENVIRONMENT
           "OMP_NUM_THREADS=4;OPENBLAS_NUM_THREADS=1;GOTO_NUM_THREADS=1;MKL_NUM_THREADS=1"
-        PASS_REGULAR_EXPRESSION "neo_dual_tolerance")
+        PASS_REGULAR_EXPRESSION "neo_projected_gradient_tolerance")
     endforeach()
   endforeach()
   unset(_xmvb_hessian_diagonal_input)
