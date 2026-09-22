@@ -311,6 +311,10 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
   const double curvature_relative_tolerance = std::min(
       options.relative_residual_tolerance,
       numerical_curvature_tolerance);
+  const double response_relative_tolerance =
+      options.require_curvature_certificate
+          ? curvature_relative_tolerance
+          : options.relative_residual_tolerance;
 
   ResponseNeoResult result;
   result.step.orbital = Eigen::VectorXd::Zero(problem_.orbital_size());
@@ -451,7 +455,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         bo + cs * response_coefficients;
     const double response_closure_target =
         options.absolute_residual_tolerance +
-        curvature_relative_tolerance * std::max(
+        response_relative_tolerance * std::max(
             bo.stableNorm(),
             (cs * response_coefficients).stableNorm());
     if (response_closure.stableNorm() > response_closure_target) {
@@ -577,9 +581,12 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         static_cast<std::size_t>(problem_.orbital_size());
     result.global_curvature_certified =
         orbital_complete && curvature_converged;
+    // A nonlinear keyframe certifies a regular boundary candidate by its
+    // actual/predicted decrease.  Resolving an unrelated lowest Ritz vector
+    // is therefore unnecessary unless explicitly requested.  A hard case is
+    // different: its step itself depends on the minimum-curvature direction.
     const bool need_curvature_certificate =
-        options.require_curvature_certificate || result.boundary ||
-        result.hard_case;
+        options.require_curvature_certificate || result.hard_case;
     const bool required_curvature_converged =
         !need_curvature_certificate || curvature_converged;
     if (stationary && required_curvature_converged && shifted_positive) {

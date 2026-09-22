@@ -915,84 +915,104 @@ storage independently of the Davidson or NEO request width.  Direct-CI sigma
 actions use $b=1$ because each column already owns the determinant-product
 workspace; factorized unique-string actions use eq 45e.
 
-### 9.6 Tiered response accuracy and incremental Davidson recycling
+### 9.6 Tiered response accuracy and incremental subspace recycling
 
-Solving every retained response column to the final Newton tolerance is
-unnecessary.  Let $\eta_{\mathrm f}$ be the relative tolerance required for
-the accepted Newton direction.  The projected model is first built with
+Solving every response column to spectral-certification accuracy is
+unnecessary for a nonlinear keyframe step.  Let $\eta_k$ be the current
+inexact-Newton forcing term and let
 
 $$
-\eta_{\mathrm m}
+\eta_{\mathrm{spec}}
 =
-\min\!\left[
-\frac{1}{2},
-\max\!\left(
-\eta_{\mathrm f},
-\min\!\left(10^{-2},\sqrt{\eta_{\mathrm f}}\right)
+\min\!\left(
+\eta_k,
+\sqrt{\epsilon_{\mathrm{mach}}}\,(n_o+n_s)
 \right)
-\right].
 \tag{45f}
 $$
 
-This square-root tier is an inexact-Newton forcing rule: model accuracy still
-tightens as stationarity is approached, but an exploratory Davidson column is
-not solved at final accuracy.  For the current projected orbital step
-$\mathbf p=\mathbf Q\mathbf c$, only the combined structure equation is then
-certified,
+be the tighter accuracy used to resolve a lowest-curvature Ritz pair.  For an
+orbital trial basis $\mathbf Q$ and a recycled structure basis $\mathbf W$,
+the Galerkin response coefficients $\mathbf Z_W$ leave the block closure
 
 $$
-\mathbf f=\mathbf B\mathbf p,
-\qquad
-\mathbf C\mathbf z_*=-\mathbf f,
-\qquad
-\|\mathbf f+\mathbf C\mathbf z_*\|
-\leq
-\epsilon_{\mathrm{abs}}+
-\eta_{\mathrm f}\|\mathbf g\|.
+\mathbf R_W
+=
+\mathbf B\mathbf Q+\mathbf C\mathbf Z_W.
 \tag{45g}
 $$
 
-If the coarse linear combination fails eq 45g, one narrow response solve is
-performed for $\mathbf f$; the unrelated retained columns are not refined.
-The same rule is applied to a minimum-curvature combination only when a
-boundary, hard case, or explicit curvature certificate requires it.  The
-certified orbital-image defect
+The implemented model-building tolerance is
 
 $$
-\delta\mathbf h
+\eta_{\mathrm{resp}}
 =
-\mathbf B^{\mathrm T}\mathbf z_*
--
-\mathbf B^{\mathrm T}\mathbf Z\mathbf c
+\begin{cases}
+\eta_{\mathrm{spec}}, &
+\text{when an explicit curvature certificate is requested},\\
+\eta_k, &
+\text{for an ordinary nonlinear keyframe}.
+\end{cases}
 \tag{45h}
 $$
 
-is projected into the orbital Davidson space and accumulated in a symmetric
-multi-secant correction to the reduced Schur model.  Consequently, the final
-step is always tested with the original coupled KKT residual; the coarse tier
-is never treated as a convergence certificate.
-
-The generalized-eigen response recycle space stores, for each orthonormal
-column $\mathbf w_j$, the projected response image and the full images
-$\mathbf H\mathbf w_j$ and $\mathbf S\mathbf w_j$.  After the response space
-is enlarged, an old right-hand side has the Galerkin approximation
+The response space is enlarged until
 
 $$
-\mathbf x_W=\mathbf W\mathbf K_W^{-1}\mathbf W^{\mathrm T}\mathbf b,
-\qquad
-\mathbf H\mathbf x_W=(\mathbf H\mathbf W)\mathbf y,
-\qquad
-\mathbf S\mathbf x_W=(\mathbf S\mathbf W)\mathbf y,
+\|\mathbf R_W\|_F
+\leq
+\epsilon_{\mathrm{abs}}
++
+\eta_{\mathrm{resp}}
+\max\!\left(
+\|\mathbf B\mathbf Q\|_F,
+\|\mathbf C\mathbf Z_W\|_F
+\right).
 \tag{45i}
 $$
 
-where $\mathbf y=\mathbf K_W^{-1}\mathbf W^{\mathrm T}\mathbf b$.  Its full
-bordered residual, including the finite-Ritz and gauge terms, is therefore
-reconstructed without another Hamiltonian/overlap action.  Only a right-hand
-side that fails this residual certificate re-enters MINRES.  The added memory
-remains $O(n_{\mathrm{str}}r)$ for response rank $r$; storing the two full
-images increases its constant factor in exchange for eliminating repeated
-$H/S$ actions.
+Equation 45i controls only the accuracy of the projected Schur model; it is
+not the acceptance certificate.  After the projected trust problem produces
+$\mathbf p=\mathbf Q\mathbf c$ and
+$\mathbf q=\mathbf Z_W\mathbf c$, the original coupled residuals are evaluated
+without approximation,
+
+$$
+\begin{aligned}
+\mathbf r_o
+&=
+\mathbf g+\mathbf A\mathbf p+\mathbf B^{\mathrm T}\mathbf q
++\lambda\mathbf M_o\mathbf p,\\
+\mathbf r_s
+&=
+\mathbf B\mathbf p+\mathbf C\mathbf q.
+\end{aligned}
+\tag{45j}
+$$
+
+Both components must satisfy the keyframe forcing target
+
+$$
+\|\mathbf r_o\|,
+\|\mathbf r_s\|
+\leq
+\epsilon_{\mathrm{abs}}+\eta_k\|\mathbf g\|.
+\tag{45k}
+$$
+
+A failed component residual supplies the next orbital or structure expansion,
+so relaxing eq 45i cannot cause a falsely converged step.  It only prevents
+unrelated columns of the response matrix from being solved more accurately
+than the accepted direction requires.
+
+A hard case still requires convergence of the minimum-curvature direction
+because that direction is part of the step itself.  A regular boundary step
+does not: the initial subspace contains the preconditioned gradient direction,
+the projected trust solution supplies model decrease, and the finite VBSCF
+trial is certified by the actual-to-predicted decrease ratio.  Requiring an
+additional unrelated lowest-root solve at every regular boundary would change
+the cost of globalization without strengthening the accepted nonlinear-point
+certificate.
 
 ### 9.7 Frozen-model keyframes
 
@@ -1008,7 +1028,7 @@ $$
 \frac{E(\mathbf x_k)-E(R_{\mathbf x_k}(\mathbf p))}
 {-\mathbf g_k^{\mathrm T}\mathbf p
 -\tfrac12\mathbf p^{\mathrm T}\mathbf H_k\mathbf p}.
-\tag{45j}
+\tag{45l}
 $$
 
 The frozen model is reused only after an accepted boundary candidate with

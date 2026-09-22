@@ -316,6 +316,44 @@ void check_boundary_residual_uses_shifted_preconditioner() {
           "boundary KKT residual did not pass its shift to the preconditioner");
 }
 
+void check_keyframe_response_uses_forcing_accuracy() {
+  Eigen::Matrix4d a = Eigen::Matrix4d::Zero();
+  a.diagonal() << 2.0, 3.0, 4.0, 5.0;
+  Eigen::Matrix<double, 3, 4> b =
+      Eigen::Matrix<double, 3, 4>::Zero();
+  b.diagonal() << 0.5, 0.4, 0.3;
+  Eigen::Matrix3d c = Eigen::Matrix3d::Zero();
+  c.diagonal() << 2.0, 1.5, 1.0;
+  const Eigen::Vector4d gradient(1.0, 0.0, 0.0, 0.0);
+  const ResponseNeoProblem problem = dense_problem(
+      a, b, c, Eigen::Matrix4d::Identity(), gradient);
+
+  NeoOptions keyframe_options;
+  keyframe_options.trust_radius = 1.0;
+  keyframe_options.relative_residual_tolerance = 0.1;
+  keyframe_options.absolute_residual_tolerance = 1.0e-3;
+  keyframe_options.require_curvature_certificate = false;
+  const ResponseNeoResult keyframe = xmvb::vb::solve_response_neo(
+      problem, keyframe_options);
+  require(keyframe.converged(),
+          "inexact keyframe response solve did not converge");
+  require(keyframe.kkt_residual.orbital.stableNorm() <=
+              keyframe.residual_target,
+          "inexact keyframe orbital residual exceeds its certificate");
+  require(keyframe.kkt_residual.structure.stableNorm() <=
+              keyframe.residual_target,
+          "inexact keyframe structure residual exceeds its certificate");
+
+  NeoOptions certified_options = keyframe_options;
+  certified_options.require_curvature_certificate = true;
+  const ResponseNeoResult certified = xmvb::vb::solve_response_neo(
+      problem, certified_options);
+  require(certified.converged(),
+          "curvature-certified comparison solve did not converge");
+  require(keyframe.structure_actions < certified.structure_actions,
+          "keyframe forcing accuracy did not reduce structure actions");
+}
+
 }  // namespace
 
 int main() {
@@ -327,6 +365,7 @@ int main() {
     check_workspace_reuses_actions_after_radius_change();
     check_recycled_orbital_guess_starts_subspace();
     check_boundary_residual_uses_shifted_preconditioner();
+    check_keyframe_response_uses_forcing_accuracy();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {
