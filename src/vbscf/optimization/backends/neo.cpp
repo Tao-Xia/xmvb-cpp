@@ -19,6 +19,7 @@
 #include "vbscf/optimization/neo/response_solver.hpp"
 #include "vbscf/optimization/objective/function.hpp"
 #include "vbscf/optimization/preconditioners/shifted_metric.hpp"
+#include "vbscf/optimization/preconditioners/transported_lbfgs.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -62,6 +63,8 @@ bool build_accepted_neo_keyframe(
     const Eigen::VectorXd& reduced_gradient,
     const Eigen::VectorXd& current_parameters,
     const Eigen::VectorXd& orbital_guess_packed,
+    const std::vector<PackedSecantPair>& packed_secant_history,
+    int history_size,
     double gradient_l2,
     double energy,
     double* trust_radius,
@@ -106,6 +109,12 @@ bool build_accepted_neo_keyframe(
       objective->second_order_context()
           ->structure_solve_accuracy
           .response_backward_error_tolerance(selected_energy_scale);
+  const auto secant_preconditioner =
+      build_transported_reduced_lbfgs_preconditioner(
+          chart,
+          packed_secant_history,
+          history_size,
+          LbfgsInitialInverse::OrbitalBlock);
   std::function<ResponseNeoResult(const NeoOptions&)> solve_step;
   if (use_structure_response) {
     auto problem = std::make_shared<ResponseNeoProblem>(
@@ -133,8 +142,12 @@ bool build_accepted_neo_keyframe(
         [&orbital_metric](const Eigen::VectorXd& vector) {
           return orbital_metric.apply(vector);
         },
-        [&chart, &orbital_metric](
+        [&chart, &orbital_metric, &secant_preconditioner](
             const Eigen::VectorXd& residual, double shift) {
+          if (shift == 0.0) {
+            return apply_nonredundant_truncated_newton_preconditioner(
+                chart, &secant_preconditioner, residual);
+          }
           return apply_inverse_shifted_metric_model(
               residual,
               shift,
@@ -318,6 +331,8 @@ BackendRunResult run_neo_backend(
   double previous_energy = initial_energy;
   double trust_radius =
       std::max(options.minimum_step_size, options.initial_step_size);
+  std::vector<PackedSecantPair> packed_secant_history;
+  packed_secant_history.reserve(std::max(0, options.history_size));
   const OrbitalPreconditioner preconditioner =
       resolve_neo_preconditioner(*objective, options.orbital_preconditioner);
   OrbitalChart chart = build_orbital_chart(
@@ -371,6 +386,8 @@ BackendRunResult run_neo_backend(
               projected.reduced_gradient,
               parameters,
               keyframe_orbital_guess_packed,
+              packed_secant_history,
+              options.history_size,
               final_gradient_l2,
               energy,
               &trust_radius,
@@ -384,6 +401,9 @@ BackendRunResult run_neo_backend(
       objective->complete_trial(&accepted.trial);
       accepted.parameters =
           parameter_view.pack(accepted.trial.orbital_preparation_input);
+      Eigen::VectorXd packed_step = accepted.parameters - parameters;
+      Eigen::VectorXd packed_gradient_change =
+          accepted.trial.gradient - gradient;
       gradient = accepted.trial.gradient;
       energy = accepted.trial.energy;
       objective->commit(std::move(accepted.trial));
@@ -397,6 +417,12 @@ BackendRunResult run_neo_backend(
       // integral-dependent preconditioner until another NEO solve is needed.
       OrbitalChart next_geometry = build_orbital_chart(
           *objective, parameter_view, OrbitalPreconditioner::Identity);
+      append_projected_secant_pair(
+          next_geometry,
+          std::move(packed_step),
+          std::move(packed_gradient_change),
+          options.history_size,
+          &packed_secant_history);
       auto next_projected = next_geometry.project_gradient(gradient);
       final_gradient_inf =
           gradient_infinity_norm(next_projected.reduced_gradient);
