@@ -746,9 +746,49 @@ exact path's iteration count.  Its final energy is $-198.7509765327\ E_h$,
 while the remaining difference from the exact result is the controlled RI
 integral approximation.
 
+### 8.4 Direction-local NEO structure response
+
+The NEO response workspace now solves structure equations only for the current
+candidate step and an optional hard-case curvature direction.  It no longer
+closes
+
+$$
+\mathbf C\mathbf Z=-\mathbf B\mathbf Q_o
+$$
+
+for every retained orbital basis vector.  Continuous basis/image matrices and
+incrementally updated projected blocks remove the repeated reconstruction of
+$\mathbf Q_o$, $\mathbf A\mathbf Q_o$, $\mathbf B\mathbf Q_o$, and their
+Gram matrices.  Independent unresolved response directions are
+orthogonalized and submitted to one memory-bounded structure H/S block action.
+
+Hanhai25 Slurm array job `250378` used 32 CPU cores, exact Libcint integrals,
+Davidson structure diagonalization, the one-electron orbital preconditioner,
+and common convergence thresholds of $10^{-3}$ for the projected gradient and
+$10^{-7}\ E_h$ for the energy change.  No outer-iteration truncation was used.
+
+| case | outer steps | orbital actions | structure actions | total coupled actions | wall time / s | peak RSS / MiB |
+|---|---:|---:|---:|---:|---:|---:|
+| MnF2 | 11 | 199 | 26 | 225 | 8.73 | 539.7 |
+| FeCl2 | 4 | 72 | 0 | 72 | 5.96 | 425.5 |
+| 241 | 6 | 9 | 0 | 9 | 1.26 | 933.5 |
+| 240 | 5 | 10 | 5 | 15 | 9.32 | 1811.6 |
+
+The zero entries are residual decisions, not molecule labels or a disabled
+response implementation.  In FeCl2 and 241, the fixed-structure candidate
+already satisfied the complete coupled KKT forcing condition.  MnF2 admitted
+14 and 12 structure directions in outer iterations 7 and 8, respectively;
+240 admitted one and four directions in iterations 3 and 4.  Relative to the
+immediately preceding response-closure implementation, MnF2 structure actions
+decreased from 325 to 26 and FeCl2 structure actions from 194 to zero.  The
+corresponding wall times changed from 8.64 to 8.73 s and from 7.95 to 5.96 s.
+Thus direction-local allocation removes most response work, although the
+MnF2 tail is now dominated by 199 orbital actions and remains a separate
+preconditioning problem.
+
 ## 9. Reproducibility
 
-The configured test suite contains 44 tests, including independent polynomial
+The configured test suite contains 61 tests, including independent polynomial
 cofactor derivatives, complete exact-integral HAO/OEO HVP finite differences,
 factor-native RI response tests, and RI HAO/OEO/state-averaged HVP finite
 differences. All 44 pass after the performance changes. The block-basis tests
@@ -776,4 +816,7 @@ OMP_NUM_THREADS=4 OPENBLAS_NUM_THREADS=1 \
 No performance-selection environment variable remains in the same-spin,
 opposite-spin, packed-gradient, structure-tile, or selected-state sparse/dense
 decision paths. Sparse/dense selected-state contraction is chosen from the
-estimated operation counts of the actual support data.
+estimated operation counts of the actual support data.  Hanhai25 Slurm job
+`250388` rebuilt all developer targets and passed all 61 tests, including the
+241/7975 fixed-point response models, the F2 PySCF NEO reference, HAO/OEO,
+exact/RI, Davidson, and finite-difference HVP checks.
