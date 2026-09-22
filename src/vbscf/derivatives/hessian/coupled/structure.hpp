@@ -33,6 +33,8 @@ struct StructureCouplingAction {
 /** @brief Coordinate-space structure action and orbital-adjoint inputs. */
 struct StructureCoordinateCouplingAction {
   Eigen::VectorXd hessian_coordinates;
+  /** @brief Matching structure-metric image from the same H/S action. */
+  Eigen::VectorXd metric_coordinates;
   Eigen::MatrixXd coefficient_response;
   Eigen::MatrixXd adjoint_multipliers;
 };
@@ -95,9 +97,17 @@ public:
   Eigen::MatrixXd coefficient_response(
       const StructureTangent& tangent) const;
 
+  /** @brief Recovers raw coefficient responses directly from coordinates. */
+  Eigen::MatrixXd coefficient_response_coordinates(
+      const Eigen::VectorXd& coordinates) const;
+
   /** @brief Maximum CI-amplitude component represented by a response. */
   double maximum_coefficient_component(
       const StructureTangent& tangent) const;
+
+  /** @brief Maximum CI-amplitude component without an ambient round trip. */
+  double maximum_coefficient_component_coordinates(
+      const Eigen::VectorXd& coordinates) const;
 
   /** @brief Applies @f$P(H-E_sS)P@f$ independently to every selected state. */
   StructureTangent apply_hessian(const StructureTangent& tangent) const;

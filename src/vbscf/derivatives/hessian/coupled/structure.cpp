@@ -242,9 +242,33 @@ Eigen::MatrixXd StructureTangentOperator::coefficient_response(
   return horizontal.scaled_coefficients;
 }
 
+Eigen::MatrixXd StructureTangentOperator::coefficient_response_coordinates(
+    const Eigen::VectorXd& coordinates) const {
+  Eigen::MatrixXd response = expand(coordinates).scaled_coefficients;
+  for (int state = 0; state < n_states_; ++state) {
+    response.col(state) /= coordinate_scales_[state];
+  }
+  return response;
+}
+
 double StructureTangentOperator::maximum_coefficient_component(
     const StructureTangent& tangent) const {
   const Eigen::MatrixXd response = coefficient_response(tangent);
+  if (response.size() == 0) return 0.0;
+  if (!action_->supports_integral_direction()) {
+    return response.cwiseAbs().maxCoeff();
+  }
+  const Eigen::MatrixXd orthogonal =
+      action_->orthogonalize_structure_block(response);
+  return orthogonal.size() == 0
+      ? 0.0
+      : orthogonal.cwiseAbs().maxCoeff();
+}
+
+double StructureTangentOperator::maximum_coefficient_component_coordinates(
+    const Eigen::VectorXd& coordinates) const {
+  const Eigen::MatrixXd response =
+      coefficient_response_coordinates(coordinates);
   if (response.size() == 0) return 0.0;
   if (!action_->supports_integral_direction()) {
     return response.cwiseAbs().maxCoeff();
@@ -296,10 +320,13 @@ StructureTangentOperator::apply_coupling_coordinates(
   result.adjoint_multipliers =
       -selected_metric_inverse_ * (selected_.transpose() * shifted);
   Eigen::MatrixXd scaled_shifted = std::move(shifted);
+  Eigen::MatrixXd scaled_overlap = images.overlap;
   for (int state = 0; state < n_states_; ++state) {
     scaled_shifted.col(state) *= coordinate_scales_[state];
+    scaled_overlap.col(state) *= coordinate_scales_[state];
   }
   result.hessian_coordinates = project_coordinates(scaled_shifted);
+  result.metric_coordinates = project_coordinates(scaled_overlap);
   return result;
 }
 

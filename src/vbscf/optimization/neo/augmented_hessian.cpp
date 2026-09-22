@@ -8,18 +8,6 @@
 #include <Eigen/Eigenvalues>
 
 namespace xmvb::vb {
-namespace {
-
-Eigen::MatrixXd columns(const std::vector<Eigen::VectorXd>& vectors) {
-  Eigen::MatrixXd result(vectors.front().size(), vectors.size());
-  for (std::size_t column = 0; column < vectors.size(); ++column) {
-    result.col(static_cast<Eigen::Index>(column)) = vectors[column];
-  }
-  return result;
-}
-
-}  // namespace
-
 AugmentedHessianWorkspace::AugmentedHessianWorkspace(
     const NeoProblem& problem)
     : problem_(&problem) {}
@@ -37,8 +25,9 @@ bool AugmentedHessianWorkspace::append(
   const double initial_norm = direction.stableNorm();
   if (!(initial_norm > 0.0) || !std::isfinite(initial_norm)) return false;
   for (int pass = 0; pass < 2; ++pass) {
-    for (const Eigen::VectorXd& basis : vectors_) {
-      direction.noalias() -= basis.dot(direction) * basis;
+    if (vectors_.cols() > 0) {
+      direction.noalias() -=
+          vectors_ * (vectors_.transpose() * direction);
     }
   }
   const double norm = direction.stableNorm();
@@ -46,9 +35,20 @@ bool AugmentedHessianWorkspace::append(
       initial_norm;
   if (!(norm > threshold) || !std::isfinite(norm)) return false;
   direction /= norm;
-  vectors_.push_back(direction);
-  hessian_images_.push_back(problem_->apply_hessian(direction));
-  metric_images_.push_back(problem_->apply_metric(direction));
+  NeoOperatorImages images = problem_->apply_hessian_metric(direction);
+  const Eigen::Index column = vectors_.cols();
+  if (column == 0) {
+    vectors_.resize(direction.size(), 1);
+    hessian_images_.resize(direction.size(), 1);
+    metric_images_.resize(direction.size(), 1);
+  } else {
+    vectors_.conservativeResize(Eigen::NoChange, column + 1);
+    hessian_images_.conservativeResize(Eigen::NoChange, column + 1);
+    metric_images_.conservativeResize(Eigen::NoChange, column + 1);
+  }
+  vectors_.col(column) = std::move(direction);
+  hessian_images_.col(column) = std::move(images.hessian);
+  metric_images_.col(column) = std::move(images.metric);
   return true;
 }
 
@@ -71,7 +71,7 @@ AugmentedHessianStep AugmentedHessianWorkspace::next(
           "augmented-Hessian residual is linearly dependent");
     }
   }
-  if (vectors_.empty()) {
+  if (vectors_.cols() == 0) {
     Eigen::VectorXd seed = problem_->initial_guess().size() == problem_->size()
         ? problem_->initial_guess()
         : gradient;
@@ -85,9 +85,9 @@ AugmentedHessianStep AugmentedHessianWorkspace::next(
   }
 
   while (true) {
-    const Eigen::MatrixXd q = columns(vectors_);
-    const Eigen::MatrixXd hq = columns(hessian_images_);
-    const Eigen::MatrixXd mq = columns(metric_images_);
+    const Eigen::MatrixXd& q = vectors_;
+    const Eigen::MatrixXd& hq = hessian_images_;
+    const Eigen::MatrixXd& mq = metric_images_;
     const Eigen::Index n = q.cols();
     Eigen::MatrixXd augmented = Eigen::MatrixXd::Zero(n + 1, n + 1);
     Eigen::MatrixXd overlap = Eigen::MatrixXd::Zero(n + 1, n + 1);
@@ -132,10 +132,10 @@ AugmentedHessianStep AugmentedHessianWorkspace::next(
     AugmentedHessianStep result;
     result.step = q * coefficients;
     result.hessian_step = hq * coefficients;
-    const Eigen::VectorXd metric_step = mq * coefficients;
+    result.metric_step = mq * coefficients;
     result.augmented_component = eigenvector[0];
     result.residual = eigenvector[0] *
-        (gradient + result.hessian_step - eigenvalue * metric_step);
+        (gradient + result.hessian_step - eigenvalue * result.metric_step);
     result.eigenvalue = eigenvalue;
     result.residual_norm = result.residual.stableNorm();
     result.overlap_minimum = overlap_minimum;

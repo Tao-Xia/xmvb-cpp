@@ -1,7 +1,5 @@
 #pragma once
 
-#include <vector>
-
 #include <Eigen/Core>
 
 #include "vbscf/optimization/neo/problem.hpp"
@@ -21,6 +19,7 @@ struct AugmentedHessianOptions {
 struct AugmentedHessianStep {
   Eigen::VectorXd step;
   Eigen::VectorXd hessian_step;
+  Eigen::VectorXd metric_step;
   Eigen::VectorXd residual;
   double eigenvalue = 0.0;
   double residual_norm = 0.0;
@@ -56,7 +55,7 @@ public:
       const AugmentedHessianOptions& options);
 
   int hessian_actions() const noexcept {
-    return static_cast<int>(hessian_images_.size());
+    return static_cast<int>(hessian_images_.cols());
   }
 
 private:
@@ -66,9 +65,9 @@ private:
       bool precondition);
 
   const NeoProblem* problem_ = nullptr;
-  std::vector<Eigen::VectorXd> vectors_;
-  std::vector<Eigen::VectorXd> hessian_images_;
-  std::vector<Eigen::VectorXd> metric_images_;
+  Eigen::MatrixXd vectors_;
+  Eigen::MatrixXd hessian_images_;
+  Eigen::MatrixXd metric_images_;
   Eigen::VectorXd pending_residual_;
   double pending_eigenvalue_ = 0.0;
   bool has_pending_residual_ = false;

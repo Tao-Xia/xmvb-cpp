@@ -147,41 +147,66 @@ bool build_accepted_neo_keyframe(
   NeoProblem problem(
       std::move(joint_gradient),
       [&coupled_hessian, &coordinates](const Eigen::VectorXd& vector) {
-        return coordinates.flatten(
-            coupled_hessian.apply(coordinates.unflatten(vector)));
+        const CoupledCoordinateDirection image =
+            coupled_hessian.apply_coordinates(
+                vector.head(coordinates.orbital_size()),
+                vector.tail(coordinates.structure_size()));
+        Eigen::VectorXd result(coordinates.size());
+        result.head(coordinates.orbital_size()) = image.orbital;
+        result.tail(coordinates.structure_size()) = image.structure;
+        return result;
       },
       [&coordinates](const Eigen::VectorXd& vector) {
         return coordinates.apply_metric(vector);
       },
       [&chart, &structure_hessian, &coordinates](
           const Eigen::VectorXd& covector, double eigenvalue) {
-        CoupledDirection blocks = coordinates.unflatten(covector);
+        Eigen::VectorXd result(coordinates.size());
         const double shifted_eigenvalue = eigenvalue - kAhLevelShift;
-        blocks.orbital = chart.apply_inverse_augmented_hessian_diagonal(
-            blocks.orbital, shifted_eigenvalue);
-        const Eigen::VectorXd structure_coordinates =
-            structure_hessian.coordinates(blocks.structure);
-        blocks.structure = structure_hessian.expand(
+        result.head(coordinates.orbital_size()) =
+            chart.apply_inverse_augmented_hessian_diagonal(
+                covector.head(coordinates.orbital_size()),
+                shifted_eigenvalue);
+        result.tail(coordinates.structure_size()) =
             structure_hessian.apply_inverse_augmented_hessian_diagonal(
-                structure_coordinates, shifted_eigenvalue));
-        return coordinates.flatten(blocks);
+                covector.tail(coordinates.structure_size()),
+                shifted_eigenvalue);
+        return result;
       },
       std::nullopt,
-      std::move(initial_guess));
+      std::move(initial_guess),
+      [&coupled_hessian, &coordinates, &orbital_metric](
+          const Eigen::VectorXd& vector) {
+        const CoupledCoordinateDirection image =
+            coupled_hessian.apply_coordinates(
+                vector.head(coordinates.orbital_size()),
+                vector.tail(coordinates.structure_size()));
+        NeoOperatorImages result;
+        result.hessian.resize(coordinates.size());
+        result.metric.resize(coordinates.size());
+        result.hessian.head(coordinates.orbital_size()) = image.orbital;
+        result.hessian.tail(coordinates.structure_size()) = image.structure;
+        result.metric.head(coordinates.orbital_size()) =
+            orbital_metric.apply(vector.head(coordinates.orbital_size()));
+        result.metric.tail(coordinates.structure_size()) =
+            image.structure_metric;
+        return result;
+      });
   AugmentedHessianWorkspace workspace(problem);
   const auto joint_gradient_norm =
       [&coordinates, &structure_hessian](const Eigen::VectorXd& covector) {
-        const CoupledDirection blocks = coordinates.unflatten(covector);
         return std::hypot(
-            blocks.orbital.stableNorm(),
+            covector.head(coordinates.orbital_size()).stableNorm(),
             structure_hessian.diagonal_dual_norm(
-                structure_hessian.coordinates(blocks.structure)));
+                covector.tail(coordinates.structure_size())));
       };
   OrbitalPreparationInput keyframe_orbitals = accepted_orbitals;
   Eigen::MatrixXd keyframe_structure_coefficients =
       objective->second_order_context()->selected_state_eigenvectors;
   Eigen::VectorXd keyframe_step = Eigen::VectorXd::Zero(coordinates.size());
   Eigen::VectorXd keyframe_hessian_step =
+      Eigen::VectorXd::Zero(coordinates.size());
+  Eigen::VectorXd keyframe_metric_step =
       Eigen::VectorXd::Zero(coordinates.size());
   Eigen::VectorXd model_gradient = problem.gradient();
   double completed_gradient_dot_step = 0.0;
@@ -207,31 +232,34 @@ bool build_accepted_neo_keyframe(
 
     last_increment = last_ah_step.step;
     last_hessian_increment = last_ah_step.hessian_step;
-    const CoupledDirection increment_blocks =
-        coordinates.unflatten(last_increment);
+    Eigen::VectorXd last_metric_increment = last_ah_step.metric_step;
     double increment_max =
-        chart.maximum_rotation_component(increment_blocks.orbital);
+        chart.maximum_rotation_component(
+            last_increment.head(coordinates.orbital_size()));
     increment_max = std::max(
         increment_max,
-        structure_hessian.maximum_coefficient_component(
-            increment_blocks.structure));
+        structure_hessian.maximum_coefficient_component_coordinates(
+            last_increment.tail(coordinates.structure_size())));
     if (increment_max > kMaximumAhCoordinateStep) {
       const double scale = kMaximumAhCoordinateStep / increment_max;
       last_increment *= scale;
       last_hessian_increment *= scale;
+      last_metric_increment *= scale;
       reached_boundary = true;
     }
     keyframe_step += last_increment;
     keyframe_hessian_step += last_hessian_increment;
+    keyframe_metric_step += last_metric_increment;
     model_gradient += last_hessian_increment;
     ++iterations_since_keyframe;
     const double model_gradient_norm = joint_gradient_norm(model_gradient);
-    const double keyframe_step_norm =
-        std::sqrt(coordinates.squared_norm(keyframe_step));
+    const double keyframe_step_norm = std::sqrt(std::max(
+        0.0, keyframe_step.dot(keyframe_metric_step)));
     if (record->micro_iterations > 3 &&
         model_gradient_norm > kAhGradientTrust * keyframe_gradient_norm) {
       keyframe_step -= last_increment;
       keyframe_hessian_step -= last_hessian_increment;
+      keyframe_metric_step -= last_metric_increment;
       model_gradient -= last_hessian_increment;
       break;
     }
@@ -252,17 +280,16 @@ bool build_accepted_neo_keyframe(
         iterations_since_keyframe >= keyframe_threshold ||
         model_gradient_norm < keyframe_gradient_norm / kAhGradientTrust;
     if (keyframe_due) {
-      const CoupledDirection keyframe_increment =
-          coordinates.unflatten(keyframe_step);
       const Eigen::VectorXd keyframe_parameters =
           build_nonredundant_lifted_trial_parameters(
               keyframe_orbitals,
               chart,
               parameter_view,
-              keyframe_increment.orbital);
+              keyframe_step.head(coordinates.orbital_size()));
       const Eigen::MatrixXd keyframe_coefficients =
           keyframe_structure_coefficients +
-          structure_hessian.coefficient_response(keyframe_increment.structure);
+          structure_hessian.coefficient_response_coordinates(
+              keyframe_step.tail(coordinates.structure_size()));
       // CIAH keyframes retain both approximate components of the joint step.
       // Rediagonalizing H/S here would erase the structure microiterations and
       // turn the coupled method into a different, repeatedly relaxed method.
@@ -301,11 +328,13 @@ bool build_accepted_neo_keyframe(
             std::move(keyframe.normalized_structure_coefficients);
         keyframe_step.setZero();
         keyframe_hessian_step.setZero();
+        keyframe_metric_step.setZero();
         model_gradient = std::move(exact_gradient);
         keyframe_gradient_norm = exact_gradient_norm;
       } else {
         keyframe_step -= last_increment;
         keyframe_hessian_step -= last_hessian_increment;
+        keyframe_metric_step -= last_metric_increment;
         model_gradient -= last_hessian_increment;
         ++record->rejected_trial_count;
         break;
@@ -313,10 +342,12 @@ bool build_accepted_neo_keyframe(
     }
   }
 
-  CoupledDirection joint_step = coordinates.unflatten(keyframe_step);
   Eigen::VectorXd candidate_parameters =
       build_nonredundant_lifted_trial_parameters(
-          keyframe_orbitals, chart, parameter_view, joint_step.orbital);
+          keyframe_orbitals,
+          chart,
+          parameter_view,
+          keyframe_step.head(coordinates.orbital_size()));
   if (is_effectively_zero_step(
           candidate_parameters - current_parameters, current_parameters)) {
     result->termination_reason = "neo_zero_orbital_step";
@@ -324,7 +355,8 @@ bool build_accepted_neo_keyframe(
   }
   const Eigen::MatrixXd candidate_structure_coefficients =
       keyframe_structure_coefficients +
-      structure_hessian.coefficient_response(joint_step.structure);
+      structure_hessian.coefficient_response_coordinates(
+          keyframe_step.tail(coordinates.structure_size()));
   auto trial = objective->evaluate_trial_with_structure_guess(
       candidate_parameters, candidate_structure_coefficients);
 
@@ -350,10 +382,10 @@ bool build_accepted_neo_keyframe(
       parameter_view.pack(trial.orbital_preparation_input);
   accepted->next_orbital_guess_packed =
       chart.expand_step(
-          coordinates.unflatten(last_increment).orbital);
+          last_increment.head(coordinates.orbital_size()));
   accepted->next_structure_guess =
-      structure_hessian.coefficient_response(
-          coordinates.unflatten(last_increment).structure);
+      structure_hessian.coefficient_response_coordinates(
+          last_increment.tail(coordinates.structure_size()));
   accepted->trial = std::move(trial);
   accept_neo_keyframe_record(
       AcceptedNeoModelScalars{

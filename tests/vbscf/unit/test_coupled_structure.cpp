@@ -225,6 +225,10 @@ void check_equal_weight_multistate(const StructureFixture& fixture) {
   require((coordinate_action.hessian_coordinates -
            structure.coordinates(hx)).norm() < 3.0e-13,
           "coordinate-space structure Hessian action is inconsistent");
+  require((coordinate_action.metric_coordinates -
+           structure.coordinates(structure.apply_metric(horizontal_x))).norm() <
+              3.0e-13,
+          "shared H/S structure metric action is inconsistent");
   const auto ambient_action = structure.apply_coupling(horizontal_x);
   require((coordinate_action.coefficient_response -
            ambient_action.coefficient_response).norm() < 3.0e-13,

@@ -40,4 +40,29 @@ CoupledDirection CoupledHessianOperator::apply(
   return result;
 }
 
+CoupledCoordinateDirection CoupledHessianOperator::apply_coordinates(
+    const Eigen::VectorXd& orbital,
+    const Eigen::VectorXd& structure) const {
+  const OrbitalCouplingAction orbital_action =
+      orbital_->apply_orbital_coupling(orbital);
+  const StructureCoordinateCouplingAction structure_action =
+      structure_->apply_coupling_coordinates(structure);
+
+  CoupledCoordinateDirection result;
+  result.orbital = orbital_action.orbital_hessian +
+      orbital_->apply_structure_coupling_adjoint(
+          structure_action.coefficient_response,
+          structure_action.adjoint_multipliers);
+  result.structure = structure_->project_coordinates(
+      orbital_action.scaled_structure_forcing);
+  result.structure += structure_action.hessian_coordinates;
+  result.structure_metric = structure_action.metric_coordinates;
+  if (!result.orbital.allFinite() || !result.structure.allFinite() ||
+      !result.structure_metric.allFinite()) {
+    throw std::runtime_error(
+        "coupled coordinate Hessian action is not finite");
+  }
+  return result;
+}
+
 }  // namespace xmvb::vb

@@ -14,6 +14,14 @@ struct CoupledDirection {
   StructureTangent structure;
 };
 
+/** @brief Coupled Hessian image represented entirely in independent coordinates. */
+struct CoupledCoordinateDirection {
+  Eigen::VectorXd orbital;
+  Eigen::VectorXd structure;
+  /** @brief Structure metric image obtained by the same H/S contraction. */
+  Eigen::VectorXd structure_metric;
+};
+
 /**
  * @brief Matrix-free coupled VBSCF Hessian at one accepted point.
  *
@@ -29,6 +37,16 @@ public:
 
   /** @brief Returns @f$[\bar A p+B^Tz,\;Bp+Cz]@f$. */
   CoupledDirection apply(const CoupledDirection& direction) const;
+
+  /**
+   * @brief Applies the coupled Hessian without ambient structure round trips.
+   *
+   * The returned structure metric image reuses the overlap contraction already
+   * required for @f$Cz@f$; callers must not issue a second H/S action for it.
+   */
+  CoupledCoordinateDirection apply_coordinates(
+      const Eigen::VectorXd& orbital,
+      const Eigen::VectorXd& structure) const;
 
 private:
   const ExactHvpOperator* orbital_ = nullptr;
