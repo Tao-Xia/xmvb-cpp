@@ -786,6 +786,41 @@ Thus direction-local allocation removes most response work, although the
 MnF2 tail is now dominated by 199 orbital actions and remains a separate
 preconditioning problem.
 
+### 8.5 Orbital-preconditioner audit
+
+The orbital KKT equation at a trust-region boundary is
+
+$$
+(\mathbf H+\lambda\mathbf M)\mathbf p=-\mathbf g.
+$$
+
+The previous local inverse shifted its block model by \(\lambda\mathbf I\),
+although the accepted-point retraction metric \(\mathbf M\) is generally not
+the identity. Production now applies \((\mathbf D+\lambda\mathbf M)^{-1}\)
+by matrix-free preconditioned CG using only inexpensive local-model and metric
+actions. A roundoff-certified unit test with a nondiagonal metric distinguishes
+this equation from \((\mathbf D+\lambda\mathbf I)^{-1}\). Hanhai25 job
+`250412` reproduced the reference MnF2 result with 11 outer steps, 199 orbital
+actions, 26 structure actions, and 8.79 s wall time. The two expensive tail
+solves have \(\lambda=0\), so this geometric correction correctly leaves them
+unchanged; it is a correctness fix for shifted solves, not a claimed MnF2
+speedup.
+
+Two stronger inverse updates were rejected by matched Hanhai25 calculations.
+Applying the response-space Woodbury formula in eq 45d of the theory note
+produced exactly the same MnF2 action sequence (job `250406`). Its correction
+did not add an effective direction outside the orbital trial space, so the
+unused production class and its dedicated test were removed. Using transported
+block-LBFGS secants only as the zero-shift NEO Krylov preconditioner preserved
+the exact HVP and final KKT certificate but regressed MnF2 from 11/199 to
+12/253 outer steps/orbital actions and increased wall time from 8.73 to 10.84 s
+(job `250419`). This experiment was also removed rather than retained behind
+an option. An analytic Hessian-diagonal run was cancelled after 59 s at outer
+step 6, compared with 8.73 s for complete convergence with the one-electron
+block. These results isolate the remaining problem as a stable representation
+of cross-orbital relaxed curvature; neither a more expensive scalar diagonal
+nor unqualified cross-point secant transport solves it.
+
 ## 9. Reproducibility
 
 The configured test suite contains 61 tests, including independent polynomial

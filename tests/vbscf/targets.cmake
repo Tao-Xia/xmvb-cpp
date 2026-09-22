@@ -32,7 +32,6 @@ set(_xmvb_vbscf_unit_targets
   test_sparse_orbital_quotient
   test_support_preserving_gauge
   test_spectral_trust_region
-  test_structure_response_woodbury
   test_orbital_block_partition)
 
 foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
@@ -146,11 +145,6 @@ if (BUILD_TESTING)
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME spectral_trust_region COMMAND test_spectral_trust_region)
   set_tests_properties(spectral_trust_region PROPERTIES
-    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(
-    NAME structure_response_woodbury
-    COMMAND test_structure_response_woodbury)
-  set_tests_properties(structure_response_woodbury PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME orthonormal_hvp_basis COMMAND test_orthonormal_hvp_basis)
   set_tests_properties(orthonormal_hvp_basis PROPERTIES

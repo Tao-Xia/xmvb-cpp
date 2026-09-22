@@ -122,7 +122,6 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/preconditioners/block_inverse_bfgs.cpp
   vbscf/optimization/preconditioners/hessian_diagonal.cpp
   vbscf/optimization/preconditioners/shifted_metric.cpp
-  vbscf/optimization/preconditioners/structure_response_woodbury.cpp
   vbscf/optimization/preconditioners/transported_lbfgs.cpp
   vbscf/optimization/objective/reduced_hvp.cpp
   vbscf/optimization/trust_region/retraction.cpp

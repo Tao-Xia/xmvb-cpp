@@ -922,6 +922,15 @@ eq 45d is used.  This update changes only the orbital residual direction used
 to expand the NEO workspace; the true HVP, structure residual in eq 45b, and
 the final NEO KKT certificate remain unchanged.
 
+Equation 45d is an algebraically valid inverse of the projected Schur model,
+but it is not automatically an effective Davidson expansion. If its added
+component is contained in, or is removed modulo, the retained orbital trial
+space, orthogonalization produces the same next quotient direction as the base
+preconditioner. The production implementation therefore requires a measured
+independent complement, not merely successful construction of the small
+Woodbury inverse. The tested direction-local realization generated an
+unchanged molecular Krylov trajectory and is not retained in the code.
+
 For block orbital coupling and block structure actions, let $m_{\mathrm{col}}$
 be a conservative upper bound on temporary bytes per direction and let
 $M_{\mathrm{work}}$ be the workspace budget.  The executed block width is
