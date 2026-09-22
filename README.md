@@ -67,8 +67,9 @@ OMP_NUM_THREADS=1 build/src/xmvb-cpp.exe <input.xmi>
 Input files use the `.xmi` format. See `testdata/vbscf/` for the versioned
 regression decks and `testdata/vbscf/F2.xmi` for the compact HAO smoke case.
 Within `$CTRL`, `ISCF=5` selects the XMVB-compatible raw-coordinate L-BFGS,
-`ISCF=7` selects TNHVP, and `ISCF=8` selects nonredundant block-LBFGS. The
-project default when `ISCF` is omitted is block-LBFGS.
+`ISCF=7` selects TNHVP, `ISCF=8` selects nonredundant block-LBFGS, and
+`ISCF=9` selects NEO. The project default when `ISCF` is omitted is
+block-LBFGS.
 `EIGENSOLVER=DAVIDSON` selects the default matrix-free structure solver,
 while `EIGENSOLVER=DENSE` selects the explicit dense reference solver. An
 explicit `--optimizer-backend` or `--eigensolver` command-line option overrides

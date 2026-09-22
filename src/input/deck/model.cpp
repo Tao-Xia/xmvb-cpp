@@ -250,10 +250,14 @@ void apply_ctrl_assignment(
       metadata->scf_optimizer = InputScfOptimizer::BlockLbfgs;
       return;
     }
+    if (iscf == 9) {
+      metadata->scf_optimizer = InputScfOptimizer::Neo;
+      return;
+    }
     throw std::invalid_argument(
         "unsupported ISCF value " + raw_value +
         "; use ISCF=5 for XMVB L-BFGS, ISCF=7 for TNHVP, or "
-        "ISCF=8 for block-LBFGS");
+        "ISCF=8 for block-LBFGS, or ISCF=9 for NEO");
   }
   if (key == "EIGENSOLVER") {
     if (value_upper == "DAVIDSON") {

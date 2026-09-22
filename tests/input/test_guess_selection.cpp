@@ -70,6 +70,13 @@ int main() {
         explicit_unit.metadata.guess_type == xmvb::vb::kGuessTypeUnit,
         "explicit GUESS=UNIT must override the $GUS default");
 
+    const auto neo_path = root / "neo.xmi";
+    write_deck(neo_path, "iscf=9");
+    const auto neo = xmvb::vb::parse_input_deck_model(neo_path.string());
+    require(
+        neo.metadata.scf_optimizer == xmvb::vb::InputScfOptimizer::Neo,
+        "ISCF=9 must select NEO");
+
     const auto state_average_path = root / "state-average.xmi";
     write_deck(state_average_path, "nstate=3");
     const auto state_average = xmvb::vb::parse_input_deck_model(

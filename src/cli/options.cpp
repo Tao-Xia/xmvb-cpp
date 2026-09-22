@@ -139,7 +139,7 @@ void print_usage() {
                " [--tnhvp-trace <path.tsv>]"
                " [--neo-trace <path.tsv>]"
                " [--dump-final-orbital-value-table-bin <path>]\n"
-               "input optimizer: ISCF=5 selects XMVB L-BFGS; ISCF=7 selects TNHVP; ISCF=8 selects block-LBFGS\n"
+               "input optimizer: ISCF=5 selects XMVB L-BFGS; ISCF=7 selects TNHVP; ISCF=8 selects block-LBFGS; ISCF=9 selects NEO\n"
                "input eigensolver: EIGENSOLVER=DAVIDSON|DENSE (default DAVIDSON)\n";
 }
 

@@ -50,6 +50,9 @@ int run(Options command_line) {
       case xmvb::vb::InputScfOptimizer::BlockLbfgs:
         options.backend = xmvb::vb::VbScfOptimizerBackend::BlockLbfgs;
         break;
+      case xmvb::vb::InputScfOptimizer::Neo:
+        options.backend = xmvb::vb::VbScfOptimizerBackend::Neo;
+        break;
       case xmvb::vb::InputScfOptimizer::Unspecified:
         break;
     }
