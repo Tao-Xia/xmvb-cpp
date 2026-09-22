@@ -35,8 +35,10 @@ public:
     int quotient_dimension_mismatch_orbital_count = 0;
     int total_gauge_rank = 0;
     int total_expected_quotient_dimension = 0;
+    int product_sphere_orbital_count = 0;
     double minimum_relative_scaling_residual = 1.0;
     double maximum_relative_scaling_residual = 0.0;
+    double maximum_sphere_tangency_residual = 0.0;
   };
 
   struct ProjectionResult {
@@ -70,6 +72,13 @@ public:
   ProjectionResult project_gradient(
       const Eigen::VectorXd& packed_gradient) const;
 
+  /**
+   * @brief Projects an ambient vector into this accepted-point chart.
+   *
+   * This is not a differentiated retraction or a cross-point vector
+   * transport. It may initialize a recycled subspace, but exact transported
+   * secant identities require a dedicated manifold transport.
+   */
   ProjectionResult project_vector(
       const Eigen::VectorXd& packed_vector) const;
 
@@ -177,7 +186,9 @@ private:
     int local_combined_rank = 0;
     int expected_quotient_dimension = 0;
     int gauge_intersection_dimension = 0;
+    bool uses_product_sphere_representative = false;
     double relative_scaling_residual = 0.0;
+    double sphere_tangency_residual = 0.0;
     int local_reduced_offset = 0;
     int local_reduced_size = 0;
   };

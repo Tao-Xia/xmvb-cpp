@@ -238,6 +238,9 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
   require(space.reduced_size() == expected_dimension,
           name + ": expected dimension " + std::to_string(expected_dimension) +
           ", got " + std::to_string(space.reduced_size()));
+  const auto chart_diagnostics = space.structural_diagnostics();
+  require(chart_diagnostics.maximum_sphere_tangency_residual < 1.0e-12,
+          name + ": product-sphere representative is not S-tangent");
   Eigen::MatrixXd u(view.size(), space.reduced_size());
   for (int j = 0; j < u.cols(); ++j) {
     u.col(j) = space.expand_step(Eigen::VectorXd::Unit(u.cols(), j));
@@ -388,9 +391,6 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
               name + ": affine solver changed an exact baseline step");
     }
   }
-  require((audit.packed_gauge_basis.transpose() * u).norm() < 1e-11,
-          name + ": nonzero gauge overlap");
-
   const Eigen::VectorXd x = view.pack(input);
   Eigen::MatrixXd fd(physical_map(input).size(), view.size());
   const double h = 1e-4;
@@ -474,11 +474,20 @@ void check_complete_oeo_active_subspace_gauge() {
       input, view, orbitals, orbitals, nullptr, false, false);
   require(structure_subset_chart.reduced_size() == 10,
           "OEO structure subset did not retain independent active rays");
+  const auto subset_diagnostics =
+      structure_subset_chart.structural_diagnostics();
+  require(subset_diagnostics.product_sphere_orbital_count == 3 &&
+              subset_diagnostics.maximum_sphere_tangency_residual < 1.0e-12,
+          "OEO structure subset did not use S-tangent orbital rays");
 
   const OrbitalChart complete_cas_chart(
       input, view, orbitals, orbitals, nullptr, false, true);
   require(complete_cas_chart.reduced_size() == 8,
           "complete-CAS OEO chart did not remove active--active gauge");
+  const auto complete_diagnostics =
+      complete_cas_chart.structural_diagnostics();
+  require(complete_diagnostics.product_sphere_orbital_count == 0,
+          "complete-CAS OEO chart was split into independent orbital rays");
 
   Eigen::VectorXd active_mixing = Eigen::VectorXd::Zero(view.size());
   for (int slot = 0; slot < 5; ++slot) {
@@ -600,39 +609,19 @@ void check_pullback_secant_transport() {
       next_space.project_reduced_gradient(gradient1 - gradient0) /
       accepted_step;
 
-  Eigen::Matrix2d vector_transport;
-  for (int column = 0; column < 2; ++column) {
-    vector_transport.col(column) =
-        next_space
-            .project_vector(old_space.expand_step(
-                Eigen::Vector2d::Unit(column)))
-            .reduced_gradient;
-  }
-  const Eigen::VectorXd transported_old_gradient =
-      vector_transport.transpose().colPivHouseholderQr().solve(
-          old_space.project_reduced_gradient(gradient0));
-  const Eigen::VectorXd transported_gradient_secant =
-      (next_space.project_reduced_gradient(gradient1) -
-       transported_old_gradient) /
-      accepted_step;
   const Eigen::VectorXd untransported_gradient_secant =
       (next_space.project_reduced_gradient(gradient1) -
        old_space.project_reduced_gradient(gradient0)) /
       accepted_step;
 
   const double packed_error = (packed_secant - reference_action).norm();
-  const double transported_gradient_error =
-      (transported_gradient_secant - reference_action).norm();
   const double untransported_gradient_error =
       (untransported_gradient_secant - reference_action).norm();
   require(packed_error < 2.0e-4 * std::max(1.0, reference_action.norm()),
-          "ambient gradient-difference secant lost the affine pullback Hessian");
-  require(transported_gradient_error <
-              5.0e-4 * std::max(1.0, reference_action.norm()),
-          "dual chart transport is not first-order consistent");
+          "ambient gradient-difference secant lost the polar pullback Hessian");
   require(untransported_gradient_error > 1000.0 * packed_error,
           "fixture did not expose the untransported chart-drift term");
-  std::cout << "affine pullback secant transport: passed (packed error "
+  std::cout << "polar pullback ambient secant: passed (packed error "
             << packed_error << ", untransported error "
             << untransported_gradient_error << ")\n";
 }

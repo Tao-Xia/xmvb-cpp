@@ -729,13 +729,103 @@ chart, so this distinction depends only on the wavefunction space and never
 on the choice of TNHVP, NEO, or L-BFGS solver.
 
 The quotient is an accepted-point tangent construction; it must not silently
-replace the nonorthogonal OEO representative during a finite trial.  The
-retraction therefore lifts a reduced step only through the accepted horizontal
-basis,
+replace the nonorthogonal OEO representative during a finite trial. Let
+$\mathbf Q_p$ be the algebraic quotient basis for orbital $p$, and define
+
+$$
+r_p=(\mathbf x_p^{\mathrm T}\mathbf S_p\mathbf x_p)^{1/2},
+\qquad
+\mathbf c_p=\mathbf x_p/r_p,
+\qquad
+\mathbf J_p=
+\frac{\mathbf I-\mathbf c_p\mathbf c_p^{\mathrm T}\mathbf S_p}{r_p}.
+\tag{27o}
+$$
+
+When the complete orbital scaling is an admissible support-preserving gauge,
+use the sphere representative below for a strict-support orbital ray or for a
+full-AO orbital whose selected structure space is not closed under general
+active transformations:
+
+$$
+\begin{aligned}
+\mathbf G_p
+&=
+\mathbf Q_p^{\mathrm T}\mathbf J_p^{\mathrm T}
+\mathbf S_p\mathbf J_p\mathbf Q_p,\\
+\mathbf U_p^{\rm sph}
+&=
+r_p\mathbf J_p\mathbf Q_p\mathbf G_p^{-1/2}.
+\end{aligned}
+\tag{27p}
+$$
+
+This representative satisfies
+
+$$
+\mathbf c_p^{\mathrm T}\mathbf S_p\mathbf U_p^{\rm sph}=0,
+\qquad
+(\mathbf J_p\mathbf U_p^{\rm sph})^{\mathrm T}
+\mathbf S_p(\mathbf J_p\mathbf U_p^{\rm sph})=\mathbf I.
+\tag{27q}
+$$
+
+A reduced step $\mathbf s_p$ is lifted as
+
+$$
+\mathbf x_{p,\rm trial}
+=
+\mathbf x_p+\mathbf U_p^{\rm sph}\mathbf s_p.
+\tag{27r}
+$$
+
+Writing $\boldsymbol\eta_p=\mathbf U_p^{\rm sph}\mathbf s_p/r_p$, the
+downstream normalization is exactly the metric polar retraction
+
+$$
+\mathcal R_{\mathbf c_p}^{\rm polar}(\boldsymbol\eta_p)
+=
+\frac{\mathbf c_p+\boldsymbol\eta_p}
+{\sqrt{1+\boldsymbol\eta_p^{\mathrm T}\mathbf S_p\boldsymbol\eta_p}}.
+\tag{27s}
+$$
+
+The corresponding local metric-sphere exponential is
+
+$$
+\operatorname{Exp}_{\mathbf c_p}(\boldsymbol\eta_p)
+=
+\mathbf c_p\cos\theta_p
++
+\boldsymbol\eta_p\frac{\sin\theta_p}{\theta_p},
+\qquad
+\theta_p^2=
+\boldsymbol\eta_p^{\mathrm T}\mathbf S_p\boldsymbol\eta_p.
+\tag{27t}
+$$
+
+Equations 27s and 27t have the same value, first derivative, and second
+derivative at the accepted point; their difference is $O(\theta_p^3)$.
+Consequently eq 27s supplies the same local Newton model as the sphere
+exponential without an additional gradient evaluation or electronic Hessian
+term. The important change relative to adding an arbitrary raw quotient
+representative is that no finite step is spent in the radial scaling gauge.
+
+A full-AO complete active space is different. Its active orbitals carry a
+coupled $GL(n_{\rm A})$ gauge, so the physical object is an orbital subspace
+rather than a product of independently labeled rays. Applying eq 27s to every
+column separately introduces a second-order active--active gauge drift. The
+implementation therefore retains the coupled quotient representative in this
+case and does not impose independent sphere sections. This distinction is
+determined by closure of the variational structure space, not by the molecule
+or optimizer backend.
+
+In either geometry, the trial input is assembled through the corresponding
+accepted horizontal basis,
 
 $$
 \mathbf x_{\rm trial}=\mathbf x+\mathbf U_p\mathbf s,
-\tag{27o}
+\tag{27u}
 $$
 
 after which the ordinary orbital-preparation map supplies individually
@@ -746,10 +836,10 @@ $$
 =
 \left(\mathbf I-\mathbf D_{\rm I}^{\rm trial}\mathbf S\right)
 \mathcal N_{\rm A}(\mathbf x_{\rm trial}).
-\tag{27p}
+\tag{27v}
 $$
 
-No joint active-space orthogonalization is inserted between eqs 27o and 27p:
+No joint active-space orthogonalization is inserted between eqs 27u and 27v:
 OEO denotes full AO support, not mutually orthogonal active orbitals.  Such a
 canonicalization leaves a complete-CAS energy invariant but changes the
 retraction; unless its differential is included in the gradient and Hessian

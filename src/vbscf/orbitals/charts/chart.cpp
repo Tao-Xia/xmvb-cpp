@@ -283,10 +283,14 @@ Eigen::MatrixXd build_exact_local_sparse_quotient_basis(
   }
 
   // LAPACKE requires the actual column-major stride, not a transpose view.
-  const Eigen::MatrixXd local_gauge_transpose =
+  // This complement fixes the inter-orbital quotient gauge.  The independent
+  // scaling gauge is converted to an S-tangent representative later, after
+  // applying the orbital-normalization Jacobian; changing all gauge
+  // complements here would select a different physical horizontal lift.
+  const Eigen::MatrixXd horizontal_constraints =
       local_gauge_generators.transpose();
   Eigen::JacobiSVD<Eigen::MatrixXd> gauge_svd(
-      local_gauge_transpose, Eigen::ComputeFullV);
+      horizontal_constraints, Eigen::ComputeFullV);
   if (gauge_svd.info() != Eigen::Success) {
     throw std::runtime_error("failed to factor exact local sparse gauge");
   }
@@ -352,7 +356,8 @@ Eigen::MatrixXd build_stable_inactive_span_basis(
 Eigen::MatrixXd whiten_normalized_orbital_quotient_basis(
     const Eigen::Ref<const Eigen::MatrixXd>& quotient_basis,
     const Eigen::Ref<const Eigen::VectorXd>& raw_coefficients,
-    const Eigen::Ref<const Eigen::MatrixXd>& overlap) {
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap,
+    bool use_product_sphere_representative) {
   if (quotient_basis.rows() != raw_coefficients.size() ||
       overlap.rows() != raw_coefficients.size() ||
       overlap.cols() != raw_coefficients.size()) {
@@ -402,7 +407,23 @@ Eigen::MatrixXd whiten_normalized_orbital_quotient_basis(
       eigensolver.eigenvectors() *
       eigensolver.eigenvalues().cwiseSqrt().cwiseInverse().asDiagonal() *
       eigensolver.eigenvectors().transpose();
-  Eigen::MatrixXd whitened = quotient_basis * inverse_square_root;
+  Eigen::MatrixXd whitened;
+  if (use_product_sphere_representative) {
+    // Use the unique raw-coefficient representative whose normalization
+    // derivative is the whitened physical tangent and whose S-radial
+    // component vanishes. Multiplication by `norm` maps the unit-sphere
+    // tangent back to the scale of the stored representative. This changes
+    // only the scaling gauge, so a finite additive update followed by
+    // normalization is the polar retraction on the orbital ray.
+    whitened = norm * physical_tangents * inverse_square_root;
+  } else {
+    // A full-AO complete active space has a coupled GL gauge and therefore a
+    // Grassmann-type quotient rather than a product of independent orbital
+    // rays. Preserve its coupled horizontal representative; imposing a
+    // separate sphere section on each column introduces second-order
+    // active--active gauge drift.
+    whitened = quotient_basis * inverse_square_root;
+  }
   require_finite_matrix(
       whitened,
       "normalized-orbital whitened quotient basis");
@@ -612,12 +633,42 @@ OrbitalChart::OrbitalChart(
           stored_overlap(row, column) = ao_overlap(ao_row, ao_column);
         }
       }
+      const bool scaling_gauge_is_admissible =
+          stored_count == local_size ||
+          stored_coefficients.tail(stored_count - local_size).isZero(0.0);
+      const bool use_product_sphere_representative =
+          !use_active_subspace_gauge && scaling_gauge_is_admissible;
       const Eigen::MatrixXd whitened_stored_basis =
           whiten_normalized_orbital_quotient_basis(
               stored_quotient_basis,
               stored_coefficients,
-              stored_overlap);
+              stored_overlap,
+              use_product_sphere_representative);
       proj.tangent_basis = whitened_stored_basis.topRows(local_size);
+      proj.uses_product_sphere_representative =
+          use_product_sphere_representative;
+      if (proj.uses_product_sphere_representative) {
+        const Eigen::VectorXd overlap_times_coefficients =
+            stored_overlap * stored_coefficients;
+        const Eigen::MatrixXd local_overlap =
+            stored_overlap.topLeftCorner(local_size, local_size);
+        const double orbital_metric_norm = std::sqrt(
+            stored_coefficients.dot(overlap_times_coefficients));
+        for (Eigen::Index column = 0;
+             column < proj.tangent_basis.cols();
+             ++column) {
+          const Eigen::VectorXd direction = proj.tangent_basis.col(column);
+          const double direction_metric_norm =
+              std::sqrt(direction.dot(local_overlap * direction));
+          if (orbital_metric_norm > 0.0 && direction_metric_norm > 0.0) {
+            proj.sphere_tangency_residual = std::max(
+                proj.sphere_tangency_residual,
+                std::abs(overlap_times_coefficients.head(local_size).dot(
+                    direction)) /
+                    (orbital_metric_norm * direction_metric_norm));
+          }
+        }
+      }
       const Eigen::MatrixXd raw_tangent_gram =
           proj.tangent_basis.transpose() * proj.tangent_basis;
       Eigen::LDLT<Eigen::MatrixXd> raw_gram_ldlt(raw_tangent_gram);
@@ -845,6 +896,9 @@ OrbitalChart::structural_diagnostics() const noexcept {
       diagnostics.total_gauge_rank += projector.local_gauge_rank;
       diagnostics.total_expected_quotient_dimension +=
           projector.expected_quotient_dimension;
+      if (projector.uses_product_sphere_representative) {
+        ++diagnostics.product_sphere_orbital_count;
+      }
       diagnostics.minimum_relative_scaling_residual =
           std::min(
               diagnostics.minimum_relative_scaling_residual,
@@ -853,6 +907,10 @@ OrbitalChart::structural_diagnostics() const noexcept {
           std::max(
               diagnostics.maximum_relative_scaling_residual,
               projector.relative_scaling_residual);
+      diagnostics.maximum_sphere_tangency_residual =
+          std::max(
+              diagnostics.maximum_sphere_tangency_residual,
+              projector.sphere_tangency_residual);
     }
   }
   if (diagnostics.orbital_count == 0) {

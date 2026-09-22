@@ -1315,10 +1315,14 @@ int main(int argc, char** argv) {
               << space_diagnostics.total_gauge_rank << '\n';
     std::cout << "nros_total_expected_quotient_dimension = "
               << space_diagnostics.total_expected_quotient_dimension << '\n';
+    std::cout << "nros_product_sphere_orbital_count = "
+              << space_diagnostics.product_sphere_orbital_count << '\n';
     std::cout << "nros_min_relative_scaling_residual = "
               << space_diagnostics.minimum_relative_scaling_residual << '\n';
     std::cout << "nros_max_relative_scaling_residual = "
               << space_diagnostics.maximum_relative_scaling_residual << '\n';
+    std::cout << "nros_max_sphere_tangency_residual = "
+              << space_diagnostics.maximum_sphere_tangency_residual << '\n';
     if (options.gauge_audit) {
       Eigen::MatrixXd current_packed_reduced_basis(
           context.parameter_view.size(),
