@@ -84,12 +84,13 @@ struct NeoResult {
  * The method builds a Euclidean-orthonormal action subspace, whitens its small
  * projected physical metric, solves the projected norm-constrained quadratic
  * problem, and expands with the KKT or lowest-curvature Ritz residual. A
- * successful return requires an explicit full-space KKT residual and a
- * converged full-space residual of the lowest generalized-Hessian Ritz pair.
- * As in matrix-free Davidson/Lanczos, lowest-root identification assumes that
- * the generic starting probe overlaps the lowest eigenspace. A complete basis
- * or a caller-supplied spectral lower bound supplies the stronger rigorous
- * global certificate reported in `NeoResult`. The
+ * successful return always requires an explicit full-space KKT residual.
+ * Lowest-curvature Ritz convergence is additionally required when requested
+ * by the caller and whenever the projected solution is a boundary or hard-case
+ * step. As in matrix-free Davidson/Lanczos, lowest-root identification assumes
+ * that the generic starting probe overlaps the lowest eigenspace. A complete
+ * basis or a caller-supplied spectral lower bound supplies the stronger
+ * rigorous global certificate reported in `NeoResult`. The
  * physical metric enters only through the trust-region norm and projected
  * generalized eigenproblem; an optional preconditioner only proposes new
  * subspace directions.

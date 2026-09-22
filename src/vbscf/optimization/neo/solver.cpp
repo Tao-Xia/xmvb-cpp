@@ -152,7 +152,7 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
 
   // A reproducible generic seed supplies the nonzero-overlap assumption used
   // by matrix-free lowest-root Davidson/Lanczos methods.
-  if (maximum_dimension > 1) {
+  if (options.require_curvature_certificate && maximum_dimension > 1) {
     append_direction(
         problem, generic_probe(problem.size()), &basis,
         &result.hessian_actions);
@@ -262,7 +262,12 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
             -positivity_tolerance;
     result.global_curvature_certified =
         complete_basis || lower_bound_certifies;
-    if (stationary && curvature_converged && shifted_positive &&
+    const bool need_curvature_certificate =
+        options.require_curvature_certificate || result.boundary ||
+        result.hard_case;
+    const bool required_curvature_converged =
+        !need_curvature_certificate || curvature_converged;
+    if (stationary && required_curvature_converged && shifted_positive &&
         (result.global_curvature_certified ||
          !problem.hessian_lower_bound())) {
       result.stop_reason = NeoStopReason::Converged;
@@ -284,7 +289,7 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
           &basis,
           &result.hessian_actions);
     }
-    if (!expanded && !curvature_converged) {
+    if (!expanded && need_curvature_certificate && !curvature_converged) {
       expanded = append_direction(
           problem,
           residual_direction(problem, -curvature_residual),
@@ -298,7 +303,7 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
           problem, std::move(canonical), &basis, &result.hessian_actions);
     }
     if (!expanded) {
-      result.stop_reason = stationary && curvature_converged &&
+      result.stop_reason = stationary && required_curvature_converged &&
               shifted_positive &&
               (result.global_curvature_certified ||
                !problem.hessian_lower_bound())

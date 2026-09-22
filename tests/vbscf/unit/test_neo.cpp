@@ -353,6 +353,56 @@ void check_scalable_lowest_root_convergence() {
           "an incomplete Davidson space claimed a rigorous global certificate");
 }
 
+void check_optional_curvature_certificate() {
+  Eigen::Matrix3d hessian = Eigen::Matrix3d::Zero();
+  hessian.diagonal() << 2.0, 3.0, 4.0;
+  const Eigen::Matrix3d metric = Eigen::Matrix3d::Identity();
+  const Eigen::Vector3d gradient(1.0, 0.0, 0.0);
+
+  NeoOptions kkt_options;
+  kkt_options.trust_radius = 1.0;
+  kkt_options.relative_residual_tolerance = 1.0e-12;
+  kkt_options.require_curvature_certificate = false;
+  const NeoResult kkt = solve_neo(
+      dense_problem(hessian, metric, gradient), kkt_options);
+  require(kkt.converged(),
+          "KKT-only interior solve did not converge");
+  require(kkt.hessian_actions == 1,
+          "KKT-only interior solve evaluated unrelated curvature modes");
+  require_close(kkt.step, Eigen::Vector3d(-0.5, 0.0, 0.0), 2.0e-10,
+                "KKT-only interior solve returned the wrong Newton step");
+
+  NeoOptions certified_options = kkt_options;
+  certified_options.require_curvature_certificate = true;
+  const NeoResult certified = solve_neo(
+      dense_problem(hessian, metric, gradient), certified_options);
+  verify_kkt("explicit curvature certificate", hessian, metric, gradient,
+             certified_options.trust_radius, certified);
+  require(certified.hessian_actions > kkt.hessian_actions,
+          "explicit curvature certification did not inspect extra modes");
+}
+
+void check_boundary_requires_curvature_certificate() {
+  Eigen::Matrix2d hessian;
+  hessian << -1.0, 0.5,
+              0.5, 2.0;
+  const Eigen::Matrix2d metric = Eigen::Matrix2d::Identity();
+  const Eigen::Vector2d gradient(1.0, 0.0);
+
+  NeoOptions options;
+  options.trust_radius = 0.1;
+  options.relative_residual_tolerance = 1.0e-12;
+  options.require_curvature_certificate = false;
+  const NeoResult result = solve_neo(
+      dense_problem(hessian, metric, gradient), options);
+  verify_kkt("automatic boundary curvature certificate", hessian, metric,
+             gradient, options.trust_radius, result);
+  require(result.boundary,
+          "negative-curvature test did not produce a boundary step");
+  require(result.hessian_actions == 2,
+          "boundary solve did not expand the curvature residual");
+}
+
 void check_nonsymmetric_hessian_rejected() {
   Eigen::Matrix2d hessian;
   hessian << 2.0, 1.0,
@@ -382,6 +432,8 @@ int main() {
     check_hidden_negative_curvature();
     check_certified_lower_bounds();
     check_scalable_lowest_root_convergence();
+    check_optional_curvature_certificate();
+    check_boundary_requires_curvature_certificate();
     check_nonsymmetric_hessian_rejected();
     return 0;
   } catch (const std::exception& error) {
