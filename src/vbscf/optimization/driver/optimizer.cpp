@@ -118,10 +118,6 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
     apply_support_preserving_inactive_gauge(&input.orbital_preparation_input);
   }
   balance_active_gauge(&input.orbital_preparation_input);
-  if (input.complete_active_space) {
-    canonicalize_complete_oeo_active_subspace(
-        &input.orbital_preparation_input);
-  }
   const SparseParameterLayout parameter_view(
       input.orbital_preparation_input);
   Eigen::VectorXd parameter_vector =

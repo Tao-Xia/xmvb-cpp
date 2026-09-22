@@ -124,11 +124,6 @@ VbScfObjective::evaluate_trial_energy(
     chart_changed =
         apply_support_preserving_inactive_gauge(&trial_orbitals);
     chart_changed = balance_active_gauge(&trial_orbitals) || chart_changed;
-    if (input_.complete_active_space) {
-      chart_changed =
-          canonicalize_complete_oeo_active_subspace(&trial_orbitals) ||
-          chart_changed;
-    }
   }
   ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
 

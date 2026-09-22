@@ -728,40 +728,34 @@ degrees of freedom. All optimization backends use the same accepted-point
 chart, so this distinction depends only on the wavefunction space and never
 on the choice of TNHVP, NEO, or L-BFGS solver.
 
-The quotient projection alone is insufficient for finite optimization steps:
-an additive lift can accumulate inactive--active and active--active gauge
-components even when its first derivative is horizontal. For complete-CAS
-OEO, every evaluated trial is therefore returned to the same stable section.
-With inactive and active blocks $\mathbf C_{\rm I}$ and $\mathbf C_{\rm A}$,
-define
+The quotient is an accepted-point tangent construction; it must not silently
+replace the nonorthogonal OEO representative during a finite trial.  The
+retraction therefore lifts a reduced step only through the accepted horizontal
+basis,
 
 $$
-\mathbf B
-=
-\left[
-\mathbf I-
-\mathbf C_{\rm I}
-(\mathbf C_{\rm I}^{\rm T}\mathbf S\mathbf C_{\rm I})^{-1}
-\mathbf C_{\rm I}^{\rm T}\mathbf S
-\right]\mathbf C_{\rm A},
+\mathbf x_{\rm trial}=\mathbf x+\mathbf U_p\mathbf s,
 \tag{27o}
 $$
 
-and select the symmetric AO-metric orthonormal representative
+after which the ordinary orbital-preparation map supplies individually
+normalized and inactive-projected active orbitals,
 
 $$
-\mathbf C_{\rm A}^{+}
+\boldsymbol\Phi_{\rm A}^{\rm trial}
 =
-\mathbf B(\mathbf B^{\rm T}\mathbf S\mathbf B)^{-1/2}.
+\left(\mathbf I-\mathbf D_{\rm I}^{\rm trial}\mathbf S\right)
+\mathcal N_{\rm A}(\mathbf x_{\rm trial}).
 \tag{27p}
 $$
 
-Equations 27o--27p preserve the inactive space and the complete active
-subspace exactly. They are consequently a pure gauge transformation of a
-complete CAS, but not of an arbitrary truncated VB structure expansion. This
-finite section makes the horizontal lift, trust-region metric, and retraction
-consistent and prevents the active overlap from becoming singular along an
-otherwise energy-invariant gauge trajectory.
+No joint active-space orthogonalization is inserted between eqs 27o and 27p:
+OEO denotes full AO support, not mutually orthogonal active orbitals.  Such a
+canonicalization leaves a complete-CAS energy invariant but changes the
+retraction; unless its differential is included in the gradient and Hessian
+pullbacks, it destroys the coordinate--retraction consistency.  After an
+accepted step the chart is rebuilt at the new nonorthogonal representative,
+which is sufficient to define the next horizontal tangent space.
 
 ## 5. A natural quotient metric
 
