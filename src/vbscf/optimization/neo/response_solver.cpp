@@ -250,6 +250,28 @@ bool ResponseNeoWorkspace::append_orbital(
   append_column(&orbital_metric_images_, metric);
   append_column(&orbital_orbital_images_, image.orbital);
   append_column(&orbital_structure_images_, image.structure);
+  const Eigen::Index n_orbital = orbital_basis_.cols();
+  const Eigen::Index n_structure = structure_basis_.cols();
+  projected_orbital_.conservativeResize(n_orbital, n_orbital);
+  projected_orbital_.col(n_orbital - 1).noalias() =
+      orbital_basis_.transpose() * image.orbital;
+  projected_orbital_.row(n_orbital - 1).noalias() =
+      direction.transpose() * orbital_orbital_images_;
+  projected_metric_.conservativeResize(n_orbital, n_orbital);
+  projected_metric_.col(n_orbital - 1).noalias() =
+      orbital_basis_.transpose() * metric;
+  projected_metric_.row(n_orbital - 1).noalias() =
+      direction.transpose() * orbital_metric_images_;
+  projected_coupling_.conservativeResize(n_structure, n_orbital);
+  if (n_structure != 0) {
+    projected_coupling_.col(n_orbital - 1).noalias() =
+        structure_basis_.transpose() * image.structure;
+  }
+  projected_coupling_adjoint_.conservativeResize(n_orbital, n_structure);
+  if (n_structure != 0) {
+    projected_coupling_adjoint_.row(n_orbital - 1).noalias() =
+        direction.transpose() * structure_orbital_images_;
+  }
   ++*actions;
   ++*orbital_actions;
   return true;
@@ -265,6 +287,23 @@ bool ResponseNeoWorkspace::append_structure(
   append_column(&structure_basis_, direction);
   append_column(&structure_orbital_images_, image.orbital);
   append_column(&structure_structure_images_, image.structure);
+  const Eigen::Index n_orbital = orbital_basis_.cols();
+  const Eigen::Index n_structure = structure_basis_.cols();
+  projected_coupling_.conservativeResize(n_structure, n_orbital);
+  if (n_orbital != 0) {
+    projected_coupling_.row(n_structure - 1).noalias() =
+        direction.transpose() * orbital_structure_images_;
+  }
+  projected_coupling_adjoint_.conservativeResize(n_orbital, n_structure);
+  if (n_orbital != 0) {
+    projected_coupling_adjoint_.col(n_structure - 1).noalias() =
+        orbital_basis_.transpose() * image.orbital;
+  }
+  projected_structure_.conservativeResize(n_structure, n_structure);
+  projected_structure_.col(n_structure - 1).noalias() =
+      structure_basis_.transpose() * image.structure;
+  projected_structure_.row(n_structure - 1).noalias() =
+      direction.transpose() * structure_structure_images_;
   ++*actions;
   ++*structure_actions;
   return true;
@@ -351,10 +390,10 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     const Eigen::MatrixXd& cs = structure_structure_images_;
 
     const Eigen::MatrixXd a = symmetric_part(
-        qo.transpose() * ao, "response NEO orbital block is not symmetric",
+        projected_orbital_, "response NEO orbital block is not symmetric",
         problem_.operator_relative_accuracy());
     const Eigen::MatrixXd metric = symmetric_part(
-        qo.transpose() * mo, "response NEO orbital metric is not symmetric");
+        projected_metric_, "response NEO orbital metric is not symmetric");
     Eigen::LLT<Eigen::MatrixXd> metric_factor(metric);
     if (metric_factor.info() != Eigen::Success) {
       throw std::runtime_error("response NEO orbital metric is not positive definite");
@@ -370,8 +409,9 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       c.setZero();
       c_inverse.setZero();
     } else {
-      b.noalias() = qs.transpose() * bo;
-      const Eigen::MatrixXd projected_adjoint = qo.transpose() * bt;
+      b = projected_coupling_;
+      const Eigen::MatrixXd& projected_adjoint =
+          projected_coupling_adjoint_;
       const double adjoint_scale = std::max({
           1.0, b.stableNorm(), projected_adjoint.stableNorm()});
       const double adjoint_tolerance = std::max(
@@ -384,7 +424,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       }
       b = 0.5 * (b + projected_adjoint.transpose());
       c = symmetric_part(
-          qs.transpose() * cs,
+          projected_structure_,
           "response NEO structure block is not symmetric",
           problem_.operator_relative_accuracy());
       const StructureInverse inverse = symmetric_pseudoinverse(c);

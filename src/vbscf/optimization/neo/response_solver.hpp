@@ -164,6 +164,11 @@ private:
   Eigen::MatrixXd structure_basis_;
   Eigen::MatrixXd structure_orbital_images_;
   Eigen::MatrixXd structure_structure_images_;
+  Eigen::MatrixXd projected_orbital_;
+  Eigen::MatrixXd projected_metric_;
+  Eigen::MatrixXd projected_coupling_;
+  Eigen::MatrixXd projected_coupling_adjoint_;
+  Eigen::MatrixXd projected_structure_;
   Eigen::Index orbital_canonical_ = 0;
   Eigen::Index structure_canonical_ = 0;
 };
