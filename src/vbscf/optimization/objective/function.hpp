@@ -35,6 +35,14 @@ struct VbScfObjectiveTrialEvaluation {
   std::optional<ActiveSpaceForwardEvaluation> forward_evaluation;
 };
 
+/** @brief Exact coupled gradient at a prescribed orbital/structure keyframe. */
+struct VbScfCoupledKeyframeEvaluation {
+  Eigen::VectorXd orbital_gradient;
+  Eigen::MatrixXd normalized_structure_coefficients;
+  Eigen::MatrixXd structure_residuals;
+  double energy = 0.0;
+};
+
 /**
  * @brief Stateful VBSCF objective on a sparse orbital chart.
  *
@@ -116,6 +124,21 @@ class VbScfObjective {
       const Eigen::VectorXd& parameter_vector,
       bool canonicalize_sparse_gauge = false) const;
 
+  /**
+   * @brief Evaluates a nonstationary coupled keyframe without rediagonalizing.
+   *
+   * This mirrors the CIAH keyframe operation: both the orbital displacement
+   * and the current approximate structure displacement are retained.
+   */
+  VbScfCoupledKeyframeEvaluation evaluate_coupled_keyframe(
+      const Eigen::VectorXd& parameter_vector,
+      const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients) const;
+
+  /** @brief Solves the trial structure problem from a coupled CIAH estimate. */
+  TrialEvaluation evaluate_trial_with_structure_guess(
+      const Eigen::VectorXd& parameter_vector,
+      const Eigen::Ref<const Eigen::MatrixXd>& selected_structure_coefficients) const;
+
   /** @brief Completes the exact gradient for an energy-screened trial. */
   void complete_trial(TrialEvaluation* evaluation) const;
 
@@ -138,6 +161,11 @@ private:
   std::vector<double> gradient_inf_norm_history_;
   std::vector<double> iteration_time_history_seconds_;
   double objective_wall_time_seconds_ = 0.0;
+
+  TrialEvaluation evaluate_trial_energy_with_initial_eigenvectors(
+      const Eigen::VectorXd& parameter_vector,
+      bool canonicalize_sparse_gauge,
+      const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const;
 };
 
 }  // namespace xmvb::vb

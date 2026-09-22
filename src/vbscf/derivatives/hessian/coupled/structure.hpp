@@ -95,8 +95,23 @@ public:
   Eigen::MatrixXd coefficient_response(
       const StructureTangent& tangent) const;
 
+  /** @brief Maximum CI-amplitude component represented by a response. */
+  double maximum_coefficient_component(
+      const StructureTangent& tangent) const;
+
   /** @brief Applies @f$P(H-E_sS)P@f$ independently to every selected state. */
   StructureTangent apply_hessian(const StructureTangent& tangent) const;
+
+  /**
+   * @brief Applies the structure Hessian directly in horizontal coordinates.
+   *
+   * If @f$Q_\perp@f$ is the Euclidean-orthonormal basis of
+   * @f$\ker[(SC_{\rm sel})^T]@f$, column @f$s@f$ is acted on by
+   * @f$Q_\perp^T(H-E_sS)Q_\perp@f$.  The action is matrix free and does not
+   * solve or eliminate a structure-response equation.
+   */
+  Eigen::VectorXd apply_hessian_coordinates(
+      const Eigen::VectorXd& coordinates) const;
 
   /**
    * @brief Applies the structure block and prepares @f$B^Tz@f$ inputs.
@@ -120,6 +135,46 @@ public:
   /** @brief Applies the structure trust-region metric @f$PSP@f$. */
   StructureTangent apply_metric(const StructureTangent& tangent) const;
 
+  /**
+   * @brief Applies @f$M_s=Q_\perp^TSQ_\perp@f$ in horizontal coordinates.
+   *
+   * The scaled tangent variable is @f$z_s=\sqrt{2w_s}\,q_s@f$.  Consequently
+   * its physical squared length is
+   * @f$\sum_s z_s^TSz_s=2\sum_s w_s q_s^TSq_s@f$; the state weights are thus
+   * part of the coordinates rather than an additional metric factor.
+   */
+  Eigen::VectorXd apply_metric_coordinates(
+      const Eigen::VectorXd& coordinates) const;
+
+  /** @brief Returns @f$x^TM_sy@f$ for two horizontal coordinate vectors. */
+  double metric_inner_product(
+      const Eigen::VectorXd& left,
+      const Eigen::VectorXd& right) const;
+
+  /** @brief Jacobi approximation to the dual norm induced by the overlap metric. */
+  double diagonal_dual_norm(const Eigen::VectorXd& covector) const;
+
+  /**
+   * @brief Applies an SPD Jacobi inverse for @f$C+\lambda M_s@f$.
+   *
+   * For state @f$s@f$ the ambient diagonal is
+   * @f$|H_{ii}-E_sS_{ii}|+\lambda S_{ii}@f$.  Absolute curvature makes this a
+   * valid SPD Krylov preconditioner even when the structure Hessian is
+   * indefinite; projection on both sides preserves symmetry on the horizontal
+   * space.  This is a preconditioner only, never a static response solve.
+   */
+  Eigen::VectorXd apply_inverse_shifted_preconditioner(
+      const Eigen::VectorXd& covector,
+      double shift) const;
+
+  /**
+   * @brief Applies the signed CIAH diagonal
+   * @f$(\operatorname{diag}C-\omega\operatorname{diag}M_s)^{-1}@f$.
+   */
+  Eigen::VectorXd apply_inverse_augmented_hessian_diagonal(
+      const Eigen::VectorXd& covector,
+      double eigenvalue) const;
+
   /** @brief Returns @f$\sum_s z_s^T S z_s@f$ on the horizontal tangent. */
   double squared_norm(const StructureTangent& tangent) const;
 
@@ -131,6 +186,9 @@ private:
   const StructureAction* action_ = nullptr;
   Eigen::VectorXd energies_;
   Eigen::VectorXd coordinate_scales_;
+  Eigen::VectorXd metric_diagonal_;
+  Eigen::MatrixXd absolute_hessian_diagonal_;
+  Eigen::MatrixXd hessian_diagonal_;
   Eigen::MatrixXd selected_;
   Eigen::MatrixXd selected_metric_inverse_;
   Eigen::HouseholderQR<Eigen::MatrixXd> constraint_qr_;

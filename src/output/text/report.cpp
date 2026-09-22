@@ -204,10 +204,13 @@ void print_tnhvp_summary(
 }
 
 const char* orbital_preconditioner_name(
-    xmvb::vb::OrbitalPreconditioner preconditioner) {
+    xmvb::vb::OrbitalPreconditioner preconditioner,
+    xmvb::vb::VbScfOptimizerBackend backend) {
   switch (preconditioner) {
     case xmvb::vb::OrbitalPreconditioner::Automatic:
-      return "automatic (one-electron block)";
+      return backend == xmvb::vb::VbScfOptimizerBackend::Neo
+          ? "automatic (analytic VBSCF Hessian diagonal)"
+          : "automatic (one-electron block)";
     case xmvb::vb::OrbitalPreconditioner::Identity:
       return "identity";
     case xmvb::vb::OrbitalPreconditioner::OneElectron:
@@ -237,7 +240,8 @@ void print_header(
   if (options.backend == xmvb::vb::VbScfOptimizerBackend::Neo) {
     print_log_field(
         "Orbital preconditioner",
-        orbital_preconditioner_name(options.orbital_preconditioner));
+        orbital_preconditioner_name(
+            options.orbital_preconditioner, options.backend));
   }
 }
 
@@ -418,6 +422,9 @@ void print_summary(
     print_log_field(
         "Final projected |g|_2",
         format_scientific_double(result.final_projected_gradient_l2_norm, 8));
+    print_log_field(
+        "Final physical |g|_(G^-1)",
+        format_scientific_double(result.final_physical_gradient_norm, 8));
   }
   if (options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {

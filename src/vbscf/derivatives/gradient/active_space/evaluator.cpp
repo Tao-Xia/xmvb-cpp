@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <stdexcept>
@@ -1047,6 +1048,158 @@ ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::complete_gradient(
           std::chrono::steady_clock::now() - completion_start_time).count();
 
   return result;
+}
+
+ActiveSpaceFixedStructureGradient
+ActiveSpaceGradientEvaluator::evaluate_fixed_structure(
+    const VbScfInput& input,
+    const std::vector<int>& selected_state_indices,
+    const std::vector<double>& state_average_weights,
+    double nuclear_repulsion_energy,
+    const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients) const {
+  const auto total_start_time = std::chrono::steady_clock::now();
+  validate_state_selection(
+      selected_state_indices,
+      state_average_weights,
+      input.structure_data.n_structures);
+  const int n_states = static_cast<int>(selected_state_indices.size());
+  if (structure_coefficients.rows() != input.structure_data.n_structures ||
+      structure_coefficients.cols() != n_states ||
+      !structure_coefficients.allFinite()) {
+    throw std::invalid_argument(
+        "fixed structure coefficients have inconsistent dimensions or values");
+  }
+  const std::vector<double> normalized_weights =
+      normalize_state_average_weights_local(state_average_weights);
+
+  ActiveSpaceGradientForwardContext context;
+  context.timed_active_space_context = prepare_timed_active_space_context(
+      input,
+      orbital_preparer_,
+      ao_effective_one_electron_builder_,
+      active_space_one_electron_builder_,
+      active_space_two_electron_builder_);
+  const auto& prepared =
+      context.timed_active_space_context.prepared_active_space;
+  const DeterminantPairEvaluator cache_builder =
+      structure_builder_.make_pair_evaluator();
+  auto topology = build_same_spin_pair_topology(
+      input.structure_data.alpha_det,
+      input.structure_data.beta_det,
+      input.orbital_preparation_input.n_active_orbitals);
+  if (can_use_topology_only_direct_ci(input, n_states, topology)) {
+    context.same_spin_pair_cache = std::move(topology);
+  } else {
+    context.same_spin_pair_cache = build_same_spin_pair_cache_context(
+        input.structure_data.alpha_det,
+        input.structure_data.beta_det,
+        cache_builder,
+        prepared.orbital_result.active_orbital_overlap_matrix,
+        prepared.active_space_one_electron_result.h1e_act,
+        input.orbital_preparation_input.n_active_orbitals,
+        prepared.active_space_two_electron_result,
+        SameSpinPairCacheBuildOptions{PairProjectionCache::Both, false});
+  }
+
+  const auto structure_start_time = std::chrono::steady_clock::now();
+  std::optional<StructureDiagonal> jacobi_diagonal;
+  if (!context.same_spin_pair_cache.enabled()) {
+    jacobi_diagonal = structure_builder_.build_davidson_jacobi_preconditioner(
+        input.structure_data.alpha_det,
+        input.structure_data.beta_det,
+        input.structure_data.determinant_to_structure_terms,
+        prepared.orbital_result.active_orbital_overlap_matrix,
+        prepared.active_space_one_electron_result.h1e_act,
+        input.orbital_preparation_input.n_active_orbitals,
+        prepared.active_space_two_electron_result,
+        input.structure_data.n_structures,
+        context.same_spin_pair_cache);
+  }
+  context.structure_action.emplace(
+      input.structure_data.determinant_to_structure_terms,
+      input.structure_data.n_structures,
+      context.same_spin_pair_cache,
+      prepared.orbital_result.active_orbital_overlap_matrix,
+      prepared.active_space_one_electron_result.h1e_act,
+      prepared.active_space_two_electron_result,
+      input.orbital_preparation_input.n_active_orbitals,
+      jacobi_diagonal ? &*jacobi_diagonal : nullptr);
+  context.structure_matrix_wall_time_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - structure_start_time).count();
+  const StructureDiagonal& diagonal =
+      context.structure_action->preconditioner_diagonal();
+  context.structure_overlap_diagonal = diagonal.overlap;
+  context.structure_overlap_diagonal_exact =
+      context.same_spin_pair_cache.enabled();
+  context.average_structure_overlap = diagonal.overlap.mean();
+
+  StructureActionResult images =
+      context.structure_action->apply(structure_coefficients);
+  context.selected_state_eigenvectors = structure_coefficients;
+  for (int state = 0; state < n_states; ++state) {
+    const double norm_squared = structure_coefficients.col(state).dot(
+        images.overlap.col(state));
+    if (!(norm_squared >
+          256.0 * std::numeric_limits<double>::epsilon()) ||
+        !std::isfinite(norm_squared)) {
+      throw std::runtime_error(
+          "fixed structure keyframe has a singular overlap norm");
+    }
+    context.selected_state_eigenvectors.col(state) /=
+        std::sqrt(norm_squared);
+  }
+  images = context.structure_action->apply(
+      context.selected_state_eigenvectors);
+  const Eigen::MatrixXd projected_hamiltonian =
+      context.selected_state_eigenvectors.transpose() * images.hamiltonian;
+  context.selected_state_energies.resize(n_states);
+  for (int state = 0; state < n_states; ++state) {
+    context.selected_state_energies[static_cast<std::size_t>(state)] =
+        projected_hamiltonian(state, state);
+  }
+
+  const int n_roots = required_root_count(selected_state_indices);
+  context.eigen_result.eigenvalues.assign(n_roots, 0.0);
+  Eigen::MatrixXd roots = Eigen::MatrixXd::Zero(
+      input.structure_data.n_structures, n_roots);
+  for (int state = 0; state < n_states; ++state) {
+    const int root = selected_state_indices[static_cast<std::size_t>(state)];
+    context.eigen_result.eigenvalues[static_cast<std::size_t>(root)] =
+        context.selected_state_energies[static_cast<std::size_t>(state)];
+    roots.col(root) = context.selected_state_eigenvectors.col(state);
+  }
+  context.eigen_result.eigenvector_matrix.assign(
+      roots.data(), roots.data() + roots.size());
+
+  if (!context.structure_action->supports_integral_direction()) {
+    populate_same_spin_phi_cache(
+        &context.same_spin_pair_cache,
+        prepared.active_space_one_electron_result.h1e_act,
+        input.orbital_preparation_input.n_active_orbitals,
+        prepared.active_space_two_electron_result);
+  }
+  ActiveSpaceFixedStructureGradient fixed;
+  initialize_active_space_gradient_result(
+      input,
+      selected_state_indices,
+      normalized_weights,
+      nuclear_repulsion_energy,
+      context,
+      &fixed.gradient);
+  accumulate_active_space_gradient(
+      input,
+      selected_state_indices,
+      normalized_weights,
+      context,
+      &fixed.gradient);
+  fixed.gradient.total_wall_time_seconds = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - total_start_time).count();
+  fixed.normalized_coefficients = context.selected_state_eigenvectors;
+  fixed.structure_residuals = std::move(images.hamiltonian);
+  fixed.structure_residuals.noalias() -=
+      images.overlap * Eigen::Map<const Eigen::VectorXd>(
+          context.selected_state_energies.data(), n_states).asDiagonal();
+  return fixed;
 }
 
 ActiveSpaceGradientResult ActiveSpaceGradientEvaluator::evaluate(

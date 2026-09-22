@@ -53,6 +53,21 @@ private:
 };
 
 /**
+ * @brief Gradient at prescribed, variationally nonstationary structure states.
+ *
+ * Each supplied structure column is normalized in the current structure
+ * overlap metric, matching CIAH's independent state normalization.
+ * `structure_residuals` stores
+ * @f$(H-E_sS)c_s@f$ for the normalized columns.  No structure eigensystem is
+ * solved; this is the exact coupled keyframe evaluation required by CIAH/NEO.
+ */
+struct ActiveSpaceFixedStructureGradient {
+  ActiveSpaceGradientResult gradient;
+  Eigen::MatrixXd normalized_coefficients;
+  Eigen::MatrixXd structure_residuals;
+};
+
+/**
  * @brief Analytic gradient evaluator for the active-space integral layer.
  *
  * This evaluator differentiates the VBSCF energy with respect
@@ -127,6 +142,14 @@ public:
   ActiveSpaceGradientResult complete_gradient(
       const VbScfInput& input,
       ActiveSpaceForwardEvaluation forward_evaluation) const;
+
+  /** @brief Evaluates energy and gradient at prescribed structure columns. */
+  ActiveSpaceFixedStructureGradient evaluate_fixed_structure(
+      const VbScfInput& input,
+      const std::vector<int>& selected_state_indices,
+      const std::vector<double>& state_average_weights,
+      double nuclear_repulsion_energy,
+      const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients) const;
 
   /**
    * @brief Evaluates a state-averaged gradient reusing a prebuilt active-space context.

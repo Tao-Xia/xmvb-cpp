@@ -116,6 +116,22 @@ VbScfObjective::TrialEvaluation
 VbScfObjective::evaluate_trial_energy(
     const Eigen::VectorXd& parameter_vector,
     bool canonicalize_sparse_gauge) const {
+  Eigen::MatrixXd initial_eigenvectors;
+  if (gradient_result_.second_order_context != nullptr) {
+    initial_eigenvectors =
+        gradient_result_.second_order_context->root_eigenvectors;
+  }
+  return evaluate_trial_energy_with_initial_eigenvectors(
+      parameter_vector,
+      canonicalize_sparse_gauge,
+      initial_eigenvectors);
+}
+
+VbScfObjective::TrialEvaluation
+VbScfObjective::evaluate_trial_energy_with_initial_eigenvectors(
+    const Eigen::VectorXd& parameter_vector,
+    bool canonicalize_sparse_gauge,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_eigenvectors) const {
   const auto iteration_start_time = std::chrono::steady_clock::now();
   OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
   layout_.unpack(parameter_vector, &trial_orbitals);
@@ -130,11 +146,6 @@ VbScfObjective::evaluate_trial_energy(
   TrialEvaluation evaluation;
   evaluation.orbital_preparation_input =
       input_.orbital_preparation_input;
-  Eigen::MatrixXd initial_eigenvectors;
-  if (gradient_result_.second_order_context != nullptr) {
-    initial_eigenvectors =
-        gradient_result_.second_order_context->root_eigenvectors;
-  }
   evaluation.forward_evaluation.emplace(
       gradient_evaluator_->evaluate_forward(
           input_,
@@ -151,6 +162,63 @@ VbScfObjective::evaluate_trial_energy(
           std::chrono::steady_clock::now() - iteration_start_time)
           .count();
   evaluation.valid = true;
+  return evaluation;
+}
+
+VbScfCoupledKeyframeEvaluation
+VbScfObjective::evaluate_coupled_keyframe(
+    const Eigen::VectorXd& parameter_vector,
+    const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients) const {
+  OrbitalPreparationInput trial_orbitals = input_.orbital_preparation_input;
+  layout_.unpack(parameter_vector, &trial_orbitals);
+  ScopedTrialOrbitals trial_scope(&input_, std::move(trial_orbitals));
+  OrbitalFixedStructureGradient fixed =
+      gradient_evaluator_->evaluate_fixed_structure(
+          input_,
+          state_indices_,
+          state_weights_,
+          nuclear_repulsion_,
+          structure_coefficients);
+  VbScfCoupledKeyframeEvaluation result;
+  result.orbital_gradient = layout_.gather_from_full(
+      fixed.gradient.sparse_orbital_energy_gradient);
+  result.normalized_structure_coefficients =
+      std::move(fixed.normalized_coefficients);
+  result.structure_residuals = std::move(fixed.structure_residuals);
+  result.energy = fixed.gradient.scf_result.total_energy;
+  return result;
+}
+
+VbScfObjective::TrialEvaluation
+VbScfObjective::evaluate_trial_with_structure_guess(
+    const Eigen::VectorXd& parameter_vector,
+    const Eigen::Ref<const Eigen::MatrixXd>& selected_structure_coefficients) const {
+  if (gradient_result_.second_order_context == nullptr) {
+    throw std::runtime_error(
+        "coupled trial requires an accepted-point structure eigensystem");
+  }
+  Eigen::MatrixXd initial_eigenvectors =
+      gradient_result_.second_order_context->root_eigenvectors;
+  if (selected_structure_coefficients.rows() != initial_eigenvectors.rows() ||
+      selected_structure_coefficients.cols() !=
+          static_cast<Eigen::Index>(state_indices_.size()) ||
+      !selected_structure_coefficients.allFinite()) {
+    throw std::invalid_argument(
+        "coupled trial structure guess has inconsistent dimensions or values");
+  }
+  for (std::size_t state = 0; state < state_indices_.size(); ++state) {
+    const int root = state_indices_[state];
+    if (root < 0 || root >= initial_eigenvectors.cols()) {
+      throw std::runtime_error(
+          "accepted structure eigensystem does not contain a selected root");
+    }
+    initial_eigenvectors.col(root) =
+        selected_structure_coefficients.col(static_cast<Eigen::Index>(state));
+  }
+  TrialEvaluation evaluation =
+      evaluate_trial_energy_with_initial_eigenvectors(
+          parameter_vector, true, initial_eigenvectors);
+  complete_trial(&evaluation);
   return evaluation;
 }
 

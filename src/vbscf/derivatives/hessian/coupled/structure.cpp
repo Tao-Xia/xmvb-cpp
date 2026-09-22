@@ -72,6 +72,24 @@ StructureTangentOperator::StructureTangentOperator(
     coordinate_scales_[state] = std::sqrt(2.0 * weight);
   }
 
+  const StructureDiagonal& diagonal = action_->preconditioner_diagonal();
+  if (diagonal.hamiltonian.size() != n_structures_ ||
+      diagonal.overlap.size() != n_structures_ ||
+      !diagonal.hamiltonian.allFinite() || !diagonal.overlap.allFinite() ||
+      (diagonal.overlap.array() <= 0.0).any()) {
+    throw std::invalid_argument(
+        "coupled structure operator requires finite positive H/S diagonals");
+  }
+  metric_diagonal_ = diagonal.overlap;
+  hessian_diagonal_.resize(n_structures_, n_states_);
+  absolute_hessian_diagonal_.resize(n_structures_, n_states_);
+  for (int state = 0; state < n_states_; ++state) {
+    hessian_diagonal_.col(state) =
+        diagonal.hamiltonian - energies_[state] * diagonal.overlap;
+    absolute_hessian_diagonal_.col(state) =
+        hessian_diagonal_.col(state).cwiseAbs();
+  }
+
   selected_ = accepted_point_->selected_state_eigenvectors;
   if (!accepted_point_->selected_state_structure_images.has_value()) {
     throw std::invalid_argument(
@@ -224,9 +242,28 @@ Eigen::MatrixXd StructureTangentOperator::coefficient_response(
   return horizontal.scaled_coefficients;
 }
 
+double StructureTangentOperator::maximum_coefficient_component(
+    const StructureTangent& tangent) const {
+  const Eigen::MatrixXd response = coefficient_response(tangent);
+  if (response.size() == 0) return 0.0;
+  if (!action_->supports_integral_direction()) {
+    return response.cwiseAbs().maxCoeff();
+  }
+  const Eigen::MatrixXd orthogonal =
+      action_->orthogonalize_structure_block(response);
+  return orthogonal.size() == 0
+      ? 0.0
+      : orthogonal.cwiseAbs().maxCoeff();
+}
+
 StructureTangent StructureTangentOperator::apply_hessian(
     const StructureTangent& tangent) const {
   return apply_coupling(tangent).hessian;
+}
+
+Eigen::VectorXd StructureTangentOperator::apply_hessian_coordinates(
+    const Eigen::VectorXd& coordinates) const {
+  return apply_coupling_coordinates(coordinates).hessian_coordinates;
 }
 
 StructureCouplingAction StructureTangentOperator::apply_coupling(
@@ -268,23 +305,119 @@ StructureTangentOperator::apply_coupling_coordinates(
 
 StructureTangent StructureTangentOperator::apply_metric(
     const StructureTangent& tangent) const {
-  StructureTangent horizontal = project(tangent.scaled_coefficients);
+  return expand(apply_metric_coordinates(coordinates(tangent)));
+}
+
+Eigen::VectorXd StructureTangentOperator::apply_metric_coordinates(
+    const Eigen::VectorXd& coordinates) const {
+  const StructureTangent horizontal = expand(coordinates);
   const StructureActionResult images =
       action_->apply(horizontal.scaled_coefficients);
   validate_shape(images.overlap);
-  return project(images.overlap);
+  return project_coordinates(images.overlap);
+}
+
+double StructureTangentOperator::metric_inner_product(
+    const Eigen::VectorXd& left,
+    const Eigen::VectorXd& right) const {
+  if (left.size() != tangent_size() || right.size() != tangent_size() ||
+      !left.allFinite() || !right.allFinite()) {
+    throw std::invalid_argument(
+        "structure metric operands have incompatible dimensions or values");
+  }
+  const double product = left.dot(apply_metric_coordinates(right));
+  if (!std::isfinite(product)) {
+    throw std::runtime_error("structure metric inner product is not finite");
+  }
+  return product;
+}
+
+double StructureTangentOperator::diagonal_dual_norm(
+    const Eigen::VectorXd& covector) const {
+  if (covector.size() != tangent_size() || !covector.allFinite()) {
+    throw std::invalid_argument(
+        "structure dual-norm covector has incompatible dimensions or values");
+  }
+  Eigen::MatrixXd ambient = expand(covector).scaled_coefficients;
+  for (int state = 0; state < n_states_; ++state) {
+    ambient.col(state).array() /= metric_diagonal_.array();
+  }
+  const Eigen::VectorXd inverse_image = project_coordinates(ambient);
+  const double squared_norm = covector.dot(inverse_image);
+  const double tolerance = 1024.0 * std::numeric_limits<double>::epsilon() *
+      std::max(1.0, covector.squaredNorm());
+  if (!std::isfinite(squared_norm) || squared_norm < -tolerance) {
+    throw std::runtime_error(
+        "structure diagonal dual norm is not positive semidefinite");
+  }
+  return std::sqrt(std::max(0.0, squared_norm));
+}
+
+Eigen::VectorXd
+StructureTangentOperator::apply_inverse_shifted_preconditioner(
+    const Eigen::VectorXd& covector,
+    double shift) const {
+  if (covector.size() != tangent_size() || !covector.allFinite()) {
+    throw std::invalid_argument(
+        "structure preconditioner covector has incompatible dimensions or values");
+  }
+  if (!std::isfinite(shift) || shift < 0.0) {
+    throw std::invalid_argument(
+        "structure preconditioner shift must be finite and nonnegative");
+  }
+
+  Eigen::MatrixXd ambient = expand(covector).scaled_coefficients;
+  for (int state = 0; state < n_states_; ++state) {
+    Eigen::VectorXd denominator =
+        absolute_hessian_diagonal_.col(state) + shift * metric_diagonal_;
+    const double scale = denominator.maxCoeff();
+    if (scale == 0.0) {
+      continue;
+    }
+    const double floor = std::max(
+        std::numeric_limits<double>::min(),
+        std::numeric_limits<double>::epsilon() *
+            static_cast<double>(std::max(1, n_structures_)) * scale);
+    denominator = denominator.cwiseMax(floor);
+    ambient.col(state).array() /= denominator.array();
+  }
+  return project_coordinates(ambient);
+}
+
+Eigen::VectorXd
+StructureTangentOperator::apply_inverse_augmented_hessian_diagonal(
+    const Eigen::VectorXd& covector,
+    double eigenvalue) const {
+  if (covector.size() != tangent_size() || !covector.allFinite()) {
+    throw std::invalid_argument(
+        "structure AH preconditioner covector has incompatible dimensions or values");
+  }
+  if (!std::isfinite(eigenvalue)) {
+    throw std::invalid_argument(
+        "structure AH preconditioner eigenvalue must be finite");
+  }
+
+  Eigen::MatrixXd ambient = expand(covector).scaled_coefficients;
+  constexpr double kDenominatorFloor = 1.0e-8;
+  for (int state = 0; state < n_states_; ++state) {
+    Eigen::VectorXd denominator = hessian_diagonal_.col(state) -
+        eigenvalue * metric_diagonal_;
+    for (Eigen::Index i = 0; i < denominator.size(); ++i) {
+      if (std::abs(denominator[i]) < kDenominatorFloor) {
+        denominator[i] = kDenominatorFloor;
+      }
+    }
+    ambient.col(state).array() /= denominator.array();
+  }
+  return project_coordinates(ambient);
 }
 
 double StructureTangentOperator::squared_norm(
     const StructureTangent& tangent) const {
-  const StructureTangent horizontal = project(tangent.scaled_coefficients);
-  const StructureActionResult images =
-      action_->apply(horizontal.scaled_coefficients);
-  validate_shape(images.overlap);
-  const double norm =
-      (horizontal.scaled_coefficients.array() * images.overlap.array()).sum();
+  const Eigen::VectorXd horizontal = coordinates(tangent);
+  const double norm = metric_inner_product(horizontal, horizontal);
   const double tolerance = 1.0e3 * std::numeric_limits<double>::epsilon() *
-      std::max(1.0, horizontal.scaled_coefficients.squaredNorm());
+      std::max(1.0, horizontal.squaredNorm());
   if (!std::isfinite(norm) || norm < -tolerance) {
     throw std::runtime_error("structure tangent metric is not positive semidefinite");
   }

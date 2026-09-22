@@ -165,13 +165,28 @@ BackendRunResult run_truncated_newton_backend(
       break;
     }
   
+    const OrbitalPreparationInput current_orbital_input =
+        objective->input().orbital_preparation_input;
+    if (accepted_point_metric == nullptr) {
+      const auto setup_start = std::chrono::steady_clock::now();
+      accepted_point_metric =
+          std::make_unique<NonredundantRetractionMetric>(
+              current_space, parameter_view, current_orbital_input);
+      accepted_point_setup_wall_time_seconds +=
+          std::chrono::duration<double>(
+              std::chrono::steady_clock::now() - setup_start).count();
+    }
+    const NonredundantRetractionMetric& retraction_metric =
+        *accepted_point_metric;
     const double reduced_gradient_inf_norm =
         gradient_infinity_norm(current_projection.reduced_gradient);
     final_projected_gradient_inf_norm = reduced_gradient_inf_norm;
     final_projected_gradient_l2_norm =
         current_projection.reduced_gradient.norm();
+    const double physical_gradient_norm =
+        retraction_metric.dual_norm(current_projection.reduced_gradient);
     if (run_result.n_iterations == 0 &&
-        reduced_gradient_inf_norm < options.gradient_tolerance) {
+        physical_gradient_norm < options.gradient_tolerance) {
       result->converged = true;
       result->termination_reason =
           "nonredundant_truncated_newton_initial_tolerance";
@@ -183,14 +198,14 @@ BackendRunResult run_truncated_newton_backend(
         reduced_gradient_inf_norm,
         initial_projected_gradient_l2_norm,
         options.gradient_tolerance);
-  
+
     if (!(trust_radius > 0.0) || !std::isfinite(trust_radius)) {
       result->termination_reason =
           "nonredundant_truncated_newton_invalid_trust_radius";
       run_result.final_gradient_l2_norm = current_projection.reduced_gradient.norm();
       break;
     }
-  
+
     // Share the positive orbital-block initial inverse and transported secant
     // memory with block-LBFGS; TNHVP additionally samples exact HVPs.
     const int transport_history_size = options.history_size;
@@ -207,19 +222,6 @@ BackendRunResult run_truncated_newton_backend(
           std::chrono::duration<double>(
               std::chrono::steady_clock::now() - setup_start).count();
     }
-    const OrbitalPreparationInput current_orbital_input =
-        objective->input().orbital_preparation_input;
-    if (accepted_point_metric == nullptr) {
-      const auto setup_start = std::chrono::steady_clock::now();
-      accepted_point_metric =
-          std::make_unique<NonredundantRetractionMetric>(
-              current_space, parameter_view, current_orbital_input);
-      accepted_point_setup_wall_time_seconds +=
-          std::chrono::duration<double>(
-              std::chrono::steady_clock::now() - setup_start).count();
-    }
-    const NonredundantRetractionMetric& retraction_metric =
-        *accepted_point_metric;
     // Build the primary L-BFGS direction before the reduced Newton solver
     // uses its inverse action. If transported secants lose
     // descent through roundoff, discard them for both candidates so the
@@ -542,6 +544,10 @@ BackendRunResult run_truncated_newton_backend(
         build_orbital_chart(*objective, parameter_view);
     auto next_projection =
         next_space.project_gradient(current_gradient);
+    const NonredundantRetractionMetric next_metric(
+        next_space,
+        parameter_view,
+        objective->input().orbital_preparation_input);
     const bool nonredundant_rank_changed =
         current_space.reduced_size() != next_space.reduced_size() ||
         current_space.rank_signature() != next_space.rank_signature();
@@ -697,7 +703,7 @@ BackendRunResult run_truncated_newton_backend(
           &packed_secant_history);
     }
     if (std::abs(de) < options.energy_tolerance &&
-        gradient_infinity_norm(next_projection.reduced_gradient) <
+        next_metric.dual_norm(next_projection.reduced_gradient) <
             options.gradient_tolerance) {
       result->converged = true;
       result->termination_reason =

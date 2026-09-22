@@ -24,9 +24,10 @@ struct Basis {
 
 Eigen::VectorXd residual_direction(
     const NeoProblem& problem,
-    const Eigen::VectorXd& residual) {
+    const Eigen::VectorXd& residual,
+    double shift) {
   return problem.has_preconditioner()
-      ? problem.apply_preconditioner(residual)
+      ? problem.apply_preconditioner(residual, shift)
       : residual;
 }
 
@@ -139,7 +140,9 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
       options.relative_residual_tolerance * gradient_norm;
 
   Basis basis;
-  Eigen::VectorXd first = residual_direction(problem, -problem.gradient());
+  Eigen::VectorXd first = problem.initial_guess().size() == problem.size()
+      ? problem.initial_guess()
+      : residual_direction(problem, -problem.gradient(), 0.0);
   if (!append_direction(
           problem, std::move(first), &basis, &result.hessian_actions)) {
     append_direction(
@@ -262,9 +265,13 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
             -positivity_tolerance;
     result.global_curvature_certified =
         complete_basis || lower_bound_certifies;
-    if (stationary && curvature_converged && shifted_positive &&
+    const bool curvature_certified =
+        curvature_converged && shifted_positive &&
         (result.global_curvature_certified ||
-         !problem.hessian_lower_bound())) {
+         !problem.hessian_lower_bound());
+    const bool model_converged = stationary &&
+        (!options.require_curvature_certificate || curvature_certified);
+    if (model_converged) {
       result.stop_reason = NeoStopReason::Converged;
       set_augmented_certificate(problem, minimum_ritz_vector, &result);
       return result;
@@ -280,14 +287,15 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
     if (!stationary) {
       expanded = append_direction(
           problem,
-          residual_direction(problem, -result.kkt_residual),
+          residual_direction(problem, -result.kkt_residual, result.shift),
           &basis,
           &result.hessian_actions);
     }
-    if (!expanded && !curvature_converged) {
+    if (!expanded && options.require_curvature_certificate &&
+        !curvature_converged) {
       expanded = append_direction(
           problem,
-          residual_direction(problem, -curvature_residual),
+          residual_direction(problem, -curvature_residual, result.shift),
           &basis,
           &result.hessian_actions);
     }
@@ -298,10 +306,7 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
           problem, std::move(canonical), &basis, &result.hessian_actions);
     }
     if (!expanded) {
-      result.stop_reason = stationary && curvature_converged &&
-              shifted_positive &&
-              (result.global_curvature_certified ||
-               !problem.hessian_lower_bound())
+      result.stop_reason = model_converged
           ? NeoStopReason::Converged
           : NeoStopReason::NumericalFailure;
       set_augmented_certificate(problem, minimum_ritz_vector, &result);

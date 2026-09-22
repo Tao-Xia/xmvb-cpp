@@ -700,9 +700,15 @@ OrbitalChart::OrbitalChart(
             throw std::invalid_argument(
                 "inactive analytic Hessian transform shape mismatch");
           }
+          const int n_external = input.n_basis_functions - n_inactive;
+          proj.ah_rotation_components.resize(
+              n_external, proj.local_reduced_size);
+          proj.ah_source_weights = inverse.row(target).transpose();
           for (int p = n_inactive; p < input.n_basis_functions; ++p) {
             const Eigen::VectorXd component =
                 physical_direction.transpose() * ao_overlap * mo.col(p);
+            proj.ah_rotation_components.row(p - n_inactive) =
+                component.transpose();
             for (int core = 0; core < n_inactive; ++core) {
               block_curvature.noalias() +=
                   diagonal(p, core) * inverse(target, core) *
@@ -722,6 +728,10 @@ OrbitalChart::OrbitalChart(
             physical_direction.noalias() -=
                 core * (core.transpose() * ao_overlap * physical_direction);
           }
+          const int n_external = input.n_basis_functions - n_inactive;
+          proj.ah_rotation_components.resize(
+              n_external, proj.local_reduced_size);
+          proj.ah_source_weights = inverse.row(local_active).transpose();
           // Complete OEO removes active--active rotations from U_p, whereas
           // strict-sparse HAO retains the support-admissible ones.  Starting
           // at the active boundary therefore gives both orbital types the
@@ -730,6 +740,8 @@ OrbitalChart::OrbitalChart(
           for (int p = n_inactive; p < input.n_basis_functions; ++p) {
             const Eigen::VectorXd component =
                 physical_direction.transpose() * ao_overlap * mo.col(p);
+            proj.ah_rotation_components.row(p - n_inactive) =
+                component.transpose();
             for (int active = 0; active < input.n_active_orbitals; ++active) {
               block_curvature.noalias() +=
                   diagonal(p, n_inactive + active) *
@@ -739,7 +751,20 @@ OrbitalChart::OrbitalChart(
             }
           }
         }
+        const Eigen::MatrixXd signed_block =
+            0.5 * (block_curvature + block_curvature.transpose());
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> signed_solver(
+            signed_block);
+        if (signed_solver.info() != Eigen::Success ||
+            !signed_solver.eigenvalues().allFinite() ||
+            !signed_solver.eigenvectors().allFinite()) {
+          throw std::runtime_error(
+              "failed to factor signed orbital Hessian block");
+        }
+        proj.ah_block_eigenvalues = signed_solver.eigenvalues();
+        proj.ah_block_eigenvectors = signed_solver.eigenvectors();
         const Eigen::VectorXd curvature = block_curvature.diagonal();
+        proj.hessian_diagonal = curvature;
         proj.curvature_diagonal = normalize_curvature_diagonal(curvature);
         PositiveCurvatureBlock positive_block =
             build_positive_curvature_block(block_curvature);
@@ -1025,6 +1050,115 @@ Eigen::VectorXd OrbitalChart::apply_reduced_curvature(
     }
   }
   return out.allFinite() ? out : reduced_vector;
+}
+
+Eigen::VectorXd OrbitalChart::apply_inverse_augmented_hessian_diagonal(
+    const Eigen::VectorXd& covector,
+    double eigenvalue) const {
+  require_finite_vector_size(
+      covector,
+      static_cast<Eigen::Index>(reduced_size_),
+      "orbital-chart augmented-Hessian preconditioner input");
+  if (!std::isfinite(eigenvalue)) {
+    throw std::invalid_argument(
+        "augmented-Hessian eigenvalue must be finite");
+  }
+  if (!has_reduced_curvature_diagonal_) {
+    throw std::logic_error(
+        "augmented-Hessian preconditioning requires an analytic diagonal");
+  }
+
+  Eigen::VectorXd out = covector;
+  constexpr double kDenominatorFloor = 1.0e-8;
+  for (const auto& block : block_bases_) {
+    for (const auto& orbital : block.orbitals) {
+      if (orbital.local_reduced_size <= 0) continue;
+      if (orbital.hessian_diagonal.size() != orbital.local_reduced_size ||
+          !orbital.hessian_diagonal.allFinite() ||
+          orbital.ah_block_eigenvalues.size() !=
+              orbital.local_reduced_size ||
+          orbital.ah_block_eigenvectors.rows() !=
+              orbital.local_reduced_size ||
+          orbital.ah_block_eigenvectors.cols() !=
+              orbital.local_reduced_size ||
+          !orbital.ah_block_eigenvalues.allFinite() ||
+          !orbital.ah_block_eigenvectors.allFinite()) {
+        throw std::runtime_error(
+            "orbital-chart analytic Hessian diagonal is inconsistent");
+      }
+      const Eigen::VectorXd local = covector.segment(
+          orbital.local_reduced_offset, orbital.local_reduced_size);
+      Eigen::VectorXd denominator =
+          orbital.ah_block_eigenvalues.array() - eigenvalue;
+      for (Eigen::Index i = 0; i < denominator.size(); ++i) {
+        if (std::abs(denominator[i]) < kDenominatorFloor) {
+          denominator[i] = kDenominatorFloor;
+        }
+      }
+      out.segment(
+          orbital.local_reduced_offset,
+          orbital.local_reduced_size).noalias() =
+          orbital.ah_block_eigenvectors *
+          (orbital.ah_block_eigenvectors.transpose() * local)
+              .cwiseQuotient(denominator);
+    }
+  }
+  require_finite_vector(
+      out, "orbital-chart augmented-Hessian preconditioner result");
+  return out;
+}
+
+double OrbitalChart::maximum_rotation_component(
+    const Eigen::VectorXd& reduced_step) const {
+  require_finite_vector_size(
+      reduced_step,
+      static_cast<Eigen::Index>(reduced_size_),
+      "orbital-chart AH step");
+  double maximum = 0.0;
+  for (const auto& block : block_bases_) {
+    for (const auto& orbital : block.orbitals) {
+      if (orbital.local_reduced_size <= 0) continue;
+      if (orbital.ah_rotation_components.cols() !=
+              orbital.local_reduced_size ||
+          orbital.ah_source_weights.size() == 0 ||
+          !orbital.ah_rotation_components.allFinite() ||
+          !orbital.ah_source_weights.allFinite()) {
+        throw std::runtime_error(
+            "orbital-chart rotation map is unavailable");
+      }
+      const Eigen::VectorXd external_components =
+          orbital.ah_rotation_components * reduced_step.segment(
+              orbital.local_reduced_offset,
+              orbital.local_reduced_size);
+      maximum = std::max(
+          maximum,
+          external_components.cwiseAbs().maxCoeff() *
+              orbital.ah_source_weights.cwiseAbs().maxCoeff());
+    }
+  }
+  return maximum;
+}
+
+Eigen::VectorXd OrbitalChart::augmented_hessian_diagonal() const {
+  if (!has_reduced_curvature_diagonal_) {
+    throw std::logic_error(
+        "analytic augmented-Hessian diagonal is unavailable");
+  }
+  Eigen::VectorXd diagonal(reduced_size_);
+  for (const auto& block : block_bases_) {
+    for (const auto& orbital : block.orbitals) {
+      if (orbital.local_reduced_size <= 0) continue;
+      if (orbital.hessian_diagonal.size() != orbital.local_reduced_size ||
+          !orbital.hessian_diagonal.allFinite()) {
+        throw std::runtime_error(
+            "orbital-chart analytic Hessian diagonal is inconsistent");
+      }
+      diagonal.segment(
+          orbital.local_reduced_offset, orbital.local_reduced_size) =
+          orbital.hessian_diagonal;
+    }
+  }
+  return diagonal;
 }
 
 Eigen::VectorXd OrbitalChart::expand_step(

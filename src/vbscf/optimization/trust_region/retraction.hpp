@@ -45,6 +45,16 @@ public:
    */
   Eigen::VectorXd solve(const Eigen::VectorXd& covector) const;
 
+  /**
+   * @brief Metric-invariant norm of a reduced gradient covector.
+   *
+   * For the pullback metric @f$G@f$, this returns
+   * @f$\sqrt{g^T G^{-1}g}@f$.  Unlike a coordinate infinity norm, this is
+   * invariant under a nonsingular change of reduced coordinates and is the
+   * physical stationarity measure dual to `norm`.
+   */
+  double dual_norm(const Eigen::VectorXd& covector) const;
+
   double norm(const Eigen::VectorXd& reduced_step) const;
   Eigen::VectorXd clip_to_radius(
       const Eigen::VectorXd& reduced_step,

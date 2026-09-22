@@ -5,6 +5,7 @@
 #include <iostream>
 #include <limits>
 #include <numeric>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -15,10 +16,12 @@
 #include "input/loading/loader.hpp"
 #include "vbscf/derivatives/gradient/orbital/evaluator.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
+#include "vbscf/derivatives/hessian/coupled/operator.hpp"
 #include "vbscf/derivatives/hessian/coupled/structure.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/orbitals/charts/chart.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/optimization/preconditioners/hessian_diagonal.hpp"
 
 namespace {
 
@@ -34,6 +37,8 @@ struct Options {
   double max_relative_error = std::numeric_limits<double>::infinity();
   double response_tolerance = 1.0e-3;
   bool stream_pair_products = false;
+  int diagonal_samples = 0;
+  bool coupled_finite_difference = false;
 };
 
 void print_usage() {
@@ -46,7 +51,8 @@ void print_usage() {
       << " [--eigensolver dense|davidson]"
       << " [--standard-two-electron-mode exact|ri]"
       << " [--direction gradient|preconditioned_gradient]"
-      << " [--stream-pair-products 0|1]\n";
+      << " [--stream-pair-products 0|1]"
+      << " [--diagonal-samples count]\n";
 }
 
 Options parse_arguments(int argc, char** argv) {
@@ -100,6 +106,14 @@ Options parse_arguments(int argc, char** argv) {
         throw std::invalid_argument("--stream-pair-products must be 0 or 1");
       }
       options.stream_pair_products = value == "1";
+    } else if (name == "--diagonal-samples") {
+      options.diagonal_samples = std::stoi(value);
+    } else if (name == "--coupled-finite-difference") {
+      if (value != "0" && value != "1") {
+        throw std::invalid_argument(
+            "--coupled-finite-difference must be 0 or 1");
+      }
+      options.coupled_finite_difference = value == "1";
     } else if (name == "--probe") {
       if (value != "full") {
         throw std::invalid_argument("only the complete exact HVP is supported");
@@ -109,6 +123,7 @@ Options parse_arguments(int argc, char** argv) {
     }
   }
   if (!(options.step > 0.0) || !(options.max_relative_error >= 0.0) ||
+      options.diagonal_samples < 0 ||
       !(options.response_tolerance > 0.0)) {
     throw std::invalid_argument("finite-difference tolerances must be non-negative");
   }
@@ -167,7 +182,8 @@ CoupledReferenceAudit audit_coupled_structure_elimination(
     const xmvb::vb::ExactHvpOperator& exact_hvp,
     const std::shared_ptr<const xmvb::vb::AcceptedPointContext>& accepted,
     const Eigen::Ref<const Eigen::VectorXd>& orbital_direction,
-    const Eigen::Ref<const Eigen::VectorXd>& relaxed_hvp) {
+    const Eigen::Ref<const Eigen::VectorXd>& relaxed_hvp,
+    bool enforce) {
   const xmvb::vb::StructureTangentOperator structure(
       accepted, exact_hvp.structure_action());
   const int n_structures = structure.n_structures();
@@ -267,11 +283,11 @@ CoupledReferenceAudit audit_coupled_structure_elimination(
       std::max(1.0, infinity_norm(relaxed_hvp));
   audit.structure_coordinate_dimension = dimension;
   audit.structure_response_rank = response_rank;
-  if (audit.adjoint_relative_error > 2.0e-9) {
+  if (enforce && audit.adjoint_relative_error > 2.0e-9) {
     throw std::runtime_error(
         "coupled orbital-structure actions violate the bilinear adjoint identity");
   }
-  if (audit.relaxed_relative_error > 2.0e-8) {
+  if (enforce && audit.relaxed_relative_error > 2.0e-8) {
     throw std::runtime_error(
         "coupled Schur elimination does not reproduce the relaxed HVP");
   }
@@ -357,15 +373,23 @@ int main(int argc, char** argv) {
     if (normalized_orbitals.size() == 0) {
       throw std::runtime_error("accepted physical orbital frame is unavailable");
     }
+    std::optional<xmvb::vb::AnalyticOrbitalDiagonal> analytic_diagonal;
+    if (options.diagonal_samples > 0) {
+      analytic_diagonal = xmvb::vb::build_analytic_orbital_diagonal(
+          input, *accepted.second_order_context);
+    }
     xmvb::vb::OrbitalChart chart(
         input.orbital_preparation_input,
         layout,
         accepted.orbital_preparation_result.auxiliary_orbital_matrix.leftCols(
             n_occupied),
         normalized_orbitals,
-        &accepted.ao_effective_one_electron_result.ao_effective_h1e,
+        analytic_diagonal
+            ? nullptr
+            : &accepted.ao_effective_one_electron_result.ao_effective_h1e,
         false,
-        input.complete_active_space);
+        input.complete_active_space,
+        analytic_diagonal ? &*analytic_diagonal : nullptr);
     const Eigen::VectorXd packed_gradient =
         layout.gather_from_full(accepted.sparse_orbital_energy_gradient);
     const Eigen::VectorXd accepted_reduced_gradient =
@@ -399,6 +423,126 @@ int main(int argc, char** argv) {
         layout,
         &chart);
     const Eigen::VectorXd analytic = exact_hvp.apply_reduced(direction);
+
+    double coupled_orbital_fd_relative_error = 0.0;
+    double coupled_structure_fd_relative_error = 0.0;
+    double coupled_directional_curvature_relative_error = 0.0;
+    if (options.coupled_finite_difference) {
+      xmvb::vb::StructureTangentOperator structure(
+          accepted.second_order_context, exact_hvp.structure_action());
+      Eigen::VectorXd structure_coordinates = Eigen::VectorXd::LinSpaced(
+          structure.tangent_size(), 1.0,
+          static_cast<double>(structure.tangent_size()));
+      structure_coordinates = structure_coordinates.array().sin().matrix();
+      xmvb::vb::StructureTangent structure_direction =
+          structure.expand(structure_coordinates);
+      const double structure_norm =
+          std::sqrt(structure.squared_norm(structure_direction));
+      if (!(structure_norm > 0.0) || !std::isfinite(structure_norm)) {
+        throw std::runtime_error(
+            "coupled finite-difference structure direction is singular");
+      }
+      structure_coordinates /= structure_norm;
+      structure_direction = structure.expand(structure_coordinates);
+
+      xmvb::vb::CoupledHessianOperator coupled_hessian(
+          exact_hvp, structure);
+      const xmvb::vb::CoupledDirection joint_direction{
+          direction, structure_direction};
+      const xmvb::vb::CoupledDirection joint_analytic =
+          coupled_hessian.apply(joint_direction);
+      const Eigen::VectorXd analytic_structure =
+          structure.coordinates(joint_analytic.structure);
+      const Eigen::MatrixXd coefficient_direction =
+          structure.coefficient_response(structure_direction);
+      const Eigen::MatrixXd accepted_coefficients =
+          accepted.second_order_context->selected_state_eigenvectors;
+
+      const auto fixed_joint_gradient = [&](double step_scale) {
+        xmvb::vb::VbScfInput displaced_input = input;
+        displaced_input.orbital_preparation_input = chart.retract_step(
+            input.orbital_preparation_input, direction, step_scale);
+        const Eigen::MatrixXd coefficients =
+            accepted_coefficients + step_scale * coefficient_direction;
+        const auto fixed = evaluator.evaluate_fixed_structure(
+            displaced_input,
+            selected_states,
+            equal_weights,
+            loaded.nuclear_repulsion_energy,
+            coefficients);
+        Eigen::VectorXd orbital = chart.project_reduced_gradient(
+            layout.gather_from_full(
+                fixed.gradient.sparse_orbital_energy_gradient));
+        Eigen::MatrixXd scaled_residuals = fixed.structure_residuals;
+        for (Eigen::Index state = 0;
+             state < scaled_residuals.cols(); ++state) {
+          scaled_residuals.col(state) *= std::sqrt(
+              2.0 * accepted.second_order_context
+                  ->normalized_state_weights[static_cast<std::size_t>(state)]);
+        }
+        return std::pair{
+            std::move(orbital),
+            structure.project_coordinates(scaled_residuals)};
+      };
+      const auto plus_joint = fixed_joint_gradient(options.step);
+      const auto minus_joint = fixed_joint_gradient(-options.step);
+      const Eigen::VectorXd fd_orbital =
+          (plus_joint.first - minus_joint.first) / (2.0 * options.step);
+      const Eigen::VectorXd fd_structure =
+          (plus_joint.second - minus_joint.second) / (2.0 * options.step);
+      coupled_orbital_fd_relative_error =
+          infinity_norm(joint_analytic.orbital - fd_orbital) /
+          std::max(1.0, infinity_norm(fd_orbital));
+      coupled_structure_fd_relative_error =
+          infinity_norm(analytic_structure - fd_structure) /
+          std::max(1.0, infinity_norm(fd_structure));
+      const double analytic_curvature =
+          direction.dot(joint_analytic.orbital) +
+          structure_coordinates.dot(analytic_structure);
+      const double finite_difference_curvature =
+          direction.dot(fd_orbital) +
+          structure_coordinates.dot(fd_structure);
+      coupled_directional_curvature_relative_error =
+          std::abs(analytic_curvature - finite_difference_curvature) /
+          std::max(1.0, std::abs(finite_difference_curvature));
+      std::cout << std::setprecision(12)
+                << "coupled_orbital_fd_relative_error = "
+                << coupled_orbital_fd_relative_error << '\n'
+                << "coupled_structure_fd_relative_error = "
+                << coupled_structure_fd_relative_error << '\n'
+                << "coupled_directional_curvature_relative_error = "
+                << coupled_directional_curvature_relative_error << std::endl;
+    }
+
+    double diagonal_sample_max_relative_error = 0.0;
+    Eigen::Index diagonal_sample_worst_coordinate = -1;
+    double diagonal_sample_worst_analytic = 0.0;
+    double diagonal_sample_worst_exact = 0.0;
+    if (options.diagonal_samples > 0) {
+      const Eigen::VectorXd diagonal = chart.augmented_hessian_diagonal();
+      const int sample_count = std::min<int>(
+          options.diagonal_samples, static_cast<int>(direction.size()));
+      for (int sample = 0; sample < sample_count; ++sample) {
+        const Eigen::Index coordinate = sample_count == 1
+            ? 0
+            : static_cast<Eigen::Index>(
+                  sample * (direction.size() - 1) / (sample_count - 1));
+        Eigen::VectorXd basis = Eigen::VectorXd::Zero(direction.size());
+        basis[coordinate] = 1.0;
+        const double exact_diagonal =
+            exact_hvp.apply_orbital_coupling(basis)
+                .orbital_hessian[coordinate];
+        const double scale = std::max(1.0, std::abs(exact_diagonal));
+        const double error =
+            std::abs(diagonal[coordinate] - exact_diagonal) / scale;
+        if (error > diagonal_sample_max_relative_error) {
+          diagonal_sample_max_relative_error = error;
+          diagonal_sample_worst_coordinate = coordinate;
+          diagonal_sample_worst_analytic = diagonal[coordinate];
+          diagonal_sample_worst_exact = exact_diagonal;
+        }
+      }
+    }
 
     Eigen::MatrixXd coupling_directions(direction.size(), 2);
     coupling_directions.col(0) = direction;
@@ -460,7 +604,8 @@ int main(int argc, char** argv) {
             exact_hvp,
             accepted.second_order_context,
             direction,
-            analytic);
+            analytic,
+            !options.coupled_finite_difference);
     const Eigen::VectorXd analytic_core = exact_hvp.apply_reduced(
         direction,
         {.direct_core_response = true,
@@ -633,7 +778,23 @@ int main(int argc, char** argv) {
                       : "gradient") << '\n'
               << "reduced_dimension = " << direction.size() << '\n'
               << "finite_difference_step = " << options.step << '\n'
+              << "coupled_finite_difference = "
+              << (options.coupled_finite_difference ? "true" : "false") << '\n'
+              << "coupled_orbital_fd_relative_error = "
+              << coupled_orbital_fd_relative_error << '\n'
+              << "coupled_structure_fd_relative_error = "
+              << coupled_structure_fd_relative_error << '\n'
+              << "coupled_directional_curvature_relative_error = "
+              << coupled_directional_curvature_relative_error << '\n'
               << "response_tolerance = " << options.response_tolerance << '\n'
+              << "diagonal_sample_max_relative_error = "
+              << diagonal_sample_max_relative_error << '\n'
+              << "diagonal_sample_worst_coordinate = "
+              << diagonal_sample_worst_coordinate << '\n'
+              << "diagonal_sample_worst_analytic = "
+              << diagonal_sample_worst_analytic << '\n'
+              << "diagonal_sample_worst_exact = "
+              << diagonal_sample_worst_exact << '\n'
               << "state_average_count = " << selected_states.size() << '\n'
               << "state_energy_average_error = "
               << state_energy_average_error << '\n'

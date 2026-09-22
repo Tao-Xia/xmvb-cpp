@@ -187,6 +187,16 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
 
   /**
+   * @brief Maps structure columns to the orthonormal determinant-product basis.
+   *
+   * The returned matrix packs one `(n_unique_alpha, n_unique_beta)` block per
+   * input column.  This operation is defined only for the complete-space
+   * direct-CI representation.
+   */
+  Eigen::MatrixXd orthogonalize_structure_block(
+      const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
+
+  /**
    * @brief Contracts packed unique-string-product images into structures.
    *
    * Each horizontal block has shape `(n_unique_alpha, n_unique_beta)`.

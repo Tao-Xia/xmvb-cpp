@@ -361,6 +361,30 @@ OrbitalGradientResult OrbitalGradientEvaluator::complete_gradient(
   return result;
 }
 
+OrbitalFixedStructureGradient
+OrbitalGradientEvaluator::evaluate_fixed_structure(
+    const VbScfInput& input,
+    const std::vector<int>& selected_state_indices,
+    const std::vector<double>& state_average_weights,
+    double nuclear_repulsion_energy,
+    const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients) const {
+  const auto total_start_time = std::chrono::steady_clock::now();
+  ActiveSpaceFixedStructureGradient active =
+      active_space_gradient_evaluator_.evaluate_fixed_structure(
+          input,
+          selected_state_indices,
+          state_average_weights,
+          nuclear_repulsion_energy,
+          structure_coefficients);
+  OrbitalFixedStructureGradient result;
+  result.normalized_coefficients =
+      std::move(active.normalized_coefficients);
+  result.structure_residuals = std::move(active.structure_residuals);
+  result.gradient = evaluate_from_active_space_gradient_result(
+      input, std::move(active.gradient), total_start_time);
+  return result;
+}
+
 OrbitalGradientResult OrbitalGradientEvaluator::evaluate_from_active_space_gradient_result(
     const VbScfInput& input,
     ActiveSpaceGradientResult active_space_gradient_result,

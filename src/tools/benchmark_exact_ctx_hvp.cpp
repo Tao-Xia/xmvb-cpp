@@ -1063,8 +1063,6 @@ void run_dense_reduced_hessian_reference(
   std::cout << "dense_reference_wall_time_seconds = "
             << std::chrono::duration<double>(stop_time - start_time).count()
             << '\n';
-  std::cout << "hessian_diagonal_reference_max_error = "
-            << diagonal_error << '\n';
 }
 
 void print_measurement(const BenchmarkMeasurement& measurement) {

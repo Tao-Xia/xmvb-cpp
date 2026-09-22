@@ -1248,6 +1248,23 @@ Eigen::MatrixXd StructureAction::expand_structure_block(
   return spin_vectors;
 }
 
+Eigen::MatrixXd StructureAction::orthogonalize_structure_block(
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
+  if (!direct_ci_) {
+    throw std::logic_error(
+        "orthogonal structure coefficients require direct CI");
+  }
+  Eigen::MatrixXd orthogonal = expand_structure_block(vectors);
+  direct_ci_->alpha_transform.apply_left(&orthogonal);
+  const int block_width = static_cast<int>(vectors.cols());
+  for (int block = 0; block < block_width; ++block) {
+    auto coefficient_block = orthogonal.middleCols(
+        block * n_unique_beta_, n_unique_beta_);
+    direct_ci_->beta_transform().apply_right_block(coefficient_block);
+  }
+  return orthogonal;
+}
+
 StructureActionResult StructureAction::apply(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
   if (vectors.rows() != n_structures_ || vectors.cols() <= 0) {

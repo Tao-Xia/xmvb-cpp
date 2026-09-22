@@ -21,6 +21,7 @@
 #include "vbscf/optimization/backends/truncated_newton.hpp"
 #include "vbscf/optimization/driver/session.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
+#include "vbscf/optimization/trust_region/retraction.hpp"
 
 namespace xmvb::vb {
 
@@ -255,7 +256,7 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
       result.scf_result.one_electron_reference_energy;
   result.final_gradient_inf_norm = result.gradient_inf_norm_history.back();
   result.final_gradient_l2_norm = final_gradient_l2_norm;
-  if (!final_projected_gradient_ready) {
+  {
     const OrbitalChart final_space =
         build_orbital_chart(objective, parameter_view);
     const Eigen::VectorXd final_packed_gradient =
@@ -263,10 +264,18 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
             objective.gradient_result().sparse_orbital_energy_gradient);
     const auto final_projection =
         final_space.project_gradient(final_packed_gradient);
-    result.final_projected_gradient_inf_norm =
-        gradient_infinity_norm(final_projection.reduced_gradient);
-    result.final_projected_gradient_l2_norm =
-        final_projection.reduced_gradient.norm();
+    if (!final_projected_gradient_ready) {
+      result.final_projected_gradient_inf_norm =
+          gradient_infinity_norm(final_projection.reduced_gradient);
+      result.final_projected_gradient_l2_norm =
+          final_projection.reduced_gradient.norm();
+    }
+    const NonredundantRetractionMetric final_metric(
+        final_space,
+        parameter_view,
+        objective.input().orbital_preparation_input);
+    result.final_physical_gradient_norm =
+        final_metric.dual_norm(final_projection.reduced_gradient);
   }
   objective.ensure_exact_structure_overlap_diagonal();
   sync_result_from_objective(objective, &result);

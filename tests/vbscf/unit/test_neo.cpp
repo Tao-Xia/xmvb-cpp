@@ -11,6 +11,7 @@
 #include <Eigen/LU>
 
 #include "vbscf/optimization/neo/problem.hpp"
+#include "vbscf/optimization/neo/augmented_hessian.hpp"
 #include "vbscf/optimization/neo/solver.hpp"
 
 namespace {
@@ -19,6 +20,8 @@ using xmvb::vb::NeoOptions;
 using xmvb::vb::NeoProblem;
 using xmvb::vb::NeoResult;
 using xmvb::vb::NeoStopReason;
+using xmvb::vb::AugmentedHessianOptions;
+using xmvb::vb::AugmentedHessianWorkspace;
 
 void require(bool condition, const std::string& message) {
   if (!condition) throw std::runtime_error(message);
@@ -152,6 +155,48 @@ void check_positive_definite_newton_limit() {
           "interior Newton limit was reported as a finite-alpha certificate");
 }
 
+void check_augmented_hessian_workspace() {
+  Eigen::Matrix2d hessian;
+  hessian << 2.0, 0.4,
+             0.4, 1.2;
+  Eigen::Matrix2d metric;
+  metric << 1.3, 0.1,
+            0.1, 0.9;
+  const Eigen::Vector2d gradient(0.7, -0.3);
+  const NeoProblem problem = dense_problem(hessian, metric, gradient);
+  AugmentedHessianWorkspace workspace(problem);
+  AugmentedHessianOptions options;
+  options.start_cycle = 2;
+  const auto step = workspace.next(gradient, options);
+
+  Eigen::Matrix3d augmented = Eigen::Matrix3d::Zero();
+  augmented.block<1, 2>(0, 1) = gradient.transpose();
+  augmented.block<2, 1>(1, 0) = gradient;
+  augmented.bottomRightCorner<2, 2>() = hessian;
+  Eigen::Matrix3d augmented_metric = Eigen::Matrix3d::Zero();
+  augmented_metric(0, 0) = 1.0;
+  augmented_metric.bottomRightCorner<2, 2>() = metric;
+  Eigen::GeneralizedSelfAdjointEigenSolver<Eigen::Matrix3d> spectrum(
+      augmented, augmented_metric);
+  require(spectrum.info() == Eigen::Success,
+          "explicit augmented-Hessian diagonalization failed");
+  Eigen::Index selected = -1;
+  for (Eigen::Index root = 0; root < 3; ++root) {
+    if (std::abs(spectrum.eigenvectors()(0, root)) > 0.1) {
+      selected = root;
+      break;
+    }
+  }
+  require(selected >= 0, "explicit augmented Hessian has no regular root");
+  const Eigen::Vector2d reference =
+      spectrum.eigenvectors().col(selected).tail<2>() /
+      spectrum.eigenvectors()(0, selected);
+  require_close(step.step, reference, 2.0e-10,
+                "retained AH workspace selected the wrong regular root");
+  require_close(step.hessian_step, hessian * reference, 2.0e-10,
+                "retained AH workspace returned the wrong Hessian image");
+}
+
 void check_generalized_metric_boundary() {
   Eigen::Matrix2d hessian;
   hessian << 3.5, 0.7,
@@ -207,6 +252,43 @@ void check_generalized_metric_boundary() {
   require(augmented_residual.stableNorm() <=
               2.0e-9 * std::max(1.0, augmented.norm()),
           "returned step does not satisfy the augmented eigenproblem");
+}
+
+void check_coupled_shift_acts_on_structure_metric() {
+  Eigen::Matrix2d hessian;
+  hessian << 2.0, 0.5,
+             0.5, 0.01;
+  Eigen::Matrix2d metric = Eigen::Matrix2d::Zero();
+  metric.diagonal() << 1.0, 4.0;
+  const Eigen::Vector2d gradient(1.0, 0.0);
+  constexpr double reference_shift = 0.5;
+  const Eigen::Vector2d reference_step =
+      -(hessian + reference_shift * metric).ldlt().solve(gradient);
+
+  NeoOptions options;
+  options.trust_radius =
+      std::sqrt(reference_step.dot(metric * reference_step));
+  options.relative_residual_tolerance = 1.0e-12;
+  const NeoResult result = solve_neo(
+      dense_problem(hessian, metric, gradient), options);
+  verify_kkt(
+      "coupled orbital-structure shift", hessian, metric, gradient,
+      options.trust_radius, result);
+  require_close(
+      result.step, reference_step, 2.0e-10,
+      "coupled NEO differs from the full shifted block solution");
+  require_close(
+      result.shift, reference_shift, 2.0e-10,
+      "coupled NEO returned the wrong common shift");
+
+  const double structure_residual =
+      hessian.row(1).dot(result.step) +
+      result.shift * metric(1, 1) * result.step[1];
+  require_close(
+      structure_residual, 0.0, 2.0e-10,
+      "structure KKT block omitted its metric shift");
+  require(std::abs(hessian.row(1).dot(result.step)) > 1.0e-3,
+          "test does not distinguish coupled NEO from frozen C inverse");
 }
 
 void check_indefinite_regular_boundary() {
@@ -301,6 +383,26 @@ void check_hidden_negative_curvature() {
           "a complete basis lacks its global curvature certificate");
 }
 
+void check_keyframe_may_skip_curvature_certificate() {
+  const Eigen::Matrix3d hessian = hidden_curvature_hessian();
+  const Eigen::Matrix3d metric = Eigen::Matrix3d::Identity();
+  const Eigen::Vector3d gradient(1.0, 0.0, 0.0);
+
+  NeoOptions options;
+  options.trust_radius = 1.0;
+  options.relative_residual_tolerance = 1.0e-12;
+  options.maximum_subspace_dimension = 1;
+  options.require_curvature_certificate = false;
+  const NeoResult result = solve_neo(
+      dense_problem(hessian, metric, gradient), options);
+  require(result.converged(),
+          "keyframe solve unnecessarily required a curvature certificate");
+  require(result.hessian_actions == 1,
+          "keyframe solve expanded beyond its converged KKT direction");
+  require(!result.global_curvature_certified,
+          "incomplete keyframe space claimed global curvature certification");
+}
+
 void check_certified_lower_bounds() {
   const Eigen::Matrix3d hessian = hidden_curvature_hessian();
   const Eigen::Matrix3d metric = Eigen::Matrix3d::Identity();
@@ -376,10 +478,13 @@ void check_nonsymmetric_hessian_rejected() {
 int main() {
   try {
     check_positive_definite_newton_limit();
+    check_augmented_hessian_workspace();
     check_generalized_metric_boundary();
+    check_coupled_shift_acts_on_structure_metric();
     check_indefinite_regular_boundary();
     check_hard_case();
     check_hidden_negative_curvature();
+    check_keyframe_may_skip_curvature_certificate();
     check_certified_lower_bounds();
     check_scalable_lowest_root_convergence();
     check_nonsymmetric_hessian_rejected();

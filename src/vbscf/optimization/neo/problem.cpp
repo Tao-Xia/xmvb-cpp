@@ -10,13 +10,15 @@ NeoProblem::NeoProblem(
     Eigen::VectorXd gradient,
     NeoAction apply_hessian,
     NeoAction apply_metric,
-    NeoAction apply_preconditioner,
-    std::optional<double> hessian_lower_bound)
+    NeoPreconditioner apply_preconditioner,
+    std::optional<double> hessian_lower_bound,
+    Eigen::VectorXd initial_guess)
     : gradient_(std::move(gradient)),
       apply_hessian_(std::move(apply_hessian)),
       apply_metric_(std::move(apply_metric)),
       apply_preconditioner_(std::move(apply_preconditioner)),
-      hessian_lower_bound_(hessian_lower_bound) {
+      hessian_lower_bound_(hessian_lower_bound),
+      initial_guess_(std::move(initial_guess)) {
   if (gradient_.size() == 0 || !gradient_.allFinite()) {
     throw std::invalid_argument("NEO requires a finite nonempty gradient");
   }
@@ -25,6 +27,11 @@ NeoProblem::NeoProblem(
   }
   if (hessian_lower_bound_ && !std::isfinite(*hessian_lower_bound_)) {
     throw std::invalid_argument("NEO Hessian lower bound must be finite");
+  }
+  if (initial_guess_.size() != 0 &&
+      (initial_guess_.size() != gradient_.size() ||
+       !initial_guess_.allFinite())) {
+    throw std::invalid_argument("NEO initial guess is invalid");
   }
 }
 
@@ -55,13 +62,24 @@ Eigen::VectorXd NeoProblem::apply_metric(
 }
 
 Eigen::VectorXd NeoProblem::apply_preconditioner(
-    const Eigen::VectorXd& covector) const {
+    const Eigen::VectorXd& covector,
+    double shift) const {
   if (!apply_preconditioner_) {
     throw std::logic_error("NEO problem has no residual preconditioner");
   }
-  return apply_checked(
-      apply_preconditioner_, covector,
-      "NEO preconditioner returned an invalid vector");
+  if (!std::isfinite(shift)) {
+    throw std::invalid_argument(
+        "NEO augmented-Hessian eigenvalue must be finite");
+  }
+  if (covector.size() != size() || !covector.allFinite()) {
+    throw std::invalid_argument("invalid vector passed to NEO preconditioner");
+  }
+  Eigen::VectorXd result = apply_preconditioner_(covector, shift);
+  if (result.size() != size() || !result.allFinite()) {
+    throw std::runtime_error(
+        "NEO preconditioner returned an invalid vector");
+  }
+  return result;
 }
 
 }  // namespace xmvb::vb

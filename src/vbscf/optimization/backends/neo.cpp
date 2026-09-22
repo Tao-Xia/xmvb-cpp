@@ -3,23 +3,23 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
-#include <memory>
 #include <optional>
 #include <utility>
 
+#include "vbscf/derivatives/hessian/coupled/operator.hpp"
+#include "vbscf/derivatives/hessian/coupled/structure.hpp"
 #include "vbscf/derivatives/hessian/exact/operator.hpp"
 #include "vbscf/derivatives/hessian/context/accepted_point.hpp"
-#include "vbscf/derivatives/hessian/coupled/structure.hpp"
 #include "vbscf/optimization/driver/checks.hpp"
 #include "vbscf/optimization/driver/options.hpp"
 #include "vbscf/optimization/driver/result.hpp"
 #include "vbscf/optimization/driver/session.hpp"
 #include "vbscf/optimization/globalization/line_search.hpp"
+#include "vbscf/optimization/neo/augmented_hessian.hpp"
+#include "vbscf/optimization/neo/coordinates.hpp"
 #include "vbscf/optimization/neo/globalization.hpp"
-#include "vbscf/optimization/neo/keyframe_policy.hpp"
-#include "vbscf/optimization/neo/response_solver.hpp"
+#include "vbscf/optimization/neo/problem.hpp"
 #include "vbscf/optimization/objective/function.hpp"
-#include "vbscf/optimization/preconditioners/structure_response_woodbury.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -31,29 +31,26 @@ OrbitalPreconditioner resolve_neo_preconditioner(
     OrbitalPreconditioner requested) {
   if (requested != OrbitalPreconditioner::Automatic) return requested;
   static_cast<void>(objective);
-  return OrbitalPreconditioner::OneElectron;
-}
-
-double neo_forcing_term(
-    double gradient_norm,
-    Eigen::Index dimension) {
-  // eta = ||g_k||/(1+||g_k||) is below one globally and is O(||g_k||)
-  // locally, as required for an inexact Newton method to retain quadratic
-  // convergence. Unlike normalization by the initial gradient, it remains
-  // meaningful when an initial guess happens to lie near a saddle point.
-  // The lower bound only prevents asking for accuracy below accumulated
-  // floating-point roundoff.
-  const double forcing = gradient_norm / (1.0 + gradient_norm);
-  const double roundoff = std::numeric_limits<double>::epsilon() *
-      static_cast<double>(std::max<Eigen::Index>(1, dimension));
-  return std::max(roundoff, forcing);
+  return OrbitalPreconditioner::HessianDiagonal;
 }
 
 struct AcceptedNeoKeyframe {
   VbScfObjective::TrialEvaluation trial;
   Eigen::VectorXd parameters;
   Eigen::VectorXd next_orbital_guess_packed;
+  Eigen::MatrixXd next_structure_guess;
 };
+
+struct NeoCarryGuess {
+  Eigen::VectorXd orbital_packed;
+  Eigen::MatrixXd structure_response;
+};
+
+constexpr double kAhGradientTrust = 3.0;
+constexpr double kMaximumAhCoordinateStep = 0.03;
+constexpr double kAhLevelShift = 1.0e-8;
+constexpr int kBaseMicroIterations = 10;
+constexpr int kKeyframeInterval = 5;
 
 struct AcceptedNeoModelScalars {
   double trial_radius = 0.0;
@@ -86,69 +83,6 @@ void accept_neo_keyframe_record(
       record->reached_boundary || model.reached_boundary;
 }
 
-/**
- * @brief Shift-local inverse of the recycled relaxed orbital model.
- *
- * The response revision identifies @f$J@f$ and @f$K@f$; the NEO shift
- * identifies the base inverse @f$P_\lambda@f$.  The small Woodbury factor is
- * rebuilt only when either quantity changes.
- */
-class NeoWoodburyOrbitalPreconditioner {
-public:
-  NeoWoodburyOrbitalPreconditioner(
-      const ExactHvpOperator& orbital_hessian,
-      const OrbitalChart& chart)
-      : orbital_hessian_(orbital_hessian), chart_(chart) {}
-
-  Eigen::VectorXd apply(
-      const Eigen::VectorXd& covector,
-      double shift) const {
-    const std::uint64_t revision =
-        orbital_hessian_.response_model_revision();
-    if (revision != revision_ || shift != shift_) rebuild(revision, shift);
-    if (!woodbury_) {
-      return chart_.apply_inverse_reduced_shifted_block_preconditioner(
-          covector, shift);
-    }
-    return woodbury_->apply(covector);
-  }
-
-private:
-  void rebuild(std::uint64_t revision, double shift) const {
-    const StructureResponseSchurModel model =
-        orbital_hessian_.structure_response_schur_model();
-    revision_ = revision;
-    shift_ = shift;
-    woodbury_.reset();
-    if (model.orbital_couplings.cols() == 0) return;
-    woodbury_ = std::make_unique<
-        StructureResponseWoodburyPreconditioner>(
-        model.orbital_couplings,
-        model.projected_operator,
-        [this, shift](const Eigen::MatrixXd& covectors) {
-          Eigen::MatrixXd result(covectors.rows(), covectors.cols());
-          for (Eigen::Index column = 0; column < covectors.cols(); ++column) {
-            result.col(column) =
-                chart_.apply_inverse_reduced_shifted_block_preconditioner(
-                    covectors.col(column), shift);
-          }
-          return result;
-        });
-    if (!woodbury_->available()) {
-      throw std::runtime_error(
-          "NEO Woodbury orbital preconditioner is unavailable: " +
-          woodbury_->unavailability_reason());
-    }
-  }
-
-  const ExactHvpOperator& orbital_hessian_;
-  const OrbitalChart& chart_;
-  mutable std::uint64_t revision_ =
-      std::numeric_limits<std::uint64_t>::max();
-  mutable double shift_ = std::numeric_limits<double>::quiet_NaN();
-  mutable std::unique_ptr<StructureResponseWoodburyPreconditioner> woodbury_;
-};
-
 bool build_accepted_neo_keyframe(
     VbScfObjective* objective,
     const SparseParameterLayout& parameter_view,
@@ -156,8 +90,7 @@ bool build_accepted_neo_keyframe(
     const OrbitalChart& chart,
     const Eigen::VectorXd& reduced_gradient,
     const Eigen::VectorXd& current_parameters,
-    const Eigen::VectorXd& orbital_guess_packed,
-    double gradient_l2,
+    const NeoCarryGuess& carry_guess,
     double energy,
     double* trust_radius,
     NeoIterationRecord* record,
@@ -183,199 +116,259 @@ bool build_accepted_neo_keyframe(
       static_cast<int>(
           chart.reduced_size() + structure_hessian.tangent_size()));
   Eigen::VectorXd orbital_guess;
-  if (orbital_guess_packed.size() ==
+  if (carry_guess.orbital_packed.size() ==
       static_cast<Eigen::Index>(parameter_view.size())) {
     orbital_guess =
-        chart.project_vector(orbital_guess_packed).reduced_gradient;
+        chart.project_vector(carry_guess.orbital_packed).reduced_gradient;
   }
-  double selected_energy_scale = 0.0;
-  for (const double selected_energy :
-       objective->second_order_context()->selected_state_energies) {
-    selected_energy_scale =
-        std::max(selected_energy_scale, std::abs(selected_energy));
-  }
-  const double operator_relative_accuracy =
-      objective->second_order_context()
-          ->structure_solve_accuracy
-          .response_backward_error_tolerance(selected_energy_scale);
-  NeoWoodburyOrbitalPreconditioner orbital_preconditioner(
-      orbital_hessian, chart);
-  ResponseNeoProblem problem(
-      reduced_gradient,
-      structure_hessian.tangent_size(),
-      [&orbital_hessian, &structure_hessian](
-          const Eigen::VectorXd& vector) {
-        const OrbitalCouplingAction image =
-            orbital_hessian.apply_orbital_coupling(vector);
-        return ResponseNeoDirection{
-            image.orbital_hessian,
-            structure_hessian.project_coordinates(
-                image.scaled_structure_forcing)};
-      },
-      [&orbital_hessian, &structure_hessian, &reduced_gradient](
-          const Eigen::Ref<const Eigen::MatrixXd>& forcing,
-          double relative_tolerance) {
-        std::vector<Eigen::MatrixXd> ambient_forcing;
-        ambient_forcing.reserve(static_cast<std::size_t>(forcing.cols()));
-        for (Eigen::Index column = 0; column < forcing.cols(); ++column) {
-          ambient_forcing.push_back(
-              structure_hessian.expand(forcing.col(column))
-                  .scaled_coefficients);
-        }
-        const StructureResponseBlock response =
-            orbital_hessian.solve_structure_response_block(
-                ambient_forcing, relative_tolerance);
-        Eigen::MatrixXd coordinates(
-            structure_hessian.tangent_size(), forcing.cols());
-        Eigen::MatrixXd orbital_images(
-            reduced_gradient.size(), forcing.cols());
-        Eigen::MatrixXd equation_residuals(
-            structure_hessian.tangent_size(), forcing.cols());
-        for (Eigen::Index column = 0; column < forcing.cols(); ++column) {
-          coordinates.col(column) = structure_hessian.project_coordinates(
-              response.scaled_coefficients[static_cast<std::size_t>(column)]);
-          orbital_images.col(column) =
-              orbital_hessian.apply_structure_coupling_adjoint(
-                  response.coefficient_responses[
-                      static_cast<std::size_t>(column)],
-                  response.adjoint_multipliers[
-                      static_cast<std::size_t>(column)]);
-          equation_residuals.col(column) =
-              structure_hessian.project_coordinates(
-                  response.scaled_equation_residuals[
-                      static_cast<std::size_t>(column)]);
-        }
-        return ResponseNeoStructureResponse{
-            std::move(coordinates), std::move(orbital_images),
-            std::move(equation_residuals), response.revision,
-            response.block_actions,
-            response.max_relative_residual};
-      },
-      [&orbital_metric](const Eigen::VectorXd& vector) {
-        return orbital_metric.apply(vector);
-      },
-      [&orbital_preconditioner](
-          const Eigen::VectorXd& residual, double shift) {
-        return orbital_preconditioner.apply(residual, shift);
-      },
-      std::move(orbital_guess),
-      operator_relative_accuracy);
-  ResponseNeoWorkspace workspace(problem);
-  NeoKeyframePolicy keyframe_policy;
-  std::optional<AcceptedNeoKeyframe> last_accepted;
-  std::optional<AcceptedNeoModelScalars> last_accepted_model;
-
-  const auto finish_last_accepted = [&]() {
-    if (!last_accepted.has_value() || !last_accepted_model.has_value()) {
-      return false;
+  CoupledHessianOperator coupled_hessian(orbital_hessian, structure_hessian);
+  CoupledNeoCoordinates coordinates(chart, orbital_metric, structure_hessian);
+  Eigen::VectorXd joint_gradient = Eigen::VectorXd::Zero(coordinates.size());
+  joint_gradient.head(coordinates.orbital_size()) = reduced_gradient;
+  Eigen::VectorXd initial_guess;
+  const bool has_orbital_guess =
+      orbital_guess.size() == coordinates.orbital_size();
+  const bool has_structure_guess =
+      carry_guess.structure_response.rows() == structure_hessian.n_structures() &&
+      carry_guess.structure_response.cols() == structure_hessian.n_states() &&
+      carry_guess.structure_response.allFinite();
+  if (has_orbital_guess || has_structure_guess) {
+    initial_guess = Eigen::VectorXd::Zero(coordinates.size());
+    if (has_orbital_guess) {
+      initial_guess.head(coordinates.orbital_size()) = orbital_guess;
     }
-    accept_neo_keyframe_record(*last_accepted_model, record);
-    *accepted = std::move(*last_accepted);
-    return true;
-  };
-
+    if (has_structure_guess) {
+      initial_guess.tail(coordinates.structure_size()) =
+          structure_hessian.coordinates(
+              structure_hessian.from_coefficient_response(
+                  carry_guess.structure_response));
+    }
+  }
+  NeoProblem problem(
+      std::move(joint_gradient),
+      [&coupled_hessian, &coordinates](const Eigen::VectorXd& vector) {
+        return coordinates.flatten(
+            coupled_hessian.apply(coordinates.unflatten(vector)));
+      },
+      [&coordinates](const Eigen::VectorXd& vector) {
+        return coordinates.apply_metric(vector);
+      },
+      [&chart, &structure_hessian, &coordinates](
+          const Eigen::VectorXd& covector, double eigenvalue) {
+        CoupledDirection blocks = coordinates.unflatten(covector);
+        const double shifted_eigenvalue = eigenvalue - kAhLevelShift;
+        blocks.orbital = chart.apply_inverse_augmented_hessian_diagonal(
+            blocks.orbital, shifted_eigenvalue);
+        const Eigen::VectorXd structure_coordinates =
+            structure_hessian.coordinates(blocks.structure);
+        blocks.structure = structure_hessian.expand(
+            structure_hessian.apply_inverse_augmented_hessian_diagonal(
+                structure_coordinates, shifted_eigenvalue));
+        return coordinates.flatten(blocks);
+      },
+      std::nullopt,
+      std::move(initial_guess));
+  AugmentedHessianWorkspace workspace(problem);
+  const auto joint_gradient_norm =
+      [&coordinates, &structure_hessian](const Eigen::VectorXd& covector) {
+        const CoupledDirection blocks = coordinates.unflatten(covector);
+        return std::hypot(
+            blocks.orbital.stableNorm(),
+            structure_hessian.diagonal_dual_norm(
+                structure_hessian.coordinates(blocks.structure)));
+      };
+  OrbitalPreparationInput keyframe_orbitals = accepted_orbitals;
+  Eigen::MatrixXd keyframe_structure_coefficients =
+      objective->second_order_context()->selected_state_eigenvectors;
+  Eigen::VectorXd keyframe_step = Eigen::VectorXd::Zero(coordinates.size());
+  Eigen::VectorXd keyframe_hessian_step =
+      Eigen::VectorXd::Zero(coordinates.size());
+  Eigen::VectorXd model_gradient = problem.gradient();
+  double completed_gradient_dot_step = 0.0;
+  double completed_step_dot_hessian_step = 0.0;
+  const double keyframe_convergence_tolerance =
+      0.3 * options.gradient_tolerance;
+  const double micro_convergence_tolerance =
+      0.3 * keyframe_convergence_tolerance;
+  double keyframe_gradient_norm = joint_gradient_norm(problem.gradient());
+  int iterations_since_keyframe = 0;
+  Eigen::VectorXd last_increment;
+  Eigen::VectorXd last_hessian_increment;
+  AugmentedHessianStep last_ah_step;
+  bool reached_boundary = false;
   while (true) {
-    const double trial_radius = *trust_radius;
-    NeoOptions neo_options;
-    neo_options.trust_radius = trial_radius;
-    neo_options.relative_residual_tolerance = neo_forcing_term(
-        gradient_l2, chart.reduced_size());
-    // A linear solve below the requested nonlinear stationarity is unusable
-    // accuracy, especially for the final energy-confirmation keyframe.
-    neo_options.absolute_residual_tolerance = options.gradient_tolerance;
-    neo_options.maximum_subspace_dimension = 0;
-    neo_options.require_curvature_certificate = false;
-    const ResponseNeoResult step = workspace.solve(neo_options);
-    record->micro_iterations += step.iterations;
-    record->coupled_block_actions += step.coupled_actions;
-    record->orbital_hvp_actions += step.orbital_actions;
-    record->structure_response_actions += step.structure_actions;
-    if (!step.converged()) {
-      if (finish_last_accepted()) return true;
-      result->termination_reason = "neo_microproblem_not_converged";
-      return false;
+    AugmentedHessianOptions ah_options;
+    last_ah_step =
+        workspace.next(model_gradient, ah_options);
+    ++record->micro_iterations;
+    record->coupled_block_actions += last_ah_step.new_hessian_actions;
+    record->orbital_hvp_actions += last_ah_step.new_hessian_actions;
+    record->structure_response_actions += last_ah_step.new_hessian_actions;
+
+    last_increment = last_ah_step.step;
+    last_hessian_increment = last_ah_step.hessian_step;
+    const CoupledDirection increment_blocks =
+        coordinates.unflatten(last_increment);
+    double increment_max =
+        chart.maximum_rotation_component(increment_blocks.orbital);
+    increment_max = std::max(
+        increment_max,
+        structure_hessian.maximum_coefficient_component(
+            increment_blocks.structure));
+    if (increment_max > kMaximumAhCoordinateStep) {
+      const double scale = kMaximumAhCoordinateStep / increment_max;
+      last_increment *= scale;
+      last_hessian_increment *= scale;
+      reached_boundary = true;
+    }
+    keyframe_step += last_increment;
+    keyframe_hessian_step += last_hessian_increment;
+    model_gradient += last_hessian_increment;
+    ++iterations_since_keyframe;
+    const double model_gradient_norm = joint_gradient_norm(model_gradient);
+    const double keyframe_step_norm =
+        std::sqrt(coordinates.squared_norm(keyframe_step));
+    if (record->micro_iterations > 3 &&
+        model_gradient_norm > kAhGradientTrust * keyframe_gradient_norm) {
+      keyframe_step -= last_increment;
+      keyframe_hessian_step -= last_hessian_increment;
+      model_gradient -= last_hessian_increment;
+      break;
+    }
+    const int maximum_microsteps = std::max(
+        kBaseMicroIterations,
+        kBaseMicroIterations - static_cast<int>(
+            2.0 * std::log(keyframe_gradient_norm + 1.0e-7)));
+    if (record->micro_iterations >= maximum_microsteps ||
+        model_gradient_norm < micro_convergence_tolerance) {
+      break;
     }
 
-    const Eigen::VectorXd candidate_parameters =
-        build_nonredundant_lifted_trial_parameters(
-            accepted_orbitals,
-            chart,
-            parameter_view,
-            step.step.orbital);
-    if (is_effectively_zero_step(
-            candidate_parameters - current_parameters,
-            current_parameters)) {
-      if (finish_last_accepted()) return true;
-      result->termination_reason = "neo_zero_orbital_step";
-      return false;
-    }
-
-    auto trial = objective->evaluate_trial_energy(candidate_parameters, true);
-    const double gradient_dot_step =
-        problem.orbital_gradient().dot(step.step.orbital);
-    const double step_dot_hessian_step =
-        step.step.orbital.dot(step.hessian_step.orbital) +
-        step.step.structure.dot(step.hessian_step.structure);
-    const NeoGlobalizationResult globalization = globalize_neo_trial(
-        energy,
-        trial.energy,
-        gradient_dot_step,
-        step_dot_hessian_step,
-        step.boundary,
-        trial_radius,
-        options.minimum_step_size);
-    if (!globalization.accepted) {
-      ++record->rejected_trial_count;
-      const bool radius_contracts =
-          globalization.next_radius < *trust_radius;
-      *trust_radius = globalization.next_radius;
-      // A farther frozen-model candidate may fail even though the previous
-      // radius produced a valid keyframe. Retain that last energy-accepted
-      // point and refresh its exact gradient instead of discarding it.
-      if (last_accepted_model.has_value()) {
-        last_accepted_model->globalization.next_radius = *trust_radius;
+    const double keyframe_threshold = std::max(
+        static_cast<double>(kKeyframeInterval),
+        static_cast<double>(kKeyframeInterval) -
+            std::log(keyframe_step_norm + 1.0e-7));
+    const bool keyframe_due =
+        iterations_since_keyframe >= keyframe_threshold ||
+        model_gradient_norm < keyframe_gradient_norm / kAhGradientTrust;
+    if (keyframe_due) {
+      const CoupledDirection keyframe_increment =
+          coordinates.unflatten(keyframe_step);
+      const Eigen::VectorXd keyframe_parameters =
+          build_nonredundant_lifted_trial_parameters(
+              keyframe_orbitals,
+              chart,
+              parameter_view,
+              keyframe_increment.orbital);
+      const Eigen::MatrixXd keyframe_coefficients =
+          keyframe_structure_coefficients +
+          structure_hessian.coefficient_response(keyframe_increment.structure);
+      // CIAH keyframes retain both approximate components of the joint step.
+      // Rediagonalizing H/S here would erase the structure microiterations and
+      // turn the coupled method into a different, repeatedly relaxed method.
+      auto keyframe = objective->evaluate_coupled_keyframe(
+          keyframe_parameters, keyframe_coefficients);
+      Eigen::VectorXd exact_gradient =
+          Eigen::VectorXd::Zero(coordinates.size());
+      exact_gradient.head(coordinates.orbital_size()) =
+          chart.project_gradient(keyframe.orbital_gradient).reduced_gradient;
+      Eigen::MatrixXd scaled_structure_residuals =
+          std::move(keyframe.structure_residuals);
+      const auto& state_weights =
+          objective->second_order_context()->normalized_state_weights;
+      for (int state = 0; state < scaled_structure_residuals.cols(); ++state) {
+        scaled_structure_residuals.col(state) *= std::sqrt(
+            2.0 * state_weights[static_cast<std::size_t>(state)]);
       }
-      if (finish_last_accepted()) return true;
-      if (!radius_contracts) {
-        result->termination_reason = "neo_trust_radius_exhausted";
-        return false;
+      exact_gradient.tail(coordinates.structure_size()) =
+          structure_hessian.project_coordinates(
+              scaled_structure_residuals);
+      const double exact_gradient_norm = joint_gradient_norm(exact_gradient);
+      const double correction_norm =
+          joint_gradient_norm(exact_gradient - model_gradient);
+      ++record->keyframes;
+      iterations_since_keyframe = 0;
+      if (correction_norm < kAhGradientTrust * model_gradient_norm ||
+          exact_gradient_norm <
+              kAhGradientTrust * keyframe_convergence_tolerance) {
+        completed_gradient_dot_step +=
+            model_gradient.dot(keyframe_step) -
+            keyframe_step.dot(keyframe_hessian_step);
+        completed_step_dot_hessian_step +=
+            keyframe_step.dot(keyframe_hessian_step);
+        parameter_view.unpack(keyframe_parameters, &keyframe_orbitals);
+        keyframe_structure_coefficients =
+            std::move(keyframe.normalized_structure_coefficients);
+        keyframe_step.setZero();
+        keyframe_hessian_step.setZero();
+        model_gradient = std::move(exact_gradient);
+        keyframe_gradient_norm = exact_gradient_norm;
+      } else {
+        keyframe_step -= last_increment;
+        keyframe_hessian_step -= last_hessian_increment;
+        model_gradient -= last_hessian_increment;
+        ++record->rejected_trial_count;
+        break;
       }
-      continue;
-    }
-
-    *trust_radius = globalization.next_radius;
-
-    AcceptedNeoKeyframe candidate;
-    candidate.parameters =
-        parameter_view.pack(trial.orbital_preparation_input);
-    candidate.next_orbital_guess_packed =
-        chart.expand_step(step.step.orbital);
-    candidate.trial = std::move(trial);
-    last_accepted = std::move(candidate);
-    last_accepted_model = AcceptedNeoModelScalars{
-        trial_radius,
-        gradient_dot_step,
-        step_dot_hessian_step,
-        globalization,
-        step.residual_norm,
-        step.residual_target,
-        step.curvature_residual_norm,
-        step.curvature_residual_target,
-        step.global_curvature_certified,
-        step.boundary};
-
-    const double estimated_gradient_norm =
-        (problem.orbital_gradient() + step.hessian_step.orbital).norm();
-    if (keyframe_policy.observe(
-            {problem.orbital_gradient().norm(),
-             estimated_gradient_norm,
-             globalization.rho,
-             trial_radius,
-             globalization.next_radius,
-             step.boundary}) == NeoKeyframePolicy::Decision::Refresh) {
-      return finish_last_accepted();
     }
   }
+
+  CoupledDirection joint_step = coordinates.unflatten(keyframe_step);
+  Eigen::VectorXd candidate_parameters =
+      build_nonredundant_lifted_trial_parameters(
+          keyframe_orbitals, chart, parameter_view, joint_step.orbital);
+  if (is_effectively_zero_step(
+          candidate_parameters - current_parameters, current_parameters)) {
+    result->termination_reason = "neo_zero_orbital_step";
+    return false;
+  }
+  const Eigen::MatrixXd candidate_structure_coefficients =
+      keyframe_structure_coefficients +
+      structure_hessian.coefficient_response(joint_step.structure);
+  auto trial = objective->evaluate_trial_with_structure_guess(
+      candidate_parameters, candidate_structure_coefficients);
+
+  const double gradient_dot_step =
+      completed_gradient_dot_step + model_gradient.dot(keyframe_step) -
+      keyframe_step.dot(keyframe_hessian_step);
+  const double step_dot_hessian_step =
+      completed_step_dot_hessian_step +
+      keyframe_step.dot(keyframe_hessian_step);
+  NeoGlobalizationResult globalization = globalize_neo_trial(
+      energy,
+      trial.energy,
+      gradient_dot_step,
+      step_dot_hessian_step,
+      reached_boundary,
+      kMaximumAhCoordinateStep,
+      options.minimum_step_size);
+  globalization.accepted = true;
+  globalization.next_radius = kMaximumAhCoordinateStep;
+  *trust_radius = globalization.next_radius;
+
+  accepted->parameters =
+      parameter_view.pack(trial.orbital_preparation_input);
+  accepted->next_orbital_guess_packed =
+      chart.expand_step(
+          coordinates.unflatten(last_increment).orbital);
+  accepted->next_structure_guess =
+      structure_hessian.coefficient_response(
+          coordinates.unflatten(last_increment).structure);
+  accepted->trial = std::move(trial);
+  accept_neo_keyframe_record(
+      AcceptedNeoModelScalars{
+          kMaximumAhCoordinateStep,
+          gradient_dot_step,
+          step_dot_hessian_step,
+          globalization,
+          last_ah_step.residual_norm,
+          1.0e-6,
+          0.0,
+          0.0,
+          false,
+          reached_boundary},
+      record);
+  return true;
 }
 
 }  // namespace
@@ -391,6 +384,7 @@ BackendRunResult run_neo_backend(
   BackendRunResult run_result;
   Eigen::VectorXd parameters = initial_parameters;
   Eigen::VectorXd gradient = initial_gradient;
+  NeoCarryGuess carry_guess;
   double energy = initial_energy;
   double previous_energy = initial_energy;
   double trust_radius =
@@ -400,10 +394,13 @@ BackendRunResult run_neo_backend(
   OrbitalChart chart = build_orbital_chart(
       *objective, parameter_view, OrbitalPreconditioner::Identity);
   auto projected = chart.project_gradient(gradient);
+  NonredundantRetractionMetric initial_metric(
+      chart, parameter_view, objective->input().orbital_preparation_input);
   double final_gradient_inf =
       gradient_infinity_norm(projected.reduced_gradient);
   double final_gradient_l2 = projected.reduced_gradient.norm();
-  if (final_gradient_inf >= options.gradient_tolerance) {
+  if (initial_metric.dual_norm(projected.reduced_gradient) >=
+      options.gradient_tolerance) {
     chart = build_orbital_chart(
         *objective, parameter_view, preconditioner);
   }
@@ -417,8 +414,14 @@ BackendRunResult run_neo_backend(
     }
     final_gradient_inf = gradient_infinity_norm(projected.reduced_gradient);
     final_gradient_l2 = projected.reduced_gradient.norm();
+    const NonredundantRetractionMetric metric(
+        chart,
+        parameter_view,
+        objective->input().orbital_preparation_input);
+    double physical_gradient_norm =
+        metric.dual_norm(projected.reduced_gradient);
     if (run_result.n_iterations == 0 &&
-        final_gradient_inf < options.gradient_tolerance) {
+        physical_gradient_norm < options.gradient_tolerance) {
       result->converged = true;
       result->termination_reason = "neo_initial_tolerance";
       break;
@@ -427,88 +430,62 @@ BackendRunResult run_neo_backend(
     NeoIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations + 1;
     iteration_record.initial_trust_radius = trust_radius;
-    const double macro_gradient_target = neo_forcing_term(
-        final_gradient_l2, chart.reduced_size()) * final_gradient_l2;
     bool macro_accepted = false;
     bool backend_failed = false;
-    Eigen::VectorXd keyframe_orbital_guess_packed;
-
-    // A macro step may contain several exact-gradient keyframes.  Each
-    // keyframe discards the old quadratic model and rebuilds H, B, and C at
-    // the newly accepted nonlinear point.  The macro ends once the exact
-    // projected gradient satisfies the same Eisenstat--Walker forcing target
-    // used by the matrix-free Newton equation.
-    while (!result->converged && final_gradient_l2 > macro_gradient_target) {
-      AcceptedNeoKeyframe accepted;
-      if (!build_accepted_neo_keyframe(
-              objective,
-              parameter_view,
-              options,
-              chart,
-              projected.reduced_gradient,
-              parameters,
-              keyframe_orbital_guess_packed,
-              final_gradient_l2,
-              energy,
-              &trust_radius,
-              &iteration_record,
-              result,
-              &accepted)) {
-        backend_failed = true;
-        break;
-      }
-
-      objective->complete_trial(&accepted.trial);
+    AcceptedNeoKeyframe accepted;
+    if (!build_accepted_neo_keyframe(
+            objective,
+            parameter_view,
+            options,
+            chart,
+            projected.reduced_gradient,
+            parameters,
+            carry_guess,
+            energy,
+            &trust_radius,
+            &iteration_record,
+            result,
+            &accepted)) {
+      backend_failed = true;
+    } else {
       accepted.parameters =
           parameter_view.pack(accepted.trial.orbital_preparation_input);
       gradient = accepted.trial.gradient;
       energy = accepted.trial.energy;
       objective->commit(std::move(accepted.trial));
       parameters = std::move(accepted.parameters);
-      keyframe_orbital_guess_packed =
+      // CIAH reuses the last accepted microstep as the next macro's seed.
+      // A gauge change alters its coordinates, not the physical tangent: the
+      // next chart projects this packed tangent into its own quotient basis.
+      carry_guess.orbital_packed =
           std::move(accepted.next_orbital_guess_packed);
+      carry_guess.structure_response =
+          std::move(accepted.next_structure_guess);
       ++iteration_record.keyframes;
       macro_accepted = true;
 
-      // Stationarity depends only on the quotient geometry. Do not build an
-      // integral-dependent preconditioner until another NEO solve is needed.
       OrbitalChart next_geometry = build_orbital_chart(
           *objective, parameter_view, OrbitalPreconditioner::Identity);
       auto next_projected = next_geometry.project_gradient(gradient);
+      const NonredundantRetractionMetric next_metric(
+          next_geometry,
+          parameter_view,
+          objective->input().orbital_preparation_input);
       final_gradient_inf =
           gradient_infinity_norm(next_projected.reduced_gradient);
       final_gradient_l2 = next_projected.reduced_gradient.norm();
+      physical_gradient_norm =
+          next_metric.dual_norm(next_projected.reduced_gradient);
       const double energy_change = energy - previous_energy;
       previous_energy = energy;
       if (std::abs(energy_change) < options.energy_tolerance &&
-          final_gradient_inf < options.gradient_tolerance) {
+          physical_gradient_norm < options.gradient_tolerance) {
         result->converged = true;
         result->termination_reason = "neo_dual_tolerance";
       }
-      // Once external first-order stationarity is reached, expose this
-      // keyframe as the end of the macro step.  If its energy change is still
-      // too large, the next macro supplies the required independent energy
-      // confirmation instead of hiding it inside the current reported step.
-      if (!result->converged &&
-          final_gradient_inf < options.gradient_tolerance) {
-        chart = build_orbital_chart(
-            *objective, parameter_view, preconditioner);
-        projected = std::move(next_projected);
-        break;
-      }
-      if (!result->converged) {
-        OrbitalChart next_chart =
-            build_orbital_chart(
-                *objective, parameter_view, preconditioner);
-        if (next_chart.reduced_size() != next_geometry.reduced_size() ||
-            next_chart.rank_signature() != next_geometry.rank_signature()) {
-          throw std::runtime_error(
-              "preconditioner changed the nonredundant orbital geometry");
-        }
-        chart = std::move(next_chart);
-      } else {
-        chart = std::move(next_geometry);
-      }
+      chart = result->converged
+          ? std::move(next_geometry)
+          : build_orbital_chart(*objective, parameter_view, preconditioner);
       projected = std::move(next_projected);
     }
 

@@ -99,6 +99,26 @@ public:
       const Eigen::VectorXd& reduced_vector,
       double shift) const;
 
+  /**
+   * @brief Applies @f$(J^TDJ-\omega I)^{-1}@f$ in quotient coordinates.
+   *
+   * The reduced orbital basis is whitened in the physical tangent metric, so
+   * its local metric is identity.  Unlike the positive block
+   * preconditioner used by MINRES and L-BFGS, this action deliberately keeps
+   * the sign of the analytic rotation diagonal before its exact pullback by
+   * the quotient-to-rotation Jacobian @f$J@f$.
+   */
+  Eigen::VectorXd apply_inverse_augmented_hessian_diagonal(
+      const Eigen::VectorXd& covector,
+      double eigenvalue) const;
+
+  /** @brief Maximum absolute orthogonal-frame rotation represented by a step. */
+  double maximum_rotation_component(
+      const Eigen::VectorXd& reduced_step) const;
+
+  /** @brief Returns the signed analytic Hessian diagonal in reduced order. */
+  Eigen::VectorXd augmented_hessian_diagonal() const;
+
   Eigen::VectorXd expand_step(
       const Eigen::VectorXd& reduced_step) const;
 
@@ -135,6 +155,16 @@ private:
     // Positive diagonal/block approximations of the complete normalized,
     // inactive-projected one-electron curvature in the additive quotient chart.
     Eigen::VectorXd curvature_diagonal;
+    // Signed analytic Hessian diagonal for CIAH Davidson.  This must not be
+    // replaced by the positive regularization used by SPD preconditioners.
+    Eigen::VectorXd hessian_diagonal;
+    // Spectral factorization of the signed pullback J^T D J.  Shifting in the
+    // whitened quotient metric changes only its eigenvalues, so each AH
+    // preconditioner application is quadratic rather than cubic.
+    Eigen::VectorXd ah_block_eigenvalues;
+    Eigen::MatrixXd ah_block_eigenvectors;
+    Eigen::MatrixXd ah_rotation_components;
+    Eigen::VectorXd ah_source_weights;
     // Positive spectral regularization of that local surrogate curvature;
     // this is not the exact relaxed VBSCF Hessian block.
     Eigen::MatrixXd curvature_block;

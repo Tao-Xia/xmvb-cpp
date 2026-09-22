@@ -20,6 +20,13 @@ namespace xmvb::vb {
 
 struct AcceptedPointContext;
 
+/** @brief Orbital pullback and structure residual at a coupled keyframe. */
+struct OrbitalFixedStructureGradient {
+  OrbitalGradientResult gradient;
+  Eigen::MatrixXd normalized_coefficients;
+  Eigen::MatrixXd structure_residuals;
+};
+
 /**
  * @brief VBSCF orbital-gradient evaluator.
  *
@@ -127,6 +134,14 @@ public:
   OrbitalGradientResult complete_gradient(
       const VbScfInput& input,
       ActiveSpaceForwardEvaluation forward_evaluation) const;
+
+  /** @brief Evaluates a coupled keyframe without solving the structure eigenproblem. */
+  OrbitalFixedStructureGradient evaluate_fixed_structure(
+      const VbScfInput& input,
+      const std::vector<int>& selected_state_indices,
+      const std::vector<double>& state_average_weights,
+      double nuclear_repulsion_energy,
+      const Eigen::Ref<const Eigen::MatrixXd>& structure_coefficients) const;
 
   /**
    * @brief Evaluates the orbital gradient pullback from a precomputed active-space result.
