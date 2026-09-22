@@ -18,6 +18,7 @@
 #include "vbscf/optimization/neo/globalization.hpp"
 #include "vbscf/optimization/neo/response_solver.hpp"
 #include "vbscf/optimization/objective/function.hpp"
+#include "vbscf/optimization/preconditioners/shifted_metric.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
 
@@ -132,9 +133,21 @@ bool build_accepted_neo_keyframe(
         [&orbital_metric](const Eigen::VectorXd& vector) {
           return orbital_metric.apply(vector);
         },
-        [&chart](const Eigen::VectorXd& residual, double shift) {
-          return chart.apply_inverse_reduced_shifted_block_preconditioner(
-              residual, shift);
+        [&chart, &orbital_metric](
+            const Eigen::VectorXd& residual, double shift) {
+          return apply_inverse_shifted_metric_model(
+              residual,
+              shift,
+              [&chart](const Eigen::VectorXd& vector) {
+                return chart.apply_reduced_curvature(vector);
+              },
+              [&orbital_metric](const Eigen::VectorXd& vector) {
+                return orbital_metric.apply(vector);
+              },
+              [&chart, shift](const Eigen::VectorXd& vector) {
+                return chart.apply_inverse_reduced_shifted_block_preconditioner(
+                    vector, shift);
+              });
         },
         std::move(orbital_guess),
         operator_relative_accuracy,

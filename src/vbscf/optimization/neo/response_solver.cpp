@@ -14,7 +14,6 @@
 #include <Eigen/Eigenvalues>
 
 #include "vbscf/optimization/trust_region/spectral.hpp"
-#include "vbscf/optimization/preconditioners/structure_response_woodbury.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -129,8 +128,6 @@ Eigen::VectorXd preconditioned_orbital(
 }
 
 }  // namespace
-
-ResponseNeoWorkspace::~ResponseNeoWorkspace() = default;
 
 ResponseNeoProblem::ResponseNeoProblem(
     Eigen::VectorXd orbital_gradient,
@@ -347,47 +344,6 @@ void ResponseNeoWorkspace::store_structure(
       structure_basis_.transpose() * image.structure;
   projected_structure_.row(n_structure - 1).noalias() =
       direction.transpose() * structure_structure_images_;
-  woodbury_preconditioner_.reset();
-  woodbury_structure_size_ = -1;
-}
-
-Eigen::VectorXd ResponseNeoWorkspace::precondition_orbital(
-    const Eigen::VectorXd& covector,
-    double shift) {
-  if (!problem_.has_orbital_preconditioner()) return covector;
-  if (structure_basis_.cols() == 0) {
-    return problem_.apply_orbital_preconditioner(covector, shift);
-  }
-  if (!woodbury_preconditioner_ || woodbury_shift_ != shift ||
-      woodbury_structure_size_ != structure_basis_.cols()) {
-    const Eigen::MatrixXd structure_block = symmetric_part(
-        projected_structure_,
-        "response NEO Woodbury structure block is not symmetric",
-        problem_.operator_relative_accuracy());
-    woodbury_preconditioner_ =
-        std::make_unique<StructureResponseWoodburyPreconditioner>(
-            structure_orbital_images_,
-            structure_block,
-            [this, shift](const Eigen::MatrixXd& covectors) {
-              Eigen::MatrixXd result(
-                  problem_.orbital_size(), covectors.cols());
-              for (Eigen::Index column = 0;
-                   column < covectors.cols(); ++column) {
-                result.col(column) =
-                    problem_.apply_orbital_preconditioner(
-                        covectors.col(column), shift);
-              }
-              return result;
-            });
-    woodbury_shift_ = shift;
-    woodbury_structure_size_ = structure_basis_.cols();
-    if (!woodbury_preconditioner_->available()) {
-      throw std::runtime_error(
-          "response NEO Woodbury preconditioner is unavailable: " +
-          woodbury_preconditioner_->unavailability_reason());
-    }
-  }
-  return woodbury_preconditioner_->apply(covector);
 }
 
 bool ResponseNeoWorkspace::append_structure_block(
@@ -703,8 +659,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     }
     if (!expanded && !stationary) {
       expanded = append_orbital(
-          precondition_orbital(
-              -result.kkt_residual.orbital, result.shift),
+          preconditioned_orbital(
+              problem_, -result.kkt_residual.orbital, result.shift),
           &result.coupled_actions,
           &result.orbital_actions);
     }
@@ -717,7 +673,7 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         curvature_orbital.stableNorm() >
         curvature_orbital_target) {
       expanded = append_orbital(
-          precondition_orbital(-curvature_orbital, 0.0),
+          preconditioned_orbital(problem_, -curvature_orbital),
           &result.coupled_actions,
           &result.orbital_actions);
     }

@@ -1,12 +1,9 @@
 #pragma once
 
 #include <functional>
-#include <limits>
-#include <memory>
 #include <Eigen/Core>
 
 #include "vbscf/optimization/neo/solver.hpp"
-#include "vbscf/optimization/preconditioners/structure_response_woodbury.hpp"
 
 namespace xmvb::vb {
 
@@ -150,8 +147,6 @@ public:
         structure_basis_(problem.structure_size(), 0),
         structure_orbital_images_(problem.orbital_size(), 0),
         structure_structure_images_(problem.structure_size(), 0) {}
-  ~ResponseNeoWorkspace();
-
   /** @brief Solves one trust-region subproblem using the cached subspace. */
   ResponseNeoResult solve(const NeoOptions& options);
 
@@ -178,10 +173,6 @@ private:
   void store_structure(
       const Eigen::VectorXd& direction,
       const ResponseNeoDirection& image);
-  Eigen::VectorXd precondition_orbital(
-      const Eigen::VectorXd& covector,
-      double shift);
-
   const ResponseNeoProblem& problem_;
   Eigen::MatrixXd orbital_basis_;
   Eigen::MatrixXd orbital_metric_images_;
@@ -195,10 +186,6 @@ private:
   Eigen::MatrixXd projected_coupling_;
   Eigen::MatrixXd projected_coupling_adjoint_;
   Eigen::MatrixXd projected_structure_;
-  std::unique_ptr<StructureResponseWoodburyPreconditioner>
-      woodbury_preconditioner_;
-  double woodbury_shift_ = std::numeric_limits<double>::quiet_NaN();
-  Eigen::Index woodbury_structure_size_ = -1;
   Eigen::Index orbital_canonical_ = 0;
   Eigen::Index structure_canonical_ = 0;
 };
