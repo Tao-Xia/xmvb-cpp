@@ -64,7 +64,8 @@ Eigen::MatrixXd symmetric_part(
   if (defect > factor * scale) {
     std::ostringstream detail;
     detail.precision(17);
-    detail << message << ": relative defect=" << defect / scale;
+    detail << message << ": relative defect=" << defect / scale
+           << ", dimension=" << matrix.rows();
     throw std::runtime_error(detail.str());
   }
   return 0.5 * (matrix + matrix.transpose());
@@ -448,9 +449,26 @@ bool ResponseNeoWorkspace::rebuild_projected_model() {
   projected_model_.response_closure_norm = response_residual.stableNorm();
   const Eigen::MatrixXd relaxed_images =
       ao + btz + qo * response_model_correction_;
+  const Eigen::MatrixXd projected_response = qo.transpose() * btz;
+  const auto relative_skew = [](const Eigen::MatrixXd& matrix) {
+    return (matrix - matrix.transpose()).stableNorm() /
+        std::max(1.0, matrix.stableNorm());
+  };
+  std::ostringstream symmetry_context;
+  symmetry_context.precision(17);
+  symmetry_context
+      << "response NEO relaxed orbital block is not symmetric"
+      << " [orbital_skew=" << relative_skew(projected_orbital_hessian_)
+      << ", response_skew=" << relative_skew(projected_response)
+      << ", adjoint_defect="
+      << (projected_response - bo.transpose() *
+              structure_response_coordinates_.leftCols(no)).stableNorm() /
+          std::max(1.0, projected_response.stableNorm());
+  symmetry_context << "]";
+  const std::string symmetry_message = symmetry_context.str();
   const Eigen::MatrixXd relaxed = symmetric_part(
       qo.transpose() * (ao + btz) + response_model_correction_,
-      "response NEO relaxed orbital block is not symmetric",
+      symmetry_message.c_str(),
       problem_.operator_relative_accuracy());
   const Eigen::MatrixXd whitened =
       projected_model_.whitening.transpose() * relaxed *

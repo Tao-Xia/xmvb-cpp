@@ -750,6 +750,47 @@ void check_sigma_action() {
           std::max(1.0, std::abs(finite_difference_state_direction)),
       "direct-CI active-integral adjoint fails finite differences");
 
+  const Eigen::MatrixXd response_coefficients =
+      left_coefficients.leftCols(static_cast<int>(beta.size()));
+  Eigen::MatrixXd orthogonal_response = response_coefficients;
+  alpha_transform.apply_left(&orthogonal_response);
+  beta_transform.apply_right(&orthogonal_response);
+  const Eigen::MatrixXd response_residual =
+      sigma_action.apply(orthogonal_response) -
+      test_energy * orthogonal_response;
+  const xmvb::vb::DirectCiIntegralAdjoint response_integral_adjoint =
+      sigma_action.integral_adjoint(
+          orthogonal_response, orthogonal_state);
+  const Eigen::MatrixXd response_generator_adjoint = 2.0 *
+      (sigma_action.one_body_generator_adjoint(
+           response_residual, orthogonal_state) +
+       sigma_action.one_body_generator_adjoint(
+           orthogonal_residual, orthogonal_response));
+  const xmvb::vb::NonorthogonalActiveIntegralAdjoint response_adjoint =
+      xmvb::vb::backpropagate_orthogonal_active_integral_adjoint(
+          orthogonal,
+          2.0 * response_integral_adjoint.one_electron,
+          2.0 * response_integral_adjoint.pair_kernel,
+          response_generator_adjoint);
+  const double predicted_response_direction =
+      (response_adjoint.overlap.cwiseProduct(overlap_direction)).sum() +
+      (response_adjoint.one_electron.cwiseProduct(
+           one_electron_direction)).sum() +
+      (response_adjoint.pair_kernel.cwiseProduct(
+           original_pair_direction)).sum();
+  const double applied_response_direction = 2.0 *
+      (response_coefficients.cwiseProduct(
+           delta_action_hamiltonian.leftCols(response_coefficients.cols()) -
+           test_energy *
+               delta_action_overlap.leftCols(response_coefficients.cols())))
+          .sum();
+  require(
+      std::abs(predicted_response_direction - applied_response_direction) <
+          3.0e-10 * std::max(1.0, std::abs(applied_response_direction)),
+      "direct-CI response adjoint is inconsistent: predicted=" +
+          std::to_string(predicted_response_direction) +
+          ", applied=" + std::to_string(applied_response_direction));
+
   const Eigen::MatrixXd directional_orthogonal_state =
       delta_action_values.leftCols(static_cast<int>(beta.size()));
   const Eigen::MatrixXd directional_orthogonal_sigma =
