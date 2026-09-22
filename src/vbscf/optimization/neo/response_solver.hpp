@@ -177,10 +177,12 @@ private:
  * @brief Solves the coupled model after projected structure-response removal.
  *
  * Independent orbital and structure bases project @f$\bar A,B,C@f$.  Each
- * projected model eliminates the structure block with its symmetric spectral
- * pseudoinverse, then solves the orbital trust-region problem for
- * @f$\bar A-B^TC^\dagger B@f$.  Convergence requires explicit residuals of
- * both coupled KKT equations and of the lowest relaxed-curvature Ritz pair.
+ * projected model eliminates the retained structure block with its symmetric
+ * spectral pseudoinverse, then solves the orbital trust-region problem for
+ * @f$\bar A-B^TC^\dagger B@f$.  Missing response directions are generated
+ * from @f$Bp+Cq@f$ of the current candidate, rather than by closing every
+ * orbital basis column.  Convergence is certified by both full coupled KKT
+ * residuals; lowest-curvature certification is optional except in a hard case.
  */
 ResponseNeoResult solve_response_neo(
     const ResponseNeoProblem& problem,

@@ -332,11 +332,6 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
   const double curvature_relative_tolerance = std::min(
       options.relative_residual_tolerance,
       numerical_curvature_tolerance);
-  const double response_relative_tolerance =
-      options.require_curvature_certificate
-          ? curvature_relative_tolerance
-          : options.relative_residual_tolerance;
-
   ResponseNeoResult result;
   result.step.orbital = Eigen::VectorXd::Zero(problem_.orbital_size());
   result.step.structure = Eigen::VectorXd::Zero(problem_.structure_size());
@@ -368,16 +363,6 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         generic_probe(problem_.orbital_size()),
         &result.coupled_actions,
         &result.orbital_actions);
-  }
-  for (Eigen::Index j = structure_basis_.cols() == 0 ? 0 :
-           orbital_structure_images_.cols();
-       j < orbital_structure_images_.cols(); ++j) {
-    if (orbital_basis_.cols() + structure_basis_.cols() >= maximum_dimension) {
-      break;
-    }
-    append_structure(
-        orbital_structure_images_.col(j), &result.coupled_actions,
-        &result.structure_actions);
   }
   while (true) {
     ++result.iterations;
@@ -464,32 +449,6 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     }
 
     const Eigen::MatrixXd response_coefficients = -c_inverse * b;
-    const Eigen::MatrixXd response_closure =
-        bo + cs * response_coefficients;
-    const double response_closure_target =
-        options.absolute_residual_tolerance +
-        response_relative_tolerance * std::max(
-            bo.stableNorm(),
-            (cs * response_coefficients).stableNorm());
-    if (response_closure.stableNorm() > response_closure_target) {
-      Eigen::Index unresolved = 0;
-      response_closure.colwise().squaredNorm().maxCoeff(&unresolved);
-      const int basis_size = static_cast<int>(
-          orbital_basis_.cols() + structure_basis_.cols());
-      if (basis_size >= maximum_dimension) {
-        result.stop_reason = NeoStopReason::SubspaceLimit;
-        return result;
-      }
-      if (!append_structure(
-              -response_closure.col(unresolved),
-              &result.coupled_actions,
-              &result.structure_actions)) {
-        result.stop_reason = NeoStopReason::NumericalFailure;
-        return result;
-      }
-      continue;
-    }
-
     const Eigen::MatrixXd relaxed = a + b.transpose() * response_coefficients;
     const Eigen::MatrixXd whitened =
         whitening.transpose() * relaxed * whitening;
@@ -613,9 +572,11 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       return result;
     }
 
-    // Close the eliminated response space before enriching the orbital
-    // subspace.  Until Bp + Cq is resolved, the projected Schur complement
-    // is not the relaxed orbital Hessian of the current trial space.
+    // Refine only the structure response required by the current candidate.
+    // Closing C Z = -B Q for every retained orbital basis column performs
+    // response solves that do not enter p = Q y.  The complete coupled KKT
+    // residual below certifies the direction-local response without that
+    // basis-wide work.
     bool expanded = false;
     if (result.kkt_residual.structure.stableNorm() >
         structure_residual_target) {

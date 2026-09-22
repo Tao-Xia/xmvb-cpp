@@ -350,8 +350,32 @@ void check_keyframe_response_uses_forcing_accuracy() {
       problem, certified_options);
   require(certified.converged(),
           "curvature-certified comparison solve did not converge");
-  require(keyframe.structure_actions < certified.structure_actions,
-          "keyframe forcing accuracy did not reduce structure actions");
+  require(keyframe.structure_actions <= certified.structure_actions,
+          "keyframe forcing accuracy increased structure actions");
+}
+
+void check_response_is_local_to_candidate_direction() {
+  constexpr int size = 5;
+  Eigen::MatrixXd a = Eigen::MatrixXd::Zero(size, size);
+  Eigen::MatrixXd b = Eigen::MatrixXd::Zero(size, size);
+  Eigen::MatrixXd c = Eigen::MatrixXd::Zero(size, size);
+  a.diagonal().setLinSpaced(2.0, 6.0);
+  b.diagonal().setLinSpaced(0.2, 0.6);
+  c.diagonal().setLinSpaced(1.0, 2.0);
+  Eigen::VectorXd gradient = Eigen::VectorXd::Zero(size);
+  gradient[0] = 1.0;
+
+  NeoOptions options;
+  options.trust_radius = 1.0;
+  options.relative_residual_tolerance = 1.0e-12;
+  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
+      dense_problem(a, b, c, Eigen::MatrixXd::Identity(size, size), gradient),
+      options);
+  verify_coupled_residual(
+      a, b, c, Eigen::MatrixXd::Identity(size, size), gradient,
+      options.trust_radius, result);
+  require(result.structure_actions == 1,
+          "response NEO solved unused orbital-basis response directions");
 }
 
 }  // namespace
@@ -366,6 +390,7 @@ int main() {
     check_recycled_orbital_guess_starts_subspace();
     check_boundary_residual_uses_shifted_preconditioner();
     check_keyframe_response_uses_forcing_accuracy();
+    check_response_is_local_to_candidate_direction();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {
