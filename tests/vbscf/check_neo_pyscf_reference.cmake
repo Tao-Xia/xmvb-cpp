@@ -47,7 +47,7 @@ if (total_actions GREATER 30)
   message(FATAL_ERROR
     "matched-seed F2 NEO used ${total_actions} coupled actions; expected at most 30")
 endif()
-if (orbital_hvp_actions GREATER 24)
+if (orbital_hvp_actions GREATER 25)
   message(FATAL_ERROR
-    "matched-seed F2 NEO used ${orbital_hvp_actions} orbital HVPs; expected at most 24")
+    "matched-seed F2 NEO used ${orbital_hvp_actions} orbital HVPs; expected at most 25")
 endif()

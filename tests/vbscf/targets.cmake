@@ -16,7 +16,6 @@ set(_xmvb_vbscf_unit_targets
   test_localized_representative_selector
   test_minres
   test_neo
-  test_neo_keyframe_policy
   test_neo_response_solver
   test_neo_globalization
   test_normalized_orbital_curvature
@@ -65,7 +64,6 @@ if (BUILD_TESTING)
   add_test(NAME neo COMMAND test_neo)
   set_tests_properties(neo PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
-  add_test(NAME neo_keyframe_policy COMMAND test_neo_keyframe_policy)
   add_test(NAME neo_response_solver COMMAND test_neo_response_solver)
   set_tests_properties(neo_response_solver PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")

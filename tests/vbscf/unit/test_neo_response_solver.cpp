@@ -18,7 +18,6 @@ using xmvb::vb::NeoStopReason;
 using xmvb::vb::ResponseNeoDirection;
 using xmvb::vb::ResponseNeoProblem;
 using xmvb::vb::ResponseNeoResult;
-using xmvb::vb::ResponseNeoStructureResponse;
 using xmvb::vb::ResponseNeoWorkspace;
 
 void require(bool condition, const std::string& message) {
@@ -47,14 +46,8 @@ ResponseNeoProblem dense_problem(
       [a, b](const Eigen::VectorXd& p) {
         return ResponseNeoDirection{a * p, b * p};
       },
-      [b, c](const Eigen::Ref<const Eigen::MatrixXd>& forcing, double) {
-        const Eigen::MatrixXd response =
-            -c.completeOrthogonalDecomposition().solve(forcing);
-        return ResponseNeoStructureResponse{
-            response, b.transpose() * response,
-            forcing + c * response, 1, 0,
-            (forcing + c * response).stableNorm() /
-                std::max(1.0, forcing.stableNorm())};
+      [b, c](const Eigen::VectorXd& q) {
+        return ResponseNeoDirection{b.transpose() * q, c * q};
       },
       [metric](const Eigen::VectorXd& p) { return metric * p; });
 }
@@ -245,8 +238,6 @@ void check_workspace_reuses_actions_after_radius_change() {
   require(first.converged(), "initial reusable NEO solve did not converge");
   require(first.coupled_actions > 0,
           "initial reusable NEO solve performed no actions");
-  require(first.projected_model_builds > 0,
-          "initial reusable NEO solve built no projected model");
 
   options.trust_radius = 0.2;
   const ResponseNeoResult reused = workspace.solve(options);
@@ -258,62 +249,10 @@ void check_workspace_reuses_actions_after_radius_change() {
           "radius-only retry repeated cached coupled actions");
   require(reused.coupled_actions < fresh.coupled_actions,
           "reused NEO solve did not reduce coupled actions");
-  require(reused.projected_model_builds == 0,
-          "radius-only retry rebuilt the cached projected spectrum");
-  require(fresh.projected_model_builds > 0,
-          "fresh comparison solve built no projected spectrum");
   require_close(reused.step.orbital, fresh.step.orbital, 2.0e-10,
                 "reused NEO orbital step differs from a fresh solve");
   require_close(reused.step.structure, fresh.step.structure, 2.0e-10,
                 "reused NEO response differs from a fresh solve");
-}
-
-void check_structure_response_refreshes_one_common_revision() {
-  const Eigen::Matrix3d a =
-      (Eigen::Vector3d(1.0, 2.0, 3.0)).asDiagonal();
-  Eigen::Matrix<double, 2, 3> b;
-  b << 0.4, -0.2, 0.3,
-       0.1, 0.5, -0.4;
-  Eigen::Matrix2d c;
-  c << 1.7, 0.2,
-       0.2, 1.1;
-  std::vector<Eigen::Index> block_widths;
-  std::uint64_t revision = 0;
-  const ResponseNeoProblem problem(
-      Eigen::Vector3d(0.8, -0.7, 0.6),
-      c.rows(),
-      [a, b](const Eigen::VectorXd& p) {
-        return ResponseNeoDirection{a * p, b * p};
-      },
-      [&block_widths, &revision, b, c](
-          const Eigen::Ref<const Eigen::MatrixXd>& forcing, double) {
-        block_widths.push_back(forcing.cols());
-        ++revision;
-        const Eigen::MatrixXd response = -c.ldlt().solve(forcing);
-        return ResponseNeoStructureResponse{
-            response, b.transpose() * response,
-            forcing + c * response, revision, 0, 0.0};
-      },
-      [](const Eigen::VectorXd& p) { return p; });
-  ResponseNeoWorkspace workspace(problem);
-  NeoOptions options;
-  options.trust_radius = 0.3;
-  options.relative_residual_tolerance = 1.0e-12;
-  const ResponseNeoResult result = workspace.solve(options);
-  require(result.converged(), "common-revision NEO solve did not converge");
-  require(block_widths.size() > 1,
-          "common-revision fixture did not enrich its orbital basis");
-  require(block_widths.back() == workspace.orbital_basis_size(),
-          "final response block does not cover the retained orbital basis");
-  require(workspace.structure_response_revision() == revision,
-          "workspace retained a stale structure-response revision");
-
-  const std::size_t calls_before_retry = block_widths.size();
-  options.trust_radius = 0.2;
-  require(workspace.solve(options).converged(),
-          "common-revision radius retry did not converge");
-  require(block_widths.size() == calls_before_retry,
-          "radius-only retry rebuilt the frozen response block");
 }
 
 void check_recycled_orbital_guess_starts_subspace() {
@@ -326,7 +265,10 @@ void check_recycled_orbital_guess_starts_subspace() {
         if (first_direction.size() == 0) first_direction = p;
         return ResponseNeoDirection{p, Eigen::VectorXd::Zero(0)};
       },
-      {},
+      [](const Eigen::VectorXd&) {
+        return ResponseNeoDirection{
+            Eigen::VectorXd::Zero(2), Eigen::VectorXd::Zero(0)};
+      },
       [](const Eigen::VectorXd& p) { return p; },
       {},
       guess);
@@ -353,7 +295,10 @@ void check_boundary_residual_uses_shifted_preconditioner() {
         return ResponseNeoDirection{
             hessian * p, Eigen::VectorXd::Zero(0)};
       },
-      {},
+      [](const Eigen::VectorXd&) {
+        return ResponseNeoDirection{
+            Eigen::VectorXd::Zero(3), Eigen::VectorXd::Zero(0)};
+      },
       [](const Eigen::VectorXd& p) { return p; },
       [&largest_shift](const Eigen::VectorXd& residual, double shift) {
         largest_shift = std::max(largest_shift, shift);
@@ -371,128 +316,6 @@ void check_boundary_residual_uses_shifted_preconditioner() {
           "boundary KKT residual did not pass its shift to the preconditioner");
 }
 
-void check_structure_response_uses_tiered_accuracy() {
-  Eigen::Matrix3d a;
-  a << 2.0, 0.2, -0.1,
-       0.2, 1.6, 0.1,
-      -0.1, 0.1, 1.2;
-  Eigen::RowVector3d b;
-  b << 0.7, -0.4, 0.3;
-  const Eigen::Vector3d gradient(0.8, -0.5, 0.4);
-  std::vector<double> requested_tolerances;
-  std::vector<Eigen::Index> requested_widths;
-  const ResponseNeoProblem problem(
-      gradient,
-      1,
-      [a, b](const Eigen::VectorXd& p) {
-        return ResponseNeoDirection{a * p, b * p};
-      },
-      [&requested_tolerances, &requested_widths, b](
-          const Eigen::Ref<const Eigen::MatrixXd>& forcing,
-          double relative_tolerance) {
-        requested_tolerances.push_back(relative_tolerance);
-        requested_widths.push_back(forcing.cols());
-        const Eigen::MatrixXd response =
-            -(1.0 - relative_tolerance) * forcing;
-        const Eigen::MatrixXd residual = forcing + response;
-        return ResponseNeoStructureResponse{
-            response, b.transpose() * response, residual, 17,
-            static_cast<int>(forcing.cols()),
-            residual.stableNorm() /
-                std::max(1.0, forcing.stableNorm())};
-      },
-      [](const Eigen::VectorXd& p) { return p; });
-
-  NeoOptions options;
-  options.trust_radius = 10.0;
-  options.relative_residual_tolerance = 1.0e-10;
-  options.absolute_residual_tolerance = 1.0e-12;
-  options.require_curvature_certificate = false;
-  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
-      problem, options);
-  Eigen::Matrix<double, 1, 1> c;
-  c << 1.0;
-  verify_coupled_residual(
-      a, b, c, Eigen::Matrix3d::Identity(), gradient,
-      options.trust_radius, result);
-
-  const double coarse_tolerance =
-      std::sqrt(options.relative_residual_tolerance);
-  int coarse_calls = 0;
-  int refinement_calls = 0;
-  for (std::size_t call = 0; call < requested_tolerances.size(); ++call) {
-    if (requested_tolerances[call] >= 0.5 * coarse_tolerance) {
-      ++coarse_calls;
-    } else {
-      ++refinement_calls;
-      require(requested_widths[call] == 1,
-              "final response refinement did not use one combined direction");
-    }
-  }
-  require(coarse_calls > 0,
-          "ordinary response columns were not solved at coarse accuracy");
-  require(refinement_calls == result.iterations,
-          "interior solve performed an unrelated curvature refinement");
-}
-
-void check_response_revision_invalidates_every_retained_column() {
-  Eigen::Matrix3d a;
-  a << 2.0, 0.2, -0.1,
-       0.2, 1.6, 0.1,
-      -0.1, 0.1, 1.2;
-  Eigen::RowVector3d b;
-  b << 0.7, -0.4, 0.3;
-  std::vector<double> tolerances;
-  std::vector<Eigen::Index> widths;
-  std::uint64_t revision = 1;
-  const ResponseNeoProblem problem(
-      Eigen::Vector3d(0.8, -0.5, 0.4),
-      1,
-      [a, b](const Eigen::VectorXd& p) {
-        return ResponseNeoDirection{a * p, b * p};
-      },
-      [&tolerances, &widths, &revision, b](
-          const Eigen::Ref<const Eigen::MatrixXd>& forcing,
-          double relative_tolerance) {
-        tolerances.push_back(relative_tolerance);
-        widths.push_back(forcing.cols());
-        if (relative_tolerance < 1.0e-7) revision = 2;
-        const Eigen::MatrixXd response =
-            -(1.0 - relative_tolerance) * forcing;
-        const Eigen::MatrixXd residual = forcing + response;
-        return ResponseNeoStructureResponse{
-            response, b.transpose() * response, residual, revision,
-            static_cast<int>(forcing.cols()),
-            residual.stableNorm() /
-                std::max(1.0, forcing.stableNorm())};
-      },
-      [](const Eigen::VectorXd& p) { return p; });
-
-  NeoOptions options;
-  options.trust_radius = 0.4;
-  options.relative_residual_tolerance = 1.0e-10;
-  options.absolute_residual_tolerance = 1.0e-12;
-  options.require_curvature_certificate = true;
-  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
-      problem, options);
-  require(result.stop_reason != NeoStopReason::NumericalFailure,
-          "response-revision replay produced a numerical failure");
-
-  bool revision_changed = false;
-  bool replayed_retained_block = false;
-  for (std::size_t call = 0; call < tolerances.size(); ++call) {
-    if (tolerances[call] < 1.0e-7) revision_changed = true;
-    if (revision_changed && widths[call] >= 2 &&
-        tolerances[call] >= 1.0e-7) {
-      replayed_retained_block = true;
-    }
-  }
-  require(revision_changed,
-          "response-revision fixture never enriched its response model");
-  require(replayed_retained_block,
-          "response revision did not replay all retained orbital columns");
-}
-
 }  // namespace
 
 int main() {
@@ -502,11 +325,8 @@ int main() {
     check_budget_reports_subspace_limit();
     check_structure_contracts();
     check_workspace_reuses_actions_after_radius_change();
-    check_structure_response_refreshes_one_common_revision();
     check_recycled_orbital_guess_starts_subspace();
     check_boundary_residual_uses_shifted_preconditioner();
-    check_structure_response_uses_tiered_accuracy();
-    check_response_revision_invalidates_every_retained_column();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {

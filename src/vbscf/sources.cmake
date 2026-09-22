@@ -114,7 +114,6 @@ set(XMVB_VBSCF_OPTIMIZATION_SOURCES
   vbscf/optimization/krylov/minres.cpp
   vbscf/optimization/globalization/line_search.cpp
   vbscf/optimization/driver/session.cpp
-  vbscf/optimization/neo/augmented_hessian.cpp
   vbscf/optimization/neo/coordinates.cpp
   vbscf/optimization/neo/globalization.cpp
   vbscf/optimization/neo/problem.cpp

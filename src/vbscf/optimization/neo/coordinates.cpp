@@ -53,16 +53,11 @@ CoupledDirection CoupledNeoCoordinates::unflatten(
 
 Eigen::VectorXd CoupledNeoCoordinates::apply_metric(
     const Eigen::VectorXd& coordinates) const {
-  if (coordinates.size() != size() || !coordinates.allFinite()) {
-    throw std::invalid_argument(
-        "coupled NEO coordinates have incompatible dimensions or values");
-  }
-  Eigen::VectorXd image(size());
-  image.head(orbital_size_) =
-      orbital_metric_->apply(coordinates.head(orbital_size_));
-  image.tail(structure_size_) =
-      structure_->apply_metric_coordinates(coordinates.tail(structure_size_));
-  return image;
+  const CoupledDirection direction = unflatten(coordinates);
+  CoupledDirection image;
+  image.orbital = orbital_metric_->apply(direction.orbital);
+  image.structure = structure_->apply_metric(direction.structure);
+  return flatten(image);
 }
 
 double CoupledNeoCoordinates::squared_norm(
