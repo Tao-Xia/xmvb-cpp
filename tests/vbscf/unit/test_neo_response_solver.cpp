@@ -378,6 +378,50 @@ void check_response_is_local_to_candidate_direction() {
           "response NEO solved unused orbital-basis response directions");
 }
 
+void check_workspace_woodbury_preconditions_orbital_residual() {
+  Eigen::Matrix3d a;
+  a << 3.0, 0.4, -0.2,
+       0.4, 2.2, 0.3,
+      -0.2, 0.3, 1.7;
+  Eigen::Matrix<double, 2, 3> b;
+  b << 0.7, -0.2, 0.4,
+      -0.3, 0.5, 0.1;
+  Eigen::Matrix2d c;
+  c << 2.1, 0.35,
+       0.35, 1.4;
+  const Eigen::Matrix3d metric = Eigen::Matrix3d::Identity();
+  const Eigen::Vector3d gradient(0.9, -1.1, 0.6);
+  int preconditioner_calls = 0;
+  const ResponseNeoProblem problem(
+      gradient,
+      c.rows(),
+      [a, b](const Eigen::VectorXd& p) {
+        return ResponseNeoDirection{a * p, b * p};
+      },
+      [b, c](const Eigen::VectorXd& q) {
+        return ResponseNeoDirection{b.transpose() * q, c * q};
+      },
+      [metric](const Eigen::VectorXd& p) { return metric * p; },
+      [a, &preconditioner_calls](
+          const Eigen::VectorXd& residual, double shift) {
+        ++preconditioner_calls;
+        return (a + shift * Eigen::Matrix3d::Identity())
+            .ldlt()
+            .solve(residual);
+      });
+  NeoOptions options;
+  options.trust_radius = 0.35;
+  options.relative_residual_tolerance = 1.0e-12;
+  const ResponseNeoResult result =
+      xmvb::vb::solve_response_neo(problem, options);
+  verify_coupled_residual(
+      a, b, c, metric, gradient, options.trust_radius, result);
+  require(result.structure_actions > 0,
+          "Woodbury fixture did not construct a response space");
+  require(preconditioner_calls > result.orbital_actions,
+          "response-space coupling was not passed through the base inverse");
+}
+
 }  // namespace
 
 int main() {
@@ -391,6 +435,7 @@ int main() {
     check_boundary_residual_uses_shifted_preconditioner();
     check_keyframe_response_uses_forcing_accuracy();
     check_response_is_local_to_candidate_direction();
+    check_workspace_woodbury_preconditions_orbital_residual();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {
