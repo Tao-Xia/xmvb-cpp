@@ -111,6 +111,11 @@ bool build_accepted_neo_keyframe(
     auto problem = std::make_shared<ResponseNeoProblem>(
         reduced_gradient,
         structure_hessian.tangent_size(),
+        [&orbital_hessian](const Eigen::VectorXd& vector) {
+          HvpComponents components;
+          components.structure_response = false;
+          return orbital_hessian.apply_reduced(vector, components);
+        },
         [&orbital_hessian, &structure_hessian](
             const Eigen::VectorXd& vector) {
           const OrbitalCouplingAction image =
@@ -235,6 +240,7 @@ bool build_accepted_neo_keyframe(
     record->micro_iterations += step.iterations;
     record->coupled_block_actions += step.coupled_actions;
     record->orbital_hvp_actions += step.orbital_actions;
+    record->structure_forcing_actions += step.structure_forcing_actions;
     record->structure_response_actions += step.structure_actions;
     if (!step.converged()) {
       result->termination_reason = "neo_microproblem_not_converged";

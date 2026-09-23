@@ -27,7 +27,8 @@ void write_neo_trace(
   stream
       << "iteration\tkeyframes\tmodel_dimension\tmicro_iterations"
       << "\tcoupled_block_actions"
-      << "\torbital_hvp_actions\tstructure_response_actions"
+      << "\torbital_hvp_actions\tstructure_forcing_actions"
+      << "\tstructure_response_actions"
       << "\trejected_trials"
       << "\tkkt_residual_norm\tkkt_residual_target"
       << "\tcurvature_residual_norm\tcurvature_residual_target"
@@ -45,6 +46,7 @@ void write_neo_trace(
         << step.micro_iterations << '\t'
         << step.coupled_block_actions << '\t'
         << step.orbital_hvp_actions << '\t'
+        << step.structure_forcing_actions << '\t'
         << step.structure_response_actions << '\t'
         << step.rejected_trial_count << '\t'
         << step.kkt_residual_norm << '\t'
