@@ -191,6 +191,9 @@ private:
       double residual_target,
       int maximum_dimension,
       bool require_curvature_certificate);
+  void retain_single_direction_candidate(
+      const ResponseNeoDirection& candidate,
+      const Eigen::VectorXd& step);
   const ResponseNeoProblem& problem_;
   Eigen::MatrixXd orbital_basis_;
   Eigen::MatrixXd orbital_metric_images_;

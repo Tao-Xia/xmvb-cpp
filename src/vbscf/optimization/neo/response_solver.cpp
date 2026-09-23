@@ -352,6 +352,26 @@ void ResponseNeoWorkspace::activate_coupling(
       orbital_basis_.transpose() * structure_orbital_images_;
 }
 
+void ResponseNeoWorkspace::retain_single_direction_candidate(
+    const ResponseNeoDirection& candidate,
+    const Eigen::VectorXd& step) {
+  if (orbital_basis_.cols() != 1) return;
+  const double coefficient = orbital_basis_.col(0).dot(step);
+  const double threshold = 64.0 * std::numeric_limits<double>::epsilon() *
+      std::max(1.0, step.stableNorm());
+  if (std::abs(coefficient) <= threshold) return;
+
+  orbital_orbital_images_.col(0) = candidate.orbital / coefficient;
+  orbital_structure_images_.col(0) = candidate.structure / coefficient;
+  projected_orbital_.noalias() =
+      orbital_basis_.transpose() * orbital_orbital_images_;
+  projected_coupling_.noalias() =
+      structure_basis_.transpose() * orbital_structure_images_;
+  projected_coupling_adjoint_.noalias() =
+      orbital_basis_.transpose() * structure_orbital_images_;
+  coupling_active_ = true;
+}
+
 bool ResponseNeoWorkspace::certify_core_candidate(
     ResponseNeoResult* result,
     double residual_target,
@@ -403,6 +423,7 @@ bool ResponseNeoWorkspace::certify_core_candidate(
             -result->kkt_residual.structure,
             &result->coupled_actions,
             &result->structure_actions)) {
+      retain_single_direction_candidate(candidate, result->step.orbital);
       return false;
     }
   }
@@ -721,22 +742,23 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         options.require_curvature_certificate || result.hard_case;
     const bool required_curvature_converged =
         !need_curvature_certificate || curvature_converged;
-    if (stationary && required_curvature_converged && shifted_positive) {
-      if (!coupling_active_) {
-        // Form Bp only for this candidate, solve Cq=-Bp, and accept only the
-        // full coupled KKT certificate.  A failure promotes the retained
-        // orbital basis to the coupled workspace.
-        if (certify_core_candidate(
-                &result, kkt_residual_target, maximum_dimension,
-                need_curvature_certificate)) {
-          result.stop_reason = NeoStopReason::Converged;
-          return result;
-        }
-        activate_coupling(
-            &result.coupled_actions, &result.orbital_actions,
-            &result.structure_forcing_actions);
-        continue;
+    if (!coupling_active_ && shifted_positive) {
+      // Certify the first usable projected-A candidate immediately.  Solving
+      // the unrelaxed A problem to final accuracy before forming Bp can be far
+      // harder than solving the Schur-complement model and defeats the delayed
+      // action.  A failed full residual promotes the retained basis at once.
+      if (certify_core_candidate(
+              &result, kkt_residual_target, maximum_dimension,
+              need_curvature_certificate)) {
+        result.stop_reason = NeoStopReason::Converged;
+        return result;
       }
+      activate_coupling(
+          &result.coupled_actions, &result.orbital_actions,
+          &result.structure_forcing_actions);
+      continue;
+    }
+    if (stationary && required_curvature_converged && shifted_positive) {
       result.stop_reason = NeoStopReason::Converged;
       return result;
     }

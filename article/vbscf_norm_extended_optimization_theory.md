@@ -859,7 +859,10 @@ core projected problem has produced an actual candidate $\mathbf p$, the
 algorithm forms $\mathbf B\mathbf p$ once, solves eq 44a in the retained and
 incrementally enlarged structure space, and evaluates eqs 44b--44d.  If the
 certificate succeeds, no individual $\mathbf B\mathbf Q_o$ columns are
-needed.  If it fails, the retained orbital directions are promoted to the
+needed.  The unrelaxed $\mathbf A$ equation is not solved to the final Newton
+tolerance first: the first usable projected candidate is certified because
+the Schur term may materially improve the orbital spectrum.  If certification
+fails, the retained orbital directions are promoted immediately to the
 fully coupled workspace and subsequent directions carry both
 $\mathbf A\mathbf v$ and $\mathbf B\mathbf v$.  This promotion is an
 algebraic consequence of the residual test, not a system-size or

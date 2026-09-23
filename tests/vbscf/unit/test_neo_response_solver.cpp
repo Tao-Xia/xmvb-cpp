@@ -418,8 +418,8 @@ void check_structure_forcing_is_delayed_until_core_candidate() {
   const ResponseNeoResult result =
       xmvb::vb::solve_response_neo(problem, options);
   require(result.converged(), "delayed-coupling fixture did not converge");
-  require(core_actions > 1,
-          "delayed-coupling fixture did not build an orbital Krylov space");
+  require(core_actions == 1,
+          "delayed-coupling fixture over-solved the unrelaxed core model");
   require(coupled_actions == 1,
           "structure forcing was built before the core candidate was ready: " +
               std::to_string(coupled_actions));
