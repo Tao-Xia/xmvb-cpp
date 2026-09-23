@@ -1081,7 +1081,7 @@ OrbitalChart::shifted_block_inverse(double shift) const {
 
   struct Block {
     Eigen::Index offset;
-    Eigen::MatrixXd inverse;
+    Eigen::LDLT<Eigen::MatrixXd> factor;
   };
   std::vector<Block> blocks;
   if (has_reduced_curvature_diagonal_) {
@@ -1100,12 +1100,7 @@ OrbitalChart::shifted_block_inverse(double shift) const {
           throw std::runtime_error(
               "failed to factor shifted orbital curvature block");
         }
-        Eigen::MatrixXd inverse = factor.solve(
-            Eigen::MatrixXd::Identity(matrix.rows(), matrix.cols()));
-        if (!inverse.allFinite()) {
-          throw std::runtime_error("non-finite shifted orbital block inverse");
-        }
-        blocks.push_back({orbital.local_reduced_offset, std::move(inverse)});
+        blocks.push_back({orbital.local_reduced_offset, std::move(factor)});
       }
     }
   }
@@ -1116,9 +1111,9 @@ OrbitalChart::shifted_block_inverse(double shift) const {
         reduced_vector, size, "orbital-chart block inverse input");
     Eigen::VectorXd out = reduced_vector;
     for (const Block& block : blocks) {
-      const Eigen::Index length = block.inverse.rows();
-      out.segment(block.offset, length).noalias() =
-          block.inverse * reduced_vector.segment(block.offset, length);
+      const Eigen::Index length = block.factor.rows();
+      out.segment(block.offset, length) = block.factor.solve(
+          reduced_vector.segment(block.offset, length));
     }
     require_finite_vector(out, "orbital-chart block inverse result");
     return out;
