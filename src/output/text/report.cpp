@@ -204,13 +204,10 @@ void print_tnhvp_summary(
 }
 
 const char* orbital_preconditioner_name(
-    xmvb::vb::OrbitalPreconditioner preconditioner,
-    xmvb::vb::VbScfOptimizerBackend backend) {
+    xmvb::vb::OrbitalPreconditioner preconditioner) {
   switch (preconditioner) {
     case xmvb::vb::OrbitalPreconditioner::Automatic:
-      return backend == xmvb::vb::VbScfOptimizerBackend::Neo
-          ? "automatic (analytic VBSCF Hessian diagonal)"
-          : "automatic (one-electron block)";
+      return "automatic (one-electron block)";
     case xmvb::vb::OrbitalPreconditioner::Identity:
       return "identity";
     case xmvb::vb::OrbitalPreconditioner::OneElectron:
@@ -240,8 +237,7 @@ void print_header(
   if (options.backend == xmvb::vb::VbScfOptimizerBackend::Neo) {
     print_log_field(
         "Orbital preconditioner",
-        orbital_preconditioner_name(
-            options.orbital_preconditioner, options.backend));
+        orbital_preconditioner_name(options.orbital_preconditioner));
   }
 }
 

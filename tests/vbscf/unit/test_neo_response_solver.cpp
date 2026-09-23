@@ -316,6 +316,59 @@ void check_boundary_residual_uses_shifted_preconditioner() {
           "boundary KKT residual did not pass its shift to the preconditioner");
 }
 
+void check_inexact_block_preconditioner_preserves_coupled_step() {
+  Eigen::Matrix3d a;
+  a << 3.0, 0.3, -0.1,
+       0.3, 2.1, 0.2,
+       -0.1, 0.2, 1.4;
+  Eigen::RowVector3d b;
+  b << 0.6, -0.2, 0.3;
+  Eigen::Matrix<double, 1, 1> c;
+  c << 1.7;
+  Eigen::Matrix3d metric;
+  metric << 1.5, 0.2, 0.0,
+            0.2, 1.1, -0.1,
+            0.0, -0.1, 0.8;
+  const Eigen::Vector3d gradient(0.9, -0.7, 0.5);
+  const Eigen::Vector3d block_diagonal(3.0, 2.1, 1.4);
+  double largest_shift = 0.0;
+  const ResponseNeoProblem problem(
+      gradient,
+      1,
+      [a, b](const Eigen::VectorXd& p) {
+        return ResponseNeoDirection{a * p, b * p};
+      },
+      [b, c](const Eigen::VectorXd& q) {
+        return ResponseNeoDirection{b.transpose() * q, c * q};
+      },
+      [metric](const Eigen::VectorXd& p) { return metric * p; },
+      [&largest_shift, block_diagonal](
+          const Eigen::VectorXd& residual, double shift) {
+        largest_shift = std::max(largest_shift, shift);
+        // Deliberately omit the off-diagonal physical metric: this is only
+        // a cheap positive preconditioner, not the shifted Newton inverse.
+        return (residual.array() /
+                (block_diagonal.array() + shift)).matrix();
+      });
+  NeoOptions options;
+  options.trust_radius = 0.25;
+  options.relative_residual_tolerance = 1.0e-12;
+  const ResponseNeoResult result = xmvb::vb::solve_response_neo(
+      problem, options);
+  verify_coupled_residual(
+      a, b, c, metric, gradient, options.trust_radius, result);
+  const Eigen::Matrix3d relaxed =
+      a - b.transpose() * c.ldlt().solve(b);
+  require_close(
+      result.step.orbital,
+      explicit_orbital_step(
+          relaxed, metric, gradient, options.trust_radius),
+      2.0e-9,
+      "inexact block preconditioner changed the coupled NEO step");
+  require(largest_shift > 0.0,
+          "inexact block preconditioner did not receive the NEO shift");
+}
+
 void check_keyframe_response_uses_forcing_accuracy() {
   Eigen::Matrix4d a = Eigen::Matrix4d::Zero();
   a.diagonal() << 2.0, 3.0, 4.0, 5.0;
@@ -389,6 +442,7 @@ int main() {
     check_workspace_reuses_actions_after_radius_change();
     check_recycled_orbital_guess_starts_subspace();
     check_boundary_residual_uses_shifted_preconditioner();
+    check_inexact_block_preconditioner_preserves_coupled_step();
     check_keyframe_response_uses_forcing_accuracy();
     check_response_is_local_to_candidate_direction();
     std::cout << "response NEO solver tests passed\n";
