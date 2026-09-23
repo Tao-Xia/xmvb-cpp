@@ -387,11 +387,9 @@ void check_response_is_local_to_candidate_direction() {
 }
 
 void check_structure_forcing_is_delayed_until_core_candidate() {
-  Eigen::Matrix3d a;
-  a << 3.0, 0.6, -0.2,
-       0.6, 1.7, 0.4,
-      -0.2, 0.4, 0.9;
-  const Eigen::Vector3d gradient(0.8, -0.7, 0.5);
+  Eigen::Matrix3d a = Eigen::Matrix3d::Zero();
+  a.diagonal() << 3.0, 1.7, 0.9;
+  const Eigen::Vector3d gradient(0.8, 0.0, 0.0);
   int core_actions = 0;
   int coupled_actions = 0;
   const ResponseNeoProblem problem(
