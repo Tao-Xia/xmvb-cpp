@@ -30,14 +30,13 @@ The collector is [`tools/collect_optimizer_results.py`](../../tools/collect_opti
 The Python/Matplotlib plotter is
 [`tools/plot_optimizer_comparison.py`](../../tools/plot_optimizer_comparison.py).
 It reads `paired_runs.csv` and plots accepted iterations and end-to-end wall
-time as point-and-line curves for ten named, converged reference cases. It
-produces `iteration_time_curves.png` and `iteration_time_curves.svg`. Case
-selection and sorting are encoded in the script; no numbers are hand-entered.
-For example:
+time for every converged pair. Cases are automatically sorted by block-LBFGS
+wall time; no numbers or case selection are hand-entered. It produces
+`all_pairs_iteration_time.png` and `all_pairs_iteration_time.svg`. For example:
 
 ```sh
 uv run --no-project --with matplotlib python tools/plot_optimizer_comparison.py \
-  results/history/paired_runs.csv results/history/iteration_time_curves
+  results/history/paired_runs.csv results/history/all_pairs_iteration_time
 ```
 
 The source scripts are retained so the CSV and figure can be regenerated and
