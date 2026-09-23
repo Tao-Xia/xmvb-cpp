@@ -137,6 +137,10 @@ bool build_accepted_neo_keyframe(
             const Eigen::VectorXd& residual,
             double shift,
             double residual_target) {
+          if (shift == 0.0) {
+            return chart.apply_inverse_reduced_block_preconditioner(residual);
+          }
+          const auto block_inverse = chart.shifted_block_inverse(shift);
           return apply_shifted_metric_preconditioner(
               residual,
               shift,
@@ -147,10 +151,7 @@ bool build_accepted_neo_keyframe(
               [&orbital_metric](const Eigen::VectorXd& vector) {
                 return orbital_metric.apply(vector);
               },
-              [&chart, shift](const Eigen::VectorXd& vector) {
-                return chart.apply_inverse_reduced_shifted_block_preconditioner(
-                    vector, shift);
-              });
+              block_inverse);
         },
         std::move(orbital_guess),
         operator_relative_accuracy,
@@ -333,6 +334,10 @@ BackendRunResult run_neo_backend(
     chart = build_orbital_chart(
         *objective, parameter_view, preconditioner);
   }
+  Eigen::VectorXd orbital_guess_packed;
+  double recycle_gradient_target =
+      neo_forcing_term(final_gradient_l2, chart.reduced_size()) *
+      final_gradient_l2;
 
   while (run_result.n_iterations < options.max_iterations) {
     if (chart.reduced_size() == 0) {
@@ -353,109 +358,91 @@ BackendRunResult run_neo_backend(
     NeoIterationRecord iteration_record;
     iteration_record.accepted_iteration_index = run_result.n_iterations + 1;
     iteration_record.initial_trust_radius = trust_radius;
-    const double macro_gradient_target = neo_forcing_term(
-        final_gradient_l2, chart.reduced_size()) * final_gradient_l2;
-    bool macro_accepted = false;
-    bool backend_failed = false;
-    Eigen::VectorXd keyframe_orbital_guess_packed;
-
-    // A macro step may contain several exact-gradient keyframes.  Each
-    // keyframe discards the old quadratic model and rebuilds H, B, and C at
-    // the newly accepted nonlinear point.  The macro ends once the exact
-    // projected gradient satisfies the same Eisenstat--Walker forcing target
-    // used by the matrix-free Newton equation.
-    while (!result->converged && final_gradient_l2 > macro_gradient_target) {
-      AcceptedNeoKeyframe accepted;
-      if (!build_accepted_neo_keyframe(
-              objective,
-              parameter_view,
-              options,
-              chart,
-              projected.reduced_gradient,
-              parameters,
-              keyframe_orbital_guess_packed,
-              final_gradient_l2,
-              energy,
-              &trust_radius,
-              &iteration_record,
-              result,
-              &accepted)) {
-        backend_failed = true;
-        break;
-      }
-
-      objective->complete_trial(&accepted.trial);
-      accepted.parameters =
-          parameter_view.pack(accepted.trial.orbital_preparation_input);
-      gradient = accepted.trial.gradient;
-      energy = accepted.trial.energy;
-      objective->commit(std::move(accepted.trial));
-      parameters = std::move(accepted.parameters);
-      keyframe_orbital_guess_packed =
-          std::move(accepted.next_orbital_guess_packed);
-      ++iteration_record.keyframes;
-      macro_accepted = true;
-
-      // Stationarity depends only on the quotient geometry. Do not build an
-      // integral-dependent preconditioner until another NEO solve is needed.
-      OrbitalChart next_geometry = build_orbital_chart(
-          *objective, parameter_view, OrbitalPreconditioner::Identity);
-      auto next_projected = next_geometry.project_gradient(gradient);
-      final_gradient_inf =
-          gradient_infinity_norm(next_projected.reduced_gradient);
-      final_gradient_l2 = next_projected.reduced_gradient.norm();
-      const double energy_change = energy - previous_energy;
-      previous_energy = energy;
-      if (std::abs(energy_change) < options.energy_tolerance &&
-          final_gradient_inf < options.gradient_tolerance) {
-        result->converged = true;
-        result->termination_reason = "neo_projected_gradient_tolerance";
-      }
-      // Once external first-order stationarity is reached, expose this
-      // keyframe as the end of the macro step.  If its energy change is still
-      // too large, the next macro supplies the required independent energy
-      // confirmation instead of hiding it inside the current reported step.
-      if (!result->converged &&
-          final_gradient_inf < options.gradient_tolerance) {
-        chart = build_orbital_chart(
-            *objective, parameter_view, preconditioner);
-        projected = std::move(next_projected);
-        break;
-      }
-      if (!result->converged) {
-        OrbitalChart next_chart =
-            build_orbital_chart(
-                *objective, parameter_view, preconditioner);
-        if (next_chart.reduced_size() != next_geometry.reduced_size() ||
-            next_chart.rank_signature() != next_geometry.rank_signature()) {
-          throw std::runtime_error(
-              "preconditioner changed the nonredundant orbital geometry");
-        }
-        chart = std::move(next_chart);
-      } else {
-        chart = std::move(next_geometry);
-      }
-      projected = std::move(next_projected);
+    AcceptedNeoKeyframe accepted;
+    if (!build_accepted_neo_keyframe(
+            objective,
+            parameter_view,
+            options,
+            chart,
+            projected.reduced_gradient,
+            parameters,
+            orbital_guess_packed,
+            final_gradient_l2,
+            energy,
+            &trust_radius,
+            &iteration_record,
+            result,
+            &accepted)) {
+      break;
     }
 
-    if (macro_accepted) {
-      ++run_result.n_iterations;
-      iteration_record.trust_ratio =
-          iteration_record.predicted_reduction > 0.0
-              ? iteration_record.actual_reduction /
-                    iteration_record.predicted_reduction
-              : -std::numeric_limits<double>::infinity();
-      result->neo_iteration_trace.push_back(iteration_record);
-      sync_result_from_objective(*objective, result);
-      record_accepted_iteration_snapshot(
-          objective,
-          run_result.n_iterations,
-          options,
-          result,
-          nullptr,
-          &projected.reduced_gradient);
+    objective->complete_trial(&accepted.trial);
+    accepted.parameters =
+        parameter_view.pack(accepted.trial.orbital_preparation_input);
+    gradient = accepted.trial.gradient;
+    energy = accepted.trial.energy;
+    objective->commit(std::move(accepted.trial));
+    parameters = std::move(accepted.parameters);
+    orbital_guess_packed = std::move(accepted.next_orbital_guess_packed);
+    iteration_record.keyframes = 1;
+
+    // Every accepted point has a new exact gradient and a new local model.
+    // It is therefore an outer iteration, including for iteration limits and
+    // progress output; grouping such points obscures the actual work.
+    OrbitalChart next_geometry = build_orbital_chart(
+        *objective, parameter_view, OrbitalPreconditioner::Identity);
+    auto next_projected = next_geometry.project_gradient(gradient);
+    final_gradient_inf =
+        gradient_infinity_norm(next_projected.reduced_gradient);
+    final_gradient_l2 = next_projected.reduced_gradient.norm();
+    // Retain the packed trial direction only while following the same
+    // exact-gradient keyframe sequence. All accepted points are still
+    // counted and reported independently.
+    if (final_gradient_inf < options.gradient_tolerance ||
+        final_gradient_l2 <= recycle_gradient_target) {
+      orbital_guess_packed.resize(0);
+      recycle_gradient_target =
+          neo_forcing_term(final_gradient_l2, next_geometry.reduced_size()) *
+          final_gradient_l2;
     }
-    if (result->converged || backend_failed || !macro_accepted) break;
+    const double energy_change = energy - previous_energy;
+    previous_energy = energy;
+    if (std::abs(energy_change) < options.energy_tolerance &&
+        final_gradient_inf < options.gradient_tolerance) {
+      result->converged = true;
+      result->termination_reason = "neo_projected_gradient_tolerance";
+    }
+    if (!result->converged &&
+        run_result.n_iterations + 1 < options.max_iterations) {
+      OrbitalChart next_chart = build_orbital_chart(
+          *objective, parameter_view, preconditioner);
+      if (next_chart.reduced_size() != next_geometry.reduced_size() ||
+          next_chart.rank_signature() != next_geometry.rank_signature()) {
+        throw std::runtime_error(
+            "preconditioner changed the nonredundant orbital geometry");
+      }
+      chart = std::move(next_chart);
+    } else {
+      chart = std::move(next_geometry);
+    }
+    projected = std::move(next_projected);
+
+    ++run_result.n_iterations;
+    iteration_record.trust_ratio =
+        iteration_record.predicted_reduction > 0.0
+            ? iteration_record.actual_reduction /
+                  iteration_record.predicted_reduction
+            : -std::numeric_limits<double>::infinity();
+    result->neo_iteration_trace.push_back(iteration_record);
+    sync_result_from_objective(*objective, result);
+    record_accepted_iteration_snapshot(
+        objective,
+        run_result.n_iterations,
+        options,
+        result,
+        nullptr,
+        &projected.reduced_gradient);
+    if (result->converged) break;
   }
 
   result->final_projected_gradient_inf_norm = final_gradient_inf;

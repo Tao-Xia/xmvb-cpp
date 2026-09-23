@@ -510,6 +510,7 @@ void check_occupation_curvature() {
     const OrbitalChart space(input, view, c, c, &f);
     Eigen::MatrixXd u(3, space.reduced_size()), action(2, 2), inverse(2, 2);
     Eigen::MatrixXd shifted_inverse(2, 2);
+    const auto cached_shifted_inverse = space.shifted_block_inverse(0.4);
     require(space.reduced_size() == 2, "invalid occupation fixture rank");
     for (int j = 0; j < 2; ++j) {
       const Eigen::VectorXd unit = Eigen::VectorXd::Unit(2, j);
@@ -518,6 +519,9 @@ void check_occupation_curvature() {
       inverse.col(j) = space.apply_inverse_reduced_block_preconditioner(unit);
       shifted_inverse.col(j) =
           space.apply_inverse_reduced_shifted_block_preconditioner(unit, 0.4);
+      require((cached_shifted_inverse(unit) - shifted_inverse.col(j)).norm() <
+                  1.0e-12,
+              "cached shifted block inverse differs from direct action");
     }
     // Independent diagonal one-electron gap formula at a stationary ray.
     const double occupation = inactive_count == 1 ? 2.0 : 1.0;

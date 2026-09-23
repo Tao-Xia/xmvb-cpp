@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include <Eigen/Core>
@@ -107,6 +108,10 @@ public:
   Eigen::VectorXd apply_inverse_reduced_shifted_block_preconditioner(
       const Eigen::VectorXd& reduced_vector,
       double shift) const;
+
+  /** @brief Factors @f$P+\lambda I@f$ once for repeated Krylov actions. */
+  std::function<Eigen::VectorXd(const Eigen::VectorXd&)>
+  shifted_block_inverse(double shift) const;
 
   /**
    * @brief Applies @f$(J^TDJ-\omega I)^{-1}@f$ in quotient coordinates.
