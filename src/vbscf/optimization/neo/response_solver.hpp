@@ -32,16 +32,13 @@ using ResponseNeoPreconditioner =
  *
  * The coupled action represents
  * @f$[\bar A p+B^Tz,\;Bp+Cz]@f$.  Only the orbital metric defines the
- * trust region.  The separate core action applies only @f$\bar A@f$, so
- * @f$Bp@f$ can be delayed until an actual orbital candidate exists.  The
- * optional preconditioner acts only on orbital covectors.
+ * trust region.  The optional preconditioner acts only on orbital covectors.
  */
 class ResponseNeoProblem {
 public:
   ResponseNeoProblem(
       Eigen::VectorXd orbital_gradient,
       Eigen::Index structure_size,
-      NeoAction apply_orbital_core,
       ResponseNeoBlockAction apply_orbital_coupling,
       ResponseNeoBlockAction apply_structure_coupling,
       NeoAction apply_orbital_metric,
@@ -58,8 +55,6 @@ public:
     return orbital_gradient_;
   }
 
-  Eigen::VectorXd apply_orbital_core(
-      const Eigen::VectorXd& direction) const;
   ResponseNeoDirection apply_orbital_coupling(
       const Eigen::VectorXd& direction) const;
   ResponseNeoDirection apply_structure_coupling(
@@ -95,7 +90,6 @@ private:
       const Eigen::VectorXd& vector,
       Eigen::Index expected_size) const;
 
-  const NeoAction apply_orbital_core_;
   const ResponseNeoBlockAction apply_orbital_coupling_;
   const ResponseNeoBlockAction apply_structure_coupling_;
   const ResponseNeoMatrixAction apply_structure_coupling_block_;
@@ -122,8 +116,6 @@ struct ResponseNeoResult {
   int iterations = 0;
   int coupled_actions = 0;
   int orbital_actions = 0;
-  /** Orbital actions that also formed the expensive structure forcing Bp. */
-  int structure_forcing_actions = 0;
   int structure_actions = 0;
   bool boundary = false;
   bool hard_case = false;
@@ -169,8 +161,7 @@ private:
   bool append_orbital(
       Eigen::VectorXd direction,
       int* actions,
-      int* orbital_actions,
-      int* structure_forcing_actions);
+      int* orbital_actions);
   bool append_structure(
       Eigen::VectorXd direction,
       int* actions,
@@ -182,18 +173,6 @@ private:
   void store_structure(
       const Eigen::VectorXd& direction,
       const ResponseNeoDirection& image);
-  void activate_coupling(
-      int* actions,
-      int* orbital_actions,
-      int* structure_forcing_actions);
-  bool certify_core_candidate(
-      ResponseNeoResult* result,
-      double residual_target,
-      int maximum_dimension,
-      bool require_curvature_certificate);
-  void retain_single_direction_candidate(
-      const ResponseNeoDirection& candidate,
-      const Eigen::VectorXd& step);
   const ResponseNeoProblem& problem_;
   Eigen::MatrixXd orbital_basis_;
   Eigen::MatrixXd orbital_metric_images_;
@@ -207,7 +186,6 @@ private:
   Eigen::MatrixXd projected_coupling_;
   Eigen::MatrixXd projected_coupling_adjoint_;
   Eigen::MatrixXd projected_structure_;
-  bool coupling_active_ = false;
   Eigen::Index orbital_canonical_ = 0;
   Eigen::Index structure_canonical_ = 0;
 };
@@ -215,12 +193,13 @@ private:
 /**
  * @brief Solves the coupled model after projected structure-response removal.
  *
- * The initial orbital basis projects only @f$\bar A@f$.  Once its projected
- * solve is stationary, the workspace forms @f$Bp@f$ for that candidate,
- * solves @f$Cq=-Bp@f$ direction-locally, and checks both coupled KKT
- * residuals.  Only a failed certificate promotes the retained orbital basis
- * to the full @f$\bar A,B,C@f$ workspace.  Lowest-curvature certification is
- * optional except in a hard case.
+ * Independent orbital and structure bases project @f$\bar A,B,C@f$.  Each
+ * projected model eliminates the retained structure block with its symmetric
+ * spectral pseudoinverse, then solves the orbital trust-region problem for
+ * @f$\bar A-B^TC^\dagger B@f$.  Missing response directions are generated
+ * from @f$Bp+Cq@f$ of the current candidate, rather than by closing every
+ * orbital basis column.  Convergence is certified by both full coupled KKT
+ * residuals; lowest-curvature certification is optional except in a hard case.
  */
 ResponseNeoResult solve_response_neo(
     const ResponseNeoProblem& problem,

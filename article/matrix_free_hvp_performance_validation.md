@@ -821,6 +821,30 @@ block. These results isolate the remaining problem as a stable representation
 of cross-orbital relaxed curvature; neither a more expensive scalar diagonal
 nor unqualified cross-point secant transport solves it.
 
+### 8.6 Delayed orbital--structure forcing audit
+
+A delayed-$B$ variant first built an orbital candidate from the unrelaxed
+$A$ block, formed $Bp$ only for that candidate, solved $Cq=-Bp$, and retained
+the step only when the complete coupled KKT residual met the normal forcing
+condition.  Solving the $A$ problem to final inner accuracy reduced exact
+forcing requests but destroyed the favorable spectrum of the relaxed Schur
+operator $A-B^TC^\dagger B$.  Hanhai25 job `250662` retained five outer steps
+for both cases but changed 241 from 29 orbital actions and 2.40 s to 106 actions
+and 6.16 s, and changed 240 from 10 actions and 10.82 s to 41 actions and
+26.64 s.
+
+A second realization certified the first usable projected-$A$ candidate and
+promoted immediately to the coupled workspace when its exact residual failed.
+Job `250711` restored the five-step trajectories, but exact $Bp$ counts were
+unchanged from the original orbital-action counts: 29 for 241 and 10 for 240.
+The extra core actions increased the totals to 36 and 15 and the wall times to
+2.77 and 11.28 s, respectively.  Thus the aggressive schedule saves forcing
+only by losing the Schur spectral information, whereas the residual-safe
+schedule preserves that information but saves no forcing.  The experimental
+implementation was removed.  A future delayed-forcing method requires an
+independently cheap approximation to the relaxed Schur spectrum; delaying
+$B$ alone is not such an approximation.
+
 ## 9. Reproducibility
 
 The configured test suite contains 61 tests, including independent polynomial

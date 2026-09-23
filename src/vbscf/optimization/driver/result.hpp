@@ -96,7 +96,6 @@ struct NeoIterationRecord {
   int micro_iterations = 0;
   int coupled_block_actions = 0;
   int orbital_hvp_actions = 0;
-  int structure_forcing_actions = 0;
   int structure_response_actions = 0;
   int rejected_trial_count = 0;
 

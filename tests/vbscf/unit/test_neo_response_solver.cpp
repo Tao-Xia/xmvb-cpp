@@ -43,7 +43,6 @@ ResponseNeoProblem dense_problem(
   return ResponseNeoProblem(
       gradient,
       c.rows(),
-      [a](const Eigen::VectorXd& p) { return (a * p).eval(); },
       [a, b](const Eigen::VectorXd& p) {
         return ResponseNeoDirection{a * p, b * p};
       },
@@ -264,10 +263,6 @@ void check_recycled_orbital_guess_starts_subspace() {
       0,
       [&first_direction](const Eigen::VectorXd& p) {
         if (first_direction.size() == 0) first_direction = p;
-        return p;
-      },
-      [&first_direction](const Eigen::VectorXd& p) {
-        if (first_direction.size() == 0) first_direction = p;
         return ResponseNeoDirection{p, Eigen::VectorXd::Zero(0)};
       },
       [](const Eigen::VectorXd&) {
@@ -296,9 +291,6 @@ void check_boundary_residual_uses_shifted_preconditioner() {
   const ResponseNeoProblem problem(
       Eigen::Vector3d(0.4, -0.7, 0.2),
       0,
-      [hessian](const Eigen::VectorXd& p) {
-        return (hessian * p).eval();
-      },
       [hessian](const Eigen::VectorXd& p) {
         return ResponseNeoDirection{
             hessian * p, Eigen::VectorXd::Zero(0)};
@@ -386,84 +378,6 @@ void check_response_is_local_to_candidate_direction() {
           "response NEO solved unused orbital-basis response directions");
 }
 
-void check_structure_forcing_is_delayed_until_core_candidate() {
-  Eigen::Matrix3d a = Eigen::Matrix3d::Zero();
-  a.diagonal() << 3.0, 1.7, 0.9;
-  const Eigen::Vector3d gradient(0.8, 0.0, 0.0);
-  int core_actions = 0;
-  int coupled_actions = 0;
-  const ResponseNeoProblem problem(
-      gradient,
-      1,
-      [a, &core_actions](const Eigen::VectorXd& p) {
-        ++core_actions;
-        return (a * p).eval();
-      },
-      [a, &coupled_actions](const Eigen::VectorXd& p) {
-        ++coupled_actions;
-        return ResponseNeoDirection{
-            a * p, Eigen::VectorXd::Zero(1)};
-      },
-      [](const Eigen::VectorXd&) {
-        return ResponseNeoDirection{
-            Eigen::VectorXd::Zero(3), Eigen::VectorXd::Zero(1)};
-      },
-      [](const Eigen::VectorXd& p) { return p; });
-  NeoOptions options;
-  options.trust_radius = 10.0;
-  options.relative_residual_tolerance = 1.0e-12;
-  options.require_curvature_certificate = false;
-  const ResponseNeoResult result =
-      xmvb::vb::solve_response_neo(problem, options);
-  require(result.converged(), "delayed-coupling fixture did not converge");
-  require(core_actions == 1,
-          "delayed-coupling fixture over-solved the unrelaxed core model");
-  require(coupled_actions == 1,
-          "structure forcing was built before the core candidate was ready: " +
-              std::to_string(coupled_actions));
-  require(result.structure_forcing_actions == 1,
-          "delayed structure-forcing count is inconsistent");
-  require(result.structure_actions == 0,
-          "zero coupling admitted an unnecessary structure direction");
-}
-
-void check_candidate_structure_response_precedes_coupled_expansion() {
-  const Eigen::Matrix2d a = Eigen::Matrix2d::Identity();
-  Eigen::Matrix<double, 1, 2> b;
-  b << 0.1, 0.0;
-  int orbital_coupling_actions = 0;
-  int structure_actions = 0;
-  const ResponseNeoProblem problem(
-      Eigen::Vector2d(1.0, 0.0),
-      1,
-      [a](const Eigen::VectorXd& p) { return (a * p).eval(); },
-      [a, b, &orbital_coupling_actions](const Eigen::VectorXd& p) {
-        ++orbital_coupling_actions;
-        return ResponseNeoDirection{a * p, b * p};
-      },
-      [b, &structure_actions](const Eigen::VectorXd& q) {
-        ++structure_actions;
-        return ResponseNeoDirection{b.transpose() * q, q};
-      },
-      [](const Eigen::VectorXd& p) { return p; });
-  NeoOptions options;
-  options.trust_radius = 10.0;
-  options.relative_residual_tolerance = 2.0e-2;
-  options.require_curvature_certificate = false;
-  const ResponseNeoResult result =
-      xmvb::vb::solve_response_neo(problem, options);
-  require(result.converged(),
-          "direction-local candidate response did not converge");
-  require(orbital_coupling_actions == 1,
-          "candidate response unnecessarily activated coupled orbital directions");
-  require(structure_actions == 1 && result.structure_actions == 1,
-          "candidate response did not solve Cq=-Bp");
-  require(std::abs(result.step.structure[0] - 0.1) < 1.0e-12,
-          "candidate structure response is incorrect");
-  require(result.residual_norm <= result.residual_target,
-          "candidate response was accepted without a full KKT certificate");
-}
-
 }  // namespace
 
 int main() {
@@ -477,8 +391,6 @@ int main() {
     check_boundary_residual_uses_shifted_preconditioner();
     check_keyframe_response_uses_forcing_accuracy();
     check_response_is_local_to_candidate_direction();
-    check_structure_forcing_is_delayed_until_core_candidate();
-    check_candidate_structure_response_precedes_coupled_expansion();
     std::cout << "response NEO solver tests passed\n";
     return 0;
   } catch (const std::exception& error) {

@@ -852,22 +852,6 @@ $$
 \tag{44d}
 $$
 
-The orbital Krylov space is therefore built initially with only
-$\mathbf A\mathbf v$.  The expensive structure forcing
-$\mathbf B\mathbf v$ is not formed for every trial basis vector.  Once the
-core projected problem has produced an actual candidate $\mathbf p$, the
-algorithm forms $\mathbf B\mathbf p$ once, solves eq 44a in the retained and
-incrementally enlarged structure space, and evaluates eqs 44b--44d.  If the
-certificate succeeds, no individual $\mathbf B\mathbf Q_o$ columns are
-needed.  The unrelaxed $\mathbf A$ equation is not solved to the final Newton
-tolerance first: the first usable projected candidate is certified because
-the Schur term may materially improve the orbital spectrum.  If certification
-fails, the retained orbital directions are promoted immediately to the
-fully coupled workspace and subsequent directions carry both
-$\mathbf A\mathbf v$ and $\mathbf B\mathbf v$.  This promotion is an
-algebraic consequence of the residual test, not a system-size or
-molecule-specific switch.
-
 Consequently a weakly coupled candidate remains core-only even in a large
 structure space, whereas a physically important response is retained even
 when \(n_s>n_o\).  This replaces the former dimension switch by an equation-
