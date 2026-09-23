@@ -121,9 +121,11 @@ StructureInverse symmetric_pseudoinverse(const Eigen::MatrixXd& matrix) {
 Eigen::VectorXd preconditioned_orbital(
     const ResponseNeoProblem& problem,
     const Eigen::VectorXd& residual,
+    double residual_target,
     double shift = 0.0) {
   return problem.has_orbital_preconditioner()
-      ? problem.apply_orbital_preconditioner(residual, shift)
+      ? problem.apply_orbital_preconditioner(
+            residual, shift, residual_target)
       : residual;
 }
 
@@ -252,7 +254,8 @@ Eigen::VectorXd ResponseNeoProblem::apply_orbital_metric(
 
 Eigen::VectorXd ResponseNeoProblem::apply_orbital_preconditioner(
     const Eigen::VectorXd& covector,
-    double shift) const {
+    double shift,
+    double residual_target) const {
   if (!apply_orbital_preconditioner_) {
     throw std::logic_error("response NEO has no orbital preconditioner");
   }
@@ -260,11 +263,16 @@ Eigen::VectorXd ResponseNeoProblem::apply_orbital_preconditioner(
     throw std::invalid_argument(
         "response NEO preconditioner shift must be finite and nonnegative");
   }
+  if (!(residual_target >= 0.0) || !std::isfinite(residual_target)) {
+    throw std::invalid_argument(
+        "response NEO preconditioner target must be finite and nonnegative");
+  }
   if (covector.size() != orbital_size() || !covector.allFinite()) {
     throw std::invalid_argument(
         "invalid vector passed to response NEO preconditioner");
   }
-  Eigen::VectorXd result = apply_orbital_preconditioner_(covector, shift);
+  Eigen::VectorXd result = apply_orbital_preconditioner_(
+      covector, shift, residual_target);
   if (result.size() != orbital_size() || !result.allFinite()) {
     throw std::runtime_error(
         "response NEO orbital preconditioner returned an invalid vector");
@@ -390,6 +398,9 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
       ? full_dimension
       : std::min(full_dimension, options.maximum_subspace_dimension);
   const double gradient_norm = problem_.orbital_gradient().stableNorm();
+  const double kkt_residual_target =
+      options.absolute_residual_tolerance +
+      options.relative_residual_tolerance * gradient_norm;
   const double numerical_curvature_tolerance =
       std::sqrt(std::numeric_limits<double>::epsilon()) *
       static_cast<double>(std::max(1, full_dimension));
@@ -408,7 +419,9 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     Eigen::VectorXd first =
         problem_.initial_orbital_guess().size() == problem_.orbital_size()
             ? problem_.initial_orbital_guess()
-            : preconditioned_orbital(problem_, -problem_.orbital_gradient());
+            : preconditioned_orbital(
+                  problem_, -problem_.orbital_gradient(),
+                  kkt_residual_target);
     if (!append_orbital(
             std::move(first), &result.coupled_actions,
             &result.orbital_actions)) {
@@ -555,9 +568,6 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     // gradient, not to the much larger cancelling Hessian terms.  Scaling by
     // those terms would permit an O(||g||) residual and destroy the local
     // Newton rate in ill-conditioned coordinates.
-    const double kkt_residual_target =
-        options.absolute_residual_tolerance +
-        options.relative_residual_tolerance * gradient_norm;
     const double orbital_residual_norm =
         result.kkt_residual.orbital.stableNorm();
     const double structure_residual_norm =
@@ -660,7 +670,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
     if (!expanded && !stationary) {
       expanded = append_orbital(
           preconditioned_orbital(
-              problem_, -result.kkt_residual.orbital, result.shift),
+              problem_, -result.kkt_residual.orbital,
+              kkt_residual_target, result.shift),
           &result.coupled_actions,
           &result.orbital_actions);
     }
@@ -673,7 +684,8 @@ ResponseNeoResult ResponseNeoWorkspace::solve(const NeoOptions& options) {
         curvature_orbital.stableNorm() >
         curvature_orbital_target) {
       expanded = append_orbital(
-          preconditioned_orbital(problem_, -curvature_orbital),
+          preconditioned_orbital(
+              problem_, -curvature_orbital, kkt_residual_target),
           &result.coupled_actions,
           &result.orbital_actions);
     }

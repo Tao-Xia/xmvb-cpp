@@ -25,7 +25,8 @@ using ResponseNeoBlockAction =
 using ResponseNeoMatrixAction =
     std::function<ResponseNeoDirectionBlock(const Eigen::MatrixXd&)>;
 using ResponseNeoPreconditioner =
-    std::function<Eigen::VectorXd(const Eigen::VectorXd&, double)>;
+    std::function<Eigen::VectorXd(
+        const Eigen::VectorXd&, double, double)>;
 
 /**
  * @brief Quadratic model for orbital-trust NEO with projected response.
@@ -68,7 +69,8 @@ public:
   }
   Eigen::VectorXd apply_orbital_preconditioner(
       const Eigen::VectorXd& covector,
-      double shift) const;
+      double shift,
+      double residual_target) const;
   /** @brief Initial Davidson direction recycled within one nonlinear macro. */
   const Eigen::VectorXd& initial_orbital_guess() const noexcept {
     return initial_orbital_guess_;

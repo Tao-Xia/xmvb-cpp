@@ -28,6 +28,7 @@ set(_xmvb_vbscf_unit_targets
   test_reduced_hessian_reference
   test_ri_ao_h1e_hvp
   test_ri_active_two_electron_response
+  test_shifted_metric_preconditioner
   test_sparse_orbital_quotient
   test_support_preserving_gauge
   test_spectral_trust_region
@@ -67,6 +68,9 @@ if (BUILD_TESTING)
   set_tests_properties(neo_response_solver PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME neo_globalization COMMAND test_neo_globalization)
+  add_test(
+    NAME shifted_metric_preconditioner
+    COMMAND test_shifted_metric_preconditioner)
   set_tests_properties(neo_globalization PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(

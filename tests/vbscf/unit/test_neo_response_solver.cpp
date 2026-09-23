@@ -300,7 +300,10 @@ void check_boundary_residual_uses_shifted_preconditioner() {
             Eigen::VectorXd::Zero(3), Eigen::VectorXd::Zero(0)};
       },
       [](const Eigen::VectorXd& p) { return p; },
-      [&largest_shift](const Eigen::VectorXd& residual, double shift) {
+      [&largest_shift](
+          const Eigen::VectorXd& residual,
+          double shift,
+          double) {
         largest_shift = std::max(largest_shift, shift);
         return residual / (2.0 + shift);
       });
@@ -343,8 +346,12 @@ void check_inexact_block_preconditioner_preserves_coupled_step() {
       },
       [metric](const Eigen::VectorXd& p) { return metric * p; },
       [&largest_shift, block_diagonal](
-          const Eigen::VectorXd& residual, double shift) {
+          const Eigen::VectorXd& residual,
+          double shift,
+          double residual_target) {
         largest_shift = std::max(largest_shift, shift);
+        require(residual_target > 0.0,
+                "NEO did not pass its KKT target to the preconditioner");
         // Deliberately omit the off-diagonal physical metric: this is only
         // a cheap positive preconditioner, not the shifted Newton inverse.
         return (residual.array() /
