@@ -23,4 +23,12 @@ build_selected_structure_direction(
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
     const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 
+/** Builds factorized structure images without a directional `U x U` cache. */
+SelectedStateDirectionalStructureImages
+build_selected_structure_direction_from_pair_tiles(
+    const AcceptedOuterResponseContext& accepted,
+    const ActiveSpaceIntegralDirectionView& direction,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
+
 }  // namespace xmvb::vb

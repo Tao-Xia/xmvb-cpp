@@ -15,6 +15,7 @@
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream_internal.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -200,6 +201,63 @@ void accumulate_projected_channel(
       (*projected)(entry.row, entry.column) += weight * entry.value;
     }
   }
+}
+
+void add_sparse_right_transpose(
+    const Eigen::Ref<const Eigen::MatrixXd>& left,
+    const std::vector<ChannelEntry>& right,
+    Eigen::Ref<Eigen::MatrixXd> output) {
+  for (const ChannelEntry& entry : right) {
+    output.col(entry.row).noalias() +=
+        entry.value * left.col(entry.column);
+  }
+}
+
+void add_sparse_left_product(
+    const std::vector<ChannelEntry>& left,
+    const Eigen::Ref<const Eigen::MatrixXd>& right,
+    Eigen::MatrixXd* output) {
+  if (output == nullptr) {
+    throw std::invalid_argument("sparse left-product output must not be null");
+  }
+  output->setZero(output->rows(), right.cols());
+  for (const ChannelEntry& entry : left) {
+    output->row(entry.row).noalias() +=
+        entry.value * right.row(entry.column);
+  }
+}
+
+Eigen::MatrixXd opposite_tile_channel(
+    const detail::DirectionalOppositeSpinPairTile& tile,
+    int packed_pair,
+    bool projected) {
+  Eigen::MatrixXd result(tile.left_size, tile.right_size);
+  for (int left = 0; left < tile.left_size; ++left) {
+    for (int right = 0; right < tile.right_size; ++right) {
+      const auto& projection = tile.pair(left, right)
+                                   .delta_first_order_cofactor_projection;
+      if (projected) {
+        if (projection.projected_pair_values.size() <=
+            static_cast<std::size_t>(packed_pair)) {
+          throw std::invalid_argument(
+              "directional projected pair channel is incomplete");
+        }
+        result(left, right) =
+            projection.projected_pair_values[packed_pair];
+        continue;
+      }
+      double value = 0.0;
+      for (std::size_t entry = 0;
+           entry < projection.packed_pair_indices.size();
+           ++entry) {
+        if (projection.packed_pair_indices[entry] == packed_pair) {
+          value += projection.packed_pair_values[entry];
+        }
+      }
+      result(left, right) = value;
+    }
+  }
+  return result;
 }
 
 }  // namespace
@@ -506,6 +564,182 @@ build_selected_structure_direction(
   require_finite(
       result.delta_overlap_selected,
       "factorized directional overlap images");
+  return result;
+}
+
+SelectedStateDirectionalStructureImages
+build_selected_structure_direction_from_pair_tiles(
+    const AcceptedOuterResponseContext& accepted,
+    const ActiveSpaceIntegralDirectionView& direction,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+  if (accepted.input == nullptr ||
+      accepted.accepted_point_context == nullptr) {
+    throw std::invalid_argument(
+        "tiled structure direction requires a complete accepted context");
+  }
+  const auto& input = *accepted.input;
+  const auto& accepted_point = *accepted.accepted_point_context;
+  const StructureAction* structure_action =
+      accepted.selected_state_eigen_response_operator.structure_action;
+  if (structure_action == nullptr) {
+    throw std::invalid_argument(
+        "tiled structure direction requires the structure action");
+  }
+  if (structure_action->supports_integral_direction()) {
+    SameSpinDirectionalPairCache unused;
+    return build_selected_structure_direction(
+        accepted,
+        direction,
+        unused,
+        accepted_ri_active_pair_factors,
+        directional_ri_active_pair_factors);
+  }
+  if (!accepted_point.same_spin_pair_cache.enabled() ||
+      accepted.structure_factors == nullptr) {
+    throw std::invalid_argument(
+        "tiled factorized structure direction requires accepted pair factors");
+  }
+
+  const auto& same_spin = accepted_point.same_spin_pair_cache;
+  const auto& factors = *accepted.structure_factors;
+  const auto& selected_states = factors.selected_states;
+  const int n_active_orbitals =
+      input.orbital_preparation_input.n_active_orbitals;
+  const int n_pairs = packed_active_pair_count(n_active_orbitals);
+  const int n_alpha = selected_states.n_unique_alpha;
+  const int n_beta = selected_states.n_unique_beta;
+  const int n_states = static_cast<int>(selected_states.states.size());
+  const auto& beta_channels = factors.beta_channels_reuse_alpha
+      ? factors.alpha_channels
+      : factors.beta_channels;
+
+  Eigen::MatrixXd delta_hamiltonian_images =
+      Eigen::MatrixXd::Zero(n_alpha, n_states * n_beta);
+  Eigen::MatrixXd delta_overlap_images =
+      Eigen::MatrixXd::Zero(n_alpha, n_states * n_beta);
+  detail::stream_directional_pair_tiles(
+      same_spin,
+      n_active_orbitals,
+      accepted_point.prepared_active_space.active_space_two_electron_result,
+      direction,
+      &accepted_point.prepared_active_space
+           .active_space_one_electron_result.h1e_act,
+      accepted_ri_active_pair_factors,
+      directional_ri_active_pair_factors,
+      true,
+      [&](bool alpha_channel,
+          bool beta_channel,
+          const detail::SameSpinDirectionalPairTile& same_tile,
+          const detail::DirectionalOppositeSpinPairTile* opposite_tile) {
+        if (opposite_tile == nullptr) {
+          throw std::logic_error(
+              "tiled structure direction is missing opposite-spin data");
+        }
+        const Eigen::MatrixXd delta_hamiltonian =
+            same_tile.delta_regular_hamiltonian +
+            same_tile.delta_singular_hamiltonian;
+
+        if (alpha_channel) {
+          for (int state = 0; state < n_states; ++state) {
+            const Eigen::MatrixXd& coefficients =
+                selected_states.states[state].coefficient_matrix;
+            const auto coefficients_right = coefficients.middleRows(
+                same_tile.right_begin, same_tile.right_size());
+            const Eigen::MatrixXd delta_overlap_coefficients =
+                same_tile.delta_overlap * coefficients_right;
+            const Eigen::MatrixXd delta_hamiltonian_coefficients =
+                delta_hamiltonian * coefficients_right;
+            auto overlap_image = delta_overlap_images.block(
+                same_tile.left_begin,
+                state * n_beta,
+                same_tile.left_size(),
+                n_beta);
+            overlap_image.noalias() +=
+                delta_overlap_coefficients * factors.beta_overlap.transpose();
+            auto hamiltonian_image = delta_hamiltonian_images.block(
+                same_tile.left_begin,
+                state * n_beta,
+                same_tile.left_size(),
+                n_beta);
+            hamiltonian_image.noalias() +=
+                delta_hamiltonian_coefficients *
+                factors.beta_overlap.transpose();
+            hamiltonian_image.noalias() +=
+                delta_overlap_coefficients *
+                factors.beta_hamiltonian.transpose();
+
+            for (int target = 0; target < n_pairs; ++target) {
+              const Eigen::MatrixXd projected = opposite_tile_channel(
+                  *opposite_tile, target, true);
+              if (projected.isZero(0.0)) {
+                continue;
+              }
+              const Eigen::MatrixXd projected_coefficients =
+                  projected * coefficients_right;
+              add_sparse_right_transpose(
+                  projected_coefficients,
+                  beta_channels[target],
+                  hamiltonian_image);
+            }
+          }
+        }
+
+        if (beta_channel) {
+          Eigen::MatrixXd accepted_alpha_times_coefficients;
+          for (int state = 0; state < n_states; ++state) {
+            const Eigen::MatrixXd& coefficients =
+                selected_states.states[state].coefficient_matrix;
+            const auto coefficients_right = coefficients.middleCols(
+                same_tile.right_begin, same_tile.right_size());
+            auto overlap_image = delta_overlap_images.middleCols(
+                state * n_beta + same_tile.left_begin,
+                same_tile.left_size());
+            overlap_image.noalias() +=
+                factors.alpha_overlap * coefficients_right *
+                same_tile.delta_overlap.transpose();
+            auto hamiltonian_image = delta_hamiltonian_images.middleCols(
+                state * n_beta + same_tile.left_begin,
+                same_tile.left_size());
+            hamiltonian_image.noalias() +=
+                factors.alpha_hamiltonian * coefficients_right *
+                same_tile.delta_overlap.transpose();
+            hamiltonian_image.noalias() +=
+                factors.alpha_overlap * coefficients_right *
+                delta_hamiltonian.transpose();
+
+            accepted_alpha_times_coefficients.resize(
+                n_alpha, same_tile.right_size());
+            for (int target = 0; target < n_pairs; ++target) {
+              const Eigen::MatrixXd directional = opposite_tile_channel(
+                  *opposite_tile, target, false);
+              if (directional.isZero(0.0)) {
+                continue;
+              }
+              add_sparse_left_product(
+                  factors.alpha_channels[target],
+                  coefficients_right,
+                  &accepted_alpha_times_coefficients);
+              hamiltonian_image.noalias() +=
+                  accepted_alpha_times_coefficients *
+                  directional.transpose();
+            }
+          }
+        }
+      });
+
+  SelectedStateDirectionalStructureImages result;
+  result.delta_hamiltonian_selected =
+      structure_action->contract_spin_product_block(
+          delta_hamiltonian_images);
+  result.delta_overlap_selected =
+      structure_action->contract_spin_product_block(delta_overlap_images);
+  require_finite(
+      result.delta_hamiltonian_selected,
+      "tiled directional Hamiltonian images");
+  require_finite(
+      result.delta_overlap_selected,
+      "tiled directional overlap images");
   return result;
 }
 
