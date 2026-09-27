@@ -372,6 +372,70 @@ Eigen::MatrixXd build_polynomial_same_spin_hamiltonian_overlap_gradient(
   return gradient;
 }
 
+void populate_same_spin_phi_cache_entry(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    SpinDeterminantPairEvaluation* pair_evaluation) {
+  if (pair_evaluation == nullptr) {
+    throw std::invalid_argument("same-spin pair evaluation must not be null");
+  }
+  if (!pair_evaluation->cofactor_differential) {
+    pair_evaluation->cofactor_differential =
+        std::make_shared<const CofactorDifferential>(
+            pair_evaluation->overlap_result);
+  }
+  pair_evaluation->has_same_spin_phi_cache = false;
+  pair_evaluation->same_spin_one_electron_phi = 0.0;
+  pair_evaluation->same_spin_total_phi = 0.0;
+  pair_evaluation->same_spin_inverse_overlap_gradient.resize(0, 0);
+  pair_evaluation->same_spin_overlap_hamiltonian_gradient.resize(0, 0);
+
+  const CofactorDifferential& cofactor =
+      cached_cofactor_differential(*pair_evaluation);
+  if (cofactor.uses_regular_form()) {
+    Eigen::MatrixXd inverse_overlap_gradient;
+    const SameSpinPhiResult phi_result = compute_same_spin_original_phi(
+        occ_L,
+        occ_R,
+        h1e_act,
+        n_orbitals,
+        active_space_two_electron_result,
+        pair_evaluation->overlap_result,
+        &inverse_overlap_gradient);
+    pair_evaluation->has_same_spin_phi_cache = true;
+    pair_evaluation->same_spin_one_electron_phi =
+        phi_result.one_electron_phi;
+    pair_evaluation->same_spin_total_phi = phi_result.total_phi;
+    pair_evaluation->same_spin_inverse_overlap_gradient =
+        std::move(inverse_overlap_gradient);
+  }
+
+  const bool regular_ri_pair =
+      pair_evaluation->has_same_spin_phi_cache &&
+      active_space_two_electron_result.representation ==
+          ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity;
+  if (regular_ri_pair) {
+    pair_evaluation->same_spin_overlap_hamiltonian_gradient =
+        build_regular_same_spin_overlap_hamiltonian_gradient(
+            pair_evaluation->overlap_result,
+            pair_evaluation->same_spin_total_phi,
+            pair_evaluation->same_spin_inverse_overlap_gradient);
+    pair_evaluation->same_spin_polynomial_response.reset();
+    return;
+  }
+  pair_evaluation->same_spin_overlap_hamiltonian_gradient =
+      build_polynomial_same_spin_hamiltonian_overlap_gradient(
+          occ_L,
+          occ_R,
+          h1e_act,
+          n_orbitals,
+          active_space_two_electron_result,
+          pair_evaluation);
+}
+
 std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
     const std::vector<std::vector<int>>& unique_spin_determinants,
     const DeterminantPairEvaluator& pair_evaluator,
@@ -507,62 +571,13 @@ void populate_same_spin_phi_cache_entries(
           left_index,
           right_index,
           n_unique_determinants)];
-      if (!pair_evaluation.cofactor_differential) {
-        pair_evaluation.cofactor_differential =
-            std::make_shared<const CofactorDifferential>(
-                pair_evaluation.overlap_result);
-      }
-      pair_evaluation.has_same_spin_phi_cache = false;
-      pair_evaluation.same_spin_one_electron_phi = 0.0;
-      pair_evaluation.same_spin_total_phi = 0.0;
-      pair_evaluation.same_spin_inverse_overlap_gradient.resize(0, 0);
-      pair_evaluation.same_spin_overlap_hamiltonian_gradient.resize(0, 0);
-
-      const CofactorDifferential& cofactor =
-          cached_cofactor_differential(pair_evaluation);
-      if (cofactor.uses_regular_form()) {
-        Eigen::MatrixXd inverse_overlap_gradient;
-        const SameSpinPhiResult phi_result = compute_same_spin_original_phi(
-            unique_spin_determinants[left_index],
-            unique_spin_determinants[right_index],
-            h1e_act,
-            n_orbitals,
-            active_space_two_electron_result,
-            pair_evaluation.overlap_result,
-            &inverse_overlap_gradient);
-        pair_evaluation.has_same_spin_phi_cache = true;
-        pair_evaluation.same_spin_one_electron_phi = phi_result.one_electron_phi;
-        pair_evaluation.same_spin_total_phi = phi_result.total_phi;
-        pair_evaluation.same_spin_inverse_overlap_gradient =
-            std::move(inverse_overlap_gradient);
-      }
-
-      const bool regular_ri_pair =
-          pair_evaluation.has_same_spin_phi_cache &&
-          active_space_two_electron_result.representation ==
-              ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity;
-      if (regular_ri_pair) {
-        // A regular RI pair is completely described by det(X), X^-1, phi and
-        // d(phi)/d(X^-1).  Retaining the occupied-pair interaction matrix here
-        // would reintroduce O(n_e^4) storage per unique-string pair.
-        pair_evaluation.same_spin_overlap_hamiltonian_gradient =
-            build_regular_same_spin_overlap_hamiltonian_gradient(
-                pair_evaluation.overlap_result,
-                pair_evaluation.same_spin_total_phi,
-                pair_evaluation.same_spin_inverse_overlap_gradient);
-        pair_evaluation.same_spin_polynomial_response.reset();
-      } else {
-        // Singular/interpolated pairs have no stable inverse chart.  Their
-        // exact polynomial payload is intentionally isolated on this path.
-        pair_evaluation.same_spin_overlap_hamiltonian_gradient =
-            build_polynomial_same_spin_hamiltonian_overlap_gradient(
-                unique_spin_determinants[left_index],
-                unique_spin_determinants[right_index],
-                h1e_act,
-                n_orbitals,
-                active_space_two_electron_result,
-                &pair_evaluation);
-      }
+      populate_same_spin_phi_cache_entry(
+          unique_spin_determinants[left_index],
+          unique_spin_determinants[right_index],
+          h1e_act,
+          n_orbitals,
+          active_space_two_electron_result,
+          &pair_evaluation);
     }
   }
 }
@@ -596,6 +611,37 @@ PairProjectionPolicy resolve_pair_projection_policy(
 }
 
 }  // namespace
+
+void complete_same_spin_pair_evaluation(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    bool materialize_projected_pair_values,
+    bool populate_response_payload,
+    SpinDeterminantPairEvaluation* pair_evaluation) {
+  if (pair_evaluation == nullptr) {
+    throw std::invalid_argument("same-spin pair evaluation must not be null");
+  }
+  attach_opposite_spin_pair_cache(
+      occ_L,
+      occ_R,
+      n_active_orbitals,
+      make_active_space_two_electron_view(active_space_two_electron_result),
+      nullptr,
+      materialize_projected_pair_values,
+      pair_evaluation);
+  if (populate_response_payload) {
+    populate_same_spin_phi_cache_entry(
+        occ_L,
+        occ_R,
+        h1e_act,
+        n_active_orbitals,
+        active_space_two_electron_result,
+        pair_evaluation);
+  }
+}
 
 SpinDeterminantReuseTable build_spin_determinant_reuse_table(
     const std::vector<std::vector<int>>& spin_determinants) {

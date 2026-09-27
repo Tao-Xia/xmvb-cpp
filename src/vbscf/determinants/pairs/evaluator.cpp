@@ -371,6 +371,36 @@ SpinDeterminantPairEvaluation DeterminantPairEvaluator::evaluate_same_spin_pair(
 SpinDeterminantPairEvaluation DeterminantPairEvaluator::evaluate_same_spin_pair(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
+    DeterminantOverlapResult overlap_result,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    bool retain_derivative_payload) const {
+  PreparedSpinDeterminantPair prepared_result;
+  prepared_result.overlap_submatrix = overlap_result.overlap_submatrix;
+  prepared_result.evaluation.overlap_result = std::move(overlap_result);
+  cache_first_order_cofactor(&prepared_result.evaluation.overlap_result);
+  if (retain_derivative_payload) {
+    prepared_result.evaluation.cofactor_differential =
+        std::make_shared<const CofactorDifferential>(
+            prepared_result.evaluation.overlap_result);
+  }
+  if (!occ_L.empty()) {
+    evaluate_spin_determinant_hamiltonian(
+        occ_L,
+        occ_R,
+        h1e_act,
+        n_orbitals,
+        active_space_two_electron_result,
+        determinant_hamiltonian_resolver_,
+        &prepared_result);
+  }
+  return std::move(prepared_result.evaluation);
+}
+
+SpinDeterminantPairEvaluation DeterminantPairEvaluator::evaluate_same_spin_pair(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
     const std::vector<double>& ovlp_act,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orbitals,

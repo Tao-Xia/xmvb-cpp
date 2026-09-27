@@ -37,6 +37,23 @@ struct SameSpinPairCacheBuildOptions {
 };
 
 /**
+ * @brief Completes packed-pair and optional derivative payload for one pair.
+ *
+ * The overlap and Hamiltonian scalars must already be present. This common
+ * completion contract is shared by the full cache builder and the bounded
+ * accepted-pair tile provider.
+ */
+void complete_same_spin_pair_evaluation(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    bool materialize_projected_pair_values,
+    bool populate_response_payload,
+    SpinDeterminantPairEvaluation* pair_evaluation);
+
+/**
  * @brief Reusable ordered same-spin determinant kernels for one active-space evaluation.
  */
 struct SameSpinPairCacheContext {

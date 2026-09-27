@@ -102,6 +102,23 @@ public:
       bool retain_derivative_payload = true) const;
 
   /**
+   * @brief Evaluates a same-spin kernel from a certified overlap result.
+   *
+   * Pair-tile generators use this overload after a Woodbury update has
+   * produced the determinant, inverse, and canonical occupied overlap block.
+   * It avoids factorizing that block again while retaining the same
+   * Hamiltonian and cofactor contracts as independent pair evaluation.
+   */
+  SpinDeterminantPairEvaluation evaluate_same_spin_pair(
+      const std::vector<int>& occ_L,
+      const std::vector<int>& occ_R,
+      DeterminantOverlapResult overlap_result,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+      int n_orbitals,
+      const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+      bool retain_derivative_payload = true) const;
+
+  /**
    * @brief Combines cached alpha/beta same-spin kernels into one full pair.
    *
    * This overload is used by the structure builder once the reusable alpha and
