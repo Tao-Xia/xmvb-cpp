@@ -5,6 +5,7 @@
 
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream_internal.hpp"
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
 
 namespace xmvb::vb {
@@ -29,6 +30,7 @@ build_selected_structure_direction_from_pair_tiles(
     const AcceptedOuterResponseContext& accepted,
     const ActiveSpaceIntegralDirectionView& direction,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
+    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr,
+    const detail::DirectionalPairTileConsumer& additional_consumer = {});
 
 }  // namespace xmvb::vb

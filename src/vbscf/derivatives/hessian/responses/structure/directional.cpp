@@ -539,7 +539,8 @@ build_selected_structure_direction_from_pair_tiles(
     const AcceptedOuterResponseContext& accepted,
     const ActiveSpaceIntegralDirectionView& direction,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    const detail::DirectionalPairTileConsumer& additional_consumer) {
   if (accepted.input == nullptr ||
       accepted.accepted_point_context == nullptr) {
     throw std::invalid_argument(
@@ -692,6 +693,10 @@ build_selected_structure_direction_from_pair_tiles(
                   directional.transpose();
             }
           }
+        }
+        if (additional_consumer) {
+          additional_consumer(
+              alpha_channel, beta_channel, same_tile, opposite_tile);
         }
       });
 
