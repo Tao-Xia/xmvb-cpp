@@ -124,12 +124,18 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
   const int n_primary = alpha
       ? selected_states_.n_unique_alpha
       : selected_states_.n_unique_beta;
+  const int n_electrons = primary_determinants.empty()
+      ? 0
+      : static_cast<int>(primary_determinants.front().size());
 
   std::vector<double> partner_image(n_packed_pairs_, 0.0);
   std::vector<unsigned char> touched_flags(n_packed_pairs_, 0u);
   std::vector<int> touched_channels;
   std::vector<int> target_channels;
   std::vector<double> accepted_values;
+  Eigen::MatrixXd accepted_weight(n_electrons, n_electrons);
+  const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(
+      n_electrons, n_electrons);
   for (int left_local = 0; left_local < tile.left_size; ++left_local) {
     const int left = tile.left_begin + left_local;
     for (int right_local = 0; right_local < tile.right_size; ++right_local) {
@@ -153,7 +159,6 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
 
       const auto& occupied_left = primary_determinants[left];
       const auto& occupied_right = primary_determinants[right];
-      const int n_electrons = static_cast<int>(occupied_left.size());
       target_channels.clear();
       target_channels.reserve(
           static_cast<std::size_t>(n_electrons) * n_electrons);
@@ -171,9 +176,6 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
           n_partner,
           target_channels,
           &accepted_values);
-      Eigen::MatrixXd accepted_weight(n_electrons, n_electrons);
-      Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(
-          n_electrons, n_electrons);
       std::size_t target = 0;
       for (int left_electron = 0;
            left_electron < n_electrons;
@@ -219,23 +221,23 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
   const auto& primary_determinants = target_alpha
       ? accepted_pair_cache_.alpha_reuse_table.unique_determinants
       : accepted_pair_cache_.beta_reuse_table.unique_determinants;
+  const int n_electrons = primary_determinants.empty()
+      ? 0
+      : static_cast<int>(primary_determinants.front().size());
   const int extent = std::min(n_primary, kSameSpinTileExtent);
+  const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(
+      n_electrons, n_electrons);
 
   for (int left_begin = 0; left_begin < n_primary; left_begin += extent) {
     const int left_size = std::min(extent, n_primary - left_begin);
     for (int right_begin = 0; right_begin < n_primary; right_begin += extent) {
       const int right_size = std::min(extent, n_primary - right_begin);
-      std::vector<Eigen::MatrixXd> pair_weights;
-      pair_weights.reserve(static_cast<std::size_t>(left_size) * right_size);
-      for (int left_local = 0; left_local < left_size; ++left_local) {
-        const int left = left_begin + left_local;
-        for (int right_local = 0; right_local < right_size; ++right_local) {
-          const int right = right_begin + right_local;
-          pair_weights.push_back(Eigen::MatrixXd::Zero(
-              primary_determinants[left].size(),
-              primary_determinants[right].size()));
-        }
-      }
+      const std::size_t pair_count =
+          static_cast<std::size_t>(left_size) * right_size;
+      const std::size_t pair_weight_size =
+          static_cast<std::size_t>(n_electrons) * n_electrons;
+      std::vector<double> pair_weights(
+          pair_count * pair_weight_size, 0.0);
 
       Eigen::MatrixXd weight_block(left_size, right_size);
       Eigen::MatrixXd raw_weight_block(left_size, right_size);
@@ -312,9 +314,9 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
             if (!need_overlap) {
               continue;
             }
-            Eigen::MatrixXd& pair_weight = pair_weights[
-                static_cast<std::size_t>(left_local) * right_size +
-                right_local];
+            const std::size_t pair_offset =
+                (static_cast<std::size_t>(left_local) * right_size +
+                 right_local) * pair_weight_size;
             for (int left_electron = 0;
                  left_electron < static_cast<int>(occupied_left.size());
                  ++left_electron) {
@@ -324,7 +326,9 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
                 if (TwoElectronIndexer::packed_pair_index(
                         occupied_right[right_electron],
                         occupied_left[left_electron]) == channel) {
-                  pair_weight(left_electron, right_electron) +=
+                  pair_weights[pair_offset + left_electron +
+                      static_cast<std::size_t>(n_electrons) *
+                          right_electron] +=
                       weight_block(left_local, right_local);
                 }
               }
@@ -341,20 +345,20 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
           const auto& occupied_right = primary_determinants[right];
           const auto& accepted_pair = primary_pairs[
               ordered_spin_pair_storage_index(left, right, n_primary)];
-          const int n_left = static_cast<int>(occupied_left.size());
-          const int n_right = static_cast<int>(occupied_right.size());
-          const Eigen::MatrixXd zero_overlap = Eigen::MatrixXd::Zero(
-              n_right, n_left);
-          const Eigen::MatrixXd zero_weight = Eigen::MatrixXd::Zero(
-              n_left, n_right);
+          const std::size_t pair_offset =
+              (static_cast<std::size_t>(left_local) * right_size +
+               right_local) * pair_weight_size;
+          const Eigen::Map<const Eigen::MatrixXd> pair_weight(
+              pair_weights.data() + pair_offset,
+              n_electrons,
+              n_electrons);
           accumulate_pair_overlap_gradient_direction(
               occupied_left,
               occupied_right,
               cached_cofactor_differential(accepted_pair),
-              zero_overlap,
-              zero_weight,
-              pair_weights[static_cast<std::size_t>(left_local) *
-                  right_size + right_local],
+              zero,
+              zero,
+              pair_weight,
               n_active_orbitals_,
               &result_.active_orbital_overlap_gradient);
         }
