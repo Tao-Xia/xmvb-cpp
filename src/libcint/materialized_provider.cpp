@@ -267,6 +267,11 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
       shell_integral_offsets[shell_i + 1] = previous_offset + shell_count;
     }
     const std::size_t total_integral_count = shell_integral_offsets.back();
+    if (total_integral_count >
+        std::numeric_limits<std::size_t>::max() / 2) {
+      throw std::overflow_error("directed ERI capacity exceeds size_t");
+    }
+    buffers.two_electron_values.reserve(2 * total_integral_count);
     buffers.two_electron_values.resize(total_integral_count);
     buffers.left_pair_indices.resize(total_integral_count);
     buffers.right_pair_indices.resize(total_integral_count);
@@ -366,7 +371,14 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
     for (const auto& values : shell_integral_values) {
       total_integral_count += values.size();
     }
-    buffers.two_electron_values.reserve(total_integral_count);
+    if (total_integral_count >
+        std::numeric_limits<std::size_t>::max() / 2) {
+      throw std::overflow_error("directed ERI capacity exceeds size_t");
+    }
+    // Reserve the final symmetric-CSR value capacity now. The graph builder
+    // expands this same allocation in place instead of retaining the raw ERI
+    // values beside a second directed value array.
+    buffers.two_electron_values.reserve(2 * total_integral_count);
     buffers.left_pair_indices.reserve(total_integral_count);
     buffers.right_pair_indices.reserve(total_integral_count);
     for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
