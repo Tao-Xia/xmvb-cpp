@@ -455,9 +455,7 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
           ->supports_integral_direction();
   const bool packed_outer_two_electron_required =
       !accepted_ri_two_electron_cache_.has_value() ||
-      direct_active_gradient ||
-      has_polynomial_same_spin_response_pairs(
-          accepted_point_context_->same_spin_pair_cache);
+      direct_active_gradient;
   std::optional<Eigen::MatrixXd> ri_directional_active_pair_factors;
   Eigen::VectorXd ri_delta_packed_active_two_electron;
   if (accepted_ri_two_electron_cache_.has_value() &&

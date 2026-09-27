@@ -237,12 +237,14 @@ Eigen::MatrixXd build_local_overlap_direction_matrix(
       n_active_orbitals);
 }
 
-SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
+static SameSpinPolynomialDirectionalPairData
+build_polynomial_spin_directional_data_impl(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
     const SpinDeterminantPairEvaluation& pair_evaluation,
     int n_active_orbitals,
     const ActiveSpaceIntegralDirectionView& direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& interaction_direction,
     bool need_overlap_gradient) {
   SameSpinPolynomialDirectionalPairData result;
   if (!pair_evaluation.same_spin_polynomial_response) {
@@ -257,21 +259,73 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
   const Eigen::MatrixXd dh = build_spin_one_electron_block_matrix_local(
       occ_L, occ_R, Eigen::Map<const Eigen::MatrixXd>(
           direction.one_electron.data(), n_active_orbitals, n_active_orbitals));
-  const Eigen::MatrixXd dg = build_spin_antisymmetrized_interaction_direction(
-      occ_L, occ_R, direction.packed_two_electron);
   result.delta_cofactor_1st = cofactor.first(ds);
   result.delta_overlap_determinant = (cofactor.value().cwiseProduct(ds)).sum();
   result.delta_total_hamiltonian =
       (dh.cwiseProduct(cofactor.value())).sum() +
-      cofactor.second_contraction(dg) +
+      cofactor.second_contraction(interaction_direction) +
       (pair_evaluation.same_spin_overlap_hamiltonian_gradient.cwiseProduct(ds)).sum();
   if (need_overlap_gradient)
     result.delta_same_spin_overlap_hamiltonian_gradient =
         cofactor.mixed(ds, polynomial.one_electron_block) +
         cofactor.first(dh) +
         cofactor.second_contraction_gradient_direction(
-            ds, polynomial.antisymmetrized_interaction, dg);
+            ds,
+            polynomial.antisymmetrized_interaction,
+            interaction_direction);
   return result;
+}
+
+static Eigen::MatrixXd build_ri_spin_antisymmetrized_interaction_direction(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& accepted_factors,
+    const Eigen::Ref<const Eigen::MatrixXd>& directional_factors) {
+  const int n_electrons = static_cast<int>(occ_L.size());
+  const int n_electron_pairs = n_electrons * (n_electrons - 1) / 2;
+  Eigen::MatrixXd result(n_electron_pairs, n_electron_pairs);
+  const auto pair = TwoElectronIndexer::packed_pair_index;
+  const auto kernel_direction = [&](int p, int q) {
+    return directional_factors.col(p).dot(accepted_factors.col(q)) +
+        accepted_factors.col(p).dot(directional_factors.col(q));
+  };
+  for (int j = 1; j < n_electrons; ++j) {
+    for (int i = 0; i < j; ++i) {
+      for (int l = 1; l < n_electrons; ++l) {
+        for (int k = 0; k < l; ++k) {
+          result(j * (j - 1) / 2 + i, l * (l - 1) / 2 + k) =
+              kernel_direction(
+                  pair(occ_R[i], occ_L[k]),
+                  pair(occ_R[j], occ_L[l])) -
+              kernel_direction(
+                  pair(occ_R[i], occ_L[l]),
+                  pair(occ_R[j], occ_L[k]));
+        }
+      }
+    }
+  }
+  return result;
+}
+
+SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const SpinDeterminantPairEvaluation& pair_evaluation,
+    int n_active_orbitals,
+    const ActiveSpaceIntegralDirectionView& direction,
+    bool need_overlap_gradient) {
+  const Eigen::MatrixXd interaction_direction =
+      build_spin_antisymmetrized_interaction_direction(
+          occ_L, occ_R, direction.packed_two_electron);
+  return build_polynomial_spin_directional_data_impl(
+      occ_L,
+      occ_R,
+      pair_evaluation,
+      n_active_orbitals,
+      direction,
+      interaction_direction,
+      need_overlap_gradient);
 }
 
 namespace {
@@ -389,12 +443,30 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
       pair_direction.delta_same_spin_overlap_hamiltonian_gradient =
           ri_direction.delta_overlap_hamiltonian_gradient;
     } else {
-      pair_direction = build_polynomial_spin_directional_data(
-          unique_determinants[canonical_left],
-          unique_determinants[canonical_right],
-          pair_evaluation,
-          n_active_orbitals,
-          direction);
+      if (use_ri) {
+        const Eigen::MatrixXd interaction_direction =
+            build_ri_spin_antisymmetrized_interaction_direction(
+                unique_determinants[canonical_left],
+                unique_determinants[canonical_right],
+                n_active_orbitals,
+                *accepted_ri_active_pair_factors,
+                *directional_ri_active_pair_factors);
+        pair_direction = build_polynomial_spin_directional_data_impl(
+            unique_determinants[canonical_left],
+            unique_determinants[canonical_right],
+            pair_evaluation,
+            n_active_orbitals,
+            direction,
+            interaction_direction,
+            true);
+      } else {
+        pair_direction = build_polynomial_spin_directional_data(
+            unique_determinants[canonical_left],
+            unique_determinants[canonical_right],
+            pair_evaluation,
+            n_active_orbitals,
+            direction);
+      }
     }
 
     if (left_id > right_id) {

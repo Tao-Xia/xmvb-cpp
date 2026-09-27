@@ -274,9 +274,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
           ->supports_integral_direction();
   const bool packed_outer_two_electron_required =
       !accepted_ri_two_electron_cache_.has_value() ||
-      direct_active_gradient ||
-      has_polynomial_same_spin_response_pairs(
-          accepted_point_context_->same_spin_pair_cache);
+      direct_active_gradient;
   if (accepted_ri_two_electron_cache_.has_value() &&
       (compute_outer_response || components.direct_core_response)) {
     const auto batch_active_two_electron_start_time =
