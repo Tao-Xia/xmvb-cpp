@@ -242,9 +242,8 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
       Eigen::MatrixXd weight_block(left_size, right_size);
       Eigen::MatrixXd raw_weight_block(left_size, right_size);
       for (int channel = 0; channel < n_packed_pairs_; ++channel) {
-        const Eigen::MatrixXd& projected =
-            partner_tile.projected_channel(channel);
-        const Eigen::MatrixXd& raw = partner_tile.raw_channel(channel);
+        const auto projected = partner_tile.projected_channel(channel);
+        const auto raw = partner_tile.raw_channel(channel);
         const bool need_overlap = !projected.isZero(0.0);
         const bool need_packed = target_alpha && !raw.isZero(0.0);
         if (!need_overlap && !need_packed) {

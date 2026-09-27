@@ -371,8 +371,7 @@ build_selected_structure_direction_from_pair_tiles(
                 factors.beta_hamiltonian.transpose();
 
             for (int target = 0; target < n_pairs; ++target) {
-              const Eigen::MatrixXd& projected =
-                  opposite_tile->projected_channel(target);
+              const auto projected = opposite_tile->projected_channel(target);
               if (projected.isZero(0.0)) {
                 continue;
               }
@@ -412,8 +411,7 @@ build_selected_structure_direction_from_pair_tiles(
             accepted_alpha_times_coefficients.resize(
                 n_alpha, same_tile.right_size());
             for (int target = 0; target < n_pairs; ++target) {
-              const Eigen::MatrixXd& directional =
-                  opposite_tile->raw_channel(target);
+              const auto directional = opposite_tile->raw_channel(target);
               if (directional.isZero(0.0)) {
                 continue;
               }

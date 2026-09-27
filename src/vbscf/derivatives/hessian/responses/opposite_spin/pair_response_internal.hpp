@@ -19,20 +19,23 @@ struct DirectionalOppositeSpinPairData {
 
 /** Directional opposite-spin data local to one unique-spin pair tile. */
 struct DirectionalOppositeSpinPairTile {
+  using ConstChannelMap = Eigen::Map<const Eigen::MatrixXd>;
+
   int left_begin = 0;
   int right_begin = 0;
   int left_size = 0;
   int right_size = 0;
   std::vector<DirectionalOppositeSpinPairData> pairs;
-  std::vector<Eigen::MatrixXd> raw_channels;
-  std::vector<Eigen::MatrixXd> projected_channels;
+  /** Pair-major contiguous storage, with one packed channel per column. */
+  Eigen::MatrixXd raw_channel_values;
+  Eigen::MatrixXd projected_channel_values;
 
   const DirectionalOppositeSpinPairData& pair(
       int left_local,
       int right_local) const;
 
-  const Eigen::MatrixXd& raw_channel(int packed_pair) const;
-  const Eigen::MatrixXd& projected_channel(int packed_pair) const;
+  ConstChannelMap raw_channel(int packed_pair) const;
+  ConstChannelMap projected_channel(int packed_pair) const;
 };
 
 /**

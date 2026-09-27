@@ -63,30 +63,31 @@ OppositeSpinPackedPairProjection build_sparse_packed_pair_projection(
   return projection;
 }
 
-std::vector<double> apply_directional_two_electron_kernel(
-    int n_active_orbitals,
+void scatter_sparse_projection(
     const OppositeSpinPackedPairProjection& projection,
-    const std::vector<double>& delta_packed_active_two_electron_integrals) {
-  const int n_packed_active_pairs = packed_active_pair_count(n_active_orbitals);
-  std::vector<double> image(n_packed_active_pairs, 0.0);
-  if (delta_packed_active_two_electron_integrals.empty()) {
-    return image;
+    int column,
+    Eigen::MatrixXd* dense) {
+  for (std::size_t entry = 0;
+       entry < projection.packed_pair_indices.size();
+       ++entry) {
+    (*dense)(projection.packed_pair_indices[entry], column) +=
+        projection.packed_pair_values[entry];
   }
-  for (std::size_t entry_index = 0;
-       entry_index < projection.packed_pair_indices.size();
-       ++entry_index) {
-    const int column_pair = projection.packed_pair_indices[entry_index];
-    const double coefficient = projection.packed_pair_values[entry_index];
-    for (int row_pair = 0; row_pair < n_packed_active_pairs; ++row_pair) {
-      image[row_pair] +=
-          delta_packed_active_two_electron_integrals[
-              TwoElectronIndexer::packed_pair_of_pairs_index(
-                  row_pair,
-                  column_pair)] *
-          coefficient;
+}
+
+void fill_exact_kernel_rows(
+    const std::vector<double>& packed_kernel,
+    int row_begin,
+    int row_end,
+    int n_packed_pairs,
+    Eigen::MatrixXd* rows) {
+  rows->resize(row_end - row_begin, n_packed_pairs);
+  for (int row = row_begin; row < row_end; ++row) {
+    for (int column = 0; column < n_packed_pairs; ++column) {
+      (*rows)(row - row_begin, column) = packed_kernel[
+          TwoElectronIndexer::packed_pair_of_pairs_index(row, column)];
     }
   }
-  return image;
 }
 
 }  // namespace
@@ -102,23 +103,29 @@ const DirectionalOppositeSpinPairData& DirectionalOppositeSpinPairTile::pair(
       right_local];
 }
 
-const Eigen::MatrixXd& DirectionalOppositeSpinPairTile::raw_channel(
+DirectionalOppositeSpinPairTile::ConstChannelMap
+DirectionalOppositeSpinPairTile::raw_channel(
     int packed_pair) const {
   if (packed_pair < 0 ||
-      packed_pair >= static_cast<int>(raw_channels.size())) {
+      packed_pair >= raw_channel_values.cols()) {
     throw std::out_of_range("raw opposite-spin tile channel out of range");
   }
-  return raw_channels[packed_pair];
+  return ConstChannelMap(
+      raw_channel_values.col(packed_pair).data(), left_size, right_size);
 }
 
-const Eigen::MatrixXd& DirectionalOppositeSpinPairTile::projected_channel(
+DirectionalOppositeSpinPairTile::ConstChannelMap
+DirectionalOppositeSpinPairTile::projected_channel(
     int packed_pair) const {
   if (packed_pair < 0 ||
-      packed_pair >= static_cast<int>(projected_channels.size())) {
+      packed_pair >= projected_channel_values.cols()) {
     throw std::out_of_range(
         "projected opposite-spin tile channel out of range");
   }
-  return projected_channels[packed_pair];
+  return ConstChannelMap(
+      projected_channel_values.col(packed_pair).data(),
+      left_size,
+      right_size);
 }
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
@@ -170,21 +177,21 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
   result.right_size = same_spin_tile.right_size();
   const int work_items = result.left_size * result.right_size;
   result.pairs.resize(static_cast<std::size_t>(work_items));
-  result.raw_channels.assign(
-      n_packed_pairs,
-      Eigen::MatrixXd::Zero(result.left_size, result.right_size));
-  result.projected_channels.assign(
-      n_packed_pairs,
-      Eigen::MatrixXd::Zero(result.left_size, result.right_size));
+  result.raw_channel_values =
+      Eigen::MatrixXd::Zero(work_items, n_packed_pairs);
+  result.projected_channel_values =
+      Eigen::MatrixXd::Zero(work_items, n_packed_pairs);
 
   const int n_threads = xmvb::effective_openmp_thread_count();
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int work = 0; work < work_items; ++work) {
-    const int left_local = work / result.right_size;
-    const int right_local = work % result.right_size;
+    const int left_local = work % result.left_size;
+    const int right_local = work / result.left_size;
     const int left = result.left_begin + left_local;
     const int right = result.right_begin + right_local;
-    auto& entry = result.pairs[static_cast<std::size_t>(work)];
+    auto& entry = result.pairs[
+        static_cast<std::size_t>(left_local) * result.right_size +
+        right_local];
     if (unique_determinants[left].empty()) {
       continue;
     }
@@ -203,8 +210,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     for (std::size_t projection_entry = 0;
          projection_entry < raw.packed_pair_indices.size();
          ++projection_entry) {
-      result.raw_channels[raw.packed_pair_indices[projection_entry]](
-          left_local, right_local) +=
+      result.raw_channel_values(
+          work, raw.packed_pair_indices[projection_entry]) +=
           raw.packed_pair_values[projection_entry];
     }
   }
@@ -226,10 +233,10 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
       Eigen::MatrixXd accepted_projection =
           Eigen::MatrixXd::Zero(n_packed_pairs, width);
       Eigen::MatrixXd directional_projection =
-          Eigen::MatrixXd::Zero(n_packed_pairs, width);
+          result.raw_channel_values.middleRows(begin, width).transpose();
       for (int work = begin; work < end; ++work) {
-        const int left_local = work / result.right_size;
-        const int right_local = work % result.right_size;
+        const int left_local = work % result.left_size;
+        const int right_local = work / result.left_size;
         const int left = result.left_begin + left_local;
         const int right = result.right_begin + right_local;
         const auto& accepted = ordered_pair_cache[
@@ -239,23 +246,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
                 n_unique_determinants)]
                                    .opposite_spin_pair_cache
                                    .first_order_cofactor_projection;
-        const auto& directional = result.pairs[static_cast<std::size_t>(work)]
-                                      .delta_first_order_cofactor_projection;
         const int column = work - begin;
-        for (std::size_t entry = 0;
-             entry < accepted.packed_pair_indices.size();
-             ++entry) {
-          accepted_projection(
-              accepted.packed_pair_indices[entry], column) +=
-              accepted.packed_pair_values[entry];
-        }
-        for (std::size_t entry = 0;
-             entry < directional.packed_pair_indices.size();
-             ++entry) {
-          directional_projection(
-              directional.packed_pair_indices[entry], column) +=
-              directional.packed_pair_values[entry];
-        }
+        scatter_sparse_projection(accepted, column, &accepted_projection);
       }
 
       Eigen::MatrixXd accepted_auxiliary =
@@ -270,61 +262,76 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
       projected.noalias() +=
           directional_ri_active_pair_factors->transpose() *
           accepted_auxiliary;
-      for (int work = begin; work < end; ++work) {
-        const int column = work - begin;
-        const int left_local = work / result.right_size;
-        const int right_local = work % result.right_size;
-        auto& values = result.pairs[static_cast<std::size_t>(work)]
-                           .delta_first_order_cofactor_projection
-                           .projected_pair_values;
-        values.assign(
-            projected.col(column).data(),
-            projected.col(column).data() + n_packed_pairs);
-        for (int packed_pair = 0;
-             packed_pair < n_packed_pairs;
-             ++packed_pair) {
-          result.projected_channels[packed_pair](left_local, right_local) =
-              projected(packed_pair, column);
-        }
-      }
+      result.projected_channel_values.middleRows(begin, width) =
+          projected.transpose();
     }
     return result;
   }
 
-  const ActiveSpaceTwoElectronView two_electron_view =
-      make_active_space_two_electron_view(active_space_two_electron_result);
-#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+  const auto& accepted_kernel =
+      active_space_two_electron_result.packed_active_two_electron_integrals;
+  const auto& directional_kernel = direction.packed_two_electron;
+  const std::size_t expected_kernel_size =
+      packed_active_two_electron_integral_count(n_active_orbitals);
+  if (accepted_kernel.size() != expected_kernel_size ||
+      (!directional_kernel.empty() &&
+       directional_kernel.size() != expected_kernel_size)) {
+    throw std::invalid_argument(
+        "exact opposite-spin tile requires packed accepted and directional kernels");
+  }
+
+  Eigen::MatrixXd accepted_projection_block =
+      Eigen::MatrixXd::Zero(n_packed_pairs, work_items);
   for (int work = 0; work < work_items; ++work) {
-    const int left_local = work / result.right_size;
-    const int right_local = work % result.right_size;
+    const int left_local = work % result.left_size;
+    const int right_local = work / result.left_size;
     const int left = result.left_begin + left_local;
     const int right = result.right_begin + right_local;
-    auto& projection = result.pairs[static_cast<std::size_t>(work)]
-                           .delta_first_order_cofactor_projection;
-    projection.projected_pair_values =
-        apply_active_space_two_electron_kernel_to_sparse_projection(
-            two_electron_view,
-            n_active_orbitals,
-            projection.packed_pair_indices,
-            projection.packed_pair_values);
-    const auto& accepted_projection = ordered_pair_cache[
+    const auto& accepted_pair_projection = ordered_pair_cache[
         ordered_spin_pair_storage_index(
             std::min(left, right),
             std::max(left, right),
             n_unique_determinants)]
                                           .opposite_spin_pair_cache
                                           .first_order_cofactor_projection;
-    const std::vector<double> kernel_direction =
-        apply_directional_two_electron_kernel(
-            n_active_orbitals,
-            accepted_projection,
-            direction.packed_two_electron);
-    for (int packed_pair = 0; packed_pair < n_packed_pairs; ++packed_pair) {
-      projection.projected_pair_values[packed_pair] +=
-          kernel_direction[packed_pair];
-      result.projected_channels[packed_pair](left_local, right_local) =
-          projection.projected_pair_values[packed_pair];
+    scatter_sparse_projection(
+        accepted_pair_projection, work, &accepted_projection_block);
+  }
+
+  const Eigen::Index workspace_budget = std::max<Eigen::Index>(
+      expected_kernel_size,
+      static_cast<Eigen::Index>(n_packed_pairs) * work_items);
+  const int row_block = std::max<int>(
+      1,
+      std::min<Eigen::Index>(
+          n_packed_pairs,
+          workspace_budget /
+              std::max<Eigen::Index>(
+                  1, 2 * n_packed_pairs + work_items)));
+  Eigen::MatrixXd accepted_rows;
+  Eigen::MatrixXd directional_rows;
+  for (int row_begin = 0; row_begin < n_packed_pairs;
+       row_begin += row_block) {
+    const int row_end = std::min(n_packed_pairs, row_begin + row_block);
+    fill_exact_kernel_rows(
+        accepted_kernel,
+        row_begin,
+        row_end,
+        n_packed_pairs,
+        &accepted_rows);
+    Eigen::MatrixXd projected = accepted_rows *
+        result.raw_channel_values.transpose();
+    if (!directional_kernel.empty()) {
+      fill_exact_kernel_rows(
+          directional_kernel,
+          row_begin,
+          row_end,
+          n_packed_pairs,
+          &directional_rows);
+      projected.noalias() += directional_rows * accepted_projection_block;
     }
+    result.projected_channel_values.middleCols(
+        row_begin, row_end - row_begin) = projected.transpose();
   }
   return result;
 }
