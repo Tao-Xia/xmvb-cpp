@@ -284,6 +284,14 @@ int main() {
         direct_phi.total_phi;
     pair_cache.alpha_pair_cache.front().same_spin_inverse_overlap_gradient =
         direct_inverse_gradient;
+    pair_cache.alpha_pair_cache.front()
+        .opposite_spin_pair_cache
+        .first_order_cofactor_projection
+        .packed_pair_indices = {0, 2};
+    pair_cache.alpha_pair_cache.front()
+        .opposite_spin_pair_cache
+        .first_order_cofactor_projection
+        .packed_pair_values = {0.31, -0.17};
     pair_cache.beta_reuses_alpha_pair_cache = true;
     pair_cache.close_shell_diagonal_reuses_same_spin_pair_cache = true;
     pair_cache.use_same_spin_pair_cache = true;
@@ -406,6 +414,63 @@ int main() {
           cache_projection.projected_pair_values[entry],
           1.0e-13,
           "RI opposite-spin tile kernel image");
+    }
+
+    xmvb::vb::ActiveSpaceTwoElectronResult exact_integrals = packed_ri;
+    exact_integrals.representation =
+        xmvb::vb::ActiveSpaceTwoElectronRepresentation::PackedExact;
+    const int n_packed_pairs =
+        xmvb::vb::packed_active_pair_count(n_active);
+    std::vector<double> exact_two_electron_direction(
+        static_cast<std::size_t>(n_packed_pairs) *
+            (n_packed_pairs + 1) / 2,
+        0.0);
+    for (int left_pair = 0; left_pair < n_packed_pairs; ++left_pair) {
+      for (int right_pair = 0; right_pair <= left_pair; ++right_pair) {
+        exact_two_electron_direction[
+            xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+                left_pair, right_pair)] =
+            direct_ri.ri_active_pair_factors.col(left_pair).dot(
+                delta_factors.col(right_pair)) +
+            delta_factors.col(left_pair).dot(
+                direct_ri.ri_active_pair_factors.col(right_pair));
+      }
+    }
+    const xmvb::vb::ActiveSpaceIntegralDirectionView exact_view{
+        overlap_direction,
+        h1e_direction,
+        exact_two_electron_direction};
+    const auto exact_opposite_cache =
+        xmvb::vb::detail::build_directional_opposite_spin_pair_data(
+            pair_cache.alpha_reuse_table.unique_determinants,
+            pair_cache.alpha_pair_cache_ref(),
+            1,
+            n_active,
+            exact_integrals,
+            exact_view,
+            scalar_cache.alpha.ordered_pair_data);
+    const auto exact_opposite_tile =
+        xmvb::vb::detail::build_directional_opposite_spin_pair_tile(
+            pair_cache.alpha_reuse_table.unique_determinants,
+            pair_cache.alpha_pair_cache_ref(),
+            1,
+            n_active,
+            exact_integrals,
+            exact_view,
+            scalar_tile);
+    const auto& exact_tile_projection =
+        exact_opposite_tile.pair(0, 0)
+            .delta_first_order_cofactor_projection;
+    const auto& exact_cache_projection =
+        exact_opposite_cache.front().delta_first_order_cofactor_projection;
+    for (std::size_t entry = 0;
+         entry < exact_tile_projection.projected_pair_values.size();
+         ++entry) {
+      require_close(
+          exact_tile_projection.projected_pair_values[entry],
+          exact_cache_projection.projected_pair_values[entry],
+          1.0e-13,
+          "exact opposite-spin tile kernel image");
     }
     const auto cache_block =
         xmvb::vb::build_same_spin_directional_pair_cache_batch(
