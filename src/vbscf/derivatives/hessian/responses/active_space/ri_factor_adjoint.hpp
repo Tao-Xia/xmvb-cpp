@@ -22,6 +22,8 @@ Eigen::MatrixXd apply_regular_ri_pair_space_adjoint(
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
     int n_active_orbitals,
+    const std::vector<double>& active_overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const Eigen::Ref<const Eigen::MatrixXd>& active_pair_factors);
 
 }  // namespace xmvb::vb

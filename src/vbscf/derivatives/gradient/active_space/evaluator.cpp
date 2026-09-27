@@ -838,6 +838,10 @@ void accumulate_active_space_gradient(
           selected_state_matrices,
           n_active_orbitals,
           forward_context.timed_active_space_context.prepared_active_space
+              .orbital_result.active_orbital_overlap_matrix,
+          forward_context.timed_active_space_context.prepared_active_space
+              .active_space_one_electron_result.h1e_act,
+          forward_context.timed_active_space_context.prepared_active_space
               .active_space_two_electron_result);
   accumulate_additive_vector(
       same_spin_contribution.active_orbital_overlap_gradient,

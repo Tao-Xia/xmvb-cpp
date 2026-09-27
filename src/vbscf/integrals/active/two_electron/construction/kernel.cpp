@@ -1,5 +1,6 @@
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <vector>
@@ -364,6 +365,43 @@ Eigen::VectorXd apply_active_space_two_electron_kernel_to_sparse_projection_subs
     }
   }
   throw std::invalid_argument("unknown active-space two-electron representation");
+}
+
+Eigen::MatrixXd apply_active_space_two_electron_kernel_block(
+    const ActiveSpaceTwoElectronResult& two_electron,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+  const int n_pairs = packed_active_pair_count(n_active_orbitals);
+  if (vectors.rows() != n_pairs || vectors.cols() <= 0) {
+    throw std::invalid_argument(
+        "active pair-kernel block has incompatible dimensions");
+  }
+  if (two_electron.representation ==
+      ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity &&
+      two_electron.ri_active_pair_factors.cols() == n_pairs) {
+    const Eigen::MatrixXd auxiliary =
+        two_electron.ri_active_pair_factors * vectors;
+    return two_electron.ri_active_pair_factors.transpose() * auxiliary;
+  }
+
+  const ActiveSpaceTwoElectronView view =
+      make_active_space_two_electron_view(two_electron);
+  Eigen::MatrixXd result = Eigen::MatrixXd::Zero(n_pairs, vectors.cols());
+  constexpr int kRowBlock = 64;
+  for (int row_begin = 0; row_begin < n_pairs; row_begin += kRowBlock) {
+    const int row_end = std::min(n_pairs, row_begin + kRowBlock);
+    Eigen::MatrixXd kernel(row_end - row_begin, n_pairs);
+    for (int row = row_begin; row < row_end; ++row) {
+      for (int column = 0; column < n_pairs; ++column) {
+        kernel(row - row_begin, column) =
+            lookup_active_space_two_electron_kernel_value(
+                view, row, column, n_active_orbitals);
+      }
+    }
+    result.middleRows(row_begin, row_end - row_begin).noalias() =
+        kernel * vectors;
+  }
+  return result;
 }
 
 std::vector<double> reconstruct_packed_active_two_electron_integrals(

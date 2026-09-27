@@ -113,13 +113,13 @@ std::vector<double> direct_packed_gradient(
   for (int alpha_right = 0; alpha_right < n_alpha; ++alpha_right) {
     for (int alpha_left = 0; alpha_left < n_alpha; ++alpha_left) {
       const auto& alpha_projection =
-          cache.alpha_pair_cache[xmvb::vb::ordered_spin_pair_storage_index(
+          cache.alpha_pair_cache_ref()[xmvb::vb::ordered_spin_pair_storage_index(
               alpha_left, alpha_right, n_alpha)]
               .opposite_spin_pair_cache.first_order_cofactor_projection;
       for (int beta_right = 0; beta_right < n_beta; ++beta_right) {
         for (int beta_left = 0; beta_left < n_beta; ++beta_left) {
           const auto& beta_projection =
-              cache.beta_pair_cache[xmvb::vb::ordered_spin_pair_storage_index(
+              cache.beta_pair_cache_ref()[xmvb::vb::ordered_spin_pair_storage_index(
                   beta_left, beta_right, n_beta)]
                   .opposite_spin_pair_cache.first_order_cofactor_projection;
           const double coefficient =
@@ -615,27 +615,43 @@ int main() {
           0.4 + 0.03 * row - 0.02 * column;
     }
   }
+  const Eigen::MatrixXd physical_accepted_coefficients =
+      accepted_coefficients.leftCols(2);
+  const Eigen::MatrixXd physical_directional_coefficients =
+      directional_coefficients.leftCols(2);
+  SelectedStateDeterminantMatrices physical_accepted;
+  physical_accepted.n_unique_alpha = 2;
+  physical_accepted.n_unique_beta = 2;
+  physical_accepted.states.push_back(
+      make_state(physical_accepted_coefficients, 1.0));
+  SelectedStateDeterminantMatrices physical_directional;
+  physical_directional.n_unique_alpha = 2;
+  physical_directional.n_unique_beta = 2;
+  physical_directional.states.push_back(
+      make_state(physical_directional_coefficients, 1.0));
   const auto contribution =
       xmvb::vb::build_directional_opposite_spin_backward_contribution(
-          cache,
-          accepted,
-          directional,
+          eager_cache,
+          physical_accepted,
+          physical_directional,
           2,
+          active_overlap,
+          active_one_electron,
           two_electron_result);
   std::vector<double> expected_overlap = direct_overlap_gradient(
-      cache.alpha_pair_cache,
-      cache.alpha_reuse_table.unique_determinants,
-      cache.beta_pair_cache,
-      accepted_coefficients,
-      directional_coefficients,
+      eager_cache.alpha_pair_cache,
+      eager_cache.alpha_reuse_table.unique_determinants,
+      eager_cache.beta_pair_cache_ref(),
+      physical_accepted_coefficients,
+      physical_directional_coefficients,
       two_electron_result.packed_active_two_electron_integrals,
       2);
   const std::vector<double> expected_beta_overlap = direct_overlap_gradient(
-      cache.beta_pair_cache,
-      cache.beta_reuse_table.unique_determinants,
-      cache.alpha_pair_cache,
-      accepted_coefficients.transpose(),
-      directional_coefficients.transpose(),
+      eager_cache.beta_pair_cache_ref(),
+      eager_cache.beta_reuse_table.unique_determinants,
+      eager_cache.alpha_pair_cache,
+      physical_accepted_coefficients.transpose(),
+      physical_directional_coefficients.transpose(),
       two_electron_result.packed_active_two_electron_integrals,
       2);
   for (std::size_t index = 0; index < expected_overlap.size(); ++index) {
@@ -659,15 +675,17 @@ int main() {
 
   const auto accepted_contribution =
       xmvb::vb::build_opposite_spin_backward_contribution(
-          cache,
-          accepted,
+          eager_cache,
+          physical_accepted,
           2,
+          active_overlap,
+          active_one_electron,
           two_electron_result);
   const Eigen::MatrixXd half_accepted_coefficients =
-      0.5 * accepted_coefficients;
+      0.5 * physical_accepted_coefficients;
   const std::vector<double> expected_accepted_packed = direct_packed_gradient(
-      cache,
-      accepted_coefficients,
+      eager_cache,
+      physical_accepted_coefficients,
       half_accepted_coefficients,
       n_channels);
   max_error = 0.0;
@@ -696,10 +714,12 @@ int main() {
       0.04, -0.19, 0.27;
   const Eigen::MatrixXd factor_adjoint =
       xmvb::vb::apply_regular_ri_pair_space_adjoint(
-          cache,
-          accepted,
+          eager_cache,
+          physical_accepted,
           std::vector<double>{0.0},
           2,
+          active_overlap,
+          active_one_electron,
           accepted_ri_factors);
   Eigen::MatrixXd packed_adjoint_matrix(n_channels, n_channels);
   for (int row = 0; row < n_channels; ++row) {
@@ -721,19 +741,19 @@ int main() {
       "RI-native pair-space adjoint disagrees with packed reference");
 
   std::vector<double> expected_accepted_overlap = direct_overlap_gradient(
-      cache.alpha_pair_cache,
-      cache.alpha_reuse_table.unique_determinants,
-      cache.beta_pair_cache,
-      accepted_coefficients,
+      eager_cache.alpha_pair_cache,
+      eager_cache.alpha_reuse_table.unique_determinants,
+      eager_cache.beta_pair_cache_ref(),
+      physical_accepted_coefficients,
       half_accepted_coefficients,
       two_electron_result.packed_active_two_electron_integrals,
       2);
   const std::vector<double> expected_accepted_beta_overlap =
       direct_overlap_gradient(
-          cache.beta_pair_cache,
-          cache.beta_reuse_table.unique_determinants,
-          cache.alpha_pair_cache,
-          accepted_coefficients.transpose(),
+          eager_cache.beta_pair_cache_ref(),
+          eager_cache.beta_reuse_table.unique_determinants,
+          eager_cache.alpha_pair_cache,
+          physical_accepted_coefficients.transpose(),
           half_accepted_coefficients.transpose(),
           two_electron_result.packed_active_two_electron_integrals,
           2);

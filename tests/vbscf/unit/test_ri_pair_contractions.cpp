@@ -503,6 +503,8 @@ int main() {
             closed_shell_cache,
             selected,
             n_active,
+            active_overlap,
+            h1e,
             direct_ri);
     std::vector<double> packed_total =
         packed_same.packed_active_two_electron_gradient;
@@ -528,6 +530,8 @@ int main() {
             selected,
             selected_energies,
             n_active,
+            active_overlap,
+            h1e,
             direct_ri.ri_active_pair_factors);
     require_matrix_close(
         native_factor_adjoint,

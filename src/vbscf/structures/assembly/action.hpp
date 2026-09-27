@@ -230,6 +230,7 @@ public:
 
 private:
   struct OrthogonalDirectCiData;
+  struct TiledPairData;
   struct StructureTerm {
     int structure = 0;
     double coefficient = 0.0;
@@ -242,59 +243,39 @@ private:
   };
 
   struct SupportedChannelFamily {
-    /**
-     * @brief Exact channels batched through their nonzero row or column support.
-     *
-     * For row support `R`, `B = E_R B_R`; the action scatters
-     * `A X B_R^T` directly onto `R`. Column support is the transpose analogue.
-     * Concatenating the compact factors turns many small products into one
-     * matrix multiplication without approximating `B`.
-     */
     std::vector<Eigen::MatrixXd> projected;
     std::vector<int> offsets;
     std::vector<int> support;
     Eigen::MatrixXd raw;
-
     bool enabled() const noexcept { return !projected.empty(); }
   };
 
-  /** @brief Builds the retained opposite-spin factors without full-channel temporaries. */
   void build_opposite_spin_channels(
       const std::vector<SpinDeterminantPairEvaluation>& alpha_pair_cache,
       const std::vector<SpinDeterminantPairEvaluation>& beta_pair_cache,
       int n_packed_pairs);
-
   void add_supported_channel_block(
       const SupportedChannelFamily& family,
       bool supports_rows,
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
       const Eigen::Ref<const Eigen::MatrixXd>& transposed_spin_vectors,
       Eigen::MatrixXd* spin_hamiltonians) const;
-
-  /** @brief Applies alpha-projected channels with support on raw-factor rows. */
   void add_alpha_projected_row_support(
       const SupportedChannelFamily& family,
       const Eigen::Ref<const Eigen::MatrixXd>& transposed_spin_vectors,
       Eigen::MatrixXd* spin_hamiltonians) const;
-
-  /** @brief Applies alpha-projected channels with support on raw-factor columns. */
   void add_alpha_projected_column_support(
       const SupportedChannelFamily& family,
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
       Eigen::MatrixXd* spin_hamiltonians) const;
-
-  /** @brief Applies beta-projected channels with support on raw-factor rows. */
   void add_beta_projected_row_support(
       const SupportedChannelFamily& family,
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
       Eigen::MatrixXd* spin_hamiltonians) const;
-
-  /** @brief Applies beta-projected channels with support on raw-factor columns. */
   void add_beta_projected_column_support(
       const SupportedChannelFamily& family,
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
       Eigen::MatrixXd* spin_hamiltonians) const;
-
   void add_individual_channels(
       const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
       Eigen::MatrixXd* spin_hamiltonian) const;
@@ -318,6 +299,7 @@ private:
   std::size_t channel_nonzeros_ = 0;
   std::size_t channel_dense_values_ = 0;
   std::unique_ptr<OrthogonalDirectCiData> direct_ci_;
+  std::unique_ptr<TiledPairData> tiled_pairs_;
 };
 
 }  // namespace xmvb::vb

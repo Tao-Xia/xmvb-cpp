@@ -216,6 +216,10 @@ SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient
           accepted_point_context.selected_state_matrices,
           directional_selected_states,
           input.orbital_preparation_input.n_active_orbitals,
+          accepted_point_context.prepared_active_space.orbital_result
+              .active_orbital_overlap_matrix,
+          accepted_point_context.prepared_active_space
+              .active_space_one_electron_result.h1e_act,
           accepted_point_context.prepared_active_space
               .active_space_two_electron_result);
   validate_opposite_spin_matrix_backward_contribution(

@@ -98,6 +98,17 @@ Eigen::VectorXd apply_active_space_two_electron_kernel_to_sparse_projection_subs
     const std::vector<int>& target_packed_pair_indices);
 
 /**
+ * @brief Applies the active pair kernel to a dense block without materializing it.
+ *
+ * `vectors` has one packed active-pair channel per row. Packed-exact input is
+ * consumed in bounded row tiles; RI input evaluates `L^T (L vectors)` by GEMM.
+ */
+Eigen::MatrixXd apply_active_space_two_electron_kernel_block(
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors);
+
+/**
  * @brief Materializes packed `GGO` storage from either exact or RI inputs.
  *
  * Production forward paths should prefer the direct pair-kernel helpers above.

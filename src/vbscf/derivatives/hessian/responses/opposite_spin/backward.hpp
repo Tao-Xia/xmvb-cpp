@@ -46,6 +46,8 @@ OppositeSpinBackwardContribution build_opposite_spin_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
+    const std::vector<double>& active_overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result);
 
 /**
@@ -64,6 +66,8 @@ build_directional_opposite_spin_backward_contribution(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStateDeterminantMatrices& directional_selected_states,
     int n_active_orbitals,
+    const std::vector<double>& active_overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result);
 
 /**
