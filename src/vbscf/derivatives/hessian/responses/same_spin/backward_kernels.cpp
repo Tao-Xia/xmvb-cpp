@@ -144,16 +144,81 @@ bool same_spin_local_weight_tile_has_any_weight(
   return false;
 }
 
-template <typename HWeight, typename SWeight, typename TWeight>
-void accumulate_spin_matrix_backward_tile(
+void accumulate_spin_pair_backward(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const SpinDeterminantPairEvaluation& pair_evaluation,
+    double hamiltonian_weight,
+    double overlap_weight,
+    double partner_total,
+    int n_active_orbitals,
+    Eigen::MatrixXd* active_one_electron_gradient,
+    std::vector<double>* active_orbital_overlap_gradient,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  const auto& overlap_result = pair_evaluation.overlap_result;
+  const bool has_hamiltonian_weight =
+      std::abs(hamiltonian_weight) > kContributionTolerance;
+  const double determinant_overlap_weight = overlap_weight + partner_total;
+  const bool need_first_order_cofactor = has_hamiltonian_weight ||
+      std::abs(determinant_overlap_weight) > kContributionTolerance;
+  Eigen::MatrixXd cofactor_1st;
+  if (need_first_order_cofactor) {
+    cofactor_1st = calc_cofactor_1st(overlap_result);
+  }
+
+  if (has_hamiltonian_weight) {
+    if (cofactor_1st.size() != 0) {
+      accumulate_one_electron_gradient_contribution_local(
+          occ_L,
+          occ_R,
+          cofactor_1st,
+          hamiltonian_weight,
+          active_one_electron_gradient);
+    }
+    accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local(
+        occ_L,
+        occ_R,
+        cached_cofactor_differential(pair_evaluation),
+        hamiltonian_weight,
+        packed_active_two_electron_gradient);
+    if (pair_evaluation.same_spin_overlap_hamiltonian_gradient.rows() !=
+            static_cast<int>(occ_R.size()) ||
+        pair_evaluation.same_spin_overlap_hamiltonian_gradient.cols() !=
+            static_cast<int>(occ_L.size())) {
+      throw std::runtime_error(
+          "matrix-form same-spin backward requires cached overlap Hamiltonian gradients");
+    }
+    accumulate_overlap_block_gradient_contribution_local(
+        occ_L,
+        occ_R,
+        pair_evaluation.same_spin_overlap_hamiltonian_gradient,
+        hamiltonian_weight,
+        n_active_orbitals,
+        active_orbital_overlap_gradient);
+  }
+
+  if (std::abs(determinant_overlap_weight) <= kContributionTolerance ||
+      cofactor_1st.size() == 0) {
+    return;
+  }
+  accumulate_overlap_block_gradient_contribution_local(
+      occ_L,
+      occ_R,
+      cofactor_1st,
+      determinant_overlap_weight,
+      n_active_orbitals,
+      active_orbital_overlap_gradient);
+}
+
+template <typename HWeight, typename SWeight, typename TWeight, typename PairAt>
+void accumulate_spin_matrix_backward_tile_from_accessor(
     const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    PairAt&& pair_at,
     const HWeight& hamiltonian_weight_tile,
     const SWeight& overlap_weight_tile,
     const TWeight& partner_total_transfer_tile,
     int left_begin,
     int right_begin,
-    int n_unique_determinants,
     int n_active_orbitals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,
@@ -178,71 +243,85 @@ void accumulate_spin_matrix_backward_tile(
         continue;
       }
 
-      const auto& pair_evaluation =
-          ordered_pair_cache[ordered_spin_pair_storage_index(
-              left_id,
-              right_id,
-              n_unique_determinants)];
-      const auto& occ_L = unique_determinants[left_id];
-      const auto& occ_R = unique_determinants[right_id];
-      const auto& overlap_result = pair_evaluation.overlap_result;
-      const bool has_hamiltonian_weight =
-          std::abs(hamiltonian_weight) > kContributionTolerance;
-
-      const double determinant_overlap_weight =
-          overlap_weight + partner_total;
-      const bool need_first_order_cofactor =
-          has_hamiltonian_weight ||
-          std::abs(determinant_overlap_weight) > kContributionTolerance;
-      Eigen::MatrixXd cofactor_1st;
-      if (need_first_order_cofactor) {
-        cofactor_1st = calc_cofactor_1st(overlap_result);
-      }
-
-      if (has_hamiltonian_weight) {
-        if (cofactor_1st.size() != 0) {
-          accumulate_one_electron_gradient_contribution_local(
-              occ_L,
-              occ_R,
-              cofactor_1st,
-              hamiltonian_weight,
-              active_one_electron_gradient);
-        }
-        accumulate_deleted_minor_same_spin_two_electron_gradient_contribution_local(
-            occ_L,
-            occ_R,
-            cached_cofactor_differential(pair_evaluation),
-            hamiltonian_weight,
-            packed_active_two_electron_gradient);
-        if (pair_evaluation.same_spin_overlap_hamiltonian_gradient.rows() !=
-                static_cast<int>(occ_R.size()) ||
-            pair_evaluation.same_spin_overlap_hamiltonian_gradient.cols() !=
-                static_cast<int>(occ_L.size())) {
-          throw std::runtime_error(
-              "matrix-form same-spin backward requires cached overlap Hamiltonian gradients");
-        }
-        accumulate_overlap_block_gradient_contribution_local(
-            occ_L,
-            occ_R,
-            pair_evaluation.same_spin_overlap_hamiltonian_gradient,
-            hamiltonian_weight,
-            n_active_orbitals,
-            active_orbital_overlap_gradient);
-      }
-
-      if (std::abs(determinant_overlap_weight) <= kContributionTolerance ||
-          cofactor_1st.size() == 0) {
-        continue;
-      }
-      accumulate_overlap_block_gradient_contribution_local(
-          occ_L,
-          occ_R,
-          cofactor_1st,
-          determinant_overlap_weight,
+      accumulate_spin_pair_backward(
+          unique_determinants[left_id],
+          unique_determinants[right_id],
+          pair_at(left_local, right_local, left_id, right_id),
+          hamiltonian_weight,
+          overlap_weight,
+          partner_total,
           n_active_orbitals,
-          active_orbital_overlap_gradient);
+          active_one_electron_gradient,
+          active_orbital_overlap_gradient,
+          packed_active_two_electron_gradient);
     }
   }
+}
+
+template <typename HWeight, typename SWeight, typename TWeight>
+void accumulate_spin_matrix_backward_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    const HWeight& hamiltonian_weight_tile,
+    const SWeight& overlap_weight_tile,
+    const TWeight& partner_total_transfer_tile,
+    int left_begin,
+    int right_begin,
+    int n_unique_determinants,
+    int n_active_orbitals,
+    Eigen::MatrixXd* active_one_electron_gradient,
+    std::vector<double>* active_orbital_overlap_gradient,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  accumulate_spin_matrix_backward_tile_from_accessor(
+      unique_determinants,
+      [&](int, int, int left, int right) -> const auto& {
+        return ordered_pair_cache[ordered_spin_pair_storage_index(
+            left, right, n_unique_determinants)];
+      },
+      hamiltonian_weight_tile,
+      overlap_weight_tile,
+      partner_total_transfer_tile,
+      left_begin,
+      right_begin,
+      n_active_orbitals,
+      active_one_electron_gradient,
+      active_orbital_overlap_gradient,
+      packed_active_two_electron_gradient);
+}
+
+void accumulate_accepted_spin_backward_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const AcceptedSpinPairTile& accepted_tile,
+    const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian_weights,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_weights,
+    const Eigen::Ref<const Eigen::MatrixXd>& partner_total_weights,
+    int n_active_orbitals,
+    Eigen::MatrixXd* active_one_electron_gradient,
+    std::vector<double>* active_orbital_overlap_gradient,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  if (hamiltonian_weights.rows() != accepted_tile.left_size ||
+      hamiltonian_weights.cols() != accepted_tile.right_size ||
+      overlap_weights.rows() != accepted_tile.left_size ||
+      overlap_weights.cols() != accepted_tile.right_size ||
+      partner_total_weights.rows() != accepted_tile.left_size ||
+      partner_total_weights.cols() != accepted_tile.right_size) {
+    throw std::invalid_argument(
+        "accepted backward tile weights have incompatible dimensions");
+  }
+  accumulate_spin_matrix_backward_tile_from_accessor(
+      unique_determinants,
+      [&](int left, int right, int, int) -> const auto& {
+        return accepted_tile.pair(left, right);
+      },
+      hamiltonian_weights,
+      overlap_weights,
+      partner_total_weights,
+      accepted_tile.left_begin,
+      accepted_tile.right_begin,
+      n_active_orbitals,
+      active_one_electron_gradient,
+      active_orbital_overlap_gradient,
+      packed_active_two_electron_gradient);
 }
 
 void accumulate_spin_matrix_backward(

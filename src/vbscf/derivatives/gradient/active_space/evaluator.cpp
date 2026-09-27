@@ -825,7 +825,13 @@ void accumulate_active_space_gradient(
           same_spin_pair_cache,
           selected_state_matrices,
           selected_state_energies,
-          n_active_orbitals);
+          n_active_orbitals,
+          forward_context.timed_active_space_context.prepared_active_space
+              .orbital_result.active_orbital_overlap_matrix,
+          forward_context.timed_active_space_context.prepared_active_space
+              .active_space_one_electron_result.h1e_act,
+          forward_context.timed_active_space_context.prepared_active_space
+              .active_space_two_electron_result);
   const OppositeSpinBackwardContribution opposite_spin_contribution =
       build_opposite_spin_backward_contribution(
           same_spin_pair_cache,

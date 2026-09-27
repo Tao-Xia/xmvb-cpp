@@ -52,6 +52,7 @@ void complete_same_spin_pair_evaluation(
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    bool populate_opposite_spin_projection,
     bool materialize_projected_pair_values,
     bool populate_response_payload,
     SpinDeterminantPairEvaluation* pair_evaluation);

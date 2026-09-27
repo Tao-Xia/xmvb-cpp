@@ -59,7 +59,10 @@ SameSpinMatrixBackwardContribution build_same_spin_matrix_backward_contribution(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     const std::vector<double>& selected_state_energies,
-    int n_active_orbitals);
+    int n_active_orbitals,
+    const std::vector<double>& active_overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
+    const ActiveSpaceTwoElectronResult& active_two_electron);
 
 /**
  * @brief Builds the directional same-spin backward contribution.
@@ -82,6 +85,9 @@ build_directional_same_spin_matrix_backward_contribution(
     const SelectedStateDeterminantMatrices& directional_selected_states,
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies,
-    int n_active_orbitals);
+    int n_active_orbitals,
+    const std::vector<double>& active_overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
+    const ActiveSpaceTwoElectronResult& active_two_electron);
 
 }  // namespace xmvb::vb

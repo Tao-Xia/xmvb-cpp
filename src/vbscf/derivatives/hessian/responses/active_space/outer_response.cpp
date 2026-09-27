@@ -197,7 +197,13 @@ SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient
           directional_selected_states,
           accepted_point_context.selected_state_energies,
           directional_selected_state_energies,
-          input.orbital_preparation_input.n_active_orbitals);
+          input.orbital_preparation_input.n_active_orbitals,
+          accepted_point_context.prepared_active_space.orbital_result
+              .active_orbital_overlap_matrix,
+          accepted_point_context.prepared_active_space
+              .active_space_one_electron_result.h1e_act,
+          accepted_point_context.prepared_active_space
+              .active_space_two_electron_result);
   validate_same_spin_matrix_backward_contribution(
       matrix_form_same_spin_direction,
       "exact outer-response directional same-spin backward contribution");
@@ -331,7 +337,13 @@ add_selected_subspace_response_to_active_space_gradient(
           zero_directional_states,
           zero_energies,
           scalar_multipliers,
-          input.orbital_preparation_input.n_active_orbitals);
+          input.orbital_preparation_input.n_active_orbitals,
+          accepted_point_context.prepared_active_space.orbital_result
+              .active_orbital_overlap_matrix,
+          accepted_point_context.prepared_active_space
+              .active_space_one_electron_result.h1e_act,
+          accepted_point_context.prepared_active_space
+              .active_space_two_electron_result);
   validate_same_spin_matrix_backward_contribution(
       multiplier_contribution,
       "selected-subspace full-multiplier backward contribution");

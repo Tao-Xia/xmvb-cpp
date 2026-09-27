@@ -633,20 +633,23 @@ void complete_same_spin_pair_evaluation(
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    bool populate_opposite_spin_projection,
     bool materialize_projected_pair_values,
     bool populate_response_payload,
     SpinDeterminantPairEvaluation* pair_evaluation) {
   if (pair_evaluation == nullptr) {
     throw std::invalid_argument("same-spin pair evaluation must not be null");
   }
-  attach_opposite_spin_pair_cache(
-      occ_L,
-      occ_R,
-      n_active_orbitals,
-      make_active_space_two_electron_view(active_space_two_electron_result),
-      nullptr,
-      materialize_projected_pair_values,
-      pair_evaluation);
+  if (populate_opposite_spin_projection) {
+    attach_opposite_spin_pair_cache(
+        occ_L,
+        occ_R,
+        n_active_orbitals,
+        make_active_space_two_electron_view(active_space_two_electron_result),
+        nullptr,
+        materialize_projected_pair_values,
+        pair_evaluation);
+  }
   if (populate_response_payload) {
     populate_same_spin_phi_cache_entry(
         occ_L,

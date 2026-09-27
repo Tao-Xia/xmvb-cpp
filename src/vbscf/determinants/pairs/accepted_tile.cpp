@@ -438,6 +438,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             active_one_electron,
             n_active_orbitals_,
             active_two_electron,
+            options.populate_opposite_spin_projection,
             options.materialize_projected_pair_values,
             options.populate_response_payload,
             &evaluation);

@@ -494,7 +494,10 @@ int main() {
             closed_shell_cache,
             selected,
             selected_energies,
-            n_active);
+            n_active,
+            active_overlap,
+            h1e,
+            direct_ri);
     const auto packed_opposite =
         xmvb::vb::build_opposite_spin_backward_contribution(
             closed_shell_cache,

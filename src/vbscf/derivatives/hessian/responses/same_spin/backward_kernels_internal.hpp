@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
+#include "vbscf/determinants/pairs/accepted_tile.hpp"
 
 namespace xmvb::vb::detail {
 
@@ -30,6 +31,17 @@ void accumulate_spin_matrix_backward(
     const Eigen::MatrixXd& overlap_weight_matrix,
     const Eigen::MatrixXd& partner_total_transfer_matrix,
     int n_unique_determinants,
+    int n_active_orbitals,
+    Eigen::MatrixXd* active_one_electron_gradient,
+    std::vector<double>* active_orbital_overlap_gradient,
+    std::vector<double>* packed_active_two_electron_gradient);
+
+void accumulate_accepted_spin_backward_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const AcceptedSpinPairTile& accepted_tile,
+    const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian_weights,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_weights,
+    const Eigen::Ref<const Eigen::MatrixXd>& partner_total_weights,
     int n_active_orbitals,
     Eigen::MatrixXd* active_one_electron_gradient,
     std::vector<double>* active_orbital_overlap_gradient,
