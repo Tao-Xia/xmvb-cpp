@@ -110,17 +110,36 @@ void add_sparse_right_transpose(
   }
 }
 
-void add_sparse_left_product(
-    const std::vector<ChannelEntry>& left,
+void add_projected_left_product(
+    const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
+    int n_unique,
+    int target_channel,
     const Eigen::Ref<const Eigen::MatrixXd>& right,
     Eigen::MatrixXd* output) {
-  if (output == nullptr) {
-    throw std::invalid_argument("sparse left-product output must not be null");
+  if (output == nullptr || right.rows() != n_unique) {
+    throw std::invalid_argument(
+        "accepted projected channel product has inconsistent dimensions");
   }
-  output->setZero(output->rows(), right.cols());
-  for (const ChannelEntry& entry : left) {
-    output->row(entry.row).noalias() +=
-        entry.value * right.row(entry.column);
+  output->setZero(n_unique, right.cols());
+  for (int left = 0; left < n_unique; ++left) {
+    for (int contracted = 0; contracted < n_unique; ++contracted) {
+      const auto& projected = accepted_pairs[
+          ordered_spin_pair_storage_index(
+              std::min(left, contracted),
+              std::max(left, contracted),
+              n_unique)]
+                                  .opposite_spin_pair_cache
+                                  .first_order_cofactor_projection
+                                  .projected_pair_values;
+      if (target_channel >= static_cast<int>(projected.size())) {
+        throw std::logic_error(
+            "accepted opposite-spin channel is missing its kernel image");
+      }
+      const double value = projected[target_channel];
+      if (value != 0.0) {
+        output->row(left).noalias() += value * right.row(contracted);
+      }
+    }
   }
 }
 
@@ -398,8 +417,10 @@ build_selected_structure_direction_from_pair_tiles(
               if (directional.isZero(0.0)) {
                 continue;
               }
-              add_sparse_left_product(
-                  factors.alpha_channels[target],
+              add_projected_left_product(
+                  same_spin.alpha_pair_cache_ref(),
+                  n_alpha,
+                  target,
                   coefficients_right,
                   &accepted_alpha_times_coefficients);
               hamiltonian_image.noalias() +=
