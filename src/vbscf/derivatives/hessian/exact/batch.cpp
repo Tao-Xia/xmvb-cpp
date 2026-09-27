@@ -451,13 +451,13 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         detail::stream_directional_pair_tiles(
             accepted_point_context_->same_spin_pair_cache,
             n_active_orbitals,
+            accepted_point_context_->prepared_active_space.orbital_result
+                .active_orbital_overlap_matrix,
+            accepted_point_context_->prepared_active_space
+                .active_space_one_electron_result.h1e_act,
             accepted_point_context_->prepared_active_space
                 .active_space_two_electron_result,
             integral_directions[static_cast<std::size_t>(column)],
-            accepted_ri_two_electron_cache_.has_value()
-                ? &accepted_point_context_->prepared_active_space
-                       .active_space_one_electron_result.h1e_act
-                : nullptr,
             accepted_ri_two_electron_cache_.has_value()
                 ? accepted_ri_two_electron_cache_
                       ->accepted_active_pair_factors

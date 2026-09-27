@@ -320,12 +320,12 @@ build_selected_structure_direction_from_pair_tiles(
   detail::stream_directional_pair_tiles(
       same_spin,
       n_active_orbitals,
+      accepted_point.prepared_active_space.orbital_result
+          .active_orbital_overlap_matrix,
+      accepted_point.prepared_active_space.active_space_one_electron_result
+          .h1e_act,
       accepted_point.prepared_active_space.active_space_two_electron_result,
       direction,
-      accepted_ri_active_pair_factors != nullptr
-          ? &accepted_point.prepared_active_space
-                 .active_space_one_electron_result.h1e_act
-          : nullptr,
       accepted_ri_active_pair_factors,
       directional_ri_active_pair_factors,
       true,

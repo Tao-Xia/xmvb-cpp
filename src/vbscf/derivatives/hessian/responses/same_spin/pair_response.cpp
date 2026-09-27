@@ -274,9 +274,12 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
   return result;
 }
 
-SameSpinDirectionalPairTile build_directional_pair_tile(
+namespace {
+
+SameSpinDirectionalPairTile build_directional_pair_tile_impl(
     const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    const std::vector<SpinDeterminantPairEvaluation>* ordered_pair_cache,
+    const AcceptedSpinPairTile* accepted_pair_tile,
     int n_unique_determinants,
     int n_active_orbitals,
     const ActiveSpaceIntegralDirectionView& direction,
@@ -288,7 +291,14 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors) {
   const std::size_t expected_size = square_storage_size(n_unique_determinants);
-  if (ordered_pair_cache.size() != expected_size ||
+  const bool full_cache_valid = ordered_pair_cache != nullptr &&
+      ordered_pair_cache->size() == expected_size;
+  const bool tile_cache_valid = accepted_pair_tile != nullptr &&
+      accepted_pair_tile->left_begin == left_begin &&
+      accepted_pair_tile->right_begin == right_begin &&
+      accepted_pair_tile->left_size == left_end - left_begin &&
+      accepted_pair_tile->right_size == right_end - right_begin;
+  if ((!full_cache_valid && !tile_cache_valid) ||
       unique_determinants.size() !=
           static_cast<std::size_t>(n_unique_determinants) ||
       left_begin < 0 || left_end <= left_begin ||
@@ -341,9 +351,12 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     }
     const int canonical_left = std::min(left_id, right_id);
     const int canonical_right = std::max(left_id, right_id);
-    const auto& pair_evaluation = ordered_pair_cache[
-        ordered_spin_pair_storage_index(
-            canonical_left, canonical_right, n_unique_determinants)];
+    const auto& pair_evaluation = accepted_pair_tile != nullptr
+        ? accepted_pair_tile->pair(
+              canonical_left - left_begin,
+              canonical_right - right_begin)
+        : (*ordered_pair_cache)[ordered_spin_pair_storage_index(
+              canonical_left, canonical_right, n_unique_determinants)];
     SameSpinPolynomialDirectionalPairData pair_direction;
     const bool regular_ri_pair =
         pair_evaluation.has_same_spin_phi_cache && use_ri;
@@ -422,6 +435,61 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     }
   }
   return tile;
+}
+
+}  // namespace
+
+SameSpinDirectionalPairTile build_directional_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    int n_unique_determinants,
+    int n_active_orbitals,
+    const ActiveSpaceIntegralDirectionView& direction,
+    int left_begin,
+    int left_end,
+    int right_begin,
+    int right_end,
+    const Eigen::MatrixXd* accepted_active_one_electron,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+  return build_directional_pair_tile_impl(
+      unique_determinants,
+      &ordered_pair_cache,
+      nullptr,
+      n_unique_determinants,
+      n_active_orbitals,
+      direction,
+      left_begin,
+      left_end,
+      right_begin,
+      right_end,
+      accepted_active_one_electron,
+      accepted_ri_active_pair_factors,
+      directional_ri_active_pair_factors);
+}
+
+SameSpinDirectionalPairTile build_directional_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const AcceptedSpinPairTile& accepted_pair_tile,
+    int n_active_orbitals,
+    const ActiveSpaceIntegralDirectionView& direction,
+    const Eigen::MatrixXd* accepted_active_one_electron,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+  return build_directional_pair_tile_impl(
+      unique_determinants,
+      nullptr,
+      &accepted_pair_tile,
+      static_cast<int>(unique_determinants.size()),
+      n_active_orbitals,
+      direction,
+      accepted_pair_tile.left_begin,
+      accepted_pair_tile.left_begin + accepted_pair_tile.left_size,
+      accepted_pair_tile.right_begin,
+      accepted_pair_tile.right_begin + accepted_pair_tile.right_size,
+      accepted_active_one_electron,
+      accepted_ri_active_pair_factors,
+      directional_ri_active_pair_factors);
 }
 
 void accumulate_directional_one_electron_gradient_contribution_local(

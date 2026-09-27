@@ -9,12 +9,27 @@
 
 #include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
+#include "vbscf/determinants/pairs/accepted_tile.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace xmvb::vb {
+
+const AcceptedPairTileProvider& SameSpinPairCacheContext::alpha_provider() const {
+  if (!alpha_pair_provider) {
+    throw std::logic_error("alpha accepted-pair provider is not initialized");
+  }
+  return *alpha_pair_provider;
+}
+
+const AcceptedPairTileProvider& SameSpinPairCacheContext::beta_provider() const {
+  if (!beta_pair_provider) {
+    throw std::logic_error("beta accepted-pair provider is not initialized");
+  }
+  return *beta_pair_provider;
+}
 
 void release_same_spin_pair_evaluations(
     SameSpinPairCacheContext* cache_context) {
@@ -748,6 +763,15 @@ SameSpinPairCacheContext build_same_spin_pair_topology(
   } else if (!context.beta_reuses_alpha_pair_cache) {
     context.beta_reuse_table = build_spin_determinant_reuse_table(beta_det);
   }
+
+  context.alpha_pair_provider = std::make_shared<const AcceptedPairTileProvider>(
+      context.alpha_reuse_table.unique_determinants,
+      n_orbitals);
+  context.beta_pair_provider = context.beta_reuses_alpha_pair_cache
+      ? context.alpha_pair_provider
+      : std::make_shared<const AcceptedPairTileProvider>(
+            context.beta_reuse_table.unique_determinants,
+            n_orbitals);
 
   const std::size_t n_alpha =
       context.alpha_reuse_table.unique_determinants.size();

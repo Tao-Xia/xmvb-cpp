@@ -7,6 +7,7 @@
 
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
+#include "vbscf/determinants/pairs/accepted_tile.hpp"
 
 namespace xmvb::vb::detail {
 
@@ -97,6 +98,15 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     int left_end,
     int right_begin,
     int right_end,
+    const Eigen::MatrixXd* accepted_active_one_electron,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors);
+
+SameSpinDirectionalPairTile build_directional_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const AcceptedSpinPairTile& accepted_pair_tile,
+    int n_active_orbitals,
+    const ActiveSpaceIntegralDirectionView& direction,
     const Eigen::MatrixXd* accepted_active_one_electron,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors);

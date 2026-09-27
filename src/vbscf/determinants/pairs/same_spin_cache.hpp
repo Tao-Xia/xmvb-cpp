@@ -3,11 +3,14 @@
 #include <Eigen/Core>
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #include "vbscf/determinants/pairs/evaluator.hpp"
 
 namespace xmvb::vb {
+
+class AcceptedPairTileProvider;
 
 /**
  * @brief Maps each spin determinant in the full space onto a unique occupied string.
@@ -59,6 +62,8 @@ void complete_same_spin_pair_evaluation(
 struct SameSpinPairCacheContext {
   SpinDeterminantReuseTable alpha_reuse_table;
   SpinDeterminantReuseTable beta_reuse_table;
+  std::shared_ptr<const AcceptedPairTileProvider> alpha_pair_provider;
+  std::shared_ptr<const AcceptedPairTileProvider> beta_pair_provider;
   std::vector<SpinDeterminantPairEvaluation> alpha_pair_cache;
   // When alpha/beta unique determinant spaces are identical, the ordered
   // beta-beta kernel is identical to the alpha-alpha kernel after the beta
@@ -93,6 +98,9 @@ struct SameSpinPairCacheContext {
   bool shares_same_spin_pair_cache_between_spins() const {
     return beta_reuses_alpha_pair_cache;
   }
+
+  const AcceptedPairTileProvider& alpha_provider() const;
+  const AcceptedPairTileProvider& beta_provider() const;
 
   const std::vector<SpinDeterminantPairEvaluation>& alpha_pair_cache_ref() const {
     return alpha_pair_cache;

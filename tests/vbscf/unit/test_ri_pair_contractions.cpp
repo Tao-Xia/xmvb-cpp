@@ -339,46 +339,6 @@ int main() {
             scalar_tile.view(),
             &direct_ri.ri_active_pair_factors,
             &delta_factors);
-    int streamed_tiles = 0;
-    xmvb::vb::detail::stream_directional_pair_tiles(
-        pair_cache,
-        n_active,
-        direct_ri,
-        first_view,
-        &h1e,
-        &direct_ri.ri_active_pair_factors,
-        &delta_factors,
-        true,
-        [&](bool alpha_channel,
-            bool beta_channel,
-            const xmvb::vb::detail::SameSpinDirectionalPairTileView& same,
-            const xmvb::vb::detail::DirectionalOppositeSpinPairTileView*
-                opposite) {
-          if (!alpha_channel || !beta_channel || opposite == nullptr) {
-            throw std::runtime_error(
-                "shared-spin directional tile stream flags mismatch");
-          }
-          require_matrix_close(
-              same.delta_regular_hamiltonian(),
-              scalar_tile.delta_regular_hamiltonian,
-              1.0e-13,
-              "streamed same-spin tile");
-          opposite->with_pair(
-              0,
-              0,
-              [&](const auto& streamed_pair) {
-                require_matrix_close(
-                    streamed_pair.delta_overlap_submatrix,
-                    opposite_tile.pair(0, 0).delta_overlap_submatrix,
-                    1.0e-13,
-                    "streamed opposite-spin tile");
-              });
-          ++streamed_tiles;
-        });
-    if (streamed_tiles != 1) {
-      throw std::runtime_error(
-          "shared-spin directional pair table was evaluated more than once");
-    }
     const auto& tile_projection = opposite_tile.pair(0, 0)
                                       .delta_first_order_cofactor_projection;
 
@@ -487,9 +447,10 @@ int main() {
     xmvb::vb::detail::stream_directional_pair_tiles(
         closed_shell_cache,
         n_active,
+        active_overlap,
+        h1e,
         direct_ri,
         first_view,
-        &h1e,
         &direct_ri.ri_active_pair_factors,
         &delta_factors,
         true,

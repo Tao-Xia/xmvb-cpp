@@ -24,9 +24,10 @@ using DirectionalPairTileConsumer = std::function<void(
 void stream_directional_pair_tiles(
     const SameSpinPairCacheContext& accepted_pair_cache,
     int n_active_orbitals,
+    const std::vector<double>& accepted_active_overlap,
+    const Eigen::MatrixXd& accepted_active_one_electron,
     const ActiveSpaceTwoElectronResult& accepted_two_electron,
     const ActiveSpaceIntegralDirectionView& direction,
-    const Eigen::MatrixXd* accepted_active_one_electron,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors,
     bool include_opposite_spin,

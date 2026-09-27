@@ -160,9 +160,12 @@ DirectionalOppositeSpinPairTileView::projected_channel(
   return channel_view(storage_->projected_channel_values, packed_pair);
 }
 
-DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
+namespace {
+
+DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
     const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    const std::vector<SpinDeterminantPairEvaluation>* ordered_pair_cache,
+    const AcceptedSpinPairTile* accepted_pair_tile,
     int n_unique_determinants,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -173,9 +176,16 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
   const std::size_t expected_size =
       static_cast<std::size_t>(n_unique_determinants) *
       n_unique_determinants;
+  const bool full_cache_valid = ordered_pair_cache != nullptr &&
+      ordered_pair_cache->size() == expected_size;
+  const bool tile_cache_valid = accepted_pair_tile != nullptr &&
+      accepted_pair_tile->left_begin == same_spin_tile.left_begin() &&
+      accepted_pair_tile->right_begin == same_spin_tile.right_begin() &&
+      accepted_pair_tile->left_size == same_spin_tile.left_size() &&
+      accepted_pair_tile->right_size == same_spin_tile.right_size();
   if (unique_determinants.size() !=
           static_cast<std::size_t>(n_unique_determinants) ||
-      ordered_pair_cache.size() != expected_size ||
+      (!full_cache_valid && !tile_cache_valid) ||
       same_spin_tile.left_begin() < 0 || same_spin_tile.right_begin() < 0 ||
       same_spin_tile.left_size() <= 0 || same_spin_tile.right_size() <= 0 ||
       same_spin_tile.left_begin() + same_spin_tile.left_size() >
@@ -282,11 +292,16 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
         const int right_local = work / result.left_size;
         const int left = result.left_begin + left_local;
         const int right = result.right_begin + right_local;
-        const auto& accepted = ordered_pair_cache[
-            ordered_spin_pair_storage_index(
-                std::min(left, right),
-                std::max(left, right),
-                n_unique_determinants)]
+        const int canonical_left = std::min(left, right);
+        const int canonical_right = std::max(left, right);
+        const auto& accepted = (accepted_pair_tile != nullptr
+            ? accepted_pair_tile->pair(
+                  canonical_left - accepted_pair_tile->left_begin,
+                  canonical_right - accepted_pair_tile->right_begin)
+            : (*ordered_pair_cache)[ordered_spin_pair_storage_index(
+                  canonical_left,
+                  canonical_right,
+                  n_unique_determinants)])
                                    .opposite_spin_pair_cache
                                    .first_order_cofactor_projection;
         const int column = work - begin;
@@ -330,11 +345,16 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const int right_local = work / result.left_size;
     const int left = result.left_begin + left_local;
     const int right = result.right_begin + right_local;
-    const auto& accepted_pair_projection = ordered_pair_cache[
-        ordered_spin_pair_storage_index(
-            std::min(left, right),
-            std::max(left, right),
-            n_unique_determinants)]
+    const int canonical_left = std::min(left, right);
+    const int canonical_right = std::max(left, right);
+    const auto& accepted_pair_projection = (accepted_pair_tile != nullptr
+        ? accepted_pair_tile->pair(
+              canonical_left - accepted_pair_tile->left_begin,
+              canonical_right - accepted_pair_tile->right_begin)
+        : (*ordered_pair_cache)[ordered_spin_pair_storage_index(
+              canonical_left,
+              canonical_right,
+              n_unique_determinants)])
                                           .opposite_spin_pair_cache
                                           .first_order_cofactor_projection;
     scatter_sparse_projection(
@@ -381,6 +401,53 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
         row_begin, row_end - row_begin) = projected.transpose();
   }
   return result;
+}
+
+}  // namespace
+
+DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    int n_unique_determinants,
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    const ActiveSpaceIntegralDirectionView& direction,
+    const SameSpinDirectionalPairTileView& same_spin_tile,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+  return build_directional_opposite_spin_pair_tile_impl(
+      unique_determinants,
+      &ordered_pair_cache,
+      nullptr,
+      n_unique_determinants,
+      n_active_orbitals,
+      active_space_two_electron_result,
+      direction,
+      same_spin_tile,
+      accepted_ri_active_pair_factors,
+      directional_ri_active_pair_factors);
+}
+
+DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const AcceptedSpinPairTile& accepted_pair_tile,
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    const ActiveSpaceIntegralDirectionView& direction,
+    const SameSpinDirectionalPairTileView& same_spin_tile,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+  return build_directional_opposite_spin_pair_tile_impl(
+      unique_determinants,
+      nullptr,
+      &accepted_pair_tile,
+      static_cast<int>(unique_determinants.size()),
+      n_active_orbitals,
+      active_space_two_electron_result,
+      direction,
+      same_spin_tile,
+      accepted_ri_active_pair_factors,
+      directional_ri_active_pair_factors);
 }
 
 }  // namespace xmvb::vb::detail
