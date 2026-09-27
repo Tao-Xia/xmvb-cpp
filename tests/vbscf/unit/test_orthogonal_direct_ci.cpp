@@ -1220,15 +1220,64 @@ void check_sigma_action() {
       (topology_images.overlap -
        reference_three_structure_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
       "topology-only overlap action differs from the dense reference");
+  std::vector<std::vector<int>> incomplete_alpha;
+  std::vector<std::vector<int>> incomplete_beta;
+  std::vector<std::vector<xmvb::vb::StructureExpansionTerm>>
+      incomplete_terms;
+  std::vector<int> retained_products;
+  for (int product = 0; product < product_dimension; ++product) {
+    if (product_alpha[product] == alpha.back()) {
+      continue;
+    }
+    incomplete_alpha.push_back(product_alpha[product]);
+    incomplete_beta.push_back(product_beta[product]);
+    incomplete_terms.push_back(determinant_to_structure_terms[product]);
+    retained_products.push_back(product);
+  }
+  Eigen::MatrixXd incomplete_expansion(
+      static_cast<int>(retained_products.size()), n_test_structures);
+  Eigen::MatrixXd incomplete_hamiltonian(
+      retained_products.size(), retained_products.size());
+  Eigen::MatrixXd incomplete_overlap(
+      retained_products.size(), retained_products.size());
+  for (int left = 0; left < static_cast<int>(retained_products.size()); ++left) {
+    incomplete_expansion.row(left) =
+        structure_expansion.row(retained_products[left]);
+    for (int right = 0;
+         right < static_cast<int>(retained_products.size());
+         ++right) {
+      incomplete_hamiltonian(left, right) =
+          dense_hamiltonian(retained_products[left], retained_products[right]);
+      incomplete_overlap(left, right) =
+          dense_overlap(retained_products[left], retained_products[right]);
+    }
+  }
+  const auto incomplete_topology = xmvb::vb::build_same_spin_pair_topology(
+      incomplete_alpha, incomplete_beta, n_orbitals);
+  xmvb::vb::StructureAction streamed_action(
+      incomplete_terms,
+      n_test_structures,
+      incomplete_topology,
+      packed_overlap,
+      one_electron,
+      two_electron,
+      n_orbitals,
+      &exact_diagonal);
   const auto streamed_images =
-      topology_action.apply_streamed(structure_vectors);
+      streamed_action.apply_streamed(structure_vectors);
+  const Eigen::MatrixXd incomplete_reference_hamiltonian =
+      incomplete_expansion.transpose() * incomplete_hamiltonian *
+      incomplete_expansion * structure_vectors;
+  const Eigen::MatrixXd incomplete_reference_overlap =
+      incomplete_expansion.transpose() * incomplete_overlap *
+      incomplete_expansion * structure_vectors;
   require(
       (streamed_images.hamiltonian -
-       reference_three_structure_hamiltonian).cwiseAbs().maxCoeff() < 2.0e-10,
+       incomplete_reference_hamiltonian).cwiseAbs().maxCoeff() < 2.0e-10,
       "streamed Hamiltonian action differs from the dense reference");
   require(
       (streamed_images.overlap -
-       reference_three_structure_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
+       incomplete_reference_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
       "streamed overlap action differs from the dense reference");
 }
 
