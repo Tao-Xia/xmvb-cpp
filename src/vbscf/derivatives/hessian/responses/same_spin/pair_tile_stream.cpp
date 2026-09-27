@@ -21,6 +21,7 @@ void stream_spin_table(
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors,
     bool include_opposite_spin,
+    int tile_extent,
     const DirectionalPairTileConsumer& consume) {
   const int n_unique = static_cast<int>(unique_determinants.size());
   if (n_unique <= 0 ||
@@ -29,7 +30,7 @@ void stream_spin_table(
     throw std::invalid_argument(
         "directional pair tile stream requires a complete accepted pair table");
   }
-  const int tile_extent = std::min(n_unique, kSameSpinTileExtent);
+  tile_extent = std::max(1, std::min(n_unique, tile_extent));
   for (int left_begin = 0; left_begin < n_unique;
        left_begin += tile_extent) {
     const int left_end = std::min(n_unique, left_begin + tile_extent);
@@ -109,6 +110,11 @@ void stream_directional_pair_tiles(
   }
   const bool shared =
       accepted_pair_cache.shares_same_spin_pair_cache_between_spins();
+  const PairTileExtents tile_extents = plan_pair_tile_extents(
+      accepted_pair_cache,
+      n_active_orbitals,
+      accepted_two_electron,
+      include_opposite_spin);
   stream_spin_table(
       accepted_pair_cache.alpha_reuse_table.unique_determinants,
       accepted_pair_cache.alpha_pair_cache_ref(),
@@ -121,6 +127,7 @@ void stream_directional_pair_tiles(
       accepted_ri_active_pair_factors,
       directional_ri_active_pair_factors,
       include_opposite_spin,
+      tile_extents.alpha,
       consume);
   if (shared) {
     return;
@@ -137,6 +144,7 @@ void stream_directional_pair_tiles(
       accepted_ri_active_pair_factors,
       directional_ri_active_pair_factors,
       include_opposite_spin,
+      tile_extents.beta,
       consume);
 }
 

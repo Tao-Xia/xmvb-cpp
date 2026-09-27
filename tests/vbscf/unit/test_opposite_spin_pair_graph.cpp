@@ -461,6 +461,22 @@ int main() {
   const Eigen::MatrixXd one_sided_ri_direction =
       ri_pair_result.ri_active_pair_factors.transpose() *
       directional_ri_factors;
+  const Eigen::MatrixXd ri_kernel =
+      ri_pair_result.ri_active_pair_factors.transpose() *
+      ri_pair_result.ri_active_pair_factors;
+  xmvb::vb::ActiveSpaceTwoElectronResult packed_ri_result = ri_pair_result;
+  packed_ri_result.representation =
+      xmvb::vb::ActiveSpaceTwoElectronRepresentation::PackedExact;
+  packed_ri_result.packed_active_two_electron_integrals.assign(
+      static_cast<std::size_t>(n_channels) * (n_channels + 1) / 2,
+      0.0);
+  for (int row = 0; row < n_channels; ++row) {
+    for (int column = 0; column <= row; ++column) {
+      packed_ri_result.packed_active_two_electron_integrals[
+          xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+              row, column)] = ri_kernel(row, column);
+    }
+  }
   std::vector<double> packed_ri_direction(
       static_cast<std::size_t>(n_channels) * (n_channels + 1) / 2,
       0.0);
@@ -501,9 +517,9 @@ int main() {
           eager_cache.alpha_pair_cache,
           2,
           2,
-          ri_pair_result,
+          packed_ri_result,
           ri_direction_view,
-          same_spin_tile);
+          same_spin_tile.view());
   const auto factor_directional_tile =
       xmvb::vb::detail::build_directional_opposite_spin_pair_tile(
           one_electron_determinants,
@@ -512,27 +528,19 @@ int main() {
           2,
           ri_pair_result,
           ri_direction_view,
-          same_spin_tile,
+          same_spin_tile.view(),
           &ri_pair_result.ri_active_pair_factors,
           &directional_ri_factors);
-  for (std::size_t pair = 0;
-       pair < packed_directional_tile.pairs.size();
-       ++pair) {
-    const auto& packed_values =
-        packed_directional_tile.pairs[pair]
-            .delta_first_order_cofactor_projection.projected_pair_values;
-    const auto& factor_values =
-        factor_directional_tile.pairs[pair]
-            .delta_first_order_cofactor_projection.projected_pair_values;
-    require(
-        packed_values.size() == factor_values.size(),
-        "RI-native opposite-spin direction returned the wrong dimension");
-    for (std::size_t channel = 0; channel < packed_values.size(); ++channel) {
-      require(
-          std::abs(packed_values[channel] - factor_values[channel]) <= 1.0e-13,
-          "RI-native opposite-spin direction disagrees with packed reference");
-    }
-  }
+  require(
+      packed_directional_tile.projected_channel_values.rows() ==
+          factor_directional_tile.projected_channel_values.rows() &&
+      packed_directional_tile.projected_channel_values.cols() ==
+          factor_directional_tile.projected_channel_values.cols() &&
+      (packed_directional_tile.projected_channel_values -
+       factor_directional_tile.projected_channel_values)
+              .cwiseAbs()
+              .maxCoeff() <= 1.0e-13,
+      "RI-native opposite-spin direction disagrees with packed reference");
 
   xmvb::vb::SameSpinPairCacheContext cache;
   fill_pair_cache(n_alpha, n_channels, 0, &cache.alpha_pair_cache);

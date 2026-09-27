@@ -37,7 +37,9 @@ LocalActiveSpaceTileAccumulator::LocalActiveSpaceTileAccumulator(
       opposite_spin_(
           accepted_point.same_spin_pair_cache,
           accepted_point.selected_state_matrices,
-          input.orbital_preparation_input.n_active_orbitals) {
+          input.orbital_preparation_input.n_active_orbitals,
+          accepted_point.prepared_active_space
+              .active_space_two_electron_result) {
   if (!accepted_point.use_pair_graph_opposite_spin_adjoint) {
     throw std::runtime_error(
         "local pair-tile adjoint requires selected-state pair graphs");

@@ -336,7 +336,7 @@ int main() {
             n_active,
             direct_ri,
             first_view,
-            scalar_tile,
+            scalar_tile.view(),
             &direct_ri.ri_active_pair_factors,
             &delta_factors);
     int streamed_tiles = 0;
@@ -351,22 +351,28 @@ int main() {
         true,
         [&](bool alpha_channel,
             bool beta_channel,
-            const xmvb::vb::detail::SameSpinDirectionalPairTile& same,
-            const xmvb::vb::detail::DirectionalOppositeSpinPairTile* opposite) {
+            const xmvb::vb::detail::SameSpinDirectionalPairTileView& same,
+            const xmvb::vb::detail::DirectionalOppositeSpinPairTileView*
+                opposite) {
           if (!alpha_channel || !beta_channel || opposite == nullptr) {
             throw std::runtime_error(
                 "shared-spin directional tile stream flags mismatch");
           }
           require_matrix_close(
-              same.delta_regular_hamiltonian,
+              same.delta_regular_hamiltonian(),
               scalar_tile.delta_regular_hamiltonian,
               1.0e-13,
               "streamed same-spin tile");
-          require_matrix_close(
-              opposite->pair(0, 0).delta_overlap_submatrix,
-              opposite_tile.pair(0, 0).delta_overlap_submatrix,
-              1.0e-13,
-              "streamed opposite-spin tile");
+          opposite->with_pair(
+              0,
+              0,
+              [&](const auto& streamed_pair) {
+                require_matrix_close(
+                    streamed_pair.delta_overlap_submatrix,
+                    opposite_tile.pair(0, 0).delta_overlap_submatrix,
+                    1.0e-13,
+                    "streamed opposite-spin tile");
+              });
           ++streamed_tiles;
         });
     if (streamed_tiles != 1) {
@@ -408,7 +414,7 @@ int main() {
             n_active,
             exact_integrals,
             exact_view,
-            scalar_tile);
+            scalar_tile.view());
     const auto& exact_tile_projection =
         exact_opposite_tile.pair(0, 0)
             .delta_first_order_cofactor_projection;
@@ -476,7 +482,8 @@ int main() {
         direct_ri,
         first_view);
     xmvb::vb::detail::LocalOppositeSpinTileAccumulator
-        tiled_local_opposite_spin(closed_shell_cache, selected, n_active);
+        tiled_local_opposite_spin(
+            closed_shell_cache, selected, n_active, direct_ri);
     xmvb::vb::detail::stream_directional_pair_tiles(
         closed_shell_cache,
         n_active,
@@ -488,8 +495,8 @@ int main() {
         true,
         [&](bool alpha_channel,
             bool beta_channel,
-            const xmvb::vb::detail::SameSpinDirectionalPairTile& tile,
-            const xmvb::vb::detail::DirectionalOppositeSpinPairTile*
+            const xmvb::vb::detail::SameSpinDirectionalPairTileView& tile,
+            const xmvb::vb::detail::DirectionalOppositeSpinPairTileView*
                 opposite_tile) {
           tiled_local_same_spin.consume(alpha_channel, beta_channel, tile);
           if (opposite_tile == nullptr) {

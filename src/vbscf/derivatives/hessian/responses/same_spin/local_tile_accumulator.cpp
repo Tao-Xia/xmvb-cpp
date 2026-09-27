@@ -41,6 +41,11 @@ LocalSameSpinTileAccumulator::LocalSameSpinTileAccumulator(
       direction_(direction),
       close_shell_same_spin_(
           accepted_pair_cache.close_shell_reuses_same_spin_pair_cache()),
+      tile_extents_(plan_pair_tile_extents(
+          accepted_pair_cache,
+          n_active_orbitals,
+          active_two_electron,
+          true)),
       result_(make_zero_backward_contribution(n_active_orbitals)),
       one_electron_gradient_(
           Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals)) {
@@ -135,7 +140,7 @@ void LocalSameSpinTileAccumulator::accumulate_beta_weight_response(
       alpha_tile.delta_regular_hamiltonian() +
       alpha_tile.delta_singular_hamiltonian();
   const int extent = std::min(
-      selected_states_.n_unique_beta, kSameSpinTileExtent);
+      selected_states_.n_unique_beta, tile_extents_.beta);
   const int n_left_tiles =
       (selected_states_.n_unique_beta + extent - 1) / extent;
   std::vector<SameSpinAcceptedTileWeights> weights(n_left_tiles);
@@ -202,7 +207,7 @@ void LocalSameSpinTileAccumulator::accumulate_alpha_weight_response(
       beta_tile.delta_regular_hamiltonian() +
       beta_tile.delta_singular_hamiltonian();
   const int extent = std::min(
-      selected_states_.n_unique_alpha, kSameSpinTileExtent);
+      selected_states_.n_unique_alpha, tile_extents_.alpha);
   const int n_right_tiles =
       (selected_states_.n_unique_alpha + extent - 1) / extent;
   std::vector<SameSpinAcceptedTileWeights> weights(n_right_tiles);

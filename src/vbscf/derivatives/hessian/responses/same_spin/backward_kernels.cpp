@@ -264,7 +264,12 @@ void accumulate_spin_matrix_backward(
 
   const int pair_tile_size = std::min(
       n_unique_determinants,
-      kSameSpinTileExtent);
+      plan_parallel_pair_tile_extent(
+          n_unique_determinants,
+          unique_determinants.empty()
+              ? 0
+              : static_cast<int>(unique_determinants.front().size()),
+          n_active_orbitals));
   const int n_pair_tiles =
       (n_unique_determinants + pair_tile_size - 1) / pair_tile_size;
   const int n_tile_pairs = n_pair_tiles * n_pair_tiles;
@@ -516,7 +521,12 @@ void accumulate_spin_local_matrix_backward(
 
   const int pair_tile_size = std::min(
       n_unique_determinants,
-      kSameSpinTileExtent);
+      plan_parallel_pair_tile_extent(
+          n_unique_determinants,
+          unique_determinants.empty()
+              ? 0
+              : static_cast<int>(unique_determinants.front().size()),
+          n_active_orbitals));
   const int n_pair_tiles =
       (n_unique_determinants + pair_tile_size - 1) / pair_tile_size;
   const int n_tile_pairs = n_pair_tiles * n_pair_tiles;
@@ -691,11 +701,15 @@ build_support_sparse_same_spin_backward_contribution_by_tiles(
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  const int tile_size = kSameSpinTileExtent;
+  const PairTileExtents tile_extents = plan_pair_tile_extents(
+      same_spin_pair_cache,
+      n_active_orbitals,
+      ActiveSpaceTwoElectronResult{},
+      false);
   SameSpinAcceptedTileWeights tile_weights;
 
   const int alpha_tile_size =
-      std::min(selected_states.n_unique_alpha, tile_size);
+      std::min(selected_states.n_unique_alpha, tile_extents.alpha);
   for (int left_begin = 0;
        left_begin < selected_states.n_unique_alpha;
        left_begin += alpha_tile_size) {
@@ -748,7 +762,7 @@ build_support_sparse_same_spin_backward_contribution_by_tiles(
         &result);
   } else {
     const int beta_tile_size =
-        std::min(selected_states.n_unique_beta, tile_size);
+        std::min(selected_states.n_unique_beta, tile_extents.beta);
     for (int left_begin = 0;
          left_begin < selected_states.n_unique_beta;
          left_begin += beta_tile_size) {
@@ -817,11 +831,15 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
       Eigen::MatrixXd::Zero(n_active_orbitals, n_active_orbitals);
   const bool close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
-  const int tile_size = kSameSpinTileExtent;
+  const PairTileExtents tile_extents = plan_pair_tile_extents(
+      same_spin_pair_cache,
+      n_active_orbitals,
+      ActiveSpaceTwoElectronResult{},
+      false);
   SameSpinAcceptedTileWeights tile_weights;
 
   const int alpha_tile_size =
-      std::min(selected_states.n_unique_alpha, tile_size);
+      std::min(selected_states.n_unique_alpha, tile_extents.alpha);
   for (int left_begin = 0;
        left_begin < selected_states.n_unique_alpha;
        left_begin += alpha_tile_size) {
@@ -876,7 +894,7 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
         &result);
   } else {
     const int beta_tile_size =
-        std::min(selected_states.n_unique_beta, tile_size);
+        std::min(selected_states.n_unique_beta, tile_extents.beta);
     for (int left_begin = 0;
          left_begin < selected_states.n_unique_beta;
          left_begin += beta_tile_size) {

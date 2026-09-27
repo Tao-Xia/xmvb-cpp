@@ -2,6 +2,7 @@
 
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
 
 namespace xmvb::vb::detail {
 
@@ -40,6 +41,7 @@ class LocalSameSpinTileAccumulator {
   const ActiveSpaceTwoElectronResult& active_two_electron_;
   const ActiveSpaceIntegralDirectionView& direction_;
   bool close_shell_same_spin_ = false;
+  PairTileExtents tile_extents_;
   SameSpinMatrixBackwardContribution result_;
   Eigen::MatrixXd one_electron_gradient_;
 };

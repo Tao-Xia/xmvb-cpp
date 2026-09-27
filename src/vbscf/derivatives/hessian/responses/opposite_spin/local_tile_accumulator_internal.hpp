@@ -3,6 +3,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/selected_state_pair_graph_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
 
 namespace xmvb::vb::detail {
 
@@ -12,7 +13,8 @@ class LocalOppositeSpinTileAccumulator {
   LocalOppositeSpinTileAccumulator(
       const SameSpinPairCacheContext& accepted_pair_cache,
       const SelectedStateDeterminantMatrices& selected_states,
-      int n_active_orbitals);
+      int n_active_orbitals,
+      const ActiveSpaceTwoElectronResult& active_two_electron);
 
   void consume(
       bool alpha_channel,
@@ -34,6 +36,7 @@ class LocalOppositeSpinTileAccumulator {
   const SelectedStateDeterminantMatrices& selected_states_;
   int n_active_orbitals_ = 0;
   int n_packed_pairs_ = 0;
+  PairTileExtents tile_extents_;
   SelectedStatePairGraph alpha_graph_;
   SelectedStatePairGraph beta_graph_;
   OppositeSpinBackwardContribution result_;

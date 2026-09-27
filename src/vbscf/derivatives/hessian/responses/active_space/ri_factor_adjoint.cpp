@@ -126,13 +126,21 @@ void accumulate_same_spin_adjoint(
     return;
   }
 
-  const int tile_extent = detail::kSameSpinTileExtent;
+  const int n_active_orbitals =
+      infer_active_orbital_count_from_packed_pair_count(
+          static_cast<int>(factors.cols()));
+  const detail::PairTileExtents tile_extents =
+      detail::plan_pair_tile_extents(
+          cache,
+          n_active_orbitals,
+          ActiveSpaceTwoElectronResult{},
+          false);
   detail::SameSpinAcceptedTileWeights tile;
   const int n_alpha = selected_states.n_unique_alpha;
-  for (int left = 0; left < n_alpha; left += tile_extent) {
-    const int left_end = std::min(n_alpha, left + tile_extent);
-    for (int right = 0; right < n_alpha; right += tile_extent) {
-      const int right_end = std::min(n_alpha, right + tile_extent);
+  for (int left = 0; left < n_alpha; left += tile_extents.alpha) {
+    const int left_end = std::min(n_alpha, left + tile_extents.alpha);
+    for (int right = 0; right < n_alpha; right += tile_extents.alpha) {
+      const int right_end = std::min(n_alpha, right + tile_extents.alpha);
       detail::accumulate_alpha_accepted_tile_weights(
           selected_states,
           selected_state_energies,
@@ -159,10 +167,10 @@ void accumulate_same_spin_adjoint(
     return;
   }
   const int n_beta = selected_states.n_unique_beta;
-  for (int left = 0; left < n_beta; left += tile_extent) {
-    const int left_end = std::min(n_beta, left + tile_extent);
-    for (int right = 0; right < n_beta; right += tile_extent) {
-      const int right_end = std::min(n_beta, right + tile_extent);
+  for (int left = 0; left < n_beta; left += tile_extents.beta) {
+    const int left_end = std::min(n_beta, left + tile_extents.beta);
+    for (int right = 0; right < n_beta; right += tile_extents.beta) {
+      const int right_end = std::min(n_beta, right + tile_extents.beta);
       detail::accumulate_beta_accepted_tile_weights(
           selected_states,
           selected_state_energies,

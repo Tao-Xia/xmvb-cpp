@@ -73,12 +73,18 @@ void add_accepted_projection_channel(
 LocalOppositeSpinTileAccumulator::LocalOppositeSpinTileAccumulator(
     const SameSpinPairCacheContext& accepted_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
-    int n_active_orbitals)
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_two_electron)
     : accepted_pair_cache_(accepted_pair_cache),
       selected_states_(selected_states),
       n_active_orbitals_(n_active_orbitals),
       n_packed_pairs_(packed_pair_count(
           accepted_pair_cache, n_active_orbitals)),
+      tile_extents_(plan_pair_tile_extents(
+          accepted_pair_cache,
+          n_active_orbitals,
+          active_two_electron,
+          true)),
       alpha_graph_(selected_states, PrimarySpin::Alpha),
       beta_graph_(selected_states, PrimarySpin::Beta) {
   result_.active_orbital_overlap_gradient.assign(
@@ -225,7 +231,8 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
   const int n_electrons = primary_determinants.empty()
       ? 0
       : static_cast<int>(primary_determinants.front().size());
-  const int extent = std::min(n_primary, kSameSpinTileExtent);
+  const int extent = std::min(
+      n_primary, target_alpha ? tile_extents_.alpha : tile_extents_.beta);
   const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(
       n_electrons, n_electrons);
 
