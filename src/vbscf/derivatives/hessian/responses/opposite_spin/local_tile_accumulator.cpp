@@ -53,6 +53,21 @@ void add_packed_outer_product(
   }
 }
 
+void add_accepted_projection_channel(
+    const OppositeSpinPackedPairProjection& accepted,
+    int directional_channel,
+    double weight,
+    std::vector<double>* packed_gradient) {
+  for (std::size_t entry = 0;
+       entry < accepted.packed_pair_indices.size();
+       ++entry) {
+    (*packed_gradient)[TwoElectronIndexer::packed_pair_of_pairs_index(
+        directional_channel,
+        accepted.packed_pair_indices[entry])] +=
+        weight * accepted.packed_pair_values[entry];
+  }
+}
+
 }  // namespace
 
 LocalOppositeSpinTileAccumulator::LocalOppositeSpinTileAccumulator(
@@ -79,18 +94,19 @@ void LocalOppositeSpinTileAccumulator::consume(
     bool beta_channel,
     const DirectionalOppositeSpinPairTile& tile) {
   if (alpha_channel) {
-    accumulate_primary(PrimarySpin::Alpha, tile);
-    accumulate_cross_overlap(PrimarySpin::Beta, tile);
+    accumulate_primary(PrimarySpin::Alpha, tile, true);
+    accumulate_cross_response(PrimarySpin::Beta, tile);
   }
   if (beta_channel) {
-    accumulate_primary(PrimarySpin::Beta, tile);
-    accumulate_cross_overlap(PrimarySpin::Alpha, tile);
+    accumulate_primary(PrimarySpin::Beta, tile, false);
+    accumulate_cross_response(PrimarySpin::Alpha, tile);
   }
 }
 
 void LocalOppositeSpinTileAccumulator::accumulate_primary(
     PrimarySpin spin,
-    const DirectionalOppositeSpinPairTile& tile) {
+    const DirectionalOppositeSpinPairTile& tile,
+    bool accumulate_packed_gradient) {
   const bool alpha = spin == PrimarySpin::Alpha;
   const auto& graph = alpha ? alpha_graph_ : beta_graph_;
   const auto& partner_pairs = alpha
@@ -119,19 +135,21 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
     for (int right_local = 0; right_local < tile.right_size; ++right_local) {
       const int right = tile.right_begin + right_local;
       const auto& directional_pair = tile.pair(left_local, right_local);
-      graph.accumulate_partner_projection(
-          left,
-          right,
-          partner_pairs,
-          n_partner,
-          &partner_image,
-          &touched_flags,
-          &touched_channels);
-      add_packed_outer_product(
-          directional_pair.delta_first_order_cofactor_projection,
-          partner_image,
-          touched_channels,
-          &result_.packed_active_two_electron_gradient);
+      if (accumulate_packed_gradient) {
+        graph.accumulate_partner_projection(
+            left,
+            right,
+            partner_pairs,
+            n_partner,
+            &partner_image,
+            &touched_flags,
+            &touched_channels);
+        add_packed_outer_product(
+            directional_pair.delta_first_order_cofactor_projection,
+            partner_image,
+            touched_channels,
+            &result_.packed_active_two_electron_gradient);
+      }
 
       const auto& occupied_left = primary_determinants[left];
       const auto& occupied_right = primary_determinants[right];
@@ -188,7 +206,7 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
   }
 }
 
-void LocalOppositeSpinTileAccumulator::accumulate_cross_overlap(
+void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
     PrimarySpin target_spin,
     const DirectionalOppositeSpinPairTile& partner_tile) {
   const bool target_alpha = target_spin == PrimarySpin::Alpha;
@@ -220,41 +238,55 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_overlap(
       }
 
       Eigen::MatrixXd weight_block(left_size, right_size);
+      Eigen::MatrixXd raw_weight_block(left_size, right_size);
       for (int channel = 0; channel < n_packed_pairs_; ++channel) {
         const Eigen::MatrixXd& projected =
             partner_tile.projected_channel(channel);
-        if (projected.isZero(0.0)) {
+        const Eigen::MatrixXd& raw = partner_tile.raw_channel(channel);
+        const bool need_overlap = !projected.isZero(0.0);
+        const bool need_packed = target_alpha && !raw.isZero(0.0);
+        if (!need_overlap && !need_packed) {
           continue;
         }
         weight_block.setZero();
+        raw_weight_block.setZero();
         for (const auto& state : selected_states_.states) {
           const auto& coefficients = state.coefficient_matrix;
           if (target_alpha) {
-            weight_block.noalias() += state.normalized_state_weight *
-                coefficients.block(
-                    left_begin,
-                    partner_tile.left_begin,
-                    left_size,
-                    partner_tile.left_size) *
-                projected *
-                coefficients.block(
-                    right_begin,
-                    partner_tile.right_begin,
-                    right_size,
-                    partner_tile.right_size).transpose();
+            const auto left_coefficients = coefficients.block(
+                left_begin,
+                partner_tile.left_begin,
+                left_size,
+                partner_tile.left_size);
+            const auto right_coefficients = coefficients.block(
+                right_begin,
+                partner_tile.right_begin,
+                right_size,
+                partner_tile.right_size);
+            if (need_overlap) {
+              weight_block.noalias() += state.normalized_state_weight *
+                  left_coefficients * projected *
+                  right_coefficients.transpose();
+            }
+            if (need_packed) {
+              raw_weight_block.noalias() += state.normalized_state_weight *
+                  left_coefficients * raw * right_coefficients.transpose();
+            }
           } else {
-            weight_block.noalias() += state.normalized_state_weight *
-                coefficients.block(
-                    partner_tile.left_begin,
-                    left_begin,
-                    partner_tile.left_size,
-                    left_size).transpose() *
-                projected *
-                coefficients.block(
-                    partner_tile.right_begin,
-                    right_begin,
-                    partner_tile.right_size,
-                    right_size);
+            if (need_overlap) {
+              weight_block.noalias() += state.normalized_state_weight *
+                  coefficients.block(
+                      partner_tile.left_begin,
+                      left_begin,
+                      partner_tile.left_size,
+                      left_size).transpose() *
+                  projected *
+                  coefficients.block(
+                      partner_tile.right_begin,
+                      right_begin,
+                      partner_tile.right_size,
+                      right_size);
+            }
           }
         }
         for (int left_local = 0; left_local < left_size; ++left_local) {
@@ -263,6 +295,23 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_overlap(
           for (int right_local = 0; right_local < right_size; ++right_local) {
             const auto& occupied_right =
                 primary_determinants[right_begin + right_local];
+            const auto& accepted_projection = primary_pairs[
+                ordered_spin_pair_storage_index(
+                    left_begin + left_local,
+                    right_begin + right_local,
+                    n_primary)]
+                                                  .opposite_spin_pair_cache
+                                                  .first_order_cofactor_projection;
+            if (need_packed) {
+              add_accepted_projection_channel(
+                  accepted_projection,
+                  channel,
+                  raw_weight_block(left_local, right_local),
+                  &result_.packed_active_two_electron_gradient);
+            }
+            if (!need_overlap) {
+              continue;
+            }
             Eigen::MatrixXd& pair_weight = pair_weights[
                 static_cast<std::size_t>(left_local) * right_size +
                 right_local];

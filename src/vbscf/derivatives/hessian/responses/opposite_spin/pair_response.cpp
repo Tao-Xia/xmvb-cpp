@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <stdexcept>
 
+#include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -176,6 +177,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
       n_packed_pairs,
       Eigen::MatrixXd::Zero(result.left_size, result.right_size));
 
+  const int n_threads = xmvb::effective_openmp_thread_count();
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int work = 0; work < work_items; ++work) {
     const int left_local = work / result.right_size;
     const int right_local = work % result.right_size;
@@ -290,6 +293,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
 
   const ActiveSpaceTwoElectronView two_electron_view =
       make_active_space_two_electron_view(active_space_two_electron_result);
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int work = 0; work < work_items; ++work) {
     const int left_local = work / result.right_size;
     const int right_local = work % result.right_size;

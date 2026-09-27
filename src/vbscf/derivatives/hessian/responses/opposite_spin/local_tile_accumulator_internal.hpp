@@ -24,8 +24,9 @@ class LocalOppositeSpinTileAccumulator {
  private:
   void accumulate_primary(
       PrimarySpin spin,
-      const DirectionalOppositeSpinPairTile& tile);
-  void accumulate_cross_overlap(
+      const DirectionalOppositeSpinPairTile& tile,
+      bool accumulate_packed_gradient);
+  void accumulate_cross_response(
       PrimarySpin target_spin,
       const DirectionalOppositeSpinPairTile& partner_tile);
 
