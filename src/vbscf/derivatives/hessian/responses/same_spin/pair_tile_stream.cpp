@@ -46,16 +46,6 @@ void stream_spin_table(
       const int canonical_left_end = transposed ? right_end : left_end;
       const int canonical_right_begin = transposed ? left_begin : right_begin;
       const int canonical_right_end = transposed ? left_end : right_end;
-      std::optional<AcceptedPairRiDirectionView> ri_direction;
-      AcceptedPairRiDirectionTile ri_direction_tile;
-      if (accepted_ri_active_pair_factors != nullptr &&
-          directional_ri_active_pair_factors != nullptr) {
-        ri_direction.emplace(AcceptedPairRiDirectionView{
-            direction.overlap,
-            direction.one_electron,
-            *directional_ri_active_pair_factors,
-            include_opposite_spin});
-      }
       const AcceptedSpinPairTile canonical_accepted =
           accepted_pair_provider.build(
               canonical_left_begin,
@@ -67,13 +57,10 @@ void stream_spin_table(
               accepted_two_electron,
               AcceptedPairTileBuildOptions{
                   .materialize_projected_pair_values = false,
-                  .populate_response_payload = true},
-              ri_direction ? &*ri_direction : nullptr,
-              ri_direction ? &ri_direction_tile : nullptr);
+                  .populate_response_payload = true});
       SameSpinDirectionalPairTile same_spin = build_directional_pair_tile(
           unique_determinants,
           canonical_accepted,
-          ri_direction ? &ri_direction_tile : nullptr,
           n_active_orbitals,
           direction,
           accepted_ri_active_pair_factors != nullptr

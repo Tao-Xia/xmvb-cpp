@@ -12,7 +12,6 @@
 namespace xmvb::vb {
 
 struct ActiveSpaceTwoElectronView;
-class RiPairUpdateState;
 
 Eigen::MatrixXd build_spin_antisymmetrized_interaction_matrix(
     const std::vector<int>& occ_L, const std::vector<int>& occ_R,
@@ -71,8 +70,7 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_block,
     double total_phi,
     const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient,
-    bool project_first_cofactor_direction = false,
-    const RiPairUpdateState* accepted_ri_state = nullptr);
+    bool project_first_cofactor_direction = false);
 
 /**
  * @brief Differentiates one regular RI pair along several tangent directions.

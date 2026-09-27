@@ -334,7 +334,6 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>* ordered_pair_cache,
     const AcceptedSpinPairTile* accepted_pair_tile,
-    AcceptedPairRiDirectionTile* accepted_direction_tile,
     int n_unique_determinants,
     int n_active_orbitals,
     const ActiveSpaceIntegralDirectionView& direction,
@@ -354,12 +353,7 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
       accepted_pair_tile->right_begin == right_begin &&
       accepted_pair_tile->left_size == left_end - left_begin &&
       accepted_pair_tile->right_size == right_end - right_begin;
-  const bool direction_tile_valid = accepted_direction_tile == nullptr ||
-      (accepted_pair_tile != nullptr &&
-       accepted_direction_tile->pairs.size() == accepted_pair_tile->pairs.size() &&
-       accepted_direction_tile->ready.size() == accepted_pair_tile->pairs.size());
   if ((!full_cache_valid && !tile_cache_valid) ||
-      !direction_tile_valid ||
       unique_determinants.size() !=
           static_cast<std::size_t>(n_unique_determinants) ||
       left_begin < 0 || left_end <= left_begin ||
@@ -429,36 +423,26 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
     const bool regular_ri_pair =
         pair_evaluation.has_same_spin_phi_cache && use_ri;
     if (regular_ri_pair) {
-      const std::size_t accepted_work = static_cast<std::size_t>(
-          canonical_left - left_begin) * right_size +
-          canonical_right - right_begin;
-      const bool precomputed = accepted_direction_tile != nullptr &&
-          accepted_direction_tile->ready[accepted_work] != 0;
-      RegularRiSameSpinDirection ri_direction;
-      if (precomputed) {
-        ri_direction =
-            std::move(accepted_direction_tile->pairs[accepted_work]);
-      } else {
-        const Eigen::MatrixXd delta_overlap =
-            build_local_overlap_direction_matrix(
-                unique_determinants[canonical_left],
-                unique_determinants[canonical_right],
-                direction.overlap,
-                n_active_orbitals);
-        ri_direction = evaluate_regular_ri_same_spin_direction(
-            unique_determinants[canonical_left],
-            unique_determinants[canonical_right],
-            *accepted_active_one_electron,
-            delta_h1e,
-            n_active_orbitals,
-            *accepted_ri_active_pair_factors,
-            *directional_ri_active_pair_factors,
-            pair_evaluation.overlap_result,
-            delta_overlap,
-            pair_evaluation.same_spin_total_phi,
-            pair_evaluation.same_spin_inverse_overlap_gradient,
-            build_ri_projected_channels);
-      }
+      const Eigen::MatrixXd delta_overlap =
+          build_local_overlap_direction_matrix(
+              unique_determinants[canonical_left],
+              unique_determinants[canonical_right],
+              direction.overlap,
+              n_active_orbitals);
+      const RegularRiSameSpinDirection ri_direction =
+          evaluate_regular_ri_same_spin_direction(
+              unique_determinants[canonical_left],
+              unique_determinants[canonical_right],
+              *accepted_active_one_electron,
+              delta_h1e,
+              n_active_orbitals,
+              *accepted_ri_active_pair_factors,
+              *directional_ri_active_pair_factors,
+              pair_evaluation.overlap_result,
+              delta_overlap,
+              pair_evaluation.same_spin_total_phi,
+              pair_evaluation.same_spin_inverse_overlap_gradient,
+              build_ri_projected_channels);
       pair_direction.delta_overlap_determinant =
           ri_direction.delta_overlap_determinant;
       pair_direction.delta_total_hamiltonian =
@@ -568,7 +552,6 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
       unique_determinants,
       &ordered_pair_cache,
       nullptr,
-      nullptr,
       n_unique_determinants,
       n_active_orbitals,
       direction,
@@ -585,7 +568,6 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
 SameSpinDirectionalPairTile build_directional_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
     const AcceptedSpinPairTile& accepted_pair_tile,
-    AcceptedPairRiDirectionTile* accepted_direction_tile,
     int n_active_orbitals,
     const ActiveSpaceIntegralDirectionView& direction,
     const Eigen::MatrixXd* accepted_active_one_electron,
@@ -596,7 +578,6 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
       unique_determinants,
       nullptr,
       &accepted_pair_tile,
-      accepted_direction_tile,
       static_cast<int>(unique_determinants.size()),
       n_active_orbitals,
       direction,

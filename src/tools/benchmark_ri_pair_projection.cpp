@@ -246,7 +246,6 @@ int main(int argc, char** argv) {
           xmvb::vb::detail::build_directional_pair_tile(
               strings,
               accepted,
-              nullptr,
               n_active,
               direction,
               &h1e,
@@ -269,7 +268,6 @@ int main(int argc, char** argv) {
       auto same_spin = xmvb::vb::detail::build_directional_pair_tile(
           strings,
           accepted,
-          nullptr,
           n_active,
           direction,
           &h1e,
@@ -307,104 +305,6 @@ int main(int argc, char** argv) {
     const double direction_projected_seconds =
         minimum_seconds(repeats, run_direction_projected);
 
-    Eigen::MatrixXd stream_reference;
-    Eigen::MatrixXd stream_reused;
-    const xmvb::vb::AcceptedPairRiDirectionView ri_direction{
-        overlap_direction_values,
-        one_electron_direction_values,
-        factor_direction,
-        true};
-    const auto run_stream_reference = [&] {
-      const auto stream_accepted = provider.build(
-          0,
-          extent,
-          0,
-          extent,
-          overlap_values,
-          h1e,
-          ri,
-          xmvb::vb::AcceptedPairTileBuildOptions{
-              .materialize_projected_pair_values = false,
-              .populate_response_payload = true,
-              .populate_opposite_spin_projection = true});
-      auto same_spin = xmvb::vb::detail::build_directional_pair_tile(
-          strings,
-          stream_accepted,
-          nullptr,
-          n_active,
-          direction,
-          &h1e,
-          &ri.ri_active_pair_factors,
-          &factor_direction,
-          true);
-      stream_reference =
-          xmvb::vb::detail::build_directional_opposite_spin_pair_tile(
-              strings,
-              stream_accepted,
-              n_active,
-              ri,
-              direction,
-              same_spin.view(),
-              &ri.ri_active_pair_factors,
-              &factor_direction,
-              &same_spin)
-              .projected_channel_values;
-    };
-    const auto run_stream_reused = [&] {
-      xmvb::vb::AcceptedPairRiDirectionTile sidecar;
-      const auto stream_accepted = provider.build(
-          0,
-          extent,
-          0,
-          extent,
-          overlap_values,
-          h1e,
-          ri,
-          xmvb::vb::AcceptedPairTileBuildOptions{
-              .materialize_projected_pair_values = false,
-              .populate_response_payload = true,
-              .populate_opposite_spin_projection = true},
-          &ri_direction,
-          &sidecar);
-      auto same_spin = xmvb::vb::detail::build_directional_pair_tile(
-          strings,
-          stream_accepted,
-          &sidecar,
-          n_active,
-          direction,
-          &h1e,
-          &ri.ri_active_pair_factors,
-          &factor_direction,
-          true);
-      stream_reused =
-          xmvb::vb::detail::build_directional_opposite_spin_pair_tile(
-              strings,
-              stream_accepted,
-              n_active,
-              ri,
-              direction,
-              same_spin.view(),
-              &ri.ri_active_pair_factors,
-              &factor_direction,
-              &same_spin)
-              .projected_channel_values;
-    };
-    run_stream_reference();
-    run_stream_reused();
-    const double stream_scale = std::max(
-        1.0, stream_reference.cwiseAbs().maxCoeff());
-    const double stream_relative_difference =
-        (stream_reference - stream_reused).cwiseAbs().maxCoeff() /
-        stream_scale;
-    if (stream_relative_difference > 2.0e-10) {
-      throw std::runtime_error(
-          "reused RI directional stream benchmark changed values");
-    }
-    const double stream_reference_seconds =
-        minimum_seconds(repeats, run_stream_reference);
-    const double stream_reused_seconds =
-        minimum_seconds(repeats, run_stream_reused);
-
     std::cout << std::setprecision(12)
               << "n_active=" << n_active << '\n'
               << "n_electrons=" << n_electrons << '\n'
@@ -424,14 +324,7 @@ int main(int argc, char** argv) {
               << direction_reference_seconds / direction_projected_seconds
               << '\n'
               << "direction_relative_difference="
-              << direction_relative_difference << '\n'
-              << "stream_reference_seconds="
-              << stream_reference_seconds << '\n'
-              << "stream_reused_seconds=" << stream_reused_seconds << '\n'
-              << "stream_speedup="
-              << stream_reference_seconds / stream_reused_seconds << '\n'
-              << "stream_relative_difference="
-              << stream_relative_difference << '\n';
+              << direction_relative_difference << '\n';
     return 0;
   } catch (const std::exception& error) {
     std::cerr << "benchmark_ri_pair_projection: " << error.what() << '\n';
