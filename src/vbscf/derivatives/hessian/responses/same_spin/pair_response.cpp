@@ -281,23 +281,25 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     const int right_local = work % right_size;
     const int left_id = left_begin + left_local;
     const int right_id = right_begin + right_local;
+    const int canonical_left = std::min(left_id, right_id);
+    const int canonical_right = std::max(left_id, right_id);
     const auto& pair_evaluation = ordered_pair_cache[
         ordered_spin_pair_storage_index(
-            left_id, right_id, n_unique_determinants)];
+            canonical_left, canonical_right, n_unique_determinants)];
     SameSpinPolynomialDirectionalPairData pair_direction;
     const bool regular_ri_pair =
         pair_evaluation.has_same_spin_phi_cache && use_ri;
     if (regular_ri_pair) {
       const Eigen::MatrixXd delta_overlap =
           build_local_overlap_direction_matrix(
-              unique_determinants[left_id],
-              unique_determinants[right_id],
+              unique_determinants[canonical_left],
+              unique_determinants[canonical_right],
               direction.overlap,
               n_active_orbitals);
       const RegularRiSameSpinDirection ri_direction =
           evaluate_regular_ri_same_spin_direction(
-              unique_determinants[left_id],
-              unique_determinants[right_id],
+              unique_determinants[canonical_left],
+              unique_determinants[canonical_right],
               *accepted_active_one_electron,
               delta_h1e,
               n_active_orbitals,
@@ -317,11 +319,17 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
           ri_direction.delta_overlap_hamiltonian_gradient;
     } else {
       pair_direction = build_polynomial_spin_directional_data(
-          unique_determinants[left_id],
-          unique_determinants[right_id],
+          unique_determinants[canonical_left],
+          unique_determinants[canonical_right],
           pair_evaluation,
           n_active_orbitals,
           direction);
+    }
+
+    if (left_id > right_id) {
+      pair_direction.delta_cofactor_1st.transposeInPlace();
+      pair_direction.delta_same_spin_overlap_hamiltonian_gradient
+          .transposeInPlace();
     }
 
     tile.pairs[static_cast<std::size_t>(work)] = std::move(pair_direction);
