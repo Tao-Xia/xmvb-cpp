@@ -13,6 +13,19 @@ namespace xmvb::vb {
 
 class CofactorDifferential;
 
+/**
+ * @brief High-order occupied-block data restricted to polynomial responses.
+ *
+ * Regular RI pairs deliberately leave this payload absent and use their
+ * two-index inverse/factor representation. Singular/interpolated pairs, and
+ * the current packed-exact response path, retain it only where an inverse-free
+ * polynomial derivative is actually required.
+ */
+struct SameSpinPolynomialResponsePayload {
+  Eigen::MatrixXd one_electron_block;
+  Eigen::MatrixXd antisymmetrized_interaction;
+};
+
 struct SpinDeterminantPairEvaluation {
   // Accepted-point polynomial cofactor factorization. Shared ownership keeps
   // copies of pair evaluations cheap while all HVP consumers reuse one SVD.
@@ -34,10 +47,8 @@ struct SpinDeterminantPairEvaluation {
   // factorization, so we cache the exact occupied-block overlap gradient of
   // the same-spin Hamiltonian directly in `(right, left)` matrix form.
   Eigen::MatrixXd same_spin_overlap_hamiltonian_gradient;
-  // Accepted occupied-block Hamiltonian factors reused by every HVP at this
-  // orbital point. Their dimensions are n and n(n-1)/2, respectively.
-  Eigen::MatrixXd same_spin_one_electron_block;
-  Eigen::MatrixXd same_spin_antisymmetrized_interaction;
+  std::shared_ptr<const SameSpinPolynomialResponsePayload>
+      same_spin_polynomial_response;
   DeterminantOverlapResult overlap_result;
   double one_electron_hamiltonian = 0.0;
   double total_hamiltonian = 0.0;

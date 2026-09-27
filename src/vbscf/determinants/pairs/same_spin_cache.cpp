@@ -342,15 +342,18 @@ Eigen::MatrixXd build_polynomial_same_spin_hamiltonian_overlap_gradient(
   if (pair_evaluation == nullptr)
     throw std::invalid_argument("same-spin polynomial cache output must not be null");
   const CofactorDifferential& cofactor = cached_cofactor_differential(*pair_evaluation);
-  pair_evaluation->same_spin_one_electron_block =
+  auto payload = std::make_shared<SameSpinPolynomialResponsePayload>();
+  payload->one_electron_block =
       build_spin_one_electron_block_matrix(occ_L, occ_R, h1e_act);
-  pair_evaluation->same_spin_antisymmetrized_interaction =
+  payload->antisymmetrized_interaction =
       build_spin_antisymmetrized_interaction_matrix(
-      occ_L, occ_R, n_active_orbitals,
-      make_active_space_two_electron_view(active_space_two_electron_result));
-  return cofactor.first(pair_evaluation->same_spin_one_electron_block) +
+          occ_L, occ_R, n_active_orbitals,
+          make_active_space_two_electron_view(active_space_two_electron_result));
+  const Eigen::MatrixXd gradient = cofactor.first(payload->one_electron_block) +
       cofactor.second_contraction_gradient(
-          pair_evaluation->same_spin_antisymmetrized_interaction);
+          payload->antisymmetrized_interaction);
+  pair_evaluation->same_spin_polynomial_response = std::move(payload);
+  return gradient;
 }
 
 std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
@@ -530,8 +533,7 @@ void populate_same_spin_phi_cache_entries(
                 pair_evaluation.overlap_result,
                 pair_evaluation.same_spin_total_phi,
                 pair_evaluation.same_spin_inverse_overlap_gradient);
-        pair_evaluation.same_spin_one_electron_block.resize(0, 0);
-        pair_evaluation.same_spin_antisymmetrized_interaction.resize(0, 0);
+        pair_evaluation.same_spin_polynomial_response.reset();
       } else {
         // Singular/interpolated pairs have no stable inverse chart.  Their
         // exact polynomial payload is intentionally isolated on this path.

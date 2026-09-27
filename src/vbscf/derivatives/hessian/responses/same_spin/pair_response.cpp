@@ -180,6 +180,11 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
     const ActiveSpaceIntegralDirectionView& direction,
     bool need_overlap_gradient) {
   SameSpinPolynomialDirectionalPairData result;
+  if (!pair_evaluation.same_spin_polynomial_response) {
+    throw std::logic_error(
+        "polynomial same-spin response requires its explicit payload");
+  }
+  const auto& polynomial = *pair_evaluation.same_spin_polynomial_response;
   const CofactorDifferential& cofactor =
       cached_cofactor_differential(pair_evaluation);
   const Eigen::MatrixXd ds = build_local_overlap_direction_matrix(
@@ -197,10 +202,10 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
       (pair_evaluation.same_spin_overlap_hamiltonian_gradient.cwiseProduct(ds)).sum();
   if (need_overlap_gradient)
     result.delta_same_spin_overlap_hamiltonian_gradient =
-        cofactor.mixed(ds, pair_evaluation.same_spin_one_electron_block) +
+        cofactor.mixed(ds, polynomial.one_electron_block) +
         cofactor.first(dh) +
         cofactor.second_contraction_gradient_direction(
-            ds, pair_evaluation.same_spin_antisymmetrized_interaction, dg);
+            ds, polynomial.antisymmetrized_interaction, dg);
   return result;
 }
 
