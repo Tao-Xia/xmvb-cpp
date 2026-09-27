@@ -141,6 +141,80 @@ int main() {
         5.0e-13,
         "inverse-overlap gradient");
 
+    Eigen::MatrixXd delta_overlap(n_electrons, n_electrons);
+    delta_overlap <<
+        0.013, -0.021, 0.008,
+        -0.017, 0.006, 0.014,
+        0.009, -0.012, -0.004;
+    Eigen::MatrixXd delta_h1e(n_active, n_active);
+    for (int column = 0; column < n_active; ++column) {
+      for (int row = 0; row < n_active; ++row) {
+        delta_h1e(row, column) =
+            0.004 * (row - column) + 0.001 * (row + 2) * (column + 1);
+      }
+    }
+    Eigen::MatrixXd delta_factors = direct_ri.ri_active_pair_factors;
+    for (Eigen::Index column = 0; column < delta_factors.cols(); ++column) {
+      for (Eigen::Index row = 0; row < delta_factors.rows(); ++row) {
+        delta_factors(row, column) =
+            0.002 * (row + 1) - 0.0013 * (column + 1);
+      }
+    }
+
+    const auto direction =
+        xmvb::vb::evaluate_regular_ri_same_spin_direction(
+            occ_left,
+            occ_right,
+            h1e,
+            delta_h1e,
+            n_active,
+            direct_ri.ri_active_pair_factors,
+            delta_factors,
+            overlap,
+            delta_overlap,
+            direct_phi.total_phi,
+            direct_inverse_gradient);
+
+    constexpr double epsilon = 1.0e-6;
+    auto displaced_data = [&](double scale) {
+      const auto displaced_overlap = overlap_resolver.resolve_matrix(
+          overlap_block + scale * delta_overlap);
+      xmvb::vb::ActiveSpaceTwoElectronResult displaced_ri = direct_ri;
+      displaced_ri.ri_active_pair_factors =
+          direct_ri.ri_active_pair_factors + scale * delta_factors;
+      Eigen::MatrixXd inverse_gradient;
+      const auto phi = xmvb::vb::compute_same_spin_original_phi(
+          occ_left,
+          occ_right,
+          h1e + scale * delta_h1e,
+          n_active,
+          displaced_ri,
+          displaced_overlap,
+          &inverse_gradient);
+      return std::make_tuple(
+          displaced_overlap.overlap_determinant * phi.total_phi,
+          xmvb::vb::calc_cofactor_1st(displaced_overlap),
+          xmvb::vb::build_regular_same_spin_overlap_hamiltonian_gradient(
+              displaced_overlap, phi.total_phi, inverse_gradient));
+    };
+    const auto plus = displaced_data(epsilon);
+    const auto minus = displaced_data(-epsilon);
+    require_close(
+        direction.delta_total_hamiltonian,
+        (std::get<0>(plus) - std::get<0>(minus)) / (2.0 * epsilon),
+        2.0e-8,
+        "RI directional Hamiltonian");
+    require_matrix_close(
+        direction.delta_first_cofactor,
+        (std::get<1>(plus) - std::get<1>(minus)) / (2.0 * epsilon),
+        2.0e-8,
+        "RI directional first cofactor");
+    require_matrix_close(
+        direction.delta_overlap_hamiltonian_gradient,
+        (std::get<2>(plus) - std::get<2>(minus)) / (2.0 * epsilon),
+        3.0e-8,
+        "RI directional overlap-Hamiltonian gradient");
+
     std::cout << "RI pair contractions agree with the packed reference\n";
     return 0;
   } catch (const std::exception& error) {

@@ -7,7 +7,10 @@ namespace xmvb::vb {
 SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     int n_active_orbitals,
-    const ActiveSpaceIntegralDirectionView& direction) {
+    const ActiveSpaceIntegralDirectionView& direction,
+    const Eigen::MatrixXd* accepted_active_one_electron,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
   SameSpinDirectionalPairCache result;
   result.close_shell_same_spin =
       same_spin_pair_cache.close_shell_reuses_same_spin_pair_cache();
@@ -17,7 +20,10 @@ SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
       static_cast<int>(
           same_spin_pair_cache.alpha_reuse_table.unique_determinants.size()),
       n_active_orbitals,
-      direction);
+      direction,
+      accepted_active_one_electron,
+      accepted_ri_active_pair_factors,
+      directional_ri_active_pair_factors);
   if (!result.close_shell_same_spin) {
     result.beta = detail::build_directional_pair_scalar_matrices(
         same_spin_pair_cache.beta_reuse_table.unique_determinants,
@@ -25,7 +31,10 @@ SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
         static_cast<int>(
             same_spin_pair_cache.beta_reuse_table.unique_determinants.size()),
         n_active_orbitals,
-        direction);
+        direction,
+        accepted_active_one_electron,
+        accepted_ri_active_pair_factors,
+        directional_ri_active_pair_factors);
   }
   return result;
 }

@@ -209,7 +209,10 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
     int n_unique_determinants,
     int n_active_orbitals,
-    const ActiveSpaceIntegralDirectionView& direction) {
+    const ActiveSpaceIntegralDirectionView& direction,
+    const Eigen::MatrixXd* accepted_active_one_electron,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
   const std::size_t expected_size = square_storage_size(n_unique_determinants);
   if (ordered_pair_cache.size() != expected_size ||
       unique_determinants.size() !=
@@ -236,13 +239,52 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
           right_id,
           n_unique_determinants);
       const auto& pair_evaluation = ordered_pair_cache[forward_index];
-      SameSpinPolynomialDirectionalPairData directional_data =
-          build_polynomial_spin_directional_data(
-              unique_determinants[left_id],
-              unique_determinants[right_id],
-              pair_evaluation,
-              n_active_orbitals,
-              direction);
+      SameSpinPolynomialDirectionalPairData directional_data;
+      const bool regular_ri_pair =
+          pair_evaluation.has_same_spin_phi_cache &&
+          accepted_active_one_electron != nullptr &&
+          accepted_ri_active_pair_factors != nullptr &&
+          directional_ri_active_pair_factors != nullptr;
+      if (regular_ri_pair) {
+        const Eigen::Map<const Eigen::MatrixXd> delta_h1e(
+            direction.one_electron.data(),
+            n_active_orbitals,
+            n_active_orbitals);
+        const Eigen::MatrixXd delta_overlap =
+            build_local_overlap_direction_matrix(
+                unique_determinants[left_id],
+                unique_determinants[right_id],
+                direction.overlap,
+                n_active_orbitals);
+        const RegularRiSameSpinDirection ri_direction =
+            evaluate_regular_ri_same_spin_direction(
+                unique_determinants[left_id],
+                unique_determinants[right_id],
+                *accepted_active_one_electron,
+                delta_h1e,
+                n_active_orbitals,
+                *accepted_ri_active_pair_factors,
+                *directional_ri_active_pair_factors,
+                pair_evaluation.overlap_result,
+                delta_overlap,
+                pair_evaluation.same_spin_total_phi,
+                pair_evaluation.same_spin_inverse_overlap_gradient);
+        directional_data.delta_overlap_determinant =
+            ri_direction.delta_overlap_determinant;
+        directional_data.delta_total_hamiltonian =
+            ri_direction.delta_total_hamiltonian;
+        directional_data.delta_cofactor_1st =
+            ri_direction.delta_first_cofactor;
+        directional_data.delta_same_spin_overlap_hamiltonian_gradient =
+            ri_direction.delta_overlap_hamiltonian_gradient;
+      } else {
+        directional_data = build_polynomial_spin_directional_data(
+            unique_determinants[left_id],
+            unique_determinants[right_id],
+            pair_evaluation,
+            n_active_orbitals,
+            direction);
+      }
       scalars.ordered_pair_data[forward_index] = directional_data;
       if (left_id != right_id) {
         SameSpinPolynomialDirectionalPairData transposed = directional_data;

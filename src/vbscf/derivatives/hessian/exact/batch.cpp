@@ -366,7 +366,16 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         outer.pair_cache = build_same_spin_directional_pair_cache(
             accepted_point_context_->same_spin_pair_cache,
             n_active_orbitals,
-            integral_direction);
+            integral_direction,
+            &accepted_point_context_->prepared_active_space
+                 .active_space_one_electron_result.h1e_act,
+            accepted_ri_two_electron_cache_.has_value()
+                ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
+                : nullptr,
+            accepted_ri_two_electron_cache_.has_value()
+                ? &ri_active_pair_factor_directions[
+                      static_cast<std::size_t>(column)]
+                : nullptr);
       }
       if (components.structure_response || build_orbital_coupling) {
         SelectedStateDirectionalStructureImages images =

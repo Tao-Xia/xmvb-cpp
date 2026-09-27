@@ -543,7 +543,15 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
       local_directional_pair_cache = build_same_spin_directional_pair_cache(
           accepted_point_context_->same_spin_pair_cache,
           current_input_->orbital_preparation_input.n_active_orbitals,
-          active_space_integral_direction);
+          active_space_integral_direction,
+          &accepted_point_context_->prepared_active_space
+               .active_space_one_electron_result.h1e_act,
+          accepted_ri_two_electron_cache_.has_value()
+              ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
+              : nullptr,
+          ri_directional_active_pair_factors.has_value()
+              ? &*ri_directional_active_pair_factors
+              : nullptr);
     }
     const SameSpinDirectionalPairCache& directional_pair_cache =
         precomputed_outer_response != nullptr

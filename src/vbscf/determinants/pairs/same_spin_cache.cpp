@@ -517,14 +517,33 @@ void populate_same_spin_phi_cache_entries(
             std::move(inverse_overlap_gradient);
       }
 
-      pair_evaluation.same_spin_overlap_hamiltonian_gradient =
-          build_polynomial_same_spin_hamiltonian_overlap_gradient(
-              unique_spin_determinants[left_index],
-              unique_spin_determinants[right_index],
-              h1e_act,
-              n_orbitals,
-              active_space_two_electron_result,
-              &pair_evaluation);
+      const bool regular_ri_pair =
+          pair_evaluation.has_same_spin_phi_cache &&
+          active_space_two_electron_result.representation ==
+              ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity;
+      if (regular_ri_pair) {
+        // A regular RI pair is completely described by det(X), X^-1, phi and
+        // d(phi)/d(X^-1).  Retaining the occupied-pair interaction matrix here
+        // would reintroduce O(n_e^4) storage per unique-string pair.
+        pair_evaluation.same_spin_overlap_hamiltonian_gradient =
+            build_regular_same_spin_overlap_hamiltonian_gradient(
+                pair_evaluation.overlap_result,
+                pair_evaluation.same_spin_total_phi,
+                pair_evaluation.same_spin_inverse_overlap_gradient);
+        pair_evaluation.same_spin_one_electron_block.resize(0, 0);
+        pair_evaluation.same_spin_antisymmetrized_interaction.resize(0, 0);
+      } else {
+        // Singular/interpolated pairs have no stable inverse chart.  Their
+        // exact polynomial payload is intentionally isolated on this path.
+        pair_evaluation.same_spin_overlap_hamiltonian_gradient =
+            build_polynomial_same_spin_hamiltonian_overlap_gradient(
+                unique_spin_determinants[left_index],
+                unique_spin_determinants[right_index],
+                h1e_act,
+                n_orbitals,
+                active_space_two_electron_result,
+                &pair_evaluation);
+      }
     }
   }
 }

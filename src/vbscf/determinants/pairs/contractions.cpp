@@ -346,6 +346,24 @@ SameSpinPhiResult compute_ri_same_spin_original_phi(
   return result;
 }
 
+Eigen::MatrixXd gather_ri_transition(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& factors,
+    Eigen::Index auxiliary) {
+  const int n_electrons = static_cast<int>(occ_L.size());
+  Eigen::MatrixXd transition(n_electrons, n_electrons);
+  for (int left = 0; left < n_electrons; ++left) {
+    for (int right = 0; right < n_electrons; ++right) {
+      transition(right, left) = factors(
+          auxiliary,
+          TwoElectronIndexer::packed_pair_index(
+              occ_R[right], occ_L[left]));
+    }
+  }
+  return transition;
+}
+
 template <typename InteractionLookup>
 double compute_opposite_spin_original_phi_impl(
     const std::vector<int>& alpha_occ_L,
@@ -414,6 +432,119 @@ double compute_opposite_spin_original_phi_impl(
 }
 
 }  // namespace
+
+Eigen::MatrixXd build_regular_same_spin_overlap_hamiltonian_gradient(
+    const DeterminantOverlapResult& overlap,
+    double total_phi,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient) {
+  if (overlap.nullity != 0 || overlap.overlap_determinant == 0.0) {
+    throw std::invalid_argument(
+        "regular same-spin overlap gradient requires a nonsingular pair");
+  }
+  const Eigen::MatrixXd inverse =
+      build_inverse_overlap_submatrix_from_result(overlap);
+  if (inverse_overlap_gradient.rows() != inverse.rows() ||
+      inverse_overlap_gradient.cols() != inverse.cols()) {
+    throw std::invalid_argument(
+        "inverse-overlap gradient dimensions are inconsistent");
+  }
+  return overlap.overlap_determinant *
+      (total_phi * inverse.transpose() -
+       inverse.transpose() * inverse_overlap_gradient * inverse.transpose());
+}
+
+RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_h1e_act,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_active_pair_factors,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_ri_active_pair_factors,
+    const DeterminantOverlapResult& overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_block,
+    double total_phi,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient) {
+  if (overlap.nullity != 0 || overlap.overlap_determinant == 0.0) {
+    throw std::invalid_argument(
+        "regular RI same-spin direction requires a nonsingular pair");
+  }
+  const int n_electrons = static_cast<int>(occ_L.size());
+  const int n_pairs = packed_active_pair_count(n_active_orbitals);
+  if (static_cast<int>(occ_R.size()) != n_electrons ||
+      delta_overlap_block.rows() != n_electrons ||
+      delta_overlap_block.cols() != n_electrons ||
+      inverse_overlap_gradient.rows() != n_electrons ||
+      inverse_overlap_gradient.cols() != n_electrons ||
+      ri_active_pair_factors.cols() != n_pairs ||
+      delta_ri_active_pair_factors.rows() != ri_active_pair_factors.rows() ||
+      delta_ri_active_pair_factors.cols() != n_pairs) {
+    throw std::invalid_argument(
+        "regular RI same-spin direction dimensions are inconsistent");
+  }
+
+  const Eigen::MatrixXd inverse =
+      build_inverse_overlap_submatrix_from_result(overlap);
+  const Eigen::MatrixXd inverse_direction =
+      -inverse * delta_overlap_block * inverse;
+  const double determinant_direction = overlap.overlap_determinant *
+      (inverse * delta_overlap_block).trace();
+  const Eigen::MatrixXd one_electron =
+      build_spin_one_electron_block_matrix(occ_L, occ_R, h1e_act);
+  const Eigen::MatrixXd one_electron_direction =
+      build_spin_one_electron_block_matrix(occ_L, occ_R, delta_h1e_act);
+
+  double phi_direction =
+      (inverse_direction * one_electron).trace() +
+      (inverse * one_electron_direction).trace();
+  Eigen::MatrixXd inverse_gradient_direction =
+      one_electron_direction.transpose();
+  const Eigen::MatrixXd identity =
+      Eigen::MatrixXd::Identity(n_electrons, n_electrons);
+  for (Eigen::Index auxiliary = 0;
+       auxiliary < ri_active_pair_factors.rows();
+       ++auxiliary) {
+    const Eigen::MatrixXd transition = gather_ri_transition(
+        occ_L, occ_R, ri_active_pair_factors, auxiliary);
+    const Eigen::MatrixXd transition_direction = gather_ri_transition(
+        occ_L, occ_R, delta_ri_active_pair_factors, auxiliary);
+    const Eigen::MatrixXd contracted = inverse * transition;
+    const Eigen::MatrixXd contracted_direction =
+        inverse_direction * transition + inverse * transition_direction;
+    const Eigen::MatrixXd contraction_adjoint =
+        contracted.trace() * identity - contracted;
+    const Eigen::MatrixXd contraction_adjoint_direction =
+        contracted_direction.trace() * identity - contracted_direction;
+    phi_direction +=
+        (contraction_adjoint.cwiseProduct(contracted_direction.transpose())).sum();
+    inverse_gradient_direction.noalias() +=
+        contraction_adjoint_direction.transpose() * transition.transpose() +
+        contraction_adjoint.transpose() * transition_direction.transpose();
+  }
+
+  RegularRiSameSpinDirection result;
+  result.delta_overlap_determinant = determinant_direction;
+  result.delta_total_hamiltonian =
+      determinant_direction * total_phi +
+      overlap.overlap_determinant * phi_direction;
+  result.delta_first_cofactor =
+      determinant_direction * inverse.transpose() +
+      overlap.overlap_determinant * inverse_direction.transpose();
+
+  const Eigen::MatrixXd bracket =
+      total_phi * inverse.transpose() -
+      inverse.transpose() * inverse_overlap_gradient * inverse.transpose();
+  const Eigen::MatrixXd bracket_direction =
+      phi_direction * inverse.transpose() +
+      total_phi * inverse_direction.transpose() -
+      inverse_direction.transpose() * inverse_overlap_gradient * inverse.transpose() -
+      inverse.transpose() * inverse_gradient_direction * inverse.transpose() -
+      inverse.transpose() * inverse_overlap_gradient * inverse_direction.transpose();
+  result.delta_overlap_hamiltonian_gradient =
+      determinant_direction * bracket +
+      overlap.overlap_determinant * bracket_direction;
+  return result;
+}
 
 
 Eigen::MatrixXd build_overlap_submatrix(

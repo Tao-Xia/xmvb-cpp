@@ -56,7 +56,10 @@ struct SameSpinDirectionalPairCache {
 SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     int n_active_orbitals,
-    const ActiveSpaceIntegralDirectionView& direction);
+    const ActiveSpaceIntegralDirectionView& direction,
+    const Eigen::MatrixXd* accepted_active_one_electron = nullptr,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 
 /**
  * @brief Builds matrix-form same-spin / one-electron backward contribution.

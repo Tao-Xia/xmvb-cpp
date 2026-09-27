@@ -26,6 +26,49 @@ struct SameSpinPhiResult {
   double total_phi = 0.0;
 };
 
+/**
+ * @brief Directional regular-pair quantities evaluated directly in RI space.
+ *
+ * All matrices use the occupied-block convention of the determinant kernels:
+ * overlap and Hamiltonian gradients have `(right, left)` shape, whereas the
+ * inverse-overlap gradient has `(left, right)` shape.
+ */
+struct RegularRiSameSpinDirection {
+  double delta_overlap_determinant = 0.0;
+  double delta_total_hamiltonian = 0.0;
+  Eigen::MatrixXd delta_first_cofactor;
+  Eigen::MatrixXd delta_overlap_hamiltonian_gradient;
+};
+
+/**
+ * @brief Converts a regular-pair `phi` derivative into `d(det(X) phi)/dX`.
+ */
+Eigen::MatrixXd build_regular_same_spin_overlap_hamiltonian_gradient(
+    const DeterminantOverlapResult& overlap,
+    double total_phi,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient);
+
+/**
+ * @brief Differentiates a regular same-spin pair without forming four-index ERIs.
+ *
+ * The accepted and directional RI factors are `B[A,pq]` and `delta B[A,pq]`.
+ * The routine evaluates the tangent of the determinant Hamiltonian and its
+ * overlap-block gradient using only occupied `n x n` matrices for one
+ * auxiliary row at a time.
+ */
+RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_h1e_act,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_active_pair_factors,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_ri_active_pair_factors,
+    const DeterminantOverlapResult& overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_block,
+    double total_phi,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient);
+
 Eigen::MatrixXd build_overlap_submatrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
