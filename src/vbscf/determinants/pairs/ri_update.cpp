@@ -71,9 +71,13 @@ double matrix_product_roundoff_factor(int inner_dimension) {
 
 double channel_scalar_error_bound(
     const Eigen::Ref<const Eigen::MatrixXd>& channel,
-    double element_error) {
+    double element_error,
+    double* channel_norm_output = nullptr) {
   const double n = static_cast<double>(channel.rows());
   const double channel_norm = max_abs(channel);
+  if (channel_norm_output != nullptr) {
+    *channel_norm_output = channel_norm;
+  }
   const double trace_norm = channel.diagonal().cwiseAbs().sum();
   return n * trace_norm * element_error +
       n * n * channel_norm * element_error +
@@ -167,6 +171,8 @@ bool RiPairUpdateState::initialize(
             std::sqrt(epsilon) * response_scale));
   if (!valid_) {
     reset();
+  } else {
+    contracted_channels_certified_ = true;
   }
   return valid_;
 }
@@ -230,6 +236,7 @@ bool RiPairUpdateState::update_right(
   double phi_error_bound = 0.0;
   double response_channel_error_bound = 0.0;
   double response_update_scale = 0.0;
+  bool contracted_channels_certified = true;
   const double response_old_norm = track_response_
       ? max_abs(response_aggregate_)
       : 0.0;
@@ -323,7 +330,12 @@ bool RiPairUpdateState::update_right(
         update_column.cwiseAbs().maxCoeff() * residual_error +
         3.0 * epsilon * (old_channel_norm + correction_norm);
     channel_error_bounds_[static_cast<std::size_t>(auxiliary)] = new_error;
-    phi_error_bound += channel_scalar_error_bound(channel, new_error);
+    double new_channel_norm = 0.0;
+    phi_error_bound += channel_scalar_error_bound(
+        channel, new_error, &new_channel_norm);
+    contracted_channels_certified = contracted_channels_certified &&
+        new_error <= std::sqrt(epsilon) * std::max(
+            std::numeric_limits<double>::min(), new_channel_norm);
     if (track_response_) {
       response_channel_error_bound +=
           channel_response_error_bound(channel, new_error);
@@ -354,6 +366,7 @@ bool RiPairUpdateState::update_right(
     return false;
   }
   occupied_right_ = occupied_right_new;
+  contracted_channels_certified_ = contracted_channels_certified;
   return true;
 }
 
@@ -366,6 +379,7 @@ void RiPairUpdateState::reset() {
   response_roundoff_bound_ = 0.0;
   n_electrons_ = 0;
   track_response_ = false;
+  contracted_channels_certified_ = false;
   valid_ = false;
 }
 
@@ -430,16 +444,13 @@ bool RiPairUpdateState::copy_contracted_channel(
       channel.rows() != n_electrons_ || channel.cols() != n_electrons_) {
     return false;
   }
+  if (!contracted_channels_certified_) {
+    return false;
+  }
   const Eigen::Map<const Eigen::MatrixXd> stored(
       channels_.data() + auxiliary * n_electrons_ * n_electrons_,
       n_electrons_,
       n_electrons_);
-  const double scale = std::max(
-      std::numeric_limits<double>::min(), max_abs(stored));
-  if (channel_error_bounds_[static_cast<std::size_t>(auxiliary)] >
-      std::sqrt(std::numeric_limits<double>::epsilon()) * scale) {
-    return false;
-  }
   channel = stored;
   return true;
 }
