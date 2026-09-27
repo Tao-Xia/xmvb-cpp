@@ -357,6 +357,9 @@ void accumulate_spin_local_matrix_backward_tile(
     const DTWeight& delta_partner_total_transfer_tile,
     int left_begin,
     int right_begin,
+    int directional_left_begin,
+    int directional_right_begin,
+    int directional_right_size,
     int n_unique_determinants,
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
@@ -408,8 +411,11 @@ void accumulate_spin_local_matrix_backward_tile(
       const auto& overlap_result = pair_evaluation.overlap_result;
 
       const SameSpinPolynomialDirectionalPairData& directional_data =
-          ordered_directional_data[ordered_spin_pair_storage_index(
-              left_id, right_id, n_unique_determinants)];
+          ordered_directional_data[
+              static_cast<std::size_t>(
+                  left_id - directional_left_begin) *
+                  directional_right_size +
+              (right_id - directional_right_begin)];
       const Eigen::MatrixXd& cofactor_1st =
           cached_cofactor_differential(pair_evaluation).value();
 
@@ -1013,6 +1019,9 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
           tile_weights.delta_partner_total,
           left_begin,
           right_begin,
+          0,
+          0,
+          selected_states.n_unique_alpha,
           selected_states.n_unique_alpha,
           n_active_orbitals,
           active_one_electron_matrix,
@@ -1073,6 +1082,9 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
             tile_weights.delta_partner_total,
             left_begin,
             right_begin,
+            0,
+            0,
+            selected_states.n_unique_beta,
             selected_states.n_unique_beta,
             n_active_orbitals,
             active_one_electron_matrix,
@@ -1088,6 +1100,72 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
   return finalize_backward_contribution(
       std::move(result),
       active_one_electron_gradient);
+}
+
+void accumulate_local_primary_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
+    const SameSpinDirectionalPairTile& directional_tile,
+    const SameSpinAcceptedTileWeights& accepted_weights,
+    int n_unique,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    const std::vector<double>& delta_overlap,
+    Eigen::MatrixXd* active_one_electron_gradient,
+    std::vector<double>* active_orbital_overlap_gradient,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(
+      directional_tile.left_size(), directional_tile.right_size());
+  accumulate_spin_local_matrix_backward_tile(
+      unique_determinants,
+      accepted_pairs,
+      directional_tile.pairs,
+      accepted_weights.hamiltonian,
+      accepted_weights.overlap,
+      accepted_weights.partner_total,
+      zero,
+      zero,
+      zero,
+      directional_tile.left_begin,
+      directional_tile.right_begin,
+      directional_tile.left_begin,
+      directional_tile.right_begin,
+      directional_tile.right_size(),
+      n_unique,
+      n_active_orbitals,
+      active_one_electron_matrix,
+      active_space_two_electron_result,
+      delta_overlap,
+      active_one_electron_gradient,
+      active_orbital_overlap_gradient,
+      packed_active_two_electron_gradient);
+}
+
+void accumulate_accepted_pair_weight_response_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
+    const SameSpinAcceptedTileWeights& directional_weights,
+    int left_begin,
+    int right_begin,
+    int n_unique,
+    int n_active_orbitals,
+    Eigen::MatrixXd* active_one_electron_gradient,
+    std::vector<double>* active_orbital_overlap_gradient,
+    std::vector<double>* packed_active_two_electron_gradient) {
+  accumulate_spin_matrix_backward_tile(
+      unique_determinants,
+      accepted_pairs,
+      directional_weights.hamiltonian,
+      directional_weights.overlap,
+      directional_weights.partner_total,
+      left_begin,
+      right_begin,
+      n_unique,
+      n_active_orbitals,
+      active_one_electron_gradient,
+      active_orbital_overlap_gradient,
+      packed_active_two_electron_gradient);
 }
 
 }  // namespace detail

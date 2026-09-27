@@ -14,6 +14,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/local_tile_accumulator_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream_internal.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -558,8 +559,92 @@ int main() {
     xmvb::vb::SelectedStateDeterminantCoefficients selected_state;
     selected_state.normalized_state_weight = 1.0;
     selected_state.coefficient_matrix = Eigen::MatrixXd::Ones(1, 1);
+    selected_state.close_shell_diagonal = true;
+    selected_state.diagonal_coefficients = {1.0};
+    selected_state.alpha_support = {0};
+    selected_state.beta_support = {0};
+    selected_state.local_diagonal_coefficients = {1.0};
+    selected_state.local_sparse_coefficient_matrix.resize(1, 1);
+    selected_state.local_sparse_coefficient_matrix.insert(0, 0) = 1.0;
+    selected_state.local_sparse_coefficient_matrix.makeCompressed();
+    selected_state.local_sparse_coefficient_transpose =
+        selected_state.local_sparse_coefficient_matrix.transpose();
+    selected_state.nonzero_coefficient_count = 1;
     selected.states.push_back(std::move(selected_state));
     const std::vector<double> selected_energies{0.0};
+    const auto closed_shell_directional_cache =
+        xmvb::vb::build_same_spin_directional_pair_cache(
+            closed_shell_cache,
+            n_active,
+            first_view,
+            &h1e,
+            &direct_ri.ri_active_pair_factors,
+            &delta_factors);
+    const auto reference_local_same_spin =
+        xmvb::vb::build_local_same_spin_matrix_backward_contribution(
+            closed_shell_cache,
+            selected,
+            selected_energies,
+            n_active,
+            h1e,
+            direct_ri,
+            first_view,
+            closed_shell_directional_cache);
+    xmvb::vb::detail::LocalSameSpinTileAccumulator tiled_local_same_spin(
+        closed_shell_cache,
+        selected,
+        selected_energies,
+        n_active,
+        h1e,
+        direct_ri,
+        first_view);
+    xmvb::vb::detail::stream_directional_pair_tiles(
+        closed_shell_cache,
+        n_active,
+        direct_ri,
+        first_view,
+        &h1e,
+        &direct_ri.ri_active_pair_factors,
+        &delta_factors,
+        false,
+        [&](bool alpha_channel,
+            bool beta_channel,
+            const xmvb::vb::detail::SameSpinDirectionalPairTile& tile,
+            const xmvb::vb::detail::DirectionalOppositeSpinPairTile*) {
+          tiled_local_same_spin.consume(alpha_channel, beta_channel, tile);
+        });
+    const auto tiled_local_contribution = tiled_local_same_spin.finish();
+    const auto require_vector_close = [&](
+        const std::vector<double>& left,
+        const std::vector<double>& right,
+        const char* label) {
+      if (left.size() != right.size()) {
+        throw std::runtime_error(std::string(label) + " shape mismatch");
+      }
+      for (std::size_t entry = 0; entry < left.size(); ++entry) {
+        try {
+          require_close(left[entry], right[entry], 1.0e-12, label);
+        } catch (const std::exception&) {
+          throw std::runtime_error(
+              std::string(label) + " mismatch at " +
+              std::to_string(entry) + ": " +
+              std::to_string(left[entry]) + " versus " +
+              std::to_string(right[entry]));
+        }
+      }
+    };
+    require_vector_close(
+        tiled_local_contribution.active_one_electron_gradient,
+        reference_local_same_spin.active_one_electron_gradient,
+        "tiled local same-spin one-electron gradient");
+    require_vector_close(
+        tiled_local_contribution.packed_active_two_electron_gradient,
+        reference_local_same_spin.packed_active_two_electron_gradient,
+        "tiled local same-spin two-electron gradient");
+    require_vector_close(
+        tiled_local_contribution.active_orbital_overlap_gradient,
+        reference_local_same_spin.active_orbital_overlap_gradient,
+        "tiled local same-spin overlap gradient");
     const auto packed_same =
         xmvb::vb::build_same_spin_matrix_backward_contribution(
             closed_shell_cache,

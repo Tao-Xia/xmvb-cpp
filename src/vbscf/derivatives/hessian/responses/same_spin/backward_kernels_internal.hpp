@@ -9,6 +9,9 @@
 
 namespace xmvb::vb::detail {
 
+struct SameSpinAcceptedTileWeights;
+struct SameSpinDirectionalPairTile;
+
 SameSpinMatrixBackwardContribution make_zero_backward_contribution(
     int n_active_orbitals);
 
@@ -78,5 +81,31 @@ build_support_sparse_local_same_spin_backward_contribution_by_tiles(
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairCache& directional_pair_cache);
+
+void accumulate_local_primary_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
+    const SameSpinDirectionalPairTile& directional_tile,
+    const SameSpinAcceptedTileWeights& accepted_weights,
+    int n_unique,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
+    const std::vector<double>& delta_overlap,
+    Eigen::MatrixXd* active_one_electron_gradient,
+    std::vector<double>* active_orbital_overlap_gradient,
+    std::vector<double>* packed_active_two_electron_gradient);
+
+void accumulate_accepted_pair_weight_response_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
+    const SameSpinAcceptedTileWeights& directional_weights,
+    int left_begin,
+    int right_begin,
+    int n_unique,
+    int n_active_orbitals,
+    Eigen::MatrixXd* active_one_electron_gradient,
+    std::vector<double>* active_orbital_overlap_gradient,
+    std::vector<double>* packed_active_two_electron_gradient);
 
 }  // namespace xmvb::vb::detail
