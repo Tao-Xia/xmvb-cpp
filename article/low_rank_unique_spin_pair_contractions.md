@@ -2067,11 +2067,17 @@ O(N_{\mathrm{aux}}n^3)
 $$
 
 per evaluated pair because it returns dense transition and overlap gradients,
-but it removes the former occupied-pair interaction construction and its
-$n^4$--$n^6$ polynomial-cofactor work. Further reduction requires contracting
-these adjoints directly into their downstream orbital weights or replacing
-the pair sweep by a biorthogonal action; it cannot be obtained by another
-cache around the old high-order tensor.
+and, inside the contracted Hamiltonian-response kernel, removes the former
+occupied-pair interaction construction and its $n^4$--$n^6$
+polynomial-cofactor work. The current downstream same-spin two-electron
+integral adjoint still consumes a legacy deleted-minor cofactor object. The
+RI--Woodbury migration is therefore complete for the scalar Hamiltonian,
+overlap adjoint, and their direction, but not yet for that final integral
+adjoint. Removing it requires contracting the RI factor adjoint directly into
+the orbital pullback. Further reduction then requires either fusing these
+adjoints with their downstream orbital weights or replacing the pair sweep by
+a biorthogonal action; it cannot be obtained by another cache around the old
+high-order tensor.
 
 ## 10. Ill-conditioned and singular pair treatment
 
