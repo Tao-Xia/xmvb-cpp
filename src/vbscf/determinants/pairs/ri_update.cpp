@@ -388,6 +388,41 @@ double RiPairUpdateState::two_electron_phi() const {
   return 0.5 * phi;
 }
 
+bool RiPairUpdateState::first_order_cofactor_auxiliary(
+    double overlap_determinant,
+    Eigen::Ref<Eigen::VectorXd> auxiliary) const {
+  if (!valid_ || auxiliary.size() != channels_.rows() ||
+      !std::isfinite(overlap_determinant)) {
+    return false;
+  }
+  const double epsilon = std::numeric_limits<double>::epsilon();
+  const double trace_roundoff = matrix_product_roundoff_factor(n_electrons_);
+  for (Eigen::Index channel_index = 0;
+       channel_index < channels_.rows();
+       ++channel_index) {
+    const Eigen::Map<const Eigen::MatrixXd> channel(
+        channels_.data() + channel_index * n_electrons_ * n_electrons_,
+        n_electrons_,
+        n_electrons_);
+    const double trace = channel.trace();
+    const double value = overlap_determinant * trace;
+    const double trace_error =
+        n_electrons_ *
+            channel_error_bounds_[static_cast<std::size_t>(channel_index)] +
+        trace_roundoff * channel.diagonal().cwiseAbs().sum();
+    const double value_error = std::abs(overlap_determinant) * trace_error +
+        epsilon * std::abs(value);
+    const double scale = std::max(
+        std::numeric_limits<double>::min(), std::abs(value));
+    if (!std::isfinite(value) || !std::isfinite(value_error) ||
+        value_error > std::sqrt(epsilon) * scale) {
+      return false;
+    }
+    auxiliary(channel_index) = value;
+  }
+  return true;
+}
+
 Eigen::MatrixXd RiPairUpdateState::two_electron_inverse_overlap_gradient(
     const DeterminantOverlapResult& overlap) const {
   if (!valid_ || !track_response_ ||

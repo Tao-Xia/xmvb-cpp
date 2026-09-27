@@ -36,6 +36,18 @@ class RiPairUpdateState {
   bool valid() const noexcept { return valid_; }
   bool tracks_response() const noexcept { return track_response_; }
   double two_electron_phi() const;
+  /**
+   * @brief Builds the RI image of the first cofactor without reprojecting it.
+   *
+   * For a regular pair, each stored channel is
+   * `A^Q = X^{-1} M^Q`.  The requested auxiliary vector is therefore
+   * `g_Q = det(X) tr(A^Q) = (B x)_Q`, where `x` is the packed first-cofactor
+   * projection.  The method returns `false` if the propagated channel error
+   * does not certify the trace contraction.
+   */
+  bool first_order_cofactor_auxiliary(
+      double overlap_determinant,
+      Eigen::Ref<Eigen::VectorXd> auxiliary) const;
   Eigen::MatrixXd two_electron_inverse_overlap_gradient(
       const DeterminantOverlapResult& overlap) const;
 

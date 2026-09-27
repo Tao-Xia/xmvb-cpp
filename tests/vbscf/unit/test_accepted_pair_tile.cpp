@@ -199,6 +199,64 @@ int main() {
           ri_update.two_electron_phi() -
           (direct_phi.total_phi - direct_one_electron_phi)) <= 2.0e-12,
       "low-rank RI channel update changed the two-electron contraction");
+  Eigen::VectorXd auxiliary_feature(ri.n_auxiliary_functions);
+  require(
+      ri_update.first_order_cofactor_auxiliary(
+          certified_update->overlap_determinant,
+          auxiliary_feature),
+      "certified RI channel traces did not produce a cofactor feature");
+  Eigen::VectorXd packed_cofactor = Eigen::VectorXd::Zero(n_pairs);
+  const Eigen::MatrixXd first_cofactor =
+      xmvb::vb::calc_cofactor_1st(*certified_update);
+  for (int left = 0; left < static_cast<int>(strings[0].size()); ++left) {
+    for (int right = 0; right < static_cast<int>(strings[1].size()); ++right) {
+      packed_cofactor(
+          xmvb::vb::TwoElectronIndexer::packed_pair_index(
+              strings[1][right], strings[0][left])) +=
+          first_cofactor(right, left);
+    }
+  }
+  require(
+      relative_difference(
+          auxiliary_feature,
+          ri.ri_active_pair_factors * packed_cofactor) <= 2.0e-11,
+      "low-rank RI cofactor feature differs from direct projection");
+
+  const auto projected_tile = provider.build(
+      0,
+      static_cast<int>(strings.size()),
+      0,
+      static_cast<int>(strings.size()),
+      overlap_storage,
+      h1e,
+      ri,
+      xmvb::vb::AcceptedPairTileBuildOptions{
+          .materialize_projected_pair_values = true,
+          .populate_response_payload = false,
+          .populate_opposite_spin_projection = true});
+  for (int left = 0; left < static_cast<int>(strings.size()); ++left) {
+    for (int right = 0; right < static_cast<int>(strings.size()); ++right) {
+      const auto& projection = projected_tile.pair(left, right)
+          .opposite_spin_pair_cache.first_order_cofactor_projection;
+      const auto reference_projected =
+          xmvb::vb::apply_active_space_two_electron_kernel_to_sparse_projection(
+              xmvb::vb::make_active_space_two_electron_view(ri),
+              n_active,
+              projection.packed_pair_indices,
+              projection.packed_pair_values);
+      require(
+          projection.projected_pair_values.size() ==
+                  reference_projected.size() &&
+              std::equal(
+                  projection.projected_pair_values.begin(),
+                  projection.projected_pair_values.end(),
+                  reference_projected.begin(),
+                  [](double generated, double reference_value) {
+                    return std::abs(generated - reference_value) <= 2.0e-11;
+                  }),
+          "low-rank RI projected cofactor image differs from direct kernel");
+    }
+  }
 
   xmvb::vb::DeterminantOverlapResult identity_pair;
   identity_pair.n_electrons = 2;

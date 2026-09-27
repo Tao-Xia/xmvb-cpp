@@ -79,6 +79,14 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
   for (int left_local = 0; left_local < tile.left_size; ++left_local) {
     const int left_index = left_begin + left_local;
     RiPairUpdateState ri_state;
+    Eigen::MatrixXd ri_auxiliary_panel;
+    std::vector<unsigned char> ri_auxiliary_ready;
+    if (direct_ri && options.materialize_projected_pair_values) {
+      ri_auxiliary_panel = Eigen::MatrixXd::Zero(
+          active_two_electron.ri_active_pair_factors.rows(),
+          tile.right_size);
+      ri_auxiliary_ready.assign(tile.right_size, 0);
+    }
     const std::vector<int> right_traversal = build_pair_update_traversal(
         unique_spin_strings_, left_index, right_begin, right_end);
     for (int traversal_index = 0;
@@ -183,12 +191,53 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             n_active_orbitals_,
             active_two_electron,
             options.populate_opposite_spin_projection,
-            options.materialize_projected_pair_values,
+            options.materialize_projected_pair_values && !used_ri_update,
             options.populate_response_payload,
             &evaluation,
             ri_response ? &*ri_response : nullptr);
+        if (used_ri_update && options.materialize_projected_pair_values) {
+          auto& projection = evaluation.opposite_spin_pair_cache
+              .first_order_cofactor_projection;
+          if (ri_state.first_order_cofactor_auxiliary(
+                  evaluation.overlap_result.overlap_determinant,
+                  ri_auxiliary_panel.col(right_local))) {
+            ri_auxiliary_ready[right_local] = 1;
+          } else {
+            projection.projected_pair_values =
+                apply_active_space_two_electron_kernel_to_sparse_projection(
+                    make_active_space_two_electron_view(active_two_electron),
+                    n_active_orbitals_,
+                    projection.packed_pair_indices,
+                    projection.packed_pair_values);
+          }
+        }
       }
       tile.pairs[pair_index] = std::move(evaluation);
+    }
+    if (!ri_auxiliary_ready.empty() &&
+        std::any_of(
+            ri_auxiliary_ready.begin(),
+            ri_auxiliary_ready.end(),
+            [](unsigned char ready) { return ready != 0; })) {
+      const Eigen::MatrixXd projected_panel =
+          active_two_electron.ri_active_pair_factors.transpose() *
+          ri_auxiliary_panel;
+      for (int right_local = 0;
+           right_local < tile.right_size;
+           ++right_local) {
+        if (ri_auxiliary_ready[right_local] == 0) {
+          continue;
+        }
+        auto& projected = tile.pairs[
+            static_cast<std::size_t>(left_local) * tile.right_size +
+            right_local]
+                              .opposite_spin_pair_cache
+                              .first_order_cofactor_projection
+                              .projected_pair_values;
+        projected.assign(
+            projected_panel.col(right_local).data(),
+            projected_panel.col(right_local).data() + projected_panel.rows());
+      }
     }
   }
   return tile;

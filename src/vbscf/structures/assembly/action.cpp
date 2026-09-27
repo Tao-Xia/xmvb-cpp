@@ -71,6 +71,28 @@ Eigen::MatrixXd build_pair_channel_block(
   return channels;
 }
 
+Eigen::MatrixXd build_projected_pair_channel_block(
+    const AcceptedSpinPairTile& tile,
+    int n_packed_pairs) {
+  Eigen::MatrixXd channels(
+      tile.left_size * tile.right_size, n_packed_pairs);
+  for (int left = 0; left < tile.left_size; ++left) {
+    for (int right = 0; right < tile.right_size; ++right) {
+      const int work = left + tile.left_size * right;
+      const auto& projected = tile.pair(left, right)
+          .opposite_spin_pair_cache.first_order_cofactor_projection
+          .projected_pair_values;
+      if (static_cast<int>(projected.size()) != n_packed_pairs) {
+        throw std::logic_error(
+            "accepted pair tile has no projected channel image");
+      }
+      channels.row(work) = Eigen::Map<const Eigen::RowVectorXd>(
+          projected.data(), n_packed_pairs);
+    }
+  }
+  return channels;
+}
+
 struct PairScalarTile {
   Eigen::MatrixXd overlap;
   Eigen::MatrixXd hamiltonian;
@@ -239,14 +261,16 @@ void add_tiled_opposite_spin_action(
               h1e,
               two_electron,
               AcceptedPairTileBuildOptions{
-                  .materialize_projected_pair_values = false,
+                  .materialize_projected_pair_values = direct_ri,
                   .populate_response_payload = false,
                   .populate_opposite_spin_projection = true});
-          const Eigen::MatrixXd beta_raw =
-              build_pair_channel_block(beta_tile, n_pairs);
-          const Eigen::MatrixXd beta_projected =
-              apply_active_space_two_electron_kernel_block(
-                  two_electron, n_active, beta_raw.transpose()).transpose();
+          const Eigen::MatrixXd beta_projected = direct_ri
+              ? build_projected_pair_channel_block(beta_tile, n_pairs)
+              : apply_active_space_two_electron_kernel_block(
+                    two_electron,
+                    n_active,
+                    build_pair_channel_block(beta_tile, n_pairs).transpose())
+                    .transpose();
 
           for (int vector = 0; vector < block_width; ++vector) {
             const auto source = spin_vectors.block(
@@ -1007,18 +1031,18 @@ StructureActionResult StructureAction::apply_streamed(
                   tiled_pairs_->one_electron,
                   tiled_pairs_->two_electron,
                   AcceptedPairTileBuildOptions{
-                      .materialize_projected_pair_values = false,
+                      .materialize_projected_pair_values = direct_ri,
                       .populate_response_payload = false,
                       .populate_opposite_spin_projection = true});
           const PairScalarTile beta_scalar =
               build_pair_scalar_tile(beta_pair);
-          const Eigen::MatrixXd beta_raw =
-              build_pair_channel_block(beta_pair, n_pairs);
-          const Eigen::MatrixXd beta_projected =
-              apply_active_space_two_electron_kernel_block(
-                  tiled_pairs_->two_electron,
-                  tiled_pairs_->n_active,
-                  beta_raw.transpose()).transpose();
+          const Eigen::MatrixXd beta_projected = direct_ri
+              ? build_projected_pair_channel_block(beta_pair, n_pairs)
+              : apply_active_space_two_electron_kernel_block(
+                    tiled_pairs_->two_electron,
+                    tiled_pairs_->n_active,
+                    build_pair_channel_block(beta_pair, n_pairs).transpose())
+                    .transpose();
           const Eigen::MatrixXd source_tile = expand_structure_tile(
               vectors,
               alpha_right,

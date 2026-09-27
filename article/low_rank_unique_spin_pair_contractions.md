@@ -606,6 +606,72 @@ When the VB structure expansion is sparse, the vectors in eq 35 can be
 contracted directly through the sparse structure-to-unique-string map. No
 intermediate expansion to a redundant determinant representation is required.
 
+### 5.1 Elimination of the repeated packed-pair projection
+
+Let $P$ denote a packed active-orbital pair and let $B_{QP}$ be the
+metric-whitened RI factor.  The packed first-cofactor projection is
+
+$$
+x_P
+=
+\sum_{r l:\,P=\operatorname{pack}(R_r,L_l)}
+\Omega K_{lr}.
+\tag{37a}
+$$
+
+A conventional implementation first forms $x$, then evaluates
+
+$$
+g=Bx,
+\qquad
+y=B^{\mathrm T}g.
+\tag{37b}
+$$
+
+The first product is redundant when the accepted pair has already generated
+
+$$
+A^Q=K M^Q,
+\qquad
+M^Q_{rl}=B_{Q,\operatorname{pack}(R_r,L_l)}.
+$$
+
+Indeed,
+
+$$
+g_Q
+=
+\sum_{rl}
+B_{Q,\operatorname{pack}(R_r,L_l)}\Omega K_{lr}
+=
+\Omega\operatorname{tr}(A^Q).
+\tag{37c}
+$$
+
+Therefore the accepted traversal exports $g_Q$ while $A^Q$ is live and
+computes only the required backprojection
+
+$$
+y_P
+=
+\sum_Q B_{QP}g_Q.
+\tag{37d}
+$$
+
+This removes one $B x$ product for every regular pair.  The auxiliary vector
+is row-local scratch and is released immediately after eq 37d; it is not
+stored for a complete tile or for the $U^2$ pair table.  Consequently the
+additional memory is
+
+$$
+O(WN_{\mathrm{aux}}),
+$$
+
+where $W$ is the number of live traversal workers, rather than
+$O(T^2N_{\mathrm{aux}})$ or $O(U^2N_{\mathrm{aux}})$.  For nullity-one pairs,
+eq 37c is unavailable because $Omega=0$ although the first cofactor can be
+nonzero; those pairs retain the exact cofactor projection in eq 37a.
+
 ## 6. Contract-first analytic differentiation
 
 ### 6.1 Differential identities
