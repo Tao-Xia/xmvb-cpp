@@ -1212,16 +1212,14 @@ void check_sigma_action() {
       n_orbitals,
       &exact_diagonal);
   const auto topology_images = topology_action.apply(structure_vectors);
-  require(topology_action.supports_integral_direction(),
-          "topology-only complete space did not select direct CI");
   require(
       (topology_images.hamiltonian -
        reference_three_structure_hamiltonian).cwiseAbs().maxCoeff() < 2.0e-10,
-      "topology-only direct-CI Hamiltonian differs from the dense reference");
+      "topology-only Hamiltonian action differs from the dense reference");
   require(
       (topology_images.overlap -
        reference_three_structure_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
-      "topology-only direct-CI overlap differs from the dense reference");
+      "topology-only overlap action differs from the dense reference");
 }
 
 void check_distinct_spin_sigma_action() {

@@ -498,8 +498,7 @@ StructureAction::StructureAction(
           same_spin_pair_cache.beta_reuse_table.unique_determinants,
           n_active_orbitals,
           1);
-  const bool use_direct_ci = direct_ci_plan.favors_direct_ci() ||
-      (!same_spin_pair_cache.enabled() && direct_ci_plan.complete());
+  const bool use_direct_ci = direct_ci_plan.favors_direct_ci();
   if (!same_spin_pair_cache.has_pair_providers()) {
     throw std::invalid_argument(
         "structure action requires accepted-pair providers");
