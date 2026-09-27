@@ -105,14 +105,7 @@ TimedPreparedActiveSpaceContext prepare_timed_active_space_context(
             *ao_ri_result,
             context.orbital_result,
             input.ao_integral_input.n_basis_functions,
-            input.orbital_preparation_input.n_active_orbitals,
-            {
-                // Keep the RI factors for reverse-mode, but also reconstruct a
-                // packed active-space `GGO` cache so determinant-pair kernels
-                // can use direct lookups instead of repeating auxiliary-length
-                // dot products inside the hot loops.
-                .reconstruct_packed_integrals = true,
-            });
+            input.orbital_preparation_input.n_active_orbitals);
   } else {
     context.active_space_two_electron_result =
         active_space_two_electron_builder.build(

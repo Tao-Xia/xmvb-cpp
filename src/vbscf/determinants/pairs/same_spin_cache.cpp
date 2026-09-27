@@ -845,18 +845,6 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
     // Direct RI representation — no materialized packed integrals.
     // Streamed callers can skip the dense `G u` / `G x` images entirely and
     // keep only the sparse packed-pair coefficients in the cache.
-    std::vector<double> reconstructed_eri;
-    std::vector<double> dense_pair_kernel;
-    const std::vector<double>* dense_pair_kernel_ptr = nullptr;
-    if (projection_policy.any()) {
-      reconstructed_eri =
-          reconstruct_packed_active_two_electron_integrals(
-              make_active_space_two_electron_view(active_space_two_electron_result),
-              n_orbitals);
-      dense_pair_kernel = build_dense_active_pair_kernel(reconstructed_eri, n_orbitals);
-      dense_pair_kernel_ptr = &dense_pair_kernel;
-    }
-
     cache_context.alpha_pair_cache = build_same_spin_pair_cache(
         cache_context.alpha_reuse_table.unique_determinants,
         pair_evaluator,
@@ -864,7 +852,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
         h1e_act,
         n_orbitals,
         active_space_two_electron_result,
-        dense_pair_kernel_ptr,
+        nullptr,
         projection_policy.alpha,
         build_options.retain_derivative_payload);
 
@@ -876,7 +864,7 @@ SameSpinPairCacheContext build_same_spin_pair_cache_context(
           h1e_act,
           n_orbitals,
           active_space_two_electron_result,
-          dense_pair_kernel_ptr,
+          nullptr,
           projection_policy.beta,
           build_options.retain_derivative_payload);
     } else {
@@ -1073,18 +1061,10 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
       const std::size_t opp_cache_idx = same_spin_pair_cache->opposite_spin_cache_index(
           alpha_left_id, alpha_right_id, beta_left_id, beta_right_id);
       if (!same_spin_pair_cache->opposite_spin_cache_computed[opp_cache_idx]) {
-        const double opp_coupling =
-            !active_space_two_electron_result.packed_active_two_electron_integrals.empty()
-            ? evaluate_opposite_spin_coulomb_coupling(
-                  alpha_occ_L, alpha_occ_R, alpha_pair_result,
-                  beta_occ_L, beta_occ_R, beta_pair_result,
-                  active_space_two_electron_result.packed_active_two_electron_integrals)
-            : evaluate_opposite_spin_coulomb_coupling(
-                  alpha_occ_L, alpha_occ_R, alpha_pair_result,
-                  beta_occ_L, beta_occ_R, beta_pair_result,
-                  reconstruct_packed_active_two_electron_integrals(
-                      make_active_space_two_electron_view(active_space_two_electron_result),
-                      n_orbitals));
+        const double opp_coupling = evaluate_opposite_spin_coulomb_coupling(
+            alpha_occ_L, alpha_occ_R, alpha_pair_result,
+            beta_occ_L, beta_occ_R, beta_pair_result,
+            n_orbitals, active_space_two_electron_result);
         const_cast<SameSpinPairCacheContext*>(same_spin_pair_cache)->opposite_spin_cache[opp_cache_idx] =
             opp_coupling;
         const_cast<SameSpinPairCacheContext*>(same_spin_pair_cache)
@@ -1093,18 +1073,10 @@ DeterminantPairEvaluation evaluate_full_determinant_pair_with_optional_same_spin
       opposite_spin_coupling =
           same_spin_pair_cache->opposite_spin_cache[opp_cache_idx];
     } else {
-      opposite_spin_coupling =
-          !active_space_two_electron_result.packed_active_two_electron_integrals.empty()
-          ? evaluate_opposite_spin_coulomb_coupling(
-                alpha_occ_L, alpha_occ_R, alpha_pair_result,
-                beta_occ_L, beta_occ_R, beta_pair_result,
-                active_space_two_electron_result.packed_active_two_electron_integrals)
-          : evaluate_opposite_spin_coulomb_coupling(
-                alpha_occ_L, alpha_occ_R, alpha_pair_result,
-                beta_occ_L, beta_occ_R, beta_pair_result,
-                reconstruct_packed_active_two_electron_integrals(
-                    make_active_space_two_electron_view(active_space_two_electron_result),
-                    n_orbitals));
+      opposite_spin_coupling = evaluate_opposite_spin_coulomb_coupling(
+          alpha_occ_L, alpha_occ_R, alpha_pair_result,
+          beta_occ_L, beta_occ_R, beta_pair_result,
+          n_orbitals, active_space_two_electron_result);
     }
 
     // Combine results using cached opposite-spin coupling

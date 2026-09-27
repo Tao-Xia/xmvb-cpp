@@ -305,6 +305,26 @@ double evaluate_opposite_spin_coulomb_coupling(
   return opposite_spin_coulomb_coupling;
 }
 
+double evaluate_opposite_spin_coulomb_coupling(
+    const std::vector<int>& alpha_occ_L,
+    const std::vector<int>& alpha_occ_R,
+    const SpinDeterminantPairEvaluation& alpha_result,
+    const std::vector<int>& beta_occ_L,
+    const std::vector<int>& beta_occ_R,
+    const SpinDeterminantPairEvaluation& beta_result,
+    int n_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result) {
+  return evaluate_opposite_spin_coulomb_coupling(
+      alpha_occ_L,
+      alpha_occ_R,
+      alpha_result,
+      beta_occ_L,
+      beta_occ_R,
+      beta_result,
+      make_active_space_two_electron_view(active_space_two_electron_result),
+      n_orbitals);
+}
+
 DeterminantPairEvaluator::DeterminantPairEvaluator()
     : determinant_overlap_resolver_(),
       determinant_hamiltonian_resolver_() {}

@@ -27,6 +27,7 @@ set(_xmvb_vbscf_unit_targets
   test_projected_orbital_surrogate
   test_reduced_hessian_reference
   test_ri_ao_h1e_hvp
+  test_ri_pair_contractions
   test_ri_active_two_electron_response
   test_shifted_metric_preconditioner
   test_sparse_orbital_quotient
@@ -154,6 +155,9 @@ if (BUILD_TESTING)
       ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME ri_ao_h1e_hvp COMMAND test_ri_ao_h1e_hvp)
   set_tests_properties(ri_ao_h1e_hvp PROPERTIES
+    ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+  add_test(NAME ri_pair_contractions COMMAND test_ri_pair_contractions)
+  set_tests_properties(ri_pair_contractions PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(
     NAME ri_active_two_electron_response

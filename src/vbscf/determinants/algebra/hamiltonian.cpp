@@ -36,6 +36,57 @@ inline int packed_pair_of_pairs_index_fast(
   return high_index * (high_index + 1) / 2 + low_index;
 }
 
+DeterminantHamiltonianResult calc_regular_ri_same_spin_hamiltonian(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const DeterminantOverlapResult& overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_factors) {
+  const int n_electrons = static_cast<int>(occ_L.size());
+  if (static_cast<int>(occ_R.size()) != n_electrons ||
+      overlap.nullity != 0 || overlap.overlap_determinant == 0.0 ||
+      ri_factors.cols() != packed_active_pair_count(n_active_orbitals)) {
+    throw std::invalid_argument("invalid regular RI same-spin contraction input");
+  }
+
+  DeterminantHamiltonianResult result;
+  result.overlap_determinant = overlap.overlap_determinant;
+  result.nullity = overlap.nullity;
+  const Eigen::MatrixXd cofactor = calc_cofactor_1st(overlap);
+  for (int left = 0; left < n_electrons; ++left) {
+    for (int right = 0; right < n_electrons; ++right) {
+      result.one_electron_hamiltonian +=
+          h1e_act(occ_R[right], occ_L[left]) * cofactor(right, left);
+    }
+  }
+  result.total_hamiltonian = result.one_electron_hamiltonian;
+  if (n_electrons < 2) {
+    return result;
+  }
+
+  const Eigen::MatrixXd inverse_overlap =
+      build_inverse_overlap_submatrix_from_result(overlap);
+  Eigen::MatrixXd transition(n_electrons, n_electrons);
+  double normalized_two_electron = 0.0;
+  for (Eigen::Index auxiliary = 0; auxiliary < ri_factors.rows(); ++auxiliary) {
+    for (int left = 0; left < n_electrons; ++left) {
+      for (int right = 0; right < n_electrons; ++right) {
+        transition(right, left) = ri_factors(
+            auxiliary,
+            packed_pair_index_fast(occ_R[right], occ_L[left]));
+      }
+    }
+    const Eigen::MatrixXd contracted = inverse_overlap * transition;
+    const double trace = contracted.trace();
+    normalized_two_electron +=
+        0.5 * (trace * trace - (contracted * contracted).trace());
+  }
+  result.total_hamiltonian +=
+      overlap.overlap_determinant * normalized_two_electron;
+  return result;
+}
+
 }  // namespace
 
 template <typename PairKernelLookup>
@@ -297,6 +348,21 @@ DeterminantHamiltonianResult calc_same_spin_hamiltonian(
     const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
     int n_orb_act,
     const ActiveSpaceTwoElectronView& two_electron_view) {
+  if (two_electron_view.representation ==
+          ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity &&
+      (two_electron_view.packed_active_two_electron_integrals == nullptr ||
+       two_electron_view.packed_active_two_electron_integrals->empty()) &&
+      two_electron_view.ri_active_pair_factors != nullptr &&
+      det_ovlp_result.nullity == 0 &&
+      det_ovlp_result.overlap_determinant != 0.0) {
+    return calc_regular_ri_same_spin_hamiltonian(
+        occ_L,
+        occ_R,
+        det_ovlp_result,
+        h1e_act,
+        n_orb_act,
+        *two_electron_view.ri_active_pair_factors);
+  }
   return calc_same_spin_hamiltonian_impl(
       occ_L,
       occ_R,

@@ -162,4 +162,17 @@ double evaluate_opposite_spin_coulomb_coupling(
     const SpinDeterminantPairEvaluation& beta_result,
     const std::vector<double>& eri_act);
 
+/**
+ * @brief Evaluates opposite-spin coupling without materializing packed RI integrals.
+ */
+double evaluate_opposite_spin_coulomb_coupling(
+    const std::vector<int>& alpha_occ_L,
+    const std::vector<int>& alpha_occ_R,
+    const SpinDeterminantPairEvaluation& alpha_result,
+    const std::vector<int>& beta_occ_L,
+    const std::vector<int>& beta_occ_R,
+    const SpinDeterminantPairEvaluation& beta_result,
+    int n_orbitals,
+    const ActiveSpaceTwoElectronResult& active_space_two_electron_result);
+
 }  // namespace xmvb::vb
