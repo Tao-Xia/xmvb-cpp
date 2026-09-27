@@ -546,6 +546,149 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
   return result;
 }
 
+std::vector<RegularRiSameSpinDirection>
+evaluate_regular_ri_same_spin_direction_batch(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    const std::vector<Eigen::MatrixXd>& delta_h1e_act,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_active_pair_factors,
+    const std::vector<Eigen::MatrixXd>& delta_ri_active_pair_factors,
+    const DeterminantOverlapResult& overlap,
+    const std::vector<Eigen::MatrixXd>& delta_overlap_blocks,
+    double total_phi,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient) {
+  const std::size_t n_directions = delta_h1e_act.size();
+  if (delta_ri_active_pair_factors.size() != n_directions ||
+      delta_overlap_blocks.size() != n_directions) {
+    throw std::invalid_argument(
+        "regular RI same-spin direction block sizes are inconsistent");
+  }
+  if (n_directions == 0) {
+    return {};
+  }
+  if (overlap.nullity != 0 || overlap.overlap_determinant == 0.0) {
+    throw std::invalid_argument(
+        "regular RI same-spin direction block requires a nonsingular pair");
+  }
+
+  const int n_electrons = static_cast<int>(occ_L.size());
+  const int n_pairs = packed_active_pair_count(n_active_orbitals);
+  if (static_cast<int>(occ_R.size()) != n_electrons ||
+      inverse_overlap_gradient.rows() != n_electrons ||
+      inverse_overlap_gradient.cols() != n_electrons ||
+      ri_active_pair_factors.cols() != n_pairs) {
+    throw std::invalid_argument(
+        "regular RI same-spin direction block dimensions are inconsistent");
+  }
+
+  const Eigen::MatrixXd inverse =
+      build_inverse_overlap_submatrix_from_result(overlap);
+  const Eigen::MatrixXd one_electron =
+      build_spin_one_electron_block_matrix(occ_L, occ_R, h1e_act);
+  const Eigen::MatrixXd identity =
+      Eigen::MatrixXd::Identity(n_electrons, n_electrons);
+
+  std::vector<Eigen::MatrixXd> inverse_directions;
+  std::vector<Eigen::MatrixXd> one_electron_directions;
+  std::vector<Eigen::MatrixXd> inverse_gradient_directions;
+  std::vector<double> determinant_directions(n_directions, 0.0);
+  std::vector<double> phi_directions(n_directions, 0.0);
+  inverse_directions.reserve(n_directions);
+  one_electron_directions.reserve(n_directions);
+  inverse_gradient_directions.reserve(n_directions);
+  for (std::size_t direction = 0; direction < n_directions; ++direction) {
+    if (delta_h1e_act[direction].rows() != n_active_orbitals ||
+        delta_h1e_act[direction].cols() != n_active_orbitals ||
+        delta_overlap_blocks[direction].rows() != n_electrons ||
+        delta_overlap_blocks[direction].cols() != n_electrons ||
+        delta_ri_active_pair_factors[direction].rows() !=
+            ri_active_pair_factors.rows() ||
+        delta_ri_active_pair_factors[direction].cols() != n_pairs) {
+      throw std::invalid_argument(
+          "regular RI same-spin direction block member has inconsistent dimensions");
+    }
+    inverse_directions.emplace_back(
+        -inverse * delta_overlap_blocks[direction] * inverse);
+    determinant_directions[direction] = overlap.overlap_determinant *
+        (inverse * delta_overlap_blocks[direction]).trace();
+    one_electron_directions.emplace_back(
+        build_spin_one_electron_block_matrix(
+            occ_L, occ_R, delta_h1e_act[direction]));
+    phi_directions[direction] =
+        (inverse_directions.back() * one_electron).trace() +
+        (inverse * one_electron_directions.back()).trace();
+    inverse_gradient_directions.emplace_back(
+        one_electron_directions.back().transpose());
+  }
+
+  for (Eigen::Index auxiliary = 0;
+       auxiliary < ri_active_pair_factors.rows();
+       ++auxiliary) {
+    const Eigen::MatrixXd transition = gather_ri_transition(
+        occ_L, occ_R, ri_active_pair_factors, auxiliary);
+    const Eigen::MatrixXd contracted = inverse * transition;
+    const Eigen::MatrixXd contraction_adjoint =
+        contracted.trace() * identity - contracted;
+    for (std::size_t direction = 0;
+         direction < n_directions;
+         ++direction) {
+      const Eigen::MatrixXd transition_direction = gather_ri_transition(
+          occ_L,
+          occ_R,
+          delta_ri_active_pair_factors[direction],
+          auxiliary);
+      const Eigen::MatrixXd contracted_direction =
+          inverse_directions[direction] * transition +
+          inverse * transition_direction;
+      const Eigen::MatrixXd contraction_adjoint_direction =
+          contracted_direction.trace() * identity - contracted_direction;
+      phi_directions[direction] +=
+          (contraction_adjoint.cwiseProduct(
+               contracted_direction.transpose())).sum();
+      inverse_gradient_directions[direction].noalias() +=
+          contraction_adjoint_direction.transpose() * transition.transpose() +
+          contraction_adjoint.transpose() * transition_direction.transpose();
+    }
+  }
+
+  const Eigen::MatrixXd bracket =
+      total_phi * inverse.transpose() -
+      inverse.transpose() * inverse_overlap_gradient * inverse.transpose();
+  std::vector<RegularRiSameSpinDirection> results(n_directions);
+  for (std::size_t direction = 0;
+       direction < n_directions;
+       ++direction) {
+    auto& result = results[direction];
+    const Eigen::MatrixXd& inverse_direction =
+        inverse_directions[direction];
+    const double determinant_direction =
+        determinant_directions[direction];
+    const double phi_direction = phi_directions[direction];
+    result.delta_overlap_determinant = determinant_direction;
+    result.delta_total_hamiltonian =
+        determinant_direction * total_phi +
+        overlap.overlap_determinant * phi_direction;
+    result.delta_first_cofactor =
+        determinant_direction * inverse.transpose() +
+        overlap.overlap_determinant * inverse_direction.transpose();
+    const Eigen::MatrixXd bracket_direction =
+        phi_direction * inverse.transpose() +
+        total_phi * inverse_direction.transpose() -
+        inverse_direction.transpose() * inverse_overlap_gradient *
+            inverse.transpose() -
+        inverse.transpose() * inverse_gradient_directions[direction] *
+            inverse.transpose() -
+        inverse.transpose() * inverse_overlap_gradient *
+            inverse_direction.transpose();
+    result.delta_overlap_hamiltonian_gradient =
+        determinant_direction * bracket +
+        overlap.overlap_determinant * bracket_direction;
+  }
+  return results;
+}
+
 
 Eigen::MatrixXd build_overlap_submatrix(
     const std::vector<int>& occ_L,

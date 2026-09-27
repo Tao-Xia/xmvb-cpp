@@ -9,6 +9,7 @@
 #include "vbscf/determinants/algebra/hamiltonian.hpp"
 #include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace {
@@ -214,6 +215,127 @@ int main() {
         (std::get<2>(plus) - std::get<2>(minus)) / (2.0 * epsilon),
         3.0e-8,
         "RI directional overlap-Hamiltonian gradient");
+
+    const std::vector<Eigen::MatrixXd> delta_h1e_block{
+        delta_h1e,
+        -0.37 * delta_h1e};
+    const std::vector<Eigen::MatrixXd> delta_factor_block{
+        delta_factors,
+        0.21 * delta_factors};
+    const std::vector<Eigen::MatrixXd> delta_overlap_block{
+        delta_overlap,
+        -0.16 * delta_overlap};
+    const auto block_directions =
+        xmvb::vb::evaluate_regular_ri_same_spin_direction_batch(
+            occ_left,
+            occ_right,
+            h1e,
+            delta_h1e_block,
+            n_active,
+            direct_ri.ri_active_pair_factors,
+            delta_factor_block,
+            overlap,
+            delta_overlap_block,
+            direct_phi.total_phi,
+            direct_inverse_gradient);
+    for (std::size_t block = 0; block < block_directions.size(); ++block) {
+      const auto scalar_direction =
+          xmvb::vb::evaluate_regular_ri_same_spin_direction(
+              occ_left,
+              occ_right,
+              h1e,
+              delta_h1e_block[block],
+              n_active,
+              direct_ri.ri_active_pair_factors,
+              delta_factor_block[block],
+              overlap,
+              delta_overlap_block[block],
+              direct_phi.total_phi,
+              direct_inverse_gradient);
+      require_close(
+          block_directions[block].delta_total_hamiltonian,
+          scalar_direction.delta_total_hamiltonian,
+          1.0e-13,
+          "block RI directional Hamiltonian");
+      require_matrix_close(
+          block_directions[block].delta_first_cofactor,
+          scalar_direction.delta_first_cofactor,
+          1.0e-13,
+          "block RI directional first cofactor");
+      require_matrix_close(
+          block_directions[block].delta_overlap_hamiltonian_gradient,
+          scalar_direction.delta_overlap_hamiltonian_gradient,
+          1.0e-13,
+          "block RI directional overlap-Hamiltonian gradient");
+    }
+
+    xmvb::vb::SameSpinPairCacheContext pair_cache;
+    pair_cache.alpha_reuse_table.unique_determinants = {occ_left};
+    pair_cache.alpha_pair_cache.resize(1);
+    pair_cache.alpha_pair_cache.front().overlap_result = overlap;
+    pair_cache.alpha_pair_cache.front().has_same_spin_phi_cache = true;
+    pair_cache.alpha_pair_cache.front().same_spin_total_phi =
+        direct_phi.total_phi;
+    pair_cache.alpha_pair_cache.front().same_spin_inverse_overlap_gradient =
+        direct_inverse_gradient;
+    pair_cache.beta_reuses_alpha_pair_cache = true;
+    pair_cache.close_shell_diagonal_reuses_same_spin_pair_cache = true;
+    pair_cache.use_same_spin_pair_cache = true;
+    Eigen::MatrixXd global_delta_overlap =
+        Eigen::MatrixXd::Zero(n_active, n_active);
+    for (int left = 0; left < n_electrons; ++left) {
+      for (int right = 0; right < n_electrons; ++right) {
+        global_delta_overlap(occ_right[right], occ_left[left]) =
+            delta_overlap(right, left);
+      }
+    }
+    std::vector<double> overlap_direction(
+        global_delta_overlap.data(),
+        global_delta_overlap.data() + global_delta_overlap.size());
+    std::vector<double> h1e_direction(
+        delta_h1e.data(), delta_h1e.data() + delta_h1e.size());
+    const std::vector<double> unused_packed_direction;
+    xmvb::vb::ActiveSpaceIntegralDirectionView first_view{
+        overlap_direction, h1e_direction, unused_packed_direction};
+    Eigen::MatrixXd second_global_overlap = -0.16 * global_delta_overlap;
+    Eigen::MatrixXd second_h1e = -0.37 * delta_h1e;
+    std::vector<double> second_overlap_direction(
+        second_global_overlap.data(),
+        second_global_overlap.data() + second_global_overlap.size());
+    std::vector<double> second_h1e_direction(
+        second_h1e.data(), second_h1e.data() + second_h1e.size());
+    xmvb::vb::ActiveSpaceIntegralDirectionView second_view{
+        second_overlap_direction,
+        second_h1e_direction,
+        unused_packed_direction};
+    const std::vector<xmvb::vb::ActiveSpaceIntegralDirectionView> views{
+        first_view, second_view};
+    const auto scalar_cache =
+        xmvb::vb::build_same_spin_directional_pair_cache(
+            pair_cache,
+            n_active,
+            first_view,
+            &h1e,
+            &direct_ri.ri_active_pair_factors,
+            &delta_factors);
+    const auto cache_block =
+        xmvb::vb::build_same_spin_directional_pair_cache_batch(
+            pair_cache,
+            n_active,
+            views,
+            &h1e,
+            &direct_ri.ri_active_pair_factors,
+            &delta_factor_block);
+    require_matrix_close(
+        cache_block.front().alpha.delta_regular_total_hamiltonian_matrix,
+        scalar_cache.alpha.delta_regular_total_hamiltonian_matrix,
+        1.0e-13,
+        "block RI pair-cache Hamiltonian");
+    require_matrix_close(
+        cache_block.front().alpha.delta_overlap_determinant_matrix,
+        scalar_cache.alpha.delta_overlap_determinant_matrix,
+        1.0e-13,
+        "block RI pair-cache overlap");
 
     std::cout << "RI pair contractions agree with the packed reference\n";
     return 0;

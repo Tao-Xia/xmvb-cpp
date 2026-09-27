@@ -69,6 +69,27 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
     double total_phi,
     const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient);
 
+/**
+ * @brief Differentiates one regular RI pair along several tangent directions.
+ *
+ * Accepted occupied-block quantities are evaluated once and shared by every
+ * direction. Direction vectors must have identical cardinality and matrix
+ * dimensions.
+ */
+std::vector<RegularRiSameSpinDirection>
+evaluate_regular_ri_same_spin_direction_batch(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    const std::vector<Eigen::MatrixXd>& delta_h1e_act,
+    int n_active_orbitals,
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_active_pair_factors,
+    const std::vector<Eigen::MatrixXd>& delta_ri_active_pair_factors,
+    const DeterminantOverlapResult& overlap,
+    const std::vector<Eigen::MatrixXd>& delta_overlap_blocks,
+    double total_phi,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient);
+
 Eigen::MatrixXd build_overlap_submatrix(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,

@@ -19,6 +19,17 @@ SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors);
 
+std::vector<SameSpinDirectionalScalarMatrices>
+build_directional_pair_scalar_matrices_batch(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    int n_unique_determinants,
+    int n_active_orbitals,
+    const std::vector<ActiveSpaceIntegralDirectionView>& directions,
+    const Eigen::MatrixXd* accepted_active_one_electron,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const std::vector<Eigen::MatrixXd>* directional_ri_active_pair_factors);
+
 void accumulate_one_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,

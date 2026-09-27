@@ -332,6 +332,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         !direct_active_gradient &&
         (components.local_active_response || components.structure_response ||
          build_orbital_coupling);
+    std::vector<ActiveSpaceIntegralDirectionView> integral_directions;
+    integral_directions.reserve(static_cast<std::size_t>(n_directions));
     for (Eigen::Index column = 0; column < n_directions; ++column) {
       PrecomputedOuterResponse& outer =
           precomputed_directions[column].outer_response.emplace();
@@ -353,11 +355,11 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
                     static_cast<std::size_t>(column)]);
         delta_packed_two_electron = Eigen::Map<const Eigen::VectorXd>(
             packed.data(), static_cast<Eigen::Index>(packed.size()));
-      } else {
+      } else if (!accepted_ri_two_electron_cache_.has_value()) {
         delta_packed_two_electron =
             delta_packed_active_two_electron_columns.col(column);
       }
-      const ActiveSpaceIntegralDirectionView integral_direction =
+      integral_directions.emplace_back(
           build_active_integral_direction(
               precomputed_directions[column]
                   .orbital_preparation_directional_result,
@@ -367,30 +369,40 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
                   : nullptr,
               nullptr,
               &outer.integral_direction,
-              packed_outer_two_electron_required);
+              packed_outer_two_electron_required));
       integral_seconds += detail::exact_hvp_elapsed_seconds(integral_start);
+    }
 
-      const auto structure_start = std::chrono::steady_clock::now();
+    const auto structure_start = std::chrono::steady_clock::now();
+    std::vector<SameSpinDirectionalPairCache> directional_pair_caches;
+    if (pair_cache_required) {
+      directional_pair_caches = build_same_spin_directional_pair_cache_batch(
+          accepted_point_context_->same_spin_pair_cache,
+          n_active_orbitals,
+          integral_directions,
+          accepted_ri_two_electron_cache_.has_value()
+              ? &accepted_point_context_->prepared_active_space
+                     .active_space_one_electron_result.h1e_act
+              : nullptr,
+          accepted_ri_two_electron_cache_.has_value()
+              ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
+              : nullptr,
+          accepted_ri_two_electron_cache_.has_value()
+              ? &ri_active_pair_factor_directions
+              : nullptr);
+    }
+    for (Eigen::Index column = 0; column < n_directions; ++column) {
+      PrecomputedOuterResponse& outer =
+          *precomputed_directions[column].outer_response;
       if (pair_cache_required) {
-        outer.pair_cache = build_same_spin_directional_pair_cache(
-            accepted_point_context_->same_spin_pair_cache,
-            n_active_orbitals,
-            integral_direction,
-            &accepted_point_context_->prepared_active_space
-                 .active_space_one_electron_result.h1e_act,
-            accepted_ri_two_electron_cache_.has_value()
-                ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
-                : nullptr,
-            accepted_ri_two_electron_cache_.has_value()
-                ? &ri_active_pair_factor_directions[
-                      static_cast<std::size_t>(column)]
-                : nullptr);
+        outer.pair_cache = std::move(
+            directional_pair_caches[static_cast<std::size_t>(column)]);
       }
       if (components.structure_response || build_orbital_coupling) {
         SelectedStateDirectionalStructureImages images =
             build_selected_structure_direction(
                 outer_response_context(),
-                integral_direction,
+                integral_directions[static_cast<std::size_t>(column)],
                 outer.pair_cache,
                 accepted_ri_two_electron_cache_.has_value()
                     ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
@@ -425,8 +437,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         }
       }
       outer.integral_direction.packed_two_electron.clear();
-      structure_seconds += detail::exact_hvp_elapsed_seconds(structure_start);
     }
+    structure_seconds += detail::exact_hvp_elapsed_seconds(structure_start);
     apply_timing_totals_
         .outer_response_active_space_integrals_wall_time_seconds +=
         integral_seconds;

@@ -482,10 +482,10 @@ int main() {
         Eigen::MatrixXd::Constant(1, 1, 0.04 * (pair + 1));
   }
   const std::vector<double> zero_overlap_direction(4, 0.0);
-  const std::vector<double> empty_one_electron_direction;
+  const std::vector<double> zero_one_electron_direction(4, 0.0);
   const xmvb::vb::ActiveSpaceIntegralDirectionView ri_direction_view{
       zero_overlap_direction,
-      empty_one_electron_direction,
+      zero_one_electron_direction,
       packed_ri_direction};
   const auto packed_directional_pairs =
       xmvb::vb::detail::build_directional_opposite_spin_pair_data(
@@ -524,6 +524,38 @@ int main() {
           std::abs(packed_values[channel] - factor_values[channel]) <= 1.0e-13,
           "RI-native opposite-spin direction disagrees with packed reference");
     }
+  }
+
+  const std::vector<xmvb::vb::ActiveSpaceIntegralDirectionView>
+      direction_block{ri_direction_view, ri_direction_view};
+  const auto scalar_pair_direction =
+      xmvb::vb::build_same_spin_directional_pair_cache(
+          eager_cache,
+          2,
+          ri_direction_view);
+  const auto block_pair_directions =
+      xmvb::vb::build_same_spin_directional_pair_cache_batch(
+          eager_cache,
+          2,
+          direction_block,
+          nullptr,
+          nullptr,
+          nullptr);
+  require(
+      block_pair_directions.size() == direction_block.size(),
+      "same-spin direction block returned the wrong width");
+  for (const auto& block_direction : block_pair_directions) {
+    require(
+        (block_direction.alpha.delta_overlap_determinant_matrix -
+         scalar_pair_direction.alpha.delta_overlap_determinant_matrix)
+                .norm() <= 1.0e-14 &&
+            (block_direction.alpha.delta_regular_total_hamiltonian_matrix -
+             scalar_pair_direction.alpha.delta_regular_total_hamiltonian_matrix)
+                    .norm() <= 1.0e-14 &&
+            (block_direction.alpha.delta_singular_total_hamiltonian_matrix -
+             scalar_pair_direction.alpha.delta_singular_total_hamiltonian_matrix)
+                    .norm() <= 1.0e-14,
+        "same-spin direction block disagrees with scalar construction");
   }
 
   xmvb::vb::SameSpinPairCacheContext cache;
