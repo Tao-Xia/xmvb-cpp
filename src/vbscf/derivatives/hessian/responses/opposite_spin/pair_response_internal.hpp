@@ -54,17 +54,4 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
     const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 
-std::vector<DirectionalOppositeSpinPairData>
-build_directional_opposite_spin_pair_data(
-    const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-    int n_unique_determinants,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const ActiveSpaceIntegralDirectionView& direction,
-    const std::vector<SameSpinPolynomialDirectionalPairData>&
-        precomputed_directional_pair_data,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
-
 }  // namespace xmvb::vb::detail

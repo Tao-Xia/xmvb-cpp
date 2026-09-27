@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <stdexcept>
 
-#include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -87,39 +86,6 @@ std::vector<double> apply_directional_two_electron_kernel(
     }
   }
   return image;
-}
-
-std::vector<double> apply_directional_ri_two_electron_kernel(
-    const OppositeSpinPackedPairProjection& projection,
-    const Eigen::MatrixXd& accepted_factors,
-    const Eigen::MatrixXd& directional_factors) {
-  if (accepted_factors.rows() != directional_factors.rows() ||
-      accepted_factors.cols() != directional_factors.cols()) {
-    throw std::invalid_argument(
-        "accepted and directional RI pair factors have inconsistent dimensions");
-  }
-
-  const int n_packed_pairs = static_cast<int>(accepted_factors.cols());
-  Eigen::VectorXd accepted_auxiliary =
-      Eigen::VectorXd::Zero(accepted_factors.rows());
-  Eigen::VectorXd directional_auxiliary =
-      Eigen::VectorXd::Zero(accepted_factors.rows());
-  for (std::size_t entry = 0;
-       entry < projection.packed_pair_indices.size();
-       ++entry) {
-    const int packed_pair = projection.packed_pair_indices[entry];
-    if (packed_pair < 0 || packed_pair >= n_packed_pairs) {
-      throw std::invalid_argument("opposite-spin packed-pair index out of range");
-    }
-    const double value = projection.packed_pair_values[entry];
-    accepted_auxiliary.noalias() += accepted_factors.col(packed_pair) * value;
-    directional_auxiliary.noalias() += directional_factors.col(packed_pair) * value;
-  }
-
-  const Eigen::VectorXd image =
-      accepted_factors.transpose() * directional_auxiliary +
-      directional_factors.transpose() * accepted_auxiliary;
-  return std::vector<double>(image.data(), image.data() + image.size());
 }
 
 }  // namespace
@@ -354,104 +320,6 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
           kernel_direction[packed_pair];
       result.projected_channels[packed_pair](left_local, right_local) =
           projection.projected_pair_values[packed_pair];
-    }
-  }
-  return result;
-}
-
-std::vector<DirectionalOppositeSpinPairData>
-build_directional_opposite_spin_pair_data(
-    const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-    int n_unique_determinants,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const ActiveSpaceIntegralDirectionView& direction,
-    const std::vector<SameSpinPolynomialDirectionalPairData>&
-        precomputed_directional_pair_data,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
-  const std::size_t expected_size =
-      static_cast<std::size_t>(n_unique_determinants) *
-      static_cast<std::size_t>(n_unique_determinants);
-  if (unique_determinants.size() !=
-          static_cast<std::size_t>(n_unique_determinants) ||
-      ordered_pair_cache.size() != expected_size ||
-      precomputed_directional_pair_data.size() != expected_size) {
-    throw std::invalid_argument(
-        "opposite-spin pair direction dimensions are inconsistent");
-  }
-  if ((accepted_ri_active_pair_factors == nullptr) !=
-      (directional_ri_active_pair_factors == nullptr)) {
-    throw std::invalid_argument(
-        "opposite-spin RI pair response requires both accepted and directional factors");
-  }
-  if (accepted_ri_active_pair_factors != nullptr &&
-      (accepted_ri_active_pair_factors->cols() !=
-           packed_active_pair_count(n_active_orbitals) ||
-       accepted_ri_active_pair_factors->rows() !=
-           directional_ri_active_pair_factors->rows() ||
-       accepted_ri_active_pair_factors->cols() !=
-           directional_ri_active_pair_factors->cols())) {
-    throw std::invalid_argument(
-        "opposite-spin RI pair response factor dimensions are inconsistent");
-  }
-
-  std::vector<DirectionalOppositeSpinPairData> result(expected_size);
-  const ActiveSpaceTwoElectronView two_electron_view =
-      make_active_space_two_electron_view(active_space_two_electron_result);
-  const int n_threads = xmvb::effective_openmp_thread_count();
-#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
-  for (int left = 0; left < n_unique_determinants; ++left) {
-    for (int right = 0; right < n_unique_determinants; ++right) {
-      const std::size_t pair_index = ordered_spin_pair_storage_index(
-          left,
-          right,
-          n_unique_determinants);
-      if (unique_determinants[left].empty()) {
-        continue;
-      }
-
-      auto& entry = result[pair_index];
-      entry.delta_overlap_submatrix = build_overlap_submatrix(
-          unique_determinants[left],
-          unique_determinants[right],
-          direction.overlap,
-          n_active_orbitals);
-      entry.delta_first_order_cofactor_projection =
-          build_sparse_packed_pair_projection(
-              unique_determinants[left],
-              unique_determinants[right],
-              precomputed_directional_pair_data[pair_index].delta_cofactor_1st,
-              n_active_orbitals);
-
-      auto& projected_direction =
-          entry.delta_first_order_cofactor_projection;
-      projected_direction.projected_pair_values =
-          apply_active_space_two_electron_kernel_to_sparse_projection(
-              two_electron_view,
-              n_active_orbitals,
-              projected_direction.packed_pair_indices,
-              projected_direction.packed_pair_values);
-      const auto& accepted_projection =
-          ordered_pair_cache[pair_index]
-              .opposite_spin_pair_cache.first_order_cofactor_projection;
-      const std::vector<double> kernel_direction =
-          accepted_ri_active_pair_factors != nullptr
-          ? apply_directional_ri_two_electron_kernel(
-                accepted_projection,
-                *accepted_ri_active_pair_factors,
-                *directional_ri_active_pair_factors)
-          : apply_directional_two_electron_kernel(
-                n_active_orbitals,
-                accepted_projection,
-                direction.packed_two_electron);
-      for (std::size_t packed_pair = 0;
-           packed_pair < kernel_direction.size();
-           ++packed_pair) {
-        projected_direction.projected_pair_values[packed_pair] +=
-            kernel_direction[packed_pair];
-      }
     }
   }
   return result;

@@ -488,34 +488,41 @@ int main() {
       zero_overlap_direction,
       zero_one_electron_direction,
       packed_ri_direction};
-  const auto packed_directional_pairs =
-      xmvb::vb::detail::build_directional_opposite_spin_pair_data(
+  xmvb::vb::detail::SameSpinDirectionalPairTile same_spin_tile;
+  same_spin_tile.left_begin = 0;
+  same_spin_tile.right_begin = 0;
+  same_spin_tile.delta_overlap = Eigen::MatrixXd::Zero(2, 2);
+  same_spin_tile.delta_regular_hamiltonian = Eigen::MatrixXd::Zero(2, 2);
+  same_spin_tile.delta_singular_hamiltonian = Eigen::MatrixXd::Zero(2, 2);
+  same_spin_tile.pairs = polynomial_pair_directions;
+  const auto packed_directional_tile =
+      xmvb::vb::detail::build_directional_opposite_spin_pair_tile(
           one_electron_determinants,
           eager_cache.alpha_pair_cache,
           2,
           2,
           ri_pair_result,
           ri_direction_view,
-          polynomial_pair_directions);
-  const auto factor_directional_pairs =
-      xmvb::vb::detail::build_directional_opposite_spin_pair_data(
+          same_spin_tile);
+  const auto factor_directional_tile =
+      xmvb::vb::detail::build_directional_opposite_spin_pair_tile(
           one_electron_determinants,
           eager_cache.alpha_pair_cache,
           2,
           2,
           ri_pair_result,
           ri_direction_view,
-          polynomial_pair_directions,
+          same_spin_tile,
           &ri_pair_result.ri_active_pair_factors,
           &directional_ri_factors);
   for (std::size_t pair = 0;
-       pair < packed_directional_pairs.size();
+       pair < packed_directional_tile.pairs.size();
        ++pair) {
     const auto& packed_values =
-        packed_directional_pairs[pair]
+        packed_directional_tile.pairs[pair]
             .delta_first_order_cofactor_projection.projected_pair_values;
     const auto& factor_values =
-        factor_directional_pairs[pair]
+        factor_directional_tile.pairs[pair]
             .delta_first_order_cofactor_projection.projected_pair_values;
     require(
         packed_values.size() == factor_values.size(),
