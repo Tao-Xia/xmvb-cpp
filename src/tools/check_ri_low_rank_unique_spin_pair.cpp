@@ -639,7 +639,7 @@ double compute_ri_same_spin_two_electron_phi(
     const Eigen::MatrixXd channel_matrix = occupied_block * inverse_overlap;
     const double trace_value = channel_matrix.trace();
     phi += trace_value * trace_value -
-           (channel_matrix * channel_matrix).trace();
+           channel_matrix.cwiseProduct(channel_matrix.transpose()).sum();
   }
   return 0.5 * phi;
 }
@@ -697,7 +697,7 @@ double compute_ri_same_spin_two_electron_phi_from_blocks(
     const Eigen::MatrixXd channel_matrix = occupied_block * inverse_overlap;
     const double trace_value = channel_matrix.trace();
     phi += trace_value * trace_value -
-           (channel_matrix * channel_matrix).trace();
+           channel_matrix.cwiseProduct(channel_matrix.transpose()).sum();
   }
   return 0.5 * phi;
 }
@@ -1882,7 +1882,7 @@ double compute_phi2_from_channel_matrices(
   for (const auto& channel_matrix : channel_matrices) {
     const double trace_value = channel_matrix.trace();
     phi2 += trace_value * trace_value -
-            (channel_matrix * channel_matrix).trace();
+        channel_matrix.cwiseProduct(channel_matrix.transpose()).sum();
   }
   return 0.5 * phi2;
 }

@@ -11,6 +11,7 @@ set(XMVB_VBSCF_DETERMINANT_SOURCES
   vbscf/determinants/pairs/accepted_action.cpp
   vbscf/determinants/pairs/accepted_tile.cpp
   vbscf/determinants/pairs/traversal.cpp
+  vbscf/determinants/pairs/ri_update.cpp
   vbscf/determinants/pairs/woodbury_overlap.cpp
   vbscf/determinants/pairs/same_spin_cache.cpp
   vbscf/determinants/pairs/contractions.cpp

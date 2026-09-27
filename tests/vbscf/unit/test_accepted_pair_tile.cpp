@@ -9,8 +9,10 @@
 #include "vbscf/determinants/pairs/accepted_action.hpp"
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/determinants/pairs/ri_update.hpp"
 #include "vbscf/determinants/pairs/traversal.hpp"
 #include "vbscf/determinants/pairs/woodbury_overlap.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace {
@@ -161,6 +163,79 @@ int main() {
               certified_update->inverse_overlap_submatrix,
               direct_update.inverse_overlap_submatrix) <= 2.0e-12,
       "certified Woodbury overlap update differs from direct factorization");
+  xmvb::vb::RiPairUpdateState ri_update;
+  require(
+      ri_update.initialize(
+          strings[0],
+          strings[0],
+          update_anchor,
+          ri.ri_active_pair_factors) &&
+          ri_update.update_right(
+              strings[0],
+              strings[0],
+              strings[1],
+              update_anchor,
+              *certified_update,
+              ri.ri_active_pair_factors),
+      "regular RI channel update was rejected");
+  const auto direct_phi = xmvb::vb::compute_same_spin_original_phi(
+      strings[0],
+      strings[1],
+      h1e,
+      n_active,
+      ri,
+      direct_update,
+      nullptr);
+  double direct_one_electron_phi = 0.0;
+  for (int left = 0; left < static_cast<int>(strings[0].size()); ++left) {
+    for (int right = 0; right < static_cast<int>(strings[1].size()); ++right) {
+      direct_one_electron_phi +=
+          h1e(strings[1][right], strings[0][left]) *
+          direct_update.inverse_overlap_submatrix(left, right);
+    }
+  }
+  require(
+      std::abs(
+          ri_update.two_electron_phi() -
+          (direct_phi.total_phi - direct_one_electron_phi)) <= 2.0e-12,
+      "low-rank RI channel update changed the two-electron contraction");
+
+  xmvb::vb::DeterminantOverlapResult identity_pair;
+  identity_pair.n_electrons = 2;
+  identity_pair.overlap_submatrix = Eigen::MatrixXd::Identity(2, 2);
+  identity_pair.inverse_overlap_submatrix = Eigen::MatrixXd::Identity(2, 2);
+  identity_pair.overlap_determinant = 1.0;
+  identity_pair.log_abs_determinant = 0.0;
+  identity_pair.determinant_sign = 1.0;
+  identity_pair.nullity = 0;
+  Eigen::MatrixXd cancellation_factors = Eigen::MatrixXd::Zero(1, 6);
+  cancellation_factors(
+      0, xmvb::vb::TwoElectronIndexer::packed_pair_index(0, 1)) = 1.0e16;
+  cancellation_factors(
+      0, xmvb::vb::TwoElectronIndexer::packed_pair_index(1, 1)) = 1.0e16;
+  cancellation_factors(
+      0, xmvb::vb::TwoElectronIndexer::packed_pair_index(0, 2)) = 1.0;
+  cancellation_factors(
+      0, xmvb::vb::TwoElectronIndexer::packed_pair_index(1, 2)) = 1.0;
+  xmvb::vb::RiPairUpdateState cancellation_update;
+  require(
+      cancellation_update.initialize(
+          {0, 1}, {0, 1}, identity_pair, cancellation_factors),
+      "RI cancellation test anchor failed");
+  require(
+      !cancellation_update.update_right(
+          {0, 1},
+          {0, 1},
+          {0, 2},
+          identity_pair,
+          identity_pair,
+          cancellation_factors),
+      "uncertified cancelling RI channel update was accepted");
+  require(
+      cancellation_update.initialize(
+          {0, 1}, {0, 2}, identity_pair, cancellation_factors) &&
+          std::abs(cancellation_update.two_electron_phi() + 1.0e16) <= 1.0,
+      "direct RI reanchor did not recover the cancelling channel");
   const auto tile = provider.build(
       0,
       static_cast<int>(strings.size()),

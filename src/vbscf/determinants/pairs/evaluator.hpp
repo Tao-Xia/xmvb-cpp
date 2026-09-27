@@ -90,6 +90,21 @@ public:
       bool retain_derivative_payload = true) const;
 
   /**
+   * @brief Builds a regular pair from an already contracted two-electron phi.
+   *
+   * Low-rank RI traversals use this entry point after updating the contracted
+   * auxiliary channels. It avoids repeating the cubic RI contraction while
+   * preserving the canonical pair payload.
+   */
+  SpinDeterminantPairEvaluation evaluate_regular_same_spin_pair(
+      const std::vector<int>& occ_L,
+      const std::vector<int>& occ_R,
+      DeterminantOverlapResult overlap_result,
+      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+      double normalized_two_electron_phi,
+      bool retain_derivative_payload = true) const;
+
+  /**
    * @brief Evaluates one same-spin determinant pair from packed or RI active ERIs.
    */
   SpinDeterminantPairEvaluation evaluate_same_spin_pair(

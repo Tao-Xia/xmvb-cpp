@@ -1,5 +1,6 @@
 #include "vbscf/determinants/pairs/evaluator.hpp"
 
+#include <stdexcept>
 #include <utility>
 
 #include "vbscf/determinants/pairs/contractions.hpp"
@@ -366,6 +367,43 @@ SpinDeterminantPairEvaluation DeterminantPairEvaluator::evaluate_same_spin_pair(
         &prepared_result);
   }
   return std::move(prepared_result.evaluation);
+}
+
+SpinDeterminantPairEvaluation
+DeterminantPairEvaluator::evaluate_regular_same_spin_pair(
+    const std::vector<int>& occ_L,
+    const std::vector<int>& occ_R,
+    DeterminantOverlapResult overlap_result,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
+    double normalized_two_electron_phi,
+    bool retain_derivative_payload) const {
+  if (overlap_result.nullity != 0 ||
+      overlap_result.overlap_determinant == 0.0 ||
+      occ_L.size() != occ_R.size()) {
+    throw std::invalid_argument(
+        "low-rank same-spin evaluation requires a regular pair");
+  }
+  SpinDeterminantPairEvaluation evaluation;
+  evaluation.overlap_result = std::move(overlap_result);
+  cache_first_order_cofactor(&evaluation.overlap_result);
+  if (retain_derivative_payload) {
+    evaluation.cofactor_differential =
+        std::make_shared<const CofactorDifferential>(
+            evaluation.overlap_result);
+  }
+  const Eigen::MatrixXd cofactor = calc_cofactor_1st(
+      evaluation.overlap_result);
+  for (int left = 0; left < static_cast<int>(occ_L.size()); ++left) {
+    for (int right = 0; right < static_cast<int>(occ_R.size()); ++right) {
+      evaluation.one_electron_hamiltonian +=
+          h1e_act(occ_R[right], occ_L[left]) * cofactor(right, left);
+    }
+  }
+  evaluation.total_hamiltonian =
+      evaluation.one_electron_hamiltonian +
+      evaluation.overlap_result.overlap_determinant *
+          normalized_two_electron_phi;
+  return evaluation;
 }
 
 SpinDeterminantPairEvaluation DeterminantPairEvaluator::evaluate_same_spin_pair(

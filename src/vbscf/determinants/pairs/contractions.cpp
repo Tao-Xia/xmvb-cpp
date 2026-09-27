@@ -333,8 +333,10 @@ SameSpinPhiResult compute_ri_same_spin_original_phi(
     }
     const Eigen::MatrixXd contracted = inverse_overlap * transition;
     const double trace = contracted.trace();
+    const double square_trace =
+        contracted.cwiseProduct(contracted.transpose()).sum();
     result.total_phi +=
-        0.5 * (trace * trace - (contracted * contracted).trace());
+        0.5 * (trace * trace - square_trace);
     if (inverse_overlap_gradient != nullptr) {
       const Eigen::MatrixXd contraction_adjoint =
           trace * Eigen::MatrixXd::Identity(n_electrons, n_electrons) -
