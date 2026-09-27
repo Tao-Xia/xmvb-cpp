@@ -718,8 +718,10 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
           accepted_point_context_->prepared_active_space
               .active_space_two_electron_result,
           active_space_integral_direction,
-          &accepted_point_context_->prepared_active_space
-               .active_space_one_electron_result.h1e_act,
+          accepted_ri_two_electron_cache_.has_value()
+              ? &accepted_point_context_->prepared_active_space
+                     .active_space_one_electron_result.h1e_act
+              : nullptr,
           accepted_ri_two_electron_cache_.has_value()
               ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
               : nullptr,

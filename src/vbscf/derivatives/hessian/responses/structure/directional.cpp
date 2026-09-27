@@ -303,8 +303,10 @@ build_selected_structure_direction_from_pair_tiles(
       n_active_orbitals,
       accepted_point.prepared_active_space.active_space_two_electron_result,
       direction,
-      &accepted_point.prepared_active_space
-           .active_space_one_electron_result.h1e_act,
+      accepted_ri_active_pair_factors != nullptr
+          ? &accepted_point.prepared_active_space
+                 .active_space_one_electron_result.h1e_act
+          : nullptr,
       accepted_ri_active_pair_factors,
       directional_ri_active_pair_factors,
       true,
