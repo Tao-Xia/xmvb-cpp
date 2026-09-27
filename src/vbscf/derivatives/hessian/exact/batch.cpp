@@ -273,12 +273,6 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
     ri_active_pair_factor_directions =
         compute_ri_active_pair_factor_directional_derivative_batch(
             *accepted_ri_two_electron_cache_, dense_active_directions);
-    if (compute_outer_response) {
-      delta_packed_active_two_electron_columns =
-          compute_ri_packed_active_two_electron_integral_directional_derivative_batch(
-              *accepted_ri_two_electron_cache_,
-              ri_active_pair_factor_directions);
-    }
     const double batch_active_two_electron_seconds =
         detail::exact_hvp_elapsed_seconds(batch_active_two_electron_start_time);
     apply_timing_totals_.active_two_electron_wall_time_seconds +=
@@ -344,8 +338,19 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
           delta_h1e * accepted_active_auxiliary_orbitals_;
 
       const auto integral_start = std::chrono::steady_clock::now();
-      const Eigen::VectorXd delta_packed_two_electron =
-          delta_packed_active_two_electron_columns.col(column);
+      Eigen::VectorXd delta_packed_two_electron;
+      if (accepted_ri_two_electron_cache_.has_value()) {
+        const std::vector<double> packed =
+            compute_ri_packed_active_two_electron_integral_directional_derivative(
+                *accepted_ri_two_electron_cache_,
+                ri_active_pair_factor_directions[
+                    static_cast<std::size_t>(column)]);
+        delta_packed_two_electron = Eigen::Map<const Eigen::VectorXd>(
+            packed.data(), static_cast<Eigen::Index>(packed.size()));
+      } else {
+        delta_packed_two_electron =
+            delta_packed_active_two_electron_columns.col(column);
+      }
       const ActiveSpaceIntegralDirectionView integral_direction =
           build_active_integral_direction(
               precomputed_directions[column]
@@ -451,10 +456,21 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
     const Eigen::VectorXd delta_h1e = delta_h1e_columns.col(column);
     const Eigen::VectorXd inactive_density_gradient =
         inactive_density_gradient_columns.col(column);
-    const Eigen::VectorXd delta_packed_active_two_electron =
-        compute_outer_response
-            ? delta_packed_active_two_electron_columns.col(column)
-            : Eigen::VectorXd();
+    Eigen::VectorXd delta_packed_active_two_electron;
+    if (compute_outer_response) {
+      if (accepted_ri_two_electron_cache_.has_value()) {
+        const std::vector<double> packed =
+            compute_ri_packed_active_two_electron_integral_directional_derivative(
+                *accepted_ri_two_electron_cache_,
+                ri_active_pair_factor_directions[
+                    static_cast<std::size_t>(column)]);
+        delta_packed_active_two_electron = Eigen::Map<const Eigen::VectorXd>(
+            packed.data(), static_cast<Eigen::Index>(packed.size()));
+      } else {
+        delta_packed_active_two_electron =
+            delta_packed_active_two_electron_columns.col(column);
+      }
+    }
     if (compute_outer_response) {
       auto& packed = precomputed_directions[column]
                          .outer_response
