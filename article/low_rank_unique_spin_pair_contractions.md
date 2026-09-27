@@ -783,6 +783,267 @@ minors of $X$. The contracted interpolation in Section 10.2 applies
 componentwise to eqs 34b, 34i, and 34k. Hence the arbitrary-order formulation
 does not introduce an inverse-based approximation at ill-conditioned pairs.
 
+### 4.7 Scaling lower bounds and the actual production target
+
+The phrase "low-scaling arbitrary-order density" refers to three distinct
+computational problems. They must not be assigned the same complexity.
+
+Let
+
+$$
+n = \text{number of occupied orbitals in one spin string},
+$$
+
+$$
+N_q=\binom{n}{q},
+$$
+
+and let $P$ denote the number of touched ordered unique-spin-string pairs.
+The structure-to-string contraction determines $P$. In the dense worst case,
+
+$$
+P=U^2,
+$$
+
+but a selected structure space can give a substantially smaller touched-pair
+support. Determinants appearing in a VB-structure expansion are not an
+additional computational layer in the proposed algorithm: the contraction is
+formed directly between unique spin strings.
+
+#### 4.7.1 Implicit representation of every RDM order
+
+For one regular pair, the complete hierarchy
+
+$$
+\Gamma^{(q)}=\Omega\mathcal C_q(K^{\mathrm T}),
+\qquad q=0,1,\ldots,n,
+$$
+
+is determined exactly by only
+
+$$
+(\Omega,K).
+$$
+
+It is therefore unnecessary to materialize any compound level merely to
+carry the pair state across the string graph. Under one site substitution,
+
+$$
+X'=X+uv^{\mathrm T},
+$$
+
+the determinant lemma and Sherman--Morrison relation give
+
+$$
+d=1+v^{\mathrm T}Ku,
+$$
+
+$$
+\Omega'=d\Omega,
+$$
+
+$$
+K'=K-\frac{(Ku)(v^{\mathrm T}K)}{d}.
+$$
+
+Maintaining an explicit dense $K$ therefore costs
+
+$$
+\Theta(n^2)
+$$
+
+per graph edge and requires
+
+$$
+\Theta(n^2)
+$$
+
+pair-local storage, independently of the requested RDM order. For $P$ touched
+pairs, the regular-pair propagation target is consequently
+
+$$
+T_{\mathrm{implicit}}=\Theta(Pn^2),
+\qquad
+M_{\mathrm{implicit}}=\Theta(n^2).
+\tag{34o}
+$$
+
+This is the first genuine scaling reduction: independent pair factorization
+costs $O(Pn^3)$, whereas the graph traversal removes one power of $n$ for the
+entire arbitrary-order hierarchy. The tangent pair
+
+$$
+(\dot\Omega,\dot K)
+$$
+
+and the reverse adjoints
+
+$$
+(\overline\Omega,\overline K)
+$$
+
+obey differentiated rank-one relations with the same $\Theta(n^2)$ edge
+cost. Thus accepted densities, orbital gradients, and matrix-free HVPs can
+share one asymptotic propagation bound.
+
+Equation 34o assumes regular pairs. A production algorithm must maintain the
+same target for ill-conditioned pairs by a certified rank-one update of a
+rank-revealing factorization. Recomputing an SVD gives an $O(n^3)$ anchor;
+rank-one SVD updating has an $O(n^2)$ target. A full refactorization remains a
+numerical recovery operation, not the nominal pair cost.
+
+#### 4.7.2 Explicit materialization has an unavoidable output bound
+
+A full occupied-index order-$q$ transition density contains
+
+$$
+N_q^2=\binom{n}{q}^2
+$$
+
+numbers. Any algorithm that explicitly writes this object for every touched
+pair therefore satisfies
+
+$$
+T_{\mathrm{explicit}}
+\geq
+\Omega(PN_q^2).
+\tag{34p}
+$$
+
+No Woodbury, interpolation, RI, or parallel implementation can reduce this
+lower bound while retaining the explicit output.
+
+The insertion in eq 34e has the factorized exterior form
+
+$$
+\mathscr I_q(\mathcal C_{q-1};b,a)
+=
+L_q(b)\,\mathcal C_{q-1}\,L_q(a)^{\mathrm T},
+\tag{34q}
+$$
+
+where every row of the exterior-insertion matrix $L_q$ has at most $q$
+nonzero entries. Sparse--dense association reduces the materialization cost
+from a literal $q^2$ sum for every output element to
+
+$$
+O\!\left(
+qN_qN_{q-1}+qN_q^2
+\right).
+\tag{34r}
+$$
+
+For fixed physical order and $q\le n/2$, eq 34r is output-linear up to the
+order-dependent factor $q$. Hence the best possible explicit algorithm is
+
+$$
+T_{\mathrm{explicit}}
+=
+\Theta(PN_q^2)
+$$
+
+with respect to $n$ at fixed $q$. This is still exponentially unfavorable as
+$q$ approaches the middle of the occupied space because the requested output
+itself is exponentially large.
+
+The global active-orbital RDM has an analogous output bound. Its exact sum over
+arbitrary dense pair weights is not generally compressible: a sum of
+compound matrices need not remain one compound matrix. Consequently, an
+explicit high-order global RDM should be formed only when it is itself the
+requested observable.
+
+#### 4.7.3 Contracted densities permit the qualitative reduction
+
+Energy, gradient, and HVP evaluation usually need a scalar or a low-rank
+adjoint contraction, not the explicit $N_q\times N_q$ density. For a general
+unstructured weight tensor $W^{(q)}$, reading its local occupied block already
+requires
+
+$$
+\Omega(N_q^2)
+$$
+
+work per pair. The exponent can be removed only when the operator or adjoint
+also has a factorized representation.
+
+For example, suppose the order-$q$ weight is a sum of $R_q$ decomposable
+exterior products,
+
+$$
+W^{(q)}
+=
+\sum_{r=1}^{R_q}
+\mathcal C_q(L_r)\,
+\mathcal C_q(R_r)^{\mathrm T}.
+\tag{34s}
+$$
+
+Cauchy--Binet gives the contraction without constructing the RDM,
+
+$$
+\left\langle
+W^{(q)},\mathcal C_q(K^{\mathrm T})
+\right\rangle
+=
+\sum_{r=1}^{R_q}
+\det\!\left(L_r^{\mathrm T}K^{\mathrm T}R_r\right).
+\tag{34t}
+$$
+
+For dense factors, eq 34t costs
+
+$$
+O\!\left[
+R_q\left(qn^2+q^3\right)
+\right]
+\tag{34u}
+$$
+
+per independently contracted pair. At fixed $q$, this is
+
+$$
+O(R_qn^2),
+$$
+
+rather than $O(n^{2q})$. The same small matrices provide analytic forward and
+reverse derivatives.
+
+The two-electron case illustrates why integral factorization is essential.
+With an unstructured exact four-index tensor, a general pair contraction
+retains an $O(n^4)$ term. RI changes the consumer rather than the pair-density
+identity and gives the graph-traversal target
+
+$$
+T_{\mathrm{RI},q=2}
+=
+O\!\left(
+A N_{\mathrm{aux}}n^3
++
+P N_{\mathrm{aux}}n^2
+\right),
+\tag{34v}
+$$
+
+where $A$ is the number of independently factorized anchors. The first term
+builds anchor auxiliary channels; the second propagates them by rank-one
+updates. COSX, THC, or an order-specific tensor factorization plays the same
+role for other consumers. Without such a factorization, Woodbury alone cannot
+remove the dense interaction-tensor exponent.
+
+The production objective is therefore not to retain every compound matrix.
+It is:
+
+1. propagate the exact implicit state $(\Omega,K)$ and its tangent/adjoint at
+   $O(n^2)$ per touched pair;
+2. expose order-$q$ density elements only on demand;
+3. fuse factorized Hamiltonian, gradient, and HVP consumers into the same tile
+   traversal; and
+4. materialize a high-order RDM only when that RDM is the requested output.
+
+The compound hierarchy of Sections 4.4--4.6 is therefore a mathematical
+reference and an explicit-output kernel. It must not become the default
+production state for contracted VBSCF evaluation.
+
 ## 5. Opposite-spin contraction in auxiliary space
 
 For spin sector $\sigma\in\{\alpha,\beta\}$, define the unnormalized
