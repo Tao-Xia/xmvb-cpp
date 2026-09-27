@@ -29,10 +29,11 @@ struct ActiveSpaceTwoElectronResult {
   /**
    * @brief Packed active-space two-electron integrals `GGO`.
    *
-   * The exact path always populates this buffer. The RI path may also fill it
-   * as an auxiliary dense lookup cache for determinant-pair kernels while
-   * still keeping `representation == ResolutionOfIdentity` so reverse-mode can
-   * backpropagate through the RI factors.
+   * The exact path always populates this buffer. The RI path fills it as a
+   * cache-friendly lookup tile only when the complete tile and its construction
+   * workspace are memory-dominated by the resident RI factor matrix. The
+   * representation remains `ResolutionOfIdentity`, so reverse-mode continues
+   * to backpropagate through the RI factors.
    */
   std::vector<double> packed_active_two_electron_integrals;
 

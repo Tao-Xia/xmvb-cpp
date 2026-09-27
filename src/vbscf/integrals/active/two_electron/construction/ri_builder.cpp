@@ -5,6 +5,7 @@
 
 #include <Eigen/Core>
 
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/transformation/packed_pair_map.hpp"
 
 namespace xmvb::vb {
@@ -47,6 +48,36 @@ Eigen::MatrixXd build_dense_active_coefficients(
     }
   }
   return dense_active_coefficients;
+}
+
+std::vector<double> build_memory_dominated_pair_kernel(
+    const Eigen::Ref<const Eigen::MatrixXd>& active_pair_factors) {
+  const std::size_t n_pairs =
+      static_cast<std::size_t>(active_pair_factors.cols());
+  const std::size_t factor_elements =
+      static_cast<std::size_t>(active_pair_factors.size());
+  const std::size_t gram_elements = n_pairs * n_pairs;
+  const std::size_t packed_elements = n_pairs * (n_pairs + 1) / 2;
+
+  // A materialized pair kernel is useful only when its construction workspace
+  // plus persistent packed result does not exceed one additional copy of the
+  // already resident RI factor matrix. This dimension-only rule gives small
+  // and medium active spaces one cache-friendly GEMM while preventing an
+  // unconditional O(n_active^4) allocation for large active spaces.
+  if (gram_elements + packed_elements > factor_elements) {
+    return {};
+  }
+
+  const Eigen::MatrixXd gram =
+      active_pair_factors.transpose() * active_pair_factors;
+  std::vector<double> packed(packed_elements, 0.0);
+  for (int column = 0; column < active_pair_factors.cols(); ++column) {
+    for (int row = 0; row <= column; ++row) {
+      packed[TwoElectronIndexer::packed_pair_of_pairs_index(row, column)] =
+          gram(row, column);
+    }
+  }
+  return packed;
 }
 
 }  // namespace
@@ -92,6 +123,8 @@ ActiveSpaceTwoElectronResult RiActiveSpaceTwoElectronBuilder::build(
       ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity;
   result.n_auxiliary_functions = ao_ri_result.n_auxiliary_functions;
   result.ri_active_pair_factors = active_pair_factors;
+  result.packed_active_two_electron_integrals =
+      build_memory_dominated_pair_kernel(active_pair_factors);
   result.dense_active_coefficients = dense_active_coefficients;
 
   return result;
