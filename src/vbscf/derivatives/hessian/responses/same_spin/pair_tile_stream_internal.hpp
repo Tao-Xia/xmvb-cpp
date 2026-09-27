@@ -35,6 +35,7 @@ void stream_directional_pair_tiles(
     const Eigen::MatrixXd* directional_ri_active_pair_factors,
     bool include_opposite_spin,
     const DirectionalPairTileConsumer& consume,
+    int n_response_states = 0,
     std::size_t workspace_bytes = kPairTileWorkspaceBytes);
 
 }  // namespace xmvb::vb::detail

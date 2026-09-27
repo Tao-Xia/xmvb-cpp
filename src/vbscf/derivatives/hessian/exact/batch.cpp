@@ -470,7 +470,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
                       static_cast<std::size_t>(column)]
                 : nullptr,
             true,
-            consume_local_active_tile);
+            consume_local_active_tile,
+            n_selected_states);
       }
       if (local_active_accumulator) {
         outer.local_active_gradient = local_active_accumulator->finish();

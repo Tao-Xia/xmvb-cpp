@@ -125,6 +125,7 @@ void stream_directional_pair_tiles(
     const Eigen::MatrixXd* directional_ri_active_pair_factors,
     bool include_opposite_spin,
     const DirectionalPairTileConsumer& consume,
+    int n_response_states,
     std::size_t workspace_bytes) {
   if (!accepted_pair_cache.has_pair_providers() || !consume) {
     throw std::invalid_argument(
@@ -132,12 +133,19 @@ void stream_directional_pair_tiles(
   }
   const bool shared =
       accepted_pair_cache.shares_same_spin_pair_cache_between_spins();
-  const PairTileExtents tile_extents = plan_pair_tile_extents(
-      accepted_pair_cache,
-      n_active_orbitals,
-      accepted_two_electron,
-      include_opposite_spin,
-      workspace_bytes);
+  const PairTileExtents tile_extents = n_response_states > 0
+      ? plan_local_response_tiles(
+            accepted_pair_cache,
+            n_active_orbitals,
+            accepted_two_electron,
+            n_response_states,
+            workspace_bytes).extents
+      : plan_pair_tile_extents(
+            accepted_pair_cache,
+            n_active_orbitals,
+            accepted_two_electron,
+            include_opposite_spin,
+            workspace_bytes);
   stream_spin_table(
       accepted_pair_cache.alpha_reuse_table.unique_determinants,
       accepted_pair_cache.alpha_provider(),

@@ -492,7 +492,8 @@ int main() {
           }
           tiled_local_opposite_spin.consume(
               alpha_channel, beta_channel, accepted_tile, *opposite_tile);
-        });
+        },
+        1);
     const auto tiled_local_contribution = tiled_local_same_spin.finish();
     const auto tiled_local_opposite_contribution =
         tiled_local_opposite_spin.finish();
@@ -568,7 +569,8 @@ int main() {
             const xmvb::vb::detail::DirectionalOppositeSpinPairTileView*) {
           open_single_panel.consume(
               alpha_channel, beta_channel, accepted_tile, tile);
-        });
+        },
+        1);
     xmvb::vb::detail::LocalSameSpinTileAccumulator open_unit_tiles(
         open_shell_cache,
         open_selected,
@@ -577,7 +579,8 @@ int main() {
         active_overlap,
         response_h1e,
         direct_ri,
-        first_view);
+        first_view,
+        1);
     xmvb::vb::detail::stream_directional_pair_tiles(
         open_shell_cache,
         n_active,
@@ -596,6 +599,7 @@ int main() {
           open_unit_tiles.consume(
               alpha_channel, beta_channel, accepted_tile, tile);
         },
+        1,
         1);
     const auto open_single_panel_result = open_single_panel.finish();
     const auto open_unit_tile_result = open_unit_tiles.finish();

@@ -22,7 +22,9 @@ int plan_scalar_tile_extent(
   const std::size_t pair_count =
       static_cast<std::size_t>(n_unique) * n_unique;
   const std::size_t pair_bytes = std::max<std::size_t>(
-      1, (full_bound + pair_count - 1) / pair_count);
+      1,
+      (full_bound + pair_count - 1) / pair_count +
+          2 * sizeof(double));
   const std::size_t maximum_pairs = std::max<std::size_t>(
       1, workspace_bytes / pair_bytes);
   return std::max(

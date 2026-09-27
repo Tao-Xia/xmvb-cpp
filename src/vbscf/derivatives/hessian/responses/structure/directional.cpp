@@ -232,11 +232,11 @@ build_selected_structure_direction_from_pair_tiles(
   const auto& accepted_two_electron =
       prepared.active_space_two_electron_result;
   const detail::PairTileExtents tile_extents =
-      detail::plan_pair_tile_extents(
+      detail::plan_local_response_tiles(
           same_spin,
           n_active_orbitals,
           accepted_two_electron,
-          true);
+          n_states).extents;
 
   Eigen::MatrixXd delta_hamiltonian_selected =
       Eigen::MatrixXd::Zero(structure_action->n_structures(), n_states);
@@ -435,7 +435,8 @@ build_selected_structure_direction_from_pair_tiles(
               same_tile,
               opposite_tile);
         }
-      });
+      },
+      n_states);
 
   SelectedStateDirectionalStructureImages result;
   result.delta_hamiltonian_selected = std::move(delta_hamiltonian_selected);

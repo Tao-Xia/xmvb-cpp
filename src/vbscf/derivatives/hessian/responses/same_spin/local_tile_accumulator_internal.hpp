@@ -34,7 +34,8 @@ class LocalSameSpinTileAccumulator {
       const std::vector<double>& active_overlap,
       const Eigen::MatrixXd& active_one_electron,
       const ActiveSpaceTwoElectronResult& active_two_electron,
-      const ActiveSpaceIntegralDirectionView& direction);
+      const ActiveSpaceIntegralDirectionView& direction,
+      std::size_t workspace_bytes = kPairTileWorkspaceBytes);
 
   void consume(
       bool alpha_channel,
@@ -70,7 +71,7 @@ class LocalSameSpinTileAccumulator {
   const ActiveSpaceTwoElectronResult& active_two_electron_;
   const ActiveSpaceIntegralDirectionView& direction_;
   bool close_shell_same_spin_ = false;
-  PairTileExtents tile_extents_;
+  LocalResponseTilePlan tile_plan_;
   SameSpinPartnerActionPanel alpha_partner_panel_;
   SameSpinPartnerActionPanel beta_partner_panel_;
   std::optional<SameSpinAcceptedWeightTile> last_alpha_weights_;
