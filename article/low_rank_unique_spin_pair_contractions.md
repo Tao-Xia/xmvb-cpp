@@ -1788,6 +1788,89 @@ anchors and traversals are independent. The tile count is an execution
 parameter determined by available threads and memory, not by molecule-specific
 physical thresholds.
 
+### 9.1 Certified-component census at the initial orbital point
+
+Topological connectivity alone does not determine the useful anchor count.
+Inverse-based Woodbury propagation is admitted only when the endpoint overlap
+inverse satisfies the same condition and backward-error certificate used by
+the production pair derivatives.  Let
+
+$$
+P=P_{\mathrm r}+P_{\mathrm i}+P_{\mathrm s},
+$$
+
+where $P_{\mathrm r}$ is the number of certified regular pairs,
+$P_{\mathrm i}$ is the number of full-rank pairs requiring the exact
+interpolated representation, and $P_{\mathrm s}$ is the number of singular
+pairs.  Let $A_{\mathrm r}$ be the number of connected components in the
+subgraph induced by the $P_{\mathrm r}$ certified pairs.  This is the
+topological lower bound on the number of independently factorized regular
+anchors; it is not the number of re-anchors produced by an arbitrary linear
+traversal.
+
+Hanhai25 Slurm array job `260198`, using revision `e52eff0`, evaluated every
+ordered same-spin pair at the input orbital point with the production
+certificate.  Every tested unique-string space is the complete fixed-spin
+space and its unfiltered substitution graph has one connected component.
+
+| System | Spin | $U$ | $P_{\mathrm r}/P$ | $A_{\mathrm r}$ | Largest certified component | $P_{\mathrm s}$ |
+|---|---:|---:|---:|---:|---:|---:|
+| 241 | both | 20 | 242 / 400 | 1 | 242 | 0 |
+| 7975 | both | 20 | 334 / 400 | 1 | 334 | 0 |
+| 240 | both | 70 | 2,402 / 4,900 | 1 | 2,402 | 0 |
+| MnF2 | alpha | 8 | 30 / 64 | 2 | 29 | 0 |
+| MnF2 | beta | 28 | 500 / 784 | 1 | 500 | 0 |
+| FeCl2 | alpha | 8 | 20 / 64 | 4 | 17 | 0 |
+| FeCl2 | beta | 56 | 360 / 3,136 | 10 | 71 | 0 |
+| YAMSAI | both | 35 | 723 / 1,225 | 1 | 723 | 0 |
+| CERRAS | both | 462 | 29,423 / 213,444 | 3 | 21,256 | 0 |
+| LOFLEA | both | 924 | 107,180 / 853,776 | 9 | 79,504 | 14 |
+
+The one-electron F2 spin sectors contain only two strings.  A one-site change
+has rank equal to the occupied-overlap dimension, so the production update
+correctly treats all four ordered pairs as direct evaluations; Woodbury has no
+algebraic advantage at $n=1$.
+
+The census separates two effects that a linear path obscures.  First, the
+certified regular subgraph remains extremely well connected: CERRAS requires
+only three regular anchors and LOFLEA only nine.  Anchor proliferation is
+therefore not the limiting issue inside the regular branch.  Second, only
+$13.78\%$ of CERRAS pairs and $12.55\%$ of LOFLEA pairs belong to that branch.
+Most pairs are full rank but too ill conditioned for inverse-based fourth-order
+derivatives and must retain the exact interpolated representation.
+
+The appropriate cost model is consequently
+
+$$
+T
+=
+A_{\mathrm r}C_{\mathrm A}^{\mathrm r}
++(P_{\mathrm r}-A_{\mathrm r})C_{\mathrm E}^{\mathrm r}
++P_{\mathrm i}C_{\mathrm i}
++P_{\mathrm s}C_{\mathrm s}.
+$$
+
+If only the regular branch is accelerated, if
+$C_{\mathrm A}^{\mathrm r}/C_{\mathrm E}^{\mathrm r}\simeq n$, and if the
+interpolated and singular costs are approximated by the direct-pair cost, the
+best possible whole-pair speedup is bounded approximately by
+
+$$
+\mathcal S_{\mathrm{inverse\text{-}only}}
+\lesssim
+\left(1-f_{\mathrm r}+\frac{f_{\mathrm r}}{n}\right)^{-1},
+\qquad
+f_{\mathrm r}=\frac{P_{\mathrm r}}{P}.
+$$
+
+This gives only about $1.13\times$ for CERRAS and $1.12\times$ for LOFLEA,
+before traversal and scheduling overhead.  It explains why improving only the
+regular Woodbury path cannot produce a large end-to-end speedup for the large
+HAO cases.  A low-scaling production algorithm must also reduce
+$C_{\mathrm i}$, either by propagating a stable contracted representation
+through the dangerous subspace or by lowering the cost of every exact
+interpolation node with an integral factorization such as THC.
+
 ## 10. Ill-conditioned and singular pair treatment
 
 ### 10.1 Residual-certified propagation
