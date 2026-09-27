@@ -9,7 +9,6 @@
 #include <Eigen/Core>
 
 #include "vbscf/core/contracts/input.hpp"
-#include "vbscf/determinants/pairs/accepted_action.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream_internal.hpp"
@@ -65,37 +64,31 @@ SparseChannels tile_channels(
   return channels;
 }
 
-Eigen::MatrixXd pack_selected_coefficients(
-    const SelectedStateDeterminantMatrices& selected_states,
-    bool alpha_action) {
-  const int columns_per_state = alpha_action
-      ? selected_states.n_unique_beta
-      : selected_states.n_unique_alpha;
-  const int rows = alpha_action
-      ? selected_states.n_unique_alpha
-      : selected_states.n_unique_beta;
-  Eigen::MatrixXd packed(
-      rows,
-      columns_per_state *
-          static_cast<int>(selected_states.states.size()));
-  for (std::size_t state = 0;
-       state < selected_states.states.size();
-       ++state) {
-    packed.middleCols(
-        static_cast<int>(state) * columns_per_state,
-        columns_per_state) = alpha_action
-        ? selected_states.states[state].coefficient_matrix
-        : selected_states.states[state].coefficient_matrix.transpose();
+struct PairScalarMatrices {
+  Eigen::MatrixXd overlap;
+  Eigen::MatrixXd hamiltonian;
+};
+
+PairScalarMatrices pair_scalar_matrices(
+    const AcceptedSpinPairTile& tile) {
+  PairScalarMatrices result{
+      Eigen::MatrixXd(tile.left_size, tile.right_size),
+      Eigen::MatrixXd(tile.left_size, tile.right_size)};
+  for (int left = 0; left < tile.left_size; ++left) {
+    for (int right = 0; right < tile.right_size; ++right) {
+      const auto& pair = tile.pair(left, right);
+      result.overlap(left, right) =
+          pair.overlap_result.overlap_determinant;
+      result.hamiltonian(left, right) = pair.total_hamiltonian;
+    }
   }
-  return packed;
+  return result;
 }
 
 }  // namespace
 
 struct AcceptedStructureResponseFactors {
   SelectedStateDeterminantMatrices selected_states;
-  AcceptedSpinPairActionResult alpha_action;
-  AcceptedSpinPairActionResult beta_action;
 };
 
 std::shared_ptr<const AcceptedStructureResponseFactors>
@@ -116,22 +109,6 @@ build_accepted_structure_response_factors(
           accepted_point.selected_state_indices,
           accepted_point.normalized_state_weights,
           same_spin);
-  const auto& prepared = accepted_point.prepared_active_space;
-  const auto& overlap = prepared.orbital_result.active_orbital_overlap_matrix;
-  const auto& h1e = prepared.active_space_one_electron_result.h1e_act;
-  const auto& two_electron = prepared.active_space_two_electron_result;
-  factors->alpha_action = apply_accepted_spin_pair_action(
-      same_spin.alpha_provider(),
-      overlap,
-      h1e,
-      two_electron,
-      pack_selected_coefficients(factors->selected_states, true));
-  factors->beta_action = apply_accepted_spin_pair_action(
-      same_spin.beta_provider(),
-      overlap,
-      h1e,
-      two_electron,
-      pack_selected_coefficients(factors->selected_states, false));
   return factors;
 }
 
@@ -301,38 +278,6 @@ build_selected_structure_direction_from_pair_tiles(
                 same_tile.left_size(), n_states * beta_left_size);
             Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
                 same_tile.left_size(), n_states * beta_left_size);
-            for (int state = 0; state < n_states; ++state) {
-              const int action_begin = state * n_alpha;
-              const auto beta_overlap_image =
-                  factors.beta_action.overlap
-                      .middleCols(action_begin, n_alpha).transpose();
-              const auto beta_hamiltonian_image =
-                  factors.beta_action.hamiltonian
-                      .middleCols(action_begin, n_alpha).transpose();
-              auto overlap_image = tile_overlap.middleCols(
-                  state * beta_left_size, beta_left_size);
-              overlap_image.noalias() += same_tile.delta_overlap() *
-                  beta_overlap_image.block(
-                      same_tile.right_begin(),
-                      beta_left,
-                      same_tile.right_size(),
-                      beta_left_size);
-              auto hamiltonian_image = tile_hamiltonian.middleCols(
-                  state * beta_left_size, beta_left_size);
-              hamiltonian_image.noalias() += delta_hamiltonian *
-                  beta_overlap_image.block(
-                      same_tile.right_begin(),
-                      beta_left,
-                      same_tile.right_size(),
-                      beta_left_size);
-              hamiltonian_image.noalias() += same_tile.delta_overlap() *
-                  beta_hamiltonian_image.block(
-                      same_tile.right_begin(),
-                      beta_left,
-                      same_tile.right_size(),
-                      beta_left_size);
-            }
-
             for (int beta_right = 0; beta_right < n_beta;
                  beta_right += tile_extents.beta) {
               const int beta_right_end = std::min(
@@ -349,6 +294,8 @@ build_selected_structure_direction_from_pair_tiles(
                       AcceptedPairTileBuildOptions{
                           .materialize_projected_pair_values = false,
                           .populate_response_payload = false});
+              const PairScalarMatrices beta_scalar =
+                  pair_scalar_matrices(beta_tile);
               const SparseChannels channels = tile_channels(
                   beta_tile, n_pairs, true);
               for (int state = 0; state < n_states; ++state) {
@@ -358,8 +305,20 @@ build_selected_structure_direction_from_pair_tiles(
                         beta_right,
                         same_tile.right_size(),
                         beta_tile.right_size);
+                const Eigen::MatrixXd right_overlap =
+                    coefficients_right * beta_scalar.overlap.transpose();
+                const Eigen::MatrixXd right_hamiltonian =
+                    coefficients_right * beta_scalar.hamiltonian.transpose();
+                auto overlap_image = tile_overlap.middleCols(
+                    state * beta_left_size, beta_left_size);
                 auto hamiltonian_image = tile_hamiltonian.middleCols(
                     state * beta_left_size, beta_left_size);
+                overlap_image.noalias() +=
+                    same_tile.delta_overlap() * right_overlap;
+                hamiltonian_image.noalias() +=
+                    delta_hamiltonian * right_overlap;
+                hamiltonian_image.noalias() +=
+                    same_tile.delta_overlap() * right_hamiltonian;
                 for (int target = 0; target < n_pairs; ++target) {
                   const auto projected =
                       opposite_tile->projected_channel(target);
@@ -399,39 +358,6 @@ build_selected_structure_direction_from_pair_tiles(
                 alpha_left_size, n_states * same_tile.left_size());
             Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
                 alpha_left_size, n_states * same_tile.left_size());
-            for (int state = 0; state < n_states; ++state) {
-              const int action_begin = state * n_beta;
-              const auto alpha_overlap_image =
-                  factors.alpha_action.overlap.middleCols(
-                      action_begin, n_beta);
-              const auto alpha_hamiltonian_image =
-                  factors.alpha_action.hamiltonian.middleCols(
-                      action_begin, n_beta);
-              auto overlap_image = tile_overlap.middleCols(
-                  state * same_tile.left_size(), same_tile.left_size());
-              overlap_image.noalias() += alpha_overlap_image.block(
-                  alpha_left,
-                  same_tile.right_begin(),
-                  alpha_left_size,
-                  same_tile.right_size()) *
-                  same_tile.delta_overlap().transpose();
-              auto hamiltonian_image = tile_hamiltonian.middleCols(
-                  state * same_tile.left_size(), same_tile.left_size());
-              hamiltonian_image.noalias() +=
-                  alpha_hamiltonian_image.block(
-                      alpha_left,
-                      same_tile.right_begin(),
-                      alpha_left_size,
-                      same_tile.right_size()) *
-                  same_tile.delta_overlap().transpose();
-              hamiltonian_image.noalias() += alpha_overlap_image.block(
-                  alpha_left,
-                  same_tile.right_begin(),
-                  alpha_left_size,
-                  same_tile.right_size()) *
-                  delta_hamiltonian.transpose();
-            }
-
             for (int alpha_right = 0; alpha_right < n_alpha;
                  alpha_right += tile_extents.alpha) {
               const int alpha_right_end = std::min(
@@ -448,6 +374,8 @@ build_selected_structure_direction_from_pair_tiles(
                       AcceptedPairTileBuildOptions{
                           .materialize_projected_pair_values = false,
                           .populate_response_payload = false});
+              const PairScalarMatrices alpha_scalar =
+                  pair_scalar_matrices(alpha_tile);
               const SparseChannels channels = tile_channels(
                   alpha_tile, n_pairs, true);
               for (int state = 0; state < n_states; ++state) {
@@ -457,8 +385,21 @@ build_selected_structure_direction_from_pair_tiles(
                         same_tile.right_begin(),
                         alpha_tile.right_size,
                         same_tile.right_size());
+                const Eigen::MatrixXd left_overlap =
+                    alpha_scalar.overlap * coefficients_right;
+                const Eigen::MatrixXd left_hamiltonian =
+                    alpha_scalar.hamiltonian * coefficients_right;
+                auto overlap_image = tile_overlap.middleCols(
+                    state * same_tile.left_size(), same_tile.left_size());
                 auto hamiltonian_image = tile_hamiltonian.middleCols(
                     state * same_tile.left_size(), same_tile.left_size());
+                overlap_image.noalias() +=
+                    left_overlap * same_tile.delta_overlap().transpose();
+                hamiltonian_image.noalias() +=
+                    left_hamiltonian *
+                    same_tile.delta_overlap().transpose();
+                hamiltonian_image.noalias() +=
+                    left_overlap * delta_hamiltonian.transpose();
                 for (int target = 0; target < n_pairs; ++target) {
                   const auto directional =
                       opposite_tile->projected_channel(target);
