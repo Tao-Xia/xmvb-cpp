@@ -77,4 +77,13 @@ struct ActiveSpaceTwoElectronResult {
       dense_ao_pair_products;
 };
 
+/** Whether determinant contractions must consume RI factors directly. */
+inline bool uses_direct_ri_pair_factors(
+    const ActiveSpaceTwoElectronResult& result) noexcept {
+  return result.representation ==
+          ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity &&
+      result.packed_active_two_electron_integrals.empty() &&
+      result.ri_active_pair_factors.size() != 0;
+}
+
 }  // namespace xmvb::vb

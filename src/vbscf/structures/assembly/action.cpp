@@ -172,18 +172,29 @@ void add_tiled_opposite_spin_action(
   const int beta_electrons = beta_strings.empty()
       ? 0
       : static_cast<int>(beta_strings.front().size());
+  const bool direct_ri = uses_direct_ri_pair_factors(two_electron);
   const int alpha_extent = detail::plan_pair_tile_extent(
       n_unique_alpha,
       alpha_electrons,
       n_active,
       two_electron.n_auxiliary_functions,
-      true);
+      true,
+      detail::kPairTileWorkspaceBytes,
+      0,
+      0,
+      0,
+      direct_ri);
   const int beta_extent = detail::plan_pair_tile_extent(
       n_unique_beta,
       beta_electrons,
       n_active,
       two_electron.n_auxiliary_functions,
-      true);
+      true,
+      detail::kPairTileWorkspaceBytes,
+      0,
+      0,
+      0,
+      direct_ri);
   for (int alpha_left = 0;
        alpha_left < n_unique_alpha;
        alpha_left += alpha_extent) {
@@ -917,20 +928,30 @@ StructureActionResult StructureAction::apply_streamed(
       ? 0
       : static_cast<int>(tiled_pairs_->beta_strings.front().size());
   const std::size_t spin_workspace = kStructureActionWorkspaceBytes / 2;
+  const bool direct_ri =
+      uses_direct_ri_pair_factors(tiled_pairs_->two_electron);
   const int alpha_extent = detail::plan_pair_tile_extent(
       n_unique_alpha_,
       alpha_electrons,
       tiled_pairs_->n_active,
       tiled_pairs_->two_electron.n_auxiliary_functions,
       true,
-      spin_workspace);
+      spin_workspace,
+      0,
+      0,
+      0,
+      direct_ri);
   const int beta_extent = detail::plan_pair_tile_extent(
       n_unique_beta_,
       beta_electrons,
       tiled_pairs_->n_active,
       tiled_pairs_->two_electron.n_auxiliary_functions,
       true,
-      spin_workspace);
+      spin_workspace,
+      0,
+      0,
+      0,
+      direct_ri);
 
   StructureActionResult result{
       Eigen::MatrixXd::Zero(n_structures_, block_width),

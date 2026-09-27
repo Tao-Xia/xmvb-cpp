@@ -66,11 +66,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
 
   const Eigen::Map<const Eigen::MatrixXd> overlap_map(
       active_overlap.data(), n_active_orbitals_, n_active_orbitals_);
-  const bool direct_ri =
-      active_two_electron.representation ==
-          ActiveSpaceTwoElectronRepresentation::ResolutionOfIdentity &&
-      active_two_electron.packed_active_two_electron_integrals.empty() &&
-      active_two_electron.ri_active_pair_factors.size() != 0;
+  const bool direct_ri = uses_direct_ri_pair_factors(active_two_electron);
   if (direct_ri &&
       active_two_electron.ri_active_pair_factors.cols() !=
           packed_active_pair_count(n_active_orbitals_)) {
