@@ -730,7 +730,13 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                 *current_input_,
                 *accepted_point_context_,
                 active_space_integral_direction,
-                directional_pair_cache)
+                directional_pair_cache,
+                accepted_ri_two_electron_cache_.has_value()
+                    ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
+                    : nullptr,
+                ri_directional_active_pair_factors.has_value()
+                    ? &*ri_directional_active_pair_factors
+                    : nullptr)
           : make_zero_active_space_gradient_direction(n_active_orbitals);
       apply_timing_totals_
           .outer_response_local_active_gradient_wall_time_seconds +=

@@ -90,6 +90,8 @@ build_local_opposite_spin_backward_contribution(
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache);
+    const SameSpinDirectionalPairCache& directional_pair_cache,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 
 }  // namespace xmvb::vb

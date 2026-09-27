@@ -174,7 +174,9 @@ ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,
     const ActiveSpaceIntegralDirectionView& integral_direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache) {
+    const SameSpinDirectionalPairCache& directional_pair_cache,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
   if (!accepted_point_context.use_pair_graph_opposite_spin_adjoint) {
     throw std::runtime_error(
         "outer-response active-gradient direction requires selected-state matrices");
@@ -208,7 +210,9 @@ ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
           input.orbital_preparation_input.n_active_orbitals,
           accepted_point_context.prepared_active_space.active_space_two_electron_result,
           integral_direction,
-          directional_pair_cache);
+          directional_pair_cache,
+          accepted_ri_active_pair_factors,
+          directional_ri_active_pair_factors);
   validate_opposite_spin_matrix_backward_contribution(
       local_opposite_spin_response,
       "exact outer-response local opposite-spin backward contribution");

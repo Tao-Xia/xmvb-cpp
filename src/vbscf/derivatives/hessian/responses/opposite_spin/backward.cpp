@@ -186,7 +186,9 @@ build_local_opposite_spin_backward_contribution(
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache) {
+    const SameSpinDirectionalPairCache& directional_pair_cache,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
   validate_backward_inputs(same_spin_pair_cache, selected_states);
   OppositeSpinBackwardContribution result =
       make_zero_contribution(n_active_orbitals);
@@ -203,7 +205,9 @@ build_local_opposite_spin_backward_contribution(
           n_active_orbitals,
           active_space_two_electron_result,
           direction,
-          directional_pair_cache.alpha.ordered_pair_data);
+          directional_pair_cache.alpha.ordered_pair_data,
+          accepted_ri_active_pair_factors,
+          directional_ri_active_pair_factors);
   std::vector<detail::DirectionalOppositeSpinPairData> beta_directional_storage;
   const auto& beta_same_spin_pairs =
       directional_pair_cache.close_shell_same_spin
@@ -218,7 +222,9 @@ build_local_opposite_spin_backward_contribution(
             n_active_orbitals,
             active_space_two_electron_result,
             direction,
-            beta_same_spin_pairs);
+            beta_same_spin_pairs,
+            accepted_ri_active_pair_factors,
+            directional_ri_active_pair_factors);
   }
   const auto& beta_directional_pairs =
       directional_pair_cache.close_shell_same_spin
