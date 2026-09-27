@@ -472,6 +472,26 @@ void accumulate_local_overlap_gradient_by_pair_graph(
 
 namespace detail {
 
+void accumulate_pair_overlap_gradient_direction(
+    const std::vector<int>& occupied_left,
+    const std::vector<int>& occupied_right,
+    const CofactorDifferential& accepted_cofactor,
+    const Eigen::MatrixXd& directional_overlap_submatrix,
+    const Eigen::MatrixXd& accepted_cofactor_weight,
+    const Eigen::MatrixXd& directional_cofactor_weight,
+    int n_active_orbitals,
+    std::vector<double>* active_orbital_overlap_gradient) {
+  accumulate_spin_overlap_gradient_direction(
+      occupied_left,
+      occupied_right,
+      accepted_cofactor,
+      directional_overlap_submatrix,
+      accepted_cofactor_weight,
+      directional_cofactor_weight,
+      n_active_orbitals,
+      active_orbital_overlap_gradient);
+}
+
 void accumulate_alpha_overlap_gradient_by_pair_graph(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,

@@ -87,7 +87,8 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/hessian/responses/active_space/ri_factor_adjoint.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/backward.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/pair_response.cpp
-  vbscf/derivatives/hessian/responses/opposite_spin/contractions.cpp
+    vbscf/derivatives/hessian/responses/opposite_spin/contractions.cpp
+    vbscf/derivatives/hessian/responses/opposite_spin/local_tile_accumulator.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/overlap_contractions.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/selected_state_pair_graph.cpp
   vbscf/derivatives/hessian/responses/orbital/preparation.cpp

@@ -12,6 +12,7 @@
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/ri_factor_adjoint.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin/local_tile_accumulator_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/local_tile_accumulator_internal.hpp"
@@ -598,6 +599,18 @@ int main() {
         h1e,
         direct_ri,
         first_view);
+    const auto reference_local_opposite_spin =
+        xmvb::vb::build_local_opposite_spin_backward_contribution(
+            closed_shell_cache,
+            selected,
+            n_active,
+            direct_ri,
+            first_view,
+            closed_shell_directional_cache,
+            &direct_ri.ri_active_pair_factors,
+            &delta_factors);
+    xmvb::vb::detail::LocalOppositeSpinTileAccumulator
+        tiled_local_opposite_spin(closed_shell_cache, selected, n_active);
     xmvb::vb::detail::stream_directional_pair_tiles(
         closed_shell_cache,
         n_active,
@@ -606,12 +619,19 @@ int main() {
         &h1e,
         &direct_ri.ri_active_pair_factors,
         &delta_factors,
-        false,
+        true,
         [&](bool alpha_channel,
             bool beta_channel,
             const xmvb::vb::detail::SameSpinDirectionalPairTile& tile,
-            const xmvb::vb::detail::DirectionalOppositeSpinPairTile*) {
+            const xmvb::vb::detail::DirectionalOppositeSpinPairTile*
+                opposite_tile) {
           tiled_local_same_spin.consume(alpha_channel, beta_channel, tile);
+          if (opposite_tile == nullptr) {
+            throw std::runtime_error(
+                "local opposite-spin oracle requires a pair tile");
+          }
+          tiled_local_opposite_spin.consume(
+              alpha_channel, beta_channel, *opposite_tile);
         });
     const auto tiled_local_contribution = tiled_local_same_spin.finish();
     const auto require_vector_close = [&](
@@ -645,6 +665,16 @@ int main() {
         tiled_local_contribution.active_orbital_overlap_gradient,
         reference_local_same_spin.active_orbital_overlap_gradient,
         "tiled local same-spin overlap gradient");
+    const auto tiled_local_opposite_contribution =
+        tiled_local_opposite_spin.finish();
+    require_vector_close(
+        tiled_local_opposite_contribution.packed_active_two_electron_gradient,
+        reference_local_opposite_spin.packed_active_two_electron_gradient,
+        "tiled local opposite-spin two-electron gradient");
+    require_vector_close(
+        tiled_local_opposite_contribution.active_orbital_overlap_gradient,
+        reference_local_opposite_spin.active_orbital_overlap_gradient,
+        "tiled local opposite-spin overlap gradient");
     const auto packed_same =
         xmvb::vb::build_same_spin_matrix_backward_contribution(
             closed_shell_cache,

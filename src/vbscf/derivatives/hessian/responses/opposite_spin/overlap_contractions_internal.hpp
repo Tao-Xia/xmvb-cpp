@@ -2,11 +2,24 @@
 
 #include <vector>
 
+#include <Eigen/Core>
+
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace xmvb::vb::detail {
+
+/** Accumulates one ordered primary-pair term of the local overlap adjoint. */
+void accumulate_pair_overlap_gradient_direction(
+    const std::vector<int>& occupied_left,
+    const std::vector<int>& occupied_right,
+    const CofactorDifferential& accepted_cofactor,
+    const Eigen::MatrixXd& directional_overlap_submatrix,
+    const Eigen::MatrixXd& accepted_cofactor_weight,
+    const Eigen::MatrixXd& directional_cofactor_weight,
+    int n_active_orbitals,
+    std::vector<double>* active_orbital_overlap_gradient);
 
 void accumulate_alpha_overlap_gradient_by_pair_graph(
     const SameSpinPairCacheContext& same_spin_pair_cache,
