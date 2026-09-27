@@ -91,6 +91,22 @@ void fill_exact_kernel_rows(
   }
 }
 
+std::size_t accepted_tile_byte_bound(
+    const std::vector<std::vector<int>>& unique_determinants,
+    int n_active_orbitals,
+    int work_items) {
+  const std::size_t n_unique = unique_determinants.size();
+  if (n_unique == 0 || work_items <= 0) {
+    return 0;
+  }
+  const std::size_t full_bound = estimate_same_spin_pair_cache_bytes(
+      unique_determinants, n_active_orbitals);
+  const std::size_t pair_count = n_unique * n_unique;
+  const std::size_t per_pair =
+      (full_bound + pair_count - 1) / pair_count;
+  return per_pair * static_cast<std::size_t>(work_items);
+}
+
 }  // namespace
 
 const DirectionalOppositeSpinPairData& DirectionalOppositeSpinPairTile::pair(
@@ -270,7 +286,12 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
         2 * n_auxiliary + 3 * n_packed_pairs;
     const Eigen::Index workspace_value_cap =
         static_cast<Eigen::Index>(kPairTileWorkspaceBytes / sizeof(double));
+    const Eigen::Index accepted_tile_values =
+        static_cast<Eigen::Index>(accepted_tile_byte_bound(
+            unique_determinants, n_active_orbitals, work_items) /
+            sizeof(double));
     const Eigen::Index resident_tile_values =
+        accepted_tile_values +
         2 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
     const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
         1, workspace_value_cap -
@@ -363,7 +384,12 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
 
   const Eigen::Index workspace_value_cap =
       static_cast<Eigen::Index>(kPairTileWorkspaceBytes / sizeof(double));
+  const Eigen::Index accepted_tile_values =
+      static_cast<Eigen::Index>(accepted_tile_byte_bound(
+          unique_determinants, n_active_orbitals, work_items) /
+          sizeof(double));
   const Eigen::Index resident_tile_values =
+      accepted_tile_values +
       3 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
   const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
       1, workspace_value_cap -

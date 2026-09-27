@@ -22,12 +22,13 @@ struct PairTileExtents {
 /**
  * @brief Chooses one square spin-pair tile from an explicit byte model.
  *
- * A directional pair owns its same-spin cofactor response and, when requested,
- * two packed opposite-spin channels. RI additionally needs two auxiliary
- * images and three packed-pair work vectors during the block GEMM. The
- * workspace bound therefore determines the tile area; the worker count only
- * raises the preferred area far enough to expose one pair per OpenMP worker
- * when the byte bound permits it.
+ * A streamed pair owns both the accepted-point evaluation and its directional
+ * response.  The accepted payload includes the inverse/cofactor state,
+ * same-spin response tensors, and sparse opposite-spin projection.  RI
+ * additionally needs two auxiliary images and three packed-pair work vectors
+ * during the block GEMM. The workspace bound therefore determines the tile
+ * area; the worker count only raises the preferred area far enough to expose
+ * one pair per OpenMP worker when the byte bound permits it.
  */
 inline int plan_pair_tile_extent(
     int n_unique,
@@ -45,12 +46,26 @@ inline int plan_pair_tile_extent(
   const std::size_t n_packed_pairs = static_cast<std::size_t>(
       packed_active_pair_count(std::max(0, n_active_orbitals)));
 
-  // Three scalar tile matrices plus two directional occupied-block matrices.
+  const std::size_t occupied_pair_count =
+      static_cast<std::size_t>(std::max(0, n_electrons)) *
+      static_cast<std::size_t>(std::max(0, n_electrons - 1)) / 2;
+
+  // Accepted-point pair payload. This is the same conservative model used by
+  // `estimate_same_spin_pair_cache_bytes`, expressed per pair. It deliberately
+  // includes projected vectors even when the current provider omits them, so
+  // a future payload option cannot silently invalidate the workspace bound.
+  std::size_t doubles_per_pair =
+      9 * occupied_square + static_cast<std::size_t>(n_electrons) +
+      2 * n_packed_pairs + 4 * occupied_pair_count * occupied_pair_count;
+  std::size_t integers_per_pair = 4 * occupied_square;
+  const std::size_t object_bytes_per_pair =
+      sizeof(SpinDeterminantPairEvaluation);
+
+  // Three scalar directional matrices plus two directional occupied blocks.
   // Opposite-spin storage adds the occupied overlap block, sparse channel
   // payload, and the raw/projected packed channels. The GEMM term accounts for
   // its largest simultaneous RI block rather than relying on a fixed extent.
-  std::size_t doubles_per_pair = 3 + 2 * occupied_square;
-  std::size_t integers_per_pair = 0;
+  doubles_per_pair += 3 + 2 * occupied_square;
   if (include_opposite_spin) {
     doubles_per_pair += occupied_square + 2 * n_packed_pairs;
     integers_per_pair += occupied_square;
@@ -64,7 +79,7 @@ inline int plan_pair_tile_extent(
   const std::size_t bytes_per_pair = std::max<std::size_t>(
       1,
       doubles_per_pair * sizeof(double) +
-          integers_per_pair * sizeof(int));
+          integers_per_pair * sizeof(int) + object_bytes_per_pair);
 
   const int workers = std::max(1, xmvb::effective_openmp_thread_count());
   const std::size_t thread_scratch =
