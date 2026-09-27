@@ -36,16 +36,12 @@ std::vector<int> changed_columns(
   return changed_rows(old_string, new_string);
 }
 
-bool inverse_is_certified(
-    const Eigen::Ref<const Eigen::MatrixXd>& matrix,
-    const Eigen::Ref<const Eigen::MatrixXd>& inverse);
-
 std::optional<DeterminantOverlapResult> make_updated_result(
     Eigen::MatrixXd new_overlap,
     Eigen::MatrixXd inverse_new,
     double middle_determinant,
     const DeterminantOverlapResult& old_result) {
-  if (!inverse_is_certified(new_overlap, inverse_new)) {
+  if (!is_certified_regular_overlap(new_overlap, inverse_new)) {
     return std::nullopt;
   }
   const double determinant =
@@ -67,7 +63,9 @@ std::optional<DeterminantOverlapResult> make_updated_result(
   return result;
 }
 
-bool inverse_is_certified(
+}  // namespace
+
+bool is_certified_regular_overlap(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& inverse) {
   if (!matrix.allFinite() || !inverse.allFinite()) {
@@ -97,8 +95,6 @@ bool inverse_is_certified(
   return std::isfinite(backward_error) &&
       backward_error <= std::sqrt(std::numeric_limits<double>::epsilon());
 }
-
-}  // namespace
 
 std::optional<DeterminantOverlapResult> try_woodbury_right_overlap_update(
     const std::vector<int>& occupied_left,

@@ -1,11 +1,14 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <numeric>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <Eigen/Core>
@@ -105,6 +108,16 @@ struct CertifiedAnchorCensus {
   long long topology_break_anchors = 0;
   long long certificate_reanchors = 0;
   long long post_singular_anchors = 0;
+};
+
+struct CertifiedComponentCensus {
+  long long visited_pairs = 0;
+  long long certified_pairs = 0;
+  long long rejected_regular_pairs = 0;
+  long long singular_pairs = 0;
+  int string_component_count = 0;
+  int pair_component_count = 0;
+  long long largest_pair_component = 0;
 };
 
 struct RiQUpdateStats {
@@ -766,6 +779,199 @@ CertifiedAnchorCensus run_certified_anchor_census(
       }
       first_pair = false;
     }
+  }
+  return census;
+}
+
+class DisjointSet {
+public:
+  explicit DisjointSet(int size)
+      : parent_(size), component_size_(size, 1) {
+    std::iota(parent_.begin(), parent_.end(), 0);
+  }
+
+  int find(int value) {
+    int root = value;
+    while (parent_[root] != root) {
+      root = parent_[root];
+    }
+    while (parent_[value] != value) {
+      const int next = parent_[value];
+      parent_[value] = root;
+      value = next;
+    }
+    return root;
+  }
+
+  void merge(int left, int right) {
+    left = find(left);
+    right = find(right);
+    if (left == right) {
+      return;
+    }
+    if (component_size_[left] < component_size_[right]) {
+      std::swap(left, right);
+    }
+    parent_[right] = left;
+    component_size_[left] += component_size_[right];
+  }
+
+  int size(int value) {
+    return component_size_[find(value)];
+  }
+
+private:
+  std::vector<int> parent_;
+  std::vector<int> component_size_;
+};
+
+std::vector<std::vector<int>> build_replacement_adjacency(
+    const std::vector<std::vector<int>>& unique_strings,
+    int n_active_orbitals) {
+  if (n_active_orbitals > 63) {
+    throw std::invalid_argument(
+        "anchor component census supports at most 63 active orbitals");
+  }
+  std::unordered_map<std::uint64_t, int> string_by_mask;
+  string_by_mask.reserve(unique_strings.size());
+  std::vector<std::uint64_t> masks(unique_strings.size(), 0);
+  for (int string_index = 0;
+       string_index < static_cast<int>(unique_strings.size());
+       ++string_index) {
+    std::uint64_t mask = 0;
+    for (const int orbital : unique_strings[string_index]) {
+      if (orbital < 0 || orbital >= n_active_orbitals) {
+        throw std::invalid_argument(
+            "unique string contains an invalid active-orbital index");
+      }
+      mask |= std::uint64_t{1} << orbital;
+    }
+    masks[string_index] = mask;
+    string_by_mask.emplace(mask, string_index);
+  }
+
+  std::vector<std::vector<int>> adjacency(unique_strings.size());
+  const std::uint64_t active_mask = n_active_orbitals == 63
+      ? (std::uint64_t{1} << 63) - 1
+      : (std::uint64_t{1} << n_active_orbitals) - 1;
+  for (int string_index = 0;
+       string_index < static_cast<int>(unique_strings.size());
+       ++string_index) {
+    const std::uint64_t occupied = masks[string_index];
+    const std::uint64_t unoccupied = active_mask & ~occupied;
+    for (const int old_orbital : unique_strings[string_index]) {
+      for (int new_orbital = 0;
+           new_orbital < n_active_orbitals;
+           ++new_orbital) {
+        if ((unoccupied & (std::uint64_t{1} << new_orbital)) == 0) {
+          continue;
+        }
+        const std::uint64_t neighbor_mask =
+            (occupied & ~(std::uint64_t{1} << old_orbital)) |
+            (std::uint64_t{1} << new_orbital);
+        const auto neighbor = string_by_mask.find(neighbor_mask);
+        if (neighbor != string_by_mask.end() &&
+            neighbor->second > string_index) {
+          adjacency[string_index].push_back(neighbor->second);
+          adjacency[neighbor->second].push_back(string_index);
+        }
+      }
+    }
+  }
+  return adjacency;
+}
+
+CertifiedComponentCensus run_certified_component_census(
+    const std::vector<std::vector<int>>& unique_strings,
+    const std::vector<double>& active_overlap,
+    int n_active_orbitals) {
+  CertifiedComponentCensus census;
+  const int n_strings = static_cast<int>(unique_strings.size());
+  if (n_strings == 0) {
+    return census;
+  }
+  const long long pair_count =
+      static_cast<long long>(n_strings) * n_strings;
+  if (pair_count > std::numeric_limits<int>::max()) {
+    throw std::overflow_error(
+        "anchor component census pair space exceeds 32-bit indexing");
+  }
+
+  const auto adjacency =
+      build_replacement_adjacency(unique_strings, n_active_orbitals);
+  DisjointSet string_components(n_strings);
+  for (int left = 0; left < n_strings; ++left) {
+    for (const int right : adjacency[left]) {
+      string_components.merge(left, right);
+    }
+  }
+  for (int string_index = 0; string_index < n_strings; ++string_index) {
+    if (string_components.find(string_index) == string_index) {
+      ++census.string_component_count;
+    }
+  }
+
+  const Eigen::Map<const Eigen::MatrixXd> overlap_map(
+      active_overlap.data(), n_active_orbitals, n_active_orbitals);
+  const xmvb::vb::DeterminantOverlapResolver overlap_resolver;
+  std::vector<unsigned char> certified(pair_count, 0);
+  for (int left = 0; left < n_strings; ++left) {
+    for (int right = 0; right < n_strings; ++right) {
+      const int pair_index = left * n_strings + right;
+      const auto overlap = overlap_resolver.resolve_matrix(
+          xmvb::vb::build_overlap_submatrix(
+              unique_strings[left],
+              unique_strings[right],
+              overlap_map));
+      ++census.visited_pairs;
+      if (overlap.nullity != 0 || overlap.overlap_determinant == 0.0) {
+        ++census.singular_pairs;
+        continue;
+      }
+      if (!xmvb::vb::is_certified_regular_overlap(
+              overlap.overlap_submatrix,
+              overlap.inverse_overlap_submatrix)) {
+        ++census.rejected_regular_pairs;
+        continue;
+      }
+      certified[pair_index] = 1;
+      ++census.certified_pairs;
+    }
+  }
+
+  DisjointSet pair_components(static_cast<int>(pair_count));
+  for (int left = 0; left < n_strings; ++left) {
+    for (int right = 0; right < n_strings; ++right) {
+      const int pair_index = left * n_strings + right;
+      if (!certified[pair_index]) {
+        continue;
+      }
+      for (const int left_neighbor : adjacency[left]) {
+        const int neighbor_index = left_neighbor * n_strings + right;
+        if (certified[neighbor_index]) {
+          pair_components.merge(pair_index, neighbor_index);
+        }
+      }
+      for (const int right_neighbor : adjacency[right]) {
+        const int neighbor_index = left * n_strings + right_neighbor;
+        if (certified[neighbor_index]) {
+          pair_components.merge(pair_index, neighbor_index);
+        }
+      }
+    }
+  }
+
+  for (int pair_index = 0;
+       pair_index < static_cast<int>(pair_count);
+       ++pair_index) {
+    if (!certified[pair_index] ||
+        pair_components.find(pair_index) != pair_index) {
+      continue;
+    }
+    ++census.pair_component_count;
+    census.largest_pair_component = std::max<long long>(
+        census.largest_pair_component,
+        pair_components.size(pair_index));
   }
   return census;
 }
@@ -2662,6 +2868,37 @@ void print_certified_anchor_census(
             << certified_update_fraction << '\n';
 }
 
+void print_certified_component_census(
+    const std::string& label,
+    const CertifiedComponentCensus& census) {
+  const double certified_fraction = census.visited_pairs > 0
+      ? static_cast<double>(census.certified_pairs) /
+          static_cast<double>(census.visited_pairs)
+      : 0.0;
+  const double component_anchor_fraction = census.certified_pairs > 0
+      ? static_cast<double>(census.pair_component_count) /
+          static_cast<double>(census.certified_pairs)
+      : 0.0;
+  std::cout << label << "_component_visited_pairs = "
+            << census.visited_pairs << '\n';
+  std::cout << label << "_component_certified_pairs = "
+            << census.certified_pairs << '\n';
+  std::cout << label << "_component_rejected_regular_pairs = "
+            << census.rejected_regular_pairs << '\n';
+  std::cout << label << "_component_singular_pairs = "
+            << census.singular_pairs << '\n';
+  std::cout << label << "_string_component_count = "
+            << census.string_component_count << '\n';
+  std::cout << label << "_certified_pair_component_count = "
+            << census.pair_component_count << '\n';
+  std::cout << label << "_largest_certified_pair_component = "
+            << census.largest_pair_component << '\n';
+  std::cout << label << "_certified_pair_fraction = "
+            << certified_fraction << '\n';
+  std::cout << label << "_component_anchor_fraction = "
+            << component_anchor_fraction << '\n';
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -2697,6 +2934,14 @@ int main(int argc, char** argv) {
           orbital_result.active_orbital_overlap_matrix,
           n_active_orbitals,
           options.max_anchor_census_pairs);
+      const auto alpha_components = run_certified_component_census(
+          alpha_strings,
+          orbital_result.active_orbital_overlap_matrix,
+          n_active_orbitals);
+      const auto beta_components = run_certified_component_census(
+          beta_strings,
+          orbital_result.active_orbital_overlap_matrix,
+          n_active_orbitals);
       std::cout << std::setprecision(15);
       std::cout << "input_path = " << options.input_path << '\n';
       std::cout << "n_active_orbitals = " << n_active_orbitals << '\n';
@@ -2704,6 +2949,8 @@ int main(int argc, char** argv) {
           "alpha", alpha_strings, n_active_orbitals, alpha_census);
       print_certified_anchor_census(
           "beta", beta_strings, n_active_orbitals, beta_census);
+      print_certified_component_census("alpha", alpha_components);
+      print_certified_component_census("beta", beta_components);
       return 0;
     }
 

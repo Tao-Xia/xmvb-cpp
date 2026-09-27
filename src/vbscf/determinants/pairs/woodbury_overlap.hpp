@@ -10,6 +10,17 @@
 namespace xmvb::vb {
 
 /**
+ * @brief Tests whether a regular overlap inverse is safe for pair derivatives.
+ *
+ * The certificate combines a condition estimate with the backward error of
+ * the supplied inverse.  It is shared by Woodbury updates and diagnostics so
+ * both use exactly the same accuracy contract.
+ */
+bool is_certified_regular_overlap(
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap);
+
+/**
  * @brief Updates a regular occupied-overlap block after changing the right string.
  *
  * The changed occupied orbitals replace rows of the overlap block.  A
