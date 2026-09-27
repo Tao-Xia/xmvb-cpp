@@ -1871,6 +1871,88 @@ $C_{\mathrm i}$, either by propagating a stable contracted representation
 through the dangerous subspace or by lowering the cost of every exact
 interpolation node with an integral factorization such as THC.
 
+### 9.2 Dynamic Woodbury-core propagation census
+
+The pointwise dangerous-mode count does not by itself prove that a small
+inverse-free core can be maintained along the string-pair graph.  Replacing
+each overlap block independently by an SVD-clipped stable completion may make
+the difference between consecutive completions high rank and therefore loses
+the graph advantage.  The relevant state is instead
+
+$$
+X=A+UV^{\mathrm T},
+\qquad
+K=A^{-1},
+$$
+
+where the base $A$ is certified regular and the columns of $U,V$ contain only
+updates that cannot yet be absorbed safely.  A graph edge adds one rank-one
+term.  After numerical rank compression, define the small Woodbury matrix
+
+$$
+G=I+V^{\mathrm T}KU.
+$$
+
+Let $G=P\Sigma Q^{\mathrm T}$ and partition the right singular vectors as
+$Q=[Q_{\mathrm s},Q_{\mathrm d}]$.  For increasing retained dimension, form
+
+$$
+\begin{aligned}
+A'&=A+(UQ_{\mathrm s})(VQ_{\mathrm s})^{\mathrm T},\\
+U'&=UQ_{\mathrm d},\\
+V'&=VQ_{\mathrm d}.
+\end{aligned}
+\tag{76a}
+$$
+
+Since $Q_{\mathrm s}Q_{\mathrm s}^{\mathrm T}+
+Q_{\mathrm d}Q_{\mathrm d}^{\mathrm T}=I$, this split is exact:
+
+$$
+X=A'+U'V'^{\mathrm T}.
+\tag{76b}
+$$
+
+The smallest retained dimension for which $A'$ and its block-Woodbury inverse
+pass the production condition and backward-error certificate defines the
+propagated dangerous-core rank.  No inverse of the retained core is formed.
+This procedure is a diagnostic construction; its SVDs identify whether the
+representation exists and are not the proposed production update.
+
+Revision `7f022eb` replayed this state over exact fixed-weight combination
+Gray paths on Hanhai25 in Slurm jobs `260235`--`260243`.  Every consecutive
+overlap change had numerical rank one.  No traversal had a topology break or
+required a full numerical re-anchor, and every propagated base retained the
+production regularity certificate.
+
+| System | Spin | Pairs | Mean propagated $q$ | Fraction $q\leq2$ | Fraction $q\leq3$ | Fraction $q\leq5$ | Maximum $q$ |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 241 | both | 400 | 0.443 | 1.000 | 1.000 | 1.000 | 2 |
+| 7975 | both | 400 | 0.168 | 1.000 | 1.000 | 1.000 | 2 |
+| 240 | both | 4,900 | 0.682 | 0.981 | 0.9996 | 1.000 | 4 |
+| MnF2 | alpha | 64 | 0.875 | 0.922 | 0.984 | 1.000 | 4 |
+| MnF2 | beta | 784 | 0.402 | 1.000 | 1.000 | 1.000 | 2 |
+| FeCl2 | alpha | 64 | 1.188 | 0.859 | 0.984 | 1.000 | 4 |
+| FeCl2 | beta | 3,136 | 1.520 | 0.892 | 1.000 | 1.000 | 3 |
+| YAMSAI | both | 1,225 | 0.487 | 0.993 | 1.000 | 1.000 | 3 |
+| CERRAS | both | 213,444 | 1.938 | 0.696 | 0.862 | 0.993 | 6 |
+| LOFLEA | both | 853,776 | 2.042 | 0.656 | 0.840 | 0.996 | 6 |
+
+The pointwise SVD census is more optimistic than dynamic propagation because
+the latter preserves one evolving Woodbury base.  Nevertheless, over $99\%$
+of the large-system paths require at most a five-dimensional retained core,
+and the mean core dimension remains approximately two.  The production
+kernel should therefore support a general small core rather than special
+cases only for $q\leq3$.
+
+After 213,443 rank-one edges, the maximum CERRAS reconstruction residual was
+$1.19\times10^{-12}$.  After 853,775 edges, the maximum LOFLEA residual was
+$5.32\times10^{-12}$.  The corresponding small cases remained near
+$10^{-14}$.  These results establish representational coverage but do not yet
+establish contraction accuracy or speed.  The next validation must compare
+small-core Hamiltonian, gradient, and HVP contractions with the existing exact
+interpolation reference, followed by an RI/THC timing comparison.
+
 ## 10. Ill-conditioned and singular pair treatment
 
 ### 10.1 Residual-certified propagation
