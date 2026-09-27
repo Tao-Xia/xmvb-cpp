@@ -105,9 +105,6 @@ static void validate_selected_state_determinant_matrices(
     const char* label) {
   for (const auto& state : selected_state_matrices.states) {
     throw_if_nonfinite(
-        state.determinant_coefficients,
-        label);
-    throw_if_nonfinite(
         state.coefficient_matrix,
         label);
     throw_if_nonfinite(state.local_sparse_coefficient_matrix, label);
