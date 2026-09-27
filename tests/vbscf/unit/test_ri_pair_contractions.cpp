@@ -12,6 +12,7 @@
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/ri_factor_adjoint.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -352,6 +353,60 @@ int main() {
         scalar_cache.alpha.ordered_pair_data.front().delta_cofactor_1st,
         1.0e-13,
         "RI directional pair tile cofactor");
+    const auto opposite_cache =
+        xmvb::vb::detail::build_directional_opposite_spin_pair_data(
+            pair_cache.alpha_reuse_table.unique_determinants,
+            pair_cache.alpha_pair_cache_ref(),
+            1,
+            n_active,
+            direct_ri,
+            first_view,
+            scalar_cache.alpha.ordered_pair_data,
+            &direct_ri.ri_active_pair_factors,
+            &delta_factors);
+    const auto opposite_tile =
+        xmvb::vb::detail::build_directional_opposite_spin_pair_tile(
+            pair_cache.alpha_reuse_table.unique_determinants,
+            pair_cache.alpha_pair_cache_ref(),
+            1,
+            n_active,
+            direct_ri,
+            first_view,
+            scalar_tile,
+            &direct_ri.ri_active_pair_factors,
+            &delta_factors);
+    require_matrix_close(
+        opposite_tile.pair(0, 0).delta_overlap_submatrix,
+        opposite_cache.front().delta_overlap_submatrix,
+        1.0e-13,
+        "RI opposite-spin tile overlap");
+    const auto& tile_projection = opposite_tile.pair(0, 0)
+                                      .delta_first_order_cofactor_projection;
+    const auto& cache_projection = opposite_cache.front()
+                                       .delta_first_order_cofactor_projection;
+    if (tile_projection.packed_pair_indices !=
+        cache_projection.packed_pair_indices) {
+      throw std::runtime_error(
+          "RI opposite-spin tile projection support mismatch");
+    }
+    for (std::size_t entry = 0;
+         entry < tile_projection.packed_pair_values.size();
+         ++entry) {
+      require_close(
+          tile_projection.packed_pair_values[entry],
+          cache_projection.packed_pair_values[entry],
+          1.0e-13,
+          "RI opposite-spin tile projection");
+    }
+    for (std::size_t entry = 0;
+         entry < tile_projection.projected_pair_values.size();
+         ++entry) {
+      require_close(
+          tile_projection.projected_pair_values[entry],
+          cache_projection.projected_pair_values[entry],
+          1.0e-13,
+          "RI opposite-spin tile kernel image");
+    }
     const auto cache_block =
         xmvb::vb::build_same_spin_directional_pair_cache_batch(
             pair_cache,
