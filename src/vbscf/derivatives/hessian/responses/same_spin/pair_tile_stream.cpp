@@ -78,9 +78,22 @@ void stream_spin_table(
       consume(
           alpha_channel,
           beta_channel,
+          accepted_tile,
           forward_same,
           forward_opposite ? &*forward_opposite : nullptr);
       if (right_begin != left_begin) {
+        const AcceptedSpinPairTile reverse_accepted =
+            accepted_pair_provider.build(
+                right_begin,
+                right_end,
+                left_begin,
+                left_end,
+                accepted_active_overlap,
+                accepted_active_one_electron,
+                accepted_two_electron,
+                AcceptedPairTileBuildOptions{
+                    .materialize_projected_pair_values = false,
+                    .populate_response_payload = true});
         const SameSpinDirectionalPairTileView reverse_same =
             same_spin.view(true);
         const std::optional<DirectionalOppositeSpinPairTileView>
@@ -91,6 +104,7 @@ void stream_spin_table(
         consume(
             alpha_channel,
             beta_channel,
+            reverse_accepted,
             reverse_same,
             reverse_opposite ? &*reverse_opposite : nullptr);
       }

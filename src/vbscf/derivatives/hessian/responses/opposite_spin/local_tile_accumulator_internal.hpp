@@ -19,6 +19,7 @@ class LocalOppositeSpinTileAccumulator {
   void consume(
       bool alpha_channel,
       bool beta_channel,
+      const AcceptedSpinPairTile& accepted,
       const DirectionalOppositeSpinPairTileView& tile);
 
   OppositeSpinBackwardContribution finish();

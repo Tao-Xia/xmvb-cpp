@@ -85,10 +85,9 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
 
 void accumulate_local_primary_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
+    const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& directional_tile,
     const SameSpinAcceptedTileWeights& accepted_weights,
-    int n_unique,
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,

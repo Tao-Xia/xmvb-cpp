@@ -431,7 +431,7 @@ template <
     typename DTWeight>
 void accumulate_spin_local_matrix_backward_tile(
     const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& directional_tile,
     const HWeight& hamiltonian_weight_tile,
     const SWeight& overlap_weight_tile,
@@ -441,7 +441,6 @@ void accumulate_spin_local_matrix_backward_tile(
     const DTWeight& delta_partner_total_transfer_tile,
     int left_begin,
     int right_begin,
-    int n_unique_determinants,
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -483,10 +482,7 @@ void accumulate_spin_local_matrix_backward_tile(
       }
 
       const auto& pair_evaluation =
-          ordered_pair_cache[ordered_spin_pair_storage_index(
-              left_id,
-              right_id,
-              n_unique_determinants)];
+          accepted.pair(left_local, right_local);
       const auto& occ_L = unique_determinants[left_id];
       const auto& occ_R = unique_determinants[right_id];
       const auto& overlap_result = pair_evaluation.overlap_result;
@@ -1026,10 +1022,9 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
 
 void accumulate_local_primary_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
-    const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
+    const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& directional_tile,
     const SameSpinAcceptedTileWeights& accepted_weights,
-    int n_unique,
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
@@ -1041,7 +1036,7 @@ void accumulate_local_primary_pair_tile(
       directional_tile.left_size(), directional_tile.right_size());
   accumulate_spin_local_matrix_backward_tile(
       unique_determinants,
-      accepted_pairs,
+      accepted,
       directional_tile,
       accepted_weights.hamiltonian,
       accepted_weights.overlap,
@@ -1051,7 +1046,6 @@ void accumulate_local_primary_pair_tile(
       zero,
       directional_tile.left_begin(),
       directional_tile.right_begin(),
-      n_unique,
       n_active_orbitals,
       active_one_electron_matrix,
       active_space_two_electron_result,

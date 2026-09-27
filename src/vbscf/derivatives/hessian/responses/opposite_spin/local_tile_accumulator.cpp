@@ -98,6 +98,7 @@ LocalOppositeSpinTileAccumulator::LocalOppositeSpinTileAccumulator(
 void LocalOppositeSpinTileAccumulator::consume(
     bool alpha_channel,
     bool beta_channel,
+    const AcceptedSpinPairTile&,
     const DirectionalOppositeSpinPairTileView& tile) {
   if (alpha_channel) {
     accumulate_primary(PrimarySpin::Alpha, tile, true);

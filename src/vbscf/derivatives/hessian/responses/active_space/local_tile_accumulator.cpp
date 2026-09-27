@@ -29,6 +29,8 @@ LocalActiveSpaceTileAccumulator::LocalActiveSpaceTileAccumulator(
           accepted_point.selected_state_matrices,
           accepted_point.selected_state_energies,
           input.orbital_preparation_input.n_active_orbitals,
+          accepted_point.prepared_active_space.orbital_result
+              .active_orbital_overlap_matrix,
           accepted_point.prepared_active_space
               .active_space_one_electron_result.h1e_act,
           accepted_point.prepared_active_space
@@ -49,14 +51,16 @@ LocalActiveSpaceTileAccumulator::LocalActiveSpaceTileAccumulator(
 void LocalActiveSpaceTileAccumulator::consume(
     bool alpha_channel,
     bool beta_channel,
+    const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& same_spin,
     const DirectionalOppositeSpinPairTileView* opposite_spin) {
   if (opposite_spin == nullptr) {
     throw std::logic_error(
         "local pair-tile adjoint requires opposite-spin channels");
   }
-  same_spin_.consume(alpha_channel, beta_channel, same_spin);
-  opposite_spin_.consume(alpha_channel, beta_channel, *opposite_spin);
+  same_spin_.consume(alpha_channel, beta_channel, accepted, same_spin);
+  opposite_spin_.consume(
+      alpha_channel, beta_channel, accepted, *opposite_spin);
 }
 
 ActiveSpaceGradientDirection LocalActiveSpaceTileAccumulator::finish() {

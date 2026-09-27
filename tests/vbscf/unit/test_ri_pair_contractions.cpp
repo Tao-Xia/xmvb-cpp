@@ -438,6 +438,7 @@ int main() {
         selected,
         selected_energies,
         n_active,
+        active_overlap,
         h1e,
         direct_ri,
         first_view);
@@ -456,16 +457,18 @@ int main() {
         true,
         [&](bool alpha_channel,
             bool beta_channel,
+            const xmvb::vb::AcceptedSpinPairTile& accepted_tile,
             const xmvb::vb::detail::SameSpinDirectionalPairTileView& tile,
             const xmvb::vb::detail::DirectionalOppositeSpinPairTileView*
                 opposite_tile) {
-          tiled_local_same_spin.consume(alpha_channel, beta_channel, tile);
+          tiled_local_same_spin.consume(
+              alpha_channel, beta_channel, accepted_tile, tile);
           if (opposite_tile == nullptr) {
             throw std::runtime_error(
                 "local opposite-spin oracle requires a pair tile");
           }
           tiled_local_opposite_spin.consume(
-              alpha_channel, beta_channel, *opposite_tile);
+              alpha_channel, beta_channel, accepted_tile, *opposite_tile);
         });
     const auto tiled_local_contribution = tiled_local_same_spin.finish();
     const auto tiled_local_opposite_contribution =

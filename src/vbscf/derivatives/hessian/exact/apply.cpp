@@ -559,11 +559,16 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
     const auto consume_local_active_tile =
         [&](bool alpha_channel,
             bool beta_channel,
+            const AcceptedSpinPairTile& accepted,
             const detail::SameSpinDirectionalPairTileView& same_spin,
             const detail::DirectionalOppositeSpinPairTileView* opposite_spin) {
           if (local_active_tile_accumulator) {
             local_active_tile_accumulator->consume(
-                alpha_channel, beta_channel, same_spin, opposite_spin);
+                alpha_channel,
+                beta_channel,
+                accepted,
+                same_spin,
+                opposite_spin);
           }
         };
     bool directional_pair_tiles_consumed = false;

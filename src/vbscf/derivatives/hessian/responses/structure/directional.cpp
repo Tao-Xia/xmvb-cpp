@@ -331,6 +331,7 @@ build_selected_structure_direction_from_pair_tiles(
       true,
       [&](bool alpha_channel,
           bool beta_channel,
+          const AcceptedSpinPairTile& accepted_tile,
           const detail::SameSpinDirectionalPairTileView& same_tile,
           const detail::DirectionalOppositeSpinPairTileView* opposite_tile) {
         if (opposite_tile == nullptr) {
@@ -457,7 +458,11 @@ build_selected_structure_direction_from_pair_tiles(
         }
         if (additional_consumer) {
           additional_consumer(
-              alpha_channel, beta_channel, same_tile, opposite_tile);
+              alpha_channel,
+              beta_channel,
+              accepted_tile,
+              same_tile,
+              opposite_tile);
         }
       });
 

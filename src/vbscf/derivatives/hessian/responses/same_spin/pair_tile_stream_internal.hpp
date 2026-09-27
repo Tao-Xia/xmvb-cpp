@@ -11,6 +11,7 @@ namespace xmvb::vb::detail {
 using DirectionalPairTileConsumer = std::function<void(
     bool alpha_channel,
     bool beta_channel,
+    const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& same_spin,
     const DirectionalOppositeSpinPairTileView* opposite_spin)>;
 
