@@ -76,7 +76,14 @@ ActiveSpaceIntegralDirectionView build_active_space_integral_direction(
         "directional integrals");
   }
 
-  if (tangent.precomputed_packed_two_electron != nullptr) {
+  if (!tangent.packed_two_electron_required) {
+    if (tangent.precomputed_packed_two_electron != nullptr) {
+      throw std::invalid_argument(
+          "packed active-space 2e direction was supplied but marked unnecessary");
+    }
+    workspace->packed_two_electron.clear();
+    workspace->two_electron.dense_fixed_adjoint_direction.resize(0, 0);
+  } else if (tangent.precomputed_packed_two_electron != nullptr) {
     const std::size_t packed_size =
         packed_active_two_electron_integral_count(n_active_orbitals);
     if (tangent.precomputed_packed_two_electron->size() !=

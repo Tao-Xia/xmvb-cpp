@@ -259,7 +259,9 @@ SelectedStateDirectionalStructureImages
 build_selected_structure_direction(
     const AcceptedOuterResponseContext& accepted,
     const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache) {
+    const SameSpinDirectionalPairCache& directional_pair_cache,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
   if (accepted.input == nullptr ||
       accepted.accepted_point_context == nullptr) {
     throw std::invalid_argument(
@@ -276,6 +278,19 @@ build_selected_structure_direction(
       same_spin.alpha_reuse_table.unique_determinants.size());
   const int n_beta = static_cast<int>(
       same_spin.beta_reuse_table.unique_determinants.size());
+  if ((accepted_ri_active_pair_factors == nullptr) !=
+      (directional_ri_active_pair_factors == nullptr)) {
+    throw std::invalid_argument(
+        "structure RI direction requires both accepted and directional factors");
+  }
+  if (accepted_ri_active_pair_factors != nullptr &&
+      (accepted_ri_active_pair_factors->cols() != n_pairs ||
+       directional_ri_active_pair_factors->rows() !=
+           accepted_ri_active_pair_factors->rows() ||
+       directional_ri_active_pair_factors->cols() != n_pairs)) {
+    throw std::invalid_argument(
+        "structure RI direction factor dimensions are inconsistent");
+  }
   const StructureAction* structure_action = accepted
       .selected_state_eigen_response_operator.structure_action;
   if (structure_action == nullptr) {
@@ -437,6 +452,12 @@ build_selected_structure_direction(
         alpha_channels,
         target,
         [&](int target_pair, int source_pair) {
+          if (accepted_ri_active_pair_factors != nullptr) {
+            return accepted_ri_active_pair_factors->col(target_pair).dot(
+                       directional_ri_active_pair_factors->col(source_pair)) +
+                directional_ri_active_pair_factors->col(target_pair).dot(
+                       accepted_ri_active_pair_factors->col(source_pair));
+          }
           return direction.packed_two_electron[
               TwoElectronIndexer::packed_pair_of_pairs_index(
                   target_pair, source_pair)];

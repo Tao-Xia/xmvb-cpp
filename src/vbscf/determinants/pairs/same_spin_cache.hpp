@@ -113,6 +113,10 @@ struct SameSpinPairCacheContext {
 void release_same_spin_pair_evaluations(
     SameSpinPairCacheContext* cache_context);
 
+/** @brief Whether any ordered spin pair requires inverse-free polynomial response data. */
+bool has_polynomial_same_spin_response_pairs(
+    const SameSpinPairCacheContext& cache_context);
+
 /**
  * @brief Compresses repeated same-spin occupied strings into a unique table.
  */

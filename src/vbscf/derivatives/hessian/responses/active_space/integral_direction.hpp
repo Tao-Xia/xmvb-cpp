@@ -51,6 +51,8 @@ struct ActiveSpaceIntegralTangent {
   const Eigen::MatrixXd& dense_active_coefficients;
   const Eigen::MatrixXd& delta_effective_h1e_times_active_auxiliary_orbitals;
   const Eigen::VectorXd* precomputed_packed_two_electron = nullptr;
+  /** Skip the packed 2e tangent when all consumers operate on RI factors. */
+  bool packed_two_electron_required = true;
 };
 
 struct ActiveSpaceIntegralDirectionWorkspace {

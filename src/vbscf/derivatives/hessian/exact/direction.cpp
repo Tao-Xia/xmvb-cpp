@@ -43,10 +43,12 @@ ExactHvpOperator::State::build_active_integral_direction(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_h1e_times_active,
     const Eigen::VectorXd* precomputed_delta_packed_two_electron,
     Eigen::VectorXd* ri_delta_packed_two_electron,
-    ActiveSpaceIntegralDirectionWorkspace* workspace) const {
+    ActiveSpaceIntegralDirectionWorkspace* workspace,
+    bool packed_two_electron_required) const {
   const Eigen::VectorXd* delta_packed_two_electron =
       precomputed_delta_packed_two_electron;
-  if (delta_packed_two_electron == nullptr &&
+  if (packed_two_electron_required &&
+      delta_packed_two_electron == nullptr &&
       accepted_ri_two_electron_cache_.has_value()) {
     if (ri_delta_packed_two_electron == nullptr) {
       throw std::invalid_argument(
@@ -83,7 +85,8 @@ ExactHvpOperator::State::build_active_integral_direction(
           orbital_direction.delta_active_auxiliary_orbitals,
           orbital_direction.delta_active_auxiliary_orbitals,
           delta_h1e_times_active,
-          delta_packed_two_electron},
+          delta_packed_two_electron,
+          packed_two_electron_required},
       workspace);
 }
 

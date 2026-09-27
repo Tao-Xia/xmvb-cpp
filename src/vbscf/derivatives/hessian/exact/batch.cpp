@@ -266,6 +266,15 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
   const bool compute_outer_response =
       components.local_active_response || components.structure_response ||
       build_orbital_coupling;
+  const bool direct_active_gradient = compute_outer_response &&
+      outer_response_context()
+          .selected_state_eigen_response_operator.structure_action
+          ->supports_integral_direction();
+  const bool packed_outer_two_electron_required =
+      !accepted_ri_two_electron_cache_.has_value() ||
+      direct_active_gradient ||
+      has_polynomial_same_spin_response_pairs(
+          accepted_point_context_->same_spin_pair_cache);
   if (accepted_ri_two_electron_cache_.has_value() &&
       (compute_outer_response || components.direct_core_response)) {
     const auto batch_active_two_electron_start_time =
@@ -319,10 +328,6 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
     }
     double integral_seconds = 0.0;
     double structure_seconds = 0.0;
-    const bool direct_active_gradient =
-        outer_response_context()
-            .selected_state_eigen_response_operator.structure_action
-            ->supports_integral_direction();
     const bool pair_cache_required =
         !direct_active_gradient &&
         (components.local_active_response || components.structure_response ||
@@ -339,7 +344,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
 
       const auto integral_start = std::chrono::steady_clock::now();
       Eigen::VectorXd delta_packed_two_electron;
-      if (accepted_ri_two_electron_cache_.has_value()) {
+      if (accepted_ri_two_electron_cache_.has_value() &&
+          packed_outer_two_electron_required) {
         const std::vector<double> packed =
             compute_ri_packed_active_two_electron_integral_directional_derivative(
                 *accepted_ri_two_electron_cache_,
@@ -356,9 +362,12 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
               precomputed_directions[column]
                   .orbital_preparation_directional_result,
               delta_h1e_times_active,
-              &delta_packed_two_electron,
+              packed_outer_two_electron_required
+                  ? &delta_packed_two_electron
+                  : nullptr,
               nullptr,
-              &outer.integral_direction);
+              &outer.integral_direction,
+              packed_outer_two_electron_required);
       integral_seconds += detail::exact_hvp_elapsed_seconds(integral_start);
 
       const auto structure_start = std::chrono::steady_clock::now();
@@ -382,7 +391,14 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
             build_selected_structure_direction(
                 outer_response_context(),
                 integral_direction,
-                outer.pair_cache);
+                outer.pair_cache,
+                accepted_ri_two_electron_cache_.has_value()
+                    ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
+                    : nullptr,
+                accepted_ri_two_electron_cache_.has_value()
+                    ? &ri_active_pair_factor_directions[
+                          static_cast<std::size_t>(column)]
+                    : nullptr);
         outer.direct_ci_direction = std::move(images.direct_ci_direction);
         if (build_orbital_coupling) {
           const auto& eigen = outer_response_context()
@@ -467,7 +483,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         inactive_density_gradient_columns.col(column);
     Eigen::VectorXd delta_packed_active_two_electron;
     if (compute_outer_response) {
-      if (accepted_ri_two_electron_cache_.has_value()) {
+      if (accepted_ri_two_electron_cache_.has_value() &&
+          packed_outer_two_electron_required) {
         const std::vector<double> packed =
             compute_ri_packed_active_two_electron_integral_directional_derivative(
                 *accepted_ri_two_electron_cache_,
@@ -480,7 +497,7 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
             delta_packed_active_two_electron_columns.col(column);
       }
     }
-    if (compute_outer_response) {
+    if (compute_outer_response && packed_outer_two_electron_required) {
       auto& packed = precomputed_directions[column]
                          .outer_response
                          ->integral_direction
@@ -496,7 +513,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
         components,
         &delta_h1e,
         &inactive_density_gradient,
-        (components.local_active_response || components.structure_response)
+        (components.local_active_response || components.structure_response) &&
+                packed_outer_two_electron_required
             ? &delta_packed_active_two_electron
             : nullptr,
         accepted_ri_two_electron_cache_.has_value() &&

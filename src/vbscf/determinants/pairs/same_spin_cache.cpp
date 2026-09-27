@@ -31,6 +31,22 @@ void release_same_spin_pair_evaluations(
   cache_context->estimated_cache_bytes = 0;
 }
 
+bool has_polynomial_same_spin_response_pairs(
+    const SameSpinPairCacheContext& cache_context) {
+  const auto contains_polynomial_pair = [](
+      const std::vector<SpinDeterminantPairEvaluation>& pairs) {
+    return std::any_of(
+        pairs.begin(),
+        pairs.end(),
+        [](const SpinDeterminantPairEvaluation& pair) {
+          return pair.same_spin_polynomial_response != nullptr;
+        });
+  };
+  return contains_polynomial_pair(cache_context.alpha_pair_cache_ref()) ||
+      (!cache_context.shares_same_spin_pair_cache_between_spins() &&
+       contains_polynomial_pair(cache_context.beta_pair_cache_ref()));
+}
+
 namespace {
 
 constexpr double kContributionTolerance = 1.0e-15;
