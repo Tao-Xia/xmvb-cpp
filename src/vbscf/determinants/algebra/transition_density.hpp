@@ -43,7 +43,14 @@ class TransitionDensityHierarchy {
     return compounds_.level(order);
   }
   Eigen::MatrixXd level(int order) const;
+  /** @brief Differentiate an order-q density along a change of `X`. */
+  Eigen::MatrixXd directional_level(
+      int order,
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction) const;
   double contraction(
+      int order, const Eigen::Ref<const Eigen::MatrixXd>& weights) const;
+  /** @brief Pull an order-q density contraction back to `X`. */
+  Eigen::MatrixXd contraction_gradient(
       int order, const Eigen::Ref<const Eigen::MatrixXd>& weights) const;
 
  private:

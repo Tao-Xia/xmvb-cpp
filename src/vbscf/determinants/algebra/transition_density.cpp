@@ -57,6 +57,25 @@ Eigen::MatrixXd TransitionDensityHierarchy::level(int order) const {
   return determinant_ * compounds_.level(order);
 }
 
+Eigen::MatrixXd TransitionDensityHierarchy::directional_level(
+    int order,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction) const {
+  if (overlap_direction.rows() != n_electrons_ ||
+      overlap_direction.cols() != n_electrons_) {
+    throw std::invalid_argument(
+        "transition-density direction has the wrong size");
+  }
+  const Eigen::MatrixXd inverse_direction =
+      -inverse_transpose_ * overlap_direction.transpose() *
+      inverse_transpose_;
+  const CompoundHierarchy compound_direction =
+      compounds_.directional(inverse_direction);
+  const double determinant_direction = determinant_ *
+      (inverse_transpose_.transpose() * overlap_direction).trace();
+  return determinant_direction * compounds_.level(order) +
+      determinant_ * compound_direction.level(order);
+}
+
 double TransitionDensityHierarchy::contraction(
     int order, const Eigen::Ref<const Eigen::MatrixXd>& weights) const {
   const Eigen::MatrixXd& normalized = compounds_.level(order);
@@ -66,6 +85,24 @@ double TransitionDensityHierarchy::contraction(
         "transition-density contraction weights have the wrong size");
   }
   return determinant_ * (weights.array() * normalized.array()).sum();
+}
+
+Eigen::MatrixXd TransitionDensityHierarchy::contraction_gradient(
+    int order, const Eigen::Ref<const Eigen::MatrixXd>& weights) const {
+  const Eigen::MatrixXd& normalized = compounds_.level(order);
+  if (weights.rows() != normalized.rows() ||
+      weights.cols() != normalized.cols()) {
+    throw std::invalid_argument(
+        "transition-density contraction weights have the wrong size");
+  }
+  const double normalized_contraction =
+      (weights.array() * normalized.array()).sum();
+  const Eigen::MatrixXd inverse_gradient =
+      compounds_.pullback(order, weights);
+  return determinant_ *
+      (normalized_contraction * inverse_transpose_ -
+       inverse_transpose_ * inverse_gradient.transpose() *
+           inverse_transpose_);
 }
 
 }  // namespace xmvb::vb

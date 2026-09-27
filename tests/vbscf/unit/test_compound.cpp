@@ -131,11 +131,14 @@ int main() {
           "compound pullback fails the adjoint identity");
     }
 
-    const Eigen::MatrixXd overlap = matrix.transpose() * matrix;
+    const Eigen::MatrixXd overlap = Eigen::MatrixXd::Identity(size, size) +
+        0.15 * Eigen::MatrixXd::Random(size, size);
     const double overlap_determinant = overlap.determinant();
     const Eigen::MatrixXd inverse_overlap = overlap.inverse();
     xmvb::vb::TransitionDensityHierarchy densities(size, max_order);
     densities.assign(overlap_determinant, inverse_overlap);
+    const Eigen::MatrixXd overlap_direction =
+        0.1 * Eigen::MatrixXd::Random(size, size);
     for (int order = 0; order <= max_order; ++order) {
       const Eigen::MatrixXd expected = overlap_determinant *
           direct_compound(
@@ -143,6 +146,44 @@ int main() {
       require(
           relative_error(densities.level(order), expected) < 3.0e-14,
           "transition density differs from det(X) C_q(X^-T)");
+
+      constexpr double density_step = 1.0e-5;
+      const Eigen::MatrixXd overlap_plus =
+          overlap + density_step * overlap_direction;
+      const Eigen::MatrixXd overlap_minus =
+          overlap - density_step * overlap_direction;
+      xmvb::vb::TransitionDensityHierarchy density_plus(size, max_order);
+      xmvb::vb::TransitionDensityHierarchy density_minus(size, max_order);
+      density_plus.assign(overlap_plus.determinant(), overlap_plus.inverse());
+      density_minus.assign(
+          overlap_minus.determinant(), overlap_minus.inverse());
+      const Eigen::MatrixXd density_finite_difference =
+          (density_plus.level(order) - density_minus.level(order)) /
+          (2.0 * density_step);
+      require(
+          relative_error(
+              densities.directional_level(order, overlap_direction),
+              density_finite_difference) < 2.0e-8,
+          "transition-density direction fails finite differences at order " +
+              std::to_string(order));
+
+      const Eigen::Index count = hierarchy.basis().level_size(order);
+      const Eigen::MatrixXd density_weights =
+          Eigen::MatrixXd::Random(count, count);
+      const double contraction_direction =
+          (density_weights.array() *
+           densities.directional_level(order, overlap_direction).array())
+              .sum();
+      const double contraction_pullback =
+          (densities.contraction_gradient(order, density_weights).array() *
+           overlap_direction.array())
+              .sum();
+      require(
+          std::abs(contraction_direction - contraction_pullback) <
+              3.0e-12 * std::max(
+                  {1.0, std::abs(contraction_direction),
+                   std::abs(contraction_pullback)}),
+          "transition-density pullback fails finite differences");
     }
 
     const Eigen::VectorXd overlap_left =
