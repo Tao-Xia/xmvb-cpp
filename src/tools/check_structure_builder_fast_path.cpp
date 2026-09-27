@@ -465,16 +465,6 @@ int main(int argc, char** argv) {
               << action_storage.expansion_bytes << '\n';
     std::cout << "factorized_diagonal_bytes = "
               << action_storage.diagonal_bytes << '\n';
-    std::cout << "factorized_dense_channels = "
-              << action_storage.dense_channels << '\n';
-    std::cout << "factorized_sparse_channels = "
-              << action_storage.sparse_channels << '\n';
-    std::cout << "factorized_factored_channels = "
-              << action_storage.factored_channels << '\n';
-    std::cout << "factorized_channel_nonzeros = "
-              << action_storage.channel_nonzeros << '\n';
-    std::cout << "factorized_channel_dense_values = "
-              << action_storage.channel_dense_values << '\n';
     std::cout << "orthogonal_direct_ci_selected = "
               << (action_storage.orthogonal_direct_ci ? "true" : "false")
               << '\n';

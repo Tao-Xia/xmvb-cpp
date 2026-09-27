@@ -5,7 +5,6 @@
 #include <vector>
 
 #include <Eigen/Core>
-#include <Eigen/SparseCore>
 
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -51,22 +50,12 @@ struct StructureIntegralDirection {
 };
 
 struct StructureActionStorage {
-  /** Payload retained by the spin-factorized action. */
+  /** Pair providers, active integrals, and spin strings retained by the action. */
   std::size_t factor_bytes = 0;
   /** Unique-string-pair/structure expansion in contiguous CSR form. */
   std::size_t expansion_bytes = 0;
   /** Hamiltonian and overlap diagonal model retained by Davidson. */
   std::size_t diagonal_bytes = 0;
-  /** Opposite-spin channels whose raw side is stored densely. */
-  int dense_channels = 0;
-  /** Opposite-spin channels whose raw side is stored as exact nonzeros. */
-  int sparse_channels = 0;
-  /** Opposite-spin channels fused into one support-factor family. */
-  int factored_channels = 0;
-  /** Exact nonzeros before a sparse channel is optionally densified. */
-  std::size_t channel_nonzeros = 0;
-  /** Dense values required to store the same active channel matrices. */
-  std::size_t channel_dense_values = 0;
   /** Whether the action uses the complete-space orthogonal direct-CI form. */
   bool orthogonal_direct_ci = false;
   /** Persistent bytes owned by the orthogonal direct-CI representation. */
@@ -236,68 +225,14 @@ private:
     double coefficient = 0.0;
   };
 
-  struct OppositeSpinChannel {
-    Eigen::MatrixXd projected;
-    Eigen::MatrixXd dense;
-    std::vector<Eigen::Triplet<double>> sparse;
-  };
-
-  struct SupportedChannelFamily {
-    std::vector<Eigen::MatrixXd> projected;
-    std::vector<int> offsets;
-    std::vector<int> support;
-    Eigen::MatrixXd raw;
-    bool enabled() const noexcept { return !projected.empty(); }
-  };
-
-  void build_opposite_spin_channels(
-      const std::vector<SpinDeterminantPairEvaluation>& alpha_pair_cache,
-      const std::vector<SpinDeterminantPairEvaluation>& beta_pair_cache,
-      int n_packed_pairs);
-  void add_supported_channel_block(
-      const SupportedChannelFamily& family,
-      bool supports_rows,
-      const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
-      const Eigen::Ref<const Eigen::MatrixXd>& transposed_spin_vectors,
-      Eigen::MatrixXd* spin_hamiltonians) const;
-  void add_alpha_projected_row_support(
-      const SupportedChannelFamily& family,
-      const Eigen::Ref<const Eigen::MatrixXd>& transposed_spin_vectors,
-      Eigen::MatrixXd* spin_hamiltonians) const;
-  void add_alpha_projected_column_support(
-      const SupportedChannelFamily& family,
-      const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
-      Eigen::MatrixXd* spin_hamiltonians) const;
-  void add_beta_projected_row_support(
-      const SupportedChannelFamily& family,
-      const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
-      Eigen::MatrixXd* spin_hamiltonians) const;
-  void add_beta_projected_column_support(
-      const SupportedChannelFamily& family,
-      const Eigen::Ref<const Eigen::MatrixXd>& spin_vectors,
-      Eigen::MatrixXd* spin_hamiltonians) const;
-  void add_individual_channels(
-      const Eigen::Ref<const Eigen::MatrixXd>& spin_vector,
-      Eigen::MatrixXd* spin_hamiltonian) const;
-
   std::vector<int> spin_products_;
   std::vector<std::size_t> spin_term_offsets_;
   std::vector<StructureTerm> spin_terms_;
   StructureDiagonal preconditioner_diagonal_;
-  Eigen::MatrixXd alpha_overlap_;
-  Eigen::MatrixXd alpha_hamiltonian_;
-  Eigen::MatrixXd beta_overlap_;
-  Eigen::MatrixXd beta_hamiltonian_;
-  std::vector<OppositeSpinChannel> opposite_spin_channels_;
-  SupportedChannelFamily row_supported_channels_;
-  SupportedChannelFamily column_supported_channels_;
-  bool alpha_projection_is_dense_ = false;
   int n_determinants_ = 0;
   int n_structures_ = 0;
   int n_unique_alpha_ = 0;
   int n_unique_beta_ = 0;
-  std::size_t channel_nonzeros_ = 0;
-  std::size_t channel_dense_values_ = 0;
   std::unique_ptr<OrthogonalDirectCiData> direct_ci_;
   std::unique_ptr<TiledPairData> tiled_pairs_;
 };
