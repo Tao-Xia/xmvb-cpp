@@ -98,6 +98,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/hessian/responses/same_spin/directional_pair_cache.cpp
   vbscf/derivatives/hessian/responses/same_spin/local_weights.cpp
   vbscf/derivatives/hessian/responses/same_spin/pair_response.cpp
+  vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream.cpp
   vbscf/derivatives/hessian/responses/same_spin/tile_weights.cpp
   vbscf/derivatives/hessian/responses/same_spin/weight_kernels.cpp
   vbscf/derivatives/hessian/responses/structure/directional.cpp

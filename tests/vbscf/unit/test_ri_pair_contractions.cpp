@@ -15,6 +15,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream_internal.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
@@ -383,6 +384,40 @@ int main() {
             scalar_tile,
             &direct_ri.ri_active_pair_factors,
             &delta_factors);
+    int streamed_tiles = 0;
+    xmvb::vb::detail::stream_directional_pair_tiles(
+        pair_cache,
+        n_active,
+        direct_ri,
+        first_view,
+        &h1e,
+        &direct_ri.ri_active_pair_factors,
+        &delta_factors,
+        true,
+        [&](bool alpha_channel,
+            bool beta_channel,
+            const xmvb::vb::detail::SameSpinDirectionalPairTile& same,
+            const xmvb::vb::detail::DirectionalOppositeSpinPairTile* opposite) {
+          if (!alpha_channel || !beta_channel || opposite == nullptr) {
+            throw std::runtime_error(
+                "shared-spin directional tile stream flags mismatch");
+          }
+          require_matrix_close(
+              same.delta_regular_hamiltonian,
+              scalar_tile.delta_regular_hamiltonian,
+              1.0e-13,
+              "streamed same-spin tile");
+          require_matrix_close(
+              opposite->pair(0, 0).delta_overlap_submatrix,
+              opposite_tile.pair(0, 0).delta_overlap_submatrix,
+              1.0e-13,
+              "streamed opposite-spin tile");
+          ++streamed_tiles;
+        });
+    if (streamed_tiles != 1) {
+      throw std::runtime_error(
+          "shared-spin directional pair table was evaluated more than once");
+    }
     require_matrix_close(
         opposite_tile.pair(0, 0).delta_overlap_submatrix,
         opposite_cache.front().delta_overlap_submatrix,
