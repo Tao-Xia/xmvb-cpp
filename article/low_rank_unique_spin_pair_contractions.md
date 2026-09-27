@@ -783,7 +783,12 @@ minors of $X$. The contracted interpolation in Section 10.2 applies
 componentwise to eqs 34b, 34i, and 34k. Hence the arbitrary-order formulation
 does not introduce an inverse-based approximation at ill-conditioned pairs.
 
-### 4.7 Scaling lower bounds and the actual production target
+### 4.7 Representation lower bounds, not the production algorithm
+
+This section distinguishes an implicit density from an explicitly requested
+RDM. The explicit-output discussion below is only a lower-bound argument for
+why the production algorithm must not materialize high-order densities. It is
+not included in the production complexity derived in Section 9.
 
 The phrase "low-scaling arbitrary-order density" refers to three distinct
 computational problems. They must not be assigned the same complexity.
@@ -1638,6 +1643,126 @@ $$
 
 For large connected string spaces, $c_{RL}\ll N_{\mathrm{pair}}$, and eq 76
 removes one occupied-orbital factor from the dominant pair sweep.
+
+For the full alpha/beta calculation, let $P_\sigma$ be the number of touched
+ordered unique-string pairs, $a_\sigma$ the number of independently
+factorized traversal anchors, and $n_\sigma$ the number of active electrons
+of spin $\sigma$. Let $T_{\mathrm{str}}$ denote the structure-to-unique-string
+matrix contractions, including the opposite-spin partner images. The
+contract-first RI target is
+
+$$
+T_{\mathrm{RI}}
+=
+T_{\mathrm{str}}
++
+\sum_{\sigma\in\{\alpha,\beta\}}
+\left[
+O\!\left(a_\sigma N_{\mathrm{aux}}n_\sigma^3\right)
++
+O\!\left(P_\sigma N_{\mathrm{aux}}n_\sigma^2\right)
+\right].
+\tag{76a}
+$$
+
+The same bound applies to the direct RI pullback. For one same-spin pair,
+
+$$
+\overline M^Q
+=
+w\Omega
+\left(j_QK-A^QK\right)^{\mathrm T}
+$$
+
+is scattered directly to the RI-factor adjoint. For an opposite-spin pair,
+
+$$
+\overline M^Q
+=
+\Omega\lambda_QK^{\mathrm T},
+$$
+
+where $\lambda_Q$ is obtained from the partner-spin structure contraction.
+Neither expression contains a four-index density or a packed pair-pair
+adjoint. Since a generic dense occupied RI block contains
+$N_{\mathrm{aux}}n_\sigma^2$ numbers, the edge term in eq 76a is also the
+information-theoretic lower bound for a generic RI consumer. The proposed
+algorithm is therefore asymptotically optimal at the pair-kernel level unless
+the auxiliary factors have additional sparsity or tensor factorization.
+
+For a block of $b$ HVP directions, the base channels are shared and every
+direction carries its own tangent channels. The corresponding target is
+
+$$
+T_{\mathrm{HVP}}(b)
+=
+T_{\mathrm{str}}(b)
++
+O\!\left[
+(b+1)
+\sum_{\sigma}
+\left(
+a_\sigma N_{\mathrm{aux}}n_\sigma^3
++
+P_\sigma N_{\mathrm{aux}}n_\sigma^2
+\right)
+\right].
+\tag{76b}
+$$
+
+Higher cofactor orders that appear after formally differentiating a
+transition RDM do not change eq 76b. The implementation differentiates the
+already contracted scalar functional. More generally, propagating a Taylor
+jet through derivative order $p$ requires only convolutions of the two-index
+states
+
+$$
+\Omega,
+\quad K,
+\quad A^Q,
+\quad D^Q,
+\quad E^Q,
+$$
+
+and has the fixed-order bound
+
+$$
+O\!\left(
+p^2P_\sigma N_{\mathrm{aux}}n_\sigma^2
+\right).
+\tag{76c}
+$$
+
+Thus gradient, HVP, and any fixed derivative order retain the same powers of
+$n_\sigma$ and $N_{\mathrm{aux}}$. Third- and fourth-order RDMs are artifacts
+of expanding the derivative before contraction and are never production
+intermediates.
+
+The corresponding streamed working memory for auxiliary block width $q_b$
+is
+
+$$
+M_{\mathrm{work}}
+=
+O\!\left[
+(b+1)q_b n_\sigma^2
+\right]
+$$
+
+per traversal worker, in addition to the requested RI-factor/orbital adjoint
+and bounded structure tiles. There is no $O(U^2N_{\mathrm{aux}}n^2)$ pair
+cache and no $O(m^4)$ active pair-pair adjoint.
+
+For comparison, an unstructured exact two-electron contraction retains
+
+$$
+\Theta(P_\sigma n_\sigma^4)
+$$
+
+work in the generic case. Updating $K$ by Woodbury does not change that
+leading exponent. The exact-integral implementation is therefore excluded
+from the low-scaling Woodbury algorithm and retained only as a numerical
+reference.
 
 The auxiliary index may be processed in blocks of width $q_b$. A streamed
 implementation then requires pair-local storage
