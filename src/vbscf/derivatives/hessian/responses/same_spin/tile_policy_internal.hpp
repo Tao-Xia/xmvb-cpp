@@ -131,7 +131,8 @@ inline PairTileExtents plan_pair_tile_extents(
     const SameSpinPairCacheContext& cache,
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& two_electron,
-    bool include_opposite_spin = true) {
+    bool include_opposite_spin = true,
+    std::size_t workspace_bytes = kPairTileWorkspaceBytes) {
   const auto extent = [&](const std::vector<std::vector<int>>& strings) {
     const int n_electrons = strings.empty()
         ? 0
@@ -141,7 +142,8 @@ inline PairTileExtents plan_pair_tile_extents(
         n_electrons,
         n_active_orbitals,
         two_electron.n_auxiliary_functions,
-        include_opposite_spin);
+        include_opposite_spin,
+        workspace_bytes);
   };
   return {
       extent(cache.alpha_reuse_table.unique_determinants),

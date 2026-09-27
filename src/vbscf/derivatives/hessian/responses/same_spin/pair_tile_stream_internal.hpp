@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cstddef>
 #include <functional>
 
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
 
 namespace xmvb::vb::detail {
 
@@ -32,6 +34,7 @@ void stream_directional_pair_tiles(
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors,
     bool include_opposite_spin,
-    const DirectionalPairTileConsumer& consume);
+    const DirectionalPairTileConsumer& consume,
+    std::size_t workspace_bytes = kPairTileWorkspaceBytes);
 
 }  // namespace xmvb::vb::detail

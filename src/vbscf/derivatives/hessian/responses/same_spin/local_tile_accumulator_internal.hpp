@@ -7,8 +7,21 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/tile_weights_internal.hpp"
 
 namespace xmvb::vb::detail {
+
+struct SameSpinPartnerActionPanel {
+  int begin = -1;
+  int size = 0;
+  AcceptedSpinPairActionResult action;
+};
+
+struct SameSpinAcceptedWeightTile {
+  int left_begin = -1;
+  int right_begin = -1;
+  SameSpinAcceptedTileWeights weights;
+};
 
 /** Accumulates the complete same-spin local HVP from one directional stream. */
 class LocalSameSpinTileAccumulator {
@@ -33,6 +46,11 @@ class LocalSameSpinTileAccumulator {
 
   SameSpinMatrixBackwardContribution finish();
 
+  /** Number of bounded partner panels built by the streamed path. */
+  std::size_t partner_panel_build_count() const noexcept {
+    return alpha_partner_panel_build_count_ + beta_partner_panel_build_count_;
+  }
+
  private:
   void consume_alpha_primary(
       const AcceptedSpinPairTile& accepted,
@@ -54,9 +72,16 @@ class LocalSameSpinTileAccumulator {
   const ActiveSpaceTwoElectronResult& active_two_electron_;
   const ActiveSpaceIntegralDirectionView& direction_;
   bool close_shell_same_spin_ = false;
+  bool accepted_kernels_are_symmetric_ = false;
   PairTileExtents tile_extents_;
   std::optional<AcceptedSpinPairActionResult> alpha_partner_action_;
   std::optional<AcceptedSpinPairActionResult> beta_partner_action_;
+  SameSpinPartnerActionPanel alpha_partner_panel_;
+  SameSpinPartnerActionPanel beta_partner_panel_;
+  std::optional<SameSpinAcceptedWeightTile> last_alpha_weights_;
+  std::optional<SameSpinAcceptedWeightTile> last_beta_weights_;
+  std::size_t alpha_partner_panel_build_count_ = 0;
+  std::size_t beta_partner_panel_build_count_ = 0;
   SameSpinMatrixBackwardContribution result_;
   Eigen::MatrixXd one_electron_gradient_;
 };

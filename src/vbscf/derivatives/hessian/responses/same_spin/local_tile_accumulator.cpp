@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <limits>
 #include <stdexcept>
 
 #include "vbscf/derivatives/hessian/responses/same_spin/backward_kernels_internal.hpp"
@@ -34,6 +35,39 @@ Eigen::MatrixXd pack_partner_vectors(
   return packed;
 }
 
+Eigen::MatrixXd pack_partner_panel_vectors(
+    const SelectedStateDeterminantMatrices& states,
+    bool target_alpha,
+    int panel_begin,
+    int panel_size) {
+  const int target_size = target_alpha
+      ? states.n_unique_alpha
+      : states.n_unique_beta;
+  const int partner_size = target_alpha
+      ? states.n_unique_beta
+      : states.n_unique_alpha;
+  if (panel_begin < 0 || panel_size <= 0 ||
+      panel_begin + panel_size > target_size) {
+    throw std::invalid_argument("partner-action panel bounds are invalid");
+  }
+  Eigen::MatrixXd packed(
+      partner_size,
+      panel_size * static_cast<int>(states.states.size()));
+  for (std::size_t state = 0; state < states.states.size(); ++state) {
+    const auto& coefficients = states.states[state].coefficient_matrix;
+    auto output = packed.middleCols(
+        static_cast<int>(state) * panel_size,
+        panel_size);
+    if (target_alpha) {
+      output = coefficients.middleRows(
+          panel_begin, panel_size).transpose();
+    } else {
+      output = coefficients.middleCols(panel_begin, panel_size);
+    }
+  }
+  return packed;
+}
+
 AcceptedSpinPairActionResult build_partner_action(
     const SameSpinPairCacheContext& cache,
     const SelectedStateDeterminantMatrices& states,
@@ -49,6 +83,53 @@ AcceptedSpinPairActionResult build_partner_action(
       two_electron,
       pack_partner_vectors(states, target_alpha),
       workspace_bytes);
+}
+
+AcceptedSpinPairActionResult build_partner_action_panel(
+    const SameSpinPairCacheContext& cache,
+    const SelectedStateDeterminantMatrices& states,
+    bool target_alpha,
+    int panel_begin,
+    int panel_size,
+    const std::vector<double>& active_overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e,
+    const ActiveSpaceTwoElectronResult& two_electron) {
+  return apply_accepted_spin_pair_action(
+      target_alpha ? cache.beta_provider() : cache.alpha_provider(),
+      active_overlap,
+      h1e,
+      two_electron,
+      pack_partner_panel_vectors(
+          states,
+          target_alpha,
+          panel_begin,
+          panel_size),
+      kPairTileWorkspaceBytes);
+}
+
+bool is_symmetric(
+    const Eigen::Ref<const Eigen::MatrixXd>& matrix) {
+  if (matrix.rows() != matrix.cols() || !matrix.allFinite()) {
+    return false;
+  }
+  const double scale = std::max(1.0, matrix.cwiseAbs().maxCoeff());
+  return (matrix - matrix.transpose()).cwiseAbs().maxCoeff() <=
+      64.0 * std::numeric_limits<double>::epsilon() *
+          static_cast<double>(std::max<Eigen::Index>(1, matrix.rows())) *
+          scale;
+}
+
+bool accepted_kernels_are_symmetric(
+    const std::vector<double>& active_overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& h1e) {
+  const int n_active = static_cast<int>(h1e.rows());
+  if (active_overlap.size() !=
+      static_cast<std::size_t>(n_active) * n_active) {
+    return false;
+  }
+  const Eigen::Map<const Eigen::MatrixXd> overlap(
+      active_overlap.data(), n_active, n_active);
+  return is_symmetric(overlap) && is_symmetric(h1e);
 }
 
 bool product_fits(
@@ -165,27 +246,6 @@ void build_cached_accepted_weights(
   }
 }
 
-struct AcceptedPairScalarTile {
-  Eigen::MatrixXd overlap;
-  Eigen::MatrixXd hamiltonian;
-};
-
-AcceptedPairScalarTile extract_pair_scalars(
-    const AcceptedSpinPairTile& tile) {
-  AcceptedPairScalarTile scalars{
-      Eigen::MatrixXd(tile.left_size, tile.right_size),
-      Eigen::MatrixXd(tile.left_size, tile.right_size)};
-  for (int left = 0; left < tile.left_size; ++left) {
-    for (int right = 0; right < tile.right_size; ++right) {
-      const auto& pair = tile.pair(left, right);
-      scalars.overlap(left, right) =
-          pair.overlap_result.overlap_determinant;
-      scalars.hamiltonian(left, right) = pair.total_hamiltonian;
-    }
-  }
-  return scalars;
-}
-
 void add_weight_product(
     const Eigen::Ref<const Eigen::MatrixXd>& overlap_product,
     const Eigen::Ref<const Eigen::MatrixXd>& hamiltonian_product,
@@ -198,117 +258,104 @@ void add_weight_product(
   weights->partner_total.noalias() += state_weight * hamiltonian_product;
 }
 
-/**
- * @brief Builds one primary-pair weight tile without retaining partner images.
- *
- * Each exact partner pair tile is contracted immediately into the current
- * primary tile and released.  The peak storage is therefore bounded by the
- * configured pair tile, independently of the total unique-string count.
- */
-void build_streamed_accepted_weights(
-    const SameSpinPairCacheContext& cache,
+void build_panel_accepted_weights(
     const SelectedStateDeterminantMatrices& states,
     const std::vector<double>& energies,
+    const SameSpinPartnerActionPanel& panel,
     bool target_alpha,
-    int primary_left,
-    int primary_left_size,
-    int primary_right,
-    int primary_right_size,
-    int partner_extent,
+    int left_begin,
+    int left_size,
+    int right_begin,
+    int right_size,
+    SameSpinAcceptedTileWeights* weights) {
+  if (left_begin < panel.begin ||
+      left_begin + left_size > panel.begin + panel.size) {
+    throw std::logic_error(
+        "accepted weight tile is outside its partner-action panel");
+  }
+  weights->reset(left_size, right_size);
+  const int panel_offset = left_begin - panel.begin;
+  for (std::size_t state = 0; state < states.states.size(); ++state) {
+    const auto& selected = states.states[state];
+    const int action_begin = static_cast<int>(state) * panel.size;
+    const auto overlap_image = panel.action.overlap.middleCols(
+        action_begin + panel_offset, left_size);
+    const auto hamiltonian_image = panel.action.hamiltonian.middleCols(
+        action_begin + panel_offset, left_size);
+    Eigen::MatrixXd product(left_size, right_size);
+    if (target_alpha) {
+      const auto right_coefficients = selected.coefficient_matrix.middleRows(
+          right_begin, right_size);
+      product.noalias() =
+          overlap_image.transpose() * right_coefficients.transpose();
+      weights->hamiltonian.noalias() +=
+          selected.normalized_state_weight * product;
+      weights->overlap.noalias() -=
+          selected.normalized_state_weight * energies[state] * product;
+      product.noalias() =
+          hamiltonian_image.transpose() * right_coefficients.transpose();
+    } else {
+      const auto right_coefficients = selected.coefficient_matrix.middleCols(
+          right_begin, right_size);
+      product.noalias() =
+          overlap_image.transpose() * right_coefficients;
+      weights->hamiltonian.noalias() +=
+          selected.normalized_state_weight * product;
+      weights->overlap.noalias() -=
+          selected.normalized_state_weight * energies[state] * product;
+      product.noalias() =
+          hamiltonian_image.transpose() * right_coefficients;
+    }
+    weights->partner_total.noalias() +=
+        selected.normalized_state_weight * product;
+  }
+}
+
+bool is_reverse_of(
+    const SameSpinAcceptedWeightTile& cached,
+    const SameSpinDirectionalPairTileView& tile) {
+  return tile.transposed() &&
+      cached.left_begin == tile.right_begin() &&
+      cached.right_begin == tile.left_begin() &&
+      cached.weights.hamiltonian.rows() == tile.right_size() &&
+      cached.weights.hamiltonian.cols() == tile.left_size();
+}
+
+SameSpinAcceptedTileWeights transpose_weights(
+    const SameSpinAcceptedTileWeights& source) {
+  SameSpinAcceptedTileWeights result;
+  result.hamiltonian = source.hamiltonian.transpose();
+  result.overlap = source.overlap.transpose();
+  result.partner_total = source.partner_total.transpose();
+  return result;
+}
+
+void refresh_partner_panel(
+    const SameSpinPairCacheContext& cache,
+    const SelectedStateDeterminantMatrices& states,
+    bool target_alpha,
+    int panel_begin,
+    int panel_size,
     const std::vector<double>& active_overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e,
     const ActiveSpaceTwoElectronResult& two_electron,
-    SameSpinAcceptedTileWeights* weights) {
-  weights->reset(primary_left_size, primary_right_size);
-  const AcceptedPairTileProvider& provider = target_alpha
-      ? cache.beta_provider()
-      : cache.alpha_provider();
-  const int n_partner = provider.size();
-  const int extent = std::max(1, std::min(partner_extent, n_partner));
-  for (int partner_left = 0; partner_left < n_partner;
-       partner_left += extent) {
-    const int partner_left_size = std::min(
-        extent, n_partner - partner_left);
-    for (int partner_right = 0; partner_right < n_partner;
-         partner_right += extent) {
-      const int partner_right_size = std::min(
-          extent, n_partner - partner_right);
-      const AcceptedSpinPairTile pair_tile = target_alpha
-          ? provider.build(
-                partner_right,
-                partner_right + partner_right_size,
-                partner_left,
-                partner_left + partner_left_size,
-                active_overlap,
-                h1e,
-                two_electron,
-                AcceptedPairTileBuildOptions{
-                    .materialize_projected_pair_values = false,
-                    .populate_response_payload = false,
-                    .populate_opposite_spin_projection = false})
-          : provider.build(
-                partner_left,
-                partner_left + partner_left_size,
-                partner_right,
-                partner_right + partner_right_size,
-                active_overlap,
-                h1e,
-                two_electron,
-                AcceptedPairTileBuildOptions{
-                    .materialize_projected_pair_values = false,
-                    .populate_response_payload = false,
-                    .populate_opposite_spin_projection = false});
-      const AcceptedPairScalarTile scalars = extract_pair_scalars(pair_tile);
-      for (std::size_t state = 0; state < states.states.size(); ++state) {
-        const auto& selected = states.states[state];
-        const auto& coefficients = selected.coefficient_matrix;
-        Eigen::MatrixXd left_coefficients;
-        Eigen::MatrixXd right_coefficients;
-        if (target_alpha) {
-          left_coefficients = coefficients.block(
-              primary_left,
-              partner_left,
-              primary_left_size,
-              partner_left_size);
-          right_coefficients = coefficients.block(
-              primary_right,
-              partner_right,
-              primary_right_size,
-              partner_right_size);
-        } else {
-          left_coefficients = coefficients.block(
-              partner_left,
-              primary_left,
-              partner_left_size,
-              primary_left_size).transpose();
-          right_coefficients = coefficients.block(
-              partner_right,
-              primary_right,
-              partner_right_size,
-              primary_right_size).transpose();
-        }
-        if (target_alpha) {
-          add_weight_product(
-              left_coefficients * scalars.overlap.transpose() *
-                  right_coefficients.transpose(),
-              left_coefficients * scalars.hamiltonian.transpose() *
-                  right_coefficients.transpose(),
-              selected.normalized_state_weight,
-              energies[state],
-              weights);
-        } else {
-          add_weight_product(
-              left_coefficients * scalars.overlap *
-                  right_coefficients.transpose(),
-              left_coefficients * scalars.hamiltonian *
-                  right_coefficients.transpose(),
-              selected.normalized_state_weight,
-              energies[state],
-              weights);
-        }
-      }
-    }
+    SameSpinPartnerActionPanel* panel,
+    std::size_t* build_count) {
+  if (panel->begin == panel_begin && panel->size == panel_size) {
+    return;
   }
+  panel->begin = panel_begin;
+  panel->size = panel_size;
+  panel->action = build_partner_action_panel(
+      cache,
+      states,
+      target_alpha,
+      panel_begin,
+      panel_size,
+      active_overlap,
+      h1e,
+      two_electron);
+  ++(*build_count);
 }
 
 }  // namespace
@@ -333,6 +380,9 @@ LocalSameSpinTileAccumulator::LocalSameSpinTileAccumulator(
       direction_(direction),
       close_shell_same_spin_(
           accepted_pair_cache.close_shell_reuses_same_spin_pair_cache()),
+      accepted_kernels_are_symmetric_(accepted_kernels_are_symmetric(
+          active_overlap,
+          active_one_electron)),
       tile_extents_(plan_pair_tile_extents(
           accepted_pair_cache,
           n_active_orbitals,
@@ -368,6 +418,9 @@ LocalSameSpinTileAccumulator::LocalSameSpinTileAccumulator(
           active_two_electron_,
           action_plan.pair_workspace_bytes));
     }
+  } else if (!accepted_kernels_are_symmetric_) {
+    throw std::invalid_argument(
+        "panelized same-spin response requires symmetric accepted S/H kernels");
   }
 }
 
@@ -398,7 +451,8 @@ void LocalSameSpinTileAccumulator::consume(
 void LocalSameSpinTileAccumulator::consume_alpha_primary(
     const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& tile) {
-  SameSpinAcceptedTileWeights weights;
+  SameSpinAcceptedTileWeights transient_weights;
+  const SameSpinAcceptedTileWeights* weights = nullptr;
   if (alpha_partner_action_.has_value()) {
     build_cached_accepted_weights(
         selected_states_,
@@ -409,28 +463,50 @@ void LocalSameSpinTileAccumulator::consume_alpha_primary(
         tile.left_size(),
         tile.right_begin(),
         tile.right_size(),
-        &weights);
+        &transient_weights);
+    weights = &transient_weights;
   } else {
-    build_streamed_accepted_weights(
-        accepted_pair_cache_,
-        selected_states_,
-        selected_state_energies_,
-        true,
-        tile.left_begin(),
-        tile.left_size(),
-        tile.right_begin(),
-        tile.right_size(),
-        tile_extents_.beta,
-        active_overlap_,
-        active_one_electron_,
-        active_two_electron_,
-        &weights);
+    if (tile.transposed()) {
+      if (!last_alpha_weights_.has_value() ||
+          !is_reverse_of(*last_alpha_weights_, tile)) {
+        throw std::logic_error(
+            "reverse alpha tile is not adjacent to its forward tile");
+      }
+      transient_weights = transpose_weights(last_alpha_weights_->weights);
+      weights = &transient_weights;
+    } else {
+      refresh_partner_panel(
+          accepted_pair_cache_,
+          selected_states_,
+          true,
+          tile.left_begin(),
+          tile.left_size(),
+          active_overlap_,
+          active_one_electron_,
+          active_two_electron_,
+          &alpha_partner_panel_,
+          &alpha_partner_panel_build_count_);
+      last_alpha_weights_.emplace();
+      last_alpha_weights_->left_begin = tile.left_begin();
+      last_alpha_weights_->right_begin = tile.right_begin();
+      build_panel_accepted_weights(
+          selected_states_,
+          selected_state_energies_,
+          alpha_partner_panel_,
+          true,
+          tile.left_begin(),
+          tile.left_size(),
+          tile.right_begin(),
+          tile.right_size(),
+          &last_alpha_weights_->weights);
+      weights = &last_alpha_weights_->weights;
+    }
   }
   accumulate_local_primary_pair_tile(
       accepted_pair_cache_.alpha_reuse_table.unique_determinants,
       accepted,
       tile,
-      weights,
+      *weights,
       n_active_orbitals_,
       active_one_electron_,
       active_two_electron_,
@@ -443,7 +519,8 @@ void LocalSameSpinTileAccumulator::consume_alpha_primary(
 void LocalSameSpinTileAccumulator::consume_beta_primary(
     const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& tile) {
-  SameSpinAcceptedTileWeights weights;
+  SameSpinAcceptedTileWeights transient_weights;
+  const SameSpinAcceptedTileWeights* weights = nullptr;
   if (beta_partner_action_.has_value()) {
     build_cached_accepted_weights(
         selected_states_,
@@ -454,28 +531,50 @@ void LocalSameSpinTileAccumulator::consume_beta_primary(
         tile.left_size(),
         tile.right_begin(),
         tile.right_size(),
-        &weights);
+        &transient_weights);
+    weights = &transient_weights;
   } else {
-    build_streamed_accepted_weights(
-        accepted_pair_cache_,
-        selected_states_,
-        selected_state_energies_,
-        false,
-        tile.left_begin(),
-        tile.left_size(),
-        tile.right_begin(),
-        tile.right_size(),
-        tile_extents_.alpha,
-        active_overlap_,
-        active_one_electron_,
-        active_two_electron_,
-        &weights);
+    if (tile.transposed()) {
+      if (!last_beta_weights_.has_value() ||
+          !is_reverse_of(*last_beta_weights_, tile)) {
+        throw std::logic_error(
+            "reverse beta tile is not adjacent to its forward tile");
+      }
+      transient_weights = transpose_weights(last_beta_weights_->weights);
+      weights = &transient_weights;
+    } else {
+      refresh_partner_panel(
+          accepted_pair_cache_,
+          selected_states_,
+          false,
+          tile.left_begin(),
+          tile.left_size(),
+          active_overlap_,
+          active_one_electron_,
+          active_two_electron_,
+          &beta_partner_panel_,
+          &beta_partner_panel_build_count_);
+      last_beta_weights_.emplace();
+      last_beta_weights_->left_begin = tile.left_begin();
+      last_beta_weights_->right_begin = tile.right_begin();
+      build_panel_accepted_weights(
+          selected_states_,
+          selected_state_energies_,
+          beta_partner_panel_,
+          false,
+          tile.left_begin(),
+          tile.left_size(),
+          tile.right_begin(),
+          tile.right_size(),
+          &last_beta_weights_->weights);
+      weights = &last_beta_weights_->weights;
+    }
   }
   accumulate_local_primary_pair_tile(
       accepted_pair_cache_.beta_reuse_table.unique_determinants,
       accepted,
       tile,
-      weights,
+      *weights,
       n_active_orbitals_,
       active_one_electron_,
       active_two_electron_,

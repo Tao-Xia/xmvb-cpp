@@ -124,7 +124,8 @@ void stream_directional_pair_tiles(
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors,
     bool include_opposite_spin,
-    const DirectionalPairTileConsumer& consume) {
+    const DirectionalPairTileConsumer& consume,
+    std::size_t workspace_bytes) {
   if (!accepted_pair_cache.has_pair_providers() || !consume) {
     throw std::invalid_argument(
         "directional pair tile stream requires an enabled cache and consumer");
@@ -135,7 +136,8 @@ void stream_directional_pair_tiles(
       accepted_pair_cache,
       n_active_orbitals,
       accepted_two_electron,
-      include_opposite_spin);
+      include_opposite_spin,
+      workspace_bytes);
   stream_spin_table(
       accepted_pair_cache.alpha_reuse_table.unique_determinants,
       accepted_pair_cache.alpha_provider(),
