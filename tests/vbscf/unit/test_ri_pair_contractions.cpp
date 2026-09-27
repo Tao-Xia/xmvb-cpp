@@ -318,10 +318,7 @@ int main() {
               directional_auxiliary +
           delta_factor_block[block].transpose() * accepted_auxiliary;
       require_matrix_close(
-          direct_ri.ri_active_pair_factors.transpose() *
-                  scalar_direction.delta_first_cofactor_auxiliary +
-              delta_factor_block[block].transpose() *
-                  scalar_direction.accepted_first_cofactor_auxiliary,
+          scalar_direction.delta_projected_first_cofactor,
           expected_projected_direction,
           2.0e-11,
           "fused regular-RI directional image");

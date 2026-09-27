@@ -390,14 +390,6 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
     tile.ri_projected_ready.assign(
         static_cast<std::size_t>(left_size) * right_size, 0);
   }
-  Eigen::MatrixXd accepted_ri_auxiliary;
-  Eigen::MatrixXd directional_ri_auxiliary;
-  if (use_ri && build_ri_projected_channels) {
-    accepted_ri_auxiliary = Eigen::MatrixXd::Zero(
-        left_size * right_size, accepted_ri_active_pair_factors->rows());
-    directional_ri_auxiliary = Eigen::MatrixXd::Zero(
-        left_size * right_size, accepted_ri_active_pair_factors->rows());
-  }
   tile.pairs.resize(static_cast<std::size_t>(left_size) * right_size);
 
   Eigen::Map<const Eigen::MatrixXd> delta_h1e(
@@ -461,10 +453,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
           ri_direction.delta_overlap_hamiltonian_gradient;
       if (build_ri_projected_channels) {
         const int channel_work = left_local + left_size * right_local;
-        accepted_ri_auxiliary.row(channel_work) =
-            ri_direction.accepted_first_cofactor_auxiliary.transpose();
-        directional_ri_auxiliary.row(channel_work) =
-            ri_direction.delta_first_cofactor_auxiliary.transpose();
+        tile.ri_projected_channels.row(channel_work) =
+            ri_direction.delta_projected_first_cofactor.transpose();
         tile.ri_projected_ready[static_cast<std::size_t>(channel_work)] = 1;
       }
     } else {
@@ -531,21 +521,13 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
         if (!tile.ri_projected_ready.empty()) {
           const int source_work = right_local + left_size * left_local;
           const int target_work = left_local + left_size * right_local;
-          accepted_ri_auxiliary.row(target_work) =
-              accepted_ri_auxiliary.row(source_work);
-          directional_ri_auxiliary.row(target_work) =
-              directional_ri_auxiliary.row(source_work);
+          tile.ri_projected_channels.row(target_work) =
+              tile.ri_projected_channels.row(source_work);
           tile.ri_projected_ready[static_cast<std::size_t>(target_work)] =
               tile.ri_projected_ready[static_cast<std::size_t>(source_work)];
         }
       }
     }
-  }
-  if (use_ri && build_ri_projected_channels) {
-    tile.ri_projected_channels.noalias() =
-        directional_ri_auxiliary * *accepted_ri_active_pair_factors;
-    tile.ri_projected_channels.noalias() +=
-        accepted_ri_auxiliary * *directional_ri_active_pair_factors;
   }
   return tile;
 }
