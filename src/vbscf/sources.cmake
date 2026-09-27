@@ -4,9 +4,11 @@
 # source tree.
 
 set(XMVB_VBSCF_DETERMINANT_SOURCES
+  vbscf/determinants/algebra/compound.cpp
   vbscf/determinants/algebra/cofactor_differential.cpp
   vbscf/determinants/algebra/hamiltonian.cpp
   vbscf/determinants/algebra/overlap.cpp
+  vbscf/determinants/algebra/transition_density.cpp
   vbscf/determinants/pairs/evaluator.cpp
   vbscf/determinants/pairs/accepted_action.cpp
   vbscf/determinants/pairs/accepted_tile.cpp
