@@ -1,6 +1,7 @@
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 
 #include <algorithm>
+#include <optional>
 #include <stdexcept>
 #include <utility>
 
@@ -142,7 +143,9 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
               occupied_left,
               occupied_right,
               overlap_result,
-              active_two_electron.ri_active_pair_factors);
+              active_two_electron.ri_active_pair_factors,
+              options.populate_response_payload &&
+                  occupied_left.size() >= 4);
         }
       } else {
         ri_state.reset();
@@ -168,6 +171,15 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
       }
       if (options.populate_opposite_spin_projection ||
           options.populate_response_payload) {
+        std::optional<RegularRiPairResponseData> ri_response;
+        if (used_ri_update && options.populate_response_payload &&
+            ri_state.tracks_response()) {
+          ri_response.emplace();
+          ri_response->two_electron_phi = ri_state.two_electron_phi();
+          ri_response->two_electron_inverse_overlap_gradient =
+              ri_state.two_electron_inverse_overlap_gradient(
+                  evaluation.overlap_result);
+        }
         complete_same_spin_pair_evaluation(
             occupied_left,
             occupied_right,
@@ -177,7 +189,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             options.populate_opposite_spin_projection,
             options.materialize_projected_pair_values,
             options.populate_response_payload,
-            &evaluation);
+            &evaluation,
+            ri_response ? &*ri_response : nullptr);
       }
       tile.pairs[pair_index] = std::move(evaluation);
     }

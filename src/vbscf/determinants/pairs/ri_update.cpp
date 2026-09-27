@@ -80,13 +80,24 @@ double channel_scalar_error_bound(
       n * n * element_error * element_error;
 }
 
+double channel_response_error_bound(
+    const Eigen::Ref<const Eigen::MatrixXd>& channel,
+    double element_error) {
+  const double n = static_cast<double>(channel.rows());
+  const double channel_norm = max_abs(channel);
+  const double trace_norm = channel.diagonal().cwiseAbs().sum();
+  return (trace_norm + 3.0 * n * channel_norm) * element_error +
+      2.0 * n * element_error * element_error;
+}
+
 }  // namespace
 
 bool RiPairUpdateState::initialize(
     const std::vector<int>& occupied_left,
     const std::vector<int>& occupied_right,
     const DeterminantOverlapResult& overlap,
-    const Eigen::Ref<const Eigen::MatrixXd>& ri_factors) {
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_factors,
+    bool track_response) {
   reset();
   const int n_electrons = static_cast<int>(occupied_left.size());
   if (static_cast<int>(occupied_right.size()) != n_electrons ||
@@ -101,12 +112,18 @@ bool RiPairUpdateState::initialize(
   n_electrons_ = n_electrons;
   occupied_left_ = occupied_left;
   occupied_right_ = occupied_right;
+  track_response_ = track_response;
+  if (track_response_) {
+    response_aggregate_ = Eigen::MatrixXd::Zero(n_electrons, n_electrons);
+  }
   channels_.resize(
       ri_factors.rows(),
       static_cast<Eigen::Index>(n_electrons) * n_electrons);
   channel_error_bounds_.assign(
       static_cast<std::size_t>(ri_factors.rows()), 0.0);
   Eigen::MatrixXd transition(n_electrons, n_electrons);
+  const double epsilon = std::numeric_limits<double>::epsilon();
+  const double gamma = matrix_product_roundoff_factor(n_electrons);
   for (Eigen::Index auxiliary = 0;
        auxiliary < ri_factors.rows();
        ++auxiliary) {
@@ -123,8 +140,34 @@ bool RiPairUpdateState::initialize(
         n_electrons,
         n_electrons);
     channel.noalias() = overlap.inverse_overlap_submatrix * transition;
+    if (track_response_) {
+      const double trace = channel.trace();
+      const Eigen::MatrixXd channel_square = channel * channel;
+      const Eigen::MatrixXd channel_abs = channel.cwiseAbs();
+      const double trace_scale =
+          channel.diagonal().cwiseAbs().sum() * max_abs(channel);
+      const double square_scale = max_abs(channel_abs * channel_abs);
+      const double aggregate_norm = max_abs(response_aggregate_);
+      response_aggregate_.noalias() += trace * channel - channel_square;
+      response_roundoff_bound_ +=
+          (gamma + 4.0 * epsilon) * (trace_scale + square_scale) +
+          epsilon * aggregate_norm;
+    }
   }
-  valid_ = channels_.allFinite();
+  const double response_scale = track_response_
+      ? std::max(
+            std::numeric_limits<double>::min(),
+            max_abs(response_aggregate_))
+      : 1.0;
+  valid_ = channels_.allFinite() &&
+      (!track_response_ ||
+       (response_aggregate_.allFinite() &&
+        std::isfinite(response_roundoff_bound_) &&
+        response_roundoff_bound_ <=
+            std::sqrt(epsilon) * response_scale));
+  if (!valid_) {
+    reset();
+  }
   return valid_;
 }
 
@@ -185,6 +228,11 @@ bool RiPairUpdateState::update_right(
       overlap_new.overlap_submatrix.row(row).cwiseAbs().sum() +
       overlap_old.overlap_submatrix.row(row).cwiseAbs().sum());
   double phi_error_bound = 0.0;
+  double response_channel_error_bound = 0.0;
+  double response_update_scale = 0.0;
+  const double response_old_norm = track_response_
+      ? max_abs(response_aggregate_)
+      : 0.0;
 
   Eigen::RowVectorXd transition_delta(n_electrons_);
   for (Eigen::Index auxiliary = 0;
@@ -223,6 +271,37 @@ bool RiPairUpdateState::update_right(
     }
     const Eigen::RowVectorXd residual =
         transition_delta - overlap_delta.transpose() * channel;
+    if (track_response_) {
+      const double trace = channel.trace();
+      const double trace_update = residual.dot(update_column);
+      const Eigen::MatrixXd trace_term = trace_update * channel;
+      const Eigen::MatrixXd rank_one_term =
+          trace * update_column * residual;
+      const Eigen::MatrixXd left_product =
+          (channel * update_column) * residual;
+      const Eigen::MatrixXd right_product =
+          update_column * (residual * channel);
+      const double update_column_norm =
+          update_column.cwiseAbs().maxCoeff();
+      const double residual_norm = residual.cwiseAbs().maxCoeff();
+      const double trace_update_scale =
+          residual.cwiseAbs().dot(update_column.cwiseAbs());
+      const double left_product_scale =
+          (channel.cwiseAbs() * update_column.cwiseAbs()).maxCoeff() *
+          residual_norm;
+      const double right_product_scale =
+          update_column_norm *
+          (residual.cwiseAbs() * channel.cwiseAbs()).maxCoeff();
+      response_roundoff_bound_ +=
+          epsilon * max_abs(response_aggregate_);
+      response_aggregate_.noalias() +=
+          trace_term + rank_one_term - left_product - right_product;
+      response_update_scale +=
+          trace_update_scale * old_channel_norm +
+          channel.diagonal().cwiseAbs().sum() *
+              update_column_norm * residual_norm +
+          left_product_scale + right_product_scale;
+    }
     const double old_error =
         channel_error_bounds_[static_cast<std::size_t>(auxiliary)];
     const double overlap_norm = overlap_delta.cwiseAbs().sum();
@@ -245,12 +324,32 @@ bool RiPairUpdateState::update_right(
         3.0 * epsilon * (old_channel_norm + correction_norm);
     channel_error_bounds_[static_cast<std::size_t>(auxiliary)] = new_error;
     phi_error_bound += channel_scalar_error_bound(channel, new_error);
+    if (track_response_) {
+      response_channel_error_bound +=
+          channel_response_error_bound(channel, new_error);
+    }
+  }
+  if (track_response_) {
+    response_roundoff_bound_ +=
+        (6.0 * gamma + 8.0 * epsilon) * response_update_scale +
+        epsilon * (response_old_norm + max_abs(response_aggregate_));
   }
   const double phi = two_electron_phi();
   const double phi_scale = std::max(
       std::numeric_limits<double>::min(), std::abs(phi));
+  const double response_scale = track_response_
+      ? std::max(
+            std::numeric_limits<double>::min(),
+            max_abs(response_aggregate_))
+      : 1.0;
+  const double response_error_bound =
+      response_roundoff_bound_ + response_channel_error_bound;
   if (!channels_.allFinite() || !std::isfinite(phi_error_bound) ||
-      phi_error_bound > std::sqrt(epsilon) * phi_scale) {
+      phi_error_bound > std::sqrt(epsilon) * phi_scale ||
+      (track_response_ &&
+       (!response_aggregate_.allFinite() ||
+        !std::isfinite(response_error_bound) ||
+        response_error_bound > std::sqrt(epsilon) * response_scale))) {
     reset();
     return false;
   }
@@ -263,7 +362,10 @@ void RiPairUpdateState::reset() {
   occupied_right_.clear();
   channel_error_bounds_.clear();
   channels_.resize(0, 0);
+  response_aggregate_.resize(0, 0);
+  response_roundoff_bound_ = 0.0;
   n_electrons_ = 0;
+  track_response_ = false;
   valid_ = false;
 }
 
@@ -284,6 +386,17 @@ double RiPairUpdateState::two_electron_phi() const {
         channel.cwiseProduct(channel.transpose()).sum();
   }
   return 0.5 * phi;
+}
+
+Eigen::MatrixXd RiPairUpdateState::two_electron_inverse_overlap_gradient(
+    const DeterminantOverlapResult& overlap) const {
+  if (!valid_ || !track_response_ ||
+      overlap.overlap_submatrix.rows() != n_electrons_ ||
+      overlap.overlap_submatrix.cols() != n_electrons_) {
+    return {};
+  }
+  return response_aggregate_.transpose() *
+      overlap.overlap_submatrix.transpose();
 }
 
 }  // namespace xmvb::vb

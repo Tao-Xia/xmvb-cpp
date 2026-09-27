@@ -107,8 +107,8 @@ int main() {
   for (int auxiliary = 0; auxiliary < ri.n_auxiliary_functions; ++auxiliary) {
     for (int pair = 0; pair < n_pairs; ++pair) {
       ri.ri_active_pair_factors(auxiliary, pair) =
-          0.021 * (auxiliary + 1) - 0.013 * (pair + 2) +
-          0.004 * ((auxiliary + pair) % 3);
+          0.04 * std::sin((auxiliary + 1) * (pair + 2)) +
+          0.03 * std::cos((auxiliary + 2) * (pair + 1));
     }
   }
 
@@ -236,6 +236,168 @@ int main() {
           {0, 1}, {0, 2}, identity_pair, cancellation_factors) &&
           std::abs(cancellation_update.two_electron_phi() + 1.0e16) <= 1.0,
       "direct RI reanchor did not recover the cancelling channel");
+
+  const std::vector<int> four_left{0, 1, 2, 3};
+  const std::vector<int> four_right_old{0, 1, 2, 3};
+  const std::vector<int> four_right_new{0, 1, 2, 4};
+  Eigen::MatrixXd chain_overlap =
+      Eigen::MatrixXd::Constant(n_active, n_active, 0.15);
+  chain_overlap.diagonal().setOnes();
+  const std::vector<double> chain_overlap_storage(
+      chain_overlap.data(), chain_overlap.data() + chain_overlap.size());
+  const auto four_anchor = overlap_resolver.resolve_matrix(
+      xmvb::vb::build_overlap_submatrix(
+          four_left, four_right_old, chain_overlap_storage, n_active));
+  const auto four_update = xmvb::vb::try_woodbury_right_overlap_update(
+      four_left,
+      four_right_old,
+      four_right_new,
+      chain_overlap,
+      four_anchor);
+  require(
+      four_update.has_value(),
+      "four-electron Woodbury response update was rejected");
+  xmvb::vb::RiPairUpdateState response_update;
+  require(
+      response_update.initialize(
+          four_left,
+          four_right_old,
+          four_anchor,
+          ri.ri_active_pair_factors,
+          true) &&
+          response_update.update_right(
+              four_left,
+              four_right_old,
+              four_right_new,
+              four_anchor,
+              *four_update,
+              ri.ri_active_pair_factors),
+      "four-electron low-rank RI response update was rejected");
+  Eigen::MatrixXd direct_response_gradient;
+  const auto direct_response = xmvb::vb::compute_same_spin_original_phi(
+      four_left,
+      four_right_new,
+      Eigen::MatrixXd::Zero(n_active, n_active),
+      n_active,
+      ri,
+      *four_update,
+      &direct_response_gradient);
+  require(
+      std::abs(
+          response_update.two_electron_phi() -
+          direct_response.total_phi) <= 2.0e-11 &&
+          relative_difference(
+              response_update.two_electron_inverse_overlap_gradient(
+                  *four_update),
+              direct_response_gradient) <= 2.0e-11,
+      "low-rank RI response aggregate differs from direct contraction");
+  const std::vector<int> four_right_next{0, 1, 3, 4};
+  const auto four_second_update =
+      xmvb::vb::try_woodbury_right_overlap_update(
+          four_left,
+          four_right_new,
+          four_right_next,
+          chain_overlap,
+          *four_update);
+  require(
+      four_second_update.has_value(),
+      "successive four-electron Woodbury overlap update was rejected");
+  xmvb::vb::RiPairUpdateState scalar_chain;
+  require(
+      scalar_chain.initialize(
+          four_left,
+          four_right_old,
+          four_anchor,
+          ri.ri_active_pair_factors) &&
+          scalar_chain.update_right(
+              four_left,
+              four_right_old,
+              four_right_new,
+              four_anchor,
+              *four_update,
+              ri.ri_active_pair_factors) &&
+          scalar_chain.update_right(
+              four_left,
+              four_right_new,
+              four_right_next,
+              *four_update,
+              *four_second_update,
+              ri.ri_active_pair_factors),
+      "successive scalar RI channel updates were rejected");
+  const bool response_updated = response_update.update_right(
+      four_left,
+      four_right_new,
+      four_right_next,
+      *four_update,
+      *four_second_update,
+      ri.ri_active_pair_factors);
+  require(
+      response_updated,
+      "successive four-electron RI response update was rejected");
+  Eigen::MatrixXd direct_second_gradient;
+  const auto direct_second_response =
+      xmvb::vb::compute_same_spin_original_phi(
+          four_left,
+          four_right_next,
+          Eigen::MatrixXd::Zero(n_active, n_active),
+          n_active,
+          ri,
+          *four_second_update,
+          &direct_second_gradient);
+  require(
+      std::abs(
+          response_update.two_electron_phi() -
+          direct_second_response.total_phi) <= 2.0e-11 &&
+          relative_difference(
+              response_update.two_electron_inverse_overlap_gradient(
+                  *four_second_update),
+              direct_second_gradient) <= 2.0e-11,
+      "successive low-rank RI response update drifted from direct contraction");
+  const xmvb::vb::AcceptedPairTileProvider four_provider(
+      {four_right_old, four_right_new}, n_active);
+  const auto four_tile = four_provider.build(
+      0,
+      2,
+      0,
+      2,
+      overlap_storage,
+      h1e,
+      ri,
+      xmvb::vb::AcceptedPairTileBuildOptions{
+          .materialize_projected_pair_values = false,
+          .populate_response_payload = true,
+          .populate_opposite_spin_projection = false});
+  auto four_reference = evaluator.evaluate_same_spin_pair(
+      four_left,
+      four_right_new,
+      overlap_storage,
+      h1e,
+      n_active,
+      ri,
+      true);
+  xmvb::vb::complete_same_spin_pair_evaluation(
+      four_left,
+      four_right_new,
+      h1e,
+      n_active,
+      ri,
+      false,
+      false,
+      true,
+      &four_reference);
+  const auto& four_generated = four_tile.pair(0, 1);
+  require(
+      four_generated.has_same_spin_phi_cache &&
+          std::abs(
+              four_generated.same_spin_total_phi -
+              four_reference.same_spin_total_phi) <= 2.0e-11 &&
+          relative_difference(
+              four_generated.same_spin_inverse_overlap_gradient,
+              four_reference.same_spin_inverse_overlap_gradient) <= 2.0e-11 &&
+          relative_difference(
+              four_generated.same_spin_overlap_hamiltonian_gradient,
+              four_reference.same_spin_overlap_hamiltonian_gradient) <= 2.0e-11,
+      "accepted tile changed the regular RI response payload");
   const auto tile = provider.build(
       0,
       static_cast<int>(strings.size()),

@@ -323,6 +323,80 @@ $$
 The cancellation in eq 22 is important: no four-index intermediate is needed
 to update the full direct-minus-exchange energy.
 
+The accepted same-spin response can be propagated by the same traversal. Define
+the compact occupied-space aggregate
+
+$$
+W
+=
+\sum_Q\left[j_QA^Q-(A^Q)^2\right].
+\tag{22a}
+$$
+
+Write the channel update as
+
+$$
+A^{Q\prime}=A^Q+u t_Q^{\mathrm T},
+\qquad
+u=\frac{a}{d},
+\qquad
+s_Q=t_Q^{\mathrm T}u.
+\tag{22b}
+$$
+
+Direct expansion of eq 22a gives
+
+$$
+W'-W
+=
+\sum_Q
+\left[
+s_QA^Q
++j_Qut_Q^{\mathrm T}
+-(A^Qu)t_Q^{\mathrm T}
+-u(t_Q^{\mathrm T}A^Q)
+\right].
+\tag{22c}
+$$
+
+The nominal quadratic rank-one term cancels exactly between the two parts of
+eq 22a. Consequently, updating the compact response aggregate requires only
+
+$$
+O(N_{\mathrm{aux}}n^2)
+$$
+
+work per single-site substitution. Moreover, the relation between the
+transition block and contracted channel is
+
+$$
+M^Q=XA^Q.
+$$
+
+The derivative of the normalized same-spin functional with respect to the
+inverse overlap is therefore
+
+$$
+\frac{\partial\phi_{\mathrm{ss}}}{\partial K}
+=
+W^{\mathrm T}X^{\mathrm T}.
+\tag{22d}
+$$
+
+For the one- plus two-electron functional this becomes
+
+$$
+\frac{\partial\phi}{\partial K}
+=
+h^{\mathrm T}+W^{\mathrm T}X^{\mathrm T}.
+\tag{22e}
+$$
+
+Thus the accepted response payload is obtained from one occupied-space square
+aggregate;
+the auxiliary channel matrices remain traversal-local and are not stored for
+all unique-string pairs.
+
 ### 3.3 Left-string substitution
 
 If only left slot $p$ changes, one column changes:

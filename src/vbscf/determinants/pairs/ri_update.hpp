@@ -21,7 +21,8 @@ class RiPairUpdateState {
       const std::vector<int>& occupied_left,
       const std::vector<int>& occupied_right,
       const DeterminantOverlapResult& overlap,
-      const Eigen::Ref<const Eigen::MatrixXd>& ri_factors);
+      const Eigen::Ref<const Eigen::MatrixXd>& ri_factors,
+      bool track_response = false);
 
   bool update_right(
       const std::vector<int>& occupied_left,
@@ -33,7 +34,10 @@ class RiPairUpdateState {
 
   void reset();
   bool valid() const noexcept { return valid_; }
+  bool tracks_response() const noexcept { return track_response_; }
   double two_electron_phi() const;
+  Eigen::MatrixXd two_electron_inverse_overlap_gradient(
+      const DeterminantOverlapResult& overlap) const;
 
  private:
   using ChannelTable = Eigen::Matrix<
@@ -46,7 +50,10 @@ class RiPairUpdateState {
   std::vector<int> occupied_right_;
   std::vector<double> channel_error_bounds_;
   ChannelTable channels_;
+  Eigen::MatrixXd response_aggregate_;
+  double response_roundoff_bound_ = 0.0;
   int n_electrons_ = 0;
+  bool track_response_ = false;
   bool valid_ = false;
 };
 
