@@ -292,69 +292,74 @@ build_selected_structure_direction_from_pair_tiles(
             same_tile.delta_singular_hamiltonian();
 
         if (alpha_channel) {
-          Eigen::MatrixXd tile_hamiltonian = Eigen::MatrixXd::Zero(
-              same_tile.left_size(), n_states * n_beta);
-          Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
-              same_tile.left_size(), n_states * n_beta);
-          for (int state = 0; state < n_states; ++state) {
-            const Eigen::MatrixXd& coefficients =
-                selected_states.states[state].coefficient_matrix;
-            const int action_begin = state * n_alpha;
-            const Eigen::MatrixXd beta_overlap_image =
-                factors.beta_action.overlap
-                    .middleCols(action_begin, n_alpha).transpose();
-            const Eigen::MatrixXd beta_hamiltonian_image =
-                factors.beta_action.hamiltonian
-                    .middleCols(action_begin, n_alpha).transpose();
-            auto overlap_image = tile_overlap.block(
-                0,
-                state * n_beta,
-                same_tile.left_size(),
-                n_beta);
-            overlap_image.noalias() += same_tile.delta_overlap() *
-                beta_overlap_image.middleRows(
-                    same_tile.right_begin(), same_tile.right_size());
-            auto hamiltonian_image = tile_hamiltonian.block(
-                0,
-                state * n_beta,
-                same_tile.left_size(),
-                n_beta);
-            hamiltonian_image.noalias() += delta_hamiltonian *
-                beta_overlap_image.middleRows(
-                    same_tile.right_begin(), same_tile.right_size());
-            hamiltonian_image.noalias() += same_tile.delta_overlap() *
-                beta_hamiltonian_image.middleRows(
-                    same_tile.right_begin(), same_tile.right_size());
+          for (int beta_left = 0; beta_left < n_beta;
+               beta_left += tile_extents.beta) {
+            const int beta_left_end = std::min(
+                n_beta, beta_left + tile_extents.beta);
+            const int beta_left_size = beta_left_end - beta_left;
+            Eigen::MatrixXd tile_hamiltonian = Eigen::MatrixXd::Zero(
+                same_tile.left_size(), n_states * beta_left_size);
+            Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
+                same_tile.left_size(), n_states * beta_left_size);
+            for (int state = 0; state < n_states; ++state) {
+              const int action_begin = state * n_alpha;
+              const auto beta_overlap_image =
+                  factors.beta_action.overlap
+                      .middleCols(action_begin, n_alpha).transpose();
+              const auto beta_hamiltonian_image =
+                  factors.beta_action.hamiltonian
+                      .middleCols(action_begin, n_alpha).transpose();
+              auto overlap_image = tile_overlap.middleCols(
+                  state * beta_left_size, beta_left_size);
+              overlap_image.noalias() += same_tile.delta_overlap() *
+                  beta_overlap_image.block(
+                      same_tile.right_begin(),
+                      beta_left,
+                      same_tile.right_size(),
+                      beta_left_size);
+              auto hamiltonian_image = tile_hamiltonian.middleCols(
+                  state * beta_left_size, beta_left_size);
+              hamiltonian_image.noalias() += delta_hamiltonian *
+                  beta_overlap_image.block(
+                      same_tile.right_begin(),
+                      beta_left,
+                      same_tile.right_size(),
+                      beta_left_size);
+              hamiltonian_image.noalias() += same_tile.delta_overlap() *
+                  beta_hamiltonian_image.block(
+                      same_tile.right_begin(),
+                      beta_left,
+                      same_tile.right_size(),
+                      beta_left_size);
+            }
 
-            for (int beta_left = 0;
-                 beta_left < n_beta;
-                 beta_left += tile_extents.beta) {
-              const int beta_left_end = std::min(
-                  n_beta, beta_left + tile_extents.beta);
-              for (int beta_right = 0;
-                   beta_right < n_beta;
-                   beta_right += tile_extents.beta) {
-                const int beta_right_end = std::min(
-                    n_beta, beta_right + tile_extents.beta);
-                const AcceptedSpinPairTile beta_tile =
-                    same_spin.beta_provider().build(
-                        beta_left,
-                        beta_left_end,
+            for (int beta_right = 0; beta_right < n_beta;
+                 beta_right += tile_extents.beta) {
+              const int beta_right_end = std::min(
+                  n_beta, beta_right + tile_extents.beta);
+              const AcceptedSpinPairTile beta_tile =
+                  same_spin.beta_provider().build(
+                      beta_left,
+                      beta_left_end,
+                      beta_right,
+                      beta_right_end,
+                      accepted_overlap,
+                      accepted_h1e,
+                      accepted_two_electron,
+                      AcceptedPairTileBuildOptions{
+                          .materialize_projected_pair_values = false,
+                          .populate_response_payload = false});
+              const SparseChannels channels = tile_channels(
+                  beta_tile, n_pairs, true);
+              for (int state = 0; state < n_states; ++state) {
+                const auto coefficients_right =
+                    selected_states.states[state].coefficient_matrix.block(
+                        same_tile.right_begin(),
                         beta_right,
-                        beta_right_end,
-                        accepted_overlap,
-                        accepted_h1e,
-                        accepted_two_electron,
-                        AcceptedPairTileBuildOptions{
-                            .materialize_projected_pair_values = false,
-                            .populate_response_payload = false});
-                const SparseChannels channels = tile_channels(
-                    beta_tile, n_pairs, true);
-                const auto coefficients_right = coefficients.block(
-                    same_tile.right_begin(),
-                    beta_right,
-                    same_tile.right_size(),
-                    beta_tile.right_size);
+                        same_tile.right_size(),
+                        beta_tile.right_size);
+                auto hamiltonian_image = tile_hamiltonian.middleCols(
+                    state * beta_left_size, beta_left_size);
                 for (int target = 0; target < n_pairs; ++target) {
                   const auto projected =
                       opposite_tile->projected_channel(target);
@@ -364,88 +369,96 @@ build_selected_structure_direction_from_pair_tiles(
                   const Eigen::MatrixXd projected_coefficients =
                       projected * coefficients_right;
                   for (const ChannelEntry& entry : channels[target]) {
-                    hamiltonian_image.col(beta_left + entry.row).noalias() +=
+                    hamiltonian_image.col(entry.row).noalias() +=
                         entry.value *
                         projected_coefficients.col(entry.column);
                   }
                 }
               }
             }
+            structure_action->add_spin_product_tile(
+                tile_hamiltonian,
+                same_tile.left_begin(),
+                beta_left,
+                &delta_hamiltonian_selected);
+            structure_action->add_spin_product_tile(
+                tile_overlap,
+                same_tile.left_begin(),
+                beta_left,
+                &delta_overlap_selected);
           }
-          structure_action->add_spin_product_tile(
-              tile_hamiltonian,
-              same_tile.left_begin(),
-              0,
-              &delta_hamiltonian_selected);
-          structure_action->add_spin_product_tile(
-              tile_overlap,
-              same_tile.left_begin(),
-              0,
-              &delta_overlap_selected);
         }
 
         if (beta_channel) {
-          Eigen::MatrixXd tile_hamiltonian = Eigen::MatrixXd::Zero(
-              n_alpha, n_states * same_tile.left_size());
-          Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
-              n_alpha, n_states * same_tile.left_size());
-          for (int state = 0; state < n_states; ++state) {
-            const Eigen::MatrixXd& coefficients =
-                selected_states.states[state].coefficient_matrix;
-            const int action_begin = state * n_beta;
-            const auto alpha_overlap_image =
-                factors.alpha_action.overlap.middleCols(
-                    action_begin, n_beta);
-            const auto alpha_hamiltonian_image =
-                factors.alpha_action.hamiltonian.middleCols(
-                    action_begin, n_beta);
-            auto overlap_image = tile_overlap.middleCols(
-                state * same_tile.left_size(),
-                same_tile.left_size());
-            overlap_image.noalias() += alpha_overlap_image.middleCols(
-                same_tile.right_begin(), same_tile.right_size()) *
-                same_tile.delta_overlap().transpose();
-            auto hamiltonian_image = tile_hamiltonian.middleCols(
-                state * same_tile.left_size(),
-                same_tile.left_size());
-            hamiltonian_image.noalias() +=
-                alpha_hamiltonian_image.middleCols(
-                    same_tile.right_begin(), same_tile.right_size()) *
-                same_tile.delta_overlap().transpose();
-            hamiltonian_image.noalias() +=
-                alpha_overlap_image.middleCols(
-                    same_tile.right_begin(), same_tile.right_size()) *
-                delta_hamiltonian.transpose();
+          for (int alpha_left = 0; alpha_left < n_alpha;
+               alpha_left += tile_extents.alpha) {
+            const int alpha_left_end = std::min(
+                n_alpha, alpha_left + tile_extents.alpha);
+            const int alpha_left_size = alpha_left_end - alpha_left;
+            Eigen::MatrixXd tile_hamiltonian = Eigen::MatrixXd::Zero(
+                alpha_left_size, n_states * same_tile.left_size());
+            Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
+                alpha_left_size, n_states * same_tile.left_size());
+            for (int state = 0; state < n_states; ++state) {
+              const int action_begin = state * n_beta;
+              const auto alpha_overlap_image =
+                  factors.alpha_action.overlap.middleCols(
+                      action_begin, n_beta);
+              const auto alpha_hamiltonian_image =
+                  factors.alpha_action.hamiltonian.middleCols(
+                      action_begin, n_beta);
+              auto overlap_image = tile_overlap.middleCols(
+                  state * same_tile.left_size(), same_tile.left_size());
+              overlap_image.noalias() += alpha_overlap_image.block(
+                  alpha_left,
+                  same_tile.right_begin(),
+                  alpha_left_size,
+                  same_tile.right_size()) *
+                  same_tile.delta_overlap().transpose();
+              auto hamiltonian_image = tile_hamiltonian.middleCols(
+                  state * same_tile.left_size(), same_tile.left_size());
+              hamiltonian_image.noalias() +=
+                  alpha_hamiltonian_image.block(
+                      alpha_left,
+                      same_tile.right_begin(),
+                      alpha_left_size,
+                      same_tile.right_size()) *
+                  same_tile.delta_overlap().transpose();
+              hamiltonian_image.noalias() += alpha_overlap_image.block(
+                  alpha_left,
+                  same_tile.right_begin(),
+                  alpha_left_size,
+                  same_tile.right_size()) *
+                  delta_hamiltonian.transpose();
+            }
 
-            for (int alpha_left = 0;
-                 alpha_left < n_alpha;
-                 alpha_left += tile_extents.alpha) {
-              const int alpha_left_end = std::min(
-                  n_alpha, alpha_left + tile_extents.alpha);
-              for (int alpha_right = 0;
-                   alpha_right < n_alpha;
-                   alpha_right += tile_extents.alpha) {
-                const int alpha_right_end = std::min(
-                    n_alpha, alpha_right + tile_extents.alpha);
-                const AcceptedSpinPairTile alpha_tile =
-                    same_spin.alpha_provider().build(
-                        alpha_left,
-                        alpha_left_end,
+            for (int alpha_right = 0; alpha_right < n_alpha;
+                 alpha_right += tile_extents.alpha) {
+              const int alpha_right_end = std::min(
+                  n_alpha, alpha_right + tile_extents.alpha);
+              const AcceptedSpinPairTile alpha_tile =
+                  same_spin.alpha_provider().build(
+                      alpha_left,
+                      alpha_left_end,
+                      alpha_right,
+                      alpha_right_end,
+                      accepted_overlap,
+                      accepted_h1e,
+                      accepted_two_electron,
+                      AcceptedPairTileBuildOptions{
+                          .materialize_projected_pair_values = false,
+                          .populate_response_payload = false});
+              const SparseChannels channels = tile_channels(
+                  alpha_tile, n_pairs, true);
+              for (int state = 0; state < n_states; ++state) {
+                const auto coefficients_right =
+                    selected_states.states[state].coefficient_matrix.block(
                         alpha_right,
-                        alpha_right_end,
-                        accepted_overlap,
-                        accepted_h1e,
-                        accepted_two_electron,
-                        AcceptedPairTileBuildOptions{
-                            .materialize_projected_pair_values = false,
-                            .populate_response_payload = false});
-                const SparseChannels channels = tile_channels(
-                    alpha_tile, n_pairs, true);
-                const auto coefficients_right = coefficients.block(
-                    alpha_right,
-                    same_tile.right_begin(),
-                    alpha_tile.right_size,
-                    same_tile.right_size());
+                        same_tile.right_begin(),
+                        alpha_tile.right_size,
+                        same_tile.right_size());
+                auto hamiltonian_image = tile_hamiltonian.middleCols(
+                    state * same_tile.left_size(), same_tile.left_size());
                 for (int target = 0; target < n_pairs; ++target) {
                   const auto directional =
                       opposite_tile->projected_channel(target);
@@ -455,25 +468,24 @@ build_selected_structure_direction_from_pair_tiles(
                   const Eigen::MatrixXd directional_coefficients =
                       coefficients_right * directional.transpose();
                   for (const ChannelEntry& entry : channels[target]) {
-                    hamiltonian_image.row(
-                        alpha_left + entry.row).noalias() +=
+                    hamiltonian_image.row(entry.row).noalias() +=
                         entry.value *
                         directional_coefficients.row(entry.column);
                   }
                 }
               }
             }
+            structure_action->add_spin_product_tile(
+                tile_hamiltonian,
+                alpha_left,
+                same_tile.left_begin(),
+                &delta_hamiltonian_selected);
+            structure_action->add_spin_product_tile(
+                tile_overlap,
+                alpha_left,
+                same_tile.left_begin(),
+                &delta_overlap_selected);
           }
-          structure_action->add_spin_product_tile(
-              tile_hamiltonian,
-              0,
-              same_tile.left_begin(),
-              &delta_hamiltonian_selected);
-          structure_action->add_spin_product_tile(
-              tile_overlap,
-              0,
-              same_tile.left_begin(),
-              &delta_overlap_selected);
         }
         if (additional_consumer) {
           additional_consumer(
