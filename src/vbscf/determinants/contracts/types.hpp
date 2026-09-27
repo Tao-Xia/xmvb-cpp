@@ -1,5 +1,6 @@
 #pragma once
 
+#include <limits>
 #include <vector>
 
 #include <Eigen/Core>
@@ -27,6 +28,19 @@ struct DeterminantOverlapResult {
    * This scalar is the determinant used by all overlap contractions.
    */
   double overlap_determinant = 0.0;
+
+  /** @brief Sign of the determinant (`-1`, `0`, or `+1`). */
+  double determinant_sign = 0.0;
+
+  /**
+   * @brief Natural logarithm of the determinant absolute value.
+   *
+   * Singular matrices store negative infinity. Keeping sign and logarithmic
+   * magnitude separately prevents future low-rank traversal updates from
+   * losing the determinant solely through floating-point overflow/underflow.
+   */
+  double log_abs_determinant =
+      -std::numeric_limits<double>::infinity();
 
   /**
    * @brief Number of singular values below the linear-dependence threshold.

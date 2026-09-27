@@ -1,6 +1,7 @@
 #include "vbscf/determinants/algebra/overlap.hpp"
 
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -9,6 +10,47 @@
 #include <Eigen/SVD>
 
 namespace xmvb::vb {
+namespace {
+
+void set_lu_determinant_state(
+    const Eigen::FullPivLU<Eigen::MatrixXd>& lu,
+    DeterminantOverlapResult* result) {
+  const auto diagonal = lu.matrixLU().diagonal();
+  double sign = static_cast<double>(
+      lu.permutationP().determinant() *
+      lu.permutationQ().determinant());
+  double log_abs = 0.0;
+  for (Eigen::Index index = 0; index < diagonal.size(); ++index) {
+    const double pivot = diagonal(index);
+    if (pivot == 0.0 || !std::isfinite(pivot)) {
+      result->determinant_sign = 0.0;
+      result->log_abs_determinant =
+          -std::numeric_limits<double>::infinity();
+      return;
+    }
+    sign = std::signbit(pivot) ? -sign : sign;
+    log_abs += std::log(std::abs(pivot));
+  }
+  result->determinant_sign = sign >= 0.0 ? 1.0 : -1.0;
+  result->log_abs_determinant = log_abs;
+}
+
+void set_svd_determinant_state(
+    double parity,
+    const Eigen::Ref<const Eigen::VectorXd>& singular_values,
+    int nullity,
+    DeterminantOverlapResult* result) {
+  if (nullity != 0) {
+    result->determinant_sign = 0.0;
+    result->log_abs_determinant =
+        -std::numeric_limits<double>::infinity();
+    return;
+  }
+  result->determinant_sign = parity >= 0.0 ? 1.0 : -1.0;
+  result->log_abs_determinant = singular_values.array().log().sum();
+}
+
+}  // namespace
 
 DeterminantOverlapResolver::DeterminantOverlapResolver(double linear_dependence_threshold)
     : linear_dependence_threshold_(linear_dependence_threshold) {
@@ -53,6 +95,7 @@ DeterminantOverlapResult DeterminantOverlapResolver::resolve_matrix(
   if (lu.rank() == result.n_electrons) {
     result.nullity = 0;
     result.overlap_determinant = lu.determinant();
+    set_lu_determinant_state(lu, &result);
     result.inverse_overlap_submatrix = lu.inverse();
     return result;
   }
@@ -73,6 +116,11 @@ DeterminantOverlapResult DeterminantOverlapResolver::resolve_matrix(
     const double det_V = result.matrix_V.determinant();
     result.parity = ((det_U * det_V) >= 0.0) ? 1.0 : -1.0;
     result.overlap_determinant = result.parity * result.singular_values.prod();
+    set_svd_determinant_state(
+        result.parity,
+        result.singular_values,
+        result.nullity,
+        &result);
     const Eigen::VectorXd inverse_singular_values =
         result.singular_values.cwiseInverse();
     result.inverse_overlap_submatrix.noalias() =
@@ -83,6 +131,11 @@ DeterminantOverlapResult DeterminantOverlapResolver::resolve_matrix(
     const double det_U = result.matrix_U.determinant();
     const double det_V = result.matrix_V.determinant();
     result.parity = ((det_U * det_V) >= 0.0) ? 1.0 : -1.0;
+    set_svd_determinant_state(
+        result.parity,
+        result.singular_values,
+        result.nullity,
+        &result);
   }
   
   return result;

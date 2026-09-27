@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <stdexcept>
@@ -411,8 +412,29 @@ int main() {
         Eigen::VectorXd s=Eigen::VectorXd::Ones(n);
         for (int i=0;i<std::min(n,deficient);++i) s(i)=small;
         const Eigen::MatrixXd x=u*s.asDiagonal()*v.transpose();
-        xmvb::vb::CofactorDifferential c(
-            overlap_resolver.resolve_matrix(x));
+        const auto overlap = overlap_resolver.resolve_matrix(x);
+        if (overlap.nullity == 0) {
+          const double determinant = overlap.overlap_determinant;
+          const double expected_sign = determinant < 0.0 ? -1.0 : 1.0;
+          if (overlap.determinant_sign != expected_sign ||
+              std::abs(
+                  overlap.log_abs_determinant -
+                  std::log(std::abs(determinant))) > 2.0e-11) {
+            throw std::runtime_error(
+                "signed-log determinant state disagrees with dense determinant: sign=" +
+                std::to_string(overlap.determinant_sign) +
+                ", expected_sign=" + std::to_string(expected_sign) +
+                ", log=" + std::to_string(overlap.log_abs_determinant) +
+                ", expected_log=" +
+                std::to_string(std::log(std::abs(determinant))));
+          }
+        } else if (overlap.determinant_sign != 0.0 ||
+                   overlap.log_abs_determinant !=
+                       -std::numeric_limits<double>::infinity()) {
+          throw std::runtime_error(
+              "singular overlap has a nonsingular signed-log determinant state");
+        }
+        xmvb::vb::CofactorDifferential c(overlap);
         check(c.value(),reference(x,a,b,0), "cofactor", n, small, deficient);
         check(c.first(a),reference(x,a,b,1), "first", n, small, deficient);
         check(c.mixed(a,b),reference(x,a,b,2), "mixed", n, small, deficient);
@@ -477,6 +499,24 @@ int main() {
               "second cofactor direction fails finite differences for n=" +
               std::to_string(n) + ", small=" + std::to_string(small) +
               ", deficient=" + std::to_string(deficient));
+      }
+    }
+    {
+      constexpr int n = 6;
+      for (const double diagonal_value : {1.0e100, 1.0e-100}) {
+        Eigen::MatrixXd scaled =
+            diagonal_value * Eigen::MatrixXd::Identity(n, n);
+        scaled(0, 0) *= -1.0;
+        const auto overlap = overlap_resolver.resolve_matrix(scaled);
+        const double expected_log =
+            static_cast<double>(n) * std::log(diagonal_value);
+        if (overlap.nullity != 0 || overlap.determinant_sign != -1.0 ||
+            !std::isfinite(overlap.log_abs_determinant) ||
+            std::abs(overlap.log_abs_determinant - expected_log) > 1.0e-12 *
+                std::max(1.0, std::abs(expected_log))) {
+          throw std::runtime_error(
+              "signed-log determinant state lost an extreme-scale determinant");
+        }
       }
     }
     {
