@@ -540,7 +540,6 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
 
     const auto structure_matrices_start_time =
         std::chrono::steady_clock::now();
-    SameSpinDirectionalPairCache local_directional_pair_cache;
     const StructureAction* accepted_structure_action =
         outer_response_context()
             .selected_state_eigen_response_operator.structure_action;
@@ -548,27 +547,6 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         precomputed_outer_response == nullptr && !direct_active_gradient &&
         (components.local_active_response || components.structure_response ||
          build_orbital_coupling);
-    const bool pair_cache_required =
-        !direct_active_gradient &&
-        (components.local_active_response || components.structure_response ||
-         build_orbital_coupling) &&
-        !use_directional_pair_tiles;
-    if (precomputed_outer_response == nullptr && pair_cache_required) {
-      local_directional_pair_cache = build_same_spin_directional_pair_cache(
-          accepted_point_context_->same_spin_pair_cache,
-          current_input_->orbital_preparation_input.n_active_orbitals,
-          active_space_integral_direction,
-          &accepted_point_context_->prepared_active_space
-               .active_space_one_electron_result.h1e_act,
-          accepted_ri_two_electron_cache_.has_value()
-              ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
-              : nullptr,
-          ri_directional_active_pair_factors.has_value()
-              ? &*ri_directional_active_pair_factors
-              : nullptr);
-    }
-    const SameSpinDirectionalPairCache& directional_pair_cache =
-        local_directional_pair_cache;
     std::unique_ptr<detail::LocalActiveSpaceTileAccumulator>
         local_active_tile_accumulator;
     if (use_directional_pair_tiles && components.local_active_response) {
@@ -627,7 +605,6 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             : build_selected_structure_direction(
                   outer_response_context(),
                   active_space_integral_direction,
-                  directional_pair_cache,
                   accepted_ri_two_electron_cache_.has_value()
                       ? accepted_ri_two_electron_cache_
                             ->accepted_active_pair_factors
@@ -806,21 +783,12 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
                  local_active_tile_accumulator) {
         directional_active_space_gradient =
             local_active_tile_accumulator->finish();
+      } else if (components.local_active_response) {
+        throw std::logic_error(
+            "local active response is missing its pair-tile accumulation");
       } else {
-        directional_active_space_gradient = components.local_active_response
-            ? build_local_active_space_gradient_direction(
-                  *current_input_,
-                  *accepted_point_context_,
-                  active_space_integral_direction,
-                  directional_pair_cache,
-                  accepted_ri_two_electron_cache_.has_value()
-                      ? accepted_ri_two_electron_cache_
-                            ->accepted_active_pair_factors
-                      : nullptr,
-                  ri_directional_active_pair_factors.has_value()
-                      ? &*ri_directional_active_pair_factors
-                      : nullptr)
-            : make_zero_active_space_gradient_direction(n_active_orbitals);
+        directional_active_space_gradient =
+            make_zero_active_space_gradient_direction(n_active_orbitals);
       }
       apply_timing_totals_
           .outer_response_local_active_gradient_wall_time_seconds +=

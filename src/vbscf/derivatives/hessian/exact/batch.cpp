@@ -396,13 +396,11 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
           };
       bool pair_tiles_consumed = false;
       if (components.structure_response || build_orbital_coupling) {
-        SameSpinDirectionalPairCache unused_pair_cache;
         SelectedStateDirectionalStructureImages images =
             direct_active_gradient
-            ? build_selected_structure_direction(
+              ? build_selected_structure_direction(
                   outer_response_context(),
                   integral_directions[static_cast<std::size_t>(column)],
-                  unused_pair_cache,
                   accepted_ri_two_electron_cache_.has_value()
                       ? accepted_ri_two_electron_cache_
                             ->accepted_active_pair_factors

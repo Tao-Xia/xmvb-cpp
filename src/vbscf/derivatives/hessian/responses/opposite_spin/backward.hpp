@@ -9,8 +9,6 @@
 
 namespace xmvb::vb {
 
-struct SameSpinDirectionalPairCache;
-
 /** @brief Wall-clock breakdown of directional opposite-spin channels. */
 struct OppositeSpinBackwardTiming {
   double packed_gradient_seconds = 0.0;
@@ -83,15 +81,4 @@ build_directional_opposite_spin_backward_contribution(
  * only materializes the direction-dependent per-pair payloads needed for one
  * HVP application.
  */
-OppositeSpinBackwardContribution
-build_local_opposite_spin_backward_contribution(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    int n_active_orbitals,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
-
 }  // namespace xmvb::vb

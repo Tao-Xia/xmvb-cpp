@@ -19,15 +19,6 @@ struct SameSpinExactWeightMatrices {
   Eigen::MatrixXd beta_singular_partner_transfer_matrix;
 };
 
-struct SameSpinLocalResponseWeightMatrices {
-  Eigen::MatrixXd alpha_delta_hamiltonian_weight_matrix;
-  Eigen::MatrixXd alpha_delta_overlap_weight_matrix;
-  Eigen::MatrixXd alpha_delta_partner_total_transfer_matrix;
-  Eigen::MatrixXd beta_delta_hamiltonian_weight_matrix;
-  Eigen::MatrixXd beta_delta_overlap_weight_matrix;
-  Eigen::MatrixXd beta_delta_partner_total_transfer_matrix;
-};
-
 SameSpinExactWeightMatrices build_dense_exact_same_spin_weight_matrices(
     const SameSpinPairCacheContext& same_spin_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
@@ -46,12 +37,5 @@ build_dense_directional_exact_same_spin_weight_matrices(
     const SelectedStateDeterminantMatrices& directional_selected_states,
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies);
-
-SameSpinLocalResponseWeightMatrices build_local_same_spin_response_weight_matrices(
-    const SelectedStateDeterminantMatrices& selected_states,
-    const std::vector<double>& selected_state_energies,
-    const SameSpinDirectionalScalarMatrices& alpha_directional_scalars,
-    const SameSpinDirectionalScalarMatrices& beta_directional_scalars,
-    bool close_shell_same_spin);
 
 }  // namespace xmvb::vb::detail

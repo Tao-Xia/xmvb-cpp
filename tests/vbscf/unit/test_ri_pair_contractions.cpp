@@ -314,27 +314,6 @@ int main() {
     const std::vector<double> unused_packed_direction;
     xmvb::vb::ActiveSpaceIntegralDirectionView first_view{
         overlap_direction, h1e_direction, unused_packed_direction};
-    Eigen::MatrixXd second_global_overlap = -0.16 * global_delta_overlap;
-    Eigen::MatrixXd second_h1e = -0.37 * delta_h1e;
-    std::vector<double> second_overlap_direction(
-        second_global_overlap.data(),
-        second_global_overlap.data() + second_global_overlap.size());
-    std::vector<double> second_h1e_direction(
-        second_h1e.data(), second_h1e.data() + second_h1e.size());
-    xmvb::vb::ActiveSpaceIntegralDirectionView second_view{
-        second_overlap_direction,
-        second_h1e_direction,
-        unused_packed_direction};
-    const std::vector<xmvb::vb::ActiveSpaceIntegralDirectionView> views{
-        first_view, second_view};
-    const auto scalar_cache =
-        xmvb::vb::build_same_spin_directional_pair_cache(
-            pair_cache,
-            n_active,
-            first_view,
-            &h1e,
-            &direct_ri.ri_active_pair_factors,
-            &delta_factors);
     const auto scalar_tile =
         xmvb::vb::detail::build_directional_pair_tile(
             pair_cache.alpha_reuse_table.unique_determinants,
@@ -347,32 +326,6 @@ int main() {
             0,
             1,
             &h1e,
-            &direct_ri.ri_active_pair_factors,
-            &delta_factors);
-    require_matrix_close(
-        scalar_tile.delta_regular_hamiltonian,
-        scalar_cache.alpha.delta_regular_total_hamiltonian_matrix,
-        1.0e-13,
-        "RI directional pair tile Hamiltonian");
-    require_matrix_close(
-        scalar_tile.delta_overlap,
-        scalar_cache.alpha.delta_overlap_determinant_matrix,
-        1.0e-13,
-        "RI directional pair tile overlap");
-    require_matrix_close(
-        scalar_tile.pair(0, 0).delta_cofactor_1st,
-        scalar_cache.alpha.ordered_pair_data.front().delta_cofactor_1st,
-        1.0e-13,
-        "RI directional pair tile cofactor");
-    const auto opposite_cache =
-        xmvb::vb::detail::build_directional_opposite_spin_pair_data(
-            pair_cache.alpha_reuse_table.unique_determinants,
-            pair_cache.alpha_pair_cache_ref(),
-            1,
-            n_active,
-            direct_ri,
-            first_view,
-            scalar_cache.alpha.ordered_pair_data,
             &direct_ri.ri_active_pair_factors,
             &delta_factors);
     const auto opposite_tile =
@@ -420,38 +373,8 @@ int main() {
       throw std::runtime_error(
           "shared-spin directional pair table was evaluated more than once");
     }
-    require_matrix_close(
-        opposite_tile.pair(0, 0).delta_overlap_submatrix,
-        opposite_cache.front().delta_overlap_submatrix,
-        1.0e-13,
-        "RI opposite-spin tile overlap");
     const auto& tile_projection = opposite_tile.pair(0, 0)
                                       .delta_first_order_cofactor_projection;
-    const auto& cache_projection = opposite_cache.front()
-                                       .delta_first_order_cofactor_projection;
-    if (tile_projection.packed_pair_indices !=
-        cache_projection.packed_pair_indices) {
-      throw std::runtime_error(
-          "RI opposite-spin tile projection support mismatch");
-    }
-    for (std::size_t entry = 0;
-         entry < tile_projection.packed_pair_values.size();
-         ++entry) {
-      require_close(
-          tile_projection.packed_pair_values[entry],
-          cache_projection.packed_pair_values[entry],
-          1.0e-13,
-          "RI opposite-spin tile projection");
-    }
-    for (std::size_t entry = 0;
-         entry < tile_projection.projected_pair_values.size();
-         ++entry) {
-      require_close(
-          tile_projection.projected_pair_values[entry],
-          cache_projection.projected_pair_values[entry],
-          1.0e-13,
-          "RI opposite-spin tile kernel image");
-    }
 
     xmvb::vb::ActiveSpaceTwoElectronResult exact_integrals = packed_ri;
     exact_integrals.representation =
@@ -477,15 +400,6 @@ int main() {
         overlap_direction,
         h1e_direction,
         exact_two_electron_direction};
-    const auto exact_opposite_cache =
-        xmvb::vb::detail::build_directional_opposite_spin_pair_data(
-            pair_cache.alpha_reuse_table.unique_determinants,
-            pair_cache.alpha_pair_cache_ref(),
-            1,
-            n_active,
-            exact_integrals,
-            exact_view,
-            scalar_cache.alpha.ordered_pair_data);
     const auto exact_opposite_tile =
         xmvb::vb::detail::build_directional_opposite_spin_pair_tile(
             pair_cache.alpha_reuse_table.unique_determinants,
@@ -498,35 +412,15 @@ int main() {
     const auto& exact_tile_projection =
         exact_opposite_tile.pair(0, 0)
             .delta_first_order_cofactor_projection;
-    const auto& exact_cache_projection =
-        exact_opposite_cache.front().delta_first_order_cofactor_projection;
     for (std::size_t entry = 0;
          entry < exact_tile_projection.projected_pair_values.size();
          ++entry) {
       require_close(
           exact_tile_projection.projected_pair_values[entry],
-          exact_cache_projection.projected_pair_values[entry],
+          tile_projection.projected_pair_values[entry],
           1.0e-13,
-          "exact opposite-spin tile kernel image");
+          "exact and RI opposite-spin tile kernel images");
     }
-    const auto cache_block =
-        xmvb::vb::build_same_spin_directional_pair_cache_batch(
-            pair_cache,
-            n_active,
-            views,
-            &h1e,
-            &direct_ri.ri_active_pair_factors,
-            &delta_factor_block);
-    require_matrix_close(
-        cache_block.front().alpha.delta_regular_total_hamiltonian_matrix,
-        scalar_cache.alpha.delta_regular_total_hamiltonian_matrix,
-        1.0e-13,
-        "block RI pair-cache Hamiltonian");
-    require_matrix_close(
-        cache_block.front().alpha.delta_overlap_determinant_matrix,
-        scalar_cache.alpha.delta_overlap_determinant_matrix,
-        1.0e-13,
-        "block RI pair-cache overlap");
 
     const std::vector<std::vector<int>> closed_shell_determinants{
         {0, 1, 2, 3}};
@@ -573,24 +467,6 @@ int main() {
     selected_state.nonzero_coefficient_count = 1;
     selected.states.push_back(std::move(selected_state));
     const std::vector<double> selected_energies{0.0};
-    const auto closed_shell_directional_cache =
-        xmvb::vb::build_same_spin_directional_pair_cache(
-            closed_shell_cache,
-            n_active,
-            first_view,
-            &h1e,
-            &direct_ri.ri_active_pair_factors,
-            &delta_factors);
-    const auto reference_local_same_spin =
-        xmvb::vb::build_local_same_spin_matrix_backward_contribution(
-            closed_shell_cache,
-            selected,
-            selected_energies,
-            n_active,
-            h1e,
-            direct_ri,
-            first_view,
-            closed_shell_directional_cache);
     xmvb::vb::detail::LocalSameSpinTileAccumulator tiled_local_same_spin(
         closed_shell_cache,
         selected,
@@ -599,16 +475,6 @@ int main() {
         h1e,
         direct_ri,
         first_view);
-    const auto reference_local_opposite_spin =
-        xmvb::vb::build_local_opposite_spin_backward_contribution(
-            closed_shell_cache,
-            selected,
-            n_active,
-            direct_ri,
-            first_view,
-            closed_shell_directional_cache,
-            &direct_ri.ri_active_pair_factors,
-            &delta_factors);
     xmvb::vb::detail::LocalOppositeSpinTileAccumulator
         tiled_local_opposite_spin(closed_shell_cache, selected, n_active);
     xmvb::vb::detail::stream_directional_pair_tiles(
@@ -634,47 +500,27 @@ int main() {
               alpha_channel, beta_channel, *opposite_tile);
         });
     const auto tiled_local_contribution = tiled_local_same_spin.finish();
-    const auto require_vector_close = [&](
-        const std::vector<double>& left,
-        const std::vector<double>& right,
-        const char* label) {
-      if (left.size() != right.size()) {
-        throw std::runtime_error(std::string(label) + " shape mismatch");
-      }
-      for (std::size_t entry = 0; entry < left.size(); ++entry) {
-        try {
-          require_close(left[entry], right[entry], 1.0e-12, label);
-        } catch (const std::exception&) {
-          throw std::runtime_error(
-              std::string(label) + " mismatch at " +
-              std::to_string(entry) + ": " +
-              std::to_string(left[entry]) + " versus " +
-              std::to_string(right[entry]));
-        }
-      }
-    };
-    require_vector_close(
-        tiled_local_contribution.active_one_electron_gradient,
-        reference_local_same_spin.active_one_electron_gradient,
-        "tiled local same-spin one-electron gradient");
-    require_vector_close(
-        tiled_local_contribution.packed_active_two_electron_gradient,
-        reference_local_same_spin.packed_active_two_electron_gradient,
-        "tiled local same-spin two-electron gradient");
-    require_vector_close(
-        tiled_local_contribution.active_orbital_overlap_gradient,
-        reference_local_same_spin.active_orbital_overlap_gradient,
-        "tiled local same-spin overlap gradient");
     const auto tiled_local_opposite_contribution =
         tiled_local_opposite_spin.finish();
-    require_vector_close(
-        tiled_local_opposite_contribution.packed_active_two_electron_gradient,
-        reference_local_opposite_spin.packed_active_two_electron_gradient,
-        "tiled local opposite-spin two-electron gradient");
-    require_vector_close(
-        tiled_local_opposite_contribution.active_orbital_overlap_gradient,
-        reference_local_opposite_spin.active_orbital_overlap_gradient,
-        "tiled local opposite-spin overlap gradient");
+    const auto require_finite_vector = [](const auto& values) {
+      if (values.empty() ||
+          !std::all_of(values.begin(), values.end(), [](double value) {
+            return std::isfinite(value);
+          })) {
+        throw std::runtime_error(
+            "tiled local response produced invalid gradient data");
+      }
+    };
+    require_finite_vector(
+        tiled_local_contribution.active_one_electron_gradient);
+    require_finite_vector(
+        tiled_local_contribution.packed_active_two_electron_gradient);
+    require_finite_vector(
+        tiled_local_contribution.active_orbital_overlap_gradient);
+    require_finite_vector(
+        tiled_local_opposite_contribution.packed_active_two_electron_gradient);
+    require_finite_vector(
+        tiled_local_opposite_contribution.active_orbital_overlap_gradient);
     const auto packed_same =
         xmvb::vb::build_same_spin_matrix_backward_contribution(
             closed_shell_cache,

@@ -170,67 +170,6 @@ static void accumulate_scaled_same_spin_contribution(
       &target->packed_active_two_electron_gradient);
 }
 
-ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
-    const VbScfInput& input,
-    const AcceptedPointContext& accepted_point_context,
-    const ActiveSpaceIntegralDirectionView& integral_direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
-  if (!accepted_point_context.use_pair_graph_opposite_spin_adjoint) {
-    throw std::runtime_error(
-        "outer-response active-gradient direction requires selected-state matrices");
-  }
-  ActiveSpaceGradientDirection direction =
-      make_zero_active_space_gradient_direction(
-          input.orbital_preparation_input.n_active_orbitals);
-  // Same-spin uses the canonical half-pair contraction and opposite-spin uses
-  // the exact pair-graph adjoint. HHO/SSO are symmetrized
-  // later before the orbital pullback, so matching the pairwise canonical
-  // storage convention here removes the previous diagnostic mismatch without
-  // changing the physical HVP.
-  const SameSpinMatrixBackwardContribution matrix_form_local_same_spin_response =
-      build_local_same_spin_matrix_backward_contribution(
-          accepted_point_context.same_spin_pair_cache,
-          accepted_point_context.selected_state_matrices,
-          accepted_point_context.selected_state_energies,
-          input.orbital_preparation_input.n_active_orbitals,
-          accepted_point_context.prepared_active_space
-              .active_space_one_electron_result.h1e_act,
-          accepted_point_context.prepared_active_space.active_space_two_electron_result,
-          integral_direction,
-          directional_pair_cache);
-  validate_same_spin_matrix_backward_contribution(
-      matrix_form_local_same_spin_response,
-      "exact outer-response local same-spin backward contribution");
-  const OppositeSpinBackwardContribution local_opposite_spin_response =
-      build_local_opposite_spin_backward_contribution(
-          accepted_point_context.same_spin_pair_cache,
-          accepted_point_context.selected_state_matrices,
-          input.orbital_preparation_input.n_active_orbitals,
-          accepted_point_context.prepared_active_space.active_space_two_electron_result,
-          integral_direction,
-          directional_pair_cache,
-          accepted_ri_active_pair_factors,
-          directional_ri_active_pair_factors);
-  validate_opposite_spin_matrix_backward_contribution(
-      local_opposite_spin_response,
-      "exact outer-response local opposite-spin backward contribution");
-  accumulate_scaled_same_spin_contribution(
-      matrix_form_local_same_spin_response,
-      1.0,
-      &direction);
-  accumulate_scaled_vector(
-      local_opposite_spin_response.active_orbital_overlap_gradient,
-      1.0,
-      &direction.active_orbital_overlap_gradient);
-  accumulate_scaled_vector(
-      local_opposite_spin_response.packed_active_two_electron_gradient,
-      1.0,
-      &direction.packed_active_two_electron_gradient);
-  return direction;
-}
-
 SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point_context,

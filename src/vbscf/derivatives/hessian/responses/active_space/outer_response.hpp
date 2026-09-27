@@ -37,15 +37,6 @@ ActiveSpaceGradientDirection make_zero_active_space_gradient_direction(
 void validate_outer_response_active_gradient(
     const ActiveSpaceGradientDirection& active_space_gradient);
 
-/** @brief Differentiates the active-space adjoint at fixed state coefficients. */
-ActiveSpaceGradientDirection build_local_active_space_gradient_direction(
-    const VbScfInput& input,
-    const AcceptedPointContext& accepted_point_context,
-    const ActiveSpaceIntegralDirectionView& integral_direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
-
 /** @brief Adds the selected-state coefficient/energy response contribution. */
 SelectedStateResponseTiming add_selected_state_response_to_active_space_gradient(
     const VbScfInput& input,

@@ -20,7 +20,6 @@ SelectedStateDirectionalStructureImages
 build_selected_structure_direction(
     const AcceptedOuterResponseContext& accepted,
     const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
     const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 

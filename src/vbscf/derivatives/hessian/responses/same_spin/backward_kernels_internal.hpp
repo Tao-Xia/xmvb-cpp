@@ -71,17 +71,6 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
     const std::vector<double>& directional_selected_state_energies,
     int n_active_orbitals);
 
-SameSpinMatrixBackwardContribution
-build_support_sparse_local_same_spin_backward_contribution_by_tiles(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const std::vector<double>& selected_state_energies,
-    int n_active_orbitals,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache);
-
 void accumulate_local_primary_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,

@@ -37,41 +37,6 @@ struct SameSpinPolynomialDirectionalPairData {
 };
 
 /**
- * Directional pair data and scalar matrices shared by all outer-response
- * consumers in one matrix-free Hessian application.
- */
-struct SameSpinDirectionalScalarMatrices {
-  Eigen::MatrixXd delta_overlap_determinant_matrix;
-  Eigen::MatrixXd delta_regular_total_hamiltonian_matrix;
-  Eigen::MatrixXd delta_singular_total_hamiltonian_matrix;
-  std::vector<SameSpinPolynomialDirectionalPairData> ordered_pair_data;
-};
-
-struct SameSpinDirectionalPairCache {
-  SameSpinDirectionalScalarMatrices alpha;
-  SameSpinDirectionalScalarMatrices beta;
-  bool close_shell_same_spin = false;
-};
-
-SameSpinDirectionalPairCache build_same_spin_directional_pair_cache(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    int n_active_orbitals,
-    const ActiveSpaceIntegralDirectionView& direction,
-    const Eigen::MatrixXd* accepted_active_one_electron = nullptr,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
-
-/** @brief Builds several directional pair caches in one accepted-pair sweep. */
-std::vector<SameSpinDirectionalPairCache>
-build_same_spin_directional_pair_cache_batch(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    int n_active_orbitals,
-    const std::vector<ActiveSpaceIntegralDirectionView>& directions,
-    const Eigen::MatrixXd* accepted_active_one_electron,
-    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const std::vector<Eigen::MatrixXd>* directional_ri_active_pair_factors);
-
-/**
  * @brief Builds matrix-form same-spin / one-electron backward contribution.
  *
  * This routine requires:
@@ -118,30 +83,5 @@ build_directional_same_spin_matrix_backward_contribution(
     const std::vector<double>& selected_state_energies,
     const std::vector<double>& directional_selected_state_energies,
     int n_active_orbitals);
-
-/**
- * @brief Builds the same-spin local-response contribution in matrix form.
- *
- * This is the exact `\delta J_{\mathrm{same}}^T \lambda` term where the
- * accepted-point selected-state weights stay fixed and only the same-spin
- * determinant kernels respond to the active-space direction
- *
- * `(\delta S_{\mathrm{act}}, \delta h_{\mathrm{act}}, \delta g_{\mathrm{act}})`.
- *
- * The routine compresses the accepted structure/determinant adjoints onto the
- * unique alpha/beta spaces exactly as in the accepted-point same-spin backward,
- * then differentiates the local same-spin pair kernels on the unique-spin
- * channels instead of revisiting every determinant pair.
- */
-SameSpinMatrixBackwardContribution
-build_local_same_spin_matrix_backward_contribution(
-    const SameSpinPairCacheContext& same_spin_pair_cache,
-    const SelectedStateDeterminantMatrices& selected_states,
-    const std::vector<double>& selected_state_energies,
-    int n_active_orbitals,
-    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
-    const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-    const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairCache& directional_pair_cache);
 
 }  // namespace xmvb::vb

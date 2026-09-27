@@ -339,6 +339,15 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
   return tile;
 }
 
+// Obsolete full-grid builders are removed after the tile migration; this
+// private declaration keeps the remaining implementation isolated meanwhile.
+struct SameSpinDirectionalScalarMatrices {
+  Eigen::MatrixXd delta_overlap_determinant_matrix;
+  Eigen::MatrixXd delta_regular_total_hamiltonian_matrix;
+  Eigen::MatrixXd delta_singular_total_hamiltonian_matrix;
+  std::vector<SameSpinPolynomialDirectionalPairData> ordered_pair_data;
+};
+
 SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
