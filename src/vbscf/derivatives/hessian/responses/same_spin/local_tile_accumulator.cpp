@@ -158,25 +158,6 @@ void build_panel_accepted_weights(
   }
 }
 
-bool is_reverse_of(
-    const SameSpinAcceptedWeightTile& cached,
-    const SameSpinDirectionalPairTileView& tile) {
-  return tile.transposed() &&
-      cached.left_begin == tile.right_begin() &&
-      cached.right_begin == tile.left_begin() &&
-      cached.weights.hamiltonian.rows() == tile.right_size() &&
-      cached.weights.hamiltonian.cols() == tile.left_size();
-}
-
-SameSpinAcceptedTileWeights transpose_weights(
-    const SameSpinAcceptedTileWeights& source) {
-  SameSpinAcceptedTileWeights result;
-  result.hamiltonian = source.hamiltonian.transpose();
-  result.overlap = source.overlap.transpose();
-  result.partner_total = source.partner_total.transpose();
-  return result;
-}
-
 void refresh_partner_panel(
     const SameSpinPairCacheContext& cache,
     const SelectedStateDeterminantMatrices& states,
@@ -274,7 +255,6 @@ void LocalSameSpinTileAccumulator::consume(
     // partner images never coexist at the spin-channel boundary.
     if (!alpha_channel && alpha_partner_panel_.begin >= 0) {
       alpha_partner_panel_ = {};
-      last_alpha_weights_.reset();
     }
     consume_beta_primary(accepted, tile);
     accumulate_alpha_weight_response(tile);
@@ -284,49 +264,34 @@ void LocalSameSpinTileAccumulator::consume(
 void LocalSameSpinTileAccumulator::consume_alpha_primary(
     const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& tile) {
-  SameSpinAcceptedTileWeights transient_weights;
-  const SameSpinAcceptedTileWeights* weights = nullptr;
-  if (tile.transposed()) {
-    if (!last_alpha_weights_.has_value() ||
-        !is_reverse_of(*last_alpha_weights_, tile)) {
-      throw std::logic_error(
-          "reverse alpha tile is not adjacent to its forward tile");
-    }
-    transient_weights = transpose_weights(last_alpha_weights_->weights);
-    weights = &transient_weights;
-  } else {
-    refresh_partner_panel(
-        accepted_pair_cache_,
-        selected_states_,
-        true,
-        tile.left_begin(),
-        tile.left_size(),
-        active_overlap_,
-        active_one_electron_,
-        active_two_electron_,
-        tile_plan_.alpha_partner_action_bytes,
-        &alpha_partner_panel_,
-        &alpha_partner_panel_build_count_);
-    last_alpha_weights_.emplace();
-    last_alpha_weights_->left_begin = tile.left_begin();
-    last_alpha_weights_->right_begin = tile.right_begin();
-    build_panel_accepted_weights(
-        selected_states_,
-        selected_state_energies_,
-        alpha_partner_panel_,
-        true,
-        tile.left_begin(),
-        tile.left_size(),
-        tile.right_begin(),
-        tile.right_size(),
-        &last_alpha_weights_->weights);
-    weights = &last_alpha_weights_->weights;
-  }
+  refresh_partner_panel(
+      accepted_pair_cache_,
+      selected_states_,
+      true,
+      tile.left_begin(),
+      tile.left_size(),
+      active_overlap_,
+      active_one_electron_,
+      active_two_electron_,
+      tile_plan_.alpha_partner_action_bytes,
+      &alpha_partner_panel_,
+      &alpha_partner_panel_build_count_);
+  SameSpinAcceptedTileWeights weights;
+  build_panel_accepted_weights(
+      selected_states_,
+      selected_state_energies_,
+      alpha_partner_panel_,
+      true,
+      tile.left_begin(),
+      tile.left_size(),
+      tile.right_begin(),
+      tile.right_size(),
+      &weights);
   accumulate_local_primary_pair_tile(
       accepted_pair_cache_.alpha_reuse_table.unique_determinants,
       accepted,
       tile,
-      *weights,
+      weights,
       n_active_orbitals_,
       active_one_electron_,
       active_two_electron_,
@@ -339,49 +304,34 @@ void LocalSameSpinTileAccumulator::consume_alpha_primary(
 void LocalSameSpinTileAccumulator::consume_beta_primary(
     const AcceptedSpinPairTile& accepted,
     const SameSpinDirectionalPairTileView& tile) {
-  SameSpinAcceptedTileWeights transient_weights;
-  const SameSpinAcceptedTileWeights* weights = nullptr;
-  if (tile.transposed()) {
-    if (!last_beta_weights_.has_value() ||
-        !is_reverse_of(*last_beta_weights_, tile)) {
-      throw std::logic_error(
-          "reverse beta tile is not adjacent to its forward tile");
-    }
-    transient_weights = transpose_weights(last_beta_weights_->weights);
-    weights = &transient_weights;
-  } else {
-    refresh_partner_panel(
-        accepted_pair_cache_,
-        selected_states_,
-        false,
-        tile.left_begin(),
-        tile.left_size(),
-        active_overlap_,
-        active_one_electron_,
-        active_two_electron_,
-        tile_plan_.beta_partner_action_bytes,
-        &beta_partner_panel_,
-        &beta_partner_panel_build_count_);
-    last_beta_weights_.emplace();
-    last_beta_weights_->left_begin = tile.left_begin();
-    last_beta_weights_->right_begin = tile.right_begin();
-    build_panel_accepted_weights(
-        selected_states_,
-        selected_state_energies_,
-        beta_partner_panel_,
-        false,
-        tile.left_begin(),
-        tile.left_size(),
-        tile.right_begin(),
-        tile.right_size(),
-        &last_beta_weights_->weights);
-    weights = &last_beta_weights_->weights;
-  }
+  refresh_partner_panel(
+      accepted_pair_cache_,
+      selected_states_,
+      false,
+      tile.left_begin(),
+      tile.left_size(),
+      active_overlap_,
+      active_one_electron_,
+      active_two_electron_,
+      tile_plan_.beta_partner_action_bytes,
+      &beta_partner_panel_,
+      &beta_partner_panel_build_count_);
+  SameSpinAcceptedTileWeights weights;
+  build_panel_accepted_weights(
+      selected_states_,
+      selected_state_energies_,
+      beta_partner_panel_,
+      false,
+      tile.left_begin(),
+      tile.left_size(),
+      tile.right_begin(),
+      tile.right_size(),
+      &weights);
   accumulate_local_primary_pair_tile(
       accepted_pair_cache_.beta_reuse_table.unique_determinants,
       accepted,
       tile,
-      *weights,
+      weights,
       n_active_orbitals_,
       active_one_electron_,
       active_two_electron_,

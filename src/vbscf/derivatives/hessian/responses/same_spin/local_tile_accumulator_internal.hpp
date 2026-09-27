@@ -1,8 +1,6 @@
 #pragma once
 
 #include <cstddef>
-#include <optional>
-
 #include "vbscf/determinants/pairs/accepted_action.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
@@ -15,12 +13,6 @@ struct SameSpinPartnerActionPanel {
   int begin = -1;
   int size = 0;
   AcceptedSpinPairActionResult action;
-};
-
-struct SameSpinAcceptedWeightTile {
-  int left_begin = -1;
-  int right_begin = -1;
-  SameSpinAcceptedTileWeights weights;
 };
 
 /** Accumulates the complete same-spin local HVP from one directional stream. */
@@ -74,8 +66,6 @@ class LocalSameSpinTileAccumulator {
   LocalResponseTilePlan tile_plan_;
   SameSpinPartnerActionPanel alpha_partner_panel_;
   SameSpinPartnerActionPanel beta_partner_panel_;
-  std::optional<SameSpinAcceptedWeightTile> last_alpha_weights_;
-  std::optional<SameSpinAcceptedWeightTile> last_beta_weights_;
   std::size_t alpha_partner_panel_build_count_ = 0;
   std::size_t beta_partner_panel_build_count_ = 0;
   SameSpinMatrixBackwardContribution result_;

@@ -33,23 +33,34 @@ void stream_spin_table(
   for (int left_begin = 0; left_begin < n_unique;
        left_begin += tile_extent) {
     const int left_end = std::min(n_unique, left_begin + tile_extent);
-    for (int right_begin = left_begin; right_begin < n_unique;
+    // Ordered row traversal keeps every partner-action panel keyed by the
+    // left tile live across the complete row. Visiting an upper tile and its
+    // transpose consecutively would save one directional-pair construction,
+    // but it invalidates that panel before the next column and consequently
+    // repeats a complete accepted partner sweep for every pair tile.
+    for (int right_begin = 0; right_begin < n_unique;
          right_begin += tile_extent) {
       const int right_end = std::min(n_unique, right_begin + tile_extent);
-      const AcceptedSpinPairTile accepted_tile = accepted_pair_provider.build(
-          left_begin,
-          left_end,
-          right_begin,
-          right_end,
-          accepted_active_overlap,
-          accepted_active_one_electron,
-          accepted_two_electron,
-          AcceptedPairTileBuildOptions{
-              .materialize_projected_pair_values = false,
-              .populate_response_payload = true});
+      const bool transposed = right_begin < left_begin;
+      const int canonical_left_begin = transposed ? right_begin : left_begin;
+      const int canonical_left_end = transposed ? right_end : left_end;
+      const int canonical_right_begin = transposed ? left_begin : right_begin;
+      const int canonical_right_end = transposed ? left_end : right_end;
+      const AcceptedSpinPairTile canonical_accepted =
+          accepted_pair_provider.build(
+              canonical_left_begin,
+              canonical_left_end,
+              canonical_right_begin,
+              canonical_right_end,
+              accepted_active_overlap,
+              accepted_active_one_electron,
+              accepted_two_electron,
+              AcceptedPairTileBuildOptions{
+                  .materialize_projected_pair_values = false,
+                  .populate_response_payload = true});
       SameSpinDirectionalPairTile same_spin = build_directional_pair_tile(
           unique_determinants,
-          accepted_tile,
+          canonical_accepted,
           n_active_orbitals,
           direction,
           accepted_ri_active_pair_factors != nullptr
@@ -57,57 +68,48 @@ void stream_spin_table(
               : nullptr,
           accepted_ri_active_pair_factors,
           directional_ri_active_pair_factors);
-      const SameSpinDirectionalPairTileView forward_same = same_spin.view();
+      const SameSpinDirectionalPairTileView same_spin_view =
+          same_spin.view(transposed);
       std::optional<DirectionalOppositeSpinPairTile> opposite_spin;
       if (include_opposite_spin) {
         opposite_spin.emplace(build_directional_opposite_spin_pair_tile(
             unique_determinants,
-            accepted_tile,
+            canonical_accepted,
             n_active_orbitals,
             accepted_two_electron,
             direction,
-            forward_same,
+            same_spin.view(),
             accepted_ri_active_pair_factors,
             directional_ri_active_pair_factors));
       }
       const std::optional<DirectionalOppositeSpinPairTileView>
-          forward_opposite = opposite_spin
+          opposite_spin_view = opposite_spin
               ? std::optional<DirectionalOppositeSpinPairTileView>(
-                    opposite_spin->view())
+                    opposite_spin->view(transposed))
               : std::nullopt;
+      std::optional<AcceptedSpinPairTile> ordered_accepted;
+      if (transposed) {
+        ordered_accepted.emplace(accepted_pair_provider.build(
+            left_begin,
+            left_end,
+            right_begin,
+            right_end,
+            accepted_active_overlap,
+            accepted_active_one_electron,
+            accepted_two_electron,
+            AcceptedPairTileBuildOptions{
+                .materialize_projected_pair_values = false,
+                .populate_response_payload = true}));
+      }
+      const AcceptedSpinPairTile& accepted = transposed
+          ? *ordered_accepted
+          : canonical_accepted;
       consume(
           alpha_channel,
           beta_channel,
-          accepted_tile,
-          forward_same,
-          forward_opposite ? &*forward_opposite : nullptr);
-      if (right_begin != left_begin) {
-        const AcceptedSpinPairTile reverse_accepted =
-            accepted_pair_provider.build(
-                right_begin,
-                right_end,
-                left_begin,
-                left_end,
-                accepted_active_overlap,
-                accepted_active_one_electron,
-                accepted_two_electron,
-                AcceptedPairTileBuildOptions{
-                    .materialize_projected_pair_values = false,
-                    .populate_response_payload = true});
-        const SameSpinDirectionalPairTileView reverse_same =
-            same_spin.view(true);
-        const std::optional<DirectionalOppositeSpinPairTileView>
-            reverse_opposite = opposite_spin
-                ? std::optional<DirectionalOppositeSpinPairTileView>(
-                      opposite_spin->view(true))
-                : std::nullopt;
-        consume(
-            alpha_channel,
-            beta_channel,
-            reverse_accepted,
-            reverse_same,
-            reverse_opposite ? &*reverse_opposite : nullptr);
-      }
+          accepted,
+          same_spin_view,
+          opposite_spin_view ? &*opposite_spin_view : nullptr);
     }
   }
 }
