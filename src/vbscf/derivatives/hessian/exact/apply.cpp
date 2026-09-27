@@ -547,7 +547,8 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
             .selected_state_eigen_response_operator.structure_action;
     const bool pair_cache_required =
         !direct_active_gradient &&
-        components.local_active_response;
+        (components.local_active_response || components.structure_response ||
+         build_orbital_coupling);
     if (precomputed_outer_response == nullptr && pair_cache_required) {
       local_directional_pair_cache = build_same_spin_directional_pair_cache(
           accepted_point_context_->same_spin_pair_cache,
@@ -589,28 +590,16 @@ Eigen::VectorXd ExactHvpOperator::State::apply_reduced_impl(
         }
       } else {
         SelectedStateDirectionalStructureImages images =
-            !direct_active_gradient && !components.local_active_response
-            ? build_selected_structure_direction_from_pair_tiles(
-                  outer_response_context(),
-                  active_space_integral_direction,
-                  accepted_ri_two_electron_cache_.has_value()
-                      ? accepted_ri_two_electron_cache_
-                            ->accepted_active_pair_factors
-                      : nullptr,
-                  ri_directional_active_pair_factors.has_value()
-                      ? &*ri_directional_active_pair_factors
-                      : nullptr)
-            : build_selected_structure_direction(
-                  outer_response_context(),
-                  active_space_integral_direction,
-                  directional_pair_cache,
-                  accepted_ri_two_electron_cache_.has_value()
-                      ? accepted_ri_two_electron_cache_
-                            ->accepted_active_pair_factors
-                      : nullptr,
-                  ri_directional_active_pair_factors.has_value()
-                      ? &*ri_directional_active_pair_factors
-                      : nullptr);
+            build_selected_structure_direction(
+                outer_response_context(),
+                active_space_integral_direction,
+                directional_pair_cache,
+                accepted_ri_two_electron_cache_.has_value()
+                    ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
+                    : nullptr,
+                ri_directional_active_pair_factors.has_value()
+                    ? &*ri_directional_active_pair_factors
+                    : nullptr);
         local_direct_ci_direction = std::move(images.direct_ci_direction);
         apply_timing_totals_
             .outer_response_structure_matrices_wall_time_seconds +=
