@@ -567,6 +567,220 @@ $$
 in exact arithmetic. The traversal order therefore changes computational
 cost only; it does not define a new physical approximation.
 
+### 4.4 Arbitrary-order transition-density hierarchy
+
+The product-graph update is not restricted to the one- and two-particle
+objects needed by the Hamiltonian. It extends to an arbitrary transition-RDM
+order. Let $I=(i_1<\cdots<i_q)$ and $J=(j_1<\cdots<j_q)$ be ordered occupied
+index sets and define the $q$th compound matrix
+
+$$
+\mathcal C_q(K^{\mathrm T})_{I,J}
+=
+\det\!\left[(K^{\mathrm T})_{I,J}\right],
+\qquad
+\mathcal C_0=1.
+\tag{34a}
+$$
+
+The occupied-index representation of the unnormalized $q$-particle
+transition density is
+
+$$
+\Gamma^{(q)}_{I,J}
+=
+\Omega\,\mathcal C_q(K^{\mathrm T})_{I,J}.
+\tag{34b}
+$$
+
+Scattering the occupied labels in $I$ and $J$ back to their active-orbital
+labels gives the usual transition RDM. Equation 34b includes the overlap at
+$q=0$ and the first cofactor at $q=1$.
+
+Consider a generic rank-one inverse update
+
+$$
+K'=K+ab^{\mathrm T},
+\qquad
+K'^{\mathrm T}=K^{\mathrm T}+ba^{\mathrm T}.
+\tag{34c}
+$$
+
+Multilinearity of the determinant implies that at most one column of a minor
+can be taken from the rank-one term. Therefore
+
+$$
+\begin{aligned}
+\mathcal C_q(K'^{\mathrm T})_{I,J}
+={}&\mathcal C_q(K^{\mathrm T})_{I,J}\\
+&+\sum_{\mu=1}^{q}\sum_{\nu=1}^{q}
+(-1)^{\mu+\nu}
+b_{i_\mu}a_{j_\nu}
+\mathcal C_{q-1}(K^{\mathrm T})
+_{I\setminus i_\mu,\,J\setminus j_\nu}.
+\end{aligned}
+\tag{34d}
+$$
+
+Define the insertion operator represented by the double sum as
+
+$$
+\mathscr I_q(\mathcal C_{q-1};b,a)_{I,J}.
+\tag{34e}
+$$
+
+If the same edge changes the determinant by $\Omega'=d\Omega$, the
+unnormalized transition RDM obeys
+
+$$
+\Gamma^{(q)\prime}
+=
+d\Gamma^{(q)}
++d\Omega\,
+\mathscr I_q(\mathcal C_{q-1};b,a).
+\tag{34f}
+$$
+
+Equations 34d--34f are exact for every $q$. All requested orders
+$0,1,\ldots,q_{\max}$ are advanced together from low to high order. No
+independent minor factorization is performed at the new string pair.
+
+Let
+
+$$
+N_q=\binom{n}{q}.
+$$
+
+Materializing a full $q$th-order occupied transition density necessarily
+requires
+
+$$
+\Theta(N_q^2)
+$$
+
+storage and writes, because that is the size of the requested output. The
+rank-one recurrence costs
+
+$$
+O(q^2N_q^2)
+\tag{34g}
+$$
+
+per graph edge. For a fixed physical order $q$, this is output-linear up to a
+small order-dependent factor. In contrast, independently evaluating every
+minor adds a factorization or determinant cost to every output element. When
+only a contraction of $\Gamma^{(q)}$ is required, the insertion in eq 34e
+should be contracted immediately and the $N_q\times N_q$ matrix need not be
+stored.
+
+For a rank-$r$ inverse update, Cauchy--Binet gives a finite sum containing
+$s=0,\ldots,\min(q,r)$ inserted update columns. The rank-one traversal is the
+preferred production form because it terminates after $s=1$ and shares the
+same string graph as the determinant and RI-channel recurrences.
+
+### 4.5 Directional arbitrary-order densities
+
+For any square matrix $A$, the directional derivative of its $q$th compound
+matrix is
+
+$$
+\begin{aligned}
+D\mathcal C_q(A)[\dot A]_{I,J}
+=
+\sum_{\mu=1}^{q}\sum_{\nu=1}^{q}
+(-1)^{\mu+\nu}
+\dot A_{i_\mu j_\nu}
+\mathcal C_{q-1}(A)
+_{I\setminus i_\mu,\,J\setminus j_\nu}.
+\end{aligned}
+\tag{34h}
+$$
+
+Consequently,
+
+$$
+\dot\Gamma^{(q)}
+=
+\dot\Omega\,\mathcal C_q(K^{\mathrm T})
++\Omega\,D\mathcal C_q(K^{\mathrm T})[\dot K^{\mathrm T}].
+\tag{34i}
+$$
+
+More importantly, the tangent can be propagated along the same graph edge by
+differentiating eq 34d:
+
+$$
+\begin{aligned}
+\dot{\mathcal C}_q'={}&\dot{\mathcal C}_q
++\mathscr I_q(\dot{\mathcal C}_{q-1};b,a)\\
+&+\mathscr I_q(\mathcal C_{q-1};\dot b,a)
++\mathscr I_q(\mathcal C_{q-1};b,\dot a).
+\end{aligned}
+\tag{34j}
+$$
+
+Thus the HVP of an arbitrary-order RDM contraction has the same
+output-sensitive scaling as the accepted RDM itself. It does not require
+reconstructing the density independently at every string pair.
+
+### 4.6 Reverse pullback of an arbitrary-order contraction
+
+Suppose a scalar objective contains
+
+$$
+F_q
+=
+\left\langle W^{(q)},\Gamma^{(q)}\right\rangle.
+\tag{34k}
+$$
+
+The determinant adjoint is
+
+$$
+\overline\Omega
+=
+\left\langle
+W^{(q)},\mathcal C_q(K^{\mathrm T})
+\right\rangle.
+\tag{34l}
+$$
+
+Writing $A=K^{\mathrm T}$, the matrix adjoint follows from the same
+$(q-1)$th compound level:
+
+$$
+\overline A_{ij}
+=
+\Omega
+\sum_{I\ni i}\sum_{J\ni j}
+(-1)^{\operatorname{pos}_I(i)+\operatorname{pos}_J(j)}
+W^{(q)}_{I,J}
+\mathcal C_{q-1}(A)_{I\setminus i,\,J\setminus j}.
+\tag{34m}
+$$
+
+With $\overline K=\overline A^{\mathrm T}$ and $K=X^{-1}$, the pullback to
+the occupied overlap block is
+
+$$
+\overline X
+=
+\overline\Omega\,\Omega K^{\mathrm T}
+-K^{\mathrm T}\overline K K^{\mathrm T}.
+\tag{34n}
+$$
+
+Equations 34l--34n show that reverse differentiation of a $q$th-order RDM
+contraction needs the already available $q$th and $(q-1)$th compound levels,
+not an explicitly constructed $(q+1)$th-order density. The reverse of the
+edge recurrence in eq 34d provides the equivalent streamed implementation and
+allows each tile-local hierarchy to be released after its consumer finishes.
+
+For singular pairs, eq 34b is replaced by the corresponding complementary
+minors of $X$. The contracted interpolation in Section 10.2 applies
+componentwise to eqs 34b, 34i, and 34k. Hence the arbitrary-order formulation
+does not introduce an inverse-based approximation at ill-conditioned pairs.
+
 ## 5. Opposite-spin contraction in auxiliary space
 
 For spin sector $\sigma\in\{\alpha,\beta\}$, define the unnormalized
