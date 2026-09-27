@@ -2963,13 +2963,14 @@ int main(int argc, char** argv) {
                 orbital_result.active_orbital_overlap_matrix,
                 n_active_orbitals,
                 options.max_hybrid_census_pairs);
-        const auto beta_hybrid =
-            xmvb::tools::run_hybrid_pair_graph_census(
-                beta_strings,
-                beta_order,
-                orbital_result.active_orbital_overlap_matrix,
-                n_active_orbitals,
-                options.max_hybrid_census_pairs);
+        const auto beta_hybrid = alpha_strings == beta_strings
+            ? alpha_hybrid
+            : xmvb::tools::run_hybrid_pair_graph_census(
+                  beta_strings,
+                  beta_order,
+                  orbital_result.active_orbital_overlap_matrix,
+                  n_active_orbitals,
+                  options.max_hybrid_census_pairs);
         std::cout << std::setprecision(15);
         std::cout << "input_path = " << options.input_path << '\n';
         std::cout << "n_active_orbitals = " << n_active_orbitals << '\n';
