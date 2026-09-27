@@ -192,16 +192,11 @@ OverlapTraversalState anchor_state(
   return state;
 }
 
-struct InverseCertificate {
-  double residual = 0.0;
-  double condition_bound = 1.0;
-};
-
-InverseCertificate certify_inverse(
+double inverse_backward_error(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& inverse) {
   if (matrix.rows() == 0) {
-    return {};
+    return 0.0;
   }
   const Eigen::MatrixXd residual =
       Eigen::MatrixXd::Identity(matrix.rows(), matrix.cols()) -
@@ -209,9 +204,9 @@ InverseCertificate certify_inverse(
   const auto infinity_norm = [](const Eigen::Ref<const Eigen::MatrixXd>& value) {
     return value.cwiseAbs().rowwise().sum().maxCoeff();
   };
-  return InverseCertificate{
-      infinity_norm(residual),
-      std::max(1.0, infinity_norm(matrix) * infinity_norm(inverse))};
+  const double scale = std::max(
+      1.0, infinity_norm(matrix) * infinity_norm(inverse));
+  return infinity_norm(residual) / scale;
 }
 
 double rounding_bound(int dimension, int updates) {
@@ -275,16 +270,10 @@ bool woodbury_child_state(
   child->log_abs_determinant =
       parent.log_abs_determinant + std::log(std::abs(eta));
   child->updates_since_anchor = parent.updates_since_anchor + 1;
-  const InverseCertificate inverse_certificate =
-      certify_inverse(child->overlap, child->inverse);
-  const double forward_error_limit =
-      std::sqrt(std::numeric_limits<double>::epsilon());
   child->regular = std::isfinite(child->determinant) &&
       std::isfinite(child->log_abs_determinant) &&
       child->inverse.allFinite() &&
-      inverse_certificate.residual <= forward_error_limit &&
-      inverse_certificate.condition_bound * certificate <=
-          forward_error_limit;
+      inverse_backward_error(child->overlap, child->inverse) <= certificate;
   return child->regular;
 }
 
