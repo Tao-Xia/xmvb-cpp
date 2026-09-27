@@ -5,7 +5,6 @@
 
 #include <Eigen/Core>
 
-#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/transformation/packed_pair_map.hpp"
 
 namespace xmvb::vb {
@@ -56,8 +55,7 @@ ActiveSpaceTwoElectronResult RiActiveSpaceTwoElectronBuilder::build(
     const RiAoFactorization& ao_ri_result,
     const OrbitalPreparationResult& orbital_preparation_result,
     int n_basis_functions,
-    int n_active_orbitals,
-    const RiActiveSpaceTwoElectronBuilderOptions& options) const {
+    int n_active_orbitals) const {
   if (n_basis_functions <= 0 || n_active_orbitals <= 0) {
     throw std::invalid_argument("RI active-space dimensions must be positive");
   }
@@ -95,24 +93,6 @@ ActiveSpaceTwoElectronResult RiActiveSpaceTwoElectronBuilder::build(
   result.n_auxiliary_functions = ao_ri_result.n_auxiliary_functions;
   result.ri_active_pair_factors = active_pair_factors;
   result.dense_active_coefficients = dense_active_coefficients;
-
-  if (options.reconstruct_packed_integrals) {
-    const Eigen::MatrixXd active_pair_gram =
-        active_pair_factors.transpose() * active_pair_factors;
-    std::vector<double> packed_active_two_electron_integrals(
-        n_active_pairs * (n_active_pairs + 1) / 2,
-        0.0);
-    for (int pair_column = 0; pair_column < static_cast<int>(n_active_pairs); ++pair_column) {
-      for (int pair_row = 0; pair_row <= pair_column; ++pair_row) {
-        const int packed_index =
-            TwoElectronIndexer::packed_pair_of_pairs_index(pair_column, pair_row);
-        packed_active_two_electron_integrals[packed_index] =
-            active_pair_gram(pair_column, pair_row);
-      }
-    }
-    result.packed_active_two_electron_integrals =
-        std::move(packed_active_two_electron_integrals);
-  }
 
   return result;
 }

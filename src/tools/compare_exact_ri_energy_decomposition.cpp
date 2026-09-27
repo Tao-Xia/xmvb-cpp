@@ -15,6 +15,7 @@
 #include "vbscf/integrals/active/two_electron/construction/builder.hpp"
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
 #include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace {
 
@@ -214,12 +215,15 @@ EnergyBreakdown build_ri_breakdown(
       n_active_orbitals);
 
   xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_builder;
-  const auto ri_eri_result = ri_builder.build(
+  auto ri_eri_result = ri_builder.build(
       ri_cache,
       orbital_result,
       n_basis_functions,
-      n_active_orbitals,
-      {.reconstruct_packed_integrals = true});
+      n_active_orbitals);
+  ri_eri_result.packed_active_two_electron_integrals =
+      xmvb::vb::reconstruct_packed_active_two_electron_integrals(
+          xmvb::vb::make_active_space_two_electron_view(ri_eri_result),
+          n_active_orbitals);
 
   EnergyBreakdown breakdown;
   breakdown.one_electron_reference_energy =
@@ -334,12 +338,15 @@ int main(int argc, char** argv) {
         orbital_result,
         n_active_orbitals);
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_eri_builder;
-    const auto ri_eri = ri_eri_builder.build(
+    auto ri_eri = ri_eri_builder.build(
         xmvb::vb::ensure_vbscf_input_ri_cache(input),
         orbital_result,
         n_basis_functions,
-        n_active_orbitals,
-        {.reconstruct_packed_integrals = true});
+        n_active_orbitals);
+    ri_eri.packed_active_two_electron_integrals =
+        xmvb::vb::reconstruct_packed_active_two_electron_integrals(
+            xmvb::vb::make_active_space_two_electron_view(ri_eri),
+            n_active_orbitals);
 
     const double active_eigen_exact_h1e_exact_eri = evaluate_active_eigenvalue(
         input,

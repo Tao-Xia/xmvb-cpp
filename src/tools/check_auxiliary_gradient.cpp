@@ -21,6 +21,7 @@
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
 #include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
 #include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/derivatives/gradient/active_space/evaluator.hpp"
 
 namespace {
@@ -201,8 +202,12 @@ double evaluate_total_energy_from_auxiliary(
             xmvb::vb::ensure_vbscf_input_ri_cache(input),
             active_orbitals,
             n_basis_functions,
-            n_active_orbitals,
-            {.reconstruct_packed_integrals = true});
+            n_active_orbitals);
+    active_space_two_electron_result.packed_active_two_electron_integrals =
+        xmvb::vb::reconstruct_packed_active_two_electron_integrals(
+            xmvb::vb::make_active_space_two_electron_view(
+                active_space_two_electron_result),
+            n_active_orbitals);
   } else {
     xmvb::vb::ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;
     active_space_two_electron_result =
@@ -281,8 +286,12 @@ ActiveSpaceMatrices build_active_space_matrices(
             xmvb::vb::ensure_vbscf_input_ri_cache(input),
             active_orbitals,
             n_basis_functions,
-            n_active_orbitals,
-            {.reconstruct_packed_integrals = true});
+            n_active_orbitals);
+    active_space_two_electron_result.packed_active_two_electron_integrals =
+        xmvb::vb::reconstruct_packed_active_two_electron_integrals(
+            xmvb::vb::make_active_space_two_electron_view(
+                active_space_two_electron_result),
+            n_active_orbitals);
   } else {
     xmvb::vb::ActiveSpaceTwoElectronBuilder active_space_two_electron_builder;
     active_space_two_electron_result =

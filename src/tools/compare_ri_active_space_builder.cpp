@@ -12,6 +12,7 @@
 #include "vbscf/orbitals/preparation/preparer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/builder.hpp"
 #include "vbscf/integrals/active/two_electron/construction/ri_builder.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace {
 
@@ -100,14 +101,15 @@ int main(int argc, char** argv) {
         provider_options);
 
     xmvb::vb::RiActiveSpaceTwoElectronBuilder ri_builder;
-    xmvb::vb::RiActiveSpaceTwoElectronBuilderOptions ri_builder_options;
-    ri_builder_options.reconstruct_packed_integrals = true;
-    const auto ri_result = ri_builder.build(
+    auto ri_result = ri_builder.build(
         ao_ri_result,
         orbital_result,
         input.orbital_preparation_input.n_basis_functions,
-        input.orbital_preparation_input.n_active_orbitals,
-        ri_builder_options);
+        input.orbital_preparation_input.n_active_orbitals);
+    ri_result.packed_active_two_electron_integrals =
+        xmvb::vb::reconstruct_packed_active_two_electron_integrals(
+            xmvb::vb::make_active_space_two_electron_view(ri_result),
+            input.orbital_preparation_input.n_active_orbitals);
 
     if (exact_result.packed_active_two_electron_integrals.size() !=
         ri_result.packed_active_two_electron_integrals.size()) {

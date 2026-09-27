@@ -6,12 +6,12 @@
 
 namespace xmvb::vb {
 
-struct RiActiveSpaceTwoElectronBuilderOptions {
-  bool reconstruct_packed_integrals = false;
-};
-
 /**
  * @brief Transforms molecule-static AO-side RI factors into active-space RI factors.
+ *
+ * The result remains factorized. Reference tools that need four-index values
+ * must reconstruct them explicitly through the kernel utility; production
+ * code cannot request a hidden `O(n_active^4)` allocation from this builder.
  */
 class RiActiveSpaceTwoElectronBuilder {
 public:
@@ -19,8 +19,7 @@ public:
       const RiAoFactorization& ao_ri_result,
       const OrbitalPreparationResult& orbital_preparation_result,
       int n_basis_functions,
-      int n_active_orbitals,
-      const RiActiveSpaceTwoElectronBuilderOptions& options = {}) const;
+      int n_active_orbitals) const;
 };
 
 }  // namespace xmvb::vb
