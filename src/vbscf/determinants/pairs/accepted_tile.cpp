@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "core/openmp.hpp"
+#include "vbscf/determinants/pairs/traversal.hpp"
 #include "vbscf/determinants/pairs/woodbury_overlap.hpp"
 
 namespace xmvb::vb {
@@ -65,15 +66,22 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
       1, std::min(xmvb::effective_openmp_thread_count(), tile.left_size));
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int left_local = 0; left_local < tile.left_size; ++left_local) {
-    for (int right_local = 0; right_local < tile.right_size; ++right_local) {
+    const int left_index = left_begin + left_local;
+    const std::vector<int> right_traversal = build_pair_update_traversal(
+        unique_spin_strings_, left_index, right_begin, right_end);
+    for (int traversal_index = 0;
+         traversal_index < tile.right_size;
+         ++traversal_index) {
+      const int right_index = right_traversal[traversal_index];
+      const int right_local = right_index - right_begin;
       const auto& occupied_left =
-          unique_spin_strings_[left_begin + left_local];
+          unique_spin_strings_[left_index];
       const auto& occupied_right =
-          unique_spin_strings_[right_begin + right_local];
+          unique_spin_strings_[right_index];
       SpinDeterminantPairEvaluation evaluation;
       const std::size_t pair_index =
           static_cast<std::size_t>(left_local) * tile.right_size + right_local;
-      if (right_local == 0) {
+      if (traversal_index == 0) {
         evaluation = pair_evaluator_.evaluate_same_spin_pair(
             occupied_left,
             occupied_right,
@@ -83,10 +91,13 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             active_two_electron,
             true);
       } else {
-        const std::size_t previous_index = pair_index - 1;
+        const int previous_right = right_traversal[traversal_index - 1];
+        const std::size_t previous_index =
+            static_cast<std::size_t>(left_local) * tile.right_size +
+            previous_right - right_begin;
         auto updated_overlap = try_woodbury_right_overlap_update(
             occupied_left,
-            unique_spin_strings_[right_begin + right_local - 1],
+            unique_spin_strings_[previous_right],
             occupied_right,
             overlap_map,
             tile.pairs[previous_index].overlap_result);

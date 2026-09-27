@@ -9,6 +9,7 @@
 #include "vbscf/determinants/pairs/accepted_action.hpp"
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/determinants/pairs/traversal.hpp"
 #include "vbscf/determinants/pairs/woodbury_overlap.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
@@ -122,6 +123,24 @@ int main() {
       &reference, h1e, n_active, ri);
 
   const xmvb::vb::AcceptedPairTileProvider provider(strings, n_active);
+  const auto traversal = xmvb::vb::build_pair_update_traversal(
+      strings, 4, 0, static_cast<int>(strings.size()));
+  require(
+      traversal.size() == strings.size() && traversal.front() == 4,
+      "pair traversal did not retain the diagonal anchor");
+  std::vector<int> traversal_counts(strings.size(), 0);
+  for (const int index : traversal) {
+    require(
+        index >= 0 && index < static_cast<int>(strings.size()),
+        "pair traversal returned an invalid string index");
+    ++traversal_counts[index];
+  }
+  require(
+      std::all_of(
+          traversal_counts.begin(),
+          traversal_counts.end(),
+          [](int count) { return count == 1; }),
+      "pair traversal did not visit every string exactly once");
   xmvb::vb::DeterminantOverlapResolver overlap_resolver;
   const auto update_anchor = overlap_resolver.resolve_matrix(
       xmvb::vb::build_overlap_submatrix(
