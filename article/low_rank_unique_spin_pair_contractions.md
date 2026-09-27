@@ -1041,8 +1041,15 @@ It is:
 4. materialize a high-order RDM only when that RDM is the requested output.
 
 The compound hierarchy of Sections 4.4--4.6 is therefore a mathematical
-reference and an explicit-output kernel. It must not become the default
-production state for contracted VBSCF evaluation.
+identity, not a production data structure. The low-scaling implementation
+stores only the implicit pair state and evaluates the factorized contraction
+and its derivatives directly.
+
+The Woodbury contraction algorithm is specifically a factorized-integral
+algorithm. It applies to RI and to future COSX/THC-like representations. The
+exact four-index integral implementation remains a numerical reference path;
+it is not duplicated inside the Woodbury implementation and no reduced
+asymptotic scaling is claimed for it.
 
 ## 5. Opposite-spin contraction in auxiliary space
 
