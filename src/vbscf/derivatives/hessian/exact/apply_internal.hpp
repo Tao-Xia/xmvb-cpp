@@ -11,6 +11,7 @@
 #include "vbscf/derivatives/hessian/context/response_internal.hpp"
 #include "vbscf/derivatives/hessian/coupled/coupling.hpp"
 #include "vbscf/derivatives/hessian/responses/active_space/integral_direction.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space/outer_response.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 
@@ -19,7 +20,7 @@ namespace xmvb::vb {
 /** @brief Directional outer-response data shared by the block and scalar stages. */
 struct PrecomputedOuterResponse {
   ActiveSpaceIntegralDirectionWorkspace integral_direction;
-  SameSpinDirectionalPairCache pair_cache;
+  std::optional<ActiveSpaceGradientDirection> local_active_gradient;
   std::optional<StructureIntegralDirection> direct_ci_direction;
   SelectedStateGeneralizedEigenDirectionalResponse selected_state_response;
   std::optional<ScaledStructureCoupling> gauge_coupling;

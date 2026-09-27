@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <memory>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -14,6 +15,7 @@
 
 #include "core/eigen_response.hpp"
 #include "vbscf/derivatives/hessian/coupled/coupling.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space/local_tile_accumulator_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/orbital/preparation.hpp"
 #include "vbscf/derivatives/hessian/responses/structure/directional.hpp"
 #include "vbscf/integrals/active/two_electron/response/directional.hpp"
@@ -328,10 +330,6 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
     }
     double integral_seconds = 0.0;
     double structure_seconds = 0.0;
-    const bool pair_cache_required =
-        !direct_active_gradient &&
-        (components.local_active_response || components.structure_response ||
-         build_orbital_coupling);
     std::vector<ActiveSpaceIntegralDirectionView> integral_directions;
     integral_directions.reserve(static_cast<std::size_t>(n_directions));
     for (Eigen::Index column = 0; column < n_directions; ++column) {
@@ -374,43 +372,58 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
     }
 
     const auto structure_start = std::chrono::steady_clock::now();
-    std::vector<SameSpinDirectionalPairCache> directional_pair_caches;
-    if (pair_cache_required) {
-      directional_pair_caches = build_same_spin_directional_pair_cache_batch(
-          accepted_point_context_->same_spin_pair_cache,
-          n_active_orbitals,
-          integral_directions,
-          accepted_ri_two_electron_cache_.has_value()
-              ? &accepted_point_context_->prepared_active_space
-                     .active_space_one_electron_result.h1e_act
-              : nullptr,
-          accepted_ri_two_electron_cache_.has_value()
-              ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
-              : nullptr,
-          accepted_ri_two_electron_cache_.has_value()
-              ? &ri_active_pair_factor_directions
-              : nullptr);
-    }
     for (Eigen::Index column = 0; column < n_directions; ++column) {
       PrecomputedOuterResponse& outer =
           *precomputed_directions[column].outer_response;
-      if (pair_cache_required) {
-        outer.pair_cache = std::move(
-            directional_pair_caches[static_cast<std::size_t>(column)]);
+      std::unique_ptr<detail::LocalActiveSpaceTileAccumulator>
+          local_active_accumulator;
+      if (!direct_active_gradient && components.local_active_response) {
+        local_active_accumulator =
+            std::make_unique<detail::LocalActiveSpaceTileAccumulator>(
+                *current_input_,
+                *accepted_point_context_,
+                integral_directions[static_cast<std::size_t>(column)]);
       }
+      const auto consume_local_active_tile =
+          [&](bool alpha_channel,
+              bool beta_channel,
+              const detail::SameSpinDirectionalPairTile& same_spin,
+              const detail::DirectionalOppositeSpinPairTile* opposite_spin) {
+            if (local_active_accumulator) {
+              local_active_accumulator->consume(
+                  alpha_channel, beta_channel, same_spin, opposite_spin);
+            }
+          };
+      bool pair_tiles_consumed = false;
       if (components.structure_response || build_orbital_coupling) {
+        SameSpinDirectionalPairCache unused_pair_cache;
         SelectedStateDirectionalStructureImages images =
-            build_selected_structure_direction(
-                outer_response_context(),
-                integral_directions[static_cast<std::size_t>(column)],
-                outer.pair_cache,
-                accepted_ri_two_electron_cache_.has_value()
-                    ? accepted_ri_two_electron_cache_->accepted_active_pair_factors
-                    : nullptr,
-                accepted_ri_two_electron_cache_.has_value()
-                    ? &ri_active_pair_factor_directions[
-                          static_cast<std::size_t>(column)]
-                    : nullptr);
+            direct_active_gradient
+            ? build_selected_structure_direction(
+                  outer_response_context(),
+                  integral_directions[static_cast<std::size_t>(column)],
+                  unused_pair_cache,
+                  accepted_ri_two_electron_cache_.has_value()
+                      ? accepted_ri_two_electron_cache_
+                            ->accepted_active_pair_factors
+                      : nullptr,
+                  accepted_ri_two_electron_cache_.has_value()
+                      ? &ri_active_pair_factor_directions[
+                            static_cast<std::size_t>(column)]
+                      : nullptr)
+            : build_selected_structure_direction_from_pair_tiles(
+                  outer_response_context(),
+                  integral_directions[static_cast<std::size_t>(column)],
+                  accepted_ri_two_electron_cache_.has_value()
+                      ? accepted_ri_two_electron_cache_
+                            ->accepted_active_pair_factors
+                      : nullptr,
+                  accepted_ri_two_electron_cache_.has_value()
+                      ? &ri_active_pair_factor_directions[
+                            static_cast<std::size_t>(column)]
+                      : nullptr,
+                  consume_local_active_tile);
+        pair_tiles_consumed = !direct_active_gradient;
         outer.direct_ci_direction = std::move(images.direct_ci_direction);
         if (build_orbital_coupling) {
           const auto& eigen = outer_response_context()
@@ -435,6 +448,29 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
           delta_overlap_selected.middleCols(first, n_selected_states) =
               images.delta_overlap_selected;
         }
+      }
+      if (local_active_accumulator && !pair_tiles_consumed) {
+        detail::stream_directional_pair_tiles(
+            accepted_point_context_->same_spin_pair_cache,
+            n_active_orbitals,
+            accepted_point_context_->prepared_active_space
+                .active_space_two_electron_result,
+            integral_directions[static_cast<std::size_t>(column)],
+            &accepted_point_context_->prepared_active_space
+                 .active_space_one_electron_result.h1e_act,
+            accepted_ri_two_electron_cache_.has_value()
+                ? accepted_ri_two_electron_cache_
+                      ->accepted_active_pair_factors
+                : nullptr,
+            accepted_ri_two_electron_cache_.has_value()
+                ? &ri_active_pair_factor_directions[
+                      static_cast<std::size_t>(column)]
+                : nullptr,
+            true,
+            consume_local_active_tile);
+      }
+      if (local_active_accumulator) {
+        outer.local_active_gradient = local_active_accumulator->finish();
       }
       outer.integral_direction.packed_two_electron.clear();
     }
