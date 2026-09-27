@@ -107,8 +107,7 @@ StableCompletion build_stable_completion(
     throw std::runtime_error("hybrid census overlap SVD failed");
   }
   const Eigen::VectorXd singular_values = svd.singularValues();
-  if (singular_values.size() != n || singular_values(0) <= 0.0 ||
-      !singular_values.allFinite()) {
+  if (singular_values.size() != n || !singular_values.allFinite()) {
     throw std::runtime_error(
         "hybrid census overlap has no finite stable completion");
   }
@@ -117,8 +116,14 @@ StableCompletion build_stable_completion(
   const double condition_limit = std::pow(
       std::numeric_limits<double>::epsilon(),
       -1.0 / (2.0 * highest_inverse_power));
+  // A completely zero occupied-overlap block has no intrinsic scale.  Orbital
+  // overlaps are dimensionless and bounded by normalization, so unit scale is
+  // the natural certified completion for this exceptional case.  Nonzero
+  // blocks retain the same relative condition criterion as production.
+  const double spectral_scale =
+      singular_values(0) > 0.0 ? singular_values(0) : 1.0;
   const double tau =
-      static_cast<double>(n) * singular_values(0) / condition_limit;
+      static_cast<double>(n) * spectral_scale / condition_limit;
   Eigen::VectorXd completed_singular_values = singular_values;
   for (int index = 0; index < n; ++index) {
     if (singular_values(index) < tau) {
