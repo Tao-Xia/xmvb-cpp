@@ -10,7 +10,7 @@
 namespace xmvb::vb::detail {
 
 struct SameSpinAcceptedTileWeights;
-struct SameSpinDirectionalPairTile;
+class SameSpinDirectionalPairTileView;
 
 SameSpinMatrixBackwardContribution make_zero_backward_contribution(
     int n_active_orbitals);
@@ -74,7 +74,7 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
 void accumulate_local_primary_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
-    const SameSpinDirectionalPairTile& directional_tile,
+    const SameSpinDirectionalPairTileView& directional_tile,
     const SameSpinAcceptedTileWeights& accepted_weights,
     int n_unique,
     int n_active_orbitals,

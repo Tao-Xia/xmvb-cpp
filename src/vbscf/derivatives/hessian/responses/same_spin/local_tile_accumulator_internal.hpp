@@ -20,17 +20,17 @@ class LocalSameSpinTileAccumulator {
   void consume(
       bool alpha_channel,
       bool beta_channel,
-      const SameSpinDirectionalPairTile& tile);
+      const SameSpinDirectionalPairTileView& tile);
 
   SameSpinMatrixBackwardContribution finish();
 
  private:
-  void consume_alpha_primary(const SameSpinDirectionalPairTile& tile);
-  void consume_beta_primary(const SameSpinDirectionalPairTile& tile);
+  void consume_alpha_primary(const SameSpinDirectionalPairTileView& tile);
+  void consume_beta_primary(const SameSpinDirectionalPairTileView& tile);
   void accumulate_beta_weight_response(
-      const SameSpinDirectionalPairTile& alpha_tile);
+      const SameSpinDirectionalPairTileView& alpha_tile);
   void accumulate_alpha_weight_response(
-      const SameSpinDirectionalPairTile& beta_tile);
+      const SameSpinDirectionalPairTileView& beta_tile);
 
   const SameSpinPairCacheContext& accepted_pair_cache_;
   const SelectedStateDeterminantMatrices& selected_states_;

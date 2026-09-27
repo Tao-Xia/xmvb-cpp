@@ -387,8 +387,8 @@ Eigen::MatrixXd ExactHvpOperator::State::apply_reduced_batch_impl(
       const auto consume_local_active_tile =
           [&](bool alpha_channel,
               bool beta_channel,
-              const detail::SameSpinDirectionalPairTile& same_spin,
-              const detail::DirectionalOppositeSpinPairTile* opposite_spin) {
+              const detail::SameSpinDirectionalPairTileView& same_spin,
+              const detail::DirectionalOppositeSpinPairTileView* opposite_spin) {
             if (local_active_accumulator) {
               local_active_accumulator->consume(
                   alpha_channel, beta_channel, same_spin, opposite_spin);

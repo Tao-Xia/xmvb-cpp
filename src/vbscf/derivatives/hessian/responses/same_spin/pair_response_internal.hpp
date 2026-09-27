@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <utility>
 
 #include <Eigen/Core>
 
@@ -8,6 +9,8 @@
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 
 namespace xmvb::vb::detail {
+
+class SameSpinDirectionalPairTileView;
 
 /**
  * @brief Directional data for one rectangular unique-spin pair tile.
@@ -35,6 +38,53 @@ struct SameSpinDirectionalPairTile {
   const SameSpinPolynomialDirectionalPairData& pair(
       int left_local,
       int right_local) const;
+
+  SameSpinDirectionalPairTileView view(bool transposed = false) const;
+};
+
+/** Zero-copy orientation view of one canonical same-spin tile. */
+class SameSpinDirectionalPairTileView {
+public:
+  using Stride = Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>;
+  using ConstMatrixMap = Eigen::Map<
+      const Eigen::MatrixXd, Eigen::Unaligned, Stride>;
+
+  SameSpinDirectionalPairTileView(
+      const SameSpinDirectionalPairTile& storage,
+      bool transposed) noexcept
+      : storage_(&storage), transposed_(transposed) {}
+
+  int left_begin() const noexcept;
+  int right_begin() const noexcept;
+  int left_size() const noexcept;
+  int right_size() const noexcept;
+  bool transposed() const noexcept { return transposed_; }
+
+  ConstMatrixMap delta_overlap() const;
+  ConstMatrixMap delta_regular_hamiltonian() const;
+  ConstMatrixMap delta_singular_hamiltonian() const;
+
+  template <typename Consumer>
+  void with_pair(
+      int left_local,
+      int right_local,
+      Consumer&& consume) const {
+    if (!transposed_) {
+      consume(storage_->pair(left_local, right_local));
+      return;
+    }
+    SameSpinPolynomialDirectionalPairData pair =
+        storage_->pair(right_local, left_local);
+    pair.delta_cofactor_1st.transposeInPlace();
+    pair.delta_same_spin_overlap_hamiltonian_gradient.transposeInPlace();
+    consume(pair);
+  }
+
+private:
+  ConstMatrixMap matrix_view(const Eigen::MatrixXd& matrix) const;
+
+  const SameSpinDirectionalPairTile* storage_ = nullptr;
+  bool transposed_ = false;
 };
 
 SameSpinDirectionalPairTile build_directional_pair_tile(

@@ -45,6 +45,59 @@ const SameSpinPolynomialDirectionalPairData& SameSpinDirectionalPairTile::pair(
       right_local];
 }
 
+SameSpinDirectionalPairTileView SameSpinDirectionalPairTile::view(
+    bool transposed) const {
+  return SameSpinDirectionalPairTileView(*this, transposed);
+}
+
+int SameSpinDirectionalPairTileView::left_begin() const noexcept {
+  return transposed_ ? storage_->right_begin : storage_->left_begin;
+}
+
+int SameSpinDirectionalPairTileView::right_begin() const noexcept {
+  return transposed_ ? storage_->left_begin : storage_->right_begin;
+}
+
+int SameSpinDirectionalPairTileView::left_size() const noexcept {
+  return transposed_ ? storage_->right_size() : storage_->left_size();
+}
+
+int SameSpinDirectionalPairTileView::right_size() const noexcept {
+  return transposed_ ? storage_->left_size() : storage_->right_size();
+}
+
+SameSpinDirectionalPairTileView::ConstMatrixMap
+SameSpinDirectionalPairTileView::matrix_view(
+    const Eigen::MatrixXd& matrix) const {
+  if (!transposed_) {
+    return ConstMatrixMap(
+        matrix.data(),
+        matrix.rows(),
+        matrix.cols(),
+        Stride(matrix.outerStride(), matrix.innerStride()));
+  }
+  return ConstMatrixMap(
+      matrix.data(),
+      matrix.cols(),
+      matrix.rows(),
+      Stride(matrix.innerStride(), matrix.outerStride()));
+}
+
+SameSpinDirectionalPairTileView::ConstMatrixMap
+SameSpinDirectionalPairTileView::delta_overlap() const {
+  return matrix_view(storage_->delta_overlap);
+}
+
+SameSpinDirectionalPairTileView::ConstMatrixMap
+SameSpinDirectionalPairTileView::delta_regular_hamiltonian() const {
+  return matrix_view(storage_->delta_regular_hamiltonian);
+}
+
+SameSpinDirectionalPairTileView::ConstMatrixMap
+SameSpinDirectionalPairTileView::delta_singular_hamiltonian() const {
+  return matrix_view(storage_->delta_singular_hamiltonian);
+}
+
 void accumulate_one_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,
     const std::vector<int>& occ_R,
@@ -271,6 +324,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
       direction.one_electron.data(),
       n_active_orbitals,
       n_active_orbitals);
+  const bool diagonal_tile = left_begin == right_begin &&
+      left_size == right_size;
   const int work_items = left_size * right_size;
   const int n_threads = std::max(
       1,
@@ -281,6 +336,9 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     const int right_local = work % right_size;
     const int left_id = left_begin + left_local;
     const int right_id = right_begin + right_local;
+    if (diagonal_tile && left_id > right_id) {
+      continue;
+    }
     const int canonical_left = std::min(left_id, right_id);
     const int canonical_right = std::max(left_id, right_id);
     const auto& pair_evaluation = ordered_pair_cache[
@@ -343,6 +401,25 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
             : tile.delta_singular_hamiltonian;
     hamiltonian(left_local, right_local) =
         stored.delta_total_hamiltonian;
+  }
+  if (diagonal_tile) {
+    for (int left_local = 1; left_local < left_size; ++left_local) {
+      for (int right_local = 0; right_local < left_local; ++right_local) {
+        const auto& source = tile.pair(right_local, left_local);
+        auto reverse = source;
+        reverse.delta_cofactor_1st.transposeInPlace();
+        reverse.delta_same_spin_overlap_hamiltonian_gradient
+            .transposeInPlace();
+        tile.pairs[static_cast<std::size_t>(left_local) * right_size +
+            right_local] = std::move(reverse);
+        tile.delta_overlap(left_local, right_local) =
+            tile.delta_overlap(right_local, left_local);
+        tile.delta_regular_hamiltonian(left_local, right_local) =
+            tile.delta_regular_hamiltonian(right_local, left_local);
+        tile.delta_singular_hamiltonian(left_local, right_local) =
+            tile.delta_singular_hamiltonian(right_local, left_local);
+      }
+    }
   }
   return tile;
 }

@@ -11,8 +11,8 @@ namespace xmvb::vb::detail {
 using DirectionalPairTileConsumer = std::function<void(
     bool alpha_channel,
     bool beta_channel,
-    const SameSpinDirectionalPairTile& same_spin,
-    const DirectionalOppositeSpinPairTile* opposite_spin)>;
+    const SameSpinDirectionalPairTileView& same_spin,
+    const DirectionalOppositeSpinPairTileView* opposite_spin)>;
 
 /**
  * @brief Streams bounded directional unique-spin pair tiles.

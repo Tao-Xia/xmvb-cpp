@@ -331,35 +331,35 @@ build_selected_structure_direction_from_pair_tiles(
       true,
       [&](bool alpha_channel,
           bool beta_channel,
-          const detail::SameSpinDirectionalPairTile& same_tile,
-          const detail::DirectionalOppositeSpinPairTile* opposite_tile) {
+          const detail::SameSpinDirectionalPairTileView& same_tile,
+          const detail::DirectionalOppositeSpinPairTileView* opposite_tile) {
         if (opposite_tile == nullptr) {
           throw std::logic_error(
               "tiled structure direction is missing opposite-spin data");
         }
         const Eigen::MatrixXd delta_hamiltonian =
-            same_tile.delta_regular_hamiltonian +
-            same_tile.delta_singular_hamiltonian;
+            same_tile.delta_regular_hamiltonian() +
+            same_tile.delta_singular_hamiltonian();
 
         if (alpha_channel) {
           for (int state = 0; state < n_states; ++state) {
             const Eigen::MatrixXd& coefficients =
                 selected_states.states[state].coefficient_matrix;
             const auto coefficients_right = coefficients.middleRows(
-                same_tile.right_begin, same_tile.right_size());
+                same_tile.right_begin(), same_tile.right_size());
             const Eigen::MatrixXd delta_overlap_coefficients =
-                same_tile.delta_overlap * coefficients_right;
+                same_tile.delta_overlap() * coefficients_right;
             const Eigen::MatrixXd delta_hamiltonian_coefficients =
                 delta_hamiltonian * coefficients_right;
             auto overlap_image = delta_overlap_images.block(
-                same_tile.left_begin,
+                same_tile.left_begin(),
                 state * n_beta,
                 same_tile.left_size(),
                 n_beta);
             overlap_image.noalias() +=
                 delta_overlap_coefficients * factors.beta_overlap.transpose();
             auto hamiltonian_image = delta_hamiltonian_images.block(
-                same_tile.left_begin,
+                same_tile.left_begin(),
                 state * n_beta,
                 same_tile.left_size(),
                 n_beta);
@@ -391,19 +391,19 @@ build_selected_structure_direction_from_pair_tiles(
             const Eigen::MatrixXd& coefficients =
                 selected_states.states[state].coefficient_matrix;
             const auto coefficients_right = coefficients.middleCols(
-                same_tile.right_begin, same_tile.right_size());
+                same_tile.right_begin(), same_tile.right_size());
             auto overlap_image = delta_overlap_images.middleCols(
-                state * n_beta + same_tile.left_begin,
+                state * n_beta + same_tile.left_begin(),
                 same_tile.left_size());
             overlap_image.noalias() +=
                 factors.alpha_overlap * coefficients_right *
-                same_tile.delta_overlap.transpose();
+                same_tile.delta_overlap().transpose();
             auto hamiltonian_image = delta_hamiltonian_images.middleCols(
-                state * n_beta + same_tile.left_begin,
+                state * n_beta + same_tile.left_begin(),
                 same_tile.left_size());
             hamiltonian_image.noalias() +=
                 factors.alpha_hamiltonian * coefficients_right *
-                same_tile.delta_overlap.transpose();
+                same_tile.delta_overlap().transpose();
             hamiltonian_image.noalias() +=
                 factors.alpha_overlap * coefficients_right *
                 delta_hamiltonian.transpose();

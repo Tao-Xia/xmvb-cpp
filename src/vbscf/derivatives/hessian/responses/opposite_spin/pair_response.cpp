@@ -103,29 +103,60 @@ const DirectionalOppositeSpinPairData& DirectionalOppositeSpinPairTile::pair(
       right_local];
 }
 
-DirectionalOppositeSpinPairTile::ConstChannelMap
-DirectionalOppositeSpinPairTile::raw_channel(
-    int packed_pair) const {
-  if (packed_pair < 0 ||
-      packed_pair >= raw_channel_values.cols()) {
-    throw std::out_of_range("raw opposite-spin tile channel out of range");
-  }
-  return ConstChannelMap(
-      raw_channel_values.col(packed_pair).data(), left_size, right_size);
+DirectionalOppositeSpinPairTileView DirectionalOppositeSpinPairTile::view(
+    bool transposed) const {
+  return DirectionalOppositeSpinPairTileView(*this, transposed);
 }
 
-DirectionalOppositeSpinPairTile::ConstChannelMap
-DirectionalOppositeSpinPairTile::projected_channel(
+int DirectionalOppositeSpinPairTileView::left_begin() const noexcept {
+  return transposed_ ? storage_->right_begin : storage_->left_begin;
+}
+
+int DirectionalOppositeSpinPairTileView::right_begin() const noexcept {
+  return transposed_ ? storage_->left_begin : storage_->right_begin;
+}
+
+int DirectionalOppositeSpinPairTileView::left_size() const noexcept {
+  return transposed_ ? storage_->right_size : storage_->left_size;
+}
+
+int DirectionalOppositeSpinPairTileView::right_size() const noexcept {
+  return transposed_ ? storage_->left_size : storage_->right_size;
+}
+
+DirectionalOppositeSpinPairTileView::ConstChannelMap
+DirectionalOppositeSpinPairTileView::channel_view(
+    const Eigen::MatrixXd& channels,
     int packed_pair) const {
   if (packed_pair < 0 ||
-      packed_pair >= projected_channel_values.cols()) {
-    throw std::out_of_range(
-        "projected opposite-spin tile channel out of range");
+      packed_pair >= channels.cols()) {
+    throw std::out_of_range("opposite-spin tile channel out of range");
+  }
+  const double* data = channels.col(packed_pair).data();
+  if (!transposed_) {
+    return ConstChannelMap(
+        data,
+        storage_->left_size,
+        storage_->right_size,
+        Stride(storage_->left_size, 1));
   }
   return ConstChannelMap(
-      projected_channel_values.col(packed_pair).data(),
-      left_size,
-      right_size);
+      data,
+      storage_->right_size,
+      storage_->left_size,
+      Stride(1, storage_->left_size));
+}
+
+DirectionalOppositeSpinPairTileView::ConstChannelMap
+DirectionalOppositeSpinPairTileView::raw_channel(
+    int packed_pair) const {
+  return channel_view(storage_->raw_channel_values, packed_pair);
+}
+
+DirectionalOppositeSpinPairTileView::ConstChannelMap
+DirectionalOppositeSpinPairTileView::projected_channel(
+    int packed_pair) const {
+  return channel_view(storage_->projected_channel_values, packed_pair);
 }
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
@@ -135,7 +166,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
     const ActiveSpaceIntegralDirectionView& direction,
-    const SameSpinDirectionalPairTile& same_spin_tile,
+    const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
     const Eigen::MatrixXd* directional_ri_active_pair_factors) {
   const std::size_t expected_size =
@@ -144,11 +175,11 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
   if (unique_determinants.size() !=
           static_cast<std::size_t>(n_unique_determinants) ||
       ordered_pair_cache.size() != expected_size ||
-      same_spin_tile.left_begin < 0 || same_spin_tile.right_begin < 0 ||
+      same_spin_tile.left_begin() < 0 || same_spin_tile.right_begin() < 0 ||
       same_spin_tile.left_size() <= 0 || same_spin_tile.right_size() <= 0 ||
-      same_spin_tile.left_begin + same_spin_tile.left_size() >
+      same_spin_tile.left_begin() + same_spin_tile.left_size() >
           n_unique_determinants ||
-      same_spin_tile.right_begin + same_spin_tile.right_size() >
+      same_spin_tile.right_begin() + same_spin_tile.right_size() >
           n_unique_determinants) {
     throw std::invalid_argument(
         "opposite-spin directional tile dimensions are inconsistent");
@@ -171,8 +202,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
   }
 
   DirectionalOppositeSpinPairTile result;
-  result.left_begin = same_spin_tile.left_begin;
-  result.right_begin = same_spin_tile.right_begin;
+  result.left_begin = same_spin_tile.left_begin();
+  result.right_begin = same_spin_tile.right_begin();
   result.left_size = same_spin_tile.left_size();
   result.right_size = same_spin_tile.right_size();
   const int work_items = result.left_size * result.right_size;
@@ -200,12 +231,17 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
         unique_determinants[right],
         direction.overlap,
         n_active_orbitals);
-    entry.delta_first_order_cofactor_projection =
-        build_sparse_packed_pair_projection(
-            unique_determinants[left],
-            unique_determinants[right],
-            same_spin_tile.pair(left_local, right_local).delta_cofactor_1st,
-            n_active_orbitals);
+    same_spin_tile.with_pair(
+        left_local,
+        right_local,
+        [&](const SameSpinPolynomialDirectionalPairData& same_pair) {
+          entry.delta_first_order_cofactor_projection =
+              build_sparse_packed_pair_projection(
+                  unique_determinants[left],
+                  unique_determinants[right],
+                  same_pair.delta_cofactor_1st,
+                  n_active_orbitals);
+        });
     const auto& raw = entry.delta_first_order_cofactor_projection;
     for (std::size_t projection_entry = 0;
          projection_entry < raw.packed_pair_indices.size();

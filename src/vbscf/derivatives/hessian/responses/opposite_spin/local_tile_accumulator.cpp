@@ -92,7 +92,7 @@ LocalOppositeSpinTileAccumulator::LocalOppositeSpinTileAccumulator(
 void LocalOppositeSpinTileAccumulator::consume(
     bool alpha_channel,
     bool beta_channel,
-    const DirectionalOppositeSpinPairTile& tile) {
+    const DirectionalOppositeSpinPairTileView& tile) {
   if (alpha_channel) {
     accumulate_primary(PrimarySpin::Alpha, tile, true);
     accumulate_cross_response(PrimarySpin::Beta, tile);
@@ -105,7 +105,7 @@ void LocalOppositeSpinTileAccumulator::consume(
 
 void LocalOppositeSpinTileAccumulator::accumulate_primary(
     PrimarySpin spin,
-    const DirectionalOppositeSpinPairTile& tile,
+    const DirectionalOppositeSpinPairTileView& tile,
     bool accumulate_packed_gradient) {
   const bool alpha = spin == PrimarySpin::Alpha;
   const auto& graph = alpha ? alpha_graph_ : beta_graph_;
@@ -136,11 +136,11 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
   Eigen::MatrixXd accepted_weight(n_electrons, n_electrons);
   const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(
       n_electrons, n_electrons);
-  for (int left_local = 0; left_local < tile.left_size; ++left_local) {
-    const int left = tile.left_begin + left_local;
-    for (int right_local = 0; right_local < tile.right_size; ++right_local) {
-      const int right = tile.right_begin + right_local;
-      const auto& directional_pair = tile.pair(left_local, right_local);
+  for (int left_local = 0; left_local < tile.left_size(); ++left_local) {
+    const int left = tile.left_begin() + left_local;
+    for (int right_local = 0; right_local < tile.right_size(); ++right_local) {
+      const int right = tile.right_begin() + right_local;
+      tile.with_pair(left_local, right_local, [&](const auto& directional_pair) {
       if (accumulate_packed_gradient) {
         graph.accumulate_partner_projection(
             left,
@@ -204,13 +204,14 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
         touched_flags[channel] = 0u;
       }
       touched_channels.clear();
+      });
     }
   }
 }
 
 void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
     PrimarySpin target_spin,
-    const DirectionalOppositeSpinPairTile& partner_tile) {
+    const DirectionalOppositeSpinPairTileView& partner_tile) {
   const bool target_alpha = target_spin == PrimarySpin::Alpha;
   const int n_primary = target_alpha
       ? selected_states_.n_unique_alpha
@@ -256,14 +257,14 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
           if (target_alpha) {
             const auto left_coefficients = coefficients.block(
                 left_begin,
-                partner_tile.left_begin,
+                partner_tile.left_begin(),
                 left_size,
-                partner_tile.left_size);
+                partner_tile.left_size());
             const auto right_coefficients = coefficients.block(
                 right_begin,
-                partner_tile.right_begin,
+                partner_tile.right_begin(),
                 right_size,
-                partner_tile.right_size);
+                partner_tile.right_size());
             if (need_overlap) {
               weight_block.noalias() += state.normalized_state_weight *
                   left_coefficients * projected *
@@ -277,15 +278,15 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
             if (need_overlap) {
               weight_block.noalias() += state.normalized_state_weight *
                   coefficients.block(
-                      partner_tile.left_begin,
+                      partner_tile.left_begin(),
                       left_begin,
-                      partner_tile.left_size,
+                      partner_tile.left_size(),
                       left_size).transpose() *
                   projected *
                   coefficients.block(
-                      partner_tile.right_begin,
+                      partner_tile.right_begin(),
                       right_begin,
-                      partner_tile.right_size,
+                      partner_tile.right_size(),
                       right_size);
             }
           }

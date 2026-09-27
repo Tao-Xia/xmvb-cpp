@@ -53,7 +53,7 @@ LocalSameSpinTileAccumulator::LocalSameSpinTileAccumulator(
 void LocalSameSpinTileAccumulator::consume(
     bool alpha_channel,
     bool beta_channel,
-    const SameSpinDirectionalPairTile& tile) {
+    const SameSpinDirectionalPairTileView& tile) {
   if (close_shell_same_spin_) {
     if (!alpha_channel || !beta_channel) {
       throw std::invalid_argument(
@@ -74,17 +74,17 @@ void LocalSameSpinTileAccumulator::consume(
 }
 
 void LocalSameSpinTileAccumulator::consume_alpha_primary(
-    const SameSpinDirectionalPairTile& tile) {
+    const SameSpinDirectionalPairTileView& tile) {
   SameSpinAcceptedTileWeights weights;
   accumulate_alpha_accepted_tile_weights(
       selected_states_,
       selected_state_energies_,
       accepted_pair_cache_.beta_pair_cache_ref(),
       selected_states_.n_unique_beta,
-      tile.left_begin,
-      tile.left_begin + tile.left_size(),
-      tile.right_begin,
-      tile.right_begin + tile.right_size(),
+      tile.left_begin(),
+      tile.left_begin() + tile.left_size(),
+      tile.right_begin(),
+      tile.right_begin() + tile.right_size(),
       &weights);
   accumulate_local_primary_pair_tile(
       accepted_pair_cache_.alpha_reuse_table.unique_determinants,
@@ -102,17 +102,17 @@ void LocalSameSpinTileAccumulator::consume_alpha_primary(
 }
 
 void LocalSameSpinTileAccumulator::consume_beta_primary(
-    const SameSpinDirectionalPairTile& tile) {
+    const SameSpinDirectionalPairTileView& tile) {
   SameSpinAcceptedTileWeights weights;
   accumulate_beta_accepted_tile_weights(
       selected_states_,
       selected_state_energies_,
       accepted_pair_cache_.alpha_pair_cache_ref(),
       selected_states_.n_unique_alpha,
-      tile.left_begin,
-      tile.left_begin + tile.left_size(),
-      tile.right_begin,
-      tile.right_begin + tile.right_size(),
+      tile.left_begin(),
+      tile.left_begin() + tile.left_size(),
+      tile.right_begin(),
+      tile.right_begin() + tile.right_size(),
       &weights);
   accumulate_local_primary_pair_tile(
       accepted_pair_cache_.beta_reuse_table.unique_determinants,
@@ -130,10 +130,10 @@ void LocalSameSpinTileAccumulator::consume_beta_primary(
 }
 
 void LocalSameSpinTileAccumulator::accumulate_beta_weight_response(
-    const SameSpinDirectionalPairTile& alpha_tile) {
+    const SameSpinDirectionalPairTileView& alpha_tile) {
   const Eigen::MatrixXd delta_hamiltonian =
-      alpha_tile.delta_regular_hamiltonian +
-      alpha_tile.delta_singular_hamiltonian;
+      alpha_tile.delta_regular_hamiltonian() +
+      alpha_tile.delta_singular_hamiltonian();
   const int extent = std::min(
       selected_states_.n_unique_beta, kSameSpinTileExtent);
   SameSpinAcceptedTileWeights weights;
@@ -150,17 +150,17 @@ void LocalSameSpinTileAccumulator::accumulate_beta_weight_response(
         const auto& coefficients =
             selected_states_.states[state].coefficient_matrix;
         const auto left_coefficients = coefficients.block(
-            alpha_tile.left_begin,
+            alpha_tile.left_begin(),
             left,
             alpha_tile.left_size(),
             left_size);
         const auto right_coefficients = coefficients.block(
-            alpha_tile.right_begin,
+            alpha_tile.right_begin(),
             right,
             alpha_tile.right_size(),
             right_size);
         const Eigen::MatrixXd overlap_product =
-            left_coefficients.transpose() * alpha_tile.delta_overlap *
+            left_coefficients.transpose() * alpha_tile.delta_overlap() *
             right_coefficients;
         const Eigen::MatrixXd hamiltonian_product =
             left_coefficients.transpose() * delta_hamiltonian *
@@ -188,10 +188,10 @@ void LocalSameSpinTileAccumulator::accumulate_beta_weight_response(
 }
 
 void LocalSameSpinTileAccumulator::accumulate_alpha_weight_response(
-    const SameSpinDirectionalPairTile& beta_tile) {
+    const SameSpinDirectionalPairTileView& beta_tile) {
   const Eigen::MatrixXd delta_hamiltonian =
-      beta_tile.delta_regular_hamiltonian +
-      beta_tile.delta_singular_hamiltonian;
+      beta_tile.delta_regular_hamiltonian() +
+      beta_tile.delta_singular_hamiltonian();
   const int extent = std::min(
       selected_states_.n_unique_alpha, kSameSpinTileExtent);
   SameSpinAcceptedTileWeights weights;
@@ -209,16 +209,16 @@ void LocalSameSpinTileAccumulator::accumulate_alpha_weight_response(
             selected_states_.states[state].coefficient_matrix;
         const auto left_coefficients = coefficients.block(
             left,
-            beta_tile.left_begin,
+            beta_tile.left_begin(),
             left_size,
             beta_tile.left_size());
         const auto right_coefficients = coefficients.block(
             right,
-            beta_tile.right_begin,
+            beta_tile.right_begin(),
             right_size,
             beta_tile.right_size());
         const Eigen::MatrixXd overlap_product =
-            left_coefficients * beta_tile.delta_overlap *
+            left_coefficients * beta_tile.delta_overlap() *
             right_coefficients.transpose();
         const Eigen::MatrixXd hamiltonian_product =
             left_coefficients * delta_hamiltonian *

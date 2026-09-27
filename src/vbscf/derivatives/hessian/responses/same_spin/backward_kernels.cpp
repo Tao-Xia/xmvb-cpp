@@ -348,7 +348,7 @@ template <
 void accumulate_spin_local_matrix_backward_tile(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
-    const std::vector<SameSpinPolynomialDirectionalPairData>& ordered_directional_data,
+    const SameSpinDirectionalPairTileView& directional_tile,
     const HWeight& hamiltonian_weight_tile,
     const SWeight& overlap_weight_tile,
     const TWeight& partner_total_transfer_tile,
@@ -357,9 +357,6 @@ void accumulate_spin_local_matrix_backward_tile(
     const DTWeight& delta_partner_total_transfer_tile,
     int left_begin,
     int right_begin,
-    int directional_left_begin,
-    int directional_right_begin,
-    int directional_right_size,
     int n_unique_determinants,
     int n_active_orbitals,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron_matrix,
@@ -410,12 +407,10 @@ void accumulate_spin_local_matrix_backward_tile(
       const auto& occ_R = unique_determinants[right_id];
       const auto& overlap_result = pair_evaluation.overlap_result;
 
-      const SameSpinPolynomialDirectionalPairData& directional_data =
-          ordered_directional_data[
-              static_cast<std::size_t>(
-                  left_id - directional_left_begin) *
-                  directional_right_size +
-              (right_id - directional_right_begin)];
+      directional_tile.with_pair(
+          left_local,
+          right_local,
+          [&](const SameSpinPolynomialDirectionalPairData& directional_data) {
       const Eigen::MatrixXd& cofactor_1st =
           cached_cofactor_differential(pair_evaluation).value();
 
@@ -482,6 +477,7 @@ void accumulate_spin_local_matrix_backward_tile(
             n_active_orbitals,
             active_orbital_overlap_gradient);
       }
+      });
     }
   }
 }
@@ -934,7 +930,7 @@ build_support_sparse_directional_same_spin_backward_contribution_by_tiles(
 void accumulate_local_primary_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
-    const SameSpinDirectionalPairTile& directional_tile,
+    const SameSpinDirectionalPairTileView& directional_tile,
     const SameSpinAcceptedTileWeights& accepted_weights,
     int n_unique,
     int n_active_orbitals,
@@ -949,18 +945,15 @@ void accumulate_local_primary_pair_tile(
   accumulate_spin_local_matrix_backward_tile(
       unique_determinants,
       accepted_pairs,
-      directional_tile.pairs,
+      directional_tile,
       accepted_weights.hamiltonian,
       accepted_weights.overlap,
       accepted_weights.partner_total,
       zero,
       zero,
       zero,
-      directional_tile.left_begin,
-      directional_tile.right_begin,
-      directional_tile.left_begin,
-      directional_tile.right_begin,
-      directional_tile.right_size(),
+      directional_tile.left_begin(),
+      directional_tile.right_begin(),
       n_unique,
       n_active_orbitals,
       active_one_electron_matrix,

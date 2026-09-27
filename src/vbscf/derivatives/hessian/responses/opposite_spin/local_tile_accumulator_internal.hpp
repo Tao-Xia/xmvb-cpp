@@ -17,18 +17,18 @@ class LocalOppositeSpinTileAccumulator {
   void consume(
       bool alpha_channel,
       bool beta_channel,
-      const DirectionalOppositeSpinPairTile& tile);
+      const DirectionalOppositeSpinPairTileView& tile);
 
   OppositeSpinBackwardContribution finish();
 
  private:
   void accumulate_primary(
       PrimarySpin spin,
-      const DirectionalOppositeSpinPairTile& tile,
+      const DirectionalOppositeSpinPairTileView& tile,
       bool accumulate_packed_gradient);
   void accumulate_cross_response(
       PrimarySpin target_spin,
-      const DirectionalOppositeSpinPairTile& partner_tile);
+      const DirectionalOppositeSpinPairTileView& partner_tile);
 
   const SameSpinPairCacheContext& accepted_pair_cache_;
   const SelectedStateDeterminantMatrices& selected_states_;

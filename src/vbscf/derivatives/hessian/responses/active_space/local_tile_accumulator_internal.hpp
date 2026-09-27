@@ -17,8 +17,8 @@ class LocalActiveSpaceTileAccumulator {
   void consume(
       bool alpha_channel,
       bool beta_channel,
-      const SameSpinDirectionalPairTile& same_spin,
-      const DirectionalOppositeSpinPairTile* opposite_spin);
+      const SameSpinDirectionalPairTileView& same_spin,
+      const DirectionalOppositeSpinPairTileView* opposite_spin);
 
   ActiveSpaceGradientDirection finish();
 

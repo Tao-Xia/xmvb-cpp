@@ -33,7 +33,7 @@ void stream_spin_table(
   for (int left_begin = 0; left_begin < n_unique;
        left_begin += tile_extent) {
     const int left_end = std::min(n_unique, left_begin + tile_extent);
-    for (int right_begin = 0; right_begin < n_unique;
+    for (int right_begin = left_begin; right_begin < n_unique;
          right_begin += tile_extent) {
       const int right_end = std::min(n_unique, right_begin + tile_extent);
       SameSpinDirectionalPairTile same_spin = build_directional_pair_tile(
@@ -49,6 +49,7 @@ void stream_spin_table(
           accepted_active_one_electron,
           accepted_ri_active_pair_factors,
           directional_ri_active_pair_factors);
+      const SameSpinDirectionalPairTileView forward_same = same_spin.view();
       std::optional<DirectionalOppositeSpinPairTile> opposite_spin;
       if (include_opposite_spin) {
         opposite_spin.emplace(build_directional_opposite_spin_pair_tile(
@@ -58,15 +59,34 @@ void stream_spin_table(
             n_active_orbitals,
             accepted_two_electron,
             direction,
-            same_spin,
+            forward_same,
             accepted_ri_active_pair_factors,
             directional_ri_active_pair_factors));
       }
+      const std::optional<DirectionalOppositeSpinPairTileView>
+          forward_opposite = opposite_spin
+              ? std::optional<DirectionalOppositeSpinPairTileView>(
+                    opposite_spin->view())
+              : std::nullopt;
       consume(
           alpha_channel,
           beta_channel,
-          same_spin,
-          opposite_spin ? &*opposite_spin : nullptr);
+          forward_same,
+          forward_opposite ? &*forward_opposite : nullptr);
+      if (right_begin != left_begin) {
+        const SameSpinDirectionalPairTileView reverse_same =
+            same_spin.view(true);
+        const std::optional<DirectionalOppositeSpinPairTileView>
+            reverse_opposite = opposite_spin
+                ? std::optional<DirectionalOppositeSpinPairTileView>(
+                      opposite_spin->view(true))
+                : std::nullopt;
+        consume(
+            alpha_channel,
+            beta_channel,
+            reverse_same,
+            reverse_opposite ? &*reverse_opposite : nullptr);
+      }
     }
   }
 }
