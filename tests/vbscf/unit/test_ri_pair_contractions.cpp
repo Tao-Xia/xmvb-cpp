@@ -411,6 +411,8 @@ int main() {
     std::vector<double> active_overlap(
         active_overlap_matrix.data(),
         active_overlap_matrix.data() + active_overlap_matrix.size());
+    const Eigen::MatrixXd response_h1e =
+        0.5 * (h1e + h1e.transpose()).eval();
     xmvb::vb::DeterminantPairEvaluator pair_evaluator;
     auto closed_shell_cache =
         xmvb::vb::build_same_spin_pair_cache_context(
@@ -418,7 +420,7 @@ int main() {
             closed_shell_determinants,
             pair_evaluator,
             active_overlap,
-            h1e,
+            response_h1e,
             n_active,
             direct_ri,
             xmvb::vb::SameSpinPairCacheBuildOptions{
@@ -426,7 +428,7 @@ int main() {
                 false});
     xmvb::vb::populate_same_spin_phi_cache(
         &closed_shell_cache,
-        h1e,
+        response_h1e,
         n_active,
         direct_ri);
     xmvb::vb::SelectedStateDeterminantMatrices selected;
@@ -455,7 +457,7 @@ int main() {
         selected_energies,
         n_active,
         active_overlap,
-        h1e,
+        response_h1e,
         direct_ri,
         first_view);
     xmvb::vb::detail::LocalOppositeSpinTileAccumulator
@@ -464,13 +466,13 @@ int main() {
             selected,
             n_active,
             active_overlap,
-            h1e,
+            response_h1e,
             direct_ri);
     xmvb::vb::detail::stream_directional_pair_tiles(
         closed_shell_cache,
         n_active,
         active_overlap,
-        h1e,
+        response_h1e,
         direct_ri,
         first_view,
         &direct_ri.ri_active_pair_factors,
@@ -515,21 +517,19 @@ int main() {
     const std::vector<std::vector<int>> open_beta_determinants{
         {0, 2, 4}, {1, 2, 3}, {0, 3, 4},
         {0, 2, 4}, {1, 2, 3}, {0, 3, 4}};
-    const Eigen::MatrixXd open_h1e =
-        0.5 * (h1e + h1e.transpose()).eval();
     auto open_shell_cache = xmvb::vb::build_same_spin_pair_cache_context(
         open_alpha_determinants,
         open_beta_determinants,
         pair_evaluator,
         active_overlap,
-        open_h1e,
+        response_h1e,
         n_active,
         direct_ri,
         xmvb::vb::SameSpinPairCacheBuildOptions{
             xmvb::vb::PairProjectionCache::Both,
             false});
     xmvb::vb::populate_same_spin_phi_cache(
-        &open_shell_cache, open_h1e, n_active, direct_ri);
+        &open_shell_cache, response_h1e, n_active, direct_ri);
     xmvb::vb::SelectedStateDeterminantMatrices open_selected;
     open_selected.n_unique_alpha = 2;
     open_selected.n_unique_beta = 3;
@@ -542,30 +542,20 @@ int main() {
         -0.11, 0.29, 0.37;
     open_selected.states.push_back(std::move(open_state));
     const std::vector<double> open_energies{-0.41};
-    xmvb::vb::detail::LocalSameSpinTileAccumulator open_cached(
+    xmvb::vb::detail::LocalSameSpinTileAccumulator open_single_panel(
         open_shell_cache,
         open_selected,
         open_energies,
         n_active,
         active_overlap,
-        open_h1e,
+        response_h1e,
         direct_ri,
         first_view);
-    xmvb::vb::detail::LocalSameSpinTileAccumulator open_streamed(
-        open_shell_cache,
-        open_selected,
-        open_energies,
-        n_active,
-        active_overlap,
-        open_h1e,
-        direct_ri,
-        first_view,
-        0);
     xmvb::vb::detail::stream_directional_pair_tiles(
         open_shell_cache,
         n_active,
         active_overlap,
-        open_h1e,
+        response_h1e,
         direct_ri,
         first_view,
         &direct_ri.ri_active_pair_factors,
@@ -576,33 +566,62 @@ int main() {
             const xmvb::vb::AcceptedSpinPairTile& accepted_tile,
             const xmvb::vb::detail::SameSpinDirectionalPairTileView& tile,
             const xmvb::vb::detail::DirectionalOppositeSpinPairTileView*) {
-          open_cached.consume(
+          open_single_panel.consume(
               alpha_channel, beta_channel, accepted_tile, tile);
-          open_streamed.consume(
+        });
+    xmvb::vb::detail::LocalSameSpinTileAccumulator open_unit_tiles(
+        open_shell_cache,
+        open_selected,
+        open_energies,
+        n_active,
+        active_overlap,
+        response_h1e,
+        direct_ri,
+        first_view);
+    xmvb::vb::detail::stream_directional_pair_tiles(
+        open_shell_cache,
+        n_active,
+        active_overlap,
+        response_h1e,
+        direct_ri,
+        first_view,
+        &direct_ri.ri_active_pair_factors,
+        &delta_factors,
+        false,
+        [&](bool alpha_channel,
+            bool beta_channel,
+            const xmvb::vb::AcceptedSpinPairTile& accepted_tile,
+            const xmvb::vb::detail::SameSpinDirectionalPairTileView& tile,
+            const xmvb::vb::detail::DirectionalOppositeSpinPairTileView*) {
+          open_unit_tiles.consume(
               alpha_channel, beta_channel, accepted_tile, tile);
         },
         1);
-    const auto open_cached_result = open_cached.finish();
-    const auto open_streamed_result = open_streamed.finish();
-    if (open_streamed.partner_panel_build_count() != 5) {
+    const auto open_single_panel_result = open_single_panel.finish();
+    const auto open_unit_tile_result = open_unit_tiles.finish();
+    if (open_single_panel.partner_panel_build_count() != 2) {
+      throw std::runtime_error(
+          "full-width tile did not use one panel per spin channel");
+    }
+    if (open_unit_tiles.partner_panel_build_count() != 5) {
       throw std::runtime_error(
           "streamed local response rebuilt a partner panel");
     }
     require_vector_close(
-        open_cached_result.active_one_electron_gradient,
-        open_streamed_result.active_one_electron_gradient,
+        open_single_panel_result.active_one_electron_gradient,
+        open_unit_tile_result.active_one_electron_gradient,
         3.0e-13,
-        "open-shell cached and streamed one-electron response");
+        "open-shell panel-size invariant one-electron response");
     require_vector_close(
-        open_cached_result.packed_active_two_electron_gradient,
-        open_streamed_result.packed_active_two_electron_gradient,
+        open_single_panel_result.packed_active_two_electron_gradient,
+        open_unit_tile_result.packed_active_two_electron_gradient,
         3.0e-13,
-        "open-shell cached and streamed two-electron response");
+        "open-shell panel-size invariant two-electron response");
     require_vector_close(
-        open_cached_result.active_orbital_overlap_gradient,
-        open_streamed_result.active_orbital_overlap_gradient,
+        open_single_panel_result.active_orbital_overlap_gradient,
+        open_unit_tile_result.active_orbital_overlap_gradient,
         3.0e-13,
-        "open-shell cached and streamed overlap response");
+        "open-shell panel-size invariant overlap response");
 
     require_finite_vector(
         tiled_local_opposite_contribution.packed_active_two_electron_gradient);
@@ -615,7 +634,7 @@ int main() {
             selected_energies,
             n_active,
             active_overlap,
-            h1e,
+            response_h1e,
             direct_ri);
     const auto packed_opposite =
         xmvb::vb::build_opposite_spin_backward_contribution(
@@ -623,7 +642,7 @@ int main() {
             selected,
             n_active,
             active_overlap,
-            h1e,
+            response_h1e,
             direct_ri);
     std::vector<double> packed_total =
         packed_same.packed_active_two_electron_gradient;
@@ -650,7 +669,7 @@ int main() {
             selected_energies,
             n_active,
             active_overlap,
-            h1e,
+            response_h1e,
             direct_ri.ri_active_pair_factors);
     require_matrix_close(
         native_factor_adjoint,
