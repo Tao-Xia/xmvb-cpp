@@ -37,9 +37,8 @@ class RiPairUpdateState {
    *
    * A left substitution changes one column of both the occupied overlap and
    * each occupied RI transition block.  The update is a sum of two rank-one
-   * channel corrections.  Response tracking is deliberately rejected until
-   * its adjoint aggregate has the same residual certificate as the scalar
-   * channels.
+   * channel corrections.  When response tracking is active, the compact
+   * accepted-point adjoint aggregate is propagated by the same two updates.
    */
   bool update_left(
       const std::vector<int>& occupied_left_old,

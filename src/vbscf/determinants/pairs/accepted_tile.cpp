@@ -76,14 +76,12 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
   const int n_threads = std::max(
       1, std::min(xmvb::effective_openmp_thread_count(), tile.left_size));
 
-  // Scalar accepted-point consumers need neither projected RI images nor
-  // cofactor-response payloads.  Traverse their full rectangular tile as a
-  // product graph: right edges change overlap rows and left edges change
-  // columns.  One exact anchor per worker replaces one anchor per tile row.
-  // The response path remains below until its left-edge adjoint recurrence is
-  // certified independently.
-  if (direct_ri && !options.materialize_projected_pair_values &&
-      !options.populate_response_payload) {
+  // Accepted-point consumers that do not retain projected RI images traverse
+  // their full rectangular tile as a product graph: right edges change
+  // overlap rows and left edges change columns.  Scalar and compact response
+  // payloads share the same certified path.  One exact anchor per worker
+  // replaces one anchor per tile row.
+  if (direct_ri && !options.materialize_projected_pair_values) {
 #pragma omp parallel if(n_threads > 1) num_threads(n_threads)
     {
       int thread = 0;
@@ -171,7 +169,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                   occupied_right,
                   overlap_result,
                   active_two_electron.ri_active_pair_factors,
-                  false);
+                  options.populate_response_payload);
             }
           } else {
             ri_state.reset();
@@ -184,7 +182,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                     overlap_result,
                     active_one_electron,
                     ri_state.two_electron_phi(),
-                    false)
+                    options.populate_response_payload)
               : pair_evaluator_.evaluate_same_spin_pair(
                     occupied_left,
                     occupied_right,
@@ -192,18 +190,29 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                     active_one_electron,
                     n_active_orbitals_,
                     active_two_electron,
-                    false);
-          if (options.populate_opposite_spin_projection) {
+                    options.populate_response_payload);
+          if (options.populate_opposite_spin_projection ||
+              options.populate_response_payload) {
+            std::optional<RegularRiPairResponseData> ri_response;
+            if (used_ri_update && options.populate_response_payload &&
+                ri_state.tracks_response()) {
+              ri_response.emplace();
+              ri_response->two_electron_phi = ri_state.two_electron_phi();
+              ri_response->two_electron_inverse_overlap_gradient =
+                  ri_state.two_electron_inverse_overlap_gradient(
+                      evaluation.overlap_result);
+            }
             complete_same_spin_pair_evaluation(
                 occupied_left,
                 occupied_right,
                 active_one_electron,
                 n_active_orbitals_,
                 active_two_electron,
-                true,
+                options.populate_opposite_spin_projection,
                 false,
-                false,
-                &evaluation);
+                options.populate_response_payload,
+                &evaluation,
+                ri_response ? &*ri_response : nullptr);
           }
           tile.pairs[
               static_cast<std::size_t>(left_index - left_begin) *

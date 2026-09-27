@@ -90,6 +90,27 @@ double channel_response_error_bound(
       2.0 * n * element_error * element_error;
 }
 
+double update_response_aggregate_rank_one(
+    const Eigen::Ref<const Eigen::MatrixXd>& channel,
+    const Eigen::Ref<const Eigen::VectorXd>& update_left,
+    const Eigen::Ref<const Eigen::RowVectorXd>& update_right,
+    Eigen::MatrixXd* response_aggregate) {
+  const double trace = channel.trace();
+  const double trace_update = update_right.dot(update_left);
+  const Eigen::VectorXd channel_left = channel * update_left;
+  const Eigen::RowVectorXd right_channel = update_right * channel;
+  response_aggregate->noalias() +=
+      trace_update * channel + trace * update_left * update_right -
+      channel_left * update_right - update_left * right_channel;
+
+  const double left_norm = update_left.cwiseAbs().maxCoeff();
+  const double right_norm = update_right.cwiseAbs().maxCoeff();
+  return std::abs(trace_update) * max_abs(channel) +
+      std::abs(trace) * left_norm * right_norm +
+      channel_left.cwiseAbs().maxCoeff() * right_norm +
+      left_norm * right_channel.cwiseAbs().maxCoeff();
+}
+
 }  // namespace
 
 bool RiPairUpdateState::initialize(
@@ -364,7 +385,7 @@ bool RiPairUpdateState::update_left(
     const DeterminantOverlapResult& overlap_old,
     const DeterminantOverlapResult& overlap_new,
     const Eigen::Ref<const Eigen::MatrixXd>& ri_factors) {
-  if (!valid_ || track_response_ ||
+  if (!valid_ ||
       occupied_left_old != occupied_left_ ||
       occupied_right != occupied_right_ ||
       occupied_left_new.size() != occupied_left_old.size() ||
@@ -413,6 +434,11 @@ bool RiPairUpdateState::update_left(
       overlap_new.overlap_submatrix.col(column).cwiseAbs().sum() +
       overlap_old.overlap_submatrix.col(column).cwiseAbs().sum());
   double phi_error_bound = 0.0;
+  double response_channel_error_bound = 0.0;
+  double response_update_scale = 0.0;
+  const double response_old_norm = track_response_
+      ? max_abs(response_aggregate_)
+      : 0.0;
   Eigen::VectorXd transition_delta(n_electrons_);
 
   for (Eigen::Index auxiliary = 0;
@@ -438,7 +464,26 @@ bool RiPairUpdateState::update_left(
     const Eigen::RowVectorXd old_selected_row = channel.row(column);
     const Eigen::VectorXd transition_update =
         overlap_new.inverse_overlap_submatrix * transition_delta;
+    if (track_response_) {
+      response_roundoff_bound_ +=
+          epsilon * max_abs(response_aggregate_);
+      response_update_scale += update_response_aggregate_rank_one(
+          channel,
+          -overlap_update,
+          old_selected_row,
+          &response_aggregate_);
+    }
     channel.noalias() -= overlap_update * old_selected_row;
+    if (track_response_) {
+      Eigen::RowVectorXd selected_column =
+          Eigen::RowVectorXd::Zero(n_electrons_);
+      selected_column(column) = 1.0;
+      response_update_scale += update_response_aggregate_rank_one(
+          channel,
+          transition_update,
+          selected_column,
+          &response_aggregate_);
+    }
     channel.col(column) += transition_update;
 
     double transition_delta_error = 0.0;
@@ -472,13 +517,34 @@ bool RiPairUpdateState::update_left(
             old_channel_norm + transition_update_norm);
     channel_error_bounds_[static_cast<std::size_t>(auxiliary)] = new_error;
     phi_error_bound += channel_scalar_error_bound(channel, new_error);
+    if (track_response_) {
+      response_channel_error_bound +=
+          channel_response_error_bound(channel, new_error);
+    }
+  }
+
+  if (track_response_) {
+    response_roundoff_bound_ +=
+        (12.0 * gamma + 16.0 * epsilon) * response_update_scale +
+        epsilon * (response_old_norm + max_abs(response_aggregate_));
   }
 
   const double phi = two_electron_phi();
   const double phi_scale = std::max(
       std::numeric_limits<double>::min(), std::abs(phi));
+  const double response_scale = track_response_
+      ? std::max(
+            std::numeric_limits<double>::min(),
+            max_abs(response_aggregate_))
+      : 1.0;
+  const double response_error_bound =
+      response_roundoff_bound_ + response_channel_error_bound;
   if (!channels_.allFinite() || !std::isfinite(phi_error_bound) ||
-      phi_error_bound > std::sqrt(epsilon) * phi_scale) {
+      phi_error_bound > std::sqrt(epsilon) * phi_scale ||
+      (track_response_ &&
+       (!response_aggregate_.allFinite() ||
+        !std::isfinite(response_error_bound) ||
+        response_error_bound > std::sqrt(epsilon) * response_scale))) {
     reset();
     return false;
   }

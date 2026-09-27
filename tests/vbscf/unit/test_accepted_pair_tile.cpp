@@ -268,6 +268,7 @@ int main() {
           (direct_left_phi.total_phi -
            direct_left_one_electron_phi)) <= 2.0e-12,
       "left low-rank RI update changed the two-electron contraction");
+
   Eigen::VectorXd auxiliary_feature(ri.n_auxiliary_functions);
   require(
       ri_update.first_order_cofactor_auxiliary(
@@ -418,6 +419,52 @@ int main() {
                   *four_update),
               direct_response_gradient) <= 2.0e-11,
       "low-rank RI response aggregate differs from direct contraction");
+  xmvb::vb::RiPairUpdateState left_response_update;
+  require(
+      left_response_update.initialize(
+          four_left,
+          four_right_old,
+          four_anchor,
+          ri.ri_active_pair_factors,
+          true),
+      "left RI response anchor was rejected");
+  const std::vector<int> four_left_new{0, 1, 2, 4};
+  const auto four_left_overlap =
+      xmvb::vb::try_woodbury_left_overlap_update(
+          four_left,
+          four_left_new,
+          four_right_old,
+          chain_overlap,
+          four_anchor);
+  require(
+      four_left_overlap.has_value() &&
+          left_response_update.update_left(
+              four_left,
+              four_left_new,
+              four_right_old,
+              four_anchor,
+              *four_left_overlap,
+              ri.ri_active_pair_factors),
+      "left RI response update was rejected");
+  Eigen::MatrixXd direct_left_response_gradient;
+  const auto direct_left_response =
+      xmvb::vb::compute_same_spin_original_phi(
+          four_left_new,
+          four_right_old,
+          Eigen::MatrixXd::Zero(n_active, n_active),
+          n_active,
+          ri,
+          *four_left_overlap,
+          &direct_left_response_gradient);
+  require(
+      std::abs(
+          left_response_update.two_electron_phi() -
+          direct_left_response.total_phi) <= 2.0e-11 &&
+          relative_difference(
+              left_response_update.two_electron_inverse_overlap_gradient(
+                  *four_left_overlap),
+              direct_left_response_gradient) <= 2.0e-11,
+      "left low-rank RI response differs from direct contraction");
   const std::vector<int> four_right_next{0, 1, 3, 4};
   const auto four_second_update =
       xmvb::vb::try_woodbury_right_overlap_update(
