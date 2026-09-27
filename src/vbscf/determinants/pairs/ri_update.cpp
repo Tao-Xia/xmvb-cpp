@@ -423,6 +423,27 @@ bool RiPairUpdateState::first_order_cofactor_auxiliary(
   return true;
 }
 
+bool RiPairUpdateState::copy_contracted_channel(
+    Eigen::Index auxiliary,
+    Eigen::Ref<Eigen::MatrixXd> channel) const {
+  if (!valid_ || auxiliary < 0 || auxiliary >= channels_.rows() ||
+      channel.rows() != n_electrons_ || channel.cols() != n_electrons_) {
+    return false;
+  }
+  const Eigen::Map<const Eigen::MatrixXd> stored(
+      channels_.data() + auxiliary * n_electrons_ * n_electrons_,
+      n_electrons_,
+      n_electrons_);
+  const double scale = std::max(
+      std::numeric_limits<double>::min(), max_abs(stored));
+  if (channel_error_bounds_[static_cast<std::size_t>(auxiliary)] >
+      std::sqrt(std::numeric_limits<double>::epsilon()) * scale) {
+    return false;
+  }
+  channel = stored;
+  return true;
+}
+
 Eigen::MatrixXd RiPairUpdateState::two_electron_inverse_overlap_gradient(
     const DeterminantOverlapResult& overlap) const {
   if (!valid_ || !track_response_ ||

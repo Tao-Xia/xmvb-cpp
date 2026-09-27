@@ -48,6 +48,12 @@ class RiPairUpdateState {
   bool first_order_cofactor_auxiliary(
       double overlap_determinant,
       Eigen::Ref<Eigen::VectorXd> auxiliary) const;
+  /** Copies `A^Q = X^{-1} M^Q` when its propagated error is certified. */
+  bool copy_contracted_channel(
+      Eigen::Index auxiliary,
+      Eigen::Ref<Eigen::MatrixXd> channel) const;
+  Eigen::Index auxiliary_count() const noexcept { return channels_.rows(); }
+  int electron_count() const noexcept { return n_electrons_; }
   Eigen::MatrixXd two_electron_inverse_overlap_gradient(
       const DeterminantOverlapResult& overlap) const;
 

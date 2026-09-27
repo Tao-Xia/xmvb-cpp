@@ -456,6 +456,86 @@ int main() {
               four_generated.same_spin_overlap_hamiltonian_gradient,
               four_reference.same_spin_overlap_hamiltonian_gradient) <= 2.0e-11,
       "accepted tile changed the regular RI response payload");
+  Eigen::MatrixXd overlap_direction = Eigen::MatrixXd::Zero(
+      n_active, n_active);
+  Eigen::MatrixXd h1e_direction = Eigen::MatrixXd::Zero(n_active, n_active);
+  for (int column = 0; column < n_active; ++column) {
+    for (int row = 0; row < n_active; ++row) {
+      overlap_direction(row, column) =
+          0.002 * std::sin((row + 1) * (column + 2));
+      h1e_direction(row, column) =
+          0.003 * std::cos((row + 2) * (column + 1));
+    }
+  }
+  overlap_direction =
+      0.5 * (overlap_direction + overlap_direction.transpose()).eval();
+  h1e_direction =
+      0.5 * (h1e_direction + h1e_direction.transpose()).eval();
+  const std::vector<double> overlap_direction_storage(
+      overlap_direction.data(),
+      overlap_direction.data() + overlap_direction.size());
+  const std::vector<double> h1e_direction_storage(
+      h1e_direction.data(), h1e_direction.data() + h1e_direction.size());
+  Eigen::MatrixXd factor_direction = 0.013 *
+      ri.ri_active_pair_factors.array().cos().matrix();
+  const xmvb::vb::AcceptedPairRiDirectionView direction_view{
+      overlap_direction_storage,
+      h1e_direction_storage,
+      factor_direction,
+      true};
+  xmvb::vb::AcceptedPairRiDirectionTile direction_tile;
+  const auto directional_accepted = four_provider.build(
+      0,
+      2,
+      0,
+      2,
+      overlap_storage,
+      h1e,
+      ri,
+      xmvb::vb::AcceptedPairTileBuildOptions{
+          .materialize_projected_pair_values = false,
+          .populate_response_payload = true,
+          .populate_opposite_spin_projection = true},
+      &direction_view,
+      &direction_tile);
+  const auto& directional_pair = directional_accepted.pair(0, 1);
+  const auto reference_direction =
+      xmvb::vb::evaluate_regular_ri_same_spin_direction(
+          four_left,
+          four_right_new,
+          h1e,
+          h1e_direction,
+          n_active,
+          ri.ri_active_pair_factors,
+          factor_direction,
+          directional_pair.overlap_result,
+          xmvb::vb::build_overlap_submatrix(
+              four_left,
+              four_right_new,
+              overlap_direction_storage,
+              n_active),
+          directional_pair.same_spin_total_phi,
+          directional_pair.same_spin_inverse_overlap_gradient,
+          true);
+  require(
+      direction_tile.ready[1] != 0 && direction_tile.ready[2] == 0 &&
+          std::abs(
+              direction_tile.pairs[1].delta_total_hamiltonian -
+              reference_direction.delta_total_hamiltonian) <= 2.0e-11 &&
+          relative_difference(
+              direction_tile.pairs[1].delta_first_cofactor,
+              reference_direction.delta_first_cofactor) <= 2.0e-11 &&
+          relative_difference(
+              direction_tile.pairs[1]
+                  .delta_overlap_hamiltonian_gradient,
+              reference_direction.delta_overlap_hamiltonian_gradient) <=
+              2.0e-11 &&
+          relative_difference(
+              direction_tile.pairs[1]
+                  .delta_projected_first_cofactor,
+              reference_direction.delta_projected_first_cofactor) <=
+              2.0e-11,
+      "accepted RI traversal changed the directional response sidecar");
   const auto tile = provider.build(
       0,
       static_cast<int>(strings.size()),

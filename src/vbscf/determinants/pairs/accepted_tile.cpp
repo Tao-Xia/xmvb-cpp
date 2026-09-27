@@ -43,7 +43,9 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
     const std::vector<double>& active_overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
     const ActiveSpaceTwoElectronResult& active_two_electron,
-    AcceptedPairTileBuildOptions options) const {
+    AcceptedPairTileBuildOptions options,
+    const AcceptedPairRiDirectionView* direction,
+    AcceptedPairRiDirectionTile* direction_tile) const {
   if (left_begin < 0 || left_end <= left_begin || left_end > size() ||
       right_begin < 0 || right_end <= right_begin || right_end > size()) {
     throw std::invalid_argument("accepted pair tile bounds are invalid");
@@ -73,6 +75,29 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
     throw std::invalid_argument(
         "RI active-pair factor dimensions are inconsistent");
   }
+  if ((direction == nullptr) != (direction_tile == nullptr)) {
+    throw std::invalid_argument(
+        "accepted RI direction request and output must be provided together");
+  }
+  if (direction != nullptr &&
+      (!direct_ri || direction->active_overlap.size() != active_overlap.size() ||
+       direction->active_one_electron.size() != active_overlap.size() ||
+       direction->active_pair_factors.rows() !=
+           active_two_electron.ri_active_pair_factors.rows() ||
+       direction->active_pair_factors.cols() !=
+           active_two_electron.ri_active_pair_factors.cols())) {
+    throw std::invalid_argument(
+        "accepted RI direction dimensions are inconsistent");
+  }
+  if (direction_tile != nullptr) {
+    direction_tile->pairs.resize(tile.pairs.size());
+    direction_tile->ready.assign(tile.pairs.size(), 0);
+  }
+  const Eigen::Map<const Eigen::MatrixXd> directional_one_electron(
+      direction != nullptr ? direction->active_one_electron.data()
+                           : active_one_electron.data(),
+      n_active_orbitals_,
+      n_active_orbitals_);
   const int n_threads = std::max(
       1, std::min(xmvb::effective_openmp_thread_count(), tile.left_size));
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
@@ -211,6 +236,36 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                     projection.packed_pair_values);
           }
         }
+      }
+      const bool mirrored_diagonal_pair = left_begin == right_begin &&
+          tile.left_size == tile.right_size && left_index > right_index;
+      if (direction != nullptr && !mirrored_diagonal_pair && used_ri_update &&
+          evaluation.same_spin_inverse_overlap_gradient.rows() ==
+              static_cast<Eigen::Index>(occupied_left.size()) &&
+          evaluation.same_spin_inverse_overlap_gradient.cols() ==
+              static_cast<Eigen::Index>(occupied_right.size())) {
+        const Eigen::MatrixXd overlap_direction =
+            build_overlap_submatrix(
+                occupied_left,
+                occupied_right,
+                direction->active_overlap,
+                n_active_orbitals_);
+        direction_tile->pairs[pair_index] =
+            evaluate_regular_ri_same_spin_direction(
+                occupied_left,
+                occupied_right,
+                active_one_electron,
+                directional_one_electron,
+                n_active_orbitals_,
+                active_two_electron.ri_active_pair_factors,
+                direction->active_pair_factors,
+                evaluation.overlap_result,
+                overlap_direction,
+                evaluation.same_spin_total_phi,
+                evaluation.same_spin_inverse_overlap_gradient,
+                direction->project_first_cofactor,
+                &ri_state);
+        direction_tile->ready[pair_index] = 1;
       }
       tile.pairs[pair_index] = std::move(evaluation);
     }

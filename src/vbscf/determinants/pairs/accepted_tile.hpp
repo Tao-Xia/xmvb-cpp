@@ -5,6 +5,7 @@
 
 #include <Eigen/Core>
 
+#include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 
 namespace xmvb::vb {
@@ -13,6 +14,20 @@ struct AcceptedPairTileBuildOptions {
   bool materialize_projected_pair_values = false;
   bool populate_response_payload = false;
   bool populate_opposite_spin_projection = true;
+};
+
+/** RI integral direction consumed while accepted traversal channels are live. */
+struct AcceptedPairRiDirectionView {
+  const std::vector<double>& active_overlap;
+  const std::vector<double>& active_one_electron;
+  const Eigen::MatrixXd& active_pair_factors;
+  bool project_first_cofactor = false;
+};
+
+/** Regular-pair directional sidecar with the same ordering as an accepted tile. */
+struct AcceptedPairRiDirectionTile {
+  std::vector<RegularRiSameSpinDirection> pairs;
+  std::vector<unsigned char> ready;
 };
 
 /** Bounded accepted-point pair payload for one rectangular spin-string tile. */
@@ -59,7 +74,9 @@ class AcceptedPairTileProvider {
       const std::vector<double>& active_overlap,
       const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
       const ActiveSpaceTwoElectronResult& active_two_electron,
-      AcceptedPairTileBuildOptions options = {}) const;
+      AcceptedPairTileBuildOptions options = {},
+      const AcceptedPairRiDirectionView* direction = nullptr,
+      AcceptedPairRiDirectionTile* direction_tile = nullptr) const;
 
  private:
   std::vector<std::vector<int>> unique_spin_strings_;

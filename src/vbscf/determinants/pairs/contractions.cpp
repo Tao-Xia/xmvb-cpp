@@ -1,5 +1,6 @@
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
+#include "vbscf/determinants/pairs/ri_update.hpp"
 #include <Eigen/LU>
 
 #include <algorithm>
@@ -467,7 +468,8 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_block,
     double total_phi,
     const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient,
-    bool project_first_cofactor_direction) {
+    bool project_first_cofactor_direction,
+    const RiPairUpdateState* accepted_ri_state) {
   if (overlap.nullity != 0 || overlap.overlap_determinant == 0.0) {
     throw std::invalid_argument(
         "regular RI same-spin direction requires a nonsingular pair");
@@ -485,6 +487,10 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
     throw std::invalid_argument(
         "regular RI same-spin direction dimensions are inconsistent");
   }
+  const bool reuse_accepted_channels = accepted_ri_state != nullptr &&
+      accepted_ri_state->valid() &&
+      accepted_ri_state->electron_count() == n_electrons &&
+      accepted_ri_state->auxiliary_count() == ri_active_pair_factors.rows();
 
   const Eigen::MatrixXd inverse =
       build_inverse_overlap_submatrix_from_result(overlap);
@@ -517,7 +523,11 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
         occ_L, occ_R, ri_active_pair_factors, auxiliary);
     const Eigen::MatrixXd transition_direction = gather_ri_transition(
         occ_L, occ_R, delta_ri_active_pair_factors, auxiliary);
-    const Eigen::MatrixXd contracted = inverse * transition;
+    Eigen::MatrixXd contracted(n_electrons, n_electrons);
+    if (!reuse_accepted_channels ||
+        !accepted_ri_state->copy_contracted_channel(auxiliary, contracted)) {
+      contracted.noalias() = inverse * transition;
+    }
     const Eigen::MatrixXd contracted_direction =
         inverse_direction * transition + inverse * transition_direction;
     if (project_first_cofactor_direction) {

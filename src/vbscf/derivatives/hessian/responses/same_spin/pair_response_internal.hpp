@@ -109,6 +109,7 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
 SameSpinDirectionalPairTile build_directional_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
     const AcceptedSpinPairTile& accepted_pair_tile,
+    AcceptedPairRiDirectionTile* accepted_direction_tile,
     int n_active_orbitals,
     const ActiveSpaceIntegralDirectionView& direction,
     const Eigen::MatrixXd* accepted_active_one_electron,
