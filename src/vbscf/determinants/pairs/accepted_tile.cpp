@@ -430,15 +430,18 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
               n_active_orbitals_,
               active_two_electron,
               true);
-      complete_same_spin_pair_evaluation(
-          occ_left,
-          occ_right,
-          active_one_electron,
-          n_active_orbitals_,
-          active_two_electron,
-          options.materialize_projected_pair_values,
-          options.populate_response_payload,
-          &evaluation);
+      if (options.populate_opposite_spin_projection ||
+          options.populate_response_payload) {
+        complete_same_spin_pair_evaluation(
+            occ_left,
+            occ_right,
+            active_one_electron,
+            n_active_orbitals_,
+            active_two_electron,
+            options.materialize_projected_pair_values,
+            options.populate_response_payload,
+            &evaluation);
+      }
       tile.pairs[static_cast<std::size_t>(left_local) * tile.right_size +
           right_local] = std::move(evaluation);
     }

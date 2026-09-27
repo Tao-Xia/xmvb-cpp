@@ -6,6 +6,7 @@
 
 #include <Eigen/Core>
 
+#include "vbscf/determinants/pairs/accepted_action.hpp"
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -177,6 +178,43 @@ int main() {
           actual.opposite_spin_pair_cache.first_order_cofactor_projection);
     }
   }
+
+  Eigen::MatrixXd vectors(n_unique, 3);
+  for (int column = 0; column < vectors.cols(); ++column) {
+    for (int row = 0; row < vectors.rows(); ++row) {
+      vectors(row, column) =
+          0.03 * (row + 1) - 0.017 * (column + 2);
+    }
+  }
+  Eigen::MatrixXd reference_overlap(n_unique, n_unique);
+  Eigen::MatrixXd reference_hamiltonian(n_unique, n_unique);
+  for (int left = 0; left < n_unique; ++left) {
+    for (int right = 0; right < n_unique; ++right) {
+      const auto& pair = reference.alpha_pair_cache_ref()[
+          xmvb::vb::ordered_spin_pair_storage_index(
+              left, right, n_unique)];
+      reference_overlap(left, right) =
+          pair.overlap_result.overlap_determinant;
+      reference_hamiltonian(left, right) = pair.total_hamiltonian;
+    }
+  }
+  const auto streamed_action = xmvb::vb::apply_accepted_spin_pair_action(
+      provider,
+      overlap_storage,
+      h1e,
+      ri,
+      vectors,
+      4096);
+  require(
+      relative_difference(
+          reference_overlap * vectors,
+          streamed_action.overlap) <= 2.0e-11,
+      "streamed accepted overlap action differs from cached action");
+  require(
+      relative_difference(
+          reference_hamiltonian * vectors,
+          streamed_action.hamiltonian) <= 2.0e-10,
+      "streamed accepted Hamiltonian action differs from cached action");
 
   const std::vector<std::vector<int>> singular_strings{{0}, {1}, {2}};
   const Eigen::Matrix3d singular_overlap = Eigen::Matrix3d::Identity();

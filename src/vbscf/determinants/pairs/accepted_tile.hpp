@@ -12,6 +12,7 @@ namespace xmvb::vb {
 struct AcceptedPairTileBuildOptions {
   bool materialize_projected_pair_values = false;
   bool populate_response_payload = false;
+  bool populate_opposite_spin_projection = true;
 };
 
 struct AcceptedPairTileStatistics {
