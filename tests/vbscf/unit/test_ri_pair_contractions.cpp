@@ -444,7 +444,12 @@ int main() {
         first_view);
     xmvb::vb::detail::LocalOppositeSpinTileAccumulator
         tiled_local_opposite_spin(
-            closed_shell_cache, selected, n_active, direct_ri);
+            closed_shell_cache,
+            selected,
+            n_active,
+            active_overlap,
+            h1e,
+            direct_ri);
     xmvb::vb::detail::stream_directional_pair_tiles(
         closed_shell_cache,
         n_active,

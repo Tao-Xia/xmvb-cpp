@@ -15,40 +15,101 @@
 namespace xmvb::vb::detail {
 namespace {
 
-int packed_pair_count(
-    const SameSpinPairCacheContext& cache,
-    int n_active_orbitals) {
-  const int expected = packed_active_pair_count(n_active_orbitals);
-  const auto require_count = [&](const auto& pairs) {
-    for (const auto& pair : pairs) {
-      const auto& projected = pair.opposite_spin_pair_cache
-          .first_order_cofactor_projection.projected_pair_values;
-      if (!projected.empty() &&
-          static_cast<int>(projected.size()) != expected) {
-        throw std::invalid_argument(
-            "opposite-spin accepted projection has inconsistent dimensions");
-      }
-    }
-  };
-  require_count(cache.alpha_pair_cache_ref());
-  require_count(cache.beta_pair_cache_ref());
-  return expected;
-}
-
 void add_packed_outer_product(
     const OppositeSpinPackedPairProjection& primary,
-    const std::vector<double>& partner_image,
-    const std::vector<int>& touched_partner_channels,
+    const Eigen::Ref<const Eigen::VectorXd>& partner_projection,
     std::vector<double>* packed_gradient) {
   for (std::size_t entry = 0;
        entry < primary.packed_pair_indices.size();
        ++entry) {
     const int primary_channel = primary.packed_pair_indices[entry];
     const double primary_value = primary.packed_pair_values[entry];
-    for (const int partner_channel : touched_partner_channels) {
+    for (int partner_channel = 0;
+         partner_channel < partner_projection.size();
+         ++partner_channel) {
+      if (partner_projection[partner_channel] == 0.0) {
+        continue;
+      }
       (*packed_gradient)[TwoElectronIndexer::packed_pair_of_pairs_index(
           partner_channel, primary_channel)] +=
-          primary_value * partner_image[partner_channel];
+          primary_value * partner_projection[partner_channel];
+    }
+  }
+}
+
+void add_partner_projection_tile(
+    const SelectedStateDeterminantMatrices& selected_states,
+    PrimarySpin primary_spin,
+    int primary_left_begin,
+    int primary_left_size,
+    int primary_right_begin,
+    int primary_right_size,
+    const AcceptedSpinPairTile& partner_tile,
+    Eigen::MatrixXd* raw_projection) {
+  Eigen::MatrixXd coefficient_weight(
+      primary_left_size, primary_right_size);
+  for (int partner_left_local = 0;
+       partner_left_local < partner_tile.left_size;
+       ++partner_left_local) {
+    const int partner_left =
+        partner_tile.left_begin + partner_left_local;
+    for (int partner_right_local = 0;
+         partner_right_local < partner_tile.right_size;
+         ++partner_right_local) {
+      const int partner_right =
+          partner_tile.right_begin + partner_right_local;
+      coefficient_weight.setZero();
+      for (const auto& state : selected_states.states) {
+        const auto& coefficients = state.coefficient_matrix;
+        if (primary_spin == PrimarySpin::Alpha) {
+          coefficient_weight.noalias() += state.normalized_state_weight *
+              coefficients.block(
+                  primary_left_begin,
+                  partner_left,
+                  primary_left_size,
+                  1) *
+              coefficients.block(
+                  primary_right_begin,
+                  partner_right,
+                  primary_right_size,
+                  1).transpose();
+        } else {
+          coefficient_weight.noalias() += state.normalized_state_weight *
+              coefficients.block(
+                  partner_left,
+                  primary_left_begin,
+                  1,
+                  primary_left_size).transpose() *
+              coefficients.block(
+                  partner_right,
+                  primary_right_begin,
+                  1,
+                  primary_right_size);
+        }
+      }
+      const auto& projection = partner_tile
+          .pair(partner_left_local, partner_right_local)
+          .opposite_spin_pair_cache.first_order_cofactor_projection;
+      for (std::size_t entry = 0;
+           entry < projection.packed_pair_indices.size();
+           ++entry) {
+        const int channel = projection.packed_pair_indices[entry];
+        const double value = projection.packed_pair_values[entry];
+        for (int primary_left_local = 0;
+             primary_left_local < primary_left_size;
+             ++primary_left_local) {
+          for (int primary_right_local = 0;
+               primary_right_local < primary_right_size;
+               ++primary_right_local) {
+            const int pair =
+                primary_left_local * primary_right_size +
+                primary_right_local;
+            (*raw_projection)(channel, pair) += value *
+                coefficient_weight(
+                    primary_left_local, primary_right_local);
+          }
+        }
+      }
     }
   }
 }
@@ -74,19 +135,21 @@ LocalOppositeSpinTileAccumulator::LocalOppositeSpinTileAccumulator(
     const SameSpinPairCacheContext& accepted_pair_cache,
     const SelectedStateDeterminantMatrices& selected_states,
     int n_active_orbitals,
+    const std::vector<double>& active_overlap,
+    const Eigen::MatrixXd& active_one_electron,
     const ActiveSpaceTwoElectronResult& active_two_electron)
     : accepted_pair_cache_(accepted_pair_cache),
       selected_states_(selected_states),
       n_active_orbitals_(n_active_orbitals),
-      n_packed_pairs_(packed_pair_count(
-          accepted_pair_cache, n_active_orbitals)),
+      n_packed_pairs_(packed_active_pair_count(n_active_orbitals)),
+      active_overlap_(active_overlap),
+      active_one_electron_(active_one_electron),
+      active_two_electron_(active_two_electron),
       tile_extents_(plan_pair_tile_extents(
           accepted_pair_cache,
           n_active_orbitals,
           active_two_electron,
-          true)),
-      alpha_graph_(selected_states, PrimarySpin::Alpha),
-      beta_graph_(selected_states, PrimarySpin::Beta) {
+          true)) {
   result_.active_orbital_overlap_gradient.assign(
       static_cast<std::size_t>(n_active_orbitals) * n_active_orbitals,
       0.0);
@@ -98,48 +161,76 @@ LocalOppositeSpinTileAccumulator::LocalOppositeSpinTileAccumulator(
 void LocalOppositeSpinTileAccumulator::consume(
     bool alpha_channel,
     bool beta_channel,
-    const AcceptedSpinPairTile&,
+    const AcceptedSpinPairTile& accepted,
     const DirectionalOppositeSpinPairTileView& tile) {
   if (alpha_channel) {
-    accumulate_primary(PrimarySpin::Alpha, tile, true);
+    accumulate_primary(PrimarySpin::Alpha, accepted, tile, true);
     accumulate_cross_response(PrimarySpin::Beta, tile);
   }
   if (beta_channel) {
-    accumulate_primary(PrimarySpin::Beta, tile, false);
+    accumulate_primary(PrimarySpin::Beta, accepted, tile, false);
     accumulate_cross_response(PrimarySpin::Alpha, tile);
   }
 }
 
 void LocalOppositeSpinTileAccumulator::accumulate_primary(
     PrimarySpin spin,
+    const AcceptedSpinPairTile& accepted,
     const DirectionalOppositeSpinPairTileView& tile,
     bool accumulate_packed_gradient) {
   const bool alpha = spin == PrimarySpin::Alpha;
-  const auto& graph = alpha ? alpha_graph_ : beta_graph_;
-  const auto& partner_pairs = alpha
-      ? accepted_pair_cache_.beta_pair_cache_ref()
-      : accepted_pair_cache_.alpha_pair_cache_ref();
   const int n_partner = alpha
       ? selected_states_.n_unique_beta
       : selected_states_.n_unique_alpha;
-  const auto& primary_pairs = alpha
-      ? accepted_pair_cache_.alpha_pair_cache_ref()
-      : accepted_pair_cache_.beta_pair_cache_ref();
   const auto& primary_determinants = alpha
       ? accepted_pair_cache_.alpha_reuse_table.unique_determinants
       : accepted_pair_cache_.beta_reuse_table.unique_determinants;
-  const int n_primary = alpha
-      ? selected_states_.n_unique_alpha
-      : selected_states_.n_unique_beta;
+  const AcceptedPairTileProvider& partner_provider = alpha
+      ? accepted_pair_cache_.beta_provider()
+      : accepted_pair_cache_.alpha_provider();
   const int n_electrons = primary_determinants.empty()
       ? 0
       : static_cast<int>(primary_determinants.front().size());
-
-  std::vector<double> partner_image(n_packed_pairs_, 0.0);
-  std::vector<unsigned char> touched_flags(n_packed_pairs_, 0u);
-  std::vector<int> touched_channels;
-  std::vector<int> target_channels;
-  std::vector<double> accepted_values;
+  const int primary_pair_count = tile.left_size() * tile.right_size();
+  Eigen::MatrixXd raw_projection = Eigen::MatrixXd::Zero(
+      n_packed_pairs_, primary_pair_count);
+  const int partner_extent = std::min(
+      n_partner, alpha ? tile_extents_.beta : tile_extents_.alpha);
+  for (int partner_left = 0;
+       partner_left < n_partner;
+       partner_left += partner_extent) {
+    const int partner_left_end = std::min(
+        n_partner, partner_left + partner_extent);
+    for (int partner_right = 0;
+         partner_right < n_partner;
+         partner_right += partner_extent) {
+      const int partner_right_end = std::min(
+          n_partner, partner_right + partner_extent);
+      const AcceptedSpinPairTile partner_tile = partner_provider.build(
+          partner_left,
+          partner_left_end,
+          partner_right,
+          partner_right_end,
+          active_overlap_,
+          active_one_electron_,
+          active_two_electron_,
+          AcceptedPairTileBuildOptions{
+              .materialize_projected_pair_values = false,
+              .populate_response_payload = false});
+      add_partner_projection_tile(
+          selected_states_,
+          spin,
+          tile.left_begin(),
+          tile.left_size(),
+          tile.right_begin(),
+          tile.right_size(),
+          partner_tile,
+          &raw_projection);
+    }
+  }
+  const Eigen::MatrixXd projected =
+      apply_active_space_two_electron_kernel_block(
+          active_two_electron_, n_active_orbitals_, raw_projection);
   Eigen::MatrixXd accepted_weight(n_electrons, n_electrons);
   const Eigen::MatrixXd zero = Eigen::MatrixXd::Zero(
       n_electrons, n_electrons);
@@ -148,54 +239,30 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
     for (int right_local = 0; right_local < tile.right_size(); ++right_local) {
       const int right = tile.right_begin() + right_local;
       tile.with_pair(left_local, right_local, [&](const auto& directional_pair) {
+      const int pair_index = left_local * tile.right_size() + right_local;
       if (accumulate_packed_gradient) {
-        graph.accumulate_partner_projection(
-            left,
-            right,
-            partner_pairs,
-            n_partner,
-            &partner_image,
-            &touched_flags,
-            &touched_channels);
         add_packed_outer_product(
             directional_pair.delta_first_order_cofactor_projection,
-            partner_image,
-            touched_channels,
+            raw_projection.col(pair_index),
             &result_.packed_active_two_electron_gradient);
       }
 
       const auto& occupied_left = primary_determinants[left];
       const auto& occupied_right = primary_determinants[right];
-      target_channels.clear();
-      target_channels.reserve(
-          static_cast<std::size_t>(n_electrons) * n_electrons);
-      for (const int orbital_left : occupied_left) {
-        for (const int orbital_right : occupied_right) {
-          target_channels.push_back(TwoElectronIndexer::packed_pair_index(
-              orbital_right, orbital_left));
-        }
-      }
-      accepted_values.assign(target_channels.size(), 0.0);
-      graph.accumulate_partner_projected_values(
-          left,
-          right,
-          partner_pairs,
-          n_partner,
-          target_channels,
-          &accepted_values);
-      std::size_t target = 0;
       for (int left_electron = 0;
            left_electron < n_electrons;
            ++left_electron) {
         for (int right_electron = 0;
              right_electron < n_electrons;
-             ++right_electron, ++target) {
+             ++right_electron) {
+          const int channel = TwoElectronIndexer::packed_pair_index(
+              occupied_right[right_electron],
+              occupied_left[left_electron]);
           accepted_weight(left_electron, right_electron) =
-              accepted_values[target];
+              projected(channel, pair_index);
         }
       }
-      const auto& accepted_pair = primary_pairs[
-          ordered_spin_pair_storage_index(left, right, n_primary)];
+      const auto& accepted_pair = accepted.pair(left_local, right_local);
       accumulate_pair_overlap_gradient_direction(
           occupied_left,
           occupied_right,
@@ -205,12 +272,6 @@ void LocalOppositeSpinTileAccumulator::accumulate_primary(
           zero,
           n_active_orbitals_,
           &result_.active_orbital_overlap_gradient);
-
-      for (const int channel : touched_channels) {
-        partner_image[channel] = 0.0;
-        touched_flags[channel] = 0u;
-      }
-      touched_channels.clear();
       });
     }
   }
@@ -223,9 +284,9 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
   const int n_primary = target_alpha
       ? selected_states_.n_unique_alpha
       : selected_states_.n_unique_beta;
-  const auto& primary_pairs = target_alpha
-      ? accepted_pair_cache_.alpha_pair_cache_ref()
-      : accepted_pair_cache_.beta_pair_cache_ref();
+  const AcceptedPairTileProvider& primary_provider = target_alpha
+      ? accepted_pair_cache_.alpha_provider()
+      : accepted_pair_cache_.beta_provider();
   const auto& primary_determinants = target_alpha
       ? accepted_pair_cache_.alpha_reuse_table.unique_determinants
       : accepted_pair_cache_.beta_reuse_table.unique_determinants;
@@ -241,6 +302,17 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
     const int left_size = std::min(extent, n_primary - left_begin);
     for (int right_begin = 0; right_begin < n_primary; right_begin += extent) {
       const int right_size = std::min(extent, n_primary - right_begin);
+      const AcceptedSpinPairTile accepted = primary_provider.build(
+          left_begin,
+          left_begin + left_size,
+          right_begin,
+          right_begin + right_size,
+          active_overlap_,
+          active_one_electron_,
+          active_two_electron_,
+          AcceptedPairTileBuildOptions{
+              .materialize_projected_pair_values = false,
+              .populate_response_payload = true});
       const std::size_t pair_count =
           static_cast<std::size_t>(left_size) * right_size;
       const std::size_t pair_weight_size =
@@ -305,13 +377,9 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
           for (int right_local = 0; right_local < right_size; ++right_local) {
             const auto& occupied_right =
                 primary_determinants[right_begin + right_local];
-            const auto& accepted_projection = primary_pairs[
-                ordered_spin_pair_storage_index(
-                    left_begin + left_local,
-                    right_begin + right_local,
-                    n_primary)]
-                                                  .opposite_spin_pair_cache
-                                                  .first_order_cofactor_projection;
+            const auto& accepted_projection = accepted
+                .pair(left_local, right_local)
+                .opposite_spin_pair_cache.first_order_cofactor_projection;
             if (need_packed) {
               add_accepted_projection_channel(
                   accepted_projection,
@@ -351,8 +419,8 @@ void LocalOppositeSpinTileAccumulator::accumulate_cross_response(
         for (int right_local = 0; right_local < right_size; ++right_local) {
           const int right = right_begin + right_local;
           const auto& occupied_right = primary_determinants[right];
-          const auto& accepted_pair = primary_pairs[
-              ordered_spin_pair_storage_index(left, right, n_primary)];
+          const auto& accepted_pair = accepted.pair(
+              left_local, right_local);
           const std::size_t pair_offset =
               (static_cast<std::size_t>(left_local) * right_size +
                right_local) * pair_weight_size;

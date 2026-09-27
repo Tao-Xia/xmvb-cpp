@@ -40,6 +40,10 @@ LocalActiveSpaceTileAccumulator::LocalActiveSpaceTileAccumulator(
           accepted_point.same_spin_pair_cache,
           accepted_point.selected_state_matrices,
           input.orbital_preparation_input.n_active_orbitals,
+          accepted_point.prepared_active_space.orbital_result
+              .active_orbital_overlap_matrix,
+          accepted_point.prepared_active_space
+              .active_space_one_electron_result.h1e_act,
           accepted_point.prepared_active_space
               .active_space_two_electron_result) {
   if (!accepted_point.use_pair_graph_opposite_spin_adjoint) {

@@ -14,6 +14,8 @@ class LocalOppositeSpinTileAccumulator {
       const SameSpinPairCacheContext& accepted_pair_cache,
       const SelectedStateDeterminantMatrices& selected_states,
       int n_active_orbitals,
+      const std::vector<double>& active_overlap,
+      const Eigen::MatrixXd& active_one_electron,
       const ActiveSpaceTwoElectronResult& active_two_electron);
 
   void consume(
@@ -27,6 +29,7 @@ class LocalOppositeSpinTileAccumulator {
  private:
   void accumulate_primary(
       PrimarySpin spin,
+      const AcceptedSpinPairTile& accepted,
       const DirectionalOppositeSpinPairTileView& tile,
       bool accumulate_packed_gradient);
   void accumulate_cross_response(
@@ -37,9 +40,10 @@ class LocalOppositeSpinTileAccumulator {
   const SelectedStateDeterminantMatrices& selected_states_;
   int n_active_orbitals_ = 0;
   int n_packed_pairs_ = 0;
+  const std::vector<double>& active_overlap_;
+  const Eigen::MatrixXd& active_one_electron_;
+  const ActiveSpaceTwoElectronResult& active_two_electron_;
   PairTileExtents tile_extents_;
-  SelectedStatePairGraph alpha_graph_;
-  SelectedStatePairGraph beta_graph_;
   OppositeSpinBackwardContribution result_;
 };
 
