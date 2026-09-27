@@ -313,10 +313,10 @@ build_selected_structure_direction_from_pair_tiles(
       ? factors.alpha_channels
       : factors.beta_channels;
 
-  Eigen::MatrixXd delta_hamiltonian_images =
-      Eigen::MatrixXd::Zero(n_alpha, n_states * n_beta);
-  Eigen::MatrixXd delta_overlap_images =
-      Eigen::MatrixXd::Zero(n_alpha, n_states * n_beta);
+  Eigen::MatrixXd delta_hamiltonian_selected =
+      Eigen::MatrixXd::Zero(structure_action->n_structures(), n_states);
+  Eigen::MatrixXd delta_overlap_selected =
+      Eigen::MatrixXd::Zero(structure_action->n_structures(), n_states);
   detail::stream_directional_pair_tiles(
       same_spin,
       n_active_orbitals,
@@ -342,6 +342,10 @@ build_selected_structure_direction_from_pair_tiles(
             same_tile.delta_singular_hamiltonian();
 
         if (alpha_channel) {
+          Eigen::MatrixXd tile_hamiltonian = Eigen::MatrixXd::Zero(
+              same_tile.left_size(), n_states * n_beta);
+          Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
+              same_tile.left_size(), n_states * n_beta);
           for (int state = 0; state < n_states; ++state) {
             const Eigen::MatrixXd& coefficients =
                 selected_states.states[state].coefficient_matrix;
@@ -351,15 +355,15 @@ build_selected_structure_direction_from_pair_tiles(
                 same_tile.delta_overlap() * coefficients_right;
             const Eigen::MatrixXd delta_hamiltonian_coefficients =
                 delta_hamiltonian * coefficients_right;
-            auto overlap_image = delta_overlap_images.block(
-                same_tile.left_begin(),
+            auto overlap_image = tile_overlap.block(
+                0,
                 state * n_beta,
                 same_tile.left_size(),
                 n_beta);
             overlap_image.noalias() +=
                 delta_overlap_coefficients * factors.beta_overlap.transpose();
-            auto hamiltonian_image = delta_hamiltonian_images.block(
-                same_tile.left_begin(),
+            auto hamiltonian_image = tile_hamiltonian.block(
+                0,
                 state * n_beta,
                 same_tile.left_size(),
                 n_beta);
@@ -383,23 +387,37 @@ build_selected_structure_direction_from_pair_tiles(
                   hamiltonian_image);
             }
           }
+          structure_action->add_spin_product_tile(
+              tile_hamiltonian,
+              same_tile.left_begin(),
+              0,
+              &delta_hamiltonian_selected);
+          structure_action->add_spin_product_tile(
+              tile_overlap,
+              same_tile.left_begin(),
+              0,
+              &delta_overlap_selected);
         }
 
         if (beta_channel) {
+          Eigen::MatrixXd tile_hamiltonian = Eigen::MatrixXd::Zero(
+              n_alpha, n_states * same_tile.left_size());
+          Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
+              n_alpha, n_states * same_tile.left_size());
           Eigen::MatrixXd accepted_alpha_times_coefficients;
           for (int state = 0; state < n_states; ++state) {
             const Eigen::MatrixXd& coefficients =
                 selected_states.states[state].coefficient_matrix;
             const auto coefficients_right = coefficients.middleCols(
                 same_tile.right_begin(), same_tile.right_size());
-            auto overlap_image = delta_overlap_images.middleCols(
-                state * n_beta + same_tile.left_begin(),
+            auto overlap_image = tile_overlap.middleCols(
+                state * same_tile.left_size(),
                 same_tile.left_size());
             overlap_image.noalias() +=
                 factors.alpha_overlap * coefficients_right *
                 same_tile.delta_overlap().transpose();
-            auto hamiltonian_image = delta_hamiltonian_images.middleCols(
-                state * n_beta + same_tile.left_begin(),
+            auto hamiltonian_image = tile_hamiltonian.middleCols(
+                state * same_tile.left_size(),
                 same_tile.left_size());
             hamiltonian_image.noalias() +=
                 factors.alpha_hamiltonian * coefficients_right *
@@ -426,6 +444,16 @@ build_selected_structure_direction_from_pair_tiles(
                   directional.transpose();
             }
           }
+          structure_action->add_spin_product_tile(
+              tile_hamiltonian,
+              0,
+              same_tile.left_begin(),
+              &delta_hamiltonian_selected);
+          structure_action->add_spin_product_tile(
+              tile_overlap,
+              0,
+              same_tile.left_begin(),
+              &delta_overlap_selected);
         }
         if (additional_consumer) {
           additional_consumer(
@@ -434,11 +462,8 @@ build_selected_structure_direction_from_pair_tiles(
       });
 
   SelectedStateDirectionalStructureImages result;
-  result.delta_hamiltonian_selected =
-      structure_action->contract_spin_product_block(
-          delta_hamiltonian_images);
-  result.delta_overlap_selected =
-      structure_action->contract_spin_product_block(delta_overlap_images);
+  result.delta_hamiltonian_selected = std::move(delta_hamiltonian_selected);
+  result.delta_overlap_selected = std::move(delta_overlap_selected);
   require_finite(
       result.delta_hamiltonian_selected,
       "tiled directional Hamiltonian images");

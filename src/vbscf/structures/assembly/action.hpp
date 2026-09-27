@@ -206,6 +206,19 @@ public:
   Eigen::MatrixXd contract_spin_product_block(
       const Eigen::Ref<const Eigen::MatrixXd>& spin_images) const;
 
+  /**
+   * @brief Contracts one rectangular unique-string-product image tile.
+   *
+   * Horizontal blocks in `tile_images` have shape
+   * `(alpha_size, beta_size)`. Contributions are accumulated directly into
+   * `structure_images`; no full alpha-by-beta image is materialized.
+   */
+  void add_spin_product_tile(
+      const Eigen::Ref<const Eigen::MatrixXd>& tile_images,
+      int alpha_begin,
+      int beta_begin,
+      Eigen::MatrixXd* structure_images) const;
+
   /** @brief Returns the H/S diagonal model used only for preconditioning. */
   const StructureDiagonal& preconditioner_diagonal() const noexcept;
 

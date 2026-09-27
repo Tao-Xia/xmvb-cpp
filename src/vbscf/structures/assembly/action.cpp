@@ -1221,6 +1221,52 @@ Eigen::MatrixXd StructureAction::contract_spin_product_block(
   return result;
 }
 
+void StructureAction::add_spin_product_tile(
+    const Eigen::Ref<const Eigen::MatrixXd>& tile_images,
+    int alpha_begin,
+    int beta_begin,
+    Eigen::MatrixXd* structure_images) const {
+  if (structure_images == nullptr || tile_images.rows() <= 0 ||
+      tile_images.cols() <= 0 || alpha_begin < 0 || beta_begin < 0 ||
+      alpha_begin + tile_images.rows() > n_unique_alpha_ ||
+      structure_images->rows() != n_structures_ ||
+      structure_images->cols() <= 0 ||
+      tile_images.cols() % structure_images->cols() != 0) {
+    throw std::invalid_argument(
+        "unique-string-product tile has incompatible dimensions");
+  }
+  const int block_width = static_cast<int>(structure_images->cols());
+  const int beta_size = static_cast<int>(tile_images.cols()) / block_width;
+  if (beta_begin + beta_size > n_unique_beta_) {
+    throw std::invalid_argument(
+        "unique-string-product tile exceeds the beta space");
+  }
+
+  for (int alpha_local = 0; alpha_local < tile_images.rows(); ++alpha_local) {
+    const int alpha = alpha_begin + alpha_local;
+    const int first_product = alpha * n_unique_beta_ + beta_begin;
+    const int last_product = first_product + beta_size;
+    auto group = std::lower_bound(
+        spin_products_.begin(), spin_products_.end(), first_product);
+    while (group != spin_products_.end() && *group < last_product) {
+      const std::size_t group_index =
+          static_cast<std::size_t>(group - spin_products_.begin());
+      const int beta_local = *group - first_product;
+      for (std::size_t term_index = spin_term_offsets_[group_index];
+           term_index < spin_term_offsets_[group_index + 1];
+           ++term_index) {
+        const StructureTerm& term = spin_terms_[term_index];
+        for (int vector = 0; vector < block_width; ++vector) {
+          (*structure_images)(term.structure, vector) +=
+              term.coefficient *
+              tile_images(alpha_local, vector * beta_size + beta_local);
+        }
+      }
+      ++group;
+    }
+  }
+}
+
 Eigen::MatrixXd StructureAction::expand_structure_block(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
   if (vectors.rows() != n_structures_ || vectors.cols() <= 0) {
