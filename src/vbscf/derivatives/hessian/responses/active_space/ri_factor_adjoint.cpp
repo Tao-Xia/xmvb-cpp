@@ -21,7 +21,8 @@ Eigen::MatrixXd apply_regular_ri_pair_space_adjoint(
     const Eigen::Ref<const Eigen::MatrixXd>& h1e,
     const Eigen::Ref<const Eigen::MatrixXd>& factors) {
   const int n_pairs = packed_active_pair_count(n_active);
-  if (!cache.enabled() || states.states.size() != energies.size() ||
+  if (!cache.has_pair_providers() ||
+      states.states.size() != energies.size() ||
       factors.rows() <= 0 || factors.cols() != n_pairs) {
     throw std::invalid_argument("RI factor adjoint dimensions are inconsistent");
   }

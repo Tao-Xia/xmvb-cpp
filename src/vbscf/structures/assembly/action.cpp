@@ -500,14 +500,14 @@ StructureAction::StructureAction(
           1);
   const bool use_direct_ci = direct_ci_plan.favors_direct_ci() ||
       (!same_spin_pair_cache.enabled() && direct_ci_plan.complete());
-  if (!same_spin_pair_cache.enabled() && !use_direct_ci) {
+  if (!same_spin_pair_cache.has_pair_providers()) {
     throw std::invalid_argument(
-        "factorized structure action requires a same-spin pair cache");
+        "structure action requires accepted-pair providers");
   }
   if (!same_spin_pair_cache.enabled() &&
       precomputed_preconditioner == nullptr) {
     throw std::invalid_argument(
-        "topology-only direct-CI action requires a diagonal preconditioner");
+        "topology-only structure action requires a diagonal preconditioner");
   }
 
   const int n_packed_pairs = packed_active_pair_count(n_active_orbitals);
@@ -559,10 +559,6 @@ StructureAction::StructureAction(
     }
   }
 
-  const auto& alpha_pair_cache =
-      same_spin_pair_cache.alpha_pair_cache_ref();
-  const auto& beta_pair_cache =
-      same_spin_pair_cache.beta_pair_cache_ref();
   if (use_direct_ci) {
     direct_ci_ = std::make_unique<OrthogonalDirectCiData>(
         same_spin_pair_cache.alpha_reuse_table.unique_determinants,

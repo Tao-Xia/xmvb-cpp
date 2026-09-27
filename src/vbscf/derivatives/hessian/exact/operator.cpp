@@ -201,7 +201,7 @@ ExactHvpOperator::State::outer_response_context() const {
   const bool has_direct_ci_action =
       accepted_point_context_->structure_action.has_value() &&
       accepted_point_context_->structure_action->supports_integral_direction();
-  if (!accepted_point_context_->same_spin_pair_cache.enabled() &&
+  if (!accepted_point_context_->same_spin_pair_cache.has_pair_providers() &&
       !has_direct_ci_action) {
     throw std::logic_error(
         "outer response requires a pair cache or direct-CI action");

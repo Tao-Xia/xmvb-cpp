@@ -36,9 +36,9 @@ void validate_backward_inputs(
     int n_active,
     const std::vector<double>& active_overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& h1e) {
-  if (!cache.enabled()) {
+  if (!cache.has_pair_providers()) {
     throw std::invalid_argument(
-        "same-spin matrix backward requires an enabled same-spin context");
+        "same-spin matrix backward requires accepted-pair providers");
   }
   if (states.states.size() != energies.size()) {
     throw std::invalid_argument(

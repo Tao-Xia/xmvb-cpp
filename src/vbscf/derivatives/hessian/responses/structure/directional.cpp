@@ -104,7 +104,7 @@ build_accepted_structure_response_factors(
     const AcceptedPointContext& accepted_point,
     const Eigen::MatrixXd& selected_columns) {
   const auto& same_spin = accepted_point.same_spin_pair_cache;
-  if (!same_spin.enabled()) {
+  if (!same_spin.has_pair_providers()) {
     throw std::invalid_argument(
         "accepted structure response requires the same-spin cache");
   }
@@ -233,7 +233,7 @@ build_selected_structure_direction_from_pair_tiles(
         accepted_ri_active_pair_factors,
         directional_ri_active_pair_factors);
   }
-  if (!accepted_point.same_spin_pair_cache.enabled() ||
+  if (!accepted_point.same_spin_pair_cache.has_pair_providers() ||
       accepted.structure_factors == nullptr) {
     throw std::invalid_argument(
         "tiled factorized structure direction requires accepted pair factors");

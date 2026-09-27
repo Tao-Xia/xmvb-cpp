@@ -92,6 +92,11 @@ struct SameSpinPairCacheContext {
     return use_same_spin_pair_cache;
   }
 
+  /** @brief Whether bounded accepted-pair tiles can be generated on demand. */
+  bool has_pair_providers() const noexcept {
+    return alpha_pair_provider != nullptr && beta_pair_provider != nullptr;
+  }
+
   bool close_shell_reuses_same_spin_pair_cache() const {
     return close_shell_diagonal_reuses_same_spin_pair_cache;
   }
