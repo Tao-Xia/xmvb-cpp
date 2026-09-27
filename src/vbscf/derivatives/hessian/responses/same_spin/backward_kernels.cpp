@@ -3,7 +3,6 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/tile_weights_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/same_spin/matrix_weights_internal.hpp"
 
 #include <algorithm>
 #include <cmath>

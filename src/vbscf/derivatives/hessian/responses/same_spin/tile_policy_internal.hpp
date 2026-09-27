@@ -209,8 +209,10 @@ inline LocalResponseTilePlan plan_local_response_tiles(
     int n_active_orbitals,
     const ActiveSpaceTwoElectronResult& two_electron,
     int n_states,
+    int action_vector_sets = 1,
     std::size_t workspace_bytes = kPairTileWorkspaceBytes) {
   const int state_count = std::max(1, n_states);
+  const int vector_set_count = std::max(1, action_vector_sets);
   const int n_alpha = static_cast<int>(
       cache.alpha_reuse_table.unique_determinants.size());
   const int n_beta = static_cast<int>(
@@ -231,7 +233,8 @@ inline LocalResponseTilePlan plan_local_response_tiles(
         ? 0
         : static_cast<int>(strings.front().size());
     const std::size_t panel_bytes_per_primary =
-        3 * static_cast<std::size_t>(state_count) *
+        3 * static_cast<std::size_t>(vector_set_count) *
+        static_cast<std::size_t>(state_count) *
         static_cast<std::size_t>(std::max(1, partner_size)) * sizeof(double);
     return plan_pair_tile_extent(
         static_cast<int>(strings.size()),

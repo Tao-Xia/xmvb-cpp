@@ -234,6 +234,7 @@ LocalSameSpinTileAccumulator::LocalSameSpinTileAccumulator(
           n_active_orbitals,
           active_two_electron,
           static_cast<int>(selected_states.states.size()),
+          1,
           workspace_bytes)),
       result_(make_zero_backward_contribution(n_active_orbitals)),
       one_electron_gradient_(

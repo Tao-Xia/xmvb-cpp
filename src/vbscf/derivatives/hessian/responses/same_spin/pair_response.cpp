@@ -1,5 +1,4 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
-#include "vbscf/derivatives/hessian/responses/same_spin/matrix_weights_internal.hpp"
 
 #include <algorithm>
 #include <cmath>

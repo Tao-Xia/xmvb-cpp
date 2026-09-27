@@ -139,6 +139,7 @@ void stream_directional_pair_tiles(
             n_active_orbitals,
             accepted_two_electron,
             n_response_states,
+            1,
             workspace_bytes).extents
       : plan_pair_tile_extents(
             accepted_pair_cache,
