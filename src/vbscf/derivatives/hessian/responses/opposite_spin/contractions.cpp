@@ -40,24 +40,12 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
     const SelectedStateDeterminantMatrices& selected_states,
     const SelectedStatePairGraph& pair_graph,
     int n_packed_active_pairs,
-    Eigen::MatrixXd* ordered_gradient) {
+    std::vector<double>* packed_active_two_electron_gradient) {
   const int n_threads = std::min(
       xmvb::effective_openmp_thread_count(),
       selected_states.n_unique_alpha);
-  std::vector<Eigen::MatrixXd> partial_gradients;
-  partial_gradients.reserve(n_threads);
-  for (int thread = 0; thread < n_threads; ++thread) {
-    partial_gradients.emplace_back(Eigen::MatrixXd::Zero(
-        n_packed_active_pairs,
-        n_packed_active_pairs));
-  }
 #pragma omp parallel if(n_threads > 1) num_threads(n_threads)
   {
-#ifdef _OPENMP
-    const int thread = omp_get_thread_num();
-#else
-    const int thread = 0;
-#endif
     std::vector<double> beta_image(n_packed_active_pairs, 0.0);
     std::vector<int> touched_beta_channels;
     touched_beta_channels.reserve(n_packed_active_pairs);
@@ -97,8 +85,17 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
         const double alpha_value =
             alpha_projection.packed_pair_values[alpha_entry];
         for (const int beta_channel : touched_beta_channels) {
-          partial_gradients[thread](alpha_channel, beta_channel) +=
+          const double contribution =
               alpha_value * beta_image[beta_channel];
+          if (std::abs(contribution) <= kContributionTolerance) {
+            continue;
+          }
+          const int packed_index =
+              TwoElectronIndexer::packed_pair_of_pairs_index(
+                  beta_channel,
+                  alpha_channel);
+#pragma omp atomic update
+          (*packed_active_two_electron_gradient)[packed_index] += contribution;
         }
       }
       for (const int beta_channel : touched_beta_channels) {
@@ -107,33 +104,6 @@ void accumulate_ordered_packed_gradient_from_pair_graph(
       }
       touched_beta_channels.clear();
       }
-    }
-  }
-  for (const Eigen::MatrixXd& partial : partial_gradients) {
-    *ordered_gradient += partial;
-  }
-}
-
-void pack_ordered_gradient(
-    const Eigen::MatrixXd& ordered_gradient,
-    int n_packed_active_pairs,
-    std::vector<double>* packed_active_two_electron_gradient) {
-  for (int beta_channel = 0;
-       beta_channel < n_packed_active_pairs;
-       ++beta_channel) {
-    for (int alpha_channel = 0;
-         alpha_channel < n_packed_active_pairs;
-         ++alpha_channel) {
-      const double value = ordered_gradient(alpha_channel, beta_channel);
-      if (std::abs(value) <= kContributionTolerance) {
-        continue;
-      }
-      const int packed_pair_of_pairs_index =
-          TwoElectronIndexer::packed_pair_of_pairs_index(
-              beta_channel,
-              alpha_channel);
-      (*packed_active_two_electron_gradient)[
-          packed_pair_of_pairs_index] += value;
     }
   }
 }
@@ -148,18 +118,11 @@ void accumulate_opposite_spin_packed_gradient_by_pair_graph(
   const SelectedStatePairGraph pair_graph(
       selected_states,
       PrimarySpin::Alpha);
-  Eigen::MatrixXd ordered_gradient = Eigen::MatrixXd::Zero(
-      n_packed_active_pairs,
-      n_packed_active_pairs);
   accumulate_ordered_packed_gradient_from_pair_graph(
       same_spin_pair_cache.alpha_pair_cache_ref(),
       same_spin_pair_cache.beta_pair_cache_ref(),
       selected_states,
       pair_graph,
-      n_packed_active_pairs,
-      &ordered_gradient);
-  pack_ordered_gradient(
-      ordered_gradient,
       n_packed_active_pairs,
       packed_active_two_electron_gradient);
 }
@@ -174,18 +137,11 @@ void accumulate_directional_opposite_spin_packed_gradient_by_pair_graph(
       selected_states,
       directional_selected_states,
       PrimarySpin::Alpha);
-  Eigen::MatrixXd ordered_gradient = Eigen::MatrixXd::Zero(
-      n_packed_active_pairs,
-      n_packed_active_pairs);
   accumulate_ordered_packed_gradient_from_pair_graph(
       same_spin_pair_cache.alpha_pair_cache_ref(),
       same_spin_pair_cache.beta_pair_cache_ref(),
       selected_states,
       pair_graph,
-      n_packed_active_pairs,
-      &ordered_gradient);
-  pack_ordered_gradient(
-      ordered_gradient,
       n_packed_active_pairs,
       packed_active_two_electron_gradient);
 }
@@ -200,25 +156,18 @@ void accumulate_local_opposite_spin_packed_gradient_by_pair_graph(
   const SelectedStatePairGraph pair_graph(
       selected_states,
       PrimarySpin::Alpha);
-  Eigen::MatrixXd ordered_gradient = Eigen::MatrixXd::Zero(
-      n_packed_active_pairs,
-      n_packed_active_pairs);
   accumulate_ordered_packed_gradient_from_pair_graph(
       alpha_directional_pair_data,
       same_spin_pair_cache.beta_pair_cache_ref(),
       selected_states,
       pair_graph,
       n_packed_active_pairs,
-      &ordered_gradient);
+      packed_active_two_electron_gradient);
   accumulate_ordered_packed_gradient_from_pair_graph(
       same_spin_pair_cache.alpha_pair_cache_ref(),
       beta_directional_pair_data,
       selected_states,
       pair_graph,
-      n_packed_active_pairs,
-      &ordered_gradient);
-  pack_ordered_gradient(
-      ordered_gradient,
       n_packed_active_pairs,
       packed_active_two_electron_gradient);
 }
