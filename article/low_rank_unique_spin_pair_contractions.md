@@ -1953,6 +1953,126 @@ establish contraction accuracy or speed.  The next validation must compare
 small-core Hamiltonian, gradient, and HVP contractions with the existing exact
 interpolation reference, followed by an RI/THC timing comparison.
 
+### 9.3 Inverse-free RI contraction and directional adjoint
+
+The propagated representation is now used directly by the RI contraction,
+not only as a coverage diagnostic. Write
+
+$$
+X=A+UV^{\mathrm T},
+\qquad
+K=A^{-1},
+\qquad
+G=I+V^{\mathrm T}KU,
+$$
+
+where only the certified base $A$ is inverted. The physical overlap $X$ and
+the dangerous core $G$ may be singular. Their determinant and first cofactor
+are evaluated as
+
+$$
+\det X=\det A\det G,
+$$
+
+$$
+C_1(X)
+=
+\det A
+\left[
+\det(G)K
+-KU C_1(G)^{\mathrm T}V^{\mathrm T}K
+\right]^{\mathrm T}.
+$$
+
+For one RI transition block $M^Q$, define
+
+$$
+C^Q=KM^Q,
+\qquad
+P=KU,
+\qquad
+R^Q=V^{\mathrm T}C^Q,
+$$
+
+$$
+B^Q=R^QP,
+\qquad
+D^Q=R^QC^QP.
+$$
+
+The unnormalized same-spin contribution is
+
+$$
+\begin{aligned}
+F_Q
+=\det A\Bigg[
+&\det(G)\frac{\operatorname{tr}(C^Q)^2-
+\operatorname{tr}((C^Q)^2)}{2}\\
+&-\operatorname{tr}(C^Q)\langle C_1(G),B^Q\rangle
++\langle C_1(G),D^Q\rangle\\
+&+\left\langle C_2(G),\wedge^2 B^Q\right\rangle
+\Bigg].
+\end{aligned}
+$$
+
+This expression contains cofactors only in the retained $q\times q$ core. It
+is therefore well defined when $G$ is singular and never forms the physical
+inverse $X^{-1}$ or a fourth-order occupied interaction tensor.
+
+For a directional perturbation, the exact tangent begins with
+
+$$
+\dot K=-K\dot A K,
+\qquad
+\dot P=\dot K U,
+\qquad
+\dot G=V^{\mathrm T}\dot P,
+$$
+
+$$
+\dot C^Q=\dot K M^Q+K\dot M^Q.
+$$
+
+The small-core polynomial is differentiated without an inverse of $G$:
+
+$$
+\dot{\det G}=\langle C_1(G),\dot G\rangle,
+\qquad
+\dot C_1(G)=D C_1(G)[\dot G],
+$$
+
+$$
+\dot C_2(G)=D C_2(G)[\dot G].
+$$
+
+Forward differentiation of the contracted scalar followed by reverse
+propagation gives the exact directional overlap adjoint
+$\dot{\overline X}$ and RI-transition adjoint
+$\dot{\overline M}^{Q}$. Thus the same core supplies the accepted energy,
+gradient, and HVP quantities for regular, ill-conditioned, and singular
+pairs. No finite-difference derivative or interpolation node is used in the
+production contraction.
+
+For fixed small $q$, the scalar graph update retains the target cost
+
+$$
+O(N_{\mathrm{aux}}n^2)
+$$
+
+per pair edge. The present full overlap-adjoint and directional-adjoint
+implementation costs
+
+$$
+O(N_{\mathrm{aux}}n^3)
+$$
+
+per evaluated pair because it returns dense transition and overlap gradients,
+but it removes the former occupied-pair interaction construction and its
+$n^4$--$n^6$ polynomial-cofactor work. Further reduction requires contracting
+these adjoints directly into their downstream orbital weights or replacing
+the pair sweep by a biorthogonal action; it cannot be obtained by another
+cache around the old high-order tensor.
+
 ## 10. Ill-conditioned and singular pair treatment
 
 ### 10.1 Residual-certified propagation
