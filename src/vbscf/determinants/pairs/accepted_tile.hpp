@@ -15,12 +15,6 @@ struct AcceptedPairTileBuildOptions {
   bool populate_opposite_spin_projection = true;
 };
 
-struct AcceptedPairTileStatistics {
-  std::size_t anchors = 0;
-  std::size_t woodbury_updates = 0;
-  std::size_t certified_reanchors = 0;
-};
-
 /** Bounded accepted-point pair payload for one rectangular spin-string tile. */
 struct AcceptedSpinPairTile {
   int left_begin = 0;
@@ -28,7 +22,6 @@ struct AcceptedSpinPairTile {
   int left_size = 0;
   int right_size = 0;
   std::vector<SpinDeterminantPairEvaluation> pairs;
-  AcceptedPairTileStatistics statistics;
 
   const SpinDeterminantPairEvaluation& pair(
       int left_local,
@@ -38,12 +31,11 @@ struct AcceptedSpinPairTile {
 /**
  * @brief Generates accepted same-spin pairs without persistent quadratic storage.
  *
- * The provider builds a single-substitution graph once. Within each requested
- * tile, roots are factorized independently and every certified regular child
- * overlap is obtained from its parent by a rank-one Woodbury update. Singular
- * or uncertified children are exact re-anchors. Integral contractions remain
- * representation-native: RI packed features are rebuilt directly rather than
- * carrying the slower full auxiliary matrix state.
+ * Every requested pair is evaluated independently with the canonical overlap
+ * resolver.  The provider deliberately contains no low-rank update policy:
+ * tiling controls memory independently of any future pair-generation
+ * acceleration, and singular-pair handling remains identical to the exact
+ * non-streamed evaluator.
  */
 class AcceptedPairTileProvider {
  public:
@@ -72,7 +64,6 @@ class AcceptedPairTileProvider {
 
  private:
   std::vector<std::vector<int>> unique_spin_strings_;
-  std::vector<std::vector<int>> substitution_graph_;
   int n_active_orbitals_ = 0;
   DeterminantOverlapResolver overlap_resolver_;
   DeterminantPairEvaluator pair_evaluator_;

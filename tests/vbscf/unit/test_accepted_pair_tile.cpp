@@ -130,13 +130,6 @@ int main() {
       h1e,
       ri,
       xmvb::vb::AcceptedPairTileBuildOptions{false, true});
-  require(
-      tile.statistics.woodbury_updates > 0,
-      "accepted tile did not use Woodbury graph edges");
-  require(
-      tile.statistics.anchors < tile.pairs.size(),
-      "accepted tile factorized every pair independently");
-
   const int n_unique = static_cast<int>(strings.size());
   for (int left = 0; left < n_unique; ++left) {
     for (int right = 0; right < n_unique; ++right) {
@@ -235,12 +228,9 @@ int main() {
       singular_h1e,
       singular_two_electron);
   require(
-      singular_tile.statistics.certified_reanchors == 2,
-      "singular Woodbury edges were not re-anchored");
-  require(
       singular_tile.pair(0, 0).overlap_result.nullity == 0 &&
       singular_tile.pair(0, 1).overlap_result.nullity == 1 &&
       singular_tile.pair(0, 2).overlap_result.nullity == 1,
-      "certified re-anchor changed singular-pair classification");
+      "exact tiled evaluation changed singular-pair classification");
   return 0;
 }
