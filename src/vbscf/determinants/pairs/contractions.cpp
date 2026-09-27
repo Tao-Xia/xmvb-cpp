@@ -467,7 +467,7 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_block,
     double total_phi,
     const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient,
-    bool project_first_cofactor_direction) {
+    bool build_first_cofactor_auxiliary) {
   if (overlap.nullity != 0 || overlap.overlap_determinant == 0.0) {
     throw std::invalid_argument(
         "regular RI same-spin direction requires a nonsingular pair");
@@ -502,7 +502,7 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
       (inverse * one_electron_direction).trace();
   Eigen::VectorXd accepted_auxiliary;
   Eigen::VectorXd directional_auxiliary;
-  if (project_first_cofactor_direction) {
+  if (build_first_cofactor_auxiliary) {
     accepted_auxiliary.resize(ri_active_pair_factors.rows());
     directional_auxiliary.resize(ri_active_pair_factors.rows());
   }
@@ -520,7 +520,7 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
     const Eigen::MatrixXd contracted = inverse * transition;
     const Eigen::MatrixXd contracted_direction =
         inverse_direction * transition + inverse * transition_direction;
-    if (project_first_cofactor_direction) {
+    if (build_first_cofactor_auxiliary) {
       accepted_auxiliary(auxiliary) = overlap.overlap_determinant *
           contracted.trace();
       directional_auxiliary(auxiliary) =
@@ -559,11 +559,9 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
   result.delta_overlap_hamiltonian_gradient =
       determinant_direction * bracket +
       overlap.overlap_determinant * bracket_direction;
-  if (project_first_cofactor_direction) {
-    result.delta_projected_first_cofactor.noalias() =
-        ri_active_pair_factors.transpose() * directional_auxiliary;
-    result.delta_projected_first_cofactor.noalias() +=
-        delta_ri_active_pair_factors.transpose() * accepted_auxiliary;
+  if (build_first_cofactor_auxiliary) {
+    result.accepted_first_cofactor_auxiliary = std::move(accepted_auxiliary);
+    result.delta_first_cofactor_auxiliary = std::move(directional_auxiliary);
   }
   return result;
 }
