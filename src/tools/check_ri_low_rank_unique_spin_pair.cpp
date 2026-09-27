@@ -16,6 +16,7 @@
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/determinants/pairs/woodbury_overlap.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
@@ -28,6 +29,8 @@ struct Options {
   int max_pair_checks = 64;
   int max_rank_update_checks = 32;
   int max_feature_benchmark_pairs = 20000;
+  int max_anchor_census_pairs = 0;
+  bool anchor_census_only = false;
 };
 
 struct LocalityStats {
@@ -90,6 +93,18 @@ struct RankOneOverlapStats {
   double rank_one_seconds = 0.0;
   double max_abs_inverse_diff = 0.0;
   double max_abs_det_diff = 0.0;
+};
+
+struct CertifiedAnchorCensus {
+  long long visited_pairs = 0;
+  long long regular_pairs = 0;
+  long long singular_pairs = 0;
+  long long certified_updates = 0;
+  long long direct_anchors = 0;
+  long long initial_anchors = 0;
+  long long topology_break_anchors = 0;
+  long long certificate_reanchors = 0;
+  long long post_singular_anchors = 0;
 };
 
 struct RiQUpdateStats {
@@ -173,7 +188,9 @@ void print_usage() {
       << " [--standard-two-electron-mode ri|auto]"
       << " [--max-pair-checks N]"
       << " [--max-rank-update-checks N]"
-      << " [--max-feature-benchmark-pairs N]\n";
+      << " [--max-feature-benchmark-pairs N]"
+      << " [--max-anchor-census-pairs N]"
+      << " [--anchor-census-only]\n";
 }
 
 int parse_positive_int(const std::string& text, const char* option_name) {
@@ -235,6 +252,23 @@ Options parse_arguments(int argc, char** argv) {
       options.max_feature_benchmark_pairs = parse_positive_int(
           argv[++argument_index],
           "--max-feature-benchmark-pairs");
+      continue;
+    }
+    if (name == "--max-anchor-census-pairs") {
+      if (argument_index + 1 >= argc) {
+        throw std::invalid_argument(
+            "--max-anchor-census-pairs requires a value");
+      }
+      options.max_anchor_census_pairs =
+          std::stoi(argv[++argument_index]);
+      if (options.max_anchor_census_pairs < 0) {
+        throw std::invalid_argument(
+            "--max-anchor-census-pairs must be non-negative");
+      }
+      continue;
+    }
+    if (name == "--anchor-census-only") {
+      options.anchor_census_only = true;
       continue;
     }
     throw std::invalid_argument("unknown argument: " + name);
@@ -573,6 +607,167 @@ std::vector<int> build_slot_stable_traversal_order(
     (void)current;
   }
   return order;
+}
+
+CertifiedAnchorCensus run_certified_anchor_census(
+    const std::vector<std::vector<int>>& unique_strings,
+    const std::vector<double>& active_overlap,
+    int n_active_orbitals,
+    int max_pairs) {
+  CertifiedAnchorCensus census;
+  if (unique_strings.empty()) {
+    return census;
+  }
+
+  const std::vector<int> left_order =
+      build_slot_stable_traversal_order(unique_strings);
+  const std::vector<int> right_order = left_order;
+  const Eigen::Map<const Eigen::MatrixXd> overlap_map(
+      active_overlap.data(), n_active_orbitals, n_active_orbitals);
+  const xmvb::vb::DeterminantOverlapResolver overlap_resolver;
+
+  std::vector<int> current_left;
+  std::vector<int> current_right;
+  xmvb::vb::DeterminantOverlapResult current_overlap;
+  bool state_valid = false;
+  bool first_pair = true;
+  bool previous_was_singular = false;
+
+  const auto resolve_direct = [&](
+      const std::vector<int>& occupied_left,
+      const std::vector<int>& occupied_right) {
+    return overlap_resolver.resolve_matrix(
+        xmvb::vb::build_overlap_submatrix(
+            occupied_left, occupied_right, overlap_map));
+  };
+
+  for (int left_position = 0;
+       left_position < static_cast<int>(left_order.size());
+       ++left_position) {
+    const bool reverse = left_position % 2 != 0;
+    for (int right_offset = 0;
+         right_offset < static_cast<int>(right_order.size());
+         ++right_offset) {
+      if (max_pairs > 0 && census.visited_pairs >= max_pairs) {
+        return census;
+      }
+      const int right_position = reverse
+          ? static_cast<int>(right_order.size()) - 1 - right_offset
+          : right_offset;
+      const auto& target_left = unique_strings[left_order[left_position]];
+      const auto& target_right = unique_strings[right_order[right_position]];
+      ++census.visited_pairs;
+
+      if (!state_valid) {
+        current_left = target_left;
+        current_right = target_right;
+        current_overlap = resolve_direct(current_left, current_right);
+        if (current_overlap.nullity == 0 &&
+            current_overlap.overlap_determinant != 0.0) {
+          ++census.regular_pairs;
+          ++census.direct_anchors;
+          if (first_pair) {
+            ++census.initial_anchors;
+          } else if (previous_was_singular) {
+            ++census.post_singular_anchors;
+          }
+          state_valid = true;
+          previous_was_singular = false;
+        } else {
+          ++census.singular_pairs;
+          previous_was_singular = true;
+        }
+        first_pair = false;
+        continue;
+      }
+
+      const bool left_edge = right_offset == 0;
+      std::vector<int> next_left = current_left;
+      std::vector<int> next_right = current_right;
+      int slot = -1;
+      int old_orbital = -1;
+      int new_orbital = -1;
+      const bool has_rank_one_edge = left_edge
+          ? find_single_replacement_slot(
+                current_left,
+                target_left,
+                &slot,
+                &old_orbital,
+                &new_orbital)
+          : find_single_replacement_slot(
+                current_right,
+                target_right,
+                &slot,
+                &old_orbital,
+                &new_orbital);
+      if (!has_rank_one_edge) {
+        current_left = target_left;
+        current_right = target_right;
+        current_overlap = resolve_direct(current_left, current_right);
+        if (current_overlap.nullity == 0 &&
+            current_overlap.overlap_determinant != 0.0) {
+          ++census.regular_pairs;
+          ++census.direct_anchors;
+          ++census.topology_break_anchors;
+          state_valid = true;
+          previous_was_singular = false;
+        } else {
+          ++census.singular_pairs;
+          state_valid = false;
+          previous_was_singular = true;
+        }
+        first_pair = false;
+        continue;
+      }
+
+      if (left_edge) {
+        next_left[slot] = new_orbital;
+      } else {
+        next_right[slot] = new_orbital;
+      }
+      auto updated = left_edge
+          ? xmvb::vb::try_woodbury_left_overlap_update(
+                current_left,
+                next_left,
+                current_right,
+                overlap_map,
+                current_overlap)
+          : xmvb::vb::try_woodbury_right_overlap_update(
+                current_left,
+                current_right,
+                next_right,
+                overlap_map,
+                current_overlap);
+      if (updated.has_value()) {
+        current_left = std::move(next_left);
+        current_right = std::move(next_right);
+        current_overlap = std::move(*updated);
+        ++census.regular_pairs;
+        ++census.certified_updates;
+        previous_was_singular = false;
+        first_pair = false;
+        continue;
+      }
+
+      current_left = std::move(next_left);
+      current_right = std::move(next_right);
+      current_overlap = resolve_direct(current_left, current_right);
+      if (current_overlap.nullity == 0 &&
+          current_overlap.overlap_determinant != 0.0) {
+        ++census.regular_pairs;
+        ++census.direct_anchors;
+        ++census.certificate_reanchors;
+        state_valid = true;
+        previous_was_singular = false;
+      } else {
+        ++census.singular_pairs;
+        state_valid = false;
+        previous_was_singular = true;
+      }
+      first_pair = false;
+    }
+  }
+  return census;
 }
 
 Eigen::MatrixXd build_ri_occupied_block(
@@ -2403,6 +2598,70 @@ void print_feature_benchmark_stats(
             << stats.scalar_linear_checksum_abs_diff << '\n';
 }
 
+long long binomial_count(int n, int k) {
+  if (k < 0 || k > n) {
+    return 0;
+  }
+  k = std::min(k, n - k);
+  long long value = 1;
+  for (int index = 1; index <= k; ++index) {
+    value = value * (n - k + index) / index;
+  }
+  return value;
+}
+
+void print_certified_anchor_census(
+    const std::string& label,
+    const std::vector<std::vector<int>>& unique_strings,
+    int n_active_orbitals,
+    const CertifiedAnchorCensus& census) {
+  const int n_electrons = unique_strings.empty()
+      ? 0
+      : static_cast<int>(unique_strings.front().size());
+  const long long complete_space_size =
+      binomial_count(n_active_orbitals, n_electrons);
+  const double anchor_fraction = census.regular_pairs > 0
+      ? static_cast<double>(census.direct_anchors) /
+          static_cast<double>(census.regular_pairs)
+      : 0.0;
+  const double certified_update_fraction = census.regular_pairs > 0
+      ? static_cast<double>(census.certified_updates) /
+          static_cast<double>(census.regular_pairs)
+      : 0.0;
+  std::cout << label << "_n_unique = " << unique_strings.size() << '\n';
+  std::cout << label << "_n_electrons = " << n_electrons << '\n';
+  std::cout << label << "_complete_space_size = "
+            << complete_space_size << '\n';
+  std::cout << label << "_is_complete_space = "
+            << (static_cast<long long>(unique_strings.size()) ==
+                    complete_space_size
+                ? 1
+                : 0)
+            << '\n';
+  std::cout << label << "_anchor_visited_pairs = "
+            << census.visited_pairs << '\n';
+  std::cout << label << "_anchor_regular_pairs = "
+            << census.regular_pairs << '\n';
+  std::cout << label << "_anchor_singular_pairs = "
+            << census.singular_pairs << '\n';
+  std::cout << label << "_anchor_certified_updates = "
+            << census.certified_updates << '\n';
+  std::cout << label << "_anchor_direct_anchors = "
+            << census.direct_anchors << '\n';
+  std::cout << label << "_anchor_initial_anchors = "
+            << census.initial_anchors << '\n';
+  std::cout << label << "_anchor_topology_break_anchors = "
+            << census.topology_break_anchors << '\n';
+  std::cout << label << "_anchor_certificate_reanchors = "
+            << census.certificate_reanchors << '\n';
+  std::cout << label << "_anchor_post_singular_anchors = "
+            << census.post_singular_anchors << '\n';
+  std::cout << label << "_anchor_fraction_of_regular_pairs = "
+            << anchor_fraction << '\n';
+  std::cout << label << "_certified_update_fraction_of_regular_pairs = "
+            << certified_update_fraction << '\n';
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -2414,6 +2673,39 @@ int main(int argc, char** argv) {
     const auto load_start = std::chrono::high_resolution_clock::now();
     const auto load_result =
         xmvb::vb::load_vbscf_input_with_timings(options.input_path, load_options);
+
+    const int n_active_orbitals =
+        load_result.input.orbital_preparation_input.n_active_orbitals;
+    const auto alpha_reuse_table = xmvb::vb::build_spin_determinant_reuse_table(
+        load_result.input.structure_data.alpha_det);
+    const auto beta_reuse_table = xmvb::vb::build_spin_determinant_reuse_table(
+        load_result.input.structure_data.beta_det);
+    const auto& alpha_strings = alpha_reuse_table.unique_determinants;
+    const auto& beta_strings = beta_reuse_table.unique_determinants;
+
+    if (options.anchor_census_only) {
+      xmvb::vb::ActiveSpaceOrbitalPreparer census_orbital_preparer;
+      const auto orbital_result = census_orbital_preparer.prepare(
+          load_result.input.orbital_preparation_input);
+      const auto alpha_census = run_certified_anchor_census(
+          alpha_strings,
+          orbital_result.active_orbital_overlap_matrix,
+          n_active_orbitals,
+          options.max_anchor_census_pairs);
+      const auto beta_census = run_certified_anchor_census(
+          beta_strings,
+          orbital_result.active_orbital_overlap_matrix,
+          n_active_orbitals,
+          options.max_anchor_census_pairs);
+      std::cout << std::setprecision(15);
+      std::cout << "input_path = " << options.input_path << '\n';
+      std::cout << "n_active_orbitals = " << n_active_orbitals << '\n';
+      print_certified_anchor_census(
+          "alpha", alpha_strings, n_active_orbitals, alpha_census);
+      print_certified_anchor_census(
+          "beta", beta_strings, n_active_orbitals, beta_census);
+      return 0;
+    }
 
     xmvb::vb::ActiveSpaceOrbitalPreparer orbital_preparer;
     xmvb::vb::AoEffectiveOneElectronBuilder ao_effective_one_electron_builder;
@@ -2429,8 +2721,6 @@ int main(int argc, char** argv) {
             .prepared_active_space;
     const auto load_end = std::chrono::high_resolution_clock::now();
 
-    const int n_active_orbitals =
-        load_result.input.orbital_preparation_input.n_active_orbitals;
     const auto& active_two_electron =
         prepared_active_space.active_space_two_electron_result;
     if (active_two_electron.representation !=
@@ -2439,13 +2729,6 @@ int main(int argc, char** argv) {
       throw std::runtime_error(
           "diagnostic requires RI active-space two-electron factors");
     }
-
-    const auto alpha_reuse_table = xmvb::vb::build_spin_determinant_reuse_table(
-        load_result.input.structure_data.alpha_det);
-    const auto beta_reuse_table = xmvb::vb::build_spin_determinant_reuse_table(
-        load_result.input.structure_data.beta_det);
-    const auto& alpha_strings = alpha_reuse_table.unique_determinants;
-    const auto& beta_strings = beta_reuse_table.unique_determinants;
 
     const LocalityStats alpha_locality =
         compute_locality_stats(alpha_strings);
