@@ -22,6 +22,12 @@ struct WoodburyContraction {
   Eigen::MatrixXd transition_gradient;
 };
 
+struct WoodburyContractionDirection {
+  double value = 0.0;
+  Eigen::MatrixXd overlap_gradient;
+  Eigen::MatrixXd transition_gradient;
+};
+
 /**
  * @brief Stable inverse base plus an inverse-free low-rank overlap core.
  *
@@ -63,12 +69,18 @@ class WoodburyCore {
 
   /** @brief Exact first cofactor of the represented overlap. */
   Eigen::MatrixXd first_cofactor() const;
+  Eigen::MatrixXd first_cofactor_direction(
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction) const;
 
   /** @brief Contracts one matrix with the exact first cofactor. */
   double first_contraction(
       const Eigen::Ref<const Eigen::MatrixXd>& transition) const;
   WoodburyContraction first_contraction_gradient(
       const Eigen::Ref<const Eigen::MatrixXd>& transition) const;
+  WoodburyContractionDirection first_contraction_gradient_direction(
+      const Eigen::Ref<const Eigen::MatrixXd>& transition,
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& transition_direction) const;
   double first_channel_contraction(
       const Eigen::Ref<const Eigen::MatrixXd>& channel) const;
 
@@ -85,6 +97,10 @@ class WoodburyCore {
       const Eigen::Ref<const Eigen::MatrixXd>& transition) const;
   WoodburyContraction second_factor_contraction_gradient(
       const Eigen::Ref<const Eigen::MatrixXd>& transition) const;
+  WoodburyContractionDirection second_factor_contraction_gradient_direction(
+      const Eigen::Ref<const Eigen::MatrixXd>& transition,
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& transition_direction) const;
   WoodburyContraction second_channel_contraction_gradient(
       const Eigen::Ref<const Eigen::MatrixXd>& channel,
       const Eigen::Ref<const Eigen::MatrixXd>& transition) const;

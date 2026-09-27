@@ -40,6 +40,8 @@ struct SpinDeterminantPairEvaluation {
    * contributions to `\phi`.
    */
   bool has_same_spin_phi_cache = false;
+  /** RI response is carried by the inverse-free Woodbury dangerous core. */
+  bool has_woodbury_ri_response = false;
   double same_spin_one_electron_phi = 0.0;
   double same_spin_total_phi = 0.0;
   Eigen::MatrixXd same_spin_inverse_overlap_gradient;

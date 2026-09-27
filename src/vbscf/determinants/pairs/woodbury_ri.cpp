@@ -244,6 +244,14 @@ int WoodburyRiState::overlap_nullity() const noexcept {
   return valid() ? core_->nullity() : 0;
 }
 
+const Eigen::MatrixXd& WoodburyRiState::regular_inverse() const {
+  if (!valid() || core_->rank() != 0) {
+    throw std::logic_error(
+        "physical overlap inverse is available only for a regular Woodbury state");
+  }
+  return core_->inverse_base();
+}
+
 double WoodburyRiState::overlap_determinant() const {
   if (!valid()) {
     throw std::logic_error("Woodbury RI state is not initialized");
@@ -322,6 +330,78 @@ Eigen::MatrixXd WoodburyRiState::hamiltonian_overlap_gradient(
     }
     result.noalias() += core_->second_channel_contraction_gradient(
         channel(auxiliary), transition).overlap_gradient;
+  }
+  return result;
+}
+
+WoodburyRiDirection WoodburyRiState::hamiltonian_direction(
+    const Eigen::Ref<const Eigen::MatrixXd>& occupied_one_electron,
+    const Eigen::Ref<const Eigen::MatrixXd>& occupied_one_electron_direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_factors,
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_factor_direction,
+    bool auxiliary_projection) const {
+  if (!valid() ||
+      occupied_one_electron.rows() != n_electrons_ ||
+      occupied_one_electron.cols() != n_electrons_ ||
+      occupied_one_electron_direction.rows() != n_electrons_ ||
+      occupied_one_electron_direction.cols() != n_electrons_ ||
+      overlap_direction.rows() != n_electrons_ ||
+      overlap_direction.cols() != n_electrons_ ||
+      ri_factors.rows() != channels_.rows() ||
+      ri_factor_direction.rows() != channels_.rows() ||
+      ri_factor_direction.cols() != ri_factors.cols() ||
+      !factors_cover_strings(
+          occupied_left_, occupied_right_, ri_factors.cols())) {
+    throw std::invalid_argument(
+        "Woodbury RI Hamiltonian-direction dimensions differ");
+  }
+
+  WoodburyRiDirection result;
+  const WoodburyContractionDirection one_electron =
+      core_->first_contraction_gradient_direction(
+          occupied_one_electron,
+          overlap_direction,
+          occupied_one_electron_direction);
+  result.hamiltonian = one_electron.value;
+  result.hamiltonian_overlap_gradient = one_electron.overlap_gradient;
+  result.first_cofactor =
+      core_->first_cofactor_direction(overlap_direction);
+  result.overlap_determinant =
+      (core_->first_cofactor().cwiseProduct(overlap_direction)).sum();
+  if (auxiliary_projection) {
+    result.accepted_auxiliary.resize(channels_.rows());
+    result.directional_auxiliary.resize(channels_.rows());
+  }
+
+  Eigen::MatrixXd transition(n_electrons_, n_electrons_);
+  Eigen::MatrixXd transition_direction(n_electrons_, n_electrons_);
+  const Eigen::MatrixXd first_cofactor = core_->first_cofactor();
+  for (Eigen::Index auxiliary = 0;
+       auxiliary < channels_.rows();
+       ++auxiliary) {
+    for (int left = 0; left < n_electrons_; ++left) {
+      for (int right = 0; right < n_electrons_; ++right) {
+        const int pair = TwoElectronIndexer::packed_pair_index(
+            occupied_right_[right], occupied_left_[left]);
+        transition(right, left) = ri_factors(auxiliary, pair);
+        transition_direction(right, left) =
+            ri_factor_direction(auxiliary, pair);
+      }
+    }
+    const WoodburyContractionDirection two_electron =
+        core_->second_factor_contraction_gradient_direction(
+            transition, overlap_direction, transition_direction);
+    result.hamiltonian += two_electron.value;
+    result.hamiltonian_overlap_gradient.noalias() +=
+        two_electron.overlap_gradient;
+    if (auxiliary_projection) {
+      result.accepted_auxiliary(auxiliary) =
+          (first_cofactor.cwiseProduct(transition)).sum();
+      result.directional_auxiliary(auxiliary) =
+          (result.first_cofactor.cwiseProduct(transition)).sum() +
+          (first_cofactor.cwiseProduct(transition_direction)).sum();
+    }
   }
   return result;
 }

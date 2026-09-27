@@ -135,6 +135,66 @@ void check_case(const Eigen::MatrixXd& overlap, const char* label) {
       2.0e-6,
       "second contraction gradient");
 
+  const auto first_gradient_direction =
+      core.first_contraction_gradient_direction(
+          transition, overlap_direction, transition_direction);
+  const auto second_gradient_direction =
+      core.second_factor_contraction_gradient_direction(
+          transition, overlap_direction, transition_direction);
+  const auto plus_first_gradient = plus_core.first_contraction_gradient(
+      transition + epsilon * transition_direction);
+  const auto minus_first_gradient = minus_core.first_contraction_gradient(
+      transition - epsilon * transition_direction);
+  const auto plus_second_gradient = plus_core.second_factor_contraction_gradient(
+      transition + epsilon * transition_direction);
+  const auto minus_second_gradient = minus_core.second_factor_contraction_gradient(
+      transition - epsilon * transition_direction);
+  require_close(
+      first_gradient_direction.value,
+      first_difference,
+      2.0e-7,
+      "first contraction value direction");
+  require_matrix_close(
+      first_gradient_direction.overlap_gradient,
+      (plus_first_gradient.overlap_gradient -
+       minus_first_gradient.overlap_gradient) /
+          (2.0 * epsilon),
+      3.0e-6,
+      "first overlap-gradient direction");
+  require_matrix_close(
+      first_gradient_direction.transition_gradient,
+      (plus_first_gradient.transition_gradient -
+       minus_first_gradient.transition_gradient) /
+          (2.0 * epsilon),
+      3.0e-6,
+      "first transition-gradient direction");
+  require_close(
+      second_gradient_direction.value,
+      second_difference,
+      2.0e-6,
+      "second contraction value direction");
+  require_matrix_close(
+      second_gradient_direction.overlap_gradient,
+      (plus_second_gradient.overlap_gradient -
+       minus_second_gradient.overlap_gradient) /
+          (2.0 * epsilon),
+      3.0e-5,
+      "second overlap-gradient direction");
+  require_matrix_close(
+      second_gradient_direction.transition_gradient,
+      (plus_second_gradient.transition_gradient -
+       minus_second_gradient.transition_gradient) /
+          (2.0 * epsilon),
+      3.0e-5,
+      "second transition-gradient direction");
+
+  require_matrix_close(
+      core.first_cofactor_direction(overlap_direction),
+      (plus_core.first_cofactor() - minus_core.first_cofactor()) /
+          (2.0 * epsilon),
+      3.0e-6,
+      "first cofactor direction");
+
   const Eigen::MatrixXd updated = overlap +
       Eigen::VectorXd::LinSpaced(n, -0.02, 0.03) *
       Eigen::RowVectorXd::LinSpaced(n, 0.04, -0.01);

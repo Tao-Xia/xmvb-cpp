@@ -561,17 +561,12 @@ int main() {
       &four_reference);
   const auto& four_generated = four_tile.pair(0, 1);
   require(
-      four_generated.has_same_spin_phi_cache &&
-          std::abs(
-              four_generated.same_spin_total_phi -
-              four_reference.same_spin_total_phi) <= 2.0e-11 &&
-          relative_difference(
-              four_generated.same_spin_inverse_overlap_gradient,
-              four_reference.same_spin_inverse_overlap_gradient) <= 2.0e-11 &&
+      (four_generated.has_woodbury_ri_response ||
+       four_generated.has_same_spin_phi_cache) &&
           relative_difference(
               four_generated.same_spin_overlap_hamiltonian_gradient,
               four_reference.same_spin_overlap_hamiltonian_gradient) <= 2.0e-11,
-      "accepted tile changed the regular RI response payload");
+      "accepted tile changed the Woodbury RI response payload");
   const auto tile = provider.build(
       0,
       static_cast<int>(strings.size()),
@@ -595,27 +590,15 @@ int main() {
                    actual.overlap_result.overlap_determinant) <= 2.0e-11,
           "accepted tile changed overlap determinant");
       require(
-          relative_difference(
-              expected.overlap_result.inverse_overlap_submatrix,
-              actual.overlap_result.inverse_overlap_submatrix) <= 5.0e-12,
-          "accepted tile changed inverse overlap");
-      require(
           std::abs(expected.total_hamiltonian - actual.total_hamiltonian) <=
               2.0e-10,
           "accepted tile changed same-spin Hamiltonian");
-      require(
-          std::abs(expected.same_spin_total_phi -
-                   actual.same_spin_total_phi) <= 2.0e-10,
-          "accepted tile changed same-spin phi");
-      require(
-          relative_difference(
-              expected.same_spin_inverse_overlap_gradient,
-              actual.same_spin_inverse_overlap_gradient) <= 2.0e-10,
-          "accepted tile changed inverse-overlap gradient");
-      require(
+      const double overlap_hamiltonian_gradient_difference =
           relative_difference(
               expected.same_spin_overlap_hamiltonian_gradient,
-              actual.same_spin_overlap_hamiltonian_gradient) <= 2.0e-10,
+              actual.same_spin_overlap_hamiltonian_gradient);
+      require(
+          overlap_hamiltonian_gradient_difference <= 2.0e-10,
           "accepted tile changed overlap-Hamiltonian gradient");
       compare_projection(
           expected.opposite_spin_pair_cache.first_order_cofactor_projection,

@@ -8,6 +8,7 @@
 #include <utility>
 
 #include "core/openmp.hpp"
+#include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/determinants/pairs/ri_update.hpp"
 #include "vbscf/determinants/pairs/traversal.hpp"
@@ -40,32 +41,62 @@ SpinDeterminantPairEvaluation evaluate_woodbury_ri_pair(
     const std::vector<int>& occupied_right,
     Eigen::MatrixXd overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
-    const WoodburyRiState& state) {
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_factors,
+    const WoodburyRiState& state,
+    bool populate_response_payload) {
   SpinDeterminantPairEvaluation result;
-  result.overlap_result.n_electrons = overlap.rows();
-  result.overlap_result.overlap_submatrix = std::move(overlap);
-  result.overlap_result.overlap_determinant = state.overlap_determinant();
-  result.overlap_result.nullity = state.overlap_nullity();
-  result.overlap_result.first_order_cofactor_matrix =
-      state.first_cofactor();
-  const double determinant = result.overlap_result.overlap_determinant;
-  if (determinant == 0.0) {
-    result.overlap_result.determinant_sign = 0.0;
-    result.overlap_result.log_abs_determinant =
-        -std::numeric_limits<double>::infinity();
+  if (populate_response_payload && state.core_rank() == 0) {
+    const DeterminantOverlapResolver resolver;
+    result.overlap_result = resolver.resolve_matrix(overlap);
+    result.overlap_result.first_order_cofactor_matrix =
+        result.overlap_result.overlap_determinant *
+        result.overlap_result.inverse_overlap_submatrix.transpose();
   } else {
-    result.overlap_result.determinant_sign =
-        std::signbit(determinant) ? -1.0 : 1.0;
-    result.overlap_result.log_abs_determinant =
-        std::log(std::abs(determinant));
+    result.overlap_result.n_electrons = overlap.rows();
+    result.overlap_result.overlap_submatrix = std::move(overlap);
+    result.overlap_result.overlap_determinant = state.overlap_determinant();
+    result.overlap_result.nullity = state.overlap_nullity();
+    result.overlap_result.first_order_cofactor_matrix =
+        state.first_cofactor();
+    if (state.core_rank() == 0) {
+      result.overlap_result.inverse_overlap_submatrix =
+          state.regular_inverse();
+    }
+    const double determinant = result.overlap_result.overlap_determinant;
+    if (determinant == 0.0) {
+      result.overlap_result.determinant_sign = 0.0;
+      result.overlap_result.log_abs_determinant =
+          -std::numeric_limits<double>::infinity();
+    } else {
+      result.overlap_result.determinant_sign =
+          std::signbit(determinant) ? -1.0 : 1.0;
+      result.overlap_result.log_abs_determinant =
+          std::log(std::abs(determinant));
+    }
   }
   const Eigen::MatrixXd one_electron = occupied_one_electron_block(
       occupied_left, occupied_right, active_one_electron);
   result.one_electron_hamiltonian =
-      state.one_electron_contraction(one_electron);
+      (result.overlap_result.first_order_cofactor_matrix
+           .cwiseProduct(one_electron))
+          .sum();
+  const double state_determinant = state.overlap_determinant();
+  const double two_electron =
+      populate_response_payload && state.core_rank() == 0 &&
+              state_determinant != 0.0
+          ? result.overlap_result.overlap_determinant *
+                state.two_electron_contraction() / state_determinant
+          : state.two_electron_contraction();
   result.total_hamiltonian =
       result.one_electron_hamiltonian +
-      state.two_electron_contraction();
+      two_electron;
+  if (populate_response_payload && state.core_rank() != 0) {
+    result.cofactor_differential =
+        std::make_shared<const CofactorDifferential>(result.overlap_result);
+    result.has_woodbury_ri_response = true;
+    result.same_spin_overlap_hamiltonian_gradient =
+        state.hamiltonian_overlap_gradient(one_electron, ri_factors);
+  }
   return result;
 }
 
@@ -138,8 +169,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
   // overlap rows and left edges change columns.  Scalar and compact response
   // payloads share the same certified path.  One exact anchor per worker
   // replaces one anchor per tile row.
-  if (direct_ri && !options.materialize_projected_pair_values &&
-      !options.populate_response_payload) {
+  if (direct_ri && !options.materialize_projected_pair_values) {
 #pragma omp parallel if(n_threads > 1) num_threads(n_threads)
     {
       int thread = 0;
@@ -199,7 +229,9 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                   occupied_right,
                   std::move(overlap),
                   active_one_electron,
-                  ri_state);
+                  active_two_electron.ri_active_pair_factors,
+                  ri_state,
+                  options.populate_response_payload);
           if (options.populate_opposite_spin_projection ||
               options.populate_response_payload) {
             complete_same_spin_pair_evaluation(
@@ -252,8 +284,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
     return tile;
   }
 
-  if (direct_ri && options.materialize_projected_pair_values &&
-      !options.populate_response_payload) {
+  if (direct_ri && options.materialize_projected_pair_values) {
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
     for (int left_local = 0; left_local < tile.left_size; ++left_local) {
       const int left_index = left_begin + left_local;
@@ -292,7 +323,9 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                 occupied_right,
                 std::move(overlap),
                 active_one_electron,
-                ri_state);
+                active_two_electron.ri_active_pair_factors,
+                ri_state,
+                options.populate_response_payload);
         complete_same_spin_pair_evaluation(
             occupied_left,
             occupied_right,
@@ -301,7 +334,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             active_two_electron,
             true,
             false,
-            false,
+            options.populate_response_payload,
             &evaluation);
         auxiliary_panel.col(right_local) =
             ri_state.first_cofactor_auxiliary();

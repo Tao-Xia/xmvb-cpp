@@ -346,6 +346,50 @@ Eigen::MatrixXd WoodburyCore::first_cofactor() const {
       (core_determinant_ * inverse_base_ - correction).transpose();
 }
 
+Eigen::MatrixXd WoodburyCore::first_cofactor_direction(
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction) const {
+  if (overlap_direction.rows() != dimension() ||
+      overlap_direction.cols() != dimension()) {
+    throw std::invalid_argument(
+        "Woodbury first-cofactor direction dimensions differ");
+  }
+  const Eigen::MatrixXd inverse_direction =
+      -inverse_base_ * overlap_direction * inverse_base_;
+  const double base_determinant_direction =
+      base_determinant_ * (inverse_base_ * overlap_direction).trace();
+  if (rank() == 0) {
+    return base_determinant_direction * inverse_base_.transpose() +
+        base_determinant_ * inverse_direction.transpose();
+  }
+
+  const Eigen::MatrixXd base_core_direction =
+      inverse_direction * core_left_;
+  const Eigen::MatrixXd core_direction =
+      core_right_.transpose() * base_core_direction;
+  const double core_determinant_direction =
+      (core_cofactor_->value().cwiseProduct(core_direction)).sum();
+  const Eigen::MatrixXd core_first_direction =
+      core_cofactor_->first(core_direction);
+  const Eigen::MatrixXd correction =
+      inverse_base_core_left_ * core_cofactor_->value().transpose() *
+      core_right_.transpose() * inverse_base_;
+  const Eigen::MatrixXd correction_direction =
+      base_core_direction * core_cofactor_->value().transpose() *
+          core_right_.transpose() * inverse_base_ +
+      inverse_base_core_left_ * core_first_direction.transpose() *
+          core_right_.transpose() * inverse_base_ +
+      inverse_base_core_left_ * core_cofactor_->value().transpose() *
+          core_right_.transpose() * inverse_direction;
+  const Eigen::MatrixXd reduced =
+      core_determinant_ * inverse_base_ - correction;
+  const Eigen::MatrixXd reduced_direction =
+      core_determinant_direction * inverse_base_ +
+      core_determinant_ * inverse_direction - correction_direction;
+  return (base_determinant_direction * reduced +
+          base_determinant_ * reduced_direction)
+      .transpose();
+}
+
 double WoodburyCore::first_contraction(
     const Eigen::Ref<const Eigen::MatrixXd>& transition) const {
   if (transition.rows() != dimension() ||
@@ -414,6 +458,157 @@ WoodburyContraction WoodburyCore::first_contraction_gradient(
           inverse_base_.transpose() -
       inverse_base_.transpose() * inverse_gradient *
           inverse_base_.transpose();
+  return result;
+}
+
+WoodburyContractionDirection
+WoodburyCore::first_contraction_gradient_direction(
+    const Eigen::Ref<const Eigen::MatrixXd>& transition,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& transition_direction) const {
+  if (transition.rows() != dimension() ||
+      transition.cols() != dimension() ||
+      overlap_direction.rows() != dimension() ||
+      overlap_direction.cols() != dimension() ||
+      transition_direction.rows() != dimension() ||
+      transition_direction.cols() != dimension()) {
+    throw std::invalid_argument(
+        "Woodbury first-gradient direction dimensions differ");
+  }
+
+  const Eigen::MatrixXd inverse_direction =
+      -inverse_base_ * overlap_direction * inverse_base_;
+  const double determinant_direction =
+      base_determinant_ * (inverse_base_ * overlap_direction).trace();
+  const Eigen::MatrixXd channel = inverse_base_ * transition;
+  const Eigen::MatrixXd channel_direction =
+      inverse_direction * transition +
+      inverse_base_ * transition_direction;
+  const double trace = channel.trace();
+  const double trace_direction = channel_direction.trace();
+
+  Eigen::MatrixXd channel_gradient = Eigen::MatrixXd::Zero(
+      dimension(), dimension());
+  Eigen::MatrixXd channel_gradient_direction = Eigen::MatrixXd::Zero(
+      dimension(), dimension());
+  Eigen::MatrixXd inverse_gradient = Eigen::MatrixXd::Zero(
+      dimension(), dimension());
+  Eigen::MatrixXd inverse_gradient_direction = Eigen::MatrixXd::Zero(
+      dimension(), dimension());
+  double determinant_gradient = 0.0;
+  double determinant_gradient_direction = 0.0;
+  WoodburyContractionDirection result;
+
+  if (rank() == 0) {
+    result.value = determinant_direction * trace +
+        base_determinant_ * trace_direction;
+    determinant_gradient = trace;
+    determinant_gradient_direction = trace_direction;
+    channel_gradient.diagonal().array() = base_determinant_;
+    channel_gradient_direction.diagonal().array() = determinant_direction;
+  } else {
+    const Eigen::MatrixXd base_core_direction =
+        inverse_direction * core_left_;
+    const Eigen::MatrixXd core_direction =
+        core_right_.transpose() * base_core_direction;
+    const double core_determinant_direction =
+        (core_cofactor_->value().cwiseProduct(core_direction)).sum();
+    const Eigen::MatrixXd core_first_direction =
+        core_cofactor_->first(core_direction);
+    const Eigen::MatrixXd projected =
+        core_right_.transpose() * channel;
+    const Eigen::MatrixXd projected_direction =
+        core_right_.transpose() * channel_direction;
+    const Eigen::MatrixXd first_core =
+        projected * inverse_base_core_left_;
+    const Eigen::MatrixXd first_core_direction =
+        projected_direction * inverse_base_core_left_ +
+        projected * base_core_direction;
+    const double linear = core_first_contraction(first_core);
+    const double linear_direction =
+        (core_first_direction.cwiseProduct(first_core)).sum() +
+        (core_cofactor_->value().cwiseProduct(first_core_direction)).sum();
+    const double reduced = core_determinant_ * trace - linear;
+    const double reduced_direction =
+        core_determinant_direction * trace +
+        core_determinant_ * trace_direction - linear_direction;
+    result.value = determinant_direction * reduced +
+        base_determinant_ * reduced_direction;
+    determinant_gradient = reduced;
+    determinant_gradient_direction = reduced_direction;
+
+    const Eigen::MatrixXd first_core_gradient =
+        -base_determinant_ * core_cofactor_->value();
+    const Eigen::MatrixXd first_core_gradient_direction =
+        -determinant_direction * core_cofactor_->value() -
+        base_determinant_ * core_first_direction;
+    const Eigen::MatrixXd core_argument =
+        -base_determinant_ * first_core;
+    const Eigen::MatrixXd core_argument_direction =
+        -determinant_direction * first_core -
+        base_determinant_ * first_core_direction;
+    Eigen::MatrixXd core_gradient =
+        base_determinant_ * trace * core_cofactor_->value();
+    core_gradient.noalias() += core_cofactor_->first(core_argument);
+    Eigen::MatrixXd core_gradient_direction =
+        (determinant_direction * trace +
+         base_determinant_ * trace_direction) *
+            core_cofactor_->value() +
+        base_determinant_ * trace * core_first_direction;
+    core_gradient_direction.noalias() +=
+        core_cofactor_->mixed(core_direction, core_argument) +
+        core_cofactor_->first(core_argument_direction);
+
+    channel_gradient.diagonal().array() +=
+        base_determinant_ * core_determinant_;
+    channel_gradient_direction.diagonal().array() +=
+        determinant_direction * core_determinant_ +
+        base_determinant_ * core_determinant_direction;
+    const Eigen::MatrixXd projected_gradient =
+        first_core_gradient * inverse_base_core_left_.transpose();
+    const Eigen::MatrixXd projected_gradient_direction =
+        first_core_gradient_direction * inverse_base_core_left_.transpose() +
+        first_core_gradient * base_core_direction.transpose();
+    channel_gradient.noalias() +=
+        core_right_ * projected_gradient;
+    channel_gradient_direction.noalias() +=
+        core_right_ * projected_gradient_direction;
+
+    Eigen::MatrixXd base_core_gradient =
+        projected.transpose() * first_core_gradient;
+    base_core_gradient.noalias() += core_right_ * core_gradient;
+    Eigen::MatrixXd base_core_gradient_direction =
+        projected_direction.transpose() * first_core_gradient +
+        projected.transpose() * first_core_gradient_direction;
+    base_core_gradient_direction.noalias() +=
+        core_right_ * core_gradient_direction;
+    inverse_gradient.noalias() +=
+        base_core_gradient * core_left_.transpose();
+    inverse_gradient_direction.noalias() +=
+        base_core_gradient_direction * core_left_.transpose();
+  }
+
+  inverse_gradient.noalias() += channel_gradient * transition.transpose();
+  inverse_gradient_direction.noalias() +=
+      channel_gradient_direction * transition.transpose() +
+      channel_gradient * transition_direction.transpose();
+  result.transition_gradient.noalias() =
+      inverse_direction.transpose() * channel_gradient +
+      inverse_base_.transpose() * channel_gradient_direction;
+
+  const double scale = determinant_gradient * base_determinant_;
+  const double scale_direction =
+      determinant_gradient_direction * base_determinant_ +
+      determinant_gradient * determinant_direction;
+  result.overlap_gradient.noalias() =
+      scale_direction * inverse_base_.transpose() +
+      scale * inverse_direction.transpose() -
+      inverse_direction.transpose() * inverse_gradient *
+          inverse_base_.transpose() -
+      inverse_base_.transpose() * inverse_gradient_direction *
+          inverse_base_.transpose() -
+      inverse_base_.transpose() * inverse_gradient *
+          inverse_direction.transpose();
   return result;
 }
 
@@ -516,6 +711,270 @@ WoodburyContraction WoodburyCore::second_factor_contraction_gradient(
   }
   const Eigen::MatrixXd channel = inverse_base_ * transition;
   return second_channel_contraction_gradient(channel, transition);
+}
+
+WoodburyContractionDirection
+WoodburyCore::second_factor_contraction_gradient_direction(
+    const Eigen::Ref<const Eigen::MatrixXd>& transition,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& transition_direction) const {
+  if (transition.rows() != dimension() ||
+      transition.cols() != dimension() ||
+      overlap_direction.rows() != dimension() ||
+      overlap_direction.cols() != dimension() ||
+      transition_direction.rows() != dimension() ||
+      transition_direction.cols() != dimension()) {
+    throw std::invalid_argument(
+        "Woodbury second-gradient direction dimensions differ");
+  }
+
+  const Eigen::MatrixXd inverse_direction =
+      -inverse_base_ * overlap_direction * inverse_base_;
+  const double determinant_direction =
+      base_determinant_ * (inverse_base_ * overlap_direction).trace();
+  const Eigen::MatrixXd channel = inverse_base_ * transition;
+  const Eigen::MatrixXd channel_direction =
+      inverse_direction * transition +
+      inverse_base_ * transition_direction;
+  const double trace = channel.trace();
+  const double trace_direction = channel_direction.trace();
+  const double base_phi = 0.5 *
+      (trace * trace - channel.cwiseProduct(channel.transpose()).sum());
+  const double base_phi_direction =
+      trace * trace_direction -
+      channel_direction.cwiseProduct(channel.transpose()).sum();
+  const Eigen::MatrixXd identity =
+      Eigen::MatrixXd::Identity(dimension(), dimension());
+
+  Eigen::MatrixXd channel_gradient = Eigen::MatrixXd::Zero(
+      dimension(), dimension());
+  Eigen::MatrixXd channel_gradient_direction = Eigen::MatrixXd::Zero(
+      dimension(), dimension());
+  Eigen::MatrixXd inverse_gradient = Eigen::MatrixXd::Zero(
+      dimension(), dimension());
+  Eigen::MatrixXd inverse_gradient_direction = Eigen::MatrixXd::Zero(
+      dimension(), dimension());
+  double determinant_gradient = 0.0;
+  double determinant_gradient_direction = 0.0;
+  WoodburyContractionDirection result;
+
+  if (rank() == 0) {
+    result.value = determinant_direction * base_phi +
+        base_determinant_ * base_phi_direction;
+    determinant_gradient = base_phi;
+    determinant_gradient_direction = base_phi_direction;
+    channel_gradient.noalias() = base_determinant_ *
+        (trace * identity - channel.transpose());
+    channel_gradient_direction.noalias() =
+        determinant_direction *
+            (trace * identity - channel.transpose()) +
+        base_determinant_ *
+            (trace_direction * identity - channel_direction.transpose());
+  } else {
+    const Eigen::MatrixXd base_core_direction =
+        inverse_direction * core_left_;
+    const Eigen::MatrixXd core_direction =
+        core_right_.transpose() * base_core_direction;
+    const double core_determinant_direction =
+        (core_cofactor_->value().cwiseProduct(core_direction)).sum();
+    const Eigen::MatrixXd core_first_direction =
+        core_cofactor_->first(core_direction);
+    const Eigen::MatrixXd core_second_direction =
+        core_cofactor_->second_first(core_direction);
+    const Eigen::MatrixXd projected =
+        core_right_.transpose() * channel;
+    const Eigen::MatrixXd projected_direction =
+        core_right_.transpose() * channel_direction;
+    const Eigen::MatrixXd first_core =
+        projected * inverse_base_core_left_;
+    const Eigen::MatrixXd first_core_direction =
+        projected_direction * inverse_base_core_left_ +
+        projected * base_core_direction;
+    const Eigen::MatrixXd second_core =
+        projected * channel * inverse_base_core_left_;
+    const Eigen::MatrixXd second_core_direction =
+        projected_direction * channel * inverse_base_core_left_ +
+        projected * channel_direction * inverse_base_core_left_ +
+        projected * channel * base_core_direction;
+    const double first_linear = core_first_contraction(first_core);
+    const double first_linear_direction =
+        (core_first_direction.cwiseProduct(first_core)).sum() +
+        (core_cofactor_->value().cwiseProduct(first_core_direction)).sum();
+    const double second_linear = core_first_contraction(second_core);
+    const double second_linear_direction =
+        (core_first_direction.cwiseProduct(second_core)).sum() +
+        (core_cofactor_->value().cwiseProduct(second_core_direction)).sum();
+    const Eigen::MatrixXd exterior = exterior_square(first_core);
+    const Eigen::MatrixXd exterior_direction =
+        exterior_square(first_core + first_core_direction) - exterior -
+        exterior_square(first_core_direction);
+    const double quadratic =
+        core_cofactor_->second_contraction(exterior);
+    const double quadratic_direction =
+        (core_cofactor_->second_contraction_gradient(exterior)
+             .cwiseProduct(core_direction))
+            .sum() +
+        core_cofactor_->second_contraction(exterior_direction);
+    const double reduced =
+        core_determinant_ * base_phi - trace * first_linear +
+        second_linear + quadratic;
+    const double reduced_direction =
+        core_determinant_direction * base_phi +
+        core_determinant_ * base_phi_direction -
+        trace_direction * first_linear -
+        trace * first_linear_direction + second_linear_direction +
+        quadratic_direction;
+    result.value = determinant_direction * reduced +
+        base_determinant_ * reduced_direction;
+    determinant_gradient = reduced;
+    determinant_gradient_direction = reduced_direction;
+
+    const double trace_gradient =
+        -base_determinant_ * first_linear;
+    const double trace_gradient_direction =
+        -determinant_direction * first_linear -
+        base_determinant_ * first_linear_direction;
+    channel_gradient.noalias() =
+        base_determinant_ * core_determinant_ *
+        (trace * identity - channel.transpose());
+    channel_gradient.diagonal().array() += trace_gradient;
+    channel_gradient_direction.noalias() =
+        (determinant_direction * core_determinant_ +
+         base_determinant_ * core_determinant_direction) *
+            (trace * identity - channel.transpose()) +
+        base_determinant_ * core_determinant_ *
+            (trace_direction * identity - channel_direction.transpose());
+    channel_gradient_direction.diagonal().array() +=
+        trace_gradient_direction;
+
+    const Eigen::MatrixXd exterior_reverse =
+        exterior_square_reverse(first_core, core_cofactor_->second());
+    const Eigen::MatrixXd exterior_reverse_direction =
+        exterior_square_reverse(
+            first_core_direction, core_cofactor_->second()) +
+        exterior_square_reverse(first_core, core_second_direction);
+    Eigen::MatrixXd first_core_gradient =
+        -base_determinant_ * trace * core_cofactor_->value();
+    first_core_gradient.noalias() +=
+        base_determinant_ * exterior_reverse;
+    Eigen::MatrixXd first_core_gradient_direction =
+        -(determinant_direction * trace +
+          base_determinant_ * trace_direction) *
+            core_cofactor_->value() -
+        base_determinant_ * trace * core_first_direction;
+    first_core_gradient_direction.noalias() +=
+        determinant_direction * exterior_reverse +
+        base_determinant_ * exterior_reverse_direction;
+    const Eigen::MatrixXd second_core_gradient =
+        base_determinant_ * core_cofactor_->value();
+    const Eigen::MatrixXd second_core_gradient_direction =
+        determinant_direction * core_cofactor_->value() +
+        base_determinant_ * core_first_direction;
+
+    const Eigen::MatrixXd core_argument =
+        -base_determinant_ * trace * first_core +
+        base_determinant_ * second_core;
+    const Eigen::MatrixXd core_argument_direction =
+        -(determinant_direction * trace +
+          base_determinant_ * trace_direction) * first_core -
+        base_determinant_ * trace * first_core_direction +
+        determinant_direction * second_core +
+        base_determinant_ * second_core_direction;
+    Eigen::MatrixXd core_gradient =
+        base_determinant_ * base_phi * core_cofactor_->value();
+    core_gradient.noalias() += core_cofactor_->first(core_argument);
+    core_gradient.noalias() += base_determinant_ *
+        core_cofactor_->second_contraction_gradient(exterior);
+    Eigen::MatrixXd core_gradient_direction =
+        (determinant_direction * base_phi +
+         base_determinant_ * base_phi_direction) *
+            core_cofactor_->value() +
+        base_determinant_ * base_phi * core_first_direction;
+    core_gradient_direction.noalias() +=
+        core_cofactor_->mixed(core_direction, core_argument) +
+        core_cofactor_->first(core_argument_direction);
+    core_gradient_direction.noalias() +=
+        determinant_direction *
+            core_cofactor_->second_contraction_gradient(exterior) +
+        base_determinant_ *
+            core_cofactor_->second_contraction_gradient_direction(
+                core_direction, exterior, exterior_direction);
+
+    Eigen::MatrixXd projected_gradient =
+        first_core_gradient * inverse_base_core_left_.transpose();
+    projected_gradient.noalias() +=
+        second_core_gradient * inverse_base_core_left_.transpose() *
+        channel.transpose();
+    Eigen::MatrixXd projected_gradient_direction =
+        first_core_gradient_direction *
+            inverse_base_core_left_.transpose() +
+        first_core_gradient * base_core_direction.transpose();
+    projected_gradient_direction.noalias() +=
+        second_core_gradient_direction *
+            inverse_base_core_left_.transpose() * channel.transpose() +
+        second_core_gradient * base_core_direction.transpose() *
+            channel.transpose() +
+        second_core_gradient * inverse_base_core_left_.transpose() *
+            channel_direction.transpose();
+    channel_gradient.noalias() +=
+        projected.transpose() * second_core_gradient *
+        inverse_base_core_left_.transpose();
+    channel_gradient.noalias() += core_right_ * projected_gradient;
+    channel_gradient_direction.noalias() +=
+        projected_direction.transpose() * second_core_gradient *
+            inverse_base_core_left_.transpose() +
+        projected.transpose() * second_core_gradient_direction *
+            inverse_base_core_left_.transpose() +
+        projected.transpose() * second_core_gradient *
+            base_core_direction.transpose();
+    channel_gradient_direction.noalias() +=
+        core_right_ * projected_gradient_direction;
+
+    Eigen::MatrixXd base_core_gradient =
+        projected.transpose() * first_core_gradient;
+    base_core_gradient.noalias() +=
+        channel.transpose() * projected.transpose() * second_core_gradient;
+    base_core_gradient.noalias() += core_right_ * core_gradient;
+    Eigen::MatrixXd base_core_gradient_direction =
+        projected_direction.transpose() * first_core_gradient +
+        projected.transpose() * first_core_gradient_direction;
+    base_core_gradient_direction.noalias() +=
+        channel_direction.transpose() * projected.transpose() *
+            second_core_gradient +
+        channel.transpose() * projected_direction.transpose() *
+            second_core_gradient +
+        channel.transpose() * projected.transpose() *
+            second_core_gradient_direction;
+    base_core_gradient_direction.noalias() +=
+        core_right_ * core_gradient_direction;
+    inverse_gradient.noalias() +=
+        base_core_gradient * core_left_.transpose();
+    inverse_gradient_direction.noalias() +=
+        base_core_gradient_direction * core_left_.transpose();
+  }
+
+  inverse_gradient.noalias() += channel_gradient * transition.transpose();
+  inverse_gradient_direction.noalias() +=
+      channel_gradient_direction * transition.transpose() +
+      channel_gradient * transition_direction.transpose();
+  result.transition_gradient.noalias() =
+      inverse_direction.transpose() * channel_gradient +
+      inverse_base_.transpose() * channel_gradient_direction;
+
+  const double scale = determinant_gradient * base_determinant_;
+  const double scale_direction =
+      determinant_gradient_direction * base_determinant_ +
+      determinant_gradient * determinant_direction;
+  result.overlap_gradient.noalias() =
+      scale_direction * inverse_base_.transpose() +
+      scale * inverse_direction.transpose() -
+      inverse_direction.transpose() * inverse_gradient *
+          inverse_base_.transpose() -
+      inverse_base_.transpose() * inverse_gradient_direction *
+          inverse_base_.transpose() -
+      inverse_base_.transpose() * inverse_gradient *
+          inverse_direction.transpose();
+  return result;
 }
 
 WoodburyContraction WoodburyCore::second_channel_contraction_gradient(

@@ -9,6 +9,8 @@
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/determinants/pairs/traversal.hpp"
+#include "vbscf/determinants/pairs/woodbury_ri.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
@@ -396,6 +398,139 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
       direction.one_electron.data(),
       n_active_orbitals,
       n_active_orbitals);
+  const bool stream_woodbury_ri = use_ri && accepted_pair_tile != nullptr &&
+      std::all_of(
+          accepted_pair_tile->pairs.begin(),
+          accepted_pair_tile->pairs.end(),
+          [](const SpinDeterminantPairEvaluation& pair) {
+            return pair.has_woodbury_ri_response ||
+                pair.has_same_spin_phi_cache;
+          });
+  if (stream_woodbury_ri) {
+    const int n_threads = std::max(
+        1,
+        std::min(xmvb::effective_openmp_thread_count(), left_size));
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+    for (int left_local = 0; left_local < left_size; ++left_local) {
+      const int left_id = left_begin + left_local;
+      const auto& occupied_left = unique_determinants[left_id];
+      const std::vector<int> right_traversal = build_pair_update_traversal(
+          unique_determinants, left_id, right_begin, right_end);
+      WoodburyRiState state;
+      bool initialized = false;
+      for (const int right_id : right_traversal) {
+        const int right_local = right_id - right_begin;
+        const auto& occupied_right = unique_determinants[right_id];
+        const auto& accepted =
+            accepted_pair_tile->pair(left_local, right_local);
+        const bool updated = initialized && state.update_right(
+            occupied_right,
+            accepted.overlap_result.overlap_submatrix,
+            *accepted_ri_active_pair_factors);
+        if (!updated && !state.initialize(
+                occupied_left,
+                occupied_right,
+                accepted.overlap_result.overlap_submatrix,
+                *accepted_ri_active_pair_factors)) {
+          throw std::runtime_error(
+              "failed to initialize streamed directional Woodbury RI state");
+        }
+        initialized = true;
+
+        const Eigen::MatrixXd overlap_direction =
+            build_local_overlap_direction_matrix(
+                occupied_left,
+                occupied_right,
+                direction.overlap,
+                n_active_orbitals);
+        SameSpinPolynomialDirectionalPairData pair_direction;
+        if (accepted.has_woodbury_ri_response) {
+          const Eigen::MatrixXd one_electron =
+              build_spin_one_electron_block_matrix_local(
+                  occupied_left,
+                  occupied_right,
+                  *accepted_active_one_electron);
+          const Eigen::MatrixXd one_electron_direction =
+              build_spin_one_electron_block_matrix_local(
+                  occupied_left,
+                  occupied_right,
+                  delta_h1e);
+          const WoodburyRiDirection woodbury_direction =
+              state.hamiltonian_direction(
+                  one_electron,
+                  one_electron_direction,
+                  overlap_direction,
+                  *accepted_ri_active_pair_factors,
+                  *directional_ri_active_pair_factors,
+                  build_ri_projected_channels);
+          pair_direction.delta_overlap_determinant =
+              woodbury_direction.overlap_determinant;
+          pair_direction.delta_total_hamiltonian =
+              woodbury_direction.hamiltonian;
+          pair_direction.delta_cofactor_1st =
+              woodbury_direction.first_cofactor;
+          pair_direction.delta_same_spin_overlap_hamiltonian_gradient =
+              woodbury_direction.hamiltonian_overlap_gradient;
+          if (build_ri_projected_channels) {
+            const int channel_work = left_local + left_size * right_local;
+            tile.ri_projected_channels.row(channel_work).noalias() =
+                (accepted_ri_active_pair_factors->transpose() *
+                     woodbury_direction.directional_auxiliary +
+                 directional_ri_active_pair_factors->transpose() *
+                     woodbury_direction.accepted_auxiliary)
+                    .transpose();
+            tile.ri_projected_ready[
+                static_cast<std::size_t>(channel_work)] = 1;
+          }
+        } else {
+          const RegularRiSameSpinDirection regular_direction =
+              evaluate_regular_ri_same_spin_direction(
+                  occupied_left,
+                  occupied_right,
+                  *accepted_active_one_electron,
+                  delta_h1e,
+                  n_active_orbitals,
+                  *accepted_ri_active_pair_factors,
+                  *directional_ri_active_pair_factors,
+                  accepted.overlap_result,
+                  overlap_direction,
+                  accepted.same_spin_total_phi,
+                  accepted.same_spin_inverse_overlap_gradient,
+                  build_ri_projected_channels);
+          pair_direction.delta_overlap_determinant =
+              regular_direction.delta_overlap_determinant;
+          pair_direction.delta_total_hamiltonian =
+              regular_direction.delta_total_hamiltonian;
+          pair_direction.delta_cofactor_1st =
+              regular_direction.delta_first_cofactor;
+          pair_direction.delta_same_spin_overlap_hamiltonian_gradient =
+              regular_direction.delta_overlap_hamiltonian_gradient;
+          if (build_ri_projected_channels) {
+            const int channel_work = left_local + left_size * right_local;
+            tile.ri_projected_channels.row(channel_work) =
+                regular_direction.delta_projected_first_cofactor.transpose();
+            tile.ri_projected_ready[
+                static_cast<std::size_t>(channel_work)] = 1;
+          }
+        }
+        const std::size_t pair_index =
+            static_cast<std::size_t>(left_local) * right_size + right_local;
+        const double overlap_value = pair_direction.delta_overlap_determinant;
+        const double hamiltonian_value = pair_direction.delta_total_hamiltonian;
+        tile.pairs[pair_index] = std::move(pair_direction);
+        tile.delta_overlap(left_local, right_local) =
+            overlap_value;
+        Eigen::MatrixXd& hamiltonian =
+            accepted.overlap_result.nullity == 0 &&
+                    accepted.overlap_result.overlap_determinant != 0.0
+                ? tile.delta_regular_hamiltonian
+                : tile.delta_singular_hamiltonian;
+        hamiltonian(left_local, right_local) =
+            hamiltonian_value;
+      }
+    }
+    return tile;
+  }
   const bool diagonal_tile = left_begin == right_begin &&
       left_size == right_size;
   const int work_items = left_size * right_size;
@@ -420,9 +555,65 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
         : (*ordered_pair_cache)[ordered_spin_pair_storage_index(
               canonical_left, canonical_right, n_unique_determinants)];
     SameSpinPolynomialDirectionalPairData pair_direction;
+    const bool woodbury_ri_pair =
+        pair_evaluation.has_woodbury_ri_response && use_ri;
     const bool regular_ri_pair =
         pair_evaluation.has_same_spin_phi_cache && use_ri;
-    if (regular_ri_pair) {
+    if (woodbury_ri_pair) {
+      const auto& occupied_left = unique_determinants[canonical_left];
+      const auto& occupied_right = unique_determinants[canonical_right];
+      const Eigen::MatrixXd delta_overlap =
+          build_local_overlap_direction_matrix(
+              occupied_left,
+              occupied_right,
+              direction.overlap,
+              n_active_orbitals);
+      const Eigen::MatrixXd one_electron =
+          build_spin_one_electron_block_matrix_local(
+              occupied_left,
+              occupied_right,
+              *accepted_active_one_electron);
+      const Eigen::MatrixXd one_electron_direction =
+          build_spin_one_electron_block_matrix_local(
+              occupied_left,
+              occupied_right,
+              delta_h1e);
+      WoodburyRiState state;
+      if (!state.initialize(
+              occupied_left,
+              occupied_right,
+              pair_evaluation.overlap_result.overlap_submatrix,
+              *accepted_ri_active_pair_factors)) {
+        throw std::runtime_error(
+            "failed to initialize directional Woodbury RI state");
+      }
+      const WoodburyRiDirection woodbury_direction =
+          state.hamiltonian_direction(
+              one_electron,
+              one_electron_direction,
+              delta_overlap,
+              *accepted_ri_active_pair_factors,
+              *directional_ri_active_pair_factors,
+              build_ri_projected_channels);
+      pair_direction.delta_overlap_determinant =
+          woodbury_direction.overlap_determinant;
+      pair_direction.delta_total_hamiltonian =
+          woodbury_direction.hamiltonian;
+      pair_direction.delta_cofactor_1st =
+          woodbury_direction.first_cofactor;
+      pair_direction.delta_same_spin_overlap_hamiltonian_gradient =
+          woodbury_direction.hamiltonian_overlap_gradient;
+      if (build_ri_projected_channels) {
+        const int channel_work = left_local + left_size * right_local;
+        tile.ri_projected_channels.row(channel_work).noalias() =
+            (accepted_ri_active_pair_factors->transpose() *
+                 woodbury_direction.directional_auxiliary +
+             directional_ri_active_pair_factors->transpose() *
+                 woodbury_direction.accepted_auxiliary)
+                .transpose();
+        tile.ri_projected_ready[static_cast<std::size_t>(channel_work)] = 1;
+      }
+    } else if (regular_ri_pair) {
       const Eigen::MatrixXd delta_overlap =
           build_local_overlap_direction_matrix(
               unique_determinants[canonical_left],

@@ -692,6 +692,9 @@ void complete_same_spin_pair_evaluation(
         pair_evaluation);
   }
   if (populate_response_payload) {
+    if (pair_evaluation->has_woodbury_ri_response) {
+      return;
+    }
     const bool populated_from_update =
         regular_ri_response != nullptr &&
         populate_regular_ri_phi_cache_entry(

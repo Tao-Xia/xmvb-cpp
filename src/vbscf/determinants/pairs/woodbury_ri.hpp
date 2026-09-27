@@ -9,6 +9,15 @@ namespace xmvb::vb {
 
 class WoodburyCore;
 
+struct WoodburyRiDirection {
+  double overlap_determinant = 0.0;
+  double hamiltonian = 0.0;
+  Eigen::MatrixXd first_cofactor;
+  Eigen::MatrixXd hamiltonian_overlap_gradient;
+  Eigen::VectorXd accepted_auxiliary;
+  Eigen::VectorXd directional_auxiliary;
+};
+
 /**
  * @brief RI channels propagated with a stable Woodbury base and singular core.
  *
@@ -40,6 +49,7 @@ class WoodburyRiState {
   bool valid() const noexcept { return core_ != nullptr; }
   int core_rank() const noexcept;
   int overlap_nullity() const noexcept;
+  const Eigen::MatrixXd& regular_inverse() const;
   double overlap_determinant() const;
   Eigen::MatrixXd first_cofactor() const;
   Eigen::VectorXd first_cofactor_auxiliary() const;
@@ -49,6 +59,13 @@ class WoodburyRiState {
   Eigen::MatrixXd hamiltonian_overlap_gradient(
       const Eigen::Ref<const Eigen::MatrixXd>& occupied_one_electron,
       const Eigen::Ref<const Eigen::MatrixXd>& ri_factors) const;
+  WoodburyRiDirection hamiltonian_direction(
+      const Eigen::Ref<const Eigen::MatrixXd>& occupied_one_electron,
+      const Eigen::Ref<const Eigen::MatrixXd>& occupied_one_electron_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& ri_factors,
+      const Eigen::Ref<const Eigen::MatrixXd>& ri_factor_direction,
+      bool auxiliary_projection) const;
 
  private:
   using ChannelTable = Eigen::Matrix<

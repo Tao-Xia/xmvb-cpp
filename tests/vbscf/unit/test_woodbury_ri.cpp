@@ -12,6 +12,7 @@
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 #include "vbscf/determinants/pairs/evaluator.hpp"
 #include "vbscf/determinants/pairs/woodbury_ri.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
@@ -123,11 +124,14 @@ void check_state(
       state.first_cofactor_auxiliary(), auxiliary, 2.0e-8, label);
 
   Eigen::MatrixXd one_electron(left.size(), left.size());
+  Eigen::MatrixXd one_electron_direction(left.size(), left.size());
   Eigen::MatrixXd direction(left.size(), left.size());
   for (int column = 0; column < one_electron.cols(); ++column) {
     for (int row = 0; row < one_electron.rows(); ++row) {
       one_electron(row, column) =
           0.031 * (row + 1) - 0.014 * (column + 2);
+      one_electron_direction(row, column) =
+          0.004 * (row + 2) + 0.002 * (column + 1);
       direction(row, column) =
           0.008 * (column + 1) + 0.003 * (row - column);
     }
@@ -136,21 +140,89 @@ void check_state(
       one_electron, factors);
   constexpr double epsilon = 2.0e-6;
   const Eigen::MatrixXd center = overlap_block(active_overlap, left, right);
+  Eigen::MatrixXd factor_direction(factors.rows(), factors.cols());
+  for (Eigen::Index column = 0; column < factor_direction.cols(); ++column) {
+    for (Eigen::Index row = 0; row < factor_direction.rows(); ++row) {
+      factor_direction(row, column) =
+          0.0013 * (row + 1) - 0.0007 * (column + 2);
+    }
+  }
   xmvb::vb::WoodburyRiState plus;
   xmvb::vb::WoodburyRiState minus;
-  if (!plus.initialize(left, right, center + epsilon * direction, factors) ||
-      !minus.initialize(left, right, center - epsilon * direction, factors)) {
+  if (!plus.initialize(
+          left,
+          right,
+          center + epsilon * direction,
+          factors + epsilon * factor_direction) ||
+      !minus.initialize(
+          left,
+          right,
+          center - epsilon * direction,
+          factors - epsilon * factor_direction)) {
     throw std::runtime_error("finite-difference RI state initialization failed");
   }
-  const double plus_value = plus.one_electron_contraction(one_electron) +
+  const double plus_value = plus.one_electron_contraction(
+                                one_electron +
+                                epsilon * one_electron_direction) +
       plus.two_electron_contraction();
-  const double minus_value = minus.one_electron_contraction(one_electron) +
+  const double minus_value = minus.one_electron_contraction(
+                                 one_electron -
+                                 epsilon * one_electron_direction) +
       minus.two_electron_contraction();
+  const auto directional = state.hamiltonian_direction(
+      one_electron,
+      one_electron_direction,
+      direction,
+      factors,
+      factor_direction,
+      true);
   require_close(
-      (gradient.cwiseProduct(direction)).sum(),
+      directional.hamiltonian,
       (plus_value - minus_value) / (2.0 * epsilon),
+      4.0e-5,
+      "RI Hamiltonian direction");
+  require_close(
+      directional.overlap_determinant,
+      (plus.overlap_determinant() - minus.overlap_determinant()) /
+          (2.0 * epsilon),
       3.0e-6,
-      "RI Hamiltonian overlap gradient");
+      "RI overlap direction");
+  require_matrix_close(
+      directional.first_cofactor,
+      (plus.first_cofactor() - minus.first_cofactor()) /
+          (2.0 * epsilon),
+      4.0e-6,
+      "RI first-cofactor direction");
+  require_matrix_close(
+      directional.hamiltonian_overlap_gradient,
+      (plus.hamiltonian_overlap_gradient(
+           one_electron + epsilon * one_electron_direction,
+           factors + epsilon * factor_direction) -
+       minus.hamiltonian_overlap_gradient(
+           one_electron - epsilon * one_electron_direction,
+           factors - epsilon * factor_direction)) /
+          (2.0 * epsilon),
+      5.0e-5,
+      "RI Hamiltonian-gradient direction");
+  require_matrix_close(
+      directional.directional_auxiliary,
+      (plus.first_cofactor_auxiliary() -
+       minus.first_cofactor_auxiliary()) /
+          (2.0 * epsilon),
+      5.0e-6,
+      "RI auxiliary direction");
+  const auto overlap_only = state.hamiltonian_direction(
+      one_electron,
+      Eigen::MatrixXd::Zero(one_electron.rows(), one_electron.cols()),
+      direction,
+      factors,
+      Eigen::MatrixXd::Zero(factors.rows(), factors.cols()),
+      false);
+  require_close(
+      overlap_only.hamiltonian,
+      (gradient.cwiseProduct(direction)).sum(),
+      3.0e-6,
+      "RI Hamiltonian overlap direction");
 }
 
 }  // namespace
@@ -299,6 +371,107 @@ int main() {
             }
           }
         }
+      }
+    }
+
+    Eigen::MatrixXd active_overlap_direction(n_active, n_active);
+    Eigen::MatrixXd active_one_electron_direction(n_active, n_active);
+    Eigen::MatrixXd active_factor_direction(factors.rows(), factors.cols());
+    for (int column = 0; column < n_active; ++column) {
+      for (int row = 0; row < n_active; ++row) {
+        active_overlap_direction(row, column) =
+            0.0021 * (row + 1) - 0.0013 * (column + 2);
+        active_one_electron_direction(row, column) =
+            0.0017 * (column + 1) + 0.0009 * (row + 2);
+      }
+    }
+    for (Eigen::Index column = 0;
+         column < active_factor_direction.cols();
+         ++column) {
+      for (Eigen::Index row = 0;
+           row < active_factor_direction.rows();
+           ++row) {
+        active_factor_direction(row, column) =
+            0.0007 * (row + 1) - 0.0003 * (column + 2);
+      }
+    }
+    std::vector<double> overlap_direction_storage(
+        active_overlap_direction.data(),
+        active_overlap_direction.data() + active_overlap_direction.size());
+    std::vector<double> one_electron_direction_storage(
+        active_one_electron_direction.data(),
+        active_one_electron_direction.data() +
+            active_one_electron_direction.size());
+    const std::vector<double> no_packed_direction;
+    const xmvb::vb::ActiveSpaceIntegralDirectionView direction_view{
+        overlap_direction_storage,
+        one_electron_direction_storage,
+        no_packed_direction};
+    const auto response_tile = provider.build(
+        0,
+        strings.size(),
+        0,
+        strings.size(),
+        overlap_storage,
+        one_electron,
+        two_electron,
+        xmvb::vb::AcceptedPairTileBuildOptions{
+            .materialize_projected_pair_values = false,
+            .populate_response_payload = true,
+            .populate_opposite_spin_projection = true});
+    const auto directional_tile =
+        xmvb::vb::detail::build_directional_pair_tile(
+            strings,
+            response_tile,
+            n_active,
+            direction_view,
+            &one_electron,
+            &factors,
+            &active_factor_direction,
+            true);
+    for (int left_index = 0;
+         left_index < static_cast<int>(strings.size());
+         ++left_index) {
+      for (int right_index = 0;
+           right_index < static_cast<int>(strings.size());
+           ++right_index) {
+        xmvb::vb::WoodburyRiState reference_state;
+        const Eigen::MatrixXd pair_overlap = overlap_block(
+            active_overlap, strings[left_index], strings[right_index]);
+        if (!reference_state.initialize(
+                strings[left_index],
+                strings[right_index],
+                pair_overlap,
+                factors)) {
+          throw std::runtime_error(
+              "failed directional-tile reference initialization");
+        }
+        const auto reference_direction = reference_state.hamiltonian_direction(
+            overlap_block(
+                one_electron, strings[left_index], strings[right_index]),
+            overlap_block(
+                active_one_electron_direction,
+                strings[left_index],
+                strings[right_index]),
+            overlap_block(
+                active_overlap_direction,
+                strings[left_index],
+                strings[right_index]),
+            factors,
+            active_factor_direction,
+            true);
+        const auto& generated =
+            directional_tile.pair(left_index, right_index);
+        require_close(
+            generated.delta_total_hamiltonian,
+            reference_direction.hamiltonian,
+            3.0e-8,
+            "streamed RI Hamiltonian direction");
+        require_matrix_close(
+            generated.delta_same_spin_overlap_hamiltonian_gradient,
+            reference_direction.hamiltonian_overlap_gradient,
+            3.0e-7,
+            "streamed RI Hamiltonian-gradient direction");
       }
     }
 
