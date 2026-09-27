@@ -46,71 +46,84 @@ void add_partner_projection_tile(
     int primary_right_size,
     const AcceptedSpinPairTile& partner_tile,
     Eigen::MatrixXd* raw_projection) {
-  Eigen::MatrixXd coefficient_weight(
-      primary_left_size, primary_right_size);
+  const int n_channels = static_cast<int>(raw_projection->rows());
+  const int partner_pair_count =
+      partner_tile.left_size * partner_tile.right_size;
+  Eigen::MatrixXd partner_channels = Eigen::MatrixXd::Zero(
+      partner_pair_count, n_channels);
+  std::vector<char> active_channels(
+      static_cast<std::size_t>(n_channels), 0);
   for (int partner_left_local = 0;
        partner_left_local < partner_tile.left_size;
        ++partner_left_local) {
-    const int partner_left =
-        partner_tile.left_begin + partner_left_local;
     for (int partner_right_local = 0;
          partner_right_local < partner_tile.right_size;
          ++partner_right_local) {
-      const int partner_right =
-          partner_tile.right_begin + partner_right_local;
-      coefficient_weight.setZero();
-      for (const auto& state : selected_states.states) {
-        const auto& coefficients = state.coefficient_matrix;
-        if (primary_spin == PrimarySpin::Alpha) {
-          coefficient_weight.noalias() += state.normalized_state_weight *
-              coefficients.block(
-                  primary_left_begin,
-                  partner_left,
-                  primary_left_size,
-                  1) *
-              coefficients.block(
-                  primary_right_begin,
-                  partner_right,
-                  primary_right_size,
-                  1).transpose();
-        } else {
-          coefficient_weight.noalias() += state.normalized_state_weight *
-              coefficients.block(
-                  partner_left,
-                  primary_left_begin,
-                  1,
-                  primary_left_size).transpose() *
-              coefficients.block(
-                  partner_right,
-                  primary_right_begin,
-                  1,
-                  primary_right_size);
-        }
-      }
       const auto& projection = partner_tile
           .pair(partner_left_local, partner_right_local)
           .opposite_spin_pair_cache.first_order_cofactor_projection;
+      const int partner_pair =
+          partner_left_local + partner_tile.left_size * partner_right_local;
       for (std::size_t entry = 0;
            entry < projection.packed_pair_indices.size();
            ++entry) {
         const int channel = projection.packed_pair_indices[entry];
-        const double value = projection.packed_pair_values[entry];
-        for (int primary_left_local = 0;
-             primary_left_local < primary_left_size;
-             ++primary_left_local) {
-          for (int primary_right_local = 0;
-               primary_right_local < primary_right_size;
-               ++primary_right_local) {
-            const int pair =
-                primary_left_local * primary_right_size +
-                primary_right_local;
-            (*raw_projection)(channel, pair) += value *
-                coefficient_weight(
-                    primary_left_local, primary_right_local);
-          }
-        }
+        partner_channels(partner_pair, channel) +=
+            projection.packed_pair_values[entry];
+        active_channels[static_cast<std::size_t>(channel)] = 1;
       }
     }
+  }
+
+  using RowMajorMatrix = Eigen::Matrix<
+      double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+  Eigen::MatrixXd push(primary_left_size, partner_tile.right_size);
+  RowMajorMatrix coefficient_weight(
+      primary_left_size, primary_right_size);
+  for (int channel = 0; channel < n_channels; ++channel) {
+    if (!active_channels[static_cast<std::size_t>(channel)]) {
+      continue;
+    }
+    const Eigen::Map<const Eigen::MatrixXd> partner_channel(
+        partner_channels.col(channel).data(),
+        partner_tile.left_size,
+        partner_tile.right_size);
+    coefficient_weight.setZero();
+    for (const auto& state : selected_states.states) {
+      const auto& coefficients = state.coefficient_matrix;
+      if (primary_spin == PrimarySpin::Alpha) {
+        const auto left = coefficients.block(
+            primary_left_begin,
+            partner_tile.left_begin,
+            primary_left_size,
+            partner_tile.left_size);
+        const auto right = coefficients.block(
+            primary_right_begin,
+            partner_tile.right_begin,
+            primary_right_size,
+            partner_tile.right_size);
+        push.noalias() = left * partner_channel;
+        coefficient_weight.noalias() +=
+            state.normalized_state_weight * push * right.transpose();
+      } else {
+        const auto left = coefficients.block(
+            partner_tile.left_begin,
+            primary_left_begin,
+            partner_tile.left_size,
+            primary_left_size);
+        const auto right = coefficients.block(
+            partner_tile.right_begin,
+            primary_right_begin,
+            partner_tile.right_size,
+            primary_right_size);
+        push.noalias() = left.transpose() * partner_channel;
+        coefficient_weight.noalias() +=
+            state.normalized_state_weight * push * right;
+      }
+    }
+    raw_projection->row(channel).noalias() +=
+        Eigen::Map<const Eigen::RowVectorXd>(
+            coefficient_weight.data(), coefficient_weight.size());
   }
 }
 
