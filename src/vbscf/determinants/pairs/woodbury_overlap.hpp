@@ -25,4 +25,19 @@ std::optional<DeterminantOverlapResult> try_woodbury_right_overlap_update(
     const Eigen::Ref<const Eigen::MatrixXd>& active_overlap,
     const DeterminantOverlapResult& old_result);
 
+/**
+ * @brief Updates a regular occupied-overlap block after changing the left string.
+ *
+ * The changed occupied orbitals replace columns of the overlap block.  This is
+ * the transpose companion of `try_woodbury_right_overlap_update()` and uses
+ * the same backward-error and condition certificates.  Callers must evaluate
+ * the pair exactly when no value is returned.
+ */
+std::optional<DeterminantOverlapResult> try_woodbury_left_overlap_update(
+    const std::vector<int>& occupied_left_old,
+    const std::vector<int>& occupied_left_new,
+    const std::vector<int>& occupied_right,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_overlap,
+    const DeterminantOverlapResult& old_result);
+
 }  // namespace xmvb::vb

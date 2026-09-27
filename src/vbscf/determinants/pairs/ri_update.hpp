@@ -32,6 +32,23 @@ class RiPairUpdateState {
       const DeterminantOverlapResult& overlap_new,
       const Eigen::Ref<const Eigen::MatrixXd>& ri_factors);
 
+  /**
+   * @brief Propagates regular RI channels after one left-string substitution.
+   *
+   * A left substitution changes one column of both the occupied overlap and
+   * each occupied RI transition block.  The update is a sum of two rank-one
+   * channel corrections.  Response tracking is deliberately rejected until
+   * its adjoint aggregate has the same residual certificate as the scalar
+   * channels.
+   */
+  bool update_left(
+      const std::vector<int>& occupied_left_old,
+      const std::vector<int>& occupied_left_new,
+      const std::vector<int>& occupied_right,
+      const DeterminantOverlapResult& overlap_old,
+      const DeterminantOverlapResult& overlap_new,
+      const Eigen::Ref<const Eigen::MatrixXd>& ri_factors);
+
   void reset();
   bool valid() const noexcept { return valid_; }
   bool tracks_response() const noexcept { return track_response_; }

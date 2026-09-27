@@ -30,6 +30,43 @@ std::vector<int> changed_rows(
   return rows;
 }
 
+std::vector<int> changed_columns(
+    const std::vector<int>& old_string,
+    const std::vector<int>& new_string) {
+  return changed_rows(old_string, new_string);
+}
+
+bool inverse_is_certified(
+    const Eigen::Ref<const Eigen::MatrixXd>& matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse);
+
+std::optional<DeterminantOverlapResult> make_updated_result(
+    Eigen::MatrixXd new_overlap,
+    Eigen::MatrixXd inverse_new,
+    double middle_determinant,
+    const DeterminantOverlapResult& old_result) {
+  if (!inverse_is_certified(new_overlap, inverse_new)) {
+    return std::nullopt;
+  }
+  const double determinant =
+      old_result.overlap_determinant * middle_determinant;
+  if (middle_determinant == 0.0 || !std::isfinite(middle_determinant) ||
+      determinant == 0.0 || !std::isfinite(determinant)) {
+    return std::nullopt;
+  }
+
+  DeterminantOverlapResult result;
+  result.n_electrons = old_result.n_electrons;
+  result.overlap_submatrix = std::move(new_overlap);
+  result.overlap_determinant = determinant;
+  result.determinant_sign = std::signbit(determinant) ? -1.0 : 1.0;
+  result.log_abs_determinant =
+      old_result.log_abs_determinant + std::log(std::abs(middle_determinant));
+  result.nullity = 0;
+  result.inverse_overlap_submatrix = std::move(inverse_new);
+  return result;
+}
+
 bool inverse_is_certified(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& inverse) {
@@ -117,28 +154,75 @@ std::optional<DeterminantOverlapResult> try_woodbury_right_overlap_update(
   const Eigen::MatrixXd inverse_new =
       old_result.inverse_overlap_submatrix -
       inverse_columns * middle_lu.solve(right_factor);
-  if (!inverse_is_certified(new_overlap, inverse_new)) {
-    return std::nullopt;
-  }
-
   const double middle_determinant = middle_lu.determinant();
-  const double determinant =
-      old_result.overlap_determinant * middle_determinant;
-  if (middle_determinant == 0.0 || !std::isfinite(middle_determinant) ||
-      determinant == 0.0 || !std::isfinite(determinant)) {
+  return make_updated_result(
+      std::move(new_overlap),
+      std::move(inverse_new),
+      middle_determinant,
+      old_result);
+}
+
+std::optional<DeterminantOverlapResult> try_woodbury_left_overlap_update(
+    const std::vector<int>& occupied_left_old,
+    const std::vector<int>& occupied_left_new,
+    const std::vector<int>& occupied_right,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_overlap,
+    const DeterminantOverlapResult& old_result) {
+  const int n_electrons = static_cast<int>(occupied_right.size());
+  if (static_cast<int>(occupied_left_old.size()) != n_electrons ||
+      static_cast<int>(occupied_left_new.size()) != n_electrons ||
+      old_result.nullity != 0 ||
+      old_result.overlap_submatrix.rows() != n_electrons ||
+      old_result.overlap_submatrix.cols() != n_electrons ||
+      old_result.inverse_overlap_submatrix.rows() != n_electrons ||
+      old_result.inverse_overlap_submatrix.cols() != n_electrons) {
     return std::nullopt;
   }
 
-  DeterminantOverlapResult result;
-  result.n_electrons = n_electrons;
-  result.overlap_submatrix = std::move(new_overlap);
-  result.overlap_determinant = determinant;
-  result.determinant_sign = std::signbit(determinant) ? -1.0 : 1.0;
-  result.log_abs_determinant =
-      old_result.log_abs_determinant + std::log(std::abs(middle_determinant));
-  result.nullity = 0;
-  result.inverse_overlap_submatrix = inverse_new;
-  return result;
+  const std::vector<int> columns = changed_columns(
+      occupied_left_old, occupied_left_new);
+  const int rank = static_cast<int>(columns.size());
+  if (rank == 0) {
+    return old_result;
+  }
+  if (rank >= n_electrons) {
+    return std::nullopt;
+  }
+
+  Eigen::MatrixXd new_overlap = build_overlap_submatrix(
+      occupied_left_new, occupied_right, active_overlap);
+  Eigen::MatrixXd delta_columns(n_electrons, rank);
+  Eigen::MatrixXd inverse_rows(rank, n_electrons);
+  for (int local = 0; local < rank; ++local) {
+    delta_columns.col(local) =
+        new_overlap.col(columns[local]) -
+        old_result.overlap_submatrix.col(columns[local]);
+    inverse_rows.row(local) =
+        old_result.inverse_overlap_submatrix.row(columns[local]);
+  }
+
+  const Eigen::MatrixXd inverse_delta =
+      old_result.inverse_overlap_submatrix * delta_columns;
+  Eigen::MatrixXd selected_inverse_delta(rank, rank);
+  for (int local = 0; local < rank; ++local) {
+    selected_inverse_delta.row(local) =
+        inverse_delta.row(columns[local]);
+  }
+  const Eigen::MatrixXd middle =
+      Eigen::MatrixXd::Identity(rank, rank) + selected_inverse_delta;
+  Eigen::FullPivLU<Eigen::MatrixXd> middle_lu(middle);
+  if (!middle_lu.isInvertible()) {
+    return std::nullopt;
+  }
+
+  const Eigen::MatrixXd inverse_new =
+      old_result.inverse_overlap_submatrix -
+      inverse_delta * middle_lu.solve(inverse_rows);
+  return make_updated_result(
+      std::move(new_overlap),
+      std::move(inverse_new),
+      middle_lu.determinant(),
+      old_result);
 }
 
 }  // namespace xmvb::vb

@@ -357,6 +357,135 @@ bool RiPairUpdateState::update_right(
   return true;
 }
 
+bool RiPairUpdateState::update_left(
+    const std::vector<int>& occupied_left_old,
+    const std::vector<int>& occupied_left_new,
+    const std::vector<int>& occupied_right,
+    const DeterminantOverlapResult& overlap_old,
+    const DeterminantOverlapResult& overlap_new,
+    const Eigen::Ref<const Eigen::MatrixXd>& ri_factors) {
+  if (!valid_ || track_response_ ||
+      occupied_left_old != occupied_left_ ||
+      occupied_right != occupied_right_ ||
+      occupied_left_new.size() != occupied_left_old.size() ||
+      overlap_old.overlap_submatrix.rows() != n_electrons_ ||
+      overlap_old.overlap_submatrix.cols() != n_electrons_ ||
+      overlap_new.overlap_submatrix.rows() != n_electrons_ ||
+      overlap_new.overlap_submatrix.cols() != n_electrons_ ||
+      overlap_new.inverse_overlap_submatrix.rows() != n_electrons_ ||
+      overlap_new.inverse_overlap_submatrix.cols() != n_electrons_ ||
+      ri_factors.rows() != channels_.rows() ||
+      channel_error_bounds_.size() !=
+          static_cast<std::size_t>(channels_.rows()) ||
+      !factors_cover_occupied_pairs(
+          occupied_left_old, occupied_right, ri_factors.cols()) ||
+      !factors_cover_occupied_pairs(
+          occupied_left_new, occupied_right, ri_factors.cols())) {
+    return false;
+  }
+  const int column = changed_position(
+      occupied_left_old, occupied_left_new);
+  if (column < 0) {
+    return false;
+  }
+
+  const Eigen::VectorXd overlap_delta =
+      overlap_new.overlap_submatrix.col(column) -
+      overlap_old.overlap_submatrix.col(column);
+  const Eigen::VectorXd inverse_delta =
+      overlap_old.inverse_overlap_submatrix * overlap_delta;
+  const double update_factor = 1.0 + inverse_delta(column);
+  if (update_factor == 0.0 || !std::isfinite(update_factor) ||
+      !determinant_update_is_consistent(
+          overlap_old.overlap_determinant,
+          update_factor,
+          overlap_new.overlap_determinant)) {
+    return false;
+  }
+
+  // K' delta_x = K delta_x / (1 + e_p^T K delta_x).  Using K' directly
+  // keeps the channel update consistent with the certified overlap inverse.
+  const Eigen::VectorXd overlap_update =
+      overlap_new.inverse_overlap_submatrix * overlap_delta;
+  const double epsilon = std::numeric_limits<double>::epsilon();
+  const double gamma = matrix_product_roundoff_factor(n_electrons_);
+  const double overlap_delta_error = epsilon * (
+      overlap_new.overlap_submatrix.col(column).cwiseAbs().sum() +
+      overlap_old.overlap_submatrix.col(column).cwiseAbs().sum());
+  double phi_error_bound = 0.0;
+  Eigen::VectorXd transition_delta(n_electrons_);
+
+  for (Eigen::Index auxiliary = 0;
+       auxiliary < channels_.rows();
+       ++auxiliary) {
+    for (int right = 0; right < n_electrons_; ++right) {
+      const int right_orbital = occupied_right[right];
+      transition_delta(right) =
+          ri_factors(
+              auxiliary,
+              TwoElectronIndexer::packed_pair_index(
+                  right_orbital, occupied_left_new[column])) -
+          ri_factors(
+              auxiliary,
+              TwoElectronIndexer::packed_pair_index(
+                  right_orbital, occupied_left_old[column]));
+    }
+    Eigen::Map<Eigen::MatrixXd> channel(
+        channels_.data() + auxiliary * n_electrons_ * n_electrons_,
+        n_electrons_,
+        n_electrons_);
+    const double old_channel_norm = max_abs(channel);
+    const Eigen::RowVectorXd old_selected_row = channel.row(column);
+    const Eigen::VectorXd transition_update =
+        overlap_new.inverse_overlap_submatrix * transition_delta;
+    channel.noalias() -= overlap_update * old_selected_row;
+    channel.col(column) += transition_update;
+
+    double transition_delta_error = 0.0;
+    for (int right = 0; right < n_electrons_; ++right) {
+      transition_delta_error = std::max(
+          transition_delta_error,
+          epsilon * (
+              std::abs(ri_factors(
+                  auxiliary,
+                  TwoElectronIndexer::packed_pair_index(
+                      occupied_right[right], occupied_left_new[column]))) +
+              std::abs(ri_factors(
+                  auxiliary,
+                  TwoElectronIndexer::packed_pair_index(
+                      occupied_right[right], occupied_left_old[column])))));
+    }
+    const double inverse_norm =
+        max_abs(overlap_new.inverse_overlap_submatrix);
+    const double old_error =
+        channel_error_bounds_[static_cast<std::size_t>(auxiliary)];
+    const double overlap_update_norm = overlap_update.cwiseAbs().maxCoeff();
+    const double transition_update_norm =
+        transition_update.cwiseAbs().maxCoeff();
+    const double new_error =
+        (1.0 + overlap_update_norm) * old_error +
+        inverse_norm * (transition_delta_error + overlap_delta_error) +
+        gamma * inverse_norm * (
+            transition_delta.cwiseAbs().maxCoeff() +
+            overlap_delta.cwiseAbs().maxCoeff()) +
+        4.0 * epsilon * (
+            old_channel_norm + transition_update_norm);
+    channel_error_bounds_[static_cast<std::size_t>(auxiliary)] = new_error;
+    phi_error_bound += channel_scalar_error_bound(channel, new_error);
+  }
+
+  const double phi = two_electron_phi();
+  const double phi_scale = std::max(
+      std::numeric_limits<double>::min(), std::abs(phi));
+  if (!channels_.allFinite() || !std::isfinite(phi_error_bound) ||
+      phi_error_bound > std::sqrt(epsilon) * phi_scale) {
+    reset();
+    return false;
+  }
+  occupied_left_ = occupied_left_new;
+  return true;
+}
+
 void RiPairUpdateState::reset() {
   occupied_left_.clear();
   occupied_right_.clear();

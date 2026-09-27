@@ -163,6 +163,38 @@ int main() {
               certified_update->inverse_overlap_submatrix,
               direct_update.inverse_overlap_submatrix) <= 2.0e-12,
       "certified Woodbury overlap update differs from direct factorization");
+  const auto certified_left_update =
+      xmvb::vb::try_woodbury_left_overlap_update(
+          strings[0], strings[1], strings[0], overlap, update_anchor);
+  require(
+      certified_left_update.has_value(),
+      "well-conditioned left rank-one Woodbury update was rejected");
+  const auto direct_left_update = overlap_resolver.resolve_matrix(
+      xmvb::vb::build_overlap_submatrix(
+          strings[1], strings[0], overlap_storage, n_active));
+  require(
+      std::abs(certified_left_update->overlap_determinant -
+               direct_left_update.overlap_determinant) <= 2.0e-12 &&
+          relative_difference(
+              certified_left_update->inverse_overlap_submatrix,
+              direct_left_update.inverse_overlap_submatrix) <= 2.0e-12,
+      "left Woodbury overlap update differs from direct factorization");
+  const auto certified_mixed_update =
+      xmvb::vb::try_woodbury_right_overlap_update(
+          strings[1], strings[0], strings[1], overlap, *certified_left_update);
+  require(
+      certified_mixed_update.has_value(),
+      "mixed left/right Woodbury path was rejected");
+  const auto direct_mixed_update = overlap_resolver.resolve_matrix(
+      xmvb::vb::build_overlap_submatrix(
+          strings[1], strings[1], overlap_storage, n_active));
+  require(
+      std::abs(certified_mixed_update->overlap_determinant -
+               direct_mixed_update.overlap_determinant) <= 2.0e-12 &&
+          relative_difference(
+              certified_mixed_update->inverse_overlap_submatrix,
+              direct_mixed_update.inverse_overlap_submatrix) <= 2.0e-12,
+      "mixed Woodbury overlap path differs from direct factorization");
   xmvb::vb::RiPairUpdateState ri_update;
   require(
       ri_update.initialize(
@@ -199,6 +231,43 @@ int main() {
           ri_update.two_electron_phi() -
           (direct_phi.total_phi - direct_one_electron_phi)) <= 2.0e-12,
       "low-rank RI channel update changed the two-electron contraction");
+  xmvb::vb::RiPairUpdateState ri_left_update;
+  require(
+      ri_left_update.initialize(
+          strings[0],
+          strings[0],
+          update_anchor,
+          ri.ri_active_pair_factors) &&
+          ri_left_update.update_left(
+              strings[0],
+              strings[1],
+              strings[0],
+              update_anchor,
+              *certified_left_update,
+              ri.ri_active_pair_factors),
+      "regular left RI channel update was rejected");
+  const auto direct_left_phi = xmvb::vb::compute_same_spin_original_phi(
+      strings[1],
+      strings[0],
+      h1e,
+      n_active,
+      ri,
+      direct_left_update,
+      nullptr);
+  double direct_left_one_electron_phi = 0.0;
+  for (int left = 0; left < static_cast<int>(strings[1].size()); ++left) {
+    for (int right = 0; right < static_cast<int>(strings[0].size()); ++right) {
+      direct_left_one_electron_phi +=
+          h1e(strings[0][right], strings[1][left]) *
+          direct_left_update.inverse_overlap_submatrix(left, right);
+    }
+  }
+  require(
+      std::abs(
+          ri_left_update.two_electron_phi() -
+          (direct_left_phi.total_phi -
+           direct_left_one_electron_phi)) <= 2.0e-12,
+      "left low-rank RI update changed the two-electron contraction");
   Eigen::VectorXd auxiliary_feature(ri.n_auxiliary_functions);
   require(
       ri_update.first_order_cofactor_auxiliary(
