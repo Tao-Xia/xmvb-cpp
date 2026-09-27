@@ -135,6 +135,25 @@ const DirectionalOppositeSpinPairData& DirectionalOppositeSpinPairTile::pair(
       right_local];
 }
 
+const Eigen::MatrixXd& DirectionalOppositeSpinPairTile::raw_channel(
+    int packed_pair) const {
+  if (packed_pair < 0 ||
+      packed_pair >= static_cast<int>(raw_channels.size())) {
+    throw std::out_of_range("raw opposite-spin tile channel out of range");
+  }
+  return raw_channels[packed_pair];
+}
+
+const Eigen::MatrixXd& DirectionalOppositeSpinPairTile::projected_channel(
+    int packed_pair) const {
+  if (packed_pair < 0 ||
+      packed_pair >= static_cast<int>(projected_channels.size())) {
+    throw std::out_of_range(
+        "projected opposite-spin tile channel out of range");
+  }
+  return projected_channels[packed_pair];
+}
+
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
@@ -184,6 +203,12 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
   result.right_size = same_spin_tile.right_size();
   const int work_items = result.left_size * result.right_size;
   result.pairs.resize(static_cast<std::size_t>(work_items));
+  result.raw_channels.assign(
+      n_packed_pairs,
+      Eigen::MatrixXd::Zero(result.left_size, result.right_size));
+  result.projected_channels.assign(
+      n_packed_pairs,
+      Eigen::MatrixXd::Zero(result.left_size, result.right_size));
 
   for (int work = 0; work < work_items; ++work) {
     const int left_local = work / result.right_size;
@@ -205,6 +230,14 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
             unique_determinants[right],
             same_spin_tile.pair(left_local, right_local).delta_cofactor_1st,
             n_active_orbitals);
+    const auto& raw = entry.delta_first_order_cofactor_projection;
+    for (std::size_t projection_entry = 0;
+         projection_entry < raw.packed_pair_indices.size();
+         ++projection_entry) {
+      result.raw_channels[raw.packed_pair_indices[projection_entry]](
+          left_local, right_local) +=
+          raw.packed_pair_values[projection_entry];
+    }
   }
 
   if (accepted_ri_active_pair_factors != nullptr) {
@@ -268,12 +301,20 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
           accepted_auxiliary;
       for (int work = begin; work < end; ++work) {
         const int column = work - begin;
+        const int left_local = work / result.right_size;
+        const int right_local = work % result.right_size;
         auto& values = result.pairs[static_cast<std::size_t>(work)]
                            .delta_first_order_cofactor_projection
                            .projected_pair_values;
         values.assign(
             projected.col(column).data(),
             projected.col(column).data() + n_packed_pairs);
+        for (int packed_pair = 0;
+             packed_pair < n_packed_pairs;
+             ++packed_pair) {
+          result.projected_channels[packed_pair](left_local, right_local) =
+              projected(packed_pair, column);
+        }
       }
     }
     return result;
@@ -307,6 +348,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     for (int packed_pair = 0; packed_pair < n_packed_pairs; ++packed_pair) {
       projection.projected_pair_values[packed_pair] +=
           kernel_direction[packed_pair];
+      result.projected_channels[packed_pair](left_local, right_local) =
+          projection.projected_pair_values[packed_pair];
     }
   }
   return result;

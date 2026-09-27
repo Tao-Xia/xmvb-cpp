@@ -227,39 +227,6 @@ void add_sparse_left_product(
   }
 }
 
-Eigen::MatrixXd opposite_tile_channel(
-    const detail::DirectionalOppositeSpinPairTile& tile,
-    int packed_pair,
-    bool projected) {
-  Eigen::MatrixXd result(tile.left_size, tile.right_size);
-  for (int left = 0; left < tile.left_size; ++left) {
-    for (int right = 0; right < tile.right_size; ++right) {
-      const auto& projection = tile.pair(left, right)
-                                   .delta_first_order_cofactor_projection;
-      if (projected) {
-        if (projection.projected_pair_values.size() <=
-            static_cast<std::size_t>(packed_pair)) {
-          throw std::invalid_argument(
-              "directional projected pair channel is incomplete");
-        }
-        result(left, right) =
-            projection.projected_pair_values[packed_pair];
-        continue;
-      }
-      double value = 0.0;
-      for (std::size_t entry = 0;
-           entry < projection.packed_pair_indices.size();
-           ++entry) {
-        if (projection.packed_pair_indices[entry] == packed_pair) {
-          value += projection.packed_pair_values[entry];
-        }
-      }
-      result(left, right) = value;
-    }
-  }
-  return result;
-}
-
 }  // namespace
 
 struct AcceptedStructureResponseFactors {
@@ -670,8 +637,8 @@ build_selected_structure_direction_from_pair_tiles(
                 factors.beta_hamiltonian.transpose();
 
             for (int target = 0; target < n_pairs; ++target) {
-              const Eigen::MatrixXd projected = opposite_tile_channel(
-                  *opposite_tile, target, true);
+              const Eigen::MatrixXd& projected =
+                  opposite_tile->projected_channel(target);
               if (projected.isZero(0.0)) {
                 continue;
               }
@@ -711,8 +678,8 @@ build_selected_structure_direction_from_pair_tiles(
             accepted_alpha_times_coefficients.resize(
                 n_alpha, same_tile.right_size());
             for (int target = 0; target < n_pairs; ++target) {
-              const Eigen::MatrixXd directional = opposite_tile_channel(
-                  *opposite_tile, target, false);
+              const Eigen::MatrixXd& directional =
+                  opposite_tile->raw_channel(target);
               if (directional.isZero(0.0)) {
                 continue;
               }

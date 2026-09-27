@@ -24,10 +24,15 @@ struct DirectionalOppositeSpinPairTile {
   int left_size = 0;
   int right_size = 0;
   std::vector<DirectionalOppositeSpinPairData> pairs;
+  std::vector<Eigen::MatrixXd> raw_channels;
+  std::vector<Eigen::MatrixXd> projected_channels;
 
   const DirectionalOppositeSpinPairData& pair(
       int left_local,
       int right_local) const;
+
+  const Eigen::MatrixXd& raw_channel(int packed_pair) const;
+  const Eigen::MatrixXd& projected_channel(int packed_pair) const;
 };
 
 /**
