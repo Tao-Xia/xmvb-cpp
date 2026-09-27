@@ -1,6 +1,7 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/matrix_weights_internal.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 #include <utility>
@@ -32,6 +33,17 @@ void set_symmetric_entry(
 }
 
 }  // namespace
+
+const SameSpinPolynomialDirectionalPairData& SameSpinDirectionalPairTile::pair(
+    int left_local,
+    int right_local) const {
+  if (left_local < 0 || left_local >= left_size() ||
+      right_local < 0 || right_local >= right_size()) {
+    throw std::out_of_range("directional same-spin tile index out of range");
+  }
+  return pairs[static_cast<std::size_t>(left_local) * right_size() +
+      right_local];
+}
 
 void accumulate_one_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,
@@ -207,6 +219,124 @@ SameSpinPolynomialDirectionalPairData build_polynomial_spin_directional_data(
         cofactor.second_contraction_gradient_direction(
             ds, polynomial.antisymmetrized_interaction, dg);
   return result;
+}
+
+SameSpinDirectionalPairTile build_directional_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    int n_unique_determinants,
+    int n_active_orbitals,
+    const ActiveSpaceIntegralDirectionView& direction,
+    int left_begin,
+    int left_end,
+    int right_begin,
+    int right_end,
+    const Eigen::MatrixXd* accepted_active_one_electron,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+  const std::size_t expected_size = square_storage_size(n_unique_determinants);
+  if (ordered_pair_cache.size() != expected_size ||
+      unique_determinants.size() !=
+          static_cast<std::size_t>(n_unique_determinants) ||
+      left_begin < 0 || left_end <= left_begin ||
+      left_end > n_unique_determinants || right_begin < 0 ||
+      right_end <= right_begin || right_end > n_unique_determinants) {
+    throw std::invalid_argument(
+        "same-spin directional tile dimensions are inconsistent");
+  }
+  const bool use_ri = accepted_active_one_electron != nullptr &&
+      accepted_ri_active_pair_factors != nullptr &&
+      directional_ri_active_pair_factors != nullptr;
+  if ((accepted_active_one_electron != nullptr ||
+       accepted_ri_active_pair_factors != nullptr ||
+       directional_ri_active_pair_factors != nullptr) &&
+      !use_ri) {
+    throw std::invalid_argument(
+        "same-spin RI directional tile requires all accepted/directional matrices");
+  }
+
+  SameSpinDirectionalPairTile tile;
+  tile.left_begin = left_begin;
+  tile.right_begin = right_begin;
+  const int left_size = left_end - left_begin;
+  const int right_size = right_end - right_begin;
+  tile.delta_overlap = Eigen::MatrixXd::Zero(left_size, right_size);
+  tile.delta_regular_hamiltonian =
+      Eigen::MatrixXd::Zero(left_size, right_size);
+  tile.delta_singular_hamiltonian =
+      Eigen::MatrixXd::Zero(left_size, right_size);
+  tile.pairs.resize(static_cast<std::size_t>(left_size) * right_size);
+
+  Eigen::Map<const Eigen::MatrixXd> delta_h1e(
+      direction.one_electron.data(),
+      n_active_orbitals,
+      n_active_orbitals);
+  const int work_items = left_size * right_size;
+  const int n_threads = std::max(
+      1,
+      std::min(xmvb::effective_openmp_thread_count(), work_items));
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+  for (int work = 0; work < work_items; ++work) {
+    const int left_local = work / right_size;
+    const int right_local = work % right_size;
+    const int left_id = left_begin + left_local;
+    const int right_id = right_begin + right_local;
+    const auto& pair_evaluation = ordered_pair_cache[
+        ordered_spin_pair_storage_index(
+            left_id, right_id, n_unique_determinants)];
+    SameSpinPolynomialDirectionalPairData pair_direction;
+    const bool regular_ri_pair =
+        pair_evaluation.has_same_spin_phi_cache && use_ri;
+    if (regular_ri_pair) {
+      const Eigen::MatrixXd delta_overlap =
+          build_local_overlap_direction_matrix(
+              unique_determinants[left_id],
+              unique_determinants[right_id],
+              direction.overlap,
+              n_active_orbitals);
+      const RegularRiSameSpinDirection ri_direction =
+          evaluate_regular_ri_same_spin_direction(
+              unique_determinants[left_id],
+              unique_determinants[right_id],
+              *accepted_active_one_electron,
+              delta_h1e,
+              n_active_orbitals,
+              *accepted_ri_active_pair_factors,
+              *directional_ri_active_pair_factors,
+              pair_evaluation.overlap_result,
+              delta_overlap,
+              pair_evaluation.same_spin_total_phi,
+              pair_evaluation.same_spin_inverse_overlap_gradient);
+      pair_direction.delta_overlap_determinant =
+          ri_direction.delta_overlap_determinant;
+      pair_direction.delta_total_hamiltonian =
+          ri_direction.delta_total_hamiltonian;
+      pair_direction.delta_cofactor_1st =
+          ri_direction.delta_first_cofactor;
+      pair_direction.delta_same_spin_overlap_hamiltonian_gradient =
+          ri_direction.delta_overlap_hamiltonian_gradient;
+    } else {
+      pair_direction = build_polynomial_spin_directional_data(
+          unique_determinants[left_id],
+          unique_determinants[right_id],
+          pair_evaluation,
+          n_active_orbitals,
+          direction);
+    }
+
+    tile.pairs[static_cast<std::size_t>(work)] = std::move(pair_direction);
+    const auto& stored = tile.pairs[static_cast<std::size_t>(work)];
+    tile.delta_overlap(left_local, right_local) =
+        stored.delta_overlap_determinant;
+    Eigen::MatrixXd& hamiltonian =
+        pair_evaluation.overlap_result.nullity == 0 &&
+                pair_evaluation.overlap_result.overlap_determinant != 0.0
+            ? tile.delta_regular_hamiltonian
+            : tile.delta_singular_hamiltonian;
+    hamiltonian(left_local, right_local) =
+        stored.delta_total_hamiltonian;
+  }
+  return tile;
 }
 
 SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(

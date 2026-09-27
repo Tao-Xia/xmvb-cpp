@@ -13,6 +13,7 @@
 #include "vbscf/derivatives/hessian/responses/active_space/ri_factor_adjoint.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
@@ -322,6 +323,35 @@ int main() {
             &h1e,
             &direct_ri.ri_active_pair_factors,
             &delta_factors);
+    const auto scalar_tile =
+        xmvb::vb::detail::build_directional_pair_tile(
+            pair_cache.alpha_reuse_table.unique_determinants,
+            pair_cache.alpha_pair_cache_ref(),
+            1,
+            n_active,
+            first_view,
+            0,
+            1,
+            0,
+            1,
+            &h1e,
+            &direct_ri.ri_active_pair_factors,
+            &delta_factors);
+    require_matrix_close(
+        scalar_tile.delta_regular_hamiltonian,
+        scalar_cache.alpha.delta_regular_total_hamiltonian_matrix,
+        1.0e-13,
+        "RI directional pair tile Hamiltonian");
+    require_matrix_close(
+        scalar_tile.delta_overlap,
+        scalar_cache.alpha.delta_overlap_determinant_matrix,
+        1.0e-13,
+        "RI directional pair tile overlap");
+    require_matrix_close(
+        scalar_tile.pair(0, 0).delta_cofactor_1st,
+        scalar_cache.alpha.ordered_pair_data.front().delta_cofactor_1st,
+        1.0e-13,
+        "RI directional pair tile cofactor");
     const auto cache_block =
         xmvb::vb::build_same_spin_directional_pair_cache_batch(
             pair_cache,

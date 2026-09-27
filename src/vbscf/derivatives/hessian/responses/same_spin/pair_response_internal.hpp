@@ -9,6 +9,48 @@
 
 namespace xmvb::vb::detail {
 
+/**
+ * @brief Directional data for one rectangular unique-spin pair tile.
+ *
+ * Storage is local to `[left_begin,left_end) x [right_begin,right_end)` and is
+ * released after the current structure/backward consumers finish. No global
+ * `n_unique x n_unique` directional object is required by this representation.
+ */
+struct SameSpinDirectionalPairTile {
+  int left_begin = 0;
+  int right_begin = 0;
+  Eigen::MatrixXd delta_overlap;
+  Eigen::MatrixXd delta_regular_hamiltonian;
+  Eigen::MatrixXd delta_singular_hamiltonian;
+  std::vector<SameSpinPolynomialDirectionalPairData> pairs;
+
+  int left_size() const noexcept {
+    return static_cast<int>(delta_overlap.rows());
+  }
+
+  int right_size() const noexcept {
+    return static_cast<int>(delta_overlap.cols());
+  }
+
+  const SameSpinPolynomialDirectionalPairData& pair(
+      int left_local,
+      int right_local) const;
+};
+
+SameSpinDirectionalPairTile build_directional_pair_tile(
+    const std::vector<std::vector<int>>& unique_determinants,
+    const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
+    int n_unique_determinants,
+    int n_active_orbitals,
+    const ActiveSpaceIntegralDirectionView& direction,
+    int left_begin,
+    int left_end,
+    int right_begin,
+    int right_end,
+    const Eigen::MatrixXd* accepted_active_one_electron,
+    const Eigen::MatrixXd* accepted_ri_active_pair_factors,
+    const Eigen::MatrixXd* directional_ri_active_pair_factors);
+
 SameSpinDirectionalScalarMatrices build_directional_pair_scalar_matrices(
     const std::vector<std::vector<int>>& unique_determinants,
     const std::vector<SpinDeterminantPairEvaluation>& ordered_pair_cache,
