@@ -1220,6 +1220,16 @@ void check_sigma_action() {
       (topology_images.overlap -
        reference_three_structure_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
       "topology-only overlap action differs from the dense reference");
+  const auto streamed_images =
+      topology_action.apply_streamed(structure_vectors);
+  require(
+      (streamed_images.hamiltonian -
+       reference_three_structure_hamiltonian).cwiseAbs().maxCoeff() < 2.0e-10,
+      "streamed Hamiltonian action differs from the dense reference");
+  require(
+      (streamed_images.overlap -
+       reference_three_structure_overlap).cwiseAbs().maxCoeff() < 2.0e-10,
+      "streamed overlap action differs from the dense reference");
 }
 
 void check_distinct_spin_sigma_action() {

@@ -108,6 +108,16 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
 
   /**
+   * @brief Applies H/S with bounded spin-product and pair-tile workspaces.
+   *
+   * This path never materializes a full `U_alpha x U_beta` intermediate and
+   * is therefore the explicit large-space action contract.  `apply()` selects
+   * it automatically when the full-grid fast path exceeds its byte budget.
+   */
+  StructureActionResult apply_streamed(
+      const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
+
+  /**
    * @brief Applies the exact first derivative of a complete-space direct-CI action.
    *
    * The selected vectors in the prepared state are held fixed while all active
@@ -176,6 +186,20 @@ public:
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
 
   /**
+   * @brief Expands structure vectors only on one spin-product tile.
+   *
+   * Horizontal blocks in the returned matrix have shape
+   * `(alpha_size, beta_size)`.  This is the bounded-memory counterpart of
+   * `expand_structure_block()` used by the large-space factorized action.
+   */
+  Eigen::MatrixXd expand_structure_tile(
+      const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+      int alpha_begin,
+      int alpha_size,
+      int beta_begin,
+      int beta_size) const;
+
+  /**
    * @brief Maps structure columns to the orthonormal determinant-product basis.
    *
    * The returned matrix packs one `(n_unique_alpha, n_unique_beta)` block per
@@ -228,6 +252,7 @@ private:
   std::vector<int> spin_products_;
   std::vector<std::size_t> spin_term_offsets_;
   std::vector<StructureTerm> spin_terms_;
+
   StructureDiagonal preconditioner_diagonal_;
   int n_determinants_ = 0;
   int n_structures_ = 0;

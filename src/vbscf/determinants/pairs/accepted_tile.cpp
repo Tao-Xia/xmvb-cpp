@@ -1,7 +1,10 @@
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 
+#include <algorithm>
 #include <stdexcept>
 #include <utility>
+
+#include "core/openmp.hpp"
 
 namespace xmvb::vb {
 
@@ -55,10 +58,15 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
   tile.pairs.resize(
       static_cast<std::size_t>(tile.left_size) * tile.right_size);
 
-  for (int left_local = 0; left_local < tile.left_size; ++left_local) {
-    const auto& occupied_left =
-        unique_spin_strings_[left_begin + left_local];
-    for (int right_local = 0; right_local < tile.right_size; ++right_local) {
+  const int pair_count = tile.left_size * tile.right_size;
+  const int n_threads = std::max(
+      1, std::min(xmvb::effective_openmp_thread_count(), pair_count));
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+  for (int pair_index = 0; pair_index < pair_count; ++pair_index) {
+      const int left_local = pair_index / tile.right_size;
+      const int right_local = pair_index % tile.right_size;
+      const auto& occupied_left =
+          unique_spin_strings_[left_begin + left_local];
       const auto& occupied_right =
           unique_spin_strings_[right_begin + right_local];
       SpinDeterminantPairEvaluation evaluation =
@@ -83,9 +91,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             options.populate_response_payload,
             &evaluation);
       }
-      tile.pairs[static_cast<std::size_t>(left_local) * tile.right_size +
-          right_local] = std::move(evaluation);
-    }
+      tile.pairs[static_cast<std::size_t>(pair_index)] =
+          std::move(evaluation);
   }
   return tile;
 }

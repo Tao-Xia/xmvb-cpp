@@ -71,6 +71,85 @@ Eigen::MatrixXd build_pair_channel_block(
   return channels;
 }
 
+struct PairScalarTile {
+  Eigen::MatrixXd overlap;
+  Eigen::MatrixXd hamiltonian;
+};
+
+PairScalarTile build_pair_scalar_tile(const AcceptedSpinPairTile& tile) {
+  PairScalarTile result{
+      Eigen::MatrixXd(tile.left_size, tile.right_size),
+      Eigen::MatrixXd(tile.left_size, tile.right_size)};
+  for (int left = 0; left < tile.left_size; ++left) {
+    for (int right = 0; right < tile.right_size; ++right) {
+      const auto& pair = tile.pair(left, right);
+      result.overlap(left, right) =
+          pair.overlap_result.overlap_determinant;
+      result.hamiltonian(left, right) = pair.total_hamiltonian;
+    }
+  }
+  return result;
+}
+
+void add_opposite_spin_tile(
+    const AcceptedSpinPairTile& alpha_tile,
+    const AcceptedSpinPairTile& beta_tile,
+    const Eigen::Ref<const Eigen::MatrixXd>& alpha_channels,
+    const Eigen::Ref<const Eigen::MatrixXd>& beta_projected,
+    const Eigen::Ref<const Eigen::MatrixXd>& source,
+    Eigen::Ref<Eigen::MatrixXd> target) {
+  if (source.rows() != alpha_tile.right_size ||
+      source.cols() != beta_tile.right_size ||
+      target.rows() != alpha_tile.left_size ||
+      target.cols() != beta_tile.left_size ||
+      alpha_channels.rows() != alpha_tile.left_size * alpha_tile.right_size ||
+      beta_projected.rows() != beta_tile.left_size * beta_tile.right_size ||
+      alpha_channels.cols() != beta_projected.cols()) {
+    throw std::invalid_argument(
+        "opposite-spin tile action dimensions are inconsistent");
+  }
+  using ChannelMap = Eigen::Map<
+      const Eigen::MatrixXd,
+      Eigen::Unaligned,
+      Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>>;
+  const Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic> alpha_stride(
+      alpha_tile.left_size, 1);
+  const Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic> beta_stride(
+      beta_tile.left_size, 1);
+  Eigen::MatrixXd push(alpha_tile.left_size, beta_tile.right_size);
+  for (int channel = 0; channel < alpha_channels.cols(); ++channel) {
+    if (alpha_channels.col(channel).isZero(0.0) ||
+        beta_projected.col(channel).isZero(0.0)) {
+      continue;
+    }
+    const ChannelMap alpha_channel(
+        alpha_channels.col(channel).data(),
+        alpha_tile.left_size,
+        alpha_tile.right_size,
+        alpha_stride);
+    const ChannelMap beta_channel(
+        beta_projected.col(channel).data(),
+        beta_tile.left_size,
+        beta_tile.right_size,
+        beta_stride);
+    push.noalias() = alpha_channel * source;
+    target.noalias() += push * beta_channel.transpose();
+  }
+}
+
+bool full_factorized_action_fits(
+    int n_unique_alpha,
+    int n_unique_beta,
+    int block_width) {
+  constexpr std::size_t kSimultaneousSpinProductMatrices = 8;
+  const std::size_t columns = static_cast<std::size_t>(block_width);
+  const std::size_t spin_products =
+      static_cast<std::size_t>(n_unique_alpha) * n_unique_beta;
+  const std::size_t maximum_products = kStructureActionWorkspaceBytes /
+      (kSimultaneousSpinProductMatrices * sizeof(double) * columns);
+  return spin_products <= maximum_products;
+}
+
 void add_tiled_opposite_spin_action(
     const AcceptedPairTileProvider& alpha_provider,
     const AcceptedPairTileProvider& beta_provider,
@@ -105,11 +184,6 @@ void add_tiled_opposite_spin_action(
       n_active,
       two_electron.n_auxiliary_functions,
       true);
-  using ChannelMap = Eigen::Map<
-      const Eigen::MatrixXd,
-      Eigen::Unaligned,
-      Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic>>;
-
   for (int alpha_left = 0;
        alpha_left < n_unique_alpha;
        alpha_left += alpha_extent) {
@@ -134,8 +208,6 @@ void add_tiled_opposite_spin_action(
               .populate_opposite_spin_projection = true});
       const Eigen::MatrixXd alpha_channels =
           build_pair_channel_block(alpha_tile, n_pairs);
-      const Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic> alpha_stride(
-          alpha_tile.left_size, 1);
 
       for (int beta_left = 0;
            beta_left < n_unique_beta;
@@ -164,8 +236,6 @@ void add_tiled_opposite_spin_action(
           const Eigen::MatrixXd beta_projected =
               apply_active_space_two_electron_kernel_block(
                   two_electron, n_active, beta_raw.transpose()).transpose();
-          const Eigen::Stride<Eigen::Dynamic, Eigen::Dynamic> beta_stride(
-              beta_tile.left_size, 1);
 
           for (int vector = 0; vector < block_width; ++vector) {
             const auto source = spin_vectors.block(
@@ -178,26 +248,13 @@ void add_tiled_opposite_spin_action(
                 vector * n_unique_beta + beta_left,
                 alpha_tile.left_size,
                 beta_tile.left_size);
-            Eigen::MatrixXd push(
-                alpha_tile.left_size, beta_tile.right_size);
-            for (int channel = 0; channel < n_pairs; ++channel) {
-              if (alpha_channels.col(channel).isZero(0.0) ||
-                  beta_projected.col(channel).isZero(0.0)) {
-                continue;
-              }
-              const ChannelMap alpha_channel(
-                  alpha_channels.col(channel).data(),
-                  alpha_tile.left_size,
-                  alpha_tile.right_size,
-                  alpha_stride);
-              const ChannelMap beta_channel(
-                  beta_projected.col(channel).data(),
-                  beta_tile.left_size,
-                  beta_tile.right_size,
-                  beta_stride);
-              push.noalias() = alpha_channel * source;
-              target.noalias() += push * beta_channel.transpose();
-            }
+            add_opposite_spin_tile(
+                alpha_tile,
+                beta_tile,
+                alpha_channels,
+                beta_projected,
+                source,
+                target);
           }
         }
       }
@@ -803,6 +860,192 @@ Eigen::MatrixXd StructureAction::expand_structure_block(
   return spin_vectors;
 }
 
+Eigen::MatrixXd StructureAction::expand_structure_tile(
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors,
+    int alpha_begin,
+    int alpha_size,
+    int beta_begin,
+    int beta_size) const {
+  if (vectors.rows() != n_structures_ || vectors.cols() <= 0 ||
+      alpha_begin < 0 || alpha_size <= 0 ||
+      alpha_begin + alpha_size > n_unique_alpha_ ||
+      beta_begin < 0 || beta_size <= 0 ||
+      beta_begin + beta_size > n_unique_beta_) {
+    throw std::invalid_argument(
+        "structure expansion tile dimensions are inconsistent");
+  }
+  const int block_width = static_cast<int>(vectors.cols());
+  Eigen::MatrixXd tile = Eigen::MatrixXd::Zero(
+      alpha_size, block_width * beta_size);
+  for (int alpha_local = 0; alpha_local < alpha_size; ++alpha_local) {
+    const int alpha = alpha_begin + alpha_local;
+    const int first_product = alpha * n_unique_beta_ + beta_begin;
+    const int last_product = first_product + beta_size;
+    auto group = std::lower_bound(
+        spin_products_.begin(), spin_products_.end(), first_product);
+    while (group != spin_products_.end() && *group < last_product) {
+      const std::size_t group_index =
+          static_cast<std::size_t>(group - spin_products_.begin());
+      const int beta_local = *group - first_product;
+      for (std::size_t term_index = spin_term_offsets_[group_index];
+           term_index < spin_term_offsets_[group_index + 1];
+           ++term_index) {
+        const StructureTerm& term = spin_terms_[term_index];
+        for (int vector = 0; vector < block_width; ++vector) {
+          tile(alpha_local, vector * beta_size + beta_local) +=
+              term.coefficient * vectors(term.structure, vector);
+        }
+      }
+      ++group;
+    }
+  }
+  return tile;
+}
+
+StructureActionResult StructureAction::apply_streamed(
+    const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
+  if (!tiled_pairs_) {
+    throw std::logic_error("tiled structure action has no pair providers");
+  }
+  const int block_width = static_cast<int>(vectors.cols());
+  const int n_pairs = packed_active_pair_count(tiled_pairs_->n_active);
+  const int alpha_electrons = tiled_pairs_->alpha_strings.empty()
+      ? 0
+      : static_cast<int>(tiled_pairs_->alpha_strings.front().size());
+  const int beta_electrons = tiled_pairs_->beta_strings.empty()
+      ? 0
+      : static_cast<int>(tiled_pairs_->beta_strings.front().size());
+  const std::size_t spin_workspace = kStructureActionWorkspaceBytes / 2;
+  const int alpha_extent = detail::plan_pair_tile_extent(
+      n_unique_alpha_,
+      alpha_electrons,
+      tiled_pairs_->n_active,
+      tiled_pairs_->two_electron.n_auxiliary_functions,
+      true,
+      spin_workspace);
+  const int beta_extent = detail::plan_pair_tile_extent(
+      n_unique_beta_,
+      beta_electrons,
+      tiled_pairs_->n_active,
+      tiled_pairs_->two_electron.n_auxiliary_functions,
+      true,
+      spin_workspace);
+
+  StructureActionResult result{
+      Eigen::MatrixXd::Zero(n_structures_, block_width),
+      Eigen::MatrixXd::Zero(n_structures_, block_width)};
+  for (int alpha_left = 0; alpha_left < n_unique_alpha_;
+       alpha_left += alpha_extent) {
+    const int alpha_left_end =
+        std::min(n_unique_alpha_, alpha_left + alpha_extent);
+    const int alpha_left_size = alpha_left_end - alpha_left;
+    for (int beta_left = 0; beta_left < n_unique_beta_;
+         beta_left += beta_extent) {
+      const int beta_left_end =
+          std::min(n_unique_beta_, beta_left + beta_extent);
+      const int beta_left_size = beta_left_end - beta_left;
+      Eigen::MatrixXd hamiltonian_tile = Eigen::MatrixXd::Zero(
+          alpha_left_size, block_width * beta_left_size);
+      Eigen::MatrixXd overlap_tile = Eigen::MatrixXd::Zero(
+          alpha_left_size, block_width * beta_left_size);
+
+      for (int alpha_right = 0; alpha_right < n_unique_alpha_;
+           alpha_right += alpha_extent) {
+        const int alpha_right_end =
+            std::min(n_unique_alpha_, alpha_right + alpha_extent);
+        const AcceptedSpinPairTile alpha_pair =
+            tiled_pairs_->alpha_provider->build(
+                alpha_left,
+                alpha_left_end,
+                alpha_right,
+                alpha_right_end,
+                tiled_pairs_->active_overlap,
+                tiled_pairs_->one_electron,
+                tiled_pairs_->two_electron,
+                AcceptedPairTileBuildOptions{
+                    .materialize_projected_pair_values = false,
+                    .populate_response_payload = false,
+                    .populate_opposite_spin_projection = true});
+        const PairScalarTile alpha_scalar =
+            build_pair_scalar_tile(alpha_pair);
+        const Eigen::MatrixXd alpha_channels =
+            build_pair_channel_block(alpha_pair, n_pairs);
+
+        for (int beta_right = 0; beta_right < n_unique_beta_;
+             beta_right += beta_extent) {
+          const int beta_right_end =
+              std::min(n_unique_beta_, beta_right + beta_extent);
+          const AcceptedSpinPairTile beta_pair =
+              tiled_pairs_->beta_provider->build(
+                  beta_left,
+                  beta_left_end,
+                  beta_right,
+                  beta_right_end,
+                  tiled_pairs_->active_overlap,
+                  tiled_pairs_->one_electron,
+                  tiled_pairs_->two_electron,
+                  AcceptedPairTileBuildOptions{
+                      .materialize_projected_pair_values = false,
+                      .populate_response_payload = false,
+                      .populate_opposite_spin_projection = true});
+          const PairScalarTile beta_scalar =
+              build_pair_scalar_tile(beta_pair);
+          const Eigen::MatrixXd beta_raw =
+              build_pair_channel_block(beta_pair, n_pairs);
+          const Eigen::MatrixXd beta_projected =
+              apply_active_space_two_electron_kernel_block(
+                  tiled_pairs_->two_electron,
+                  tiled_pairs_->n_active,
+                  beta_raw.transpose()).transpose();
+          const Eigen::MatrixXd source_tile = expand_structure_tile(
+              vectors,
+              alpha_right,
+              alpha_pair.right_size,
+              beta_right,
+              beta_pair.right_size);
+
+          for (int vector = 0; vector < block_width; ++vector) {
+            const auto source = source_tile.middleCols(
+                vector * beta_pair.right_size,
+                beta_pair.right_size);
+            auto target_hamiltonian = hamiltonian_tile.middleCols(
+                vector * beta_left_size, beta_left_size);
+            auto target_overlap = overlap_tile.middleCols(
+                vector * beta_left_size, beta_left_size);
+            Eigen::MatrixXd alpha_push =
+                alpha_scalar.overlap * source;
+            target_overlap.noalias() +=
+                alpha_push * beta_scalar.overlap.transpose();
+            target_hamiltonian.noalias() +=
+                alpha_push * beta_scalar.hamiltonian.transpose();
+            alpha_push.noalias() = alpha_scalar.hamiltonian * source;
+            target_hamiltonian.noalias() +=
+                alpha_push * beta_scalar.overlap.transpose();
+            add_opposite_spin_tile(
+                alpha_pair,
+                beta_pair,
+                alpha_channels,
+                beta_projected,
+                source,
+                target_hamiltonian);
+          }
+        }
+      }
+      add_spin_product_tile(
+          hamiltonian_tile,
+          alpha_left,
+          beta_left,
+          &result.hamiltonian);
+      add_spin_product_tile(
+          overlap_tile,
+          alpha_left,
+          beta_left,
+          &result.overlap);
+    }
+  }
+  return result;
+}
+
 Eigen::MatrixXd StructureAction::orthogonalize_structure_block(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {
   if (!direct_ci_) {
@@ -841,6 +1084,11 @@ StructureActionResult StructureAction::apply(
       images.overlap.middleCols(first, width) = chunk.overlap;
     }
     return images;
+  }
+
+  if (!direct_ci_ && !full_factorized_action_fits(
+                         n_unique_alpha_, n_unique_beta_, block_width)) {
+    return apply_streamed(vectors);
   }
 
   Eigen::MatrixXd spin_vectors = expand_structure_block(vectors);
