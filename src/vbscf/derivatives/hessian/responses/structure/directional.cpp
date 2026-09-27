@@ -87,12 +87,12 @@ PairScalarMatrices pair_scalar_matrices(
 
 }  // namespace
 
-struct AcceptedStructureResponseFactors {
+struct AcceptedStructureResponseState {
   SelectedStateDeterminantMatrices selected_states;
 };
 
-std::shared_ptr<const AcceptedStructureResponseFactors>
-build_accepted_structure_response_factors(
+std::shared_ptr<const AcceptedStructureResponseState>
+build_accepted_structure_response_state(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point,
     const Eigen::MatrixXd& selected_columns) {
@@ -101,15 +101,15 @@ build_accepted_structure_response_factors(
     throw std::invalid_argument(
         "accepted structure response requires the same-spin cache");
   }
-  auto factors = std::make_shared<AcceptedStructureResponseFactors>();
-  factors->selected_states =
+  auto state = std::make_shared<AcceptedStructureResponseState>();
+  state->selected_states =
       build_selected_state_determinant_matrices_from_selected_columns(
           input.structure_data,
           selected_columns,
           accepted_point.selected_state_indices,
           accepted_point.normalized_state_weights,
           same_spin);
-  return factors;
+  return state;
 }
 
 SelectedStateDirectionalStructureImages
@@ -211,14 +211,13 @@ build_selected_structure_direction_from_pair_tiles(
         directional_ri_active_pair_factors);
   }
   if (!accepted_point.same_spin_pair_cache.has_pair_providers() ||
-      accepted.structure_factors == nullptr) {
+      accepted.structure_state == nullptr) {
     throw std::invalid_argument(
         "tiled factorized structure direction requires accepted pair factors");
   }
 
   const auto& same_spin = accepted_point.same_spin_pair_cache;
-  const auto& factors = *accepted.structure_factors;
-  const auto& selected_states = factors.selected_states;
+  const auto& selected_states = accepted.structure_state->selected_states;
   const int n_active_orbitals =
       input.orbital_preparation_input.n_active_orbitals;
   const int n_pairs = packed_active_pair_count(n_active_orbitals);

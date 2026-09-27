@@ -173,7 +173,7 @@ AcceptedOuterResponseContext build_accepted_outer_response_context(
           *accepted_point_context);
   if (!context.selected_state_eigen_response_operator.structure_action
            ->supports_integral_direction()) {
-    context.structure_factors = build_accepted_structure_response_factors(
+    context.structure_state = build_accepted_structure_response_state(
         *input,
         *accepted_point_context,
         context.selected_state_eigen_response_operator.selected_eigenvectors);

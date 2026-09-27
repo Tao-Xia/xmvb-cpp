@@ -10,8 +10,8 @@
 
 namespace xmvb::vb {
 
-std::shared_ptr<const AcceptedStructureResponseFactors>
-build_accepted_structure_response_factors(
+std::shared_ptr<const AcceptedStructureResponseState>
+build_accepted_structure_response_state(
     const VbScfInput& input,
     const AcceptedPointContext& accepted_point,
     const Eigen::MatrixXd& selected_columns);

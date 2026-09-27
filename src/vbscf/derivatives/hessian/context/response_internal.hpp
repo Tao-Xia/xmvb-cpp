@@ -13,7 +13,7 @@
 
 namespace xmvb::vb {
 
-struct AcceptedStructureResponseFactors;
+struct AcceptedStructureResponseState;
 
 /**
  * @brief Directional structure-matrix images of the selected states.
@@ -92,7 +92,7 @@ struct AcceptedOuterResponseContext {
   const AcceptedPointContext* accepted_point_context = nullptr;
   AcceptedSelectedStateGeneralizedEigenResponseOperator
       selected_state_eigen_response_operator;
-  std::shared_ptr<const AcceptedStructureResponseFactors> structure_factors;
+  std::shared_ptr<const AcceptedStructureResponseState> structure_state;
 };
 
 AcceptedOuterResponseContext build_accepted_outer_response_context(
