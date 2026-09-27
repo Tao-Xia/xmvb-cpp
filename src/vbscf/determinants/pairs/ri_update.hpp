@@ -72,7 +72,6 @@ class RiPairUpdateState {
   double response_roundoff_bound_ = 0.0;
   int n_electrons_ = 0;
   bool track_response_ = false;
-  bool contracted_channels_certified_ = false;
   bool valid_ = false;
 };
 
