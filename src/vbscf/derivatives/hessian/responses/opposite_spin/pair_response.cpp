@@ -265,7 +265,9 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
         const int right = result.right_begin + right_local;
         const auto& accepted = ordered_pair_cache[
             ordered_spin_pair_storage_index(
-                left, right, n_unique_determinants)]
+                std::min(left, right),
+                std::max(left, right),
+                n_unique_determinants)]
                                    .opposite_spin_pair_cache
                                    .first_order_cofactor_projection;
         const auto& directional = result.pairs[static_cast<std::size_t>(work)]
@@ -337,7 +339,9 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
             projection.packed_pair_values);
     const auto& accepted_projection = ordered_pair_cache[
         ordered_spin_pair_storage_index(
-            left, right, n_unique_determinants)]
+            std::min(left, right),
+            std::max(left, right),
+            n_unique_determinants)]
                                           .opposite_spin_pair_cache
                                           .first_order_cofactor_projection;
     const std::vector<double> kernel_direction =
