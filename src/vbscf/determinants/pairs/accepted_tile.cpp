@@ -5,6 +5,7 @@
 #include <utility>
 
 #include "core/openmp.hpp"
+#include "vbscf/determinants/pairs/woodbury_overlap.hpp"
 
 namespace xmvb::vb {
 
@@ -58,19 +59,48 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
   tile.pairs.resize(
       static_cast<std::size_t>(tile.left_size) * tile.right_size);
 
-  const int pair_count = tile.left_size * tile.right_size;
+  const Eigen::Map<const Eigen::MatrixXd> overlap_map(
+      active_overlap.data(), n_active_orbitals_, n_active_orbitals_);
   const int n_threads = std::max(
-      1, std::min(xmvb::effective_openmp_thread_count(), pair_count));
+      1, std::min(xmvb::effective_openmp_thread_count(), tile.left_size));
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
-  for (int pair_index = 0; pair_index < pair_count; ++pair_index) {
-      const int left_local = pair_index / tile.right_size;
-      const int right_local = pair_index % tile.right_size;
+  for (int left_local = 0; left_local < tile.left_size; ++left_local) {
+    for (int right_local = 0; right_local < tile.right_size; ++right_local) {
       const auto& occupied_left =
           unique_spin_strings_[left_begin + left_local];
       const auto& occupied_right =
           unique_spin_strings_[right_begin + right_local];
-      SpinDeterminantPairEvaluation evaluation =
-          pair_evaluator_.evaluate_same_spin_pair(
+      SpinDeterminantPairEvaluation evaluation;
+      const std::size_t pair_index =
+          static_cast<std::size_t>(left_local) * tile.right_size + right_local;
+      if (right_local == 0) {
+        evaluation = pair_evaluator_.evaluate_same_spin_pair(
+            occupied_left,
+            occupied_right,
+            active_overlap,
+            active_one_electron,
+            n_active_orbitals_,
+            active_two_electron,
+            true);
+      } else {
+        const std::size_t previous_index = pair_index - 1;
+        auto updated_overlap = try_woodbury_right_overlap_update(
+            occupied_left,
+            unique_spin_strings_[right_begin + right_local - 1],
+            occupied_right,
+            overlap_map,
+            tile.pairs[previous_index].overlap_result);
+        if (updated_overlap.has_value()) {
+          evaluation = pair_evaluator_.evaluate_same_spin_pair(
+              occupied_left,
+              occupied_right,
+              std::move(*updated_overlap),
+              active_one_electron,
+              n_active_orbitals_,
+              active_two_electron,
+              true);
+        } else {
+          evaluation = pair_evaluator_.evaluate_same_spin_pair(
               occupied_left,
               occupied_right,
               active_overlap,
@@ -78,6 +108,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
               n_active_orbitals_,
               active_two_electron,
               true);
+        }
+      }
       if (options.populate_opposite_spin_projection ||
           options.populate_response_payload) {
         complete_same_spin_pair_evaluation(
@@ -91,8 +123,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             options.populate_response_payload,
             &evaluation);
       }
-      tile.pairs[static_cast<std::size_t>(pair_index)] =
-          std::move(evaluation);
+      tile.pairs[pair_index] = std::move(evaluation);
+    }
   }
   return tile;
 }

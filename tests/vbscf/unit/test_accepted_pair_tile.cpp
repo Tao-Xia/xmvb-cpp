@@ -9,6 +9,7 @@
 #include "vbscf/determinants/pairs/accepted_action.hpp"
 #include "vbscf/determinants/pairs/accepted_tile.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/determinants/pairs/woodbury_overlap.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace {
@@ -121,6 +122,26 @@ int main() {
       &reference, h1e, n_active, ri);
 
   const xmvb::vb::AcceptedPairTileProvider provider(strings, n_active);
+  xmvb::vb::DeterminantOverlapResolver overlap_resolver;
+  const auto update_anchor = overlap_resolver.resolve_matrix(
+      xmvb::vb::build_overlap_submatrix(
+          strings[0], strings[0], overlap_storage, n_active));
+  const auto certified_update =
+      xmvb::vb::try_woodbury_right_overlap_update(
+          strings[0], strings[0], strings[1], overlap, update_anchor);
+  require(
+      certified_update.has_value(),
+      "well-conditioned rank-one Woodbury update was rejected");
+  const auto direct_update = overlap_resolver.resolve_matrix(
+      xmvb::vb::build_overlap_submatrix(
+          strings[0], strings[1], overlap_storage, n_active));
+  require(
+      std::abs(certified_update->overlap_determinant -
+               direct_update.overlap_determinant) <= 2.0e-12 &&
+          relative_difference(
+              certified_update->inverse_overlap_submatrix,
+              direct_update.inverse_overlap_submatrix) <= 2.0e-12,
+      "certified Woodbury overlap update differs from direct factorization");
   const auto tile = provider.build(
       0,
       static_cast<int>(strings.size()),
@@ -232,5 +253,83 @@ int main() {
       singular_tile.pair(0, 1).overlap_result.nullity == 1 &&
       singular_tile.pair(0, 2).overlap_result.nullity == 1,
       "exact tiled evaluation changed singular-pair classification");
+
+  const std::vector<std::vector<int>> mixed_strings{
+      {0, 2, 4}, {1, 2, 3}, {0, 3, 4}};
+  const Eigen::MatrixXd mixed_overlap =
+      Eigen::MatrixXd::Identity(n_active, n_active);
+  const std::vector<double> mixed_overlap_storage(
+      mixed_overlap.data(), mixed_overlap.data() + mixed_overlap.size());
+  const xmvb::vb::AcceptedPairTileProvider mixed_provider(
+      mixed_strings, n_active);
+  const auto mixed_tile = mixed_provider.build(
+      0,
+      static_cast<int>(mixed_strings.size()),
+      0,
+      static_cast<int>(mixed_strings.size()),
+      mixed_overlap_storage,
+      h1e,
+      ri,
+      xmvb::vb::AcceptedPairTileBuildOptions{false, true});
+  for (int left = 0; left < static_cast<int>(mixed_strings.size()); ++left) {
+    for (int right = 0; right < static_cast<int>(mixed_strings.size()); ++right) {
+      const auto singleton = mixed_provider.build(
+          left,
+          left + 1,
+          right,
+          right + 1,
+          mixed_overlap_storage,
+          h1e,
+          ri,
+          xmvb::vb::AcceptedPairTileBuildOptions{false, true});
+      const auto& traversed = mixed_tile.pair(left, right);
+      const auto& exact = singleton.pair(0, 0);
+      require(
+          traversed.overlap_result.nullity == exact.overlap_result.nullity,
+          "Woodbury traversal changed mixed-pair nullity");
+      require(
+          std::abs(traversed.overlap_result.overlap_determinant -
+                   exact.overlap_result.overlap_determinant) <= 2.0e-12,
+          "Woodbury traversal changed mixed-pair determinant");
+      require(
+          std::abs(traversed.total_hamiltonian - exact.total_hamiltonian) <=
+              2.0e-11,
+          "Woodbury traversal changed mixed-pair Hamiltonian");
+      require(
+          std::abs(traversed.same_spin_total_phi -
+                   exact.same_spin_total_phi) <= 2.0e-11,
+          "Woodbury traversal changed mixed-pair phi");
+      require(
+          relative_difference(
+              traversed.same_spin_inverse_overlap_gradient,
+              exact.same_spin_inverse_overlap_gradient) <= 2.0e-11,
+          "Woodbury traversal changed mixed-pair inverse gradient");
+    }
+  }
+  Eigen::MatrixXd mixed_vectors(mixed_strings.size(), 2);
+  mixed_vectors << 0.2, -0.1, 0.3, 0.4, -0.5, 0.7;
+  const auto mixed_full_action = xmvb::vb::apply_accepted_spin_pair_action(
+      mixed_provider,
+      mixed_overlap_storage,
+      h1e,
+      ri,
+      mixed_vectors,
+      1ull << 20);
+  const auto mixed_unit_action = xmvb::vb::apply_accepted_spin_pair_action(
+      mixed_provider,
+      mixed_overlap_storage,
+      h1e,
+      ri,
+      mixed_vectors,
+      1);
+  require(
+      relative_difference(
+          mixed_full_action.overlap, mixed_unit_action.overlap) <= 2.0e-12,
+      "Woodbury traversal changed mixed overlap action across tile sizes");
+  require(
+      relative_difference(
+          mixed_full_action.hamiltonian,
+          mixed_unit_action.hamiltonian) <= 2.0e-11,
+      "Woodbury traversal changed mixed Hamiltonian action across tile sizes");
   return 0;
 }
