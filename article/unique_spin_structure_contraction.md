@@ -1729,6 +1729,72 @@ ordered same-spin pair evaluations are no longer part of the persistent HVP
 state.  Incomplete fixed-spin spaces retain the streamed cofactor adjoint,
 because the direct exterior representation is not exact there.
 
+#### 13.2.1 Contention-free packed-pair adjoint reduction
+
+The direct-CI integral adjoint visits independent determinant-product work
+items, but every item contributes to the same symmetric packed-pair kernel.
+Let $q=n_{\mathrm{act}}(n_{\mathrm{act}}+1)/2$, let $w$ label one graph work
+item, and denote its symmetric contribution by $\Delta G_w$.  The required
+adjoint is
+
+$$
+\bar D_G=\sum_w \Delta G_w.
+$$
+
+Updating one shared $q\times q$ matrix with atomic additions preserves this
+identity but serializes the most frequently visited entries.  The production
+algorithm instead partitions the work among $p$ active threads,
+
+$$
+\bar D_G^{(t)}=\sum_{w\in\mathcal W_t}\Delta G_w,
+\qquad
+\bar D_G=\sum_{t=1}^{p}\bar D_G^{(t)}.
+$$
+
+The same reduction is applied to the one-electron adjoint.  Since addition is
+associative in exact arithmetic, the mathematical adjoint is unchanged; only
+the floating-point summation order differs.  The thread count is constrained
+by an explicit workspace budget $M_{\mathrm{work}}$,
+
+$$
+p
+\leq
+\min\left(
+p_{\mathrm{hardware}},
+N_{\mathrm{work}},
+\left\lfloor
+\frac{M_{\mathrm{work}}}
+{8\left(q^2+n_{\mathrm{act}}^2\right)}
+\right\rfloor
+\right),
+$$
+
+with $M_{\mathrm{work}}=256$ MiB in the current implementation.  Therefore
+the reduction introduces no storage proportional to the square of the number
+of unique spin strings.  Its bounded temporary storage is
+
+$$
+O\!\left[p\left(q^2+n_{\mathrm{act}}^2\right)\right],
+$$
+
+and the formal Slater--Condon graph complexity is unchanged.
+
+The following single-run comparisons used the same 32-core Slurm allocation,
+Davidson structure solves, RI integrals, NEO optimization, and two outer
+iterations.  Energies, gradients, and H/S action counts were identical before
+and after the reduction.
+
+| System | SCF before (s) | SCF after (s) | SCF speedup | End-to-end before/after (s) | Peak RSS before/after (MiB) |
+|---|---:|---:|---:|---:|---:|
+| 241 | 0.259 | 0.249 | 1.04 | 0.567 / 0.571 | 230.0 / 220.0 |
+| 240 | 0.940 | 0.707 | 1.33 | 1.558 / 1.306 | 406.0 / 400.0 |
+| LOFLEA | 58.667 | 32.546 | 1.80 | 59.760 / 33.650 | 635.3 / 634.7 |
+
+The very small 241 case is dominated by fixed program overhead, so its
+end-to-end time is effectively unchanged.  The increasing benefit for 240 and
+LOFLEA is consistent with removal of contention in the direct-CI adjoint
+rather than a molecule-specific convergence change.
+
 A 32-core Slurm measurement on LOFLEA confirms the memory consequence of this
 replacement.  Releasing the accepted ordered-pair payload changed the reported
 cofactor storage from $1{,}166{,}697{,}760$ bytes to zero and reduced peak RSS
