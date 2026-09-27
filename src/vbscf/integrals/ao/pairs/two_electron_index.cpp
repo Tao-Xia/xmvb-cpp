@@ -81,7 +81,7 @@ AoPairGraph build_ao_pair_graph(
   // entries with thread-local histograms and later assign each thread a stable
   // write range inside every row.  This keeps the graph deterministic while
   // avoiding atomics in the hot integral loops.
-  std::vector<std::vector<int>> thread_row_counts(
+  std::vector<std::vector<int>> thread_row_offsets(
       thread_count,
       std::vector<int>(n_ao_pairs, 0));
   std::atomic<int> invalid_integral_index(-1);
@@ -94,7 +94,7 @@ AoPairGraph build_ao_pair_graph(
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
-    auto& local_row_counts = thread_row_counts[thread_index];
+    auto& local_row_offsets = thread_row_offsets[thread_index];
 
 #pragma omp for schedule(static)
     for (std::ptrdiff_t integral_offset = 0;
@@ -113,9 +113,9 @@ AoPairGraph build_ao_pair_graph(
             static_cast<int>(integral_index));
         continue;
       }
-      ++local_row_counts[left_pair_index];
+      ++local_row_offsets[left_pair_index];
       if (right_pair_index != left_pair_index) {
-        ++local_row_counts[right_pair_index];
+        ++local_row_offsets[right_pair_index];
       }
     }
   }
@@ -129,7 +129,7 @@ AoPairGraph build_ao_pair_graph(
   for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
     int total_count = 0;
     for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
-      total_count += thread_row_counts[thread_index][row_index];
+      total_count += thread_row_offsets[thread_index][row_index];
     }
     row_counts[row_index] = total_count;
     n_graph_edges += static_cast<std::size_t>(total_count);
@@ -161,14 +161,15 @@ AoPairGraph build_ao_pair_graph(
   }
   graph.values.resize(graph.row_offsets.back());
 
-  std::vector<std::vector<int>> thread_next_offsets(
-      thread_count,
-      std::vector<int>(n_ao_pairs, 0));
+  // Convert the thread-local counts in place into disjoint write cursors.
+  // Keeping a second thread-by-row table doubles the graph-construction
+  // workspace and can dominate the raw integral payload for large AO bases.
   for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
     int next_offset = graph.row_offsets[row_index];
     for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
-      thread_next_offsets[thread_index][row_index] = next_offset;
-      next_offset += thread_row_counts[thread_index][row_index];
+      const int row_count = thread_row_offsets[thread_index][row_index];
+      thread_row_offsets[thread_index][row_index] = next_offset;
+      next_offset += row_count;
     }
   }
 
@@ -178,7 +179,7 @@ AoPairGraph build_ao_pair_graph(
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
-    auto& local_next_offsets = thread_next_offsets[thread_index];
+    auto& local_next_offsets = thread_row_offsets[thread_index];
 
 #pragma omp for schedule(static)
     for (std::ptrdiff_t integral_offset = 0;
@@ -199,11 +200,14 @@ AoPairGraph build_ao_pair_graph(
   }
 
   std::vector<double>().swap(values);
+  // Each cursor now equals the end of its thread's row segment. Recover all
+  // segment starts in place before filling the matching column entries.
   for (std::size_t row_index = 0; row_index < n_ao_pairs; ++row_index) {
     int next_offset = graph.row_offsets[row_index];
     for (int thread_index = 0; thread_index < n_threads; ++thread_index) {
-      thread_next_offsets[thread_index][row_index] = next_offset;
-      next_offset += thread_row_counts[thread_index][row_index];
+      const int segment_end = thread_row_offsets[thread_index][row_index];
+      thread_row_offsets[thread_index][row_index] = next_offset;
+      next_offset = segment_end;
     }
   }
 
@@ -216,7 +220,7 @@ AoPairGraph build_ao_pair_graph(
 #ifdef _OPENMP
     thread_index = omp_get_thread_num();
 #endif
-    auto& local_next_offsets = thread_next_offsets[thread_index];
+    auto& local_next_offsets = thread_row_offsets[thread_index];
 
 #pragma omp for schedule(static)
     for (std::ptrdiff_t integral_offset = 0;
