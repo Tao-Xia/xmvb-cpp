@@ -513,6 +513,21 @@ int main() {
         throw std::runtime_error(
             "regular cofactor representation retained compound matrices");
       }
+
+      auto drifted_overlap = overlap_resolver.resolve_matrix(x);
+      drifted_overlap.inverse_overlap_submatrix(0, 0) += 1.0e-3;
+      const xmvb::vb::CofactorDifferential certified(drifted_overlap);
+      if (certified.uses_regular_form()) {
+        throw std::runtime_error(
+            "regular cofactor accepted an inverse with failed backward error");
+      }
+      check(
+          certified.value(),
+          reference(x, x, x, 0),
+          "backward-error fallback",
+          n,
+          1.0,
+          0);
     }
     std::cout << "Cofactor value, first and mixed derivatives: polynomial reference, near-singular and rank-deficient tests passed\n";
     return 0;

@@ -28,6 +28,30 @@ double matrix_infinity_norm(const Eigen::MatrixXd& matrix) {
   }
   return matrix.cwiseAbs().rowwise().sum().maxCoeff();
 }
+
+bool inverse_has_backward_error_certificate(
+    const Eigen::Ref<const Eigen::MatrixXd>& matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse) {
+  if (matrix.rows() != matrix.cols() ||
+      inverse.rows() != matrix.rows() ||
+      inverse.cols() != matrix.cols() ||
+      !matrix.allFinite() || !inverse.allFinite()) {
+    return false;
+  }
+  const Eigen::MatrixXd residual =
+      Eigen::MatrixXd::Identity(matrix.rows(), matrix.cols()) -
+      matrix * inverse;
+  const double scale = 1.0 +
+      matrix_infinity_norm(matrix) * matrix_infinity_norm(inverse);
+  const double backward_error = matrix_infinity_norm(residual) / scale;
+  // The threshold follows the precision scale rather than an iteration count
+  // or molecule-specific constant.  Values below sqrt(u) separate normal
+  // backward-stable solve error, O(u), from a visibly drifted inverse while
+  // leaving the independent condition-number certificate to control the
+  // fourth-order inverse products used below.
+  return std::isfinite(backward_error) &&
+      backward_error <= std::sqrt(std::numeric_limits<double>::epsilon());
+}
 }
 
 CofactorDifferential::CofactorDifferential(
@@ -61,7 +85,10 @@ CofactorDifferential::CofactorDifferential(
       -1.0 / (2.0 * highest_inverse_power));
   const bool stable_regular =
       n >= 4 && overlap.nullity == 0 && has_inverse &&
-      condition_estimate <= stable_condition_limit;
+      condition_estimate <= stable_condition_limit &&
+      inverse_has_backward_error_certificate(
+          overlap.overlap_submatrix,
+          overlap.inverse_overlap_submatrix);
   if (stable_regular) {
     representation_ = Representation::Regular;
     determinant_ = overlap.overlap_determinant;

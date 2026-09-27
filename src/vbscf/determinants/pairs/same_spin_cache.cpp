@@ -502,8 +502,9 @@ void populate_same_spin_phi_cache_entries(
       pair_evaluation.same_spin_inverse_overlap_gradient.resize(0, 0);
       pair_evaluation.same_spin_overlap_hamiltonian_gradient.resize(0, 0);
 
-      if (pair_evaluation.overlap_result.nullity == 0 &&
-          pair_evaluation.overlap_result.overlap_determinant != 0.0) {
+      const CofactorDifferential& cofactor =
+          cached_cofactor_differential(pair_evaluation);
+      if (cofactor.uses_regular_form()) {
         Eigen::MatrixXd inverse_overlap_gradient;
         const SameSpinPhiResult phi_result = compute_same_spin_original_phi(
             unique_spin_determinants[left_index],
