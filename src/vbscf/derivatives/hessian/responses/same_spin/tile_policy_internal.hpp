@@ -27,6 +27,12 @@ struct LocalResponseTilePlan {
   std::size_t beta_partner_action_bytes = 1;
 };
 
+/** Outer and nested partner extents for opposite-spin backward sweeps. */
+struct OppositeSpinTilePlan {
+  PairTileExtents primary;
+  PairTileExtents partner;
+};
+
 inline std::size_t accepted_scalar_pair_bytes(
     const AcceptedPairTileProvider& provider,
     int n_active_orbitals) {
@@ -41,15 +47,24 @@ inline std::size_t accepted_scalar_pair_bytes(
           2 * sizeof(double));
 }
 
+inline int parallel_scalar_action_extent(
+    const AcceptedPairTileProvider& provider) {
+  const std::size_t workers = static_cast<std::size_t>(
+      std::max(1, xmvb::effective_openmp_thread_count()));
+  const int worker_extent = static_cast<int>(std::ceil(
+      std::sqrt(static_cast<long double>(workers))));
+  return std::min(
+      std::max(1, provider.size()),
+      worker_extent);
+}
+
 inline std::size_t parallel_scalar_action_bytes(
     const AcceptedPairTileProvider& provider,
     int n_active_orbitals) {
   const std::size_t n_unique = static_cast<std::size_t>(
       std::max(1, provider.size()));
-  const std::size_t workers = static_cast<std::size_t>(
-      std::max(1, xmvb::effective_openmp_thread_count()));
-  const std::size_t parallel_extent = static_cast<std::size_t>(std::ceil(
-      std::sqrt(static_cast<long double>(workers))));
+  const std::size_t parallel_extent = static_cast<std::size_t>(
+      parallel_scalar_action_extent(provider));
   const std::size_t parallel_pairs = std::min<std::size_t>(
       n_unique * n_unique,
       parallel_extent * parallel_extent);
@@ -76,7 +91,8 @@ inline int plan_pair_tile_extent(
     bool include_opposite_spin,
     std::size_t workspace_bytes = kPairTileWorkspaceBytes,
     std::size_t bytes_per_primary = 0,
-    std::size_t reserved_bytes = 0) {
+    std::size_t reserved_bytes = 0,
+    std::size_t additional_bytes_per_pair = 0) {
   if (n_unique <= 1) {
     return std::max(1, n_unique);
   }
@@ -119,7 +135,8 @@ inline int plan_pair_tile_extent(
   const std::size_t bytes_per_pair = std::max<std::size_t>(
       1,
       doubles_per_pair * sizeof(double) +
-          integers_per_pair * sizeof(int) + object_bytes_per_pair);
+          integers_per_pair * sizeof(int) + object_bytes_per_pair +
+          additional_bytes_per_pair);
 
   const int workers = std::max(1, xmvb::effective_openmp_thread_count());
   const std::size_t thread_scratch =
@@ -217,6 +234,10 @@ inline LocalResponseTilePlan plan_local_response_tiles(
       cache.alpha_reuse_table.unique_determinants.size());
   const int n_beta = static_cast<int>(
       cache.beta_reuse_table.unique_determinants.size());
+  const std::size_t opposite_workspace_per_pair =
+      2 * static_cast<std::size_t>(
+              packed_active_pair_count(std::max(0, n_active_orbitals))) *
+          sizeof(double);
   const std::size_t alpha_action_bytes = std::min(
       workspace_bytes,
       parallel_scalar_action_bytes(
@@ -244,7 +265,8 @@ inline LocalResponseTilePlan plan_local_response_tiles(
         true,
         workspace_bytes,
         panel_bytes_per_primary,
-        action_bytes);
+        action_bytes,
+        opposite_workspace_per_pair);
   };
   return {
       {extent(
@@ -257,6 +279,58 @@ inline LocalResponseTilePlan plan_local_response_tiles(
            beta_action_bytes)},
       alpha_action_bytes,
       beta_action_bytes};
+}
+
+/** Plans two simultaneously live spin-pair tiles and their channel images. */
+inline OppositeSpinTilePlan plan_opposite_spin_backward_tiles(
+    const SameSpinPairCacheContext& cache,
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& two_electron,
+    std::size_t workspace_bytes = kPairTileWorkspaceBytes) {
+  const std::size_t alpha_partner_bytes = std::min(
+      workspace_bytes,
+      parallel_scalar_action_bytes(
+          cache.beta_provider(), n_active_orbitals));
+  const std::size_t beta_partner_bytes = std::min(
+      workspace_bytes,
+      parallel_scalar_action_bytes(
+          cache.alpha_provider(), n_active_orbitals));
+  const std::size_t channel_bytes_per_primary_pair =
+      2 * static_cast<std::size_t>(
+              packed_active_pair_count(std::max(0, n_active_orbitals))) *
+          sizeof(double);
+  const auto extent = [&](
+                          const std::vector<std::vector<int>>& strings,
+                          std::size_t bytes,
+                          std::size_t reserved,
+                          std::size_t extra_per_pair) {
+    const int n_electrons = strings.empty()
+        ? 0
+        : static_cast<int>(strings.front().size());
+    return plan_pair_tile_extent(
+        static_cast<int>(strings.size()),
+        n_electrons,
+        n_active_orbitals,
+        two_electron.n_auxiliary_functions,
+        true,
+        bytes,
+        0,
+        reserved,
+        extra_per_pair);
+  };
+  return {
+      {extent(
+           cache.alpha_reuse_table.unique_determinants,
+           workspace_bytes,
+           alpha_partner_bytes,
+           channel_bytes_per_primary_pair),
+       extent(
+           cache.beta_reuse_table.unique_determinants,
+           workspace_bytes,
+           beta_partner_bytes,
+           channel_bytes_per_primary_pair)},
+      {parallel_scalar_action_extent(cache.alpha_provider()),
+       parallel_scalar_action_extent(cache.beta_provider())}};
 }
 
 }  // namespace xmvb::vb::detail

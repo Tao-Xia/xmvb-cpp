@@ -299,14 +299,15 @@ void consume_primary_tiles(
   const PrimarySpin partner_spin = primary_spin == PrimarySpin::Alpha
       ? PrimarySpin::Beta
       : PrimarySpin::Alpha;
-  const auto extents = detail::plan_pair_tile_extents(
-      cache, n_active, two_electron, true);
+  const detail::OppositeSpinTilePlan tile_plan =
+      detail::plan_opposite_spin_backward_tiles(
+          cache, n_active, two_electron);
   const int primary_extent = primary_spin == PrimarySpin::Alpha
-      ? extents.alpha
-      : extents.beta;
+      ? tile_plan.primary.alpha
+      : tile_plan.primary.beta;
   const int partner_extent = partner_spin == PrimarySpin::Alpha
-      ? extents.alpha
-      : extents.beta;
+      ? tile_plan.partner.alpha
+      : tile_plan.partner.beta;
   const int n_primary = spin_size(states, primary_spin);
   const int n_partner = spin_size(states, partner_spin);
   const int n_pairs = packed_active_pair_count(n_active);

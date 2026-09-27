@@ -145,11 +145,10 @@ LocalOppositeSpinTileAccumulator::LocalOppositeSpinTileAccumulator(
       active_overlap_(active_overlap),
       active_one_electron_(active_one_electron),
       active_two_electron_(active_two_electron),
-      tile_extents_(plan_pair_tile_extents(
+      tile_extents_(plan_opposite_spin_backward_tiles(
           accepted_pair_cache,
           n_active_orbitals,
-          active_two_electron,
-          true)) {
+          active_two_electron).partner) {
   result_.active_orbital_overlap_gradient.assign(
       static_cast<std::size_t>(n_active_orbitals) * n_active_orbitals,
       0.0);
