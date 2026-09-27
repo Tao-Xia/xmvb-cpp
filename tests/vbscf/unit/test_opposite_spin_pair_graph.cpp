@@ -9,6 +9,7 @@
 #include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/pair_response_internal.hpp"
 #include "vbscf/derivatives/hessian/responses/opposite_spin/packed_contractions_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space/ri_factor_adjoint.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
@@ -563,6 +564,12 @@ int main() {
   fill_pair_cache(n_beta, n_channels, 1, &cache.beta_pair_cache);
   fill_regular_overlap_data(n_alpha, n_channels, &cache.alpha_pair_cache);
   fill_regular_overlap_data(n_beta, n_channels, &cache.beta_pair_cache);
+  for (auto& pair : cache.alpha_pair_cache) {
+    pair.has_same_spin_phi_cache = true;
+  }
+  for (auto& pair : cache.beta_pair_cache) {
+    pair.has_same_spin_phi_cache = true;
+  }
   cache.alpha_reuse_table.unique_determinants = {{0}, {1}};
   cache.beta_reuse_table.unique_determinants = {{0}, {1}, {0}};
   cache.use_same_spin_pair_cache = true;
@@ -697,6 +704,38 @@ int main() {
   require(
       max_error <= 1.0e-12 * reference_scale,
       "accepted pair-major packed adjoint disagrees with direct sum");
+
+  Eigen::MatrixXd accepted_ri_factors(4, n_channels);
+  accepted_ri_factors <<
+      0.31, -0.07, 0.18,
+      -0.11, 0.29, 0.06,
+      0.17, 0.13, -0.23,
+      0.04, -0.19, 0.27;
+  const Eigen::MatrixXd factor_adjoint =
+      xmvb::vb::apply_regular_ri_pair_space_adjoint(
+          cache,
+          accepted,
+          std::vector<double>{0.0},
+          2,
+          accepted_ri_factors);
+  Eigen::MatrixXd packed_adjoint_matrix(n_channels, n_channels);
+  for (int row = 0; row < n_channels; ++row) {
+    for (int column = 0; column < n_channels; ++column) {
+      const double packed_value =
+          accepted_contribution.packed_active_two_electron_gradient[
+              xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+                  row,
+                  column)];
+      packed_adjoint_matrix(row, column) =
+          row == column ? 2.0 * packed_value : packed_value;
+    }
+  }
+  const Eigen::MatrixXd expected_factor_adjoint =
+      accepted_ri_factors * packed_adjoint_matrix;
+  require(
+      (factor_adjoint - expected_factor_adjoint).norm() <=
+          1.0e-12 * std::max(1.0, expected_factor_adjoint.norm()),
+      "RI-native pair-space adjoint disagrees with packed reference");
 
   std::vector<double> expected_accepted_overlap = direct_overlap_gradient(
       cache.alpha_pair_cache,

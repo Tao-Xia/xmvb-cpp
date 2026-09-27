@@ -84,6 +84,7 @@ set(XMVB_VBSCF_DERIVATIVE_SOURCES
   vbscf/derivatives/hessian/context/response_cache.cpp
   vbscf/derivatives/hessian/responses/active_space/integral_direction.cpp
   vbscf/derivatives/hessian/responses/active_space/outer_response.cpp
+  vbscf/derivatives/hessian/responses/active_space/ri_factor_adjoint.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/backward.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/pair_response.cpp
   vbscf/derivatives/hessian/responses/opposite_spin/contractions.cpp

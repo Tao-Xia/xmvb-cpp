@@ -9,8 +9,12 @@
 #include "vbscf/determinants/algebra/hamiltonian.hpp"
 #include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/determinants/pairs/same_spin_cache.hpp"
+#include "vbscf/derivatives/hessian/responses/active_space/ri_factor_adjoint.hpp"
+#include "vbscf/derivatives/hessian/responses/opposite_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
 namespace {
 
@@ -336,6 +340,83 @@ int main() {
         scalar_cache.alpha.delta_overlap_determinant_matrix,
         1.0e-13,
         "block RI pair-cache overlap");
+
+    const std::vector<std::vector<int>> closed_shell_determinants{
+        {0, 1, 2, 3}};
+    Eigen::MatrixXd active_overlap_matrix =
+        Eigen::MatrixXd::Identity(n_active, n_active);
+    std::vector<double> active_overlap(
+        active_overlap_matrix.data(),
+        active_overlap_matrix.data() + active_overlap_matrix.size());
+    xmvb::vb::DeterminantPairEvaluator pair_evaluator;
+    auto closed_shell_cache =
+        xmvb::vb::build_same_spin_pair_cache_context(
+            closed_shell_determinants,
+            closed_shell_determinants,
+            pair_evaluator,
+            active_overlap,
+            h1e,
+            n_active,
+            direct_ri,
+            xmvb::vb::SameSpinPairCacheBuildOptions{
+                xmvb::vb::PairProjectionCache::Both,
+                false});
+    xmvb::vb::populate_same_spin_phi_cache(
+        &closed_shell_cache,
+        h1e,
+        n_active,
+        direct_ri);
+    xmvb::vb::SelectedStateDeterminantMatrices selected;
+    selected.n_unique_alpha = 1;
+    selected.n_unique_beta = 1;
+    selected.n_determinants = 1;
+    xmvb::vb::SelectedStateDeterminantCoefficients selected_state;
+    selected_state.normalized_state_weight = 1.0;
+    selected_state.coefficient_matrix = Eigen::MatrixXd::Ones(1, 1);
+    selected.states.push_back(std::move(selected_state));
+    const std::vector<double> selected_energies{0.0};
+    const auto packed_same =
+        xmvb::vb::build_same_spin_matrix_backward_contribution(
+            closed_shell_cache,
+            selected,
+            selected_energies,
+            n_active);
+    const auto packed_opposite =
+        xmvb::vb::build_opposite_spin_backward_contribution(
+            closed_shell_cache,
+            selected,
+            n_active,
+            direct_ri);
+    std::vector<double> packed_total =
+        packed_same.packed_active_two_electron_gradient;
+    for (std::size_t index = 0; index < packed_total.size(); ++index) {
+      packed_total[index] +=
+          packed_opposite.packed_active_two_electron_gradient[index];
+    }
+    const int n_pairs = xmvb::vb::packed_active_pair_count(n_active);
+    Eigen::MatrixXd pair_adjoint(n_pairs, n_pairs);
+    for (int row = 0; row < n_pairs; ++row) {
+      for (int column = 0; column < n_pairs; ++column) {
+        const double value = packed_total[
+            xmvb::vb::TwoElectronIndexer::packed_pair_of_pairs_index(
+                row, column)];
+        pair_adjoint(row, column) = row == column ? 2.0 * value : value;
+      }
+    }
+    const Eigen::MatrixXd packed_factor_adjoint =
+        direct_ri.ri_active_pair_factors * pair_adjoint;
+    const Eigen::MatrixXd native_factor_adjoint =
+        xmvb::vb::apply_regular_ri_pair_space_adjoint(
+            closed_shell_cache,
+            selected,
+            selected_energies,
+            n_active,
+            direct_ri.ri_active_pair_factors);
+    require_matrix_close(
+        native_factor_adjoint,
+        packed_factor_adjoint,
+        2.0e-12,
+        "RI-native full pair-space adjoint");
 
     std::cout << "RI pair contractions agree with the packed reference\n";
     return 0;
