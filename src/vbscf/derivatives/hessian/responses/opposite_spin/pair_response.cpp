@@ -7,6 +7,7 @@
 #include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 
@@ -257,12 +258,18 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
         accepted_ri_active_pair_factors->rows();
     const Eigen::Index workspace_values_per_column =
         2 * n_auxiliary + 3 * n_packed_pairs;
-    const Eigen::Index factor_values = n_auxiliary * n_packed_pairs;
+    const Eigen::Index workspace_value_cap =
+        static_cast<Eigen::Index>(kPairTileWorkspaceBytes / sizeof(double));
+    const Eigen::Index resident_tile_values =
+        2 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
+    const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
+        1, workspace_value_cap -
+               std::min(workspace_value_cap - 1, resident_tile_values));
     const int column_block = std::max<int>(
         1,
         std::min<Eigen::Index>(
             work_items,
-            factor_values / workspace_values_per_column));
+            available_workspace_values / workspace_values_per_column));
     for (int begin = 0; begin < work_items; begin += column_block) {
       const int end = std::min(work_items, begin + column_block);
       const int width = end - begin;
@@ -334,14 +341,18 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
         accepted_pair_projection, work, &accepted_projection_block);
   }
 
-  const Eigen::Index workspace_budget = std::max<Eigen::Index>(
-      expected_kernel_size,
-      static_cast<Eigen::Index>(n_packed_pairs) * work_items);
+  const Eigen::Index workspace_value_cap =
+      static_cast<Eigen::Index>(kPairTileWorkspaceBytes / sizeof(double));
+  const Eigen::Index resident_tile_values =
+      3 * static_cast<Eigen::Index>(n_packed_pairs) * work_items;
+  const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
+      1, workspace_value_cap -
+             std::min(workspace_value_cap - 1, resident_tile_values));
   const int row_block = std::max<int>(
       1,
       std::min<Eigen::Index>(
           n_packed_pairs,
-          workspace_budget /
+          available_workspace_values /
               std::max<Eigen::Index>(
                   1, 2 * n_packed_pairs + work_items)));
   Eigen::MatrixXd accepted_rows;
