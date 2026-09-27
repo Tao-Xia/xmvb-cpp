@@ -326,7 +326,11 @@ void attach_opposite_spin_pair_cache(
       dense_pair_kernel,
       materialize_first_order_projected_values);
 
-  if (overlap_result.nullity == 0) {
+  if (overlap_result.nullity == 0 &&
+      overlap_result.inverse_overlap_submatrix.rows() ==
+          overlap_result.n_electrons &&
+      overlap_result.inverse_overlap_submatrix.cols() ==
+          overlap_result.n_electrons) {
     // Production overlap-response contractions consume the inverse-overlap
     // projection sparsely and apply the active-space kernel only to the
     // channels touched by the partner image.  Retaining a dense G*x image for
