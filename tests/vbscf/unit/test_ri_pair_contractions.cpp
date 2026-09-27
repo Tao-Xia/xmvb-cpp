@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -26,7 +27,9 @@ namespace {
 void require_close(double left, double right, double tolerance, const char* label) {
   const double scale = std::max({1.0, std::abs(left), std::abs(right)});
   if (std::abs(left - right) > tolerance * scale) {
-    throw std::runtime_error(std::string(label) + " mismatch");
+    std::ostringstream message;
+    message << label << " mismatch: " << left << " versus " << right;
+    throw std::runtime_error(message.str());
   }
 }
 
@@ -41,6 +44,19 @@ void require_matrix_close(
   const double scale = std::max({1.0, left.norm(), right.norm()});
   if ((left - right).norm() > tolerance * scale) {
     throw std::runtime_error(std::string(label) + " value mismatch");
+  }
+}
+
+void require_vector_close(
+    const std::vector<double>& left,
+    const std::vector<double>& right,
+    double tolerance,
+    const char* label) {
+  if (left.size() != right.size()) {
+    throw std::runtime_error(std::string(label) + " size mismatch");
+  }
+  for (std::size_t index = 0; index < left.size(); ++index) {
+    require_close(left[index], right[index], tolerance, label);
   }
 }
 
@@ -442,6 +458,17 @@ int main() {
         h1e,
         direct_ri,
         first_view);
+    xmvb::vb::detail::LocalSameSpinTileAccumulator
+        streamed_local_same_spin(
+            closed_shell_cache,
+            selected,
+            selected_energies,
+            n_active,
+            active_overlap,
+            h1e,
+            direct_ri,
+            first_view,
+            0);
     xmvb::vb::detail::LocalOppositeSpinTileAccumulator
         tiled_local_opposite_spin(
             closed_shell_cache,
@@ -468,6 +495,8 @@ int main() {
                 opposite_tile) {
           tiled_local_same_spin.consume(
               alpha_channel, beta_channel, accepted_tile, tile);
+          streamed_local_same_spin.consume(
+              alpha_channel, beta_channel, accepted_tile, tile);
           if (opposite_tile == nullptr) {
             throw std::runtime_error(
                 "local opposite-spin oracle requires a pair tile");
@@ -476,6 +505,8 @@ int main() {
               alpha_channel, beta_channel, accepted_tile, *opposite_tile);
         });
     const auto tiled_local_contribution = tiled_local_same_spin.finish();
+    const auto streamed_local_contribution =
+        streamed_local_same_spin.finish();
     const auto tiled_local_opposite_contribution =
         tiled_local_opposite_spin.finish();
     const auto require_finite_vector = [](const auto& values) {
@@ -493,6 +524,110 @@ int main() {
         tiled_local_contribution.packed_active_two_electron_gradient);
     require_finite_vector(
         tiled_local_contribution.active_orbital_overlap_gradient);
+    require_vector_close(
+        tiled_local_contribution.active_one_electron_gradient,
+        streamed_local_contribution.active_one_electron_gradient,
+        2.0e-13,
+        "cached and streamed local one-electron response");
+    require_vector_close(
+        tiled_local_contribution.packed_active_two_electron_gradient,
+        streamed_local_contribution.packed_active_two_electron_gradient,
+        2.0e-13,
+        "cached and streamed local two-electron response");
+    require_vector_close(
+        tiled_local_contribution.active_orbital_overlap_gradient,
+        streamed_local_contribution.active_orbital_overlap_gradient,
+        2.0e-13,
+        "cached and streamed local overlap response");
+
+    const std::vector<std::vector<int>> open_alpha_determinants{
+        {0, 1, 2}, {0, 1, 2}, {0, 1, 2},
+        {0, 1, 3}, {0, 1, 3}, {0, 1, 3}};
+    const std::vector<std::vector<int>> open_beta_determinants{
+        {0, 2, 4}, {1, 2, 3}, {0, 3, 4},
+        {0, 2, 4}, {1, 2, 3}, {0, 3, 4}};
+    auto open_shell_cache = xmvb::vb::build_same_spin_pair_cache_context(
+        open_alpha_determinants,
+        open_beta_determinants,
+        pair_evaluator,
+        active_overlap,
+        h1e,
+        n_active,
+        direct_ri,
+        xmvb::vb::SameSpinPairCacheBuildOptions{
+            xmvb::vb::PairProjectionCache::Both,
+            false});
+    xmvb::vb::populate_same_spin_phi_cache(
+        &open_shell_cache, h1e, n_active, direct_ri);
+    xmvb::vb::SelectedStateDeterminantMatrices open_selected;
+    open_selected.n_unique_alpha = 2;
+    open_selected.n_unique_beta = 3;
+    open_selected.n_determinants = 6;
+    xmvb::vb::SelectedStateDeterminantCoefficients open_state;
+    open_state.normalized_state_weight = 1.0;
+    open_state.coefficient_matrix.resize(2, 3);
+    open_state.coefficient_matrix <<
+        0.31, -0.17, 0.23,
+        -0.11, 0.29, 0.37;
+    open_selected.states.push_back(std::move(open_state));
+    const std::vector<double> open_energies{-0.41};
+    xmvb::vb::detail::LocalSameSpinTileAccumulator open_cached(
+        open_shell_cache,
+        open_selected,
+        open_energies,
+        n_active,
+        active_overlap,
+        h1e,
+        direct_ri,
+        first_view);
+    xmvb::vb::detail::LocalSameSpinTileAccumulator open_streamed(
+        open_shell_cache,
+        open_selected,
+        open_energies,
+        n_active,
+        active_overlap,
+        h1e,
+        direct_ri,
+        first_view,
+        0);
+    xmvb::vb::detail::stream_directional_pair_tiles(
+        open_shell_cache,
+        n_active,
+        active_overlap,
+        h1e,
+        direct_ri,
+        first_view,
+        &direct_ri.ri_active_pair_factors,
+        &delta_factors,
+        false,
+        [&](bool alpha_channel,
+            bool beta_channel,
+            const xmvb::vb::AcceptedSpinPairTile& accepted_tile,
+            const xmvb::vb::detail::SameSpinDirectionalPairTileView& tile,
+            const xmvb::vb::detail::DirectionalOppositeSpinPairTileView*) {
+          open_cached.consume(
+              alpha_channel, beta_channel, accepted_tile, tile);
+          open_streamed.consume(
+              alpha_channel, beta_channel, accepted_tile, tile);
+        });
+    const auto open_cached_result = open_cached.finish();
+    const auto open_streamed_result = open_streamed.finish();
+    require_vector_close(
+        open_cached_result.active_one_electron_gradient,
+        open_streamed_result.active_one_electron_gradient,
+        3.0e-13,
+        "open-shell cached and streamed one-electron response");
+    require_vector_close(
+        open_cached_result.packed_active_two_electron_gradient,
+        open_streamed_result.packed_active_two_electron_gradient,
+        3.0e-13,
+        "open-shell cached and streamed two-electron response");
+    require_vector_close(
+        open_cached_result.active_orbital_overlap_gradient,
+        open_streamed_result.active_orbital_overlap_gradient,
+        3.0e-13,
+        "open-shell cached and streamed overlap response");
+
     require_finite_vector(
         tiled_local_opposite_contribution.packed_active_two_electron_gradient);
     require_finite_vector(

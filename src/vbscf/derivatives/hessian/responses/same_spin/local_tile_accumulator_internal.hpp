@@ -1,5 +1,8 @@
 #pragma once
 
+#include <cstddef>
+#include <optional>
+
 #include "vbscf/determinants/pairs/accepted_action.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_response_internal.hpp"
@@ -18,7 +21,9 @@ class LocalSameSpinTileAccumulator {
       const std::vector<double>& active_overlap,
       const Eigen::MatrixXd& active_one_electron,
       const ActiveSpaceTwoElectronResult& active_two_electron,
-      const ActiveSpaceIntegralDirectionView& direction);
+      const ActiveSpaceIntegralDirectionView& direction,
+      std::size_t retained_action_budget_bytes =
+          kPairTileWorkspaceBytes);
 
   void consume(
       bool alpha_channel,
@@ -50,8 +55,8 @@ class LocalSameSpinTileAccumulator {
   const ActiveSpaceIntegralDirectionView& direction_;
   bool close_shell_same_spin_ = false;
   PairTileExtents tile_extents_;
-  AcceptedSpinPairActionResult alpha_partner_action_;
-  AcceptedSpinPairActionResult beta_partner_action_;
+  std::optional<AcceptedSpinPairActionResult> alpha_partner_action_;
+  std::optional<AcceptedSpinPairActionResult> beta_partner_action_;
   SameSpinMatrixBackwardContribution result_;
   Eigen::MatrixXd one_electron_gradient_;
 };
