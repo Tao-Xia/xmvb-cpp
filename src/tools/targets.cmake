@@ -323,7 +323,8 @@ target_link_libraries(compare_ri_active_space_builder
     xmvb_output)
 
 add_executable(check_ri_low_rank_unique_spin_pair
-  tools/check_ri_low_rank_unique_spin_pair.cpp)
+  tools/check_ri_low_rank_unique_spin_pair.cpp
+  tools/hybrid_pair_graph_census.cpp)
 target_link_libraries(check_ri_low_rank_unique_spin_pair
   PRIVATE
     xmvb_vbscf

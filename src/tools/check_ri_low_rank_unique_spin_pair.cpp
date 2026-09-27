@@ -15,6 +15,7 @@
 #include <Eigen/LU>
 
 #include "input/loading/loader.hpp"
+#include "tools/hybrid_pair_graph_census.hpp"
 #include "vbscf/determinants/algebra/overlap.hpp"
 #include "vbscf/integrals/active/preparation/space.hpp"
 #include "vbscf/determinants/pairs/same_spin_cache.hpp"
@@ -34,6 +35,8 @@ struct Options {
   int max_feature_benchmark_pairs = 20000;
   int max_anchor_census_pairs = 0;
   bool anchor_census_only = false;
+  int max_hybrid_census_pairs = 0;
+  bool hybrid_census_only = false;
 };
 
 struct LocalityStats {
@@ -203,7 +206,9 @@ void print_usage() {
       << " [--max-rank-update-checks N]"
       << " [--max-feature-benchmark-pairs N]"
       << " [--max-anchor-census-pairs N]"
-      << " [--anchor-census-only]\n";
+      << " [--anchor-census-only]"
+      << " [--max-hybrid-census-pairs N]"
+      << " [--hybrid-census-only]\n";
 }
 
 int parse_positive_int(const std::string& text, const char* option_name) {
@@ -282,6 +287,23 @@ Options parse_arguments(int argc, char** argv) {
     }
     if (name == "--anchor-census-only") {
       options.anchor_census_only = true;
+      continue;
+    }
+    if (name == "--max-hybrid-census-pairs") {
+      if (argument_index + 1 >= argc) {
+        throw std::invalid_argument(
+            "--max-hybrid-census-pairs requires a value");
+      }
+      options.max_hybrid_census_pairs =
+          std::stoi(argv[++argument_index]);
+      if (options.max_hybrid_census_pairs < 0) {
+        throw std::invalid_argument(
+            "--max-hybrid-census-pairs must be non-negative");
+      }
+      continue;
+    }
+    if (name == "--hybrid-census-only") {
+      options.hybrid_census_only = true;
       continue;
     }
     throw std::invalid_argument("unknown argument: " + name);
@@ -2925,10 +2947,38 @@ int main(int argc, char** argv) {
     const auto& alpha_strings = alpha_reuse_table.unique_determinants;
     const auto& beta_strings = beta_reuse_table.unique_determinants;
 
-    if (options.anchor_census_only) {
+    if (options.anchor_census_only || options.hybrid_census_only) {
       xmvb::vb::ActiveSpaceOrbitalPreparer census_orbital_preparer;
       const auto orbital_result = census_orbital_preparer.prepare(
           load_result.input.orbital_preparation_input);
+      if (options.hybrid_census_only) {
+        const auto alpha_order =
+            build_slot_stable_traversal_order(alpha_strings);
+        const auto beta_order =
+            build_slot_stable_traversal_order(beta_strings);
+        const auto alpha_hybrid =
+            xmvb::tools::run_hybrid_pair_graph_census(
+                alpha_strings,
+                alpha_order,
+                orbital_result.active_orbital_overlap_matrix,
+                n_active_orbitals,
+                options.max_hybrid_census_pairs);
+        const auto beta_hybrid =
+            xmvb::tools::run_hybrid_pair_graph_census(
+                beta_strings,
+                beta_order,
+                orbital_result.active_orbital_overlap_matrix,
+                n_active_orbitals,
+                options.max_hybrid_census_pairs);
+        std::cout << std::setprecision(15);
+        std::cout << "input_path = " << options.input_path << '\n';
+        std::cout << "n_active_orbitals = " << n_active_orbitals << '\n';
+        xmvb::tools::print_hybrid_pair_graph_census(
+            "alpha", alpha_hybrid);
+        xmvb::tools::print_hybrid_pair_graph_census(
+            "beta", beta_hybrid);
+        return 0;
+      }
       const auto alpha_census = run_certified_anchor_census(
           alpha_strings,
           orbital_result.active_orbital_overlap_matrix,
