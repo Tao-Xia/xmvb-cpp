@@ -940,10 +940,15 @@ CertifiedComponentCensus run_certified_component_census(
   }
 
   DisjointSet pair_components(static_cast<int>(pair_count));
+  const bool rank_one_is_beneficial =
+      !unique_strings.front().empty() && unique_strings.front().size() > 1;
   for (int left = 0; left < n_strings; ++left) {
     for (int right = 0; right < n_strings; ++right) {
       const int pair_index = left * n_strings + right;
       if (!certified[pair_index]) {
+        continue;
+      }
+      if (!rank_one_is_beneficial) {
         continue;
       }
       for (const int left_neighbor : adjacency[left]) {
