@@ -67,7 +67,8 @@ void stream_spin_table(
               ? &accepted_active_one_electron
               : nullptr,
           accepted_ri_active_pair_factors,
-          directional_ri_active_pair_factors);
+          directional_ri_active_pair_factors,
+          include_opposite_spin);
       const SameSpinDirectionalPairTileView same_spin_view =
           same_spin.view(transposed);
       std::optional<DirectionalOppositeSpinPairTile> opposite_spin;
@@ -80,7 +81,8 @@ void stream_spin_table(
             direction,
             same_spin.view(),
             accepted_ri_active_pair_factors,
-            directional_ri_active_pair_factors));
+            directional_ri_active_pair_factors,
+            &same_spin));
       }
       const std::optional<DirectionalOppositeSpinPairTileView>
           opposite_spin_view = opposite_spin

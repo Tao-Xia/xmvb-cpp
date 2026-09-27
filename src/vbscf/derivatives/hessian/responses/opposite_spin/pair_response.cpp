@@ -188,7 +188,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    SameSpinDirectionalPairTile* ri_projected_source) {
   const std::size_t expected_size =
       static_cast<std::size_t>(n_unique_determinants) *
       n_unique_determinants;
@@ -237,8 +238,21 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
   result.pairs.resize(static_cast<std::size_t>(work_items));
   result.raw_channel_values =
       Eigen::MatrixXd::Zero(work_items, n_packed_pairs);
-  result.projected_channel_values =
-      Eigen::MatrixXd::Zero(work_items, n_packed_pairs);
+  std::vector<unsigned char> projected_ready;
+  if (accepted_ri_active_pair_factors != nullptr &&
+      ri_projected_source != nullptr &&
+      ri_projected_source->ri_projected_channels.rows() == work_items &&
+      ri_projected_source->ri_projected_channels.cols() == n_packed_pairs &&
+      ri_projected_source->ri_projected_ready.size() ==
+          static_cast<std::size_t>(work_items)) {
+    result.projected_channel_values =
+        std::move(ri_projected_source->ri_projected_channels);
+    projected_ready = std::move(ri_projected_source->ri_projected_ready);
+  } else {
+    result.projected_channel_values =
+        Eigen::MatrixXd::Zero(work_items, n_packed_pairs);
+    projected_ready.assign(work_items, 0);
+  }
 
   const int n_threads = xmvb::effective_openmp_thread_count();
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
@@ -296,19 +310,31 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
     const Eigen::Index available_workspace_values = std::max<Eigen::Index>(
         1, workspace_value_cap -
                std::min(workspace_value_cap - 1, resident_tile_values));
+    std::vector<int> fallback_work;
+    fallback_work.reserve(work_items);
+    for (int work = 0; work < work_items; ++work) {
+      if (projected_ready[static_cast<std::size_t>(work)] == 0) {
+        fallback_work.push_back(work);
+      }
+    }
     const int column_block = std::max<int>(
         1,
         std::min<Eigen::Index>(
-            work_items,
+            fallback_work.size(),
             available_workspace_values / workspace_values_per_column));
-    for (int begin = 0; begin < work_items; begin += column_block) {
-      const int end = std::min(work_items, begin + column_block);
+    for (int begin = 0;
+         begin < static_cast<int>(fallback_work.size());
+         begin += column_block) {
+      const int end = std::min<int>(
+          fallback_work.size(), begin + column_block);
       const int width = end - begin;
       Eigen::MatrixXd accepted_projection =
           Eigen::MatrixXd::Zero(n_packed_pairs, width);
-      Eigen::MatrixXd directional_projection =
-          result.raw_channel_values.middleRows(begin, width).transpose();
-      for (int work = begin; work < end; ++work) {
+      Eigen::MatrixXd directional_projection(n_packed_pairs, width);
+      for (int column = 0; column < width; ++column) {
+        const int work = fallback_work[begin + column];
+        directional_projection.col(column) =
+            result.raw_channel_values.row(work).transpose();
         const int left_local = work % result.left_size;
         const int right_local = work / result.left_size;
         const int left = result.left_begin + left_local;
@@ -325,7 +351,6 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
                   n_unique_determinants)])
                                    .opposite_spin_pair_cache
                                    .first_order_cofactor_projection;
-        const int column = work - begin;
         scatter_sparse_projection(accepted, column, &accepted_projection);
       }
 
@@ -341,8 +366,10 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile_impl(
       projected.noalias() +=
           directional_ri_active_pair_factors->transpose() *
           accepted_auxiliary;
-      result.projected_channel_values.middleRows(begin, width) =
-          projected.transpose();
+      for (int column = 0; column < width; ++column) {
+        result.projected_channel_values.row(fallback_work[begin + column]) =
+            projected.col(column).transpose();
+      }
     }
     return result;
   }
@@ -440,7 +467,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    SameSpinDirectionalPairTile* ri_projected_source) {
   return build_directional_opposite_spin_pair_tile_impl(
       unique_determinants,
       &ordered_pair_cache,
@@ -451,7 +479,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
       direction,
       same_spin_tile,
       accepted_ri_active_pair_factors,
-      directional_ri_active_pair_factors);
+      directional_ri_active_pair_factors,
+      ri_projected_source);
 }
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
@@ -462,7 +491,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    SameSpinDirectionalPairTile* ri_projected_source) {
   return build_directional_opposite_spin_pair_tile_impl(
       unique_determinants,
       nullptr,
@@ -473,7 +503,8 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
       direction,
       same_spin_tile,
       accepted_ri_active_pair_factors,
-      directional_ri_active_pair_factors);
+      directional_ri_active_pair_factors,
+      ri_projected_source);
 }
 
 }  // namespace xmvb::vb::detail

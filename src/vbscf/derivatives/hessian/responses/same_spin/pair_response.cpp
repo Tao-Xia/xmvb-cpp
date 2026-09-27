@@ -10,6 +10,7 @@
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace xmvb::vb::detail {
 
@@ -342,7 +343,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
     int right_end,
     const Eigen::MatrixXd* accepted_active_one_electron,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    bool build_ri_projected_channels) {
   const std::size_t expected_size = square_storage_size(n_unique_determinants);
   const bool full_cache_valid = ordered_pair_cache != nullptr &&
       ordered_pair_cache->size() == expected_size;
@@ -381,6 +383,13 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
       Eigen::MatrixXd::Zero(left_size, right_size);
   tile.delta_singular_hamiltonian =
       Eigen::MatrixXd::Zero(left_size, right_size);
+  if (use_ri && build_ri_projected_channels) {
+    tile.ri_projected_channels = Eigen::MatrixXd::Zero(
+        left_size * right_size,
+        packed_active_pair_count(n_active_orbitals));
+    tile.ri_projected_ready.assign(
+        static_cast<std::size_t>(left_size) * right_size, 0);
+  }
   tile.pairs.resize(static_cast<std::size_t>(left_size) * right_size);
 
   Eigen::Map<const Eigen::MatrixXd> delta_h1e(
@@ -432,7 +441,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
               pair_evaluation.overlap_result,
               delta_overlap,
               pair_evaluation.same_spin_total_phi,
-              pair_evaluation.same_spin_inverse_overlap_gradient);
+              pair_evaluation.same_spin_inverse_overlap_gradient,
+              build_ri_projected_channels);
       pair_direction.delta_overlap_determinant =
           ri_direction.delta_overlap_determinant;
       pair_direction.delta_total_hamiltonian =
@@ -441,6 +451,12 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
           ri_direction.delta_first_cofactor;
       pair_direction.delta_same_spin_overlap_hamiltonian_gradient =
           ri_direction.delta_overlap_hamiltonian_gradient;
+      if (build_ri_projected_channels) {
+        const int channel_work = left_local + left_size * right_local;
+        tile.ri_projected_channels.row(channel_work) =
+            ri_direction.delta_projected_first_cofactor.transpose();
+        tile.ri_projected_ready[static_cast<std::size_t>(channel_work)] = 1;
+      }
     } else {
       if (use_ri) {
         const Eigen::MatrixXd interaction_direction =
@@ -502,6 +518,14 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
             tile.delta_regular_hamiltonian(right_local, left_local);
         tile.delta_singular_hamiltonian(left_local, right_local) =
             tile.delta_singular_hamiltonian(right_local, left_local);
+        if (!tile.ri_projected_ready.empty()) {
+          const int source_work = right_local + left_size * left_local;
+          const int target_work = left_local + left_size * right_local;
+          tile.ri_projected_channels.row(target_work) =
+              tile.ri_projected_channels.row(source_work);
+          tile.ri_projected_ready[static_cast<std::size_t>(target_work)] =
+              tile.ri_projected_ready[static_cast<std::size_t>(source_work)];
+        }
       }
     }
   }
@@ -522,7 +546,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     int right_end,
     const Eigen::MatrixXd* accepted_active_one_electron,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    bool build_ri_projected_channels) {
   return build_directional_pair_tile_impl(
       unique_determinants,
       &ordered_pair_cache,
@@ -536,7 +561,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
       right_end,
       accepted_active_one_electron,
       accepted_ri_active_pair_factors,
-      directional_ri_active_pair_factors);
+      directional_ri_active_pair_factors,
+      build_ri_projected_channels);
 }
 
 SameSpinDirectionalPairTile build_directional_pair_tile(
@@ -546,7 +572,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const Eigen::MatrixXd* accepted_active_one_electron,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors) {
+    const Eigen::MatrixXd* directional_ri_active_pair_factors,
+    bool build_ri_projected_channels) {
   return build_directional_pair_tile_impl(
       unique_determinants,
       nullptr,
@@ -560,7 +587,8 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
       accepted_pair_tile.right_begin + accepted_pair_tile.right_size,
       accepted_active_one_electron,
       accepted_ri_active_pair_factors,
-      directional_ri_active_pair_factors);
+      directional_ri_active_pair_factors,
+      build_ri_projected_channels);
 }
 
 void accumulate_directional_one_electron_gradient_contribution_local(

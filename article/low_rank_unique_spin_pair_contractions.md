@@ -978,6 +978,38 @@ $$
 \tag{65}
 $$
 
+The auxiliary first-cofactor feature and its tangent follow from the same
+accepted and directional channels:
+
+$$
+g_Q
+=
+\Omega\operatorname{tr}(A^Q),
+\qquad
+\dot g_Q
+=
+\dot\Omega\operatorname{tr}(A^Q)
++\Omega\operatorname{tr}(\dot A^Q).
+\tag{65a}
+$$
+
+Consequently, the directional packed-pair image required by the
+opposite-spin HVP is
+
+$$
+\dot y
+=
+B^{\mathrm T}\dot g
++\dot B^{\mathrm T}g.
+\tag{65b}
+$$
+
+Equations 65a and 65b replace the three forward products
+$Bx$, $\dot Bx$, and $B\dot x$ followed by two backprojections.  They are
+evaluated while $A^Q$ and $\dot A^Q$ are already live in the regular-pair
+same-spin response.  The final packed image occupies the same bounded tile
+storage as the conventional route; no auxiliary feature table is retained.
+
 ### 8.2 Directional same-spin adjoint
 
 Define the untransposed adjoint kernels

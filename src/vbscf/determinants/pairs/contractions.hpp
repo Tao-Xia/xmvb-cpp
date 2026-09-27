@@ -38,6 +38,8 @@ struct RegularRiSameSpinDirection {
   double delta_total_hamiltonian = 0.0;
   Eigen::MatrixXd delta_first_cofactor;
   Eigen::MatrixXd delta_overlap_hamiltonian_gradient;
+  /** `delta(B^T B x)` evaluated while accepted RI channels are live. */
+  Eigen::VectorXd delta_projected_first_cofactor;
 };
 
 /**
@@ -67,7 +69,8 @@ RegularRiSameSpinDirection evaluate_regular_ri_same_spin_direction(
     const DeterminantOverlapResult& overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& delta_overlap_block,
     double total_phi,
-    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient);
+    const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap_gradient,
+    bool project_first_cofactor_direction = false);
 
 /**
  * @brief Differentiates one regular RI pair along several tangent directions.
