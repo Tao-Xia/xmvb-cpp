@@ -89,6 +89,22 @@ void add_symmetric_entry(
   (*matrix)(column, row) += 0.5 * value;
 }
 
+void add_symmetric_entry_atomic(
+    Eigen::MatrixXd* matrix,
+    int row,
+    int column,
+    double value) {
+  if (row == column) {
+#pragma omp atomic update
+    (*matrix)(row, column) += value;
+    return;
+  }
+#pragma omp atomic update
+  (*matrix)(row, column) += 0.5 * value;
+#pragma omp atomic update
+  (*matrix)(column, row) += 0.5 * value;
+}
+
 }  // namespace
 
 void DirectCiSigmaAction::DensityConnections::reserve(std::size_t capacity) {
@@ -505,12 +521,13 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
   const int n_threads = std::max(
       1,
       std::min(effective_openmp_thread_count(), work_items));
-  std::vector<DirectCiIntegralAdjoint> partials(n_threads);
-  for (auto& partial : partials) {
-    partial.one_electron = Eigen::MatrixXd::Zero(
-        n_orbitals_, n_orbitals_);
-    partial.pair_kernel = Eigen::MatrixXd::Zero(n_pairs, n_pairs);
-  }
+  std::vector<Eigen::MatrixXd> partial_one_electron(
+      n_threads,
+      Eigen::MatrixXd::Zero(n_orbitals_, n_orbitals_));
+  DirectCiIntegralAdjoint result;
+  result.one_electron = Eigen::MatrixXd::Zero(
+      n_orbitals_, n_orbitals_);
+  result.pair_kernel = Eigen::MatrixXd::Zero(n_pairs, n_pairs);
 
 #pragma omp parallel if(n_threads > 1) num_threads(n_threads)
   {
@@ -518,8 +535,8 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
 #ifdef _OPENMP
     thread = omp_get_thread_num();
 #endif
-    auto& one = partials[thread].one_electron;
-    auto& pair = partials[thread].pair_kernel;
+    auto& one = partial_one_electron[thread];
+    auto& pair = result.pair_kernel;
 
     const auto add_spin_diagonal = [&](
         const std::vector<int>& occupied,
@@ -535,7 +552,7 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
              second < static_cast<int>(occupied.size());
              ++second) {
           const int second_orbital = occupied[second];
-          add_symmetric_entry(
+          add_symmetric_entry_atomic(
               &pair,
               TwoElectronIndexer::packed_pair_index(
                   first_orbital, first_orbital),
@@ -545,6 +562,7 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
           const int exchange_pair =
               TwoElectronIndexer::packed_pair_index(
                   first_orbital, second_orbital);
+#pragma omp atomic update
           pair(exchange_pair, exchange_pair) -= weight;
         }
       }
@@ -568,12 +586,12 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
           if (common == removed) {
             continue;
           }
-          add_symmetric_entry(
+          add_symmetric_entry_atomic(
               &pair,
               TwoElectronIndexer::packed_pair_index(removed, inserted),
               TwoElectronIndexer::packed_pair_index(common, common),
               signed_weight);
-          add_symmetric_entry(
+          add_symmetric_entry_atomic(
               &pair,
               TwoElectronIndexer::packed_pair_index(removed, common),
               TwoElectronIndexer::packed_pair_index(inserted, common),
@@ -582,7 +600,7 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
       }
       for (int term = 0; term < connection.n_pair_terms; ++term) {
         const PairKernelTerm& entry = connection.pair_terms[term];
-        add_symmetric_entry(
+        add_symmetric_entry_atomic(
             &pair,
             entry.first_pair,
             entry.second_pair,
@@ -609,7 +627,7 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
         const int alpha_pair = TwoElectronIndexer::packed_pair_index(
             alpha_orbital, alpha_orbital);
         for (const int beta_orbital : beta_graph.occupied[beta]) {
-          add_symmetric_entry(
+          add_symmetric_entry_atomic(
               &pair,
               alpha_pair,
               TwoElectronIndexer::packed_pair_index(
@@ -625,7 +643,7 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
         add_spin_connection(alpha_, connection, weight);
         if (connection.density_pair >= 0) {
           for (const int beta_orbital : beta_graph.occupied[beta]) {
-            add_symmetric_entry(
+            add_symmetric_entry_atomic(
                 &pair,
                 connection.density_pair,
                 TwoElectronIndexer::packed_pair_index(
@@ -642,7 +660,7 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
         add_spin_connection(beta_graph, connection, weight);
         if (connection.density_pair >= 0) {
           for (const int alpha_orbital : alpha_.occupied[alpha]) {
-            add_symmetric_entry(
+            add_symmetric_entry_atomic(
                 &pair,
                 connection.density_pair,
                 TwoElectronIndexer::packed_pair_index(
@@ -662,7 +680,7 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
           const double weight = left_value * right(
               alpha_singles.sources[alpha_single],
               block * n_beta_ + beta_singles.sources[beta_single]);
-          add_symmetric_entry(
+          add_symmetric_entry_atomic(
               &pair,
               alpha_singles.pairs[alpha_single],
               beta_singles.pairs[beta_single],
@@ -673,13 +691,8 @@ DirectCiIntegralAdjoint DirectCiSigmaAction::integral_adjoint(
     }
   }
 
-  DirectCiIntegralAdjoint result;
-  result.one_electron = Eigen::MatrixXd::Zero(
-      n_orbitals_, n_orbitals_);
-  result.pair_kernel = Eigen::MatrixXd::Zero(n_pairs, n_pairs);
-  for (const auto& partial : partials) {
-    result.one_electron += partial.one_electron;
-    result.pair_kernel += partial.pair_kernel;
+  for (const auto& partial : partial_one_electron) {
+    result.one_electron += partial;
   }
   return result;
 }
