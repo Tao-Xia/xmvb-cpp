@@ -641,9 +641,11 @@ d\Gamma^{(q)}
 \tag{34f}
 $$
 
-Equations 34d--34f are exact for every $q$. All requested orders
-$0,1,\ldots,q_{\max}$ are advanced together from low to high order. No
-independent minor factorization is performed at the new string pair.
+Equations 34d--34f are exact for every $q$. All requested orders are advanced
+together. An in-place implementation visits
+$q=q_{\max},q_{\max}-1,\ldots,1$, so that the right-hand side always uses the
+old $(q-1)$th level. No independent minor factorization is performed at the
+new string pair.
 
 Let
 
