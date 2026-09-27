@@ -364,8 +364,10 @@ void accumulate_directional_deleted_minor_same_spin_two_electron_gradient_contri
               orbital_index_left_second,
               orbital_index_right_second,
               orbital_index_left_first);
+#pragma omp atomic update
           (*packed_active_two_electron_gradient)[direct_index] +=
               total_directional_second_order_cofactor;
+#pragma omp atomic update
           (*packed_active_two_electron_gradient)[exchange_index] -=
               total_directional_second_order_cofactor;
         }

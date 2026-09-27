@@ -527,9 +527,6 @@ void accumulate_spin_local_matrix_backward(
   std::vector<std::vector<double>> partial_overlap(
       n_threads,
       std::vector<double>(active_orbital_overlap_gradient->size(), 0.0));
-  std::vector<std::vector<double>> partial_two_electron(
-      n_threads,
-      std::vector<double>(packed_active_two_electron_gradient->size(), 0.0));
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int tile_pair = 0; tile_pair < n_tile_pairs; ++tile_pair) {
 #ifdef _OPENMP
@@ -611,7 +608,7 @@ void accumulate_spin_local_matrix_backward(
               n_active_orbitals,
               hamiltonian_weight,
               delta_hamiltonian_weight,
-              &partial_two_electron[thread]);
+              packed_active_two_electron_gradient);
 
           if (pair_evaluation.same_spin_overlap_hamiltonian_gradient.rows() !=
                   static_cast<int>(occ_R.size()) ||
@@ -667,12 +664,6 @@ void accumulate_spin_local_matrix_backward(
          entry < active_orbital_overlap_gradient->size();
          ++entry) {
       (*active_orbital_overlap_gradient)[entry] += partial_overlap[thread][entry];
-    }
-    for (std::size_t entry = 0;
-         entry < packed_active_two_electron_gradient->size();
-         ++entry) {
-      (*packed_active_two_electron_gradient)[entry] +=
-          partial_two_electron[thread][entry];
     }
   }
 }
