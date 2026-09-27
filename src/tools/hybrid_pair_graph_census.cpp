@@ -116,6 +116,19 @@ StableCompletion build_stable_completion(
   const double condition_limit = std::pow(
       std::numeric_limits<double>::epsilon(),
       -1.0 / (2.0 * highest_inverse_power));
+  if (singular_values(n - 1) > 0.0) {
+    Eigen::MatrixXd direct_inverse;
+    direct_inverse.noalias() =
+        svd.matrixV() * singular_values.cwiseInverse().asDiagonal() *
+        svd.matrixU().transpose();
+    if (xmvb::vb::is_certified_regular_overlap(overlap, direct_inverse)) {
+      result.base = overlap;
+      result.inverse_base = std::move(direct_inverse);
+      result.overlap_is_certified_regular = true;
+      return result;
+    }
+  }
+
   // A completely zero occupied-overlap block has no intrinsic scale.  Orbital
   // overlaps are dimensionless and bounded by normalization, so unit scale is
   // the natural certified completion for this exceptional case.  Nonzero

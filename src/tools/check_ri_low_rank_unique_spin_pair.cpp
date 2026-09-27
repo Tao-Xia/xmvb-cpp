@@ -644,6 +644,77 @@ std::vector<int> build_slot_stable_traversal_order(
   return order;
 }
 
+long long capped_binomial_count(int n, int k, long long limit) {
+  if (k < 0 || k > n) {
+    return 0;
+  }
+  k = std::min(k, n - k);
+  long long value = 1;
+  for (int index = 1; index <= k; ++index) {
+    if (value > limit * index / (n - k + index)) {
+      return limit + 1;
+    }
+    value = value * (n - k + index) / index;
+  }
+  return value;
+}
+
+std::vector<std::uint64_t> combination_gray_masks(int n, int k) {
+  if (k == 0) {
+    return {0};
+  }
+  if (k == n) {
+    return {(std::uint64_t{1} << n) - 1};
+  }
+  std::vector<std::uint64_t> masks = combination_gray_masks(n - 1, k);
+  std::vector<std::uint64_t> tail = combination_gray_masks(n - 1, k - 1);
+  std::reverse(tail.begin(), tail.end());
+  const std::uint64_t highest_bit = std::uint64_t{1} << (n - 1);
+  masks.reserve(masks.size() + tail.size());
+  for (const std::uint64_t mask : tail) {
+    masks.push_back(mask | highest_bit);
+  }
+  return masks;
+}
+
+std::vector<int> build_adjacent_traversal_order(
+    const std::vector<std::vector<int>>& unique_strings,
+    int n_active_orbitals) {
+  if (unique_strings.empty() || n_active_orbitals > 63) {
+    return build_slot_stable_traversal_order(unique_strings);
+  }
+  const int n_electrons = static_cast<int>(unique_strings.front().size());
+  const long long expected = capped_binomial_count(
+      n_active_orbitals,
+      n_electrons,
+      static_cast<long long>(unique_strings.size()));
+  if (expected != static_cast<long long>(unique_strings.size())) {
+    return build_slot_stable_traversal_order(unique_strings);
+  }
+
+  std::unordered_map<std::uint64_t, int> index_by_mask;
+  index_by_mask.reserve(unique_strings.size());
+  for (int index = 0; index < static_cast<int>(unique_strings.size()); ++index) {
+    std::uint64_t mask = 0;
+    for (const int orbital : unique_strings[index]) {
+      mask |= std::uint64_t{1} << orbital;
+    }
+    index_by_mask.emplace(mask, index);
+  }
+
+  const auto masks = combination_gray_masks(n_active_orbitals, n_electrons);
+  std::vector<int> order;
+  order.reserve(masks.size());
+  for (const std::uint64_t mask : masks) {
+    const auto found = index_by_mask.find(mask);
+    if (found == index_by_mask.end()) {
+      return build_slot_stable_traversal_order(unique_strings);
+    }
+    order.push_back(found->second);
+  }
+  return order;
+}
+
 CertifiedAnchorCensus run_certified_anchor_census(
     const std::vector<std::vector<int>>& unique_strings,
     const std::vector<double>& active_overlap,
@@ -2952,10 +3023,10 @@ int main(int argc, char** argv) {
       const auto orbital_result = census_orbital_preparer.prepare(
           load_result.input.orbital_preparation_input);
       if (options.hybrid_census_only) {
-        const auto alpha_order =
-            build_slot_stable_traversal_order(alpha_strings);
-        const auto beta_order =
-            build_slot_stable_traversal_order(beta_strings);
+        const auto alpha_order = build_adjacent_traversal_order(
+            alpha_strings, n_active_orbitals);
+        const auto beta_order = build_adjacent_traversal_order(
+            beta_strings, n_active_orbitals);
         const auto alpha_hybrid =
             xmvb::tools::run_hybrid_pair_graph_census(
                 alpha_strings,
