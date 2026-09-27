@@ -9,10 +9,11 @@
 #include <Eigen/Core>
 
 #include "vbscf/core/contracts/input.hpp"
-#include "vbscf/determinants/pairs/storage.hpp"
+#include "vbscf/determinants/pairs/accepted_action.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
 #include "vbscf/derivatives/hessian/responses/same_spin/pair_tile_stream_internal.hpp"
+#include "vbscf/derivatives/hessian/responses/same_spin/tile_policy_internal.hpp"
 
 namespace xmvb::vb {
 namespace {
@@ -21,28 +22,6 @@ void require_finite(const Eigen::MatrixXd& values, const char* label) {
   if (!values.allFinite()) {
     throw std::runtime_error(std::string(label) + " contains non-finite values");
   }
-}
-
-Eigen::MatrixXd pair_scalar_matrix(
-    const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
-    int n_unique,
-    bool hamiltonian) {
-  if (pair_cache.size() !=
-      static_cast<std::size_t>(n_unique) * n_unique) {
-    throw std::invalid_argument(
-        "same-spin pair cache has inconsistent dimensions");
-  }
-  Eigen::MatrixXd result(n_unique, n_unique);
-  for (int left = 0; left < n_unique; ++left) {
-    for (int right = 0; right < n_unique; ++right) {
-      const auto& pair = pair_cache[ordered_spin_pair_storage_index(
-          left, right, n_unique)];
-      result(left, right) = hamiltonian
-          ? pair.total_hamiltonian
-          : pair.overlap_result.overlap_determinant;
-    }
-  }
-  return result;
 }
 
 struct ChannelEntry {
@@ -54,15 +33,15 @@ struct ChannelEntry {
 /** Channel-major exact nonzeros used to stream one packed-pair channel. */
 using SparseChannels = std::vector<std::vector<ChannelEntry>>;
 
-template <typename ProjectionProvider>
-SparseChannels index_channels(
-    int n_unique,
+SparseChannels tile_channels(
+    const AcceptedSpinPairTile& tile,
     int n_pairs,
-    ProjectionProvider&& projection_at) {
+    bool local_indices) {
   SparseChannels channels(n_pairs);
-  for (int left = 0; left < n_unique; ++left) {
-    for (int right = 0; right < n_unique; ++right) {
-      const auto& projection = projection_at(left, right);
+  for (int left = 0; left < tile.left_size; ++left) {
+    for (int right = 0; right < tile.right_size; ++right) {
+      const auto& projection = tile.pair(left, right)
+          .opposite_spin_pair_cache.first_order_cofactor_projection;
       if (projection.packed_pair_indices.size() !=
           projection.packed_pair_values.size()) {
         throw std::invalid_argument(
@@ -77,8 +56,8 @@ SparseChannels index_channels(
               "packed-pair projection index is out of range");
         }
         channels[packed_pair].push_back(ChannelEntry{
-            left,
-            right,
+            local_indices ? left : tile.left_begin + left,
+            local_indices ? right : tile.right_begin + right,
             projection.packed_pair_values[entry]});
       }
     }
@@ -86,74 +65,37 @@ SparseChannels index_channels(
   return channels;
 }
 
-SparseChannels accepted_channels(
-    const std::vector<SpinDeterminantPairEvaluation>& pair_cache,
-    int n_unique,
-    int n_pairs) {
-  return index_channels(
-      n_unique,
-      n_pairs,
-      [&](int left, int right) -> const OppositeSpinPackedPairProjection& {
-        return pair_cache[ordered_spin_pair_storage_index(
-            left, right, n_unique)]
-            .opposite_spin_pair_cache.first_order_cofactor_projection;
-      });
-}
-
-void add_sparse_right_transpose(
-    const Eigen::Ref<const Eigen::MatrixXd>& left,
-    const std::vector<ChannelEntry>& right,
-    Eigen::Ref<Eigen::MatrixXd> output) {
-  for (const ChannelEntry& entry : right) {
-    output.col(entry.row).noalias() +=
-        entry.value * left.col(entry.column);
+Eigen::MatrixXd pack_selected_coefficients(
+    const SelectedStateDeterminantMatrices& selected_states,
+    bool alpha_action) {
+  const int columns_per_state = alpha_action
+      ? selected_states.n_unique_beta
+      : selected_states.n_unique_alpha;
+  const int rows = alpha_action
+      ? selected_states.n_unique_alpha
+      : selected_states.n_unique_beta;
+  Eigen::MatrixXd packed(
+      rows,
+      columns_per_state *
+          static_cast<int>(selected_states.states.size()));
+  for (std::size_t state = 0;
+       state < selected_states.states.size();
+       ++state) {
+    packed.middleCols(
+        static_cast<int>(state) * columns_per_state,
+        columns_per_state) = alpha_action
+        ? selected_states.states[state].coefficient_matrix
+        : selected_states.states[state].coefficient_matrix.transpose();
   }
-}
-
-void add_projected_left_product(
-    const std::vector<SpinDeterminantPairEvaluation>& accepted_pairs,
-    int n_unique,
-    int target_channel,
-    const Eigen::Ref<const Eigen::MatrixXd>& right,
-    Eigen::MatrixXd* output) {
-  if (output == nullptr || right.rows() != n_unique) {
-    throw std::invalid_argument(
-        "accepted projected channel product has inconsistent dimensions");
-  }
-  output->setZero(n_unique, right.cols());
-  for (int left = 0; left < n_unique; ++left) {
-    for (int contracted = 0; contracted < n_unique; ++contracted) {
-      const auto& projected = accepted_pairs[
-          ordered_spin_pair_storage_index(
-              std::min(left, contracted),
-              std::max(left, contracted),
-              n_unique)]
-                                  .opposite_spin_pair_cache
-                                  .first_order_cofactor_projection
-                                  .projected_pair_values;
-      if (target_channel >= static_cast<int>(projected.size())) {
-        throw std::logic_error(
-            "accepted opposite-spin channel is missing its kernel image");
-      }
-      const double value = projected[target_channel];
-      if (value != 0.0) {
-        output->row(left).noalias() += value * right.row(contracted);
-      }
-    }
-  }
+  return packed;
 }
 
 }  // namespace
 
 struct AcceptedStructureResponseFactors {
   SelectedStateDeterminantMatrices selected_states;
-  Eigen::MatrixXd alpha_overlap;
-  Eigen::MatrixXd alpha_hamiltonian;
-  Eigen::MatrixXd beta_overlap;
-  Eigen::MatrixXd beta_hamiltonian;
-  SparseChannels alpha_channels;
-  SparseChannels beta_channels;
-  bool beta_channels_reuse_alpha = false;
+  AcceptedSpinPairActionResult alpha_action;
+  AcceptedSpinPairActionResult beta_action;
 };
 
 std::shared_ptr<const AcceptedStructureResponseFactors>
@@ -166,13 +108,6 @@ build_accepted_structure_response_factors(
     throw std::invalid_argument(
         "accepted structure response requires the same-spin cache");
   }
-  const int n_alpha = static_cast<int>(
-      same_spin.alpha_reuse_table.unique_determinants.size());
-  const int n_beta = static_cast<int>(
-      same_spin.beta_reuse_table.unique_determinants.size());
-  const int n_pairs = packed_active_pair_count(
-      input.orbital_preparation_input.n_active_orbitals);
-
   auto factors = std::make_shared<AcceptedStructureResponseFactors>();
   factors->selected_states =
       build_selected_state_determinant_matrices_from_selected_columns(
@@ -181,18 +116,22 @@ build_accepted_structure_response_factors(
           accepted_point.selected_state_indices,
           accepted_point.normalized_state_weights,
           same_spin);
-  const auto& alpha_cache = same_spin.alpha_pair_cache_ref();
-  const auto& beta_cache = same_spin.beta_pair_cache_ref();
-  factors->alpha_overlap = pair_scalar_matrix(alpha_cache, n_alpha, false);
-  factors->alpha_hamiltonian = pair_scalar_matrix(alpha_cache, n_alpha, true);
-  factors->beta_overlap = pair_scalar_matrix(beta_cache, n_beta, false);
-  factors->beta_hamiltonian = pair_scalar_matrix(beta_cache, n_beta, true);
-  factors->alpha_channels = accepted_channels(alpha_cache, n_alpha, n_pairs);
-  factors->beta_channels_reuse_alpha =
-      same_spin.shares_same_spin_pair_cache_between_spins();
-  if (!factors->beta_channels_reuse_alpha) {
-    factors->beta_channels = accepted_channels(beta_cache, n_beta, n_pairs);
-  }
+  const auto& prepared = accepted_point.prepared_active_space;
+  const auto& overlap = prepared.orbital_result.active_orbital_overlap_matrix;
+  const auto& h1e = prepared.active_space_one_electron_result.h1e_act;
+  const auto& two_electron = prepared.active_space_two_electron_result;
+  factors->alpha_action = apply_accepted_spin_pair_action(
+      same_spin.alpha_provider(),
+      overlap,
+      h1e,
+      two_electron,
+      pack_selected_coefficients(factors->selected_states, true));
+  factors->beta_action = apply_accepted_spin_pair_action(
+      same_spin.beta_provider(),
+      overlap,
+      h1e,
+      two_electron,
+      pack_selected_coefficients(factors->selected_states, false));
   return factors;
 }
 
@@ -309,9 +248,19 @@ build_selected_structure_direction_from_pair_tiles(
   const int n_alpha = selected_states.n_unique_alpha;
   const int n_beta = selected_states.n_unique_beta;
   const int n_states = static_cast<int>(selected_states.states.size());
-  const auto& beta_channels = factors.beta_channels_reuse_alpha
-      ? factors.alpha_channels
-      : factors.beta_channels;
+  const auto& prepared = accepted_point.prepared_active_space;
+  const auto& accepted_overlap =
+      prepared.orbital_result.active_orbital_overlap_matrix;
+  const auto& accepted_h1e =
+      prepared.active_space_one_electron_result.h1e_act;
+  const auto& accepted_two_electron =
+      prepared.active_space_two_electron_result;
+  const detail::PairTileExtents tile_extents =
+      detail::plan_pair_tile_extents(
+          same_spin,
+          n_active_orbitals,
+          accepted_two_electron,
+          true);
 
   Eigen::MatrixXd delta_hamiltonian_selected =
       Eigen::MatrixXd::Zero(structure_action->n_structures(), n_states);
@@ -350,42 +299,77 @@ build_selected_structure_direction_from_pair_tiles(
           for (int state = 0; state < n_states; ++state) {
             const Eigen::MatrixXd& coefficients =
                 selected_states.states[state].coefficient_matrix;
-            const auto coefficients_right = coefficients.middleRows(
-                same_tile.right_begin(), same_tile.right_size());
-            const Eigen::MatrixXd delta_overlap_coefficients =
-                same_tile.delta_overlap() * coefficients_right;
-            const Eigen::MatrixXd delta_hamiltonian_coefficients =
-                delta_hamiltonian * coefficients_right;
+            const int action_begin = state * n_alpha;
+            const Eigen::MatrixXd beta_overlap_image =
+                factors.beta_action.overlap
+                    .middleCols(action_begin, n_alpha).transpose();
+            const Eigen::MatrixXd beta_hamiltonian_image =
+                factors.beta_action.hamiltonian
+                    .middleCols(action_begin, n_alpha).transpose();
             auto overlap_image = tile_overlap.block(
                 0,
                 state * n_beta,
                 same_tile.left_size(),
                 n_beta);
-            overlap_image.noalias() +=
-                delta_overlap_coefficients * factors.beta_overlap.transpose();
+            overlap_image.noalias() += same_tile.delta_overlap() *
+                beta_overlap_image.middleRows(
+                    same_tile.right_begin(), same_tile.right_size());
             auto hamiltonian_image = tile_hamiltonian.block(
                 0,
                 state * n_beta,
                 same_tile.left_size(),
                 n_beta);
-            hamiltonian_image.noalias() +=
-                delta_hamiltonian_coefficients *
-                factors.beta_overlap.transpose();
-            hamiltonian_image.noalias() +=
-                delta_overlap_coefficients *
-                factors.beta_hamiltonian.transpose();
+            hamiltonian_image.noalias() += delta_hamiltonian *
+                beta_overlap_image.middleRows(
+                    same_tile.right_begin(), same_tile.right_size());
+            hamiltonian_image.noalias() += same_tile.delta_overlap() *
+                beta_hamiltonian_image.middleRows(
+                    same_tile.right_begin(), same_tile.right_size());
 
-            for (int target = 0; target < n_pairs; ++target) {
-              const auto projected = opposite_tile->projected_channel(target);
-              if (projected.isZero(0.0)) {
-                continue;
+            for (int beta_left = 0;
+                 beta_left < n_beta;
+                 beta_left += tile_extents.beta) {
+              const int beta_left_end = std::min(
+                  n_beta, beta_left + tile_extents.beta);
+              for (int beta_right = 0;
+                   beta_right < n_beta;
+                   beta_right += tile_extents.beta) {
+                const int beta_right_end = std::min(
+                    n_beta, beta_right + tile_extents.beta);
+                const AcceptedSpinPairTile beta_tile =
+                    same_spin.beta_provider().build(
+                        beta_left,
+                        beta_left_end,
+                        beta_right,
+                        beta_right_end,
+                        accepted_overlap,
+                        accepted_h1e,
+                        accepted_two_electron,
+                        AcceptedPairTileBuildOptions{
+                            .materialize_projected_pair_values = false,
+                            .populate_response_payload = false});
+                const SparseChannels channels = tile_channels(
+                    beta_tile, n_pairs, true);
+                const auto coefficients_right = coefficients.block(
+                    same_tile.right_begin(),
+                    beta_right,
+                    same_tile.right_size(),
+                    beta_tile.right_size);
+                for (int target = 0; target < n_pairs; ++target) {
+                  const auto projected =
+                      opposite_tile->projected_channel(target);
+                  if (channels[target].empty() || projected.isZero(0.0)) {
+                    continue;
+                  }
+                  const Eigen::MatrixXd projected_coefficients =
+                      projected * coefficients_right;
+                  for (const ChannelEntry& entry : channels[target]) {
+                    hamiltonian_image.col(beta_left + entry.row).noalias() +=
+                        entry.value *
+                        projected_coefficients.col(entry.column);
+                  }
+                }
               }
-              const Eigen::MatrixXd projected_coefficients =
-                  projected * coefficients_right;
-              add_sparse_right_transpose(
-                  projected_coefficients,
-                  beta_channels[target],
-                  hamiltonian_image);
             }
           }
           structure_action->add_spin_product_tile(
@@ -405,44 +389,79 @@ build_selected_structure_direction_from_pair_tiles(
               n_alpha, n_states * same_tile.left_size());
           Eigen::MatrixXd tile_overlap = Eigen::MatrixXd::Zero(
               n_alpha, n_states * same_tile.left_size());
-          Eigen::MatrixXd accepted_alpha_times_coefficients;
           for (int state = 0; state < n_states; ++state) {
             const Eigen::MatrixXd& coefficients =
                 selected_states.states[state].coefficient_matrix;
-            const auto coefficients_right = coefficients.middleCols(
-                same_tile.right_begin(), same_tile.right_size());
+            const int action_begin = state * n_beta;
+            const auto alpha_overlap_image =
+                factors.alpha_action.overlap.middleCols(
+                    action_begin, n_beta);
+            const auto alpha_hamiltonian_image =
+                factors.alpha_action.hamiltonian.middleCols(
+                    action_begin, n_beta);
             auto overlap_image = tile_overlap.middleCols(
                 state * same_tile.left_size(),
                 same_tile.left_size());
-            overlap_image.noalias() +=
-                factors.alpha_overlap * coefficients_right *
+            overlap_image.noalias() += alpha_overlap_image.middleCols(
+                same_tile.right_begin(), same_tile.right_size()) *
                 same_tile.delta_overlap().transpose();
             auto hamiltonian_image = tile_hamiltonian.middleCols(
                 state * same_tile.left_size(),
                 same_tile.left_size());
             hamiltonian_image.noalias() +=
-                factors.alpha_hamiltonian * coefficients_right *
+                alpha_hamiltonian_image.middleCols(
+                    same_tile.right_begin(), same_tile.right_size()) *
                 same_tile.delta_overlap().transpose();
             hamiltonian_image.noalias() +=
-                factors.alpha_overlap * coefficients_right *
+                alpha_overlap_image.middleCols(
+                    same_tile.right_begin(), same_tile.right_size()) *
                 delta_hamiltonian.transpose();
 
-            accepted_alpha_times_coefficients.resize(
-                n_alpha, same_tile.right_size());
-            for (int target = 0; target < n_pairs; ++target) {
-              const auto directional = opposite_tile->raw_channel(target);
-              if (directional.isZero(0.0)) {
-                continue;
+            for (int alpha_left = 0;
+                 alpha_left < n_alpha;
+                 alpha_left += tile_extents.alpha) {
+              const int alpha_left_end = std::min(
+                  n_alpha, alpha_left + tile_extents.alpha);
+              for (int alpha_right = 0;
+                   alpha_right < n_alpha;
+                   alpha_right += tile_extents.alpha) {
+                const int alpha_right_end = std::min(
+                    n_alpha, alpha_right + tile_extents.alpha);
+                const AcceptedSpinPairTile alpha_tile =
+                    same_spin.alpha_provider().build(
+                        alpha_left,
+                        alpha_left_end,
+                        alpha_right,
+                        alpha_right_end,
+                        accepted_overlap,
+                        accepted_h1e,
+                        accepted_two_electron,
+                        AcceptedPairTileBuildOptions{
+                            .materialize_projected_pair_values = false,
+                            .populate_response_payload = false});
+                const SparseChannels channels = tile_channels(
+                    alpha_tile, n_pairs, true);
+                const auto coefficients_right = coefficients.block(
+                    alpha_right,
+                    same_tile.right_begin(),
+                    alpha_tile.right_size,
+                    same_tile.right_size());
+                for (int target = 0; target < n_pairs; ++target) {
+                  const auto directional =
+                      opposite_tile->projected_channel(target);
+                  if (channels[target].empty() || directional.isZero(0.0)) {
+                    continue;
+                  }
+                  const Eigen::MatrixXd directional_coefficients =
+                      coefficients_right * directional.transpose();
+                  for (const ChannelEntry& entry : channels[target]) {
+                    hamiltonian_image.row(
+                        alpha_left + entry.row).noalias() +=
+                        entry.value *
+                        directional_coefficients.row(entry.column);
+                  }
+                }
               }
-              add_projected_left_product(
-                  same_spin.alpha_pair_cache_ref(),
-                  n_alpha,
-                  target,
-                  coefficients_right,
-                  &accepted_alpha_times_coefficients);
-              hamiltonian_image.noalias() +=
-                  accepted_alpha_times_coefficients *
-                  directional.transpose();
             }
           }
           structure_action->add_spin_product_tile(
