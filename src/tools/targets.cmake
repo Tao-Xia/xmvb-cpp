@@ -68,6 +68,11 @@ target_link_libraries(benchmark_ri_ao_h1e_operator
     xmvb_input
     xmvb_output)
 
+add_executable(benchmark_ri_pair_projection
+  tools/benchmark_ri_pair_projection.cpp)
+target_link_libraries(benchmark_ri_pair_projection
+  PRIVATE xmvb_vbscf)
+
 add_executable(inspect_ao_h1e_backprop_symmetry
   tools/inspect_ao_h1e_backprop_symmetry.cpp)
 target_link_libraries(inspect_ao_h1e_backprop_symmetry
@@ -347,6 +352,7 @@ add_dependencies(check_ao_h1e_ri_operator xmvb_assets)
 add_dependencies(inspect_ri_inactive_density xmvb_assets)
 add_dependencies(check_ri_ao_h1e_modes xmvb_assets)
 add_dependencies(benchmark_ri_ao_h1e_operator xmvb_assets)
+add_dependencies(benchmark_ri_pair_projection xmvb_assets)
 add_dependencies(inspect_ao_h1e_backprop_symmetry xmvb_assets)
 add_dependencies(check_reference_orbital_gradient_modes xmvb_assets)
 add_dependencies(compare_exact_ri_energy_decomposition xmvb_assets)
