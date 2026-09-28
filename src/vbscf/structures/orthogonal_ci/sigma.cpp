@@ -6,7 +6,6 @@
 #include <unordered_map>
 
 #include "core/openmp.hpp"
-#include "vbscf/determinants/pairs/evaluator.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
 #include "vbscf/structures/orthogonal_ci/planner.hpp"
 
@@ -158,20 +157,20 @@ DirectCiSigmaAction::DirectCiSigmaAction(
     throw std::invalid_argument(
         "orthogonal direct-CI sigma requires complete fixed-spin spaces");
   }
-  alpha_ = build_spin_connections(alpha_determinants, integrals);
-  alpha_coulomb_diagonal_ = build_coulomb_diagonal(alpha_determinants);
+  const int n_electrons =
+      static_cast<int>(alpha_determinants.front().size() +
+                       beta_determinants.front().size());
+  hamiltonian_pair_kernel_ =
+      build_hamiltonian_pair_kernel(integrals, n_electrons);
+  alpha_ = build_spin_connections(alpha_determinants);
   if (beta_determinants != alpha_determinants) {
-    distinct_beta_.emplace(
-        build_spin_connections(beta_determinants, integrals));
-    distinct_beta_coulomb_diagonal_.emplace(
-        build_coulomb_diagonal(beta_determinants));
+    distinct_beta_.emplace(build_spin_connections(beta_determinants));
   }
 }
 
 DirectCiSigmaAction::SpinConnections
 DirectCiSigmaAction::build_spin_connections(
-    const std::vector<std::vector<int>>& determinants,
-    const OrthogonalActiveIntegrals& integrals) const {
+    const std::vector<std::vector<int>>& determinants) const {
   const int dimension = static_cast<int>(determinants.size());
   std::vector<std::uint64_t> masks(dimension);
   std::unordered_map<std::uint64_t, int> index_by_mask;
@@ -184,19 +183,10 @@ DirectCiSigmaAction::build_spin_connections(
           "direct-CI determinant space contains a duplicate");
     }
   }
-  std::vector<double> identity_overlap(
-      static_cast<std::size_t>(n_orbitals_) * n_orbitals_, 0.0);
-  for (int orbital = 0; orbital < n_orbitals_; ++orbital) {
-    identity_overlap[static_cast<std::size_t>(orbital) * n_orbitals_ + orbital] =
-        1.0;
-  }
-
   SpinConnections result;
-  result.diagonal.resize(dimension);
   result.off_diagonal.resize(dimension);
   result.singles.resize(dimension);
   result.occupied = determinants;
-  const DeterminantPairEvaluator evaluator;
   const int n_threads = std::max(
       1,
       std::min(effective_openmp_thread_count(), dimension));
@@ -228,17 +218,8 @@ DirectCiSigmaAction::build_spin_connections(
             "direct-CI excitation left the fixed-spin determinant space");
       }
       const int source = source_entry->second;
-      const auto pair = evaluator.evaluate_same_spin_pair(
-          determinants[target],
-          determinants[source],
-          identity_overlap,
-          integrals.one_electron,
-          n_orbitals_,
-          integrals.two_electron,
-          false);
       HamiltonianConnection connection;
       connection.source = source;
-      connection.value = pair.total_hamiltonian;
       const int changed_orbitals =
           __builtin_popcountll(masks[target] ^ source_mask);
       const std::vector<int> inserted = orbitals_not_in_mask(
@@ -288,15 +269,6 @@ DirectCiSigmaAction::build_spin_connections(
       connections.push_back(connection);
     };
 
-    result.diagonal[target] = evaluator.evaluate_same_spin_pair(
-        target_occupied,
-        target_occupied,
-        identity_overlap,
-        integrals.one_electron,
-        n_orbitals_,
-        integrals.two_electron,
-        false).total_hamiltonian;
-
     for (const int removed_from_target : target_occupied) {
       for (const int inserted_into_source : target_virtual) {
         const std::uint64_t source_mask =
@@ -336,33 +308,57 @@ DirectCiSigmaAction::build_spin_connections(
   return result;
 }
 
-Eigen::MatrixXd DirectCiSigmaAction::build_coulomb_diagonal(
-    const std::vector<std::vector<int>>& determinants) const {
-  Eigen::MatrixXd result = Eigen::MatrixXd::Zero(
-      static_cast<int>(determinants.size()),
-      pair_kernel_.rows());
-  for (int determinant = 0;
-       determinant < static_cast<int>(determinants.size());
-       ++determinant) {
-    for (const int occupied : determinants[determinant]) {
-      const int diagonal_pair =
-          TwoElectronIndexer::packed_pair_index(occupied, occupied);
-      result.row(determinant) += pair_kernel_.col(diagonal_pair).transpose();
+Eigen::MatrixXd DirectCiSigmaAction::build_hamiltonian_pair_kernel(
+    const OrthogonalActiveIntegrals& integrals,
+    int n_electrons) const {
+  const int n_pairs = static_cast<int>(pair_kernel_.rows());
+  if (n_electrons <= 0 || pair_kernel_.cols() != n_pairs ||
+      integrals.one_electron.rows() != n_orbitals_ ||
+      integrals.one_electron.cols() != n_orbitals_ ||
+      !pair_kernel_.allFinite()) {
+    throw std::invalid_argument(
+        "invalid direct-CI packed Hamiltonian kernel input");
+  }
+
+  // In an orthonormal active basis,
+  //   H = sum_pq h_pq E_pq
+  //     + 1/2 sum_pqrs (pq|rs) (E_pq E_rs - delta_qr E_ps).
+  // Absorb the one-body and contraction terms into the packed pair kernel so
+  // the complete Hamiltonian is one scatter--GEMM--gather operation.
+  Eigen::MatrixXd effective_one_electron = integrals.one_electron;
+  for (int row = 0; row < n_orbitals_; ++row) {
+    for (int column = 0; column < n_orbitals_; ++column) {
+      double contraction = 0.0;
+      for (int orbital = 0; orbital < n_orbitals_; ++orbital) {
+        contraction += pair_kernel_(
+            TwoElectronIndexer::packed_pair_index(row, orbital),
+            TwoElectronIndexer::packed_pair_index(orbital, column));
+      }
+      effective_one_electron(row, column) -= 0.5 * contraction;
     }
   }
-  return result;
+  effective_one_electron /= static_cast<double>(n_electrons);
+
+  Eigen::MatrixXd result = 0.5 * pair_kernel_;
+  for (int orbital = 0; orbital < n_orbitals_; ++orbital) {
+    const int diagonal_pair =
+        TwoElectronIndexer::packed_pair_index(orbital, orbital);
+    for (int row = 0; row < n_orbitals_; ++row) {
+      for (int column = 0; column <= row; ++column) {
+        const int pair =
+            TwoElectronIndexer::packed_pair_index(row, column);
+        const double value = 0.5 * effective_one_electron(row, column);
+        result(diagonal_pair, pair) += value;
+        result(pair, diagonal_pair) += value;
+      }
+    }
+  }
+  return 0.5 * (result + result.transpose());
 }
 
 const DirectCiSigmaAction::SpinConnections&
 DirectCiSigmaAction::beta_connections() const noexcept {
   return distinct_beta_.has_value() ? *distinct_beta_ : alpha_;
-}
-
-const Eigen::MatrixXd&
-DirectCiSigmaAction::beta_coulomb_diagonal() const noexcept {
-  return distinct_beta_coulomb_diagonal_.has_value()
-      ? *distinct_beta_coulomb_diagonal_
-      : alpha_coulomb_diagonal_;
 }
 
 Eigen::MatrixXd DirectCiSigmaAction::apply(
@@ -374,87 +370,186 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
   }
   const int block_width = static_cast<int>(coefficients.cols()) / n_beta_;
   const SpinConnections& beta_graph = beta_connections();
-  const Eigen::MatrixXd& beta_coulomb = beta_coulomb_diagonal();
+  const int n_pairs = static_cast<int>(hamiltonian_pair_kernel_.rows());
   Eigen::MatrixXd sigma = Eigen::MatrixXd::Zero(
       n_alpha_, coefficients.cols());
-  const int work_items = n_alpha_ * n_beta_;
   const int n_threads = std::max(
-      1,
-      std::min(effective_openmp_thread_count(), work_items));
+      1, std::min(effective_openmp_thread_count(), n_beta_));
+
+  // Bound all thread-local scatter, transformed-scatter, and reduction
+  // buffers by one explicit workspace budget.  A wider alpha tile increases
+  // GEMM efficiency without changing the mathematical action.
+  constexpr std::size_t kWorkspaceBytes = 64ULL * 1024ULL * 1024ULL;
+  constexpr int kMaximumAlphaTile = 160;
+  const std::size_t bytes_per_alpha =
+      static_cast<std::size_t>(n_threads) * block_width *
+      (static_cast<std::size_t>(n_beta_) + 2ULL * n_pairs) * sizeof(double);
+  const int alpha_tile = std::min(
+      n_alpha_,
+      std::max(
+          1,
+          std::min(
+              kMaximumAlphaTile,
+              static_cast<int>(kWorkspaceBytes /
+                  std::max<std::size_t>(bytes_per_alpha, 1)))));
+  const int maximum_columns = alpha_tile * block_width;
+  std::vector<Eigen::MatrixXd> partial_sigma(
+      n_threads,
+      Eigen::MatrixXd::Zero(maximum_columns, n_beta_));
 
 #pragma omp parallel if(n_threads > 1) num_threads(n_threads)
   {
-    std::vector<double> values(block_width, 0.0);
-#pragma omp for schedule(static)
-    for (int work = 0; work < work_items; ++work) {
-      // Visit each alpha/beta target once.  All Davidson block vectors share
-      // its determinant connections and integral coefficients.
-      const int alpha = work % n_alpha_;
-      const int beta = work / n_alpha_;
-      double diagonal = alpha_.diagonal[alpha] + beta_graph.diagonal[beta];
-      for (const int occupied : alpha_.occupied[alpha]) {
-        diagonal += beta_coulomb(
-            beta,
-            TwoElectronIndexer::packed_pair_index(occupied, occupied));
-      }
-      for (int block = 0; block < block_width; ++block) {
-        const int column = block * n_beta_ + beta;
-        values[block] = diagonal * coefficients(alpha, column);
-      }
+    int thread = 0;
+#ifdef _OPENMP
+    thread = omp_get_thread_num();
+#endif
+    Eigen::MatrixXd intermediate(n_pairs, maximum_columns);
+    Eigen::MatrixXd transformed(n_pairs, maximum_columns);
+    Eigen::MatrixXd& beta_reduction = partial_sigma[thread];
 
-      for (const HamiltonianConnection& connection :
-           alpha_.off_diagonal[alpha]) {
-        double matrix_element = connection.value;
-        if (connection.density_pair >= 0) {
-          matrix_element += connection.density_sign *
-              beta_coulomb(beta, connection.density_pair);
-        }
-        for (int block = 0; block < block_width; ++block) {
-          const int column = block * n_beta_ + beta;
-          values[block] += matrix_element *
-              coefficients(connection.source, column);
-        }
-      }
-      for (const HamiltonianConnection& connection :
-           beta_graph.off_diagonal[beta]) {
-        double matrix_element = connection.value;
-        if (connection.density_pair >= 0) {
-          matrix_element += connection.density_sign *
-              alpha_coulomb_diagonal_(alpha, connection.density_pair);
-        }
-        for (int block = 0; block < block_width; ++block) {
-          values[block] += matrix_element * coefficients(
-              alpha,
-              block * n_beta_ + connection.source);
-        }
-      }
-      const DensityConnections& alpha_singles = alpha_.singles[alpha];
-      const DensityConnections& beta_singles = beta_graph.singles[beta];
-      // Beta excitation selects one coefficient column.  Keep that column
-      // fixed while visiting all alpha sources so the opposite-spin
-      // contraction stays inside a small determinant column.
-      for (std::size_t beta_single = 0;
-           beta_single < beta_singles.size();
-           ++beta_single) {
-        const int beta_source = beta_singles.sources[beta_single];
-        const int beta_pair = beta_singles.pairs[beta_single];
-        const double beta_sign = beta_singles.signs[beta_single];
-        for (std::size_t alpha_single = 0;
-             alpha_single < alpha_singles.size();
-             ++alpha_single) {
-          const double matrix_element =
-              alpha_singles.signs[alpha_single] * beta_sign *
-              pair_kernel_(alpha_singles.pairs[alpha_single], beta_pair);
-          const int alpha_source = alpha_singles.sources[alpha_single];
+    for (int alpha_begin = 0;
+         alpha_begin < n_alpha_;
+         alpha_begin += alpha_tile) {
+      const int alpha_count = std::min(alpha_tile, n_alpha_ - alpha_begin);
+      const int active_columns = alpha_count * block_width;
+      beta_reduction.topRows(active_columns).setZero();
+
+#pragma omp for schedule(static)
+      for (int beta_target = 0; beta_target < n_beta_; ++beta_target) {
+        auto active_intermediate = intermediate.leftCols(active_columns);
+        active_intermediate.setZero();
+
+        const auto add_beta_link = [&] (
+            int beta_source, int pair, double sign) {
           for (int block = 0; block < block_width; ++block) {
-            values[block] += matrix_element * coefficients(
-                alpha_source,
-                block * n_beta_ + beta_source);
+            active_intermediate.row(pair)
+                .segment(block * alpha_count, alpha_count)
+                .noalias() += sign * coefficients.block(
+                    alpha_begin,
+                    block * n_beta_ + beta_source,
+                    alpha_count,
+                    1).transpose();
+          }
+        };
+        for (const int occupied : beta_graph.occupied[beta_target]) {
+          add_beta_link(
+              beta_target,
+              TwoElectronIndexer::packed_pair_index(occupied, occupied),
+              1.0);
+        }
+        const DensityConnections& beta_singles =
+            beta_graph.singles[beta_target];
+        for (std::size_t link = 0; link < beta_singles.size(); ++link) {
+          add_beta_link(
+              beta_singles.sources[link],
+              beta_singles.pairs[link],
+              beta_singles.signs[link]);
+        }
+
+        for (int local_alpha = 0;
+             local_alpha < alpha_count;
+             ++local_alpha) {
+          const int alpha_target = alpha_begin + local_alpha;
+          const auto add_alpha_link = [&] (
+              int alpha_source, int pair, double sign) {
+            for (int block = 0; block < block_width; ++block) {
+              active_intermediate(
+                  pair, block * alpha_count + local_alpha) +=
+                  sign * coefficients(
+                      alpha_source, block * n_beta_ + beta_target);
+            }
+          };
+          for (const int occupied : alpha_.occupied[alpha_target]) {
+            add_alpha_link(
+                alpha_target,
+                TwoElectronIndexer::packed_pair_index(occupied, occupied),
+                1.0);
+          }
+          const DensityConnections& alpha_singles =
+              alpha_.singles[alpha_target];
+          for (std::size_t link = 0; link < alpha_singles.size(); ++link) {
+            add_alpha_link(
+                alpha_singles.sources[link],
+                alpha_singles.pairs[link],
+                alpha_singles.signs[link]);
           }
         }
+
+        auto active_transformed = transformed.leftCols(active_columns);
+        active_transformed.noalias() =
+            hamiltonian_pair_kernel_ * active_intermediate;
+
+        // Alpha links write one beta column owned by this loop iteration, so
+        // no synchronization is required.
+        for (int local_alpha = 0;
+             local_alpha < alpha_count;
+             ++local_alpha) {
+          const int alpha_target = alpha_begin + local_alpha;
+          const auto gather_alpha_link = [&] (
+              int alpha_source, int pair, double sign) {
+            for (int block = 0; block < block_width; ++block) {
+              sigma(alpha_source, block * n_beta_ + beta_target) +=
+                  sign * active_transformed(
+                      pair, block * alpha_count + local_alpha);
+            }
+          };
+          for (const int occupied : alpha_.occupied[alpha_target]) {
+            gather_alpha_link(
+                alpha_target,
+                TwoElectronIndexer::packed_pair_index(occupied, occupied),
+                1.0);
+          }
+          const DensityConnections& alpha_singles =
+              alpha_.singles[alpha_target];
+          for (std::size_t link = 0; link < alpha_singles.size(); ++link) {
+            gather_alpha_link(
+                alpha_singles.sources[link],
+                alpha_singles.pairs[link],
+                alpha_singles.signs[link]);
+          }
+        }
+
+        // Contributions scattered through beta links can collide between
+        // beta targets.  Accumulate them in one bounded buffer per thread.
+        const auto gather_beta_link = [&] (
+            int beta_source, int pair, double sign) {
+          for (int column = 0; column < active_columns; ++column) {
+            beta_reduction(column, beta_source) +=
+                sign * active_transformed(pair, column);
+          }
+        };
+        for (const int occupied : beta_graph.occupied[beta_target]) {
+          gather_beta_link(
+              beta_target,
+              TwoElectronIndexer::packed_pair_index(occupied, occupied),
+              1.0);
+        }
+        for (std::size_t link = 0; link < beta_singles.size(); ++link) {
+          gather_beta_link(
+              beta_singles.sources[link],
+              beta_singles.pairs[link],
+              beta_singles.signs[link]);
+        }
       }
-      for (int block = 0; block < block_width; ++block) {
-        sigma(alpha, block * n_beta_ + beta) = values[block];
+
+#pragma omp for schedule(static)
+      for (int beta = 0; beta < n_beta_; ++beta) {
+        for (int block = 0; block < block_width; ++block) {
+          for (int local_alpha = 0;
+               local_alpha < alpha_count;
+               ++local_alpha) {
+            const int row = block * alpha_count + local_alpha;
+            double value = 0.0;
+            for (int source_thread = 0;
+                 source_thread < n_threads;
+                 ++source_thread) {
+              value += partial_sigma[source_thread](row, beta);
+            }
+            sigma(
+                alpha_begin + local_alpha,
+                block * n_beta_ + beta) += value;
+          }
+        }
       }
     }
   }
@@ -802,7 +897,6 @@ Eigen::MatrixXd DirectCiSigmaAction::one_body_generator_adjoint(
 std::size_t DirectCiSigmaAction::dynamic_bytes() const noexcept {
   const auto spin_bytes = [](const SpinConnections& spin) {
     std::size_t bytes =
-        spin.diagonal.capacity() * sizeof(double) +
         spin.off_diagonal.capacity() *
             sizeof(std::vector<HamiltonianConnection>) +
         spin.singles.capacity() * sizeof(DensityConnections) +
@@ -819,12 +913,10 @@ std::size_t DirectCiSigmaAction::dynamic_bytes() const noexcept {
     return bytes;
   };
   std::size_t bytes = static_cast<std::size_t>(
-      pair_kernel_.size() + alpha_coulomb_diagonal_.size()) * sizeof(double) +
+      pair_kernel_.size() + hamiltonian_pair_kernel_.size()) * sizeof(double) +
       spin_bytes(alpha_);
   if (distinct_beta_.has_value()) {
-    bytes += spin_bytes(*distinct_beta_) +
-        static_cast<std::size_t>(distinct_beta_coulomb_diagonal_->size()) *
-            sizeof(double);
+    bytes += spin_bytes(*distinct_beta_);
   }
   return bytes;
 }

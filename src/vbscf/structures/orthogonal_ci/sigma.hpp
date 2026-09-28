@@ -81,7 +81,6 @@ private:
 
   struct HamiltonianConnection {
     int source = 0;
-    double value = 0.0;
     int density_pair = -1;
     double density_sign = 0.0;
     int one_electron_row = -1;
@@ -110,28 +109,25 @@ private:
   };
 
   struct SpinConnections {
-    std::vector<double> diagonal;
     std::vector<std::vector<HamiltonianConnection>> off_diagonal;
     std::vector<DensityConnections> singles;
     std::vector<std::vector<int>> occupied;
   };
 
   SpinConnections build_spin_connections(
-      const std::vector<std::vector<int>>& determinants,
-      const OrthogonalActiveIntegrals& integrals) const;
-  Eigen::MatrixXd build_coulomb_diagonal(
       const std::vector<std::vector<int>>& determinants) const;
+  Eigen::MatrixXd build_hamiltonian_pair_kernel(
+      const OrthogonalActiveIntegrals& integrals,
+      int n_electrons) const;
   const SpinConnections& beta_connections() const noexcept;
-  const Eigen::MatrixXd& beta_coulomb_diagonal() const noexcept;
 
   int n_orbitals_ = 0;
   int n_alpha_ = 0;
   int n_beta_ = 0;
   Eigen::MatrixXd pair_kernel_;
+  Eigen::MatrixXd hamiltonian_pair_kernel_;
   SpinConnections alpha_;
   std::optional<SpinConnections> distinct_beta_;
-  Eigen::MatrixXd alpha_coulomb_diagonal_;
-  std::optional<Eigen::MatrixXd> distinct_beta_coulomb_diagonal_;
 };
 
 }  // namespace xmvb::vb
