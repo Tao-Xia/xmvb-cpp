@@ -1424,12 +1424,14 @@ O\!\left(N_{\mathrm{FCI}}n_{\mathrm{act}}^{4}b\right).
 $$
 
 The implementation verifies determinant-space completeness from the occupied
-orbital bit patterns rather than from the dimension alone.  Incomplete VB
-string spaces continue to use the exact nonorthogonal factorized action,
-because an exterior transform restricted to an incomplete space is not closed
-and would not be mathematically equivalent.  For complete spaces, an exact
-FLOP planner selects direct CI only when its predicted fixed-point work is
-smaller.  The Slater--Condon graph is generated directly from occupied--virtual
+orbital bit patterns rather than from the dimension alone.  Every complete
+fixed-spin carrier uses the orthogonal direct-CI action.  Incomplete VB string
+spaces continue to use the exact nonorthogonal factorized action, because an
+exterior transform restricted to an incomplete carrier is not closed and
+would not be mathematically equivalent.  A complete carrier that cannot fit
+one bounded direct-CI action vector is rejected explicitly rather than being
+silently redirected to the quadratic cofactor representation.  The
+Slater--Condon graph is generated directly from occupied--virtual
 single and double substitutions followed by determinant-bitmask lookup; it
 does not contain an $O(U_{\sigma}^{2})$ all-pairs setup scan.  Its construction
 therefore has the same

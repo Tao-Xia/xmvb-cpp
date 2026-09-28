@@ -548,10 +548,19 @@ StructureAction::StructureAction(
           same_spin_pair_cache.beta_reuse_table.unique_determinants,
           n_active_orbitals,
           1);
-  const bool use_direct_ci =
-      direct_ci_plan.fits_action_workspace(kStructureActionWorkspaceBytes) &&
-      (direct_ci_plan.favors_direct_ci() ||
-       !same_spin_pair_cache.enabled());
+  // A complete fixed-spin carrier admits an exact change of representation
+  // to the orthonormal determinant basis.  This is the production operator,
+  // not a heuristic fast path: falling back to the nonorthogonal pair graph
+  // would restore quadratic unique-string storage and cofactor work.  The
+  // pair representation is retained only for mathematically incomplete
+  // carriers, where the exterior transform is not closed.
+  const bool use_direct_ci = direct_ci_plan.carrier_complete();
+  if (use_direct_ci &&
+      !direct_ci_plan.fits_action_workspace(kStructureActionWorkspaceBytes)) {
+    throw std::runtime_error(
+        "complete fixed-spin carrier exceeds the bounded direct-CI action "
+        "workspace; a streamed direct-CI action is required");
+  }
   if (!same_spin_pair_cache.has_pair_providers()) {
     throw std::invalid_argument(
         "structure action requires accepted-pair providers");

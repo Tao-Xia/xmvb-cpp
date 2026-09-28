@@ -1242,6 +1242,9 @@ void check_sigma_action() {
       two_electron,
       n_orbitals,
       &exact_diagonal);
+  require(
+      topology_action.storage().orthogonal_direct_ci,
+      "complete fixed-spin carrier did not select direct CI");
   const auto topology_images = topology_action.apply(structure_vectors);
   require(
       (topology_images.hamiltonian -
@@ -1294,6 +1297,9 @@ void check_sigma_action() {
       two_electron,
       n_orbitals,
       &exact_diagonal);
+  require(
+      !streamed_action.storage().orthogonal_direct_ci,
+      "incomplete fixed-spin carrier incorrectly selected direct CI");
   const auto streamed_images =
       streamed_action.apply_streamed(structure_vectors);
   const Eigen::MatrixXd incomplete_reference_hamiltonian =
