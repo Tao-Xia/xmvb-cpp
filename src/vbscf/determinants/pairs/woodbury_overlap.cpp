@@ -65,6 +65,13 @@ std::optional<DeterminantOverlapResult> make_updated_result(
 
 }  // namespace
 
+double regular_overlap_condition_limit() noexcept {
+  constexpr double highest_inverse_power = 4.0;
+  return std::pow(
+      std::numeric_limits<double>::epsilon(),
+      -1.0 / (2.0 * highest_inverse_power));
+}
+
 bool is_certified_regular_overlap(
     const Eigen::Ref<const Eigen::MatrixXd>& matrix,
     const Eigen::Ref<const Eigen::MatrixXd>& inverse) {
@@ -78,10 +85,7 @@ bool is_certified_regular_overlap(
   // Accepted pairs feed derivatives containing as many as four inverse
   // factors.  This bound limits their roundoff amplification to sqrt(u), the
   // same precision-derived certificate used by CofactorDifferential.
-  constexpr double highest_inverse_power = 4.0;
-  const double condition_limit = std::pow(
-      std::numeric_limits<double>::epsilon(),
-      -1.0 / (2.0 * highest_inverse_power));
+  const double condition_limit = regular_overlap_condition_limit();
   if (!std::isfinite(condition_estimate) ||
       condition_estimate > condition_limit) {
     return false;

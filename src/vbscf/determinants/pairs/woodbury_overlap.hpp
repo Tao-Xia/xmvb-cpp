@@ -10,6 +10,15 @@
 namespace xmvb::vb {
 
 /**
+ * @brief Returns the precision-derived condition limit for fourth-order pair derivatives.
+ *
+ * The limit bounds amplification by the four inverse factors that can occur in
+ * an orbital Hessian-vector product. Diagnostics reuse the same roundoff
+ * budget when reporting spectral principal-angle conditioning.
+ */
+double regular_overlap_condition_limit() noexcept;
+
+/**
  * @brief Tests whether a regular overlap inverse is safe for pair derivatives.
  *
  * The certificate combines a condition estimate with the backward error of

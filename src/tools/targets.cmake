@@ -331,6 +331,15 @@ target_link_libraries(check_ri_low_rank_unique_spin_pair
     xmvb_input
     xmvb_output)
 
+add_executable(diagnose_pair_conditioning
+  tools/diagnose_pair_conditioning.cpp
+  tools/pair_conditioning_census.cpp)
+target_link_libraries(diagnose_pair_conditioning
+  PRIVATE
+    xmvb_vbscf
+    xmvb_input
+    xmvb_output)
+
 add_executable(benchmark_low_rank_synthetic
   tools/benchmark_low_rank_synthetic.cpp)
 target_include_directories(benchmark_low_rank_synthetic

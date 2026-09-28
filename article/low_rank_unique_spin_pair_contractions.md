@@ -2263,7 +2263,84 @@ establish contraction accuracy or speed.  The next validation must compare
 small-core Hamiltonian, gradient, and HVP contractions with the existing exact
 interpolation reference, followed by an RI/THC timing comparison.
 
-### 9.3 Inverse-free RI contraction and directional adjoint
+### 9.3 Geometric origin of the dangerous pair population
+
+The inverse certificate alone does not determine whether a rejected pair is
+caused by a defective determinant representation or by genuine near
+orthogonality between two otherwise valid occupied spaces.  For a left and
+right unique string, define the self metrics and cross overlap
+
+$$
+G_L=C_L^{\mathrm T}S_{\mathrm{AO}}C_L,
+\qquad
+G_R=C_R^{\mathrm T}S_{\mathrm{AO}}C_R,
+\qquad
+X=C_R^{\mathrm T}S_{\mathrm{AO}}C_L.
+$$
+
+When both self metrics have full numerical rank, form the whitened overlap
+
+$$
+\widehat X=G_R^{-1/2}XG_L^{-1/2}.
+$$
+
+Its singular values are the cosines of the principal angles between the two
+occupied spaces.  This separates three cases without changing the physical
+wave function:
+
+1. a rank-deficient or condition-limited $G_L$ or $G_R$ identifies a defective
+   determinant representation;
+2. a numerically singular $\widehat X$ identifies an exact inter-string rank
+   deficiency at working precision; and
+3. a full-rank but condition-limited $\widehat X$ identifies genuine
+   inter-string near orthogonality.
+
+The numerical-rank threshold is the standard backward-error scale
+
+$$
+\tau_{\mathrm{rank}}
+=
+n\epsilon_{\mathrm{mach}}
+\max(1,\sigma_{\max}),
+$$
+
+while the dangerous-dimension census uses the same fourth-order roundoff
+budget as the HVP inverse certificate,
+
+$$
+\kappa_{\mathrm{HVP}}
+=
+\epsilon_{\mathrm{mach}}^{-1/8}.
+$$
+
+This is a diagnostic classification, not a screening approximation.  In
+particular, whitening removes determinant self scaling before measuring the
+principal angles, whereas the production certificate additionally tests the
+backward error of the inverse in its actual computational representation.
+
+Hanhai25 Slurm job `260601` evaluated every ordered pair at the input orbital
+point.  No unique string in these four systems had a rank-deficient or
+condition-limited self metric, and no whitened pair was numerically rank
+deficient.  The complete census was
+
+| System | Spin | $U$ | Smallest $\lambda_{\min}(G)/\lambda_{\max}(G)$ | Regular pairs | Intrinsic dangerous pairs | Dangerous dimensions | Smallest $\sigma(\widehat X)$ |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 241 | both | 20 | 0.591 | 298 / 400 | 102 / 400 (25.5%) | $q=1$: 102 | $6.27\times10^{-5}$ |
+| MnF2 | alpha | 8 | 0.133 | 42 / 64 | 22 / 64 (34.4%) | $q=1$: 22 | $3.08\times10^{-4}$ |
+| MnF2 | beta | 28 | 0.212 | 526 / 784 | 258 / 784 (32.9%) | $q=1$: 258 | $2.06\times10^{-6}$ |
+| FeCl2 | alpha | 8 | 0.419 | 24 / 64 | 40 / 64 (62.5%) | $q=1$: 40 | $3.62\times10^{-8}$ |
+| FeCl2 | beta | 56 | 0.474 | 370 / 3,136 | 2,766 / 3,136 (88.2%) | $q=1$: 1,902; $q=2$: 864 | $3.31\times10^{-10}$ |
+| CERRAS | both | 462 | 0.254 | 42,646 / 213,444 | 170,798 / 213,444 (80.0%) | $q=1$: 127,532; $q=2$: 41,766; $q=3$: 1,500 | $2.72\times10^{-12}$ |
+
+Consequently, normalization, determinant-local whitening, or a corrected
+orbital retraction cannot remove the dominant dangerous population in these
+examples.  Those operations remain necessary to prevent artificial
+self-conditioning, but the measured bottleneck is geometric: valid occupied
+spaces contain one to three nearly orthogonal principal directions.  The
+production algorithm must therefore make the small inverse-free core fast;
+re-anchoring every such pair necessarily forfeits the graph speedup.
+
+### 9.4 Inverse-free RI contraction and directional adjoint
 
 The propagated representation is now used directly by the RI contraction,
 not only as a coverage diagnostic. Write

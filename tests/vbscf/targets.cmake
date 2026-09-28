@@ -46,9 +46,16 @@ foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
   target_link_libraries(${target_name} PRIVATE xmvb_vbscf)
 endforeach()
 
+add_executable(
+  test_pair_conditioning_census
+  ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_pair_conditioning_census.cpp
+  ${CMAKE_SOURCE_DIR}/src/tools/pair_conditioning_census.cpp)
+target_link_libraries(test_pair_conditioning_census PRIVATE xmvb_vbscf)
+
 if (BUILD_TESTING)
   add_test(NAME active_two_electron_sparse COMMAND test_active_two_electron_sparse)
   add_test(NAME accepted_pair_tile COMMAND test_accepted_pair_tile)
+  add_test(NAME pair_conditioning_census COMMAND test_pair_conditioning_census)
   add_test(NAME block_inverse_bfgs COMMAND test_block_inverse_bfgs)
   add_test(NAME hessian_diagonal COMMAND test_hessian_diagonal)
   set_tests_properties(block_inverse_bfgs PROPERTIES
