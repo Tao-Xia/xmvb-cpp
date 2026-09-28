@@ -23,9 +23,12 @@ execute_process(
 if (NOT run_status EQUAL 0)
   message(FATAL_ERROR "matched-seed F2 NEO run failed: ${run_error}")
 endif()
-if (NOT report MATCHES "VBSCF converged in[ ]+[34] iterations")
+# The report counts every accepted exact-gradient keyframe.  The fifth point is
+# the independent energy confirmation after projected-gradient convergence;
+# older grouped-macro reporting hid that point inside the preceding macro.
+if (NOT report MATCHES "VBSCF converged in[ ]+[345] iterations")
   message(FATAL_ERROR
-    "matched-seed F2 NEO no longer converges in at most four macro iterations")
+    "matched-seed F2 NEO no longer converges in at most five accepted keyframes")
 endif()
 if (NOT report MATCHES "Final total energy[ ]+:[ ]+-198[.]761111[0-9]+")
   message(FATAL_ERROR "matched-seed F2 NEO energy no longer agrees with the PySCF CASSCF root")
