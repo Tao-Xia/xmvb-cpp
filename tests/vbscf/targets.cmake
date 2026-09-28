@@ -34,6 +34,7 @@ set(_xmvb_vbscf_unit_targets
   test_sparse_orbital_quotient
   test_support_preserving_gauge
   test_spectral_trust_region
+  test_structure_spin
   test_orbital_block_partition)
 
 foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
@@ -147,6 +148,7 @@ if (BUILD_TESTING)
   set_tests_properties(normalized_orbital_curvature PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME spectral_trust_region COMMAND test_spectral_trust_region)
+  add_test(NAME structure_spin COMMAND test_structure_spin)
   set_tests_properties(spectral_trust_region PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
   add_test(NAME orthonormal_hvp_basis COMMAND test_orthonormal_hvp_basis)

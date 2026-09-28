@@ -174,6 +174,13 @@ target_link_libraries(check_structure_expansion_signs
     xmvb_input
     xmvb_output)
 
+add_executable(check_structure_spin
+  tools/check_structure_spin.cpp)
+target_link_libraries(check_structure_spin
+  PRIVATE
+    xmvb_vbscf
+    xmvb_input)
+
 add_executable(check_structure_overlap_against_raw_reference
   tools/check_structure_overlap_against_raw_reference.cpp)
 target_link_libraries(check_structure_overlap_against_raw_reference

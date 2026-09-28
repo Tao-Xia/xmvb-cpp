@@ -15,6 +15,7 @@ set(XMVB_VBSCF_DETERMINANT_SOURCES
 )
 
 set(XMVB_VBSCF_STRUCTURE_SOURCES
+  vbscf/structures/analysis/spin.cpp
   vbscf/structures/assembly/action.cpp
   vbscf/structures/assembly/hamiltonian_overlap.cpp
   vbscf/structures/reference/overlap.cpp
