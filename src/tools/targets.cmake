@@ -68,11 +68,6 @@ target_link_libraries(benchmark_ri_ao_h1e_operator
     xmvb_input
     xmvb_output)
 
-add_executable(benchmark_ri_pair_projection
-  tools/benchmark_ri_pair_projection.cpp)
-target_link_libraries(benchmark_ri_pair_projection
-  PRIVATE xmvb_vbscf)
-
 add_executable(inspect_ao_h1e_backprop_symmetry
   tools/inspect_ao_h1e_backprop_symmetry.cpp)
 target_link_libraries(inspect_ao_h1e_backprop_symmetry
@@ -322,24 +317,6 @@ target_link_libraries(compare_ri_active_space_builder
     xmvb_input
     xmvb_output)
 
-add_executable(check_ri_low_rank_unique_spin_pair
-  tools/check_ri_low_rank_unique_spin_pair.cpp
-  tools/hybrid_pair_graph_census.cpp)
-target_link_libraries(check_ri_low_rank_unique_spin_pair
-  PRIVATE
-    xmvb_vbscf
-    xmvb_input
-    xmvb_output)
-
-add_executable(diagnose_pair_conditioning
-  tools/diagnose_pair_conditioning.cpp
-  tools/pair_conditioning_census.cpp)
-target_link_libraries(diagnose_pair_conditioning
-  PRIVATE
-    xmvb_vbscf
-    xmvb_input
-    xmvb_output)
-
 add_executable(benchmark_low_rank_synthetic
   tools/benchmark_low_rank_synthetic.cpp)
 target_include_directories(benchmark_low_rank_synthetic
@@ -362,7 +339,6 @@ add_dependencies(check_ao_h1e_ri_operator xmvb_assets)
 add_dependencies(inspect_ri_inactive_density xmvb_assets)
 add_dependencies(check_ri_ao_h1e_modes xmvb_assets)
 add_dependencies(benchmark_ri_ao_h1e_operator xmvb_assets)
-add_dependencies(benchmark_ri_pair_projection xmvb_assets)
 add_dependencies(inspect_ao_h1e_backprop_symmetry xmvb_assets)
 add_dependencies(check_reference_orbital_gradient_modes xmvb_assets)
 add_dependencies(compare_exact_ri_energy_decomposition xmvb_assets)
@@ -388,7 +364,6 @@ add_dependencies(benchmark_union_graph_single_step xmvb_assets)
 add_dependencies(check_direct_libcint_smoke xmvb_assets)
 add_dependencies(check_libcint_ri_smoke xmvb_assets)
 add_dependencies(compare_ri_active_space_builder xmvb_assets)
-add_dependencies(check_ri_low_rank_unique_spin_pair xmvb_assets)
 add_dependencies(check_active_overlap_split xmvb_assets)
 get_property(_xmvb_targets_after_dev_tools DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 set(_xmvb_dev_tool_targets)

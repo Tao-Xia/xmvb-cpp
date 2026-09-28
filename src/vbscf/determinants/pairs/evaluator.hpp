@@ -40,8 +40,6 @@ struct SpinDeterminantPairEvaluation {
    * contributions to `\phi`.
    */
   bool has_same_spin_phi_cache = false;
-  /** RI response is carried by the inverse-free Woodbury dangerous core. */
-  bool has_woodbury_ri_response = false;
   double same_spin_one_electron_phi = 0.0;
   double same_spin_total_phi = 0.0;
   Eigen::MatrixXd same_spin_inverse_overlap_gradient;
@@ -92,44 +90,12 @@ public:
       bool retain_derivative_payload = true) const;
 
   /**
-   * @brief Builds a regular pair from an already contracted two-electron phi.
-   *
-   * Low-rank RI traversals use this entry point after updating the contracted
-   * auxiliary channels. It avoids repeating the cubic RI contraction while
-   * preserving the canonical pair payload.
-   */
-  SpinDeterminantPairEvaluation evaluate_regular_same_spin_pair(
-      const std::vector<int>& occ_L,
-      const std::vector<int>& occ_R,
-      DeterminantOverlapResult overlap_result,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      double normalized_two_electron_phi,
-      bool retain_derivative_payload = true) const;
-
-  /**
    * @brief Evaluates one same-spin determinant pair from packed or RI active ERIs.
    */
   SpinDeterminantPairEvaluation evaluate_same_spin_pair(
       const std::vector<int>& occ_L,
       const std::vector<int>& occ_R,
       const std::vector<double>& ovlp_act,
-      const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-      int n_orbitals,
-      const ActiveSpaceTwoElectronResult& active_space_two_electron_result,
-      bool retain_derivative_payload = true) const;
-
-  /**
-   * @brief Evaluates a same-spin kernel from a certified overlap result.
-   *
-   * Pair-tile generators use this overload after a Woodbury update has
-   * produced the determinant, inverse, and canonical occupied overlap block.
-   * It avoids factorizing that block again while retaining the same
-   * Hamiltonian and cofactor contracts as independent pair evaluation.
-   */
-  SpinDeterminantPairEvaluation evaluate_same_spin_pair(
-      const std::vector<int>& occ_L,
-      const std::vector<int>& occ_R,
-      DeterminantOverlapResult overlap_result,
       const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
       int n_orbitals,
       const ActiveSpaceTwoElectronResult& active_space_two_electron_result,

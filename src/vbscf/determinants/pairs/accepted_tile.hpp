@@ -31,10 +31,11 @@ struct AcceptedSpinPairTile {
 /**
  * @brief Generates accepted same-spin pairs without persistent quadratic storage.
  *
- * Each tile row starts from an exactly factorized pair and traverses the right
- * strings with certified Woodbury overlap updates. Singular, ill-conditioned,
- * or non-beneficial updates are factorized exactly and become the next anchor.
- * Tiling therefore bounds memory independently of update success.
+ * Every requested pair is evaluated independently with the canonical overlap
+ * resolver.  The provider deliberately contains no low-rank update policy:
+ * tiling controls memory independently of any future pair-generation
+ * acceleration, and singular-pair handling remains identical to the exact
+ * non-streamed evaluator.
  */
 class AcceptedPairTileProvider {
  public:

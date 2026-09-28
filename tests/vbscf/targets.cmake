@@ -10,7 +10,6 @@ set(_xmvb_vbscf_unit_targets
   test_block_inverse_bfgs
   test_hessian_diagonal
   test_cofactor_differential
-  test_contracted_density
   test_coupled_structure
   test_curvature_decomposition
   test_davidson
@@ -35,8 +34,6 @@ set(_xmvb_vbscf_unit_targets
   test_sparse_orbital_quotient
   test_support_preserving_gauge
   test_spectral_trust_region
-  test_woodbury_core
-  test_woodbury_ri
   test_orbital_block_partition)
 
 foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
@@ -46,16 +43,9 @@ foreach(target_name IN LISTS _xmvb_vbscf_unit_targets)
   target_link_libraries(${target_name} PRIVATE xmvb_vbscf)
 endforeach()
 
-add_executable(
-  test_pair_conditioning_census
-  ${CMAKE_SOURCE_DIR}/tests/vbscf/unit/test_pair_conditioning_census.cpp
-  ${CMAKE_SOURCE_DIR}/src/tools/pair_conditioning_census.cpp)
-target_link_libraries(test_pair_conditioning_census PRIVATE xmvb_vbscf)
-
 if (BUILD_TESTING)
   add_test(NAME active_two_electron_sparse COMMAND test_active_two_electron_sparse)
   add_test(NAME accepted_pair_tile COMMAND test_accepted_pair_tile)
-  add_test(NAME pair_conditioning_census COMMAND test_pair_conditioning_census)
   add_test(NAME block_inverse_bfgs COMMAND test_block_inverse_bfgs)
   add_test(NAME hessian_diagonal COMMAND test_hessian_diagonal)
   set_tests_properties(block_inverse_bfgs PROPERTIES
@@ -66,9 +56,6 @@ if (BUILD_TESTING)
   add_test(NAME opposite_spin_pair_graph COMMAND test_opposite_spin_pair_graph)
   add_test(NAME orthogonal_direct_ci COMMAND test_orthogonal_direct_ci)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
-  add_test(NAME contracted_density COMMAND test_contracted_density)
-  add_test(NAME woodbury_core COMMAND test_woodbury_core)
-  add_test(NAME woodbury_ri COMMAND test_woodbury_ri)
   add_test(NAME coupled_structure COMMAND test_coupled_structure)
   set_tests_properties(coupled_structure PROPERTIES
     ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")

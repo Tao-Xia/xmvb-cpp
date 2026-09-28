@@ -188,30 +188,6 @@ void accumulate_singular_spin_overlap_gradient_from_dense_image_local(
   }
 }
 
-void accumulate_polynomial_spin_overlap_gradient_from_dense_image_local(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const SpinDeterminantPairEvaluation& pair_evaluation,
-    const Eigen::MatrixXd& pair_dense_image,
-    int n_active_orbitals,
-    std::vector<double>* active_orbital_overlap_gradient) {
-  if (active_orbital_overlap_gradient == nullptr ||
-      pair_dense_image.rows() != static_cast<int>(occ_R.size()) ||
-      pair_dense_image.cols() != static_cast<int>(occ_L.size())) {
-    throw std::invalid_argument(
-        "polynomial opposite-spin overlap-gradient dimensions differ");
-  }
-  const Eigen::MatrixXd overlap_gradient =
-      cached_cofactor_differential(pair_evaluation).first(pair_dense_image);
-  for (int left = 0; left < static_cast<int>(occ_L.size()); ++left) {
-    for (int right = 0; right < static_cast<int>(occ_R.size()); ++right) {
-      (*active_orbital_overlap_gradient)[
-          occ_L[left] * n_active_orbitals + occ_R[right]] +=
-          overlap_gradient(right, left);
-    }
-  }
-}
-
 void accumulate_overlap_gradient_by_pair_graph(
     const std::vector<SpinDeterminantPairEvaluation>& primary_pair_cache,
     const std::vector<std::vector<int>>& unique_primary_determinants,
@@ -265,8 +241,7 @@ void accumulate_overlap_gradient_by_pair_graph(
               primary_left,
               primary_right,
               n_unique_primary)];
-      if (pair_evaluation.overlap_result.nullity > 1 &&
-          !pair_evaluation.has_woodbury_ri_response) {
+      if (pair_evaluation.overlap_result.nullity > 1) {
         continue;
       }
       const auto& inverse_projection =
@@ -322,25 +297,7 @@ void accumulate_overlap_gradient_by_pair_graph(
       }
 
       const int n_electrons = static_cast<int>(occ_L.size());
-      if (pair_evaluation.has_woodbury_ri_response) {
-        pair_dense_image.resize(n_electrons, n_electrons);
-        for (int left_column = 0; left_column < n_electrons; ++left_column) {
-          for (int right_row = 0; right_row < n_electrons; ++right_row) {
-            const int channel = TwoElectronIndexer::packed_pair_index(
-                occ_R[right_row],
-                occ_L[left_column]);
-            pair_dense_image(right_row, left_column) =
-                projected_image[channel];
-          }
-        }
-        accumulate_polynomial_spin_overlap_gradient_from_dense_image_local(
-            occ_L,
-            occ_R,
-            pair_evaluation,
-            pair_dense_image,
-            n_active_orbitals,
-            &partial_gradients[thread]);
-      } else if (pair_evaluation.overlap_result.nullity == 1) {
+      if (pair_evaluation.overlap_result.nullity == 1) {
         pair_dense_image.resize(n_electrons, n_electrons);
         for (int left_column = 0; left_column < n_electrons; ++left_column) {
           for (int right_row = 0; right_row < n_electrons; ++right_row) {

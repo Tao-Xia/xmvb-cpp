@@ -98,8 +98,7 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr,
-    SameSpinDirectionalPairTile* ri_projected_source = nullptr);
+    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 
 DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
@@ -109,7 +108,6 @@ DirectionalOppositeSpinPairTile build_directional_opposite_spin_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const SameSpinDirectionalPairTileView& same_spin_tile,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors = nullptr,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr,
-    SameSpinDirectionalPairTile* ri_projected_source = nullptr);
+    const Eigen::MatrixXd* directional_ri_active_pair_factors = nullptr);
 
 }  // namespace xmvb::vb::detail

@@ -26,9 +26,6 @@ struct SameSpinDirectionalPairTile {
   Eigen::MatrixXd delta_overlap;
   Eigen::MatrixXd delta_regular_hamiltonian;
   Eigen::MatrixXd delta_singular_hamiltonian;
-  /** Pair-major packed images supplied directly by regular RI contractions. */
-  Eigen::MatrixXd ri_projected_channels;
-  std::vector<unsigned char> ri_projected_ready;
   std::vector<SameSpinPolynomialDirectionalPairData> pairs;
 
   int left_size() const noexcept {
@@ -103,8 +100,7 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     int right_end,
     const Eigen::MatrixXd* accepted_active_one_electron,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors,
-    bool build_ri_projected_channels = false);
+    const Eigen::MatrixXd* directional_ri_active_pair_factors);
 
 SameSpinDirectionalPairTile build_directional_pair_tile(
     const std::vector<std::vector<int>>& unique_determinants,
@@ -113,8 +109,7 @@ SameSpinDirectionalPairTile build_directional_pair_tile(
     const ActiveSpaceIntegralDirectionView& direction,
     const Eigen::MatrixXd* accepted_active_one_electron,
     const Eigen::MatrixXd* accepted_ri_active_pair_factors,
-    const Eigen::MatrixXd* directional_ri_active_pair_factors,
-    bool build_ri_projected_channels = false);
+    const Eigen::MatrixXd* directional_ri_active_pair_factors);
 
 void accumulate_one_electron_gradient_contribution_local(
     const std::vector<int>& occ_L,

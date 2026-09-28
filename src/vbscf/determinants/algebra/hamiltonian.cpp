@@ -79,10 +79,8 @@ DeterminantHamiltonianResult calc_regular_ri_same_spin_hamiltonian(
     }
     const Eigen::MatrixXd contracted = inverse_overlap * transition;
     const double trace = contracted.trace();
-    const double square_trace =
-        contracted.cwiseProduct(contracted.transpose()).sum();
     normalized_two_electron +=
-        0.5 * (trace * trace - square_trace);
+        0.5 * (trace * trace - (contracted * contracted).trace());
   }
   result.total_hamiltonian +=
       overlap.overlap_determinant * normalized_two_electron;

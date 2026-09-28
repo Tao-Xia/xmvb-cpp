@@ -326,11 +326,7 @@ void attach_opposite_spin_pair_cache(
       dense_pair_kernel,
       materialize_first_order_projected_values);
 
-  if (overlap_result.nullity == 0 &&
-      overlap_result.inverse_overlap_submatrix.rows() ==
-          overlap_result.n_electrons &&
-      overlap_result.inverse_overlap_submatrix.cols() ==
-          overlap_result.n_electrons) {
+  if (overlap_result.nullity == 0) {
     // Production overlap-response contractions consume the inverse-overlap
     // projection sparsely and apply the active-space kernel only to the
     // channels touched by the partner image.  Retaining a dense G*x image for
@@ -453,42 +449,6 @@ void populate_same_spin_phi_cache_entry(
           n_orbitals,
           active_space_two_electron_result,
           pair_evaluation);
-}
-
-bool populate_regular_ri_phi_cache_entry(
-    const std::vector<int>& occ_L,
-    const std::vector<int>& occ_R,
-    const Eigen::Ref<const Eigen::MatrixXd>& h1e_act,
-    const RegularRiPairResponseData& response,
-    SpinDeterminantPairEvaluation* pair_evaluation) {
-  if (pair_evaluation == nullptr || !pair_evaluation->cofactor_differential ||
-      !pair_evaluation->cofactor_differential->uses_regular_form()) {
-    return false;
-  }
-  const Eigen::MatrixXd inverse = build_inverse_overlap_submatrix_from_result(
-      pair_evaluation->overlap_result);
-  const Eigen::MatrixXd one_electron =
-      build_spin_one_electron_block_matrix(occ_L, occ_R, h1e_act);
-  if (response.two_electron_inverse_overlap_gradient.rows() != inverse.rows() ||
-      response.two_electron_inverse_overlap_gradient.cols() != inverse.cols()) {
-    return false;
-  }
-  pair_evaluation->has_same_spin_phi_cache = true;
-  pair_evaluation->same_spin_one_electron_phi =
-      one_electron.cwiseProduct(inverse.transpose()).sum();
-  pair_evaluation->same_spin_total_phi =
-      pair_evaluation->same_spin_one_electron_phi +
-      response.two_electron_phi;
-  pair_evaluation->same_spin_inverse_overlap_gradient =
-      one_electron.transpose() +
-      response.two_electron_inverse_overlap_gradient;
-  pair_evaluation->same_spin_overlap_hamiltonian_gradient =
-      build_regular_same_spin_overlap_hamiltonian_gradient(
-          pair_evaluation->overlap_result,
-          pair_evaluation->same_spin_total_phi,
-          pair_evaluation->same_spin_inverse_overlap_gradient);
-  pair_evaluation->same_spin_polynomial_response.reset();
-  return true;
 }
 
 std::vector<SpinDeterminantPairEvaluation> build_same_spin_pair_cache(
@@ -676,8 +636,7 @@ void complete_same_spin_pair_evaluation(
     bool populate_opposite_spin_projection,
     bool materialize_projected_pair_values,
     bool populate_response_payload,
-    SpinDeterminantPairEvaluation* pair_evaluation,
-    const RegularRiPairResponseData* regular_ri_response) {
+    SpinDeterminantPairEvaluation* pair_evaluation) {
   if (pair_evaluation == nullptr) {
     throw std::invalid_argument("same-spin pair evaluation must not be null");
   }
@@ -692,34 +651,13 @@ void complete_same_spin_pair_evaluation(
         pair_evaluation);
   }
   if (populate_response_payload) {
-    if (pair_evaluation->has_woodbury_ri_response) {
-      return;
-    }
-    if (pair_evaluation->cofactor_differential &&
-        pair_evaluation->same_spin_polynomial_response &&
-        pair_evaluation->same_spin_overlap_hamiltonian_gradient.rows() ==
-            static_cast<int>(occ_R.size()) &&
-        pair_evaluation->same_spin_overlap_hamiltonian_gradient.cols() ==
-            static_cast<int>(occ_L.size())) {
-      return;
-    }
-    const bool populated_from_update =
-        regular_ri_response != nullptr &&
-        populate_regular_ri_phi_cache_entry(
-            occ_L,
-            occ_R,
-            h1e_act,
-            *regular_ri_response,
-            pair_evaluation);
-    if (!populated_from_update) {
-      populate_same_spin_phi_cache_entry(
-          occ_L,
-          occ_R,
-          h1e_act,
-          n_active_orbitals,
-          active_space_two_electron_result,
-          pair_evaluation);
-    }
+    populate_same_spin_phi_cache_entry(
+        occ_L,
+        occ_R,
+        h1e_act,
+        n_active_orbitals,
+        active_space_two_electron_result,
+        pair_evaluation);
   }
 }
 

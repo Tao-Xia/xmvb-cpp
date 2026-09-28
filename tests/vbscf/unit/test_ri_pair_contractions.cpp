@@ -276,8 +276,7 @@ int main() {
               overlap,
               delta_overlap_block[block],
               direct_phi.total_phi,
-              direct_inverse_gradient,
-              true);
+              direct_inverse_gradient);
       require_close(
           block_directions[block].delta_total_hamiltonian,
           scalar_direction.delta_total_hamiltonian,
@@ -293,35 +292,6 @@ int main() {
           scalar_direction.delta_overlap_hamiltonian_gradient,
           1.0e-13,
           "block RI directional overlap-Hamiltonian gradient");
-      Eigen::VectorXd accepted_projection = Eigen::VectorXd::Zero(
-          xmvb::vb::packed_active_pair_count(n_active));
-      Eigen::VectorXd directional_projection = Eigen::VectorXd::Zero(
-          xmvb::vb::packed_active_pair_count(n_active));
-      const Eigen::MatrixXd accepted_cofactor =
-          xmvb::vb::calc_cofactor_1st(overlap);
-      for (int left = 0; left < n_electrons; ++left) {
-        for (int right = 0; right < n_electrons; ++right) {
-          const int pair = xmvb::vb::TwoElectronIndexer::packed_pair_index(
-              occ_right[right], occ_left[left]);
-          accepted_projection(pair) += accepted_cofactor(right, left);
-          directional_projection(pair) +=
-              scalar_direction.delta_first_cofactor(right, left);
-        }
-      }
-      const Eigen::VectorXd accepted_auxiliary =
-          direct_ri.ri_active_pair_factors * accepted_projection;
-      const Eigen::VectorXd directional_auxiliary =
-          delta_factor_block[block] * accepted_projection +
-          direct_ri.ri_active_pair_factors * directional_projection;
-      const Eigen::VectorXd expected_projected_direction =
-          direct_ri.ri_active_pair_factors.transpose() *
-              directional_auxiliary +
-          delta_factor_block[block].transpose() * accepted_auxiliary;
-      require_matrix_close(
-          scalar_direction.delta_projected_first_cofactor,
-          expected_projected_direction,
-          2.0e-11,
-          "fused regular-RI directional image");
     }
 
     xmvb::vb::SameSpinPairCacheContext pair_cache;
