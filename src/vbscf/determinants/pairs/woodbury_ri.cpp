@@ -1,10 +1,7 @@
 #include "vbscf/determinants/pairs/woodbury_ri.hpp"
 
 #include <algorithm>
-#include <limits>
 #include <stdexcept>
-
-#include <Eigen/SVD>
 
 #include "vbscf/determinants/pairs/woodbury_core.hpp"
 #include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
@@ -41,35 +38,6 @@ bool factors_cover_strings(
     }
   }
   return true;
-}
-
-struct LowRankDifference {
-  Eigen::MatrixXd left;
-  Eigen::MatrixXd right;
-};
-
-LowRankDifference factor_difference(
-    const Eigen::Ref<const Eigen::MatrixXd>& difference) {
-  const Eigen::JacobiSVD<Eigen::MatrixXd> svd(
-      difference, Eigen::ComputeThinU | Eigen::ComputeThinV);
-  if (svd.info() != Eigen::Success) {
-    throw std::runtime_error("directional graph difference SVD failed");
-  }
-  int rank = 0;
-  if (svd.singularValues().size() != 0 &&
-      svd.singularValues()(0) != 0.0) {
-    const double tolerance = std::numeric_limits<double>::epsilon() *
-        static_cast<double>(difference.rows()) * svd.singularValues()(0);
-    while (rank < svd.singularValues().size() &&
-           svd.singularValues()(rank) > tolerance) {
-      ++rank;
-    }
-  }
-  LowRankDifference result;
-  result.left = svd.matrixU().leftCols(rank) *
-      svd.singularValues().head(rank).asDiagonal();
-  result.right = svd.matrixV().leftCols(rank);
-  return result;
 }
 
 }  // namespace
@@ -196,6 +164,9 @@ bool WoodburyRiState::update_right(
     // anchor for this pair.  append has not committed an uncertified base.
     return false;
   }
+  last_inverse_left_ = base_update.left;
+  last_inverse_right_.noalias() =
+      moments_.inverse_overlap().transpose() * base_update.right;
   update_base_channels(base_update.left, base_update.right);
 
   const int transition_rank = static_cast<int>(rows.size());
@@ -311,7 +282,6 @@ bool WoodburyRiState::update_right_directional(
 
   const std::vector<int> occupied_right_old = occupied_right_;
   const Eigen::MatrixXd inverse_old = core_->inverse_base();
-  const Eigen::MatrixXd inverse_direction_old = inverse_direction_;
   const RiContractedMoments::Table channel_directions_old =
       channel_directions_;
   if (!update_right(occupied_right_new, overlap_new, ri_factors)) {
@@ -322,10 +292,38 @@ bool WoodburyRiState::update_right_directional(
   const Eigen::MatrixXd& inverse_new = core_->inverse_base();
   const Eigen::MatrixXd inverse_direction_new =
       -inverse_new * overlap_direction_new * inverse_new;
-  const LowRankDifference inverse_update =
-      factor_difference(inverse_new - inverse_old);
-  const LowRankDifference inverse_direction_update =
-      factor_difference(inverse_direction_new - inverse_direction_old);
+  const Eigen::MatrixXd& inverse_left = last_inverse_left_;
+  const Eigen::MatrixXd& inverse_right = last_inverse_right_;
+  const int inverse_rank = inverse_left.cols();
+  const int direction_rank = 3 * inverse_rank + rows.size();
+  Eigen::MatrixXd inverse_direction_left(n_electrons_, direction_rank);
+  Eigen::MatrixXd inverse_direction_right(n_electrons_, direction_rank);
+  if (inverse_rank != 0) {
+    inverse_direction_left.leftCols(inverse_rank) = -inverse_left;
+    inverse_direction_right.leftCols(inverse_rank).noalias() =
+        inverse_old.transpose() * overlap_direction_.transpose() *
+        inverse_right;
+    inverse_direction_left.middleCols(inverse_rank, inverse_rank)
+        .noalias() = -inverse_old * overlap_direction_ * inverse_left;
+    inverse_direction_right.middleCols(inverse_rank, inverse_rank) =
+        inverse_right;
+    inverse_direction_left.middleCols(2 * inverse_rank, inverse_rank)
+        .noalias() =
+        -inverse_left *
+        (inverse_right.transpose() * overlap_direction_ * inverse_left);
+    inverse_direction_right.middleCols(2 * inverse_rank, inverse_rank) =
+        inverse_right;
+  }
+  for (int local = 0; local < static_cast<int>(rows.size()); ++local) {
+    const int column = 3 * inverse_rank + local;
+    const int row = rows[local];
+    const Eigen::VectorXd direction_delta =
+        overlap_direction_new.row(row).transpose() -
+        overlap_direction_.row(row).transpose();
+    inverse_direction_left.col(column) = -inverse_new.col(row);
+    inverse_direction_right.col(column).noalias() =
+        inverse_new.transpose() * direction_delta;
+  }
 
   channel_directions_.resizeLike(channel_directions_old);
   Eigen::MatrixXd transition_old(n_electrons_, n_electrons_);
@@ -353,15 +351,15 @@ bool WoodburyRiState::update_right_directional(
         n_electrons_,
         n_electrons_);
     new_direction = old_direction;
-    if (inverse_direction_update.left.cols() != 0) {
+    if (direction_rank != 0) {
       new_direction.noalias() +=
-          inverse_direction_update.left *
-          (inverse_direction_update.right.transpose() * transition_old);
+          inverse_direction_left *
+          (inverse_direction_right.transpose() * transition_old);
     }
-    if (inverse_update.left.cols() != 0) {
+    if (inverse_rank != 0) {
       new_direction.noalias() +=
-          inverse_update.left *
-          (inverse_update.right.transpose() * transition_direction_old);
+          inverse_left *
+          (inverse_right.transpose() * transition_direction_old);
     }
     for (const int row : rows) {
       Eigen::RowVectorXd transition_delta(n_electrons_);

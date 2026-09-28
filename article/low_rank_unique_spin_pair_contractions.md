@@ -2317,13 +2317,13 @@ graph therefore has one anchor contribution $O(N_{\mathrm{aux}}n^3)$ and
 edge contributions
 
 $$
-O(n^3+N_{\mathrm{aux}}n^2q),
+O(N_{\mathrm{aux}}n^2q),
 $$
 
-where the auxiliary-independent $O(n^3)$ term currently factorizes
-$\Delta K$ and $\Delta\dot K$ to obtain residual-complete thin factors. An
-analytic factor propagation can remove this small factorization later; it is
-not multiplied by $N_{\mathrm{aux}}$.
+because the factors of $\Delta K$ are returned directly by the accepted
+Woodbury edge, while the displayed identity gives an analytic thin
+factorization of $\Delta\dot K$. No edge SVD or empirical rank truncation is
+required.
 
 Inside the contracted Hamiltonian-response kernel, the current formulation
 removes the former occupied-pair interaction construction and its

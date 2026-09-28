@@ -101,6 +101,8 @@ class WoodburyRiState {
   RiContractedMoments::Table channel_directions_;
   Eigen::MatrixXd overlap_direction_;
   Eigen::MatrixXd inverse_direction_;
+  Eigen::MatrixXd last_inverse_left_;
+  Eigen::MatrixXd last_inverse_right_;
   std::unique_ptr<WoodburyCore> core_;
   int n_electrons_ = 0;
   bool directional_ready_ = false;
