@@ -28,6 +28,8 @@ set(required_report_patterns
   "Full structure Hamiltonian and overlap matrices are omitted"
   "UNNORMALIZED DETERMINANT COEFFICIENTS"
   "Coulson-Chirgwin Weights"
+  "1:8[ ]+9-10"
+  "1:8[ ]+9 9"
   "Renormalized Weights"
   "Lowdin and inverse weights are omitted"
   "ORBITALS IN PRIMITIVE BASIS FUNCTIONS"

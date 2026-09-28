@@ -1,5 +1,7 @@
 #include "output/text/sections.hpp"
 
+#include "output/text/structure.hpp"
+
 #include <Eigen/Eigenvalues>
 
 #include <algorithm>
@@ -23,6 +25,9 @@ namespace xmvb::output {
 namespace {
 
 namespace fs = std::filesystem;
+
+constexpr int kStructureListPrefixWidth = 18;
+constexpr int kStructureValuePrefixWidth = 34;
 
 constexpr std::array<const char*, 87> kElementSymbols = {{
     "X",
@@ -100,40 +105,6 @@ std::string centered_field(const std::string& value, int width) {
   const int right_padding = width - static_cast<int>(value.size()) - left_padding;
   return std::string(left_padding, ' ') + value +
       std::string(right_padding, ' ');
-}
-
-std::string structure_description(
-    const vb::RawStructureData& structures,
-    int structure_index) {
-  const int n_inactive =
-      (structures.n_total_electrons - structures.n_active_electrons) / 2;
-  std::map<int, int> occupations;
-  const int* orbitals = structures.structure_orbitals_data(structure_index);
-  for (int electron = 0; electron < structures.n_total_electrons; ++electron) {
-    ++occupations[orbitals[electron]];
-  }
-
-  std::ostringstream text;
-  if (n_inactive > 0) {
-    text << "1:" << n_inactive;
-  }
-  std::vector<int> singly_occupied;
-  for (const auto& [orbital, occupation] : occupations) {
-    if (orbital <= n_inactive) {
-      continue;
-    }
-    if (occupation == 1) {
-      singly_occupied.push_back(orbital);
-    } else {
-      for (int copy = 0; copy < occupation; ++copy) {
-        text << ' ' << orbital;
-      }
-    }
-  }
-  if (!singly_occupied.empty()) {
-    text << ' ' << orbital_range(singly_occupied);
-  }
-  return text.str();
 }
 
 int structure_ionic_order(
@@ -471,10 +442,11 @@ void print_weight_table(
     const vb::RawStructureData& structures) {
   output << "\n         " << title << "\n\n";
   for (int index = 0; index < weights.size(); ++index) {
-    output << std::setw(8) << index + 1
-           << std::fixed << std::setprecision(8) << std::setw(17)
-           << weights[index] << "  ******    "
-           << structure_description(structures, index) << '\n';
+    output << "    " << std::setw(4) << index + 1 << "    "
+           << std::fixed << std::setprecision(8) << std::setw(13)
+           << weights[index] << "  ****** ";
+    print_structure(output, structures, index, kStructureValuePrefixWidth);
+    output << '\n';
   }
 }
 
@@ -1073,9 +1045,13 @@ void print_input_sections(
   const int n_printed_structures =
       std::min(10, load_result.raw_structure_data.n_structures);
   for (int structure = 0; structure < n_printed_structures; ++structure) {
-    output << std::setw(8) << structure + 1 << "   ******    "
-           << structure_description(load_result.raw_structure_data, structure)
-           << '\n';
+    output << "    " << std::setw(4) << structure + 1 << "   ****** ";
+    print_structure(
+        output,
+        load_result.raw_structure_data,
+        structure,
+        kStructureListPrefixWidth);
+    output << '\n';
   }
 
   int n_sparse_coefficients = 0;
@@ -1189,11 +1165,15 @@ void print_final_state_sections(
     }
     output << "\n\n              ******  COEFFICIENTS OF STRUCTURES ******\n\n";
     for (int structure = 0; structure < normalized.coefficients.size(); ++structure) {
-      output << std::setw(8) << structure + 1
-             << std::fixed << std::setprecision(8) << std::setw(17)
-             << normalized.coefficients[structure] << "  ******    "
-             << structure_description(load_result.raw_structure_data, structure)
-             << '\n';
+      output << "    " << std::setw(4) << structure + 1 << "    "
+             << std::fixed << std::setprecision(8) << std::setw(13)
+             << normalized.coefficients[structure] << "  ****** ";
+      print_structure(
+          output,
+          load_result.raw_structure_data,
+          structure,
+          kStructureValuePrefixWidth);
+      output << '\n';
     }
     const auto& orbitals = result.optimized_input.orbital_preparation_input;
     const int n_inactive =

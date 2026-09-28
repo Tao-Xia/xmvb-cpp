@@ -62,6 +62,7 @@ set(XMVB_OUTPUT_SOURCES
   output/molden/writer.cpp
   output/text/report.cpp
   output/text/sections.cpp
+  output/text/structure.cpp
   output/trace/accepted_iteration.cpp
   output/trace/neo.cpp
   output/trace/tnhvp.cpp
@@ -226,6 +227,17 @@ add_custom_target(
 add_dependencies(xmvb xmvb_assets)
 
 if (BUILD_TESTING)
+  add_executable(
+    test_output_structure
+    output/text/structure.cpp
+    ${CMAKE_SOURCE_DIR}/tests/output/test_structure.cpp)
+  target_include_directories(
+    test_output_structure
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${EIGEN3_INCLUDE_DIR})
+  add_test(NAME output_structure COMMAND test_output_structure)
+
   add_executable(
     test_cli_options
     cli/options.cpp
