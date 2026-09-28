@@ -729,21 +729,30 @@ WoodburyCore::second_factor_contraction_gradient_direction(
 
   const Eigen::MatrixXd channel = inverse_base_ * transition;
   MatrixTable channels(1, dimension() * dimension());
+  MatrixTable channel_directions(1, dimension() * dimension());
   MatrixTable transitions(1, dimension() * dimension());
   MatrixTable transition_directions(1, dimension() * dimension());
   Eigen::Map<Eigen::MatrixXd>(channels.data(), dimension(), dimension()) =
       channel;
+  const Eigen::MatrixXd inverse_direction =
+      -inverse_base_ * overlap_direction * inverse_base_;
+  Eigen::Map<Eigen::MatrixXd>(
+      channel_directions.data(), dimension(), dimension()).noalias() =
+      inverse_direction * transition +
+      inverse_base_ * transition_direction;
   Eigen::Map<Eigen::MatrixXd>(transitions.data(), dimension(), dimension()) =
       transition;
   Eigen::Map<Eigen::MatrixXd>(transition_directions.data(), dimension(),
                               dimension()) = transition_direction;
   return second_channel_sum_gradient_direction(
-      channels, transitions, transition_directions, overlap_direction, true);
+      channels, channel_directions, transitions, transition_directions,
+      overlap_direction, true);
 }
 
 WoodburyContractionDirection
 WoodburyCore::second_channel_sum_gradient_direction(
     const Eigen::Ref<const MatrixTable> &channels,
+    const Eigen::Ref<const MatrixTable> &channel_directions,
     const Eigen::Ref<const MatrixTable> &transitions,
     const Eigen::Ref<const MatrixTable> &transition_directions,
     const Eigen::Ref<const Eigen::MatrixXd> &overlap_direction,
@@ -751,7 +760,10 @@ WoodburyCore::second_channel_sum_gradient_direction(
   const int n = dimension();
   const Eigen::Index matrix_size = static_cast<Eigen::Index>(n) * n;
   if (overlap_direction.rows() != n || overlap_direction.cols() != n ||
-      channels.cols() != matrix_size || transitions.rows() != channels.rows() ||
+      channels.cols() != matrix_size ||
+      channel_directions.rows() != channels.rows() ||
+      channel_directions.cols() != matrix_size ||
+      transitions.rows() != channels.rows() ||
       transitions.cols() != matrix_size ||
       transition_directions.rows() != channels.rows() ||
       transition_directions.cols() != matrix_size) {
@@ -793,19 +805,19 @@ WoodburyCore::second_channel_sum_gradient_direction(
     const Eigen::Index count =
         std::min(auxiliary_tile_width, channels.rows() - begin);
     const double *channel_data = channels.data() + begin * matrix_size;
+    const double *channel_direction_data =
+        channel_directions.data() + begin * matrix_size;
     const double *transition_data = transitions.data() + begin * matrix_size;
     const double *transition_direction_data =
         transition_directions.data() + begin * matrix_size;
     const Eigen::Map<const Eigen::MatrixXd> channel_block(channel_data, n,
                                                           n * count);
+    const Eigen::Map<const Eigen::MatrixXd> channel_direction_block(
+        channel_direction_data, n, n * count);
     const Eigen::Map<const Eigen::MatrixXd> transition_block(transition_data, n,
                                                              n * count);
     const Eigen::Map<const Eigen::MatrixXd> transition_direction_block(
         transition_direction_data, n, n * count);
-    Eigen::MatrixXd channel_direction_block(n, n * count);
-    channel_direction_block.noalias() = inverse_direction * transition_block;
-    channel_direction_block.noalias() +=
-        inverse_base_ * transition_direction_block;
     Eigen::MatrixXd channel_gradient_block =
         Eigen::MatrixXd::Zero(n, n * count);
     Eigen::MatrixXd channel_gradient_direction_block =

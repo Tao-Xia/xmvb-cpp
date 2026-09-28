@@ -2278,20 +2278,59 @@ $$
 O(N_{\mathrm{aux}}n^3)
 $$
 
-per evaluated pair because forming all $\dot C^Q$ still applies a dense
-accepted-point direction to every RI channel. The repeated final inverse
-sandwiches are no longer part of this cost. Reusing $\dot C^Q$ along the
-single-site pair graph changes the remaining term to an anchor contribution
-$O(N_{\mathrm{aux}}n^3)$ plus edge contributions
-$O(N_{\mathrm{aux}}n^2q)$. This is the next required step for the complete
-dangerous-pair algorithm.
+per graph anchor because forming all $\dot C^Q$ applies a dense
+accepted-point direction to every RI channel there. The repeated final
+inverse sandwiches are no longer part of this cost. At a graph edge write
+
+$$
+K_+=K+\Delta K,
+\qquad
+\dot X_+=\dot X+\Delta\dot X.
+$$
+
+Using the local tangent gauge $\dot A=\dot X$ and
+$\dot U=\dot V=0$, the new base-inverse tangent obeys the exact identity
+
+$$
+\begin{aligned}
+\Delta\dot K
+={}&-\Delta K\,\dot X K
+-K\dot X\,\Delta K
+-\Delta K\,\dot X\,\Delta K\\
+&-K_+\Delta\dot X K_+.
+\end{aligned}
+$$
+
+Both $\Delta K$ and $\Delta\dot X$ have low rank on a single-site edge, so
+$\Delta\dot K$ also admits a thin factorization. Consequently,
+
+$$
+\Delta\dot C^Q
+=\Delta\dot K M^Q
++\dot K_+\Delta M^Q
++\Delta K\dot M^Q
++K_+\Delta\dot M^Q
+$$
+
+is evaluated only with dense--thin products. The implemented directional
+graph therefore has one anchor contribution $O(N_{\mathrm{aux}}n^3)$ and
+edge contributions
+
+$$
+O(n^3+N_{\mathrm{aux}}n^2q),
+$$
+
+where the auxiliary-independent $O(n^3)$ term currently factorizes
+$\Delta K$ and $\Delta\dot K$ to obtain residual-complete thin factors. An
+analytic factor propagation can remove this small factorization later; it is
+not multiplied by $N_{\mathrm{aux}}$.
 
 Inside the contracted Hamiltonian-response kernel, the current formulation
 removes the former occupied-pair interaction construction and its
 $n^4$--$n^6$ polynomial-cofactor work. The current downstream same-spin
 two-electron integral adjoint still consumes a legacy deleted-minor cofactor
-object. The
-RI--Woodbury migration is therefore complete for the scalar Hamiltonian,
+object. The RI--Woodbury migration is therefore complete for the scalar
+Hamiltonian,
 overlap adjoint, and their direction, but not yet for that final integral
 adjoint. Removing it requires contracting the RI factor adjoint directly into
 the orbital pullback. Further reduction then requires either fusing these

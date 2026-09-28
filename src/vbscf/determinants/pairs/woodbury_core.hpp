@@ -119,6 +119,7 @@ class WoodburyCore {
    */
   WoodburyContractionDirection second_channel_sum_gradient_direction(
       const Eigen::Ref<const MatrixTable>& channels,
+      const Eigen::Ref<const MatrixTable>& channel_directions,
       const Eigen::Ref<const MatrixTable>& transitions,
       const Eigen::Ref<const MatrixTable>& transition_directions,
       const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,

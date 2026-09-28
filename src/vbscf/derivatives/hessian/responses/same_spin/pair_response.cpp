@@ -634,10 +634,18 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
         const auto& occupied_right = unique_determinants[right_id];
         const auto& accepted =
             accepted_pair_tile->pair(left_local, right_local);
-        const bool updated = initialized && state.update_right(
+        const Eigen::MatrixXd overlap_direction =
+            build_local_overlap_direction_matrix(
+                occupied_left,
+                occupied_right,
+                direction.overlap,
+                n_active_orbitals);
+        const bool updated = initialized && state.update_right_directional(
             occupied_right,
             accepted.overlap_result.overlap_submatrix,
-            *accepted_ri_active_pair_factors);
+            overlap_direction,
+            *accepted_ri_active_pair_factors,
+            *directional_ri_active_pair_factors);
         if (!updated && !state.initialize(
                 occupied_left,
                 occupied_right,
@@ -645,6 +653,12 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
                 *accepted_ri_active_pair_factors)) {
           throw std::runtime_error(
               "failed to initialize streamed directional Woodbury RI state");
+        }
+        if (!updated && !state.initialize_direction(
+                overlap_direction,
+                *directional_ri_active_pair_factors)) {
+          throw std::runtime_error(
+              "failed to initialize streamed directional Woodbury RI anchor");
         }
         initialized = true;
 
@@ -654,12 +668,6 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
           continue;
         }
 
-        const Eigen::MatrixXd overlap_direction =
-            build_local_overlap_direction_matrix(
-                occupied_left,
-                occupied_right,
-                direction.overlap,
-                n_active_orbitals);
         SameSpinPolynomialDirectionalPairData pair_direction;
         if (accepted.has_woodbury_ri_response) {
           const Eigen::MatrixXd one_electron =

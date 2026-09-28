@@ -43,6 +43,24 @@ class WoodburyRiState {
       const Eigen::Ref<const Eigen::MatrixXd>& overlap_new,
       const Eigen::Ref<const Eigen::MatrixXd>& ri_factors);
 
+  /** @brief Initializes the exact directional RI anchor at the current pair. */
+  bool initialize_direction(
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& ri_factor_direction);
+
+  /**
+   * @brief Advances accepted and directional channels over one right-string edge.
+   *
+   * Dense anchor products are replaced by low-rank differences of the stable
+   * base inverse and its physical tangent.
+   */
+  bool update_right_directional(
+      const std::vector<int>& occupied_right_new,
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_new,
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction_new,
+      const Eigen::Ref<const Eigen::MatrixXd>& ri_factors,
+      const Eigen::Ref<const Eigen::MatrixXd>& ri_factor_direction);
+
   bool update_left(
       const std::vector<int>& occupied_left_new,
       const Eigen::Ref<const Eigen::MatrixXd>& overlap_new,
@@ -80,8 +98,12 @@ class WoodburyRiState {
   std::vector<int> occupied_left_;
   std::vector<int> occupied_right_;
   RiContractedMoments moments_;
+  RiContractedMoments::Table channel_directions_;
+  Eigen::MatrixXd overlap_direction_;
+  Eigen::MatrixXd inverse_direction_;
   std::unique_ptr<WoodburyCore> core_;
   int n_electrons_ = 0;
+  bool directional_ready_ = false;
 };
 
 }  // namespace xmvb::vb
