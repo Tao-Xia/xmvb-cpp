@@ -287,6 +287,49 @@ bool run_outer_accuracy_case() {
   return passed;
 }
 
+bool run_bounded_multiroot_restart_case() {
+  constexpr int dimension = 600;
+  constexpr int n_roots = 3;
+  const DenseProblem problem = make_tridiagonal_problem(dimension);
+  const xmvb::core::GeneralizedEigenAction action =
+      [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+        return xmvb::core::GeneralizedEigenActionResult{
+            problem.hamiltonian * vectors,
+            problem.overlap * vectors};
+      };
+  const xmvb::core::DavidsonOptions options{
+      n_roots,
+      300,
+      128,
+      1.0,
+      2.0e-8};
+  const xmvb::core::GeneralizedEigensolver solver;
+  const auto reference = solver.solve_dense(
+      flatten(problem.hamiltonian),
+      flatten(problem.overlap),
+      dimension);
+  const auto result = solver.solve_davidson(
+      action,
+      problem.hamiltonian.diagonal(),
+      problem.overlap.diagonal(),
+      options);
+  const double eigenvalue_error = max_eigenvalue_error(
+      reference.eigenvalues,
+      result.eigenpairs.eigenvalues,
+      n_roots);
+  const bool passed =
+      result.iterations <= options.max_iterations &&
+      result.peak_subspace_dimension == options.max_subspace_dimension - 1 &&
+      eigenvalue_error <= 1.0e-8;
+  std::cout << "bounded multiroot restart"
+            << " iterations=" << result.iterations
+            << " actions=" << result.block_actions
+            << " subspace=" << result.peak_subspace_dimension
+            << " eigenvalue_error=" << eigenvalue_error
+            << (passed ? " PASS\n" : " FAIL\n");
+  return passed;
+}
+
 bool run_default_option_cases() {
   const auto small =
       xmvb::core::make_davidson_options(3, 2, 1.0e-7, 1.0e-3);
@@ -337,6 +380,7 @@ int main() {
       passed;
   passed = run_recycled_case() && passed;
   passed = run_outer_accuracy_case() && passed;
+  passed = run_bounded_multiroot_restart_case() && passed;
   std::cout << (passed ? "ALL PASSED\n" : "SOME FAILED\n");
   return passed ? 0 : 1;
 }
