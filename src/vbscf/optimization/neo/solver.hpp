@@ -86,11 +86,12 @@ struct NeoResult {
  * problem, and expands with the KKT or lowest-curvature Ritz residual. A
  * successful return always requires an explicit full-space KKT residual.
  * Lowest-curvature Ritz convergence is additionally required when requested
- * by the caller and whenever the projected solution is a boundary or hard-case
- * step. As in matrix-free Davidson/Lanczos, lowest-root identification assumes
- * that the generic starting probe overlaps the lowest eigenspace. A complete
- * basis or a caller-supplied spectral lower bound supplies the stronger
- * rigorous global certificate reported in `NeoResult`. The
+ * by the caller and for a hard-case step. A regular boundary candidate is
+ * certified by its exact nonlinear keyframe instead of an unrelated extremal
+ * Ritz vector. As in matrix-free Davidson/Lanczos, lowest-root identification
+ * assumes that the generic starting probe overlaps the lowest eigenspace. A
+ * complete basis or a caller-supplied spectral lower bound supplies the
+ * stronger rigorous global certificate reported in `NeoResult`. The
  * physical metric enters only through the trust-region norm and projected
  * generalized eigenproblem; an optional preconditioner only proposes new
  * subspace directions.

@@ -262,9 +262,13 @@ NeoResult solve_neo(const NeoProblem& problem, const NeoOptions& options) {
             -positivity_tolerance;
     result.global_curvature_certified =
         complete_basis || lower_bound_certifies;
+    // A regular boundary step is certified by the exact nonlinear keyframe
+    // and its actual/predicted decrease.  Resolving an unrelated lowest Ritz
+    // vector after the shifted Newton equation has converged only oversolves
+    // the stale quadratic model.  A hard case remains different because the
+    // step itself depends on the minimum-curvature direction.
     const bool need_curvature_certificate =
-        options.require_curvature_certificate || result.boundary ||
-        result.hard_case;
+        options.require_curvature_certificate || result.hard_case;
     const bool required_curvature_converged =
         !need_curvature_certificate || curvature_converged;
     if (stationary && required_curvature_converged && shifted_positive &&
