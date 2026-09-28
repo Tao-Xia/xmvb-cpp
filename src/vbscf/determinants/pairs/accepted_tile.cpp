@@ -11,6 +11,7 @@
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/determinants/pairs/traversal.hpp"
+#include "vbscf/determinants/pairs/woodbury_core.hpp"
 #include "vbscf/determinants/pairs/woodbury_overlap.hpp"
 #include "vbscf/determinants/pairs/woodbury_ri.hpp"
 #include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
@@ -31,6 +32,103 @@ Eigen::MatrixXd occupied_one_electron_block(
       result(right, left) = active_one_electron(
           occupied_right[right], occupied_left[left]);
     }
+  }
+  return result;
+}
+
+DeterminantOverlapResult make_woodbury_overlap_result(
+    Eigen::MatrixXd overlap,
+    const WoodburyCore& core) {
+  DeterminantOverlapResult result;
+  result.n_electrons = core.dimension();
+  result.overlap_submatrix = std::move(overlap);
+  result.overlap_determinant = core.determinant();
+  result.nullity = core.nullity();
+  result.first_order_cofactor_matrix = core.first_cofactor();
+  if (core.rank() == 0) {
+    result.inverse_overlap_submatrix = core.inverse_base();
+  }
+  if (result.overlap_determinant == 0.0) {
+    result.determinant_sign = 0.0;
+    result.log_abs_determinant =
+        -std::numeric_limits<double>::infinity();
+  } else {
+    result.determinant_sign =
+        std::signbit(result.overlap_determinant) ? -1.0 : 1.0;
+    result.log_abs_determinant =
+        std::log(std::abs(result.overlap_determinant));
+  }
+  return result;
+}
+
+void append_right_overlap_update(
+    const std::vector<int>& occupied_right_old,
+    const std::vector<int>& occupied_right_new,
+    const Eigen::Ref<const Eigen::MatrixXd>& new_overlap,
+    WoodburyCore* core) {
+  if (core == nullptr ||
+      occupied_right_old.size() != occupied_right_new.size() ||
+      new_overlap.rows() != core->dimension() ||
+      new_overlap.cols() != core->dimension()) {
+    throw std::invalid_argument(
+        "Woodbury right-overlap update dimensions differ");
+  }
+  std::vector<int> changed_rows;
+  for (int row = 0; row < static_cast<int>(occupied_right_old.size()); ++row) {
+    if (occupied_right_old[row] != occupied_right_new[row]) {
+      changed_rows.push_back(row);
+    }
+  }
+  if (changed_rows.empty()) {
+    return;
+  }
+  Eigen::MatrixXd left = Eigen::MatrixXd::Zero(
+      core->dimension(), static_cast<int>(changed_rows.size()));
+  Eigen::MatrixXd right(
+      core->dimension(), static_cast<int>(changed_rows.size()));
+  for (int local = 0; local < static_cast<int>(changed_rows.size()); ++local) {
+    const int row = changed_rows[local];
+    left(row, local) = 1.0;
+    right.col(local) =
+        (new_overlap.row(row) - core->overlap().row(row)).transpose();
+  }
+  core->append(left, right);
+}
+
+SpinDeterminantPairEvaluation evaluate_woodbury_exact_pair(
+    const std::vector<int>& occupied_left,
+    const std::vector<int>& occupied_right,
+    Eigen::MatrixXd overlap,
+    const Eigen::Ref<const Eigen::MatrixXd>& active_one_electron,
+    int n_active_orbitals,
+    const ActiveSpaceTwoElectronResult& active_two_electron,
+    const WoodburyCore& core,
+    bool populate_response_payload) {
+  SpinDeterminantPairEvaluation result;
+  result.overlap_result =
+      make_woodbury_overlap_result(std::move(overlap), core);
+  const Eigen::MatrixXd one_electron = occupied_one_electron_block(
+      occupied_left, occupied_right, active_one_electron);
+  result.one_electron_hamiltonian = core.first_contraction(one_electron);
+  Eigen::MatrixXd two_electron =
+      build_spin_antisymmetrized_interaction_matrix(
+          occupied_left,
+          occupied_right,
+          n_active_orbitals,
+          make_active_space_two_electron_view(active_two_electron));
+  result.total_hamiltonian = result.one_electron_hamiltonian +
+      core.second_contraction(two_electron);
+  if (populate_response_payload) {
+    result.cofactor_differential =
+        std::make_shared<const CofactorDifferential>(result.overlap_result);
+    auto response = std::make_shared<SameSpinPolynomialResponsePayload>();
+    response->one_electron_block = one_electron;
+    response->antisymmetrized_interaction = std::move(two_electron);
+    result.same_spin_overlap_hamiltonian_gradient =
+        result.cofactor_differential->first(response->one_electron_block) +
+        result.cofactor_differential->second_contraction_gradient(
+            response->antisymmetrized_interaction);
+    result.same_spin_polynomial_response = std::move(response);
   }
   return result;
 }
@@ -217,7 +315,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
           Eigen::MatrixXd overlap = build_overlap_submatrix(
               occupied_left, occupied_right, overlap_map);
           bool updated = false;
-          if (have_previous && ri_state.core_rank() == 0) {
+          if (have_previous) {
             updated = left_edge
                 ? ri_state.update_left(
                       occupied_left,
@@ -321,8 +419,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
         const auto& occupied_right = unique_spin_strings_[right_index];
         Eigen::MatrixXd overlap = build_overlap_submatrix(
             occupied_left, occupied_right, overlap_map);
-        const bool updated = traversal_index > 0 &&
-            ri_state.core_rank() == 0 && ri_state.update_right(
+        const bool updated = traversal_index > 0 && ri_state.update_right(
             occupied_right,
             overlap,
             active_two_electron.ri_active_pair_factors);
@@ -390,6 +487,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
     const int left_index = left_begin + left_local;
     const std::vector<int> right_traversal = build_pair_update_traversal(
         unique_spin_strings_, left_index, right_begin, right_end);
+    std::unique_ptr<WoodburyCore> dangerous_core;
+    int previous_right = -1;
     for (int traversal_index = 0;
          traversal_index < tile.right_size;
          ++traversal_index) {
@@ -401,16 +500,22 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
           unique_spin_strings_[right_index];
       const std::size_t pair_index =
           static_cast<std::size_t>(left_local) * tile.right_size + right_local;
+      Eigen::MatrixXd overlap = build_overlap_submatrix(
+          occupied_left, occupied_right, overlap_map);
       DeterminantOverlapResult overlap_result;
-      int previous_right = -1;
-      std::size_t previous_index = 0;
       if (traversal_index == 0) {
-        overlap_result = overlap_resolver_.resolve_matrix(
-            build_overlap_submatrix(
-                occupied_left, occupied_right, overlap_map));
+        overlap_result = overlap_resolver_.resolve_matrix(overlap);
+      } else if (dangerous_core) {
+        append_right_overlap_update(
+            unique_spin_strings_[previous_right],
+            occupied_right,
+            overlap,
+            dangerous_core.get());
+        overlap_result = dangerous_core->rank() == 0
+            ? overlap_resolver_.resolve_matrix(overlap)
+            : make_woodbury_overlap_result(overlap, *dangerous_core);
       } else {
-        previous_right = right_traversal[traversal_index - 1];
-        previous_index =
+        const std::size_t previous_index =
             static_cast<std::size_t>(left_local) * tile.right_size +
             previous_right - right_begin;
         auto updated_overlap = try_woodbury_right_overlap_update(
@@ -419,24 +524,46 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             occupied_right,
             overlap_map,
             tile.pairs[previous_index].overlap_result);
-        if (updated_overlap.has_value()) {
+        if (updated_overlap) {
           overlap_result = std::move(*updated_overlap);
+        } else if (!options.populate_response_payload) {
+          overlap_result = overlap_resolver_.resolve_matrix(overlap);
         } else {
-          overlap_result = overlap_resolver_.resolve_matrix(
-              build_overlap_submatrix(
-                  occupied_left, occupied_right, overlap_map));
+          dangerous_core = std::make_unique<WoodburyCore>(
+              tile.pairs[previous_index].overlap_result.overlap_submatrix);
+          append_right_overlap_update(
+              unique_spin_strings_[previous_right],
+              occupied_right,
+              overlap,
+              dangerous_core.get());
+          overlap_result = dangerous_core->rank() == 0
+              ? overlap_resolver_.resolve_matrix(overlap)
+              : make_woodbury_overlap_result(overlap, *dangerous_core);
         }
       }
 
-      SpinDeterminantPairEvaluation evaluation =
-          pair_evaluator_.evaluate_same_spin_pair(
-              occupied_left,
-              occupied_right,
-              std::move(overlap_result),
-              active_one_electron,
-              n_active_orbitals_,
-              active_two_electron,
-              options.populate_response_payload);
+      SpinDeterminantPairEvaluation evaluation;
+      if (dangerous_core && dangerous_core->rank() != 0) {
+        evaluation = evaluate_woodbury_exact_pair(
+            occupied_left,
+            occupied_right,
+            std::move(overlap),
+            active_one_electron,
+            n_active_orbitals_,
+            active_two_electron,
+            *dangerous_core,
+            options.populate_response_payload);
+      } else {
+        evaluation = pair_evaluator_.evaluate_same_spin_pair(
+            occupied_left,
+            occupied_right,
+            std::move(overlap_result),
+            active_one_electron,
+            n_active_orbitals_,
+            active_two_electron,
+            options.populate_response_payload);
+        dangerous_core.reset();
+      }
       if (options.populate_opposite_spin_projection ||
           options.populate_response_payload) {
         complete_same_spin_pair_evaluation(
@@ -451,6 +578,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             &evaluation);
       }
       tile.pairs[pair_index] = std::move(evaluation);
+      previous_right = right_index;
     }
   }
   return tile;

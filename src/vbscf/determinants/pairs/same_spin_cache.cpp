@@ -695,6 +695,14 @@ void complete_same_spin_pair_evaluation(
     if (pair_evaluation->has_woodbury_ri_response) {
       return;
     }
+    if (pair_evaluation->cofactor_differential &&
+        pair_evaluation->same_spin_polynomial_response &&
+        pair_evaluation->same_spin_overlap_hamiltonian_gradient.rows() ==
+            static_cast<int>(occ_R.size()) &&
+        pair_evaluation->same_spin_overlap_hamiltonian_gradient.cols() ==
+            static_cast<int>(occ_L.size())) {
+      return;
+    }
     const bool populated_from_update =
         regular_ri_response != nullptr &&
         populate_regular_ri_phi_cache_entry(

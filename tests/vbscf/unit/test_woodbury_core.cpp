@@ -88,6 +88,20 @@ void check_case(const Eigen::MatrixXd& overlap, const char* label) {
       reference.second_contraction(exterior_square(transition)),
       5.0e-9,
       label);
+  Eigen::MatrixXd two_particle_weights(
+      n * (n - 1) / 2, n * (n - 1) / 2);
+  for (int column = 0; column < two_particle_weights.cols(); ++column) {
+    for (int row = 0; row < two_particle_weights.rows(); ++row) {
+      two_particle_weights(row, column) =
+          0.013 * (row + 1) - 0.008 * (column + 2) +
+          0.003 * ((row + 3) * (column + 1) % 7);
+    }
+  }
+  require_close(
+      core.second_contraction(two_particle_weights),
+      reference.second_contraction(two_particle_weights),
+      5.0e-9,
+      label);
 
   const xmvb::vb::WoodburyContraction first_gradient =
       core.first_contraction_gradient(transition);

@@ -18,6 +18,63 @@ int pair_index(int first, int second) {
   return second * (second - 1) / 2 + first;
 }
 
+double exterior_square_contraction(
+    const Eigen::Ref<const Eigen::MatrixXd>& matrix,
+    const Eigen::Ref<const Eigen::MatrixXd>& weights) {
+  double result = 0.0;
+  for (int row_second = 1; row_second < matrix.rows(); ++row_second) {
+    for (int row_first = 0; row_first < row_second; ++row_first) {
+      const int row = pair_index(row_first, row_second);
+      for (int column_second = 1;
+           column_second < matrix.cols();
+           ++column_second) {
+        for (int column_first = 0;
+             column_first < column_second;
+             ++column_first) {
+          const int column = pair_index(column_first, column_second);
+          result += weights(row, column) *
+              (matrix(row_first, column_first) *
+                   matrix(row_second, column_second) -
+               matrix(row_first, column_second) *
+                   matrix(row_second, column_first));
+        }
+      }
+    }
+  }
+  return result;
+}
+
+double exterior_cross_contraction(
+    const Eigen::Ref<const Eigen::MatrixXd>& left,
+    const Eigen::Ref<const Eigen::MatrixXd>& right,
+    const Eigen::Ref<const Eigen::MatrixXd>& weights) {
+  double result = 0.0;
+  for (int row_second = 1; row_second < left.rows(); ++row_second) {
+    for (int row_first = 0; row_first < row_second; ++row_first) {
+      const int row = pair_index(row_first, row_second);
+      for (int column_second = 1;
+           column_second < left.cols();
+           ++column_second) {
+        for (int column_first = 0;
+             column_first < column_second;
+             ++column_first) {
+          const int column = pair_index(column_first, column_second);
+          result += weights(row, column) *
+              (left(row_first, column_first) *
+                   right(row_second, column_second) +
+               right(row_first, column_first) *
+                   left(row_second, column_second) -
+               left(row_first, column_second) *
+                   right(row_second, column_first) -
+               right(row_first, column_second) *
+                   left(row_second, column_first));
+        }
+      }
+    }
+  }
+  return result;
+}
+
 double determinant_from_svd(
     const Eigen::Ref<const Eigen::MatrixXd>& left,
     const Eigen::Ref<const Eigen::VectorXd>& singular_values,
@@ -626,6 +683,48 @@ double WoodburyCore::first_channel_contraction(
       core_right_.transpose() * channel * inverse_base_core_left_;
   return base_determinant_ *
       (core_determinant_ * trace - core_first_contraction(projected));
+}
+
+double WoodburyCore::second_contraction(
+    const Eigen::Ref<const Eigen::MatrixXd>& weights) const {
+  const int pair_count = dimension() * (dimension() - 1) / 2;
+  if (weights.rows() != pair_count || weights.cols() != pair_count) {
+    throw std::invalid_argument(
+        "Woodbury second-cofactor weights have inconsistent dimensions");
+  }
+
+  const Eigen::MatrixXd base_inverse_transpose = inverse_base_.transpose();
+  const double base_contraction =
+      exterior_square_contraction(base_inverse_transpose, weights);
+  if (rank() == 0) {
+    return base_determinant_ * base_contraction;
+  }
+
+  if (rank() == 1) {
+    // For X = A + u v^T, let a = A^-1 u, b = A^-T v and
+    // g = 1 + v^T A^-1 u.  Polynomial continuation gives
+    //
+    // C2(X) = det(A) [g wedge^2(A^-T) - cross(A^-T, b a^T)].
+    //
+    // This remains exact at g = 0 and avoids both X^-1 and division by g.
+    const Eigen::VectorXd a = inverse_base_core_left_.col(0);
+    const Eigen::VectorXd b = inverse_base_.transpose() * core_right_.col(0);
+    const Eigen::MatrixXd rank_one = b * a.transpose();
+    const double cross_contraction = exterior_cross_contraction(
+        base_inverse_transpose, rank_one, weights);
+    return base_determinant_ *
+        (core_determinant_ * base_contraction - cross_contraction);
+  }
+
+  // Higher-dimensional dangerous cores are uncommon but physically valid.
+  // The general inverse-free polynomial contraction remains the exact path.
+  DeterminantOverlapResult overlap_result;
+  overlap_result.n_electrons = dimension();
+  overlap_result.overlap_submatrix = overlap_;
+  overlap_result.overlap_determinant = determinant();
+  overlap_result.nullity = nullity();
+  const CofactorDifferential differential(overlap_result);
+  return differential.second_contraction(weights);
 }
 
 Eigen::MatrixXd WoodburyCore::exterior_square(

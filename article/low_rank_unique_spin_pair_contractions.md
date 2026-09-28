@@ -2395,6 +2395,88 @@ followed by a general small-core path.  A coefficient threshold must not be
 introduced from these data; any future omission requires an operator-norm
 error bound tied to the requested energy, gradient, or HVP accuracy.
 
+#### 9.3.1 Rank-one dangerous-core exterior identity
+
+The dangerous-core construction is independent of the representation of the
+electron interaction.  To avoid confusing two unrelated orders, let
+$q_{\mathrm{core}}$ denote the retained dangerous-core dimension and let $k$
+denote the transition-density or exterior order.  For the dominant
+$q_{\mathrm{core}}=1$ case, write
+
+$$
+X=A+uv^{\mathrm T},
+\qquad
+K=A^{-1},
+\qquad
+a=Ku,
+\qquad
+b=K^{\mathrm T}v,
+$$
+
+and
+
+$$
+g=1+v^{\mathrm T}Ku.
+$$
+
+The determinant and first cofactor are the polynomial identities
+
+$$
+\det X=\det A\,g,
+$$
+
+$$
+C_1(X)=\det A\left(gK^{\mathrm T}-ba^{\mathrm T}\right).
+$$
+
+Neither expression divides by $g$, so both remain exact at $g=0$.  At second
+exterior order, the rank-one property $\wedge^2(ba^{\mathrm T})=0$ gives
+
+$$
+C_2(X)
+=
+\det A
+\left[
+g\,\wedge^2K^{\mathrm T}
+-\operatorname{cross}\left(K^{\mathrm T},ba^{\mathrm T}\right)
+\right],
+$$
+
+where the bilinear exterior cross term is defined by
+
+$$
+\begin{aligned}
+\operatorname{cross}(L,R)_{(ij),(kl)}
+={}&L_{ik}R_{jl}+R_{ik}L_{jl}\\
+&-L_{il}R_{jk}-R_{il}L_{jk},
+\qquad i<j,\quad k<l.
+\end{aligned}
+$$
+
+Therefore an arbitrary exact two-electron kernel $W$ can be contracted as
+
+$$
+\langle W,C_2(X)\rangle
+=
+\det A
+\left[
+g\left\langle W,\wedge^2K^{\mathrm T}\right\rangle
+-\left\langle
+W,\operatorname{cross}(K^{\mathrm T},ba^{\mathrm T})
+\right\rangle
+\right].
+$$
+
+The implementation evaluates this scalar directly in the occupied pair loops;
+it does not materialize either exterior matrix.  Its work is $O(n^4)$ and its
+additional storage is $O(n^2)$.  This is optimal for a dense exact four-index
+kernel because reading the occupied interaction itself costs $O(n^4)$.  With
+RI, Cholesky, THC, or another factorized interaction, the same determinant and
+cofactor algebra is retained while the final contraction is reassociated with
+the factors to reach the lower representation-specific scaling.  Thus
+Woodbury is not an RI approximation: RI changes only how the electron
+interaction is consumed.
+
 ### 9.4 Inverse-free RI contraction and directional adjoint
 
 The propagated representation is now used directly by the RI contraction,

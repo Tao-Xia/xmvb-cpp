@@ -94,6 +94,16 @@ class WoodburyCore {
       const Eigen::Ref<const Eigen::MatrixXd>& channel) const;
 
   /**
+   * @brief Contracts an arbitrary two-particle kernel with the second cofactor.
+   *
+   * Pair indices use `j * (j - 1) / 2 + i`, `i < j`.  A rank-one dangerous
+   * core is evaluated by the exact exterior Woodbury identity and therefore
+   * never forms or inverts the physical occupied overlap.
+   */
+  double second_contraction(
+      const Eigen::Ref<const Eigen::MatrixXd>& weights) const;
+
+  /**
    * @brief Contracts one RI factor with the exact second cofactor.
    *
    * The result is the unnormalized same-spin contribution
