@@ -314,7 +314,7 @@ DavidsonOptions make_davidson_options(
   // matrices; the projected Hamiltonian uses one subspace square. Cap this
   // workspace by bytes, not by a molecular or structure-count heuristic.
   constexpr long double kBasisBudgetDoubles =
-      static_cast<long double>(1024ULL * 1024ULL * 1024ULL) / sizeof(double);
+      static_cast<long double>(512ULL * 1024ULL * 1024ULL) / sizeof(double);
   const long double n = static_cast<long double>(dimension);
   const long double capacity =
       2.0L * kBasisBudgetDoubles /
