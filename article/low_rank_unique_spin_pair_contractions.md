@@ -2340,6 +2340,61 @@ spaces contain one to three nearly orthogonal principal directions.  The
 production algorithm must therefore make the small inverse-free core fast;
 re-anchoring every such pair necessarily forfeits the graph speedup.
 
+Geometric population alone does not show whether these pairs are used by the
+selected wave function.  Let $C^{(s)}$ be the selected-state coefficient
+matrix in unique alpha--beta string coordinates.  A threshold-free upper-bound
+factor for every partner-spin contraction involving an alpha pair $(i,j)$ is
+
+$$
+e_{ij}^{\alpha}
+=
+\sum_s w_s
+\left\|C^{(s)}_{i,:}\right\|_1
+\left\|C^{(s)}_{j,:}\right\|_1,
+$$
+
+with the corresponding column norms for a beta pair,
+
+$$
+e_{ij}^{\beta}
+=
+\sum_s w_s
+\left\|C^{(s)}_{:,i}\right\|_1
+\left\|C^{(s)}_{:,j}\right\|_1.
+$$
+
+This exposure is not an energy estimate and is not used for screening.  It is
+dimensionless, contains no empirical threshold, and has one strict
+interpretation: $e_{ij}=0$ proves that the selected states do not use that
+pair.  The normalized sums $\sum_{ij\in D}e_{ij}/\sum_{ij}e_{ij}$ and
+$\sum_{ij\in D}e_{ij}^2/\sum_{ij}e_{ij}^2$ measure the linear and concentrated
+coefficient support carried by a dangerous set $D$.
+
+Hanhai25 Slurm job `260629` performed the initial selected-state solve and the
+complete exposure census.  No ordered pair had exactly zero exposure.  The
+results were
+
+| System | Spin | Dangerous pair fraction | Dangerous exposure fraction | Dangerous squared-exposure fraction | Exposure in $q\geq2$ |
+|---|---:|---:|---:|---:|---:|
+| 241 | alpha | 25.5% | 13.18% | 3.45% | 0 |
+| 241 | beta | 25.5% | 13.18% | 3.45% | 0 |
+| MnF2 | alpha | 34.4% | 3.85% | 0.11% | 0 |
+| MnF2 | beta | 32.9% | 9.29% | 1.00% | 0 |
+| FeCl2 | alpha | 62.5% | 7.29% | 1.02% | 0 |
+| FeCl2 | beta | 88.2% | 19.11% | 4.96% | 0.145% |
+| CERRAS | alpha | 80.0% | 27.32% | 6.95% | 1.084% |
+| CERRAS | beta | 80.0% | 51.09% | 40.46% | 2.701% |
+
+Near-orthogonal pairs are therefore not removable bookkeeping artifacts.
+Their count overstates their aggregate selected-state support, but important
+dangerous pairs remain, especially in the large CERRAS spin sector.  At the
+same time, almost all dangerous exposure lies in $q=1$; $q=2$ is a small
+correction and $q=3$ is negligible in this data.  The implementation priority
+is consequently an optimized inverse-free $q=1$ contracted-exterior kernel,
+followed by a general small-core path.  A coefficient threshold must not be
+introduced from these data; any future omission requires an operator-norm
+error bound tied to the requested energy, gradient, or HVP accuracy.
+
 ### 9.4 Inverse-free RI contraction and directional adjoint
 
 The propagated representation is now used directly by the RI contraction,
