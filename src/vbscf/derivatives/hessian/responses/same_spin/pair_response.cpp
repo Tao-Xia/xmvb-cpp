@@ -477,16 +477,24 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
             return pair.has_woodbury_ri_response ||
                 pair.has_same_spin_phi_cache;
           });
-  const bool stream_regular_directional_graph =
-      stream_woodbury_ri && std::all_of(
+  const auto regular_graph_pair =
+      [](const SpinDeterminantPairEvaluation& pair) {
+        return pair.has_same_spin_phi_cache &&
+            pair.overlap_result.nullity == 0 &&
+            pair.overlap_result.overlap_determinant != 0.0;
+      };
+  const bool has_regular_directional_graph =
+      stream_woodbury_ri && std::any_of(
           accepted_pair_tile->pairs.begin(),
           accepted_pair_tile->pairs.end(),
-          [](const SpinDeterminantPairEvaluation& pair) {
-            return pair.has_same_spin_phi_cache &&
-                pair.overlap_result.nullity == 0 &&
-                pair.overlap_result.overlap_determinant != 0.0;
-          });
-  if (stream_regular_directional_graph) {
+          regular_graph_pair);
+  const bool all_regular_directional_graph =
+      has_regular_directional_graph && std::all_of(
+          accepted_pair_tile->pairs.begin(),
+          accepted_pair_tile->pairs.end(),
+          regular_graph_pair);
+  std::vector<char> regular_graph_ready(tile.pairs.size(), 0);
+  if (has_regular_directional_graph) {
     const int n_threads = std::max(
         1,
         std::min(xmvb::effective_openmp_thread_count(), left_size));
@@ -506,6 +514,9 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
         const auto& occupied_right = unique_determinants[right_id];
         const auto& accepted =
             accepted_pair_tile->pair(left_local, right_local);
+        if (!regular_graph_pair(accepted)) {
+          continue;
+        }
         const Eigen::MatrixXd overlap_direction =
             build_local_overlap_direction_matrix(
                 occupied_left,
@@ -527,6 +538,7 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
         tile.delta_regular_hamiltonian(left_local, right_local) =
             pair_direction.delta_total_hamiltonian;
         tile.pairs[pair_index] = std::move(pair_direction);
+        regular_graph_ready[pair_index] = 1;
       }
 
       for (int auxiliary_begin = 0;
@@ -549,6 +561,10 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
           const auto& occupied_right = unique_determinants[right_id];
           const auto& accepted =
               accepted_pair_tile->pair(left_local, right_local);
+          if (!regular_graph_pair(accepted)) {
+            initialized = false;
+            continue;
+          }
           const Eigen::MatrixXd overlap_direction =
               build_local_overlap_direction_matrix(
                   occupied_left,
@@ -597,7 +613,9 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
         }
       }
     }
-    return tile;
+    if (all_regular_directional_graph) {
+      return tile;
+    }
   }
   if (stream_woodbury_ri) {
     const int n_threads = std::max(
@@ -629,6 +647,12 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
               "failed to initialize streamed directional Woodbury RI state");
         }
         initialized = true;
+
+        const std::size_t pair_index =
+            static_cast<std::size_t>(left_local) * right_size + right_local;
+        if (regular_graph_ready[pair_index]) {
+          continue;
+        }
 
         const Eigen::MatrixXd overlap_direction =
             build_local_overlap_direction_matrix(
@@ -706,8 +730,6 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
                 static_cast<std::size_t>(channel_work)] = 1;
           }
         }
-        const std::size_t pair_index =
-            static_cast<std::size_t>(left_local) * right_size + right_local;
         const double overlap_value = pair_direction.delta_overlap_determinant;
         const double hamiltonian_value = pair_direction.delta_total_hamiltonian;
         tile.pairs[pair_index] = std::move(pair_direction);
