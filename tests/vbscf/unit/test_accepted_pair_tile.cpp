@@ -564,6 +564,9 @@ int main() {
       (four_generated.has_woodbury_ri_response ||
        four_generated.has_same_spin_phi_cache) &&
           relative_difference(
+              four_generated.same_spin_inverse_overlap_gradient,
+              four_reference.same_spin_inverse_overlap_gradient) <= 2.0e-11 &&
+          relative_difference(
               four_generated.same_spin_overlap_hamiltonian_gradient,
               four_reference.same_spin_overlap_hamiltonian_gradient) <= 2.0e-11,
       "accepted tile changed the Woodbury RI response payload");

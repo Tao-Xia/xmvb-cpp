@@ -100,6 +100,21 @@ SpinDeterminantPairEvaluation evaluate_woodbury_ri_pair(
   return result;
 }
 
+std::optional<RegularRiPairResponseData> regular_ri_response(
+    const WoodburyRiState& state,
+    bool requested) {
+  if (!requested || state.core_rank() != 0 ||
+      state.overlap_determinant() == 0.0) {
+    return std::nullopt;
+  }
+  RegularRiPairResponseData result;
+  result.two_electron_phi =
+      state.two_electron_contraction() / state.overlap_determinant();
+  result.two_electron_inverse_overlap_gradient =
+      state.regular_two_electron_inverse_gradient();
+  return result;
+}
+
 }  // namespace
 
 const SpinDeterminantPairEvaluation& AcceptedSpinPairTile::pair(
@@ -203,7 +218,7 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
           Eigen::MatrixXd overlap = build_overlap_submatrix(
               occupied_left, occupied_right, overlap_map);
           bool updated = false;
-          if (have_previous) {
+          if (have_previous && ri_state.core_rank() == 0) {
             updated = left_edge
                 ? ri_state.update_left(
                       occupied_left,
@@ -234,6 +249,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                   options.populate_response_payload);
           if (options.populate_opposite_spin_projection ||
               options.populate_response_payload) {
+            const auto ri_response = regular_ri_response(
+                ri_state, options.populate_response_payload);
             complete_same_spin_pair_evaluation(
                 occupied_left,
                 occupied_right,
@@ -243,7 +260,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                 options.populate_opposite_spin_projection,
                 false,
                 options.populate_response_payload,
-                &evaluation);
+                &evaluation,
+                ri_response ? &*ri_response : nullptr);
           }
           tile.pairs[
               static_cast<std::size_t>(left_index - left_begin) *
@@ -304,7 +322,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
         const auto& occupied_right = unique_spin_strings_[right_index];
         Eigen::MatrixXd overlap = build_overlap_submatrix(
             occupied_left, occupied_right, overlap_map);
-        const bool updated = traversal_index > 0 && ri_state.update_right(
+        const bool updated = traversal_index > 0 &&
+            ri_state.core_rank() == 0 && ri_state.update_right(
             occupied_right,
             overlap,
             active_two_electron.ri_active_pair_factors);
@@ -326,6 +345,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
                 active_two_electron.ri_active_pair_factors,
                 ri_state,
                 options.populate_response_payload);
+        const auto ri_response = regular_ri_response(
+            ri_state, options.populate_response_payload);
         complete_same_spin_pair_evaluation(
             occupied_left,
             occupied_right,
@@ -335,7 +356,8 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             true,
             false,
             options.populate_response_payload,
-            &evaluation);
+            &evaluation,
+            ri_response ? &*ri_response : nullptr);
         auxiliary_panel.col(right_local) =
             ri_state.first_cofactor_auxiliary();
         tile.pairs[

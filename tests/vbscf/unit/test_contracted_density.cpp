@@ -7,6 +7,7 @@
 #include <Eigen/LU>
 
 #include "vbscf/determinants/algebra/contracted_density.hpp"
+#include "vbscf/determinants/algebra/ri_contracted_moments.hpp"
 
 namespace {
 
@@ -256,6 +257,84 @@ void check_low_rank_update(
   }
 }
 
+xmvb::vb::RiContractedMoments::Table make_factor_table(
+    int count,
+    int dimension,
+    int rank,
+    double phase) {
+  xmvb::vb::RiContractedMoments::Table result(
+      count, dimension * rank);
+  for (int index = 0; index < count; ++index) {
+    const Eigen::MatrixXd factor =
+        make_matrix(dimension, phase + 0.013 * index).leftCols(rank);
+    Eigen::Map<Eigen::MatrixXd>(
+        result.data() + index * dimension * rank,
+        dimension,
+        rank) = factor;
+  }
+  return result;
+}
+
+void check_ri_contracted_moments() {
+  constexpr int n = 7;
+  constexpr int n_aux = 11;
+  Eigen::MatrixXd overlap = make_matrix(n, 0.17);
+  overlap.diagonal().array() += 4.0;
+  const Eigen::MatrixXd inverse = overlap.inverse();
+  xmvb::vb::RiContractedMoments::Table channels(n_aux, n * n);
+  for (int auxiliary = 0; auxiliary < n_aux; ++auxiliary) {
+    Eigen::Map<Eigen::MatrixXd>(
+        channels.data() + auxiliary * n * n, n, n) =
+        make_matrix(n, 0.09 + 0.007 * auxiliary);
+  }
+
+  xmvb::vb::RiContractedMoments moments;
+  moments.initialize(inverse, channels);
+  const Eigen::MatrixXd inverse_left = make_matrix(n, 0.031).leftCols(2);
+  const Eigen::MatrixXd inverse_right = make_matrix(n, 0.047).leftCols(2);
+  const auto channel_left = make_factor_table(n_aux, n, 2, 0.023);
+  const auto channel_right = make_factor_table(n_aux, n, 2, 0.059);
+  moments.update(
+      inverse_left, inverse_right, channel_left, channel_right);
+
+  const Eigen::MatrixXd new_inverse =
+      inverse + inverse_left * inverse_right.transpose();
+  double coefficient_sum = 0.0;
+  Eigen::MatrixXd response = Eigen::MatrixXd::Zero(n, n);
+  for (int auxiliary = 0; auxiliary < n_aux; ++auxiliary) {
+    const Eigen::Map<const Eigen::MatrixXd> old_channel(
+        channels.data() + auxiliary * n * n, n, n);
+    const Eigen::Map<const Eigen::MatrixXd> left(
+        channel_left.data() + auxiliary * n * 2, n, 2);
+    const Eigen::Map<const Eigen::MatrixXd> right(
+        channel_right.data() + auxiliary * n * 2, n, 2);
+    const Eigen::MatrixXd channel = old_channel + left * right.transpose();
+    const Eigen::MatrixXd transition =
+        new_inverse.fullPivLu().solve(channel);
+    const xmvb::vb::ContractedDensityState reference(
+        new_inverse, transition, 2);
+    coefficient_sum += reference.coefficient(2);
+    response.noalias() +=
+        reference.coefficient(1) * channel * new_inverse -
+        channel * channel * new_inverse;
+    require_matrix_close(
+        moments.channel(auxiliary),
+        channel,
+        2.0e-12,
+        "updated RI channel");
+  }
+  require_close(
+      moments.second_coefficient_sum(),
+      coefficient_sum,
+      2.0e-11,
+      "batched second exterior coefficient");
+  require_matrix_close(
+      moments.second_response_moment(),
+      response,
+      3.0e-10,
+      "batched second response moment");
+}
+
 }  // namespace
 
 int main() {
@@ -273,6 +352,7 @@ int main() {
       check_low_rank_update(inverse, transition, order, 2, 2);
       check_directional_low_rank_update(inverse, transition, order);
     }
+    check_ri_contracted_moments();
     std::cout << "contracted density tests passed\n";
     return 0;
   } catch (const std::exception& error) {

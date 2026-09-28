@@ -5,6 +5,8 @@
 
 #include <Eigen/Core>
 
+#include "vbscf/determinants/algebra/ri_contracted_moments.hpp"
+
 namespace xmvb::vb {
 
 class WoodburyCore;
@@ -59,6 +61,8 @@ class WoodburyRiState {
   Eigen::MatrixXd hamiltonian_overlap_gradient(
       const Eigen::Ref<const Eigen::MatrixXd>& occupied_one_electron,
       const Eigen::Ref<const Eigen::MatrixXd>& ri_factors) const;
+  /** @brief Two-electron regular-pair derivative with respect to `K=X^-1`. */
+  Eigen::MatrixXd regular_two_electron_inverse_gradient() const;
   WoodburyRiDirection hamiltonian_direction(
       const Eigen::Ref<const Eigen::MatrixXd>& occupied_one_electron,
       const Eigen::Ref<const Eigen::MatrixXd>& occupied_one_electron_direction,
@@ -68,21 +72,14 @@ class WoodburyRiState {
       bool auxiliary_projection) const;
 
  private:
-  using ChannelTable = Eigen::Matrix<
-      double,
-      Eigen::Dynamic,
-      Eigen::Dynamic,
-      Eigen::RowMajor>;
-
   void update_base_channels(
       const Eigen::Ref<const Eigen::MatrixXd>& left,
       const Eigen::Ref<const Eigen::MatrixXd>& right);
-  Eigen::Map<Eigen::MatrixXd> channel(Eigen::Index auxiliary);
   Eigen::Map<const Eigen::MatrixXd> channel(Eigen::Index auxiliary) const;
 
   std::vector<int> occupied_left_;
   std::vector<int> occupied_right_;
-  ChannelTable channels_;
+  RiContractedMoments moments_;
   std::unique_ptr<WoodburyCore> core_;
   int n_electrons_ = 0;
 };

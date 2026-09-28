@@ -9,7 +9,10 @@ namespace xmvb::vb {
 class CofactorDifferential;
 
 struct WoodburyBaseUpdate {
-  /** `K_new = K_old + left * right^T`. */
+  /**
+   * `right` is the physical overlap-update factor `V`.  The inverse update is
+   * `K_new = K_old + left * (right^T K_old)`.
+   */
   Eigen::MatrixXd left;
   Eigen::MatrixXd right;
 };

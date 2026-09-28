@@ -45,20 +45,9 @@ bool factors_cover_strings(
 WoodburyRiState::WoodburyRiState() = default;
 WoodburyRiState::~WoodburyRiState() = default;
 
-Eigen::Map<Eigen::MatrixXd> WoodburyRiState::channel(
-    Eigen::Index auxiliary) {
-  return Eigen::Map<Eigen::MatrixXd>(
-      channels_.data() + auxiliary * n_electrons_ * n_electrons_,
-      n_electrons_,
-      n_electrons_);
-}
-
 Eigen::Map<const Eigen::MatrixXd> WoodburyRiState::channel(
     Eigen::Index auxiliary) const {
-  return Eigen::Map<const Eigen::MatrixXd>(
-      channels_.data() + auxiliary * n_electrons_ * n_electrons_,
-      n_electrons_,
-      n_electrons_);
+  return moments_.channel(auxiliary);
 }
 
 bool WoodburyRiState::initialize(
@@ -67,7 +56,6 @@ bool WoodburyRiState::initialize(
     const Eigen::Ref<const Eigen::MatrixXd>& overlap,
     const Eigen::Ref<const Eigen::MatrixXd>& ri_factors) {
   core_.reset();
-  channels_.resize(0, 0);
   n_electrons_ = static_cast<int>(occupied_left.size());
   if (static_cast<int>(occupied_right.size()) != n_electrons_ ||
       overlap.rows() != n_electrons_ || overlap.cols() != n_electrons_ ||
@@ -77,7 +65,7 @@ bool WoodburyRiState::initialize(
   }
 
   auto core = std::make_unique<WoodburyCore>(overlap);
-  channels_.resize(
+  RiContractedMoments::Table channels(
       ri_factors.rows(),
       static_cast<Eigen::Index>(n_electrons_) * n_electrons_);
   Eigen::MatrixXd transition(n_electrons_, n_electrons_);
@@ -92,12 +80,16 @@ bool WoodburyRiState::initialize(
                 occupied_right[right], occupied_left[left]));
       }
     }
-    channel(auxiliary).noalias() = core->inverse_base() * transition;
+    Eigen::Map<Eigen::MatrixXd> channel(
+        channels.data() + auxiliary * n_electrons_ * n_electrons_,
+        n_electrons_,
+        n_electrons_);
+    channel.noalias() = core->inverse_base() * transition;
   }
-  if (!channels_.allFinite()) {
-    channels_.resize(0, 0);
+  if (!channels.allFinite()) {
     return false;
   }
+  moments_.initialize(core->inverse_base(), channels);
   occupied_left_ = occupied_left;
   occupied_right_ = occupied_right;
   core_ = std::move(core);
@@ -110,12 +102,30 @@ void WoodburyRiState::update_base_channels(
   if (left.cols() == 0) {
     return;
   }
+  const Eigen::Index n_auxiliary = moments_.channel_count();
+  const int rank = left.cols();
+  RiContractedMoments::Table channel_left(
+      n_auxiliary, n_electrons_ * rank);
+  RiContractedMoments::Table channel_right(
+      n_auxiliary, n_electrons_ * rank);
+  // WoodburyCore returns the physical overlap-update right factor `V`.
+  // Its inverse update is `delta K = L (V^T K)`, whereas every channel
+  // changes as `delta A_Q = L (V^T A_Q)`.
+  const Eigen::MatrixXd inverse_right =
+      moments_.inverse_overlap().transpose() * right;
   for (Eigen::Index auxiliary = 0;
-       auxiliary < channels_.rows();
+       auxiliary < n_auxiliary;
        ++auxiliary) {
-    Eigen::Map<Eigen::MatrixXd> value = channel(auxiliary);
-    value.noalias() += left * (right.transpose() * value);
+    Eigen::Map<Eigen::MatrixXd>(
+        channel_left.data() + auxiliary * n_electrons_ * rank,
+        n_electrons_,
+        rank) = left;
+    Eigen::Map<Eigen::MatrixXd>(
+        channel_right.data() + auxiliary * n_electrons_ * rank,
+        n_electrons_,
+        rank).noalias() = channel(auxiliary).transpose() * right;
   }
+  moments_.update(left, inverse_right, channel_left, channel_right);
 }
 
 bool WoodburyRiState::update_right(
@@ -145,18 +155,39 @@ bool WoodburyRiState::update_right(
         (overlap_new.row(rows[local]) -
          core_->overlap().row(rows[local])).transpose();
   }
-  const WoodburyBaseUpdate base_update =
-      core_->append(update_left, update_right);
+  WoodburyBaseUpdate base_update;
+  try {
+    base_update = core_->append(update_left, update_right);
+  } catch (const std::runtime_error&) {
+    // The caller owns the graph traversal and will establish a fresh exact
+    // anchor for this pair.  append has not committed an uncertified base.
+    return false;
+  }
   update_base_channels(base_update.left, base_update.right);
 
-  Eigen::MatrixXd transition_delta =
-      Eigen::MatrixXd::Zero(n_electrons_, n_electrons_);
+  const int transition_rank = static_cast<int>(rows.size());
+  RiContractedMoments::Table transition_left(
+      moments_.channel_count(), n_electrons_ * transition_rank);
+  RiContractedMoments::Table transition_right(
+      moments_.channel_count(), n_electrons_ * transition_rank);
   for (Eigen::Index auxiliary = 0;
-       auxiliary < channels_.rows();
+       auxiliary < moments_.channel_count();
        ++auxiliary) {
-    for (const int row : rows) {
+    Eigen::Map<Eigen::MatrixXd> left_factors(
+        transition_left.data() +
+            auxiliary * n_electrons_ * transition_rank,
+        n_electrons_,
+        transition_rank);
+    Eigen::Map<Eigen::MatrixXd> right_factors(
+        transition_right.data() +
+            auxiliary * n_electrons_ * transition_rank,
+        n_electrons_,
+        transition_rank);
+    for (int local = 0; local < transition_rank; ++local) {
+      const int row = rows[local];
+      left_factors.col(local) = core_->inverse_base().col(row);
       for (int left = 0; left < n_electrons_; ++left) {
-        transition_delta(row, left) =
+        right_factors(left, local) =
             ri_factors(
                 auxiliary,
                 TwoElectronIndexer::packed_pair_index(
@@ -167,14 +198,15 @@ bool WoodburyRiState::update_right(
                     occupied_right_[row], occupied_left_[left]));
       }
     }
-    Eigen::Map<Eigen::MatrixXd> value = channel(auxiliary);
-    for (const int row : rows) {
-      value.noalias() +=
-          core_->inverse_base().col(row) * transition_delta.row(row);
-    }
   }
+  const Eigen::MatrixXd no_inverse_update(n_electrons_, 0);
+  moments_.update(
+      no_inverse_update,
+      no_inverse_update,
+      transition_left,
+      transition_right);
   occupied_right_ = occupied_right_new;
-  return channels_.allFinite();
+  return moments_.channels().allFinite();
 }
 
 bool WoodburyRiState::update_left(
@@ -204,18 +236,38 @@ bool WoodburyRiState::update_left(
         core_->overlap().col(columns[local]);
     update_right(columns[local], local) = 1.0;
   }
-  const WoodburyBaseUpdate base_update =
-      core_->append(update_left, update_right);
+  WoodburyBaseUpdate base_update;
+  try {
+    base_update = core_->append(update_left, update_right);
+  } catch (const std::runtime_error&) {
+    return false;
+  }
   update_base_channels(base_update.left, base_update.right);
 
-  Eigen::MatrixXd transition_delta =
-      Eigen::MatrixXd::Zero(n_electrons_, n_electrons_);
+  const int transition_rank = static_cast<int>(columns.size());
+  RiContractedMoments::Table transition_left(
+      moments_.channel_count(), n_electrons_ * transition_rank);
+  RiContractedMoments::Table transition_right(
+      moments_.channel_count(), n_electrons_ * transition_rank);
   for (Eigen::Index auxiliary = 0;
-       auxiliary < channels_.rows();
+       auxiliary < moments_.channel_count();
        ++auxiliary) {
-    for (const int column : columns) {
+    Eigen::Map<Eigen::MatrixXd> left_factors(
+        transition_left.data() +
+            auxiliary * n_electrons_ * transition_rank,
+        n_electrons_,
+        transition_rank);
+    Eigen::Map<Eigen::MatrixXd> right_factors(
+        transition_right.data() +
+            auxiliary * n_electrons_ * transition_rank,
+        n_electrons_,
+        transition_rank);
+    right_factors.setZero();
+    for (int local = 0; local < transition_rank; ++local) {
+      const int column = columns[local];
+      Eigen::VectorXd transition_delta(n_electrons_);
       for (int right = 0; right < n_electrons_; ++right) {
-        transition_delta(right, column) =
+        transition_delta(right) =
             ri_factors(
                 auxiliary,
                 TwoElectronIndexer::packed_pair_index(
@@ -225,15 +277,19 @@ bool WoodburyRiState::update_left(
                 TwoElectronIndexer::packed_pair_index(
                     occupied_right_[right], occupied_left_[column]));
       }
-    }
-    Eigen::Map<Eigen::MatrixXd> value = channel(auxiliary);
-    for (const int column : columns) {
-      value.col(column).noalias() +=
-          core_->inverse_base() * transition_delta.col(column);
+      left_factors.col(local).noalias() =
+          core_->inverse_base() * transition_delta;
+      right_factors(column, local) = 1.0;
     }
   }
+  const Eigen::MatrixXd no_inverse_update(n_electrons_, 0);
+  moments_.update(
+      no_inverse_update,
+      no_inverse_update,
+      transition_left,
+      transition_right);
   occupied_left_ = occupied_left_new;
-  return channels_.allFinite();
+  return moments_.channels().allFinite();
 }
 
 int WoodburyRiState::core_rank() const noexcept {
@@ -270,9 +326,9 @@ Eigen::VectorXd WoodburyRiState::first_cofactor_auxiliary() const {
   if (!valid()) {
     throw std::logic_error("Woodbury RI state is not initialized");
   }
-  Eigen::VectorXd result(channels_.rows());
+  Eigen::VectorXd result(moments_.channel_count());
   for (Eigen::Index auxiliary = 0;
-       auxiliary < channels_.rows();
+       auxiliary < moments_.channel_count();
        ++auxiliary) {
     result(auxiliary) =
         core_->first_channel_contraction(channel(auxiliary));
@@ -292,9 +348,12 @@ double WoodburyRiState::two_electron_contraction() const {
   if (!valid()) {
     throw std::logic_error("Woodbury RI state is not initialized");
   }
+  if (core_->rank() == 0) {
+    return core_->determinant() * moments_.second_coefficient_sum();
+  }
   double result = 0.0;
   for (Eigen::Index auxiliary = 0;
-       auxiliary < channels_.rows();
+       auxiliary < moments_.channel_count();
        ++auxiliary) {
     result += core_->second_channel_contraction(channel(auxiliary));
   }
@@ -307,7 +366,7 @@ Eigen::MatrixXd WoodburyRiState::hamiltonian_overlap_gradient(
   if (!valid() ||
       occupied_one_electron.rows() != n_electrons_ ||
       occupied_one_electron.cols() != n_electrons_ ||
-      ri_factors.rows() != channels_.rows() ||
+      ri_factors.rows() != moments_.channel_count() ||
       !factors_cover_strings(
           occupied_left_, occupied_right_, ri_factors.cols())) {
     throw std::invalid_argument(
@@ -316,9 +375,16 @@ Eigen::MatrixXd WoodburyRiState::hamiltonian_overlap_gradient(
   Eigen::MatrixXd result =
       core_->first_contraction_gradient(occupied_one_electron)
           .overlap_gradient;
+  if (core_->rank() == 0) {
+    result.noalias() += core_->determinant() *
+        (moments_.second_coefficient_sum() *
+             core_->inverse_base().transpose() -
+         moments_.second_response_moment().transpose());
+    return result;
+  }
   Eigen::MatrixXd transition(n_electrons_, n_electrons_);
   for (Eigen::Index auxiliary = 0;
-       auxiliary < channels_.rows();
+       auxiliary < moments_.channel_count();
        ++auxiliary) {
     for (int left = 0; left < n_electrons_; ++left) {
       for (int right = 0; right < n_electrons_; ++right) {
@@ -331,6 +397,20 @@ Eigen::MatrixXd WoodburyRiState::hamiltonian_overlap_gradient(
     result.noalias() += core_->second_channel_contraction_gradient(
         channel(auxiliary), transition).overlap_gradient;
   }
+  return result;
+}
+
+Eigen::MatrixXd WoodburyRiState::regular_two_electron_inverse_gradient()
+    const {
+  if (!valid() || core_->rank() != 0) {
+    throw std::logic_error(
+        "regular RI inverse gradient requires a regular Woodbury state");
+  }
+  Eigen::MatrixXd result;
+  result.noalias() =
+      core_->overlap().transpose() *
+      moments_.second_response_moment().transpose() *
+      core_->overlap().transpose();
   return result;
 }
 
@@ -348,8 +428,8 @@ WoodburyRiDirection WoodburyRiState::hamiltonian_direction(
       occupied_one_electron_direction.cols() != n_electrons_ ||
       overlap_direction.rows() != n_electrons_ ||
       overlap_direction.cols() != n_electrons_ ||
-      ri_factors.rows() != channels_.rows() ||
-      ri_factor_direction.rows() != channels_.rows() ||
+      ri_factors.rows() != moments_.channel_count() ||
+      ri_factor_direction.rows() != moments_.channel_count() ||
       ri_factor_direction.cols() != ri_factors.cols() ||
       !factors_cover_strings(
           occupied_left_, occupied_right_, ri_factors.cols())) {
@@ -370,15 +450,15 @@ WoodburyRiDirection WoodburyRiState::hamiltonian_direction(
   result.overlap_determinant =
       (core_->first_cofactor().cwiseProduct(overlap_direction)).sum();
   if (auxiliary_projection) {
-    result.accepted_auxiliary.resize(channels_.rows());
-    result.directional_auxiliary.resize(channels_.rows());
+    result.accepted_auxiliary.resize(moments_.channel_count());
+    result.directional_auxiliary.resize(moments_.channel_count());
   }
 
   Eigen::MatrixXd transition(n_electrons_, n_electrons_);
   Eigen::MatrixXd transition_direction(n_electrons_, n_electrons_);
   const Eigen::MatrixXd first_cofactor = core_->first_cofactor();
   for (Eigen::Index auxiliary = 0;
-       auxiliary < channels_.rows();
+       auxiliary < moments_.channel_count();
        ++auxiliary) {
     for (int left = 0; left < n_electrons_; ++left) {
       for (int right = 0; right < n_electrons_; ++right) {
