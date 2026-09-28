@@ -8,6 +8,9 @@
 
 #include "vbscf/determinants/algebra/contracted_density.hpp"
 #include "vbscf/determinants/algebra/ri_contracted_moments.hpp"
+#include "vbscf/determinants/algebra/ri_directional_graph.hpp"
+#include "vbscf/integrals/active/two_electron/construction/indexer.hpp"
+#include "vbscf/integrals/active/two_electron/construction/kernel.hpp"
 
 namespace {
 
@@ -335,6 +338,88 @@ void check_ri_contracted_moments() {
       "batched second response moment");
 }
 
+void check_ri_directional_graph() {
+  constexpr int n = 3;
+  constexpr int n_active = 6;
+  constexpr int n_aux = 7;
+  const std::vector<int> occupied_left{0, 2, 4};
+  const std::vector<int> occupied_old{0, 1, 3};
+  const std::vector<int> occupied_new{0, 5, 3};
+  Eigen::MatrixXd overlap = make_matrix(n, 0.13);
+  overlap.diagonal().array() += 3.0;
+  Eigen::MatrixXd overlap_direction = make_matrix(n, 0.071) * 0.03;
+  Eigen::MatrixXd overlap_new = overlap;
+  overlap_new.row(1) = make_matrix(n, 0.23).row(1);
+  Eigen::MatrixXd overlap_direction_new = overlap_direction;
+  overlap_direction_new.row(1) = make_matrix(n, 0.097).row(1) * 0.03;
+
+  const int n_pairs = xmvb::vb::packed_active_pair_count(n_active);
+  Eigen::MatrixXd factors(n_aux, n_pairs);
+  Eigen::MatrixXd factor_direction(n_aux, n_pairs);
+  for (int pair = 0; pair < n_pairs; ++pair) {
+    for (int auxiliary = 0; auxiliary < n_aux; ++auxiliary) {
+      factors(auxiliary, pair) =
+          std::sin(0.07 * (auxiliary + 1) * (pair + 2));
+      factor_direction(auxiliary, pair) =
+          0.02 * std::cos(0.11 * (auxiliary + 2) * (pair + 1));
+    }
+  }
+
+  xmvb::vb::RiDirectionalGraph updated;
+  if (!updated.initialize(
+          occupied_left,
+          occupied_old,
+          overlap,
+          overlap_direction,
+          factors,
+          factor_direction) ||
+      !updated.update_right(
+          occupied_new,
+          overlap_new,
+          overlap_direction_new,
+          factors,
+          factor_direction)) {
+    throw std::runtime_error("directional RI graph update failed");
+  }
+  xmvb::vb::RiDirectionalGraph rebuilt;
+  if (!rebuilt.initialize(
+          occupied_left,
+          occupied_new,
+          overlap_new,
+          overlap_direction_new,
+          factors,
+          factor_direction)) {
+    throw std::runtime_error("directional RI graph rebuild failed");
+  }
+  const auto value = updated.value();
+  const auto reference = rebuilt.value();
+  require_close(
+      value.two_electron,
+      reference.two_electron,
+      3.0e-10,
+      "directional graph accepted contraction");
+  require_close(
+      value.two_electron_direction,
+      reference.two_electron_direction,
+      2.0e-9,
+      "directional graph contraction direction");
+  require_matrix_close(
+      value.overlap_gradient_direction,
+      reference.overlap_gradient_direction,
+      2.0e-8,
+      "directional graph overlap-adjoint direction");
+  require_matrix_close(
+      value.accepted_first_contractions,
+      reference.accepted_first_contractions,
+      3.0e-10,
+      "directional graph accepted auxiliary");
+  require_matrix_close(
+      value.directional_first_contractions,
+      reference.directional_first_contractions,
+      2.0e-9,
+      "directional graph directional auxiliary");
+}
+
 }  // namespace
 
 int main() {
@@ -353,6 +438,7 @@ int main() {
       check_directional_low_rank_update(inverse, transition, order);
     }
     check_ri_contracted_moments();
+    check_ri_directional_graph();
     std::cout << "contracted density tests passed\n";
     return 0;
   } catch (const std::exception& error) {

@@ -6,6 +6,7 @@
 set(XMVB_VBSCF_DETERMINANT_SOURCES
   vbscf/determinants/algebra/contracted_density.cpp
   vbscf/determinants/algebra/ri_contracted_moments.cpp
+  vbscf/determinants/algebra/ri_directional_graph.cpp
   vbscf/determinants/algebra/cofactor_differential.cpp
   vbscf/determinants/algebra/hamiltonian.cpp
   vbscf/determinants/algebra/overlap.cpp
