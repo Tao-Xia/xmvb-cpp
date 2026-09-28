@@ -2477,6 +2477,213 @@ the factors to reach the lower representation-specific scaling.  Thus
 Woodbury is not an RI approximation: RI changes only how the electron
 interaction is consumed.
 
+#### 9.3.2 Unified contracted-exterior jet
+
+The preceding identity extends to every exterior order required by the
+energy, gradient, and HVP.  Let
+
+$$
+E_k(X)=\det X\,\wedge^kX^{-\mathrm T}.
+$$
+
+For the rank-one dangerous core in Section 9.3.1, multilinearity of the
+exterior product and
+
+$$
+\wedge^2(ba^{\mathrm T})=0
+$$
+
+give the inverse-free identity
+
+$$
+E_k(X)
+=
+\det A
+\left[
+g\,\wedge^kA^{-\mathrm T}
+-\mathcal I_k\!\left(A^{-\mathrm T},ba^{\mathrm T}\right)
+\right],
+\qquad k=1,2,3,4,
+$$
+
+where
+
+$$
+\mathcal I_k(L,R)
+=
+\sum_{j=1}^{k}
+L\wedge\cdots\wedge
+\underset{j}{R}
+\wedge\cdots\wedge L
+$$
+
+denotes the signed insertion of the rank-one factor into one exterior slot.
+There are no terms containing two or more copies of $R=ba^{\mathrm T}$.
+Consequently the physical dangerous scalar $g$ is never inverted, including
+at the exactly singular point $g=0$.
+
+An equivalent implementation identity follows by introducing the artificial
+path
+
+$$
+X(\alpha)=A+\alpha uv^{\mathrm T}.
+$$
+
+Every complementary exterior $E_k(X(\alpha))$ is affine in $\alpha$.
+Therefore, for any certified nonzero node $c$,
+
+$$
+E_k(X(1))
+=
+\left(1-\frac{1}{c}\right)E_k(X(0))
++\frac{1}{c}E_k(X(c)).
+\tag{91}
+$$
+
+The two useful analytic choices are $c=2$, with weights $(1/2,1/2)$, and
+$c=-1$, with weights $(2,-1)$.  Their regular inverses can be obtained without
+a factorization:
+
+$$
+X(c)^{-1}
+=
+K-\frac{c}{1+c\,v^{\mathrm T}Ku}
+(Ku)(v^{\mathrm T}K).
+\tag{92}
+$$
+
+Equation 91 also reveals an important limitation.  The existing
+`CofactorDifferential` implementation already evaluates a
+$q_{\mathrm{core}}=1$ dangerous pair as two regular exterior nodes.  It does
+not materialize third- or fourth-order RDMs.  Replacing those two nodes by one
+explicit base-plus-insertion sweep is therefore an algebraic reformulation,
+not an asymptotic improvement for a dense exterior weight.  The explicit
+insertion needs the base and cross adjoints simultaneously and can even have a
+larger arithmetic constant than the two-node form.
+
+Most importantly, eq 91 is an identity for the common perturbed family
+
+$$
+X(\epsilon,\alpha)=A+\epsilon\Delta X+\alpha uv^{\mathrm T}.
+$$
+
+Differentiation with respect to $\epsilon$ therefore commutes with the
+two-node combination:
+
+$$
+D^mE_k(X(1))[\Delta X_1,\ldots,\Delta X_m]
+=
+\left(1-\frac{1}{c}\right)
+D^mE_k(X(0))[\Delta X_1,\ldots,\Delta X_m]
++\frac{1}{c}
+D^mE_k(X(c))[\Delta X_1,\ldots,\Delta X_m],
+$$
+
+for $m=0,1,2$.  A unified contracted-exterior interface can hence provide the
+whole contracted hierarchy:
+
+| Consumer | Required exterior information | Jet level |
+|---|---|---|
+| overlap and one-electron energy | $E_1$ | value |
+| two-electron energy | $E_2$ | value/contraction |
+| orbital gradient and backward adjoint | contracted $E_2,E_3$ | first derivative |
+| orbital HVP and directional backward adjoint | contracted $E_2,E_3,E_4$ | second directional derivative |
+
+The third- and fourth-order objects are never materialized.  They occur only
+through contractions in the derivative of the lower-order functional.
+
+For a dense exact two-electron kernel, any such interface still has to read
+$\Theta(n^4)$ weights.  It can improve organization and memory traffic, but
+it cannot change that lower bound.  The asymptotic reduction occurs only when
+the consumer preserves an RI, Cholesky, or THC factorization through the
+backward and HVP contractions.
+
+This distinction is concrete in the current RI implementation.  Pair forward
+and directional evaluation already use `WoodburyRiState` and
+`RiContractedMoments`, but the backward sweep still scatters every same-spin
+and opposite-spin pair into a global packed four-index active-space adjoint,
+
+$$
+\overline G_{PR},
+\qquad
+P,R=1,\ldots,N_{\mathrm{active-pair}},
+$$
+
+and only afterwards forms the RI-factor adjoint.  This retains
+$\Theta(n_{\mathrm{active}}^4)$ storage and work at precisely the boundary
+where factorization should have reduced the order.  A useful production
+object is therefore not a dense-weight `ContractedExteriorJet`, but an
+`RiFactorAdjointJet` whose output is directly
+
+$$
+\overline L_{Q,P}
+$$
+
+and its directional derivative.
+
+For a regular same-spin pair, let $M^Q$ be the occupied block of RI factor
+$Q$, $K=X^{-1}$, $A^Q=KM^Q$, and $t_Q=\operatorname{tr}A^Q$.  The pair energy
+and factor-block adjoint are
+
+$$
+\epsilon_Q
+=
+\frac{\det X}{2}
+\left[t_Q^2-\operatorname{tr}\left((A^Q)^2\right)\right],
+$$
+
+$$
+\overline M^Q
+=
+\det X
+\left[
+t_QK^{\mathrm T}
+-K^{\mathrm T}(M^Q)^{\mathrm T}K^{\mathrm T}
+\right].
+\tag{93}
+$$
+
+The rank-one dangerous-core form follows by substituting the inverse-free
+exterior identity above before taking the same adjoint.  Equation 93 is
+scattered directly to the occupied active-pair columns of
+$\overline L_{Q,P}$; no $\overline G_{PR}$ is created.  Its directional
+derivative supplies the same-spin HVP factor adjoint using the already
+available $\dot K$, $\dot M^Q$, $\dot t_Q$, and $\dot{\det X}$.
+
+For opposite spin, define the auxiliary first-cofactor contractions
+
+$$
+z_\sigma^Q
+=
+\left\langle E_1(X_\sigma),M_\sigma^Q\right\rangle.
+$$
+
+The pair energy is
+
+$$
+\epsilon_{\alpha\beta}
+=
+\sum_Q z_\alpha^Qz_\beta^Q,
+$$
+
+so the factor-block adjoints are obtained directly from
+
+$$
+\overline M_\alpha^Q=z_\beta^Q E_1(X_\alpha),
+\qquad
+\overline M_\beta^Q=z_\alpha^Q E_1(X_\beta),
+\tag{94}
+$$
+
+with the directional form given by the product rule.  Equations 93 and 94
+replace the current packed-adjoint route.  Their pair-local cost is
+$O(N_{\mathrm{aux}}n^2)$ after the accepted/directional moments are available,
+instead of an $O(n^4)$ deleted-minor scatter followed by an
+$O(N_{\mathrm{aux}}n_{\mathrm{active}}^4)$ global factor pullback.  The output
+memory is the unavoidable $O(N_{\mathrm{aux}}n_{\mathrm{active}}^2)$ RI-factor
+adjoint, with auxiliary tiling available when even that output must be
+consumed incrementally.
+
 ### 9.4 Inverse-free RI contraction and directional adjoint
 
 The propagated representation is now used directly by the RI contraction,
