@@ -886,9 +886,13 @@ W_A=
 \tag{44f}
 $$
 
-The coupled response is admitted when
+The coupled response is admitted when either the horizontal response space
+does not exceed the orbital tangent space or the contraction itself fits
+inside one core action,
 
 $$
+N_s\leq N_o
+\quad\text{or}\quad
 W_R\leq W_A.
 \tag{44g}
 $$
@@ -897,10 +901,12 @@ Otherwise NEO solves the orbital-only matrix-free trust problem and retains
 the same exact finite-trial energy and gradient acceptance test.  Equation
 44g is deliberately an operation-count comparison: it contains no molecule
 name, active-space cutoff, empirical wall-time constant, or environment
-override.  It prevents one structure-coupling image from costing more than the
-core Hessian image it augments.  The resulting large-space branch is a
-globalized second-order orbital model, but it does not claim the complete
-coupled Newton certificate of eq 44d.
+override.  The first branch retains useful Schur curvature when its complete
+horizontal model is no larger than the orbital model; the second admits a
+larger response only when its contraction count remains bounded by the core
+action.  The resulting large-space branch is a globalized second-order
+orbital model, but it does not claim the complete coupled Newton certificate
+of eq 44d.
 
 ### 9.5 Recycled response and Woodbury orbital preconditioning
 

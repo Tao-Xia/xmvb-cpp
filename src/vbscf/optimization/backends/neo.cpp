@@ -51,7 +51,8 @@ double neo_forcing_term(
 
 bool admit_structure_response(
     const VbScfObjective& objective,
-    const StructureTangentOperator& structure_hessian) {
+    const StructureTangentOperator& structure_hessian,
+    Eigen::Index orbital_dimension) {
   if (structure_hessian.tangent_size() == 0) return false;
 
   const auto& context = *objective.second_order_context();
@@ -67,12 +68,14 @@ bool admit_structure_response(
           context.selected_state_matrices);
 
   // A coupled orbital basis vector evaluates Bp in addition to the core HVP.
-  // Admit that work only when one response contraction is no more expensive,
-  // in its leading unique-string count, than the core AO-pair contraction it
-  // augments.  Otherwise use the orbital-only NEO model and let the exact
-  // trial energy and gradient globalize it.  This is an asymptotic work test,
-  // not a molecule, active-space, or wall-time threshold.
-  return response_work <= core_pair_work;
+  // Retain the complete coupled model when either its horizontal response
+  // space does not exceed the orbital tangent space or its leading
+  // unique-string contraction is no more expensive than the core AO-pair
+  // contraction.  Otherwise use orbital-only NEO and let the exact trial
+  // energy and gradient globalize it.  Both tests compare mathematical work
+  // dimensions; neither contains a molecule, active-space, or timing cutoff.
+  return structure_hessian.tangent_size() <= orbital_dimension ||
+      response_work <= core_pair_work;
 }
 
 struct AcceptedNeoKeyframe {
@@ -111,7 +114,8 @@ bool build_accepted_neo_keyframe(
   StructureTangentOperator structure_hessian(
       objective->second_order_context(), orbital_hessian.structure_action());
   const bool use_structure_response =
-      admit_structure_response(*objective, structure_hessian);
+      admit_structure_response(
+          *objective, structure_hessian, chart.reduced_size());
   record->model_dimension = std::max(
       record->model_dimension,
       static_cast<int>(
