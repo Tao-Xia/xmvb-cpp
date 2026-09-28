@@ -377,76 +377,86 @@ Eigen::MatrixXd DirectCiSigmaAction::apply(
   const Eigen::MatrixXd& beta_coulomb = beta_coulomb_diagonal();
   Eigen::MatrixXd sigma = Eigen::MatrixXd::Zero(
       n_alpha_, coefficients.cols());
-  const int work_items = block_width * n_alpha_ * n_beta_;
+  const int work_items = n_alpha_ * n_beta_;
   const int n_threads = std::max(
       1,
       std::min(effective_openmp_thread_count(), work_items));
 
-#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
-  for (int work = 0; work < work_items; ++work) {
-    // Eigen stores the alpha index contiguously. Mapping the flattened work
-    // index to that storage order gives every OpenMP chunk contiguous output
-    // writes and keeps all fixed-beta coefficient reads in one column.
-    const int alpha = work % n_alpha_;
-    const int packed_column = work / n_alpha_;
-    const int beta = packed_column % n_beta_;
-    const int block = packed_column / n_beta_;
-    const int column = packed_column;
-    double value =
-        (alpha_.diagonal[alpha] + beta_graph.diagonal[beta]) *
-        coefficients(alpha, column);
-    for (const int occupied : alpha_.occupied[alpha]) {
-      const int pair = TwoElectronIndexer::packed_pair_index(
-          occupied, occupied);
-      value += beta_coulomb(beta, pair) *
-          coefficients(alpha, column);
-    }
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+  {
+    std::vector<double> values(block_width, 0.0);
+#pragma omp for schedule(static)
+    for (int work = 0; work < work_items; ++work) {
+      // Visit each alpha/beta target once.  All Davidson block vectors share
+      // its determinant connections and integral coefficients.
+      const int alpha = work % n_alpha_;
+      const int beta = work / n_alpha_;
+      double diagonal = alpha_.diagonal[alpha] + beta_graph.diagonal[beta];
+      for (const int occupied : alpha_.occupied[alpha]) {
+        diagonal += beta_coulomb(
+            beta,
+            TwoElectronIndexer::packed_pair_index(occupied, occupied));
+      }
+      for (int block = 0; block < block_width; ++block) {
+        const int column = block * n_beta_ + beta;
+        values[block] = diagonal * coefficients(alpha, column);
+      }
 
-    for (const HamiltonianConnection& connection :
-         alpha_.off_diagonal[alpha]) {
-      double matrix_element = connection.value;
-      if (connection.density_pair >= 0) {
-        matrix_element += connection.density_sign *
-            beta_coulomb(beta, connection.density_pair);
+      for (const HamiltonianConnection& connection :
+           alpha_.off_diagonal[alpha]) {
+        double matrix_element = connection.value;
+        if (connection.density_pair >= 0) {
+          matrix_element += connection.density_sign *
+              beta_coulomb(beta, connection.density_pair);
+        }
+        for (int block = 0; block < block_width; ++block) {
+          const int column = block * n_beta_ + beta;
+          values[block] += matrix_element *
+              coefficients(connection.source, column);
+        }
       }
-      value += matrix_element * coefficients(connection.source, column);
-    }
-    for (const HamiltonianConnection& connection :
-         beta_graph.off_diagonal[beta]) {
-      double matrix_element = connection.value;
-      if (connection.density_pair >= 0) {
-        matrix_element += connection.density_sign *
-            alpha_coulomb_diagonal_(alpha, connection.density_pair);
+      for (const HamiltonianConnection& connection :
+           beta_graph.off_diagonal[beta]) {
+        double matrix_element = connection.value;
+        if (connection.density_pair >= 0) {
+          matrix_element += connection.density_sign *
+              alpha_coulomb_diagonal_(alpha, connection.density_pair);
+        }
+        for (int block = 0; block < block_width; ++block) {
+          values[block] += matrix_element * coefficients(
+              alpha,
+              block * n_beta_ + connection.source);
+        }
       }
-      value += matrix_element * coefficients(
-          alpha,
-          block * n_beta_ + connection.source);
-    }
-    const DensityConnections& alpha_singles = alpha_.singles[alpha];
-    const DensityConnections& beta_singles = beta_graph.singles[beta];
-    // Beta excitation selects one coefficient column.  Keep that column
-    // fixed while visiting all alpha sources so the opposite-spin contraction
-    // reads a small contiguous determinant column instead of striding across
-    // one column per inner-loop iteration.
-    for (std::size_t beta_single = 0;
-         beta_single < beta_singles.size();
-         ++beta_single) {
-      const int beta_source_column =
-          block * n_beta_ + beta_singles.sources[beta_single];
-      const int beta_pair = beta_singles.pairs[beta_single];
-      const double beta_sign = beta_singles.signs[beta_single];
-      for (std::size_t alpha_single = 0;
-           alpha_single < alpha_singles.size();
-           ++alpha_single) {
-        value +=
-            alpha_singles.signs[alpha_single] * beta_sign *
-            pair_kernel_(alpha_singles.pairs[alpha_single], beta_pair) *
-            coefficients(
-                alpha_singles.sources[alpha_single],
-                beta_source_column);
+      const DensityConnections& alpha_singles = alpha_.singles[alpha];
+      const DensityConnections& beta_singles = beta_graph.singles[beta];
+      // Beta excitation selects one coefficient column.  Keep that column
+      // fixed while visiting all alpha sources so the opposite-spin
+      // contraction stays inside a small determinant column.
+      for (std::size_t beta_single = 0;
+           beta_single < beta_singles.size();
+           ++beta_single) {
+        const int beta_source = beta_singles.sources[beta_single];
+        const int beta_pair = beta_singles.pairs[beta_single];
+        const double beta_sign = beta_singles.signs[beta_single];
+        for (std::size_t alpha_single = 0;
+             alpha_single < alpha_singles.size();
+             ++alpha_single) {
+          const double matrix_element =
+              alpha_singles.signs[alpha_single] * beta_sign *
+              pair_kernel_(alpha_singles.pairs[alpha_single], beta_pair);
+          const int alpha_source = alpha_singles.sources[alpha_single];
+          for (int block = 0; block < block_width; ++block) {
+            values[block] += matrix_element * coefficients(
+                alpha_source,
+                block * n_beta_ + beta_source);
+          }
+        }
+      }
+      for (int block = 0; block < block_width; ++block) {
+        sigma(alpha, block * n_beta_ + beta) = values[block];
       }
     }
-    sigma(alpha, column) = value;
   }
   return sigma;
 }
