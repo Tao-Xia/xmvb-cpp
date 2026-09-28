@@ -1,5 +1,9 @@
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
+#include <stdexcept>
+
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -26,6 +30,27 @@ inline int effective_openmp_thread_count() {
 #else
   return 1;
 #endif
+}
+
+/**
+ * @brief Bounds a requested worker count without narrowing the work size.
+ *
+ * The returned value is always representable as `int` because it cannot
+ * exceed `requested`.  Comparing in `size_t` first is essential for kernels
+ * whose work count can exceed `INT_MAX`, such as exact AO integral streams.
+ */
+inline int bounded_openmp_thread_count(
+    int requested,
+    std::size_t work_items) {
+  if (requested <= 0) {
+    throw std::invalid_argument("OpenMP thread count must be positive");
+  }
+  if (work_items == 0) {
+    return 1;
+  }
+  return static_cast<int>(std::min(
+      static_cast<std::size_t>(requested),
+      work_items));
 }
 
 }  // namespace xmvb

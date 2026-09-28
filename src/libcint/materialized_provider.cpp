@@ -267,11 +267,10 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
       shell_integral_offsets[shell_i + 1] = previous_offset + shell_count;
     }
     const std::size_t total_integral_count = shell_integral_offsets.back();
-    if (total_integral_count >
-        std::numeric_limits<std::size_t>::max() / 2) {
-      throw std::overflow_error("directed ERI capacity exceeds size_t");
-    }
-    buffers.two_electron_values.reserve(2 * total_integral_count);
+    // This large-basis path is consumed as a once-symmetry-reduced stream;
+    // unlike the CSR path below, it is never expanded into directed edges.
+    // Reserving twice the final value count retained an unused O(N_ERI)
+    // allocation for the entire calculation.
     buffers.two_electron_values.resize(total_integral_count);
     buffers.left_pair_indices.resize(total_integral_count);
     buffers.right_pair_indices.resize(total_integral_count);

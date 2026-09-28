@@ -9,6 +9,8 @@
 #include <omp.h>
 #endif
 
+#include "core/openmp.hpp"
+
 namespace xmvb::vb {
 namespace {
 
@@ -118,16 +120,6 @@ inline void accumulate_transpose(
   target[t.li] -= t.value * adjoint[t.jk];
 }
 
-int active_threads(int requested, std::size_t n_integrals) {
-  if (requested <= 0) {
-    throw std::invalid_argument("AO-H1E thread count must be positive");
-  }
-  if (n_integrals == 0) {
-    return 1;
-  }
-  return std::min(requested, static_cast<int>(n_integrals));
-}
-
 void reduce(
     std::vector<std::vector<double>> partial,
     std::vector<double>* result) {
@@ -154,7 +146,7 @@ std::vector<double> apply_ao_h1e(
   }
   const std::size_t size = matrix_size(ao);
   const std::size_t n_integrals = ao.pair_graph.integral_count();
-  n_threads = active_threads(n_threads, n_integrals);
+  n_threads = xmvb::bounded_openmp_thread_count(n_threads, n_integrals);
   std::vector<std::vector<double>> partial(
       n_threads, std::vector<double>(size, 0.0));
 #pragma omp parallel num_threads(n_threads)
@@ -185,7 +177,7 @@ std::vector<double> apply_ao_h1e_transpose(
   }
   const std::size_t size = matrix_size(ao);
   const std::size_t n_integrals = ao.pair_graph.integral_count();
-  n_threads = active_threads(n_threads, n_integrals);
+  n_threads = xmvb::bounded_openmp_thread_count(n_threads, n_integrals);
   std::vector<std::vector<double>> partial(
       n_threads, std::vector<double>(size, 0.0));
 #pragma omp parallel num_threads(n_threads)
@@ -221,7 +213,7 @@ void apply_ao_h1e_fused(
   }
   const std::size_t size = matrix_size(ao);
   const std::size_t n_integrals = ao.pair_graph.integral_count();
-  n_threads = active_threads(n_threads, n_integrals);
+  n_threads = xmvb::bounded_openmp_thread_count(n_threads, n_integrals);
   workspace->forward.resize(n_threads);
   workspace->transpose.resize(n_threads);
   for (int thread = 0; thread < n_threads; ++thread) {
@@ -274,7 +266,7 @@ void apply_ao_h1e_fused_batch(
     throw std::invalid_argument("AO-H1E batch input shape mismatch");
   }
   const std::size_t n_integrals = ao.pair_graph.integral_count();
-  n_threads = active_threads(n_threads, n_integrals);
+  n_threads = xmvb::bounded_openmp_thread_count(n_threads, n_integrals);
   const Eigen::Index n_directions = sources.cols();
   using RowMatrix =
       Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;

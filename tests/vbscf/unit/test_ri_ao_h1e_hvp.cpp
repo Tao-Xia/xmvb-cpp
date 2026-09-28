@@ -1,11 +1,13 @@
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <Eigen/Core>
 
+#include "core/openmp.hpp"
 #include "vbscf/integrals/ao/one_electron/backpropagator.hpp"
 #include "vbscf/integrals/ao/one_electron/builder.hpp"
 #include "vbscf/integrals/ao/one_electron/direct_operator.hpp"
@@ -248,6 +250,20 @@ void check_exact_builder_triangular_regression() {
                 "exact builder effective matrix changed");
 }
 
+void check_large_work_count_thread_bound() {
+  const std::size_t oversized_work_count =
+      static_cast<std::size_t>(std::numeric_limits<int>::max()) + 1;
+  require(
+      xmvb::bounded_openmp_thread_count(32, oversized_work_count) == 32,
+      "large work count overflowed the bounded OpenMP thread count");
+  require(
+      xmvb::bounded_openmp_thread_count(32, 7) == 7,
+      "small work count did not bound the OpenMP thread count");
+  require(
+      xmvb::bounded_openmp_thread_count(32, 0) == 1,
+      "empty work count did not select one OpenMP thread");
+}
+
 }  // namespace
 
 int main() {
@@ -256,6 +272,7 @@ int main() {
     check_ri_builder_and_directional_action();
     check_ri_backpropagation_adjoint_identity();
     check_exact_builder_triangular_regression();
+    check_large_work_count_thread_bound();
     std::cout << "RI AO-H1E fused HVP primitives: passed\n";
     return 0;
   } catch (const std::exception& error) {
