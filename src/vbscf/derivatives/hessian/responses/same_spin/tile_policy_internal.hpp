@@ -80,7 +80,8 @@ inline std::size_t parallel_scalar_action_bytes(
  * same-spin response tensors, and sparse opposite-spin projection.  RI
  * additionally needs two auxiliary images and three packed-pair work vectors
  * during the block GEMM. A direct-RI Woodbury traversal also owns one
- * `N_aux x n_electron^2` channel table per live tile row.  A consumer that
+ * two `N_aux x n_electron^2` tables (`A_Q` and `A_Q K`) per live worker.
+ * A consumer that
  * requests projected cofactor images additionally uses one bounded
  * `N_aux x tile_extent` row panel and its packed-pair image.  The workspace
  * bound therefore determines both the tile area and the number of
@@ -146,7 +147,8 @@ inline int plan_pair_tile_extent(
   std::size_t scratch_doubles = 6 * occupied_square + n_packed_pairs;
   if (include_ri_channel_state && n_auxiliary > 0) {
     scratch_doubles +=
-        static_cast<std::size_t>(n_auxiliary) * (occupied_square + 1) +
+        static_cast<std::size_t>(n_auxiliary) *
+            (2 * occupied_square + 1) +
         occupied_square;
   }
   const std::size_t scratch_bytes_per_worker =
