@@ -397,6 +397,70 @@ aggregate;
 the auxiliary channel matrices remain traversal-local and are not stored for
 all unique-string pairs.
 
+For a direct overlap adjoint it is preferable to propagate the first inverse
+moment
+
+$$
+B^Q=A^QK
+\tag{22f}
+$$
+
+and the aggregate contracted moment
+
+$$
+J
+=
+\sum_Q\left[j_QB^Q-A^QB^Q\right]
+=WK.
+\tag{22g}
+$$
+
+The unnormalized two-electron overlap adjoint is then
+
+$$
+\overline X_{\mathrm{ss}}
+=
+\Omega\left[
+\left(\sum_Q e_2(A^Q)\right)K^{\mathrm T}-J^{\mathrm T}
+\right].
+\tag{22h}
+$$
+
+No inverse-gradient sandwich is required in eq 22h.  Under low-rank updates
+
+$$
+\Delta A^Q=L_QR_Q^{\mathrm T},
+\qquad
+\Delta K=L_KR_K^{\mathrm T},
+$$
+
+the first inverse moment changes as
+
+$$
+\Delta B^Q
+=
+L_QR_Q^{\mathrm T}K
++A^{Q\prime}L_KR_K^{\mathrm T}.
+\tag{22i}
+$$
+
+This is itself low rank.  Therefore the product contribution required to
+update eq 22g can be evaluated as
+
+$$
+\Delta(A^QB^Q)
+=
+A^{Q\prime}\Delta B^Q
++\Delta A^QB^Q,
+\tag{22j}
+$$
+
+using only dense--thin products.  The production state consequently stores
+two auxiliary tables, $A^Q$ and $B^Q$, plus the single aggregate $J$; it does
+not store $(A^Q)^2K$ as a third auxiliary table.  Both the edge work and the
+temporary storage remain quadratic in the occupied-string dimension for
+fixed update rank.
+
 ### 3.3 Left-string substitution
 
 If only left slot $p$ changes, one column changes:
