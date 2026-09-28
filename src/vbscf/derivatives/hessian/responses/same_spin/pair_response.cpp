@@ -5,8 +5,11 @@
 #include <stdexcept>
 #include <utility>
 
+#include <Eigen/LU>
+
 #include "core/openmp.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
+#include "vbscf/determinants/algebra/ri_directional_graph.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
 #include "vbscf/determinants/pairs/traversal.hpp"
@@ -32,6 +35,26 @@ void set_symmetric_entry(
     double value) {
   (*matrix)(row, column) = value;
   (*matrix)(column, row) = value;
+}
+
+int directional_auxiliary_tile_width(
+    int n_auxiliary,
+    int n_electrons,
+    int n_workers) {
+  constexpr std::size_t workspace_bytes = 256ULL * 1024ULL * 1024ULL;
+  // ContractedDensityJet owns accepted and directional power/moment tables.
+  // Sixteen occupied matrices per auxiliary is a conservative live bound.
+  const std::size_t bytes_per_auxiliary = std::max<std::size_t>(
+      1,
+      16ULL * static_cast<std::size_t>(n_electrons) * n_electrons *
+          sizeof(double));
+  const std::size_t bytes_per_worker =
+      workspace_bytes / static_cast<std::size_t>(std::max(1, n_workers));
+  return std::max(
+      1,
+      std::min(
+          n_auxiliary,
+          static_cast<int>(bytes_per_worker / bytes_per_auxiliary)));
 }
 
 }  // namespace
@@ -239,6 +262,54 @@ Eigen::MatrixXd build_local_overlap_direction_matrix(
       n_active_orbitals);
 }
 
+SameSpinPolynomialDirectionalPairData regular_one_electron_direction(
+    const std::vector<int>& occupied_left,
+    const std::vector<int>& occupied_right,
+    const SpinDeterminantPairEvaluation& accepted,
+    const Eigen::Ref<const Eigen::MatrixXd>& one_electron,
+    const Eigen::Ref<const Eigen::MatrixXd>& one_electron_direction,
+    const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction) {
+  Eigen::MatrixXd inverse =
+      accepted.overlap_result.inverse_overlap_submatrix;
+  if (inverse.rows() != overlap_direction.rows() ||
+      inverse.cols() != overlap_direction.cols()) {
+    inverse = accepted.overlap_result.overlap_submatrix.inverse();
+  }
+  const Eigen::MatrixXd inverse_direction =
+      -inverse * overlap_direction * inverse;
+  const double determinant = accepted.overlap_result.overlap_determinant;
+  const double determinant_direction =
+      determinant * (inverse * overlap_direction).trace();
+  const Eigen::MatrixXd h = build_spin_one_electron_block_matrix_local(
+      occupied_left, occupied_right, one_electron);
+  const Eigen::MatrixXd dh = build_spin_one_electron_block_matrix_local(
+      occupied_left, occupied_right, one_electron_direction);
+  const double phi = (inverse * h).trace();
+  const double phi_direction =
+      (inverse_direction * h).trace() + (inverse * dh).trace();
+  const Eigen::MatrixXd response = inverse * h * inverse;
+  const Eigen::MatrixXd response_direction =
+      inverse_direction * h * inverse + inverse * dh * inverse +
+      inverse * h * inverse_direction;
+  const Eigen::MatrixXd bracket =
+      phi * inverse.transpose() - response.transpose();
+  const Eigen::MatrixXd bracket_direction =
+      phi_direction * inverse.transpose() +
+      phi * inverse_direction.transpose() -
+      response_direction.transpose();
+
+  SameSpinPolynomialDirectionalPairData result;
+  result.delta_overlap_determinant = determinant_direction;
+  result.delta_total_hamiltonian =
+      determinant_direction * phi + determinant * phi_direction;
+  result.delta_cofactor_1st =
+      determinant_direction * inverse.transpose() +
+      determinant * inverse_direction.transpose();
+  result.delta_same_spin_overlap_hamiltonian_gradient =
+      determinant_direction * bracket + determinant * bracket_direction;
+  return result;
+}
+
 static SameSpinPolynomialDirectionalPairData
 build_polynomial_spin_directional_data_impl(
     const std::vector<int>& occ_L,
@@ -406,6 +477,128 @@ SameSpinDirectionalPairTile build_directional_pair_tile_impl(
             return pair.has_woodbury_ri_response ||
                 pair.has_same_spin_phi_cache;
           });
+  const bool stream_regular_directional_graph =
+      stream_woodbury_ri && std::all_of(
+          accepted_pair_tile->pairs.begin(),
+          accepted_pair_tile->pairs.end(),
+          [](const SpinDeterminantPairEvaluation& pair) {
+            return pair.has_same_spin_phi_cache &&
+                pair.overlap_result.nullity == 0 &&
+                pair.overlap_result.overlap_determinant != 0.0;
+          });
+  if (stream_regular_directional_graph) {
+    const int n_threads = std::max(
+        1,
+        std::min(xmvb::effective_openmp_thread_count(), left_size));
+    const int auxiliary_tile = directional_auxiliary_tile_width(
+        accepted_ri_active_pair_factors->rows(),
+        static_cast<int>(unique_determinants[left_begin].size()),
+        n_threads);
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+    for (int left_local = 0; left_local < left_size; ++left_local) {
+      const int left_id = left_begin + left_local;
+      const auto& occupied_left = unique_determinants[left_id];
+      const std::vector<int> right_traversal = build_pair_update_traversal(
+          unique_determinants, left_id, right_begin, right_end);
+
+      for (int right_local = 0; right_local < right_size; ++right_local) {
+        const int right_id = right_begin + right_local;
+        const auto& occupied_right = unique_determinants[right_id];
+        const auto& accepted =
+            accepted_pair_tile->pair(left_local, right_local);
+        const Eigen::MatrixXd overlap_direction =
+            build_local_overlap_direction_matrix(
+                occupied_left,
+                occupied_right,
+                direction.overlap,
+                n_active_orbitals);
+        SameSpinPolynomialDirectionalPairData pair_direction =
+            regular_one_electron_direction(
+                occupied_left,
+                occupied_right,
+                accepted,
+                *accepted_active_one_electron,
+                delta_h1e,
+                overlap_direction);
+        const std::size_t pair_index =
+            static_cast<std::size_t>(left_local) * right_size + right_local;
+        tile.delta_overlap(left_local, right_local) =
+            pair_direction.delta_overlap_determinant;
+        tile.delta_regular_hamiltonian(left_local, right_local) =
+            pair_direction.delta_total_hamiltonian;
+        tile.pairs[pair_index] = std::move(pair_direction);
+      }
+
+      for (int auxiliary_begin = 0;
+           auxiliary_begin < accepted_ri_active_pair_factors->rows();
+           auxiliary_begin += auxiliary_tile) {
+        const int auxiliary_size = std::min(
+            auxiliary_tile,
+            static_cast<int>(accepted_ri_active_pair_factors->rows()) -
+                auxiliary_begin);
+        const auto accepted_factors =
+            accepted_ri_active_pair_factors->middleRows(
+                auxiliary_begin, auxiliary_size);
+        const auto directional_factors =
+            directional_ri_active_pair_factors->middleRows(
+                auxiliary_begin, auxiliary_size);
+        RiDirectionalGraph graph;
+        bool initialized = false;
+        for (const int right_id : right_traversal) {
+          const int right_local = right_id - right_begin;
+          const auto& occupied_right = unique_determinants[right_id];
+          const auto& accepted =
+              accepted_pair_tile->pair(left_local, right_local);
+          const Eigen::MatrixXd overlap_direction =
+              build_local_overlap_direction_matrix(
+                  occupied_left,
+                  occupied_right,
+                  direction.overlap,
+                  n_active_orbitals);
+          const bool updated = initialized && graph.update_right(
+              occupied_right,
+              accepted.overlap_result.overlap_submatrix,
+              overlap_direction,
+              accepted_factors,
+              directional_factors);
+          if (!updated && !graph.initialize(
+                  occupied_left,
+                  occupied_right,
+                  accepted.overlap_result.overlap_submatrix,
+                  overlap_direction,
+                  accepted_factors,
+                  directional_factors)) {
+            throw std::runtime_error(
+                "failed to initialize regular directional RI graph");
+          }
+          initialized = true;
+          const RiDirectionalTileValue value = graph.value();
+          const std::size_t pair_index =
+              static_cast<std::size_t>(left_local) * right_size + right_local;
+          auto& pair_direction = tile.pairs[pair_index];
+          pair_direction.delta_total_hamiltonian +=
+              value.two_electron_direction;
+          pair_direction.delta_same_spin_overlap_hamiltonian_gradient
+              .noalias() += value.overlap_gradient_direction;
+          tile.delta_regular_hamiltonian(left_local, right_local) =
+              pair_direction.delta_total_hamiltonian;
+          if (build_ri_projected_channels) {
+            const int channel_work =
+                left_local + left_size * right_local;
+            tile.ri_projected_channels.row(channel_work).noalias() +=
+                (accepted_factors.transpose() *
+                     value.directional_first_contractions +
+                 directional_factors.transpose() *
+                     value.accepted_first_contractions)
+                    .transpose();
+            tile.ri_projected_ready[
+                static_cast<std::size_t>(channel_work)] = 1;
+          }
+        }
+      }
+    }
+    return tile;
+  }
   if (stream_woodbury_ri) {
     const int n_threads = std::max(
         1,

@@ -393,6 +393,32 @@ void check_ri_directional_graph() {
   }
   const auto value = updated.value();
   const auto reference = rebuilt.value();
+  double tiled_two_electron = 0.0;
+  double tiled_two_electron_direction = 0.0;
+  Eigen::MatrixXd tiled_gradient = Eigen::MatrixXd::Zero(n, n);
+  for (int begin : {0, 3}) {
+    const int size = begin == 0 ? 3 : n_aux - 3;
+    xmvb::vb::RiDirectionalGraph graph_tile;
+    if (!graph_tile.initialize(
+            occupied_left,
+            occupied_old,
+            overlap,
+            overlap_direction,
+            factors.middleRows(begin, size),
+            factor_direction.middleRows(begin, size)) ||
+        !graph_tile.update_right(
+            occupied_new,
+            overlap_new,
+            overlap_direction_new,
+            factors.middleRows(begin, size),
+            factor_direction.middleRows(begin, size))) {
+      throw std::runtime_error("directional RI auxiliary tile failed");
+    }
+    const auto tile_value = graph_tile.value();
+    tiled_two_electron += tile_value.two_electron;
+    tiled_two_electron_direction += tile_value.two_electron_direction;
+    tiled_gradient.noalias() += tile_value.overlap_gradient_direction;
+  }
   require_close(
       value.two_electron,
       reference.two_electron,
@@ -418,6 +444,21 @@ void check_ri_directional_graph() {
       reference.directional_first_contractions,
       2.0e-9,
       "directional graph directional auxiliary");
+  require_close(
+      tiled_two_electron,
+      value.two_electron,
+      3.0e-12,
+      "directional auxiliary-tile contraction");
+  require_close(
+      tiled_two_electron_direction,
+      value.two_electron_direction,
+      3.0e-11,
+      "directional auxiliary-tile direction");
+  require_matrix_close(
+      tiled_gradient,
+      value.overlap_gradient_direction,
+      3.0e-10,
+      "directional auxiliary-tile adjoint");
 }
 
 }  // namespace
