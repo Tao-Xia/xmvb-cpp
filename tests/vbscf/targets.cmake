@@ -10,7 +10,6 @@ set(_xmvb_vbscf_unit_targets
   test_block_inverse_bfgs
   test_hessian_diagonal
   test_cofactor_differential
-  test_contracted_exterior_jet
   test_coupled_structure
   test_curvature_decomposition
   test_davidson
@@ -59,7 +58,6 @@ if (BUILD_TESTING)
   add_test(NAME opposite_spin_pair_graph COMMAND test_opposite_spin_pair_graph)
   add_test(NAME orthogonal_direct_ci COMMAND test_orthogonal_direct_ci)
   add_test(NAME cofactor_differential COMMAND test_cofactor_differential)
-  add_test(NAME contracted_exterior_jet COMMAND test_contracted_exterior_jet)
   add_test(NAME woodbury_core COMMAND test_woodbury_core)
   add_test(NAME woodbury_ri COMMAND test_woodbury_ri)
   add_test(NAME coupled_structure COMMAND test_coupled_structure)

@@ -4,7 +4,6 @@
 # source tree.
 
 set(XMVB_VBSCF_DETERMINANT_SOURCES
-  vbscf/determinants/algebra/contracted_exterior_jet.cpp
   vbscf/determinants/algebra/cofactor_differential.cpp
   vbscf/determinants/algebra/hamiltonian.cpp
   vbscf/determinants/algebra/overlap.cpp
