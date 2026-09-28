@@ -454,12 +454,23 @@ WoodburyRiDirection WoodburyRiState::hamiltonian_direction(
     result.directional_auxiliary.resize(moments_.channel_count());
   }
 
-  Eigen::MatrixXd transition(n_electrons_, n_electrons_);
-  Eigen::MatrixXd transition_direction(n_electrons_, n_electrons_);
+  WoodburyCore::MatrixTable transitions(
+      moments_.channel_count(), n_electrons_ * n_electrons_);
+  WoodburyCore::MatrixTable transition_directions(
+      moments_.channel_count(), n_electrons_ * n_electrons_);
   const Eigen::MatrixXd first_cofactor = core_->first_cofactor();
   for (Eigen::Index auxiliary = 0;
        auxiliary < moments_.channel_count();
        ++auxiliary) {
+    Eigen::Map<Eigen::MatrixXd> transition(
+        transitions.data() + auxiliary * n_electrons_ * n_electrons_,
+        n_electrons_,
+        n_electrons_);
+    Eigen::Map<Eigen::MatrixXd> transition_direction(
+        transition_directions.data() +
+            auxiliary * n_electrons_ * n_electrons_,
+        n_electrons_,
+        n_electrons_);
     for (int left = 0; left < n_electrons_; ++left) {
       for (int right = 0; right < n_electrons_; ++right) {
         const int pair = TwoElectronIndexer::packed_pair_index(
@@ -469,12 +480,6 @@ WoodburyRiDirection WoodburyRiState::hamiltonian_direction(
             ri_factor_direction(auxiliary, pair);
       }
     }
-    const WoodburyContractionDirection two_electron =
-        core_->second_factor_contraction_gradient_direction(
-            transition, overlap_direction, transition_direction);
-    result.hamiltonian += two_electron.value;
-    result.hamiltonian_overlap_gradient.noalias() +=
-        two_electron.overlap_gradient;
     if (auxiliary_projection) {
       result.accepted_auxiliary(auxiliary) =
           (first_cofactor.cwiseProduct(transition)).sum();
@@ -483,6 +488,15 @@ WoodburyRiDirection WoodburyRiState::hamiltonian_direction(
           (first_cofactor.cwiseProduct(transition_direction)).sum();
     }
   }
+  const WoodburyContractionDirection two_electron =
+      core_->second_channel_sum_gradient_direction(
+          moments_.channels(),
+          transitions,
+          transition_directions,
+          overlap_direction);
+  result.hamiltonian += two_electron.value;
+  result.hamiltonian_overlap_gradient.noalias() +=
+      two_electron.overlap_gradient;
   return result;
 }
 

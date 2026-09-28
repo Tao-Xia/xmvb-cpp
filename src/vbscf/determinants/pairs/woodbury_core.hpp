@@ -43,6 +43,12 @@ struct WoodburyContractionDirection {
  */
 class WoodburyCore {
  public:
+  using MatrixTable = Eigen::Matrix<
+      double,
+      Eigen::Dynamic,
+      Eigen::Dynamic,
+      Eigen::RowMajor>;
+
   explicit WoodburyCore(const Eigen::Ref<const Eigen::MatrixXd>& overlap);
   ~WoodburyCore();
 
@@ -104,6 +110,19 @@ class WoodburyCore {
       const Eigen::Ref<const Eigen::MatrixXd>& transition,
       const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
       const Eigen::Ref<const Eigen::MatrixXd>& transition_direction) const;
+  /**
+   * @brief Sum directional second-cofactor contractions over RI auxiliaries.
+   *
+   * Every table row stores one column-major flattened occupied matrix. The
+   * dangerous-core differential and final inverse sandwiches are shared by
+   * the whole auxiliary batch instead of being repeated for every factor.
+   */
+  WoodburyContractionDirection second_channel_sum_gradient_direction(
+      const Eigen::Ref<const MatrixTable>& channels,
+      const Eigen::Ref<const MatrixTable>& transitions,
+      const Eigen::Ref<const MatrixTable>& transition_directions,
+      const Eigen::Ref<const Eigen::MatrixXd>& overlap_direction,
+      bool transition_gradient = false) const;
   WoodburyContraction second_channel_contraction_gradient(
       const Eigen::Ref<const Eigen::MatrixXd>& channel,
       const Eigen::Ref<const Eigen::MatrixXd>& transition) const;

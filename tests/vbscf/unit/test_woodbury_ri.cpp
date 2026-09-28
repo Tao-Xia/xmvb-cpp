@@ -230,7 +230,9 @@ void check_state(
 int main() {
   try {
     constexpr int n_active = 7;
-    constexpr int n_auxiliary = 9;
+    // Crosses the production auxiliary-tile boundary used by the batched
+    // dangerous-pair directional contraction.
+    constexpr int n_auxiliary = 67;
     Eigen::MatrixXd orbital_vectors(5, n_active);
     for (int column = 0; column < n_active; ++column) {
       for (int row = 0; row < orbital_vectors.rows(); ++row) {

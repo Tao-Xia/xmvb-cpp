@@ -2227,24 +2227,70 @@ gradient, and HVP quantities for regular, ill-conditioned, and singular
 pairs. No finite-difference derivative or interpolation node is used in the
 production contraction.
 
+The auxiliary channels must be accumulated before applying the dense inverse
+sandwich. Let $r_Q$ be the scalar derivative with respect to $\det A$, and let
+$R_Q$ denote the remaining derivative with respect to $K$. Define
+
+$$
+r=\sum_Q r_Q,
+\qquad
+R=\sum_Q R_Q,
+$$
+
+and their directional derivatives
+
+$$
+\dot r=\sum_Q \dot r_Q,
+\qquad
+\dot R=\sum_Q \dot R_Q.
+$$
+
+With $d=\det A$ and $\dot d=d\operatorname{tr}(K\dot A)$, the complete
+two-electron overlap-adjoint direction is assembled once as
+
+$$
+\begin{aligned}
+\dot{\overline X}_{2e}
+={}&(\dot d\,r+d\dot r)K^{\mathrm T}
++d r\,\dot K^{\mathrm T}\\
+&-\dot K^{\mathrm T}RK^{\mathrm T}
+-K^{\mathrm T}\dot R K^{\mathrm T}
+-K^{\mathrm T}R\dot K^{\mathrm T}.
+\end{aligned}
+$$
+
+Thus the three dense inverse sandwiches are pair operations, not auxiliary
+operations. The implementation evaluates channel adjoints in bounded
+auxiliary tiles, accumulates $R$ and $\dot R$ with block GEMM, and releases
+each tile before advancing. This changes neither the dangerous-core
+polynomial nor the HVP; it is an exact reassociation of the auxiliary sum.
+
 For fixed small $q$, the scalar graph update retains the target cost
 
 $$
 O(N_{\mathrm{aux}}n^2)
 $$
 
-per pair edge. The present full overlap-adjoint and directional-adjoint
-implementation costs
+per pair edge. After the batched adjoint assembly, the remaining anchor work
+costs
 
 $$
 O(N_{\mathrm{aux}}n^3)
 $$
 
-per evaluated pair because it returns dense transition and overlap gradients,
-and, inside the contracted Hamiltonian-response kernel, removes the former
-occupied-pair interaction construction and its $n^4$--$n^6$
-polynomial-cofactor work. The current downstream same-spin two-electron
-integral adjoint still consumes a legacy deleted-minor cofactor object. The
+per evaluated pair because forming all $\dot C^Q$ still applies a dense
+accepted-point direction to every RI channel. The repeated final inverse
+sandwiches are no longer part of this cost. Reusing $\dot C^Q$ along the
+single-site pair graph changes the remaining term to an anchor contribution
+$O(N_{\mathrm{aux}}n^3)$ plus edge contributions
+$O(N_{\mathrm{aux}}n^2q)$. This is the next required step for the complete
+dangerous-pair algorithm.
+
+Inside the contracted Hamiltonian-response kernel, the current formulation
+removes the former occupied-pair interaction construction and its
+$n^4$--$n^6$ polynomial-cofactor work. The current downstream same-spin
+two-electron integral adjoint still consumes a legacy deleted-minor cofactor
+object. The
 RI--Woodbury migration is therefore complete for the scalar Hamiltonian,
 overlap adjoint, and their direction, but not yet for that final integral
 adjoint. Removing it requires contracting the RI factor adjoint directly into
