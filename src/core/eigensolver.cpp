@@ -446,6 +446,7 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
       0,
       active_dimension,
       &projected_hamiltonian);
+  Eigen::VectorXd previous_eigenvalues;
 
   for (int iteration = 1;
        iteration <= options.max_iterations;
@@ -465,7 +466,7 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
     const int n_projected_roots =
         active_dimension + options.n_roots > max_subspace
             ? active_dimension
-            : options.n_roots;
+            : std::min(active_dimension, options.n_roots + 1);
     const ProjectedEigenpairs projected =
         solve_lowest_projected_eigenpairs(
             active_projected_hamiltonian,
@@ -479,6 +480,13 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
         active_hamiltonian_basis * root_coefficients;
     const Eigen::MatrixXd overlap_root_vectors =
         active_overlap_basis * root_coefficients;
+    const double selected_subspace_gap =
+        projected_eigenvalues.size() > options.n_roots
+        ? std::max(
+              projected_eigenvalues[options.n_roots] -
+                  projected_eigenvalues[options.n_roots - 1],
+              std::numeric_limits<double>::epsilon())
+        : std::numeric_limits<double>::epsilon();
 
     result.relative_residual_norms.assign(options.n_roots, 0.0);
     bool converged = true;
@@ -496,11 +504,23 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
                   overlap_root_vectors.col(root).norm());
       const double relative_residual = residual.norm() / residual_scale;
       result.relative_residual_norms[root] = relative_residual;
-      const double energy_scaled_tolerance =
-          options.energy_tolerance / std::max(1.0, std::abs(eigenvalue));
-      const double required_residual =
-          std::min(options.residual_tolerance, energy_scaled_tolerance);
-      if (relative_residual <= required_residual) {
+      const double energy_scale = std::max(1.0, std::abs(eigenvalue));
+      const double first_iteration_residual_tolerance =
+          options.energy_tolerance / energy_scale;
+      const double spectral_energy_residual_tolerance = std::sqrt(
+          (options.energy_tolerance / energy_scale) *
+          (selected_subspace_gap / energy_scale));
+      const bool ritz_energy_stable =
+          previous_eigenvalues.size() == options.n_roots &&
+          std::abs(eigenvalue - previous_eigenvalues[root]) <=
+              options.energy_tolerance;
+      const bool independently_certified =
+          relative_residual <= first_iteration_residual_tolerance;
+      const double required_residual = std::min(
+          options.residual_tolerance,
+          spectral_energy_residual_tolerance);
+      if (relative_residual <= required_residual &&
+          (ritz_energy_stable || independently_certified)) {
         continue;
       }
       converged = false;
@@ -522,6 +542,8 @@ DavidsonResult GeneralizedEigensolver::solve_davidson(
       result.overlap_eigenvectors = overlap_root_vectors;
       return result;
     }
+    previous_eigenvalues =
+        projected_eigenvalues.head(options.n_roots);
 
     // A complete S-orthonormal basis leaves no independent correction
     // direction. Returning an inaccurate root here would violate the outer

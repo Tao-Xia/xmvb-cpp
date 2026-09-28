@@ -243,6 +243,50 @@ bool run_recycled_case() {
   return passed;
 }
 
+bool run_outer_accuracy_case() {
+  constexpr int dimension = 400;
+  constexpr int n_roots = 2;
+  const DenseProblem problem = make_tridiagonal_problem(dimension);
+  const xmvb::core::GeneralizedEigenAction action =
+      [&](const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
+        return xmvb::core::GeneralizedEigenActionResult{
+            problem.hamiltonian * vectors,
+            problem.overlap * vectors};
+      };
+  const xmvb::core::DavidsonOptions options{
+      n_roots,
+      2 * dimension,
+      128,
+      1.0e-7,
+      1.0e-3};
+  const xmvb::core::GeneralizedEigensolver solver;
+  const auto reference = solver.solve_dense(
+      flatten(problem.hamiltonian),
+      flatten(problem.overlap),
+      dimension);
+  const auto result = solver.solve_davidson(
+      action,
+      problem.hamiltonian.diagonal(),
+      problem.overlap.diagonal(),
+      options);
+  const double eigenvalue_error = max_eigenvalue_error(
+      reference.eigenvalues,
+      result.eigenpairs.eigenvalues,
+      n_roots);
+  const double residual = *std::max_element(
+      result.relative_residual_norms.begin(),
+      result.relative_residual_norms.end());
+  const bool passed =
+      eigenvalue_error <= options.energy_tolerance &&
+      residual <= options.residual_tolerance;
+  std::cout << "outer-accuracy Davidson"
+            << " iterations=" << result.iterations
+            << " eigenvalue_error=" << eigenvalue_error
+            << " residual=" << residual
+            << (passed ? " PASS\n" : " FAIL\n");
+  return passed;
+}
+
 bool run_default_option_cases() {
   const auto small =
       xmvb::core::make_davidson_options(3, 2, 1.0e-7, 1.0e-3);
@@ -292,6 +336,7 @@ int main() {
                2.0e-5) &&
       passed;
   passed = run_recycled_case() && passed;
+  passed = run_outer_accuracy_case() && passed;
   std::cout << (passed ? "ALL PASSED\n" : "SOME FAILED\n");
   return passed ? 0 : 1;
 }

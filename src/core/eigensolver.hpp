@@ -45,7 +45,7 @@ struct DavidsonOptions {
   int n_roots;
   int max_iterations;
   int max_subspace_dimension;
-  /** Absolute Ritz-energy accuracy requested by the outer calculation. */
+  /** Maximum change of consecutive Ritz energies requested by the outer calculation. */
   double energy_tolerance;
   /** Maximum normalized eigen-equation backward error. */
   double residual_tolerance;
