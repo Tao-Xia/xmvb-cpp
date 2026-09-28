@@ -56,6 +56,16 @@ void check_gradients(
   const Eigen::MatrixXd overlap_direction = make_matrix(overlap.rows(), 0.11);
   const Eigen::MatrixXd transition_direction =
       make_matrix(overlap.rows(), 0.07);
+  const Eigen::MatrixXd inverse_direction =
+      -inverse * overlap_direction * inverse;
+  const double determinant_direction =
+      determinant * (inverse * overlap_direction).trace();
+  const xmvb::vb::ContractedDensityJet jet(
+      inverse,
+      transition,
+      inverse_direction,
+      transition_direction,
+      maximum_order);
   constexpr double epsilon = 2.0e-6;
   for (int order = 0; order <= maximum_order; ++order) {
     const Eigen::MatrixXd plus_overlap =
@@ -84,6 +94,115 @@ void check_gradients(
         finite_difference,
         2.0e-6,
         "contracted-density gradient");
+    require_close(
+        jet.contraction_direction(
+            order, determinant, determinant_direction),
+        finite_difference,
+        2.0e-6,
+        "contracted-density scalar direction");
+    require_matrix_close(
+        jet.transition_gradient_direction(
+            order, determinant, determinant_direction),
+        (plus.transition_gradient(order, plus_overlap.determinant()) -
+         minus.transition_gradient(order, minus_overlap.determinant())) /
+            (2.0 * epsilon),
+        3.0e-5,
+        "contracted-density transition-gradient direction");
+    require_matrix_close(
+        jet.overlap_gradient_direction(
+            order, determinant, determinant_direction),
+        (plus.overlap_gradient(order, plus_overlap.determinant()) -
+         minus.overlap_gradient(order, minus_overlap.determinant())) /
+            (2.0 * epsilon),
+        3.0e-5,
+        "contracted-density overlap-gradient direction");
+  }
+}
+
+void check_directional_low_rank_update(
+    const Eigen::MatrixXd& inverse,
+    const Eigen::MatrixXd& transition,
+    int maximum_order) {
+  const int n = inverse.rows();
+  const Eigen::MatrixXd inverse_direction = make_matrix(n, 0.071) * 0.02;
+  const Eigen::MatrixXd transition_direction = make_matrix(n, 0.083) * 0.03;
+  xmvb::vb::ContractedDensityJet updated(
+      inverse,
+      transition,
+      inverse_direction,
+      transition_direction,
+      maximum_order);
+
+  const Eigen::MatrixXd inverse_left = make_matrix(n, 0.029).leftCols(2);
+  const Eigen::MatrixXd inverse_right = make_matrix(n, 0.037).leftCols(2);
+  const Eigen::MatrixXd inverse_left_direction =
+      make_matrix(n, 0.043).leftCols(2) * 0.02;
+  const Eigen::MatrixXd inverse_right_direction =
+      make_matrix(n, 0.053).leftCols(2) * 0.02;
+  const Eigen::MatrixXd channel_left = make_matrix(n, 0.061).leftCols(2);
+  const Eigen::MatrixXd channel_right = make_matrix(n, 0.067).leftCols(2);
+  const Eigen::MatrixXd channel_left_direction =
+      make_matrix(n, 0.073).leftCols(2) * 0.02;
+  const Eigen::MatrixXd channel_right_direction =
+      make_matrix(n, 0.079).leftCols(2) * 0.02;
+
+  const Eigen::MatrixXd old_channel = inverse * transition;
+  const Eigen::MatrixXd old_channel_direction =
+      inverse_direction * transition + inverse * transition_direction;
+  updated.update(
+      inverse_left,
+      inverse_right,
+      inverse_left_direction,
+      inverse_right_direction,
+      channel_left,
+      channel_right,
+      channel_left_direction,
+      channel_right_direction);
+
+  const Eigen::MatrixXd new_inverse =
+      inverse + inverse_left * inverse_right.transpose();
+  const Eigen::MatrixXd new_inverse_direction =
+      inverse_direction +
+      inverse_left_direction * inverse_right.transpose() +
+      inverse_left * inverse_right_direction.transpose();
+  const Eigen::MatrixXd new_channel =
+      old_channel + channel_left * channel_right.transpose();
+  const Eigen::MatrixXd new_channel_direction =
+      old_channel_direction +
+      channel_left_direction * channel_right.transpose() +
+      channel_left * channel_right_direction.transpose();
+  const Eigen::FullPivLU<Eigen::MatrixXd> inverse_solver(new_inverse);
+  const Eigen::MatrixXd new_transition = inverse_solver.solve(new_channel);
+  const Eigen::MatrixXd new_transition_direction = inverse_solver.solve(
+      new_channel_direction - new_inverse_direction * new_transition);
+  const xmvb::vb::ContractedDensityJet rebuilt(
+      new_inverse,
+      new_transition,
+      new_inverse_direction,
+      new_transition_direction,
+      maximum_order);
+
+  require_matrix_close(
+      updated.channel_direction(),
+      rebuilt.channel_direction(),
+      3.0e-11,
+      "updated channel direction");
+  for (int order = 0; order <= maximum_order; ++order) {
+    require_close(
+        updated.coefficient_direction(order),
+        rebuilt.coefficient_direction(order),
+        5.0e-9,
+        "updated coefficient direction");
+    require_matrix_close(
+        updated.transition_gradient_direction(order, 0.73, -0.11),
+        rebuilt.transition_gradient_direction(order, 0.73, -0.11),
+        2.0e-8,
+        "updated transition-gradient direction");
+    require_matrix_close(
+        updated.overlap_gradient_direction(order, 0.73, -0.11),
+        rebuilt.overlap_gradient_direction(order, 0.73, -0.11),
+        2.0e-8,
+        "updated overlap-gradient direction");
   }
 }
 
@@ -152,6 +271,7 @@ int main() {
       check_low_rank_update(inverse, transition, order, 1, 1);
       check_low_rank_update(inverse, transition, order, 1, 2);
       check_low_rank_update(inverse, transition, order, 2, 2);
+      check_directional_low_rank_update(inverse, transition, order);
     }
     std::cout << "contracted density tests passed\n";
     return 0;

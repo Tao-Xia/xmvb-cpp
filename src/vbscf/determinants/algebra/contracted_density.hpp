@@ -6,6 +6,8 @@
 
 namespace xmvb::vb {
 
+class ContractedDensityJet;
+
 /**
  * @brief Implicit arbitrary-order transition-density contractions.
  *
@@ -67,6 +69,7 @@ class ContractedDensityState {
       const Eigen::Ref<const Eigen::MatrixXd>& channel_right);
 
  private:
+  friend class ContractedDensityJet;
   void rebuild_coefficients();
   void validate_order(int order) const;
 
@@ -76,6 +79,72 @@ class ContractedDensityState {
   std::vector<Eigen::MatrixXd> powers_;
   std::vector<Eigen::MatrixXd> inverse_moments_;
   std::vector<double> coefficients_;
+};
+
+/**
+ * @brief Directional jet of the implicit contracted-density hierarchy.
+ *
+ * The jet propagates the tangent of every stored coefficient and adjoint
+ * moment together with the accepted state.  A graph edge differentiates the
+ * same low-rank recurrences used by `ContractedDensityState`; no higher-order
+ * RDM and no dense matrix-matrix edge product is formed.
+ */
+class ContractedDensityJet {
+ public:
+  ContractedDensityJet(
+      const Eigen::Ref<const Eigen::MatrixXd>& inverse_overlap,
+      const Eigen::Ref<const Eigen::MatrixXd>& transition,
+      const Eigen::Ref<const Eigen::MatrixXd>& inverse_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& transition_direction,
+      int maximum_order);
+
+  const ContractedDensityState& value() const noexcept { return value_; }
+  const Eigen::MatrixXd& inverse_direction() const noexcept {
+    return inverse_direction_;
+  }
+  const Eigen::MatrixXd& channel_direction() const noexcept {
+    return channel_direction_;
+  }
+
+  double coefficient_direction(int order) const;
+  double contraction_direction(
+      int order,
+      double overlap_determinant,
+      double overlap_determinant_direction) const;
+  Eigen::MatrixXd transition_gradient_direction(
+      int order,
+      double overlap_determinant,
+      double overlap_determinant_direction) const;
+  Eigen::MatrixXd overlap_gradient_direction(
+      int order,
+      double overlap_determinant,
+      double overlap_determinant_direction) const;
+
+  /**
+   * @brief Applies an accepted low-rank edge and its exact tangent.
+   *
+   * Directional factors describe derivatives of both low-rank products, e.g.
+   * `delta(L R^T) = delta_L R^T + L delta_R^T`.
+   */
+  void update(
+      const Eigen::Ref<const Eigen::MatrixXd>& inverse_left,
+      const Eigen::Ref<const Eigen::MatrixXd>& inverse_right,
+      const Eigen::Ref<const Eigen::MatrixXd>& inverse_left_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& inverse_right_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& channel_left,
+      const Eigen::Ref<const Eigen::MatrixXd>& channel_right,
+      const Eigen::Ref<const Eigen::MatrixXd>& channel_left_direction,
+      const Eigen::Ref<const Eigen::MatrixXd>& channel_right_direction);
+
+ private:
+  void rebuild_directional_coefficients();
+
+  ContractedDensityState value_;
+  Eigen::MatrixXd inverse_direction_;
+  Eigen::MatrixXd channel_direction_;
+  std::vector<Eigen::MatrixXd> directional_powers_;
+  std::vector<Eigen::MatrixXd> directional_inverse_moments_;
+  std::vector<double> directional_coefficients_;
 };
 
 }  // namespace xmvb::vb
