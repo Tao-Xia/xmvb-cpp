@@ -21,7 +21,6 @@
 #include "vbscf/derivatives/hessian/responses/same_spin/backward.hpp"
 #include "vbscf/structures/assembly/selected_coefficients.hpp"
 #include "vbscf/structures/assembly/action.hpp"
-#include "vbscf/structures/orthogonal_ci/planner.hpp"
 
 namespace xmvb::vb {
 
@@ -250,14 +249,6 @@ void solve_structure_problem(
   const int n_structures = input.structure_data.n_structures;
   const int n_roots = required_root_count(selected_state_indices);
   auto stage_start_time = std::chrono::steady_clock::now();
-  const DirectCiActionPlan direct_ci_plan = plan_orthogonal_direct_ci_action(
-      context->same_spin_pair_cache.alpha_reuse_table.unique_determinants,
-      context->same_spin_pair_cache.beta_reuse_table.unique_determinants,
-      input.orbital_preparation_input.n_active_orbitals,
-      n_roots);
-  const bool use_direct_ci_action =
-      structure_eigensolver == StructureEigensolver::Davidson &&
-      direct_ci_plan.favors_direct_ci();
   const bool use_materialized_operator =
       structure_eigensolver == StructureEigensolver::Dense;
 
