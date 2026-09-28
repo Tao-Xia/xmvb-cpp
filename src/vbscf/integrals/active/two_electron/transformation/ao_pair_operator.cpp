@@ -97,8 +97,20 @@ void apply_exact_ao_pair_kernel(
         }
       }
     }
-    for (const auto& partial : partial_products) {
-      *result += partial;
+    // Each integral-stream worker owns a complete private image because the
+    // canonical stream scatters to both AO-pair rows.  Reduce those images by
+    // output element: this preserves the deterministic thread-order sum while
+    // avoiding a serial pass over n_threads * n_ao_pairs * n_active_pairs.
+    // The reduction is outside the integral OpenMP region, so it can use the
+    // whole allocation without nested parallelism.
+    const Eigen::Index result_size = result->size();
+#pragma omp parallel for schedule(static) num_threads(n_threads)
+    for (Eigen::Index index = 0; index < result_size; ++index) {
+      double value = 0.0;
+      for (int thread = 0; thread < n_threads; ++thread) {
+        value += partial_products[thread].data()[index];
+      }
+      target[index] = value;
     }
     return;
   }
@@ -214,7 +226,7 @@ void apply_generated_pair_rows(
   if (directional_pair_products != nullptr) {
     directional_pair_products->setZero(row_count, n_active_pairs);
   }
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(dynamic, 1)
   for (Eigen::Index local_row = 0; local_row < row_count; ++local_row) {
     const Eigen::Index target_row = row_begin + local_row;
     const int edge_begin = graph.row_offsets[target_row];
