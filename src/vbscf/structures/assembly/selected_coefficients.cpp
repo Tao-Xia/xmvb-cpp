@@ -2,9 +2,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <stdexcept>
 #include <string>
 
+#include "core/openmp.hpp"
 #include "vbscf/determinants/pairs/storage.hpp"
 
 namespace xmvb::vb {
@@ -12,6 +14,13 @@ namespace xmvb::vb {
 namespace {
 
 constexpr double kNormalizedWeightTolerance = 1e-10;
+
+struct SpinPairContribution {
+  std::size_t packed_pair = 0;
+  int determinant = 0;
+  double coefficient = 0.0;
+};
+
 double estimate_dense_selected_state_contraction_work(
     const SelectedStateDeterminantMatrices& selected_state_matrices) {
   const double n_unique_alpha =
@@ -255,47 +264,116 @@ build_selected_state_determinant_matrices_from_column_provider_impl(
       touched_diagonal_indices.reserve(n_determinants);
     }
 
-    for (int determinant_index = 0;
-         determinant_index < n_determinants;
-         ++determinant_index) {
-      const auto& structure_terms =
-          full_determinant_data.determinant_to_structure_terms[
-              determinant_index];
+    const int n_threads = std::max(
+        1,
+        std::min(xmvb::effective_openmp_thread_count(), n_determinants));
+    std::vector<std::vector<SpinPairContribution>> partial_contributions(
+        n_threads);
+    std::vector<int> invalid_input(n_threads, 0);
+    const std::size_t reserve_per_thread =
+        (static_cast<std::size_t>(n_determinants) + n_threads - 1) /
+        n_threads;
+    for (auto& partial : partial_contributions) {
+      partial.reserve(reserve_per_thread);
+    }
+
+#pragma omp parallel if(n_threads > 1) num_threads(n_threads)
+    {
+      int thread = 0;
+#ifdef _OPENMP
+      thread = omp_get_thread_num();
+#endif
+      auto& partial = partial_contributions[thread];
+#pragma omp for schedule(static)
+      for (int determinant_index = 0;
+           determinant_index < n_determinants;
+           ++determinant_index) {
+        const auto& structure_terms =
+            full_determinant_data.determinant_to_structure_terms[
+                determinant_index];
+        double coefficient = 0.0;
+        bool valid = true;
+        for (const auto& term : structure_terms) {
+          if (term.structure_index < 0 ||
+              term.structure_index >= n_structures) {
+            invalid_input[thread] = 1;
+            valid = false;
+            break;
+          }
+          coefficient +=
+              term.coefficient *
+              selected_state_column[term.structure_index];
+        }
+        const int unique_alpha_id =
+            result.determinant_to_unique_alpha_id[determinant_index];
+        const int unique_beta_id =
+            result.determinant_to_unique_beta_id[determinant_index];
+        if (!valid || unique_alpha_id < 0 ||
+            unique_alpha_id >= n_unique_alpha ||
+            unique_beta_id < 0 || unique_beta_id >= n_unique_beta) {
+          invalid_input[thread] = 1;
+          continue;
+        }
+        if (close_shell_diagonal && unique_alpha_id != unique_beta_id) {
+          invalid_input[thread] = 1;
+          continue;
+        }
+        const std::size_t packed_pair = close_shell_diagonal
+            ? static_cast<std::size_t>(unique_alpha_id)
+            : static_cast<std::size_t>(unique_beta_id) * n_unique_alpha +
+                unique_alpha_id;
+        partial.push_back(
+            SpinPairContribution{
+                packed_pair, determinant_index, coefficient});
+      }
+    }
+    if (std::any_of(
+            invalid_input.begin(), invalid_input.end(),
+            [](int invalid) { return invalid != 0; })) {
+      throw std::out_of_range(
+          "determinant-to-structure or unique-spin map is out of range");
+    }
+
+    std::vector<SpinPairContribution> contributions;
+    contributions.reserve(n_determinants);
+    for (auto& partial : partial_contributions) {
+      contributions.insert(
+          contributions.end(),
+          std::make_move_iterator(partial.begin()),
+          std::make_move_iterator(partial.end()));
+    }
+    std::sort(
+        contributions.begin(), contributions.end(),
+        [](const SpinPairContribution& left,
+           const SpinPairContribution& right) {
+          if (left.packed_pair != right.packed_pair) {
+            return left.packed_pair < right.packed_pair;
+          }
+          return left.determinant < right.determinant;
+        });
+    for (std::size_t first = 0; first < contributions.size();) {
+      const std::size_t packed_pair = contributions[first].packed_pair;
       double coefficient = 0.0;
-      for (const auto& term : structure_terms) {
-        if (term.structure_index < 0 || term.structure_index >= n_structures) {
-          throw std::out_of_range("determinant_to_structure_terms structure index out of range");
-        }
-        coefficient +=
-            term.coefficient *
-            selected_state_column[term.structure_index];
+      std::size_t last = first;
+      while (last < contributions.size() &&
+             contributions[last].packed_pair == packed_pair) {
+        coefficient += contributions[last].coefficient;
+        ++last;
       }
-      const int unique_alpha_id =
-          result.determinant_to_unique_alpha_id[determinant_index];
-      const int unique_beta_id =
-          result.determinant_to_unique_beta_id[determinant_index];
-      if (unique_alpha_id < 0 || unique_alpha_id >= n_unique_alpha ||
-          unique_beta_id < 0 || unique_beta_id >= n_unique_beta) {
-        throw std::out_of_range("determinant-to-unique spin id is out of range");
-      }
-      // In the expected full-determinant space each (alpha,beta) pair is unique.
-      // We still accumulate defensively in case an upstream caller keeps
-      // duplicate determinant rows mapped to the same unique spin pair.
       if (close_shell_diagonal) {
-        if (unique_alpha_id != unique_beta_id) {
-          throw std::runtime_error(
-              "close-shell selected-state compression requires alpha and beta unique ids to match");
-        }
-        state_coefficients.diagonal_coefficients[unique_alpha_id] +=
-            coefficient;
-        touched_diagonal_indices.push_back(unique_alpha_id);
+        const int unique_id = static_cast<int>(packed_pair);
+        state_coefficients.diagonal_coefficients[unique_id] = coefficient;
+        touched_diagonal_indices.push_back(unique_id);
       } else {
-        state_coefficients.coefficient_matrix(unique_alpha_id, unique_beta_id) +=
-            coefficient;
-        touched_pair_indices.push_back(
-            unique_beta_id * n_unique_alpha +
-            unique_alpha_id);
+        const int unique_alpha_id = static_cast<int>(
+            packed_pair % n_unique_alpha);
+        const int unique_beta_id = static_cast<int>(
+            packed_pair / n_unique_alpha);
+        state_coefficients.coefficient_matrix(
+            unique_alpha_id, unique_beta_id) = coefficient;
+        touched_pair_indices.push_back(packed_pair);
       }
+      first = last;
     }
 
     // Build the exact trimmed support block for this selected state after the
