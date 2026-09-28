@@ -38,20 +38,28 @@ void RiContractedMoments::initialize(
   inverse_overlap_ = inverse_overlap;
   channels_ = channels;
   first_moments_.resizeLike(channels_);
-  second_moments_.resizeLike(channels_);
   const int n = dimension();
+  second_response_moment_ = Eigen::MatrixXd::Zero(n, n);
   for (Eigen::Index auxiliary = 0;
        auxiliary < channel_count();
        ++auxiliary) {
     const Eigen::Map<const Eigen::MatrixXd> accepted = channel(auxiliary);
     Eigen::Map<Eigen::MatrixXd> first =
         mutable_table_matrix(&first_moments_, auxiliary, n);
-    Eigen::Map<Eigen::MatrixXd> second =
-        mutable_table_matrix(&second_moments_, auxiliary, n);
     first.noalias() = accepted * inverse_overlap_;
-    second.noalias() = accepted * first;
+    second_response_moment_.noalias() +=
+        accepted.trace() * first - accepted * first;
   }
-  rebuild_aggregates();
+  second_coefficient_sum_ = 0.0;
+  for (Eigen::Index auxiliary = 0;
+       auxiliary < channel_count();
+       ++auxiliary) {
+    const Eigen::Map<const Eigen::MatrixXd> accepted = channel(auxiliary);
+    const double trace = accepted.trace();
+    second_coefficient_sum_ += 0.5 *
+        (trace * trace -
+         accepted.cwiseProduct(accepted.transpose()).sum());
+  }
 }
 
 void RiContractedMoments::update(
@@ -83,8 +91,6 @@ void RiContractedMoments::update(
         mutable_table_matrix(&channels_, auxiliary, n);
     Eigen::Map<Eigen::MatrixXd> first =
         mutable_table_matrix(&first_moments_, auxiliary, n);
-    Eigen::Map<Eigen::MatrixXd> second =
-        mutable_table_matrix(&second_moments_, auxiliary, n);
     const Eigen::MatrixXd old_accepted = accepted;
     const Eigen::MatrixXd old_first = first;
     const Eigen::Map<const Eigen::MatrixXd> left =
@@ -110,21 +116,36 @@ void RiContractedMoments::update(
           (new_accepted * inverse_left) * inverse_right.transpose();
     }
 
-    Eigen::MatrixXd new_second = second;
+    const int first_update_rank = channel_rank + inverse_left.cols();
+    Eigen::MatrixXd first_update_left(n, first_update_rank);
+    Eigen::MatrixXd first_update_right(n, first_update_rank);
     if (channel_rank != 0) {
-      new_second.noalias() +=
-          (new_accepted * left) * (right.transpose() * old_inverse);
-      new_second.noalias() += left * (right.transpose() * old_first);
+      first_update_left.leftCols(channel_rank) = left;
+      first_update_right.leftCols(channel_rank).noalias() =
+          old_inverse.transpose() * right;
     }
     if (inverse_left.cols() != 0) {
-      new_second.noalias() +=
-          (new_accepted * (new_accepted * inverse_left)) *
-          inverse_right.transpose();
+      first_update_left.rightCols(inverse_left.cols()).noalias() =
+          new_accepted * inverse_left;
+      first_update_right.rightCols(inverse_left.cols()) = inverse_right;
     }
+    Eigen::MatrixXd product_direction =
+        Eigen::MatrixXd::Zero(n, n);
+    if (first_update_rank != 0) {
+      product_direction.noalias() +=
+          (new_accepted * first_update_left) *
+          first_update_right.transpose();
+    }
+    if (channel_rank != 0) {
+      product_direction.noalias() +=
+          left * (right.transpose() * old_first);
+    }
+    second_response_moment_.noalias() +=
+        new_accepted.trace() * new_first -
+        old_accepted.trace() * old_first - product_direction;
 
     accepted = new_accepted;
     first = new_first;
-    second = new_second;
   }
   inverse_overlap_ = new_inverse;
   rebuild_aggregates();
@@ -140,15 +161,8 @@ Eigen::Map<const Eigen::MatrixXd> RiContractedMoments::first_moment(
   return table_matrix(first_moments_, auxiliary, dimension());
 }
 
-Eigen::Map<const Eigen::MatrixXd> RiContractedMoments::second_moment(
-    Eigen::Index auxiliary) const {
-  return table_matrix(second_moments_, auxiliary, dimension());
-}
-
 void RiContractedMoments::rebuild_aggregates() {
   second_coefficient_sum_ = 0.0;
-  second_response_moment_ =
-      Eigen::MatrixXd::Zero(dimension(), dimension());
   for (Eigen::Index auxiliary = 0;
        auxiliary < channel_count();
        ++auxiliary) {
@@ -157,8 +171,6 @@ void RiContractedMoments::rebuild_aggregates() {
     second_coefficient_sum_ += 0.5 *
         (trace * trace -
          accepted.cwiseProduct(accepted.transpose()).sum());
-    second_response_moment_.noalias() +=
-        trace * first_moment(auxiliary) - second_moment(auxiliary);
   }
 }
 
