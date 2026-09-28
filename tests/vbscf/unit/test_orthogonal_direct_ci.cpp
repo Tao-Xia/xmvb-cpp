@@ -172,7 +172,9 @@ void check_planner() {
       cerras_beta,
       11,
       1);
-  require(cerras.complete(), "CERRAS-size fixed-spin space was not recognized");
+  require(
+      cerras.carrier_complete(),
+      "CERRAS-size fixed-spin carrier was not recognized");
   require(cerras.n_alpha_strings == 462 && cerras.n_beta_strings == 462,
           "CERRAS-size determinant count is wrong");
   require(cerras.alpha_same_spin_connections == 181 &&
@@ -187,7 +189,9 @@ void check_planner() {
       loflea_space,
       12,
       1);
-  require(loflea.complete(), "LOFLEA-size fixed-spin space was not recognized");
+  require(
+      loflea.carrier_complete(),
+      "LOFLEA-size fixed-spin carrier was not recognized");
   require(loflea.n_alpha_strings == 924 && loflea.n_beta_strings == 924,
           "LOFLEA-size determinant count is wrong");
   require(loflea.alpha_same_spin_connections == 262 &&
@@ -202,9 +206,36 @@ void check_planner() {
       cerras_beta,
       11,
       1);
-  require(!rejected.complete() && !rejected.favors_direct_ci(),
+  require(!rejected.carrier_complete() && !rejected.favors_direct_ci(),
           "incomplete fixed-spin space was admitted");
 
+  auto duplicate = cerras_alpha;
+  duplicate.back() = duplicate.front();
+  const auto duplicate_rejected = xmvb::vb::plan_orthogonal_direct_ci_action(
+      duplicate,
+      cerras_beta,
+      11,
+      1);
+  require(
+      !duplicate_rejected.carrier_complete(),
+      "count-complete carrier with a duplicate string was admitted");
+
+  constexpr std::size_t workspace_budget = 256ULL * 1024ULL * 1024ULL;
+  require(
+      loflea.fits_action_workspace(workspace_budget),
+      "LOFLEA-size direct-CI carrier exceeded the action workspace");
+  const auto large_half_filled = complete_space(16, 8);
+  const auto large_plan = xmvb::vb::plan_orthogonal_direct_ci_action(
+      large_half_filled,
+      large_half_filled,
+      16,
+      1);
+  require(
+      large_plan.carrier_complete(),
+      "large fixed-spin carrier was not recognized");
+  require(
+      !large_plan.fits_action_workspace(workspace_budget),
+      "multi-gigabyte direct-CI carrier passed the action workspace limit");
 }
 
 void check_sigma_action() {

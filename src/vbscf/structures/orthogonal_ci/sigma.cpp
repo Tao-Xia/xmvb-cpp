@@ -108,7 +108,7 @@ DirectCiSigmaAction::DirectCiSigmaAction(
            alpha_determinants,
            beta_determinants,
            n_orbitals_,
-           1).complete()) {
+           1).carrier_complete()) {
     throw std::invalid_argument(
         "orthogonal direct-CI sigma requires complete fixed-spin spaces");
   }

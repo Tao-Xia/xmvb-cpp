@@ -13,8 +13,8 @@ namespace xmvb::vb {
  * sparse structure-to-spin-product scatter and gather.
  */
 struct DirectCiActionPlan {
-  bool alpha_space_complete = false;
-  bool beta_space_complete = false;
+  bool alpha_carrier_complete = false;
+  bool beta_carrier_complete = false;
   int n_active_orbitals = 0;
   int n_alpha_electrons = 0;
   int n_beta_electrons = 0;
@@ -26,9 +26,16 @@ struct DirectCiActionPlan {
   long double kronecker_flops = 0.0L;
   long double direct_ci_flops = 0.0L;
   long double exterior_transform_flops = 0.0L;
+  /** Minimum coefficient workspace for one direct-CI action vector. */
+  std::size_t minimum_action_workspace_bytes = 0;
 
-  bool complete() const noexcept {
-    return alpha_space_complete && beta_space_complete;
+  bool carrier_complete() const noexcept {
+    return alpha_carrier_complete && beta_carrier_complete;
+  }
+
+  bool fits_action_workspace(std::size_t workspace_bytes) const noexcept {
+    return carrier_complete() &&
+        minimum_action_workspace_bytes <= workspace_bytes;
   }
 
   long double total_direct_ci_flops() const noexcept {
@@ -36,7 +43,7 @@ struct DirectCiActionPlan {
   }
 
   bool favors_direct_ci() const noexcept {
-    return complete() && total_direct_ci_flops() < kronecker_flops;
+    return carrier_complete() && total_direct_ci_flops() < kronecker_flops;
   }
 
 };
