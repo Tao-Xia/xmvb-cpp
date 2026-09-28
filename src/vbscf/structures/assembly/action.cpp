@@ -27,20 +27,13 @@ int bounded_structure_action_width(
     int n_unique_alpha,
     int n_unique_beta,
     bool direct_ci) {
-  // A direct-CI column owns determinant-product sigma and exterior-transform
-  // workspaces. Keeping its width at one prevents the FCI workspace from being
-  // multiplied by the Davidson block width. The factorized action can batch,
-  // but bounds its simultaneous spin-product matrices by the same byte budget.
-  if (direct_ci) {
-    return 1;
-  }
   const std::size_t spin_products =
       static_cast<std::size_t>(n_unique_alpha) *
       static_cast<std::size_t>(n_unique_beta);
-  constexpr std::size_t kSimultaneousSpinProductMatrices = 8;
+  const std::size_t simultaneous_spin_product_matrices = direct_ci ? 4 : 8;
   const std::size_t bytes_per_column = std::max<std::size_t>(
       sizeof(double),
-      kSimultaneousSpinProductMatrices * spin_products * sizeof(double));
+      simultaneous_spin_product_matrices * spin_products * sizeof(double));
   const int budget_width = static_cast<int>(std::max<std::size_t>(
       1ULL, kStructureActionWorkspaceBytes / bytes_per_column));
   return std::max(
