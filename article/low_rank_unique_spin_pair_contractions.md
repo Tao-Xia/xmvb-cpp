@@ -1650,6 +1650,99 @@ $$
 or less when the auxiliary index is blocked. It does not require a matrix of
 size $O(m^4b)$ in the active-orbital dimension $m$.
 
+### 8.4 Directional moment graph
+
+The accepted and directional states must be propagated on the same
+single-site-substitution graph. It is not sufficient to update the accepted
+inverse by Woodbury and then rebuild every directional state independently.
+For the right-string edge of eqs 11--13, let both the accepted orbitals and a
+trial orbital direction vary. The edge quantities obey
+
+$$
+\dot a=\dot K u,
+\qquad
+\dot c=\dot K^{\mathrm T}v+K^{\mathrm T}\dot v,
+\qquad
+\dot d=\dot v^{\mathrm T}a+v^{\mathrm T}\dot a.
+\tag{72a}
+$$
+
+Differentiating the determinant-lemma and Sherman--Morrison updates gives
+
+$$
+\dot\Omega'=\dot\Omega d+\Omega\dot d,
+\tag{72b}
+$$
+
+and
+
+$$
+\dot K'
+=
+\dot K
+-\frac{\dot a c^{\mathrm T}+a\dot c^{\mathrm T}}{d}
++\frac{\dot d}{d^2}ac^{\mathrm T}.
+\tag{72c}
+$$
+
+For either a one-electron channel or one RI auxiliary channel, define
+
+$$
+t^{\mathrm T}=\delta m^{\mathrm T}-c^{\mathrm T}M,
+\tag{72d}
+$$
+
+and
+
+$$
+\dot t^{\mathrm T}
+=
+\delta\dot m^{\mathrm T}
+-\dot c^{\mathrm T}M
+-c^{\mathrm T}\dot M.
+\tag{72e}
+$$
+
+The contracted transition moment and its direction then propagate as
+
+$$
+A'=A+\frac{at^{\mathrm T}}{d},
+\tag{72f}
+$$
+
+$$
+\dot A'
+=
+\dot A
++\frac{\dot a t^{\mathrm T}+a\dot t^{\mathrm T}}{d}
+-\frac{\dot d}{d^2}at^{\mathrm T}.
+\tag{72g}
+$$
+
+Equations 72a--72g are exact derivatives of the accepted graph edge; they do
+not introduce a finite-difference, secant, or truncated response model. The
+same recurrence applies componentwise to the contracted exterior jets needed
+by eqs 65--71. For an auxiliary tile of width $q_b$, a directional graph
+anchor costs
+
+$$
+O(q_b n^3),
+\tag{72h}
+$$
+
+whereas every subsequent certified rank-one edge costs
+
+$$
+O(q_b n^2).
+\tag{72i}
+$$
+
+Therefore the HVP has the same pair-edge occupied-space exponent as the
+accepted energy and gradient. Reconstructing $\dot K$, $\dot A^Q$, or their
+contracted exterior moments independently at every pair would restore an
+unnecessary cubic pair-local term and is excluded from the low-scaling
+algorithm.
+
 ## 9. Complexity and bounded-memory execution
 
 Let
@@ -1803,19 +1896,36 @@ of expanding the derivative before contraction and are never production
 intermediates.
 
 The corresponding streamed working memory for auxiliary block width $q_b$
-is
+and $w$ simultaneous traversal workers is
 
 $$
 M_{\mathrm{work}}
 =
 O\!\left[
-(b+1)q_b n_\sigma^2
+(b+1)wq_b n_\sigma^2
 \right]
 $$
 
-per traversal worker, in addition to the requested RI-factor/orbital adjoint
-and bounded structure tiles. There is no $O(U^2N_{\mathrm{aux}}n^2)$ pair
-cache and no $O(m^4)$ active pair-pair adjoint.
+in addition to the requested RI-factor/orbital adjoint and bounded structure
+tiles. Given an explicit directional-workspace budget $M_{\max}$, the largest
+admissible auxiliary tile is therefore chosen from
+
+$$
+q_b
+\le
+\left\lfloor
+\frac{M_{\max}}
+{c_{\mathrm{jet}}(b+1)w n_\sigma^2 s_{\mathrm{fp}}}
+\right\rfloor,
+\tag{76d}
+$$
+
+where $s_{\mathrm{fp}}$ is the floating-point element size and
+$c_{\mathrm{jet}}$ counts the simultaneously live accepted and directional
+two-index channels. Equation 76d is an execution-space constraint, not a
+molecule-dependent physical threshold. There is no
+$O(U^2N_{\mathrm{aux}}n^2)$ pair cache and no $O(m^4)$ active pair-pair
+adjoint.
 
 For comparison, an unstructured exact two-electron contraction retains
 
