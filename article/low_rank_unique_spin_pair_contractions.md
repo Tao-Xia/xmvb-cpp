@@ -847,6 +847,134 @@ minors of $X$. The contracted interpolation in Section 10.2 applies
 componentwise to eqs 34b, 34i, and 34k. Hence the arbitrary-order formulation
 does not introduce an inverse-based approximation at ill-conditioned pairs.
 
+### 4.6.1 Where the third- and fourth-order densities enter
+
+Two different orders must be distinguished. The electronic Hamiltonian has
+particle rank two, whereas differentiation of its second-cofactor contraction
+raises the cofactor rank. Let $\mathfrak C_k(X)$ denote the unnormalized
+$k$-particle transition density, equivalently the signed order-$k$
+complementary cofactor of the occupied overlap $X$. In schematic exterior
+notation,
+
+$$
+D\mathfrak C_k(X)[\Delta X]
+=
+\mathfrak C_{k+1}(X)\mathbin{:}_1\Delta X,
+\tag{34n1}
+$$
+
+and
+
+$$
+D^2\mathfrak C_k(X)[\Delta X,\Delta Y]
+=
+\mathfrak C_{k+2}(X)
+\mathbin{:}_2(\Delta X,\Delta Y),
+\tag{34n2}
+$$
+
+where $\mathbin{:}_s$ denotes the signed contraction of $s$ complementary
+index pairs. Therefore a two-electron Hamiltonian contraction contains the
+following hierarchy:
+
+| Requested quantity | Cofactor contribution | Size if materialized |
+| --- | --- | --- |
+| energy | $\mathfrak C_2$ | $\binom{n}{2}^2=\Theta(n^4)$ |
+| orbital gradient | $D\mathfrak C_2$, hence contracted $\mathfrak C_3$ | $\binom{n}{3}^2=\Theta(n^6)$ |
+| orbital HVP | $D^2\mathfrak C_2$, hence contracted $\mathfrak C_4$ | $\binom{n}{4}^2=\Theta(n^8)$ |
+
+The third- and fourth-order terms are thus not optional and are not discarded.
+They are evaluated after contraction with the integral factors and orbital
+directions. They must not be confused with explicitly requested 3-RDM and
+4-RDM tensors.
+
+For a regular pair and one RI factor, define
+
+$$
+A^Q=K M^Q,
+\qquad
+e_k^Q=[t^k]\det(I+tA^Q).
+\tag{34n3}
+$$
+
+Newton identities express $e_k^Q$ through
+
+$$
+\operatorname{tr}\!\left[(A^Q)^j\right],
+\qquad j=1,\ldots,k,
+\tag{34n4}
+$$
+
+and the reverse and directional contractions require only the two-index
+moments
+
+$$
+(A^Q)^jK,
+\qquad
+D\!\left[(A^Q)^jK\right][\dot A^Q,\dot K].
+\tag{34n5}
+$$
+
+For the physical two-electron case, evaluating the order-two scalar,
+its overlap adjoint, and the directional derivative of that adjoint exactly
+accounts for the contracted second-, third-, and fourth-order cofactor terms,
+respectively. No array with six or eight occupied indices is formed.
+
+Let $p$ be the highest cofactor rank required by differentiation; $p=4$ for
+an orbital HVP of a two-electron Hamiltonian. For fixed $p$, a dense anchor
+and a certified rank-$r$ graph edge have the targets
+
+$$
+T_{\mathrm{anchor}}(p)
+=
+O\!\left(pN_{\mathrm{aux}}n^3\right),
+\tag{34n6}
+$$
+
+$$
+T_{\mathrm{edge}}(p)
+=
+O\!\left(p^2rN_{\mathrm{aux}}n^2\right),
+\tag{34n7}
+$$
+
+and auxiliary-tiled working memory
+
+$$
+M_{\mathrm{work}}(p)
+=
+O\!\left(pb_{\mathrm{aux}}n^2\right).
+\tag{34n8}
+$$
+
+Thus the explicit $n^6$ and $n^8$ representations are replaced by
+fixed-order two-index moment jets. The reduction is not a claim that a full
+3-RDM or 4-RDM can be written below its output size; it applies because the
+VBSCF energy, gradient, and HVP request only their contractions.
+
+For an ill-conditioned pair, let $r_c$ be the dimension of the inverse-free
+dangerous core. The corresponding target replaces the regular edge work by
+
+$$
+T_{\mathrm{dangerous\ edge}}(p)
+=
+O\!\left(
+p^2rN_{\mathrm{aux}}n^2
++pN_{\mathrm{aux}}n^2r_c
++N_{\mathrm{aux}}\operatorname{poly}(p,r_c)
+\right).
+\tag{34n9}
+$$
+
+The dependence on $n$ remains quadratic at fixed $p$, $r$, and $r_c$; only
+the small dangerous core retains the higher exterior algebra. Achieving
+eq 34n9 for the complete dangerous-pair gradient and HVP pullback is the
+remaining implementation requirement. The current regular-pair moment jet
+already realizes eqs 34n6--34n8, whereas the dangerous-pair code still has a
+batched dense adjoint product with $O(N_{\mathrm{aux}}n^3)$ work. Therefore
+the arbitrary-order low-scaling formulation is mathematically established,
+but its dangerous-pair production path is not yet complete.
+
 ### 4.7 Representation lower bounds, not the production algorithm
 
 This section distinguishes an implicit density from an explicitly requested
@@ -1627,7 +1755,10 @@ $$
 
 Equations 59--71 provide the exact pair-local contribution to a matrix-free
 HVP. They require only matrices with two occupied indices and one optional
-auxiliary index. Third- and fourth-order cofactor derivatives never appear.
+auxiliary index. The contracted third- and fourth-order cofactor contributions
+are present through the first and second derivatives of the second-cofactor
+functional, but the corresponding six- and eight-index tensors are never
+materialized.
 
 ### 8.3 Block HVP
 
@@ -1867,10 +1998,11 @@ P_\sigma N_{\mathrm{aux}}n_\sigma^2
 \tag{76b}
 $$
 
-Higher cofactor orders that appear after formally differentiating a
-transition RDM do not change eq 76b. The implementation differentiates the
-already contracted scalar functional. More generally, propagating a Taylor
-jet through derivative order $p$ requires only convolutions of the two-index
+Higher cofactor orders that appear after differentiating a transition RDM do
+not change eq 76b when their contractions are propagated directly. The
+implementation differentiates the already contracted scalar functional. More
+generally, propagating a Taylor jet through derivative order $p$ requires only
+convolutions of the two-index
 states
 
 $$
@@ -1890,10 +2022,14 @@ p^2P_\sigma N_{\mathrm{aux}}n_\sigma^2
 \tag{76c}
 $$
 
-Thus gradient, HVP, and any fixed derivative order retain the same powers of
-$n_\sigma$ and $N_{\mathrm{aux}}$. Third- and fourth-order RDMs are artifacts
-of expanding the derivative before contraction and are never production
-intermediates.
+Thus gradient, HVP, and any fixed derivative order retain the same target
+powers of $n_\sigma$ and $N_{\mathrm{aux}}$. The contracted third- and
+fourth-order contributions are physical and must be retained. Only their
+explicit RDM representations are artifacts of expanding the derivative before
+contraction and are excluded from the production intermediates. Equation 76c
+is the completed graph target; the current dangerous-core pullback still
+contains an $O(N_{\mathrm{aux}}n_\sigma^3)$ dense adjoint product and has not
+yet reached this bound.
 
 The corresponding streamed working memory for auxiliary block width $q_b$
 and $w$ simultaneous traversal workers is

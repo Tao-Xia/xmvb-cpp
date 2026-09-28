@@ -19,6 +19,11 @@ class ContractedDensityJet;
  * It stores matrix powers and the contracted moments `(K M)^j K`, not an
  * order-q RDM.  Both hierarchies admit exact quadratic-cost updates when `K`
  * and `K M` change by low rank along a unique-spin-string pair graph.
+ *
+ * `maximum_order` is the particle rank of the contracted operator.  It is
+ * not the orbital-derivative order: for `maximum_order == 2`, the overlap
+ * adjoint and its directional derivative contain the contracted third- and
+ * fourth-cofactor contributions required by the gradient and HVP.
  */
 class ContractedDensityState {
  public:
@@ -86,8 +91,9 @@ class ContractedDensityState {
  *
  * The jet propagates the tangent of every stored coefficient and adjoint
  * moment together with the accepted state.  A graph edge differentiates the
- * same low-rank recurrences used by `ContractedDensityState`; no higher-order
- * RDM and no dense matrix-matrix edge product is formed.
+ * same low-rank recurrences used by `ContractedDensityState`; higher-order
+ * cofactor contractions are retained without forming a higher-order RDM or a
+ * dense matrix-matrix edge product.
  */
 class ContractedDensityJet {
  public:
