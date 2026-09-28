@@ -652,7 +652,8 @@ StructureAction::StructureAction(
       }
       pending_terms.push_back(PendingSpinTerm{
           spin_product,
-          StructureTerm{term.structure_index, term.coefficient}});
+          StructureTerm{
+              spin_product, term.structure_index, term.coefficient}});
     }
   }
 
@@ -686,27 +687,29 @@ StructureAction::StructureAction(
         ++pending;
       }
       if (coefficient != 0.0) {
-        spin_terms_.push_back(StructureTerm{structure, coefficient});
+        spin_terms_.push_back(
+            StructureTerm{spin_product, structure, coefficient});
       }
     }
     spin_term_offsets_.push_back(spin_terms_.size());
   }
 
-  struct StructureSpinTerm {
-    int spin_product = 0;
-    double coefficient = 0.0;
-  };
-  std::vector<std::vector<StructureSpinTerm>> terms_by_structure(
-      n_structures_);
-  for (std::size_t group = 0; group < spin_products_.size(); ++group) {
-    const int spin_product = spin_products_[group];
-    for (std::size_t term_index = spin_term_offsets_[group];
-         term_index < spin_term_offsets_[group + 1];
-         ++term_index) {
-      const StructureTerm& term = spin_terms_[term_index];
-      terms_by_structure[term.structure].push_back(
-          StructureSpinTerm{spin_product, term.coefficient});
-    }
+  structure_term_offsets_.assign(
+      static_cast<std::size_t>(n_structures_) + 1, 0);
+  for (const StructureTerm& term : spin_terms_) {
+    ++structure_term_offsets_[static_cast<std::size_t>(term.structure) + 1];
+  }
+  for (int structure = 0; structure < n_structures_; ++structure) {
+    structure_term_offsets_[static_cast<std::size_t>(structure) + 1] +=
+        structure_term_offsets_[static_cast<std::size_t>(structure)];
+  }
+  structure_term_indices_.resize(spin_terms_.size());
+  std::vector<std::size_t> next_structure_term = structure_term_offsets_;
+  for (std::size_t term_index = 0;
+       term_index < spin_terms_.size();
+       ++term_index) {
+    const int structure = spin_terms_[term_index].structure;
+    structure_term_indices_[next_structure_term[structure]++] = term_index;
   }
 
   if (precomputed_preconditioner != nullptr) {
@@ -731,8 +734,18 @@ StructureAction::StructureAction(
   for (int structure = 0; structure < n_structures_; ++structure) {
     double hamiltonian = 0.0;
     double overlap = 0.0;
-    for (const StructureSpinTerm& left : terms_by_structure[structure]) {
-      for (const StructureSpinTerm& right : terms_by_structure[structure]) {
+    const std::size_t first = structure_term_offsets_[structure];
+    const std::size_t last = structure_term_offsets_[structure + 1];
+    for (std::size_t left_position = first;
+         left_position < last;
+         ++left_position) {
+      const StructureTerm& left =
+          spin_terms_[structure_term_indices_[left_position]];
+      for (std::size_t right_position = first;
+           right_position < last;
+           ++right_position) {
+        const StructureTerm& right =
+            spin_terms_[structure_term_indices_[right_position]];
         const DeterminantPairScalars pair = evaluate_spin_product_pair(
             same_spin_pair_cache,
             left.spin_product,
@@ -763,16 +776,20 @@ Eigen::MatrixXd StructureAction::contract_spin_product_block(
       static_cast<int>(spin_images.cols()) / n_unique_beta_;
   Eigen::MatrixXd result =
       Eigen::MatrixXd::Zero(n_structures_, block_width);
-  for (std::size_t group = 0; group < spin_products_.size(); ++group) {
-    const int spin_product = spin_products_[group];
-    const int alpha = spin_product / n_unique_beta_;
-    const int beta = spin_product % n_unique_beta_;
-    for (std::size_t term_index = spin_term_offsets_[group];
-         term_index < spin_term_offsets_[group + 1];
-         ++term_index) {
-      const StructureTerm& term = spin_terms_[term_index];
+  const int n_threads = std::max(
+      1,
+      std::min(xmvb::effective_openmp_thread_count(), n_structures_));
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+  for (int structure = 0; structure < n_structures_; ++structure) {
+    for (std::size_t position = structure_term_offsets_[structure];
+         position < structure_term_offsets_[structure + 1];
+         ++position) {
+      const StructureTerm& term =
+          spin_terms_[structure_term_indices_[position]];
+      const int alpha = term.spin_product / n_unique_beta_;
+      const int beta = term.spin_product % n_unique_beta_;
       for (int vector = 0; vector < block_width; ++vector) {
-        result(term.structure, vector) +=
+        result(structure, vector) +=
             term.coefficient *
             spin_images(alpha, vector * n_unique_beta_ + beta);
       }
@@ -837,7 +854,12 @@ Eigen::MatrixXd StructureAction::expand_structure_block(
   const int block_width = static_cast<int>(vectors.cols());
   Eigen::MatrixXd spin_vectors = Eigen::MatrixXd::Zero(
       n_unique_alpha_, block_width * n_unique_beta_);
-  for (std::size_t group = 0; group < spin_products_.size(); ++group) {
+  const int n_groups = static_cast<int>(spin_products_.size());
+  const int n_threads = std::max(
+      1,
+      std::min(xmvb::effective_openmp_thread_count(), n_groups));
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
+  for (int group = 0; group < n_groups; ++group) {
     const int spin_product = spin_products_[group];
     const int alpha = spin_product / n_unique_beta_;
     const int beta = spin_product % n_unique_beta_;
@@ -871,6 +893,10 @@ Eigen::MatrixXd StructureAction::expand_structure_tile(
   const int block_width = static_cast<int>(vectors.cols());
   Eigen::MatrixXd tile = Eigen::MatrixXd::Zero(
       alpha_size, block_width * beta_size);
+  const int n_threads = std::max(
+      1,
+      std::min(xmvb::effective_openmp_thread_count(), alpha_size));
+#pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int alpha_local = 0; alpha_local < alpha_size; ++alpha_local) {
     const int alpha = alpha_begin + alpha_local;
     const int first_product = alpha * n_unique_beta_ + beta_begin;
@@ -1757,7 +1783,9 @@ StructureActionStorage StructureAction::storage() const noexcept {
   result.expansion_bytes =
       spin_products_.size() * sizeof(int) +
       spin_term_offsets_.size() * sizeof(std::size_t) +
-      spin_terms_.size() * sizeof(StructureTerm);
+      spin_terms_.size() * sizeof(StructureTerm) +
+      structure_term_offsets_.size() * sizeof(std::size_t) +
+      structure_term_indices_.size() * sizeof(std::size_t);
   result.diagonal_bytes =
       static_cast<std::size_t>(
           preconditioner_diagonal_.hamiltonian.size() +

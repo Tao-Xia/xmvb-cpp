@@ -245,6 +245,7 @@ private:
   struct OrthogonalDirectCiData;
   struct TiledPairData;
   struct StructureTerm {
+    int spin_product = 0;
     int structure = 0;
     double coefficient = 0.0;
   };
@@ -252,6 +253,9 @@ private:
   std::vector<int> spin_products_;
   std::vector<std::size_t> spin_term_offsets_;
   std::vector<StructureTerm> spin_terms_;
+  /** Structure-major permutation of `spin_terms_` for race-free C^T actions. */
+  std::vector<std::size_t> structure_term_offsets_;
+  std::vector<std::size_t> structure_term_indices_;
 
   StructureDiagonal preconditioner_diagonal_;
   int n_determinants_ = 0;

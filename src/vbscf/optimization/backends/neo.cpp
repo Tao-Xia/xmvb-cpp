@@ -21,6 +21,7 @@
 #include "vbscf/optimization/preconditioners/shifted_metric.hpp"
 #include "vbscf/optimization/trust_region/retraction.hpp"
 #include "vbscf/orbitals/charts/layout.hpp"
+#include "vbscf/structures/assembly/selected_coefficients.hpp"
 
 namespace xmvb::vb::optimizer_detail {
 namespace {
@@ -46,6 +47,32 @@ double neo_forcing_term(
   const double roundoff = std::numeric_limits<double>::epsilon() *
       static_cast<double>(std::max<Eigen::Index>(1, dimension));
   return std::max(roundoff, forcing);
+}
+
+bool admit_structure_response(
+    const VbScfObjective& objective,
+    const StructureTangentOperator& structure_hessian) {
+  if (structure_hessian.tangent_size() == 0) return false;
+
+  const auto& context = *objective.second_order_context();
+  const auto& orbitals = objective.input().orbital_preparation_input;
+  const long double n_ao = orbitals.n_basis_functions;
+  const long double n_active = orbitals.n_active_orbitals;
+  const long double n_ao_pairs = n_ao * (n_ao + 1.0L) / 2.0L;
+  const long double n_active_pairs =
+      n_active * (n_active + 1.0L) / 2.0L;
+  const long double core_pair_work = n_ao_pairs * n_active_pairs;
+  const long double response_work =
+      estimate_selected_state_contraction_work(
+          context.selected_state_matrices);
+
+  // A coupled orbital basis vector evaluates Bp in addition to the core HVP.
+  // Admit that work only when one response contraction is no more expensive,
+  // in its leading unique-string count, than the core AO-pair contraction it
+  // augments.  Otherwise use the orbital-only NEO model and let the exact
+  // trial energy and gradient globalize it.  This is an asymptotic work test,
+  // not a molecule, active-space, or wall-time threshold.
+  return response_work <= core_pair_work;
 }
 
 struct AcceptedNeoKeyframe {
@@ -84,7 +111,7 @@ bool build_accepted_neo_keyframe(
   StructureTangentOperator structure_hessian(
       objective->second_order_context(), orbital_hessian.structure_action());
   const bool use_structure_response =
-      structure_hessian.tangent_size() != 0;
+      admit_structure_response(*objective, structure_hessian);
   record->model_dimension = std::max(
       record->model_dimension,
       static_cast<int>(

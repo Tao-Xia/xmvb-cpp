@@ -860,6 +860,48 @@ hard-case directions require response while the orbital subspace has size
 \(k_o\), the large-space response work changes from approximately
 \(O(k_oT_C)\) to \(O(rT_C)\), with \(r\ll k_o\) in the regular case.
 
+The residual test decides whether a response is mathematically required, but
+it cannot by itself decide whether evaluating that response is cheaper than a
+globalized core step.  Before constructing a coupled workspace, the
+implementation therefore compares leading contraction counts.  For selected
+states represented in unique alpha and beta string spaces, define
+
+$$
+W_R=
+\min\left[
+N_{\mathrm{st}}U_\alpha U_\beta(U_\alpha+U_\beta),
+W_R^{\mathrm{sparse}}
+\right],
+\tag{44e}
+$$
+
+where the sparse count is used only when the exact selected-state support is
+trimmed.  The corresponding leading AO-pair transformation count of one core
+orbital action is
+
+$$
+W_A=
+\frac{N_{\mathrm{bf}}(N_{\mathrm{bf}}+1)}{2}
+\frac{N_{\mathrm{act}}(N_{\mathrm{act}}+1)}{2}.
+\tag{44f}
+$$
+
+The coupled response is admitted when
+
+$$
+W_R\leq W_A.
+\tag{44g}
+$$
+
+Otherwise NEO solves the orbital-only matrix-free trust problem and retains
+the same exact finite-trial energy and gradient acceptance test.  Equation
+44g is deliberately an operation-count comparison: it contains no molecule
+name, active-space cutoff, empirical wall-time constant, or environment
+override.  It prevents one structure-coupling image from costing more than the
+core Hessian image it augments.  The resulting large-space branch is a
+globalized second-order orbital model, but it does not claim the complete
+coupled Newton certificate of eq 44d.
+
 ### 9.5 Recycled response and Woodbury orbital preconditioning
 
 Let the columns of $\mathbf W$ be the accepted-point horizontal structure
