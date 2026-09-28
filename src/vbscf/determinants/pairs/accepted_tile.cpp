@@ -10,7 +10,6 @@
 #include "core/openmp.hpp"
 #include "vbscf/determinants/algebra/cofactor_differential.hpp"
 #include "vbscf/determinants/pairs/contractions.hpp"
-#include "vbscf/determinants/pairs/ri_update.hpp"
 #include "vbscf/determinants/pairs/traversal.hpp"
 #include "vbscf/determinants/pairs/woodbury_overlap.hpp"
 #include "vbscf/determinants/pairs/woodbury_ri.hpp"
@@ -389,15 +388,6 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
 #pragma omp parallel for schedule(static) if(n_threads > 1) num_threads(n_threads)
   for (int left_local = 0; left_local < tile.left_size; ++left_local) {
     const int left_index = left_begin + left_local;
-    RiPairUpdateState ri_state;
-    Eigen::MatrixXd ri_auxiliary_panel;
-    std::vector<unsigned char> ri_auxiliary_ready;
-    if (direct_ri && options.materialize_projected_pair_values) {
-      ri_auxiliary_panel = Eigen::MatrixXd::Zero(
-          active_two_electron.ri_active_pair_factors.rows(),
-          tile.right_size);
-      ri_auxiliary_ready.assign(tile.right_size, 0);
-    }
     const std::vector<int> right_traversal = build_pair_update_traversal(
         unique_spin_strings_, left_index, right_begin, right_end);
     for (int traversal_index = 0;
@@ -409,11 +399,9 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
           unique_spin_strings_[left_index];
       const auto& occupied_right =
           unique_spin_strings_[right_index];
-      SpinDeterminantPairEvaluation evaluation;
       const std::size_t pair_index =
           static_cast<std::size_t>(left_local) * tile.right_size + right_local;
       DeterminantOverlapResult overlap_result;
-      bool used_low_rank_overlap = false;
       int previous_right = -1;
       std::size_t previous_index = 0;
       if (traversal_index == 0) {
@@ -433,7 +421,6 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             tile.pairs[previous_index].overlap_result);
         if (updated_overlap.has_value()) {
           overlap_result = std::move(*updated_overlap);
-          used_low_rank_overlap = true;
         } else {
           overlap_result = overlap_resolver_.resolve_matrix(
               build_overlap_submatrix(
@@ -441,60 +428,17 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
         }
       }
 
-      bool used_ri_update = false;
-      if (direct_ri && overlap_result.nullity == 0 &&
-          overlap_result.overlap_determinant != 0.0) {
-        if (used_low_rank_overlap && ri_state.valid()) {
-          used_ri_update = ri_state.update_right(
-              occupied_left,
-              unique_spin_strings_[previous_right],
-              occupied_right,
-              tile.pairs[previous_index].overlap_result,
-              overlap_result,
-              active_two_electron.ri_active_pair_factors);
-        }
-        if (!used_ri_update) {
-          used_ri_update = ri_state.initialize(
+      SpinDeterminantPairEvaluation evaluation =
+          pair_evaluator_.evaluate_same_spin_pair(
               occupied_left,
               occupied_right,
-              overlap_result,
-              active_two_electron.ri_active_pair_factors,
-              options.populate_response_payload &&
-                  occupied_left.size() >= 4);
-        }
-      } else {
-        ri_state.reset();
-      }
-
-      if (used_ri_update) {
-        evaluation = pair_evaluator_.evaluate_regular_same_spin_pair(
-            occupied_left,
-            occupied_right,
-            std::move(overlap_result),
-            active_one_electron,
-            ri_state.two_electron_phi(),
-            options.populate_response_payload);
-      } else {
-        evaluation = pair_evaluator_.evaluate_same_spin_pair(
-            occupied_left,
-            occupied_right,
-            std::move(overlap_result),
-            active_one_electron,
-            n_active_orbitals_,
-            active_two_electron,
-            options.populate_response_payload);
-      }
+              std::move(overlap_result),
+              active_one_electron,
+              n_active_orbitals_,
+              active_two_electron,
+              options.populate_response_payload);
       if (options.populate_opposite_spin_projection ||
           options.populate_response_payload) {
-        std::optional<RegularRiPairResponseData> ri_response;
-        if (used_ri_update && options.populate_response_payload &&
-            ri_state.tracks_response()) {
-          ri_response.emplace();
-          ri_response->two_electron_phi = ri_state.two_electron_phi();
-          ri_response->two_electron_inverse_overlap_gradient =
-              ri_state.two_electron_inverse_overlap_gradient(
-                  evaluation.overlap_result);
-        }
         complete_same_spin_pair_evaluation(
             occupied_left,
             occupied_right,
@@ -502,53 +446,11 @@ AcceptedSpinPairTile AcceptedPairTileProvider::build(
             n_active_orbitals_,
             active_two_electron,
             options.populate_opposite_spin_projection,
-            options.materialize_projected_pair_values && !used_ri_update,
+            options.materialize_projected_pair_values,
             options.populate_response_payload,
-            &evaluation,
-            ri_response ? &*ri_response : nullptr);
-        if (used_ri_update && options.materialize_projected_pair_values) {
-          auto& projection = evaluation.opposite_spin_pair_cache
-              .first_order_cofactor_projection;
-          if (ri_state.first_order_cofactor_auxiliary(
-                  evaluation.overlap_result.overlap_determinant,
-                  ri_auxiliary_panel.col(right_local))) {
-            ri_auxiliary_ready[right_local] = 1;
-          } else {
-            projection.projected_pair_values =
-                apply_active_space_two_electron_kernel_to_sparse_projection(
-                    make_active_space_two_electron_view(active_two_electron),
-                    n_active_orbitals_,
-                    projection.packed_pair_indices,
-                    projection.packed_pair_values);
-          }
-        }
+            &evaluation);
       }
       tile.pairs[pair_index] = std::move(evaluation);
-    }
-    if (!ri_auxiliary_ready.empty() &&
-        std::any_of(
-            ri_auxiliary_ready.begin(),
-            ri_auxiliary_ready.end(),
-            [](unsigned char ready) { return ready != 0; })) {
-      const Eigen::MatrixXd projected_panel =
-          active_two_electron.ri_active_pair_factors.transpose() *
-          ri_auxiliary_panel;
-      for (int right_local = 0;
-           right_local < tile.right_size;
-           ++right_local) {
-        if (ri_auxiliary_ready[right_local] == 0) {
-          continue;
-        }
-        auto& projected = tile.pairs[
-            static_cast<std::size_t>(left_local) * tile.right_size +
-            right_local]
-                              .opposite_spin_pair_cache
-                              .first_order_cofactor_projection
-                              .projected_pair_values;
-        projected.assign(
-            projected_panel.col(right_local).data(),
-            projected_panel.col(right_local).data() + projected_panel.rows());
-      }
     }
   }
   return tile;
