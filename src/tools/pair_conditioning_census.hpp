@@ -3,6 +3,8 @@
 #include <iosfwd>
 #include <vector>
 
+#include <Eigen/Core>
+
 namespace xmvb::tools {
 
 /** Primary numerical origin of an occupied-overlap conditioning failure. */
@@ -57,6 +59,34 @@ struct PairConditioningCensus {
   std::vector<PairConditioningExample> worst_pairs;
 };
 
+/** Selected-state coefficient exposure carried by one spin-string pair. */
+struct PairExposureExample {
+  int left_string = -1;
+  int right_string = -1;
+  double exposure = 0.0;
+  PairConditioningObservation observation;
+};
+
+/**
+ * @brief Parameter-free census of wavefunction support on conditioned pairs.
+ *
+ * Exposure is accumulated without a screening threshold. `zero_exposure_pairs`
+ * therefore counts only exact zeros in the selected-state coefficient support.
+ */
+struct PairExposureCensus {
+  long long pair_population = 0;
+  long long zero_exposure_pairs = 0;
+  double total_exposure = 0.0;
+  double dangerous_exposure = 0.0;
+  double total_squared_exposure = 0.0;
+  double dangerous_squared_exposure = 0.0;
+  double maximum_regular_exposure = 0.0;
+  double maximum_dangerous_exposure = 0.0;
+  std::vector<double> exposure_by_dangerous_dimension;
+  std::vector<double> squared_exposure_by_dangerous_dimension;
+  std::vector<PairExposureExample> largest_dangerous_pairs;
+};
+
 /**
  * @brief Diagnoses one pair after removing each determinant's self metric.
  *
@@ -83,10 +113,33 @@ PairConditioningCensus run_pair_conditioning_census(
     long long max_pairs,
     int retained_worst_pairs = 8);
 
+/**
+ * @brief Measures selected-state coefficient exposure on every ordered pair.
+ *
+ * For alpha pairs, the exposure is
+ * `sum_s w_s ||C_s(i,:)||_1 ||C_s(j,:)||_1`; beta pairs use column norms.
+ * This is a dimensionless upper-bound factor for all partner-spin
+ * contractions and contains no empirical screening threshold.
+ */
+PairExposureCensus run_pair_exposure_census(
+    const std::vector<std::vector<int>>& unique_strings,
+    const std::vector<double>& active_overlap,
+    int n_active_orbitals,
+    const std::vector<Eigen::MatrixXd>& selected_state_coefficients,
+    const std::vector<double>& normalized_state_weights,
+    bool alpha_pairs,
+    int retained_largest_pairs = 8);
+
 void print_pair_conditioning_census(
     const char* label,
     const std::vector<std::vector<int>>& unique_strings,
     const PairConditioningCensus& census,
+    std::ostream& output);
+
+void print_pair_exposure_census(
+    const char* label,
+    const std::vector<std::vector<int>>& unique_strings,
+    const PairExposureCensus& census,
     std::ostream& output);
 
 }  // namespace xmvb::tools

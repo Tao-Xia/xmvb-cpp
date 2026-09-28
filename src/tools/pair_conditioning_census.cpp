@@ -203,6 +203,32 @@ void retain_worst(
   }
 }
 
+void retain_largest_exposure(
+    PairExposureExample example,
+    int retained_count,
+    std::vector<PairExposureExample>* largest) {
+  if (retained_count <= 0 || example.exposure == 0.0 ||
+      example.observation.dangerous_dimension == 0) {
+    return;
+  }
+  largest->push_back(std::move(example));
+  std::sort(
+      largest->begin(),
+      largest->end(),
+      [](const PairExposureExample& left, const PairExposureExample& right) {
+        if (left.exposure != right.exposure) {
+          return left.exposure > right.exposure;
+        }
+        if (left.left_string != right.left_string) {
+          return left.left_string < right.left_string;
+        }
+        return left.right_string < right.right_string;
+      });
+  if (static_cast<int>(largest->size()) > retained_count) {
+    largest->resize(retained_count);
+  }
+}
+
 void accumulate_observation(
     int left,
     int right,
@@ -436,6 +462,123 @@ PairConditioningCensus run_pair_conditioning_census(
   return census;
 }
 
+PairExposureCensus run_pair_exposure_census(
+    const std::vector<std::vector<int>>& unique_strings,
+    const std::vector<double>& active_overlap,
+    int n_active_orbitals,
+    const std::vector<Eigen::MatrixXd>& selected_state_coefficients,
+    const std::vector<double>& normalized_state_weights,
+    bool alpha_pairs,
+    int retained_largest_pairs) {
+  require_valid_inputs(unique_strings, active_overlap, n_active_orbitals);
+  if (selected_state_coefficients.empty() ||
+      selected_state_coefficients.size() != normalized_state_weights.size()) {
+    throw std::invalid_argument(
+        "selected-state coefficients and weights must have equal nonzero sizes");
+  }
+  if (retained_largest_pairs < 0) {
+    throw std::invalid_argument("retained exposure-pair count must be non-negative");
+  }
+
+  const int n_strings = static_cast<int>(unique_strings.size());
+  std::vector<Eigen::VectorXd> marginal_norms;
+  marginal_norms.reserve(selected_state_coefficients.size());
+  double weight_sum = 0.0;
+  for (std::size_t state = 0;
+       state < selected_state_coefficients.size();
+       ++state) {
+    const auto& coefficients = selected_state_coefficients[state];
+    const double weight = normalized_state_weights[state];
+    if (weight < 0.0 || !std::isfinite(weight)) {
+      throw std::invalid_argument(
+          "selected-state weights must be finite and non-negative");
+    }
+    const int target_size = alpha_pairs
+        ? static_cast<int>(coefficients.rows())
+        : static_cast<int>(coefficients.cols());
+    if (target_size != n_strings) {
+      throw std::invalid_argument(
+          "selected-state coefficient dimensions do not match spin strings");
+    }
+    Eigen::VectorXd marginal_norm(target_size);
+    if (alpha_pairs) {
+      marginal_norm = coefficients.cwiseAbs().rowwise().sum();
+    } else {
+      marginal_norm = coefficients.cwiseAbs().colwise().sum().transpose();
+    }
+    marginal_norms.push_back(std::move(marginal_norm));
+    weight_sum += weight;
+  }
+  if (!(weight_sum > 0.0) ||
+      std::abs(weight_sum - 1.0) >
+          64.0 * std::numeric_limits<double>::epsilon()) {
+    throw std::invalid_argument(
+        "selected-state weights must sum to one within roundoff");
+  }
+
+  PairExposureCensus census;
+  census.pair_population =
+      static_cast<long long>(n_strings) * n_strings;
+  if (n_strings == 0) {
+    return census;
+  }
+
+  const Eigen::Map<const Eigen::MatrixXd> overlap(
+      active_overlap.data(), n_active_orbitals, n_active_orbitals);
+  std::vector<StringMetric> metrics;
+  metrics.reserve(unique_strings.size());
+  for (const auto& string : unique_strings) {
+    metrics.push_back(build_string_metric(string, overlap));
+  }
+
+  for (int left = 0; left < n_strings; ++left) {
+    for (int right = 0; right < n_strings; ++right) {
+      double exposure = 0.0;
+      for (std::size_t state = 0; state < marginal_norms.size(); ++state) {
+        exposure += normalized_state_weights[state] *
+            marginal_norms[state](left) * marginal_norms[state](right);
+      }
+      const PairConditioningObservation observation = diagnose_with_metrics(
+          unique_strings[left],
+          unique_strings[right],
+          overlap,
+          metrics[left],
+          metrics[right]);
+      if (exposure == 0.0) {
+        ++census.zero_exposure_pairs;
+      }
+      const double squared_exposure = exposure * exposure;
+      census.total_exposure += exposure;
+      census.total_squared_exposure += squared_exposure;
+      const int dangerous_dimension = observation.dangerous_dimension;
+      if (dangerous_dimension >= static_cast<int>(
+              census.exposure_by_dangerous_dimension.size())) {
+        census.exposure_by_dangerous_dimension.resize(
+            dangerous_dimension + 1, 0.0);
+        census.squared_exposure_by_dangerous_dimension.resize(
+            dangerous_dimension + 1, 0.0);
+      }
+      census.exposure_by_dangerous_dimension[dangerous_dimension] += exposure;
+      census.squared_exposure_by_dangerous_dimension[dangerous_dimension] +=
+          squared_exposure;
+      if (dangerous_dimension == 0) {
+        census.maximum_regular_exposure = std::max(
+            census.maximum_regular_exposure, exposure);
+      } else {
+        census.dangerous_exposure += exposure;
+        census.dangerous_squared_exposure += squared_exposure;
+        census.maximum_dangerous_exposure = std::max(
+            census.maximum_dangerous_exposure, exposure);
+        retain_largest_exposure(
+            PairExposureExample{left, right, exposure, observation},
+            retained_largest_pairs,
+            &census.largest_dangerous_pairs);
+      }
+    }
+  }
+  return census;
+}
+
 void print_pair_conditioning_census(
     const char* label,
     const std::vector<std::vector<int>>& unique_strings,
@@ -516,6 +659,78 @@ void print_pair_conditioning_census(
            << example.observation.smallest_principal_singular_value
            << " condition:"
            << example.observation.principal_condition_number << '\n';
+  }
+}
+
+void print_pair_exposure_census(
+    const char* label,
+    const std::vector<std::vector<int>>& unique_strings,
+    const PairExposureCensus& census,
+    std::ostream& output) {
+  const auto fraction = [](double numerator, double denominator) {
+    return denominator > 0.0 ? numerator / denominator : 0.0;
+  };
+  output << std::setprecision(15);
+  output << label << "_exposure_pair_population = "
+         << census.pair_population << '\n';
+  output << label << "_zero_exposure_pairs = "
+         << census.zero_exposure_pairs << '\n';
+  output << label << "_zero_exposure_fraction = "
+         << (census.pair_population > 0
+                 ? static_cast<double>(census.zero_exposure_pairs) /
+                       static_cast<double>(census.pair_population)
+                 : 0.0)
+         << '\n';
+  output << label << "_total_exposure = " << census.total_exposure << '\n';
+  output << label << "_dangerous_exposure = "
+         << census.dangerous_exposure << '\n';
+  output << label << "_dangerous_exposure_fraction = "
+         << fraction(census.dangerous_exposure, census.total_exposure) << '\n';
+  output << label << "_total_squared_exposure = "
+         << census.total_squared_exposure << '\n';
+  output << label << "_dangerous_squared_exposure = "
+         << census.dangerous_squared_exposure << '\n';
+  output << label << "_dangerous_squared_exposure_fraction = "
+         << fraction(
+                census.dangerous_squared_exposure,
+                census.total_squared_exposure)
+         << '\n';
+  output << label << "_maximum_regular_exposure = "
+         << census.maximum_regular_exposure << '\n';
+  output << label << "_maximum_dangerous_exposure = "
+         << census.maximum_dangerous_exposure << '\n';
+  for (int dimension = 0;
+       dimension < static_cast<int>(
+           census.exposure_by_dangerous_dimension.size());
+       ++dimension) {
+    output << label << "_dangerous_dimension_" << dimension
+           << "_exposure_fraction = "
+           << fraction(
+                  census.exposure_by_dangerous_dimension[dimension],
+                  census.total_exposure)
+           << '\n';
+    output << label << "_dangerous_dimension_" << dimension
+           << "_squared_exposure_fraction = "
+           << fraction(
+                  census.squared_exposure_by_dangerous_dimension[dimension],
+                  census.total_squared_exposure)
+           << '\n';
+  }
+  for (int index = 0;
+       index < static_cast<int>(census.largest_dangerous_pairs.size());
+       ++index) {
+    const auto& example = census.largest_dangerous_pairs[index];
+    output << label << "_largest_dangerous_exposure_pair_" << index
+           << " = left:" << example.left_string
+           << format_string(unique_strings[example.left_string])
+           << " right:" << example.right_string
+           << format_string(unique_strings[example.right_string])
+           << " exposure:" << example.exposure
+           << " dangerous_dimension:"
+           << example.observation.dangerous_dimension
+           << " sigma_min:"
+           << example.observation.smallest_principal_singular_value
+           << '\n';
   }
 }
 

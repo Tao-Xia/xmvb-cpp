@@ -85,6 +85,35 @@ void test_intrinsic_pair_conditioning() {
   require(singular.numerical_nullity == 1, "intrinsic nullity is incorrect");
 }
 
+void test_selected_state_pair_exposure() {
+  Eigen::Matrix4d overlap = Eigen::Matrix4d::Identity();
+  overlap(0, 2) = 0.5;
+  overlap(2, 0) = 0.5;
+  overlap(1, 3) = 1.0e-4;
+  overlap(3, 1) = 1.0e-4;
+  Eigen::MatrixXd coefficients(2, 1);
+  coefficients << 1.0, 2.0;
+  const auto census = xmvb::tools::run_pair_exposure_census(
+      {{0, 1}, {2, 3}},
+      flatten(overlap),
+      4,
+      {coefficients},
+      {1.0},
+      true,
+      2);
+  require(census.pair_population == 4, "exposure pair population is incorrect");
+  require(census.zero_exposure_pairs == 0, "nonzero exposure was discarded");
+  require(
+      std::abs(census.total_exposure - 9.0) < 1.0e-14,
+      "total coefficient exposure is incorrect");
+  require(
+      std::abs(census.dangerous_exposure - 4.0) < 1.0e-14,
+      "dangerous coefficient exposure is incorrect");
+  require(
+      census.largest_dangerous_pairs.size() == 2,
+      "dangerous exposure examples were not retained");
+}
+
 }  // namespace
 
 int main() {
@@ -93,6 +122,7 @@ int main() {
     test_self_rank_deficiency();
     test_self_condition_limit();
     test_intrinsic_pair_conditioning();
+    test_selected_state_pair_exposure();
     std::cout << "Pair conditioning census tests passed\n";
     return 0;
   } catch (const std::exception& error) {
