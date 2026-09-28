@@ -1,6 +1,5 @@
 #pragma once
 
-#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -73,23 +72,6 @@ public:
   std::size_t dynamic_bytes() const noexcept;
 
 private:
-  struct PairKernelTerm {
-    int first_pair = 0;
-    int second_pair = 0;
-    double coefficient = 0.0;
-  };
-
-  struct HamiltonianConnection {
-    int source = 0;
-    int density_pair = -1;
-    double density_sign = 0.0;
-    int one_electron_row = -1;
-    int one_electron_column = -1;
-    double one_electron_sign = 0.0;
-    std::array<PairKernelTerm, 2> pair_terms{};
-    int n_pair_terms = 0;
-  };
-
   struct DensityConnections {
     std::vector<int> sources;
     std::vector<int> pairs;
@@ -109,7 +91,6 @@ private:
   };
 
   struct SpinConnections {
-    std::vector<std::vector<HamiltonianConnection>> off_diagonal;
     std::vector<DensityConnections> singles;
     std::vector<std::vector<int>> occupied;
   };
@@ -119,6 +100,12 @@ private:
   Eigen::MatrixXd build_hamiltonian_pair_kernel(
       const OrthogonalActiveIntegrals& integrals,
       int n_electrons) const;
+  void scatter_one_body_intermediate(
+      const Eigen::Ref<const Eigen::MatrixXd>& coefficients,
+      int alpha_begin,
+      int alpha_count,
+      int beta_target,
+      Eigen::Ref<Eigen::MatrixXd> intermediate) const;
   const SpinConnections& beta_connections() const noexcept;
 
   int n_orbitals_ = 0;
