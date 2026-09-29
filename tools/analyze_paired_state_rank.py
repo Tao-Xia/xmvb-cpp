@@ -63,8 +63,10 @@ def inversion_parity(indices: Sequence[int]) -> int:
     return -1 if inversions % 2 else 1
 
 
-def adjacent_singlet_terms(n_orbitals: int) -> list[PairTerm]:
-    """Expand adjacent singlet pairs only for the small exact reference.
+def singlet_pair_terms(
+    n_orbitals: int, pairs: Sequence[tuple[int, int]]
+) -> list[PairTerm]:
+    """Expand a perfect matching of singlet pairs for the exact reference.
 
     Spin-orbitals are canonically ordered with every alpha orbital preceding
     every beta orbital.  Fermionic reorder signs are therefore included here,
@@ -74,6 +76,11 @@ def adjacent_singlet_terms(n_orbitals: int) -> list[PairTerm]:
     if n_orbitals <= 0 or n_orbitals % 2:
         raise ValueError("the paired diagnostic requires a positive even K")
     n_pairs = n_orbitals // 2
+    if len(pairs) != n_pairs:
+        raise ValueError("a covalent structure must pair every orbital once")
+    flattened = [orbital for pair in pairs for orbital in pair]
+    if sorted(flattened) != list(range(n_orbitals)):
+        raise ValueError("singlet pairs must form a perfect orbital matching")
     normalization = 2.0 ** (-0.5 * n_pairs)
     terms: list[PairTerm] = []
     for choices in itertools.product((0, 1), repeat=n_pairs):
@@ -81,9 +88,7 @@ def adjacent_singlet_terms(n_orbitals: int) -> list[PairTerm]:
         beta_mask = 0
         operator_order: list[int] = []
         local_sign = 1
-        for pair, choice in enumerate(choices):
-            first = 2 * pair
-            second = first + 1
+        for (first, second), choice in zip(pairs, choices):
             if choice == 0:
                 # b(first,alpha)^+ b(second,beta)^+
                 alpha_mask |= 1 << first
@@ -210,6 +215,7 @@ def apply_exterior_right(
 
 def transformed_pair_coefficients(
     overlap: np.ndarray,
+    pairs: Sequence[tuple[int, int]],
 ) -> tuple[np.ndarray, list[int], list[PairTerm]]:
     """Return the exact orthonormal-carrier coefficients of one pair state."""
 
@@ -217,7 +223,7 @@ def transformed_pair_coefficients(
     n_alpha = n_orbitals // 2
     masks = fixed_weight_masks(n_orbitals, n_alpha)
     mask_index = {mask: index for index, mask in enumerate(masks)}
-    terms = adjacent_singlet_terms(n_orbitals)
+    terms = singlet_pair_terms(n_orbitals, pairs)
     coefficients = np.zeros((len(masks), len(masks)))
     for term in terms:
         coefficients[
@@ -399,15 +405,27 @@ def dense_overlap_from_spectrum(local_overlap: np.ndarray, seed: int) -> np.ndar
     return 0.5 * (result + result.T)
 
 
-def hydrogen_chain_overlap(n_orbitals: int, spacing_bohr: float) -> np.ndarray:
-    """Build the STO-3G AO overlap of an equally spaced hydrogen chain."""
+def hydrogen_chain_overlap(
+    n_orbitals: int,
+    spacing_bohr: float,
+    spacing_disorder: float = 0.0,
+    seed: int = 7,
+) -> np.ndarray:
+    """Build the STO-3G AO overlap of a regular or disordered H chain."""
 
     try:
         from pyscf import gto
     except ImportError as error:
         raise RuntimeError("the hchain model requires PySCF") from error
+    generator = np.random.default_rng(seed + n_orbitals)
+    spacings = spacing_bohr * (
+        1.0
+        + spacing_disorder
+        * generator.uniform(-1.0, 1.0, size=max(0, n_orbitals - 1))
+    )
+    positions = np.concatenate(([0.0], np.cumsum(spacings)))
     molecule = gto.M(
-        atom=[("H", (spacing_bohr * atom, 0.0, 0.0)) for atom in range(n_orbitals)],
+        atom=[("H", (position, 0.0, 0.0)) for position in positions],
         basis="sto-3g",
         unit="Bohr",
         spin=0,
@@ -417,6 +435,59 @@ def hydrogen_chain_overlap(n_orbitals: int, spacing_bohr: float) -> np.ndarray:
     if overlap.shape != (n_orbitals, n_orbitals):
         raise RuntimeError("H/STO-3G did not produce one AO per active orbital")
     return overlap
+
+
+def pairing_pattern(
+    name: str, n_orbitals: int, seed: int
+) -> list[tuple[int, int]]:
+    """Return a perfect matching used to define one covalent structure."""
+
+    if name == "adjacent":
+        return [(orbital, orbital + 1) for orbital in range(0, n_orbitals, 2)]
+    if name == "nested":
+        return [
+            (orbital, n_orbitals - 1 - orbital)
+            for orbital in range(n_orbitals // 2)
+        ]
+    if name == "random":
+        generator = np.random.default_rng(seed + 104729 * n_orbitals)
+        permutation = generator.permutation(n_orbitals)
+        return [
+            tuple(sorted((int(permutation[index]), int(permutation[index + 1]))))
+            for index in range(0, n_orbitals, 2)
+        ]
+    raise ValueError(f"unknown pairing pattern: {name}")
+
+
+def order_pairing(
+    overlap: np.ndarray,
+    pairs: Sequence[tuple[int, int]],
+    ordering: str,
+) -> tuple[np.ndarray, list[tuple[int, int]]]:
+    """Apply a site ordering consistently to overlap and singlet pairs."""
+
+    if ordering == "natural":
+        return overlap, list(pairs)
+    if ordering != "pair":
+        raise ValueError(f"unknown orbital ordering: {ordering}")
+    order = [orbital for pair in pairs for orbital in pair]
+    inverse = {old: new for new, old in enumerate(order)}
+    ordered_pairs = [(inverse[first], inverse[second]) for first, second in pairs]
+    return overlap[np.ix_(order, order)], ordered_pairs
+
+
+def pair_cut_width(
+    pairs: Sequence[tuple[int, int]], n_orbitals: int
+) -> int:
+    """Return the maximum number of singlet bonds crossing an orbital cut."""
+
+    return max(
+        sum(
+            (first < cut <= second) or (second < cut <= first)
+            for first, second in pairs
+        )
+        for cut in range(1, n_orbitals)
+    )
 
 
 def overlap_model(
@@ -437,24 +508,36 @@ def overlap_model(
         return dense_overlap_from_spectrum(local, seed + n_orbitals)
     if name == "hchain":
         return hydrogen_chain_overlap(n_orbitals, spacing_bohr)
+    if name == "hchain_disordered":
+        return hydrogen_chain_overlap(
+            n_orbitals,
+            spacing_bohr,
+            spacing_disorder=0.30,
+            seed=seed,
+        )
     raise ValueError(f"unknown overlap model: {name}")
 
 
 def analyze_case(
     model: str,
     n_orbitals: int,
+    pairing: str,
+    ordering: str,
     tolerances: Sequence[float],
     decay: float,
     spacing_bohr: float,
     seed: int,
-) -> tuple[float, float, list[CutSpectrum]]:
+) -> tuple[float, float, int, list[CutSpectrum]]:
     """Run one exact rank diagnostic and its independent norm check."""
 
     overlap = overlap_model(model, n_orbitals, decay, spacing_bohr, seed)
+    pairs = pairing_pattern(pairing, n_orbitals, seed)
+    overlap, pairs = order_pairing(overlap, pairs, ordering)
+    maximum_pair_cut = pair_cut_width(pairs, n_orbitals)
     eigenvalues = np.linalg.eigvalsh(overlap)
     if eigenvalues[0] <= 0.0:
         raise ValueError(f"{model} overlap is not positive definite")
-    coefficients, masks, terms = transformed_pair_coefficients(overlap)
+    coefficients, masks, terms = transformed_pair_coefficients(overlap, pairs)
     transformed_norm = float(np.vdot(coefficients, coefficients).real)
     reference_norm = direct_nonorthogonal_norm(overlap, terms)
     relative_norm_error = abs(transformed_norm - reference_norm) / max(
@@ -475,7 +558,12 @@ def analyze_case(
         )
         for cut in range(1, n_orbitals)
     ]
-    return float(eigenvalues[-1] / eigenvalues[0]), relative_norm_error, spectra
+    return (
+        float(eigenvalues[-1] / eigenvalues[0]),
+        relative_norm_error,
+        maximum_pair_cut,
+        spectra,
+    )
 
 
 def write_rows(
@@ -487,7 +575,10 @@ def write_rows(
 
     fields = [
         "model",
+        "pairing",
+        "ordering",
         "n_orbitals",
+        "max_pair_cut",
         "cut",
         "condition_number",
         "norm_relative_error",
@@ -509,8 +600,15 @@ def run_self_test() -> None:
 
     tolerances = (1.0e-12,)
     for n_orbitals in (4, 6, 8):
-        condition, norm_error, spectra = analyze_case(
-            "identity", n_orbitals, tolerances, 0.35, 2.0, 7
+        condition, norm_error, maximum_pair_cut, spectra = analyze_case(
+            "identity",
+            n_orbitals,
+            "adjacent",
+            "natural",
+            tolerances,
+            0.35,
+            2.0,
+            7,
         )
         if abs(condition - 1.0) > 1.0e-14 or norm_error > 1.0e-13:
             raise AssertionError("identity-model normalization failed")
@@ -521,11 +619,19 @@ def run_self_test() -> None:
                     f"K={n_orbitals} cut={spectrum.cut}: "
                     f"rank {spectrum.exact_rank}, expected {expected_rank}"
                 )
-    _, norm_error, _ = analyze_case(
-        "local", 8, tolerances, 0.35, 2.0, 7
+        if maximum_pair_cut != 1:
+            raise AssertionError("adjacent pairing must have unit cut width")
+    _, norm_error, _, _ = analyze_case(
+        "local", 8, "random", "natural", tolerances, 0.35, 2.0, 7
     )
     if norm_error > 2.0e-12:
         raise AssertionError("nonorthogonal exterior-transform norm check failed")
+    _, _, maximum_pair_cut, spectra = analyze_case(
+        "identity", 6, "nested", "natural", tolerances, 0.35, 2.0, 7
+    )
+    middle = next(spectrum for spectrum in spectra if spectrum.cut == 3)
+    if maximum_pair_cut != 3 or middle.exact_rank != 2**maximum_pair_cut:
+        raise AssertionError("crossing-singlet Schmidt-rank check failed")
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -542,9 +648,23 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--models",
         nargs="+",
-        choices=("identity", "local", "dense", "hchain"),
+        choices=("identity", "local", "dense", "hchain", "hchain_disordered"),
         default=["identity", "local", "dense", "hchain"],
         help="overlap models to compare",
+    )
+    parser.add_argument(
+        "--pairings",
+        nargs="+",
+        choices=("adjacent", "nested", "random"),
+        default=["adjacent"],
+        help="perfect matchings defining the covalent structure",
+    )
+    parser.add_argument(
+        "--orderings",
+        nargs="+",
+        choices=("natural", "pair"),
+        default=["natural"],
+        help="spatial-orbital order used for Schmidt cuts",
     )
     parser.add_argument(
         "--tolerances",
@@ -603,46 +723,59 @@ def main() -> None:
 
     rows: list[dict[str, object]] = []
     for model in arguments.models:
-        for n_orbitals in arguments.sizes:
-            condition, norm_error, spectra = analyze_case(
-                model,
-                n_orbitals,
-                tolerances,
-                arguments.decay,
-                arguments.spacing_bohr,
-                arguments.seed,
-            )
-            worst = max(
-                spectra,
-                key=lambda spectrum: spectrum.effective_ranks[-1],
-            )
-            ranks = ", ".join(
-                f"D({tolerance:.0e})={rank}"
-                for tolerance, rank in zip(tolerances, worst.effective_ranks)
-            )
-            print(
-                f"{model:8s} K={n_orbitals:2d} cond(S)={condition:.3e} "
-                f"norm_err={norm_error:.3e} worst_cut={worst.cut:2d} "
-                f"D_exact={worst.exact_rank:4d} {ranks}",
-                flush=True,
-            )
-            for spectrum in spectra:
-                row: dict[str, object] = {
-                    "model": model,
-                    "n_orbitals": n_orbitals,
-                    "cut": spectrum.cut,
-                    "condition_number": condition,
-                    "norm_relative_error": norm_error,
-                    "exact_rank": spectrum.exact_rank,
-                    "entropy": spectrum.entropy,
-                    "largest_singular_value": spectrum.largest_singular_value,
-                    "smallest_retained_singular_value": (
-                        spectrum.smallest_retained_singular_value
-                    ),
-                }
-                for tolerance, rank in zip(tolerances, spectrum.effective_ranks):
-                    row[f"rank_dw_{tolerance:.0e}"] = rank
-                rows.append(row)
+        for pairing in arguments.pairings:
+            for ordering in arguments.orderings:
+                for n_orbitals in arguments.sizes:
+                    condition, norm_error, maximum_pair_cut, spectra = analyze_case(
+                        model,
+                        n_orbitals,
+                        pairing,
+                        ordering,
+                        tolerances,
+                        arguments.decay,
+                        arguments.spacing_bohr,
+                        arguments.seed,
+                    )
+                    worst = max(
+                        spectra,
+                        key=lambda spectrum: spectrum.effective_ranks[-1],
+                    )
+                    ranks = ", ".join(
+                        f"D({tolerance:.0e})={rank}"
+                        for tolerance, rank in zip(
+                            tolerances, worst.effective_ranks
+                        )
+                    )
+                    print(
+                        f"{model:18s} {pairing:8s}/{ordering:7s} "
+                        f"K={n_orbitals:2d} cond(S)={condition:.3e} "
+                        f"pair_cut={maximum_pair_cut:2d} "
+                        f"norm_err={norm_error:.3e} worst_cut={worst.cut:2d} "
+                        f"D_exact={worst.exact_rank:4d} {ranks}",
+                        flush=True,
+                    )
+                    for spectrum in spectra:
+                        row: dict[str, object] = {
+                            "model": model,
+                            "pairing": pairing,
+                            "ordering": ordering,
+                            "n_orbitals": n_orbitals,
+                            "max_pair_cut": maximum_pair_cut,
+                            "cut": spectrum.cut,
+                            "condition_number": condition,
+                            "norm_relative_error": norm_error,
+                            "exact_rank": spectrum.exact_rank,
+                            "entropy": spectrum.entropy,
+                            "largest_singular_value": spectrum.largest_singular_value,
+                            "smallest_retained_singular_value": (
+                                spectrum.smallest_retained_singular_value
+                            ),
+                        }
+                        for tolerance, rank in zip(
+                            tolerances, spectrum.effective_ranks
+                        ):
+                            row[f"rank_dw_{tolerance:.0e}"] = rank
+                        rows.append(row)
     write_rows(arguments.output, rows, tolerances)
     print(f"wrote {arguments.output}")
 
