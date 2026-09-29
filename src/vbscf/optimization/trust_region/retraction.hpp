@@ -40,8 +40,10 @@ public:
    * @brief Applies the inverse Riesz map without assembling the metric.
    *
    * Solves @f$M y=b@f$ by conjugate gradients using matrix-free metric
-   * actions. Failure to reach the roundoff-derived residual tolerance in at
-   * most the reduced-space dimension is reported explicitly.
+   * actions. True residuals certify convergence.  When finite-precision loss
+   * of conjugacy prevents the exact-arithmetic n-step property, the solve
+   * restarts after a complete Krylov cycle and continues while the certified
+   * residual still decreases above roundoff.
    */
   Eigen::VectorXd solve(const Eigen::VectorXd& covector) const;
 

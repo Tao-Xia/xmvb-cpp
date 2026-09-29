@@ -274,8 +274,13 @@ VbScfOptimizerResult VbScfOptimizer::optimize(
         final_space,
         parameter_view,
         objective.input().orbital_preparation_input);
-    result.final_physical_gradient_norm =
-        final_metric.dual_norm(final_projection.reduced_gradient);
+    try {
+      result.final_physical_gradient_norm =
+          final_metric.dual_norm(final_projection.reduced_gradient);
+    } catch (const std::runtime_error& error) {
+      result.final_physical_gradient_norm.reset();
+      result.final_physical_gradient_diagnostic = error.what();
+    }
   }
   objective.ensure_exact_structure_overlap_diagonal();
   sync_result_from_objective(objective, &result);

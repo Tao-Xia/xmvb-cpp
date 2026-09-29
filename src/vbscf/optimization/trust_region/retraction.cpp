@@ -68,14 +68,13 @@ Eigen::VectorXd NonredundantRetractionMetric::solve(
       std::sqrt(std::numeric_limits<double>::epsilon());
   const double residual_tolerance =
       relative_tolerance * right_hand_side_norm;
-  const double loss_of_conjugacy_tolerance =
-      std::cbrt(std::numeric_limits<double>::epsilon()) *
-      right_hand_side_norm;
 
   Eigen::VectorXd solution = Eigen::VectorXd::Zero(dimension);
   Eigen::VectorXd direction = covector;
   double residual_squared = covector.squaredNorm();
-  for (Eigen::Index iteration = 0; iteration < dimension; ++iteration) {
+  double cycle_initial_residual_norm = right_hand_side_norm;
+  Eigen::Index iteration_in_cycle = 0;
+  while (true) {
     Eigen::VectorXd metric_direction = apply(direction);
     double curvature = direction.dot(metric_direction);
     if (!(curvature > 0.0) || !std::isfinite(curvature)) {
@@ -85,7 +84,7 @@ Eigen::VectorXd NonredundantRetractionMetric::solve(
       // reduced metric.
       direction = covector - apply(solution);
       const double restarted_residual_norm = direction.norm();
-      if (restarted_residual_norm <= loss_of_conjugacy_tolerance) {
+      if (restarted_residual_norm <= residual_tolerance) {
         return solution;
       }
       metric_direction = apply(direction);
@@ -95,6 +94,8 @@ Eigen::VectorXd NonredundantRetractionMetric::solve(
             "retraction metric is singular in reduced space");
       }
       residual_squared = direction.squaredNorm();
+      cycle_initial_residual_norm = restarted_residual_norm;
+      iteration_in_cycle = 0;
     }
 
     const double step = residual_squared / curvature;
@@ -117,6 +118,28 @@ Eigen::VectorXd NonredundantRetractionMetric::solve(
     }
 
     const double next_residual_squared = next_residual.squaredNorm();
+    ++iteration_in_cycle;
+    if (iteration_in_cycle == dimension) {
+      // The n-step termination property of CG holds only in exact arithmetic.
+      // Recomputed residuals deliberately trade exact conjugacy for a truthful
+      // certificate, so an ill-conditioned but nonsingular metric can require
+      // another Krylov cycle.  Continue only when the completed cycle made a
+      // decrease resolvable in working precision.
+      const double resolved_decrease =
+          cycle_initial_residual_norm - next_residual_norm;
+      const double roundoff_decrease =
+          std::numeric_limits<double>::epsilon() *
+          std::max(cycle_initial_residual_norm, right_hand_side_norm);
+      if (!(resolved_decrease > roundoff_decrease)) {
+        throw std::runtime_error(
+            "retraction metric CG stagnated above its residual tolerance");
+      }
+      direction = next_residual;
+      residual_squared = next_residual_squared;
+      cycle_initial_residual_norm = next_residual_norm;
+      iteration_in_cycle = 0;
+      continue;
+    }
     const double beta = next_residual_squared / residual_squared;
     if (!std::isfinite(beta)) {
       throw std::runtime_error(
@@ -125,23 +148,12 @@ Eigen::VectorXd NonredundantRetractionMetric::solve(
     direction = next_residual + beta * direction;
     residual_squared = next_residual_squared;
   }
-
-  throw std::runtime_error(
-      "retraction metric CG did not reach its roundoff tolerance");
 }
 
 double NonredundantRetractionMetric::dual_norm(
     const Eigen::VectorXd& covector) const {
   if (covector.size() == 0) return 0.0;
-  Eigen::VectorXd riesz_gradient;
-  try {
-    riesz_gradient = solve(covector);
-  } catch (const std::runtime_error&) {
-    // A failed Riesz solve cannot certify physical stationarity.  Returning
-    // infinity is conservative: the optimizer continues instead of treating
-    // a numerically rank-deficient chart as a converged point.
-    return std::numeric_limits<double>::infinity();
-  }
+  const Eigen::VectorXd riesz_gradient = solve(covector);
   const double squared_norm = covector.dot(riesz_gradient);
   const double roundoff =
       64.0 * std::numeric_limits<double>::epsilon() *

@@ -418,9 +418,16 @@ void print_summary(
     print_log_field(
         "Final projected |g|_2",
         format_scientific_double(result.final_projected_gradient_l2_norm, 8));
-    print_log_field(
-        "Final physical |g|_(G^-1)",
-        format_scientific_double(result.final_physical_gradient_norm, 8));
+    if (result.final_physical_gradient_norm.has_value()) {
+      print_log_field(
+          "Final physical |g|_(G^-1)",
+          format_scientific_double(
+              *result.final_physical_gradient_norm, 8));
+    } else {
+      print_log_field(
+          "Final physical gradient diagnostic",
+          "unavailable: " + result.final_physical_gradient_diagnostic);
+    }
   }
   if (options.backend ==
       xmvb::vb::VbScfOptimizerBackend::NonredundantTruncatedNewton) {

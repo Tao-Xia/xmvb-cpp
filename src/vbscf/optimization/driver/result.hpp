@@ -280,7 +280,8 @@ struct VbScfOptimizerResult {
   /**
    * @brief Final metric-dual gradient norm on the physical orbital quotient.
    */
-  double final_physical_gradient_norm = 0.0;
+  std::optional<double> final_physical_gradient_norm;
+  std::string final_physical_gradient_diagnostic;
 
   /**
    * @brief Total energy after each objective/gradient evaluation, including the initial value.

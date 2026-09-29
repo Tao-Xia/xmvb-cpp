@@ -312,6 +312,11 @@ void check(const std::string& name, const OrbitalPreparationInput& input,
       require((metric.apply(riesz_vector) - covector).norm() <
                   2.0e-8 * covector.norm(),
               name + ": matrix-free Riesz solve has a large true residual");
+      require(std::abs(
+                  metric.dual_norm(covector) -
+                  std::sqrt(covector.dot(dense_riesz_vector))) <
+                  5.0e-8 * std::max(1.0, dense_riesz_vector.norm()),
+              name + ": physical dual norm differs from the dense metric");
       const Eigen::VectorXd test_vector =
           Eigen::VectorXd::LinSpaced(u.cols(), 0.9, -0.4);
       require((metric.solve(metric.apply(test_vector)) - test_vector).norm() <
