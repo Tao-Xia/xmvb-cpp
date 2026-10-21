@@ -180,6 +180,7 @@ class ExactAoPairOperator {
   int n_bf_;
   std::int64_t n_pairs_;
   std::int64_t n_integrals_ = 0;
+  int exchange_shared_values_ = 0;
   bool compact_ = false;
   Buffer<int> pair_first_;
   Buffer<int> pair_second_;

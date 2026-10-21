@@ -523,6 +523,26 @@ void check_exchange_row_graph() {
     near(actual.middleCols(channel*fixture.n_bf,fixture.n_bf),
         reference_jk(fixture,densities.middleCols(channel*fixture.n_bf,fixture.n_bf)),
         "CUDA reordered row-graph exchange differs from four-index oracle");
+  {
+    int device=0,shared_bytes=0;
+    xmvb::cuda::check_cuda(cudaGetDevice(&device),"query tiled exchange test device");
+    xmvb::cuda::check_cuda(cudaDeviceGetAttribute(&shared_bytes,
+        cudaDevAttrMaxSharedMemoryPerBlock,device),"query tiled exchange test capacity");
+    const int channels=shared_bytes/(2*fixture.n_bf*sizeof(double))+3;
+    Matrix batch(fixture.n_bf,fixture.n_bf*channels);
+    for (int c=0;c<channels;++c)
+      batch.middleCols(c*fixture.n_bf,fixture.n_bf)=
+          symmetric_values(fixture.n_bf,0.11+0.017*c);
+    DeviceMatrix dbatch(context,fixture.n_bf,fixture.n_bf*channels);
+    DeviceMatrix obatch(context,fixture.n_bf,fixture.n_bf*channels);
+    upload(context,dbatch,batch);
+    gpu.contract_jk_batch(dbatch.view(),obatch.view());
+    const auto image=download(context,obatch);
+    for (int c=0;c<channels;++c)
+      near(image.middleCols(c*fixture.n_bf,fixture.n_bf),
+          reference_jk(fixture,batch.middleCols(c*fixture.n_bf,fixture.n_bf)),
+          "CUDA shared-memory channel-tiled exchange differs from oracle");
+  }
 }
 
 void check_budgeted_pair_tiles(bool compact) {

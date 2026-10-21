@@ -257,16 +257,65 @@ __global__ void exchange_unique(const int* rows,const int* columns,
   }
 }
 
-// CSR already contains both pair orientations. Consume each once, without
-// regenerating the reverse orbit or retaining another integral-sized index.
+// A CSR row (i,j) contributes only to output rows i and j. Merge those
+// contributions in block-local panels before the global accumulation. CSR
+// already contains the reverse pair orientation; do not emit it again.
 __global__ void exchange_rows(const int* offsets,const int* columns,const double* values,
     const int* first,const int* second,linalg::ConstMatrixView density,
-    linalg::MatrixView output,double weight,int channels) {
-  const int row=blockIdx.x;
+    linalg::MatrixView output,double weight,int channels,int column_width,
+    int channel_width) {
+  extern __shared__ double sums[];
+  const int row=blockIdx.x,ui=first[row],uj=second[row];
+  const int column_begin=blockIdx.y*column_width;
+  const int count=min(column_width,static_cast<int>(output.rows)-column_begin);
+  const int channel_begin=blockIdx.z*channel_width;
+  const int channel_count=min(channel_width,channels-channel_begin);
+  const int panel=count*channel_count,cells=2*panel;
+  for (int k=threadIdx.x;k<cells;k+=blockDim.x) sums[k]=0.0;
+  __syncthreads();
   for (int edge=offsets[row]+threadIdx.x;edge<offsets[row+1];edge+=blockDim.x) {
-    add_oriented_exchange(row,columns[edge],weight*values[edge],first,second,
-        density,output,channels);
+    const int v=columns[edge],vi=first[v],vj=second[v];
+    const double value=weight*values[edge];
+    for (int c=0;c<channel_count;++c) {
+      const auto shift=static_cast<std::int64_t>(channel_begin+c)*density.rows;
+      const int base=c*count;
+      if (vi>=column_begin && vi<column_begin+count) {
+        atomic_add_double(sums+base+vi-column_begin,
+            value*density.data[uj+density.ld*(vj+shift)]);
+        if (ui!=uj) atomic_add_double(sums+panel+base+vi-column_begin,
+            value*density.data[ui+density.ld*(vj+shift)]);
+      }
+      if (vi!=vj && vj>=column_begin && vj<column_begin+count) {
+        atomic_add_double(sums+base+vj-column_begin,
+            value*density.data[uj+density.ld*(vi+shift)]);
+        if (ui!=uj) atomic_add_double(sums+panel+base+vj-column_begin,
+            value*density.data[ui+density.ld*(vi+shift)]);
+      }
+    }
   }
+  __syncthreads();
+  for (int k=threadIdx.x;k<cells;k+=blockDim.x) {
+    const double value=sums[k];
+    if (value==0.0) continue;
+    const int local=k%panel,channel=channel_begin+local/count;
+    const int column=column_begin+local%count,ao=k<panel ? ui:uj;
+    atomic_add_double(output.data+ao+output.ld*(column+channel*output.rows),value);
+  }
+}
+
+void launch_exchange_rows(Context& context,const int* offsets,const int* columns,
+    const double* values,const int* first,const int* second,
+    linalg::ConstMatrixView density,linalg::MatrixView output,double weight,
+    int channels,int shared_values,std::int64_t pairs) {
+  // Capacity comes from the device, not an independent numerical/cache knob.
+  // Only very wide AO rows or channel blocks require another source-row visit.
+  const int column_width=std::min(blas_int(output.rows),shared_values/2);
+  const int channel_width=std::min(channels,shared_values/(2*column_width));
+  const dim3 grid(blas_int(pairs),(blas_int(output.rows)+column_width-1)/column_width,
+      (channels+channel_width-1)/channel_width);
+  const auto bytes=2*static_cast<std::size_t>(column_width)*channel_width*sizeof(double);
+  exchange_rows<<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
+      density,output,weight,channels,column_width,channel_width);
 }
 
 __global__ void finish_jk_batch(const double* image,linalg::MatrixView output,
@@ -458,6 +507,11 @@ ExactAoPairOperator::ExactAoPairOperator(
       graph.pair_first.size() != static_cast<std::size_t>(n_pairs_) ||
       graph.pair_second.size() != static_cast<std::size_t>(n_pairs_))
     throw std::invalid_argument("invalid CUDA AO-pair dimensions");
+  int device=0,shared_bytes=0;
+  check_cuda(cudaGetDevice(&device),"query CUDA exchange device");
+  check_cuda(cudaDeviceGetAttribute(&shared_bytes,cudaDevAttrMaxSharedMemoryPerBlock,device),
+      "query CUDA exchange block capacity");
+  exchange_shared_values_=shared_bytes/sizeof(double);
   for (int pair = 0; pair < n_pairs_; ++pair) {
     if (graph.pair_first[pair] < 0 || graph.pair_first[pair] >= n_bf_ ||
         graph.pair_second[pair] < 0 || graph.pair_second[pair] > graph.pair_first[pair] ||
@@ -935,9 +989,9 @@ void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
           integral_rows_.data(),integral_columns_.data(),integral_values_.data(),n_integrals_,
           pair_first_.data(),pair_second_.data(),density,output,exchange,1);
     else
-      exchange_rows<<<n_pairs_,256,0,context_->stream()>>>(
+      launch_exchange_rows(*context_,
           row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
-          pair_second_.data(),density,output,exchange,1);
+          pair_second_.data(),density,output,exchange,1,exchange_shared_values_,n_pairs_);
     check_launch("CUDA unique-ERI exchange contraction");
   }
   if (coulomb != 0.0 || coulomb_output.data) {
@@ -978,9 +1032,9 @@ void ExactAoPairOperator::contract_jk_batch(linalg::ConstMatrixView density,
           integral_rows_.data(),integral_columns_.data(),integral_values_.data(),n_integrals_,
           pair_first_.data(),pair_second_.data(),density,output,exchange,channels);
     else
-      exchange_rows<<<n_pairs_,256,0,context_->stream()>>>(
+      launch_exchange_rows(*context_,
           row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
-          pair_second_.data(),density,output,exchange,channels);
+          pair_second_.data(),density,output,exchange,channels,exchange_shared_values_,n_pairs_);
     check_launch("CUDA batched unique-ERI exchange contraction");
   }
   if (coulomb!=0.0) {
