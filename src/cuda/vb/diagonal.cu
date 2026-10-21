@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 
 #include "cuda/integrals/exact.hpp"
 #include "cuda/linalg/blas.hpp"
@@ -53,20 +54,16 @@ __global__ void difference(linalg::ConstMatrixView effective,
       core.data[row+core.ld*col];
 }
 
-__global__ void project_active_coulomb(ConstPairPanel products,
-    linalg::ConstMatrixView mo,linalg::MatrixView j_active,
-    std::int64_t begin,int nbf,int active_pairs) {
+// B[p,(mu,nu)] contracts a symmetric AO matrix directly to its MO diagonal.
+// The same bounded tile serves every Coulomb and exchange density channel.
+__global__ void mo_pair_features(linalg::ConstMatrixView mo,
+    linalg::MatrixView features,std::int64_t begin,int nbf) {
   const auto k=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
-  if (k>=static_cast<std::int64_t>(nbf)*active_pairs) return;
-  const int p=static_cast<int>(k%nbf),ab=static_cast<int>(k/nbf);
-  double value=0.0;
-  for (std::int64_t row=0;row<products.rows;++row) {
-    int mu,nu;
-    decode_pair(begin+row,mu,nu);
-    value+=(mu==nu ? 1.0:2.0)*mo.data[mu+mo.ld*p]*
-        mo.data[nu+mo.ld*p]*products.data[row*products.ld+ab];
-  }
-  j_active.data[p+j_active.ld*ab]+=value;
+  if (k>=features.rows*features.cols) return;
+  const int p=static_cast<int>(k%nbf);
+  int mu,nu;
+  decode_pair(begin+k/nbf,mu,nu);
+  features.data[k]=(mu==nu ? 1.0:2.0)*mo.data[mu+mo.ld*p]*mo.data[nu+mo.ld*p];
 }
 
 __global__ void core_density(linalg::ConstMatrixView mo,
@@ -292,11 +289,24 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
   gemm(context,vmo.view(),mo,projected.view(),1.0,0.0,Operation::transpose);
 
   Matrix<double> jactive(context,nbf,pairs);
-  check_cuda(cudaMemsetAsync(jactive.data(),0,
-      static_cast<std::size_t>(nbf)*pairs*sizeof(double),context.stream()),
-      "CUDA Hessian clear active Coulomb slices");
+  Matrix<double> active_images(context,nbf,2*active);
+  // Every weight is symmetric, including when the supplied RDM adjoints are
+  // not. Hence its exchange image is symmetric and the packed AO-pair
+  // projection is exact; no full AO response or full MO transform is needed.
+  Matrix<double> active_weights(context,active,2*active*active);
+  for (int channel=0;channel<2*active;++channel) {
+    active_weight<<<grid(static_cast<std::int64_t>(active)*active),256,0,
+        context.stream()>>>(dm1,pair_adjoint,
+        active_weights.view().columns(channel*active,active),
+        active,channel%active,channel>=active);
+    check_cuda(cudaGetLastError(),"CUDA Hessian active density weight");
+  }
   {
-    const auto rows=pair_tile_rows(context,integrals.pair_count(),pairs);
+    const nvtx3::scoped_range range{"diagonal.pair_projection"};
+    const auto rows=pair_tile_rows(context,integrals.pair_count(),
+        nbf+(exchange_products.data ? 2*active:0)+(!accepted_products.data ? pairs:0));
+    Matrix<double> features(context,nbf,rows),exchange_image;
+    if (exchange_products.data) exchange_image=Matrix<double>(context,rows,2*active);
     Buffer<double> products;
     if (!accepted_products.data) products=Buffer<double>(context,static_cast<std::size_t>(rows)*pairs);
     for (std::int64_t begin=0;begin<integrals.pair_count();begin+=rows) {
@@ -306,17 +316,28 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
       if (!accepted_products.data)
         integrals.generated_rows(mo.columns(ncore,active),{},begin,
             {products.data(),count,pairs,pairs});
-      project_active_coulomb<<<grid(static_cast<std::int64_t>(nbf)*pairs),
-          256,0,context.stream()>>>(
-          {tile.data,tile.rows,tile.cols,tile.ld},mo,jactive.view(),begin,nbf,pairs);
-      check_cuda(cudaGetLastError(),"CUDA Hessian active Coulomb projection");
+      const auto b=features.view().columns(0,count);
+      mo_pair_features<<<grid(static_cast<std::int64_t>(nbf)*count),256,0,
+          context.stream()>>>(mo,b,begin,nbf);
+      check_cuda(cudaGetLastError(),"CUDA Hessian shared MO pair projection");
+      gemm(context,jactive.view(),b,{tile.data,pairs,count,tile.ld},
+          1.0,begin==0 ? 0.0:1.0,Operation::none,Operation::transpose);
+      if (exchange_products.data) {
+        const auto n2=static_cast<std::int64_t>(active)*active;
+        const linalg::MatrixView image{exchange_image.data(),count,2*active,rows};
+        // E is row-major in AO pairs. The active pair index is transposed
+        // relative to column-major W, which is immaterial for symmetric W.
+        gemm(context,image,
+            {exchange_products.data+begin*exchange_products.ld,n2,count,exchange_products.ld},
+            {active_weights.data(),n2,2*active,n2},-1.0,0.0,Operation::transpose);
+        gemm(context,active_images.view(),b,image,1.0,begin==0 ? 0.0:1.0);
+      }
     }
   }
 
   Matrix<double> density(context,nbf,nbf),response(context,nbf,nbf);
   Matrix<double> active_left;
   if (!exchange_products.data) active_left=Matrix<double>(context,nbf,active);
-  Matrix<double> active_images(context,nbf,2*active);
   Matrix<double> core_response(context,nbf,ncore),jpc(context,nbf,ncore);
   const auto active_mo=mo.columns(ncore,active);
   const bool core_projected=integrals.core_diagonal(mo,ncore,jpc.view(),core_response.view(),
@@ -335,32 +356,28 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
         mo,projected.view(),jpc.view(),c,nbf);
     check_cuda(cudaGetLastError(),"CUDA Hessian core Coulomb diagonal");
   }
-  std::size_t free=0,total=0;
-  check_cuda(cudaMemGetInfo(&free,&total),"query analytic diagonal batch memory");
-  const auto available=std::min(free,context.device_byte_budget()-
-      context.counters().current_device_bytes);
-  // Density and output slabs are shared, not replicated per channel/thread.
-  // Leave another slab pair for subsequent library/reduction workspaces.
-  const auto channel_bytes=(4*static_cast<std::size_t>(nbf)*nbf+
-      static_cast<std::size_t>(active)*active)*sizeof(double);
-  const int width=static_cast<int>(std::min<std::size_t>(2*active,available/channel_bytes));
-  if (width<1) throw std::runtime_error("CUDA diagonal budget cannot hold one density batch");
-  Matrix<double> densities,responses(context,nbf,nbf*width);
-  if (!exchange_products.data) densities=Matrix<double>(context,nbf,nbf*width);
-  Matrix<double> active_weights(context,active,active*width);
+  int width=2*active;
+  Matrix<double> densities,responses;
+  if (!exchange_products.data) {
+    std::size_t free=0,total=0;
+    check_cuda(cudaMemGetInfo(&free,&total),"query analytic diagonal batch memory");
+    const auto available=std::min(free,context.device_byte_budget()-
+        context.counters().current_device_bytes);
+    // Only the streamed representation needs full density slabs. The
+    // retained-image route above has already completed every K projection.
+    const auto channel_bytes=4*static_cast<std::size_t>(nbf)*nbf*sizeof(double);
+    width=static_cast<int>(std::min<std::size_t>(2*active,available/channel_bytes));
+    if (width<1) throw std::runtime_error("CUDA diagonal budget cannot hold one density batch");
+    densities=Matrix<double>(context,nbf,nbf*width);
+    responses=Matrix<double>(context,nbf,nbf*width);
+  }
   for (int begin=0;begin<2*active;begin+=width) {
     const int count=std::min(width,2*active-begin);
     for (int local=0;local<count;++local) {
-      const int channel=begin+local,a=channel%active;
-      const auto weight=active_weights.view().columns(local*active,active);
-      active_weight<<<grid(static_cast<std::int64_t>(active)*active),256,0,
-          context.stream()>>>(dm1,pair_adjoint,weight,
-          active,a,channel>=active);
-      check_cuda(cudaGetLastError(),"CUDA Hessian active density weight");
-      if (exchange_products.data)
-        integrals.exchange_density(exchange_products,weight,responses.view().columns(local*nbf,nbf));
-      else {
-        gemm(context,active_left.view(),active_mo,weight);
+      if (!exchange_products.data) {
+        const int channel=begin+local;
+        const auto source=active_weights.view().columns(channel*active,active);
+        gemm(context,active_left.view(),active_mo,source);
         gemm(context,densities.view().columns(local*nbf,nbf),active_left.view(),active_mo,
             1.0,0.0,Operation::none,Operation::transpose);
       }
@@ -370,12 +387,14 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
           responses.view().columns(0,nbf*count),0.0,-1.0);
     for (int local=0;local<count;++local) {
       const int channel=begin+local;
-      gemm(context,projected.view(),responses.view().columns(local*nbf,nbf),mo);
-      projected_mo_diagonal<<<grid(nbf),256,0,context.stream()>>>(
-          mo,projected.view(),active_images.view(),channel,nbf);
-      check_cuda(cudaGetLastError(),"CUDA Hessian active exchange diagonal");
+      if (!exchange_products.data) {
+        gemm(context,projected.view(),responses.view().columns(local*nbf,nbf),mo);
+        projected_mo_diagonal<<<grid(nbf),256,0,context.stream()>>>(
+            mo,projected.view(),active_images.view(),channel,nbf);
+        check_cuda(cudaGetLastError(),"CUDA Hessian active exchange diagonal");
+      }
       add_active_coulomb<<<grid(nbf),256,0,context.stream()>>>(jactive.view(),
-          active_weights.view().columns(local*active,active),active_images.view(),channel,nbf,active);
+          active_weights.view().columns(channel*active,active),active_images.view(),channel,nbf,active);
       check_cuda(cudaGetLastError(),"CUDA Hessian active Coulomb diagonal");
     }
   }

@@ -252,6 +252,20 @@ void check(bool compact,int ncore) {
   xmvb::cuda::copy_to_host(context,actual,reused.view());
   if ((actual-expected).norm()>2e-9*std::max(1.0,expected.norm()))
     throw std::runtime_error("GPU retained analytic Hessian diagonal differs from CPU oracle");
+  if (!compact && ncore==0) {
+    // Leave only 256 doubles beyond the resident inputs. This forces multiple
+    // shared AO-pair projection tiles, including a non-full final tile.
+    const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
+    xmvb::cuda::Buffer<unsigned char> padding(context,available-256*sizeof(double));
+    const auto tiled=xmvb::cuda::build_analytic_rotation_diagonal(
+        context,graph,dmo.view(),dcore.view(),deffective.view(),ddm1.view(),
+        dadjoint.view(),dpair.view(),ncore,
+        {products.data(),graph.pair_count(),nactivepairs,nactivepairs},
+        {exchange.data(),graph.pair_count(),na*na,na*na});
+    xmvb::cuda::copy_to_host(context,actual,tiled.view());
+    if ((actual-expected).norm()>2e-9*std::max(1.0,expected.norm()))
+      throw std::runtime_error("GPU tiled pair diagonal differs from CPU oracle");
+  }
 }
 
 }  // namespace
