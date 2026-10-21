@@ -8,6 +8,7 @@
 #include <string>
 
 #include <cuda_runtime.h>
+#include <cub/warp/warp_reduce.cuh>
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
@@ -282,11 +283,10 @@ __global__ void exchange_unique(const int* rows,const int* columns,
 // A CSR row (i,j) contributes only to output rows i and j. Merge those
 // contributions in block-local panels before the global accumulation. CSR
 // already contains the reverse pair orientation; do not emit it again.
-template<bool Packed=false>
 __global__ void exchange_rows(const int* offsets,const int* columns,const double* values,
     const int* first,const int* second,linalg::ConstMatrixView density,
     linalg::MatrixView output,double weight,int channels,int column_width,
-    int channel_width,PackedAoPairMatrix::DeviceView packed={}) {
+    int channel_width) {
   extern __shared__ double sums[];
   const int row=blockIdx.x,ui=first[row],uj=second[row];
   const int column_begin=blockIdx.y*column_width;
@@ -296,11 +296,11 @@ __global__ void exchange_rows(const int* offsets,const int* columns,const double
   const int panel=count*channel_count,cells=2*panel;
   for (int k=threadIdx.x;k<cells;k+=blockDim.x) sums[k]=0.0;
   __syncthreads();
-  const int begin=Packed ? 0:offsets[row];
-  const int end=Packed ? packed.pairs:offsets[row+1];
+  const int begin=offsets[row];
+  const int end=offsets[row+1];
   for (int edge=begin+threadIdx.x;edge<end;edge+=blockDim.x) {
-    const int v=Packed ? edge:columns[edge],vi=first[v],vj=second[v];
-    const double value=weight*(Packed ? packed.value(row,v):values[edge]);
+    const int v=columns[edge],vi=first[v],vj=second[v];
+    const double value=weight*values[edge];
     if (value==0.0) continue;
     for (int c=0;c<channel_count;++c) {
       const auto shift=static_cast<std::int64_t>(channel_begin+c)*density.rows;
@@ -332,8 +332,7 @@ __global__ void exchange_rows(const int* offsets,const int* columns,const double
 void launch_exchange_rows(Context& context,const int* offsets,const int* columns,
     const double* values,const int* first,const int* second,
     linalg::ConstMatrixView density,linalg::MatrixView output,double weight,
-    int channels,int shared_values,std::int64_t pairs,
-    PackedAoPairMatrix::DeviceView packed={}) {
+    int channels,int shared_values,std::int64_t pairs) {
   // Capacity comes from the device, not an independent numerical/cache knob.
   // Only very wide AO rows or channel blocks require another source-row visit.
   const int column_width=std::min(blas_int(output.rows),shared_values/2);
@@ -341,12 +340,55 @@ void launch_exchange_rows(Context& context,const int* offsets,const int* columns
   const dim3 grid(blas_int(pairs),(blas_int(output.rows)+column_width-1)/column_width,
       (channels+channel_width-1)/channel_width);
   const auto bytes=2*static_cast<std::size_t>(column_width)*channel_width*sizeof(double);
-  if (packed.values)
-    exchange_rows<true><<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
-        density,output,weight,channels,column_width,channel_width,packed);
-  else
-    exchange_rows<false><<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
+  exchange_rows<<<grid,256,bytes,context.stream()>>>(offsets,columns,values,first,second,
         density,output,weight,channels,column_width,channel_width);
+}
+
+struct ExchangeSum {
+  double forward,reverse;
+};
+
+struct AddExchange {
+  __device__ ExchangeSum operator()(ExchangeSum a,ExchangeSum b) const {
+    return {a.forward+b.forward,a.reverse+b.reverse};
+  }
+};
+
+__device__ std::int64_t ao_pair(int a,int b) {
+  const auto high=max(a,b),low=min(a,b);
+  return static_cast<std::int64_t>(high)*(high+1)/2+low;
+}
+
+// One output AO pair owns both orientations. Summing unordered source pairs
+// needs no scatter or atomics and preserves nonsymmetric density inputs too:
+// K_mu,nu=sum_kl (mu k|nu l) D_kl, K_nu,mu uses the transposed D.
+__global__ void exchange_pair_gather(PackedAoPairMatrix::DeviceView eri,
+    const int* first,const int* second,linalg::ConstMatrixView density,
+    linalg::MatrixView output,double weight) {
+  using Reduce=cub::WarpReduce<ExchangeSum>;
+  __shared__ typename Reduce::TempStorage temporary[8];
+  const int warp=threadIdx.x/32,lane=threadIdx.x%32;
+  const auto row=static_cast<std::int64_t>(blockIdx.x)*8+warp;
+  if (row>=eri.pairs) return;
+  const int mu=first[row],nu=second[row];
+  ExchangeSum sum{0.0,0.0};
+  for (std::int64_t q=lane;q<eri.pairs;q+=32) {
+    const int k=first[q],l=second[q];
+    const double a=eri.value(ao_pair(mu,k),ao_pair(nu,l));
+    const double d=density.data[k+density.ld*l],dt=density.data[l+density.ld*k];
+    sum.forward+=a*d;
+    sum.reverse+=a*dt;
+    if (k!=l) {
+      const double b=eri.value(ao_pair(mu,l),ao_pair(nu,k));
+      sum.forward+=b*dt;
+      sum.reverse+=b*d;
+    }
+  }
+  const auto value=Reduce(temporary[warp]).Reduce(sum,AddExchange{});
+  if (lane==0) {
+    output.data[mu+output.ld*nu]=weight*value.forward;
+    if (mu!=nu) output.data[nu+output.ld*mu]=weight*value.reverse;
+  }
 }
 
 __global__ void finish_jk_batch(const double* image,linalg::MatrixView output,
@@ -1078,15 +1120,17 @@ void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
     throw std::invalid_argument("invalid CUDA separate Coulomb output");
   zero_matrix(*context_, output);
   if (exchange != 0.0 && n_integrals_ != 0) {
-    if (compact_)
+    if (packed_)
+      exchange_pair_gather<<<blas_int((n_pairs_+7)/8),256,0,context_->stream()>>>(
+          packed_->view(),pair_first_.data(),pair_second_.data(),density,output,exchange);
+    else if (compact_)
       exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
           integral_rows_.data(),integral_columns_.data(),integral_values_.data(),n_integrals_,
           pair_first_.data(),pair_second_.data(),density,output,exchange,1);
     else
       launch_exchange_rows(*context_,
           row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
-          pair_second_.data(),density,output,exchange,1,exchange_shared_values_,n_pairs_,
-          packed_ ? packed_->view():PackedAoPairMatrix::DeviceView{});
+          pair_second_.data(),density,output,exchange,1,exchange_shared_values_,n_pairs_);
     check_launch("CUDA unique-ERI exchange contraction");
   }
   if (coulomb != 0.0 || coulomb_output.data) {
@@ -1120,6 +1164,10 @@ void ExactAoPairOperator::contract_jk_batch(linalg::ConstMatrixView density,
       output.data==density.data || !std::isfinite(coulomb) || !std::isfinite(exchange))
     throw std::invalid_argument("invalid CUDA symmetric JK batch");
   const int channels=blas_int(density.cols/n_bf_);
+  if (channels==1) {
+    contract_jk(density,output,coulomb,exchange);
+    return;
+  }
   zero_matrix(*context_,output);
   if (exchange!=0.0 && n_integrals_!=0) {
     if (packed_)

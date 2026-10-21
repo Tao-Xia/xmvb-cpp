@@ -436,6 +436,10 @@ void check_one_electron_and_core(bool compact,bool sparse=false) {
     xmvb::cuda::copy_to_host(context,actual,oview);
     near(actual,reference_jk(fixture,nonsymmetric,0.0,1.0),
         "CUDA exchange transposed the supplied density row");
+    gpu.contract_jk_batch(pview,oview,0.0,1.0);
+    xmvb::cuda::copy_to_host(context,actual,oview);
+    near(actual,reference_jk(fixture,nonsymmetric,0.0,1.0),
+        "CUDA single-channel exchange batch differs from scalar contraction");
   }
   Matrix density_batch(fixture.n_bf,3*fixture.n_bf);
   density_batch << density,density_direction,(density+0.37*density_direction).eval();
