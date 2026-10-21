@@ -11,6 +11,7 @@
 
 #include "cuda/memory/buffer.hpp"
 #include "cuda/linalg/svd.hpp"
+#include "cuda/linalg/block_map.hpp"
 #include "cuda/vb/chart.hpp"
 #include "cuda/vb/orbitals.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
@@ -71,6 +72,43 @@ void check_matrix_transfers() {
   xmvb::cuda::copy_to_device(context,{nullptr,0,3,0},host.block(0,0,0,3));
   if (context.counters().host_to_device_bytes!=42*sizeof(double))
     throw std::runtime_error("empty matrix transfer changed byte accounting");
+}
+
+void check_block_map() {
+  xmvb::cuda::Context context;
+  Matrix a(6,3),b(6,3),c(2,2),x(14,1),raw=Matrix::Constant(7,3,-91.0);
+  for (int j=0;j<3;++j) for (int i=0;i<6;++i) {
+    a(i,j)=std::sin(0.3*(i+1)*(j+2));
+    b(i,j)=std::cos(0.2*(i+2)*(j+1));
+  }
+  c<<0.4,0.7,-0.2,1.1;
+  for (int i=0;i<14;++i) x(i)=std::sin(0.17*(i+1));
+  auto da=upload(context,a),db=upload(context,b),dc=upload(context,c);
+  auto dx=upload(context,x),dy=upload(context,raw);
+  const std::vector<xmvb::cuda::BlockMapEntry> entries{
+      {{da.data(),4,3,6},0,0},{{db.data(),4,3,6},4,1},{dc.view(),9,2}};
+  xmvb::cuda::BlockMap map(context,entries);
+  const auto bytes=context.counters().current_device_bytes;
+  const auto uploads=context.counters().host_to_device_bytes;
+  map.apply(dx.data(),dy.data(),false,1,7);
+  Matrix expected=raw;
+  expected.col(0).head(4)=a.topRows(4)*x.topRows(3);
+  expected.col(1).head(4)=b.topRows(4)*x.middleRows(4,3);
+  expected.col(2).head(2)=c*x.middleRows(9,2);
+  near(download(context,dy.view()),expected,"CUDA block map forward/padding");
+  Matrix covector=Matrix::Constant(14,1,-91.0);
+  auto dg=upload(context,covector);
+  const auto apply_bytes=context.counters().current_device_bytes;
+  const auto apply_uploads=context.counters().host_to_device_bytes;
+  map.apply(dy.data(),dg.data(),true,7,1);
+  covector.topRows(3)=a.topRows(4).transpose()*expected.col(0).head(4);
+  covector.middleRows(4,3)=b.topRows(4).transpose()*expected.col(1).head(4);
+  covector.middleRows(9,2)=c.transpose()*expected.col(2).head(2);
+  near(download(context,dg.view()),covector,"CUDA block map transpose/padding");
+  if (context.counters().current_device_bytes!=apply_bytes ||
+      context.counters().host_to_device_bytes!=apply_uploads ||
+      apply_bytes!=bytes+14*sizeof(double) || apply_uploads!=uploads+14*sizeof(double))
+    throw std::runtime_error("CUDA block map application allocated or uploaded workspace");
 }
 
 void check_right_svd() {
@@ -380,6 +418,7 @@ int main() {
   try {
     check_right_svd();
     check_matrix_transfers();check_map();
+    check_block_map();
     for (bool oeo:{false,true})
       for (bool inactive:{false,true}) check_accepted(oeo,inactive);
     check_accepted(false,2); // Equal inactive support, different fixed active tails.

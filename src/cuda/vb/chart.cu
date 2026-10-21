@@ -1,6 +1,7 @@
 #include "cuda/vb/chart.hpp"
 #include "cuda/vb/orbitals.hpp"
 #include "cuda/linalg/blas.hpp"
+#include "cuda/linalg/block_map.hpp"
 #include "cuda/linalg/svd.hpp"
 #include "vbscf/orbitals/charts/partition.hpp"
 #include "vbscf/core/contracts/orbital_type.hpp"
@@ -123,8 +124,6 @@ __global__ void chart_make_basis(Const,Const,Const,double*,int,int,double,bool);
 __global__ void chart_rank_one(double*,const double*,int);
 __global__ void chart_subtract(double*,const double*,int);
 __global__ void chart_sphere_flag(Const,int,int,int,int*);
-__global__ void chart_scatter_direction(Const,const int*,Mut,int,int);
-__global__ void chart_gather_covector(Const,int,double*,int);
 __global__ void chart_add_retraction(Const,Const,Mut,const int*,int*,int,int,double);
 __global__ void chart_scatter_basis(Const,const int*,double*,int,int,int);
 __global__ void chart_take_row(Const,int,double*,int);
@@ -261,6 +260,8 @@ struct AcceptedOrbitalChart::Impl {
   Matrix<double> restrict_ray(const OrbitalGeometry&,const Meta&,Const);
   std::vector<Meta> metas;
   std::vector<Local> locals;
+  BlockMap basis_map,metric_map,inverse_map,signed_map;
+  Matrix<double> signed_spectrum,signed_scratch;
   int reduced=0;
   int quotient_groups=0;
   std::uint64_t signature=1469598103934665603ull;
@@ -291,6 +292,9 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
   p.reduced=0;
   p.signature=1469598103934665603ull;
   p.has_analytic_diagonal=false;
+  p.signed_map=BlockMap{};
+  p.signed_spectrum=Matrix<double>{};
+  p.signed_scratch=Matrix<double>{};
 
   Matrix<double> inactive_span(ctx,p.basis,p.inactive);
   if (p.inactive) {
@@ -427,6 +431,16 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
   }
   p.build_rotation_frame(geometry);
   p.build_physical_metric_factors(geometry);
+  std::vector<BlockMapEntry> basis_entries,metric_entries,inverse_entries;
+  for (const auto& local:p.locals) {
+    if (!local.size) continue;
+    basis_entries.push_back({local.basis.view(),local.offset,local.orbital});
+    metric_entries.push_back({local.metric.view(),local.offset,local.offset});
+    inverse_entries.push_back({local.inverse.view(),local.offset,local.offset});
+  }
+  p.basis_map=BlockMap(ctx,basis_entries);
+  p.metric_map=BlockMap(ctx,metric_entries);
+  p.inverse_map=BlockMap(ctx,inverse_entries);
 }
 
 Matrix<double> AcceptedOrbitalChart::Impl::build_quotient(
@@ -1018,17 +1032,6 @@ __global__ void chart_rank_one(double* metric,const double* r,int q) {
   if (k<q*q) metric[k]-=r[k%q]*r[k/q];
 }
 
-__global__ void chart_scatter_direction(Const local,const int* slots,
-    Mut raw,int count,int orbital) {
-  const int i=blockIdx.x*blockDim.x+threadIdx.x;
-  if (i<count) raw.data[orbital*raw.ld+i]=local.data[i];
-}
-
-__global__ void chart_gather_covector(Const raw,int orbital,double* local,int count) {
-  const int i=blockIdx.x*blockDim.x+threadIdx.x;
-  if (i<count) local[i]=raw.data[orbital*raw.ld+i];
-}
-
 __global__ void chart_add_retraction(Const accepted,Const tangent,Mut trial,
     const int* stored,int* info,int basis,int orbitals,double scale) {
   const int k=blockIdx.x*blockDim.x+threadIdx.x;
@@ -1199,36 +1202,14 @@ void AcceptedOrbitalChart::expand(Const reduced,Mut raw_direction) const {
   chart_check_view(reduced,p.reduced,1,"CUDA accepted chart direction");
   chart_check_view(raw_direction,p.basis,p.orbitals,"CUDA accepted chart raw direction");
   chart_zero(p.context,raw_direction);
-  for (const auto& block:p.locals) {
-    if (!block.size) continue;
-    Matrix<double> local(p.context,block.differentiable,1);
-    const double alpha=1.0,beta=0.0;
-    check_cublas(cublasDgemv(p.context.blas(),CUBLAS_OP_N,
-        block.differentiable,block.size,&alpha,block.basis.data(),
-        block.differentiable,reduced.data+block.offset,1,&beta,
-        local.data(),1),"cublasDgemv chart expansion");
-    chart_scatter_direction<<<grid(block.differentiable),kThreads,0,p.context.stream()>>>(
-        local.view(),nullptr,raw_direction,block.differentiable,block.orbital);
-    check_cuda(cudaGetLastError(),"CUDA accepted chart expansion scatter");
-  }
+  p.basis_map.apply(reduced.data,raw_direction.data,false,1,raw_direction.ld);
 }
 
 void AcceptedOrbitalChart::project(Const raw_covector,Mut reduced_covector) const {
   auto& p=*impl_;
   chart_check_view(raw_covector,p.basis,p.orbitals,"CUDA accepted chart raw covector");
   chart_check_view(reduced_covector,p.reduced,1,"CUDA accepted chart covector");
-  for (const auto& block:p.locals) {
-    if (!block.size) continue;
-    Matrix<double> local(p.context,block.differentiable,1);
-    chart_gather_covector<<<grid(block.differentiable),kThreads,0,p.context.stream()>>>(
-        raw_covector,block.orbital,local.data(),block.differentiable);
-    check_cuda(cudaGetLastError(),"CUDA accepted chart covector gather");
-    const double alpha=1.0,beta=0.0;
-    check_cublas(cublasDgemv(p.context.blas(),CUBLAS_OP_T,
-        block.differentiable,block.size,&alpha,block.basis.data(),
-        block.differentiable,local.data(),1,&beta,
-        reduced_covector.data+block.offset,1),"cublasDgemv chart projection");
-  }
+  p.basis_map.apply(raw_covector.data,reduced_covector.data,true,raw_covector.ld,1);
 }
 
 void AcceptedOrbitalChart::project_vector(Const raw_direction,Mut reduced_vector) const {
@@ -1243,13 +1224,12 @@ void AcceptedOrbitalChart::project_vector(Const raw_direction,Mut reduced_vector
     if (!block.size) continue;
     const auto& meta=p.metas[index];
     const int m=block.differentiable;
-    Matrix<double> local(ctx,m,1),overlap(ctx,m,m);
-    chart_gather_covector<<<grid(m),kThreads,0,ctx.stream()>>>(
-        raw_direction,block.orbital,local.data(),m);
+    Matrix<double> overlap(ctx,m,m);
+    const Const local{raw_direction.data+block.orbital*raw_direction.ld,m,1,m};
     chart_gather_overlap<<<grid(m*m),kThreads,0,ctx.stream()>>>(
         p.ao_overlap,meta.local_device.data(),overlap.data(),m);
     check_cuda(cudaGetLastError(),"CUDA chart vector AO metric gather");
-    auto covariant=chart_product(ctx,overlap.view(),local.view());
+    auto covariant=chart_product(ctx,overlap.view(),local);
     auto pulled=chart_product(ctx,block.basis.view(),covariant.view(),
                                Operation::transpose);
     const double alpha=1.0,beta=0.0;
@@ -1284,14 +1264,7 @@ void AcceptedOrbitalChart::metric(Const vector,Mut covector) const {
   auto& p=*impl_;
   chart_check_view(vector,p.reduced,1,"CUDA chart metric vector");
   chart_check_view(covector,p.reduced,1,"CUDA chart metric covector");
-  for (const auto& block:p.locals) {
-    if (!block.size) continue;
-    const double alpha=1.0,beta=0.0;
-    check_cublas(cublasDgemv(p.context.blas(),CUBLAS_OP_N,
-        block.size,block.size,&alpha,block.metric.data(),block.size,
-        vector.data+block.offset,1,&beta,covector.data+block.offset,1),
-        "cublasDgemv chart coordinate metric");
-  }
+  p.metric_map.apply(vector.data,covector.data);
 }
 
 void AcceptedOrbitalChart::physical_metric(Const vector,Mut covector) const {
@@ -1398,14 +1371,7 @@ void AcceptedOrbitalChart::inverse_metric(Const covector,Mut vector) const {
   auto& p=*impl_;
   chart_check_view(covector,p.reduced,1,"CUDA chart inverse metric covector");
   chart_check_view(vector,p.reduced,1,"CUDA chart inverse metric vector");
-  for (const auto& block:p.locals) {
-    if (!block.size) continue;
-    const double alpha=1.0,beta=0.0;
-    check_cublas(cublasDgemv(p.context.blas(),CUBLAS_OP_N,
-        block.size,block.size,&alpha,block.inverse.data(),block.size,
-        covector.data+block.offset,1,&beta,vector.data+block.offset,1),
-        "cublasDgemv chart inverse coordinate metric");
-  }
+  p.inverse_map.apply(covector.data,vector.data);
 }
 
 double AcceptedOrbitalChart::coordinate_dual_norm(Const covector) const {
@@ -1607,6 +1573,18 @@ void AcceptedOrbitalChart::set_hessian_diagonal(
       p.ah_active_source_inverse=Matrix<double>(ctx,p.active,p.active);
       chart_copy(ctx,p.ah_active_source_inverse.view(),geometry.frame_transform());
     }
+  } else {
+    std::vector<BlockMapEntry> entries;
+    p.signed_spectrum=Matrix<double>(ctx,p.reduced,1);
+    p.signed_scratch=Matrix<double>(ctx,p.reduced,1);
+    for (auto& block:p.locals) {
+      if (!block.size) continue;
+      entries.push_back({block.ah_signed_vectors.view(),block.offset,block.offset});
+      chart_copy(ctx,{p.signed_spectrum.data()+block.offset,block.size,1,block.size},
+          block.ah_signed_values.view());
+      block.ah_signed_values=Matrix<double>{};
+    }
+    p.signed_map=BlockMap(ctx,entries);
   }
   p.has_analytic_diagonal=true;
 }
@@ -1627,22 +1605,12 @@ void AcceptedOrbitalChart::apply_inverse_hessian_diagonal(Const covector,
     throw std::invalid_argument("CUDA chart analytic Hessian eigenvalue");
   Context& ctx=p.context;
   if (!p.full_rotation_frame) {
-    for (const auto& block:p.locals) {
-      if (!block.size) continue;
-      Matrix<double> spectral(ctx,block.size,1);
-      const double alpha=1.0,beta=0.0;
-      check_cublas(cublasDgemv(ctx.blas(),CUBLAS_OP_T,block.size,block.size,
-          &alpha,block.ah_signed_vectors.data(),block.size,
-          covector.data+block.offset,1,&beta,spectral.data(),1),
-          "cublasDgemv chart analytic signed projection");
-      chart_ah_divide<<<grid(block.size),kThreads,0,ctx.stream()>>>(
-          spectral.data(),block.ah_signed_values.view(),block.size,1,0,eigenvalue);
-      check_cuda(cudaGetLastError(),"CUDA chart analytic signed denominator");
-      check_cublas(cublasDgemv(ctx.blas(),CUBLAS_OP_N,block.size,block.size,
-          &alpha,block.ah_signed_vectors.data(),block.size,spectral.data(),1,
-          &beta,direction.data+block.offset,1),
-          "cublasDgemv chart analytic signed inverse");
-    }
+    if (!p.reduced) return;
+    p.signed_map.apply(covector.data,p.signed_scratch.data(),true);
+    chart_ah_divide<<<grid(p.reduced),kThreads,0,ctx.stream()>>>(
+        p.signed_scratch.data(),p.signed_spectrum.view(),p.reduced,1,0,eigenvalue);
+    check_cuda(cudaGetLastError(),"CUDA chart analytic signed denominator");
+    p.signed_map.apply(p.signed_scratch.data(),direction.data);
     return;
   }
   const int external_count=p.basis-p.inactive;
