@@ -155,6 +155,7 @@ class DirectCiSigma {
   struct Workspace {
     Matrix<double> scattered,transformed,right_scattered,channel_adjoint;
     std::uint64_t generation=0;
+    std::int64_t products=0;
     int moment_partitions=0;
   };
   // One scratch owner per shared spin graph family, not per physical point.

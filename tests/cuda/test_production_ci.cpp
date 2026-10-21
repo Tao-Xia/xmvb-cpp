@@ -161,6 +161,12 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
   xmvb::cuda::Matrix<double> d_image(context, left.rows(), left.cols());
   xmvb::cuda::Matrix<double> d_h(context, n, n);
   const int pairs = n * (n + 1) / 2;
+  const auto sigma_bytes=gpu.resident_bytes();
+  gpu.prepare_with_adjoint(rhs_count);
+  const auto panel_bytes=gpu.resident_bytes()-sigma_bytes-pairs*pairs*sizeof(double);
+  require(panel_bytes%(3*pairs*sizeof(double))==0,
+      "CUDA fused sigma allocated an unused full-carrier panel tail");
+  gpu.reset_workspace();
   xmvb::cuda::Matrix<double> d_g(context, pairs, pairs);
   xmvb::cuda::copy_to_device(context, d_left.view(), left);
   xmvb::cuda::copy_to_device(context, d_right.view(), right);

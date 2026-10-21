@@ -330,6 +330,7 @@ std::size_t DirectCiSigma::resident_bytes() const noexcept {
 
 void DirectCiSigma::reset_workspace() const {
   ++workspace_->generation;
+  workspace_->products=0;
   scattered_=Matrix<double>{};
   transformed_=Matrix<double>{};
   right_scattered_=Matrix<double>{};
@@ -339,7 +340,8 @@ void DirectCiSigma::reset_workspace() const {
 void DirectCiSigma::prepare(int block_width) const {
   if (block_width<=0) throw std::invalid_argument("invalid CUDA sigma block width");
   const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
-  if (transformed_.rows()==products) return;
+  if (workspace_->products==products && scattered_.rows()>0 &&
+      transformed_.rows()==scattered_.rows() && transformed_.cols()==n_channels_) return;
   reset_workspace();
   const std::size_t available=context_->device_byte_budget()-
       context_->counters().current_device_bytes;
@@ -352,8 +354,9 @@ void DirectCiSigma::prepare(int block_width) const {
     throw std::runtime_error("CUDA direct-CI budget cannot hold one complete channel row");
   if (tile<1)
     throw std::runtime_error("CUDA direct-CI budget cannot hold two single-channel slabs");
-  // Keep the same two-slab byte capacity. Both panels carry all channels
-  // for one source-row tile, which is consumed before the next is generated.
+  // Preserve the source-row plan, but allocate only the rows actually used.
+  // Both panels carry all channels for this tile; full-carrier equivalents
+  // above are a planning bound, not a required physical matrix shape.
   auto rows=std::min(products,std::max<std::int64_t>(1,products*tile/n_channels_));
   constexpr int warp_rows=32;
   if (rows>=warp_rows) rows=(rows/warp_rows)*warp_rows;
@@ -361,19 +364,21 @@ void DirectCiSigma::prepare(int block_width) const {
        static_cast<std::size_t>(products)*tile)*sizeof(double)>available)
     throw std::runtime_error("CUDA direct-CI budget cannot hold a complete channel row");
   Matrix<double> scattered(*context_,rows,n_channels_);
-  Matrix<double> transformed(*context_,products,tile);
+  Matrix<double> transformed(*context_,rows,n_channels_);
   scattered_=std::move(scattered);
   transformed_=std::move(transformed);
+  workspace_->products=products;
 }
 
 void DirectCiSigma::prepare_adjoint(int block_width,bool with_sigma,
                                    bool retain_channel_kernel) const {
   if (block_width<=0) throw std::invalid_argument("invalid CUDA adjoint block width");
   const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
-  if (scattered_.rows()>0 && scattered_.cols()==n_channels_ &&
+  if (workspace_->products==products && scattered_.rows()>0 && scattered_.cols()==n_channels_ &&
       right_scattered_.rows()==scattered_.rows() &&
       right_scattered_.cols()==n_channels_ &&
-      (!with_sigma || (transformed_.rows()==products && transformed_.cols()>0)) &&
+      (!with_sigma || (transformed_.rows()==scattered_.rows() &&
+                      transformed_.cols()==n_channels_)) &&
       (!retain_channel_kernel || channel_adjoint_.rows()==n_channels_)) return;
 
   reset_workspace();
@@ -422,11 +427,15 @@ void DirectCiSigma::prepare_adjoint(int block_width,bool with_sigma,
   Matrix<double> scattered(*context_,rows,n_channels_);
   Matrix<double> right_scattered(*context_,rows,n_channels_);
   Matrix<double> transformed;
-  if (with_sigma) transformed=Matrix<double>(*context_,products,tile);
+  // Every GEMM writes count-by-channel output, just like its source slabs.
+  // The full-carrier channel-equivalent capacity was only a planning bound;
+  // its unconsumed tail must not become a physical device allocation.
+  if (with_sigma) transformed=Matrix<double>(*context_,rows,n_channels_);
   channel_adjoint_=std::move(kernel_adjoint);
   scattered_=std::move(scattered);
   right_scattered_=std::move(right_scattered);
   transformed_=std::move(transformed);
+  workspace_->products=products;
 }
 
 void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
