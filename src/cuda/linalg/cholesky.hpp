@@ -1,7 +1,5 @@
 #pragma once
 
-#include <cusolverDn.h>
-
 #include "cuda/memory/buffer.hpp"
 #include "linalg/views.hpp"
 
@@ -15,7 +13,6 @@ namespace xmvb::cuda {
 class Cholesky {
  public:
   Cholesky(Context& context, linalg::ConstMatrixView matrix);
-  ~Cholesky();
   Cholesky(const Cholesky&) = delete;
   Cholesky& operator=(const Cholesky&) = delete;
 
@@ -29,7 +26,6 @@ class Cholesky {
   int dimension_;
   Matrix<double> factor_;
   mutable Buffer<int> info_;
-  cusolverDnHandle_t solver_ = nullptr;
 };
 
 }  // namespace xmvb::cuda

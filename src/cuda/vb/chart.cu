@@ -166,7 +166,7 @@ struct AcceptedOrbitalChart::Impl {
         orbitals(static_cast<int>(input.n_orbitals)),
         inactive(static_cast<int>((input.n_total_electrons-input.n_active_electrons)/2)),
         active(static_cast<int>(input.n_active_orbitals)),
-        active_subspace(complete && input.orbital_type==vb::kOrbitalTypeOeo),
+        active_subspace(complete && input.orbital_type==vb::kOrbitalTypeOeo),solver(ctx.solver()),
         full_support(ctx,static_cast<std::size_t>(basis)*orbitals),
         stored_counts(ctx,orbitals),bad_info(ctx,1),
         tangent(ctx,basis,orbitals),ao_overlap(metric.overlap()) {
@@ -235,11 +235,7 @@ struct AcceptedOrbitalChart::Impl {
       meta.quotient_group=where->second;
       if (inserted) ++quotient_groups;
     }
-    chart_solver(cusolverDnCreate(&solver),"cusolverDnCreate accepted chart");
-    chart_solver(cusolverDnSetStream(solver,context.stream()),
-                 "cusolverDnSetStream accepted chart");
   }
-  ~Impl() { if (solver) cusolverDnDestroy(solver); }
 
   Context& context;
   const AoMetric& ao_metric;

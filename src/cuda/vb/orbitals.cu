@@ -384,38 +384,29 @@ void OrbitalGeometry::prepare() {
 
   // The CPU direct-CI convention is R^T R=A with upper triangular R.
   Matrix<double> factor=duplicate(context,active_overlap_.view());
-  cusolverDnHandle_t solver=nullptr;
-  check_solver(cusolverDnCreate(&solver),"cusolverDnCreate orbital frame");
-  try {
-    check_solver(cusolverDnSetStream(solver,context.stream()),
-                 "cusolverDnSetStream orbital frame");
-    int workspace_size=0;
-    check_solver(cusolverDnDpotrf_bufferSize(solver,CUBLAS_FILL_MODE_LOWER,
-        active_count_,factor.data(),active_count_,&workspace_size),
-        "cusolverDnDpotrf_bufferSize orbital frame");
-    if (workspace_size<0) throw std::runtime_error("negative orbital frame workspace");
-    Buffer<double> workspace(context,workspace_size);
-    check_solver(cusolverDnDpotrf(solver,CUBLAS_FILL_MODE_LOWER,
-        active_count_,factor.data(),active_count_,workspace.data(),
-        workspace_size,impl_->info.data()),"cusolverDnDpotrf orbital frame");
-    context.copy_to_host(&status,impl_->info.data(),sizeof(int));
-    if (status) throw std::runtime_error("CUDA active overlap is not positive definite");
-    const double one=1.0;
-    identity(context,frame_inverse_.view());
-    check_cublas(cublasDtrsm(context.blas(),CUBLAS_SIDE_LEFT,
-        CUBLAS_FILL_MODE_LOWER,CUBLAS_OP_T,CUBLAS_DIAG_NON_UNIT,
-        active_count_,active_count_,&one,factor.data(),active_count_,
-        frame_inverse_.data(),active_count_),
-        "cublasDtrsm orbital frame inverse");
-    // R is the transpose of the lower Cholesky triangle.
-    upper_from_lower_kernel<<<grid(active_count_*active_count_),kThreads,
-        0,context.stream()>>>(frame_transform_.data(),factor.data(),active_count_);
-    check_cuda(cudaGetLastError(),"CUDA orbital upper factor extraction");
-  } catch (...) {
-    cusolverDnDestroy(solver);
-    throw;
-  }
-  cusolverDnDestroy(solver);
+  const auto solver=context.solver();
+  int workspace_size=0;
+  check_solver(cusolverDnDpotrf_bufferSize(solver,CUBLAS_FILL_MODE_LOWER,
+      active_count_,factor.data(),active_count_,&workspace_size),
+      "cusolverDnDpotrf_bufferSize orbital frame");
+  if (workspace_size<0) throw std::runtime_error("negative orbital frame workspace");
+  Buffer<double> workspace(context,workspace_size);
+  check_solver(cusolverDnDpotrf(solver,CUBLAS_FILL_MODE_LOWER,
+      active_count_,factor.data(),active_count_,workspace.data(),
+      workspace_size,impl_->info.data()),"cusolverDnDpotrf orbital frame");
+  context.copy_to_host(&status,impl_->info.data(),sizeof(int));
+  if (status) throw std::runtime_error("CUDA active overlap is not positive definite");
+  const double one=1.0;
+  identity(context,frame_inverse_.view());
+  check_cublas(cublasDtrsm(context.blas(),CUBLAS_SIDE_LEFT,
+      CUBLAS_FILL_MODE_LOWER,CUBLAS_OP_T,CUBLAS_DIAG_NON_UNIT,
+      active_count_,active_count_,&one,factor.data(),active_count_,
+      frame_inverse_.data(),active_count_),
+      "cublasDtrsm orbital frame inverse");
+  // R is the transpose of the lower Cholesky triangle.
+  upper_from_lower_kernel<<<grid(active_count_*active_count_),kThreads,
+      0,context.stream()>>>(frame_transform_.data(),factor.data(),active_count_);
+  check_cuda(cudaGetLastError(),"CUDA orbital upper factor extraction");
   gemm(context,frame_.view(),active_.view(),frame_inverse_.view());
   prepared_=true;
 }

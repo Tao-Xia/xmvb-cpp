@@ -9,6 +9,7 @@
 
 #include <cublas_v2.h>
 #include <cuda_runtime_api.h>
+#include <cusolverDn.h>
 
 namespace xmvb::cuda {
 
@@ -26,6 +27,12 @@ inline void check_cublas(cublasStatus_t status, const char* operation) {
   }
 }
 
+inline void check_cusolver(cusolverStatus_t status,const char* operation) {
+  if (status!=CUSOLVER_STATUS_SUCCESS)
+    throw std::runtime_error(std::string(operation)+" failed (cuSOLVER status "+
+        std::to_string(static_cast<int>(status))+")");
+}
+
 struct TransferCounters {
   std::size_t current_device_bytes = 0;
   std::size_t peak_device_bytes = 0;
@@ -33,7 +40,9 @@ struct TransferCounters {
   std::size_t device_to_host_bytes = 0;
 };
 
-/** Owns a non-default stream and its cuBLAS handle; allocations belong to it. */
+/** Owns a non-default stream and its serialized cuBLAS/cuSOLVER handles.
+ * Numerical objects borrow these handles; none owns another vendor context.
+ */
 class Context {
  public:
   explicit Context(
@@ -56,7 +65,10 @@ class Context {
       check_cublas(cublasSetStream(blas_, stream_), "cublasSetStream");
       check_cublas(cublasSetMathMode(blas_, CUBLAS_DEFAULT_MATH),
                    "cublasSetMathMode");
+      check_cusolver(cusolverDnCreate(&solver_),"cusolverDnCreate Context");
+      check_cusolver(cusolverDnSetStream(solver_,stream_),"cusolverDnSetStream Context");
     } catch (...) {
+      if (solver_ != nullptr) cusolverDnDestroy(solver_);
       if (blas_ != nullptr) cublasDestroy(blas_);
       if (pool_ != nullptr) cudaMemPoolDestroy(pool_);
       cudaStreamDestroy(stream_);
@@ -73,6 +85,7 @@ class Context {
     // All owned allocations and frees are ordered on this stream. Complete
     // them once at shutdown, rather than synchronizing every temporary free.
     if (stream_ != nullptr) cudaStreamSynchronize(stream_);
+    if (solver_ != nullptr) cusolverDnDestroy(solver_);
     if (blas_ != nullptr) cublasDestroy(blas_);
     if (pool_ != nullptr) cudaMemPoolDestroy(pool_);
     if (stream_ != nullptr) cudaStreamDestroy(stream_);
@@ -80,6 +93,7 @@ class Context {
 
   [[nodiscard]] cudaStream_t stream() const noexcept { return stream_; }
   [[nodiscard]] cublasHandle_t blas() const noexcept { return blas_; }
+  [[nodiscard]] cusolverDnHandle_t solver() const noexcept { return solver_; }
   [[nodiscard]] const TransferCounters& counters() const noexcept {
     return counters_;
   }
@@ -154,6 +168,7 @@ class Context {
   cudaStream_t stream_ = nullptr;
   cudaMemPool_t pool_ = nullptr;
   cublasHandle_t blas_ = nullptr;
+  cusolverDnHandle_t solver_ = nullptr;
   std::size_t device_byte_budget_;
   TransferCounters counters_;
   const char* allocation_phase_="unspecified";

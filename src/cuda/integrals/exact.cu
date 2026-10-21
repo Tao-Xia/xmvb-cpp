@@ -8,7 +8,7 @@
 #include <string>
 
 #include <cuda_runtime.h>
-#include <cub/warp/warp_reduce.cuh>
+#include <cub/block/block_reduce.cuh>
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
@@ -365,14 +365,11 @@ __device__ std::int64_t ao_pair(int a,int b) {
 __global__ void exchange_pair_gather(PackedAoPairMatrix::DeviceView eri,
     const int* first,const int* second,linalg::ConstMatrixView density,
     linalg::MatrixView output,double weight) {
-  using Reduce=cub::WarpReduce<ExchangeSum>;
-  __shared__ typename Reduce::TempStorage temporary[8];
-  const int warp=threadIdx.x/32,lane=threadIdx.x%32;
-  const auto row=static_cast<std::int64_t>(blockIdx.x)*8+warp;
-  if (row>=eri.pairs) return;
-  const int mu=first[row],nu=second[row];
+  using Reduce=cub::BlockReduce<ExchangeSum,256>;
+  __shared__ typename Reduce::TempStorage temporary;
+  const int mu=first[blockIdx.x],nu=second[blockIdx.x];
   ExchangeSum sum{0.0,0.0};
-  for (std::int64_t q=lane;q<eri.pairs;q+=32) {
+  for (std::int64_t q=threadIdx.x;q<eri.pairs;q+=blockDim.x) {
     const int k=first[q],l=second[q];
     const double a=eri.value(ao_pair(mu,k),ao_pair(nu,l));
     const double d=density.data[k+density.ld*l],dt=density.data[l+density.ld*k];
@@ -384,8 +381,8 @@ __global__ void exchange_pair_gather(PackedAoPairMatrix::DeviceView eri,
       sum.reverse+=b*d;
     }
   }
-  const auto value=Reduce(temporary[warp]).Reduce(sum,AddExchange{});
-  if (lane==0) {
+  const auto value=Reduce(temporary).Reduce(sum,AddExchange{});
+  if (threadIdx.x==0) {
     output.data[mu+output.ld*nu]=weight*value.forward;
     if (mu!=nu) output.data[nu+output.ld*mu]=weight*value.reverse;
   }
@@ -1121,7 +1118,7 @@ void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,
   zero_matrix(*context_, output);
   if (exchange != 0.0 && n_integrals_ != 0) {
     if (packed_)
-      exchange_pair_gather<<<blas_int((n_pairs_+7)/8),256,0,context_->stream()>>>(
+      exchange_pair_gather<<<blas_int(n_pairs_),256,0,context_->stream()>>>(
           packed_->view(),pair_first_.data(),pair_second_.data(),density,output,exchange);
     else if (compact_)
       exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(

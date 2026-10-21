@@ -48,25 +48,6 @@ void check_solver(cusolverStatus_t status,const char* operation) {
                              std::to_string(static_cast<int>(status))+")");
 }
 
-class SolverHandle {
- public:
-  explicit SolverHandle(cudaStream_t stream) {
-    check_solver(cusolverDnCreate(&handle_),"cusolverDnCreate");
-    try {
-      check_solver(cusolverDnSetStream(handle_,stream),"cusolverDnSetStream");
-    } catch (...) {
-      cusolverDnDestroy(handle_);
-      throw;
-    }
-  }
-  ~SolverHandle() { cusolverDnDestroy(handle_); }
-  SolverHandle(const SolverHandle&)=delete;
-  SolverHandle& operator=(const SolverHandle&)=delete;
-  operator cusolverDnHandle_t() const noexcept { return handle_; }
- private:
-  cusolverDnHandle_t handle_=nullptr;
-};
-
 // Each output cell has one owner and intersects two product-sorted sparse W
 // columns. This fixes reduction order without atomics or a global dense Gram.
 __global__ void assemble_gram(const int* indices,const std::int64_t* offsets,
@@ -326,7 +307,7 @@ SpinMetric::SpinMetric(Context& context,const vb::StructureAction& source,
   Buffer<int> info(context,host_mutable_pointers.size());
   context.copy_to_device(mutable_pointers.data(),host_mutable_pointers.data(),
                          host_mutable_pointers.size()*sizeof(double*));
-  SolverHandle solver(context.stream());
+  const auto solver=context.solver();
   for (const auto& group:groups_) {
     check_solver(cusolverDnDpotrfBatched(solver,CUBLAS_FILL_MODE_LOWER,
         group.dimension,mutable_pointers.data()+group.first_pointer,

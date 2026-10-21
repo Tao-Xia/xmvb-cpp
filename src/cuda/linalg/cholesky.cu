@@ -8,12 +8,6 @@
 namespace xmvb::cuda {
 namespace {
 
-void check_cusolver(cusolverStatus_t status, const char* operation) {
-  if (status != CUSOLVER_STATUS_SUCCESS)
-    throw std::runtime_error(std::string(operation) + " failed (cuSOLVER status " +
-                             std::to_string(static_cast<int>(status)) + ")");
-}
-
 int checked_dimension(linalg::ConstMatrixView matrix) {
   if (matrix.data == nullptr || matrix.rows <= 0 ||
       matrix.rows != matrix.cols || matrix.ld < matrix.rows)
@@ -25,12 +19,9 @@ int checked_dimension(linalg::ConstMatrixView matrix) {
 
 void copy_columns(Context& context, linalg::MatrixView destination,
                   linalg::ConstMatrixView source) {
-  for (std::int64_t column = 0; column < source.cols; ++column)
-    check_cuda(cudaMemcpyAsync(destination.column(column).data,
-                               source.column(column).data,
-                               static_cast<std::size_t>(source.rows) * sizeof(double),
-                               cudaMemcpyDeviceToDevice, context.stream()),
-               "CUDA Cholesky column copy");
+  check_cuda(cudaMemcpy2DAsync(destination.data,destination.ld*sizeof(double),
+      source.data,source.ld*sizeof(double),source.rows*sizeof(double),source.cols,
+      cudaMemcpyDeviceToDevice,context.stream()),"CUDA Cholesky matrix copy");
 }
 
 std::size_t span_bytes(linalg::ConstMatrixView matrix) {
@@ -71,32 +62,20 @@ void check_info(Context& context, const Buffer<int>& info,
 Cholesky::Cholesky(Context& context, linalg::ConstMatrixView matrix)
     : context_(&context), dimension_(checked_dimension(matrix)),
       factor_(context, dimension_, dimension_), info_(context, 1) {
-  try {
-    check_cusolver(cusolverDnCreate(&solver_), "cusolverDnCreate");
-    check_cusolver(cusolverDnSetStream(solver_, context.stream()),
-                   "cusolverDnSetStream");
-    copy_columns(context, factor_.view(), matrix);
-    int workspace_size = 0;
-    check_cusolver(cusolverDnDpotrf_bufferSize(
-        solver_, CUBLAS_FILL_MODE_LOWER, dimension_, factor_.data(),
-        dimension_, &workspace_size), "cusolverDnDpotrf_bufferSize");
-    if (workspace_size < 0)
-      throw std::runtime_error("CUDA Cholesky reported negative workspace size");
-    Buffer<double> workspace(context, static_cast<std::size_t>(workspace_size));
-    check_cusolver(cusolverDnDpotrf(
-        solver_, CUBLAS_FILL_MODE_LOWER, dimension_, factor_.data(),
-        dimension_, workspace.data(), workspace_size, info_.data()),
-        "cusolverDnDpotrf");
-    check_info(context, info_, "cusolverDnDpotrf", true);
-  } catch (...) {
-    if (solver_ != nullptr) cusolverDnDestroy(solver_);
-    solver_ = nullptr;
-    throw;
-  }
-}
-
-Cholesky::~Cholesky() {
-  if (solver_ != nullptr) cusolverDnDestroy(solver_);
+  const auto solver=context.solver();
+  copy_columns(context, factor_.view(), matrix);
+  int workspace_size = 0;
+  check_cusolver(cusolverDnDpotrf_bufferSize(
+      solver, CUBLAS_FILL_MODE_LOWER, dimension_, factor_.data(),
+      dimension_, &workspace_size), "cusolverDnDpotrf_bufferSize");
+  if (workspace_size < 0)
+    throw std::runtime_error("CUDA Cholesky reported negative workspace size");
+  Buffer<double> workspace(context, static_cast<std::size_t>(workspace_size));
+  check_cusolver(cusolverDnDpotrf(
+      solver, CUBLAS_FILL_MODE_LOWER, dimension_, factor_.data(),
+      dimension_, workspace.data(), workspace_size, info_.data()),
+      "cusolverDnDpotrf");
+  check_info(context, info_, "cusolverDnDpotrf", true);
 }
 
 void Cholesky::solve(linalg::ConstMatrixView rhs, linalg::MatrixView out) const {
@@ -122,7 +101,7 @@ void Cholesky::solve(linalg::ConstMatrixView rhs, linalg::MatrixView out) const 
     }
   }
   check_cusolver(cusolverDnDpotrs(
-      solver_, CUBLAS_FILL_MODE_LOWER, dimension_, static_cast<int>(rhs.cols),
+      context_->solver(), CUBLAS_FILL_MODE_LOWER, dimension_, static_cast<int>(rhs.cols),
       factor_.data(), dimension_, out.data, static_cast<int>(out.ld), info_.data()),
       "cusolverDnDpotrs");
   check_info(*context_, info_, "cusolverDnDpotrs", false);

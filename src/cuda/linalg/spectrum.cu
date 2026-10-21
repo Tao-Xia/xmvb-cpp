@@ -74,17 +74,9 @@ AoMetric::AoMetric(Context& ctx,const Eigen::Ref<const Eigen::MatrixXd>& overlap
   if (overlap.rows()<=0 || overlap.rows()!=overlap.cols())
     throw std::invalid_argument("AO metric must be square");
   copy_to_device(ctx,overlap_.view(),overlap);
-  cusolverDnHandle_t solver=nullptr;
-  solver_check(cusolverDnCreate(&solver),"cusolverDnCreate AO metric");
-  try {
-    solver_check(cusolverDnSetStream(solver,ctx.stream()),"cusolverDnSetStream AO metric");
-    auto eig=symmetric_spectrum(ctx,solver,overlap_.view());
-    if (!(eig.host_values.front()>0.0)) throw std::runtime_error("AO metric is not positive definite");
-    root_=spectral_power(ctx,eig,0.5);
-    inverse_root_=spectral_power(ctx,eig,-0.5);
-  } catch (...) {
-    cusolverDnDestroy(solver);throw;
-  }
-  cusolverDnDestroy(solver);
+  auto eig=symmetric_spectrum(ctx,ctx.solver(),overlap_.view());
+  if (!(eig.host_values.front()>0.0)) throw std::runtime_error("AO metric is not positive definite");
+  root_=spectral_power(ctx,eig,0.5);
+  inverse_root_=spectral_power(ctx,eig,-0.5);
 }
 } // namespace xmvb::cuda
