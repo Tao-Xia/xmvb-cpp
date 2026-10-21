@@ -69,13 +69,15 @@ class ExactAoPairOperator {
    * Empty means the exact device-streamed representation remains in use.
    */
   Buffer<double> prepare_exchange(linalg::ConstMatrixView coefficients,
-      Buffer<double>* half_products = nullptr) const;
+      Matrix<double>* density_projection = nullptr,
+      linalg::ConstMatrixView targets = {}) const;
 
-  /** Apply G(V C^T+C V^T) using accepted (mu nu|k a) half products.
-   * The triangular AO-pair image is shared by all directions.
+  /** Accepted map vec(V) -> vec(G(V C^T+C V^T) T), column-major.
+   * Only the consumed target projections are stored, never an AO^3 image.
+   * Empty means exact device-streamed contractions remain necessary.
    */
-  void half_density_response(ConstPairPanel half_products,
-      linalg::ConstMatrixView factor,linalg::MatrixView output) const;
+  Matrix<double> prepare_density_projection(linalg::ConstMatrixView coefficients,
+      linalg::ConstMatrixView targets) const;
 
   /** Contract K(C weights C^T) from a prepared exchange image, without ERIs. */
   void exchange_density(ConstPairPanel exchange,linalg::ConstMatrixView weights,
@@ -88,9 +90,12 @@ class ExactAoPairOperator {
   /** Core-only J(p,p;c,c) and 2J(p,p;c,c)-K(p,c;p,c), without full AO
    * response matrices. Returns false for the compact device representation.
    * Row-graph work is tiled over core channels within the live memory budget.
+   * Optional density_projection is the upper-column-packed symmetric map
+   * vec(V) -> vec(G(V C^T+C V^T) C), C=mo[:,0:n_core], from the same sweep.
    */
   bool core_diagonal(linalg::ConstMatrixView mo,int n_core,
-      linalg::MatrixView coulomb,linalg::MatrixView response) const;
+      linalg::MatrixView coulomb,linalg::MatrixView response,
+      Buffer<double>* density_projection = nullptr) const;
 
   /** Full directional pair kernel for dC at the accepted C. */
   void directional(linalg::ConstMatrixView coefficients,
@@ -152,13 +157,16 @@ class ExactAoPairOperator {
       linalg::ConstMatrixView direction,
       linalg::ConstMatrixView active_adjoint,
       linalg::ConstMatrixView active_adjoint_direction,
-      linalg::MatrixView density_adjoint_direction,
-      ConstPairPanel half_products = {}) const;
+      linalg::MatrixView density_adjoint_direction) const;
 
  private:
   std::size_t response_capacity() const;
   void build_exchange_image(linalg::ConstMatrixView coefficients,
-      PairPanel image,bool diagonal,PairPanel half_products = {}) const;
+      PairPanel image,bool diagonal,linalg::ConstMatrixView targets = {},
+      linalg::MatrixView density_projection = {},bool packed = false,
+      int first_column = 0) const;
+  Matrix<double> reserve_density_projection(linalg::ConstMatrixView coefficients,
+      linalg::ConstMatrixView targets) const;
   void validate_coefficients(linalg::ConstMatrixView coefficients) const;
   void validate_panel(ConstPairPanel panel) const;
   void validate_panel(PairPanel panel) const;

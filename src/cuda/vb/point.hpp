@@ -24,8 +24,10 @@ class VbPoint {
   /** Evaluate the relaxed or fixed CI state using the prepared integrals. */
   double evaluate_coefficients(linalg::ConstMatrixView coefficients);
   void activate() const { select_frame(); }
-  /** Prepare shared half-exchange data only for accepted-point consumers. */
-  void prepare_exchange();
+  /** Analytic rotation diagonal and accepted response projections from the
+   * same integral sweep. mo is ordered orthonormal core, active, virtual.
+   */
+  Matrix<double> hessian_diagonal(linalg::ConstMatrixView mo);
   void gradient(linalg::MatrixView orbital,linalg::MatrixView structure) const;
   /** @brief Joint Hessian action, not a relaxed orbital response solve. */
   void hessian(linalg::ConstMatrixView orbital,linalg::ConstMatrixView structure,
@@ -63,7 +65,9 @@ class VbPoint {
   Matrix<double> effective_,one_,pair_,state_,image_,carrier_gradient_;
   Matrix<double> one_adjoint_,pair_adjoint_,frame_gradient_,frame_moment_;
   Matrix<double> active_gradient_,density_gradient_;
-  Buffer<double> pair_products_,exchange_products_,half_products_;
+  Buffer<double> pair_products_,exchange_products_;
+  Buffer<double> inactive_response_;
+  Matrix<double> active_response_,overlap_core_,core_basis_,core_to_dual_;
   mutable Matrix<double> carrier_scratch_;
   mutable std::uint64_t selected_action_version_=0;
   bool ready_=false,prepared_=false;

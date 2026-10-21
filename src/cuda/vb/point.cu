@@ -7,6 +7,7 @@
 
 #include "cuda/integrals/one_electron.hpp"
 #include "cuda/linalg/blas.hpp"
+#include "cuda/vb/diagonal.hpp"
 
 namespace xmvb::cuda {
 namespace {
@@ -65,6 +66,22 @@ Matrix<double> product(Context& c,View a,View b,Operation oa=Operation::none,
   gemm(c,result.view(),a,b,1.0,0.0,oa,ob);
   return result;
 }
+
+// vec(G(V C^T+C V^T) T) = R(C,T) vec(V). Owned factors are contiguous.
+void density_projection(Context& c,View response,View factor,Out output,
+    Operation operation=Operation::none) {
+  gemm(c,{output.data,output.rows*output.cols,1,output.rows*output.cols},response,
+      {factor.data,factor.rows*factor.cols,1,factor.rows*factor.cols},1.0,0.0,operation);
+}
+
+Matrix<double> active_density_factor(Context& c,View f,View df,View a,View da) {
+  Matrix<double> v(c,f.rows,f.cols);
+  gemm(c,v.view(),df,a,0.5);
+  gemm(c,v.view(),df,a,0.5,1.0,Operation::none,Operation::transpose);
+  gemm(c,v.view(),f,da,0.25,1.0);
+  gemm(c,v.view(),f,da,0.25,1.0,Operation::none,Operation::transpose);
+  return v;
+}
 void check_structure(View c,int n) {
   if (c.rows!=n || c.cols!=1 || c.ld<c.rows || !c.data)
     throw std::invalid_argument("CUDA point requires one selected-structure state");
@@ -114,7 +131,7 @@ void VbPoint::prepare(View raw) {
   ready_=false;
   prepared_=false;
   exchange_products_={};
-  half_products_={};
+  inactive_response_={};active_response_={};overlap_core_={};core_basis_={};core_to_dual_={};
   auto& c=*context_;
   geometry_.set_raw(raw);geometry_.prepare();
   Matrix<double> core_energy(c,1,1);
@@ -131,10 +148,23 @@ void VbPoint::prepare(View raw) {
   prepared_=true;
 }
 
-void VbPoint::prepare_exchange() {
+Matrix<double> VbPoint::hessian_diagonal(View mo) {
   if (!ready_) throw std::logic_error("CUDA exchange preparation requires an evaluated point");
-  if (pair_products_.empty() || !exchange_products_.empty()) return;
-  exchange_products_=integrals_->prepare_exchange(geometry_.orthogonal_active(),&half_products_);
+  const auto f=geometry_.orthogonal_active(),dual=geometry_.inactive_dual();
+  const auto core=mo.columns(0,dual.cols);
+  if (!pair_products_.empty() && exchange_products_.empty())
+    exchange_products_=integrals_->prepare_exchange(f,&active_response_,core);
+  if (dual.cols) {
+    core_basis_=Matrix<double>(*context_,core.rows,core.cols);
+    copy(*context_,core_basis_.view(),core);
+    overlap_core_=product(*context_,geometry_.ao_overlap(),core);
+    core_to_dual_=product(*context_,overlap_core_.view(),dual,Operation::transpose);
+  }
+  auto diagonal=build_analytic_rotation_diagonal(*context_,*integrals_,mo,core_,
+      effective_.view(),one_adjoint_.view(),pair_adjoint_.view(),pair_.view(),
+      geometry_.inactive_count(),pair_products(),exchange_products(),
+      active_response_.data() ? &inactive_response_:nullptr);
+  return diagonal;
 }
 
 double VbPoint::evaluate_coefficients(View coefficients) {
@@ -203,14 +233,35 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   action_->apply_orbital_transform(dy.view());
   sigma_.apply_generator(state_.view(),generator.view(),dc.view());
   add(c,dy.view(),dc.view());
-  Matrix<double> dheff(c,effective_.rows(),effective_.cols());
-  integrals_->contract_jk(d.inactive_density.view(),dheff.view());
+  const int nc=geometry_.inactive_count(),na=geometry_.active_count(),nb=geometry_.basis_size();
+  Matrix<double> dheff,dheff_active(c,nb,na),inactive_projection;
+  if (inactive_response_.data()) {
+    Matrix<double> factor(c,nb,nc);
+    // For the occupied projector P=C C^T, dP=dP S P+P S dP;
+    // V=dP S C therefore gives dP=V C^T+C V^T without a gauge choice.
+    gemm(c,factor.view(),d.inactive_density.view(),overlap_core_.view());
+    inactive_projection=Matrix<double>(c,nb,nc);
+    const double one=1.0,zero=0.0;
+    check_cublas(cublasDspmv(c.blas(),CUBLAS_FILL_MODE_UPPER,blas_int(nb*nc),&one,
+        inactive_response_.data(),factor.data(),1,&zero,inactive_projection.data(),1),
+        "CUDA symmetric core density projection");
+    // Self-adjoint G makes the reverse cross response the transpose of the
+    // active-density response. No second cross image or transform exists.
+    density_projection(c,active_response_.view(),factor.view(),dheff_active.view(),
+        Operation::transpose);
+  } else if (nc) {
+    dheff=Matrix<double>(c,nb,nb);
+    integrals_->contract_jk(d.inactive_density.view(),dheff.view());
+    gemm(c,dheff_active.view(),dheff.view(),geometry_.orthogonal_active());
+  } else {
+    check_cuda(cudaMemsetAsync(dheff_active.data(),0,nb*na*sizeof(double),c.stream()),
+        "zero empty core response");
+  }
   Matrix<double> dh(c,one_.rows(),one_.cols()),dg(c,pair_.rows(),pair_.cols());
   transform_one_electron_directional(c,effective_.view(),geometry_.orthogonal_active(),
       d.orthogonal_active.view(),dh.view());
-  Matrix<double> extra_h(c,one_.rows(),one_.cols());
-  transform_one_electron(c,dheff.view(),geometry_.orthogonal_active(),extra_h.view());
-  add(c,dh.view(),extra_h.view());
+  gemm(c,dh.view(),geometry_.orthogonal_active(),dheff_active.view(),
+      1.0,1.0,Operation::transpose);
   integrals_->directional(geometry_.orthogonal_active(),d.orthogonal_active.view(),
       dg.view(),pair_products());
   direction_sigma_.update_integrals(dh.view(),dg.view());
@@ -250,18 +301,37 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   transform_one_electron_directional_adjoint(c,effective_.view(),geometry_.orthogonal_active(),
       d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),one_extra.view());
   add(c,dfgrad.view(),one_extra.view());
-  transform_one_electron_adjoint(c,dheff.view(),geometry_.orthogonal_active(),
-      one_adjoint_.view(),one_extra.view());
+  gemm(c,one_extra.view(),dheff_active.view(),one_adjoint_.view());
+  gemm(c,one_extra.view(),dheff_active.view(),one_adjoint_.view(),1.0,1.0,
+      Operation::none,Operation::transpose);
   add(c,dfgrad.view(),one_extra.view());
-  Matrix<double> dpgrad(c,density_gradient_.rows(),density_gradient_.cols());
-  integrals_->active_core_density_directional_adjoint(geometry_.orthogonal_active(),
-      d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),dpgrad.view(),
-      half_products_.empty() ? ConstPairPanel{}:ConstPairPanel{half_products_.data(),
-          integrals_->pair_count(),geometry_.basis_size()*one_.rows(),
-          geometry_.basis_size()*one_.rows()});
-  add(c,dpgrad.view(),dheff.view(),2.0);
+  Matrix<double> dpgrad,projected_density;
+  if (nc) {
+    projected_density=Matrix<double>(c,nb,nc);
+    if (active_response_.data()) {
+      auto factor=active_density_factor(c,geometry_.orthogonal_active(),
+          d.orthogonal_active.view(),one_adjoint_.view(),dha.view());
+      density_projection(c,active_response_.view(),factor.view(),projected_density.view());
+      if (inactive_projection.data())
+        add(c,projected_density.view(),inactive_projection.view(),2.0);
+      else
+        gemm(c,projected_density.view(),dheff.view(),core_basis_.view(),2.0,1.0);
+      Matrix<double> dual_projection(c,nb,nc);
+      gemm(c,dual_projection.view(),projected_density.view(),core_to_dual_.view());
+      projected_density=std::move(dual_projection);
+    } else {
+      dpgrad=Matrix<double>(c,nb,nb);
+      integrals_->active_core_density_directional_adjoint(geometry_.orthogonal_active(),
+          d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),dpgrad.view());
+      gemm(c,projected_density.view(),dpgrad.view(),geometry_.inactive_dual());
+      gemm(c,projected_density.view(),dheff.view(),geometry_.inactive_dual(),2.0,1.0);
+    }
+    // OrbitalGeometry consumes (dgp+dgp^T)*dual. Both exact G images are symmetric.
+    scale(c,projected_density.view(),2.0);
+  }
   geometry_.pullback_direction(d,{},density_gradient_.view(),{},frame_gradient_.view(),
-      active_gradient_.view(),{},dpgrad.view(),{},dframe_gradient.view(),dfgrad.view(),orbital_image);
+      active_gradient_.view(),{},{},{},dframe_gradient.view(),dfgrad.view(),orbital_image,
+      projected_density.view());
   // d(T^T gY)=T^T[dgY+E(dR R^-1)^T gY], without a second H/M action.
   Matrix<double> transpose(c,generator.rows(),generator.cols());
   constexpr double one=1.0,zero=0.0;

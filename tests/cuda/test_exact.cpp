@@ -8,6 +8,7 @@
 
 #include "cuda/integrals/exact.hpp"
 #include "cuda/integrals/one_electron.hpp"
+#include "cuda/linalg/blas.hpp"
 #include "cuda/memory/buffer.hpp"
 #include "integrals/ao/graph.hpp"
 
@@ -462,20 +463,29 @@ void check_one_electron_and_core(bool compact) {
       dc.view(), dd.view(), da.view(), dda.view(), dout.view());
   near(download(context, dout), reference_jk(fixture, active_density_direction),
        "CUDA directional active-core density adjoint differs from oracle");
-  xmvb::cuda::Buffer<double> half;
-  auto exchange=gpu.prepare_exchange(dc.view(),&half);
-  require(half.empty()==compact,"CUDA one-index image admission differs");
-  if (!half.empty()) {
-    const xmvb::cuda::ConstPairPanel retained{half.data(),fixture.ao_pairs,
-        fixture.n_bf*active,fixture.n_bf*active};
-    gpu.half_density_response(retained,dd.view(),dout.view());
-    near(download(context,dout),reference_jk(fixture,
-        direction*c.transpose()+c*direction.transpose()),
-        "CUDA half-density JK differs from four-index oracle");
-    gpu.active_core_density_directional_adjoint(dc.view(),dd.view(),da.view(),
-        dda.view(),dout.view(),retained);
-    near(download(context,dout),reference_jk(fixture,active_density_direction),
-        "CUDA retained-half density derivative differs from oracle");
+  DeviceMatrix target(context,fixture.n_bf,2),projected(context,fixture.n_bf,2);
+  const Matrix target_host=values(fixture.n_bf,2,0.51);
+  upload(context,target,target_host);
+  DeviceMatrix response;
+  auto exchange=gpu.prepare_exchange(dc.view(),&response,target.view());
+  require((response.data()==nullptr)==compact,"CUDA projected density image admission differs");
+  if (response.data()) {
+    auto standalone=gpu.prepare_density_projection(dc.view(),target.view());
+    near(download(context,response),download(context,standalone),
+        "CUDA fused and standalone density projections differ");
+    const auto apply=[&](const Matrix& factor) {
+      upload(context,dd,factor);
+      xmvb::cuda::gemm(context,{projected.data(),fixture.n_bf*2,1,fixture.n_bf*2},
+          response.view(),{dd.data(),fixture.n_bf*active,1,fixture.n_bf*active});
+      return download(context,projected);
+    };
+    near(apply(direction),reference_jk(fixture,
+        direction*c.transpose()+c*direction.transpose())*target_host,
+        "CUDA two-sided density projection differs from four-index oracle");
+    const Matrix factor=direction*sym+
+        0.25*c*(upstream_direction+upstream_direction.transpose());
+    near(apply(factor),reference_jk(fixture,active_density_direction)*target_host,
+        "CUDA projected density derivative differs from oracle");
   }
 }
 

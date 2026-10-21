@@ -50,7 +50,8 @@ unsigned int grid(std::int64_t count) {
 } // namespace
 
 bool ExactAoPairOperator::core_diagonal(linalg::ConstMatrixView mo,int ncore,
-    linalg::MatrixView coulomb,linalg::MatrixView response) const {
+    linalg::MatrixView coulomb,linalg::MatrixView response,
+    Buffer<double>* projection) const {
   const nvtx3::scoped_range range{"ao.core_diagonal"};
   validate_coefficients(mo);
   if (mo.cols!=n_bf_ || ncore<0 || ncore>n_bf_ ||
@@ -58,19 +59,37 @@ bool ExactAoPairOperator::core_diagonal(linalg::ConstMatrixView mo,int ncore,
       response.rows!=n_bf_ || response.cols!=ncore || response.ld<n_bf_ ||
       (ncore && (!coulomb.data || !response.data || coulomb.data==response.data)))
     throw std::invalid_argument("invalid CUDA projected core diagonal dimensions");
+  if (projection) *projection={};
   if (ncore==0) return true;
   if (compact_) return false;
+  const auto targets=mo.columns(0,ncore);
+  if (projection) {
+    const auto dimension=static_cast<std::int64_t>(n_bf_)*ncore;
+    const auto count=dimension*(dimension+1)/2;
+    const auto scratch=2*static_cast<std::int64_t>(n_bf_)*n_bf_*ncore+
+        3*static_cast<std::int64_t>(n_bf_)*ncore*ncore;
+    if (static_cast<std::size_t>(2*count+scratch)<=response_capacity()/sizeof(double)) {
+      *projection=Buffer<double>(*context_,count);
+      check_cuda(cudaMemsetAsync(projection->data(),0,count*sizeof(double),context_->stream()),
+          "zero CUDA symmetric core response");
+    }
+  }
   const auto free=response_capacity()/sizeof(double);
   int width=ncore;
   // Both pair panels and one shared half-transform scratch are bounded. A
   // second working set remains free for SpMM and subsequent response work.
   for (;width>0;width/=2) {
-    const auto half=static_cast<std::int64_t>(n_bf_)*n_bf_*width;
-    const auto transformed=static_cast<std::int64_t>(n_bf_)*width*width;
+    const bool projected=projection && projection->data();
+    const auto half=(projected ? 2:1)*static_cast<std::int64_t>(n_bf_)*n_bf_*width;
+    const auto transformed=static_cast<std::int64_t>(n_bf_)*width*width+
+        (projected ? 2*static_cast<std::int64_t>(n_bf_)*width*targets.cols:0);
     const auto images=2*n_pairs_*width;
     if (static_cast<std::size_t>(images+half+transformed)<=free/2) break;
   }
-  if (width==0) return false;
+  if (width==0) {
+    if (projection) *projection={};
+    return false;
+  }
   Buffer<double> images(*context_,2*n_pairs_*width);
   for (int begin=0;begin<ncore;begin+=width) {
     const int count=std::min(width,ncore-begin);
@@ -81,7 +100,10 @@ bool ExactAoPairOperator::core_diagonal(linalg::ConstMatrixView mo,int ncore,
         core,pair_first_.data(),pair_second_.data(),k);
     check_cuda(cudaGetLastError(),"CUDA rank-one core pair features");
     apply({k.data,k.rows,k.cols,k.ld},j);
-    build_exchange_image(core,k,true);
+    const auto projected=projection && projection->data()
+        ? linalg::MatrixView{projection->data(),static_cast<std::int64_t>(projection->size()),1,
+            static_cast<std::int64_t>(projection->size())}:linalg::MatrixView{};
+    build_exchange_image(core,k,true,targets,projected,true,begin);
     project_core<<<grid(static_cast<std::int64_t>(n_bf_)*count),256,0,context_->stream()>>>(
         mo,pair_first_.data(),pair_second_.data(),{j.data,j.rows,j.cols,j.ld},
         {k.data,k.rows,k.cols,k.ld},coulomb,response,begin);

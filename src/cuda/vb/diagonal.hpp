@@ -22,6 +22,7 @@ Matrix<double> build_analytic_rotation_diagonal(
     linalg::ConstMatrixView active_one_adjoint,
     linalg::ConstMatrixView full_pair_adjoint,
     linalg::ConstMatrixView active_pair_kernel,int n_core,
-    ConstPairPanel accepted_products = {},ConstPairPanel exchange_products = {});
+    ConstPairPanel accepted_products = {},ConstPairPanel exchange_products = {},
+    Buffer<double>* density_projection = nullptr);
 
 }  // namespace xmvb::cuda

@@ -273,7 +273,7 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
     linalg::ConstMatrixView core,linalg::ConstMatrixView effective,
     linalg::ConstMatrixView dm1,linalg::ConstMatrixView pair_adjoint,
     linalg::ConstMatrixView active_pair,int ncore,ConstPairPanel accepted_products,
-    ConstPairPanel exchange_products) {
+    ConstPairPanel exchange_products,Buffer<double>* density_projection) {
   validate(mo,core,effective,dm1,pair_adjoint,active_pair,ncore,integrals);
   const int nbf=static_cast<int>(mo.rows),active=static_cast<int>(dm1.rows);
   const int pairs=active*(active+1)/2,nocc=ncore+active;
@@ -319,7 +319,8 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
   Matrix<double> active_images(context,nbf,2*active);
   Matrix<double> core_response(context,nbf,ncore),jpc(context,nbf,ncore);
   const auto active_mo=mo.columns(ncore,active);
-  const bool core_projected=integrals.core_diagonal(mo,ncore,jpc.view(),core_response.view());
+  const bool core_projected=integrals.core_diagonal(mo,ncore,jpc.view(),core_response.view(),
+      density_projection);
   for (int c=0;!core_projected && c<ncore;++c) {
     core_density<<<grid(static_cast<std::int64_t>(nbf)*nbf),256,0,context.stream()>>>(
         mo,density.view(),c,static_cast<std::int64_t>(nbf)*nbf);

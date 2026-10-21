@@ -1060,7 +1060,7 @@ void ExactAoPairOperator::active_core_density_adjoint(
 void ExactAoPairOperator::active_core_density_directional_adjoint(
     linalg::ConstMatrixView c, linalg::ConstMatrixView d,
     linalg::ConstMatrixView a, linalg::ConstMatrixView da,
-    linalg::MatrixView density_adjoint_direction,ConstPairPanel half_products) const {
+    linalg::MatrixView density_adjoint_direction) const {
   validate_coefficients(c);
   if (!d.data || d.rows != c.rows || d.cols != c.cols || d.ld < d.rows ||
       !a.data || a.rows != c.cols || a.cols != c.cols || a.ld < a.rows ||
@@ -1079,14 +1079,6 @@ void ExactAoPairOperator::active_core_density_directional_adjoint(
   Matrix<double> directional_contracted(*context_, n_bf_, n);
   const linalg::ConstMatrixView h{symmetric.data(), n, n, n};
   const linalg::ConstMatrixView dh{directional_symmetric.data(), n, n, n};
-  if (half_products.data) {
-    // dD=V C^T+C V^T, V=dC sym(A)+C sym(dA)/2.
-    // Both J and K use the same accepted one-index half transform.
-    gemm(*context_, directional_contracted.view(), d, h, 0.5);
-    gemm(*context_, directional_contracted.view(), c, dh, 0.25, 1.0);
-    half_density_response(half_products,directional_contracted.view(),density_adjoint_direction);
-    return;
-  }
   Matrix<double> contracted(*context_, n_bf_, n);
   gemm(*context_, contracted.view(), c, h);
   gemm(*context_, directional_contracted.view(), d, h);

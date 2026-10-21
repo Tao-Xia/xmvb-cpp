@@ -161,6 +161,25 @@ void check(bool compact,int ncore) {
         throw std::runtime_error("CUDA direct core projection differs from four-index oracle");
     };
     check_projected();
+    {
+      xmvb::cuda::Buffer<double> response;
+      if (!graph.core_diagonal(dmo.view(),ncore,dj.view(),dr.view(),&response) ||
+          !response.data())
+        throw std::runtime_error("CUDA fused core density response was not admitted");
+      auto standalone=graph.prepare_density_projection(dmo.view().columns(0,ncore),
+          dmo.view().columns(0,ncore));
+      const int dimension=Fixture::nbf*ncore;
+      Matrix fused(dimension,dimension),reference(dimension,dimension);
+      std::vector<double> packed_response(response.size());
+      context.copy_to_host(packed_response.data(),response.data(),response.size()*sizeof(double));
+      for (int i=0;i<dimension;++i) for (int j=0;j<dimension;++j) {
+        const int high=std::max(i,j),low=std::min(i,j);
+        fused(i,j)=packed_response[high*(high+1)/2+low];
+      }
+      xmvb::cuda::copy_to_host(context,reference,standalone.view());
+      if ((fused-reference).norm()>2e-10)
+        throw std::runtime_error("CUDA fused core density response differs from separate transform");
+    }
     const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
     const std::size_t one_channel=2*(2*Fixture::npair+Fixture::nbf*Fixture::nbf+
         Fixture::nbf)*sizeof(double);

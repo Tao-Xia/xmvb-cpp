@@ -52,7 +52,10 @@ class OrbitalGeometry {
                 linalg::MatrixView raw_gradient) const;
 
   /** Exact directional derivative of pullback, including fixed-upstream
-   * curvature. Upstream directions may be empty when fixed. */
+   * curvature. Upstream directions may be empty when fixed. An optional
+   * density_direction_projection supplies (dgp+dgp^T)*inactive_dual instead
+   * of a full dgp matrix; it does not replace gp*d(inactive_dual).
+   */
   void pullback_direction(
       const OrbitalDirection& tangent,
       linalg::ConstMatrixView active_auxiliary_gradient,
@@ -65,7 +68,8 @@ class OrbitalGeometry {
       linalg::ConstMatrixView active_overlap_gradient_direction,
       linalg::ConstMatrixView frame_transform_gradient_direction,
       linalg::ConstMatrixView orthogonal_active_gradient_direction,
-      linalg::MatrixView raw_gradient_direction) const;
+      linalg::MatrixView raw_gradient_direction,
+      linalg::ConstMatrixView density_direction_projection = {}) const;
 
   linalg::ConstMatrixView normalized() const noexcept { return normalized_.view(); }
   linalg::ConstMatrixView raw() const noexcept { return raw_.view(); }

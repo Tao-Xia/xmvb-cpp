@@ -11,6 +11,7 @@
 #include "core/pair_index.hpp"
 #include "cuda/memory/buffer.hpp"
 #include "cuda/vb/point.hpp"
+#include "cuda/vb/chart.hpp"
 #include "integrals/active/two_electron.hpp"
 #include "integrals/ao/graph.hpp"
 #include "mcscf/ci/strings.hpp"
@@ -300,7 +301,9 @@ void check_case(bool inactive,int structures) {
   const auto hvp=[&](const Matrix& orbital,const Matrix& structure) {
     auto base_raw=upload(context,raw),base_ci=upload(context,ci);
     point.evaluate(base_raw.view(),base_ci.view());
-    point.prepare_exchange();
+    xmvb::cuda::AcceptedOrbitalChart chart(context,input,false);
+    chart.rebuild(point.geometry());
+    auto diagonal=point.hessian_diagonal(chart.accepted_mo_frame());
     const auto version=action.version();
     point.activate();
     require(action.version()==version,"unchanged point rebuilt shared action");

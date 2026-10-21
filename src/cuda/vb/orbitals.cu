@@ -581,7 +581,7 @@ void OrbitalGeometry::pullback(View gt,View gp,View ga,View gr,View gf,
 void OrbitalGeometry::pullback_direction(const OrbitalDirection& tangent,
     View gt,View gp,View ga,View gr,View gf,
     View dgt,View dgp,View dga,View dgr,View dgf,
-    Mutable raw_gradient_direction) const {
+    Mutable raw_gradient_direction,View density_direction_projection) const {
   if (!prepared_) throw std::logic_error("CUDA orbital pullback direction requires prepare");
   check_view(gt,basis_,active_count_,"active auxiliary gradient",true);
   check_view(gp,basis_,basis_,"inactive density gradient",true);
@@ -590,6 +590,10 @@ void OrbitalGeometry::pullback_direction(const OrbitalDirection& tangent,
   check_view(gf,basis_,active_count_,"orthogonal active gradient",true);
   check_view(dgt,basis_,active_count_,"active auxiliary gradient direction",true);
   check_view(dgp,basis_,basis_,"inactive density gradient direction",true);
+  check_view(density_direction_projection,basis_,inactive_,
+      "projected inactive density gradient direction",true);
+  if (supplied(dgp) && supplied(density_direction_projection))
+    throw std::invalid_argument("duplicate inactive density gradient direction");
   check_view(dga,active_count_,active_count_,"active overlap gradient direction",true);
   check_view(dgr,active_count_,active_count_,"frame transform gradient direction",true);
   check_view(dgf,basis_,active_count_,"orthogonal active gradient direction",true);
@@ -696,6 +700,8 @@ void OrbitalGeometry::pullback_direction(const OrbitalDirection& tangent,
     add_sym(context,dq.view(),dcross.view(),-1.0);
     auto qd=product(context,q.view(),dual_.view());
     auto dqd=product(context,dq.view(),dual_.view());
+    if (supplied(density_direction_projection))
+      axpy(context,dqd.view(),density_direction_projection,1.0);
     gemm(context,dqd.view(),q.view(),tangent.inactive_dual.view(),
          1.0,1.0);
     auto h=product(context,ci,qd.view(),Operation::transpose);
