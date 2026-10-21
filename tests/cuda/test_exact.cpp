@@ -545,6 +545,31 @@ void check_exchange_row_graph() {
   }
 }
 
+void check_wide_density_projection() {
+  const Fixture fixture;
+  xmvb::cuda::Context context(128ULL*1024*1024);
+  const xmvb::cuda::ExactAoPairOperator gpu(context,fixture.graph(false),fixture.n_bf);
+  int device=0,shared_bytes=0;
+  xmvb::cuda::check_cuda(cudaGetDevice(&device),"query half projection test device");
+  xmvb::cuda::check_cuda(cudaDeviceGetAttribute(&shared_bytes,
+      cudaDevAttrMaxSharedMemoryPerBlock,device),"query half projection test capacity");
+  // Redundant factor columns are valid in a density map. Crossing the device
+  // panel capacity tests channel tails and multiple source-row partitions.
+  const int columns=shared_bytes/(fixture.n_bf*sizeof(double))+3;
+  const Matrix c=values(fixture.n_bf,columns,0.23);
+  const Matrix v=values(fixture.n_bf,columns,0.81);
+  const Matrix target=values(fixture.n_bf,2,1.31);
+  DeviceMatrix dc(context,fixture.n_bf,columns),dv(context,fixture.n_bf,columns);
+  DeviceMatrix dt(context,fixture.n_bf,2),out(context,fixture.n_bf,2);
+  upload(context,dc,c);upload(context,dv,v);upload(context,dt,target);
+  auto response=gpu.prepare_density_projection(dc.view(),dt.view());
+  require(response.data()!=nullptr,"CUDA wide-factor density projection was not admitted");
+  xmvb::cuda::gemm(context,{out.data(),fixture.n_bf*2,1,fixture.n_bf*2},
+      response.view(),{dv.data(),fixture.n_bf*columns,1,fixture.n_bf*columns});
+  near(download(context,out),reference_jk(fixture,v*c.transpose()+c*v.transpose())*target,
+      "CUDA partitioned and channel-tiled half projection differs from oracle");
+}
+
 void check_budgeted_pair_tiles(bool compact) {
   const Fixture fixture;
   xmvb::cuda::Context context(1024ULL*1024ULL);
@@ -631,6 +656,7 @@ void check_budgeted_pair_tiles(bool compact) {
 int main() {
   try {
     check_exchange_row_graph();
+    check_wide_density_projection();
     for (bool compact : {false, true}) {
       check_graph_and_pair(2, compact);
       check_graph_and_pair(3, compact);
