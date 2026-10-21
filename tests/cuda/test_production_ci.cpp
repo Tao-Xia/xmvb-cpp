@@ -1,11 +1,11 @@
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
 
 #include <Eigen/Core>
-#include <Eigen/Cholesky>
 #include <Eigen/Cholesky>
 
 #include "core/pair_index.hpp"
@@ -253,13 +253,29 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
   near(download(context,d_image),cpu.apply_one_body_generator(right,generator),
        3.0e-10,"CUDA nonsymmetric CI generator differs from CPU");
   const auto fused_bytes=gpu.resident_bytes();
-  gpu.one_body_generator_adjoint(d_left.view(),d_right.view(),d_generator_adjoint.view());
+  gpu.generator_moments(std::array<xmvb::linalg::ConstMatrixView,1>{d_left.view()},
+      d_right.view(),std::array<xmvb::linalg::MatrixView,1>{d_generator_adjoint.view()});
   require(gpu.resident_bytes()-fused_bytes <= sizeof(double)*
           (2*static_cast<std::size_t>(pairs)+left.size()),
           "CUDA generator adjoint duplicated a fused channel slab");
   const Matrix generator_adjoint=download(context,d_generator_adjoint);
   near(generator_adjoint,cpu.one_body_generator_adjoint(left,right),3.0e-10,
        "CUDA nonsymmetric generator adjoint differs from CPU");
+  const Matrix mixed_left=0.37*left-0.19*right;
+  xmvb::cuda::Matrix<double> d_mixed_left(context,left.rows(),left.cols());
+  xmvb::cuda::Matrix<double> d_moments(context,n,3*n);
+  xmvb::cuda::copy_to_device(context,d_mixed_left.view(),mixed_left);
+  gpu.generator_moments(
+      std::array<xmvb::linalg::ConstMatrixView,3>{
+          d_left.view(),d_right.view(),d_mixed_left.view()},d_right.view(),
+      std::array<xmvb::linalg::MatrixView,3>{d_moments.view().columns(0,n),
+          d_moments.view().columns(n,n),d_moments.view().columns(2*n,n)});
+  const Matrix moments=download(context,d_moments);
+  near(moments.leftCols(n),generator_adjoint,3.0e-10,"CUDA batched left moment");
+  near(moments.middleCols(n,n),cpu.one_body_generator_adjoint(right,right),
+       3.0e-10,"CUDA batched equal-carrier moment");
+  near(moments.rightCols(n),cpu.one_body_generator_adjoint(mixed_left,right),
+       3.0e-10,"CUDA batched mixed-carrier moment");
   require(std::abs(bilinear(generator_adjoint,generator)-
                    bilinear(left,download(context,d_image))) <
               3.0e-10*std::max(1.0,left.norm()*right.norm()*generator.norm()),
@@ -284,8 +300,9 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
     captured_generator.apply(d_right.view(),d_image.view());
   });
   const auto captured_bytes=captured_generator.resident_bytes();
-  captured_generator.one_body_generator_adjoint(
-      d_left.view(),d_right.view(),d_generator_adjoint.view());
+  captured_generator.generator_moments(
+      std::array<xmvb::linalg::ConstMatrixView,1>{d_left.view()},d_right.view(),
+      std::array<xmvb::linalg::MatrixView,1>{d_generator_adjoint.view()});
   require(captured_generator.resident_bytes()-captured_bytes <= sizeof(double)*
           (2*static_cast<std::size_t>(pairs)+left.size()),
           "CUDA generator adjoint duplicated a captured channel slab");

@@ -1,6 +1,7 @@
 #include "cuda/vb/transport.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <sstream>
@@ -224,11 +225,13 @@ void SelectedCrossOverlap::adjoint(linalg::ConstMatrixView left_frame,
   Matrix<double> moment(*context_,active_,active_);
   frame_image(left_frame,left_coefficients,left.view());
   frame_image(right_frame,right_coefficients,right.view());
-  action_->carrier_sigma().one_body_generator_adjoint(
-      right.view(),left.view(),moment.view());
+  action_->carrier_sigma().generator_moments(
+      std::array<linalg::ConstMatrixView,1>{right.view()},left.view(),
+      std::array<linalg::MatrixView,1>{moment.view()});
   pullback(left_frame,moment.view(),left_gradient);
-  action_->carrier_sigma().one_body_generator_adjoint(
-      left.view(),right.view(),moment.view());
+  action_->carrier_sigma().generator_moments(
+      std::array<linalg::ConstMatrixView,1>{left.view()},right.view(),
+      std::array<linalg::MatrixView,1>{moment.view()});
   pullback(right_frame,moment.view(),right_gradient);
 }
 
@@ -272,12 +275,19 @@ void SelectedCrossOverlap::transport_gradient(linalg::ConstMatrixView current,
   // current moment M(target,left)-M(left,transported); both metric sides
   // remain. The origin moment is M(left,reference), with no zero generator.
   auto& sigma=action_->carrier_sigma();
-  sigma.one_body_generator_adjoint(target.view(),left.view(),moment.view());
-  sigma.one_body_generator_adjoint(left.view(),transported,extra.view());
-  axpy(*context_,moment.view(),-1.0,extra.view());
+  sigma.generator_moments(
+      std::array<linalg::ConstMatrixView,3>{target.view(),transported,reference},left.view(),
+      std::array<linalg::MatrixView,3>{moment.view(),extra.view(),origin_gradient});
+  // E_pq^T=E_qp: share the right carrier and transpose the last two moments.
+  const double one=1.0,minus=-1.0,zero=0.0;
+  check_cublas(cublasDgeam(context_->blas(),CUBLAS_OP_N,CUBLAS_OP_T,
+      active_,active_,&one,moment.data(),active_,&minus,extra.data(),active_,
+      moment.data(),active_),"CUDA transport shared current moment");
+  check_cublas(cublasDgeam(context_->blas(),CUBLAS_OP_T,CUBLAS_OP_N,
+      active_,active_,&one,origin_gradient.data,blas_int(origin_gradient.ld),
+      &zero,extra.data(),active_,extra.data(),active_),"CUDA transport shared origin moment");
   pullback(current,moment.view(),current_gradient);
-  sigma.one_body_generator_adjoint(left.view(),reference,moment.view());
-  pullback(origin,moment.view(),origin_gradient);
+  pullback(origin,extra.view(),origin_gradient);
   action_->update_frame(origin);
   action_->apply_adjoint_orbital_transform(left.view());
   action_->contract_spin(left.view(),image);

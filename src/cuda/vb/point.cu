@@ -1,5 +1,6 @@
 #include "cuda/vb/point.hpp"
 
+#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -210,7 +211,8 @@ double VbPoint::evaluate_coefficients(View coefficients) {
   copy(c,carrier_gradient_.view(),image_.view());
   add(c,carrier_gradient_.view(),state_.view(),-active_energy_);
   scale(c,carrier_gradient_.view(),2.0/norm_);
-  sigma_.one_body_generator_adjoint(carrier_gradient_.view(),state_.view(),frame_moment_.view());
+  sigma_.generator_moments(std::array<View,1>{carrier_gradient_.view()},state_.view(),
+      std::array<Out,1>{frame_moment_.view()});
   gemm(c,frame_gradient_.view(),frame_moment_.view(),geometry_.frame_inverse_transform(),
       1.0,0.0,Operation::none,Operation::transpose);
   integrals_->adjoint(geometry_.orthogonal_active(),pair_adjoint_.view(),
@@ -319,8 +321,10 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   });
   // dhy now denotes the exact directional carrier gradient.
   Matrix<double> moment(c,one_.rows(),one_.cols()),other(c,one_.rows(),one_.cols());
-  sigma_.one_body_generator_adjoint(dhy.view(),state_.view(),moment.view());
-  sigma_.one_body_generator_adjoint(carrier_gradient_.view(),dy.view(),other.view());
+  sigma_.generator_moments(std::array<View,1>{dhy.view()},state_.view(),
+      std::array<Out,1>{moment.view()});
+  sigma_.generator_moments(std::array<View,1>{carrier_gradient_.view()},dy.view(),
+      std::array<Out,1>{other.view()});
   add(c,moment.view(),other.view());
   auto dinverse=product(c,geometry_.frame_inverse_transform(),generator.view());
   scale(c,dinverse.view(),-1.0);

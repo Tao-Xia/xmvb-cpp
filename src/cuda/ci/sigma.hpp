@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 #include "cuda/memory/buffer.hpp"
 #include "linalg/views.hpp"
@@ -95,13 +96,13 @@ class DirectCiSigma {
                        linalg::ConstMatrixView orbital_generator,
                        linalg::MatrixView image) const;
 
-  /** Full nonsymmetric orbital cotangent of left^T E(generator) right.
-   * The device output D satisfies sum_pq D(p,q) generator(p,q) for arbitrary
-   * generator directions and is overwritten on the Context stream.
+  /** Independent full moments left[i]^T E(generator) right, sharing E(right).
+   * Each output is overwritten, including both nonsymmetric orientations.
+   * Batched left carriers are contiguous; a single left also accepts strides.
+   * Only one bounded left tile is packed, never replicated full carriers.
    */
-  void one_body_generator_adjoint(linalg::ConstMatrixView left,
-                                  linalg::ConstMatrixView right,
-                                  linalg::MatrixView orbital_adjoint) const;
+  void generator_moments(std::span<const linalg::ConstMatrixView> left,
+      linalg::ConstMatrixView right,std::span<const linalg::MatrixView> outputs) const;
 
   /** Allocate the bounded channel slabs before stream capture. */
   void prepare(int block_width) const;
