@@ -144,6 +144,33 @@ void check(bool compact,int ncore) {
   xmvb::cuda::copy_to_device(context,ddm1.view(),dm1);
   xmvb::cuda::copy_to_device(context,dadjoint.view(),pair_adjoint);
   xmvb::cuda::copy_to_device(context,dpair.view(),active_pair);
+  if (!compact && ncore>0) {
+    DeviceMatrix dj(context,Fixture::nbf,ncore),dr(context,Fixture::nbf,ncore);
+    Matrix expected_j(Fixture::nbf,ncore),expected_r(Fixture::nbf,ncore);
+    for (int p=0;p<Fixture::nbf;++p) for (int c=0;c<ncore;++c) {
+      expected_j(p,c)=fixture.mo_eri(mo,p,p,c,c);
+      expected_r(p,c)=2.0*expected_j(p,c)-fixture.mo_eri(mo,p,c,p,c);
+    }
+    const auto check_projected=[&] {
+      if (!graph.core_diagonal(dmo.view(),ncore,dj.view(),dr.view()))
+        throw std::runtime_error("CUDA row-graph core projection was not admitted");
+      Matrix j(Fixture::nbf,ncore),r(Fixture::nbf,ncore);
+      xmvb::cuda::copy_to_host(context,j,dj.view());
+      xmvb::cuda::copy_to_host(context,r,dr.view());
+      if ((j-expected_j).norm()>2e-10 || (r-expected_r).norm()>2e-10)
+        throw std::runtime_error("CUDA direct core projection differs from four-index oracle");
+    };
+    check_projected();
+    const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
+    const std::size_t one_channel=2*(2*Fixture::npair+Fixture::nbf*Fixture::nbf+
+        Fixture::nbf)*sizeof(double);
+    {
+      xmvb::cuda::Buffer<unsigned char> padding(context,available-one_channel);
+      check_projected(); // Forces one core channel per tile, with identical physics.
+      if (context.counters().peak_device_bytes>context.device_byte_budget())
+        throw std::runtime_error("CUDA core projection exceeded the live budget");
+    }
+  }
   const DeviceMatrix actual_device=xmvb::cuda::build_analytic_rotation_diagonal(
       context,graph,dmo.view(),dcore.view(),deffective.view(),ddm1.view(),
       dadjoint.view(),dpair.view(),ncore);
@@ -179,6 +206,8 @@ int main() {
   try {
     check(false,0);
     check(false,1);
+    check(false,2);
+    check(false,3);
     check(true,1);
     check(true,2);
     std::cout << "CUDA analytic orbital diagonal passed\n";

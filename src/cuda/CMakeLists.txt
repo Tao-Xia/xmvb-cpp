@@ -4,6 +4,7 @@ add_library(xmvb_cuda
   ci/sigma.cu
   integrals/exact.cu
   integrals/exchange.cu
+  integrals/core.cu
   integrals/one_electron.cu
   optimization/ciah.cu
   optimization/coarse.cu

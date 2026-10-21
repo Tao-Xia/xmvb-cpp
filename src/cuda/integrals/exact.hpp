@@ -78,6 +78,13 @@ class ExactAoPairOperator {
   void exchange_pair_direction(ConstPairPanel exchange,linalg::ConstMatrixView direction,
       linalg::ConstMatrixView kernel_adjoint,linalg::MatrixView gradient) const;
 
+  /** Core-only J(p,p;c,c) and 2J(p,p;c,c)-K(p,c;p,c), without full AO
+   * response matrices. Returns false for the compact device representation.
+   * Row-graph work is tiled over core channels within the live memory budget.
+   */
+  bool core_diagonal(linalg::ConstMatrixView mo,int n_core,
+      linalg::MatrixView coulomb,linalg::MatrixView response) const;
+
   /** Full directional pair kernel for dC at the accepted C. */
   void directional(linalg::ConstMatrixView coefficients,
                    linalg::ConstMatrixView direction,
@@ -141,6 +148,9 @@ class ExactAoPairOperator {
       linalg::MatrixView density_adjoint_direction) const;
 
  private:
+  std::size_t response_capacity() const;
+  void build_exchange_image(linalg::ConstMatrixView coefficients,
+      PairPanel image,bool diagonal) const;
   void validate_coefficients(linalg::ConstMatrixView coefficients) const;
   void validate_panel(ConstPairPanel panel) const;
   void validate_panel(PairPanel panel) const;

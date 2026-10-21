@@ -319,7 +319,8 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
   Matrix<double> active_images(context,nbf,2*active);
   Matrix<double> core_response(context,nbf,ncore),jpc(context,nbf,ncore);
   const auto active_mo=mo.columns(ncore,active);
-  for (int c=0;c<ncore;++c) {
+  const bool core_projected=integrals.core_diagonal(mo,ncore,jpc.view(),core_response.view());
+  for (int c=0;!core_projected && c<ncore;++c) {
     core_density<<<grid(static_cast<std::int64_t>(nbf)*nbf),256,0,context.stream()>>>(
         mo,density.view(),c,static_cast<std::int64_t>(nbf)*nbf);
     check_cuda(cudaGetLastError(),"CUDA Hessian core density");

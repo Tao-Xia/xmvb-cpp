@@ -42,12 +42,16 @@ __global__ void exchange_half(View c,const int* offsets,const int* columns,
   }
 }
 
-__global__ void store_exchange(View transformed,int mu,int n,PairPanel exchange) {
-  const auto work=static_cast<std::int64_t>(mu+1)*n*n;
+__global__ void store_exchange(View transformed,int mu,int n,PairPanel exchange,bool diagonal) {
+  const auto width=diagonal ? n:static_cast<std::int64_t>(n)*n;
+  const auto work=static_cast<std::int64_t>(mu+1)*width;
   for (std::int64_t k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
        k<work;k+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
-    const int nu=static_cast<int>(k/(n*n)),a=static_cast<int>(k/n%n),b=static_cast<int>(k%n);
-    exchange.data[static_cast<std::int64_t>(pair(mu,nu))*exchange.ld+a*n+b]=
+    const int nu=static_cast<int>(k/width);
+    const int a=diagonal ? static_cast<int>(k%n):static_cast<int>(k/n%n);
+    const int b=diagonal ? a:static_cast<int>(k%n);
+    const auto channel=diagonal ? a:a*n+b;
+    exchange.data[static_cast<std::int64_t>(pair(mu,nu))*exchange.ld+channel]=
         transformed.data[nu*n+b+transformed.ld*a];
   }
 }
@@ -95,20 +99,20 @@ __global__ void exchange_rows(ConstPairPanel exchange,int begin,int rows,
   }
 }
 
-std::size_t available(Context& context) {
-  std::size_t free=0,total=0;
-  check_cuda(cudaMemGetInfo(&free,&total),"query CUDA exchange workspace memory");
-  const auto budget=context.device_byte_budget(),used=context.counters().current_device_bytes;
-  if (used>budget) throw std::runtime_error("CUDA exchange accounting exceeds budget");
-  return std::min(free,budget-used);
-}
-
 void validate_image(ConstPairPanel exchange,int nbf,int n) {
   if (!exchange.data || exchange.rows!=static_cast<std::int64_t>(nbf)*(nbf+1)/2 ||
       exchange.cols!=static_cast<std::int64_t>(n)*n || exchange.ld<exchange.cols)
     throw std::invalid_argument("invalid CUDA accepted exchange image");
 }
 } // namespace
+
+std::size_t ExactAoPairOperator::response_capacity() const {
+  std::size_t free=0,total=0;
+  check_cuda(cudaMemGetInfo(&free,&total),"query CUDA exact response workspace memory");
+  const auto budget=context_->device_byte_budget(),used=context_->counters().current_device_bytes;
+  if (used>budget) throw std::runtime_error("CUDA exact response accounting exceeds budget");
+  return std::min(free,budget-used);
+}
 
 Buffer<double> ExactAoPairOperator::prepare_exchange(View c) const {
   const nvtx3::scoped_range range{"ao.exchange_prepare"};
@@ -119,7 +123,7 @@ Buffer<double> ExactAoPairOperator::prepare_exchange(View c) const {
   const int n=blas_int(c.cols);
   const auto n2=static_cast<std::int64_t>(n)*n,n3=n2*n;
   blas_int(n3);
-  const auto free=available(*context_);
+  const auto free=response_capacity();
   const auto half_count=static_cast<std::int64_t>(n_bf_)*n_bf_*n;
   const auto action_count=static_cast<std::int64_t>(n_bf_)*n3+n*n3+2*n_bf_*n2;
   // Reserve the second point's image and the larger of preparation/action
@@ -128,9 +132,18 @@ Buffer<double> ExactAoPairOperator::prepare_exchange(View c) const {
   const auto count=n_pairs_*n2;
   const auto workspace=std::max(half_count+static_cast<std::int64_t>(n_bf_)*n2,action_count);
   if (static_cast<std::size_t>(workspace)>free/sizeof(double)-2*count) return {};
-  Buffer<double> exchange(*context_,count),half(*context_,half_count);
-  Matrix<double> transformed(*context_,static_cast<std::int64_t>(n_bf_)*n,n);
+  Buffer<double> exchange(*context_,count);
   const PairPanel image{exchange.data(),n_pairs_,n2,n2};
+  build_exchange_image(c,image,false);
+  return exchange;
+}
+
+void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diagonal) const {
+  const int n=blas_int(c.cols);
+  const auto n2=static_cast<std::int64_t>(n)*n;
+  const auto half_count=static_cast<std::int64_t>(n_bf_)*n_bf_*n;
+  Buffer<double> half(*context_,half_count);
+  Matrix<double> transformed(*context_,static_cast<std::int64_t>(n_bf_)*n,n);
   for (int mu=0;mu<n_bf_;++mu) {
     check_cuda(cudaMemsetAsync(half.data(),0,half_count*sizeof(double),context_->stream()),
         "clear CUDA exchange half image");
@@ -140,11 +153,10 @@ Buffer<double> ExactAoPairOperator::prepare_exchange(View c) const {
     check_cuda(cudaGetLastError(),"CUDA one-active-index exchange transform");
     gemm(*context_,transformed.view(),{half.data(),static_cast<std::int64_t>(n_bf_)*n,
         n_bf_,static_cast<std::int64_t>(n_bf_)*n},c);
-    store_exchange<<<grid(static_cast<std::int64_t>(mu+1)*n2),256,0,context_->stream()>>>(
-        transformed.view(),mu,n,image);
+    store_exchange<<<grid(static_cast<std::int64_t>(mu+1)*(diagonal ? n:n2)),
+        256,0,context_->stream()>>>(transformed.view(),mu,n,image,diagonal);
     check_cuda(cudaGetLastError(),"CUDA triangular exchange image");
   }
-  return exchange;
 }
 
 void ExactAoPairOperator::exchange_density(ConstPairPanel exchange,View weights,
@@ -181,7 +193,7 @@ void ExactAoPairOperator::exchange_pair_direction(ConstPairPanel exchange,View d
       {weights.data(),channels,n,channels},d,1.0,0.0,Operation::none,Operation::transpose);
   const auto row_width=static_cast<std::int64_t>(n_bf_)*n2;
   const int rows=static_cast<int>(std::min<std::size_t>(n_bf_,
-      available(*context_)/(row_width*sizeof(double))));
+      response_capacity()/(row_width*sizeof(double))));
   if (rows<1) throw std::runtime_error("CUDA exchange budget cannot hold one output row");
   Buffer<double> panel(*context_,row_width*rows);
   for (int begin=0;begin<n_bf_;begin+=rows) {
