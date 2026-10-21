@@ -229,57 +229,6 @@ __global__ void apply_orbital_generator(linalg::ConstMatrixView coefficients,
   image.data[a+image.ld*column]=value;
 }
 
-__global__ void scatter_oriented_generator(linalg::ConstMatrixView left,
-    linalg::ConstMatrixView right,double* left_values,
-    double* high_channels,double* low_channels,std::int64_t begin,int count,
-    int n_alpha,int n_beta,int n_channels,
-    const int* alpha,const int* beta) {
-  const std::int64_t index=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
-  if (index>=static_cast<std::int64_t>(count)*n_channels) return;
-  const int channel=index/count;
-  const auto product=begin+index%count;
-  const int a=product%n_alpha;
-  const auto column=product/n_alpha;
-  const int b=column%n_beta;
-  const auto rhs=column/n_beta;
-  if (left_values && channel==0) left_values[index%count]=left.data[a+left.ld*column];
-  const int sa=alpha[static_cast<std::int64_t>(channel)*n_alpha+a];
-  const int sb=beta[static_cast<std::int64_t>(channel)*n_beta+b];
-  int high,low;
-  unpack_pair(channel,high,low);
-  double high_value=0,low_value=0;
-  if (high==low) {
-    const int occupied=(sa!=0)+(sb!=0);
-    high_value=occupied*right.data[a+right.ld*column];
-  } else {
-    if (sa) {
-      const double value=(sa>0 ? 1.0:-1.0)*
-          right.data[abs(sa)-1+right.ld*column];
-      const int diagonal=high*(high+1)/2+high;
-      if (alpha[static_cast<std::int64_t>(diagonal)*n_alpha+a]) high_value+=value;
-      else low_value+=value;
-    }
-    if (sb) {
-      const double value=(sb>0 ? 1.0:-1.0)*
-          right.data[a+right.ld*(rhs*n_beta+abs(sb)-1)];
-      const int diagonal=high*(high+1)/2+high;
-      if (beta[static_cast<std::int64_t>(diagonal)*n_beta+b]) high_value+=value;
-      else low_value+=value;
-    }
-  }
-  high_channels[index]=high_value;
-  low_channels[index]=low_value;
-}
-
-__global__ void unpack_generator_moments(const double* moments,
-    linalg::MatrixView orbital_adjoint,int n_orbitals,int low_offset) {
-  const int index=blockIdx.x*blockDim.x+threadIdx.x;
-  if (index>=n_orbitals*n_orbitals) return;
-  const int row=index%n_orbitals,column=index/n_orbitals;
-  const int pair=packed_pair(row,column);
-  orbital_adjoint.data[row+orbital_adjoint.ld*column]=
-      row>=column ? moments[pair]:moments[low_offset+pair];
-}
 
 unsigned int grid_size(std::int64_t count) {
   constexpr std::int64_t threads = 256;
@@ -371,14 +320,13 @@ DirectCiSigma::DirectCiSigma(Context& context,const DirectCiSigma& source)
 }
 
 std::size_t DirectCiSigma::resident_bytes() const noexcept {
-  return (kernel_.size()+effective_one_.size()+generator_moments_.size())*sizeof(double) +
+  return (kernel_.size()+effective_one_.size())*sizeof(double) +
          alpha_->resident_bytes() +
          (shared_spin_graph_ ? 0 : beta_->resident_bytes()) +
       sizeof(double)*(scattered_.rows()*scattered_.cols()+
           transformed_.rows()*transformed_.cols()+
           right_scattered_.rows()*right_scattered_.cols()+
-          channel_adjoint_.rows()*channel_adjoint_.cols()+
-          generator_left_.rows());
+          channel_adjoint_.rows()*channel_adjoint_.cols());
 }
 
 void DirectCiSigma::prepare(int block_width) const {
@@ -738,141 +686,4 @@ void DirectCiSigma::apply_generator(linalg::ConstMatrixView coefficients,
       n_orbitals_,alpha,beta);
   check_cuda(cudaGetLastError(),"CUDA direct-CI orbital generator action");
 }
-
-void DirectCiSigma::prepare_generator_adjoint(int block_width) const {
-  if (block_width<=0) throw std::invalid_argument("invalid generator block width");
-  const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
-  const auto planned_rows=std::max<std::int64_t>(1,products*
-      std::min(n_channels_,channel_capacity_)/n_channels_);
-  const auto transformed_rows=transformed_.data() ?
-      transformed_.rows()*transformed_.cols()/n_channels_:0;
-  auto low_rows=std::max(right_scattered_.rows(),transformed_rows);
-  // Action sigma may be captured in a CUDA graph. Its two existing slab
-  // addresses must remain immutable; the generator only borrows their bytes
-  // between graph launches on Context's single stream.
-  if (scattered_.rows()==0) {
-    ++workspace_->generation;
-    generator_left_=Matrix<double>{};
-    generator_moments_=Buffer<double>{};
-    const auto available=context_->device_byte_budget()-
-        context_->counters().current_device_bytes;
-    const auto moments_bytes=2*static_cast<std::size_t>(n_channels_)*sizeof(double);
-    const auto row_bytes=(2*static_cast<std::size_t>(n_channels_)+1)*sizeof(double);
-    if (moments_bytes>available || row_bytes>available-moments_bytes)
-      throw std::runtime_error("CUDA direct-CI budget cannot hold generator adjoint row");
-    auto rows=std::min<std::int64_t>({products,planned_rows,
-        static_cast<std::int64_t>((available-moments_bytes)/row_bytes)});
-    if (rows>=32) rows=(rows/32)*32;
-    Buffer<double> moments(*context_,2*static_cast<std::size_t>(n_channels_));
-    Matrix<double> high(*context_,rows,n_channels_);
-    Matrix<double> low(*context_,rows,n_channels_);
-    Matrix<double> left(*context_,rows,1);
-    scattered_=std::move(high);
-    right_scattered_=std::move(low);
-    generator_moments_=std::move(moments);
-    generator_left_=std::move(left);
-    return;
-  }
-  if (low_rows==0) {
-    // An ordinary prepared sigma already owns scattered_; add only the
-    // missing second panel when no transformed slab can be borrowed.
-    const auto available=context_->device_byte_budget()-
-        context_->counters().current_device_bytes;
-    const auto moments_bytes=generator_moments_.empty() ?
-        2*static_cast<std::size_t>(n_channels_)*sizeof(double):0;
-    const auto row_bytes=(static_cast<std::size_t>(n_channels_)+1)*sizeof(double);
-    if (moments_bytes>available || row_bytes>available-moments_bytes)
-      throw std::runtime_error("CUDA direct-CI budget cannot hold generator adjoint row");
-    auto rows=std::min<std::int64_t>(scattered_.rows(),
-        static_cast<std::int64_t>((available-moments_bytes)/row_bytes));
-    if (rows>=32) rows=(rows/32)*32;
-    right_scattered_=Matrix<double>(*context_,rows,n_channels_);
-    low_rows=rows;
-  }
-  const auto rows=std::min(scattered_.rows(),low_rows);
-  if (rows<1) throw std::runtime_error("CUDA generator adjoint has no shared channel row");
-  if (generator_moments_.size()!=2*static_cast<std::size_t>(n_channels_)) {
-    generator_moments_=Buffer<double>{};
-    generator_moments_=Buffer<double>(*context_,2*static_cast<std::size_t>(n_channels_));
-  }
-  if (generator_left_.rows()!=rows) {
-    generator_left_=Matrix<double>{};
-    generator_left_=Matrix<double>(*context_,rows,1);
-  }
-}
-
-void DirectCiSigma::generator_moments(std::span<const linalg::ConstMatrixView> left,
-    linalg::ConstMatrixView right,std::span<const linalg::MatrixView> outputs) const {
-  const nvtx3::scoped_range range{"ci.generator_moments"};
-  if (left.empty() || left.size()!=outputs.size())
-    throw std::invalid_argument("CUDA generator moment batch dimensions");
-  const int batch=blas_int(left.size());
-  const int block_width=validate_adjoint_panels(left.front(),right,n_alpha_,n_beta_);
-  for (int j=0;j<batch;++j) {
-    validate_adjoint_panels(left[j],right,n_alpha_,n_beta_);
-    validate_output(outputs[j],n_orbitals_,n_orbitals_,"invalid CUDA orbital moment output");
-    if (batch>1 && left[j].ld!=left[j].rows)
-      throw std::invalid_argument("CUDA batched moment left carriers must be contiguous");
-    if (outputs[j].data==left[j].data || outputs[j].data==right.data)
-      throw std::invalid_argument("CUDA generator moment aliases input");
-  }
-  prepare_generator_adjoint(block_width);
-  const auto* alpha=alpha_->sources.data();
-  const auto* beta=beta_->sources.data();
-  int rows=static_cast<int>(generator_left_.rows());
-  const auto transformed_rows=transformed_.data() ?
-      transformed_.rows()*transformed_.cols()/n_channels_:0;
-  const bool use_right=right_scattered_.rows()>=rows;
-  if (!use_right && transformed_rows<rows)
-    throw std::logic_error("CUDA generator adjoint lost its shared low panel");
-  auto* high_data=scattered_.data();
-  auto* low_data=use_right ? right_scattered_.data():transformed_.data();
-  Matrix<double> packed_left;
-  Buffer<double> batch_moments;
-  auto* moment_data=generator_moments_.data();
-  if (batch>1) {
-    batch_moments=Buffer<double>(*context_,2*static_cast<std::size_t>(n_channels_)*batch);
-    const auto available=context_->device_byte_budget()-context_->counters().current_device_bytes;
-    rows=static_cast<int>(std::min<std::size_t>(rows,available/(sizeof(double)*batch)));
-    if (rows<1) throw std::runtime_error("CUDA generator batch cannot hold one left row");
-    packed_left=Matrix<double>(*context_,rows,batch);
-    moment_data=batch_moments.data();
-  }
-  const auto products=right.rows*right.cols;
-  bool first=true;
-  for (std::int64_t begin=0;begin<products;begin+=rows) {
-      const int count=static_cast<int>(std::min<std::int64_t>(rows,products-begin));
-      scatter_oriented_generator<<<grid_size(static_cast<std::int64_t>(count)*n_channels_),
-          256,0,context_->stream()>>>(left.front(),right,batch==1 ? generator_left_.data():nullptr,
-              high_data,low_data,begin,count,
-              n_alpha_,n_beta_,n_channels_,alpha,beta);
-      check_cuda(cudaGetLastError(),"CUDA direct-CI oriented generator scatter");
-      if (batch>1) for (int j=0;j<batch;++j)
-        check_cuda(cudaMemcpyAsync(packed_left.data()+static_cast<std::int64_t>(rows)*j,
-            left[j].data+begin,count*sizeof(double),cudaMemcpyDeviceToDevice,context_->stream()),
-            "CUDA shared-generator left tile packing");
-      const linalg::ConstMatrixView left_panel{
-          batch==1 ? generator_left_.data():packed_left.data(),count,batch,batch==1 ? count:rows};
-      const linalg::ConstMatrixView high{
-          high_data,count,n_channels_,count};
-      const linalg::ConstMatrixView low{
-          low_data,count,n_channels_,count};
-      const linalg::MatrixView high_moments{
-          moment_data,n_channels_,batch,n_channels_};
-      const linalg::MatrixView low_moments{
-          moment_data+static_cast<std::int64_t>(n_channels_)*batch,n_channels_,batch,n_channels_};
-      gemm(*context_,high_moments,high,left_panel,
-          1.0,first ? 0.0:1.0,Operation::transpose,Operation::none);
-      gemm(*context_,low_moments,low,left_panel,
-          1.0,first ? 0.0:1.0,Operation::transpose,Operation::none);
-      first=false;
-  }
-  for (int j=0;j<batch;++j) {
-    unpack_generator_moments<<<grid_size(static_cast<std::int64_t>(n_orbitals_)*n_orbitals_),
-        256,0,context_->stream()>>>(moment_data+static_cast<std::int64_t>(j)*n_channels_,
-            outputs[j],n_orbitals_,n_channels_*batch);
-    check_cuda(cudaGetLastError(),"CUDA direct-CI orbital generator pullback");
-  }
-}
-
 }  // namespace xmvb::cuda

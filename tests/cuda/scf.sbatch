@@ -37,7 +37,8 @@ cmake -S "$source_dir" -B "$source_dir/build-cuvbscf" > "$out/configure.log" 2>&
 cmake --build "$source_dir/build-cuvbscf" --target cuvbscf -j 16 > "$out/build.log" 2>&1
 cp "$source_dir/build-cuvbscf/src/cuvbscf" "$out/"
 sha256sum "$out/cuvbscf" > "$out/binary.sha256"
-bundle="$source_dir/cuvbscf-c12-297979/bundle/cases"
+bundle="${CUVB_CASE_BUNDLE:-$source_dir/cuvbscf-c12-297979/bundle/cases}"
+printf '%s\n' "$bundle" > "$out/bundle.txt"
 status=0
 read -ra cases <<< "${CUVB_CASES:-mixed20 cov ion02 full}"
 for case in "${cases[@]}"; do

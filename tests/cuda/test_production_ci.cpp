@@ -334,6 +334,41 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
           "CUDA production CI test exceeded its device budget");
 }
 
+void check_partitioned_moments() {
+  constexpr int n=8,rhs=3;
+  const xmvb::mcscf::SpinStrings a(n,4),b(n,3);
+  const xmvb::mcscf::DirectCiSigmaAction cpu(a.occupations(),b.occupations(),
+      active_integrals(n,false));
+  const int rows=a.occupations().size(),cols=b.occupations().size()*rhs;
+  const Matrix left=values(rows,cols,0.29),right=values(rows,cols,0.83);
+  Matrix padded_left=Matrix::Constant(rows+3,cols,19.0);
+  Matrix padded_right=Matrix::Constant(rows+1,cols,23.0);
+  padded_left.topRows(rows)=left;padded_right.topRows(rows)=right;
+  xmvb::cuda::Context context(128ULL*1024*1024);
+  xmvb::cuda::DirectCiSigma gpu(context,cpu);
+  xmvb::cuda::Matrix<double> dl(context,rows+3,cols),dr(context,rows+1,cols);
+  xmvb::cuda::Matrix<double> output(context,n+2,2*n);
+  xmvb::cuda::copy_to_device(context,dl.view(),padded_left);
+  xmvb::cuda::copy_to_device(context,dr.view(),padded_right);
+  const Matrix padding=Matrix::Constant(n+2,2*n,-17.0);
+  xmvb::cuda::copy_to_device(context,output.view(),padding);
+  const xmvb::linalg::ConstMatrixView l{dl.data(),rows,cols,rows+3};
+  const xmvb::linalg::ConstMatrixView r{dr.data(),rows,cols,rows+1};
+  const xmvb::linalg::MatrixView o1{output.data(),n,n,n+2};
+  const xmvb::linalg::MatrixView o2{output.data()+output.rows()*n,n,n,n+2};
+  const auto bytes=gpu.resident_bytes(),generation=gpu.workspace_generation();
+  gpu.generator_moments(std::array{l,r},r,std::array{o1,o2});
+  const Matrix result=download(context,output);
+  near(result.topRows(n).leftCols(n),cpu.one_body_generator_adjoint(left,right),
+      3e-10,"CUDA partitioned unequal-spin moments differ from CPU");
+  near(result.topRows(n).rightCols(n),cpu.one_body_generator_adjoint(right,right),
+      3e-10,"CUDA partitioned equal-carrier moments differ from CPU");
+  require((result.bottomRows(2).array()==-17.0).all(),
+      "CUDA generator moment overwrote padded output rows");
+  require(gpu.resident_bytes()==bytes && gpu.workspace_generation()==generation,
+      "CUDA direct moments allocated resident channel panels or invalidated sigma");
+}
+
 void check_spin_metric(int rhs_count) {
   constexpr int n = 4;
   const Strings alpha = xmvb::mcscf::SpinStrings(n, 2).occupations();
@@ -618,6 +653,7 @@ int main() {
         check_sigma(rhs_count,rotated,1);
         check_sigma(rhs_count,rotated,1,true);
       }
+    check_partitioned_moments();
     for (int rhs_count : {1, 3}) check_spin_metric(rhs_count);
     for (int rhs_count : {1, 3}) check_exterior(rhs_count);
     check_exterior(1,12,6,5); // Unequal wide spin sectors in shared tiles.

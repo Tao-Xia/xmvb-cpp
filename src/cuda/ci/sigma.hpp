@@ -96,10 +96,10 @@ class DirectCiSigma {
                        linalg::ConstMatrixView orbital_generator,
                        linalg::MatrixView image) const;
 
-  /** Independent full moments left[i]^T E(generator) right, sharing E(right).
+  /** Independent full moments left[i]^T E(generator) right from spin links.
    * Each output is overwritten, including both nonsymmetric orientations.
-   * Batched left carriers are contiguous; a single left also accepts strides.
-   * Only one bounded left tile is packed, never replicated full carriers.
+   * All carrier strides are respected. Only small reduction partials are
+   * stored, never carrier-by-channel panels or expanded generator images.
    */
   void generator_moments(std::span<const linalg::ConstMatrixView> left,
       linalg::ConstMatrixView right,std::span<const linalg::MatrixView> outputs) const;
@@ -110,8 +110,6 @@ class DirectCiSigma {
   void prepare_with_adjoint(int block_width) const {
     prepare_adjoint(block_width, true, true);
   }
-  /** Allocate the independent generator-VJP row slabs before capture. */
-  void prepare_generator_adjoint(int block_width = 1) const;
 
   int n_alpha_strings() const noexcept { return n_alpha_; }
   int n_beta_strings() const noexcept { return n_beta_; }
@@ -152,6 +150,7 @@ class DirectCiSigma {
   struct Workspace {
     Matrix<double> scattered,transformed,right_scattered,channel_adjoint;
     std::uint64_t generation=0;
+    int moment_partitions=0;
   };
   // One scratch owner per shared spin graph family, not per physical point.
   std::shared_ptr<Workspace> workspace_;
@@ -159,11 +158,6 @@ class DirectCiSigma {
   Matrix<double>& transformed_;
   Matrix<double>& right_scattered_;
   Matrix<double>& channel_adjoint_;
-  // Generator VJPs borrow the channel panels (or sigma output slab) after
-  // their preceding action has completed on the same stream. In particular,
-  // a captured action's scattered_/transformed_ addresses are never changed.
-  mutable Buffer<double> generator_moments_;
-  mutable Matrix<double> generator_left_;
 };
 
 }  // namespace xmvb::cuda

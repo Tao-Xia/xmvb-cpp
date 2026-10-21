@@ -5,6 +5,7 @@ add_library(xmvb_cuda
   linalg/spectrum.cu
   linalg/svd.cu
   ci/sigma.cu
+  ci/moments.cu
   integrals/exact.cu
   integrals/packed.cu
   integrals/packed_response.cu
