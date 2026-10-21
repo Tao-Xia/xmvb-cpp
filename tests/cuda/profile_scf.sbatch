@@ -29,7 +29,7 @@ hostname > "$out/node.txt"
 lscpu > "$out/cpu.txt"
 nvidia-smi -q > "$out/gpu.txt"
 module list > "$out/modules.txt" 2>&1
-find "$source_dir/src/cuda" "$source_dir/src/input/loading" \
+find "$source_dir/src/cuda" "$source_dir/src/vbscf/structures/assembly" "$source_dir/src/input/loading" \
   "$source_dir/src/integrals/ao" "$source_dir/src/libcint" \
   "$source_dir/tools/cuvbscf" -type f -print0 | sort -z | xargs -0 sha256sum > "$out/sources.sha256"
 cmake --build "$source_dir/build-cuvbscf" --target cuvbscf -j 16 > "$out/build.log" 2>&1

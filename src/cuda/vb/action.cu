@@ -175,7 +175,7 @@ struct StructureAction::Impl {
         groups(source.orthogonal_view().products.size()),
         products(static_cast<std::int64_t>(alpha)*beta),
         diagonal(source.preconditioner_diagonal()),
-        sigma(ctx, source.orthogonal_view().sigma),
+        sigma(ctx, source.orthogonal_view().sigma,16,source.orthogonal_view().exchange_parity),
         alpha_transform(ctx, source.orthogonal_view().alpha),
         beta_storage(&source.orthogonal_view().alpha == &source.orthogonal_view().beta
             ? nullptr : std::make_unique<ExteriorTransform>(ctx, source.orthogonal_view().beta)),

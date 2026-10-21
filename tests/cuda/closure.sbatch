@@ -29,7 +29,8 @@ hostname > "$out/node.txt"
 lscpu > "$out/cpu.txt"
 nvidia-smi -q > "$out/gpu.txt"
 module list > "$out/modules.txt" 2>&1
-find "$source_dir/src/cuda" "$source_dir/src/mcscf/optimization/ciah" \
+find "$source_dir/src/cuda" "$source_dir/src/vbscf/structures/assembly" \
+  "$source_dir/src/mcscf/optimization/ciah" \
   "$source_dir/src/input/loading" "$source_dir/src/integrals/ao" "$source_dir/src/libcint" \
   "$source_dir/tests/cuda" -type f -print0 | sort -z | xargs -0 sha256sum \
   > "$out/sources.sha256"

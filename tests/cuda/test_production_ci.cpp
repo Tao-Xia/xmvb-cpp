@@ -153,6 +153,12 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
   const Matrix left = values(alpha.size(), beta.size() * rhs_count, 0.26);
   const Matrix right = values(alpha.size(), beta.size() * rhs_count, 0.82);
   xmvb::cuda::Context context(128ULL * 1024ULL * 1024ULL);
+  if (n==4 && rhs_count==1 && !rotated && !one_product && maximum_tile==3) {
+    bool rejected=false;
+    try { xmvb::cuda::DirectCiSigma invalid(context,cpu,maximum_tile,1); }
+    catch (const std::invalid_argument&) {rejected=true;}
+    require(rejected,"CUDA exchange sector was accepted for unequal spin graphs");
+  }
   xmvb::cuda::DirectCiSigma gpu(context,cpu,maximum_tile);
   require(one_product || gpu.n_alpha_strings() != gpu.n_beta_strings(),
           "CUDA direct-CI fixture lost unequal spin dimensions");
@@ -366,6 +372,120 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
        "GPU integral update left a stale CI diagonal");
   require(context.counters().peak_device_bytes < context.device_byte_budget(),
           "CUDA production CI test exceeded its device budget");
+}
+
+void check_exchange_parity(int n,int rhs,int parity,int capacity) {
+  const auto strings=xmvb::mcscf::SpinStrings(n,n/2).occupations();
+  const auto base=active_integrals(n,false);
+  const xmvb::mcscf::DirectCiSigmaAction cpu(strings,strings,base);
+  const int dim=strings.size(),pairs=n*(n+1)/2;
+  const auto sector=[&](double phase) {
+    Matrix result=values(dim,dim*rhs,phase);
+    for (int b=0;b<rhs;++b) {
+      auto block=result.middleCols(b*dim,dim);
+      block=(0.5*(block+parity*block.transpose())).eval();
+    }
+    return result;
+  };
+  const Matrix left=sector(0.26),right=sector(0.82);
+  const auto expected=cpu.apply_with_adjoint(left,right);
+  near(cpu.apply(left,parity),expected.sigma,3e-10,
+      "CPU exchange sector disagrees with the unrestricted oracle");
+  xmvb::cuda::Context context(128ULL*1024*1024);
+  xmvb::cuda::DirectCiSigma gpu(context,cpu,capacity,parity);
+  require(gpu.exchange_parity()==parity,"CUDA sigma lost its certified sector");
+  xmvb::cuda::Matrix<double> dl(context,dim+1,dim*rhs),dr(context,dim+2,dim*rhs);
+  xmvb::cuda::Matrix<double> image(context,dim+3,dim*rhs);
+  xmvb::cuda::Matrix<double> h(context,n,n),g(context,pairs,pairs),moments(context,n,2*n);
+  Matrix padded_left=Matrix::Constant(dim+1,dim*rhs,19.0);
+  Matrix padded_right=Matrix::Constant(dim+2,dim*rhs,23.0);
+  padded_left.topRows(dim)=left;padded_right.topRows(dim)=right;
+  xmvb::cuda::copy_to_device(context,dl.view(),padded_left);
+  xmvb::cuda::copy_to_device(context,dr.view(),padded_right);
+  xmvb::cuda::copy_to_device(context,image.view(),Matrix::Constant(dim+3,dim*rhs,-17.0));
+  const xmvb::linalg::ConstMatrixView l{dl.data(),dim,dim*rhs,dim+1};
+  const xmvb::linalg::ConstMatrixView r{dr.data(),dim,dim*rhs,dim+2};
+  const xmvb::linalg::MatrixView out{image.data(),dim,dim*rhs,dim+3};
+  const auto read=[&] {return download(context,image).topRows(dim).eval();};
+  const auto resident=gpu.resident_bytes();
+  gpu.prepare(rhs);
+  auto rows=std::max<std::int64_t>(1,
+      static_cast<std::int64_t>(dim)*(dim+1)/2*rhs*std::min(pairs,capacity)/pairs);
+  if (rows>=32) rows=(rows/32)*32;
+  require(gpu.resident_bytes()-resident==2*rows*pairs*sizeof(double),
+      "CUDA certified sigma still allocated full-product source panels");
+  gpu.apply(l,out);
+  near(read(),expected.sigma,3e-10,"CUDA exchange sigma differs from full CPU action");
+  gpu.apply(r,out,true);
+  near(read(),expected.sigma+cpu.apply(right),3e-10,"CUDA exchange sigma add mode differs");
+  gpu.apply_with_adjoint(l,r,out,h.view(),g.view());
+  near(read(),expected.sigma,3e-10,"CUDA exchange fused sigma differs");
+  near(download(context,h),expected.integrals.one_electron,3e-10,
+      "CUDA exchange one-electron adjoint has wrong row weights");
+  near(download(context,g),expected.integrals.pair_kernel,3e-10,
+      "CUDA exchange pair adjoint has wrong row weights");
+  const auto same=cpu.apply_with_adjoint(right,right);
+  gpu.apply_with_adjoint(r,r,out,h.view(),g.view());
+  near(read(),same.sigma,3e-10,"CUDA same-source exchange sigma differs");
+  near(download(context,g),same.integrals.pair_kernel,3e-10,
+      "CUDA same-source exchange adjoint squared the row weights");
+  const xmvb::mcscf::ActiveIntegrals delta{
+      symmetric_values(n,1.74),0.11*symmetric_values(pairs,2.36)};
+  const xmvb::mcscf::DirectCiSigmaAction direction(strings,strings,delta);
+  xmvb::cuda::DirectCiSigma dgpu(context,gpu);
+  xmvb::cuda::copy_to_device(context,h.view(),delta.one_electron);
+  xmvb::cuda::copy_to_device(context,g.view(),delta.pair_kernel);
+  dgpu.update_integrals(h.view(),g.view());
+  gpu.apply_direction_with_adjoint(l,r,dgpu,out,h.view(),g.view());
+  const Matrix combined=expected.sigma+direction.apply(right);
+  near(read(),combined,3e-10,"CUDA exchange directional sigma differs");
+  near(download(context,h),expected.integrals.one_electron,3e-10,
+      "CUDA exchange directional one-electron adjoint differs");
+  near(download(context,g),expected.integrals.pair_kernel,3e-10,
+      "CUDA exchange directional pair adjoint differs");
+  const xmvb::cuda::Graph captured(context,[&] {
+    gpu.apply_direction_with_adjoint(l,r,dgpu,out,h.view(),g.view());
+  });
+  xmvb::cuda::Matrix<double> generator(context,n,n);
+  const Matrix rotation=values(n,n,0.57);
+  xmvb::cuda::copy_to_device(context,generator.view(),rotation);
+  gpu.apply_generator(r,generator.view(),out);
+  near(read(),cpu.apply_one_body_generator(right,rotation),3e-10,
+      "CUDA exchange nonsymmetric generator differs");
+  gpu.generator_moments(std::array{l,r},r,
+      std::array{moments.view().columns(0,n),moments.view().columns(n,n)});
+  const Matrix moment=download(context,moments);
+  near(moment.leftCols(n),cpu.one_body_generator_adjoint(left,right),3e-10,
+      "CUDA exchange mixed generator moments differ");
+  near(moment.rightCols(n),cpu.one_body_generator_adjoint(right,right),3e-10,
+      "CUDA exchange same-source generator moments differ");
+  captured.launch();
+  near(read(),combined,3e-10,"CUDA exchange graph replay differs");
+  require((download(context,image).bottomRows(3).array()==-17.0).all(),
+      "CUDA exchange output touched padded rows");
+}
+
+void check_distinct_spin_graphs() {
+  constexpr int n=5;
+  const auto a=xmvb::mcscf::SpinStrings(n,2).occupations();
+  const auto b=xmvb::mcscf::SpinStrings(n,3).occupations();
+  const xmvb::mcscf::DirectCiSigmaAction cpu(a,b,active_integrals(n,false));
+  require(a.size()==b.size() && !cpu.shared_spin_connections(),
+      "CUDA unequal-spin fixture lost its equal dimension coincidence");
+  xmvb::cuda::Context context(128ULL*1024*1024);
+  for (int parity:{-1,1}) {
+    bool rejected=false;
+    try {xmvb::cuda::DirectCiSigma invalid(context,cpu,16,parity);}
+    catch (const std::invalid_argument&) {rejected=true;}
+    require(rejected,"CUDA inferred spin-exchange symmetry from equal dimensions");
+  }
+  xmvb::cuda::DirectCiSigma gpu(context,cpu);
+  const Matrix input=values(a.size(),b.size(),0.61);
+  xmvb::cuda::Matrix<double> x(context,input.rows(),input.cols()),y(context,input.rows(),input.cols());
+  xmvb::cuda::copy_to_device(context,x.view(),input);
+  gpu.apply(x.view(),y.view());
+  near(download(context,y),cpu.apply(input),3e-10,
+      "CUDA equal-size distinct-spin action changed its physical space");
 }
 
 void check_row_budget() {
@@ -742,6 +862,11 @@ int main() {
     // Wide, unequal spin sectors and one-channel-equivalent workspace force
     // many source tiles. Exercise transpose scatter, add mode and fused HVP.
     check_sigma(2,false,1,false,8);
+    for (int parity:{-1,1}) for (int rhs:{1,3}) {
+      check_exchange_parity(4,rhs,parity,1);
+      check_exchange_parity(6,rhs,parity,3);
+    }
+    check_distinct_spin_graphs();
     check_row_budget();
     check_partitioned_moments();
     for (int rhs_count : {1, 3}) check_spin_metric(rhs_count);

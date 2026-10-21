@@ -6,6 +6,8 @@
 #include <cub/block/block_reduce.cuh>
 #include <nvtx3/nvtx3.hpp>
 
+#include "cuda/ci/rows.cuh"
+
 namespace xmvb::cuda {
 namespace {
 constexpr int threads=256;
@@ -20,7 +22,7 @@ struct AddMoments {
 // carrier rows; no generator image or carrier-by-channel panel is formed.
 __global__ void reduce_moments(linalg::ConstMatrixView left,
     linalg::ConstMatrixView right,const int* alpha,const int* beta,
-    int n_alpha,int n_beta,std::int64_t products,double2* partials) {
+    int n_alpha,int n_beta,std::int64_t products,int parity,double2* partials) {
   using Reduce=cub::BlockReduce<double2,threads>;
   __shared__ typename Reduce::TempStorage scratch;
   const int channel=blockIdx.x;
@@ -31,14 +33,13 @@ __global__ void reduce_moments(linalg::ConstMatrixView left,
   double2 sum=make_double2(0.0,0.0);
   for (std::int64_t product=static_cast<std::int64_t>(blockIdx.y)*threads+threadIdx.x;
        product<products;product+=static_cast<std::int64_t>(gridDim.y)*threads) {
-    const int a=product%n_alpha;
-    const auto column=product/n_alpha;
-    const int b=column%n_beta;
-    const auto rhs=column/n_beta;
+    const auto row=product_row(product,n_alpha,n_beta,parity);
+    const int a=row.alpha,b=row.beta;
+    const auto column=row.column,rhs=row.rhs;
     const int sa=alpha[static_cast<std::int64_t>(channel)*n_alpha+a];
     const int sb=beta[static_cast<std::int64_t>(channel)*n_beta+b];
     if (!sa && !sb) continue;
-    const double weight=left.data[a+left.ld*column];
+    const double weight=row.weight*left.data[a+left.ld*column];
     if (high==low) {
       sum.x+=weight*((sa!=0)+(sb!=0))*right.data[a+right.ld*column];
       continue;
@@ -102,7 +103,7 @@ void DirectCiSigma::generator_moments(std::span<const linalg::ConstMatrixView> l
         "generator moment occupancy");
     workspace_->moment_partitions=std::max(1,(multiprocessors*blocks+n_channels_-1)/n_channels_);
   }
-  const auto products=right.rows*right.cols;
+  const auto products=contraction_rows(static_cast<int>(right.cols/n_beta_));
   const int partitions=static_cast<int>(std::min<std::int64_t>(workspace_->moment_partitions,
       (products+threads-1)/threads));
   const auto count=static_cast<std::size_t>(n_channels_)*partitions;
@@ -110,7 +111,7 @@ void DirectCiSigma::generator_moments(std::span<const linalg::ConstMatrixView> l
   for (std::size_t i=0;i<left.size();++i) {
     reduce_moments<<<dim3(n_channels_,partitions),threads,0,context_->stream()>>>(
         left[i],right,alpha_->sources.data(),beta_->sources.data(),n_alpha_,n_beta_,
-        products,partials.data());
+        products,exchange_parity_,partials.data());
     check_cuda(cudaGetLastError(),"CUDA direct link generator moments");
     const auto cells=static_cast<std::int64_t>(n_orbitals_)*n_orbitals_;
     store_moments<<<static_cast<unsigned int>((cells+threads-1)/threads),threads,0,

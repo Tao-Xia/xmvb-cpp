@@ -18,15 +18,17 @@ namespace xmvb::cuda {
  * Input/output panels are caller-owned and charged to Context's device budget.
  * All-channel source-row slabs share a bounded workspace. No Hamiltonian
  * matrix or extra full-carrier channel cache is retained.
+ * Nonzero exchange_parity requires identical spin graphs and certifies the
+ * same transpose parity for every supplied carrier, not just equal dimensions.
  */
 class DirectCiSigma {
  public:
-  /** channel_capacity bounds storage in full-carrier channel equivalents;
-   * every contraction row still includes all channels. A complete row is the
-   * minimum allocation, including in a one-product carrier.
+  /** channel_capacity bounds each panel in representative-domain channel
+   * equivalents (the full product domain when parity is zero). Every tiled
+   * row still includes all channels; one complete row is the minimum.
    */
   DirectCiSigma(Context& context, const mcscf::DirectCiSigmaAction& source,
-                int channel_capacity = 16);
+                int channel_capacity = 16,int exchange_parity = 0);
   /** @brief Share immutable device links; update_integrals must precede use. */
   DirectCiSigma(Context& context, const DirectCiSigma& reference);
   DirectCiSigma(const DirectCiSigma&) = delete;
@@ -120,6 +122,8 @@ class DirectCiSigma {
   int n_beta_strings() const noexcept { return n_beta_; }
   int n_orbitals() const noexcept { return n_orbitals_; }
   int n_channels() const noexcept { return n_channels_; }
+  /** Topology-certified common transpose parity, zero if not restricted. */
+  int exchange_parity() const noexcept { return exchange_parity_; }
   std::size_t resident_bytes() const noexcept;
   /** Shared scratch changes invalidate graphs that captured its addresses.
    * All members of a clone family execute sequentially on Context's stream.
@@ -127,6 +131,11 @@ class DirectCiSigma {
   std::uint64_t workspace_generation() const noexcept { return workspace_->generation; }
 
  private:
+  std::int64_t contraction_rows(int width) const noexcept {
+    return (exchange_parity_ ? static_cast<std::int64_t>(n_alpha_)*(n_alpha_+1)/2:
+        static_cast<std::int64_t>(n_alpha_)*n_beta_)*width;
+  }
+  void complete_exchange(linalg::MatrixView,bool average) const;
   struct SpinGraph {
     /** Zero means absent; signed (source+1) encodes the exact fermionic sign. */
     Buffer<int> sources;
@@ -148,6 +157,7 @@ class DirectCiSigma {
                                linalg::MatrixView pair_kernel_adjoint) const;
   Context* context_;
   int n_alpha_, n_beta_, n_orbitals_, n_electrons_, n_channels_, channel_capacity_;
+  int exchange_parity_;
   bool shared_spin_graph_;
   Buffer<double> kernel_;
   Buffer<double> effective_one_;

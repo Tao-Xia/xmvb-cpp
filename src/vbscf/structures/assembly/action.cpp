@@ -1186,7 +1186,7 @@ StructureAction::OrthogonalView StructureAction::orthogonal_view() const {
   if (!direct_ci_)
     throw std::invalid_argument("structure action has no orthogonal representation");
   return {direct_ci_->alpha_transform, direct_ci_->beta_transform(), direct_ci_->sigma,
-      spin_products_, spin_term_offsets_, spin_terms_};
+      spin_products_, spin_term_offsets_, spin_terms_,spin_exchange_parity_};
 }
 
 Eigen::MatrixXd StructureAction::apply_hamiltonian(

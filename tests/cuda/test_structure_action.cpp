@@ -76,6 +76,8 @@ void check_action(int count, bool transformed) {
   const xmvb::vb::StructureAction cpu(terms,count,topology,overlap,h,eri,n,&diagonal_model);
   xmvb::cuda::Context context(256ULL*1024ULL*1024ULL);
   const xmvb::cuda::StructureAction gpu(context,cpu);
+  require(gpu.carrier_sigma().exchange_parity()==cpu.orthogonal_view().exchange_parity,
+      "CUDA structure action lost the common spin-exchange certificate");
   require(gpu.graph_nodes()==0,"topology eagerly prepared numerical sigma workspace");
   Eigen::MatrixXd vectors(count,3);
   for (int j = 0; j < vectors.cols(); ++j)

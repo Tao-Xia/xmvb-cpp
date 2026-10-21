@@ -9,6 +9,7 @@
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
+#include "cuda/ci/rows.cuh"
 #include "mcscf/ci/sigma.hpp"
 
 namespace xmvb::cuda {
@@ -17,21 +18,19 @@ namespace {
 __global__ void scatter_channels(
     linalg::ConstMatrixView input, double* channels, std::int64_t begin,std::int64_t count,
     int n_alpha, int n_beta, const int* alpha, const int* beta,
-    int channel_count) {
+    int channel_count,int parity,bool weighted) {
   const std::int64_t index=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
   if (index>=count*channel_count) return;
-  const auto product=begin+index%count;
+  const auto row=product_row(begin+index%count,n_alpha,n_beta,parity);
   const int channel=index/count;
-  const int a=product%n_alpha;
-  const auto column=product/n_alpha;
-  const int b=column%n_beta;
-  const auto rhs=column/n_beta;
+  const int a=row.alpha,b=row.beta;
+  const auto column=row.column,rhs=row.rhs;
   const int sa=alpha[static_cast<std::int64_t>(channel)*n_alpha+a];
   const int sb=beta[static_cast<std::int64_t>(channel)*n_beta+b];
   double value=0;
   if (sa) value+=(sa>0 ? 1.0:-1.0)*input.data[abs(sa)-1+input.ld*column];
   if (sb) value+=(sb>0 ? 1.0:-1.0)*input.data[a+input.ld*(rhs*n_beta+abs(sb)-1)];
-  channels[index]=value;
+  channels[index]=value*(weighted ? row.weight:1.0);
 }
 
 // E_P is a Hermitian packed one-body channel. Its transpose therefore uses
@@ -40,15 +39,13 @@ __global__ void scatter_channels(
 // Atomic additions merge different channels without a full-carrier buffer.
 __global__ void scatter_channel_adjoint(const double* channels,linalg::MatrixView image,
     std::int64_t begin,std::int64_t count,
-    int n_alpha,int n_beta,const int* alpha,const int* beta,int n_channels) {
+    int n_alpha,int n_beta,const int* alpha,const int* beta,int n_channels,int parity) {
   const auto index=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
   if (index>=count*n_channels) return;
-  const auto product=begin+index%count;
+  const auto row=product_row(begin+index%count,n_alpha,n_beta,parity);
   const int p=index/count;
-  const int a=product%n_alpha;
-  const auto column=product/n_alpha;
-  const int b=column%n_beta;
-  const auto rhs=column/n_beta;
+  const int a=row.alpha,b=row.beta;
+  const auto column=row.column,rhs=row.rhs;
   const int sa=alpha[static_cast<std::int64_t>(p)*n_alpha+a];
   const int sb=beta[static_cast<std::int64_t>(p)*n_beta+b];
   const double value=channels[index];
@@ -56,6 +53,31 @@ __global__ void scatter_channel_adjoint(const double* channels,linalg::MatrixVie
     atomicAdd(image.data+abs(sa)-1+image.ld*column,(sa>0 ? 1.0:-1.0)*value);
   if (sb)
     atomicAdd(image.data+a+image.ld*(rhs*n_beta+abs(sb)-1),(sb>0 ? 1.0:-1.0)*value);
+}
+
+// D is needed on the state only after its unweighted integral-VJP consumer.
+__global__ void weight_channels(double* data,std::int64_t begin,std::int64_t count,
+    int na,int nb,int channels,int parity) {
+  const auto index=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+  if (index<count*channels)
+    data[index]*=product_row(begin+index%count,na,nb,parity).weight;
+}
+
+// Each unordered pair has one owner; no full transpose workspace is needed.
+__global__ void complete_exchange_image(linalg::MatrixView image,std::int64_t rows,
+    int na,int nb,int parity,bool average) {
+  const auto index=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+  if (index>=rows) return;
+  const auto row=product_row(index,na,nb,parity);
+  auto* lower=image.data+row.alpha+image.ld*row.column;
+  auto* upper=image.data+row.beta+image.ld*(row.rhs*nb+row.alpha);
+  double value=*lower;
+  if (row.alpha==row.beta) {
+    if (parity<0) *lower=0.0;
+    return;
+  }
+  if (average) value=0.5*(value+parity*(*upper));
+  *lower=value;*upper=parity*value;
 }
 
 void clear_image(Context& context,linalg::MatrixView image) {
@@ -186,13 +208,12 @@ __global__ void product_diagonal(linalg::MatrixView values,
 __global__ void apply_orbital_generator(linalg::ConstMatrixView coefficients,
     linalg::ConstMatrixView generator,linalg::MatrixView image,
     std::int64_t products,int n_alpha,int n_beta,int n_orbitals,
-    const int* alpha,const int* beta) {
+    const int* alpha,const int* beta,int parity) {
   const std::int64_t product=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
   if (product>=products) return;
-  const int a=product%n_alpha;
-  const auto column=product/n_alpha;
-  const int b=column%n_beta;
-  const auto rhs=column/n_beta;
+  const auto row=product_row(product,n_alpha,n_beta,parity);
+  const int a=row.alpha,b=row.beta;
+  const auto column=row.column,rhs=row.rhs;
   const double self=coefficients.data[a+coefficients.ld*column];
   double value=0;
   for (int p=0;p<n_orbitals;++p) {
@@ -297,7 +318,7 @@ DirectCiSigma::SpinGraph::SpinGraph(
 
 DirectCiSigma::DirectCiSigma(
     Context& context, const mcscf::DirectCiSigmaAction& source,
-    int channel_capacity)
+    int channel_capacity,int exchange_parity)
     : context_(&context), n_alpha_(source.n_alpha_strings()),
       n_beta_(source.n_beta_strings()),
       n_orbitals_(source.n_orbitals()),
@@ -305,6 +326,7 @@ DirectCiSigma::DirectCiSigma(
                    source.beta_connections_view().n_occupied()),
       n_channels_(static_cast<int>(source.channel_kernel().rows())),
       channel_capacity_(channel_capacity),
+      exchange_parity_(exchange_parity),
       shared_spin_graph_(source.shared_spin_connections()),
       kernel_(context, static_cast<std::size_t>(n_channels_)*n_channels_),
       effective_one_(context,n_channels_),
@@ -313,7 +335,8 @@ DirectCiSigma::DirectCiSigma(
       transformed_(workspace_->transformed),right_scattered_(workspace_->right_scattered),
       channel_adjoint_(workspace_->channel_adjoint) {
   if (channel_capacity <= 0 || n_channels_ <= 0 ||
-      source.channel_kernel().cols() != n_channels_)
+      source.channel_kernel().cols() != n_channels_ || exchange_parity < -1 ||
+      exchange_parity > 1 || (exchange_parity && !shared_spin_graph_))
     throw std::invalid_argument("invalid CUDA direct-CI channel dimensions");
   context.copy_to_device(kernel_.data(), source.channel_kernel().data(),
                          kernel_.size()*sizeof(double));
@@ -325,6 +348,7 @@ DirectCiSigma::DirectCiSigma(Context& context,const DirectCiSigma& source)
     : context_(&context),n_alpha_(source.n_alpha_),n_beta_(source.n_beta_),
       n_orbitals_(source.n_orbitals_),n_electrons_(source.n_electrons_),
       n_channels_(source.n_channels_),channel_capacity_(source.channel_capacity_),
+      exchange_parity_(source.exchange_parity_),
       shared_spin_graph_(source.shared_spin_graph_),
       kernel_(context,source.kernel_.size()),effective_one_(context,source.effective_one_.size()),
       alpha_(source.alpha_),beta_(source.beta_),workspace_(source.workspace_),
@@ -355,7 +379,7 @@ void DirectCiSigma::reset_workspace() const {
 
 void DirectCiSigma::prepare(int block_width) const {
   if (block_width<=0) throw std::invalid_argument("invalid CUDA sigma block width");
-  const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
+  const auto products=contraction_rows(block_width);
   if (workspace_->products==products && scattered_.rows()>0 &&
       transformed_.rows()==scattered_.rows() && transformed_.cols()==n_channels_) return;
   reset_workspace();
@@ -389,7 +413,7 @@ void DirectCiSigma::prepare(int block_width) const {
 void DirectCiSigma::prepare_adjoint(int block_width,bool with_sigma,
                                    bool retain_channel_kernel) const {
   if (block_width<=0) throw std::invalid_argument("invalid CUDA adjoint block width");
-  const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
+  const auto products=contraction_rows(block_width);
   if (workspace_->products==products && scattered_.rows()>0 && scattered_.cols()==n_channels_ &&
       right_scattered_.rows()==scattered_.rows() &&
       right_scattered_.cols()==n_channels_ &&
@@ -431,7 +455,7 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
     throw std::invalid_argument("invalid CUDA direct-CI product panels");
   if (coefficients.cols > std::numeric_limits<int>::max() / n_alpha_)
     throw std::overflow_error("CUDA direct-CI product panel exceeds cuBLAS range");
-  const std::int64_t products = coefficients.rows*coefficients.cols;
+  const std::int64_t products=contraction_rows(static_cast<int>(coefficients.cols/n_beta_));
   prepare(static_cast<int>(coefficients.cols/n_beta_));
   if (!add) clear_image(*context_,image);
   const auto* alpha=alpha_->sources.data();
@@ -443,37 +467,39 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
   for (std::int64_t begin=0;begin<products;begin+=rows) {
     const auto count=std::min(rows,products-begin);
     scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-        coefficients,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+        coefficients,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_,
+        exchange_parity_,true);
     check_cuda(cudaGetLastError(),"CUDA direct-CI channel scatter");
     const linalg::ConstMatrixView q_view{scattered_.data(),count,n_channels_,count};
     const linalg::ConstMatrixView kernel_view{kernel_.data(),n_channels_,n_channels_,n_channels_};
     const linalg::MatrixView p_view{transformed_.data(),count,n_channels_,count};
     gemm(*context_,p_view,q_view,kernel_view,1.0,0.0,Operation::none,Operation::transpose);
     scatter_channel_adjoint<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-        transformed_.data(),image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+        transformed_.data(),image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_,exchange_parity_);
     check_cuda(cudaGetLastError(), "CUDA direct-CI channel gather");
   }
+  complete_exchange(image,true);
 }
 
 void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
     linalg::ConstMatrixView right,linalg::MatrixView* image,
     linalg::MatrixView channel_kernel_adjoint) const {
   const nvtx3::scoped_range range{"ci.sigma_adjoint"};
-  const std::int64_t products=left.rows*left.cols;
+  const std::int64_t products=contraction_rows(static_cast<int>(left.cols/n_beta_));
   const auto rows=scattered_.rows();
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
-  const bool same_source=left.data==right.data && left.ld==right.ld;
+  const bool same_source=!exchange_parity_ && left.data==right.data && left.ld==right.ld;
   if (image) clear_image(*context_,*image);
   bool first_adjoint=true;
   for (std::int64_t begin=0;begin<products;begin+=rows) {
     const auto count=std::min(rows,products-begin);
     scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-        left,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+        left,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_,exchange_parity_,true);
     check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint left scatter");
     if (!same_source) {
       scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-          right,right_scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+          right,right_scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_,exchange_parity_,false);
       check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint right scatter");
     }
     const linalg::ConstMatrixView left_channels{scattered_.data(),count,n_channels_,count};
@@ -489,10 +515,11 @@ void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
       const linalg::MatrixView p_view{right_scattered_.data(),count,n_channels_,count};
       gemm(*context_,p_view,left_channels,kernel_view,1.0,0.0,Operation::none,Operation::transpose);
       scatter_channel_adjoint<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-          right_scattered_.data(),*image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+          right_scattered_.data(),*image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_,exchange_parity_);
       check_cuda(cudaGetLastError(),"CUDA direct-CI adjoint sigma gather");
     }
   }
+  if (image) complete_exchange(*image,true);
 }
 
 void DirectCiSigma::pullback_channel_kernel(
@@ -582,6 +609,7 @@ void DirectCiSigma::apply_direction_with_adjoint(
   if (direction.context_!=context_ || direction.n_alpha_!=n_alpha_ ||
       direction.n_beta_!=n_beta_ || direction.n_orbitals_!=n_orbitals_ ||
       direction.n_channels_!=n_channels_ || direction.n_electrons_!=n_electrons_ ||
+      direction.exchange_parity_!=exchange_parity_ ||
       direction.alpha_!=alpha_ || direction.beta_!=beta_)
     throw std::invalid_argument("CUDA direct-CI direction must share the spin graph");
   if (combined_image.data==response.data || combined_image.data==state.data ||
@@ -594,7 +622,7 @@ void DirectCiSigma::apply_direction_with_adjoint(
       one_electron_adjoint.data==pair_kernel_adjoint.data)
     throw std::invalid_argument("CUDA direct-CI directional outputs alias another view");
   prepare_adjoint(block_width,true,true);
-  const std::int64_t products=response.rows*response.cols;
+  const std::int64_t products=contraction_rows(block_width);
   const auto rows=scattered_.rows();
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
@@ -603,16 +631,21 @@ void DirectCiSigma::apply_direction_with_adjoint(
   for (std::int64_t begin=0;begin<products;begin+=rows) {
     const auto count=std::min(rows,products-begin);
     scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-        response,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+        response,scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_,exchange_parity_,true);
     check_cuda(cudaGetLastError(),"CUDA direct-CI directional response scatter");
     scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-        state,right_scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+        state,right_scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_,exchange_parity_,false);
     check_cuda(cudaGetLastError(),"CUDA direct-CI directional state scatter");
     const linalg::ConstMatrixView response_channels{scattered_.data(),count,n_channels_,count};
     const linalg::ConstMatrixView state_channels{right_scattered_.data(),count,n_channels_,count};
     gemm(*context_,channel_adjoint_.view(),response_channels,state_channels,
         1.0,first_adjoint ? 0.0:1.0,Operation::transpose,Operation::none);
     first_adjoint=false;
+    if (exchange_parity_) {
+      weight_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+          right_scattered_.data(),begin,count,n_alpha_,n_beta_,n_channels_,exchange_parity_);
+      check_cuda(cudaGetLastError(),"CUDA directional state exchange weights");
+    }
     const linalg::MatrixView output{transformed_.data(),count,n_channels_,count};
     const linalg::ConstMatrixView fixed_kernel{kernel_.data(),n_channels_,n_channels_,n_channels_};
     const linalg::ConstMatrixView directional_kernel{
@@ -622,9 +655,10 @@ void DirectCiSigma::apply_direction_with_adjoint(
     gemm(*context_,output,state_channels,directional_kernel,
         1.0,1.0,Operation::none,Operation::transpose);
     scatter_channel_adjoint<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
-        transformed_.data(),combined_image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+        transformed_.data(),combined_image,begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_,exchange_parity_);
     check_cuda(cudaGetLastError(),"CUDA direct-CI combined directional gather");
   }
+  complete_exchange(combined_image,true);
   pullback_channel_kernel(channel_adjoint_.view(),
       one_electron_adjoint,pair_kernel_adjoint);
 }
@@ -670,10 +704,19 @@ void DirectCiSigma::apply_generator(linalg::ConstMatrixView coefficients,
     throw std::invalid_argument("invalid CUDA direct-CI orbital generator views");
   const auto* alpha=alpha_->sources.data();
   const auto* beta=beta_->sources.data();
-  const std::int64_t products=coefficients.rows*coefficients.cols;
+  const std::int64_t products=contraction_rows(static_cast<int>(coefficients.cols/n_beta_));
   apply_orbital_generator<<<grid_size(products),256,0,context_->stream()>>>(
       coefficients,orbital_generator,image,products,n_alpha_,n_beta_,
-      n_orbitals_,alpha,beta);
+          n_orbitals_,alpha,beta,exchange_parity_);
   check_cuda(cudaGetLastError(),"CUDA direct-CI orbital generator action");
+  complete_exchange(image,false);
+}
+
+void DirectCiSigma::complete_exchange(linalg::MatrixView image,bool average) const {
+  if (!exchange_parity_) return;
+  const auto rows=contraction_rows(static_cast<int>(image.cols/n_beta_));
+  complete_exchange_image<<<grid_size(rows),256,0,context_->stream()>>>(
+      image,rows,n_alpha_,n_beta_,exchange_parity_,average);
+  check_cuda(cudaGetLastError(),"CUDA complete certified exchange image");
 }
 }  // namespace xmvb::cuda

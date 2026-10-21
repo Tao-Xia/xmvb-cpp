@@ -166,6 +166,7 @@ public:
     std::span<const mcscf::ProductIndex> products;
     std::span<const std::size_t> offsets;
     std::span<const StructureTerm> terms;
+    int exchange_parity;
   };
 
   /** @brief Export the retained orthogonal representation without rebuilding it. */
