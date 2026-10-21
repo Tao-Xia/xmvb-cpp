@@ -29,23 +29,27 @@ hostname > "$out/node.txt"
 lscpu > "$out/cpu.txt"
 nvidia-smi -q > "$out/gpu.txt"
 module list > "$out/modules.txt" 2>&1
-find "$source_dir/src/cuda" -type f -print0 | sort -z | xargs -0 sha256sum > "$out/sources.sha256"
+find "$source_dir/src/cuda" "$source_dir/src/input/loading" \
+  "$source_dir/src/integrals/ao" "$source_dir/src/libcint" \
+  "$source_dir/tools/cuvbscf" -type f -print0 | sort -z | xargs -0 sha256sum > "$out/sources.sha256"
 cmake --build "$source_dir/build-cuvbscf" --target cuvbscf -j 16 > "$out/build.log" 2>&1
 cp "$source_dir/build-cuvbscf/src/cuvbscf" "$out/"
 sha256sum "$out/cuvbscf" > "$out/binary.sha256"
 case_name=${CUVB_PROFILE_CASE:-full}
 [[ "$case_name" == mixed20 || "$case_name" == cov || "$case_name" == ion02 || "$case_name" == full ]] || exit 64
 printf '%s\n' "$case_name" > "$out/case.txt"
+profile_range=${CUVB_PROFILE_RANGE:-gpu.scf.macro}
+printf '%s\n' "$profile_range" > "$out/range.txt"
 bundle="$source_dir/cuvbscf-c12-297979/bundle/cases/$case_name"
 cp "$bundle/input.xmi" "$bundle/cc-pvdz.gbs" "$out/"
 cd "$out"
 sha256sum input.xmi cc-pvdz.gbs > input.sha256
 nsys --version > nsys_version.txt
-# Capture the first complete macro only. The remaining SCF continues normally;
+# Capture one selected registered range (the first macro by default). SCF continues normally;
 # profiled process time is attribution evidence, never a native speed result.
 srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \
   nsys profile --sample=none --cpuctxsw=none --trace=cuda,cublas,nvtx \
-    --cuda-graph-trace=graph --capture-range=nvtx --nvtx-capture=gpu.scf.macro \
+    --cuda-graph-trace=graph --capture-range=nvtx --nvtx-capture="$profile_range" \
     --capture-range-end=stop --force-overwrite=true --output="$out/nsys" \
     "$out/cuvbscf" input.xmi > profile.out 2> profile.err
 srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \

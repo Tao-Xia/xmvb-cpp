@@ -590,33 +590,56 @@ ExactAoPairOperator::ExactAoPairOperator(
       throw std::invalid_argument("invalid CUDA AO-pair component order");
   }
   compact_ = graph.has_compact_integral_stream();
+  std::size_t directed_bytes=0,staging_bytes=0;
   if (compact_) {
     if (graph.integral_rows.size() != graph.integral_columns.size() ||
         graph.integral_rows.size() != graph.integral_values.size())
       throw std::invalid_argument("invalid compact AO integral stream");
     n_integrals_ = graph.integral_rows.size();
-    for (std::int64_t k = 0; k < n_integrals_; ++k)
+    std::size_t directed=0;
+    for (std::int64_t k = 0; k < n_integrals_; ++k) {
       if (graph.integral_rows[k] < 0 || graph.integral_rows[k] >= n_pairs_ ||
           graph.integral_columns[k] < 0 || graph.integral_columns[k] >= n_pairs_)
         throw std::invalid_argument("compact AO integral index out of range");
+      directed+=1+(graph.integral_rows[k]!=graph.integral_columns[k]);
+    }
+    directed_bytes=directed*(sizeof(int)+sizeof(double))+(n_pairs_+1)*sizeof(int);
+    staging_bytes=2*sizeof(int)+sizeof(double);
   } else {
     if (graph.row_offsets.size() != static_cast<std::size_t>(n_pairs_ + 1) ||
         graph.row_offsets.front() != 0 || graph.row_offsets.back() < 0 ||
         graph.columns.size() != graph.values.size() ||
         graph.columns.size() != static_cast<std::size_t>(graph.row_offsets.back()))
       throw std::invalid_argument("invalid CUDA AO-pair CSR graph");
-    for (int row = 0; row < n_pairs_; ++row)
+    std::size_t largest_row=0;
+    for (int row = 0; row < n_pairs_; ++row) {
       if (graph.row_offsets[row] > graph.row_offsets[row + 1])
         throw std::invalid_argument("unsorted CUDA AO-pair CSR offsets");
+      largest_row=std::max(largest_row,static_cast<std::size_t>(
+          graph.row_offsets[row+1]-graph.row_offsets[row]));
+    }
     for (int column : graph.columns)
       if (column < 0 || column >= n_pairs_)
         throw std::invalid_argument("CUDA AO-pair CSR column out of range");
     n_integrals_ = graph.columns.size();
+    directed_bytes=graph.columns.size()*(sizeof(int)+sizeof(double))+
+        graph.row_offsets.size()*sizeof(int);
+    staging_bytes=largest_row*(sizeof(int)+sizeof(double))+2*sizeof(int);
   }
   pair_first_ = Buffer<int>(context, n_pairs_);
   pair_second_ = Buffer<int>(context, n_pairs_);
   context.copy_to_device(pair_first_.data(), graph.pair_first.data(), n_pairs_ * sizeof(int));
   context.copy_to_device(pair_second_.data(), graph.pair_second.data(), n_pairs_ * sizeof(int));
+  const auto packed_bytes=PackedAoPairMatrix::storage_bytes(n_pairs_);
+  const auto available=response_capacity();
+  // Input layout does not change execution planning: use exactly the implied
+  // symmetric row-graph storage cost, without constructing or uploading it.
+  if (packed_bytes<=directed_bytes && packed_bytes<=available &&
+      staging_bytes<=available-packed_bytes) {
+    packed_=std::make_unique<PackedAoPairMatrix>(context,graph,n_bf_);
+    compact_=false;
+    return;
+  }
   if (compact_) {
     integral_rows_ = Buffer<int>(context, n_integrals_);
     integral_columns_ = Buffer<int>(context, n_integrals_);
@@ -628,22 +651,6 @@ ExactAoPairOperator::ExactAoPairOperator(
     context.copy_to_device(integral_values_.data(), graph.integral_values.data(),
                            n_integrals_ * sizeof(double));
   } else {
-    const auto csr_bytes=graph.columns.size()*(sizeof(int)+sizeof(double))+
-        graph.row_offsets.size()*sizeof(int);
-    const auto packed_bytes=PackedAoPairMatrix::storage_bytes(n_pairs_);
-    std::size_t largest_row=0;
-    for (std::int64_t row=0;row<n_pairs_;++row)
-      largest_row=std::max(largest_row,static_cast<std::size_t>(
-          graph.row_offsets[row+1]-graph.row_offsets[row]));
-    const auto staging=largest_row*(sizeof(int)+sizeof(double))+2*sizeof(int);
-    const auto available=response_capacity();
-    // Select by actual storage, never by VB-space size or numerical screening.
-    // Packed construction streams source rows; two complete layouts never coexist.
-    if (packed_bytes<=csr_bytes && packed_bytes<=available &&
-        staging<=available-packed_bytes) {
-      packed_=std::make_unique<PackedAoPairMatrix>(context,graph,n_bf_);
-      return;
-    }
     row_offsets_ = Buffer<int>(context, n_pairs_ + 1);
     columns_ = Buffer<int>(context, n_integrals_);
     values_ = Buffer<double>(context, n_integrals_);

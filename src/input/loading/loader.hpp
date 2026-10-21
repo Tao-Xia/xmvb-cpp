@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "input/deck/metadata.hpp"
+#include "integrals/ao/graph.hpp"
 #include "vbscf/core/contracts/input.hpp"
 #include "vbscf/structures/selection/subspace/selector.hpp"
 #include "vbscf/structures/expansion/types.hpp"
@@ -40,6 +41,7 @@ struct VbScfInputLoadOptions {
   RawStructureSelectionMode raw_structure_selection = RawStructureSelectionMode::Full;
   bool skip_orbital_guess = false;
   bool expand_selected_raw_structures = true;
+  integrals::AoPairLayout ao_pair_layout=integrals::AoPairLayout::Automatic;
 };
 
 struct VbScfInputLoadResult {

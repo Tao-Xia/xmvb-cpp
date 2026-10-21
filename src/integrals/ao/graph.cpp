@@ -88,7 +88,7 @@ AoPairGraph build_ao_pair_graph(
     std::vector<int> left_pairs,
     std::vector<int> right_pairs,
     std::vector<double> values,
-    int n_bf) {
+    int n_bf,AoPairLayout layout) {
   if (n_bf <= 0) {
     throw std::invalid_argument("n_bf must be positive");
   }
@@ -112,6 +112,27 @@ AoPairGraph build_ao_pair_graph(
   }
   if (n_threads < 1) {
     n_threads = 1;
+  }
+  AoPairGraph graph;
+  graph.pair_first.reserve(n_ao_pairs);
+  graph.pair_second.reserve(n_ao_pairs);
+  for (int first=0;first<n_bf;++first)
+    for (int second=0;second<=first;++second) {
+      graph.pair_first.push_back(first);
+      graph.pair_second.push_back(second);
+    }
+  if (layout==AoPairLayout::Unique) {
+    int invalid=0;
+#pragma omp parallel for num_threads(n_threads) reduction(|:invalid) schedule(static)
+    for (std::ptrdiff_t k=0;k<static_cast<std::ptrdiff_t>(n_integrals);++k)
+      invalid|=left_pairs[k]<0 || right_pairs[k]<0 ||
+          static_cast<std::size_t>(left_pairs[k])>=n_ao_pairs ||
+          static_cast<std::size_t>(right_pairs[k])>=n_ao_pairs;
+    if (invalid) throw std::invalid_argument("AO-pair index out of range");
+    graph.integral_rows=std::move(left_pairs);
+    graph.integral_columns=std::move(right_pairs);
+    graph.integral_values=std::move(values);
+    return graph;
   }
   const std::size_t thread_count = n_threads;
 
@@ -174,15 +195,6 @@ AoPairGraph build_ao_pair_graph(
     n_graph_edges += static_cast<std::size_t>(total_count);
   }
 
-  AoPairGraph graph;
-  graph.pair_first.reserve(n_ao_pairs);
-  graph.pair_second.reserve(n_ao_pairs);
-  for (int first = 0; first < n_bf; ++first) {
-    for (int second = 0; second <= first; ++second) {
-      graph.pair_first.push_back(first);
-      graph.pair_second.push_back(second);
-    }
-  }
   // The symmetric CSR representation duplicates every off-diagonal unique
   // integral.  Preserve the once-symmetry-reduced stream when those directed
   // edges no longer fit the 32-bit hot-path offsets.

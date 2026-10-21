@@ -27,7 +27,7 @@ xmvb::integrals::AoIntegralInput build_core_hamiltonian_only_ao_integral_input(
 }
 
 xmvb::integrals::AoIntegralInput build_materialized_ao_integral_input(
-    MaterializedAoIntegralBuffers buffers) {
+    MaterializedAoIntegralBuffers buffers,integrals::AoPairLayout layout) {
   if (buffers.n_basis_functions <= 0) {
     throw std::invalid_argument("n_basis_functions must be positive");
   }
@@ -50,7 +50,7 @@ xmvb::integrals::AoIntegralInput build_materialized_ao_integral_input(
       std::move(buffers.left_pair_indices),
       std::move(buffers.right_pair_indices),
       std::move(buffers.two_electron_values),
-      buffers.n_basis_functions);
+      buffers.n_basis_functions,layout);
   return ao_integral_input;
 }
 

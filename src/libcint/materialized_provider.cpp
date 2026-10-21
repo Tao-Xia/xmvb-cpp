@@ -327,14 +327,14 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
     for (const auto& values : shell_integral_values) {
       total_integral_count += values.size();
     }
+    const std::size_t expansion=options.ao_pair_layout==integrals::AoPairLayout::Unique ? 1:2;
     if (total_integral_count >
-        std::numeric_limits<std::size_t>::max() / 2) {
+        std::numeric_limits<std::size_t>::max() / expansion) {
       throw std::overflow_error("directed ERI capacity exceeds size_t");
     }
-    // Reserve the final symmetric-CSR value capacity now. The graph builder
-    // expands this same allocation in place instead of retaining the raw ERI
-    // values beside a second directed value array.
-    buffers.two_electron_values.reserve(2 * total_integral_count);
+    // Row consumers expand this same allocation in place for symmetric CSR.
+    // Unique-stream consumers never expand it and retain only the raw count.
+    buffers.two_electron_values.reserve(expansion * total_integral_count);
     buffers.left_pair_indices.reserve(total_integral_count);
     buffers.right_pair_indices.reserve(total_integral_count);
     for (int shell_i = 0; shell_i < n_shells; ++shell_i) {
@@ -353,6 +353,11 @@ MaterializedAoIntegralBuffers LibcintMaterializedIntegralProvider::build(
           buffers.right_pair_indices.end(),
           std::make_move_iterator(right_pairs.begin()),
           std::make_move_iterator(right_pairs.end()));
+      // The aggregate owns these entries now. Do not retain shell-sized
+      // copies while filling the rest of the output, in either input layout.
+      std::vector<double>().swap(values);
+      std::vector<int>().swap(left_pairs);
+      std::vector<int>().swap(right_pairs);
     }
   }
 

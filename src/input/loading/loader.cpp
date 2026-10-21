@@ -667,7 +667,9 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
   xmvb::libcint::MaterializedAoIntegralBuffers ao_integral_buffers;
   if (!use_standard_ri_two_electron_mode) {
     xmvb::libcint::LibcintMaterializedIntegralProvider provider;
-    ao_integral_buffers = provider.build(result.libcint_input);
+    xmvb::libcint::LibcintMaterializedIntegralProviderOptions provider_options;
+    provider_options.ao_pair_layout=options.ao_pair_layout;
+    ao_integral_buffers = provider.build(result.libcint_input,provider_options);
   }
   load_result.ao_integral_provider_seconds =
       std::chrono::duration<double>(
@@ -682,7 +684,7 @@ VbScfInputLoadResult load_vbscf_input_with_timings(
         core_hamiltonian_matrix);
   } else {
     result.ao_integral_input = xmvb::libcint::build_materialized_ao_integral_input(
-        std::move(ao_integral_buffers));
+        std::move(ao_integral_buffers),options.ao_pair_layout);
   }
   load_result.ao_integral_input_build_seconds =
       std::chrono::duration<double>(

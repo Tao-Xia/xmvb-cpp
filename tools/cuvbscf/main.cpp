@@ -13,7 +13,9 @@ int main(int argc,char** argv) {
     if (argc!=2) throw std::invalid_argument("usage: cuvbscf INPUT.xmi");
     std::cout<<std::unitbuf<<std::setprecision(16);
     const auto start=std::chrono::steady_clock::now();
-    const auto loaded=xmvb::vb::load_vbscf_input_with_timings(argv[1]);
+    xmvb::vb::VbScfInputLoadOptions load_options;
+    load_options.ao_pair_layout=xmvb::integrals::AoPairLayout::Unique;
+    const auto loaded=xmvb::vb::load_vbscf_input_with_timings(argv[1],load_options);
     if (loaded.state_average_count!=1)
       throw std::invalid_argument("cuvbscf currently supports single-state exact calculations");
     xmvb::vb::VbScfOptimizerOptions options;

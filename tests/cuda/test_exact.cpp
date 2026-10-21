@@ -86,16 +86,8 @@ struct Fixture {
   }
 
   xmvb::integrals::AoPairGraph graph(bool compact) const {
-    if (!compact)
-      return xmvb::integrals::build_ao_pair_graph(
-          unique_left, unique_right, unique_values, n_bf);
-    xmvb::integrals::AoPairGraph result;
-    result.pair_first = first;
-    result.pair_second = second;
-    result.integral_rows = unique_left;
-    result.integral_columns = unique_right;
-    result.integral_values = unique_values;
-    return result;
+    return xmvb::integrals::build_ao_pair_graph(unique_left,unique_right,unique_values,n_bf,
+        compact ? xmvb::integrals::AoPairLayout::Unique:xmvb::integrals::AoPairLayout::Automatic);
   }
 
   double eri(int i, int j, int k, int l) const {
@@ -312,8 +304,8 @@ void check_graph_and_pair(int active, bool compact,bool sparse=false) {
   gpu.directional_adjoint(dc.view(),dd.view(),dg.view(),ddg.view(),dgradient.view(),accepted_view);
   near(download(context,dgradient),expected_hvp,"CUDA retained pair HVP differs from finite difference",2e-7);
   auto exchange=gpu.prepare_exchange(dc.view());
-  require(exchange.empty()==compact,"CUDA exchange image representation admission differs");
-  if (!compact) {
+  require(exchange.empty()==(compact && sparse),"CUDA exchange image representation admission differs");
+  if (!exchange.empty()) {
     const xmvb::cuda::ConstPairPanel image{exchange.data(),fixture.ao_pairs,active*active,active*active};
     std::vector<double> host(exchange.size());
     context.copy_to_host(host.data(),exchange.data(),host.size()*sizeof(double));
@@ -503,7 +495,7 @@ void check_one_electron_and_core(bool compact,bool sparse=false) {
     near(download(context,dout),expected_density_adjoint,
         "CUDA accepted density adjoint differs from four-index oracle");
   }
-  require((response.data()==nullptr)==compact,"CUDA projected density image admission differs");
+  require((response.data()==nullptr)==(compact && sparse),"CUDA projected density image admission differs");
   if (response.data()) {
     auto standalone=gpu.prepare_density_projection(dc.view(),target.view());
     near(download(context,response),download(context,standalone),
@@ -636,6 +628,56 @@ void check_symmetric_tiles() {
       reference(l,nu*nb+k)=kernel(pair_index(mu,nu+3),pair_index(k,l));
     near(actual,reference,"CUDA sliced packed AO plane differs from oracle");
   }
+  auto ul=left,ur=right;
+  auto uv=values;
+  for (std::size_t k=0;k<ul.size();++k) if (k%2) std::swap(ul[k],ur[k]);
+  for (int k=0;k<17;++k) {
+    ul.push_back(ul[k]);ur.push_back(ur[k]);uv.push_back(0.25*uv[k]);uv[k]*=0.75;
+  }
+  const auto unique=xmvb::integrals::build_ao_pair_graph(std::move(ul),std::move(ur),
+      std::move(uv),nb,xmvb::integrals::AoPairLayout::Unique);
+  require(!unique.has_row_graph() && unique.has_compact_integral_stream(),
+      "unique input contract constructed a symmetric row graph");
+  const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
+  const auto payload=xmvb::cuda::PackedAoPairMatrix::storage_bytes(pairs);
+  constexpr std::size_t staging=65536*(2*sizeof(int)+sizeof(double));
+  require(available>payload+staging,"unique tile fixture lacks staging budget");
+  xmvb::cuda::Buffer<unsigned char> padding(context,available-payload-staging);
+  const auto before=context.counters().host_to_device_bytes;
+  const xmvb::cuda::PackedAoPairMatrix streamed(context,unique,nb);
+  require(context.counters().host_to_device_bytes-before==
+      unique.integral_count()*(2*sizeof(int)+sizeof(double)),
+      "unique packing uploaded duplicated symmetric ERIs");
+  xmvb::cuda::Buffer<double> unique_output(context,pairs*target_stride);
+  streamed.apply({device_input.data(),pairs,channels,source_stride},
+      {unique_output.data(),pairs,channels,target_stride});
+  std::vector<double> output(pairs*target_stride);
+  context.copy_to_host(output.data(),unique_output.data(),output.size()*sizeof(double));
+  Matrix actual(pairs,channels);
+  for (int p=0;p<pairs;++p) for (int c=0;c<channels;++c)
+    actual(p,c)=output[p*target_stride+c];
+  near(actual,expected,"unique multi-chunk packing differs from full symmetric oracle");
+  require(context.counters().peak_device_bytes<=context.device_byte_budget(),
+      "unique packing exceeded the shared device budget");
+}
+
+void check_empty_unique() {
+  const auto graph=xmvb::integrals::build_ao_pair_graph({}, {}, {},4,
+      xmvb::integrals::AoPairLayout::Unique);
+  require(graph.has_compact_integral_stream() && !graph.has_row_graph() && !graph.integral_count(),
+      "empty unique operator lost its layout contract");
+  xmvb::cuda::Context context(1024*1024);
+  const xmvb::cuda::ExactAoPairOperator zero(context,graph,4);
+  DeviceMatrix p(context,4,4),out(context,4,4);
+  upload(context,p,values(4,4,0.73));
+  zero.contract_jk(p.view(),out.view());
+  near(download(context,out),Matrix::Zero(4,4),"empty unique JK operator is not zero");
+  bool rejected=false;
+  try {
+    (void)xmvb::integrals::build_ao_pair_graph({10},{0},{1.0},4,
+        xmvb::integrals::AoPairLayout::Unique);
+  } catch (const std::invalid_argument&) { rejected=true; }
+  require(rejected,"unique builder accepted an out-of-range AO pair");
 }
 
 void check_wide_density_projection() {
@@ -749,10 +791,13 @@ void check_budgeted_pair_tiles(bool compact) {
 int main() {
   try {
     check_exchange_row_graph();
+    check_empty_unique();
     check_symmetric_tiles();
     check_wide_density_projection();
     check_graph_and_pair(3,false,true);
     check_one_electron_and_core(false,true);
+    check_graph_and_pair(3,true,true);
+    check_one_electron_and_core(true,true);
     for (bool compact : {false, true}) {
       check_graph_and_pair(2, compact);
       check_graph_and_pair(3, compact);

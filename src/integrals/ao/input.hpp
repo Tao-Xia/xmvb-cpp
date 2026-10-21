@@ -16,9 +16,9 @@ struct AoPairIntegral {
 /**
  * @brief Exact symmetric AO-pair operator with adaptive storage.
  *
- * Small operators use a symmetric compressed-row graph for fast repeated
- * actions. Operators whose directed edge count exceeds the 32-bit CSR address
- * space retain the canonical permutationally unique integral stream instead.
+ * Automatic construction uses symmetric CSR for repeated row actions, with
+ * a unique stream when directed edges exceed 32-bit addressing. Consumers
+ * may also request the unique stream to avoid an unused CSR intermediate.
  */
 struct AoPairGraph {
   std::vector<int> row_offsets;
@@ -43,9 +43,9 @@ struct AoPairGraph {
   /** @brief Whether the fast symmetric CSR representation is present. */
   bool has_row_graph() const noexcept { return !row_offsets.empty(); }
 
-  /** @brief Whether the canonical unique-integral representation is present. */
+  /** @brief Unique stream, including the valid zero-integral operator. */
   bool has_compact_integral_stream() const noexcept {
-    return !integral_values.empty();
+    return row_offsets.empty() && !pair_first.empty();
   }
 
   /** @brief Number of unique permutational AO integrals. */

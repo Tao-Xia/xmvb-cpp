@@ -9,6 +9,8 @@ struct LibcintMaterializedIntegralProviderOptions {
   /** @brief Absolute discard threshold in unit-normalized AO integrals. */
   double integral_tolerance = 1.0e-10;
   bool use_shell_pair_prescreen = true;
+  /** Allocation contract only; screening and integral values are unchanged. */
+  integrals::AoPairLayout ao_pair_layout=integrals::AoPairLayout::Automatic;
 };
 
 /**

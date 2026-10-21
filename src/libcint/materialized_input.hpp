@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "integrals/ao/input.hpp"
+#include "integrals/ao/graph.hpp"
 
 namespace xmvb::libcint {
 
@@ -28,6 +29,7 @@ xmvb::integrals::AoIntegralInput build_core_hamiltonian_only_ao_integral_input(
     Eigen::MatrixXd ao_core_hamiltonian_matrix);
 
 xmvb::integrals::AoIntegralInput build_materialized_ao_integral_input(
-    MaterializedAoIntegralBuffers buffers);
+    MaterializedAoIntegralBuffers buffers,
+    integrals::AoPairLayout layout=integrals::AoPairLayout::Automatic);
 
 }  // namespace xmvb::libcint

@@ -84,6 +84,23 @@ __global__ void pack_csr_rows(const int* offsets, const int* columns,
   }
 }
 
+// A canonical integral supplies one symmetric AO-pair matrix entry. Store
+// only its lower block tile; diagonal tiles also need the transpose lane.
+// Atomic addition preserves the existing additive duplicate-entry contract.
+__global__ void pack_unique(const int* rows,const int* columns,const double* values,
+    std::int64_t count,int edge,std::int64_t blocks,double* packed) {
+  for (auto k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       k<count;k+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    const auto row=static_cast<std::int64_t>(max(rows[k],columns[k]));
+    const auto col=static_cast<std::int64_t>(min(rows[k],columns[k]));
+    const auto p=row/edge,q=col/edge,d=p-q;
+    const auto tile=d*blocks-d*(d-1)/2+q;
+    const auto i=row%edge,j=col%edge,base=tile*edge*edge;
+    add_double(packed+base+j*edge+i,values[k]);
+    if (p==q && i!=j) add_double(packed+base+i*edge+j,values[k]);
+  }
+}
+
 __global__ void clear_panel(PairPanel target, std::int64_t work) {
   for (std::int64_t index = blockIdx.x * static_cast<std::int64_t>(blockDim.x) +
                             threadIdx.x;
@@ -166,11 +183,19 @@ PackedAoPairMatrix::PackedAoPairMatrix(
     Context& context, const integrals::AoPairGraph& graph, int n_bf)
     : context_(&context), n_bf_(n_bf),
       n_pairs_(static_cast<std::int64_t>(n_bf) * (static_cast<std::int64_t>(n_bf) + 1) / 2) {
+  static const nvtx3::registered_string range_name{"ao.pack_input"};
+  const nvtx3::scoped_range range{range_name};
+  const bool unique=graph.has_compact_integral_stream();
   if (n_bf <= 0 || n_pairs_ > std::numeric_limits<int>::max() ||
-      !graph.has_row_graph() ||
-      graph.row_offsets.size() != static_cast<std::size_t>(n_pairs_ + 1) ||
       graph.pair_first.size() != static_cast<std::size_t>(n_pairs_) ||
-      graph.pair_second.size() != static_cast<std::size_t>(n_pairs_) ||
+      graph.pair_second.size() != static_cast<std::size_t>(n_pairs_))
+    throw std::invalid_argument("invalid packed AO-pair topology");
+  if (unique) {
+    if (graph.integral_rows.size()!=graph.integral_columns.size() ||
+        graph.integral_rows.size()!=graph.integral_values.size())
+      throw std::invalid_argument("invalid packed AO-pair unique stream");
+  } else if (!graph.has_row_graph() ||
+      graph.row_offsets.size() != static_cast<std::size_t>(n_pairs_ + 1) ||
       graph.columns.size() != graph.values.size() ||
       graph.row_offsets.front() != 0 || graph.row_offsets.back() < 0 ||
       graph.columns.size() != static_cast<std::size_t>(graph.row_offsets.back()))
@@ -184,6 +209,32 @@ PackedAoPairMatrix::PackedAoPairMatrix(
   values_ = Buffer<double>(context, bytes / sizeof(double));
   check_cuda(cudaMemsetAsync(values_.data(), 0, bytes, context.stream()),
              "zero packed AO-pair tiles");
+
+  if (unique) {
+    if (graph.integral_values.empty()) return;
+    std::size_t free=0,total=0;
+    check_cuda(cudaMemGetInfo(&free,&total),"CUDA unique ERI staging capacity");
+    const auto available=std::min(free,context.device_byte_budget()-
+        context.counters().current_device_bytes);
+    // One block-row worth of input is sufficient to stream the conversion;
+    // tighter budgets split that row further. There is no full input copy.
+    const auto count=std::min({graph.integral_values.size(),
+        static_cast<std::size_t>(edge_)*static_cast<std::size_t>(n_pairs_),
+        available/(2*sizeof(int)+sizeof(double))});
+    if (!count) throw std::runtime_error("unique ERI staging cannot hold one entry");
+    Buffer<int> rows(context,count),columns(context,count);
+    Buffer<double> staging(context,count);
+    for (std::size_t begin=0;begin<graph.integral_values.size();begin+=count) {
+      const auto size=std::min(count,graph.integral_values.size()-begin);
+      context.copy_to_device(rows.data(),graph.integral_rows.data()+begin,size*sizeof(int));
+      context.copy_to_device(columns.data(),graph.integral_columns.data()+begin,size*sizeof(int));
+      context.copy_to_device(staging.data(),graph.integral_values.data()+begin,size*sizeof(double));
+      pack_unique<<<grid(size),256,0,context.stream()>>>(rows.data(),columns.data(),
+          staging.data(),size,edge_,n_blocks_,values_.data());
+      check_cuda(cudaGetLastError(),"CUDA unique ERI tile packing");
+    }
+    return;
+  }
 
   // Keep only one bounded CSR row chunk on device; its staging memory is freed
   // before the next chunk. A row is never split, preserving a simple CSR map.

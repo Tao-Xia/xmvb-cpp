@@ -48,7 +48,7 @@ class PackedAoPairMatrix {
   /** Padded tile payload in bytes; SIZE_MAX denotes invalid/overflowing pairs. */
   [[nodiscard]] static std::size_t storage_bytes(std::int64_t pairs) noexcept;
 
-  /** graph must be a validated symmetric CSR AO-pair graph. */
+  /** Validated symmetric CSR or unique stream; input is staged in bounded chunks. */
   PackedAoPairMatrix(Context& context, const integrals::AoPairGraph& graph, int n_bf);
   PackedAoPairMatrix(const PackedAoPairMatrix&) = delete;
   PackedAoPairMatrix& operator=(const PackedAoPairMatrix&) = delete;

@@ -30,6 +30,7 @@ lscpu > "$out/cpu.txt"
 nvidia-smi -q > "$out/gpu.txt"
 module list > "$out/modules.txt" 2>&1
 find "$source_dir/src/cuda" "$source_dir/src/mcscf/optimization/ciah" \
+  "$source_dir/src/input/loading" "$source_dir/src/integrals/ao" "$source_dir/src/libcint" \
   "$source_dir/tools/cuvbscf" -type f -print0 | sort -z | xargs -0 sha256sum \
   > "$out/sources.sha256"
 cmake -S "$source_dir" -B "$source_dir/build-cuvbscf" > "$out/configure.log" 2>&1
