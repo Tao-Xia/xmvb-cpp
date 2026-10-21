@@ -96,10 +96,6 @@ __global__ void add_step(linalg::ConstMatrixView accepted,
 namespace {
 using Const=linalg::ConstMatrixView;
 using Mut=linalg::MatrixView;
-struct ChartSpectrum {
-  Matrix<double> vectors,values;
-  std::vector<double> host_values;
-};
 struct ChartSvd {
   Matrix<double> right;
   int rank;
@@ -110,9 +106,7 @@ void chart_copy(Context&,Mut,Const);
 Matrix<double> chart_product(Context&,Const,Const,
     Operation=Operation::none,Operation=Operation::none);
 Matrix<double> chart_eye(Context&,int);
-ChartSpectrum chart_eigen(Context&,cusolverDnHandle_t,Const);
 ChartSvd chart_svd(Context&,cusolverDnHandle_t,Const);
-Matrix<double> chart_spectral_power(Context&,const ChartSpectrum&,double);
 Buffer<int> chart_indices(Context&,const std::vector<int>&);
 void chart_check_view(Const,int,int,const char*);
 __global__ void chart_scatter_inactive(Const,const int*,const int*,double*,int,int);
@@ -167,21 +161,23 @@ struct AcceptedOrbitalChart::Impl {
     Matrix<double> ah_signed_vectors,ah_signed_values,ah_frame_inverse;
   };
 
-  Impl(Context& ctx,const vb::OrbitalPreparationInput& input,bool complete)
-      : context(ctx),basis(static_cast<int>(input.n_basis_functions)),
+  Impl(Context& ctx,const vb::OrbitalPreparationInput& input,bool complete,const AoMetric& metric)
+      : context(ctx),ao_metric(metric),basis(static_cast<int>(input.n_basis_functions)),
         orbitals(static_cast<int>(input.n_orbitals)),
         inactive(static_cast<int>((input.n_total_electrons-input.n_active_electrons)/2)),
         active(static_cast<int>(input.n_active_orbitals)),
         active_subspace(complete && input.orbital_type==vb::kOrbitalTypeOeo),
         full_support(ctx,static_cast<std::size_t>(basis)*orbitals),
         stored_counts(ctx,orbitals),bad_info(ctx,1),
-        tangent(ctx,basis,orbitals),ao_overlap(ctx,basis,basis) {
+        tangent(ctx,basis,orbitals),ao_overlap(metric.overlap()) {
     if (basis<=0 || orbitals<=0 || inactive<0 || inactive+active>orbitals ||
         input.n_total_electrons<input.n_active_electrons ||
         input.ao_overlap_matrix.rows()!=basis ||
         input.ao_overlap_matrix.cols()!=basis ||
         input.orbital_basis_index_table.size()!=static_cast<std::size_t>(basis)*orbitals)
       throw std::invalid_argument("accepted CUDA chart orbital dimensions");
+    if (&metric.context()!=&ctx || ao_overlap.rows!=basis || ao_overlap.cols!=basis)
+      throw std::invalid_argument("accepted CUDA chart AO metric ownership/dimensions");
     std::vector<int> support(static_cast<std::size_t>(basis)*orbitals,-1);
     std::vector<int> counts(orbitals,0);
     for (int orbital=0;orbital<orbitals;++orbital) {
@@ -193,8 +189,6 @@ struct AcceptedOrbitalChart::Impl {
     }
     context.copy_to_device(full_support.data(),support.data(),support.size()*sizeof(int));
     context.copy_to_device(stored_counts.data(),counts.data(),counts.size()*sizeof(int));
-    context.copy_to_device(ao_overlap.data(),input.ao_overlap_matrix.data(),
-        static_cast<std::size_t>(basis)*basis*sizeof(double));
     const auto blocks=vb::detect_orbital_blocks(input);
     int occupied_block=0;
     for (int block=0;block<static_cast<int>(blocks.size());++block) {
@@ -248,12 +242,13 @@ struct AcceptedOrbitalChart::Impl {
   ~Impl() { if (solver) cusolverDnDestroy(solver); }
 
   Context& context;
+  const AoMetric& ao_metric;
   int basis,orbitals,inactive,active;
   bool active_subspace;
   cusolverDnHandle_t solver=nullptr;
   Buffer<int> full_support,stored_counts,bad_info;
   Matrix<double> tangent;
-  Matrix<double> ao_overlap;
+  Const ao_overlap;
   Matrix<double> frame_mo,frame_external,inactive_inverse_transform;
   Matrix<double> ah_rotation_diagonal,ah_diagonal,ah_core_source_inverse,
       ah_active_source_inverse;
@@ -275,8 +270,8 @@ struct AcceptedOrbitalChart::Impl {
 };
 
 AcceptedOrbitalChart::AcceptedOrbitalChart(Context& context,
-    const vb::OrbitalPreparationInput& input,bool complete_active_space)
-    : impl_(std::make_unique<Impl>(context,input,complete_active_space)) {}
+    const vb::OrbitalPreparationInput& input,bool complete_active_space,const AoMetric& metric)
+    : impl_(std::make_unique<Impl>(context,input,complete_active_space,metric)) {}
 AcceptedOrbitalChart::~AcceptedOrbitalChart()=default;
 int AcceptedOrbitalChart::reduced_size() const noexcept { return impl_->reduced; }
 int AcceptedOrbitalChart::raw_size() const noexcept { return impl_->basis*impl_->orbitals; }
@@ -310,12 +305,12 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
     auto metric_image=chart_product(ctx,overlap,inactive_span.view());
     auto metric=chart_product(ctx,inactive_span.view(),metric_image.view(),
                               Operation::transpose);
-    auto eig=chart_eigen(ctx,p.solver,metric.view());
+    auto eig=symmetric_spectrum(ctx,p.solver,metric.view());
     const double scale=eig.host_values.back();
     if (!(scale>0.0) ||
         !(eig.host_values.front()>DBL_EPSILON*p.inactive*scale))
       throw std::runtime_error("inactive span is numerically rank deficient in AO metric");
-    auto root=chart_spectral_power(ctx,eig,-0.5);
+    auto root=spectral_power(ctx,eig,-0.5);
     inactive_span=chart_product(ctx,inactive_span.view(),root.view());
   }
 
@@ -371,10 +366,10 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
     auto su=chart_product(ctx,stored_overlap.view(),stored_u.view());
     auto base_metric=chart_product(ctx,stored_u.view(),su.view(),
                                     Operation::transpose);
-    auto base_eig=chart_eigen(ctx,p.solver,base_metric.view());
+    auto base_eig=symmetric_spectrum(ctx,p.solver,base_metric.view());
     if (!(base_eig.host_values.front()>0.0))
       throw std::runtime_error("raw quotient AO metric is not positive definite");
-    auto inverse_root=chart_spectral_power(ctx,base_eig,-0.5);
+    auto inverse_root=spectral_power(ctx,base_eig,-0.5);
     auto inverse=chart_product(ctx,inverse_root.view(),inverse_root.view());
     auto image=chart_product(ctx,inverse.view(),projection.view());
     double squared=0.0;
@@ -402,10 +397,10 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
     } else {
       // The bound may be inconclusive near the rank boundary. Preserve the
       // original exact spectral decision and its stable cuSOLVER inverse.
-      const auto metric_eig=chart_eigen(ctx,p.solver,local.metric.view());
+      const auto metric_eig=symmetric_spectrum(ctx,p.solver,local.metric.view());
       if (!(metric_eig.host_values.front()>rank_factor*metric_eig.host_values.back()))
         throw std::runtime_error("raw normalized-orbital metric is rank deficient");
-      local.inverse=chart_spectral_power(ctx,metric_eig,-1.0);
+      local.inverse=spectral_power(ctx,metric_eig,-1.0);
     }
     local.reference_root=std::move(inverse_root);
     local.projection=std::move(projection);
@@ -462,11 +457,11 @@ Matrix<double> AcceptedOrbitalChart::Impl::build_quotient(
       }
       auto image=chart_product(ctx,overlap,residual.view());
       auto metric=chart_product(ctx,residual.view(),image.view(),Operation::transpose);
-      auto eig=chart_eigen(ctx,solver,metric.view());
+      auto eig=symmetric_spectrum(ctx,solver,metric.view());
       const double scale=eig.host_values.back();
       if (!(scale>0.0) || !(eig.host_values.front()>DBL_EPSILON*std::max(1,na)*scale))
         throw std::runtime_error("active orbital subspace is rank deficient outside inactive span");
-      auto root=chart_spectral_power(ctx,eig,-0.5);
+      auto root=spectral_power(ctx,eig,-0.5);
       auto active_source=chart_product(ctx,residual.view(),root.view());
       chart_compose<<<grid(basis*nsource),kThreads,0,ctx.stream()>>>(
           source.data(),inactive_span,active_source.view(),inactive,basis,nsource);
@@ -561,24 +556,21 @@ Matrix<double> AcceptedOrbitalChart::Impl::restrict_ray(
 
 void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geometry) {
   Context& ctx=context;
-  const Const overlap=ao_overlap.view();
+  const Const overlap=ao_overlap;
   const int occupied=inactive+active;
   Matrix<double> core(ctx,basis,inactive);
   if (inactive) {
     const Const normalized=geometry.normalized().columns(0,inactive);
     auto image=chart_product(ctx,overlap,normalized);
     auto gram=chart_product(ctx,normalized,image.view(),Operation::transpose);
-    auto eig=chart_eigen(ctx,solver,gram.view());
+    auto eig=symmetric_spectrum(ctx,solver,gram.view());
     if (!(eig.host_values.front()>0.0))
       throw std::runtime_error("CUDA chart inactive rotation frame rank");
-    inactive_inverse_transform=chart_spectral_power(ctx,eig,-0.5);
+    inactive_inverse_transform=spectral_power(ctx,eig,-0.5);
     core=chart_product(ctx,normalized,inactive_inverse_transform.view());
   }
-  auto ao_eig=chart_eigen(ctx,solver,overlap);
-  if (!(ao_eig.host_values.front()>0.0))
-    throw std::runtime_error("CUDA chart AO rotation metric rank");
-  auto overlap_root=chart_spectral_power(ctx,ao_eig,0.5);
-  auto overlap_inverse_root=chart_spectral_power(ctx,ao_eig,-0.5);
+  const auto overlap_root=ao_metric.root();
+  const auto overlap_inverse_root=ao_metric.inverse_root();
   Matrix<double> occupied_frame(ctx,basis,occupied);
   if (occupied) {
     chart_compose<<<grid(basis*occupied),kThreads,0,ctx.stream()>>>(
@@ -592,7 +584,7 @@ void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geo
     Matrix<double> null_vectors(ctx,basis,virtual_count);
     if (occupied) {
       auto horizontal=chart_product(ctx,occupied_frame.view(),
-          overlap_root.view(),Operation::transpose);
+          overlap_root,Operation::transpose);
       auto svd=chart_svd(ctx,solver,horizontal.view());
       if (svd.rank!=occupied)
         throw std::runtime_error("CUDA chart occupied rotation frame rank deficient");
@@ -600,7 +592,7 @@ void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geo
     } else {
       null_vectors=chart_eye(ctx,basis);
     }
-    virtual_frame=chart_product(ctx,overlap_inverse_root.view(),null_vectors.view());
+    virtual_frame=chart_product(ctx,overlap_inverse_root,null_vectors.view());
   }
   const int external_count=basis-inactive;
   frame_external=Matrix<double>(ctx,basis,external_count);
@@ -686,7 +678,7 @@ void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geo
 void AcceptedOrbitalChart::Impl::build_physical_metric_factors(
     const OrbitalGeometry& geometry) {
   Context& ctx=context;
-  const Const overlap=ao_overlap.view();
+  const Const overlap=ao_overlap;
   metric_core=Matrix<double>(ctx,basis,inactive);
   metric_active=Matrix<double>(ctx,basis,active);
   chart_zero(ctx,metric_core.view());
@@ -700,11 +692,11 @@ void AcceptedOrbitalChart::Impl::build_physical_metric_factors(
   if (inactive) {
     auto sc=chart_product(ctx,overlap,metric_core.view());
     auto gram=chart_product(ctx,metric_core.view(),sc.view(),Operation::transpose);
-    auto eig=chart_eigen(ctx,solver,gram.view());
+    auto eig=symmetric_spectrum(ctx,solver,gram.view());
     if (!(eig.host_values.front()>0.0))
       throw std::runtime_error("singular inactive span in CUDA physical metric");
-    metric_core_inverse=chart_spectral_power(ctx,eig,-1.0);
-    metric_core_root=chart_spectral_power(ctx,eig,-0.5);
+    metric_core_inverse=spectral_power(ctx,eig,-1.0);
+    metric_core_root=spectral_power(ctx,eig,-0.5);
     metric_CGi=chart_product(ctx,metric_core.view(),metric_core_inverse.view());
   }
   if (active) {
@@ -725,11 +717,11 @@ void AcceptedOrbitalChart::Impl::build_physical_metric_factors(
       if (!(norm>0.0) || !std::isfinite(norm))
         throw std::runtime_error("degenerate projected active ray in CUDA physical metric");
     if (active_subspace) {
-      auto eig=chart_eigen(ctx,solver,gram.view());
+      auto eig=symmetric_spectrum(ctx,solver,gram.view());
       if (!(eig.host_values.front()>0.0))
         throw std::runtime_error("singular active subspace in CUDA physical metric");
-      metric_active_inverse=chart_spectral_power(ctx,eig,-1.0);
-      metric_active_root=chart_spectral_power(ctx,eig,-0.5);
+      metric_active_inverse=spectral_power(ctx,eig,-1.0);
+      metric_active_root=spectral_power(ctx,eig,-0.5);
     }
     if (inactive) {
       auto inner=chart_product(ctx,metric_core.view(),metric_SA.view(),
@@ -967,23 +959,6 @@ __global__ void chart_gather_coeff(Const raw,int orbital,double* output,int coun
   if (k<count) output[k]=raw.data[orbital*raw.ld+k];
 }
 
-__global__ void chart_scale_columns(double* x,const double* scales,
-    int rows,int cols,double power) {
-  const int k=blockIdx.x*blockDim.x+threadIdx.x;
-  if (k<rows*cols) x[k]*=pow(scales[k/rows],power);
-}
-
-__global__ void chart_sym(double* x,int n) {
-  const int k=blockIdx.x*blockDim.x+threadIdx.x;
-  if (k<n*n) {
-    const int i=k%n,j=k/n;
-    if (i<j) {
-      const double v=0.5*(x[k]+x[j+i*n]);
-      x[k]=v;
-      x[j+i*n]=v;
-    }
-  }
-}
 
 __global__ void chart_subtract(double* y,const double* x,int n) {
   const int k=blockIdx.x*blockDim.x+threadIdx.x;
@@ -1194,42 +1169,6 @@ Matrix<double> chart_projector_apply(Context& ctx,Const overlap,Const carrier,
   return result;
 }
 
-ChartSpectrum chart_eigen(Context& ctx,cusolverDnHandle_t solver,Const input) {
-  const int n=static_cast<int>(input.rows);
-  if (n!=input.cols || n<=0) throw std::invalid_argument("chart eigen shape");
-  ChartSpectrum out{Matrix<double>(ctx,n,n),Matrix<double>(ctx,n,1),{}};
-  chart_copy(ctx,out.vectors.view(),input);
-  chart_sym<<<grid(n*n),kThreads,0,ctx.stream()>>>(out.vectors.data(),n);
-  check_cuda(cudaGetLastError(),"CUDA chart symmetrize metric");
-  int work_size=0;
-  chart_solver(cusolverDnDsyevd_bufferSize(solver,CUSOLVER_EIG_MODE_VECTOR,
-      CUBLAS_FILL_MODE_LOWER,n,out.vectors.data(),n,out.values.data(),
-      &work_size),"cusolverDnDsyevd_bufferSize chart");
-  Buffer<double> work(ctx,work_size);
-  Buffer<int> info(ctx,1);
-  chart_solver(cusolverDnDsyevd(solver,CUSOLVER_EIG_MODE_VECTOR,
-      CUBLAS_FILL_MODE_LOWER,n,out.vectors.data(),n,out.values.data(),
-      work.data(),work_size,info.data()),"cusolverDnDsyevd chart");
-  int host_info=0;
-  ctx.copy_to_host(&host_info,info.data(),sizeof(int));
-  if (host_info) throw std::runtime_error("CUDA chart eigensolver did not converge");
-  out.host_values.resize(n);
-  ctx.copy_to_host(out.host_values.data(),out.values.data(),n*sizeof(double));
-  return out;
-}
-
-Matrix<double> chart_spectral_power(Context& ctx,const ChartSpectrum& eig,
-    double exponent) {
-  const int n=static_cast<int>(eig.values.rows());
-  Matrix<double> scaled(ctx,n,n);
-  chart_copy(ctx,scaled.view(),eig.vectors.view());
-  chart_scale_columns<<<grid(n*n),kThreads,0,ctx.stream()>>>(
-      scaled.data(),eig.values.data(),n,n,exponent);
-  check_cuda(cudaGetLastError(),"CUDA chart spectral scaling");
-  return chart_product(ctx,scaled.view(),eig.vectors.view(),
-                       Operation::none,Operation::transpose);
-}
-
 ChartSvd chart_svd(Context& ctx,cusolverDnHandle_t solver,Const input) {
   const int m=static_cast<int>(input.rows),n=static_cast<int>(input.cols);
   if (!n) return {Matrix<double>(ctx,0,0),0};
@@ -1336,7 +1275,7 @@ void AcceptedOrbitalChart::project_vector(Const raw_direction,Mut reduced_vector
     chart_gather_covector<<<grid(m),kThreads,0,ctx.stream()>>>(
         raw_direction,block.orbital,local.data(),m);
     chart_gather_overlap<<<grid(m*m),kThreads,0,ctx.stream()>>>(
-        p.ao_overlap.view(),meta.local_device.data(),overlap.data(),m);
+        p.ao_overlap,meta.local_device.data(),overlap.data(),m);
     check_cuda(cudaGetLastError(),"CUDA chart vector AO metric gather");
     auto covariant=chart_product(ctx,overlap.view(),local.view());
     auto pulled=chart_product(ctx,block.basis.view(),covariant.view(),
@@ -1390,7 +1329,7 @@ void AcceptedOrbitalChart::physical_metric(Const vector,Mut covector) const {
   chart_check_view(vector,p.reduced,1,"CUDA chart physical metric vector");
   chart_check_view(covector,p.reduced,1,"CUDA chart physical metric covector");
   if (!p.reduced) return;
-  const Const overlap=p.ao_overlap.view();
+  const Const overlap=p.ao_overlap;
   Matrix<double> raw_direction(ctx,p.basis,p.orbitals);
   expand(vector,raw_direction.view());
   Matrix<double> di(ctx,p.basis,p.inactive),da(ctx,p.basis,p.active);
@@ -1676,21 +1615,21 @@ void AcceptedOrbitalChart::set_hessian_diagonal(
     check_cuda(cudaGetLastError(),"CUDA chart analytic weighted rotations");
     auto curvature=chart_product(ctx,block.rotation_components.view(),
         weighted.view(),Operation::transpose);
-    auto metric_eig=chart_eigen(ctx,p.solver,block.metric.view());
-    auto inverse_root=chart_spectral_power(ctx,metric_eig,-0.5);
+    auto metric_eig=symmetric_spectrum(ctx,p.solver,block.metric.view());
+    auto inverse_root=spectral_power(ctx,metric_eig,-0.5);
     auto work=chart_product(ctx,inverse_root.view(),curvature.view());
     auto standard=chart_product(ctx,work.view(),inverse_root.view());
-    auto eig=chart_eigen(ctx,p.solver,standard.view());
+    auto eig=symmetric_spectrum(ctx,p.solver,standard.view());
     block.ah_signed_values=std::move(eig.values);
     block.ah_signed_vectors=chart_product(ctx,inverse_root.view(),
                                            eig.vectors.view());
   }
   if (p.full_rotation_frame) {
     if (p.inactive) {
-      auto eig=chart_eigen(ctx,p.solver,p.inactive_inverse_transform.view());
+      auto eig=symmetric_spectrum(ctx,p.solver,p.inactive_inverse_transform.view());
       if (!(eig.host_values.front()>0.0))
         throw std::runtime_error("singular analytic diagonal inactive source transform");
-      p.ah_core_source_inverse=chart_spectral_power(ctx,eig,-1.0);
+      p.ah_core_source_inverse=spectral_power(ctx,eig,-1.0);
     }
     if (p.active) {
       p.ah_active_source_inverse=Matrix<double>(ctx,p.active,p.active);

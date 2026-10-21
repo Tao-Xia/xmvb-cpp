@@ -6,6 +6,7 @@
 
 #include "c12_fixture.hpp"
 #include "cuda/vb/point.hpp"
+#include "cuda/linalg/spectrum.hpp"
 #include "vbscf/orbitals/preparation/input.hpp"
 
 namespace xmvb::cuda::test {
@@ -40,7 +41,8 @@ inline void benchmark_point(Context& context,StructureAction& action,
   auto draw=upload(raw),dcoeff=upload(coefficients),direction=upload(dr),ci_direction=upload(dc);
   auto core=upload(input.ao_integral_input.ao_core_hamiltonian_matrix);
   ExactAoPairOperator ao(context,input.ao_integral_input.pair_graph,n_bf);
-  VbPoint point(context,orbitals,action,ao,core.view(),fixture.loaded.nuclear_repulsion_energy);
+  const AoMetric ao_metric(context,orbitals.ao_overlap_matrix);
+  VbPoint point(context,orbitals,action,ao,core.view(),ao_metric.overlap(),fixture.loaded.nuclear_repulsion_energy);
   Matrix<double> gr(context,n_bf,n_orb),gc(context,n_str,1);
   Matrix<double> hr(context,n_bf,n_orb),hc(context,n_str,1);
   auto start=Clock::now();

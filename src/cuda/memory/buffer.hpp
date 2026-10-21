@@ -98,11 +98,9 @@ inline void copy_to_device(
       (destination.cols > 0 && destination.ld < destination.rows)) {
     throw std::invalid_argument("CUDA matrix upload dimensions");
   }
-  for (std::int64_t column = 0; column < destination.cols; ++column) {
-    context.copy_to_device(destination.column(column).data,
-                           source.col(column).data(),
-                           static_cast<std::size_t>(destination.rows) * sizeof(double));
-  }
+  context.copy_to_device_2d(destination.data,destination.ld*sizeof(double),
+      source.data(),source.outerStride()*sizeof(double),
+      destination.rows*sizeof(double),destination.cols);
 }
 
 inline void copy_to_host(
@@ -112,10 +110,8 @@ inline void copy_to_host(
       (source.cols > 0 && source.ld < source.rows)) {
     throw std::invalid_argument("CUDA matrix download dimensions");
   }
-  for (std::int64_t column = 0; column < source.cols; ++column) {
-    context.copy_to_host(destination.col(column).data(), source.column(column).data,
-                         static_cast<std::size_t>(source.rows) * sizeof(double));
-  }
+  context.copy_to_host_2d(destination.data(),destination.outerStride()*sizeof(double),
+      source.data,source.ld*sizeof(double),source.rows*sizeof(double),source.cols);
 }
 
 }  // namespace xmvb::cuda

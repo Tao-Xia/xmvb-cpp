@@ -19,14 +19,17 @@ struct OrbitalDirection {
 
 /**
  * Device preparation of the VB physical orbitals. The host input supplies only
- * immutable sparse-support topology and AO overlap. Each accepted/trial point,
+ * immutable sparse-support topology; the AO overlap is a shared device view.
+ * Each accepted/trial point,
  * tangent, and pullback is evaluated on the device. Raw columns retain the
  * input's fixed-width sparse-slot layout, including fixed expanded-support
  * slots. No occupied or active gauge rotation is applied here.
  */
 class OrbitalGeometry {
  public:
-  OrbitalGeometry(Context& context, const vb::OrbitalPreparationInput& input);
+  /** overlap is borrowed device storage and must outlive this geometry. */
+  OrbitalGeometry(Context& context, const vb::OrbitalPreparationInput& input,
+      linalg::ConstMatrixView overlap);
   ~OrbitalGeometry();
   OrbitalGeometry(const OrbitalGeometry&) = delete;
   OrbitalGeometry& operator=(const OrbitalGeometry&) = delete;
@@ -73,7 +76,7 @@ class OrbitalGeometry {
 
   linalg::ConstMatrixView normalized() const noexcept { return normalized_.view(); }
   linalg::ConstMatrixView raw() const noexcept { return raw_.view(); }
-  linalg::ConstMatrixView ao_overlap() const noexcept { return overlap_.view(); }
+  linalg::ConstMatrixView ao_overlap() const noexcept { return overlap_; }
   linalg::ConstMatrixView inactive_dual() const noexcept { return dual_.view(); }
   linalg::ConstMatrixView inactive_density() const noexcept { return density_.view(); }
   linalg::ConstMatrixView active_auxiliary() const noexcept { return active_.view(); }
@@ -92,7 +95,8 @@ class OrbitalGeometry {
   Context* context_;
   int basis_, orbitals_, inactive_, active_count_;
   Buffer<int> support_, stored_counts_, differentiable_counts_;
-  Matrix<double> overlap_, raw_, normalized_, overlap_normalized_;
+  linalg::ConstMatrixView overlap_;
+  Matrix<double> raw_, normalized_, overlap_normalized_;
   Matrix<double> inverse_norms_, inverse_inactive_metric_, dual_, density_;
   Matrix<double> active_, active_overlap_, frame_transform_, frame_inverse_, frame_;
   Matrix<double> inactive_active_overlap_;

@@ -48,6 +48,29 @@ Matrix download(xmvb::cuda::Context& context,
   return result;
 }
 
+void check_matrix_transfers() {
+  xmvb::cuda::Context context(1024*1024);
+  Matrix host(7,6);
+  for (int j=0;j<host.cols();++j) for (int i=0;i<host.rows();++i)
+    host(i,j)=i+10*j;
+  DeviceMatrix storage(context,6,5);
+  xmvb::cuda::copy_to_device(context,storage.view(),Matrix::Zero(6,5));
+  const xmvb::linalg::MatrixView tile{storage.data()+1+6,4,3,6};
+  xmvb::cuda::copy_to_device(context,tile,host.block(1,1,4,3));
+  Matrix output=Matrix::Constant(9,8,-99.0);
+  xmvb::cuda::copy_to_host(context,output.block(1,1,6,5),storage.view());
+  Matrix expected=Matrix::Constant(9,8,-99.0);
+  expected.block(1,1,6,5).setZero();
+  expected.block(2,2,4,3)=host.block(1,1,4,3);
+  near(output,expected,"pitched host/device transfer changed padding");
+  if (context.counters().host_to_device_bytes!=42*sizeof(double) ||
+      context.counters().device_to_host_bytes!=30*sizeof(double))
+    throw std::runtime_error("pitched matrix transfer byte accounting differs");
+  xmvb::cuda::copy_to_device(context,{nullptr,0,3,0},host.block(0,0,0,3));
+  if (context.counters().host_to_device_bytes!=42*sizeof(double))
+    throw std::runtime_error("empty matrix transfer changed byte accounting");
+}
+
 void check_map() {
   xmvb::cuda::Context context;
   // Exact block values would normally be exported from one accepted
@@ -144,9 +167,17 @@ Matrix raw_table(const xmvb::vb::OrbitalPreparationInput& input) {
 void check_accepted(bool oeo,int inactive,bool complete=true) {
   xmvb::cuda::Context context;
   auto input=fixture(oeo,inactive);
+  const xmvb::cuda::AoMetric ao_metric(context,input.ao_overlap_matrix);
+  const Matrix root=download(context,ao_metric.root());
+  const Matrix inverse_root=download(context,ao_metric.inverse_root());
+  near(download(context,ao_metric.overlap()),input.ao_overlap_matrix,
+      "shared AO metric changed input overlap");
+  near(root*root,input.ao_overlap_matrix,"shared AO symmetric root differs");
+  near(root*inverse_root,Matrix::Identity(root.rows(),root.cols()),
+      "shared AO symmetric roots are not inverse");
   const int basis=static_cast<int>(input.n_basis_functions);
   const int orbitals=static_cast<int>(input.n_orbitals);
-  xmvb::cuda::OrbitalGeometry geometry(context,input);
+  xmvb::cuda::OrbitalGeometry geometry(context,input,ao_metric.overlap());
   geometry.prepare();
   const Matrix normalized=download(context,geometry.normalized());
   const int occupied=static_cast<int>(input.n_active_orbitals)+inactive;
@@ -155,7 +186,7 @@ void check_accepted(bool oeo,int inactive,bool complete=true) {
   xmvb::vb::OrbitalChart reference(input,layout,normalized.leftCols(occupied),
       normalized,nullptr,false,full,nullptr,
       xmvb::vb::OrbitalChart::Coordinates::Unwhitened);
-  xmvb::cuda::AcceptedOrbitalChart chart(context,input,full);
+  xmvb::cuda::AcceptedOrbitalChart chart(context,input,full,ao_metric);
   chart.rebuild(geometry);
   if (chart.reduced_size()!=reference.reduced_size() ||
       chart.rank_signature()!=reference.rank_signature())
@@ -302,7 +333,7 @@ void check_accepted(bool oeo,int inactive,bool complete=true) {
 
 int main() {
   try {
-    check_map();
+    check_matrix_transfers();check_map();
     for (bool oeo:{false,true})
       for (bool inactive:{false,true}) check_accepted(oeo,inactive);
     check_accepted(false,2); // Equal inactive support, different fixed active tails.

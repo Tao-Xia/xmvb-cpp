@@ -131,6 +131,25 @@ class Context {
     counters_.device_to_host_bytes += bytes;
   }
 
+  /** Pitched matrix transfers; host ownership need only last until return. */
+  void copy_to_device_2d(void* dst,std::size_t dst_pitch,const void* src,
+      std::size_t src_pitch,std::size_t width,std::size_t height) {
+    if (!width || !height) return;
+    check_cuda(cudaMemcpy2DAsync(dst,dst_pitch,src,src_pitch,width,height,
+        cudaMemcpyHostToDevice,stream_),"host-to-device matrix copy");
+    synchronize();
+    counters_.host_to_device_bytes+=width*height;
+  }
+
+  void copy_to_host_2d(void* dst,std::size_t dst_pitch,const void* src,
+      std::size_t src_pitch,std::size_t width,std::size_t height) {
+    if (!width || !height) return;
+    check_cuda(cudaMemcpy2DAsync(dst,dst_pitch,src,src_pitch,width,height,
+        cudaMemcpyDeviceToHost,stream_),"device-to-host matrix copy");
+    synchronize();
+    counters_.device_to_host_bytes+=width*height;
+  }
+
  private:
   cudaStream_t stream_ = nullptr;
   cudaMemPool_t pool_ = nullptr;

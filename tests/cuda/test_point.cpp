@@ -253,10 +253,11 @@ void check_case(bool inactive,int structures) {
   require(source.storage().orthogonal_direct_ci,
           "selected fixture does not retain a complete orthogonal carrier");
   xmvb::cuda::Context context(256ULL*1024ULL*1024ULL);
+  const xmvb::cuda::AoMetric ao_metric(context,input.ao_overlap_matrix);
   xmvb::cuda::StructureAction action(context,source);
   xmvb::cuda::ExactAoPairOperator integrals(context,ao.graph(),AoFixture::basis);
   auto dcore=upload(context,ao.core);
-  xmvb::cuda::VbPoint point(context,input,action,integrals,dcore.view(),nuclear);
+  xmvb::cuda::VbPoint point(context,input,action,integrals,dcore.view(),ao_metric.overlap(),nuclear);
   Matrix raw=Eigen::Map<const Matrix>(input.orbital_value_table.data(),4,
                                        input.n_orbitals);
   Matrix ci(structures,1);
@@ -301,7 +302,7 @@ void check_case(bool inactive,int structures) {
   const auto hvp=[&](const Matrix& orbital,const Matrix& structure) {
     auto base_raw=upload(context,raw),base_ci=upload(context,ci);
     point.evaluate(base_raw.view(),base_ci.view());
-    xmvb::cuda::AcceptedOrbitalChart chart(context,input,false);
+    xmvb::cuda::AcceptedOrbitalChart chart(context,input,false,ao_metric);
     chart.rebuild(point.geometry());
     auto diagonal=point.hessian_diagonal(chart.accepted_mo_frame());
     const auto version=action.version();

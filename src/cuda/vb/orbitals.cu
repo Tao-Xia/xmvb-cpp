@@ -119,7 +119,7 @@ Matrix<double> vacant(Context& context, int rows, int cols) {
 }
 
 __global__ void normalize_kernel(const double* raw, const int* support,
-    const int* counts, const double* metric, int basis, int orbitals,
+    const int* counts, const double* metric, int metric_ld,int basis, int orbitals,
     double* normalized, double* inverse_norms, int* info) {
   const int orbital = blockIdx.x*blockDim.x+threadIdx.x;
   if (orbital >= orbitals) return;
@@ -130,7 +130,7 @@ __global__ void normalize_kernel(const double* raw, const int* support,
     const double xj = raw[orbital*basis+j];
     for (int i=0;i<count;++i) {
       const int bi = support[orbital*basis+i];
-      norm2 += xj*raw[orbital*basis+i]*metric[bj*basis+bi];
+      norm2 += xj*raw[orbital*basis+i]*metric[bj*metric_ld+bi];
     }
   }
   if (!(norm2 > DBL_EPSILON) || !isfinite(norm2)) {
@@ -273,7 +273,7 @@ OrbitalDirection::OrbitalDirection(Context& context,int basis,int orbitals,
       orthogonal_active(context,basis,active) {}
 
 OrbitalGeometry::OrbitalGeometry(Context& context,
-    const vb::OrbitalPreparationInput& input)
+    const vb::OrbitalPreparationInput& input,View overlap)
     : impl_(std::make_unique<Impl>(context)),context_(&context),
       basis_(static_cast<int>(input.n_basis_functions)),
       orbitals_(static_cast<int>(input.n_orbitals)),
@@ -282,7 +282,7 @@ OrbitalGeometry::OrbitalGeometry(Context& context,
       support_(context,input.n_basis_functions*input.n_orbitals),
       stored_counts_(context,input.n_orbitals),
       differentiable_counts_(context,input.n_orbitals),
-      overlap_(context,basis_,basis_),raw_(context,basis_,orbitals_),
+      overlap_(overlap),raw_(context,basis_,orbitals_),
       normalized_(context,basis_,orbitals_),
       overlap_normalized_(context,basis_,orbitals_),
       inverse_norms_(context,orbitals_,1),
@@ -294,6 +294,7 @@ OrbitalGeometry::OrbitalGeometry(Context& context,
       frame_inverse_(context,active_count_,active_count_),
       frame_(context,basis_,active_count_),
       inactive_active_overlap_(context,inactive_,active_count_) {
+  check_view(overlap_,basis_,basis_,"CUDA shared AO overlap");
   if (input.n_total_electrons<input.n_active_electrons ||
       (input.n_total_electrons-input.n_active_electrons)%2 ||
       basis_<=0 || orbitals_<=0 || active_count_<=0 ||
@@ -326,8 +327,6 @@ OrbitalGeometry::OrbitalGeometry(Context& context,
   context.copy_to_device(stored_counts_.data(),stored.data(),stored.size()*sizeof(int));
   context.copy_to_device(differentiable_counts_.data(),differentiable.data(),
                          differentiable.size()*sizeof(int));
-  context.copy_to_device(overlap_.data(),input.ao_overlap_matrix.data(),
-                         static_cast<std::size_t>(basis_)*basis_*sizeof(double));
   context.copy_to_device(raw_.data(),input.orbital_value_table.data(),
                          static_cast<std::size_t>(basis_)*orbitals_*sizeof(double));
 }
@@ -346,8 +345,8 @@ void OrbitalGeometry::prepare() {
   check_cuda(cudaMemsetAsync(impl_->info.data(),0,sizeof(int),context.stream()),
              "CUDA orbital normalization info reset");
   normalize_kernel<<<grid(orbitals_),kThreads,0,context.stream()>>>(
-      raw_.data(),support_.data(),stored_counts_.data(),overlap_.data(),
-      basis_,orbitals_,normalized_.data(),inverse_norms_.data(),
+      raw_.data(),support_.data(),stored_counts_.data(),overlap_.data,
+      blas_int(overlap_.ld),basis_,orbitals_,normalized_.data(),inverse_norms_.data(),
       impl_->info.data());
   check_cuda(cudaGetLastError(),"CUDA orbital normalization kernel");
   int status=0;
@@ -355,7 +354,7 @@ void OrbitalGeometry::prepare() {
   if (status)
     throw std::runtime_error("CUDA orbital normalization failed for orbital "+
                              std::to_string(status-1));
-  gemm(context,overlap_normalized_.view(),overlap_.view(),normalized_.view());
+  gemm(context,overlap_normalized_.view(),overlap_,normalized_.view());
   zero(context,density_.view());
   if (inactive_) {
     auto metric=product(context,normalized_.view().columns(0,inactive_),
@@ -379,7 +378,7 @@ void OrbitalGeometry::prepare() {
   if (inactive_)
     gemm(context,active_.view(),dual_.view(),inactive_active_overlap_.view(),
          -1.0,1.0);
-  auto s_active=product(context,overlap_.view(),active_.view());
+  auto s_active=product(context,overlap_,active_.view());
   gemm(context,active_overlap_.view(),active_.view(),s_active.view(),
        1.0,0.0,Operation::transpose);
 
@@ -432,7 +431,7 @@ OrbitalDirection OrbitalGeometry::direction(View raw_direction) const {
       normalized_.data(),overlap_normalized_.data(),inverse_norms_.data(),
       basis_,orbitals_,tangent.normalized.data());
   check_cuda(cudaGetLastError(),"CUDA orbital normalization direction kernel");
-  auto s_delta=product(context,overlap_.view(),tangent.normalized.view());
+  auto s_delta=product(context,overlap_,tangent.normalized.view());
   zero(context,tangent.inactive_density.view());
   if (inactive_) {
     auto ci=normalized_.view().columns(0,inactive_);
@@ -466,8 +465,8 @@ OrbitalDirection OrbitalGeometry::direction(View raw_direction) const {
     gemm(context,tangent.active_auxiliary.view(),dual_.view(),dk.view(),
          -1.0,1.0);
   }
-  auto sa=product(context,overlap_.view(),active_.view());
-  auto sda=product(context,overlap_.view(),tangent.active_auxiliary.view());
+  auto sa=product(context,overlap_,active_.view());
+  auto sda=product(context,overlap_,tangent.active_auxiliary.view());
   gemm(context,tangent.active_overlap.view(),tangent.active_auxiliary.view(),
        sa.view(),1.0,0.0,Operation::transpose);
   gemm(context,tangent.active_overlap.view(),active_.view(),sda.view(),
@@ -543,7 +542,7 @@ void OrbitalGeometry::pullback(View gt,View gp,View ga,View gr,View gf,
   auto& context=*context_;
   auto adj=frame_pullback(context,active_.view(),frame_.view(),
       frame_inverse_.view(),frame_transform_.view(),gt,ga,gr,gf);
-  auto s_active=product(context,overlap_.view(),active_.view());
+  auto s_active=product(context,overlap_,active_.view());
   auto t_extra=product(context,s_active.view(),adj.overlap.view());
   gemm(context,adj.active_auxiliary.view(),s_active.view(),adj.overlap.view(),
        1.0,1.0,Operation::none,Operation::transpose);
@@ -563,7 +562,7 @@ void OrbitalGeometry::pullback(View gt,View gp,View ga,View gr,View gf,
     add_sym(context,q.view(),cross.view(),-1.0);
     auto qd=product(context,q.view(),dual_.view());
     auto h=product(context,ci,qd.view(),Operation::transpose);
-    auto sh=product(context,overlap_.view(),dual_.view());
+    auto sh=product(context,overlap_,dual_.view());
     gemm(context,qd.view(),sh.view(),h.view(),-1.0,1.0);
     copy(context,gc.view().columns(0,inactive_),qd.view());
     auto ctg=product(context,ci,g.view(),Operation::transpose);
@@ -659,8 +658,8 @@ void OrbitalGeometry::pullback_direction(const OrbitalDirection& tangent,
                  Operation::none,Operation::transpose);
     axpy(context,dadj.overlap.view(),term.view(),-1.0);
   }
-  auto sa=product(context,overlap_.view(),active_.view());
-  auto sda=product(context,overlap_.view(),tangent.active_auxiliary.view());
+  auto sa=product(context,overlap_,active_.view());
+  auto sda=product(context,overlap_,tangent.active_auxiliary.view());
   auto aterm=product(context,sa.view(),adj.overlap.view());
   gemm(context,adj.active_auxiliary.view(),sa.view(),adj.overlap.view(),
        1.0,1.0,Operation::none,Operation::transpose);
@@ -685,7 +684,7 @@ void OrbitalGeometry::pullback_direction(const OrbitalDirection& tangent,
     const auto sca=overlap_normalized_.view().columns(inactive_,n);
     const auto g=adj.active_auxiliary.view();
     const auto dg=dadj.active_auxiliary.view();
-    auto sdca=product(context,overlap_.view(),
+    auto sdca=product(context,overlap_,
                       tangent.normalized.view().columns(inactive_,n));
     auto q=vacant(context,basis_,basis_);
     auto dq=vacant(context,basis_,basis_);
@@ -707,8 +706,8 @@ void OrbitalGeometry::pullback_direction(const OrbitalDirection& tangent,
     auto h=product(context,ci,qd.view(),Operation::transpose);
     auto dh=product(context,dci,qd.view(),Operation::transpose);
     gemm(context,dh.view(),ci,dqd.view(),1.0,1.0,Operation::transpose);
-    auto sdual=product(context,overlap_.view(),dual_.view());
-    auto dsdual=product(context,overlap_.view(),tangent.inactive_dual.view());
+    auto sdual=product(context,overlap_,dual_.view());
+    auto dsdual=product(context,overlap_,tangent.inactive_dual.view());
     gemm(context,qd.view(),sdual.view(),h.view(),-1.0,1.0);
     gemm(context,dqd.view(),dsdual.view(),h.view(),-1.0,1.0);
     gemm(context,dqd.view(),sdual.view(),dh.view(),-1.0,1.0);
@@ -725,7 +724,7 @@ void OrbitalGeometry::pullback_direction(const OrbitalDirection& tangent,
     copy(context,gc.view().columns(inactive_,n),gca.view());
     copy(context,dgc.view().columns(inactive_,n),dgca.view());
   }
-  auto s_delta_c=product(context,overlap_.view(),tangent.normalized.view());
+  auto s_delta_c=product(context,overlap_,tangent.normalized.view());
   normalization_pullback_direction_kernel<<<grid(orbitals_),kThreads,
       0,context.stream()>>>(support_.data(),differentiable_counts_.data(),
       normalized_.data(),tangent.normalized.data(),

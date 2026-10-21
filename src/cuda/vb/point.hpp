@@ -14,9 +14,10 @@ namespace xmvb::cuda {
  */
 class VbPoint {
  public:
+  /** core and overlap are shared device views and must outlive this point. */
   VbPoint(Context& context,const vb::OrbitalPreparationInput& orbitals,
           StructureAction& action,const ExactAoPairOperator& integrals,
-          linalg::ConstMatrixView core,double nuclear_repulsion);
+          linalg::ConstMatrixView core,linalg::ConstMatrixView overlap,double nuclear_repulsion);
 
   double evaluate(linalg::ConstMatrixView raw,linalg::ConstMatrixView coefficients);
   /** Prepare a new orbital point once before CI relaxation. */

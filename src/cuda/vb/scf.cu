@@ -102,6 +102,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
   const auto& orbital=input.orbital_preparation_input;
   const int nb=orbital.n_basis_functions,norb=orbital.n_orbitals;
   const int na=orbital.n_active_orbitals,nstr=input.structure_data.n_structures;
+  const AoMetric ao_metric(context,orbital.ao_overlap_matrix);
   auto metadata=make_topology(input);
   StructureAction action(context,*metadata);
   const auto topology=vb::build_orthogonal_spin_topology(input.structure_data.alpha_det,
@@ -113,7 +114,9 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
   Matrix<double> core(context,nb,nb),raw(context,nb,norb);
   copy_to_device(context,core.view(),input.ao_integral_input.ao_core_hamiltonian_matrix);
   context.copy_to_device(raw.data(),orbital.orbital_value_table.data(),nb*norb*sizeof(double));
-  const auto new_point=[&] { return std::make_unique<VbPoint>(context,orbital,action,ao,core.view(),nuclear); };
+  const auto new_point=[&] {
+    return std::make_unique<VbPoint>(context,orbital,action,ao,core.view(),ao_metric.overlap(),nuclear);
+  };
   auto ci_options=linalg::make_davidson_options(nstr,1,1.0e-7,
       options.gradient_tolerance,options.energy_tolerance);
   ScfResult result;
@@ -147,7 +150,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
     auto& origin=*accepted.point;
     auto chart_owner=std::move(next_chart);
     if (!chart_owner) {
-      chart_owner=std::make_unique<AcceptedOrbitalChart>(context,orbital,input.complete_active_space);
+      chart_owner=std::make_unique<AcceptedOrbitalChart>(context,orbital,input.complete_active_space,ao_metric);
       chart_owner->rebuild(origin.geometry());
     }
     auto& chart=*chart_owner;
@@ -345,7 +348,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
     };
     macro.energy=[](const Trial& trial){return trial.energy;};
     macro.terminal=[&](Trial& trial) {
-      AcceptedOrbitalChart trial_chart(context,orbital,input.complete_active_space);
+      AcceptedOrbitalChart trial_chart(context,orbital,input.complete_active_space,ao_metric);
       trial_chart.rebuild(trial.point->geometry());
       Matrix<double> gr(context,nb,norb),gc(context,nstr,1),g(context,trial_chart.reduced_size(),1);
       trial.point->gradient(gr.view(),gc.view());trial_chart.project(gr.view(),g.view());
@@ -367,7 +370,7 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
         std::chrono::duration<double>(Clock::now()-start).count()};
     // The accepted-point gradient is already prepared; the next loop reports
     // its stationarity in its own newly built quotient, not the old model.
-    next_chart=std::make_unique<AcceptedOrbitalChart>(context,orbital,input.complete_active_space);
+    next_chart=std::make_unique<AcceptedOrbitalChart>(context,orbital,input.complete_active_space,ao_metric);
     auto& next=*next_chart;next.rebuild(accepted.point->geometry());
     Matrix<double> gr(context,nb,norb),gc(context,nstr,1),g(context,next.reduced_size(),1);
     accepted.point->gradient(gr.view(),gc.view());next.project(gr.view(),g.view());

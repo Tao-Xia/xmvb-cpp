@@ -110,9 +110,9 @@ void check_structure(View c,int n) {
 
 VbPoint::VbPoint(Context& context,const vb::OrbitalPreparationInput& input,
     StructureAction& action,const ExactAoPairOperator& integrals,
-    View core,double nuclear)
+    View core,View overlap,double nuclear)
     : context_(&context),action_(&action),integrals_(&integrals),core_(core),nuclear_(nuclear),
-      geometry_(context,input),sigma_(context,action.carrier_sigma()),
+      geometry_(context,input,overlap),sigma_(context,action.carrier_sigma()),
       direction_sigma_(context,sigma_),
       effective_(context,input.n_basis_functions,input.n_basis_functions),
       one_(context,input.n_active_orbitals,input.n_active_orbitals),

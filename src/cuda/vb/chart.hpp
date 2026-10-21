@@ -5,6 +5,7 @@
 #include <memory>
 
 #include "cuda/memory/buffer.hpp"
+#include "cuda/linalg/spectrum.hpp"
 #include "linalg/views.hpp"
 #include "vbscf/orbitals/preparation/input.hpp"
 
@@ -75,8 +76,10 @@ class OrbitalChartMap {
  */
 class AcceptedOrbitalChart {
  public:
+  /** ao_metric belongs to context and must outlive this chart. */
   AcceptedOrbitalChart(Context& context,
-      const vb::OrbitalPreparationInput& input,bool complete_active_space);
+      const vb::OrbitalPreparationInput& input,bool complete_active_space,
+      const AoMetric& ao_metric);
   ~AcceptedOrbitalChart();
   AcceptedOrbitalChart(const AcceptedOrbitalChart&)=delete;
   AcceptedOrbitalChart& operator=(const AcceptedOrbitalChart&)=delete;

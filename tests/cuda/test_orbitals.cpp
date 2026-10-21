@@ -171,7 +171,11 @@ void verify_forward(xmvb::cuda::Context& context,const Input& input,
 void run_case(bool full_oeo,bool inactive) {
   Input input=fixture(full_oeo,inactive);
   xmvb::cuda::Context context;
-  Geometry geometry(context,input);
+  const int n_bf=static_cast<int>(input.n_basis_functions);
+  Matrix padded=Matrix::Constant(n_bf+2,n_bf,0.91);
+  padded.topRows(n_bf)=input.ao_overlap_matrix;
+  auto overlap=upload(context,padded);
+  Geometry geometry(context,input,{overlap.data(),n_bf,n_bf,n_bf+2});
   geometry.prepare();
   verify_forward(context,input,geometry);
   const int basis=static_cast<int>(input.n_basis_functions);
