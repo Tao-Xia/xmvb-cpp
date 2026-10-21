@@ -225,6 +225,14 @@ std::size_t StructureAction::graph_nodes() const noexcept { return impl_->graph-
 const vb::StructureDiagonal& StructureAction::preconditioner_diagonal() const noexcept {
   return impl_->diagonal;
 }
+const DirectCiSigma& StructureAction::carrier_sigma() const noexcept { return impl_->sigma; }
+void StructureAction::update_integrals(linalg::ConstMatrixView h,
+    linalg::ConstMatrixView g,linalg::ConstMatrixView upper) {
+  impl_->sigma.update_integrals(h,g);
+  impl_->alpha_transform.update_upper(upper);
+  if (impl_->beta_storage) impl_->beta_storage->update_upper(upper);
+  if (impl_->carrier_diagonal.rows()) impl_->sigma.diagonal(impl_->carrier_diagonal.view());
+}
 void StructureAction::apply(linalg::ConstMatrixView vectors,
     linalg::MatrixView h,linalg::MatrixView m) const { impl_->apply(vectors,h,m); }
 

@@ -336,20 +336,31 @@ DirectCiSigma::DirectCiSigma(
       shared_spin_graph_(source.shared_spin_connections()),
       kernel_(context, static_cast<std::size_t>(n_channels_)*n_channels_),
       effective_one_(context,n_channels_),
-      alpha_(context, source.alpha_connections(), n_channels_) {
+      alpha_(std::make_shared<SpinGraph>(context, source.alpha_connections(), n_channels_)) {
   if (maximum_channel_tile <= 0 || n_channels_ <= 0 ||
       source.channel_kernel().cols() != n_channels_)
     throw std::invalid_argument("invalid CUDA direct-CI channel dimensions");
   context.copy_to_device(kernel_.data(), source.channel_kernel().data(),
                          kernel_.size()*sizeof(double));
-  if (!shared_spin_graph_)
-    beta_ = SpinGraph(context, source.beta_connections_view(), n_channels_);
+  beta_=shared_spin_graph_ ? alpha_ :
+      std::make_shared<SpinGraph>(context, source.beta_connections_view(), n_channels_);
+}
+
+DirectCiSigma::DirectCiSigma(Context& context,const DirectCiSigma& source)
+    : context_(&context),n_alpha_(source.n_alpha_),n_beta_(source.n_beta_),
+      n_orbitals_(source.n_orbitals_),n_electrons_(source.n_electrons_),
+      n_channels_(source.n_channels_),maximum_channel_tile_(source.maximum_channel_tile_),
+      shared_spin_graph_(source.shared_spin_graph_),
+      kernel_(context,source.kernel_.size()),effective_one_(context,source.effective_one_.size()),
+      alpha_(source.alpha_),beta_(source.beta_) {
+  if (&context!=source.context_)
+    throw std::invalid_argument("shared CI links require the same CUDA context");
 }
 
 std::size_t DirectCiSigma::resident_bytes() const noexcept {
   return (kernel_.size()+effective_one_.size()+generator_moments_.size())*sizeof(double) +
-         alpha_.resident_bytes() +
-         (shared_spin_graph_ ? 0 : beta_.resident_bytes()) +
+         alpha_->resident_bytes() +
+         (shared_spin_graph_ ? 0 : beta_->resident_bytes()) +
       sizeof(double)*(scattered_.rows()*scattered_.cols()+
           transformed_.rows()*transformed_.cols()+
           right_scattered_.rows()*right_scattered_.cols()+
@@ -462,8 +473,8 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
   const std::int64_t products = coefficients.rows*coefficients.cols;
   prepare(static_cast<int>(coefficients.cols/n_beta_));
   const int tile=static_cast<int>(transformed_.cols());
-  const auto* alpha=alpha_.sources.data();
-  const auto* beta=shared_spin_graph_ ? alpha:beta_.sources.data();
+  const auto* alpha=alpha_->sources.data();
+  const auto* beta=beta_->sources.data();
 
   // A serpentine walk reuses the boundary source-row tile at the next P block.
   const auto rows=scattered_.rows();
@@ -503,8 +514,8 @@ void DirectCiSigma::contract_adjoint(linalg::ConstMatrixView left,
   const auto rows=scattered_.rows();
   const auto blocks=(products+rows-1)/rows;
   const int tile=image ? static_cast<int>(transformed_.cols()):1;
-  const auto* alpha=alpha_.sources.data();
-  const auto* beta=shared_spin_graph_ ? alpha:beta_.sources.data();
+  const auto* alpha=alpha_->sources.data();
+  const auto* beta=beta_->sources.data();
   std::int64_t retained_begin=-1;
   bool first_adjoint=true;
   for (int p=0;p<(image ? n_channels_:1);p+=tile) {
@@ -624,8 +635,8 @@ void DirectCiSigma::apply_with_adjoint(linalg::ConstMatrixView response,
 void DirectCiSigma::diagonal(linalg::MatrixView values) const {
   validate_output(values,n_alpha_,n_beta_,
       "invalid CUDA direct-CI diagonal output");
-  const auto* alpha=alpha_.sources.data();
-  const auto* beta=shared_spin_graph_ ? alpha:beta_.sources.data();
+  const auto* alpha=alpha_->sources.data();
+  const auto* beta=beta_->sources.data();
   product_diagonal<<<grid_size(static_cast<std::int64_t>(n_alpha_)*n_beta_),
       256,0,context_->stream()>>>(values,kernel_.data(),alpha,beta,
           n_alpha_,n_beta_,n_orbitals_,n_channels_);
@@ -660,8 +671,8 @@ void DirectCiSigma::apply_generator(linalg::ConstMatrixView coefficients,
       orbital_generator.ld<n_orbitals_ || orbital_generator.data==nullptr ||
       image.data==coefficients.data || image.data==orbital_generator.data)
     throw std::invalid_argument("invalid CUDA direct-CI orbital generator views");
-  const auto* alpha=alpha_.sources.data();
-  const auto* beta=shared_spin_graph_ ? alpha:beta_.sources.data();
+  const auto* alpha=alpha_->sources.data();
+  const auto* beta=beta_->sources.data();
   const std::int64_t products=coefficients.rows*coefficients.cols;
   apply_orbital_generator<<<grid_size(products),256,0,context_->stream()>>>(
       coefficients,orbital_generator,image,products,n_alpha_,n_beta_,
@@ -702,8 +713,8 @@ void DirectCiSigma::one_body_generator_adjoint(linalg::ConstMatrixView left,
   if (orbital_adjoint.data==left.data || orbital_adjoint.data==right.data)
     throw std::invalid_argument("CUDA direct-CI orbital adjoint output aliases input");
   prepare_generator_adjoint(block_width);
-  const auto* alpha=alpha_.sources.data();
-  const auto* beta=shared_spin_graph_ ? alpha:beta_.sources.data();
+  const auto* alpha=alpha_->sources.data();
+  const auto* beta=beta_->sources.data();
   const int rows=static_cast<int>(generator_high_.rows());
   const auto products=left.rows*left.cols;
   bool first=true;

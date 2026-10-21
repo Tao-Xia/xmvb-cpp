@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 #include <cuda_runtime.h>
 
@@ -30,6 +31,17 @@ __global__ void jacobi_correction_kernel(
     denominator = copysign(floor, denominator == 0.0 ? 1.0 : denominator);
   }
   correction[index] = -residual[index] / denominator;
+}
+
+__global__ void finite_matrix_kernel(const double* values,
+                                     std::int64_t rows, std::int64_t cols,
+                                     std::int64_t ld, int* finite) {
+  const std::int64_t index =
+      static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (index >= rows * cols) return;
+  if (!isfinite(values[(index / rows) * ld + index % rows])) {
+    atomicExch(finite, 0);
+  }
 }
 
 struct DeviceBackend {
@@ -63,6 +75,25 @@ struct DeviceBackend {
     Matrix output(context, host.rows(), host.cols());
     upload_matrix(output.view(), host);
     return output;
+  }
+  Matrix upload(linalg::ConstMatrixView source) const {
+    Matrix output(context, source.rows, source.cols);
+    copy(output.view(), source);
+    return output;
+  }
+  bool all_finite(linalg::ConstMatrixView source) const {
+    Buffer<int> finite(context, 1);
+    const int initial = 1;
+    context.copy_to_device(finite.data(), &initial, sizeof(int));
+    const std::int64_t count = source.rows * source.cols;
+    constexpr int threads = 256;
+    const int blocks = blas_int((count + threads - 1) / threads);
+    finite_matrix_kernel<<<blocks, threads, 0, context.stream()>>>(
+        source.data, source.rows, source.cols, source.ld, finite.data());
+    check_cuda(cudaGetLastError(), "Davidson initial finite kernel launch");
+    int host_finite = 0;
+    context.copy_to_host(&host_finite, finite.data(), sizeof(int));
+    return host_finite != 0;
   }
   linalg::MatrixView view(Matrix& matrix) const { return matrix.view(); }
   linalg::ConstMatrixView cview(const Matrix& matrix) const {
@@ -197,6 +228,15 @@ struct DeviceBackend {
     }
     action(vectors, h, s);
   }
+  void finish_device_result(DeviceDavidsonResult& result, Matrix&& roots,
+                            Matrix&& hamiltonian_roots,
+                            Matrix&& overlap_roots,
+                            bool identity_overlap) const {
+    result.identity_overlap = identity_overlap;
+    result.eigenpairs.eigenvector_matrix = std::move(roots);
+    result.hamiltonian_eigenvectors = std::move(hamiltonian_roots);
+    result.overlap_eigenvectors = std::move(overlap_roots);
+  }
 };
 
 }  // namespace
@@ -243,6 +283,53 @@ linalg::DavidsonResult solve_davidson(
   DeviceBackend backend(context, action, hamiltonian_diagonal,
                         overlap_diagonal, preconditioner);
   return linalg::detail::solve_davidson(
+      backend, hamiltonian_diagonal, overlap_diagonal, initial_vectors,
+      options);
+}
+
+DeviceDavidsonResult solve_device_davidson(
+    Context& context, const DeviceEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner) {
+  const int dimension = static_cast<int>(hamiltonian_diagonal.size());
+  linalg::detail::validate_davidson_diagonals(
+      hamiltonian_diagonal, overlap_diagonal);
+  linalg::detail::validate_davidson_options(dimension, options);
+  const int n_initial =
+      std::min(options.max_subspace_dimension, 2 * options.n_roots);
+  const Eigen::MatrixXd initial = linalg::make_davidson_initial_vectors(
+      hamiltonian_diagonal, overlap_diagonal, n_initial);
+  return solve_device_davidson(context, action, hamiltonian_diagonal,
+                               overlap_diagonal, initial, options,
+                               preconditioner);
+}
+
+DeviceDavidsonResult solve_device_davidson(
+    Context& context, const DeviceEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_vectors,
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner) {
+  DeviceBackend backend(context, action, hamiltonian_diagonal,
+                        overlap_diagonal, preconditioner);
+  return linalg::detail::solve_davidson<DeviceDavidsonResult>(
+      backend, hamiltonian_diagonal, overlap_diagonal, initial_vectors,
+      options);
+}
+
+DeviceDavidsonResult solve_device_davidson(
+    Context& context, const DeviceEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    linalg::ConstMatrixView initial_vectors,
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner) {
+  DeviceBackend backend(context, action, hamiltonian_diagonal,
+                        overlap_diagonal, preconditioner);
+  return linalg::detail::solve_davidson<DeviceDavidsonResult>(
       backend, hamiltonian_diagonal, overlap_diagonal, initial_vectors,
       options);
 }

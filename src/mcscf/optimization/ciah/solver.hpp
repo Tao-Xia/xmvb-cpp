@@ -1,6 +1,8 @@
 #pragma once
 
 #include <functional>
+#include <cmath>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -16,31 +18,59 @@ namespace xmvb::mcscf {
  * Only displacement since the last keyframe belongs in its quadratic model.
  * The Hessian images remain reusable, as in PySCF's CIAH iteration.
  */
-class CiahEnergyModel {
+namespace detail {
+
+inline constexpr double ciah_step_max_component = 0.03;
+
+struct HostCiahVectorOps {
+  using Vector = Eigen::VectorXd;
+  Vector clone(const Vector& v) const { return v; }
+  Vector zeros_like(const Vector& v) const { return Vector::Zero(v.size()); }
+  void axpy(Vector& y, double a, const Vector& x) const { y.noalias() += a * x; }
+  void scal(Vector& x, double a) const { x *= a; }
+  double dot(const Vector& x, const Vector& y) const { return x.dot(y); }
+};
+
+template <class Result>
+bool ciah_result_resolved(const Result& result, double rhs_norm,
+                          double relative_accuracy) noexcept {
+  const double alpha = std::abs(result.reference_component);
+  return std::isfinite(result.residual_norm) && result.residual_norm >= 0.0 &&
+      std::isfinite(alpha) && alpha > 0.0 &&
+      std::isfinite(rhs_norm) && rhs_norm >= 0.0 &&
+      std::isfinite(relative_accuracy) && relative_accuracy >= 0.0 &&
+      result.residual_norm <= alpha * relative_accuracy * rhs_norm;
+}
+
+template <class Ops>
+class CiahEnergyModelT {
 public:
-  CiahEnergyModel(double energy, const Eigen::VectorXd& gradient)
-      : energy_(energy), gradient_(gradient),
-        step_(Eigen::VectorXd::Zero(gradient.size())), image_(step_) {}
+  using Vector = typename Ops::Vector;
+  CiahEnergyModelT(double energy, const Vector& gradient, Ops ops = {})
+      : ops_(std::move(ops)), energy_(energy),
+        gradient_(ops_.clone(gradient)), step_(ops_.zeros_like(gradient)),
+        image_(ops_.zeros_like(gradient)) {}
 
-  void add(const Eigen::VectorXd& step, const Eigen::VectorXd& image) {
-    step_ += step;
-    image_ += image;
+  void add(const Vector& step, const Vector& image) {
+    ops_.axpy(step_, 1.0, step);
+    ops_.axpy(image_, 1.0, image);
   }
 
-  void remove(const Eigen::VectorXd& step, const Eigen::VectorXd& image) {
-    step_ -= step;
-    image_ -= image;
+  void remove(const Vector& step, const Vector& image) {
+    ops_.axpy(step_, -1.0, step);
+    ops_.axpy(image_, -1.0, image);
   }
 
-  void refresh(double energy, const Eigen::VectorXd& gradient) {
+  void refresh(double energy, const Vector& gradient) {
     energy_ = energy;
-    gradient_ = gradient;
-    step_.setZero();
-    image_.setZero();
+    gradient_ = ops_.clone(gradient);
+    step_ = ops_.zeros_like(gradient);
+    image_ = ops_.zeros_like(gradient);
   }
 
   double energy() const {
-    return energy_ + gradient_.dot(step_) + 0.5 * step_.dot(image_);
+    return energy_ + ops_.dot(gradient_, step_) +
+           0.5 * ops_.dot(step_, image_);
   }
 
   /** @brief An exact keyframe contradicts the segment's predicted descent.
@@ -55,12 +85,17 @@ public:
   double anchor_energy() const noexcept { return energy_; }
 
   /** @brief Incremental displacement since the last accepted keyframe. */
-  const Eigen::VectorXd& displacement() const noexcept { return step_; }
+  const Vector& displacement() const noexcept { return step_; }
 
 private:
+  Ops ops_;
   double energy_;
-  Eigen::VectorXd gradient_, step_, image_;
+  Vector gradient_, step_, image_;
 };
+
+}  // namespace detail
+
+using CiahEnergyModel = detail::CiahEnergyModelT<detail::HostCiahVectorOps>;
 
 /** Controls one bounded, matrix-free CIAH Davidson workspace. */
 struct CiahOptions {
@@ -119,39 +154,55 @@ struct CiahResult {
  * not a Ritz solve for the gradient at an intermediate point.
  * The borrowed proposal must outlive the path and retain its operator images.
  */
-class CiahStepPath {
+namespace detail {
+
+template <class Result, class Ops>
+class CiahStepPathT {
 public:
-  void set(const CiahResult& proposal) {
+  using Vector = typename Ops::Vector;
+  explicit CiahStepPathT(Ops ops = {}) : ops_(std::move(ops)) {}
+  void set(const Result& proposal) {
     proposal_ = &proposal;
     remaining_ = 1.0;
   }
   void clear() noexcept { remaining_ = 0.0; }
   bool pending() const noexcept { return remaining_ > 0.0; }
   double remaining_fraction() const noexcept { return remaining_; }
-  const Eigen::VectorXd& direction() const noexcept { return proposal_->step; }
+  const Vector& direction() const noexcept { return proposal_->step; }
 
   /** @brief Current AH residual of the unused step, using cached H/G images.
    * With s=remaining*p, choose omega=g^T*s to satisfy the reference row.
    * The remaining row is g+H*s-omega*G*s. Its source Ritz residual is not
    * a certificate after the gradient changes, even for a quadratic model.
    */
-  Eigen::VectorXd residual_at(const Eigen::VectorXd& gradient) const {
-    const double omega=remaining_*gradient.dot(proposal_->step);
-    return gradient+remaining_*proposal_->hessian_step-
-        (omega*remaining_)*proposal_->metric_step;
+  Vector residual_at(const Vector& gradient) const {
+    const double omega=remaining_*ops_.dot(gradient, proposal_->step);
+    Vector residual = ops_.clone(gradient);
+    ops_.axpy(residual, remaining_, proposal_->hessian_step);
+    ops_.axpy(residual, -omega*remaining_, proposal_->metric_step);
+    return residual;
   }
 
   /** @brief Take a positive fraction, at most one, of the remaining path. */
-  std::pair<Eigen::VectorXd, Eigen::VectorXd> take(double fraction) {
+  std::pair<Vector, Vector> take(double fraction) {
     const double part = fraction * remaining_;
     remaining_ = fraction < 1.0 ? remaining_ - part : 0.0;
-    return {part * proposal_->step, part * proposal_->hessian_step};
+    Vector step = ops_.clone(proposal_->step);
+    Vector image = ops_.clone(proposal_->hessian_step);
+    ops_.scal(step, part);
+    ops_.scal(image, part);
+    return {std::move(step), std::move(image)};
   }
 
 private:
-  const CiahResult* proposal_ = nullptr;
+  Ops ops_;
+  const Result* proposal_ = nullptr;
   double remaining_ = 0.0;
 };
+
+}  // namespace detail
+
+using CiahStepPath = detail::CiahStepPathT<CiahResult, detail::HostCiahVectorOps>;
 
 /** @brief Direction from the lowest origin-gradient AH root in the retained span.
  *
@@ -178,36 +229,50 @@ struct CiahInverseSpectrum {
 };
 
 /** @brief A true-energy keyframe and its frozen origin-chart images. */
-struct CiahCheckpoint {
+template <class Vector>
+struct CiahCheckpointT {
   double energy = 0.0;
-  Eigen::VectorXd displacement, image, last_step;
+  Vector displacement, image, last_step;
   double residual_norm = 0.0, eigenvalue = 0.0;
   bool converged = false;
 };
 
+using CiahCheckpoint = CiahCheckpointT<Eigen::VectorXd>;
+
 /** @brief Retain the lowest evaluated descending keyframe, without new actions. */
-class CiahKeyframes {
+namespace detail {
+
+template <class Result, class Ops>
+class CiahKeyframesT {
 public:
-  explicit CiahKeyframes(double source_energy) : lowest_energy_(source_energy) {}
-  void save(double energy, const Eigen::VectorXd& displacement,
-      const Eigen::VectorXd& image, const Eigen::VectorXd& last_step,
-      const CiahResult& ritz) {
+  using Vector = typename Ops::Vector;
+  using Checkpoint = CiahCheckpointT<Vector>;
+  explicit CiahKeyframesT(double source_energy, Ops ops = {})
+      : ops_(std::move(ops)), lowest_energy_(source_energy) {}
+  void save(double energy, const Vector& displacement,
+      const Vector& image, const Vector& last_step, const Result& ritz) {
     if (!(energy < lowest_energy_)) return;
     lowest_energy_ = energy;
-    checkpoint_ = CiahCheckpoint{energy, displacement, image, last_step,
+    checkpoint_ = Checkpoint{energy, ops_.clone(displacement), ops_.clone(image),
+        ops_.clone(last_step),
         ritz.residual_norm, ritz.eigenvalue, ritz.converged};
   }
   bool available() const noexcept { return checkpoint_.has_value(); }
   /** @brief Consume a checkpoint so backtracking cannot retry it indefinitely. */
-  CiahCheckpoint take() {
-    CiahCheckpoint point = std::move(checkpoint_.value());
+  Checkpoint take() {
+    Checkpoint point = std::move(checkpoint_.value());
     checkpoint_.reset();
     return point;
   }
 private:
+  Ops ops_;
   double lowest_energy_;
-  std::optional<CiahCheckpoint> checkpoint_;
+  std::optional<Checkpoint> checkpoint_;
 };
+
+}  // namespace detail
+
+using CiahKeyframes = detail::CiahKeyframesT<CiahResult, detail::HostCiahVectorOps>;
 
 /**
  * Davidson iteration for the generalized augmented Hessian of one fixed model.
@@ -218,6 +283,10 @@ private:
  */
 class CiahWorkspace {
 public:
+  ~CiahWorkspace();
+  CiahWorkspace(const CiahWorkspace&);
+  CiahWorkspace(CiahWorkspace&&) noexcept;
+  CiahWorkspace& operator=(const CiahWorkspace&) = delete;
   /** @brief Dual norm captured by the current AH trial space.
    * Diagnostic projection using cached metric images; no operator evaluation.
    */
@@ -261,38 +330,11 @@ public:
   std::optional<CiahOriginRay> origin_ray(
       const Eigen::VectorXd& origin_gradient) const;
 
-  int basis_size() const noexcept {
-    return static_cast<int>(basis_.size());
-  }
+  int basis_size() const noexcept;
 
 private:
-  Eigen::VectorXd precondition(
-      const Eigen::VectorXd& residual, double eigenvalue) const;
-  bool append(Eigen::VectorXd direction,
-      const Eigen::VectorXd* residual = nullptr,
-      double residual_norm = 0.0, double shift = 0.0);
-
-  const QuadraticProblem& problem_;
-  CiahOptions options_;
-  std::optional<Eigen::VectorXd> initial_direction_;
-  std::optional<Eigen::VectorXd> pending_residual_;
-  std::optional<double> previous_eigenvalue_;
-  double pending_eigenvalue_ = 0.0;
-  /** @brief Cached complete coordinate norm for scalar expansion diagnostics. */
-  double pending_residual_norm_ = 0.0;
-  std::vector<Eigen::VectorXd> basis_;
-  std::vector<Eigen::VectorXd> hessian_images_;
-  std::vector<Eigen::VectorXd> metric_images_;
-  /** @brief Cached raw projections and positive dot sums for symmetry certification.
-   * Only the newly admitted row/column is evaluated; keyframe RHS updates
-   * do not modify these frozen-operator projections.
-   */
-  Eigen::MatrixXd hessian_projection_, metric_projection_;
-  Eigen::MatrixXd hessian_magnitude_, metric_magnitude_;
-  double basis_squared_norm_ = 0.0;
-  double hessian_squared_norm_ = 0.0, metric_squared_norm_ = 0.0;
-  Eigen::MatrixXd projected_metric_;
-  bool exhausted_ = false;
+  class Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 }  // namespace xmvb::mcscf

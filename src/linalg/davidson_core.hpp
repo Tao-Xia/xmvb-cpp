@@ -6,6 +6,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -185,20 +187,45 @@ void validate_images(Backend& backend, ConstMatrixView h, ConstMatrixView s,
 }
 
 /** Shared iteration and stopping decisions for host and CUDA storage. */
-template <class Backend>
-DavidsonResult solve_davidson(
+template <class Result = DavidsonResult, class Backend, class InitialVectors>
+Result solve_davidson(
     Backend& backend,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    const Eigen::Ref<const Eigen::MatrixXd>& initial_vectors,
+    const InitialVectors& initial_vectors,
     const DavidsonOptions& options) {
   const int dimension = static_cast<int>(hamiltonian_diagonal.size());
   validate_davidson_diagonals(hamiltonian_diagonal, overlap_diagonal);
   validate_davidson_options(dimension, options);
-  if (initial_vectors.rows() != dimension ||
-      initial_vectors.cols() < options.n_roots ||
-      initial_vectors.cols() > options.max_subspace_dimension ||
-      !initial_vectors.allFinite()) {
+  const auto initial_rows = [&] {
+    if constexpr (std::is_same_v<InitialVectors, ConstMatrixView>) {
+      return initial_vectors.rows;
+    } else {
+      return initial_vectors.rows();
+    }
+  }();
+  const auto initial_cols = [&] {
+    if constexpr (std::is_same_v<InitialVectors, ConstMatrixView>) {
+      return initial_vectors.cols;
+    } else {
+      return initial_vectors.cols();
+    }
+  }();
+  if (initial_rows != dimension ||
+      initial_cols < options.n_roots ||
+      initial_cols > options.max_subspace_dimension) {
+    throw std::invalid_argument("invalid Davidson initial vector block");
+  }
+  const bool initial_finite = [&] {
+    if constexpr (std::is_same_v<InitialVectors, ConstMatrixView>) {
+      return initial_vectors.data != nullptr &&
+             initial_vectors.ld >= initial_vectors.rows &&
+             backend.all_finite(initial_vectors);
+    } else {
+      return initial_vectors.allFinite();
+    }
+  }();
+  if (!initial_finite) {
     throw std::invalid_argument("invalid Davidson initial vector block");
   }
   if constexpr (!Backend::supports_host_callbacks) {
@@ -213,18 +240,18 @@ DavidsonResult solve_davidson(
   auto hamiltonian_basis = backend.make(dimension, max_subspace);
   auto overlap_basis = backend.make(
       dimension, options.identity_overlap ? 0 : max_subspace);
-  DavidsonResult result;
+  Result result;
   int active_dimension = 0;
   {
     auto candidate = backend.upload(initial_vectors);
-    auto hamiltonian_candidate = backend.make(dimension, initial_vectors.cols());
+    auto hamiltonian_candidate = backend.make(dimension, initial_cols);
     auto overlap_candidate = backend.make(
-        dimension, options.identity_overlap ? 0 : initial_vectors.cols());
+        dimension, options.identity_overlap ? 0 : initial_cols);
     backend.apply(backend.cview(candidate), backend.view(hamiltonian_candidate),
                   backend.view(overlap_candidate));
     validate_images(backend, backend.cview(hamiltonian_candidate),
                     backend.cview(overlap_candidate), dimension,
-                    static_cast<int>(initial_vectors.cols()),
+                    static_cast<int>(initial_cols),
                     options.identity_overlap);
     ++result.block_actions;
     active_dimension = append_s_orthonormal_block(
@@ -375,12 +402,19 @@ DavidsonResult solve_davidson(
       result.eigenpairs.eigenvalues.assign(
           projected_eigenvalues.data(),
           projected_eigenvalues.data() + options.n_roots);
-      const Eigen::MatrixXd host_roots = backend.download(backend.cview(roots));
-      result.eigenpairs.eigenvector_matrix.assign(
-          host_roots.data(), host_roots.data() + host_roots.size());
-      result.hamiltonian_eigenvectors =
-          backend.download(backend.cview(hamiltonian_roots));
-      result.overlap_eigenvectors = backend.download(s_roots);
+      if constexpr (std::is_same_v<Result, DavidsonResult>) {
+        const Eigen::MatrixXd host_roots = backend.download(backend.cview(roots));
+        result.eigenpairs.eigenvector_matrix.assign(
+            host_roots.data(), host_roots.data() + host_roots.size());
+        result.hamiltonian_eigenvectors =
+            backend.download(backend.cview(hamiltonian_roots));
+        result.overlap_eigenvectors = backend.download(s_roots);
+      } else {
+        backend.finish_device_result(result, std::move(roots),
+                                     std::move(hamiltonian_roots),
+                                     std::move(overlap_roots),
+                                     options.identity_overlap);
+      }
       return result;
     }
     previous_eigenvalues = projected_eigenvalues.head(options.n_roots);

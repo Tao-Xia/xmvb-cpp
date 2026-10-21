@@ -21,6 +21,11 @@ set -u
 source_dir=$(realpath -e "$SLURM_SUBMIT_DIR")
 deps=/home/guqqgroup/taoxia/software/conda-envs/xmvb-cpp-89c74a6
 out="$source_dir/cuvb-ci-$SLURM_JOB_ID"
+mode=${CUVB_MODE:---gpu}
+if [[ "$mode" != --gpu && "$mode" != --point ]]; then
+  echo "CUVB_MODE must be --gpu or --point" >&2
+  exit 64
+fi
 mkdir -p "$out"
 export OMP_NUM_THREADS=32 OMP_PLACES=cores OMP_PROC_BIND=close OMP_MAX_ACTIVE_LEVELS=1
 export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 BLIS_NUM_THREADS=1
@@ -31,6 +36,7 @@ nvidia-smi -q > "$out/gpu.txt"
 module list > "$out/modules.txt" 2>&1
 find "$source_dir/src/cuda" "$source_dir/tests/cuda" -type f -print0 \
   | sort -z | xargs -0 sha256sum > "$out/sources.sha256"
+cmake -S "$source_dir" -B "$source_dir/build-cuvbscf" > "$out/configure.log" 2>&1
 cmake --build "$source_dir/build-cuvbscf" --target \
   c12_cuda_benchmark test_cuda_structure_action test_cuda_production_ci -j 16 \
   > "$out/build.log" 2>&1
@@ -52,7 +58,7 @@ for case in mixed20 cov ion02 full; do
     sampler=$!
     trap 'kill "$sampler" 2>/dev/null || true' EXIT
     srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \
-      /usr/bin/time -v -o gpu.time "$out/c12_cuda_benchmark" --gpu input.xmi \
+      /usr/bin/time -v -o gpu.time "$out/c12_cuda_benchmark" "$mode" input.xmi \
       > gpu.out 2> gpu.err
   )
 done

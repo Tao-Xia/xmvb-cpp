@@ -2,8 +2,15 @@ add_library(xmvb_cuda
   linalg/davidson.cu
   linalg/cholesky.cu
   ci/sigma.cu
+  integrals/exact.cu
+  integrals/one_electron.cu
+  optimization/ciah.cu
   vb/transform.cu
   vb/metric.cu
+  vb/orbitals.cu
+  vb/chart.cu
+  vb/tangent.cu
+  vb/point.cu
   vb/ci.cu
   vb/action.cu)
 target_include_directories(xmvb_cuda PUBLIC ${CMAKE_SOURCE_DIR}/src)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <memory>
 
 #include "cuda/memory/buffer.hpp"
 #include "linalg/views.hpp"
@@ -20,6 +21,8 @@ class DirectCiSigma {
  public:
   DirectCiSigma(Context& context, const mcscf::DirectCiSigmaAction& source,
                 int maximum_channel_tile = 16);
+  /** @brief Share immutable device links; update_integrals must precede use. */
+  DirectCiSigma(Context& context, const DirectCiSigma& reference);
   DirectCiSigma(const DirectCiSigma&) = delete;
   DirectCiSigma& operator=(const DirectCiSigma&) = delete;
 
@@ -122,7 +125,7 @@ class DirectCiSigma {
   bool shared_spin_graph_;
   Buffer<double> kernel_;
   Buffer<double> effective_one_;
-  SpinGraph alpha_, beta_;
+  std::shared_ptr<const SpinGraph> alpha_, beta_;
   // Reused on the same stream, not allocated/freed at every sigma call.
   mutable Matrix<double> scattered_, transformed_, right_scattered_, channel_adjoint_;
   // Separate from sigma workspaces so generator VJPs preserve captured pointers.

@@ -17,6 +17,7 @@
 #include "cuda/vb/ci.hpp"
 #include "linalg/eigensolver.hpp"
 #include "action_benchmark.hpp"
+#include "point_benchmark.hpp"
 
 namespace {
 
@@ -73,9 +74,10 @@ int main(int argc, char** argv) {
   try {
     if (argc != 3 || (std::string(argv[1]) != "--gpu" &&
                       std::string(argv[1]) != "--action" &&
+                      std::string(argv[1]) != "--point" &&
                       std::string(argv[1]) != "--cpu-action" &&
                       std::string(argv[1]) != "--check"))
-      throw std::invalid_argument("usage: c12_cuda_benchmark --gpu|--check|--action|--cpu-action INPUT.xmi");
+      throw std::invalid_argument("usage: c12_cuda_benchmark --gpu|--check|--action|--point|--cpu-action INPUT.xmi");
     const std::string mode = argv[1];
     std::cout << std::unitbuf;
     const auto process_start = Clock::now();
@@ -138,6 +140,8 @@ int main(int argc, char** argv) {
         const auto result = solver.solve(options);
         context.synchronize();
         report_result(result,fixture.energy_offset(),elapsed(start,Clock::now()));
+        if (mode=="--point")
+          xmvb::cuda::test::benchmark_point(context,gpu,fixture,result);
       }
       report_device(context);
     }

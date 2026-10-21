@@ -9,6 +9,8 @@
 
 namespace xmvb::cuda {
 
+class DirectCiSigma;
+
 /** Exact GPU H/M action in the original selected VB structure coordinates.
  * The sparse incidence and elementary orbital transformations are borrowed
  * from the CPU mathematical representation and uploaded once. Numerical
@@ -33,6 +35,10 @@ class StructureAction {
   std::size_t graph_nodes() const noexcept;
   int n_structures() const noexcept { return size(); }
   const vb::StructureDiagonal& preconditioner_diagonal() const noexcept;
+  /** @brief Replace only current numerical integrals/frame; topology is shared. */
+  void update_integrals(linalg::ConstMatrixView one_electron,
+      linalg::ConstMatrixView pair_kernel,linalg::ConstMatrixView upper);
+  const DirectCiSigma& carrier_sigma() const noexcept;
 
   int n_alpha_strings() const noexcept;
   int n_beta_strings() const noexcept;

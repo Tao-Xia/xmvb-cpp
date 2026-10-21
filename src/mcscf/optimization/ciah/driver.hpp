@@ -8,7 +8,7 @@
 
 namespace xmvb::mcscf {
 
-inline constexpr double ciah_max_component = 0.03;
+inline constexpr double ciah_max_component = detail::ciah_step_max_component;
 
 /** Exact nonlinear observation in the immutable origin coordinates. */
 struct CiahKeyframe {

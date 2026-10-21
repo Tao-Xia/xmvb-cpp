@@ -1,10 +1,12 @@
 #pragma once
 
 #include <functional>
+#include <vector>
 
 #include <Eigen/Core>
 
 #include "cuda/memory/context.hpp"
+#include "cuda/memory/buffer.hpp"
 #include "linalg/eigensolver.hpp"
 #include "linalg/views.hpp"
 
@@ -27,11 +29,60 @@ using DeviceEigenAction = std::function<void(
 using DeviceEigenPreconditioner = std::function<void(
     linalg::ConstMatrixView residual, double energy, linalg::MatrixView image)>;
 
+/** Converged Ritz data with all full-dimension vectors owned on the device.
+ * For identity overlap, overlap_eigenvectors is empty and overlap_view()
+ * aliases the eigenvectors. The Context must outlive these device matrices.
+ */
+struct DeviceDavidsonResult {
+  struct Eigenpairs {
+    std::vector<double> eigenvalues;
+    Matrix<double> eigenvector_matrix;
+  } eigenpairs;
+  Matrix<double> hamiltonian_eigenvectors;
+  Matrix<double> overlap_eigenvectors;
+  bool identity_overlap = false;
+  std::vector<double> relative_residual_norms;
+  std::vector<double> stationarity_residual_norms;
+  int iterations = 0;
+  int block_actions = 0;
+  int peak_subspace_dimension = 0;
+
+  [[nodiscard]] linalg::ConstMatrixView overlap_view() const noexcept {
+    return identity_overlap ? eigenpairs.eigenvector_matrix.view()
+                            : overlap_eigenvectors.view();
+  }
+};
+
 /** The device backend shares the host Davidson iteration and stopping logic. */
 linalg::DavidsonResult solve_davidson(
     Context& context, const DeviceEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner = {});
+
+/** Shared Davidson loop with device-resident converged roots and images. */
+DeviceDavidsonResult solve_device_davidson(
+    Context& context, const DeviceEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner = {});
+
+DeviceDavidsonResult solve_device_davidson(
+    Context& context, const DeviceEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    const Eigen::Ref<const Eigen::MatrixXd>& initial_vectors,
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner = {});
+
+/** The borrowed initial block is copied device-to-device before iteration. */
+DeviceDavidsonResult solve_device_davidson(
+    Context& context, const DeviceEigenAction& action,
+    const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
+    const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
+    linalg::ConstMatrixView initial_vectors,
     const linalg::DavidsonOptions& options,
     const DeviceEigenPreconditioner& preconditioner = {});
 

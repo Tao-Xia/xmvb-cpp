@@ -7,6 +7,11 @@ add_executable(test_cuda_production_ci
   ${CMAKE_SOURCE_DIR}/tests/cuda/test_production_ci.cpp)
 target_link_libraries(test_cuda_production_ci PRIVATE xmvb_cuda xmvb_vbscf)
 
+foreach(name IN ITEMS exact orbitals ciah point tangent chart device_davidson)
+  add_executable(test_cuda_${name} ${CMAKE_SOURCE_DIR}/tests/cuda/test_${name}.cpp)
+  target_link_libraries(test_cuda_${name} PRIVATE xmvb_cuda xmvb_vbscf)
+endforeach()
+
 add_executable(c12_cuda_benchmark
   ${CMAKE_SOURCE_DIR}/tests/cuda/c12_benchmark.cpp)
 target_include_directories(c12_cuda_benchmark PRIVATE ${CMAKE_SOURCE_DIR}/tests/cuda)
