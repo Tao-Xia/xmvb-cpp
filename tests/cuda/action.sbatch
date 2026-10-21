@@ -49,14 +49,26 @@ for case in mixed20 cov ion02 full; do
     (cd "$out/$case" && srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \
       "$out/c12_cuda_benchmark" --check input.xmi > check.out 2> check.err)
   fi
-  (cd "$out/$case" && srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \
-    /usr/bin/time -v -o action.time "$out/c12_cuda_benchmark" --action input.xmi \
-    > action.out 2> action.err)
+  (
+    cd "$out/$case"
+    nvidia-smi --query-compute-apps=gpu_uuid,pid,used_memory \
+      --format=csv,noheader,nounits -lms 100 > gpu_samples.csv &
+    sampler=$!
+    trap 'kill "$sampler" 2>/dev/null || true' EXIT
+    srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \
+      /usr/bin/time -v -o action.time "$out/c12_cuda_benchmark" --action input.xmi \
+      > action.out 2> action.err
+    if [[ ${XMVB_GPU_SOLVE:-0} == 1 ]]; then
+      srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \
+        /usr/bin/time -v -o gpu.time "$out/c12_cuda_benchmark" --gpu input.xmi \
+        > gpu.out 2> gpu.err
+    fi
+  )
 done
 if command -v nsys >/dev/null; then
   nsys --version > "$out/nsys_version.txt"
   (cd "$out/cov" && srun --exact --ntasks=1 --cpus-per-task=32 --cpu-bind=cores \
-    nsys profile --sample=none --cpuctxsw=none --trace=cuda,cublas,nvtx \
+    nsys profile --sample=none --cpuctxsw=none --trace=cuda,cublas,nvtx --cuda-graph-trace=node \
       --capture-range=cudaProfilerApi --capture-range-end=stop \
       --force-overwrite=true --output="$out/cov/nsys" \
       "$out/c12_cuda_benchmark" --action input.xmi > profile.out 2> profile.err)

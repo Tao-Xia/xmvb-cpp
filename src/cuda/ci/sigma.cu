@@ -14,13 +14,13 @@ namespace xmvb::cuda {
 namespace {
 
 __global__ void scatter_channels(
-    linalg::ConstMatrixView input, double* channels, std::int64_t products,
+    linalg::ConstMatrixView input, double* channels, std::int64_t begin,std::int64_t count,
     int n_alpha, int n_beta, const int* alpha, const int* beta,
-    int first_channel, int channel_count) {
+    int channel_count) {
   const std::int64_t index=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
-  if (index>=products*channel_count) return;
-  const auto product=index%products;
-  const int channel=first_channel+index/products;
+  if (index>=count*channel_count) return;
+  const auto product=begin+index%count;
+  const int channel=index/count;
   const int a=product%n_alpha;
   const auto column=product/n_alpha;
   const int b=column%n_beta;
@@ -112,6 +112,34 @@ std::size_t DirectCiSigma::resident_bytes() const noexcept {
       sizeof(double)*(scattered_.rows()*scattered_.cols()+transformed_.rows()*transformed_.cols());
 }
 
+void DirectCiSigma::prepare(int block_width) const {
+  if (block_width<=0) throw std::invalid_argument("invalid CUDA sigma block width");
+  const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
+  if (transformed_.rows()==products) return;
+  scattered_=Matrix<double>{};
+  transformed_=Matrix<double>{};
+  const std::size_t available=context_->device_byte_budget()-
+      context_->counters().current_device_bytes;
+  const std::size_t per_channel=2*static_cast<std::size_t>(products)*sizeof(double);
+  const int tile=static_cast<int>(std::min<std::size_t>(
+      {static_cast<std::size_t>(n_channels_),static_cast<std::size_t>(maximum_channel_tile_),
+       available/per_channel}));
+  if (tile<1)
+    throw std::runtime_error("CUDA direct-CI budget cannot hold two single-channel slabs");
+  // Keep the same two-slab capacity, but contract all channels for a row tile.
+  // C is written once rather than reread/accumulated for every Q block.
+  auto rows=std::min(products,std::max<std::int64_t>(1,products*tile/n_channels_));
+  constexpr int warp_rows=32;
+  if (rows>=warp_rows) rows=(rows/warp_rows)*warp_rows;
+  if ((static_cast<std::size_t>(rows)*n_channels_+
+       static_cast<std::size_t>(products)*tile)*sizeof(double)>available)
+    throw std::runtime_error("CUDA direct-CI budget cannot hold a complete channel row");
+  Matrix<double> scattered(*context_,rows,n_channels_);
+  Matrix<double> transformed(*context_,products,tile);
+  scattered_=std::move(scattered);
+  transformed_=std::move(transformed);
+}
+
 void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
                           linalg::MatrixView image, bool add) const {
   const nvtx3::scoped_range range{"ci.sigma"};
@@ -125,42 +153,32 @@ void DirectCiSigma::apply(linalg::ConstMatrixView coefficients,
   if (coefficients.cols > std::numeric_limits<int>::max() / n_alpha_)
     throw std::overflow_error("CUDA direct-CI product panel exceeds cuBLAS range");
   const std::int64_t products = coefficients.rows*coefficients.cols;
-  if (scattered_.rows()!=products) {
-    // Release obsolete slabs first: never hold old and new workspaces together.
-    scattered_=Matrix<double>{};
-    transformed_=Matrix<double>{};
-    const std::size_t available=context_->device_byte_budget()-
-        context_->counters().current_device_bytes;
-    const std::size_t per_channel=2*static_cast<std::size_t>(products)*sizeof(double);
-    const int tile=static_cast<int>(std::min<std::size_t>(
-        {static_cast<std::size_t>(n_channels_),static_cast<std::size_t>(maximum_channel_tile_),
-         available/per_channel}));
-    if (tile<1)
-      throw std::runtime_error("CUDA direct-CI budget cannot hold two single-channel slabs");
-    Matrix<double> scattered(*context_,products,tile);
-    Matrix<double> transformed(*context_,products,tile);
-    scattered_=std::move(scattered);
-    transformed_=std::move(transformed);
-  }
-  const int tile=static_cast<int>(scattered_.cols());
+  prepare(static_cast<int>(coefficients.cols/n_beta_));
+  const int tile=static_cast<int>(transformed_.cols());
   const auto* alpha=alpha_.sources.data();
   const auto* beta=shared_spin_graph_ ? alpha:beta_.sources.data();
 
+  // A serpentine walk reuses the boundary source-row tile at the next P block.
+  const auto rows=scattered_.rows();
+  const auto blocks=(products+rows-1)/rows;
+  std::int64_t retained_begin=-1;
   for (int p = 0; p < n_channels_; p += tile) {
     const int p_count = std::min(tile, n_channels_ - p);
-    for (int q = 0; q < n_channels_; q += tile) {
-      const int q_count = std::min(tile, n_channels_ - q);
-      scatter_channels<<<grid_size(products*q_count),256,0,context_->stream()>>>(
-          coefficients, scattered_.data(), products, n_alpha_, n_beta_,
-          alpha, beta, q, q_count);
-      check_cuda(cudaGetLastError(), "CUDA direct-CI channel scatter");
-      const linalg::ConstMatrixView q_view{scattered_.data(), products, q_count, products};
+    for (std::int64_t step=0;step<blocks;++step) {
+      const auto begin=((p/tile)%2 ? blocks-1-step:step)*rows;
+      const auto count=std::min(rows,products-begin);
+      if (begin!=retained_begin) {
+        scatter_channels<<<grid_size(count*n_channels_),256,0,context_->stream()>>>(
+          coefficients, scattered_.data(),begin,count,n_alpha_,n_beta_,alpha,beta,n_channels_);
+        check_cuda(cudaGetLastError(), "CUDA direct-CI channel scatter");
+        retained_begin=begin;
+      }
+      const linalg::ConstMatrixView q_view{scattered_.data(),count,n_channels_,count};
       const linalg::ConstMatrixView kernel_view{
-          kernel_.data() + p + static_cast<std::size_t>(n_channels_)*q,
-          p_count, q_count, n_channels_};
-      const linalg::MatrixView p_view{transformed_.data(), products, p_count, products};
+          kernel_.data()+p,p_count,n_channels_,n_channels_};
+      const linalg::MatrixView p_view{transformed_.data()+begin,count,p_count,products};
       gemm(*context_, p_view, q_view, kernel_view,
-           1.0, q == 0 ? 0.0 : 1.0,
+           1.0,0.0,
            Operation::none, Operation::transpose);
     }
     gather_channels<<<grid_size(products),256,0,context_->stream()>>>(

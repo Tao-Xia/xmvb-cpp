@@ -111,6 +111,8 @@ int main(int argc, char** argv) {
       xmvb::cuda::StructureAction gpu(context,cpu);
       context.synchronize();
       std::cout << "gpu_action_init_seconds=" << elapsed(device_start,Clock::now()) << '\n';
+      std::cout << "gpu_graph_build_seconds=" << gpu.graph_build_seconds() << '\n'
+                << "gpu_graph_nodes=" << gpu.graph_nodes() << '\n';
       if (mode=="--action") {
         xmvb::cuda::test::benchmark_action(context,gpu,1);
         xmvb::cuda::test::benchmark_action(context,gpu,3);

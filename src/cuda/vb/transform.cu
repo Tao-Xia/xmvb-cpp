@@ -44,10 +44,11 @@ __global__ void shear_right(linalg::MatrixView coefficients,
   const std::int64_t index = blockIdx.x * static_cast<std::int64_t>(blockDim.x)
                              + threadIdx.x;
   if (index >= elements) return;
-  const Edge edge = edges[index % edge_count];
-  const std::int64_t side = index / edge_count;
-  const std::int64_t row = side % coefficients.rows;
-  const std::int64_t rhs = side / coefficients.rows;
+  // Adjacent lanes update adjacent rows in one column, not strided columns.
+  const std::int64_t row = index % coefficients.rows;
+  const std::int64_t side = index / coefficients.rows;
+  const Edge edge = edges[side % edge_count];
+  const std::int64_t rhs = side / edge_count;
   const int source = adjoint ? edge.target : edge.source;
   const int target = adjoint ? edge.source : edge.target;
   const std::int64_t source_column = rhs*spin_dimension + source;

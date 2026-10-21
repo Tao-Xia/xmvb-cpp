@@ -27,6 +27,8 @@ class StructureAction {
   vb::StructureActionResult apply(
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
   int size() const noexcept;
+  double graph_build_seconds() const noexcept;
+  std::size_t graph_nodes() const noexcept;
   int n_structures() const noexcept { return size(); }
   const vb::StructureDiagonal& preconditioner_diagonal() const noexcept;
 

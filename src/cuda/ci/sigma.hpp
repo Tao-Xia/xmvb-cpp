@@ -13,8 +13,8 @@ namespace xmvb::cuda {
 /** Exact packed-channel direct-CI action on a full current-RHS spin product.
  * A panel has n_alpha rows and n_beta*RHS columns, with beta varying fastest.
  * Input/output panels are caller-owned and charged to Context's device budget.
- * Two channel slabs are bounded by the remaining budget; no product-by-all-
- * channels slab or Hamiltonian matrix is retained.
+ * Source-row/all-channel and full-row/output-channel slabs share a bounded
+ * workspace. No Hamiltonian matrix or extra full-carrier channel cache is retained.
  */
 class DirectCiSigma {
  public:
@@ -26,6 +26,9 @@ class DirectCiSigma {
   /** Enqueues work on Context's stream; host consumers must synchronize. */
   void apply(linalg::ConstMatrixView coefficients,
              linalg::MatrixView image, bool add = false) const;
+
+  /** Allocate the bounded channel slabs before stream capture. */
+  void prepare(int block_width) const;
 
   int n_alpha_strings() const noexcept { return n_alpha_; }
   int n_beta_strings() const noexcept { return n_beta_; }

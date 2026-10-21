@@ -6,13 +6,13 @@ import csv
 from pathlib import Path
 import sys
 
-from summarize import fields
+from summarize import fields, process_gpu_peak_gib
 
 
-def summarize(baseline, current):
+def summarize(baseline, current, previous_root=None):
     for case in ("mixed20", "cov", "ion02", "full"):
         cpu = fields(baseline / case / "cpu_phases.out")
-        previous = fields(baseline / case / "action.out")
+        previous = fields((previous_root or baseline) / case / "action.out")
         gpu = fields(current / case / "action.out")
         check = fields(current / case / "check.out")
         if cpu["structures"] != gpu["structures"]:
@@ -32,7 +32,12 @@ def summarize(baseline, current):
                        gpu_event_seconds=gpu[prefix + "gpu_event_seconds"],
                        h_relative_error=check["h_block_relative_error"],
                        m_relative_error=check["s_block_relative_error"],
-                       gpu_peak_payload_bytes=gpu["gpu_peak_device_bytes"])
+                       gpu_peak_payload_bytes=gpu["gpu_peak_device_bytes"],
+                       gpu_previous_peak_payload_bytes=previous["gpu_peak_device_bytes"],
+                       gpu_sampled_process_peak_gib=process_gpu_peak_gib(
+                           current / case / "gpu_samples.csv",gpu["process_id"]),
+                       gpu_graph_build_seconds=gpu.get("gpu_graph_build_seconds"),
+                       gpu_graph_nodes=gpu.get("gpu_graph_nodes"))
             for key, value in cpu.items():
                 if key.startswith(prefix + "cpu_phase_"):
                     row[key.removeprefix(prefix)] = value
@@ -43,8 +48,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("baseline", type=Path)
     parser.add_argument("current", type=Path)
+    parser.add_argument("--previous", type=Path)
     args = parser.parse_args()
-    rows = list(summarize(args.baseline, args.current))
+    rows = list(summarize(args.baseline, args.current, args.previous))
     columns = list(dict.fromkeys(key for row in rows for key in row))
     writer = csv.DictWriter(sys.stdout, fieldnames=columns, lineterminator="\n")
     writer.writeheader()

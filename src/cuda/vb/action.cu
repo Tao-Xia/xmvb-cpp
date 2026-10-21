@@ -1,6 +1,7 @@
 #include "cuda/vb/action.hpp"
 
 #include <cstdint>
+#include <chrono>
 #include <limits>
 #include <vector>
 
@@ -12,6 +13,7 @@
 
 #include "cuda/ci/sigma.hpp"
 #include "cuda/memory/buffer.hpp"
+#include "cuda/memory/graph.hpp"
 #include "cuda/vb/transform.hpp"
 
 namespace xmvb::cuda {
@@ -51,8 +53,12 @@ struct StructureAction::Impl {
   Buffer<double> weights;
   cusparseHandle_t sparse = nullptr;
   cusparseSpMatDescr_t incidence = nullptr;
-  mutable Matrix<double> coefficients, image, support;
+  mutable Matrix<double> carriers, support;
+  linalg::MatrixView coefficients, image;
   mutable Buffer<std::byte> sparse_workspace;
+  mutable Matrix<double> input, hamiltonian, overlap;
+  std::unique_ptr<Graph> graph;
+  double graph_seconds=0;
 
   Impl(Context& ctx, const vb::StructureAction& source)
       : context(ctx), structures(source.n_structures()),
@@ -68,7 +74,9 @@ struct StructureAction::Impl {
         row_offsets(ctx, groups+1), product_indices(ctx, groups),
         columns(ctx, source.orthogonal_view().terms.size()),
         weights(ctx, source.orthogonal_view().terms.size()),
-        coefficients(ctx, alpha, beta), image(ctx, alpha, beta), support(ctx, groups, 1) {
+        carriers(ctx,alpha,2*static_cast<std::int64_t>(beta)),support(ctx,groups,1),
+        coefficients(carriers.view().columns(0,beta)),image(carriers.view().columns(beta,beta)),
+        input(ctx,structures,1),hamiltonian(ctx,structures,1),overlap(ctx,structures,1) {
     const auto view=source.orthogonal_view();
     std::vector<std::int64_t> offsets(view.offsets.begin(), view.offsets.end());
     std::vector<std::int64_t> addresses;
@@ -98,6 +106,14 @@ struct StructureAction::Impl {
       const auto bytes=std::max(spmm_bytes(false,structure_vector.view(),support.view()),
           spmm_bytes(true,support.view(),structure_vector.view()));
       sparse_workspace=Buffer<std::byte>(context, bytes);
+      sigma.prepare(1);
+      context.synchronize();
+      const auto start=std::chrono::steady_clock::now();
+      graph=std::make_unique<Graph>(context,[&] {
+        emit(input.view(),hamiltonian.view(),overlap.view());
+      });
+      context.synchronize();
+      graph_seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
     } catch (...) {
       if (incidence) cusparseDestroySpMat(incidence);
       if (sparse) cusparseDestroy(sparse);
@@ -106,6 +122,7 @@ struct StructureAction::Impl {
   }
 
   ~Impl() {
+    graph.reset();
     if (incidence) cusparseDestroySpMat(incidence);
     if (sparse) cusparseDestroy(sparse);
   }
@@ -132,38 +149,54 @@ struct StructureAction::Impl {
         CUDA_R_64F, CUSPARSE_SPMM_ALG_DEFAULT, sparse_workspace.data()), "cusparseSpMM");
   }
 
-  void project(linalg::MatrixView output) const {
+  void project(linalg::ConstMatrixView carrier,linalg::MatrixView output) const {
     const nvtx3::scoped_range range{"vb.backproject"};
-    beta_transform->apply_right(image.view(), true);
-    alpha_transform.apply_left(image.view(), true);
     thrust::gather(thrust::cuda::par_nosync.on(context.stream()), product_indices.data(),
-        product_indices.data()+groups, image.data(), support.data());
+        product_indices.data()+groups, carrier.data, support.data());
     spmm(true,support.view(),output);
+  }
+
+  // Called exactly once during capture; there is one maintained contraction path.
+  void emit(linalg::ConstMatrixView vector,linalg::MatrixView h,linalg::MatrixView m) const {
+      {
+      const nvtx3::scoped_range range{"vb.expand"};
+      spmm(false,vector,support.view());
+      check_cuda(cudaMemsetAsync(coefficients.data,0,products*sizeof(double),context.stream()),
+          "clear product input");
+      thrust::scatter(thrust::cuda::par_nosync.on(context.stream()),support.data(),support.data()+groups,
+          product_indices.data(),coefficients.data);
+      }
+      {
+      const nvtx3::scoped_range range{"vb.transform"};
+      alpha_transform.apply_left(coefficients);
+      beta_transform->apply_right(coefficients);
+      }
+      sigma.apply(coefficients,image);
+      {
+        const nvtx3::scoped_range range{"vb.transform_adjoint"};
+        // The input is the overlap image after sigma consumed it. Transform H/M
+        // together, in the same two panels; neither a carrier copy nor new storage.
+        beta_transform->apply_right(carriers.view(),true);
+        alpha_transform.apply_left(carriers.view(),true);
+      }
+      project(coefficients,m);
+      project(image,h);
   }
 
   void apply(linalg::ConstMatrixView vectors,linalg::MatrixView h,linalg::MatrixView m) const {
     if (vectors.rows!=structures || h.rows!=structures || m.rows!=structures ||
         vectors.cols<=0 || h.cols!=vectors.cols || m.cols!=vectors.cols)
       throw std::invalid_argument("CUDA structure action block dimensions");
-    for (std::int64_t rhs=0; rhs<vectors.cols; ++rhs) {
-      {
-      const nvtx3::scoped_range range{"vb.expand"};
-      spmm(false,vectors.column(rhs),support.view());
-      check_cuda(cudaMemsetAsync(coefficients.data(),0,products*sizeof(double),context.stream()),
-          "clear product input");
-      thrust::scatter(thrust::cuda::par_nosync.on(context.stream()),support.data(),support.data()+groups,
-          product_indices.data(),coefficients.data());
-      }
-      {
-      const nvtx3::scoped_range range{"vb.transform"};
-      alpha_transform.apply_left(coefficients.view());
-      beta_transform->apply_right(coefficients.view());
-      }
-      check_cuda(cudaMemcpyAsync(image.data(),coefficients.data(),products*sizeof(double),
-          cudaMemcpyDeviceToDevice,context.stream()),"copy overlap image");
-      project(m.column(rhs));
-      sigma.apply(coefficients.view(),image.view());
-      project(h.column(rhs));
+    const auto bytes=static_cast<std::size_t>(structures)*sizeof(double);
+    for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
+      // Fixed graph addresses need three selected-space vectors, not new carriers.
+      check_cuda(cudaMemcpyAsync(input.data(),vectors.column(rhs).data,bytes,
+          cudaMemcpyDeviceToDevice,context.stream()),"stage graph input");
+      graph->launch();
+      check_cuda(cudaMemcpyAsync(h.column(rhs).data,hamiltonian.data(),bytes,
+          cudaMemcpyDeviceToDevice,context.stream()),"copy graph H image");
+      check_cuda(cudaMemcpyAsync(m.column(rhs).data,overlap.data(),bytes,
+          cudaMemcpyDeviceToDevice,context.stream()),"copy graph M image");
     }
   }
 };
@@ -172,6 +205,8 @@ StructureAction::StructureAction(Context& context,const vb::StructureAction& sou
     : impl_(std::make_unique<Impl>(context,source)) {}
 StructureAction::~StructureAction()=default;
 int StructureAction::size() const noexcept { return impl_->structures; }
+double StructureAction::graph_build_seconds() const noexcept { return impl_->graph_seconds; }
+std::size_t StructureAction::graph_nodes() const noexcept { return impl_->graph->nodes(); }
 const vb::StructureDiagonal& StructureAction::preconditioner_diagonal() const noexcept {
   return impl_->diagonal;
 }
