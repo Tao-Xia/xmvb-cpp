@@ -306,6 +306,46 @@ void check(bool compact,int ncore) {
   }
 }
 
+/** Independent factor-integral oracle across multiple 256-pair reductions. */
+void check_large_core_projection() {
+  constexpr int nb=45,ncore=3;
+  Matrix mo(nb,nb),z(nb,nb),w(nb,nb);
+  for (int i=0;i<nb;++i) for (int j=0;j<nb;++j) {
+    mo(i,j)=(i==j ? 1.0:0.0)+0.03*std::sin((i+1)*(j+2));
+    z(i,j)=std::cos(0.09*(i+j+1));
+    w(i,j)=0.02*std::sin(0.2*(i+1)*(j+1));
+  }
+  std::vector<int> first,second,rows,columns;
+  std::vector<double> values;
+  for (int i=0;i<nb;++i) for (int j=0;j<=i;++j) {
+    first.push_back(i);second.push_back(j);
+  }
+  for (int p=0;p<static_cast<int>(first.size());++p) for (int q=0;q<=p;++q) {
+    rows.push_back(p);columns.push_back(q);
+    values.push_back(z(first[p],second[p])*z(first[q],second[q])+
+        w(first[p],second[p])*w(first[q],second[q]));
+  }
+  const Matrix zm=mo.transpose()*z*mo,wm=mo.transpose()*w*mo;
+  Matrix expected_j(nb,ncore),expected_r(nb,ncore);
+  for (int p=0;p<nb;++p) for (int c=0;c<ncore;++c) {
+    expected_j(p,c)=zm(p,p)*zm(c,c)+wm(p,p)*wm(c,c);
+    expected_r(p,c)=2.0*expected_j(p,c)-zm(p,c)*zm(p,c)-wm(p,c)*wm(p,c);
+  }
+  xmvb::cuda::Context context(256*1024*1024);
+  auto source=xmvb::integrals::build_ao_pair_graph(rows,columns,values,nb);
+  xmvb::cuda::ExactAoPairOperator graph(context,source,nb);
+  DeviceMatrix dmo(context,nb,nb),dj(context,nb,ncore),dr(context,nb,ncore);
+  xmvb::cuda::copy_to_device(context,dmo.view(),mo);
+  if (!graph.core_diagonal(dmo.view(),ncore,dj.view(),dr.view()))
+    throw std::runtime_error("large CUDA core projection was not admitted");
+  Matrix j(nb,ncore),r(nb,ncore);
+  xmvb::cuda::copy_to_host(context,j,dj.view());
+  xmvb::cuda::copy_to_host(context,r,dr.view());
+  if ((j-expected_j).norm()>2e-10*std::max(1.0,expected_j.norm()) ||
+      (r-expected_r).norm()>2e-10*std::max(1.0,expected_r.norm()))
+    throw std::runtime_error("large CUDA core projection differs from factor oracle");
+}
+
 }  // namespace
 
 int main() {
@@ -316,6 +356,7 @@ int main() {
     check(false,3);
     check(true,1);
     check(true,2);
+    check_large_core_projection();
     std::cout << "CUDA analytic orbital diagonal passed\n";
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

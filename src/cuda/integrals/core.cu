@@ -4,6 +4,7 @@
 #include <array>
 #include <stdexcept>
 
+#include <cub/block/block_reduce.cuh>
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
@@ -12,27 +13,36 @@
 namespace xmvb::cuda {
 namespace {
 
+struct AddProjection {
+  __device__ double2 operator()(double2 a,double2 b) const {
+    return make_double2(a.x+b.x,a.y+b.y);
+  }
+};
+
+// Share each AO-pair coefficient between J and K. CUB reduces the pair
+// dimension without storing a MO-by-AO-pair feature matrix or partial sums.
 __global__ void project_core(linalg::ConstMatrixView mo,const int* first,
     const int* second,ConstPairPanel j,ConstPairPanel k,
     linalg::MatrixView coulomb,linalg::MatrixView response,int begin) {
+  using Reduce=cub::BlockReduce<double2,256>;
+  __shared__ typename Reduce::TempStorage scratch;
   const auto work=mo.cols*j.cols;
-  for (std::int64_t cell=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
-       cell<work;cell+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+  for (std::int64_t cell=blockIdx.x;cell<work;cell+=gridDim.x) {
     const auto p=cell%mo.cols,c=cell/mo.cols;
-    double jp=0.0,kp=0.0;
-    for (std::int64_t pair=0;pair<j.rows;++pair) {
+    double2 sum=make_double2(0.0,0.0);
+    for (std::int64_t pair=threadIdx.x;pair<j.rows;pair+=blockDim.x) {
       const int i=first[pair],l=second[pair];
       const double coefficient=(i==l ? 1.0:2.0)*mo.data[i+mo.ld*p]*mo.data[l+mo.ld*p];
-      jp+=coefficient*j.data[pair*j.ld+c];
-      kp+=coefficient*k.data[pair*k.ld+c];
+      sum.x+=coefficient*j.data[pair*j.ld+c];
+      sum.y+=coefficient*k.data[pair*k.ld+c];
     }
-    coulomb.data[p+coulomb.ld*(begin+c)]=jp;
-    response.data[p+response.ld*(begin+c)]=2.0*jp-kp;
+    sum=Reduce(scratch).Reduce(sum,AddProjection{});
+    if (threadIdx.x==0) {
+      coulomb.data[p+coulomb.ld*(begin+c)]=sum.x;
+      response.data[p+response.ld*(begin+c)]=2.0*sum.x-sum.y;
+    }
+    __syncthreads();
   }
-}
-
-unsigned int grid(std::int64_t count) {
-  return static_cast<unsigned int>(std::min<std::int64_t>(65535,(count+255)/256));
 }
 
 } // namespace
@@ -132,9 +142,13 @@ bool ExactAoPairOperator::prepare_core(linalg::ConstMatrixView mo,int ncore,
     const ExchangeRequest request{core,targets,k,j,projected,true,true,begin};
     if (joint && begin==0) build_exchange_images(std::array{*joint,request});
     else build_exchange_images(std::array{request});
-    project_core<<<grid(static_cast<std::int64_t>(n_bf_)*count),256,0,context_->stream()>>>(
-        mo,pair_first_.data(),pair_second_.data(),{j.data,j.rows,j.cols,j.ld},
-        {k.data,k.rows,k.cols,k.ld},coulomb,response,begin);
+    {
+      const nvtx3::scoped_range project_range{"ao.core_projection"};
+      const auto cells=static_cast<std::int64_t>(n_bf_)*count;
+      const auto blocks=static_cast<unsigned int>(std::min<std::int64_t>(65535,cells));
+      project_core<<<blocks,256,0,context_->stream()>>>(mo,pair_first_.data(),pair_second_.data(),
+          {j.data,j.rows,j.cols,j.ld},{k.data,k.rows,k.cols,k.ld},coulomb,response,begin);
+    }
     check_cuda(cudaGetLastError(),"CUDA direct core J/K diagonal projection");
   }
   return true;
