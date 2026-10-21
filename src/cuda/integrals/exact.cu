@@ -9,6 +9,7 @@
 
 #include <cuda_runtime.h>
 #include <cub/block/block_reduce.cuh>
+#include <cub/thread/thread_search.cuh>
 #include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
@@ -259,11 +260,26 @@ __device__ void add_oriented_exchange(int u,int v,double value,
 }
 
 template<class Index>
+__device__ int unique_row(const Index* offsets,int rows,std::int64_t edge,int begin=0) {
+  return begin+cub::UpperBound(offsets+begin+1,rows-begin,edge);
+}
+
+// Balance integral edges, not variably sized CSR rows. A warp finds its
+// first row once; only lanes crossing that row's end need another lookup.
+// Row offsets are small and shared; no full edge-to-row index is stored.
+template<class Index>
 __global__ void exchange_unique(const Index* offsets,const Index* columns,
-    const double* values,const int* first,const int* second,
+    const double* values,int rows,std::int64_t edges,const int* first,const int* second,
     linalg::ConstMatrixView density,linalg::MatrixView output,double weight,int channels) {
-  const int left=blockIdx.x;
-  for (std::int64_t p=offsets[left]+threadIdx.x;p<offsets[left+1];p+=blockDim.x) {
+  const int lane=threadIdx.x&31;
+  for (auto begin=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x-lane;
+       begin<edges;begin+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    int left=0;
+    if (!lane) left=unique_row(offsets,rows,begin);
+    left=__shfl_sync(0xffffffff,left,0);
+    const auto p=begin+lane;
+    if (p>=edges) continue;
+    if (p>=offsets[left+1]) left=unique_row(offsets,rows,p,left+1);
     const int right=static_cast<int>(columns[p]);
     const double value=weight*values[p];
     add_oriented_exchange(left,right,value,first,second,density,output,channels);
@@ -1100,13 +1116,13 @@ void ExactAoPairOperator::directional_adjoint(
 void ExactAoPairOperator::unique_exchange(linalg::ConstMatrixView density,
     linalg::MatrixView output,double weight,int channels) const {
   if (wide_)
-    exchange_unique<<<static_cast<unsigned int>(n_pairs_),256,0,context_->stream()>>>(
-        wide_offsets_.data(),wide_columns_.data(),values_.data(),pair_first_.data(),
-        pair_second_.data(),density,output,weight,channels);
+    exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
+        wide_offsets_.data(),wide_columns_.data(),values_.data(),blas_int(n_pairs_),
+        n_integrals_,pair_first_.data(),pair_second_.data(),density,output,weight,channels);
   else
-    exchange_unique<<<static_cast<unsigned int>(n_pairs_),256,0,context_->stream()>>>(
-        row_offsets_.data(),columns_.data(),values_.data(),pair_first_.data(),
-        pair_second_.data(),density,output,weight,channels);
+    exchange_unique<<<blocks(n_integrals_),256,0,context_->stream()>>>(
+        row_offsets_.data(),columns_.data(),values_.data(),blas_int(n_pairs_),
+        n_integrals_,pair_first_.data(),pair_second_.data(),density,output,weight,channels);
 }
 
 void ExactAoPairOperator::contract_jk(linalg::ConstMatrixView density,

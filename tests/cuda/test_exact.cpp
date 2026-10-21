@@ -423,8 +423,8 @@ void check_graph_and_pair(int active, bool compact,bool sparse=false,bool chunke
   }
 }
 
-void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=false) {
-  const Fixture fixture(sparse);
+void check_one_electron_and_core(bool compact,bool sparse=false,bool chunked=false,int n_bf=4) {
+  const Fixture fixture(sparse,n_bf);
   constexpr int active = 3;
   xmvb::cuda::Context context(128ULL * 1024ULL * 1024ULL);
   const xmvb::cuda::ExactAoPairOperator gpu(context, fixture.graph(compact,chunked),
@@ -937,6 +937,9 @@ int main() {
   try {
     check_unique_csr_library<int>();
     check_unique_csr_library<std::int64_t>();
+    // Multiple warps/blocks, empty CSR rows and a final partial warp exercise
+    // edge-balanced row lookup, scalar/batched exchange and density adjoints.
+    check_one_electron_and_core(true,true,false,12);
     for (bool sparse:{false,true}) {
       check_graph_and_pair(3,true,sparse,true);
       check_one_electron_and_core(true,sparse,true);
