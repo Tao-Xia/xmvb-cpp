@@ -24,6 +24,8 @@ class StructureAction {
 
   void apply(linalg::ConstMatrixView vectors,
              linalg::MatrixView hamiltonian, linalg::MatrixView overlap) const;
+  /** @brief Overlap alone; never evaluate sigma to prepare a metric. */
+  void apply_overlap(linalg::ConstMatrixView vectors, linalg::MatrixView overlap) const;
   vb::StructureActionResult apply(
       const Eigen::Ref<const Eigen::MatrixXd>& vectors) const;
   int size() const noexcept;
@@ -31,6 +33,21 @@ class StructureAction {
   std::size_t graph_nodes() const noexcept;
   int n_structures() const noexcept { return size(); }
   const vb::StructureDiagonal& preconditioner_diagonal() const noexcept;
+
+  int n_alpha_strings() const noexcept;
+  int n_beta_strings() const noexcept;
+  /** @brief Exact sparse structure/product maps, without orbital transforms. */
+  void expand_spin(linalg::ConstMatrixView structures, linalg::MatrixView carrier) const;
+  void contract_spin(linalg::ConstMatrixView carrier, linalg::MatrixView structures) const;
+  /** @brief In-place orbital maps on packed alpha-by-(beta*RHS) panels. */
+  void apply_orbital_transform(linalg::MatrixView carrier) const;
+  void apply_inverse_orbital_transform(linalg::MatrixView carrier) const;
+  void apply_adjoint_orbital_transform(linalg::MatrixView carrier) const;
+  void apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
+                                linalg::MatrixView image) const;
+  /** @brief Production FULL diagonal inverse; energies is a 1-by-RHS device view. */
+  void divide_carrier_diagonal(linalg::MatrixView carrier,
+      linalg::ConstMatrixView energies, double eigenvalue) const;
 
  private:
   struct Impl;

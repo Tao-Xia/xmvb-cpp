@@ -11,6 +11,11 @@ namespace {
 
 using Edge = vb::ExteriorOrbitalTransform::ShearEdge;
 
+__global__ void inverse_scale(const double* scales, double* inverse, int n) {
+  const int i = blockIdx.x*blockDim.x + threadIdx.x;
+  if (i < n) inverse[i] = 1.0/scales[i];
+}
+
 unsigned int grid_size(std::int64_t count) {
   constexpr std::int64_t threads = 256;
   const auto blocks = (count + threads - 1) / threads;
@@ -63,11 +68,15 @@ __global__ void shear_right(linalg::MatrixView coefficients,
 ExteriorTransform::ExteriorTransform(
     Context& context, const vb::ExteriorOrbitalTransform& source)
     : context_(&context), dimension_(source.dimension()),
-      scales_(context, static_cast<std::size_t>(source.dimension())) {
+      scales_(context, static_cast<std::size_t>(source.dimension())),
+      inverse_scales_(context, static_cast<std::size_t>(source.dimension())) {
   if (dimension_ <= 0 || source.determinant_scales().size() != dimension_)
     throw std::invalid_argument("invalid CUDA exterior transform dimensions");
   context.copy_to_device(scales_.data(), source.determinant_scales().data(),
                          scales_.size()*sizeof(double));
+  inverse_scale<<<grid_size(dimension_),256,0,context.stream()>>>(
+      scales_.data(), inverse_scales_.data(), dimension_);
+  check_cuda(cudaGetLastError(), "inverse exterior scaling");
   std::vector<Edge> all_edges;
   shears_.reserve(source.shear_count());
   for (std::size_t i = 0; i < source.shear_count(); ++i) {
@@ -84,7 +93,7 @@ ExteriorTransform::ExteriorTransform(
 }
 
 void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
-                                    bool adjoint) const {
+                                    bool adjoint, bool inverse) const {
   if (coefficients.rows != dimension_ || coefficients.cols <= 0 ||
       coefficients.ld < coefficients.rows || coefficients.data == nullptr)
     throw std::invalid_argument("invalid CUDA exterior left panel");
@@ -92,29 +101,30 @@ void ExteriorTransform::apply_left(linalg::MatrixView coefficients,
     // cuBLAS permits in-place dgmm when lda == ldc, as here.
     check_cublas(cublasDdgmm(context_->blas(), CUBLAS_SIDE_LEFT,
         blas_int(coefficients.rows), blas_int(coefficients.cols),
-        coefficients.data, blas_int(coefficients.ld), scales_.data(), 1,
+        coefficients.data, blas_int(coefficients.ld),
+        inverse ? inverse_scales_.data() : scales_.data(), 1,
         coefficients.data, blas_int(coefficients.ld)),
         "cublasDdgmm exterior left scaling");
   };
-  if (!adjoint) {
+  if (adjoint == inverse) {
     scale();
   }
   for (std::size_t step = 0; step < shears_.size(); ++step) {
-    const Shear& shear = shears_[adjoint ? shears_.size()-1-step : step];
+    const Shear& shear = shears_[adjoint != inverse ? shears_.size()-1-step : step];
     if (shear.count == 0 || shear.coefficient == 0.0) continue;
     const std::int64_t work = static_cast<std::int64_t>(shear.count)*coefficients.cols;
     shear_left<<<grid_size(work),256,0,context_->stream()>>>(
         coefficients, edges_.data()+shear.offset, shear.count,
-        shear.coefficient, adjoint, work);
+        inverse ? -shear.coefficient : shear.coefficient, adjoint, work);
     check_cuda(cudaGetLastError(), "CUDA exterior left shear");
   }
-  if (adjoint) {
+  if (adjoint != inverse) {
     scale();
   }
 }
 
 void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
-                                     bool adjoint) const {
+                                     bool adjoint, bool inverse) const {
   if (coefficients.rows <= 0 || coefficients.cols <= 0 ||
       coefficients.cols % dimension_ != 0 ||
       coefficients.ld < coefficients.rows || coefficients.data == nullptr)
@@ -125,24 +135,24 @@ void ExteriorTransform::apply_right(linalg::MatrixView coefficients,
       const auto panel = coefficients.columns(block*dimension_, dimension_);
       check_cublas(cublasDdgmm(context_->blas(), CUBLAS_SIDE_RIGHT,
           blas_int(panel.rows), blas_int(panel.cols), panel.data,
-          blas_int(panel.ld), scales_.data(), 1, panel.data,
+          blas_int(panel.ld), inverse ? inverse_scales_.data() : scales_.data(), 1, panel.data,
           blas_int(panel.ld)), "cublasDdgmm exterior right scaling");
     }
   };
-  if (!adjoint) {
+  if (adjoint == inverse) {
     scale();
   }
   for (std::size_t step = 0; step < shears_.size(); ++step) {
-    const Shear& shear = shears_[adjoint ? shears_.size()-1-step : step];
+    const Shear& shear = shears_[adjoint != inverse ? shears_.size()-1-step : step];
     if (shear.count == 0 || shear.coefficient == 0.0) continue;
     const std::int64_t work = static_cast<std::int64_t>(shear.count)*
                               coefficients.rows*rhs;
     shear_right<<<grid_size(work),256,0,context_->stream()>>>(
         coefficients, edges_.data()+shear.offset, shear.count,
-        shear.coefficient, adjoint, dimension_, work);
+        inverse ? -shear.coefficient : shear.coefficient, adjoint, dimension_, work);
     check_cuda(cudaGetLastError(), "CUDA exterior right shear");
   }
-  if (adjoint) {
+  if (adjoint != inverse) {
     scale();
   }
 }

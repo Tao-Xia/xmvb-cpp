@@ -20,18 +20,27 @@ using DeviceEigenAction = std::function<void(
     linalg::MatrixView hamiltonian_images,
     linalg::MatrixView overlap_images)>;
 
+/** @brief Positive inverse image of a residual, entirely on Context's stream.
+ * The shared Davidson loop supplies the minus sign. Implementations must not
+ * download the residual or invoke a host numerical preconditioner.
+ */
+using DeviceEigenPreconditioner = std::function<void(
+    linalg::ConstMatrixView residual, double energy, linalg::MatrixView image)>;
+
 /** The device backend shares the host Davidson iteration and stopping logic. */
 linalg::DavidsonResult solve_davidson(
     Context& context, const DeviceEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    const linalg::DavidsonOptions& options);
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner = {});
 
 linalg::DavidsonResult solve_davidson(
     Context& context, const DeviceEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_vectors,
-    const linalg::DavidsonOptions& options);
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner = {});
 
 }  // namespace xmvb::cuda

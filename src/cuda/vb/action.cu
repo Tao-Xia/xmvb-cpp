@@ -19,6 +19,20 @@
 namespace xmvb::cuda {
 namespace {
 
+__global__ void divide_diagonal(linalg::MatrixView carrier,
+    const double* diagonal, linalg::ConstMatrixView energies,
+    std::int64_t products, double shift, std::int64_t elements) {
+  const std::int64_t i=static_cast<std::int64_t>(blockIdx.x)*blockDim.x+threadIdx.x;
+  if (i>=elements) return;
+  const auto rhs=i/products, product=i%products;
+  double denominator=diagonal[product]-energies.data[rhs*energies.ld]-shift;
+  // Exactly the existing production FULL inverse convention, not a new tolerance.
+  if (fabs(denominator)<1.0e-8) denominator=1.0e-8;
+  const auto row=product%carrier.rows;
+  const auto column=product/carrier.rows+rhs*(products/carrier.rows);
+  carrier.data[row+column*carrier.ld]/=denominator;
+}
+
 void check_sparse(cusparseStatus_t status, const char* operation) {
   if (status != CUSPARSE_STATUS_SUCCESS)
     throw std::runtime_error(std::string(operation) + ": " + cusparseGetErrorString(status));
@@ -57,6 +71,7 @@ struct StructureAction::Impl {
   linalg::MatrixView coefficients, image;
   mutable Buffer<std::byte> sparse_workspace;
   mutable Matrix<double> input, hamiltonian, overlap;
+  mutable Matrix<double> carrier_diagonal;
   std::unique_ptr<Graph> graph;
   double graph_seconds=0;
 
@@ -212,6 +227,83 @@ const vb::StructureDiagonal& StructureAction::preconditioner_diagonal() const no
 }
 void StructureAction::apply(linalg::ConstMatrixView vectors,
     linalg::MatrixView h,linalg::MatrixView m) const { impl_->apply(vectors,h,m); }
+
+void StructureAction::apply_overlap(linalg::ConstMatrixView vectors,
+    linalg::MatrixView overlap) const {
+  const auto& p=*impl_;
+  if (vectors.rows!=p.structures || overlap.rows!=p.structures || vectors.cols<=0 ||
+      overlap.cols!=vectors.cols)
+    throw std::invalid_argument("CUDA overlap block dimensions");
+  for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
+    expand_spin(vectors.column(rhs),p.coefficients);
+    apply_orbital_transform(p.coefficients);
+    apply_adjoint_orbital_transform(p.coefficients);
+    contract_spin(p.coefficients,overlap.column(rhs));
+  }
+}
+
+int StructureAction::n_alpha_strings() const noexcept { return impl_->alpha; }
+int StructureAction::n_beta_strings() const noexcept { return impl_->beta; }
+
+void StructureAction::expand_spin(linalg::ConstMatrixView structures,
+    linalg::MatrixView carrier) const {
+  const auto& p=*impl_;
+  if (structures.rows!=p.structures || structures.cols<=0 || carrier.rows!=p.alpha ||
+      carrier.cols!=p.beta*structures.cols || carrier.ld!=p.alpha)
+    throw std::invalid_argument("CUDA spin expansion dimensions");
+  for (std::int64_t rhs=0;rhs<structures.cols;++rhs) {
+    p.spmm(false,structures.column(rhs),p.support.view());
+    auto panel=carrier.columns(rhs*p.beta,p.beta);
+    check_cuda(cudaMemsetAsync(panel.data,0,p.products*sizeof(double),p.context.stream()),
+        "clear expanded spin panel");
+    thrust::scatter(thrust::cuda::par_nosync.on(p.context.stream()),p.support.data(),
+        p.support.data()+p.groups,p.product_indices.data(),panel.data);
+  }
+}
+
+void StructureAction::contract_spin(linalg::ConstMatrixView carrier,
+    linalg::MatrixView structures) const {
+  const auto& p=*impl_;
+  if (structures.rows!=p.structures || structures.cols<=0 || carrier.rows!=p.alpha ||
+      carrier.cols!=p.beta*structures.cols || carrier.ld!=p.alpha)
+    throw std::invalid_argument("CUDA spin contraction dimensions");
+  for (std::int64_t rhs=0;rhs<structures.cols;++rhs)
+    p.project(carrier.columns(rhs*p.beta,p.beta),structures.column(rhs));
+}
+
+void StructureAction::apply_orbital_transform(linalg::MatrixView carrier) const {
+  impl_->alpha_transform.apply_left(carrier);
+  impl_->beta_transform->apply_right(carrier);
+}
+void StructureAction::apply_inverse_orbital_transform(linalg::MatrixView carrier) const {
+  impl_->beta_transform->apply_right(carrier,false,true);
+  impl_->alpha_transform.apply_left(carrier,false,true);
+}
+void StructureAction::apply_adjoint_orbital_transform(linalg::MatrixView carrier) const {
+  impl_->beta_transform->apply_right(carrier,true);
+  impl_->alpha_transform.apply_left(carrier,true);
+}
+void StructureAction::apply_carrier_hamiltonian(linalg::ConstMatrixView carrier,
+    linalg::MatrixView image) const { impl_->sigma.apply(carrier,image); }
+
+void StructureAction::divide_carrier_diagonal(linalg::MatrixView carrier,
+    linalg::ConstMatrixView energies,double eigenvalue) const {
+  auto& p=*impl_;
+  if (carrier.rows!=p.alpha || carrier.cols<=0 || carrier.cols%p.beta!=0 ||
+      energies.rows!=1 || energies.cols!=carrier.cols/p.beta)
+    throw std::invalid_argument("CUDA carrier inverse dimensions");
+  if (p.carrier_diagonal.rows()==0) {
+    p.carrier_diagonal=Matrix<double>(p.context,p.alpha,p.beta);
+    p.sigma.diagonal(p.carrier_diagonal.view());
+  }
+  const auto elements=p.products*energies.cols;
+  const auto blocks=(elements+255)/256;
+  if (blocks>std::numeric_limits<unsigned int>::max())
+    throw std::overflow_error("CUDA diagonal inverse grid overflow");
+  divide_diagonal<<<static_cast<unsigned int>(blocks),256,0,p.context.stream()>>>(
+      carrier,p.carrier_diagonal.data(),energies,p.products,eigenvalue,elements);
+  check_cuda(cudaGetLastError(),"CUDA carrier diagonal inverse");
+}
 
 vb::StructureActionResult StructureAction::apply(
     const Eigen::Ref<const Eigen::MatrixXd>& vectors) const {

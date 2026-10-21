@@ -14,6 +14,7 @@
 #include "cuda/linalg/davidson.hpp"
 #include "cuda/memory/context.hpp"
 #include "cuda/vb/action.hpp"
+#include "cuda/vb/ci.hpp"
 #include "linalg/eigensolver.hpp"
 #include "action_benchmark.hpp"
 
@@ -70,12 +71,11 @@ void report_device(const xmvb::cuda::Context& context) {
 
 int main(int argc, char** argv) {
   try {
-    if (argc != 3 || (std::string(argv[1]) != "--cpu" &&
-                      std::string(argv[1]) != "--gpu" &&
+    if (argc != 3 || (std::string(argv[1]) != "--gpu" &&
                       std::string(argv[1]) != "--action" &&
                       std::string(argv[1]) != "--cpu-action" &&
                       std::string(argv[1]) != "--check"))
-      throw std::invalid_argument("usage: c12_cuda_benchmark --cpu|--gpu|--check|--action INPUT.xmi");
+      throw std::invalid_argument("usage: c12_cuda_benchmark --gpu|--check|--action|--cpu-action INPUT.xmi");
     const std::string mode = argv[1];
     std::cout << std::unitbuf;
     const auto process_start = Clock::now();
@@ -89,22 +89,11 @@ int main(int argc, char** argv) {
               << "process_id=" << getpid() << '\n';
     report_fixture(fixture);
 
-    const auto options = xmvb::linalg::make_davidson_options(
+    auto options = xmvb::linalg::make_davidson_options(
         n,1,1.0e-7,1.0e-3,1.0e-7);
     if (mode=="--cpu-action") {
       xmvb::cuda::test::benchmark_cpu_action(cpu,1);
       xmvb::cuda::test::benchmark_cpu_action(cpu,3);
-    } else if (mode=="--cpu") {
-      const xmvb::linalg::GeneralizedEigenAction action = [&cpu](
-          const Eigen::Ref<const Eigen::MatrixXd>& vectors) {
-        auto result = cpu.apply(vectors);
-        return xmvb::linalg::GeneralizedEigenActionResult{
-            std::move(result.hamiltonian),std::move(result.overlap)};
-      };
-      const auto start = Clock::now();
-      const auto result = xmvb::linalg::GeneralizedEigensolver().solve_davidson(
-          action,diagonal.hamiltonian,diagonal.overlap,options);
-      report_result(result,fixture.energy_offset(),elapsed(start,Clock::now()));
     } else {
       const auto device_start = Clock::now();
       xmvb::cuda::Context context(64ULL*1024ULL*1024ULL*1024ULL);
@@ -129,13 +118,24 @@ int main(int argc, char** argv) {
         require(h_error<2e-9 && s_error<2e-9,
                 "C12 GPU H/S block differs from CPU");
       } else {
-        const xmvb::cuda::DeviceEigenAction action = [&gpu](
-            xmvb::linalg::ConstMatrixView v,
-            xmvb::linalg::MatrixView h,
-            xmvb::linalg::MatrixView s) { gpu.apply(v,h,s); };
+        const auto model_start=Clock::now();
+        const xmvb::cuda::SpinMetric device_spin(context,cpu,
+            fixture.topology.alpha_reuse_table.unique_determinants,
+            fixture.topology.beta_reuse_table.unique_determinants,
+            context.device_byte_budget());
+        xmvb::cuda::StructureCi solver(context,gpu,device_spin,
+            fixture.loaded.input.complete_active_space);
+        context.synchronize();
+        std::cout << "ci_model_init_seconds=" << elapsed(model_start,Clock::now()) << '\n'
+                  << "ci_preconditioner=" << solver.preconditioner_name() << '\n'
+                  << "ci_identity_overlap=" << solver.identity_overlap() << '\n';
+        options.observe_iteration=[](int iteration,int basis,double energy,double relative,
+                                     double stationarity) {
+          std::cout << "ci_trace=" << iteration << ',' << basis << ',' << energy << ','
+                    << relative << ',' << stationarity << '\n';
+        };
         const auto start = Clock::now();
-        const auto result = xmvb::cuda::solve_davidson(
-            context,action,diagonal.hamiltonian,diagonal.overlap,options);
+        const auto result = solver.solve(options);
         context.synchronize();
         report_result(result,fixture.energy_offset(),elapsed(start,Clock::now()));
       }

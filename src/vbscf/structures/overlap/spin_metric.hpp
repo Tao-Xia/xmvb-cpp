@@ -53,16 +53,17 @@ public:
       const std::vector<std::vector<int>>& alpha,
       const std::vector<std::vector<int>>& beta, std::size_t byte_limit);
 
-private:
-  struct Block {
-    std::vector<int> indices;
-    Eigen::MatrixXd lower;
-  };
+  /** @brief Occupation topology only; performs no numerical Gram contraction. */
   static std::vector<std::vector<int>> occupation_groups(
       const StructureAction& action,
       const std::vector<std::vector<int>>& alpha,
       const std::vector<std::vector<int>>& beta);
 
+private:
+  struct Block {
+    std::vector<int> indices;
+    Eigen::MatrixXd lower;
+  };
   int dimension_;
   Eigen::VectorXd diagonal_;
   std::vector<Block> blocks_;

@@ -37,13 +37,15 @@ struct DeviceBackend {
   static constexpr bool supports_host_callbacks = false;
   Context& context;
   const DeviceEigenAction& action;
+  const DeviceEigenPreconditioner& inverse;
   Buffer<double> diagonal_h;
   Buffer<double> diagonal_s;
 
   DeviceBackend(Context& context_, const DeviceEigenAction& action_,
                 const Eigen::Ref<const Eigen::VectorXd>& h,
-                const Eigen::Ref<const Eigen::VectorXd>& s)
-      : context(context_), action(action_),
+                const Eigen::Ref<const Eigen::VectorXd>& s,
+                const DeviceEigenPreconditioner& inverse_)
+      : context(context_), action(action_), inverse(inverse_),
         diagonal_h(context_, static_cast<std::size_t>(h.size())),
         diagonal_s(context_, static_cast<std::size_t>(s.size())) {
     context.copy_to_device(diagonal_h.data(), h.data(),
@@ -173,6 +175,13 @@ struct DeviceBackend {
                     const Eigen::Ref<const Eigen::VectorXd>&,
                     const Eigen::Ref<const Eigen::VectorXd>&,
                     double lambda) const {
+    if (inverse) {
+      inverse(residual, lambda, correction);
+      constexpr double minus_one = -1.0;
+      check_cublas(cublasDscal(context.blas(), blas_int(correction.rows),
+          &minus_one, correction.data, 1), "Davidson inverse sign");
+      return;
+    }
     const auto count = correction.rows;
     constexpr int threads = 256;
     const int blocks = blas_int((count + threads - 1) / threads);
@@ -196,7 +205,8 @@ linalg::DavidsonResult solve_davidson(
     Context& context, const DeviceEigenAction& action,
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
-    const linalg::DavidsonOptions& options) {
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner) {
   const int dimension = static_cast<int>(hamiltonian_diagonal.size());
   linalg::detail::validate_davidson_diagonals(
       hamiltonian_diagonal, overlap_diagonal);
@@ -206,7 +216,7 @@ linalg::DavidsonResult solve_davidson(
   const Eigen::MatrixXd initial = linalg::make_davidson_initial_vectors(
       hamiltonian_diagonal, overlap_diagonal, n_initial);
   return solve_davidson(context, action, hamiltonian_diagonal,
-                        overlap_diagonal, initial, options);
+                        overlap_diagonal, initial, options, preconditioner);
 }
 
 linalg::DavidsonResult solve_davidson(
@@ -214,7 +224,8 @@ linalg::DavidsonResult solve_davidson(
     const Eigen::Ref<const Eigen::VectorXd>& hamiltonian_diagonal,
     const Eigen::Ref<const Eigen::VectorXd>& overlap_diagonal,
     const Eigen::Ref<const Eigen::MatrixXd>& initial_vectors,
-    const linalg::DavidsonOptions& options) {
+    const linalg::DavidsonOptions& options,
+    const DeviceEigenPreconditioner& preconditioner) {
   linalg::detail::validate_davidson_diagonals(
       hamiltonian_diagonal, overlap_diagonal);
   linalg::detail::validate_davidson_options(
@@ -230,7 +241,7 @@ linalg::DavidsonResult solve_davidson(
         "CUDA Davidson does not support host residual callbacks");
   }
   DeviceBackend backend(context, action, hamiltonian_diagonal,
-                        overlap_diagonal);
+                        overlap_diagonal, preconditioner);
   return linalg::detail::solve_davidson(
       backend, hamiltonian_diagonal, overlap_diagonal, initial_vectors,
       options);
