@@ -8,7 +8,7 @@
 namespace xmvb::cuda {
 
 /** CPU structure AH inverse uses distinct constraints for the two models. */
-enum class CiInverseConstraint { Spin, Carrier };
+enum class CiInverseConstraint { Diagonal, Spin, Carrier };
 
 /** Device actions in the original selected structure space. */
 struct SingleStateCiActions {

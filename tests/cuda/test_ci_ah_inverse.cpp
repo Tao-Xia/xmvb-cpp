@@ -97,7 +97,8 @@ struct Fixture {
   }
 };
 
-void check(bool full) {
+void check(bool full,bool spin_model=false) {
+  const char* branch=full ? "FULL":(spin_model ? "SPIN":"SELECTED");
   Fixture fixture(full);
   const int n=full?3:2;
   xmvb::vb::SpinMetric cpu_spin(*fixture.source,fixture.strings,
@@ -138,18 +139,26 @@ void check(bool full) {
       const Matrix image=cpu_full->apply_carrier_inverse(x,energies,eigenvalue);
       return image.col(0);
     }
-    const Vector model=(diagonal_h.array()-
-        (selected_energy+eigenvalue)*diagonal_m.array()).abs().max(1.0e-8);
-    const Matrix image=cpu_spin.solve_diagonal_model(x,model);
-    return image.col(0);
+    Vector model=diagonal_h-(selected_energy+eigenvalue)*diagonal_m;
+    if (spin_model) {
+      model=model.cwiseAbs().cwiseMax(1.0e-8);
+      const Matrix image=cpu_spin.solve_diagonal_model(x,model);
+      return image.col(0);
+    }
+    for (int i=0;i<n;++i) if (std::abs(model[i])<1.0e-8) model[i]=1.0e-8;
+    return (x.array()/model.array()).matrix();
   };
 
   auto d_rhs=upload(context,rhs);
   DeviceMatrix d_out(context,n,1);
-  ci.inverse_augmented_hessian_model(d_rhs.view(),selected_energy,eigenvalue,
+  if (!spin_model) {
+    ci.inverse_augmented_hessian_model(d_rhs.view(),selected_energy,eigenvalue,
                                       d_out.view());
-  near(download(context,d_out.view()),cpu_inverse(rhs),full?"FULL":"ION",
-       "CUDA ambient AH inverse differs from CPU spin/carrier oracle");
+    near(download(context,d_out.view()),cpu_inverse(rhs),branch,
+         "CUDA ambient AH inverse differs from CPU model oracle");
+  }
+  auto spin_diagonal=upload(context,Vector((diagonal_h.array()-
+      (selected_energy+eigenvalue)*diagonal_m.array()).abs().max(1.0e-8)));
 
   auto d_selected=upload(context,selected);
   xmvb::cuda::SingleStateCiActions actions;
@@ -163,13 +172,15 @@ void check(bool full) {
   };
   actions.augmented_inverse=[&](xmvb::linalg::ConstMatrixView x,double shift,
                                  xmvb::linalg::MatrixView y) {
-    ci.inverse_augmented_hessian_model(x,selected_energy,shift,y);
+    if (spin_model) spin.solve_diagonal_model(x,spin_diagonal.view(),y);
+    else ci.inverse_augmented_hessian_model(x,selected_energy,shift,y);
   };
   actions.maximum_component=[&](xmvb::linalg::ConstMatrixView x) {
     return action.maximum_orthogonal_component(x);
   };
   actions.inverse_constraint=full ? xmvb::cuda::CiInverseConstraint::Carrier :
-      xmvb::cuda::CiInverseConstraint::Spin;
+      (spin_model ? xmvb::cuda::CiInverseConstraint::Spin:
+          xmvb::cuda::CiInverseConstraint::Diagonal);
   xmvb::cuda::SingleStateCiTangent tangent(context,n,d_selected.view(),
                                             selected_energy,1.0,actions);
   DeviceMatrix d_z(context,n-1,1),d_ambient(context,n,1);
@@ -185,19 +196,19 @@ void check(bool full) {
     const Vector right=ambient-constraint*selected.dot(ambient);
     const Vector solved=cpu_inverse(right);
     expected=solved-selected*constraint.dot(solved);
-  } else {
+  } else if (spin_model) {
     const Vector solved=cpu_inverse(ambient);
     const Vector constraint_inverse=cpu_inverse(constraint);
     expected=solved-constraint_inverse*
         (constraint.dot(solved)/constraint.dot(constraint_inverse));
-  }
+  } else expected=cpu_inverse(ambient);
   DeviceMatrix d_inverse(context,n-1,1),d_projected(context,n,1);
   tangent.apply_inverse_augmented_hessian_diagonal(d_z.view(),eigenvalue,
                                                     d_inverse.view());
   tangent.expand_coordinates(d_inverse.view(),d_projected.view());
   const Vector horizontal=expected-constraint*
       (constraint.dot(expected)/constraint.squaredNorm());
-  near(download(context,d_projected.view()),horizontal,full?"FULL":"ION",
+  near(download(context,d_projected.view()),horizontal,branch,
        "CUDA constrained AH inverse differs from CPU tangent oracle");
 
   DeviceMatrix d_response(context,n,1);
@@ -208,7 +219,7 @@ void check(bool full) {
   const double gpu_max=tangent.maximum_coefficient_component_coordinates(
       d_z.view());
   if (!(std::abs(cpu_max-gpu_max)<5.0e-10*std::max(1.0,cpu_max))) {
-    std::cerr<<(full?"FULL":"ION")
+    std::cerr<<branch
              <<": CUDA CI clipping differs from CPU orthogonal carrier maximum"
              <<" abs_error="<<std::abs(cpu_max-gpu_max)
              <<" gpu_max="<<gpu_max<<" cpu_max="<<cpu_max<<'\n';
@@ -222,6 +233,7 @@ void check(bool full) {
 int main() {
   try {
     check(false);
+    check(false,true);
     check(true);
     std::cout<<"CUDA CI AH inverse/carrier clipping CPU oracle: PASS\n";
   } catch (const std::exception& error) {

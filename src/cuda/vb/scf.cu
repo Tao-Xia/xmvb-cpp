@@ -188,7 +188,9 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
                 accepted.ci_point.get());
           },
           [&](View x) { origin.activate();return action.maximum_orthogonal_component(x); },
-          input.complete_active_space ? CiInverseConstraint::Carrier:CiInverseConstraint::Spin});
+          input.complete_active_space ? CiInverseConstraint::Carrier:
+              (ci_solver.uses_selected_metric() ? CiInverseConstraint::Diagonal:
+                  CiInverseConstraint::Spin)});
     const int ns=tangent ? tangent->tangent_size():0,dimension=no+ns;
     SelectedCrossOverlap overlap(context,action,na,
         ci_solver.has_exact_metric_inverse() ? SelectedCrossOverlap::ExactMetricInverse(

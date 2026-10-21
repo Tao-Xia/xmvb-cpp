@@ -56,8 +56,9 @@ class StructureCi {
    */
   void inverse_metric(linalg::ConstMatrixView rhs,linalg::MatrixView image);
   /** Unconstrained ambient inverse for the coupled CIAH preconditioner.
-   * FULL uses the exact carrier model; selected spaces use the current-frame
-   * positive spin-Gram diagonal model. Horizontal constraints live in tangent.
+   * FULL uses the carrier model, bounded selections a signed diagonal inverse,
+   * and broad selections the positive spin-Gram model, as in the CPU adapter.
+   * Horizontal constraints live in tangent.
    */
   void inverse_augmented_hessian_model(linalg::ConstMatrixView rhs,
       double selected_energy,double eigenvalue,linalg::MatrixView image,

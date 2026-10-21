@@ -165,6 +165,13 @@ void SingleStateCiTangent::apply_inverse_augmented_hessian_diagonal(
   if (!actions_.augmented_inverse || !std::isfinite(eigenvalue))
     throw std::invalid_argument("CI tangent augmented inverse is unavailable");
   expand_coordinates(covector,ambient_.view());
+  if (actions_.inverse_constraint==CiInverseConstraint::Diagonal) {
+    // Bounded selected spaces use Q^T diag(H-(E+shift)M)^-1 Q.
+    // Unlike the positive spin model, no Schur inverse is present on CPU.
+    actions_.augmented_inverse(ambient_.view(),eigenvalue,hessian_.view());
+    project_coordinates(hessian_.view(),direction);
+    return;
+  }
   // reflector = S c - reflected_first * e_1. Reconstruct the cached selected
   // metric image from the Householder data without another H/M action.
   device_copy(*context_,metric_.data(),reflector_.data(),structures_);

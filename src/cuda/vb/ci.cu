@@ -31,6 +31,16 @@ __global__ void augmented_positive_model(const double* h,const double* m,
     model[i]=fmax(fabs(h[i]-(selected_energy+eigenvalue)*m[i]),1.0e-8);
 }
 
+__global__ void augmented_diagonal_inverse(const double* h,const double* m,
+    const double* rhs,double energy,double shift,double* out,int n) {
+  const int i=blockIdx.x*blockDim.x+threadIdx.x;
+  if (i<n) {
+    double denominator=h[i]-(energy+shift)*m[i];
+    if (fabs(denominator)<1.0e-8) denominator=1.0e-8;
+    out[i]=rhs[i]/denominator;
+  }
+}
+
 __global__ void select_jacobi_seed(linalg::MatrixView seed,
     const double* h,const double* m,int* selected,int n,int column) {
   __shared__ double minima[256];
@@ -174,6 +184,13 @@ void StructureCi::inverse_augmented_hessian_model(
   } else {
     if (!point) { refresh();point=point_.get(); }
     const int n=action_->size();
+    if (selected_mode_) {
+      augmented_diagonal_inverse<<<(n+255)/256,256,0,context_->stream()>>>(
+          point->diagonal_h.data(),point->diagonal_m.data(),rhs.data,
+          selected_energy,eigenvalue,image.data,n);
+      check_cuda(cudaGetLastError(),"CUDA selected CI signed diagonal inverse");
+      return;
+    }
     augmented_positive_model<<<(n+255)/256,256,0,context_->stream()>>>(
         point->diagonal_h.data(),point->diagonal_m.data(),selected_energy,eigenvalue,
         positive_.data(),n);
