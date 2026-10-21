@@ -161,11 +161,17 @@ void check(bool compact,int ncore) {
         throw std::runtime_error("CUDA direct core projection differs from four-index oracle");
     };
     check_projected();
+    Matrix expected_density_response;
     {
       xmvb::cuda::Buffer<double> response;
       if (!graph.core_diagonal(dmo.view(),ncore,dj.view(),dr.view(),&response) ||
           !response.data())
         throw std::runtime_error("CUDA fused core density response was not admitted");
+      Matrix j(Fixture::nbf,ncore),r(Fixture::nbf,ncore);
+      xmvb::cuda::copy_to_host(context,j,dj.view());
+      xmvb::cuda::copy_to_host(context,r,dr.view());
+      if ((j-expected_j).norm()>2e-10 || (r-expected_r).norm()>2e-10)
+        throw std::runtime_error("CUDA shared core image differs from four-index oracle");
       auto standalone=graph.prepare_density_projection(dmo.view().columns(0,ncore),
           dmo.view().columns(0,ncore));
       const int dimension=Fixture::nbf*ncore;
@@ -179,6 +185,7 @@ void check(bool compact,int ncore) {
       xmvb::cuda::copy_to_host(context,reference,standalone.view());
       if ((fused-reference).norm()>2e-10)
         throw std::runtime_error("CUDA fused core density response differs from separate transform");
+      expected_density_response=std::move(fused);
     }
     const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
     const std::size_t one_channel=2*(2*Fixture::npair+Fixture::nbf*Fixture::nbf+
@@ -188,6 +195,34 @@ void check(bool compact,int ncore) {
       check_projected(); // Forces one core channel per tile, with identical physics.
       if (context.counters().peak_device_bytes>context.device_byte_budget())
         throw std::runtime_error("CUDA core projection exceeded the live budget");
+    }
+    if (ncore>=2) {
+      // Admit the response map, but force its half-transform into proper
+      // core-column slices. This exercises nonzero offsets in the shared U view.
+      const std::size_t dimension=Fixture::nbf*ncore;
+      const std::size_t count=dimension*(dimension+1)/2;
+      const std::size_t scratch=2*Fixture::nbf*Fixture::nbf*ncore+
+          3*Fixture::nbf*ncore*ncore;
+      xmvb::cuda::Buffer<unsigned char> padding(context,
+          available-(2*count+scratch)*sizeof(double));
+      xmvb::cuda::Buffer<double> response;
+      if (!graph.core_diagonal(dmo.view(),ncore,dj.view(),dr.view(),&response) ||
+          response.empty())
+        throw std::runtime_error("CUDA tiled core response was not admitted");
+      Matrix j(Fixture::nbf,ncore),r(Fixture::nbf,ncore);
+      xmvb::cuda::copy_to_host(context,j,dj.view());
+      xmvb::cuda::copy_to_host(context,r,dr.view());
+      if ((j-expected_j).norm()>2e-10 || (r-expected_r).norm()>2e-10)
+        throw std::runtime_error("CUDA tiled shared core image differs from oracle");
+      std::vector<double> packed_response(response.size());
+      context.copy_to_host(packed_response.data(),response.data(),response.size()*sizeof(double));
+      Matrix actual_response(dimension,dimension);
+      for (std::size_t i=0;i<dimension;++i) for (std::size_t j=0;j<dimension;++j) {
+        const auto high=std::max(i,j),low=std::min(i,j);
+        actual_response(i,j)=packed_response[high*(high+1)/2+low];
+      }
+      if ((actual_response-expected_density_response).norm()>2e-10)
+        throw std::runtime_error("CUDA tiled core response differs from complete-column projection");
     }
   }
   const DeviceMatrix actual_device=xmvb::cuda::build_analytic_rotation_diagonal(
