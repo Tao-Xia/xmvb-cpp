@@ -83,7 +83,8 @@ class ExactAoPairOperator {
 
   /** Core-only J(p,p;c,c) and 2J(p,p;c,c)-K(p,c;p,c), without full AO
    * response matrices. Returns false for the compact device representation.
-   * Row-graph work is tiled over core channels within the live memory budget.
+   * Both images use one half transform, tiled within the live memory budget;
+   * Coulomb is a diagonal slice of its projection, not another ERI sweep.
    * Optional density_projection is the upper-column-packed symmetric map
    * vec(V) -> vec(G(V C^T+C V^T) C), C=mo[:,0:n_core], from the same sweep.
    */
@@ -162,7 +163,7 @@ class ExactAoPairOperator {
   void build_exchange_image(linalg::ConstMatrixView coefficients,
       PairPanel image,bool diagonal,linalg::ConstMatrixView targets = {},
       linalg::MatrixView density_projection = {},bool packed = false,
-      int first_column = 0) const;
+      int first_column = 0,PairPanel coulomb = {}) const;
   Matrix<double> reserve_density_projection(linalg::ConstMatrixView coefficients,
       linalg::ConstMatrixView targets) const;
   void packed_exchange(linalg::ConstMatrixView densities,

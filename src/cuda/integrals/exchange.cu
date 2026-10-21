@@ -79,6 +79,18 @@ __global__ void add_density_projection(View u,View p,Out response,int mu,int nbf
   }
 }
 
+// P(t,nu,a)=(mu nu|T_t C_a). For a core column C_a=T_(first+a),
+// J(C_a C_a^T)_(mu,nu) is already its diagonal t=first+a.
+__global__ void store_coulomb(View p,PairPanel output,int mu,int n,int first_column) {
+  const auto work=static_cast<std::int64_t>(mu+1)*n;
+  for (auto index=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
+       index<work;index+=gridDim.x*static_cast<std::int64_t>(blockDim.x)) {
+    const int nu=static_cast<int>(index/n),a=static_cast<int>(index%n);
+    output.data[static_cast<std::int64_t>(pair(mu,nu))*output.ld+a]=
+        p.data[first_column+a+p.ld*(nu*n+a)];
+  }
+}
+
 __global__ void density_image(ConstPairPanel exchange,View weights,Out out,double scale) {
   const int n=static_cast<int>(weights.rows),nbf=static_cast<int>(out.rows);
   for (std::int64_t k=blockIdx.x*static_cast<std::int64_t>(blockDim.x)+threadIdx.x;
@@ -167,7 +179,7 @@ Buffer<double> ExactAoPairOperator::prepare_exchange(View c,Matrix<double>* proj
 }
 
 void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diagonal,
-    View targets,Out response,bool packed,int first_column) const {
+    View targets,Out response,bool packed,int first_column,PairPanel coulomb) const {
   const int n=blas_int(c.cols);
   const auto n2=static_cast<std::int64_t>(n)*n;
   const auto half_count=static_cast<std::int64_t>(n_bf_)*n_bf_*n;
@@ -183,11 +195,12 @@ void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diago
     transformed=Matrix<double>(*context_,static_cast<std::int64_t>(n_bf_)*n,n);
   if (response.data) {
     u=Matrix<double>(*context_,static_cast<std::int64_t>(n_bf_)*n,targets.cols);
-    p=Matrix<double>(*context_,targets.cols,static_cast<std::int64_t>(n_bf_)*n);
     if (!packed)
       check_cuda(cudaMemsetAsync(response.data,0,response.rows*response.cols*sizeof(double),
           context_->stream()),"zero CUDA projected density response");
   }
+  if (response.data || coulomb.data)
+    p=Matrix<double>(*context_,targets.cols,static_cast<std::int64_t>(n_bf_)*n);
   Matrix<double> plane;
   int nu_width=0;
   if (packed_) {
@@ -218,6 +231,8 @@ void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diago
     if (response.data) {
       gemm(*context_,u.view(),{half.data(),static_cast<std::int64_t>(n_bf_)*n,
           n_bf_,static_cast<std::int64_t>(n_bf_)*n},targets);
+    }
+    if (p.data()) {
       // H_k[a,nu] already occupies one contiguous n-by-nbf slice. Batched
       // targets^T H_k^T produces P[t,k,a] directly from that storage, without
       // permuting/copying the whole AO-by-AO-by-orbital half image.
@@ -228,9 +243,16 @@ void ExactAoPairOperator::build_exchange_image(View c,PairPanel image,bool diago
           half.data(),n,static_cast<long long>(n_bf_)*n,&zero,
           p.data(),nt,static_cast<long long>(nt)*n,n_bf_),
           "CUDA batched density response half projection");
+    }
+    if (response.data) {
       add_density_projection<<<grid(static_cast<std::int64_t>(n_bf_)*n*targets.cols),
           256,0,context_->stream()>>>(u.view(),p.view(),response,mu,n_bf_,n,packed,first_column);
       check_cuda(cudaGetLastError(),"assemble CUDA projected density response");
+    }
+    if (coulomb.data) {
+      store_coulomb<<<grid(static_cast<std::int64_t>(mu+1)*n),256,0,context_->stream()>>>(
+          p.view(),coulomb,mu,n,first_column);
+      check_cuda(cudaGetLastError(),"CUDA core Coulomb from shared half projection");
     }
     if (!image.data) continue;
     if (!shared_projection)

@@ -189,7 +189,7 @@ void check(bool compact,int ncore) {
     }
     const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
     const std::size_t one_channel=2*(2*Fixture::npair+Fixture::nbf*Fixture::nbf+
-        Fixture::nbf)*sizeof(double);
+        Fixture::nbf*(1+ncore))*sizeof(double);
     {
       xmvb::cuda::Buffer<unsigned char> padding(context,available-one_channel);
       check_projected(); // Forces one core channel per tile, with identical physics.
