@@ -20,19 +20,26 @@ int main(int argc,char** argv) {
     options.backend=xmvb::vb::VbScfOptimizerBackend::Ciah;
     options.orbital_preconditioner=xmvb::vb::OrbitalPreconditioner::HessianDiagonal;
     options.max_iterations=loaded.requested_scf_max_iterations;
+    const auto context_start=std::chrono::steady_clock::now();
     xmvb::cuda::Context context(4ULL*1024ULL*1024ULL*1024ULL);
+    const double context_seconds=std::chrono::duration<double>(
+        std::chrono::steady_clock::now()-context_start).count();
     std::cout<<"method=cuvbscf_ciah\npreconditioner=analytic_hessian_diagonal\n"
              <<"structures="<<loaded.input.structure_data.n_structures<<'\n'
              <<"basis_functions="<<loaded.input.orbital_preparation_input.n_basis_functions<<'\n'
              <<"active_orbitals="<<loaded.input.orbital_preparation_input.n_active_orbitals<<'\n'
              <<"input_seconds="<<loaded.total_seconds<<'\n'
              <<"iteration,energy,delta_energy,gradient_inf,hvp,ci_actions,keyframes,seconds\n";
+    const auto solve_start=std::chrono::steady_clock::now();
     auto result=xmvb::cuda::solve_scf(context,loaded.input,loaded.nuclear_repulsion_energy,
         options,[](const xmvb::cuda::ScfIteration& row) {
           std::cout<<row.iteration<<','<<row.energy<<','<<row.energy_change<<','
               <<row.gradient_inf<<','<<row.hvp<<','<<row.ci_actions<<','
               <<row.keyframes<<','<<row.seconds<<'\n';
         });
+    const double solve_call_seconds=std::chrono::duration<double>(
+        std::chrono::steady_clock::now()-solve_start).count();
+    const auto output_start=std::chrono::steady_clock::now();
     if (result.converged) {
       auto output_orbitals=loaded.input.orbital_preparation_input;
       Eigen::MatrixXd values(result.orbitals.rows(),result.orbitals.cols());
@@ -40,6 +47,8 @@ int main(int argc,char** argv) {
       output_orbitals.orbital_value_table.assign(values.data(),values.data()+values.size());
       std::cout<<"orbital_output="<<xmvb::output::write_orbital_file(argv[1],output_orbitals).string()<<'\n';
     }
+    const double output_seconds=std::chrono::duration<double>(
+        std::chrono::steady_clock::now()-output_start).count();
     const auto& counters=context.counters();
     std::cout<<"converged="<<result.converged<<'\n'
              <<"termination="<<result.reason<<'\n'
@@ -51,6 +60,10 @@ int main(int argc,char** argv) {
              <<"selected_metric_builds="<<result.selected_metric_builds<<'\n'
              <<"gradient_inf="<<result.gradient_inf<<'\n'
              <<"scf_seconds="<<result.seconds<<'\n'
+             <<"context_seconds="<<context_seconds<<'\n'
+             <<"solve_call_seconds="<<solve_call_seconds<<'\n'
+             <<"solver_teardown_seconds="<<solve_call_seconds-result.seconds<<'\n'
+             <<"orbital_output_seconds="<<output_seconds<<'\n'
              <<"process_seconds="<<std::chrono::duration<double>(
                  std::chrono::steady_clock::now()-start).count()<<'\n'
              <<"gpu_peak_device_bytes="<<counters.peak_device_bytes<<'\n'

@@ -101,13 +101,13 @@ void check_map() {
     throw std::runtime_error("CUDA chart changed a fixed sparse slot");
 }
 
-xmvb::vb::OrbitalPreparationInput fixture(bool oeo,bool inactive) {
+xmvb::vb::OrbitalPreparationInput fixture(bool oeo,int inactive) {
   xmvb::vb::OrbitalPreparationInput input;
   input.n_basis_functions=5;
-  input.n_orbitals=inactive?3:2;
+  input.n_orbitals=inactive+2;
   input.n_active_orbitals=2;
   input.n_active_electrons=2;
-  input.n_total_electrons=inactive?4:2;
+  input.n_total_electrons=2*inactive+2;
   input.orbital_type=oeo?xmvb::vb::kOrbitalTypeOeo:xmvb::vb::kOrbitalTypeHao;
   input.ao_overlap_matrix=Matrix::Identity(5,5);
   input.ao_overlap_matrix.array()+=0.03;
@@ -118,7 +118,8 @@ xmvb::vb::OrbitalPreparationInput fixture(bool oeo,bool inactive) {
   input.orbital_value_table.assign(5*norb,0.0);
   input.orbital_basis_counts.resize(norb);
   input.original_orbital_basis_counts.resize(norb);
-  const std::vector<std::vector<int>> hao=inactive?
+  const std::vector<std::vector<int>> hao=inactive==2?
+      std::vector<std::vector<int>>{{1,2,3},{1,2,3},{2,3,4},{1,4,5}}:inactive?
       std::vector<std::vector<int>>{{1,2,3},{2,3,4},{1,4,5}}:
       std::vector<std::vector<int>>{{1,2,3},{3,4,5}};
   for (int o=0;o<norb;++o) {
@@ -140,7 +141,7 @@ Matrix raw_table(const xmvb::vb::OrbitalPreparationInput& input) {
       input.n_basis_functions,input.n_orbitals);
 }
 
-void check_accepted(bool oeo,bool inactive) {
+void check_accepted(bool oeo,int inactive,bool complete=true) {
   xmvb::cuda::Context context;
   auto input=fixture(oeo,inactive);
   const int basis=static_cast<int>(input.n_basis_functions);
@@ -148,12 +149,13 @@ void check_accepted(bool oeo,bool inactive) {
   xmvb::cuda::OrbitalGeometry geometry(context,input);
   geometry.prepare();
   const Matrix normalized=download(context,geometry.normalized());
-  const int occupied=static_cast<int>(input.n_active_orbitals)+(inactive?1:0);
+  const int occupied=static_cast<int>(input.n_active_orbitals)+inactive;
+  const bool full=oeo && complete;
   xmvb::vb::SparseParameterLayout layout(input);
   xmvb::vb::OrbitalChart reference(input,layout,normalized.leftCols(occupied),
-      normalized,nullptr,false,oeo,nullptr,
+      normalized,nullptr,false,full,nullptr,
       xmvb::vb::OrbitalChart::Coordinates::Unwhitened);
-  xmvb::cuda::AcceptedOrbitalChart chart(context,input,oeo);
+  xmvb::cuda::AcceptedOrbitalChart chart(context,input,full);
   chart.rebuild(geometry);
   if (chart.reduced_size()!=reference.reduced_size() ||
       chart.rank_signature()!=reference.rank_signature())
@@ -218,7 +220,7 @@ void check_accepted(bool oeo,bool inactive) {
     const Matrix raw_host=download(context,raw_physical.view());
     const Eigen::VectorXd packed=layout.gather_from_full(
         std::vector<double>(raw_host.data(),raw_host.data()+raw_host.size()));
-    const xmvb::vb::OrbitalPhysicalMetric cpu_metric(input,oeo);
+    const xmvb::vb::OrbitalPhysicalMetric cpu_metric(input,full);
     const double cpu_squared=cpu_metric.squared_norm(layout,packed);
     if (std::abs(gpu_squared-cpu_squared)>
         1e-8*std::max(1.0,std::abs(cpu_squared)))
@@ -256,7 +258,7 @@ void check_accepted(bool oeo,bool inactive) {
     for (int i=0;i<basis;++i)
       analytic.rotation_diagonal(i,j)=((i+2*j)%3==0?-1.0:1.0)*
           (0.8+0.17*i+0.11*j+0.09*std::sin(0.31+0.4*i+0.7*j));
-  const int ncore=inactive?1:0;
+  const int ncore=inactive;
   if (ncore) {
     const Matrix raw_core=normalized.leftCols(ncore);
     const Matrix gram=raw_core.transpose()*input.ao_overlap_matrix*raw_core;
@@ -266,7 +268,7 @@ void check_accepted(bool oeo,bool inactive) {
   analytic.active_inverse_transform=download(context,
       geometry.frame_inverse_transform());
   xmvb::vb::OrbitalChart reference_analytic(input,layout,
-      normalized.leftCols(occupied),normalized,nullptr,false,oeo,nullptr,
+      normalized.leftCols(occupied),normalized,nullptr,false,full,nullptr,
       xmvb::vb::OrbitalChart::Coordinates::Unwhitened);
   reference_analytic.set_curvature(input,nullptr,&analytic,
       xmvb::vb::OrbitalChart::CurvatureUse::AugmentedHessian);
@@ -303,6 +305,9 @@ int main() {
     check_map();
     for (bool oeo:{false,true})
       for (bool inactive:{false,true}) check_accepted(oeo,inactive);
+    check_accepted(false,2); // Equal inactive support, different fixed active tails.
+    check_accepted(true,2);
+    check_accepted(true,2,false); // Selected active rays must not be merged.
     std::cout<<"CUDA orbital chart map checks passed\n";
     return 0;
   } catch (const std::exception& error) {

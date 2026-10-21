@@ -12,6 +12,9 @@
 #include <cfloat>
 #include <cstdint>
 #include <memory>
+#include <map>
+#include <optional>
+#include <tuple>
 #include <numeric>
 #include <utility>
 #include <cusolverDn.h>
@@ -118,6 +121,7 @@ __global__ void chart_gather_overlap(Const,const int*,double*,int);
 __global__ void chart_gather_coeff(Const,int,double*,int);
 __global__ void chart_compose(double*,Const,Const,int,int,int);
 __global__ void chart_sign_columns(double*,int,int);
+__global__ void chart_ray_reflector(const double*,double*,int,double);
 __global__ void chart_stored_quotient(Const,double*,int,int,int);
 __global__ void chart_scale_vector(double*,int,double);
 __global__ void chart_make_basis(Const,Const,Const,double*,int,int,double,bool);
@@ -146,6 +150,8 @@ Matrix<double> chart_projector_apply(Context&,Const,Const,Const,Const);
 struct AcceptedOrbitalChart::Impl {
   struct Meta {
     int orbital=0,stored=0,differentiable=0,block=0,block_orbital=0;
+    int quotient_group=0;
+    bool local_ray=false;
     std::vector<int> local_ao,stored_ao,forbidden_ao;
     Buffer<int> local_device,stored_device,forbidden_device;
   };
@@ -221,6 +227,20 @@ struct AcceptedOrbitalChart::Impl {
       }
       if (block_occupied) ++occupied_block;
     }
+    // A quotient depends on the ordered allowed rows, forbidden rows and
+    // gauge source, not on the orbital's norm/radial representative. Selected
+    // active expansions use distinct rays, never an assumed CAS closure.
+    std::map<std::tuple<int,std::vector<int>,std::vector<int>>,int> groups;
+    for (auto& meta:metas) {
+      meta.local_ray=meta.orbital>=inactive && !active_subspace &&
+          meta.differentiable==meta.stored;
+      const int source=meta.orbital<inactive || meta.local_ray ? -1:
+          active_subspace ? -2:meta.orbital;
+      const auto [where,inserted]=groups.emplace(
+          std::make_tuple(source,meta.local_ao,meta.forbidden_ao),quotient_groups);
+      meta.quotient_group=where->second;
+      if (inserted) ++quotient_groups;
+    }
     chart_solver(cusolverDnCreate(&solver),"cusolverDnCreate accepted chart");
     chart_solver(cusolverDnSetStream(solver,context.stream()),
                  "cusolverDnSetStream accepted chart");
@@ -245,9 +265,12 @@ struct AcceptedOrbitalChart::Impl {
   bool full_rotation_frame=false;
   void build_rotation_frame(const OrbitalGeometry&);
   void build_physical_metric_factors(const OrbitalGeometry&);
+  Matrix<double> build_quotient(const OrbitalGeometry&,const Meta&,Const);
+  Matrix<double> restrict_ray(const OrbitalGeometry&,const Meta&,Const);
   std::vector<Meta> metas;
   std::vector<Local> locals;
   int reduced=0;
+  int quotient_groups=0;
   std::uint64_t signature=1469598103934665603ull;
 };
 
@@ -296,6 +319,9 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
     inactive_span=chart_product(ctx,inactive_span.view(),root.view());
   }
 
+  std::vector<std::optional<Matrix<double>>> quotients(p.quotient_groups);
+  std::vector<int> remaining(p.quotient_groups,0);
+  for (const auto& meta:p.metas) ++remaining[meta.quotient_group];
   for (const auto& meta:p.metas) {
     Impl::Local local;
     local.orbital=meta.orbital;
@@ -303,90 +329,11 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
     local.differentiable=meta.differentiable;
     local.offset=p.reduced;
     const int m=meta.differentiable;
-    const int nsource=p.inactive+(meta.orbital>=p.inactive?
-        (p.active_subspace?p.active:1):0);
-    Matrix<double> source(ctx,p.basis,nsource);
-    if (nsource) {
-      if (meta.orbital>=p.inactive) {
-        const int na=nsource-p.inactive;
-        const int first=p.active_subspace?p.inactive:meta.orbital;
-        Matrix<double> residual(ctx,p.basis,na);
-        chart_copy(ctx,residual.view(),geometry.normalized().columns(first,na));
-        if (p.inactive) {
-          auto image=chart_product(ctx,overlap,residual.view());
-          auto projection=chart_product(ctx,inactive_span.view(),image.view(),
-                                        Operation::transpose);
-          auto removed=chart_product(ctx,inactive_span.view(),projection.view());
-          chart_subtract<<<grid(p.basis*na),kThreads,0,ctx.stream()>>>(
-              residual.data(),removed.data(),p.basis*na);
-          check_cuda(cudaGetLastError(),"CUDA chart active residual");
-        }
-        auto image=chart_product(ctx,overlap,residual.view());
-        auto metric=chart_product(ctx,residual.view(),image.view(),
-                                  Operation::transpose);
-        auto eig=chart_eigen(ctx,p.solver,metric.view());
-        const double scale=eig.host_values.back();
-        if (!(scale>0.0) ||
-            !(eig.host_values.front()>DBL_EPSILON*std::max(1,na)*scale))
-          throw std::runtime_error("active orbital subspace is rank deficient outside inactive span");
-        auto root=chart_spectral_power(ctx,eig,-0.5);
-        auto active=chart_product(ctx,residual.view(),root.view());
-        chart_compose<<<grid(p.basis*nsource),kThreads,0,ctx.stream()>>>(
-            source.data(),inactive_span.view(),active.view(),p.inactive,
-            p.basis,nsource);
-        check_cuda(cudaGetLastError(),"CUDA chart gauge sources");
-      } else {
-        chart_copy(ctx,source.view(),inactive_span.view());
-      }
-    }
-
-    Matrix<double> quotient(ctx,m,0);
-    if (!m) {
-      // Empty differentiable support has no local coordinate.
-    } else if (!nsource) {
-      quotient=chart_eye(ctx,m);
-    } else {
-      const int forbidden=static_cast<int>(meta.forbidden_ao.size());
-      Matrix<double> admissible(ctx,nsource,0);
-      if (!forbidden) {
-        admissible=chart_eye(ctx,nsource);
-      } else {
-        Matrix<double> constrained(ctx,forbidden,nsource);
-        chart_gather_rows<<<grid(forbidden*nsource),kThreads,0,ctx.stream()>>>(
-            source.view(),meta.forbidden_device.data(),constrained.data(),
-            forbidden,nsource);
-        check_cuda(cudaGetLastError(),"CUDA chart forbidden-source gather");
-        auto svd=chart_svd(ctx,p.solver,constrained.view());
-        const int nullity=nsource-svd.rank;
-        admissible=Matrix<double>(ctx,nsource,nullity);
-        if (nullity)
-          chart_copy(ctx,admissible.view(),svd.right.view().columns(svd.rank,nullity));
-      }
-      if (!admissible.cols()) {
-        quotient=chart_eye(ctx,m);
-      } else {
-        Matrix<double> gathered(ctx,m,nsource);
-        chart_gather_rows<<<grid(m*nsource),kThreads,0,ctx.stream()>>>(
-            source.view(),meta.local_device.data(),gathered.data(),m,nsource);
-        check_cuda(cudaGetLastError(),"CUDA chart local-source gather");
-        auto generator=chart_product(ctx,gathered.view(),admissible.view());
-        Matrix<double> local_overlap(ctx,m,m);
-        chart_gather_overlap<<<grid(m*m),kThreads,0,ctx.stream()>>>(
-            overlap,meta.local_device.data(),local_overlap.data(),m);
-        check_cuda(cudaGetLastError(),"CUDA chart local overlap gather");
-        auto horizontal=chart_product(ctx,generator.view(),local_overlap.view(),
-                                      Operation::transpose);
-        auto svd=chart_svd(ctx,p.solver,horizontal.view());
-        local.size=m-svd.rank;
-        quotient=Matrix<double>(ctx,m,local.size);
-        if (local.size) {
-          chart_copy(ctx,quotient.view(),svd.right.view().columns(svd.rank,local.size));
-          chart_sign_columns<<<grid(local.size),kThreads,0,ctx.stream()>>>(
-              quotient.data(),m,local.size);
-          check_cuda(cudaGetLastError(),"CUDA chart quotient signs");
-        }
-      }
-    }
+    auto& shared=quotients[meta.quotient_group];
+    if (!shared) shared=p.build_quotient(geometry,meta,inactive_span.view());
+    Matrix<double> ray_quotient;
+    if (meta.local_ray) ray_quotient=p.restrict_ray(geometry,meta,shared->view());
+    const auto& quotient=meta.local_ray ? ray_quotient:*shared;
     local.size=static_cast<int>(quotient.cols());
     for (int value:{meta.block+1,meta.block_orbital+1,local.size+1}) {
       p.signature^=static_cast<std::uint64_t>(value);
@@ -394,6 +341,7 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
     }
     if (!local.size) {
       p.locals.push_back(std::move(local));
+      if (!--remaining[meta.quotient_group]) shared.reset();
       continue;
     }
 
@@ -483,9 +431,132 @@ void AcceptedOrbitalChart::rebuild(const OrbitalGeometry& geometry) {
     check_cuda(cudaGetLastError(),"CUDA chart raw tangent inverse Gram");
     p.reduced+=q;
     p.locals.push_back(std::move(local));
+    if (!--remaining[meta.quotient_group]) shared.reset();
   }
   p.build_rotation_frame(geometry);
   p.build_physical_metric_factors(geometry);
+}
+
+Matrix<double> AcceptedOrbitalChart::Impl::build_quotient(
+    const OrbitalGeometry& geometry,const Meta& meta,Const inactive_span) {
+  const nvtx3::scoped_range range{"chart.quotient"};
+  auto& ctx=context;
+  const auto overlap=geometry.ao_overlap();
+  const int m=meta.differentiable;
+  const int nsource=inactive+(meta.orbital>=inactive && !meta.local_ray ?
+      (active_subspace ? active:1):0);
+  Matrix<double> source(ctx,basis,nsource);
+  if (nsource) {
+    if (meta.orbital>=inactive && !meta.local_ray) {
+      const int na=nsource-inactive;
+      const int first=active_subspace ? inactive:meta.orbital;
+      Matrix<double> residual(ctx,basis,na);
+      chart_copy(ctx,residual.view(),geometry.normalized().columns(first,na));
+      if (inactive) {
+        auto image=chart_product(ctx,overlap,residual.view());
+        auto projection=chart_product(ctx,inactive_span,image.view(),Operation::transpose);
+        auto removed=chart_product(ctx,inactive_span,projection.view());
+        chart_subtract<<<grid(basis*na),kThreads,0,ctx.stream()>>>(
+            residual.data(),removed.data(),basis*na);
+        check_cuda(cudaGetLastError(),"CUDA chart active residual");
+      }
+      auto image=chart_product(ctx,overlap,residual.view());
+      auto metric=chart_product(ctx,residual.view(),image.view(),Operation::transpose);
+      auto eig=chart_eigen(ctx,solver,metric.view());
+      const double scale=eig.host_values.back();
+      if (!(scale>0.0) || !(eig.host_values.front()>DBL_EPSILON*std::max(1,na)*scale))
+        throw std::runtime_error("active orbital subspace is rank deficient outside inactive span");
+      auto root=chart_spectral_power(ctx,eig,-0.5);
+      auto active_source=chart_product(ctx,residual.view(),root.view());
+      chart_compose<<<grid(basis*nsource),kThreads,0,ctx.stream()>>>(
+          source.data(),inactive_span,active_source.view(),inactive,basis,nsource);
+      check_cuda(cudaGetLastError(),"CUDA chart gauge sources");
+    } else {
+      chart_copy(ctx,source.view(),inactive_span);
+    }
+  }
+  if (!m) return Matrix<double>(ctx,m,0);
+  if (!nsource) return chart_eye(ctx,m);
+  const int forbidden=static_cast<int>(meta.forbidden_ao.size());
+  Matrix<double> admissible(ctx,nsource,0);
+  if (!forbidden) {
+    admissible=chart_eye(ctx,nsource);
+  } else {
+    Matrix<double> constrained(ctx,forbidden,nsource);
+    chart_gather_rows<<<grid(forbidden*nsource),kThreads,0,ctx.stream()>>>(
+        source.view(),meta.forbidden_device.data(),constrained.data(),forbidden,nsource);
+    check_cuda(cudaGetLastError(),"CUDA chart forbidden-source gather");
+    auto svd=chart_svd(ctx,solver,constrained.view());
+    const int nullity=nsource-svd.rank;
+    admissible=Matrix<double>(ctx,nsource,nullity);
+    if (nullity)
+      chart_copy(ctx,admissible.view(),svd.right.view().columns(svd.rank,nullity));
+  }
+  if (!admissible.cols()) return chart_eye(ctx,m);
+  Matrix<double> gathered(ctx,m,nsource);
+  chart_gather_rows<<<grid(m*nsource),kThreads,0,ctx.stream()>>>(
+      source.view(),meta.local_device.data(),gathered.data(),m,nsource);
+  check_cuda(cudaGetLastError(),"CUDA chart local-source gather");
+  auto generator=chart_product(ctx,gathered.view(),admissible.view());
+  Matrix<double> local_overlap(ctx,m,m);
+  chart_gather_overlap<<<grid(m*m),kThreads,0,ctx.stream()>>>(
+      overlap,meta.local_device.data(),local_overlap.data(),m);
+  check_cuda(cudaGetLastError(),"CUDA chart local overlap gather");
+  auto horizontal=chart_product(ctx,generator.view(),local_overlap.view(),Operation::transpose);
+  auto svd=chart_svd(ctx,solver,horizontal.view());
+  const int q=m-svd.rank;
+  Matrix<double> quotient(ctx,m,q);
+  if (q) {
+    chart_copy(ctx,quotient.view(),svd.right.view().columns(svd.rank,q));
+    chart_sign_columns<<<grid(q),kThreads,0,ctx.stream()>>>(quotient.data(),m,q);
+    check_cuda(cudaGetLastError(),"CUDA chart quotient signs");
+  }
+  return quotient;
+}
+
+Matrix<double> AcceptedOrbitalChart::Impl::restrict_ray(
+    const OrbitalGeometry& geometry,const Meta& meta,Const base) {
+  const nvtx3::scoped_range range{"chart.local_ray"};
+  auto& ctx=context;
+  const int m=meta.differentiable,q0=static_cast<int>(base.cols);
+  if (!q0) return Matrix<double>(ctx,m,0);
+  // For a ray a entirely in allowed support L,
+  // (I + span(a)) intersect L = (I intersect L) + span(a).
+  // Therefore restrict the common inactive quotient by the single row a^T S Q.
+  // Fixed nonzero tails are NOT in L and never enter this factorization.
+  Matrix<double> orbital(ctx,m,1),local_overlap(ctx,m,m);
+  chart_gather_rows<<<grid(m),kThreads,0,ctx.stream()>>>(
+      geometry.normalized().columns(meta.orbital,1),meta.local_device.data(),
+      orbital.data(),m,1);
+  chart_gather_overlap<<<grid(m*m),kThreads,0,ctx.stream()>>>(
+      geometry.ao_overlap(),meta.local_device.data(),local_overlap.data(),m);
+  check_cuda(cudaGetLastError(),"CUDA chart local ray gather");
+  auto image=chart_product(ctx,local_overlap.view(),orbital.view());
+  auto row=chart_product(ctx,image.view(),base,Operation::transpose);
+  double norm=0.0;
+  check_cublas(cublasDnrm2(ctx.blas(),q0,row.data(),1,&norm),"CUDA chart ray norm");
+  if (!std::isfinite(norm)) throw std::runtime_error("nonfinite CUDA chart ray norm");
+  const int rank=norm>DBL_EPSILON*q0*norm ? 1:0; // Same single-row SVD rank test.
+  const int q=q0-rank;
+  Matrix<double> quotient(ctx,m,q);
+  if (!rank) { chart_copy(ctx,quotient.view(),base);return quotient; }
+  if (!q) return quotient;
+  double first=0.0;
+  ctx.copy_to_host(&first,row.data(),sizeof(double));
+  const double denominator=first+std::copysign(norm,first);
+  const double tau=1.0+std::abs(first)/norm;
+  Matrix<double> v(ctx,q0,1);
+  chart_ray_reflector<<<grid(q0),kThreads,0,ctx.stream()>>>(
+      row.data(),v.data(),q0,denominator);
+  check_cuda(cudaGetLastError(),"CUDA chart ray reflector");
+  auto reflector_image=chart_product(ctx,base,v.view());
+  chart_copy(ctx,quotient.view(),base.columns(1,q));
+  const double alpha=-tau;
+  check_cublas(cublasDger(ctx.blas(),m,q,&alpha,reflector_image.data(),1,v.data()+1,1,
+      quotient.data(),m),"CUDA chart rank-one ray restriction");
+  chart_sign_columns<<<grid(q),kThreads,0,ctx.stream()>>>(quotient.data(),m,q);
+  check_cuda(cudaGetLastError(),"CUDA chart local ray quotient signs");
+  return quotient;
 }
 
 void AcceptedOrbitalChart::Impl::build_rotation_frame(const OrbitalGeometry& geometry) {
@@ -831,10 +902,16 @@ void chart_copy(Context& ctx,Mut target,Const source) {
   if (target.rows!=source.rows || target.cols!=source.cols)
     throw std::invalid_argument("accepted chart copy shape mismatch");
   if (!source.rows || !source.cols) return;
-  for (int j=0;j<source.cols;++j)
-    check_cuda(cudaMemcpyAsync(target.column(j).data,source.column(j).data,
-        static_cast<std::size_t>(source.rows)*sizeof(double),
-        cudaMemcpyDeviceToDevice,ctx.stream()),"CUDA accepted chart copy");
+  if (target.data==source.data && target.ld==source.ld) return;
+  if (target.ld==target.rows && source.ld==source.rows) {
+    check_cuda(cudaMemcpyAsync(target.data,source.data,
+        static_cast<std::size_t>(source.rows)*source.cols*sizeof(double),
+        cudaMemcpyDeviceToDevice,ctx.stream()),"CUDA accepted chart contiguous copy");
+  } else {
+    check_cuda(cudaMemcpy2DAsync(target.data,target.ld*sizeof(double),
+        source.data,source.ld*sizeof(double),source.rows*sizeof(double),source.cols,
+        cudaMemcpyDeviceToDevice,ctx.stream()),"CUDA accepted chart pitched copy");
+  }
 }
 
 Matrix<double> chart_product(Context& ctx,Const a,Const b,
@@ -921,6 +998,11 @@ __global__ void chart_compose(double* target,Const left,Const right,
     target[k]=j<first_right?left.data[j*left.ld+i]:
         right.data[(j-first_right)*right.ld+i];
   }
+}
+
+__global__ void chart_ray_reflector(const double* row,double* v,int n,double denominator) {
+  const int i=blockIdx.x*blockDim.x+threadIdx.x;
+  if (i<n) v[i]=i==0 ? 1.0:row[i]/denominator;
 }
 
 __global__ void chart_sign_columns(double* x,int rows,int cols) {
