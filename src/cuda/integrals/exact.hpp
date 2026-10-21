@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <span>
 
 #include <cusparse.h>
 
@@ -14,6 +15,18 @@
 namespace xmvb::cuda {
 
 class PackedAoPairMatrix;
+
+/** Prepared core MO-diagonal contractions; empty views mean not prepared. */
+struct CoreDiagonalView {
+  linalg::ConstMatrixView coulomb,response;
+};
+
+/** One accepted point's shared exchange/density-response preparation. */
+struct ExactAoResponses {
+  Buffer<double> exchange,inactive;
+  Matrix<double> active,core_coulomb,core_response;
+  bool core_ready=false;
+};
 
 /** Device-resident exact AO-pair ERI graph and its matrix-free orbital response.
  * All matrix arguments and packed outputs refer to device memory. The graph is
@@ -65,6 +78,12 @@ class ExactAoPairOperator {
   Buffer<double> prepare_exchange(linalg::ConstMatrixView coefficients,
       Matrix<double>* density_projection = nullptr,
       linalg::ConstMatrixView targets = {}) const;
+
+  /** Share AO slices between active exchange and core response consumers.
+   * Orbitals in mo are ordered core, active, virtual. No integral copy is kept.
+   */
+  ExactAoResponses prepare_responses(linalg::ConstMatrixView active,
+      linalg::ConstMatrixView mo,int n_core) const;
 
   /** Accepted map vec(V) -> vec(G(V C^T+C V^T) T), column-major.
    * Only the consumed target projections are stored, never an AO^3 image.
@@ -160,10 +179,18 @@ class ExactAoPairOperator {
 
  private:
   std::size_t response_capacity() const;
-  void build_exchange_image(linalg::ConstMatrixView coefficients,
-      PairPanel image,bool diagonal,linalg::ConstMatrixView targets = {},
-      linalg::MatrixView density_projection = {},bool packed = false,
-      int first_column = 0,PairPanel coulomb = {}) const;
+  struct ExchangeRequest {
+    linalg::ConstMatrixView coefficients,targets;
+    PairPanel image,coulomb;
+    linalg::MatrixView response;
+    bool diagonal=false,packed=false;
+    int first_column=0;
+  };
+  std::int64_t exchange_workspace(const ExchangeRequest&) const;
+  void build_exchange_images(std::span<const ExchangeRequest>) const;
+  Buffer<double> reserve_exchange(linalg::ConstMatrixView) const;
+  bool prepare_core(linalg::ConstMatrixView,int,linalg::MatrixView,linalg::MatrixView,
+      Buffer<double>*,const ExchangeRequest* = nullptr) const;
   Matrix<double> reserve_density_projection(linalg::ConstMatrixView coefficients,
       linalg::ConstMatrixView targets) const;
   void packed_exchange(linalg::ConstMatrixView densities,

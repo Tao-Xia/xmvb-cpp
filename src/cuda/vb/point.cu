@@ -173,8 +173,13 @@ Matrix<double> VbPoint::hessian_diagonal(View mo) {
   if (!ready_) throw std::logic_error("CUDA exchange preparation requires an evaluated point");
   const auto f=geometry_.orthogonal_active(),dual=geometry_.inactive_dual();
   const auto core=mo.columns(0,dual.cols);
-  if (!pair_products_.empty() && exchange_products_.empty())
-    exchange_products_=integrals_->prepare_exchange(f,&active_response_,core);
+  ExactAoResponses prepared;
+  if (!pair_products_.empty() && exchange_products_.empty()) {
+    prepared=integrals_->prepare_responses(f,mo,geometry_.inactive_count());
+    exchange_products_=std::move(prepared.exchange);
+    active_response_=std::move(prepared.active);
+    inactive_response_=std::move(prepared.inactive);
+  }
   if (dual.cols) {
     core_basis_=Matrix<double>(*context_,core.rows,core.cols);
     copy(*context_,core_basis_.view(),core);
@@ -184,7 +189,9 @@ Matrix<double> VbPoint::hessian_diagonal(View mo) {
   auto diagonal=build_analytic_rotation_diagonal(*context_,*integrals_,mo,core_,
       effective_.view(),one_adjoint_.view(),pair_adjoint_.view(),pair_.view(),
       geometry_.inactive_count(),pair_products(),exchange_products(),
-      active_response_.data() ? &inactive_response_:nullptr);
+      active_response_.data() && !prepared.core_ready ? &inactive_response_:nullptr,
+      prepared.core_ready ? CoreDiagonalView{prepared.core_coulomb.view(),
+          prepared.core_response.view()}:CoreDiagonalView{});
   return diagonal;
 }
 

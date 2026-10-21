@@ -270,7 +270,8 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
     linalg::ConstMatrixView core,linalg::ConstMatrixView effective,
     linalg::ConstMatrixView dm1,linalg::ConstMatrixView pair_adjoint,
     linalg::ConstMatrixView active_pair,int ncore,ConstPairPanel accepted_products,
-    ConstPairPanel exchange_products,Buffer<double>* density_projection) {
+    ConstPairPanel exchange_products,Buffer<double>* density_projection,
+    CoreDiagonalView prepared_core) {
   validate(mo,core,effective,dm1,pair_adjoint,active_pair,ncore,integrals);
   const int nbf=static_cast<int>(mo.rows),active=static_cast<int>(dm1.rows);
   const int pairs=active*(active+1)/2,nocc=ncore+active;
@@ -338,10 +339,19 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
   Matrix<double> density(context,nbf,nbf),response(context,nbf,nbf);
   Matrix<double> active_left;
   if (!exchange_products.data) active_left=Matrix<double>(context,nbf,active);
-  Matrix<double> core_response(context,nbf,ncore),jpc(context,nbf,ncore);
+  Matrix<double> core_response,jpc;
+  auto core_j=prepared_core.coulomb,core_r=prepared_core.response;
+  if (core_j.data && (core_j.rows!=nbf || core_j.cols!=ncore || core_j.ld<nbf ||
+      !core_r.data || core_r.rows!=nbf || core_r.cols!=ncore || core_r.ld<nbf))
+    throw std::invalid_argument("CUDA prepared core diagonal dimensions");
   const auto active_mo=mo.columns(ncore,active);
-  const bool core_projected=integrals.core_diagonal(mo,ncore,jpc.view(),core_response.view(),
-      density_projection);
+  bool core_projected=core_j.data;
+  if (!core_projected) {
+    core_response=Matrix<double>(context,nbf,ncore);jpc=Matrix<double>(context,nbf,ncore);
+    core_j=jpc.view();core_r=core_response.view();
+    core_projected=integrals.core_diagonal(mo,ncore,jpc.view(),core_response.view(),
+        density_projection);
+  }
   for (int c=0;!core_projected && c<ncore;++c) {
     core_density<<<grid(static_cast<std::int64_t>(nbf)*nbf),256,0,context.stream()>>>(
         mo,density.view(),c,static_cast<std::int64_t>(nbf)*nbf);
@@ -410,7 +420,7 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
   check_cuda(cudaGetLastError(),"CUDA Hessian RDM contractions");
   Matrix<double> output(context,nbf,nbf);
   assemble<<<grid(static_cast<std::int64_t>(nbf)*nbf),256,0,context.stream()>>>(
-      hmo.view(),vmo.view(),dm1,jpc.view(),core_response.view(),
+      hmo.view(),vmo.view(),dm1,core_j,core_r,
       one.view(),two.view(),potential.data(),gradient.data(),output.view(),
       nbf,ncore,active);
   check_cuda(cudaGetLastError(),"CUDA analytic rotation Hessian diagonal");

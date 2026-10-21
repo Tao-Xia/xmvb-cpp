@@ -225,9 +225,47 @@ void check(bool compact,int ncore) {
         throw std::runtime_error("CUDA tiled core response differs from complete-column projection");
     }
   }
+  xmvb::cuda::ExactAoResponses joint;
+  if (!compact) {
+    joint=graph.prepare_responses(dmo.view().columns(ncore,na),dmo.view(),ncore);
+    if (joint.exchange.empty() || !joint.core_ready)
+      throw std::runtime_error("CUDA joint AO response preparation was not admitted");
+    std::vector<double> image(joint.exchange.size());
+    context.copy_to_host(image.data(),joint.exchange.data(),image.size()*sizeof(double));
+    for (int mu=0;mu<Fixture::nbf;++mu) for (int nu=0;nu<=mu;++nu)
+      for (int a=0;a<na;++a) for (int b=0;b<na;++b) {
+        double expected_exchange=0;
+        for (int k=0;k<Fixture::nbf;++k) for (int l=0;l<Fixture::nbf;++l)
+          expected_exchange+=fixture.eri(mu,k,nu,l)*mo(k,ncore+a)*mo(l,ncore+b);
+        if (std::abs(image[pair(mu,nu)*na*na+a*na+b]-expected_exchange)>2e-10)
+          throw std::runtime_error("CUDA joint exchange image differs from four-index oracle");
+      }
+    if (ncore) {
+      Matrix j(Fixture::nbf,ncore),r(Fixture::nbf,ncore);
+      xmvb::cuda::copy_to_host(context,j,joint.core_coulomb.view());
+      xmvb::cuda::copy_to_host(context,r,joint.core_response.view());
+      for (int p=0;p<Fixture::nbf;++p) for (int c=0;c<ncore;++c) {
+        const double expected_j=fixture.mo_eri(mo,p,p,c,c);
+        const double expected_r=2*expected_j-fixture.mo_eri(mo,p,c,p,c);
+        if (std::abs(j(p,c)-expected_j)>2e-10 || std::abs(r(p,c)-expected_r)>2e-10)
+          throw std::runtime_error("CUDA joint core projection differs from four-index oracle");
+      }
+      auto cross=graph.prepare_density_projection(dmo.view().columns(ncore,na),
+          dmo.view().columns(0,ncore));
+      Matrix fused(Fixture::nbf*ncore,Fixture::nbf*na),separate(fused.rows(),fused.cols());
+      xmvb::cuda::copy_to_host(context,fused,joint.active.view());
+      xmvb::cuda::copy_to_host(context,separate,cross.view());
+      if ((fused-separate).norm()>2e-10)
+        throw std::runtime_error("CUDA joint cross response differs from separate projection");
+    }
+  }
+  const xmvb::cuda::ConstPairPanel joint_exchange{joint.exchange.data(),Fixture::npair,
+      na*na,na*na};
   const DeviceMatrix actual_device=xmvb::cuda::build_analytic_rotation_diagonal(
       context,graph,dmo.view(),dcore.view(),deffective.view(),ddm1.view(),
-      dadjoint.view(),dpair.view(),ncore);
+      dadjoint.view(),dpair.view(),ncore,{},joint_exchange,nullptr,
+      joint.core_ready ? xmvb::cuda::CoreDiagonalView{joint.core_coulomb.view(),
+          joint.core_response.view()}:xmvb::cuda::CoreDiagonalView{});
   Matrix actual(Fixture::nbf,Fixture::nbf);
   xmvb::cuda::copy_to_host(context,actual,actual_device.view());
   if (!actual.allFinite() ||
