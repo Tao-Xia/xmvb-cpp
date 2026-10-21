@@ -164,8 +164,9 @@ struct StructureAction::Impl {
   mutable Buffer<std::byte> sparse_workspace;
   mutable Matrix<double> input, hamiltonian, overlap;
   mutable Matrix<double> carrier_diagonal;
-  std::unique_ptr<Graph> graph;
-  double graph_seconds=0;
+  mutable std::unique_ptr<Graph> graph;
+  mutable double graph_seconds=0;
+  mutable std::uint64_t graph_workspace_generation=0;
   std::uint64_t version=0;
 
   Impl(Context& ctx, const vb::StructureAction& source)
@@ -222,6 +223,7 @@ struct StructureAction::Impl {
       });
       context.synchronize();
       graph_seconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+      graph_workspace_generation=sigma.workspace_generation();
     } catch (...) {
       if (incidence) cusparseDestroySpMat(incidence);
       if (sparse) cusparseDestroy(sparse);
@@ -300,6 +302,19 @@ struct StructureAction::Impl {
     if (vectors.rows!=structures || h.rows!=structures || m.rows!=structures ||
         vectors.cols<=0 || h.cols!=vectors.cols || m.cols!=vectors.cols)
       throw std::invalid_argument("CUDA structure action block dimensions");
+    sigma.prepare(1);
+    if (graph_workspace_generation!=sigma.workspace_generation()) {
+      // Another point may grow/repartition the shared scratch. Recapture the
+      // same physical action before replay, never launch stale device pointers.
+      context.synchronize();
+      graph.reset();
+      const auto start=std::chrono::steady_clock::now();
+      graph=std::make_unique<Graph>(context,[&] {
+        emit(input.view(),hamiltonian.view(),overlap.view());
+      });
+      graph_seconds+=std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+      graph_workspace_generation=sigma.workspace_generation();
+    }
     const auto bytes=static_cast<std::size_t>(structures)*sizeof(double);
     for (std::int64_t rhs=0;rhs<vectors.cols;++rhs) {
       // Fixed graph addresses need three selected-space vectors, not new carriers.

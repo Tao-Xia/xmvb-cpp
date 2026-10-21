@@ -344,7 +344,10 @@ DirectCiSigma::DirectCiSigma(
       shared_spin_graph_(source.shared_spin_connections()),
       kernel_(context, static_cast<std::size_t>(n_channels_)*n_channels_),
       effective_one_(context,n_channels_),
-      alpha_(std::make_shared<SpinGraph>(context, source.alpha_connections(), n_channels_)) {
+      alpha_(std::make_shared<SpinGraph>(context, source.alpha_connections(), n_channels_)),
+      workspace_(std::make_shared<Workspace>()),scattered_(workspace_->scattered),
+      transformed_(workspace_->transformed),right_scattered_(workspace_->right_scattered),
+      channel_adjoint_(workspace_->channel_adjoint) {
   if (channel_capacity <= 0 || n_channels_ <= 0 ||
       source.channel_kernel().cols() != n_channels_)
     throw std::invalid_argument("invalid CUDA direct-CI channel dimensions");
@@ -360,7 +363,9 @@ DirectCiSigma::DirectCiSigma(Context& context,const DirectCiSigma& source)
       n_channels_(source.n_channels_),channel_capacity_(source.channel_capacity_),
       shared_spin_graph_(source.shared_spin_graph_),
       kernel_(context,source.kernel_.size()),effective_one_(context,source.effective_one_.size()),
-      alpha_(source.alpha_),beta_(source.beta_) {
+      alpha_(source.alpha_),beta_(source.beta_),workspace_(source.workspace_),
+      scattered_(workspace_->scattered),transformed_(workspace_->transformed),
+      right_scattered_(workspace_->right_scattered),channel_adjoint_(workspace_->channel_adjoint) {
   if (&context!=source.context_)
     throw std::invalid_argument("shared CI links require the same CUDA context");
 }
@@ -380,6 +385,7 @@ void DirectCiSigma::prepare(int block_width) const {
   if (block_width<=0) throw std::invalid_argument("invalid CUDA sigma block width");
   const auto products=static_cast<std::int64_t>(n_alpha_)*n_beta_*block_width;
   if (transformed_.rows()==products) return;
+  ++workspace_->generation;
   scattered_=Matrix<double>{};
   transformed_=Matrix<double>{};
   right_scattered_=Matrix<double>{};
@@ -418,6 +424,8 @@ void DirectCiSigma::prepare_adjoint(int block_width,bool with_sigma,
       right_scattered_.cols()==n_channels_ &&
       (!with_sigma || (transformed_.rows()==products && transformed_.cols()>0)) &&
       (!retain_channel_kernel || channel_adjoint_.rows()==n_channels_)) return;
+
+  ++workspace_->generation;
 
   scattered_=Matrix<double>{};
   transformed_=Matrix<double>{};
@@ -743,6 +751,7 @@ void DirectCiSigma::prepare_generator_adjoint(int block_width) const {
   // addresses must remain immutable; the generator only borrows their bytes
   // between graph launches on Context's single stream.
   if (scattered_.rows()==0) {
+    ++workspace_->generation;
     generator_left_=Matrix<double>{};
     generator_moments_=Buffer<double>{};
     const auto available=context_->device_byte_budget()-

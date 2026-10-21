@@ -176,8 +176,8 @@ double VbPoint::evaluate_coefficients(View coefficients) {
   select_frame();
   action_->expand_spin(coefficients,state_.view());
   action_->apply_orbital_transform(state_.view());
-  // Prepare the fused mode once. Later ordinary actions on this sigma retain
-  // these addresses; the separate CI graph owns an independent workspace.
+  // Cloned sigma instances share stream-local scratch. The CI graph recaptures
+  // only when preparing a different scratch layout changes its addresses.
   sigma_.apply_with_adjoint(state_.view(),state_.view(),image_.view(),
       one_adjoint_.view(),pair_adjoint_.view());
   norm_=dot(c,state_.view(),state_.view());

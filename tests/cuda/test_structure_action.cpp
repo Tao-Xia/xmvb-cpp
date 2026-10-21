@@ -8,6 +8,7 @@
 #include <Eigen/Core>
 
 #include "core/pair_index.hpp"
+#include "cuda/ci/sigma.hpp"
 #include "cuda/linalg/davidson.hpp"
 #include "cuda/memory/context.hpp"
 #include "cuda/vb/action.hpp"
@@ -90,6 +91,27 @@ void check_action(int count, bool transformed) {
   require(gpu.size() == count,"GPU action structure dimension changed");
   require(context.counters().peak_device_bytes != 0,
           "GPU action allocated no device storage");
+  {
+    xmvb::cuda::DirectCiSigma point_sigma(context,gpu.carrier_sigma());
+    const auto initial_generation=gpu.carrier_sigma().workspace_generation();
+    point_sigma.prepare_with_adjoint(1);
+    require(point_sigma.workspace_generation()!=initial_generation &&
+        point_sigma.workspace_generation()==gpu.carrier_sigma().workspace_generation(),
+        "CUDA point sigma did not share action scratch generation");
+    const auto allocated=context.counters().current_device_bytes;
+    point_sigma.prepare_with_adjoint(1);
+    require(context.counters().current_device_bytes==allocated,
+        "CUDA point sigma duplicated an already prepared workspace");
+    const auto after_fused=gpu.apply(vectors);
+    require((after_fused.hamiltonian-expected.hamiltonian).norm()<2e-10 &&
+        (after_fused.overlap-expected.overlap).norm()<2e-10,
+        "CUDA structure graph retained stale fused scratch addresses");
+    point_sigma.prepare(3);
+    const auto after_resize=gpu.apply(vectors);
+    require((after_resize.hamiltonian-expected.hamiltonian).norm()<2e-10 &&
+        (after_resize.overlap-expected.overlap).norm()<2e-10,
+        "CUDA structure graph retained stale resized scratch addresses");
+  }
   if (count == 3) {
     const auto& diagonal = cpu.preconditioner_diagonal();
     const auto options = xmvb::linalg::make_davidson_options(

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 #include "cuda/memory/buffer.hpp"
@@ -116,6 +117,10 @@ class DirectCiSigma {
   int n_orbitals() const noexcept { return n_orbitals_; }
   int n_channels() const noexcept { return n_channels_; }
   std::size_t resident_bytes() const noexcept;
+  /** Shared scratch changes invalidate graphs that captured its addresses.
+   * All members of a clone family execute sequentially on Context's stream.
+   */
+  std::uint64_t workspace_generation() const noexcept { return workspace_->generation; }
 
  private:
   struct SpinGraph {
@@ -143,8 +148,16 @@ class DirectCiSigma {
   Buffer<double> kernel_;
   Buffer<double> effective_one_;
   std::shared_ptr<const SpinGraph> alpha_, beta_;
-  // Reused on the same stream, not allocated/freed at every sigma call.
-  mutable Matrix<double> scattered_, transformed_, right_scattered_, channel_adjoint_;
+  struct Workspace {
+    Matrix<double> scattered,transformed,right_scattered,channel_adjoint;
+    std::uint64_t generation=0;
+  };
+  // One scratch owner per shared spin graph family, not per physical point.
+  std::shared_ptr<Workspace> workspace_;
+  Matrix<double>& scattered_;
+  Matrix<double>& transformed_;
+  Matrix<double>& right_scattered_;
+  Matrix<double>& channel_adjoint_;
   // Generator VJPs borrow the channel panels (or sigma output slab) after
   // their preceding action has completed on the same stream. In particular,
   // a captured action's scattered_/transformed_ addresses are never changed.
