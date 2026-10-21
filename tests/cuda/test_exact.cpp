@@ -58,14 +58,15 @@ int pair_index(int i, int j) {
 }
 
 struct Fixture {
-  int n_bf = 4;
-  int ao_pairs = 10;
+  int n_bf;
+  int ao_pairs;
   Matrix pair_kernel;
   std::vector<int> unique_left, unique_right;
   std::vector<double> unique_values;
   std::vector<int> first, second;
 
-  explicit Fixture(bool sparse=false) : pair_kernel(ao_pairs, ao_pairs) {
+  explicit Fixture(bool sparse=false,int n=4)
+      : n_bf(n),ao_pairs(n*(n+1)/2),pair_kernel(ao_pairs, ao_pairs) {
     pair_kernel.setZero();
     for (int i = 0; i < n_bf; ++i)
       for (int j = 0; j <= i; ++j) {
@@ -162,6 +163,27 @@ Matrix reference_jk(const Fixture& fixture, const Matrix& density,
               (coulomb * fixture.eri(i, j, k, l) +
                exchange * fixture.eri(i, k, j, l)) * density(k, l);
   return result;
+}
+
+void check_packed_exchange_blocks() {
+  // 1035 AO pairs cross both the 512-wide packed-tile boundary and multiple
+  // 256-thread source iterations, unlike the tiny integral oracle fixtures.
+  const Fixture fixture(false,45);
+  xmvb::cuda::Context context(128ULL*1024ULL*1024ULL);
+  const xmvb::cuda::ExactAoPairOperator gpu(context,fixture.graph(false),fixture.n_bf);
+  DeviceMatrix density(context,fixture.n_bf,fixture.n_bf),out(context,fixture.n_bf,fixture.n_bf);
+  for (int kind=0;kind<3;++kind) {
+    Matrix host=kind==0 ? symmetric_values(fixture.n_bf,0.83):
+        values(fixture.n_bf,fixture.n_bf,1.39);
+    if (kind==2) {
+      host.setZero();
+      host(3,41)=0.7;host(37,5)=-0.2;host(19,19)=0.4;
+    }
+    upload(context,density,host);
+    gpu.contract_jk(density.view(),out.view(),0.0,1.0);
+    near(download(context,out),reference_jk(fixture,host,0.0,1.0),
+        "CUDA packed exchange differs from four-index oracle across block boundaries");
+  }
 }
 
 double trace_product(const Matrix& left, const Matrix& right) {
@@ -790,6 +812,7 @@ void check_budgeted_pair_tiles(bool compact) {
 
 int main() {
   try {
+    check_packed_exchange_blocks();
     check_exchange_row_graph();
     check_empty_unique();
     check_symmetric_tiles();
