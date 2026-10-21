@@ -32,8 +32,7 @@ void near(const Matrix& x,const Matrix& y,const char* message) {
       (x-y).norm()<2e-10*std::max(1.0,y.norm()),message);
 }
 
-void check(bool indefinite) {
-  constexpr int n=5;
+void check(bool indefinite,int n=5) {
   Matrix h=Matrix::Zero(n,n),m=Matrix::Zero(n,n);
   for (int i=0;i<n;++i) {
     h(i,i)=indefinite && i==0 ? -0.7:0.4+0.7*i;
@@ -41,7 +40,8 @@ void check(bool indefinite) {
     if (i) h(i,i-1)=h(i-1,i)=0.12;
   }
   Vector gradient(n);
-  gradient<<0.4,-0.2,0.1,0.25,-0.07;
+  gradient.head(5)<<0.4,-0.2,0.1,0.25,-0.07;
+  for (int i=5;i<n;++i) gradient[i]=0.1*std::cos(0.37*i);
   const xmvb::mcscf::QuadraticProblem problem(gradient,
       [&h](const Vector& x) { return Vector(h*x); },
       [&m](const Vector& x) { return Vector(m*x); },
@@ -189,6 +189,7 @@ void check(bool indefinite) {
 int main() {
   try {
     check(false);check(true);
+    check(false,513);check(true,513);
     std::cout<<"CUDA shared CIAH quadratic/keyframe/microstep parity: PASS\n";
   } catch (const std::exception& error) {
     std::cerr<<error.what()<<'\n';

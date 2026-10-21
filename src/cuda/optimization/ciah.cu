@@ -5,6 +5,8 @@
 #include <utility>
 
 #include <cuda_runtime.h>
+#include <cub/block/block_reduce.cuh>
+#include <nvtx3/nvtx3.hpp>
 
 #include "cuda/linalg/blas.hpp"
 #include "cuda/memory/context.hpp"
@@ -20,12 +22,15 @@ __global__ void finite_vector_kernel(const double* values, std::int64_t count,
   if (i < count && !isfinite(values[i])) atomicExch(finite, 0);
 }
 
-__global__ void absolute_product_kernel(const double* left,
-                                        const double* right,
-                                        std::int64_t count, double* products) {
-  const std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x +
-                         threadIdx.x;
-  if (i < count) products[i] = fabs(left[i]) * fabs(right[i]);
+__global__ void absolute_products(const double* const* left,const double* const* right,
+    std::int64_t count,mcscf::detail::CiahProduct* products) {
+  using Reduce=cub::BlockReduce<double,256>;
+  __shared__ typename Reduce::TempStorage scratch;
+  double value=0.0;
+  for (std::int64_t i=threadIdx.x;i<count;i+=blockDim.x)
+    value+=fabs(left[blockIdx.x][i])*fabs(right[blockIdx.x][i]);
+  value=Reduce(scratch).Sum(value);
+  if (threadIdx.x==0) products[blockIdx.x].magnitude=value;
 }
 
 __global__ void ones_vector_kernel(double* values, std::int64_t count) {
@@ -57,12 +62,10 @@ struct DeviceBackend {
   std::int64_t n;
   DeviceCiahOptions options;
   mutable Buffer<int> finite_flag;
-  mutable Buffer<double> absolute_products;
 
   DeviceBackend(Context& context_, std::int64_t n_, DeviceCiahOptions options_)
       : context(context_), n(n_), options(std::move(options_)),
-        finite_flag(context_, 1),
-        absolute_products(context_, n_ > 0 ? static_cast<std::size_t>(n_) : 0) {
+        finite_flag(context_, 1) {
     if (n <= 0 || !options.apply_images)
       throw std::invalid_argument("invalid CUDA CIAH dimension or action");
     check_cublas(cublasSetPointerMode(context.blas(), CUBLAS_POINTER_MODE_HOST),
@@ -117,17 +120,33 @@ struct DeviceBackend {
                            b.data(), 1, &value), "CIAH cublasDdot");
     return value;
   }
-  double abs_dot(const Vector& a, const Vector& b) const {
-    constexpr int threads = 256;
-    const int blocks = blas_int((n + threads - 1) / threads);
-    absolute_product_kernel<<<blocks, threads, 0, context.stream()>>>(
-        a.data(), b.data(), n, absolute_products.data());
-    check_cuda(cudaGetLastError(), "CIAH absolute dot kernel");
-    double value = 0.0;
-    check_cublas(cublasDasum(context.blas(), blas_int(n),
-                            absolute_products.data(), 1, &value),
-                 "CIAH cublasDasum");
-    return value;
+  std::vector<mcscf::detail::CiahProduct> products(
+      const std::vector<std::pair<const Vector*,const Vector*>>& requests) const {
+    const nvtx3::scoped_range range{"ciah.projection_products"};
+    using Product=mcscf::detail::CiahProduct;
+    static_assert(sizeof(Product)==2*sizeof(double));
+    const int count=blas_int(requests.size());
+    Buffer<Product> result(context,count);
+    Buffer<const double*> left(context,count),right(context,count);
+    Buffer<double*> output(context,count);
+    std::vector<const double*> a(count),b(count);
+    std::vector<double*> out(count);
+    for (int i=0;i<count;++i) {
+      a[i]=requests[i].first->data();b[i]=requests[i].second->data();
+      out[i]=reinterpret_cast<double*>(result.data()+i);
+    }
+    context.copy_to_device(left.data(),a.data(),count*sizeof(double*));
+    context.copy_to_device(right.data(),b.data(),count*sizeof(double*));
+    context.copy_to_device(output.data(),out.data(),count*sizeof(double*));
+    const double one=1.0,zero=0.0;
+    check_cublas(cublasDgemmBatched(context.blas(),CUBLAS_OP_N,CUBLAS_OP_N,
+        1,1,blas_int(n),&one,left.data(),1,right.data(),blas_int(n),&zero,
+        output.data(),1,count),"CIAH batched projection dot products");
+    absolute_products<<<count,256,0,context.stream()>>>(left.data(),right.data(),n,result.data());
+    check_cuda(cudaGetLastError(),"CIAH batched absolute-product bounds");
+    std::vector<Product> host(count);
+    context.copy_to_host(host.data(),result.data(),count*sizeof(Product));
+    return host;
   }
   double norm(const Vector& v) const {
     double value = 0.0;

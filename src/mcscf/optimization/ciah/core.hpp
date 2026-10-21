@@ -25,6 +25,12 @@ struct CiahNumerics {
   double operator_relative_accuracy = 0.0;
 };
 
+/** Signed inner product and absolute-product sum for roundoff certification. */
+struct CiahProduct {
+  double value=0.0;
+  double magnitude=0.0;
+};
+
 template <class Vector>
 struct CiahCoreResult {
   double eigenvalue = 0.0;
@@ -442,19 +448,41 @@ private:
     const Eigen::Index j = basis_size() - 1;
     xmvb::profiling::ScopedPhase projection_phase(
         xmvb::profiling::Phase::NeoProjectionFactor);
-    for (Eigen::Index i = 0; i <= j; ++i) {
-      hessian_projection_(i,j) = backend_.dot(basis_[i], hessian_images_[j]);
-      hessian_projection_(j,i) = backend_.dot(basis_[j], hessian_images_[i]);
-      metric_projection_(i,j) = backend_.dot(basis_[i], metric_images_[j]);
-      metric_projection_(j,i) = backend_.dot(basis_[j], metric_images_[i]);
-      hessian_magnitude_(i,j) = backend_.abs_dot(basis_[i], hessian_images_[j]);
-      hessian_magnitude_(j,i) = backend_.abs_dot(basis_[j], hessian_images_[i]);
-      metric_magnitude_(i,j) = backend_.abs_dot(basis_[i], metric_images_[j]);
-      metric_magnitude_(j,i) = backend_.abs_dot(basis_[j], metric_images_[i]);
+    std::vector<std::pair<const Vector*,const Vector*>> requests;
+    requests.reserve(4*(j+1)+3);
+    for (Eigen::Index i=0;i<=j;++i) {
+      requests.emplace_back(&basis_[i],&hessian_images_[j]);
+      requests.emplace_back(&basis_[j],&hessian_images_[i]);
+      requests.emplace_back(&basis_[i],&metric_images_[j]);
+      requests.emplace_back(&basis_[j],&metric_images_[i]);
     }
-    basis_squared_norm_ += backend_.dot(basis_[j], basis_[j]);
-    hessian_squared_norm_ += backend_.dot(hessian_images_[j], hessian_images_[j]);
-    metric_squared_norm_ += backend_.dot(metric_images_[j], metric_images_[j]);
+    requests.emplace_back(&basis_[j],&basis_[j]);
+    requests.emplace_back(&hessian_images_[j],&hessian_images_[j]);
+    requests.emplace_back(&metric_images_[j],&metric_images_[j]);
+    const auto products=[&] {
+      if constexpr (requires { backend_.products(requests); }) {
+        return backend_.products(requests);
+      } else {
+        std::vector<CiahProduct> result;
+        result.reserve(requests.size());
+        for (const auto& [a,b]:requests)
+          result.push_back({backend_.dot(*a,*b),backend_.abs_dot(*a,*b)});
+        return result;
+      }
+    }();
+    for (Eigen::Index i=0;i<=j;++i) {
+      hessian_projection_(i,j)=products[4*i].value;
+      hessian_projection_(j,i)=products[4*i+1].value;
+      metric_projection_(i,j)=products[4*i+2].value;
+      metric_projection_(j,i)=products[4*i+3].value;
+      hessian_magnitude_(i,j)=products[4*i].magnitude;
+      hessian_magnitude_(j,i)=products[4*i+1].magnitude;
+      metric_magnitude_(i,j)=products[4*i+2].magnitude;
+      metric_magnitude_(j,i)=products[4*i+3].magnitude;
+    }
+    basis_squared_norm_+=products[4*(j+1)].value;
+    hessian_squared_norm_+=products[4*(j+1)+1].value;
+    metric_squared_norm_+=products[4*(j+1)+2].value;
     if (trace) diagnostics::ciah_trace("ciah_projection_update_cost",
         "basis=%d,seconds=%.17g", basis_size(),
         std::chrono::duration<double>(std::chrono::steady_clock::now()-projection_start).count());
