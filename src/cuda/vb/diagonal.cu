@@ -272,7 +272,8 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
     const ExactAoPairOperator& integrals,linalg::ConstMatrixView mo,
     linalg::ConstMatrixView core,linalg::ConstMatrixView effective,
     linalg::ConstMatrixView dm1,linalg::ConstMatrixView pair_adjoint,
-    linalg::ConstMatrixView active_pair,int ncore,ConstPairPanel accepted_products) {
+    linalg::ConstMatrixView active_pair,int ncore,ConstPairPanel accepted_products,
+    ConstPairPanel exchange_products) {
   validate(mo,core,effective,dm1,pair_adjoint,active_pair,ncore,integrals);
   const int nbf=static_cast<int>(mo.rows),active=static_cast<int>(dm1.rows);
   const int pairs=active*(active+1)/2,nocc=ncore+active;
@@ -313,7 +314,8 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
   }
 
   Matrix<double> density(context,nbf,nbf),response(context,nbf,nbf);
-  Matrix<double> active_left(context,nbf,active);
+  Matrix<double> active_left;
+  if (!exchange_products.data) active_left=Matrix<double>(context,nbf,active);
   Matrix<double> active_images(context,nbf,2*active);
   Matrix<double> core_response(context,nbf,ncore),jpc(context,nbf,ncore);
   const auto active_mo=mo.columns(ncore,active);
@@ -341,7 +343,8 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
       static_cast<std::size_t>(active)*active)*sizeof(double);
   const int width=static_cast<int>(std::min<std::size_t>(2*active,available/channel_bytes));
   if (width<1) throw std::runtime_error("CUDA diagonal budget cannot hold one density batch");
-  Matrix<double> densities(context,nbf,nbf*width),responses(context,nbf,nbf*width);
+  Matrix<double> densities,responses(context,nbf,nbf*width);
+  if (!exchange_products.data) densities=Matrix<double>(context,nbf,nbf*width);
   Matrix<double> active_weights(context,active,active*width);
   for (int begin=0;begin<2*active;begin+=width) {
     const int count=std::min(width,2*active-begin);
@@ -352,12 +355,17 @@ Matrix<double> build_analytic_rotation_diagonal(Context& context,
           context.stream()>>>(dm1,pair_adjoint,weight,
           active,a,channel>=active);
       check_cuda(cudaGetLastError(),"CUDA Hessian active density weight");
-      gemm(context,active_left.view(),active_mo,weight);
-      gemm(context,densities.view().columns(local*nbf,nbf),active_left.view(),active_mo,
-          1.0,0.0,Operation::none,Operation::transpose);
+      if (exchange_products.data)
+        integrals.exchange_density(exchange_products,weight,responses.view().columns(local*nbf,nbf));
+      else {
+        gemm(context,active_left.view(),active_mo,weight);
+        gemm(context,densities.view().columns(local*nbf,nbf),active_left.view(),active_mo,
+            1.0,0.0,Operation::none,Operation::transpose);
+      }
     }
-    integrals.contract_jk_batch(densities.view().columns(0,nbf*count),
-        responses.view().columns(0,nbf*count),0.0,-1.0);
+    if (!exchange_products.data)
+      integrals.contract_jk_batch(densities.view().columns(0,nbf*count),
+          responses.view().columns(0,nbf*count),0.0,-1.0);
     for (int local=0;local<count;++local) {
       const int channel=begin+local;
       gemm(context,projected.view(),responses.view().columns(local*nbf,nbf),mo);

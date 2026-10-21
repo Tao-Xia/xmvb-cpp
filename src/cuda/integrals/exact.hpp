@@ -64,6 +64,20 @@ class ExactAoPairOperator {
    */
   Buffer<double> reserve_products(int n_active) const;
 
+  /** Point-owned E(mu,nu;a,b)=(mu a|nu b), triangular in the AO indices.
+   * A one-active-index graph sweep and GEMM build this shared exchange image.
+   * Empty means the exact device-streamed representation remains in use.
+   */
+  Buffer<double> prepare_exchange(linalg::ConstMatrixView coefficients) const;
+
+  /** Contract K(C weights C^T) from a prepared exchange image, without ERIs. */
+  void exchange_density(ConstPairPanel exchange,linalg::ConstMatrixView weights,
+                         linalg::MatrixView output,double scale = -1.0) const;
+
+  /** Add J_B(C)^T K dB (G+G^T), using only the exchange image and GEMM. */
+  void exchange_pair_direction(ConstPairPanel exchange,linalg::ConstMatrixView direction,
+      linalg::ConstMatrixView kernel_adjoint,linalg::MatrixView gradient) const;
+
   /** Full directional pair kernel for dC at the accepted C. */
   void directional(linalg::ConstMatrixView coefficients,
                    linalg::ConstMatrixView direction,
@@ -81,7 +95,8 @@ class ExactAoPairOperator {
                            linalg::ConstMatrixView kernel_adjoint,
                            linalg::ConstMatrixView kernel_adjoint_direction,
                            linalg::MatrixView gradient_direction,
-                           ConstPairPanel products = {}) const;
+                           ConstPairPanel products = {},
+                           ConstPairPanel exchange = {}) const;
 
 
   /** Symmetric AO-density contraction coulomb*J(P)+exchange*K(P).

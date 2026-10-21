@@ -850,7 +850,7 @@ void ExactAoPairOperator::adjoint(
 void ExactAoPairOperator::directional_adjoint(
     linalg::ConstMatrixView c, linalg::ConstMatrixView d,
     linalg::ConstMatrixView g, linalg::ConstMatrixView dg,
-    linalg::MatrixView gradient,ConstPairPanel accepted) const {
+    linalg::MatrixView gradient,ConstPairPanel accepted,ConstPairPanel exchange) const {
   validate_coefficients(c);
   const std::int64_t pairs = active_pairs(c.cols);
   if ((d.data && (d.rows != c.rows || d.cols != c.cols || d.ld < d.rows)) ||
@@ -862,6 +862,7 @@ void ExactAoPairOperator::directional_adjoint(
     throw std::invalid_argument("invalid CUDA exact pair adjoint dimensions");
   if (accepted.data && (accepted.rows!=n_pairs_ || accepted.cols!=pairs || accepted.ld<pairs))
     throw std::invalid_argument("invalid CUDA accepted pair products");
+  const bool projected=d.data && exchange.data;
   Buffer<double> h(*context_, pairs * pairs);
   Buffer<double> dh;
   if (dg.data) dh = Buffer<double>(*context_, pairs * pairs);
@@ -871,8 +872,8 @@ void ExactAoPairOperator::directional_adjoint(
   if (!accepted.data) p=Buffer<double>(*context_,rows*pairs);
   Buffer<double> dp, dt;
   if (d.data) {
-    dp = Buffer<double>(*context_, rows * pairs);
-    dt = Buffer<double>(*context_, rows * pairs);
+    if (!projected) dp = Buffer<double>(*context_, rows * pairs);
+    if (!projected || dg.data) dt = Buffer<double>(*context_, rows * pairs);
   }
   const std::int64_t hwork = pairs * pairs;
   symmetrize<<<blocks(hwork), 256, 0, context_->stream()>>>(
@@ -885,8 +886,9 @@ void ExactAoPairOperator::directional_adjoint(
         count,pairs,accepted.data ? accepted.ld:pairs};
     PairPanel dpp{dp.data(), count, pairs, pairs};
     if (!accepted.data)
-      generated_rows_impl(c,d,begin,{p.data(),count,pairs,pairs},d.data ? dpp:PairPanel{});
-    else if (d.data) generated_rows_impl(c,d,begin,dpp,{},true);
+      generated_rows_impl(c,projected ? linalg::ConstMatrixView{}:d,begin,
+          {p.data(),count,pairs,pairs},d.data && !projected ? dpp:PairPanel{});
+    else if (d.data && !projected) generated_rows_impl(c,d,begin,dpp,{},true);
     PairPanel tp{t.data(), count, pairs, pairs};
     multiply_pair_tile(*context_, tp, pp,
                        h.data(), blas_int(pairs));
@@ -897,15 +899,25 @@ void ExactAoPairOperator::directional_adjoint(
     check_launch("accepted CUDA pair pullback");
     if (d.data) {
       PairPanel dtp{dt.data(), count, pairs, pairs};
-      multiply_pair_tile(*context_, dtp, {dpp.data, count, pairs, pairs},
-                         h.data(), blas_int(pairs));
+      if (!projected)
+        multiply_pair_tile(*context_, dtp, {dpp.data, count, pairs, pairs},
+                           h.data(), blas_int(pairs));
       if (dg.data)
         multiply_pair_tile(*context_, dtp, pp,
-                           dh.data(), blas_int(pairs), 1.0);
-      pair_pullback<<<blocks(work), 256, 0, context_->stream()>>>(
-          dtp, c, pair_first_.data(), pair_second_.data(), begin, gradient, work);
-      check_launch("directional CUDA pair pullback");
+                           dh.data(), blas_int(pairs), projected ? 0.0:1.0);
+      if (!projected || dg.data) {
+        pair_pullback<<<blocks(work), 256, 0, context_->stream()>>>(
+            dtp, c, pair_first_.data(), pair_second_.data(), begin, gradient, work);
+        check_launch("directional CUDA pair pullback");
+      }
     }
+  }
+  if (projected) {
+    // The pair sweep and exchange projection are sequential consumers. Do
+    // not retain their large temporary panels simultaneously under a tight
+    // device budget; the original point-owned integral images stay shared.
+    p={};t={};dp={};dt={};h={};dh={};
+    exchange_pair_direction(exchange,d,g,gradient);
   }
 }
 

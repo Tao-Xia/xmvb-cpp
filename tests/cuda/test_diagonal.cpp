@@ -161,10 +161,13 @@ void check(bool compact,int ncore) {
   DeviceMatrix prepared_pair(context,nactivepairs,nactivepairs);
   graph.forward(dmo.view().columns(ncore,na),prepared_pair.view(),
       {products.data(),graph.pair_count(),nactivepairs,nactivepairs});
+  auto exchange=graph.prepare_exchange(dmo.view().columns(ncore,na));
   const auto reused=xmvb::cuda::build_analytic_rotation_diagonal(
       context,graph,dmo.view(),dcore.view(),deffective.view(),ddm1.view(),
       dadjoint.view(),dpair.view(),ncore,
-      {products.data(),graph.pair_count(),nactivepairs,nactivepairs});
+      {products.data(),graph.pair_count(),nactivepairs,nactivepairs},
+      exchange.empty() ? xmvb::cuda::ConstPairPanel{}:
+          xmvb::cuda::ConstPairPanel{exchange.data(),graph.pair_count(),na*na,na*na});
   xmvb::cuda::copy_to_host(context,actual,reused.view());
   if ((actual-expected).norm()>2e-9*std::max(1.0,expected.norm()))
     throw std::runtime_error("GPU retained analytic Hessian diagonal differs from CPU oracle");

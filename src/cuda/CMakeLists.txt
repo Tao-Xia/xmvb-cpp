@@ -3,6 +3,7 @@ add_library(xmvb_cuda
   linalg/cholesky.cu
   ci/sigma.cu
   integrals/exact.cu
+  integrals/exchange.cu
   integrals/one_electron.cu
   optimization/ciah.cu
   optimization/coarse.cu

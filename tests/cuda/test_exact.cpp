@@ -132,10 +132,7 @@ Matrix directional_features(const Fixture& fixture, const Matrix& c,
           features(fixture, direction)).eval();
 }
 
-Matrix pair_gradient(const Fixture& fixture, const Matrix& c,
-                     const Matrix& adjoint) {
-  const Matrix product = fixture.pair_kernel * features(fixture, c);
-  const Matrix tile_gradient = product * (adjoint + adjoint.transpose());
+Matrix pair_pullback(const Fixture& fixture,const Matrix& c,const Matrix& tile_gradient) {
   Matrix gradient = Matrix::Zero(c.rows(), c.cols());
   for (int row = 0; row < fixture.ao_pairs; ++row) {
     const int i = fixture.first[row], j = fixture.second[row];
@@ -151,6 +148,12 @@ Matrix pair_gradient(const Fixture& fixture, const Matrix& c,
       }
   }
   return gradient;
+}
+
+Matrix pair_gradient(const Fixture& fixture, const Matrix& c,
+                     const Matrix& adjoint) {
+  const Matrix product = fixture.pair_kernel * features(fixture, c);
+  return pair_pullback(fixture,c,product*(adjoint+adjoint.transpose()));
 }
 
 Matrix reference_jk(const Fixture& fixture, const Matrix& density,
@@ -305,6 +308,52 @@ void check_graph_and_pair(int active, bool compact) {
   near(download(context,dgradient),gradient,"CUDA retained pair gradient differs from oracle");
   gpu.directional_adjoint(dc.view(),dd.view(),dg.view(),ddg.view(),dgradient.view(),accepted_view);
   near(download(context,dgradient),expected_hvp,"CUDA retained pair HVP differs from finite difference",2e-7);
+  auto exchange=gpu.prepare_exchange(dc.view());
+  require(exchange.empty()==compact,"CUDA exchange image representation admission differs");
+  if (!compact) {
+    const xmvb::cuda::ConstPairPanel image{exchange.data(),fixture.ao_pairs,active*active,active*active};
+    std::vector<double> host(exchange.size());
+    context.copy_to_host(host.data(),exchange.data(),host.size()*sizeof(double));
+    for (int mu=0;mu<fixture.n_bf;++mu) for (int nu=0;nu<=mu;++nu)
+      for (int a=0;a<active;++a) for (int b=0;b<active;++b) {
+        double reference=0.0;
+        for (int k=0;k<fixture.n_bf;++k) for (int l=0;l<fixture.n_bf;++l)
+          reference+=fixture.eri(mu,k,nu,l)*c(k,a)*c(l,b);
+        near_scalar(host[pair_index(mu,nu)*active*active+a*active+b],reference,
+            "CUDA exchange half transform differs from four-index oracle");
+      }
+    gpu.directional_adjoint(dc.view(),dd.view(),dg.view(),ddg.view(),dgradient.view(),accepted_view,image);
+    near(download(context,dgradient),expected_hvp,"CUDA exchange projected HVP differs",2e-7);
+    gpu.directional_adjoint(dc.view(),dd.view(),dg.view(),ddg.view(),dgradient.view(),{},image);
+    near(download(context,dgradient),expected_hvp,"CUDA exchange streamed-product HVP differs",2e-7);
+    const Matrix weight=symmetric_values(active,0.82);
+    DeviceMatrix dweight(context,active,active),density_image(context,fixture.n_bf,fixture.n_bf);
+    upload(context,dweight,weight);
+    gpu.exchange_density(image,dweight.view(),density_image.view());
+    near(download(context,density_image),reference_jk(fixture,c*weight*c.transpose(),0.0,-1.0),
+        "CUDA exchange density projection differs from four-index oracle");
+    gpu.directional_adjoint(dc.view(),dd.view(),dg.view(),{},dgradient.view(),accepted_view,image);
+    const Matrix fixed_hvp=(pair_gradient(fixture,c+step*direction,upstream)-
+        pair_gradient(fixture,c-step*direction,upstream))/(2*step);
+    near(download(context,dgradient),fixed_hvp,"CUDA fixed-adjoint exchange HVP differs",2e-7);
+    {
+      const auto n2=static_cast<std::size_t>(active)*active,n3=n2*active;
+      const auto fixed_bytes=(active*n3+fixture.n_bf*n3)*sizeof(double);
+      const auto row_bytes=fixture.n_bf*n2*sizeof(double);
+      const auto free=context.device_byte_budget()-context.counters().current_device_bytes;
+      require(free>fixed_bytes+2*row_bytes,"CUDA exchange tile fixture lacks workspace");
+      xmvb::cuda::Buffer<unsigned char> padding(context,free-fixed_bytes-2*row_bytes);
+      require(gpu.prepare_exchange(dc.view()).empty(),"CUDA exchange admission ignored the live budget");
+      xmvb::cuda::check_cuda(cudaMemsetAsync(dgradient.data(),0,
+          fixture.n_bf*active*sizeof(double),context.stream()),"clear tiled exchange oracle");
+      gpu.exchange_pair_direction(image,dd.view(),dg.view(),dgradient.view());
+      near(download(context,dgradient),pair_pullback(fixture,c,
+          fixture.pair_kernel*db*(upstream+upstream.transpose())),
+          "CUDA budgeted exchange output-row projection differs from oracle");
+      require(context.counters().peak_device_bytes<=context.device_byte_budget(),
+          "CUDA exchange projection exceeded its memory budget");
+    }
+  }
 }
 
 void check_one_electron_and_core(bool compact) {

@@ -300,6 +300,7 @@ void check_case(bool inactive,int structures) {
   const auto hvp=[&](const Matrix& orbital,const Matrix& structure) {
     auto base_raw=upload(context,raw),base_ci=upload(context,ci);
     point.evaluate(base_raw.view(),base_ci.view());
+    point.prepare_exchange();
     const auto version=action.version();
     point.activate();
     require(action.version()==version,"unchanged point rebuilt shared action");

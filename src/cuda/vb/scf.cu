@@ -168,10 +168,12 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,double nuclear,
     if (iteration==options.max_iterations) { result.reason="ciah_iteration_limit";break; }
     if (no==0) { result.reason="ciah_nonredundant_space_empty";break; }
     context.set_allocation_phase("analytic Hessian diagonal");
+    origin.prepare_exchange();
     auto diagonal=build_analytic_rotation_diagonal(context,ao,chart.accepted_mo_frame(),
         core.view(),origin.effective_one_electron(),origin.one_electron_adjoint(),
         origin.pair_kernel_adjoint(),origin.pair_kernel(),
-        (orbital.n_total_electrons-orbital.n_active_electrons)/2,origin.pair_products());
+        (orbital.n_total_electrons-orbital.n_active_electrons)/2,
+        origin.pair_products(),origin.exchange_products());
     chart.set_hessian_diagonal(origin.geometry(),diagonal.view());
     context.set_allocation_phase("CI tangent and transport");
     std::unique_ptr<SingleStateCiTangent> tangent;

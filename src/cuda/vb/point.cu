@@ -113,6 +113,7 @@ void VbPoint::prepare(View raw) {
   const nvtx3::scoped_range range{"point.prepare"};
   ready_=false;
   prepared_=false;
+  exchange_products_={};
   auto& c=*context_;
   geometry_.set_raw(raw);geometry_.prepare();
   Matrix<double> core_energy(c,1,1);
@@ -127,6 +128,12 @@ void VbPoint::prepare(View raw) {
   select_frame();
   c.copy_to_host(&core_energy_,core_energy.data(),sizeof(double));
   prepared_=true;
+}
+
+void VbPoint::prepare_exchange() {
+  if (!ready_) throw std::logic_error("CUDA exchange preparation requires an evaluated point");
+  if (pair_products_.empty() || !exchange_products_.empty()) return;
+  exchange_products_=integrals_->prepare_exchange(geometry_.orthogonal_active());
 }
 
 double VbPoint::evaluate_coefficients(View coefficients) {
@@ -238,7 +245,7 @@ void VbPoint::hessian(View orbital,View structure,Out orbital_image,Out structur
   Matrix<double> dfgrad(c,active_gradient_.rows(),active_gradient_.cols());
   Matrix<double> one_extra(c,active_gradient_.rows(),active_gradient_.cols());
   integrals_->directional_adjoint(geometry_.orthogonal_active(),d.orthogonal_active.view(),
-      pair_adjoint_.view(),dga.view(),dfgrad.view(),pair_products());
+      pair_adjoint_.view(),dga.view(),dfgrad.view(),pair_products(),exchange_products());
   transform_one_electron_directional_adjoint(c,effective_.view(),geometry_.orthogonal_active(),
       d.orthogonal_active.view(),one_adjoint_.view(),dha.view(),one_extra.view());
   add(c,dfgrad.view(),one_extra.view());
