@@ -359,6 +359,58 @@ void check_sigma(int rhs_count,bool rotated,int maximum_tile=3,bool one_product=
           "CUDA production CI test exceeded its device budget");
 }
 
+void check_row_budget() {
+  constexpr int n=8,pairs=n*(n+1)/2,tile_rows=17;
+  const auto alpha=xmvb::mcscf::SpinStrings(n,4).occupations();
+  const auto beta=xmvb::mcscf::SpinStrings(n,3).occupations();
+  const auto base=active_integrals(n,false);
+  const xmvb::mcscf::ActiveIntegrals delta{
+      symmetric_values(n,1.74),0.11*symmetric_values(pairs,2.36)};
+  const xmvb::mcscf::DirectCiSigmaAction cpu(alpha,beta,base),direction(alpha,beta,delta);
+  const Matrix left=values(alpha.size(),beta.size(),0.26);
+  const Matrix right=values(alpha.size(),beta.size(),0.82);
+  const auto expected=cpu.apply_with_adjoint(left,right);
+  const Matrix combined=expected.sigma+direction.apply(right);
+  xmvb::cuda::Context context(128ULL*1024*1024);
+  xmvb::cuda::DirectCiSigma gpu(context,cpu),gpu_direction(context,gpu);
+  xmvb::cuda::Matrix<double> dl(context,left.rows(),left.cols());
+  xmvb::cuda::Matrix<double> dr(context,right.rows(),right.cols());
+  xmvb::cuda::Matrix<double> image(context,left.rows(),left.cols());
+  xmvb::cuda::Matrix<double> h(context,n,n),g(context,pairs,pairs);
+  xmvb::cuda::copy_to_device(context,dl.view(),left);
+  xmvb::cuda::copy_to_device(context,dr.view(),right);
+  xmvb::cuda::copy_to_device(context,h.view(),delta.one_electron);
+  xmvb::cuda::copy_to_device(context,g.view(),delta.pair_kernel);
+  gpu_direction.update_integrals(h.view(),g.view());
+  const auto resident=gpu.resident_bytes();
+  const auto room=(static_cast<std::size_t>(pairs)*pairs+3*pairs*tile_rows)*sizeof(double);
+  require(room<static_cast<std::size_t>(left.size())*sizeof(double),
+      "CUDA row-budget fixture accidentally holds a full-carrier channel");
+  const auto free=context.device_byte_budget()-context.counters().current_device_bytes;
+  require(free>room,"CUDA row-budget fixture lacks its small workspace");
+  xmvb::cuda::Buffer<unsigned char> padding(context,free-room);
+  gpu.prepare_with_adjoint(1);
+  require(gpu.resident_bytes()-resident==room,
+      "CUDA fused row planner reserved an unused full-carrier channel");
+  gpu.apply_direction_with_adjoint(dl.view(),dr.view(),gpu_direction,
+      image.view(),h.view(),g.view());
+  near(download(context,image),combined,3e-10,
+      "CUDA sub-channel-budget directional sigma differs from CPU");
+  near(download(context,h),expected.integrals.one_electron,3e-10,
+      "CUDA sub-channel-budget one-electron adjoint differs from CPU");
+  near(download(context,g),expected.integrals.pair_kernel,3e-10,
+      "CUDA sub-channel-budget pair adjoint differs from CPU");
+  const xmvb::cuda::Graph captured(context,[&] {
+    gpu.apply_direction_with_adjoint(dl.view(),dr.view(),gpu_direction,
+        image.view(),h.view(),g.view());
+  });
+  captured.launch();
+  near(download(context,image),combined,3e-10,
+      "CUDA row-budget graph replay differs from CPU");
+  require(context.counters().peak_device_bytes<=context.device_byte_budget(),
+      "CUDA source-row planning exceeded the shared budget");
+}
+
 void check_partitioned_moments() {
   constexpr int n=8,rhs=3;
   const xmvb::mcscf::SpinStrings a(n,4),b(n,3);
@@ -681,6 +733,7 @@ int main() {
     // Wide, unequal spin sectors and one-channel-equivalent workspace force
     // many source tiles. Exercise transpose scatter, add mode and fused HVP.
     check_sigma(2,false,1,false,8);
+    check_row_budget();
     check_partitioned_moments();
     for (int rhs_count : {1, 3}) check_spin_metric(rhs_count);
     for (int rhs_count : {1, 3}) check_exterior(rhs_count);

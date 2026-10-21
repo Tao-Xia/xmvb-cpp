@@ -256,6 +256,22 @@ void validate_output(linalg::MatrixView output,std::int64_t rows,
     throw std::invalid_argument(name);
 }
 
+// Every live slab is [source row, all channels]. Channel equivalents bound
+// its maximum size, but no full-carrier channel is allocated or reserved.
+std::int64_t source_tile_rows(Context& context,std::int64_t products,
+    int channels,int capacity,int panels,std::size_t extra=0) {
+  const auto available=context.device_byte_budget()-context.counters().current_device_bytes;
+  const auto row_bytes=static_cast<std::size_t>(panels)*channels*sizeof(double);
+  if (extra>available || row_bytes>available-extra)
+    throw std::runtime_error("CUDA direct-CI budget cannot hold one complete source row");
+  const auto maximum=std::max<std::int64_t>(1,
+      products*std::min(channels,capacity)/channels);
+  auto rows=std::min({products,maximum,
+      static_cast<std::int64_t>((available-extra)/row_bytes)});
+  if (rows>=32) rows=(rows/32)*32;
+  return rows;
+}
+
 }  // namespace
 
 DirectCiSigma::SpinGraph::SpinGraph(
@@ -354,9 +370,9 @@ void DirectCiSigma::prepare(int block_width) const {
     throw std::runtime_error("CUDA direct-CI budget cannot hold one complete channel row");
   if (tile<1)
     throw std::runtime_error("CUDA direct-CI budget cannot hold two single-channel slabs");
-  // Preserve the source-row plan, but allocate only the rows actually used.
-  // Both panels carry all channels for this tile; full-carrier equivalents
-  // above are a planning bound, not a required physical matrix shape.
+  // The ordinary action retains these panels for graph replay while its CI
+  // caller grows other vectors. Keep that persistent-cache plan separate
+  // from the fully consumed temporary adjoint panels below.
   auto rows=std::min(products,std::max<std::int64_t>(1,products*tile/n_channels_));
   constexpr int warp_rows=32;
   if (rows>=warp_rows) rows=(rows/warp_rows)*warp_rows;
@@ -382,45 +398,10 @@ void DirectCiSigma::prepare_adjoint(int block_width,bool with_sigma,
       (!retain_channel_kernel || channel_adjoint_.rows()==n_channels_)) return;
 
   reset_workspace();
-  const std::size_t available=context_->device_byte_budget()-
-      context_->counters().current_device_bytes;
   const std::size_t kernel_bytes=retain_channel_kernel ?
       static_cast<std::size_t>(n_channels_)*n_channels_*sizeof(double):0;
-  const std::size_t minimum_rows=2*static_cast<std::size_t>(n_channels_)*sizeof(double);
-  if (kernel_bytes>available || minimum_rows>available-kernel_bytes)
-    throw std::runtime_error("CUDA direct-CI budget cannot hold adjoint channel slabs");
-  const std::size_t workspace=available-kernel_bytes;
-  int tile=0;
-  std::int64_t rows=0;
-  if (with_sigma) {
-    const auto transform_channel_bytes=static_cast<std::size_t>(products)*sizeof(double);
-    if (transform_channel_bytes>workspace-minimum_rows)
-      throw std::runtime_error("CUDA direct-CI budget cannot hold fused sigma slab");
-    tile=static_cast<int>(std::min<std::size_t>({
-        static_cast<std::size_t>(n_channels_),
-        static_cast<std::size_t>(channel_capacity_),
-        (workspace-minimum_rows)/transform_channel_bytes}));
-    // One all-channel intermediate row must fit even for a one-string
-    // carrier. Channel capacity is a storage bound, not a contraction tile.
-    tile=std::max<std::int64_t>(tile,(n_channels_+products-1)/products);
-    if (static_cast<std::size_t>(products)*tile*sizeof(double)>workspace-minimum_rows)
-      throw std::runtime_error("CUDA direct-CI budget cannot hold one fused channel row");
-    rows=std::min<std::int64_t>(products,
-        (workspace/sizeof(double)-static_cast<std::size_t>(products)*tile)/
-        (2*static_cast<std::size_t>(n_channels_)));
-  } else {
-    rows=std::min<std::int64_t>(products,
-        workspace/(2*static_cast<std::size_t>(n_channels_)*sizeof(double)));
-  }
-  // Match the sigma source-panel plan under the shared Context budget. There
-  // is no private fixed byte cap competing with the accepted-point workspace.
-  const auto panel_rows=std::max<std::int64_t>(1,
-      products*std::min(n_channels_,channel_capacity_)/n_channels_);
-  rows=std::min(rows,panel_rows);
-  if (with_sigma)
-    rows=std::min(rows,products*tile/n_channels_);
-  if (rows<1) throw std::runtime_error("CUDA direct-CI adjoint row exceeds budget");
-  if (rows>=32) rows=(rows/32)*32;
+  const auto rows=source_tile_rows(*context_,products,n_channels_,channel_capacity_,
+      with_sigma ? 3:2,kernel_bytes);
   Matrix<double> kernel_adjoint;
   if (retain_channel_kernel)
     kernel_adjoint=Matrix<double>(*context_,n_channels_,n_channels_);

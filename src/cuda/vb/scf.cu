@@ -247,6 +247,10 @@ ScfResult solve_scf(Context& context,const vb::VbScfInput& input,
     const vb::StructureSolveAccuracy accuracy{options.energy_tolerance,options.gradient_tolerance};
     ciah.operator_relative_accuracy=accuracy.response_backward_error_tolerance(
         std::abs(accepted.ci.eigenpairs.eigenvalues.front()));
+    // CI tangent/transport preparation has consumed its H/S scratch. Return
+    // that cache before allocating the coupled solver's persistent vectors;
+    // its next action recaptures against the shared workspace generation.
+    action.carrier_sigma().reset_workspace();
     context.set_allocation_phase("CIAH coarse workspace");
     // One full coupled sample is observed per retained AH direction. Unlike
     // the CPU split-block collector, this path never emits two samples.
